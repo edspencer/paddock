@@ -1,6 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, ApiError } from "../lib/api";
-import type { Project } from "../lib/types";
+import type { Project, ProjectStatus } from "../lib/types";
+import { XIcon } from "./icons";
+
+const STATUSES: ProjectStatus[] = ["idea", "active", "paused", "blocked", "done"];
 
 export function NewProjectModal({
   open,
@@ -14,8 +17,25 @@ export function NewProjectModal({
   const [name, setName] = useState("");
   const [summary, setSummary] = useState("");
   const [domain, setDomain] = useState("");
+  const [status, setStatus] = useState<ProjectStatus>("active");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Reset on open; close on Escape.
+  useEffect(() => {
+    if (open) {
+      setName("");
+      setSummary("");
+      setDomain("");
+      setStatus("active");
+      setError(null);
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && open && !busy) onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, busy, onClose]);
 
   if (!open) return null;
 
@@ -27,6 +47,7 @@ export function NewProjectModal({
     try {
       const project = await api.createProject({
         name: name.trim(),
+        status,
         summary: summary.trim() || undefined,
         domain: domain
           .split(",")
@@ -34,10 +55,6 @@ export function NewProjectModal({
           .filter(Boolean),
       });
       onCreated(project);
-      setName("");
-      setSummary("");
-      setDomain("");
-      onClose();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to create project");
     } finally {
@@ -47,53 +64,81 @@ export function NewProjectModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
+      onClick={() => !busy && onClose()}
     >
       <form
-        className="w-full max-w-md rounded-xl border border-paddock-200 bg-white p-5 shadow-xl dark:border-paddock-800 dark:bg-paddock-900"
+        className="w-full max-w-md animate-scale-in rounded-2xl border border-paddock-200 bg-white p-6 shadow-2xl dark:border-paddock-800 dark:bg-paddock-900"
         onClick={(e) => e.stopPropagation()}
         onSubmit={submit}
       >
-        <h2 className="mb-4 text-lg font-semibold">New project</h2>
+        <div className="mb-5 flex items-center justify-between">
+          <h2 className="text-lg font-semibold">New project</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg p-1 text-paddock-400 hover:bg-paddock-100 hover:text-paddock-600 dark:hover:bg-paddock-800"
+            aria-label="Close"
+          >
+            <XIcon width={18} height={18} />
+          </button>
+        </div>
 
-        <label className="mb-3 block text-sm">
-          <span className="mb-1 block text-paddock-600 dark:text-paddock-300">Name</span>
+        <label className="mb-4 block">
+          <span className="field-label">Name</span>
           <input
             autoFocus
-            className="w-full rounded-lg border border-paddock-300 bg-paddock-50 px-3 py-2 outline-none focus:border-paddock-500 dark:border-paddock-700 dark:bg-paddock-950"
+            className="input"
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Garage Water Heater Replacement"
           />
         </label>
 
-        <label className="mb-3 block text-sm">
-          <span className="mb-1 block text-paddock-600 dark:text-paddock-300">Summary</span>
+        <label className="mb-4 block">
+          <span className="field-label">Summary (optional)</span>
           <input
-            className="w-full rounded-lg border border-paddock-300 bg-paddock-50 px-3 py-2 outline-none focus:border-paddock-500 dark:border-paddock-700 dark:bg-paddock-950"
+            className="input"
             value={summary}
             onChange={(e) => setSummary(e.target.value)}
-            placeholder="One-line description"
+            placeholder="One line on what this project is about"
           />
         </label>
 
-        <label className="mb-4 block text-sm">
-          <span className="mb-1 block text-paddock-600 dark:text-paddock-300">
-            Domain tags (comma-separated)
-          </span>
-          <input
-            className="w-full rounded-lg border border-paddock-300 bg-paddock-50 px-3 py-2 outline-none focus:border-paddock-500 dark:border-paddock-700 dark:bg-paddock-950"
-            value={domain}
-            onChange={(e) => setDomain(e.target.value)}
-            placeholder="home, plumbing"
-          />
-        </label>
+        <div className="mb-5 grid grid-cols-2 gap-3">
+          <label className="block">
+            <span className="field-label">Domain tags</span>
+            <input
+              className="input"
+              value={domain}
+              onChange={(e) => setDomain(e.target.value)}
+              placeholder="home, plumbing"
+            />
+          </label>
+          <label className="block">
+            <span className="field-label">Status</span>
+            <select
+              className="input capitalize"
+              value={status}
+              onChange={(e) => setStatus(e.target.value as ProjectStatus)}
+            >
+              {STATUSES.map((s) => (
+                <option key={s} value={s} className="capitalize">
+                  {s}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
 
-        {error && <p className="mb-3 text-sm text-rose-600 dark:text-rose-400">{error}</p>}
+        {error && (
+          <p className="mb-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600 dark:bg-rose-950/40 dark:text-rose-300">
+            {error}
+          </p>
+        )}
 
         <div className="flex justify-end gap-2">
-          <button type="button" className="btn-ghost" onClick={onClose}>
+          <button type="button" className="btn-ghost" onClick={onClose} disabled={busy}>
             Cancel
           </button>
           <button type="submit" className="btn-primary" disabled={busy || !name.trim()}>

@@ -12,30 +12,135 @@
     height: 100%;
   }
   body {
-    @apply bg-paddock-50 text-paddock-900 antialiased;
+    @apply bg-canvas text-ink antialiased;
+    font-feature-settings: "cv05", "ss01";
   }
   .dark body {
-    @apply bg-paddock-950 text-paddock-100;
+    @apply bg-canvas-dark text-ink-dark;
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--scroll-thumb)) transparent;
+  }
+  :root {
+    --scroll-thumb: 212 205 182; /* paddock-200 */
+  }
+  .dark {
+    --scroll-thumb: 62 53 40; /* paddock-800 */
+  }
+  ::-webkit-scrollbar {
+    width: 9px;
+    height: 9px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: rgb(var(--scroll-thumb));
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
   }
 }
 
 @layer components {
   .status-pill {
-    @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium;
+    @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium leading-none;
   }
   .tag {
-    @apply inline-flex items-center rounded-md bg-paddock-200/60 px-1.5 py-0.5 text-xs text-paddock-700 dark:bg-paddock-800/60 dark:text-paddock-300;
+    @apply inline-flex items-center rounded-md bg-paddock-200/70 px-1.5 py-0.5 text-[11px] font-medium text-paddock-700 dark:bg-paddock-800/70 dark:text-paddock-300;
   }
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors disabled:opacity-50;
+    @apply inline-flex select-none items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition-all disabled:cursor-not-allowed disabled:opacity-50;
   }
   .btn-primary {
-    @apply btn bg-paddock-600 text-white hover:bg-paddock-700;
+    @apply btn bg-accent text-white shadow-sm hover:bg-accent-600 active:scale-[0.98];
   }
   .btn-ghost {
-    @apply btn bg-paddock-200/50 text-paddock-800 hover:bg-paddock-200 dark:bg-paddock-800/50 dark:text-paddock-100 dark:hover:bg-paddock-800;
+    @apply btn bg-paddock-200/60 text-paddock-800 hover:bg-paddock-200 dark:bg-paddock-800/50 dark:text-paddock-100 dark:hover:bg-paddock-800;
+  }
+  .btn-subtle {
+    @apply btn text-paddock-600 hover:bg-paddock-200/60 dark:text-paddock-400 dark:hover:bg-paddock-800/60;
   }
   .card {
-    @apply rounded-xl border border-paddock-200 bg-white p-4 shadow-sm transition-shadow hover:shadow-md dark:border-paddock-800 dark:bg-paddock-900;
+    @apply rounded-2xl border border-paddock-200 bg-white p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:border-paddock-300 hover:shadow-md dark:border-paddock-800 dark:bg-paddock-900/70 dark:hover:border-paddock-700;
+  }
+  .input {
+    @apply w-full rounded-lg border border-paddock-300 bg-paddock-50 px-3 py-2 text-sm outline-none transition-colors placeholder:text-paddock-400 focus:border-accent focus:ring-2 focus:ring-accent/20 dark:border-paddock-700 dark:bg-paddock-950 dark:placeholder:text-paddock-600;
+  }
+  .field-label {
+    @apply mb-1 block text-xs font-semibold uppercase tracking-wide text-paddock-500;
+  }
+  .section-label {
+    @apply px-3 text-[11px] font-semibold uppercase tracking-wider text-paddock-500;
+  }
+}
+
+/* Markdown rendering inside assistant bubbles. Compact, readable, dark-aware. */
+@layer components {
+  .md {
+    @apply text-[14px] leading-relaxed;
+  }
+  .md > :first-child {
+    @apply mt-0;
+  }
+  .md > :last-child {
+    @apply mb-0;
+  }
+  .md p {
+    @apply my-2;
+  }
+  .md h1 {
+    @apply mb-2 mt-4 text-lg font-semibold;
+  }
+  .md h2 {
+    @apply mb-2 mt-4 text-base font-semibold;
+  }
+  .md h3 {
+    @apply mb-1.5 mt-3 text-sm font-semibold;
+  }
+  .md ul {
+    @apply my-2 list-disc space-y-1 pl-5;
+  }
+  .md ol {
+    @apply my-2 list-decimal space-y-1 pl-5;
+  }
+  .md li > ul,
+  .md li > ol {
+    @apply my-1;
+  }
+  .md a {
+    @apply text-accent underline underline-offset-2 hover:text-accent-600;
+  }
+  .md blockquote {
+    @apply my-2 border-l-2 border-paddock-300 pl-3 text-paddock-600 dark:border-paddock-700 dark:text-paddock-400;
+  }
+  .md code {
+    @apply rounded bg-paddock-200/70 px-1 py-0.5 font-mono text-[12.5px] dark:bg-paddock-800/80;
+  }
+  .md pre {
+    @apply my-3 overflow-x-auto rounded-lg bg-paddock-100 p-3 text-[12.5px] leading-relaxed dark:bg-paddock-950;
+  }
+  .md pre code {
+    @apply bg-transparent p-0;
+  }
+  .md table {
+    @apply my-3 w-full border-collapse text-[13px];
+  }
+  .md th,
+  .md td {
+    @apply border border-paddock-200 px-2 py-1 text-left dark:border-paddock-800;
+  }
+  .md th {
+    @apply bg-paddock-100/70 font-semibold dark:bg-paddock-900;
+  }
+  .md hr {
+    @apply my-3 border-paddock-200 dark:border-paddock-800;
+  }
+}
+
+/* The blinking caret shown while assistant text is streaming in. */
+@layer utilities {
+  .streaming-caret::after {
+    content: "▍";
+    @apply ml-0.5 inline-block animate-pulse text-accent;
   }
 }

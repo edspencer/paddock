@@ -1,8 +1,15 @@
 // Typed REST client for the paddock-server API.
 //
-// Falls back to mock data when the API is unreachable (so the UI is usable in
-// pure-frontend dev). Set VITE_API_BASE to point at a non-default server.
-import type { Chat, CreateProjectInput, Project } from "./types";
+// Set VITE_API_BASE to point at a non-default server (defaults to same-origin,
+// which is correct both behind the dev proxy and in production where the server
+// serves the built SPA).
+import type {
+  Chat,
+  CreateProjectInput,
+  HistoryMessage,
+  Project,
+  ProjectDetail,
+} from "./types";
 
 const BASE = import.meta.env.VITE_API_BASE ?? "";
 
@@ -36,23 +43,13 @@ export class ApiError extends Error {
 
 export const api = {
   async listProjects(): Promise<Project[]> {
-    try {
-      const { projects } = await req<{ projects: Project[] }>("/api/projects");
-      return projects;
-    } catch {
-      return MOCK_PROJECTS;
-    }
+    const { projects } = await req<{ projects: Project[] }>("/api/projects");
+    return projects;
   },
 
-  async getProject(slug: string): Promise<Project> {
-    try {
-      const { project } = await req<{ project: Project }>(`/api/projects/${slug}`);
-      return project;
-    } catch {
-      const mock = MOCK_PROJECTS.find((p) => p.slug === slug);
-      if (mock) return mock;
-      throw new ApiError(`Project not found: ${slug}`, 404);
-    }
+  /** Enriched single-project payload: metadata + changelog + its chats. */
+  async getProjectDetail(slug: string): Promise<ProjectDetail> {
+    return req<ProjectDetail>(`/api/projects/${encodeURIComponent(slug)}`);
   },
 
   async createProject(input: CreateProjectInput): Promise<Project> {
@@ -64,71 +61,30 @@ export const api = {
   },
 
   async listProjectChats(slug: string): Promise<Chat[]> {
-    try {
-      const { chats } = await req<{ chats: Chat[] }>(`/api/projects/${slug}/chats`);
-      return chats;
-    } catch {
-      return [];
-    }
+    const { chats } = await req<{ chats: Chat[] }>(
+      `/api/projects/${encodeURIComponent(slug)}/chats`,
+    );
+    return chats;
   },
 
-  async listAdhocChats(): Promise<Chat[]> {
-    try {
-      const { chats } = await req<{ chats: Chat[] }>("/api/chats");
-      return chats;
-    } catch {
-      return [];
-    }
+  async listScratchChats(): Promise<Chat[]> {
+    const { chats } = await req<{ chats: Chat[] }>("/api/chats");
+    return chats;
   },
 
-  async changelog(slug: string): Promise<string> {
-    try {
-      const res = await fetch(`${BASE}/api/projects/${slug}/changelog`);
-      if (!res.ok) return "";
-      return await res.text();
-    } catch {
-      return "";
-    }
+  /** Hydrate a project chat's transcript. */
+  async projectChatMessages(slug: string, sessionId: string): Promise<HistoryMessage[]> {
+    const { messages } = await req<{ messages: HistoryMessage[] }>(
+      `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}/messages`,
+    );
+    return messages;
+  },
+
+  /** Hydrate a one-off (scratch) chat's transcript. */
+  async scratchChatMessages(sessionId: string): Promise<HistoryMessage[]> {
+    const { messages } = await req<{ messages: HistoryMessage[] }>(
+      `/api/chats/${encodeURIComponent(sessionId)}/messages`,
+    );
+    return messages;
   },
 };
-
-// --- mock data (used only when the API is unreachable) ---
-
-const MOCK_PROJECTS: Project[] = [
-  {
-    name: "Garage Water Heater Replacement",
-    slug: "water-heater-garage",
-    status: "active",
-    domain: ["home", "plumbing"],
-    visibility: "public",
-    started: "2026-05-01",
-    updated: "2026-06-20",
-    created: "2026-05-01",
-    summary: "Heat-pump hybrid swap; 30A circuit is the open question.",
-    dir: "/data/projects/water-heater-garage",
-  },
-  {
-    name: "Firewall HA Migration",
-    slug: "firewall-ha-migration",
-    status: "active",
-    domain: ["network", "infra"],
-    visibility: "public",
-    started: "2026-04-10",
-    updated: "2026-06-18",
-    created: "2026-04-10",
-    summary: "Move OPNsense to an HA pair without dropping the homelab.",
-    dir: "/data/projects/firewall-ha-migration",
-  },
-  {
-    name: "Kiwix Offline Wiki",
-    slug: "kiwix-offline-wiki",
-    status: "idea",
-    domain: ["prepping", "media"],
-    visibility: "public",
-    started: "2026-06-01",
-    updated: "2026-06-12",
-    created: "2026-06-01",
-    summary: "Self-hosted offline knowledge base for the rack.",
-    dir: "/data/projects/kiwix-offline-wiki",
-  },
-];

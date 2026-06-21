@@ -213,3 +213,62 @@ Browser ──https──> Caddy(netops) ──> projects.valfenda.net LXC
   still works; frontend agent should migrate to `projectSlug` + handle
   `chat:message_boundary`/`durationMs`. (4) Minor: chat list has a ~30s discovery
   cache TTL, now bypassed on completion via `invalidateAttributionCache`.
+
+- 2026-06-21 — Sub-agent (frontend, project-first web UI): **DONE.** Rebuilt
+  `packages/web` into a genuinely polished, project-first SPA on top of the
+  scaffold and the LIVE backend contract (matched `server/src/{ws,routes}.ts`
+  exactly; **migrated fully off the legacy `target` field to `projectSlug`**).
+
+  **UI shipped:**
+  - **Landing (`/`)**: projects grid — cards with name, status pill (dot +
+    color), domain tags, live chat/session count (lazy `GET /:slug/chats`), and
+    relative last-activity. Primary **+ New Project**; lighter secondary **New
+    chat**. Inviting empty state. Sidebar mirrors it (project nav + the two CTAs).
+  - **New Project**: polished modal (name, summary, domain tags, status select);
+    Esc to close, scale-in anim → `POST /api/projects` → navigates into the project.
+  - **Project view (`/projects/:slug`)**: header (name, status, domains, updated),
+    left session list with **+ New Chat**, chat pane, and a **Files & Changelog**
+    tab rendering project.yaml summary/metadata + `CHANGELOG.md` as markdown — all
+    from the enriched `GET /:slug` (`{project, changelog, chats}`).
+  - **Chat pane (core)**: shared auto-reconnecting WS (`lib/ws.ts`) with ping
+    keepalive and **per-chat routing by projectSlug/sessionId**. Renders streaming
+    `chat:response` as live **markdown** (react-markdown + remark-gfm) with a
+    blinking caret; `chat:tool_call` as tidy **collapsible** blocks (name, input
+    summary, output, error state, duration via `durationMs`); uses
+    `chat:message_boundary` to split assistant turns into separate bubbles; on
+    `chat:complete` stores the returned `sessionId` (resumes next turn + refreshes
+    lists); shows `chat:error` inline. Composer: auto-growing textarea, Enter to
+    send / Shift+Enter newline, disabled while streaming, **Stop** → `chat:cancel`.
+    Auto-scroll only when pinned. Resumed sessions **hydrate** from the messages
+    endpoints.
+  - **One-off chat (`/chat`, `/chat/:sessionId`)**: same pane against
+    `projectSlug:"scratch"`, with its own recent-list; clearly secondary in the IA.
+  - **Polish**: Tailwind, dark-mode (default), responsive; warm "paddock" neutrals
+    + a single terracotta `accent`; Inter/JetBrains Mono; custom scrollbars,
+    skeletons, fade/scale anims; inline SVG icon set (no icon dep).
+
+  **Contract mapping** is documented in `packages/web/README.md`; **full-stack
+  local run** (server + Max token + web, both prod-like and hot-reload) in root
+  **`DEV.md`**. Added deps: `react-markdown@9`, `remark-gfm@4`.
+
+  **VALIDATION:** `npm run -w packages/web build` (tsc -b + vite) **clean**; root
+  `npm run typecheck` (server + web) **clean**; full `npm run build` **clean**.
+  **Served smoke test** (token sourced from `~/herds/.env` into env, never
+  printed; temp `PADDOCK_DATA_DIR`; PORT 4011): server boots, **app shell loads at
+  `/`** (text/html), built `/assets/*.js|css` serve 200, **SPA fallback** serves
+  index.html for client routes (`/projects/foo`), and through the served app
+  `GET /api/projects`, `POST /api/projects`, enriched `GET /:slug`
+  (`{project,changelog,chats}`), `/:slug/chats`, and `/api/chats` all return the
+  shapes the typed client expects. Server stopped + temp data cleaned afterward.
+  Did **not** modify `packages/server`.
+
+  **For the orchestrator (visual/Playwright pass):** (1) drive a real Claude turn
+  end-to-end (create project → New Chat → send a message that uses a tool) to see
+  streaming markdown + a collapsible tool block + the session appearing in the
+  left list on completion; (2) reload + reopen the session to confirm history
+  hydration; (3) check the one-off `/chat` path. **Rough edges:** fonts load from
+  Google Fonts at runtime (system-ui fallback if the LXC client is offline);
+  bundle is ~399KB/125KB gzip (react-markdown) — fine for a POC, code-split later
+  if desired; after a NEW project chat completes, the in-progress pane keeps its
+  live transcript while the saved session also appears in the list (claude.ai-like)
+  — clicking the list entry re-hydrates from history (brief flash, acceptable).

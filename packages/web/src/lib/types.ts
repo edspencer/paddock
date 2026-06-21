@@ -1,5 +1,6 @@
 // Shared DTO types mirroring the paddock-server API + WS protocol.
-// Kept in sync by hand with packages/server/src/{routes,ws}.ts.
+// Kept in sync by hand with packages/server/src/{routes,ws}.ts and the
+// @herdctl/core ChatMessage / DiscoveredSession shapes.
 
 export type ProjectStatus =
   | "idea"
@@ -36,6 +37,7 @@ export interface CreateProjectInput {
   summary?: string;
 }
 
+/** A chat = one Claude Code session, surfaced by the server's session discovery. */
 export interface Chat {
   sessionId: string;
   workingDirectory: string;
@@ -45,41 +47,59 @@ export interface Chat {
   preview?: string;
 }
 
+/** A persisted message hydrated from a session's transcript (core ChatMessage). */
+export interface ChatToolCall {
+  toolName: string;
+  inputSummary?: string;
+  output: string;
+  isError: boolean;
+  durationMs?: number;
+}
+
+export interface HistoryMessage {
+  role: "user" | "assistant" | "tool";
+  content: string;
+  timestamp: string;
+  toolCall?: ChatToolCall;
+}
+
+/** Enriched single-project response from GET /api/projects/:slug. */
+export interface ProjectDetail {
+  project: Project;
+  changelog: string;
+  chats: Chat[];
+}
+
 // --- WS protocol (mirrors server/src/ws.ts) ---
 
-export const ADHOC_TARGET = "__adhoc__";
+/** The slug used to address one-off chats. The server routes it to the scratch agent. */
+export const SCRATCH_SLUG = "scratch";
 
-export interface ChatSend {
-  type: "chat:send";
-  payload: { target: string; sessionId?: string; message: string };
+/** Routing fields present on every server->client chat event. */
+interface Routing {
+  projectSlug: string;
+  /** Legacy alias for `projectSlug`; the server emits both. */
+  target?: string;
+  sessionId: string | null;
+  jobId: string | null;
 }
 
 export type ServerWsMessage =
-  | {
-      type: "chat:response";
-      payload: { target: string; sessionId: string | null; jobId: string | null; chunk: string };
-    }
+  | { type: "chat:response"; payload: Routing & { chunk: string } }
   | {
       type: "chat:tool_call";
-      payload: {
-        target: string;
-        sessionId: string | null;
-        jobId: string | null;
+      payload: Routing & {
         toolName: string;
         inputSummary?: string;
         output: string;
         isError: boolean;
+        durationMs?: number;
       };
     }
+  | { type: "chat:message_boundary"; payload: Routing }
   | {
       type: "chat:complete";
-      payload: {
-        target: string;
-        sessionId: string | null;
-        jobId: string | null;
-        success: boolean;
-        error?: string;
-      };
+      payload: Routing & { success: boolean; error?: string };
     }
-  | { type: "chat:error"; payload: { target: string; error: string } }
+  | { type: "chat:error"; payload: { projectSlug: string; target?: string; error: string } }
   | { type: "pong" };
