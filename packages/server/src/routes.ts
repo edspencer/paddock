@@ -24,6 +24,7 @@ import type { FastifyInstance } from "fastify";
 import { ProjectError, type ProjectStore, type CreateProjectInput, type UpdateProjectInput } from "./projects.js";
 import type { HerdctlService } from "./herdctl.js";
 import { SCRATCH_SLUG, SCRATCH_AGENT, keeperAgentName } from "./herdctl.js";
+import type { GitService } from "./git.js";
 import {
   MODELS,
   KEEPER_DEFAULT_MODEL,
@@ -35,10 +36,11 @@ import {
 export interface RouteDeps {
   projects: ProjectStore;
   herdctl: HerdctlService;
+  git: GitService;
 }
 
 export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Promise<void> {
-  const { projects, herdctl } = deps;
+  const { projects, herdctl, git } = deps;
 
   app.get("/api/health", async () => ({ ok: true }));
 
@@ -143,6 +145,35 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
       return sendProjectError(reply, err);
     }
   });
+
+  // --- git (backing-store capability, phase 1: read surface) -------------
+  // Uncommitted changes confined to this project's subtree. Returns
+  // `{ repo: false }` when the projects dir isn't a git working tree, so the
+  // UI hides the git affordance entirely. Never throws on git errors.
+  app.get<{ Params: { slug: string } }>("/api/projects/:slug/git/status", async (req, reply) => {
+    try {
+      const project = await projects.get(req.params.slug);
+      return await git.projectStatus(project.dir);
+    } catch (err) {
+      return sendProjectError(reply, err);
+    }
+  });
+
+  // Unified diff for the project's tracked changes (working tree vs HEAD), or a
+  // single file via ?file=. Untracked files are reported by /git/status instead.
+  app.get<{ Params: { slug: string }; Querystring: { file?: string } }>(
+    "/api/projects/:slug/git/diff",
+    async (req, reply) => {
+      try {
+        const project = await projects.get(req.params.slug);
+        const diff = await git.projectDiff(project.dir, req.query.file);
+        reply.header("content-type", "text/plain; charset=utf-8");
+        return diff;
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
 
   app.get<{ Params: { slug: string } }>("/api/projects/:slug/changelog", async (req, reply) => {
     try {

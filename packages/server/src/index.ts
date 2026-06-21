@@ -12,6 +12,7 @@ import { promises as fs } from "node:fs";
 import { loadPaddockConfig } from "./config.js";
 import { ProjectStore } from "./projects.js";
 import { HerdctlService } from "./herdctl.js";
+import { GitService } from "./git.js";
 import { registerRoutes } from "./routes.js";
 import { makeChatHandler } from "./ws.js";
 import { SweepService } from "./sweep.js";
@@ -28,6 +29,8 @@ async function main(): Promise<void> {
   await projects.init();
 
   const herdctl = new HerdctlService(cfg);
+  // Git-aware capability over the projects dir (no-ops when it isn't a repo).
+  const git = new GitService(cfg.projectsRoot);
   const initialProjects = await projects.list();
   try {
     await herdctl.init(initialProjects);
@@ -49,7 +52,7 @@ async function main(): Promise<void> {
 
   // --- transport ---------------------------------------------------------
   await app.register(websocket);
-  await registerRoutes(app, { projects, herdctl });
+  await registerRoutes(app, { projects, herdctl, git });
 
   const chatHandler = makeChatHandler({ herdctl, projects, sweep });
   await app.register(async (scoped) => {
