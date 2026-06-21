@@ -756,3 +756,94 @@ Browser ──https──> Caddy(netops) ──> projects.valfenda.net LXC
   no change needed. (e) The Garage Water Heater project now has ONE real keeper chat (the
   worked-example authoring session) left in place as living proof; the other 3 seeded projects
   remain empty for Ed to start.
+
+- 2026-06-21 — Sub-agent (herdctl bump + drop-in API adoption — remove the 4 workarounds):
+  **DONE. 15/15 E2E green; typecheck + build clean; pushed to main. NOT deployed (a later
+  agent redeploys).** Bumped to the freshly published herdctl and replaced paddock's four
+  app-layer workarounds with the real first-class APIs — behavior identical, code simpler.
+
+  **Deps (resolved to PUBLISHED registry versions, not local links — verified in the
+  lockfile via `resolved: https://registry.npmjs.org/...`):**
+  - `@herdctl/core` `5.10.1` → **`^5.11.0`** (resolves 5.11.0).
+  - `@herdctl/chat` added at **`^0.4.0`** (resolves 0.4.0).
+  Both hoisted to root `node_modules`; `npm install` clean.
+
+  **Workaround → real API (with what was removed):**
+  1. **Runtime agents** (`herdctl.ts`). Removed the generate-per-agent-yaml +
+     regenerate-herdctl.yaml + `fleet.reload()` dance (`renderAgentYaml`,
+     `renderSweeperYaml`, the agent-file writer loop, and the inverse rm-files-on-delete
+     path). Now: the FleetManager boots from a **minimal zero-agent config** (fleet +
+     `defaults` only, no agent path refs), and every agent is registered programmatically
+     via **`fleet.addAgent({...}, {replace:true})`** (scratch at init, keeper + sweeper per
+     project on create) and **`fleet.removeAgent(name)`** on delete. `addAgent` deep-merges
+     the fleet `defaults` (kept in the minimal yaml) so keeper agents inherit
+     runtime/model/max_turns/permission_mode/denied_tools exactly as before; the sweeper
+     overrides them explicitly (Haiku 4.5, Read/Write/Glob/Grep, Bash/Edit/WebFetch denied).
+     **Verified**: fleet starts with `agents: []`, added agents are immediately triggerable
+     and appear in `/api/fleet` (E2E flow 11 create + flow 10 delete-removes-keeper prove it).
+  2. **Sessions** (`herdctl.ts`). Removed the hand-rolled `SessionDiscoveryService`
+     instantiation (+ the `claudeHome()` plumbing for it). `listSessions`/`recentSessions`/
+     `listScratchSessions` now call **`fleet.getAgentSessions(name, {limit})`** and
+     `sessionMessages` calls **`fleet.getAgentSessionMessages(name, sessionId)`** — both derive
+     the working dir + Docker mode from config, so callers pass an AGENT NAME, not a dir
+     (updated `routes.ts` `agentForSlug()` + `sweep.ts` to pass `keeperAgentName(slug)`).
+  3. **SDKMessage translation** (`ws.ts`). Deleted ~140 lines of local translation
+     (`assistantText`, `extractResultsWithIds`, `parsable`, the tool_use→tool_result pairing
+     Map/FIFO, and the core `extractToolUseBlocks`/`extractToolResults`/`getToolInputSummary`
+     imports). Now a single **`createSDKMessageHandler({onText,onBoundary,onToolCall})`** from
+     `@herdctl/chat` drives the stream; its `TranslatedToolCall` maps 1:1 to the existing
+     `chat:tool_call` payload (toolName, inputSummary, output, isError, durationMs), `onText`→
+     `chat:response`, `onBoundary`→`chat:message_boundary`. `chat:complete`/`chat:error`
+     unchanged. The handler is wrapped by a 3-line `onMessage` that still captures
+     `m.session_id` (the translator doesn't surface routing metadata). One TS nuance: core's
+     `SDKMessage` types `message` as `unknown` (wider) vs chat's narrower decl — same runtime
+     object, so a `as unknown as ChatSDKMessage` cast at the boundary (documented inline).
+  4. **deleteSession** (`routes.ts`/`herdctl.ts`). Removed the **deep import**
+     `@herdctl/core/dist/runner/runtime/cli-session-path.js` (`getCliSessionFile`) + the manual
+     `fs.unlink` + cache-invalidate. Now `HerdctlService.deleteSession(agentName, sessionId)` →
+     **`fleet.deleteSession(name, sessionId)`** (resolves the dir, deletes the transcript,
+     invalidates the discovery cache, validates the sessionId). Works for both project keeper
+     and scratch agents.
+
+  **BONUS — session rename (issue #10), now unblocked & wired cleanly (closes #10):**
+  `fleet.setSessionName(name, sessionId, customName)` → new `HerdctlService.renameSession`
+  + `PATCH /api/projects/:slug/chats/:sessionId` and `PATCH /api/chats/:sessionId`
+  ({name} body; null/empty clears). **Proven by hand**: PATCH a real session → the next
+  `getAgentSessions` returns the new `customName` immediately (shared SessionMetadataStore,
+  no stale cache). UI affordance: a hover **pencil** button next to the trash on each
+  project chat row → `window.prompt` → `api.renameProjectChat`, optimistic list update.
+
+  **FRESHNESS note (the one honest behavior delta):** `fleet.getAgentSessions` uses the
+  FleetManager's internal `SessionDiscoveryService` with a **30s directory cache** that
+  paddock can no longer invalidate after a turn (the old code called
+  `invalidateAttributionCache` on `chat:complete`; there's no public post-turn hook). In
+  practice this is a non-issue for the proven flows because the discovery service does **NOT**
+  cache a missing directory (ENOENT returns `[]` without caching), and a brand-new project's
+  transcript dir doesn't exist until its first turn — so the first chat of a project surfaces
+  immediately (E2E flow 3 confirms: session lands in the left list right after completion).
+  `deleteSession`/`setSessionName` invalidate the cache internally. The only residual lag: a
+  **second** new chat in an already-listed project created within 30s may take up to the TTL
+  to appear. Acceptable for the POC; a public `invalidateSessions(name)` (or a `chat:complete`
+  hook) on FleetManager is a clean herdctl follow-up candidate.
+
+  **VALIDATION (Max OAuth, claude 2.1.167, dot-free temp PADDOCK_DATA_DIR, PORT 4077,
+  `PADDOCK_SWEEP_MIN_INTERVAL_MS=8000`; token sourced into env, never printed):** full
+  `scripts/e2e.mjs` **15/15 PASS** (twice — once before, once after adding the rename UI, on a
+  fresh build/dir): create → streaming chat + tool blocks + on-disk notes.md → session list →
+  reload/hydrate → resume continuity → one-off scratch → fonts → edit metadata → delete
+  project (keeper gone from /api/fleet) → preload checkbox → plan.md md+Mermaid SVG → report.html
+  sandboxed iframe → pin/unpin sibling tabs. **Sweep confirmed**: `sweeper-demo-project` job
+  `sweep: completed` → `OVERVIEW.md` written on disk; coalescing/skip-if-no-activity logic intact
+  (`skipped (no new activity)` / `skipped (no sessions yet)` both observed). `npm run typecheck`
+  + `npm run build` clean. Server stopped, temp data + this run's `~/.claude/projects/*paddock*`
+  transcripts removed.
+
+  **Net code:** `ws.ts` −141 lines (the whole hand-rolled translator), `herdctl.ts` −50 net
+  (yaml-gen gone, replaced by small `*AgentConfig()` builders + a tiny zero-agent
+  `ensureConfigFile`). routes/web grew only for the net-new rename feature. Scope kept tight:
+  did **NOT** do the bigger "one shared agent via per-trigger `workingDirectory` override"
+  refactor (separate follow-up) — keeper + sweeper agent configs are byte-for-byte equivalent
+  to before. **`docs/INTEGRATION.md`/`docs/CONTRACT-v2.md` left as-is** (historical; their
+  "GAP/workaround" sections are now superseded by this entry — updating them is a doc-only
+  follow-up). `spike.ts` untouched (still typechecks; `SessionDiscoveryService` remains a valid
+  public export). **Not deployed** — redeploy is a separate agent's step.

@@ -93,6 +93,22 @@ export const api = {
     });
   },
 
+  /** Rename a project chat (set/clear its custom display name). */
+  async renameProjectChat(slug: string, sessionId: string, name: string | null): Promise<void> {
+    await req<{ ok: boolean }>(
+      `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}`,
+      { method: "PATCH", body: JSON.stringify({ name }) },
+    );
+  },
+
+  /** Rename a one-off (scratch) chat. */
+  async renameScratchChat(sessionId: string, name: string | null): Promise<void> {
+    await req<{ ok: boolean }>(`/api/chats/${encodeURIComponent(sessionId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+    });
+  },
+
   /** List the freeform files in a project's directory. */
   async listProjectFiles(slug: string): Promise<string[]> {
     const { files } = await req<{ files: string[] }>(

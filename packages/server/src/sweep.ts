@@ -25,6 +25,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { HerdctlService } from "./herdctl.js";
+import { keeperAgentName } from "./herdctl.js";
 import type { ProjectStore, Project } from "./projects.js";
 
 /** Minimal logger shape (Fastify's logger satisfies this). */
@@ -221,7 +222,7 @@ export class SweepService {
     const parts: string[] = [];
     for (const s of recent) {
       const messages = await this.herdctl
-        .sessionMessages(project.dir, s.sessionId)
+        .sessionMessages(keeperAgentName(project.slug), s.sessionId)
         .catch(() => []);
       if (messages.length === 0) continue;
       const lines: string[] = [];

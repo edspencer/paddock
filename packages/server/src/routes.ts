@@ -22,7 +22,7 @@
 import type { FastifyInstance } from "fastify";
 import { ProjectError, type ProjectStore, type CreateProjectInput, type UpdateProjectInput } from "./projects.js";
 import type { HerdctlService } from "./herdctl.js";
-import { SCRATCH_SLUG } from "./herdctl.js";
+import { SCRATCH_SLUG, SCRATCH_AGENT, keeperAgentName } from "./herdctl.js";
 
 export interface RouteDeps {
   projects: ProjectStore;
@@ -51,9 +51,9 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
   app.post<{ Body: CreateProjectInput }>("/api/projects", async (req, reply) => {
     try {
       const project = await projects.create(req.body ?? ({} as CreateProjectInput));
-      // Register the keeper agent and hot-reload the fleet.
+      // Register the keeper + sweeper agents at runtime (fleet.addAgent).
       try {
-        await herdctl.ensureProjectAgent(project, await projects.list());
+        await herdctl.ensureProjectAgent(project);
       } catch (err) {
         req.log.warn({ err }, "keeper-agent registration failed (project still created)");
       }
@@ -89,14 +89,13 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     },
   );
 
-  // Delete a project: remove its directory, drop the generated keeper-agent
-  // yaml, regenerate herdctl.yaml from the survivors, and hot-reload the fleet
-  // (the inverse of the create flow).
+  // Delete a project: remove its directory and unregister its keeper + sweeper
+  // agents at runtime (fleet.removeAgent) — the inverse of the create flow.
   app.delete<{ Params: { slug: string } }>("/api/projects/:slug", async (req, reply) => {
     try {
       const project = await projects.remove(req.params.slug); // throws not_found
       try {
-        await herdctl.removeProjectAgent(project.slug, await projects.list());
+        await herdctl.removeProjectAgent(project.slug);
       } catch (err) {
         req.log.warn({ err }, "keeper-agent unregister failed (project dir already removed)");
       }
@@ -220,8 +219,10 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     "/api/projects/:slug/chats/:sessionId/messages",
     async (req, reply) => {
       try {
-        const dir = await workingDirForSlug(req.params.slug);
-        const messages = await herdctl.sessionMessages(dir, req.params.sessionId).catch(() => []);
+        const agent = await agentForSlug(req.params.slug);
+        const messages = await herdctl
+          .sessionMessages(agent, req.params.sessionId)
+          .catch(() => []);
         return { messages };
       } catch (err) {
         return sendProjectError(reply, err);
@@ -234,9 +235,26 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     "/api/projects/:slug/chats/:sessionId",
     async (req, reply) => {
       try {
-        const dir = await workingDirForSlug(req.params.slug);
-        const removed = await herdctl.deleteSession(dir, req.params.sessionId);
+        const agent = await agentForSlug(req.params.slug);
+        const removed = await herdctl.deleteSession(agent, req.params.sessionId);
         return reply.code(200).send({ ok: true, removed });
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  // Rename a chat (session): set or clear its custom display name. Now unblocked
+  // by @herdctl/core's fleet.setSessionName (issue #10). A null/empty name
+  // clears any custom name.
+  app.patch<{ Params: { slug: string; sessionId: string }; Body: { name?: string | null } }>(
+    "/api/projects/:slug/chats/:sessionId",
+    async (req, reply) => {
+      try {
+        const agent = await agentForSlug(req.params.slug);
+        const name = req.body?.name ?? null;
+        await herdctl.renameSession(agent, req.params.sessionId, name);
+        return reply.code(200).send({ ok: true });
       } catch (err) {
         return sendProjectError(reply, err);
       }
@@ -254,7 +272,7 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     "/api/chats/:sessionId/messages",
     async (req) => {
       const messages = await herdctl
-        .sessionMessages(herdctl.scratchDir, req.params.sessionId)
+        .sessionMessages(SCRATCH_AGENT, req.params.sessionId)
         .catch(() => []);
       return { messages };
     },
@@ -265,7 +283,7 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     "/api/chats/:sessionId",
     async (req, reply) => {
       try {
-        const removed = await herdctl.deleteSession(herdctl.scratchDir, req.params.sessionId);
+        const removed = await herdctl.deleteSession(SCRATCH_AGENT, req.params.sessionId);
         return reply.code(200).send({ ok: true, removed });
       } catch (err) {
         return sendProjectError(reply, err);
@@ -273,11 +291,24 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     },
   );
 
-  /** Resolve a slug to the working directory whose sessions back it. */
-  async function workingDirForSlug(slug: string): Promise<string> {
-    if (slug === SCRATCH_SLUG) return herdctl.scratchDir;
-    const project = await projects.get(slug); // throws not_found
-    return project.dir;
+  // Rename a one-off (scratch) chat (issue #10).
+  app.patch<{ Params: { sessionId: string }; Body: { name?: string | null } }>(
+    "/api/chats/:sessionId",
+    async (req, reply) => {
+      try {
+        await herdctl.renameSession(SCRATCH_AGENT, req.params.sessionId, req.body?.name ?? null);
+        return reply.code(200).send({ ok: true });
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  /** Resolve a slug to the agent name whose sessions back it. */
+  async function agentForSlug(slug: string): Promise<string> {
+    if (slug === SCRATCH_SLUG) return SCRATCH_AGENT;
+    await projects.get(slug); // throws not_found for unknown slug
+    return keeperAgentName(slug);
   }
 }
 

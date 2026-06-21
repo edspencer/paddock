@@ -23,23 +23,21 @@
  *     { type: "pong" }
  *
  * Streaming is wired for real via HerdctlService.chat()'s onMessage callback
- * (the public trigger API supports it). Tool-call extraction reuses
- * @herdctl/core's tool-parsing helpers (extractToolUseBlocks / extractToolResults
- * / getToolInputSummary) so tool_use blocks nested in assistant content and the
- * paired tool_result blocks in user messages are rendered correctly.
+ * (the public trigger API supports it). The SDKMessage -> chat-event translation
+ * (assistant text deltas, message boundaries, and paired tool_use -> tool_result
+ * calls enriched with input summaries + wall-clock durations) is now done by
+ * @herdctl/chat's `createSDKMessageHandler` — the shared, transport-agnostic
+ * translator every herdctl chat surface uses — so paddock no longer reimplements
+ * it. We compose it with a tiny wrapper that also captures the session id from
+ * each SDK message (the translator only exposes text/boundary/tool events).
  *
  * Field-name note: legacy clients may send `target` instead of `projectSlug`;
  * we accept both. Server events always carry both `projectSlug` and the legacy
  * `target` alias so existing/early frontends keep working.
  */
 import type { WebSocket } from "@fastify/websocket";
-import {
-  type SDKMessage,
-  extractToolUseBlocks,
-  extractToolResults,
-  getToolInputSummary,
-  type ToolUseBlock,
-} from "@herdctl/core";
+import type { SDKMessage } from "@herdctl/core";
+import { createSDKMessageHandler, type SDKMessage as ChatSDKMessage } from "@herdctl/chat";
 import type { HerdctlService } from "./herdctl.js";
 import { keeperAgentName, SCRATCH_AGENT, SCRATCH_SLUG } from "./herdctl.js";
 import type { ProjectStore } from "./projects.js";
@@ -153,94 +151,6 @@ export function isClientMessage(data: unknown): data is ClientMessage {
 }
 
 /**
- * Extract plain assistant text from an SDK message, if any.
- *
- * Assistant text lives either in `message.message.content[]` text blocks (the
- * normal SDK shape) or in a top-level `content` string (legacy/back-compat).
- */
-function assistantText(msg: SDKMessage): string | null {
-  if (msg.type !== "assistant") return null;
-  const inner = msg.message as { content?: unknown } | undefined;
-  if (Array.isArray(inner?.content)) {
-    const text = inner.content
-      .filter(
-        (b): b is { type: "text"; text: string } =>
-          !!b &&
-          typeof b === "object" &&
-          (b as { type?: unknown }).type === "text" &&
-          typeof (b as { text?: unknown }).text === "string",
-      )
-      .map((b) => b.text)
-      .join("");
-    if (text.length > 0) return text;
-  }
-  if (typeof msg.content === "string" && msg.content.length > 0) return msg.content;
-  return null;
-}
-
-/**
- * The core tool-parsing helpers accept a looser structural shape than the
- * (deliberately wide) SDKMessage. SDKMessage carries the same fields with
- * `message`/`tool_use_result` typed as `unknown`, so this cast is sound.
- */
-type ParsableMessage = {
-  type: string;
-  message?: { content?: unknown };
-  tool_use_result?: unknown;
-};
-function parsable(m: SDKMessage): ParsableMessage {
-  return m as unknown as ParsableMessage;
-}
-
-/**
- * Extract tool results from a user message, PRESERVING the `tool_use_id`.
- *
- * Why not just `extractToolResults`? In the live SDK stream a user message
- * carries the result BOTH as a top-level `tool_use_result` (a string/object
- * with NO id) AND as a nested `message.content[]` `tool_result` block (which
- * DOES have `tool_use_id` + `is_error`). The core helper short-circuits on the
- * id-less top-level value, so pairing by id is lost. We read the nested blocks
- * directly to keep the id (for correct tool-name pairing + durationMs), and
- * fall back to the core helper only when there are no nested blocks.
- */
-function extractResultsWithIds(
-  m: SDKMessage,
-): Array<{ output: string; isError: boolean; toolUseId?: string }> {
-  const inner = (m.message as { content?: unknown } | undefined)?.content;
-  if (Array.isArray(inner)) {
-    const out: Array<{ output: string; isError: boolean; toolUseId?: string }> = [];
-    for (const block of inner) {
-      if (!block || typeof block !== "object") continue;
-      const b = block as Record<string, unknown>;
-      if (b.type !== "tool_result") continue;
-      const toolUseId = typeof b.tool_use_id === "string" ? b.tool_use_id : undefined;
-      const isError = b.is_error === true;
-      let output = "";
-      if (typeof b.content === "string") {
-        output = b.content;
-      } else if (Array.isArray(b.content)) {
-        output = b.content
-          .filter(
-            (p): p is { type: "text"; text: string } =>
-              !!p &&
-              typeof p === "object" &&
-              (p as { type?: unknown }).type === "text" &&
-              typeof (p as { text?: unknown }).text === "string",
-          )
-          .map((p) => p.text)
-          .join("\n");
-      }
-      // If the nested block had no inline content, use the top-level result.
-      if (!output && typeof m.tool_use_result === "string") output = m.tool_use_result;
-      out.push({ output, isError, toolUseId });
-    }
-    if (out.length > 0) return out;
-  }
-  // No nested blocks — fall back to the core helper (id-less).
-  return extractToolResults(parsable(m));
-}
-
-/**
  * Register the /ws route handler. Pure transport: it validates messages,
  * resolves the target agent, and streams a real trigger back to the socket.
  */
@@ -292,38 +202,42 @@ export function makeChatHandler(deps: {
         jobId,
       });
 
-      // Pairing state: tool_use id -> { name, inputSummary, startedAt }.
-      const pending = new Map<
-        string,
-        { name: string; inputSummary?: string; startedAt: number }
-      >();
-      // tool_use blocks with no id (rare) — keep a FIFO fallback.
-      const anonymous: Array<{ name: string; inputSummary?: string; startedAt: number }> = [];
-
-      const recordToolUse = (b: ToolUseBlock) => {
-        const entry = {
-          name: b.name,
-          inputSummary: getToolInputSummary(b.name, b.input),
-          startedAt: Date.now(),
-        };
-        if (b.id) pending.set(b.id, entry);
-        else anonymous.push(entry);
-      };
+      // @herdctl/chat's shared translator turns the SDKMessage stream into the
+      // three UI events we forward over the socket. Created fresh per turn (it
+      // holds per-turn tool-pairing state).
+      const translate = createSDKMessageHandler({
+        onText: (chunk) => {
+          if (chunk) send({ type: "chat:response", payload: { ...routing(), chunk } });
+        },
+        onBoundary: () => {
+          send({ type: "chat:message_boundary", payload: routing() });
+        },
+        onToolCall: (call) => {
+          send({
+            type: "chat:tool_call",
+            payload: {
+              ...routing(),
+              toolName: call.toolName,
+              inputSummary: call.inputSummary,
+              output: call.output,
+              isError: call.isError,
+              durationMs: call.durationMs,
+            },
+          });
+        },
+      });
 
       try {
         // Resolve the agent: "scratch" -> scratch agent; otherwise keeper-<slug>.
         let agentName: string;
-        let workingDir: string;
         // Effective prompt — may be augmented with the project overview below.
         let prompt = message;
         if (slug === SCRATCH_SLUG) {
           agentName = SCRATCH_AGENT;
-          workingDir = deps.herdctl.scratchDir;
         } else {
           // Verifies the project exists (throws if not).
-          const project = await deps.projects.get(slug);
+          await deps.projects.get(slug);
           agentName = keeperAgentName(slug);
-          workingDir = project.dir;
 
           // Context preload (issue #1): only for a NEW chat, only when asked,
           // and only when the project actually has an OVERVIEW.md. Prepend it
@@ -348,71 +262,16 @@ export function makeChatHandler(deps: {
           onJobCreated: (id) => {
             jobId = id;
           },
-          onMessage: (m) => {
+          onMessage: async (m: SDKMessage) => {
+            // Capture the session id as it arrives mid-stream (the translator
+            // only surfaces text/boundary/tool events, not routing metadata).
             if (m.session_id) resolvedSession = m.session_id;
-
-            if (m.type === "assistant") {
-              // 1) record any tool_use blocks for later pairing.
-              for (const b of extractToolUseBlocks(parsable(m))) recordToolUse(b);
-              // 2) stream assistant text deltas.
-              const text = assistantText(m);
-              if (text) {
-                send({ type: "chat:response", payload: { ...routing(), chunk: text } });
-              }
-              // 3) mark an assistant message boundary (one logical turn rendered).
-              send({ type: "chat:message_boundary", payload: routing() });
-              return;
-            }
-
-            if (m.type === "user" || m.type === "tool_result") {
-              // tool_result blocks (paired with the earlier tool_use by id).
-              for (const r of extractResultsWithIds(m)) {
-                let matched:
-                  | { name: string; inputSummary?: string; startedAt: number }
-                  | undefined;
-                if (r.toolUseId && pending.has(r.toolUseId)) {
-                  matched = pending.get(r.toolUseId);
-                  pending.delete(r.toolUseId);
-                } else {
-                  matched = anonymous.shift();
-                }
-                // If the tool produced no textual content, fall back to a
-                // compact serialization of the raw result (e.g. Write returns
-                // a structured object, not text).
-                let output = r.output;
-                if (!output && m.tool_use_result !== undefined) {
-                  output =
-                    typeof m.tool_use_result === "string"
-                      ? m.tool_use_result
-                      : JSON.stringify(m.tool_use_result);
-                }
-                send({
-                  type: "chat:tool_call",
-                  payload: {
-                    ...routing(),
-                    toolName: matched?.name ?? "tool",
-                    inputSummary: matched?.inputSummary,
-                    output,
-                    isError: r.isError,
-                    durationMs: matched ? Date.now() - matched.startedAt : undefined,
-                  },
-                });
-              }
-              return;
-            }
-
-            // Legacy/standalone tool_use message (no nested assistant block).
-            if (m.type === "tool_use") {
-              const name = m.tool_name ?? m.name ?? "tool";
-              recordToolUse({ id: m.tool_use_id, name, input: m.input });
-            }
+            // @herdctl/core's SDKMessage types `message` as `unknown` (wider);
+            // @herdctl/chat's translator declares a structurally narrower
+            // SDKMessage. Same runtime object — cast across the package boundary.
+            await translate(m as unknown as ChatSDKMessage);
           },
         });
-
-        // A successful turn may have created a new session; drop the discovery
-        // cache for this working dir so the chat list reflects it immediately
-        // (rather than after the ~30s cache TTL).
-        if (result.success) deps.herdctl.invalidateSessions(workingDir);
 
         // Post-turn sweep (issues #2/#6): on a successful USER turn in a real
         // project, enqueue a coalesced/debounced curation sweep. Out of band —
