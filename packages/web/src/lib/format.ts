@@ -1,8 +1,35 @@
 // Small formatting helpers shared across the UI.
 
-/** Human "time ago" for an ISO timestamp or date string. */
+/** A bare calendar date with no time component, e.g. "2026-06-21". */
+const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Human "time ago" for an ISO timestamp or date string.
+ *
+ * Date-only values (`YYYY-MM-DD`, how project.yaml stores `started`/`updated`)
+ * have no time component, so `new Date("2026-06-21")` parses as midnight UTC —
+ * which would render a misleading hour-precise "5h ago" for a project touched
+ * today. For those we fall back to a calendar-relative label computed in the
+ * viewer's local timezone (today / yesterday / Nd ago).
+ */
 export function relativeTime(iso?: string): string {
   if (!iso) return "";
+
+  if (DATE_ONLY_RE.test(iso)) {
+    const [y, m, d] = iso.split("-").map(Number);
+    const then = new Date(y, m - 1, d); // local midnight
+    if (Number.isNaN(then.getTime())) return iso;
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const days = Math.round((startOfToday.getTime() - then.getTime()) / 86_400_000);
+    if (days <= 0) return "today";
+    if (days === 1) return "yesterday";
+    if (days < 7) return `${days}d ago`;
+    if (days < 35) return `${Math.round(days / 7)}w ago`;
+    if (days < 365) return `${Math.round(days / 30)}mo ago`;
+    return `${Math.round(days / 365)}y ago`;
+  }
+
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return iso;
   const secs = Math.round((Date.now() - then) / 1000);

@@ -18,5 +18,8 @@
     "dev:web": "npm run dev -w packages/web",
     "typecheck": "npm run typecheck -w packages/server && npm run typecheck -w packages/web",
     "start": "npm run start -w packages/server"
+  },
+  "devDependencies": {
+    "playwright": "^1.61.0"
   }
 }

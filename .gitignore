@@ -9,3 +9,11 @@ dist/
 .astro/
 coverage/
 data/           # local project data (per-project dirs created at runtime)
+
+# Playwright (E2E): browser binaries live in the OS cache (~/.cache or
+# ~/Library/Caches/ms-playwright), never in the repo. Ignore any local
+# test output / downloaded-browser dirs just in case.
+test-results/
+playwright-report/
+ms-playwright/
+.playwright/

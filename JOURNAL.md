@@ -272,3 +272,56 @@ Browser ──https──> Caddy(netops) ──> projects.valfenda.net LXC
   if desired; after a NEW project chat completes, the in-progress pane keeps its
   live transcript while the saved session also appears in the list (claude.ai-like)
   — clicking the list entry re-hydrates from history (brief flash, acceptable).
+
+- 2026-06-21 — Sub-agent (browser E2E verification): **DONE. FULL STACK PROVEN IN A
+  REAL BROWSER — 7/7 flows green.** Built everything, ran the single-process server
+  (Max OAuth, no API key; temp `PADDOCK_DATA_DIR`, PORT 4022) and drove a real
+  Chromium (Playwright) through the whole workflow. Script committed at
+  `scripts/e2e.mjs`; 10 screenshots committed under `docs/screenshots/`
+  (01-landing … 10-final).
+
+  **Results (all PASS):** (1) landing/empty-state renders; (2) New-Project modal →
+  create "Demo Project" + domain tag + summary → navigates into the project view;
+  (3) New Chat → prompt that streams markdown text live, renders TOOL BLOCKS
+  (Write/Bash, with durations + an error-state block), session lands in the left
+  list on completion, and `notes.md` ("paddock works") verified on disk; (4) reload
+  + reopen the session → full transcript HYDRATES from history (user + assistant +
+  all tool blocks); (5) follow-up "what did you write in notes.md?" → answers
+  "paddock works" (resume/continuity proven in the UI); (6) one-off `/chat` scratch
+  reply streams; (7) final polished project view. UI looks genuinely finished —
+  dark theme, terracotta accent, status pills, collapsible tool blocks, markdown,
+  auto-scroll, live "connected" indicator.
+
+  **BUGS FOUND + FIXED:**
+  1. **Misleading "updated 5h ago" on a just-created project (FIXED).** `project.yaml`
+     stores `started`/`updated` as date-only `YYYY-MM-DD` (the homelab projects
+     standard — kept as-is). The web `relativeTime()` parsed a bare date as
+     **midnight UTC**, so a project touched today rendered "Nh ago" (N = current UTC
+     hour). Fixed in `packages/web/src/lib/format.ts`: date-only values now render a
+     calendar-relative label in the viewer's local tz (today / yesterday / Nd ago).
+     Now shows "updated today". Full ISO timestamps (session mtimes) are unaffected
+     and still show "just now". Rebuilt; re-ran E2E green; visible in 10-final.png.
+  2. **Session discovery silently returns [] when the data-dir PATH CONTAINS A DOT
+     (env/harness gotcha, NOT a paddock product bug — but a real deploy caveat).**
+     My first run used `mktemp -d /tmp/paddock-e2e.XXXXXX` (note the `.`). Claude
+     Code encodes that project cwd's transcript dir as `…-paddock-e2e-LdCOid-…`
+     (`.`→`-`), but `@herdctl/core`'s `encodePathForCli()` produces
+     `…-paddock-e2e.LdCOid-…` (keeps the `.`). The two disagree, so
+     `SessionDiscoveryService.getAgentSessions()` looks in the wrong dir and finds
+     nothing → empty chat list (flows 3/4/7 failed; the turn + `notes.md` + in-memory
+     resume all still worked, proving it was purely a discovery-path mismatch). Root
+     cause isolated by hand (attribution index + sidechain filter both fine; the
+     mismatch is the encoder). Fixed the run by using a **dot-free** temp dir →
+     all green. **Implications:** production paths (`/data/projects/<slug>`, slugs are
+     kebab-case, no dots) are unaffected, so the product is correct as-is. ACTIONS for
+     orchestrator/Ed: (a) on the LXC, keep `PADDOCK_DATA_DIR` dot-free (e.g.
+     `/var/lib/paddock` or `/data`, NOT something like `/srv/app.v2/...`). (b) New
+     herdctl PR candidate (add to docs/INTEGRATION.md gap list): `encodePathForCli`
+     should encode `.`→`-` to match Claude Code's own transcript-dir encoding, OR
+     paddock should defensively reject/normalize dots in resolved project dirs.
+
+  **VALIDATION:** `npm run build` + `npm run typecheck` clean before commit. Server
+  stopped, all temp data + test Claude transcripts removed. Playwright added as a
+  root devDependency; browser binaries live in the OS cache (NOT committed) and
+  `.gitignore` extended with playwright output dirs. `scripts/e2e.mjs` is rerunnable:
+  `BASE_URL=… PADDOCK_DATA_DIR=… node scripts/e2e.mjs` (exit 0 = all green).
