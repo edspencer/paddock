@@ -60,6 +60,7 @@ import YAML from "yaml";
 import type { PaddockConfig } from "./config.js";
 import type { Project } from "./projects.js";
 import { KEEPER_DEFAULT_MODEL, SWEEPER_DEFAULT_MODEL } from "./models.js";
+import { ensureProjectChats } from "./transcripts.js";
 
 /** Options passed through to a streamed trigger. */
 export interface ChatTurnOptions {
@@ -148,12 +149,16 @@ export class HerdctlService {
 
     // Register the scratch agent (one-off chats) at the keeper default model.
     await fs.mkdir(this.cfg.scratchDir, { recursive: true });
+    await ensureProjectChats(this.cfg.scratchDir);
     await this.fleet.addAgent(this.scratchAgentConfig(), { replace: true });
     this.agentModels.set(SCRATCH_AGENT, KEEPER_DEFAULT_MODEL);
 
     // Register a keeper + sweeper for every existing project, recording each
     // keeper's resolved model so per-chat overrides can short-circuit later.
+    // ensureProjectChats relocates this project's transcripts into <dir>/.chats
+    // (migrating any existing real transcript dir) so the project is portable.
     for (const project of projects) {
+      await ensureProjectChats(project.dir);
       await this.fleet.addAgent(this.keeperAgentConfig(project), { replace: true });
       await this.fleet.addAgent(this.sweeperAgentConfig(project), { replace: true });
       this.agentModels.set(keeperAgentName(project.slug), project.model ?? KEEPER_DEFAULT_MODEL);
@@ -198,6 +203,7 @@ export class HerdctlService {
    */
   async ensureProjectAgent(project: Project): Promise<void> {
     if (!this.fleet) return;
+    await ensureProjectChats(project.dir);
     await this.fleet.addAgent(this.keeperAgentConfig(project), { replace: true });
     await this.fleet.addAgent(this.sweeperAgentConfig(project), { replace: true });
     // Record the keeper's resolved model so per-chat overrides can detect a

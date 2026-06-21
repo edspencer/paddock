@@ -104,6 +104,97 @@ export interface ProjectDetail {
   chats: Chat[];
 }
 
+// --- Git backing store (GET /api/git, .../git/status, GitHub device flow) ---
+
+/** GitHub connection status, nested in GitInfo. */
+export interface GithubStatus {
+  /** Whether a GitHub OAuth client id is configured on the server. */
+  configured: boolean;
+  /** Whether a token is stored (the device flow completed). */
+  connected: boolean;
+  /** The authenticated GitHub login, when connected. */
+  login?: string;
+}
+
+/**
+ * Fleet-wide git state (GET /api/git). When `repo` is false the projects dir
+ * isn't a git repo and the ENTIRE git UI is hidden.
+ */
+export interface GitInfo {
+  /** True when the projects dir is a git repo. False ⇒ hide all git UI. */
+  repo: boolean;
+  /** True when a remote (origin) is configured (push is possible). */
+  configured: boolean;
+  /** The remote URL, when configured. */
+  url?: string;
+  /** The current branch. */
+  branch?: string;
+  /** Commits ahead of the remote (drives "↑N to push"). */
+  ahead?: number;
+  /** Commits behind the remote. */
+  behind?: number;
+  github: GithubStatus;
+}
+
+/** One changed file in a project's working tree (.../git/status). */
+export interface GitFileChange {
+  /** Repo-relative path. */
+  path: string;
+  /** Porcelain status code (M, A, D, ??, R…, etc.). */
+  status: string;
+  /** Whether the change is staged. */
+  staged: boolean;
+  /** Whether the file is untracked (won't appear in the diff). */
+  untracked: boolean;
+}
+
+/** Per-project git status (GET /api/projects/:slug/git/status). */
+export interface GitProjectStatus {
+  /** True when the projects dir is a git repo. False ⇒ no Changes tab. */
+  repo: boolean;
+  /** The current branch. */
+  branch?: string;
+  /** The changed files in this project's subtree. */
+  files: GitFileChange[];
+  /** True when there are no changes. */
+  clean: boolean;
+}
+
+/** Result of POST /api/projects/:slug/git/commit. */
+export interface GitCommitResult {
+  /** False ⇒ nothing to commit. */
+  committed: boolean;
+  /** The new commit hash, when committed. */
+  hash?: string;
+  error?: string;
+}
+
+/** Result of POST /api/git/push. */
+export interface GitPushResult {
+  pushed: boolean;
+  error?: string;
+}
+
+/** POST /api/git/github/connect — starts the OAuth device flow. */
+export interface DeviceFlowStart {
+  /** The code the user enters at `verificationUri`. */
+  userCode: string;
+  /** Where the user goes to enter the code (github.com/login/device). */
+  verificationUri: string;
+  /** Opaque handle passed back to poll/. */
+  deviceCode: string;
+  /** Seconds to wait between polls. */
+  interval: number;
+  /** Seconds until the device code expires. */
+  expiresIn: number;
+}
+
+/** POST /api/git/github/poll — one poll of the device flow. */
+export interface PollResult {
+  status: "authorized" | "pending" | "slow_down" | "error";
+  error?: string;
+}
+
 // --- WS protocol (mirrors server/src/ws.ts) ---
 
 /** The slug used to address one-off chats. The server routes it to the scratch agent. */

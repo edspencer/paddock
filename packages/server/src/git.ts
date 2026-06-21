@@ -146,6 +146,115 @@ export class GitService {
       }
     }
   }
+
+  // --- phase 2: write surface (commit / push / remote) -------------------
+
+  /** Commit identity, from env with sensible defaults (no global git config needed). */
+  private identity(): { name: string; email: string } {
+    return {
+      name: process.env.PADDOCK_GIT_AUTHOR_NAME ?? "Paddock",
+      email: process.env.PADDOCK_GIT_AUTHOR_EMAIL ?? "paddock@localhost",
+    };
+  }
+
+  /** Origin remote info + ahead/behind vs upstream (best-effort). */
+  async remote(): Promise<{
+    repo: boolean;
+    configured: boolean;
+    url?: string;
+    branch?: string;
+    ahead?: number;
+    behind?: number;
+  }> {
+    if (!(await this.isRepo())) return { repo: false, configured: false };
+    let branch: string | undefined;
+    try {
+      branch = (await this.git(this.projectsRoot, ["rev-parse", "--abbrev-ref", "HEAD"])).trim();
+      if (branch === "HEAD") branch = undefined;
+    } catch {
+      /* detached / unborn */
+    }
+    let url: string | undefined;
+    try {
+      url = (await this.git(this.projectsRoot, ["remote", "get-url", "origin"])).trim();
+    } catch {
+      return { repo: true, configured: false, branch };
+    }
+    let ahead: number | undefined;
+    let behind: number | undefined;
+    try {
+      const counts = (
+        await this.git(this.projectsRoot, [
+          "rev-list",
+          "--left-right",
+          "--count",
+          "@{upstream}...HEAD",
+        ])
+      ).trim();
+      const [b, a] = counts.split(/\s+/).map((n) => Number.parseInt(n, 10));
+      behind = Number.isFinite(b) ? b : undefined;
+      ahead = Number.isFinite(a) ? a : undefined;
+    } catch {
+      /* no upstream yet */
+    }
+    return { repo: true, configured: true, url, branch, ahead, behind };
+  }
+
+  /**
+   * Stage + commit a single project's changes (tracked mods, deletions, and
+   * untracked files within its subtree). `committed: false` when nothing was
+   * pending. Explicit identity so the LXC needs no global git config.
+   */
+  async commitProject(
+    projectDir: string,
+    message: string,
+  ): Promise<{ committed: boolean; hash?: string; error?: string }> {
+    if (!(await this.isRepo())) return { committed: false, error: "not a repo" };
+    const msg = message.trim() || "Update project";
+    try {
+      await this.git(projectDir, ["add", "-A", "--", "."]);
+      const staged = (
+        await this.git(projectDir, ["diff", "--cached", "--name-only", "--", "."])
+      ).trim();
+      if (!staged) return { committed: false };
+      const { name, email } = this.identity();
+      await this.git(projectDir, [
+        "-c",
+        `user.name=${name}`,
+        "-c",
+        `user.email=${email}`,
+        "commit",
+        "-m",
+        msg,
+        "--",
+        ".",
+      ]);
+      const hash = (await this.git(projectDir, ["rev-parse", "HEAD"])).trim();
+      return { committed: true, hash };
+    } catch (err) {
+      return { committed: false, error: errText(err) };
+    }
+  }
+
+  /** Push the current branch to origin (sets upstream on first push). */
+  async push(): Promise<{ pushed: boolean; error?: string }> {
+    if (!(await this.isRepo())) return { pushed: false, error: "not a repo" };
+    try {
+      const branch = (
+        await this.git(this.projectsRoot, ["rev-parse", "--abbrev-ref", "HEAD"])
+      ).trim();
+      await this.git(this.projectsRoot, ["push", "--set-upstream", "origin", branch]);
+      return { pushed: true };
+    } catch (err) {
+      return { pushed: false, error: errText(err) };
+    }
+  }
+}
+
+/** Best-effort error text from an execFile rejection (prefers stderr). */
+function errText(err: unknown): string {
+  const e = err as { stderr?: string; message?: string };
+  return (e.stderr || e.message || String(err)).trim();
 }
 
 /**

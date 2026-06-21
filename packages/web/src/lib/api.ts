@@ -6,8 +6,14 @@
 import {
   type Chat,
   type CreateProjectInput,
+  type DeviceFlowStart,
+  type GitCommitResult,
+  type GitInfo,
+  type GitProjectStatus,
+  type GitPushResult,
   type HistoryMessage,
   type ModelInfo,
+  type PollResult,
   type Project,
   type ProjectDetail,
   type ProjectFile,
@@ -33,6 +39,27 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(detail, res.status);
   }
   return (await res.json()) as T;
+}
+
+/**
+ * Like `req`, but returns the raw response body as text rather than JSON-parsing
+ * it. Used for the git diff endpoint, which serves `text/plain` unified diffs.
+ * Errors still surface as `ApiError` (the server returns JSON `{ error }` on
+ * failure, which we best-effort parse out of the text body).
+ */
+async function reqText(path: string, init?: RequestInit): Promise<string> {
+  const res = await fetch(`${BASE}${path}`, init);
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const body = JSON.parse(await res.text()) as { error?: string };
+      if (body.error) detail = body.error;
+    } catch {
+      /* not JSON — keep the status text */
+    }
+    throw new ApiError(detail, res.status);
+  }
+  return res.text();
 }
 
 export class ApiError extends Error {
@@ -201,5 +228,61 @@ export const api = {
       usage: { contextTokens: number; contextLimit: number } | null;
     }>(path);
     return usage;
+  },
+
+  // --- Git backing store ----------------------------------------------------
+
+  /**
+   * Fleet-wide git state. `repo:false` ⇒ the projects dir isn't a git repo and
+   * the entire git UI should be hidden.
+   */
+  async gitInfo(): Promise<GitInfo> {
+    return req<GitInfo>("/api/git");
+  },
+
+  /** A project's working-tree status (changed files, branch, clean flag). */
+  async gitStatus(slug: string): Promise<GitProjectStatus> {
+    return req<GitProjectStatus>(`/api/projects/${encodeURIComponent(slug)}/git/status`);
+  },
+
+  /**
+   * A project's unified diff. Pass `file` (repo-relative) for one file's diff,
+   * or omit it for the whole project's tracked diff. Returns the raw diff text
+   * (`text/plain`, not JSON). Untracked files have no diff (they're in status).
+   */
+  async gitDiff(slug: string, file?: string): Promise<string> {
+    const qs = file ? `?file=${encodeURIComponent(file)}` : "";
+    return reqText(`/api/projects/${encodeURIComponent(slug)}/git/diff${qs}`);
+  },
+
+  /** Commit a project's changes. `committed:false` ⇒ nothing to commit. */
+  async gitCommit(slug: string, message: string): Promise<GitCommitResult> {
+    return req<GitCommitResult>(`/api/projects/${encodeURIComponent(slug)}/git/commit`, {
+      method: "POST",
+      body: JSON.stringify({ message }),
+    });
+  },
+
+  /** Push the projects repo to its remote. */
+  async gitPush(): Promise<GitPushResult> {
+    return req<GitPushResult>("/api/git/push", { method: "POST" });
+  },
+
+  /** Start the GitHub OAuth device flow. HTTP 400 ⇒ no client id configured. */
+  async githubConnect(): Promise<DeviceFlowStart> {
+    return req<DeviceFlowStart>("/api/git/github/connect", { method: "POST" });
+  },
+
+  /** Poll the device flow for completion (call every `interval` seconds). */
+  async githubPoll(deviceCode: string): Promise<PollResult> {
+    return req<PollResult>("/api/git/github/poll", {
+      method: "POST",
+      body: JSON.stringify({ deviceCode }),
+    });
+  },
+
+  /** Disconnect GitHub (drop the stored token). */
+  async githubDisconnect(): Promise<void> {
+    await req<{ ok: boolean }>("/api/git/github/disconnect", { method: "POST" });
   },
 };

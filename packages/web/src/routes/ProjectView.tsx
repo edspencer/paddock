@@ -5,6 +5,7 @@ import { useProjects } from "../lib/projects-context";
 import type { Chat, Project } from "../lib/types";
 import { StatusPill } from "../components/StatusPill";
 import { ChatPane } from "../components/ChatPane";
+import { ChangesPane } from "../components/ChangesPane";
 import { Markdown } from "../components/Markdown";
 import { FileView } from "../components/FileView";
 import { ProjectMenu } from "../components/ProjectMenu";
@@ -23,6 +24,7 @@ import {
 } from "../components/icons";
 import { relativeTime } from "../lib/format";
 import { clearLastTab, toSubPath, writeLastTab } from "../lib/lastTab";
+import type { GitProjectStatus } from "../lib/types";
 
 /**
  * The active view ("chat" or "files") and the selected chat/file are derived
@@ -67,12 +69,26 @@ export function ProjectView() {
   const [files, setFiles] = useState<string[]>([]);
   const [loadErr, setLoadErr] = useState<string | null>(null);
 
+  // Git backing store: the project's working-tree status. null = not yet loaded
+  // or not a git repo (`status.repo === false`) — either way the Changes tab is
+  // hidden. The "Changes" tab is local UI state (not a route), so it overlays
+  // the URL-driven chat/files tabs; selecting Chat/Files dismisses it.
+  const [gitStatus, setGitStatus] = useState<GitProjectStatus | null>(null);
+  const [showChanges, setShowChanges] = useState(false);
+
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deletingChat, setDeletingChat] = useState<Chat | null>(null);
 
   // The active chat session is the URL's sessionId (null = a fresh "new chat").
   const activeSession = routeSessionId ?? null;
+
+  // Fetch the project's git status; clears it (hiding the Changes tab) when the
+  // projects dir isn't a repo or the request fails. Safe to call freely.
+  const refreshGit = useCallback(async () => {
+    const next = await api.gitStatus(slug).catch(() => null);
+    setGitStatus(next && next.repo ? next : null);
+  }, [slug]);
 
   const load = useCallback(async () => {
     setLoadErr(null);
@@ -86,10 +102,13 @@ export function ProjectView() {
     } catch (e) {
       setLoadErr(e instanceof Error ? e.message : "Failed to load project");
     }
-  }, [slug]);
+    void refreshGit();
+  }, [slug, refreshGit]);
 
   useEffect(() => {
     setProject(null);
+    setGitStatus(null);
+    setShowChanges(false);
     void load();
   }, [slug, load]);
 
@@ -121,12 +140,21 @@ export function ProjectView() {
     }
     const fileList = await api.listProjectFiles(slug).catch(() => null);
     if (fileList) setFiles(fileList);
-  }, [slug]);
+    // A completed turn may have authored/changed files — refresh git status so
+    // the Changes badge stays accurate without opening the panel.
+    void refreshGit();
+  }, [slug, refreshGit]);
 
   const loadHistory = useCallback(
     (sessionId: string) => api.projectChatMessages(slug, sessionId),
     [slug],
   );
+
+  // Any navigation back to a URL-driven tab dismisses the Changes overlay so the
+  // routed content (chat / file) shows through again.
+  useEffect(() => {
+    setShowChanges(false);
+  }, [view, routeSessionId, routeFileName]);
 
   // --- URL-driven navigation (all tab/chat/file clicks change the route) -----
   const goChat = useCallback(() => navigate(`/projects/${slug}/chat`), [navigate, slug]);
@@ -356,26 +384,59 @@ export function ProjectView() {
         {/* Main: tabs + content. The active tab is derived from the URL. */}
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex items-center gap-1 overflow-x-auto border-b border-paddock-200 px-4 dark:border-paddock-800">
-            <TabButton active={view === "chat"} onClick={goChat}>
+            <TabButton active={view === "chat" && !showChanges} onClick={goChat}>
               Chat
             </TabButton>
-            <TabButton active={filesTabActive} onClick={goFiles}>
+            <TabButton active={filesTabActive && !showChanges} onClick={goFiles}>
               Files &amp; Changelog
             </TabButton>
+            {/* The Changes tab appears ONLY when the projects dir is a git repo.
+                It carries a subtle "N uncommitted" badge so pending work is
+                visible without opening it. */}
+            {gitStatus && (
+              <TabButton active={showChanges} onClick={() => setShowChanges(true)}>
+                <span className="inline-flex items-center gap-1.5">
+                  Changes
+                  {gitStatus.files.length > 0 && (
+                    <span
+                      title={`${gitStatus.files.length} uncommitted change${
+                        gitStatus.files.length === 1 ? "" : "s"
+                      }`}
+                      className="inline-flex min-w-[1.1rem] items-center justify-center rounded-full bg-amber-100 px-1 text-[10px] font-semibold text-amber-700 dark:bg-amber-950/50 dark:text-amber-400"
+                    >
+                      {gitStatus.files.length}
+                    </span>
+                  )}
+                </span>
+              </TabButton>
+            )}
             {/* Pinned file tabs (sibling tabs), order preserved by the server.
                 Each links to /files/:name so the tab is deep-linkable. */}
             {pinned.map((f) => (
               <PinnedTab
                 key={f}
                 file={f}
-                active={activePinnedFile === f}
-                onSelect={() => openFile(f)}
+                active={activePinnedFile === f && !showChanges}
+                onSelect={() => {
+                  setShowChanges(false);
+                  openFile(f);
+                }}
                 onUnpin={() => void unpinTab(f)}
               />
             ))}
           </div>
 
-          {view === "chat" && (
+          {/* The Changes panel overlays the routed tab content when open. It
+              owns refetching status post-commit and propagates it up so the tab
+              badge stays in sync. */}
+          {showChanges && gitStatus && (
+            <ChangesPane
+              slug={project.slug}
+              status={gitStatus}
+              onStatusChange={(s) => setGitStatus(s.repo ? s : null)}
+            />
+          )}
+          {!showChanges && view === "chat" && (
             <ChatPane
               // Stable across the new->established transition; bumps only on a
               // real chat switch (see paneKeyRef above) so the live transcript
@@ -392,7 +453,7 @@ export function ProjectView() {
             />
           )}
           {/* Files tab with no file selected -> the files list + changelog. */}
-          {view === "files" && !viewingFile && (
+          {!showChanges && view === "files" && !viewingFile && (
             <FilesList
               project={project}
               changelog={changelog}
@@ -404,7 +465,7 @@ export function ProjectView() {
           {/* Any /files/:name (pinned or not) -> the single file reader. The
               same component renders regardless of pinned state, so pinning the
               file you're viewing only changes which tab is highlighted. */}
-          {view === "files" && viewingFile && (
+          {!showChanges && view === "files" && viewingFile && (
             <FileReader
               key={viewingFile}
               project={project}

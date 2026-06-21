@@ -25,6 +25,7 @@ import { ProjectError, type ProjectStore, type CreateProjectInput, type UpdatePr
 import type { HerdctlService } from "./herdctl.js";
 import { SCRATCH_SLUG, SCRATCH_AGENT, keeperAgentName } from "./herdctl.js";
 import type { GitService } from "./git.js";
+import type { GithubAuth } from "./github-auth.js";
 import {
   MODELS,
   KEEPER_DEFAULT_MODEL,
@@ -37,10 +38,40 @@ export interface RouteDeps {
   projects: ProjectStore;
   herdctl: HerdctlService;
   git: GitService;
+  githubAuth: GithubAuth;
 }
 
 export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Promise<void> {
-  const { projects, herdctl, git } = deps;
+  const { projects, herdctl, git, githubAuth } = deps;
+
+  // --- git (backing store): fleet-level remote + connection state --------
+  app.get("/api/git", async () => {
+    const [remote, github] = await Promise.all([git.remote(), githubAuth.status()]);
+    return { ...remote, github };
+  });
+
+  // Push the working tree to origin (the NAS bare repo / configured remote).
+  app.post("/api/git/push", async () => {
+    return git.push();
+  });
+
+  // GitHub device-flow auth: begin → poll → disconnect.
+  app.post("/api/git/github/connect", async (_req, reply) => {
+    try {
+      return await githubAuth.startDeviceFlow();
+    } catch (err) {
+      return reply.code(400).send({ error: (err as Error).message });
+    }
+  });
+  app.post<{ Body: { deviceCode?: string } }>("/api/git/github/poll", async (req, reply) => {
+    const code = req.body?.deviceCode;
+    if (!code) return reply.code(400).send({ error: "deviceCode required" });
+    return githubAuth.pollDeviceFlow(code);
+  });
+  app.post("/api/git/github/disconnect", async () => {
+    await githubAuth.disconnect();
+    return { ok: true };
+  });
 
   app.get("/api/health", async () => ({ ok: true }));
 
@@ -169,6 +200,21 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
         const diff = await git.projectDiff(project.dir, req.query.file);
         reply.header("content-type", "text/plain; charset=utf-8");
         return diff;
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  // Commit this project's pending changes (phase 2). `committed: false` when
+  // there was nothing to commit. Push is a separate explicit action (/api/git/push).
+  app.post<{ Params: { slug: string }; Body: { message?: string } }>(
+    "/api/projects/:slug/git/commit",
+    async (req, reply) => {
+      try {
+        const project = await projects.get(req.params.slug);
+        const message = req.body?.message?.trim() || `Update ${project.name}`;
+        return await git.commitProject(project.dir, message);
       } catch (err) {
         return sendProjectError(reply, err);
       }
