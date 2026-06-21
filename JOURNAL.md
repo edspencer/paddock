@@ -1033,3 +1033,12 @@ Browser ──https──> Caddy(netops) ──> projects.valfenda.net LXC
 - `chat:complete` now carries per-turn `model` + `usage`; web shows a context-window meter + model picker (per-chat, localStorage `paddock:chatModel:<id>`).
 - Shipped as `main@14e31a0`; redeployed to LXC (one redeploy, deps bumped). Full isolated e2e verify green (tool pairing, model override, usage, sweeper). Deep-linking (7b2b162) also now live.
 - **Docker isolation (#7) assessment:** herdctl Docker writes transcripts to a FLAT `.herdctl/docker-sessions/` (in-container cwd is always `/workspace`→`-workspace`), NOT per-project `~/.claude/projects/<encoded-cwd>/`; host-side SessionDiscoveryService doesn't scan it and marks Docker sessions `resumable:false`. So paddock's per-project list+resume BREAKS under Docker today — needs herdctl-core changes (Docker-aware discovery, resumable-if-file-exists, per-project docker-sessions subdir). Auth (env-var OAuth) + the persistence/resume ENGINE already work. Not implemented; pending Ed's go-ahead.
+
+## STATUS LOG — 2026-06-21 (backing store phases 1-4 + jsonl parser fix)
+- herdctl **core 5.13.0** (fix parseSessionMessages dropping the final assistant answer of any extended-thinking chat on reload; + FleetManager.getAgentSessionUsage). Paddock adopted; context meter now shows on chat load.
+- **Backing store (docs/DESIGN-backing-store.md), phases 1-4 live (`main@6313731` + prod git-init):**
+  - Phase 1: GitService read surface (per-project uncommitted status + diff) + web Changes tab.
+  - Phase 2: commit/push (GitService.commitProject/push/remote) + endpoints + Commit/Push UI; GitHub OAuth device-flow (config-gated on PADDOCK_GITHUB_CLIENT_ID) + Connect GitHub UI.
+  - Phase 3: transcripts relocated into <project>/.chats via self-healing symlink (transcripts.ts ensureProjectChats); validated Claude writes/reads through the symlink; applied to prod (chats still list/load/resume).
+  - Phase 4: git-init prod /var/lib/paddock/projects (.chats gitignored), origin = local bare repo (NAS stand-in); commit→push proven via API on prod.
+- Deferred: GitHub client_id (Ed), NAS remote swap (Ed — runbook in deploy-notes §12), auto-commit generated + track transcripts, per-project .chats/index.json.
