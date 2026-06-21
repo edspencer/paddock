@@ -933,3 +933,94 @@ Browser ──https──> Caddy(netops) ──> projects.valfenda.net LXC
   that path). (e) `/opt/paddock.bak3` removed (all green); older `/opt/paddock.bak` (251M)
   retained — `ssh projects 'rm -rf /opt/paddock.bak'` to reclaim. (f) Keeper + sweeper agents
   still run WITHOUT Docker isolation (unchanged follow-up, #7).
+
+- 2026-06-21 — Sub-agent (frontend: deep-linkable + restorable navigation):
+  **DONE. 19/19 E2E green** (the 15 proven flows + 4 new ones) in a real browser
+  (Max OAuth, claude 2.1.167, dot-free temp `PADDOCK_DATA_DIR`, PORT 4066, real
+  Claude turns). **typecheck + build clean; pushed to main. NOT deployed.** Made
+  every in-project tab/chat/file deep-linkable and restorable, with a sticky
+  last-tab-per-project so the main nav returns you exactly where you left off.
+
+  **ROUTES ADDED (`main.tsx`):** replaced the single `projects/:slug` route with:
+  - `projects/:slug/chat` — Chat tab (chat list + pane, fresh new chat).
+  - `projects/:slug/chat/:sessionId` — a specific selected chat (selecting one in
+    the list navigates here; reloading restores + hydrates it).
+  - `projects/:slug/files` — the Files & Changelog list tab.
+  - `projects/:slug/files/:name` — one file (URL-encoded name). Single canonical
+    file URL used by BOTH the files-list "open" AND pinned-file tabs; renders
+    md→Markdown+Mermaid, html→sandboxed iframe, text→`<pre>` on direct load.
+  - `projects/:slug` (bare) → new **`ProjectRedirect`** component that redirects
+    to the STICKY last tab (defaults to `/chat`). The sidebar + grid links target
+    this bare URL so the restore kicks in; in-app tab/chat/file clicks use the
+    explicit sub-routes. One-off scratch `/chat` + `/chat/:sessionId` kept and made
+    consistent (same no-flash establish pattern).
+
+  **TABS ↔ URL:** `ProjectView` now derives the active tab purely from the URL
+  (`useLocation` pathname + `useParams`), NOT local state — so a deep link/reload
+  highlights the right tab. Chat tab active on `/chat[...]`; a pinned-file sibling
+  tab active on `/files/<name>` when pinned; Files tab active otherwise. Removed
+  the old `tab`/`openFile`/`chatKey`/`activeSession` state. Unified file viewing
+  into ONE `FileReader` (back link + pin toggle) for both unpinned-from-list and
+  pinned-tab views, so pinning the file you're viewing only shifts the tab
+  highlight (no component swap / view jump — this fixed an intermediate
+  detached-DOM regression the e2e caught).
+
+  **STICKY LAST TAB (`lib/lastTab.ts`, localStorage):** key
+  `paddock:lastTab:<slug>` = `"chat" | "chat/<sessionId>" | "files" | "files/<encodedName>"`.
+  `ProjectView` writes it on every in-project route change. `ProjectRedirect`
+  reads it on the bare URL and **validates stale entries**: a stored
+  `files/<name>` is checked against the project's current `pinned` + files lists
+  (an unpinned/removed file falls back to `/files`); a stored chat passes through
+  (the chat route surfaces a missing session inline); nothing stored → `/chat`.
+  Cleared on project delete. Shape-validated on read so a corrupt/foreign value
+  never drives navigation. **Scenario proven:** project A on a pinned html tab →
+  go to project B (open its chat) → return to A via the bare nav URL → land back
+  on that pinned file tab (e2e flow 19).
+
+  **NO-FLASH ESTABLISH (the subtle bit):** when a brand-new chat saves its
+  session id, we mirror it into the URL via `navigate(..., {replace, state:{established:true}})`.
+  A `paneKeyRef` keeps the ChatPane mount key STABLE across that `null→<id>`
+  transition (bumps only on a real chat switch), and ChatPane now skips
+  re-hydration when the incoming `initialSessionId` matches a NEW
+  `establishedHereRef` (the id it just saved live) — so the live transcript
+  doesn't remount/flash. Critically, `establishedHereRef` (not `sessionRef`,
+  which is pre-seeded on mount) is what gates the skip, so a normal
+  mount/deep-link/switch STILL hydrates from history. (First cut guarded on
+  `sessionRef` and wrongly skipped hydration on direct chat deep-links — e2e
+  flows 4/7/17 caught it; fixed.)
+
+  **E2E (extended `scripts/e2e.mjs`, exit-gate raised to ≥19) — new assertions,
+  all PASS:**
+  - **16. (30-deeplink-file.png)** direct-load `/files/plan.md` → Mermaid SVG
+    renders; direct-load `/files/report.html` → sandboxed iframe
+    (`allow-scripts`, NOT allow-same-origin, `<h1>Report</h1>` inside); the
+    server-persisted pinned `plan.md` sibling tab present after the fresh load. ✓
+  - **17. (32-deeplink-chat.png)** direct-load `/chat/:sessionId` → the chat
+    hydrates from history (original prompt + assistant text) and the URL keeps
+    the sessionId (no redirect away). ✓
+  - **18.** selecting a saved chat in the list updates the URL to
+    `/chat/:sessionId`. ✓
+  - **19. (31-sticky-restored.png)** sticky restore across projects (A pinned
+    file → B → back to A via bare URL → restored, Mermaid renders); AND a fresh
+    project's bare URL defaults to `/chat`. ✓
+  - All 15 prior flows still PASS (landing, create, streaming chat + tool blocks
+    + on-disk notes.md, history hydration, resume continuity, one-off scratch,
+    self-hosted fonts, edit metadata, delete project, preload checkbox,
+    md+Mermaid, sandboxed HTML, pin/unpin sibling tabs) — proven flows intact.
+
+  **VALIDATION:** `npm run typecheck` (server + web, `noUnusedLocals` on) + full
+  `npm run build` clean. Server stopped; temp data dir + this run's
+  `~/.claude/projects/*paddock-e2e*` transcripts removed; stale `*-FAIL.png`
+  cleaned; no Playwright binaries committed. New success screenshots
+  `30-deeplink-file`, `31-sticky-restored`, `32-deeplink-chat` under
+  `docs/screenshots/`.
+
+  **Honest notes / rough edges:** (a) `ProjectRedirect` does a tiny fetch
+  (`getProjectDetail` + `listProjectFiles`) ONLY when validating a stored
+  `files/<name>` tab (to confirm the file still exists); a stored chat / nothing
+  stored redirects with no fetch. (b) A deep-linked chat whose session was
+  deleted still routes to `/chat/:sessionId` and shows ChatPane's inline "Could
+  not load this chat's history" error (we don't pre-validate sessionIds — the
+  history endpoint is the source of truth). (c) `view` is derived from the
+  pathname string (`/projects/<slug>/files…`); robust for these routes. (d) Not
+  deployed — a later consolidated redeploy handles it.

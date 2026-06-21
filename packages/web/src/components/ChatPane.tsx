@@ -70,6 +70,10 @@ export function ChatPane({
   const sessionRef = useRef<string | null>(initialSessionId ?? null);
   const jobRef = useRef<string | null>(null);
   const isNewSessionRef = useRef<boolean>(!initialSessionId);
+  // The session id this pane established LIVE (a brand-new chat that just saved).
+  // Used to ignore the parent mirroring that id into the URL (which flows back
+  // as `initialSessionId`) so we don't needlessly re-hydrate the live transcript.
+  const establishedHereRef = useRef<string | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
@@ -90,6 +94,18 @@ export function ChatPane({
 
   // --- hydrate a resumed session --------------------------------------------
   useEffect(() => {
+    // The parent mirrors a brand-new chat's established session id into the URL
+    // (which flows back in as `initialSessionId`) WITHOUT remounting this pane.
+    // That is NOT a chat switch: the live transcript is already correct, so skip
+    // re-hydration ONLY when the incoming id is the one this pane established
+    // live. (On a normal mount/switch, sessionRef is pre-seeded with
+    // initialSessionId, so guarding on sessionRef alone would wrongly skip the
+    // hydration we DO want — hence the dedicated establishedHereRef.)
+    if (initialSessionId && initialSessionId === establishedHereRef.current) {
+      isNewSessionRef.current = false;
+      return;
+    }
+
     let cancelled = false;
     sessionRef.current = initialSessionId ?? null;
     isNewSessionRef.current = !initialSessionId;
@@ -151,6 +167,9 @@ export function ChatPane({
           sub.setSessionId(meta.sessionId);
           if (wasNew || isNewSessionRef.current) {
             isNewSessionRef.current = false;
+            // Remember this so the parent's URL mirroring (which feeds the id
+            // back as initialSessionId) doesn't trigger a re-hydration.
+            establishedHereRef.current = meta.sessionId;
             onSessionEstablished?.(meta.sessionId);
           }
         }

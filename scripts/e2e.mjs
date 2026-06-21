@@ -673,6 +673,173 @@ async function run() {
     fail("15. Pin two files as sibling tabs + unpin one (tab + project.yaml) (#4)", e);
   }
 
+  // ==========================================================================
+  // Deep-linkable, restorable navigation (routes + sticky last tab).
+  // ==========================================================================
+
+  // ---- Flow 16: Deep-link a file URL renders the right file on direct load --
+  // /projects/:slug/files/<encoded name> must render the file directly (a
+  // pinned html in the sandboxed iframe; a markdown's Mermaid as SVG), with the
+  // matching tab highlighted — proving the tab is derived from the URL.
+  try {
+    if (!richSlug) throw new Error("No rich project from flow 11");
+
+    // (a) Markdown file deep link -> Mermaid SVG renders + Chat tab NOT active.
+    await page.goto(`${BASE_URL}/projects/${richSlug}/files/${encodeURIComponent("plan.md")}`, {
+      waitUntil: "networkidle",
+    });
+    await waitFor(
+      async () => (await page.locator('[data-testid="mermaid"] svg').count()) > 0,
+      { timeout: 20_000, label: "deep-linked plan.md renders Mermaid SVG" },
+    );
+
+    // (b) HTML file deep link -> sandboxed iframe renders on a fresh load.
+    // report.html exists on disk (written in flow 12) even though it was unpinned
+    // in flow 15 — deep-linking by name must still render it.
+    await page.goto(
+      `${BASE_URL}/projects/${richSlug}/files/${encodeURIComponent("report.html")}`,
+      { waitUntil: "networkidle" },
+    );
+    const frameLoc = page.locator('iframe[title="report.html"]');
+    await frameLoc.waitFor({ timeout: 15_000 });
+    const sandbox = await frameLoc.getAttribute("sandbox");
+    if (!sandbox || !/allow-scripts/.test(sandbox) || /allow-same-origin/.test(sandbox)) {
+      throw new Error(`deep-linked html iframe sandbox wrong: ${JSON.stringify(sandbox)}`);
+    }
+    const contentFrame = await (await frameLoc.elementHandle()).contentFrame();
+    await waitFor(
+      async () => {
+        try {
+          return /report/i.test(await contentFrame.locator("h1").first().innerText());
+        } catch {
+          return false;
+        }
+      },
+      { timeout: 15_000, label: "deep-linked report.html shows <h1>Report</h1>" },
+    );
+    // The pinned plan.md tab is a sibling tab and must be present after reload
+    // (pins are server-persisted) — proving pinned tabs are URL-restorable.
+    await page.getByRole("tab", { name: /Open plan\.md tab/i }).waitFor({ timeout: 10_000 });
+    await shot(page, "30-deeplink-file.png");
+    pass("16. Deep-link /files/<name> renders the file directly (md+Mermaid, html in iframe)");
+  } catch (e) {
+    await shot(page, "30-deeplink-file-FAIL.png").catch(() => {});
+    fail("16. Deep-link /files/<name> renders the file directly (md+Mermaid, html in iframe)", e);
+  }
+
+  // ---- Flow 17: Deep-link a chat URL hydrates that chat on direct load ------
+  // /projects/:slug/chat/:sessionId must restore + hydrate that exact chat.
+  try {
+    if (!projectSlug) throw new Error("No project from flow 2");
+    const detail = await fetchJson(`${BASE_URL}/api/projects/${projectSlug}`);
+    const sid = detail?.chats?.[0]?.sessionId;
+    if (!sid) throw new Error("no saved chat session to deep-link");
+    log("deep-linking chat session:", sid);
+
+    await page.goto(`${BASE_URL}/projects/${projectSlug}/chat/${encodeURIComponent(sid)}`, {
+      waitUntil: "networkidle",
+    });
+    // The chat hydrates from history: the original prompt + assistant text show.
+    await waitFor(
+      async () => {
+        const userBubble = await page.getByText(FILE_PROMPT, { exact: false }).count();
+        const assistantText = await page.locator(".justify-start p").count();
+        return userBubble > 0 && assistantText > 0;
+      },
+      { timeout: 30_000, label: "deep-linked chat hydrates from history" },
+    );
+    // The URL still carries the sessionId (it wasn't redirected away).
+    if (!page.url().includes(sid)) throw new Error(`URL lost the sessionId: ${page.url()}`);
+    await shot(page, "32-deeplink-chat.png");
+    pass("17. Deep-link /chat/:sessionId hydrates that chat on direct load");
+  } catch (e) {
+    await shot(page, "32-deeplink-chat-FAIL.png").catch(() => {});
+    fail("17. Deep-link /chat/:sessionId hydrates that chat on direct load", e);
+  }
+
+  // ---- Flow 18: Selecting a chat puts its sessionId in the URL --------------
+  try {
+    if (!projectSlug) throw new Error("No project from flow 2");
+    // Land on the bare project URL (which redirects to a sticky/default tab).
+    await page.goto(`${BASE_URL}/projects/${projectSlug}/chat`, { waitUntil: "networkidle" });
+    const detail = await fetchJson(`${BASE_URL}/api/projects/${projectSlug}`);
+    const sid = detail?.chats?.[0]?.sessionId;
+    if (!sid) throw new Error("no saved chat to select");
+    // Click the saved chat in the left list.
+    const sessionBtn = page.locator(".w-64 button:has(.truncate.font-medium)").first();
+    await sessionBtn.waitFor({ timeout: 15_000 });
+    await sessionBtn.click();
+    // The URL must now include the selected chat's sessionId.
+    await waitFor(
+      async () => page.url().includes(`/chat/${sid}`),
+      { timeout: 10_000, label: "selecting a chat updates the URL to /chat/:sessionId" },
+    );
+    log("after selecting chat, url:", page.url());
+    pass("18. Selecting a chat updates the URL to /chat/:sessionId");
+  } catch (e) {
+    fail("18. Selecting a chat updates the URL to /chat/:sessionId", e);
+  }
+
+  // ---- Flow 19: Sticky last tab restore across projects --------------------
+  // Scenario: on project A viewing a pinned file tab -> switch to project B ->
+  // return to A via the bare /projects/:slug nav -> land back on that file tab.
+  // Also: a project with nothing stored defaults to /chat.
+  try {
+    if (!richSlug || !projectSlug) throw new Error("missing projects from earlier flows");
+
+    // A = richSlug. Open its pinned plan.md tab (sets the sticky tab to it).
+    await page.goto(`${BASE_URL}/projects/${richSlug}/files/${encodeURIComponent("plan.md")}`, {
+      waitUntil: "networkidle",
+    });
+    await page.getByRole("tab", { name: /Open plan\.md tab/i }).waitFor({ timeout: 10_000 });
+
+    // B = projectSlug. Visit it (its bare URL redirects somewhere valid) and do
+    // something (open its chat tab) so we genuinely leave A.
+    await page.goto(`${BASE_URL}/projects/${projectSlug}`, { waitUntil: "networkidle" });
+    await waitFor(
+      async () => /\/projects\/[^/]+\/(chat|files)/.test(page.url()),
+      { timeout: 10_000, label: "bare project B redirects to a sub-tab" },
+    );
+
+    // Return to A via the BARE url (as the sidebar/grid nav does) -> sticky
+    // restore must land us back on the pinned plan.md file tab.
+    await page.goto(`${BASE_URL}/projects/${richSlug}`, { waitUntil: "networkidle" });
+    await waitFor(
+      async () =>
+        page.url().endsWith(`/files/${encodeURIComponent("plan.md")}`) ||
+        page.url().endsWith("/files/plan.md"),
+      { timeout: 10_000, label: "returning to A via bare URL restores the plan.md file tab" },
+    );
+    // And the file actually renders (Mermaid SVG) — not just the URL.
+    await waitFor(
+      async () => (await page.locator('[data-testid="mermaid"] svg').count()) > 0,
+      { timeout: 20_000, label: "restored plan.md tab renders Mermaid" },
+    );
+    log("sticky restore landed on:", page.url());
+    await shot(page, "31-sticky-restored.png");
+
+    // Default-to-chat: a freshly created project with no stored tab should
+    // redirect its bare URL to /chat.
+    await page.goto(BASE_URL, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: /New Project/i }).first().click();
+    await page.getByRole("heading", { name: "New project" }).waitFor({ timeout: 5_000 });
+    await page.getByPlaceholder("Garage Water Heater Replacement").fill("Sticky Default");
+    await page.getByRole("button", { name: /Create project/i }).click();
+    await page.waitForURL(/\/projects\/[a-z0-9-]+\/chat$/i, { timeout: 20_000 });
+    const stickySlug = page.url().match(/\/projects\/([a-z0-9-]+)\/chat$/i)?.[1];
+    if (!stickySlug) throw new Error(`expected /projects/<slug>/chat, got ${page.url()}`);
+    // Re-visit its bare URL directly (no stored tab beyond /chat) -> /chat.
+    await page.goto(`${BASE_URL}/projects/${stickySlug}`, { waitUntil: "networkidle" });
+    await waitFor(
+      async () => page.url().endsWith(`/projects/${stickySlug}/chat`),
+      { timeout: 10_000, label: "bare URL of a chat-only project defaults to /chat" },
+    );
+    pass("19. Sticky last tab restores across projects; bare URL defaults to /chat");
+  } catch (e) {
+    await shot(page, "31-sticky-restored-FAIL.png").catch(() => {});
+    fail("19. Sticky last tab restores across projects; bare URL defaults to /chat", e);
+  }
+
   await browser.close();
 }
 
@@ -729,5 +896,5 @@ run()
     console.log("\n================ E2E SUMMARY ================");
     for (const r of results) console.log(`${r.ok ? "PASS" : "FAIL"}  ${r.name}`);
     console.log(`--------------------------------------------\n${passed}/${total} flows passed`);
-    process.exit(passed === total && total >= 15 ? 0 : 1);
+    process.exit(passed === total && total >= 19 ? 0 : 1);
   });

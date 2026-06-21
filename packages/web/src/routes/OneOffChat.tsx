@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { SCRATCH_SLUG, type Chat } from "../lib/types";
 import { ChatPane } from "../components/ChatPane";
@@ -14,9 +14,22 @@ import { relativeTime } from "../lib/format";
  */
 export function OneOffChat() {
   const { sessionId } = useParams();
+  const location = useLocation();
   const navigate = useNavigate();
   const [chats, setChats] = useState<Chat[]>([]);
   const [deletingChat, setDeletingChat] = useState<Chat | null>(null);
+
+  // Stable ChatPane mount key (same pattern as ProjectView): keep the pane
+  // across the new->established transition (we mirror the id into /chat/:id with
+  // state.established) so the live transcript doesn't flash, but reset it on a
+  // real switch (New one-off / clicking a saved scratch chat).
+  const paneKeyRef = useRef({ counter: 0, session: sessionId ?? null });
+  if (paneKeyRef.current.session !== (sessionId ?? null)) {
+    const established = (location.state as { established?: boolean } | null)?.established;
+    if (!established) paneKeyRef.current.counter += 1;
+    paneKeyRef.current.session = sessionId ?? null;
+  }
+  const chatPaneKey = paneKeyRef.current.counter;
 
   const refresh = useCallback(async () => {
     setChats(await api.listScratchChats().catch(() => []));
@@ -39,7 +52,7 @@ export function OneOffChat() {
     (id: string) => {
       void refresh();
       // Reflect the real session id in the URL so a refresh resumes it.
-      if (!sessionId) navigate(`/chat/${id}`, { replace: true });
+      if (!sessionId) navigate(`/chat/${id}`, { replace: true, state: { established: true } });
     },
     [refresh, sessionId, navigate],
   );
@@ -106,7 +119,7 @@ export function OneOffChat() {
 
         <div className="min-w-0 flex-1">
           <ChatPane
-            key={sessionId ?? "new"}
+            key={chatPaneKey}
             projectSlug={SCRATCH_SLUG}
             initialSessionId={sessionId}
             loadHistory={loadHistory}

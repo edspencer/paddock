@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { useProjects } from "../lib/projects-context";
 import type { Chat, Project } from "../lib/types";
@@ -22,14 +22,44 @@ import {
   XIcon,
 } from "../components/icons";
 import { relativeTime } from "../lib/format";
+import { clearLastTab, toSubPath, writeLastTab } from "../lib/lastTab";
 
-/** Built-in tabs are "chat" / "files"; a pinned file tab is `file:<name>`. */
-type Tab = "chat" | "files" | `file:${string}`;
-
+/**
+ * The active view ("chat" or "files") and the selected chat/file are derived
+ * from the URL via the route's params, NOT local state. This makes every tab,
+ * chat, and file deep-linkable + restorable on reload, and keeps the tab bar
+ * highlighting correct on a direct load. Routes that mount this component:
+ *   /projects/:slug/chat[/:sessionId]   -> Chat tab (optionally a saved chat)
+ *   /projects/:slug/files[/:name]       -> Files tab / a specific file (or pin)
+ */
 export function ProjectView() {
-  const { slug = "" } = useParams();
+  const params = useParams();
+  const slug = params.slug ?? "";
+  const location = useLocation();
   const navigate = useNavigate();
   const { refresh: refreshProjects, upsert, remove } = useProjects();
+
+  // Which sub-route are we on? Derived from the URL pathname so it updates on
+  // client-side navigation (the presence of `/files` distinguishes the tab).
+  const view: "chat" | "files" = location.pathname.startsWith(`/projects/${slug}/files`)
+    ? "files"
+    : "chat";
+  const routeSessionId = view === "chat" ? params.sessionId : undefined;
+  const routeFileName = view === "files" && params.name ? decodeURIComponent(params.name) : undefined;
+
+  // Stable ChatPane mount key. The pane should reset when the user switches to a
+  // DIFFERENT chat (new chat / a saved chat / after deleting the open one), but
+  // NOT when a brand-new chat merely establishes its session id (which we mirror
+  // into the URL via `replace` with state.established) — otherwise the live
+  // transcript the user is watching would remount and flash. So we keep the same
+  // key across the `null -> <newId>` establish transition.
+  const paneKeyRef = useRef({ counter: 0, session: routeSessionId ?? null });
+  if (paneKeyRef.current.session !== (routeSessionId ?? null)) {
+    const established = (location.state as { established?: boolean } | null)?.established;
+    if (!established) paneKeyRef.current.counter += 1;
+    paneKeyRef.current.session = routeSessionId ?? null;
+  }
+  const chatPaneKey = paneKeyRef.current.counter;
 
   const [project, setProject] = useState<Project | null>(null);
   const [chats, setChats] = useState<Chat[]>([]);
@@ -41,13 +71,8 @@ export function ProjectView() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deletingChat, setDeletingChat] = useState<Chat | null>(null);
 
-  // null = a fresh "new chat"; a sessionId = a resumed chat.
-  const [activeSession, setActiveSession] = useState<string | null>(null);
-  // Bumping this remounts ChatPane to reset its transcript on switch.
-  const [chatKey, setChatKey] = useState(0);
-  const [tab, setTab] = useState<Tab>("chat");
-  // The file open in the Files tab's reader (null = the file list).
-  const [openFile, setOpenFile] = useState<string | null>(null);
+  // The active chat session is the URL's sessionId (null = a fresh "new chat").
+  const activeSession = routeSessionId ?? null;
 
   const load = useCallback(async () => {
     setLoadErr(null);
@@ -65,12 +90,19 @@ export function ProjectView() {
 
   useEffect(() => {
     setProject(null);
-    setActiveSession(null);
-    setTab("chat");
-    setOpenFile(null);
-    setChatKey((k) => k + 1);
     void load();
   }, [slug, load]);
+
+  // Sticky last tab: persist the current in-project sub-path for this project
+  // whenever the URL (view / session / file) changes, so the bare
+  // `/projects/:slug` redirect can restore exactly where the user left off.
+  useEffect(() => {
+    const sub =
+      view === "chat"
+        ? toSubPath({ view: "chat", sessionId: routeSessionId })
+        : toSubPath({ view: "files", name: routeFileName });
+    writeLastTab(slug, sub);
+  }, [slug, view, routeSessionId, routeFileName]);
 
   // Refresh just the chat list (e.g. after a new session is established).
   const refreshChats = useCallback(async () => {
@@ -96,22 +128,35 @@ export function ProjectView() {
     [slug],
   );
 
-  const newChat = () => {
-    setActiveSession(null);
-    setTab("chat");
-    setChatKey((k) => k + 1);
-  };
+  // --- URL-driven navigation (all tab/chat/file clicks change the route) -----
+  const goChat = useCallback(() => navigate(`/projects/${slug}/chat`), [navigate, slug]);
+  const goFiles = useCallback(() => navigate(`/projects/${slug}/files`), [navigate, slug]);
+  const newChat = goChat;
+  const openChat = useCallback(
+    (sessionId: string) =>
+      navigate(`/projects/${slug}/chat/${encodeURIComponent(sessionId)}`),
+    [navigate, slug],
+  );
+  const openFile = useCallback(
+    (name: string) => navigate(`/projects/${slug}/files/${encodeURIComponent(name)}`),
+    [navigate, slug],
+  );
 
-  const openChat = (sessionId: string) => {
-    setActiveSession(sessionId);
-    setTab("chat");
-    setChatKey((k) => k + 1);
-  };
-
-  const onSessionEstablished = useCallback(() => {
-    void refreshChats();
-    void refreshProjects();
-  }, [refreshChats, refreshProjects]);
+  // When a brand-new chat first establishes its session id, reflect it in the
+  // URL (replace) so a reload restores that chat and the sticky tab points at it.
+  const onSessionEstablished = useCallback(
+    (sessionId: string) => {
+      void refreshChats();
+      void refreshProjects();
+      if (!routeSessionId) {
+        navigate(`/projects/${slug}/chat/${encodeURIComponent(sessionId)}`, {
+          replace: true,
+          state: { established: true },
+        });
+      }
+    },
+    [refreshChats, refreshProjects, routeSessionId, navigate, slug],
+  );
 
   const onTurnComplete = useCallback(() => {
     void refreshAfterTurn();
@@ -135,10 +180,10 @@ export function ProjectView() {
       const updated = await api.unpinFile(slug, file);
       setProject(updated);
       upsert(updated);
-      // If the unpinned tab was active, fall back to Files.
-      setTab((t) => (t === `file:${file}` ? "files" : t));
+      // If the unpinned tab is the one being viewed, fall back to the Files list.
+      if (routeFileName === file) navigate(`/projects/${slug}/files`, { replace: true });
     },
-    [slug, upsert],
+    [slug, upsert, routeFileName, navigate],
   );
 
   const confirmDeleteChat = useCallback(async () => {
@@ -146,13 +191,10 @@ export function ProjectView() {
     const id = deletingChat.sessionId;
     await api.deleteProjectChat(slug, id);
     setChats((prev) => prev.filter((c) => c.sessionId !== id));
-    // If the deleted chat is open, drop back to a fresh "new chat".
-    if (activeSession === id) {
-      setActiveSession(null);
-      setChatKey((k) => k + 1);
-    }
+    // If the deleted chat is the one open, drop back to a fresh "new chat".
+    if (activeSession === id) navigate(`/projects/${slug}/chat`, { replace: true });
     setDeletingChat(null);
-  }, [deletingChat, slug, activeSession]);
+  }, [deletingChat, slug, activeSession, navigate]);
 
   const renameChat = useCallback(
     async (chat: Chat) => {
@@ -185,8 +227,18 @@ export function ProjectView() {
   }
 
   const pinned = project.pinned;
-  // The file currently shown by the active pinned tab, if any.
-  const activePinnedFile = tab.startsWith("file:") ? tab.slice("file:".length) : null;
+  // The single canonical URL for viewing a file is /files/:name — used both by
+  // the Files-list "open" action and by pinned sibling tabs. Tab highlighting is
+  // derived purely from the URL:
+  //  - Chat tab active on /chat[...].
+  //  - A pinned-file tab active on /files/<name> when <name> is pinned.
+  //  - The Files tab active otherwise (the files list, or an unpinned file open
+  //    in the reader). Pinning a file you're viewing therefore just shifts the
+  //    highlight to its new sibling tab — the SAME reader keeps rendering it (no
+  //    component swap), so the view doesn't jump.
+  const viewingFile = view === "files" ? (routeFileName ?? null) : null;
+  const activePinnedFile = viewingFile && pinned.includes(viewingFile) ? viewingFile : null;
+  const filesTabActive = view === "files" && !activePinnedFile;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -241,7 +293,7 @@ export function ProjectView() {
           </div>
           <div className="flex-1 overflow-y-auto px-2 pb-2">
             {/* The pending new chat, shown while it has no session id yet. */}
-            {activeSession === null && tab === "chat" && (
+            {activeSession === null && view === "chat" && (
               <div className="mb-0.5 flex items-center gap-1.5 rounded-lg bg-paddock-200/80 px-2.5 py-2 text-sm dark:bg-paddock-800">
                 <ChatIcon width={13} height={13} className="text-paddock-500" />
                 <span className="font-medium italic text-paddock-600 dark:text-paddock-300">
@@ -258,7 +310,7 @@ export function ProjectView() {
               <div
                 key={c.sessionId}
                 className={`group/chat relative mb-0.5 rounded-lg transition-colors ${
-                  activeSession === c.sessionId && tab === "chat"
+                  activeSession === c.sessionId && view === "chat"
                     ? "bg-paddock-200/80 dark:bg-paddock-800"
                     : "hover:bg-paddock-200/50 dark:hover:bg-paddock-800/50"
                 }`}
@@ -301,30 +353,34 @@ export function ProjectView() {
           </div>
         </div>
 
-        {/* Main: tabs + content */}
+        {/* Main: tabs + content. The active tab is derived from the URL. */}
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex items-center gap-1 overflow-x-auto border-b border-paddock-200 px-4 dark:border-paddock-800">
-            <TabButton active={tab === "chat"} onClick={() => setTab("chat")}>
+            <TabButton active={view === "chat"} onClick={goChat}>
               Chat
             </TabButton>
-            <TabButton active={tab === "files"} onClick={() => setTab("files")}>
+            <TabButton active={filesTabActive} onClick={goFiles}>
               Files &amp; Changelog
             </TabButton>
-            {/* Pinned file tabs (sibling tabs), order preserved by the server. */}
+            {/* Pinned file tabs (sibling tabs), order preserved by the server.
+                Each links to /files/:name so the tab is deep-linkable. */}
             {pinned.map((f) => (
               <PinnedTab
                 key={f}
                 file={f}
-                active={tab === `file:${f}`}
-                onSelect={() => setTab(`file:${f}`)}
+                active={activePinnedFile === f}
+                onSelect={() => openFile(f)}
                 onUnpin={() => void unpinTab(f)}
               />
             ))}
           </div>
 
-          {tab === "chat" && (
+          {view === "chat" && (
             <ChatPane
-              key={chatKey}
+              // Stable across the new->established transition; bumps only on a
+              // real chat switch (see paneKeyRef above) so the live transcript
+              // doesn't flash when a new chat saves its session id.
+              key={chatPaneKey}
               projectSlug={project.slug}
               initialSessionId={activeSession ?? undefined}
               loadHistory={loadHistory}
@@ -334,20 +390,27 @@ export function ProjectView() {
               isProjectChat
             />
           )}
-          {tab === "files" && (
-            <FilesTab
+          {/* Files tab with no file selected -> the files list + changelog. */}
+          {view === "files" && !viewingFile && (
+            <FilesList
               project={project}
               changelog={changelog}
               files={files}
-              openFile={openFile}
-              onOpenFile={setOpenFile}
+              onOpenFile={openFile}
               onTogglePin={togglePin}
             />
           )}
-          {activePinnedFile && (
-            <div className="flex-1 overflow-y-auto">
-              <FileView slug={project.slug} name={activePinnedFile} />
-            </div>
+          {/* Any /files/:name (pinned or not) -> the single file reader. The
+              same component renders regardless of pinned state, so pinning the
+              file you're viewing only changes which tab is highlighted. */}
+          {view === "files" && viewingFile && (
+            <FileReader
+              key={viewingFile}
+              project={project}
+              name={viewingFile}
+              onBack={goFiles}
+              onTogglePin={togglePin}
+            />
           )}
         </div>
       </div>
@@ -377,6 +440,7 @@ export function ProjectView() {
         onConfirm={async () => {
           await api.deleteProject(project.slug);
           remove(project.slug);
+          clearLastTab(project.slug);
           navigate("/");
         }}
         onClose={() => setDeleteOpen(false)}
@@ -444,55 +508,65 @@ function PinnedTab({
   );
 }
 
-function FilesTab({
+/**
+ * The single file reader for /files/:name (used for both an unpinned file
+ * opened from the list AND a pinned sibling tab). A back link returns to the
+ * files list; the pin toggle pins/unpins the file (which only moves the tab
+ * highlight, since this same reader keeps rendering the file).
+ */
+function FileReader({
+  project,
+  name,
+  onBack,
+  onTogglePin,
+}: {
+  project: Project;
+  name: string;
+  onBack: () => void;
+  onTogglePin: (file: string) => void;
+}) {
+  const isPinned = project.pinned.includes(name);
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex items-center gap-2 border-b border-paddock-200 px-4 py-2 dark:border-paddock-800">
+        <button onClick={onBack} className="btn-subtle -ml-2 py-1.5 text-xs">
+          ← Files
+        </button>
+        <span className="font-mono text-sm text-paddock-700 dark:text-paddock-300">{name}</span>
+        <button
+          onClick={() => onTogglePin(name)}
+          className={`ml-auto inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
+            isPinned
+              ? "bg-accent/10 text-accent"
+              : "text-paddock-500 hover:bg-paddock-200/60 dark:hover:bg-paddock-800/60"
+          }`}
+          title={isPinned ? "Unpin (remove tab)" : "Pin as a tab"}
+        >
+          <PinIcon width={13} height={13} />
+          {isPinned ? "Pinned" : "Pin as tab"}
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        <FileView slug={project.slug} name={name} />
+      </div>
+    </div>
+  );
+}
+
+/** The Files & Changelog list (files index + summary + CHANGELOG). */
+function FilesList({
   project,
   changelog,
   files,
-  openFile,
   onOpenFile,
   onTogglePin,
 }: {
   project: Project;
   changelog: string;
   files: string[];
-  openFile: string | null;
-  onOpenFile: (name: string | null) => void;
+  onOpenFile: (name: string) => void;
   onTogglePin: (file: string) => void;
 }) {
-  // When a file is open, show the reader with a back link.
-  if (openFile) {
-    return (
-      <div className="flex min-h-0 flex-1 flex-col">
-        <div className="flex items-center gap-2 border-b border-paddock-200 px-4 py-2 dark:border-paddock-800">
-          <button
-            onClick={() => onOpenFile(null)}
-            className="btn-subtle -ml-2 py-1.5 text-xs"
-          >
-            ← Files
-          </button>
-          <span className="font-mono text-sm text-paddock-700 dark:text-paddock-300">
-            {openFile}
-          </span>
-          <button
-            onClick={() => onTogglePin(openFile)}
-            className={`ml-auto inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
-              project.pinned.includes(openFile)
-                ? "bg-accent/10 text-accent"
-                : "text-paddock-500 hover:bg-paddock-200/60 dark:hover:bg-paddock-800/60"
-            }`}
-            title={project.pinned.includes(openFile) ? "Unpin (remove tab)" : "Pin as a tab"}
-          >
-            <PinIcon width={13} height={13} />
-            {project.pinned.includes(openFile) ? "Pinned" : "Pin as tab"}
-          </button>
-        </div>
-        <div className="flex-1 overflow-y-auto">
-          <FileView slug={project.slug} name={openFile} />
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="flex-1 overflow-y-auto">
       <div className="mx-auto max-w-3xl px-6 py-6">
