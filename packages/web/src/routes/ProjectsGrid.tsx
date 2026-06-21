@@ -18,7 +18,6 @@ import {
   XIcon,
 } from "../components/icons";
 import { relativeTime } from "../lib/format";
-import { tagColor } from "../lib/tagColor";
 import { areaBlurb, areaLabel, INBOX, orderAreaSlugs } from "../lib/areas";
 
 /**
@@ -448,16 +447,13 @@ function ProjectCard({
   );
 }
 
-/** The active-filter chip shown above the grid on /tags/:tag. Uses the tag's
- *  own stable color; the "×" clears the filter (back to the full grid). */
+/** The active-filter chip shown above the grid on /tags/:tag. The "×" clears
+ *  the filter (back to the full grid). */
 function FilterChip({ tag, onClear }: { tag: string; onClear: () => void }) {
-  const color = tagColor(tag);
   return (
     <div className="mb-6 flex items-center gap-2 text-sm text-paddock-500">
       <span>Filtered by</span>
-      <span
-        className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${color.chipClassName}`}
-      >
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-paddock-200/70 px-2.5 py-1 text-xs font-medium text-paddock-700 dark:bg-paddock-800 dark:text-paddock-200">
         <span aria-hidden>🏷</span>
         <span className="max-w-[14rem] truncate">{tag}</span>
         <button
@@ -476,18 +472,11 @@ function FilterChip({ tag, onClear }: { tag: string; onClear: () => void }) {
 
 /** Empty state for /tags/:tag when no project carries the tag. */
 function NoTagMatchState({ tag, onClear }: { tag: string; onClear: () => void }) {
-  const color = tagColor(tag);
   return (
     <div className="mx-auto mt-10 max-w-lg rounded-2xl border border-dashed border-paddock-300 bg-white/50 px-8 py-12 text-center dark:border-paddock-700 dark:bg-paddock-900/40">
       <h2 className="text-lg font-semibold">No projects tagged</h2>
       <p className="mx-auto mt-3 flex items-center justify-center gap-1.5 text-sm text-paddock-500">
-        Nothing matches{" "}
-        <span
-          className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] font-medium ${color.className}`}
-        >
-          {tag}
-        </span>{" "}
-        right now.
+        Nothing matches <span className="tag">{tag}</span> right now.
       </p>
       <div className="mt-6 flex items-center justify-center">
         <button className="btn-ghost" onClick={onClear}>
