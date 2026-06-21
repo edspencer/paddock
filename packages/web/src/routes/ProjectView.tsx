@@ -4,6 +4,7 @@ import { api } from "../lib/api";
 import { useProjects } from "../lib/projects-context";
 import type { Chat, Project } from "../lib/types";
 import { StatusPill } from "../components/StatusPill";
+import { TagPill } from "../components/TagPill";
 import { ChatPane } from "../components/ChatPane";
 import { ChangesPane } from "../components/ChangesPane";
 import { Markdown } from "../components/Markdown";
@@ -276,9 +277,7 @@ export function ProjectView() {
           <h1 className="text-xl font-semibold tracking-tight">{project.name}</h1>
           <StatusPill status={project.status} />
           {project.domain.map((d) => (
-            <span key={d} className="tag">
-              {d}
-            </span>
+            <TagPill key={d} tag={d} />
           ))}
           {project.hasOverview && (
             <span

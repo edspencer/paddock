@@ -3,6 +3,7 @@ import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useProjects } from "../lib/projects-context";
 import type { Project } from "../lib/types";
 import { StatusPill } from "./StatusPill";
+import { TagPill } from "./TagPill";
 import { NewProjectModal } from "./NewProjectModal";
 import { ChatIcon, FolderIcon, PlusIcon } from "./icons";
 
@@ -88,9 +89,7 @@ export function AppShell() {
               {p.domain.length > 0 && (
                 <span className="flex min-w-0 items-center gap-1 overflow-hidden pl-[18px]">
                   {p.domain.slice(0, 2).map((d) => (
-                    <span key={d} className="tag max-w-[7rem] truncate">
-                      {d}
-                    </span>
+                    <TagPill key={d} tag={d} className="max-w-[7rem] truncate" />
                   ))}
                   {p.domain.length > 2 && (
                     <span className="shrink-0 text-[11px] text-paddock-400">
