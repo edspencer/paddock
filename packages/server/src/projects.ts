@@ -17,6 +17,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
+import { KEEPER_DEFAULT_MODEL } from "./models.js";
 
 /** project.yaml status enum (matches the documented standard). */
 export type ProjectStatus =
@@ -68,6 +69,11 @@ export interface ProjectYaml {
    * sibling tabs in the UI. Order-preserving, deduped. Default [].
    */
   pinned?: string[];
+  /**
+   * The Claude model the project's keeper agent runs on. Optional on disk: an
+   * absent value resolves to KEEPER_DEFAULT_MODEL in the DTO. (CONTRACT-v3 §4.)
+   */
+  model?: string;
 }
 
 /** API-facing project DTO (adds derived fields). */
@@ -80,6 +86,11 @@ export interface Project extends ProjectYaml {
   hasOverview: boolean;
   /** Always present in the DTO (defaults to []). */
   pinned: string[];
+  /**
+   * The keeper agent's model — ALWAYS concrete in the DTO (`yaml.model ??
+   * KEEPER_DEFAULT_MODEL`), even though it's optional on disk.
+   */
+  model: string;
 }
 
 export interface CreateProjectInput {
@@ -94,7 +105,7 @@ export interface CreateProjectInput {
 
 /** Partial metadata update (slug + started are immutable). */
 export type UpdateProjectInput = Partial<
-  Pick<ProjectYaml, "name" | "status" | "domain" | "visibility" | "summary" | "links">
+  Pick<ProjectYaml, "name" | "status" | "domain" | "visibility" | "summary" | "links" | "model">
 >;
 
 const PROJECT_FILE = "project.yaml";
@@ -433,6 +444,10 @@ export class ProjectStore {
       pinned: Array.isArray(p.pinned)
         ? p.pinned.filter((f): f is string => typeof f === "string")
         : [],
+      // Carry model through only when present on disk; the DTO resolves the
+      // default (an absent model stays absent in the yaml so existing files
+      // without `model` still round-trip unchanged).
+      ...(typeof p.model === "string" ? { model: p.model } : {}),
     };
   }
 
@@ -448,6 +463,9 @@ export class ProjectStore {
     return {
       ...yaml,
       pinned: yaml.pinned ?? [],
+      // Always concrete in the DTO: an absent on-disk model resolves to the
+      // keeper default (CONTRACT-v3 §4).
+      model: yaml.model ?? KEEPER_DEFAULT_MODEL,
       dir,
       created: yaml.started,
       hasOverview,

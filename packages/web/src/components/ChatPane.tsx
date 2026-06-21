@@ -2,6 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { chatClient, type ConnectionState, type ToolCall } from "../lib/ws";
 import { Markdown } from "./Markdown";
 import { formatDuration } from "../lib/format";
+import { api } from "../lib/api";
+import { readChatModel, writeChatModel } from "../lib/chatModel";
 import {
   AlertIcon,
   ChevronRightIcon,
@@ -10,7 +12,7 @@ import {
   StopIcon,
   WrenchIcon,
 } from "./icons";
-import type { HistoryMessage } from "../lib/types";
+import type { ChatCompleteUsage, HistoryMessage, ModelInfo } from "../lib/types";
 
 /** One rendered item in the transcript. Assistant boundaries split bubbles. */
 type Turn =
@@ -36,6 +38,12 @@ export interface ChatPaneProps {
   isProjectChat?: boolean;
   /** Whether the project has an OVERVIEW.md to preload (issue #1). */
   preloadAvailable?: boolean;
+  /**
+   * The project's configured keeper model — the default model for this chat's
+   * picker (CONTRACT-v3 §8). Undefined for scratch chats, where the default
+   * falls back to the models response's `keeperDefault`.
+   */
+  projectModel?: string;
   emptyHint?: string;
   placeholder?: string;
 }
@@ -48,6 +56,7 @@ export function ChatPane({
   onTurnComplete,
   isProjectChat = false,
   preloadAvailable = false,
+  projectModel,
   emptyHint,
   placeholder,
 }: ChatPaneProps) {
@@ -65,6 +74,23 @@ export function ChatPane({
   const showPreload = isProjectChat && !initialSessionId;
   // The checkbox only has an effect once a turn has been sent on a brand-new chat.
   const firstTurnSentRef = useRef(false);
+
+  // --- model picker + context meter (CONTRACT-v3 §8) -------------------------
+  // The selectable models + defaults (fetched once, app-wide static). The
+  // picker's default is the project's model (project chats) or `keeperDefault`
+  // (scratch); a per-chat localStorage override takes precedence when present.
+  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [keeperDefault, setKeeperDefault] = useState<string | null>(null);
+  const [model, setModel] = useState<string | null>(null);
+  // The selected model is kept in a ref too so `send` reads the latest without
+  // re-subscribing (the picker can change between sends without remounting).
+  const modelRef = useRef<string | null>(null);
+  // Last completed turn's usage for THIS chat (stale-by-one-turn by design).
+  // Reset whenever the chat identity changes (see the hydration effect below).
+  const [usage, setUsage] = useState<ChatCompleteUsage | null>(null);
+
+  // The chat's default model: project model for project chats, else keeperDefault.
+  const defaultModel = (isProjectChat ? projectModel : keeperDefault) ?? keeperDefault;
 
   // Session id is kept in a ref (the WS sub needs the latest without re-subscribing).
   const sessionRef = useRef<string | null>(initialSessionId ?? null);
@@ -91,6 +117,35 @@ export function ChatPane({
 
   // --- connection state ------------------------------------------------------
   useEffect(() => chatClient.onState(setConn), []);
+
+  // --- model list (fetched once) ---------------------------------------------
+  useEffect(() => {
+    let cancelled = false;
+    void api
+      .getModels()
+      .then((res) => {
+        if (cancelled) return;
+        setModels(res.models);
+        setKeeperDefault(res.keeperDefault);
+      })
+      .catch(() => {
+        /* leave the picker empty; sends fall back to the server default */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Keep the selected model in both state (for the <select>) and a ref (so
+  // `send` reads the latest without resubscribing).
+  const selectModel = useCallback(
+    (next: string) => {
+      setModel(next);
+      modelRef.current = next;
+      writeChatModel(sessionRef.current ?? initialSessionId, projectSlug, next);
+    },
+    [projectSlug, initialSessionId],
+  );
 
   // --- hydrate a resumed session --------------------------------------------
   useEffect(() => {
@@ -136,6 +191,29 @@ export function ChatPane({
     };
   }, [projectSlug, initialSessionId, loadHistory]);
 
+  // --- resolve the picker's model + reset usage on a chat switch -------------
+  // Keyed on the chat identity (slug + sessionId) so switching chats restores
+  // that chat's saved model (else the project default) and clears the stale
+  // meter. Re-runs when `defaultModel` resolves (models load async), but only
+  // adopts the default while the user hasn't already picked a model this chat.
+  useEffect(() => {
+    const saved = readChatModel(initialSessionId, projectSlug);
+    const resolved = saved ?? defaultModel;
+    if (resolved) {
+      setModel(resolved);
+      modelRef.current = resolved;
+    }
+  }, [projectSlug, initialSessionId, defaultModel]);
+
+  // Reset the stale meter when the chat identity changes (a real switch). Skip
+  // the new->established transition (where the parent mirrors the just-saved id
+  // back as initialSessionId without a remount) so the meter the user just got
+  // from that first turn isn't wiped.
+  useEffect(() => {
+    if (initialSessionId && initialSessionId === establishedHereRef.current) return;
+    setUsage(null);
+  }, [projectSlug, initialSessionId]);
+
   // --- subscribe to the shared socket for this chat -------------------------
   useEffect(() => {
     const sub = chatClient.subscribe(projectSlug, sessionRef.current, {
@@ -161,12 +239,18 @@ export function ChatPane({
         if (meta.jobId) jobRef.current = meta.jobId;
         setStreaming(false);
         setTurns((prev) => sealStreaming(prev));
+        // Stale-by-one-turn context meter: store the last completed turn's
+        // usage for this chat (omitted by the server when none was observed).
+        if (meta.usage) setUsage(meta.usage);
         if (meta.sessionId) {
           const wasNew = isNewSessionRef.current && sessionRef.current !== meta.sessionId;
           sessionRef.current = meta.sessionId;
           sub.setSessionId(meta.sessionId);
           if (wasNew || isNewSessionRef.current) {
             isNewSessionRef.current = false;
+            // Carry the new chat's picked model from its "new:<slug>" key onto
+            // the now-established session-id key so reopening it restores it.
+            if (modelRef.current) writeChatModel(meta.sessionId, projectSlug, modelRef.current);
             // Remember this so the parent's URL mirroring (which feeds the id
             // back as initialSessionId) doesn't trigger a re-hydration.
             establishedHereRef.current = meta.sessionId;
@@ -207,7 +291,12 @@ export function ChatPane({
     const isFirstTurnOfNewChat = isNewSessionRef.current && !firstTurnSentRef.current;
     const preload = isProjectChat && isFirstTurnOfNewChat && preloadContext;
     firstTurnSentRef.current = true;
-    chatClient.send(projectSlug, text, sessionRef.current, { preloadContext: preload });
+    chatClient.send(projectSlug, text, sessionRef.current, {
+      preloadContext: preload,
+      // Send the selected model so the server runs this turn on it. Omitted when
+      // unresolved (models not yet loaded) → the server uses the project default.
+      model: modelRef.current ?? undefined,
+    });
   }, [draft, streaming, projectSlug, isProjectChat, preloadContext]);
 
   const cancel = useCallback(() => {
@@ -280,6 +369,12 @@ export function ChatPane({
               onChange={setPreloadContext}
             />
           )}
+          <StatusRow
+            models={models}
+            model={model}
+            onSelectModel={selectModel}
+            usage={usage}
+          />
           <div className="flex items-end gap-2 rounded-2xl border border-paddock-300 bg-white p-2 shadow-sm focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/20 dark:border-paddock-700 dark:bg-paddock-900">
             <textarea
               className="max-h-48 min-h-[40px] flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none placeholder:text-paddock-400 dark:placeholder:text-paddock-600"
@@ -372,6 +467,84 @@ function PreloadToggle({
         {available ? "(injects OVERVIEW.md)" : "(no overview yet)"}
       </span>
     </label>
+  );
+}
+
+/**
+ * CONTRACT-v3 §8 — a compact status row above the composer: a model picker and
+ * a context-window meter for the currently open chat. Deliberately unobtrusive
+ * (a status row, not a settings panel). The meter is sourced from the most
+ * recent completed turn's usage, so it is intentionally stale-by-one-turn.
+ */
+function StatusRow({
+  models,
+  model,
+  onSelectModel,
+  usage,
+}: {
+  models: ModelInfo[];
+  model: string | null;
+  onSelectModel: (id: string) => void;
+  usage: ChatCompleteUsage | null;
+}) {
+  return (
+    <div className="mb-2 flex items-center gap-3 px-1 text-[11px] text-paddock-400">
+      <label className="inline-flex items-center gap-1.5">
+        <span className="font-medium text-paddock-500 dark:text-paddock-400">Model</span>
+        <select
+          value={model ?? ""}
+          onChange={(e) => onSelectModel(e.target.value)}
+          disabled={models.length === 0}
+          title="Model for this chat (sent on every message; remembered per chat)"
+          className="rounded-md border border-paddock-300 bg-white px-1.5 py-0.5 text-[11px] text-paddock-700 outline-none focus:border-accent focus:ring-1 focus:ring-accent/20 disabled:opacity-50 dark:border-paddock-700 dark:bg-paddock-900 dark:text-paddock-200"
+        >
+          {/* A placeholder while the selected model isn't among the loaded list
+              (e.g. before /api/models resolves) so the <select> stays controlled. */}
+          {model && !models.some((m) => m.id === model) && (
+            <option value={model}>{model}</option>
+          )}
+          {models.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <ContextMeter usage={usage} />
+    </div>
+  );
+}
+
+/**
+ * The thin context-window meter. Before any turn completes (no usage yet) it
+ * shows a muted "context: —" placeholder. Once a turn has completed it renders
+ * "{k}k / {limit}k ({pct}%)" with a thin progress bar that turns amber at ≥80%.
+ */
+function ContextMeter({ usage }: { usage: ChatCompleteUsage | null }) {
+  if (!usage || usage.contextLimit <= 0) {
+    return <span className="text-paddock-400">context: —</span>;
+  }
+  const pct = Math.min(100, Math.max(0, (usage.contextTokens / usage.contextLimit) * 100));
+  const warn = pct >= 80;
+  const used = Math.round(usage.contextTokens / 1000);
+  const limit = Math.round(usage.contextLimit / 1000);
+  return (
+    <span
+      className="inline-flex min-w-0 items-center gap-1.5"
+      title={`Context window used as of the last completed turn (${usage.contextTokens.toLocaleString()} / ${usage.contextLimit.toLocaleString()} tokens)`}
+    >
+      <span className="h-1 w-20 overflow-hidden rounded-full bg-paddock-200 dark:bg-paddock-800">
+        <span
+          className={`block h-full rounded-full transition-all ${
+            warn ? "bg-amber-500" : "bg-accent"
+          }`}
+          style={{ width: `${pct}%` }}
+        />
+      </span>
+      <span className={warn ? "text-amber-600 dark:text-amber-400" : undefined}>
+        {used}k / {limit}k ({Math.round(pct)}%)
+      </span>
+    </span>
   );
 }
 

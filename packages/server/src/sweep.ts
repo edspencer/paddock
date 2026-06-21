@@ -17,10 +17,14 @@
  *     the WS user-chat path, so a sweep can NEVER enqueue another sweep — no
  *     recursion.
  *
- * The sweeper rewrites OVERVIEW.md (replaced wholesale = current synthesized
- * state for an LLM to read at the start of a new chat) and appends ONE dated
- * bullet to CHANGELOG.md (append-only narrative). All sweep failures are
- * non-fatal: they're logged and never break chat.
+ * The sweeper is TOOL-LESS: it returns the curated content as plain text in two
+ * marked sections (`<<<OVERVIEW>>> ... <<<CHANGELOG>>> ... <<<END>>>`), and THIS
+ * service parses that text and writes the files itself — replacing OVERVIEW.md
+ * wholesale (current synthesized state for an LLM to read at the start of a new
+ * chat) and appending ONE dated bullet to CHANGELOG.md (append-only narrative).
+ * If the returned text is unparseable the sweep throws (so the mtime watermark
+ * doesn't advance and the next sweep retries) — no partial/garbage writes. All
+ * sweep failures are non-fatal: they're logged and never break chat.
  */
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -198,12 +202,37 @@ export class SweepService {
       digest,
     });
 
-    const result = await this.herdctl.runSweeper(project.slug, prompt);
+    const { result, text } = await this.herdctl.runSweeper(project.slug, prompt);
     if (!result.success) {
       throw result.error ?? new Error("sweeper trigger reported failure");
     }
+
+    // The sweeper returns text only (tool-less); parse its two marked sections
+    // and write the files ourselves. Throw on unparseable output so the
+    // watermark doesn't advance and the next sweep retries (no partial writes).
+    const parsed = parseSweeperOutput(text);
+    if (!parsed) {
+      this.log.warn(
+        { slug: project.slug, sessionId: result.sessionId, jobId: result.jobId },
+        "sweep: sweeper output missing/unparseable markers — not writing",
+      );
+      throw new Error("sweeper output missing OVERVIEW/CHANGELOG markers");
+    }
+
+    await this.projects.writeOverview(project.slug, parsed.overview);
+    if (parsed.changelog) {
+      // appendChangelog adds the leading "- " + dated heading, so the sweeper
+      // returns the bare line.
+      await this.projects.appendChangelog(project.slug, parsed.changelog);
+    }
+
     this.log.info(
-      { slug: project.slug, sessionId: result.sessionId, jobId: result.jobId },
+      {
+        slug: project.slug,
+        sessionId: result.sessionId,
+        jobId: result.jobId,
+        wroteChangelog: Boolean(parsed.changelog),
+      },
       "sweep: completed",
     );
   }
@@ -269,22 +298,25 @@ export class SweepService {
       trim(changelog, 2000) || "(empty)",
       "",
       "=== YOUR TASKS ===",
-      "1. REWRITE OVERVIEW.md in full (use the Write tool) as a concise, " +
-        "synthesized snapshot of the project's CURRENT state — written for an " +
-        "LLM to read at the start of a NEW chat. Include: what the project is, " +
-        "key decisions/facts established, open questions, and next steps. " +
-        "Prefer a short markdown doc with clear sections. Do NOT include a " +
-        "changelog or per-session history here — this is the living current state, " +
-        "replaced each sweep.",
-      "2. APPEND exactly ONE dated bullet to CHANGELOG.md summarizing what " +
-        `happened in this recent activity, under a \`## ${today}\` heading ` +
-        "(create the heading if today's is not already present; otherwise add " +
-        "the bullet under it). Keep existing entries untouched — this file is " +
-        "append-only.",
+      "Do NOT use any tools. Output ONLY the two sections below, nothing else " +
+        "(no preamble, no explanation). Use these LITERAL markers exactly:",
       "",
-      "Read the files first if you need their exact current contents. Be factual " +
-        "and terse; do not invent details not supported by the activity. When done, " +
-        "stop — do not ask questions.",
+      "<<<OVERVIEW>>>",
+      "Then the FULL markdown OVERVIEW.md, which REPLACES the current one " +
+        "wholesale: a concise, synthesized snapshot of the project's CURRENT " +
+        "state — written for an LLM to read at the start of a NEW chat. Include " +
+        "what the project is, key decisions/facts established, open questions, " +
+        "and next steps. Prefer a short markdown doc with clear sections. Do NOT " +
+        "include a changelog or per-session history here — this is the living " +
+        "current state, replaced each sweep.",
+      "<<<CHANGELOG>>>",
+      "Then EXACTLY ONE bullet line summarizing what happened in this recent " +
+        'activity, with NO leading "- " and no date heading — just the bare ' +
+        "sentence. (The system adds the bullet marker and today's " +
+        `\`## ${today}\` heading.)`,
+      "<<<END>>>",
+      "",
+      "Be factual and terse; do not invent details not supported by the activity.",
     ]
       .filter((l) => l !== "")
       .join("\n");
@@ -329,6 +361,52 @@ function trim(s: string, max: number): string {
   if (!s) return "";
   const flat = s.replace(/\s+/g, " ").trim();
   return flat.length > max ? flat.slice(0, max) + "…" : flat;
+}
+
+/**
+ * Parse the tool-less sweeper's marked output into the overview body + a single
+ * changelog line.
+ *
+ * Expected shape (markers are literal):
+ *
+ *   <<<OVERVIEW>>>
+ *   ...full markdown overview (replaces OVERVIEW.md wholesale)...
+ *   <<<CHANGELOG>>>
+ *   ...one bullet line (no leading "- ")...
+ *   <<<END>>>
+ *
+ * Returns null if the OVERVIEW/CHANGELOG markers are absent or the overview is
+ * empty — the caller treats that as a failure and retries (no partial writes).
+ * The `<<<END>>>` marker is optional (EOF is accepted). The changelog line is
+ * trimmed to a single line; an empty changelog is allowed (overview-only write).
+ */
+function parseSweeperOutput(text: string): { overview: string; changelog: string } | null {
+  if (!text) return null;
+  const overviewIdx = text.indexOf("<<<OVERVIEW>>>");
+  const changelogIdx = text.indexOf("<<<CHANGELOG>>>");
+  if (overviewIdx === -1 || changelogIdx === -1 || changelogIdx < overviewIdx) return null;
+
+  const overview = text
+    .slice(overviewIdx + "<<<OVERVIEW>>>".length, changelogIdx)
+    .trim();
+  if (overview.length === 0) return null;
+
+  const endIdx = text.indexOf("<<<END>>>", changelogIdx);
+  const rawChangelog = text.slice(
+    changelogIdx + "<<<CHANGELOG>>>".length,
+    endIdx === -1 ? undefined : endIdx,
+  );
+  // Collapse to the first non-empty line, stripping any leading "- " the model
+  // added despite instructions (appendChangelog adds its own bullet marker).
+  const changelog =
+    rawChangelog
+      .split("\n")
+      .map((l) => l.trim())
+      .find((l) => l.length > 0)
+      ?.replace(/^[-*]\s+/, "")
+      .trim() ?? "";
+
+  return { overview, changelog };
 }
 
 function envIntervalMs(): number | undefined {

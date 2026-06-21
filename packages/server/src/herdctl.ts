@@ -52,11 +52,13 @@ import {
   type AgentInfo,
   type FleetStatus,
 } from "@herdctl/core";
+import { createSDKMessageHandler, type SDKMessage as ChatSDKMessage } from "@herdctl/chat";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
 import type { PaddockConfig } from "./config.js";
 import type { Project } from "./projects.js";
+import { KEEPER_DEFAULT_MODEL, SWEEPER_DEFAULT_MODEL } from "./models.js";
 
 /** Options passed through to a streamed trigger. */
 export interface ChatTurnOptions {
@@ -95,8 +97,13 @@ export function sweeperAgentName(slug: string): string {
   return `${SWEEPER_PREFIX}${slug}`;
 }
 
-/** The model used by the sweeper agent (cheap curation/summarization). */
-export const SWEEPER_MODEL = "claude-haiku-4-5-20251001";
+/**
+ * The model used by the sweeper agent (cheap curation/summarization).
+ *
+ * Re-exported alias of `SWEEPER_DEFAULT_MODEL` (the canonical constant lives in
+ * models.ts now) so existing imports of `SWEEPER_MODEL` keep working.
+ */
+export const SWEEPER_MODEL = SWEEPER_DEFAULT_MODEL;
 
 /**
  * The slug clients use to address one-off chats over WS/REST. Routed to the
@@ -107,6 +114,19 @@ export const SCRATCH_SLUG = "scratch";
 export class HerdctlService {
   private fleet: FleetManager | null = null;
   private started = false;
+
+  /**
+   * The model currently registered for each agent (keyed by agent name). Lets
+   * `ensureKeeperModel`/`ensureScratchModel` skip a re-registration when the
+   * requested model already matches the live agent config.
+   *
+   * SINGLE-USER CAVEAT: the keeper is one shared agent per project, so the
+   * model is last-write-wins across concurrent chats of the same project — if
+   * two chats of the same project pick different models, whichever triggered
+   * last wins for both. Acceptable for paddock's single-user POC; a clean
+   * per-trigger model override is a herdctl follow-up.
+   */
+  private agentModels = new Map<string, string>();
 
   constructor(private readonly cfg: PaddockConfig) {}
 
@@ -125,14 +145,17 @@ export class HerdctlService {
     });
     await this.fleet.initialize();
 
-    // Register the scratch agent (one-off chats).
+    // Register the scratch agent (one-off chats) at the keeper default model.
     await fs.mkdir(this.cfg.scratchDir, { recursive: true });
     await this.fleet.addAgent(this.scratchAgentConfig(), { replace: true });
+    this.agentModels.set(SCRATCH_AGENT, KEEPER_DEFAULT_MODEL);
 
-    // Register a keeper + sweeper for every existing project.
+    // Register a keeper + sweeper for every existing project, recording each
+    // keeper's resolved model so per-chat overrides can short-circuit later.
     for (const project of projects) {
       await this.fleet.addAgent(this.keeperAgentConfig(project), { replace: true });
       await this.fleet.addAgent(this.sweeperAgentConfig(project), { replace: true });
+      this.agentModels.set(keeperAgentName(project.slug), project.model ?? KEEPER_DEFAULT_MODEL);
     }
   }
 
@@ -176,6 +199,51 @@ export class HerdctlService {
     if (!this.fleet) return;
     await this.fleet.addAgent(this.keeperAgentConfig(project), { replace: true });
     await this.fleet.addAgent(this.sweeperAgentConfig(project), { replace: true });
+    // Record the keeper's resolved model so per-chat overrides can detect a
+    // no-op. ensureProjectAgent re-registers at project.model (the persisted
+    // default), so a model change via PATCH takes effect here too.
+    this.agentModels.set(keeperAgentName(project.slug), project.model ?? KEEPER_DEFAULT_MODEL);
+  }
+
+  /**
+   * Ensure a project's keeper agent is registered at `model`, re-registering it
+   * (addAgent replace:true) only when the model actually changed. Used by the
+   * WS chat path to honor a per-chat model override before triggering.
+   *
+   * No herdctl per-trigger model API exists yet, so a model override is applied
+   * by re-registering the (single, shared) keeper agent. See the `agentModels`
+   * single-user caveat: this is last-write-wins across concurrent chats of the
+   * same project.
+   */
+  async ensureKeeperModel(project: Project, model: string): Promise<void> {
+    if (!this.fleet) return;
+    const name = keeperAgentName(project.slug);
+    if (this.agentModels.get(name) === model) return;
+    await this.fleet.addAgent(this.keeperAgentConfig(project, model), { replace: true });
+    this.agentModels.set(name, model);
+  }
+
+  /**
+   * Ensure the scratch agent is registered at `model`, re-registering it only
+   * when the model actually changed. Same per-chat-override mechanism as
+   * `ensureKeeperModel`, for one-off / scratch chats.
+   */
+  async ensureScratchModel(model: string): Promise<void> {
+    if (!this.fleet) return;
+    if (this.agentModels.get(SCRATCH_AGENT) === model) return;
+    await this.fleet.addAgent(this.scratchAgentConfig(model), { replace: true });
+    this.agentModels.set(SCRATCH_AGENT, model);
+  }
+
+  /**
+   * Force the FleetManager's session-discovery cache to drop its cached listing
+   * for an agent, so a brand-new chat surfaces immediately (rather than waiting
+   * out the 30s directory cache). New public API in @herdctl/core 5.12.0. No-op
+   * and never throws if the fleet isn't ready.
+   */
+  invalidateSessions(agentName: string): void {
+    if (!this.fleet) return;
+    this.fleet.invalidateSessions(agentName);
   }
 
   /**
@@ -233,13 +301,31 @@ export class HerdctlService {
    * prompt. Used OUT OF BAND by SweepService — never from the user-chat path —
    * so a sweep can never enqueue another sweep. resume:null forces a clean
    * session each time (the sweep is stateless).
+   *
+   * The sweeper is tool-less and returns its result as plain assistant text
+   * (the two marked sections SweepService parses), so we accumulate the
+   * assistant text deltas via @herdctl/chat's shared translator (same pattern
+   * as ws.ts) and return them alongside the TriggerResult.
    */
-  async runSweeper(slug: string, prompt: string): Promise<TriggerResult> {
-    return this.manager.trigger(sweeperAgentName(slug), undefined, {
+  async runSweeper(slug: string, prompt: string): Promise<{ result: TriggerResult; text: string }> {
+    let text = "";
+    const translate = createSDKMessageHandler({
+      onText: (chunk) => {
+        if (chunk) text += chunk;
+      },
+    });
+    const result = await this.manager.trigger(sweeperAgentName(slug), undefined, {
       prompt,
       resume: null,
       triggerType: "manual",
+      onMessage: async (m: SDKMessage) => {
+        // core's SDKMessage types `message` as `unknown` (wider) than the
+        // translator's structurally-narrower SDKMessage — same runtime object,
+        // cast across the package boundary.
+        await translate(m as unknown as ChatSDKMessage);
+      },
     });
+    return { result, text };
   }
 
   /** Recent sessions for a project's keeper agent, used to build the sweep digest. */
@@ -269,12 +355,17 @@ export class HerdctlService {
 
   // --- agent configs -----------------------------------------------------
 
-  /** The scratch (one-off chats) agent config. */
-  private scratchAgentConfig(): Record<string, unknown> & { name: string } {
+  /**
+   * The scratch (one-off chats) agent config. Defaults to the keeper default
+   * model; a per-chat override may re-register it at a different model via
+   * `ensureScratchModel`.
+   */
+  private scratchAgentConfig(model?: string): Record<string, unknown> & { name: string } {
     return {
       name: SCRATCH_AGENT,
       description: "One-off / scratch chats.",
       working_directory: this.cfg.scratchDir,
+      model: model ?? KEEPER_DEFAULT_MODEL,
       system_prompt:
         "You are a Claude Code agent for one-off chats. Be helpful and concise.",
       default_prompt: "How can I help?",
@@ -283,14 +374,21 @@ export class HerdctlService {
 
   /**
    * A project's keeper agent config. Inherits the fleet `defaults` (runtime,
-   * model, max_turns, permission_mode, allowed/denied tools) via addAgent's
-   * deep-merge; only project-specific fields are set here.
+   * max_turns, permission_mode, allowed/denied tools) via addAgent's deep-merge;
+   * only project-specific fields are set here.
+   *
+   * Model resolution: `modelOverride` (a per-chat override) wins, else the
+   * project's persisted `model`, else the keeper default (Opus).
    */
-  private keeperAgentConfig(project: Project): Record<string, unknown> & { name: string } {
+  private keeperAgentConfig(
+    project: Project,
+    modelOverride?: string,
+  ): Record<string, unknown> & { name: string } {
     return {
       name: keeperAgentName(project.slug),
       description: project.summary || `Keeper agent for project ${project.name}.`,
       working_directory: project.dir,
+      model: modelOverride ?? project.model ?? KEEPER_DEFAULT_MODEL,
       system_prompt:
         "You are a Claude Code keeper agent for this project directory. " +
         "Honor any CLAUDE.md present. Keep CHANGELOG.md current. " +
@@ -300,32 +398,44 @@ export class HerdctlService {
   }
 
   /**
-   * A project's sweeper (curator) agent config. Lightweight: a cheap model,
-   * restricted to read/write/search tools (NO Bash — it only edits OVERVIEW.md /
-   * CHANGELOG.md). acceptEdits so it can write without prompts, small max_turns.
-   * Overrides the fleet defaults explicitly.
+   * A project's sweeper (curator) agent config. TOOL-LESS: the sweeper has NO
+   * tools (`allowed_tools: []`) — it never reads or writes files. Instead it
+   * RETURNS the curated content as plain assistant text in two marked sections;
+   * SweepService parses that text and writes OVERVIEW.md / CHANGELOG.md itself.
+   *
+   * This is cheaper and far more predictable than letting a Haiku agent drive
+   * file edits: no tool-loop turns, no partial writes, no permission_mode /
+   * denied_tools to reason about (all irrelevant with zero tools).
    */
   private sweeperAgentConfig(project: Project): Record<string, unknown> & { name: string } {
     return {
       name: sweeperAgentName(project.slug),
       description: `Overview/changelog curator (sweeper) for project ${project.name}.`,
       working_directory: project.dir,
-      model: SWEEPER_MODEL,
-      max_turns: 20,
-      permission_mode: "acceptEdits",
-      allowed_tools: ["Read", "Write", "Glob", "Grep"],
-      // Defaults include Bash/Edit/WebFetch/etc.; the sweeper must not have them.
-      denied_tools: ["Bash", "Edit", "WebFetch", "WebSearch"],
+      model: SWEEPER_DEFAULT_MODEL,
+      // Tool-less: a handful of turns is plenty since there are no tool loops.
+      max_turns: 4,
+      // NO tools. The sweeper returns text only; SweepService does the writing.
+      allowed_tools: [],
       system_prompt:
-        "You are a concise project curator. You maintain two files in this " +
-        "project directory:\n" +
-        "- OVERVIEW.md: a synthesized snapshot of the project's CURRENT state, " +
-        "written for an LLM to read at the start of a new chat. You REPLACE it " +
-        "in full each time.\n" +
-        "- CHANGELOG.md: an append-only, reverse-chronological narrative. You " +
-        "APPEND one dated bullet per sweep; never rewrite existing entries.\n" +
-        "Be factual and terse. Do not invent details not present in the " +
-        "provided activity. Use only the Read/Write/Glob/Grep tools.",
+        "You are a concise project curator. You DO NOT use any tools — you only " +
+        "return text. From the recent activity, the current OVERVIEW.md, and the " +
+        "recent CHANGELOG.md provided in the user message, produce EXACTLY two " +
+        "sections wrapped in these literal markers, and NOTHING else:\n" +
+        "\n" +
+        "<<<OVERVIEW>>>\n" +
+        "<the full markdown OVERVIEW.md, which REPLACES the current one wholesale: " +
+        "a synthesized snapshot of the project's CURRENT state for an LLM to read " +
+        "at the start of a new chat — what the project is, key decisions/facts, " +
+        "open questions, and next steps. No changelog or per-session history here.>\n" +
+        "<<<CHANGELOG>>>\n" +
+        "<exactly ONE changelog bullet line summarizing this recent activity, with " +
+        'NO leading "- " and no date heading — just the bare sentence.>\n' +
+        "<<<END>>>\n" +
+        "\n" +
+        "Be factual and terse. Do not invent details not present in the provided " +
+        "activity. Output ONLY the two sections between the markers — no preamble, " +
+        "no explanation, no tool use.",
       default_prompt: "Curate OVERVIEW.md and CHANGELOG.md from recent activity.",
     };
   }
@@ -356,7 +466,9 @@ export class HerdctlService {
       },
       defaults: {
         runtime: "cli",
-        model: "claude-sonnet-4-6",
+        // Keeper default (Opus) so the scratch agent and any default-inheriting
+        // agent run on it; each keeper sets its own model explicitly anyway.
+        model: KEEPER_DEFAULT_MODEL,
         // ~200 turns: enough for real multi-step coding sessions while still
         // bounding runaway agents (CLAUDE.md: always set max_turns).
         max_turns: 200,

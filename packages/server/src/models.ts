@@ -1,0 +1,63 @@
+/**
+ * Models module — the single source of truth for the Claude model ids paddock
+ * exposes (keeper + sweeper defaults, the picker list, and per-model context
+ * limits).
+ *
+ * The wire contract (CONTRACT-v3 §2/§3) and every consumer (the `/api/models`
+ * route, the project `model` resolution in projects.ts, the keeper/sweeper
+ * registration in herdctl.ts, and the context-meter math in ws.ts) read these
+ * constants — so changing the available models or a context limit is a one-file
+ * edit here.
+ *
+ * Context limits: all three currently run the standard 200k context via the
+ * Max/CLI runtime. Opus 4.8 has a 1M-context beta variant, but the keeper runs
+ * the standard window — keep 200000 unless that changes.
+ */
+
+/** A single selectable model: its id, a human label, and its context window. */
+export interface ModelInfo {
+  /** The Claude model id passed to herdctl / the SDK (e.g. "claude-opus-4-8"). */
+  id: string;
+  /** Human-friendly label for the picker (e.g. "Opus 4.8"). */
+  label: string;
+  /** Total context window in tokens (used for the context meter). */
+  contextLimit: number;
+}
+
+/**
+ * The selectable models, in picker order. The first entry is the keeper default
+ * (Opus); the cheap Haiku is the sweeper default. Order here is the order the UI
+ * renders.
+ */
+export const MODELS: ModelInfo[] = [
+  { id: "claude-opus-4-8", label: "Opus 4.8", contextLimit: 200000 },
+  { id: "claude-sonnet-4-6", label: "Sonnet 4.6", contextLimit: 200000 },
+  { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5", contextLimit: 200000 },
+];
+
+/** The model a project's keeper agent uses unless the project overrides it. */
+export const KEEPER_DEFAULT_MODEL = "claude-opus-4-8";
+
+/** The cheap model the post-turn sweeper (curator) always uses. */
+export const SWEEPER_DEFAULT_MODEL = "claude-haiku-4-5-20251001";
+
+/** Default context limit when a model id is unknown (every current model is 200k). */
+const DEFAULT_CONTEXT_LIMIT = 200000;
+
+/** Whether `id` is one of the known selectable models. */
+export function isKnownModel(id: string): boolean {
+  return MODELS.some((m) => m.id === id);
+}
+
+/**
+ * The context limit (in tokens) for a model id. Falls back to 200000 for an
+ * unknown id so the context meter never divides by an undefined/zero limit.
+ */
+export function getContextLimit(id: string): number {
+  return MODELS.find((m) => m.id === id)?.contextLimit ?? DEFAULT_CONTEXT_LIMIT;
+}
+
+/** The full ModelInfo for a model id, or undefined if it isn't a known model. */
+export function getModelInfo(id: string): ModelInfo | undefined {
+  return MODELS.find((m) => m.id === id);
+}

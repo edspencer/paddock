@@ -7,7 +7,7 @@
 // panes coexist and survives reconnects without tearing down React state.
 //
 // Client -> server:
-//   chat:send   { projectSlug, sessionId|null, message }
+//   chat:send   { projectSlug, sessionId|null, message, preloadContext?, model? }
 //   chat:cancel { jobId }
 //   ping
 //
@@ -15,10 +15,10 @@
 //   chat:response         { ..., chunk }
 //   chat:tool_call        { ..., toolName, inputSummary?, output, isError, durationMs? }
 //   chat:message_boundary { ... }
-//   chat:complete         { ..., success, error? }
+//   chat:complete         { ..., success, error?, model?, usage? }
 //   chat:error            { projectSlug, error }
 //   pong
-import type { ServerWsMessage } from "./types";
+import type { ChatCompleteUsage, ServerWsMessage } from "./types";
 
 export interface ToolCall {
   toolName: string;
@@ -33,7 +33,16 @@ export interface ChatHandlers {
   onResponse?: (chunk: string, meta: { sessionId: string | null; jobId: string | null }) => void;
   onToolCall?: (tc: ToolCall, meta: { sessionId: string | null; jobId: string | null }) => void;
   onMessageBoundary?: (meta: { sessionId: string | null; jobId: string | null }) => void;
-  onComplete?: (meta: { sessionId: string | null; jobId: string | null; success: boolean; error?: string }) => void;
+  onComplete?: (meta: {
+    sessionId: string | null;
+    jobId: string | null;
+    success: boolean;
+    error?: string;
+    /** The model the turn ran on (server: lastModel ?? effectiveModel). */
+    model?: string;
+    /** Last per-turn usage; absent if none was observed (drives the context meter). */
+    usage?: ChatCompleteUsage;
+  }) => void;
   onError?: (error: string) => void;
 }
 
@@ -109,12 +118,16 @@ class ChatClient {
     projectSlug: string,
     message: string,
     sessionId: string | null,
-    opts?: { preloadContext?: boolean },
+    opts?: { preloadContext?: boolean; model?: string },
   ): void {
     const payload: Record<string, unknown> = { projectSlug, sessionId, message };
     // Only meaningful on the first turn of a NEW chat; the server ignores it
     // otherwise. Omit when false to keep the wire clean.
     if (opts?.preloadContext) payload.preloadContext = true;
+    // The model the keeper/scratch agent should run this turn on. The server
+    // re-registers the agent with it (last-write-wins per project). Omit when
+    // unset so the server falls back to the project/keeper default.
+    if (opts?.model) payload.model = opts.model;
     this.transmit(JSON.stringify({ type: "chat:send", payload }));
   }
 
@@ -252,6 +265,8 @@ class ChatClient {
           ...meta,
           success: msg.payload.success,
           error: msg.payload.error,
+          model: msg.payload.model,
+          usage: msg.payload.usage,
         });
         break;
     }

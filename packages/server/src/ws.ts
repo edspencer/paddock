@@ -8,6 +8,8 @@
  *         projectSlug: string,        // project slug, or "scratch" for one-off
  *         sessionId: string | null,   // resume an existing chat, or null = new
  *         message: string,
+ *         preloadContext?: boolean,   // new chat: prepend the project OVERVIEW.md
+ *         model?: string,             // per-chat model override (a known model id)
  *     } }
  *     { type: "chat:cancel", payload: { jobId } }   // optional: stop a running turn
  *     { type: "ping" }
@@ -18,18 +20,28 @@
  *                                                  toolName, inputSummary, output,
  *                                                  isError, durationMs } }
  *     { type: "chat:message_boundary", payload: { projectSlug, sessionId, jobId } }
- *     { type: "chat:complete",         payload: { projectSlug, sessionId, jobId, success, error? } }
+ *     { type: "chat:complete",         payload: { projectSlug, sessionId, jobId, success, error?,
+ *                                                  model?, usage? } }
+ *         // model: the model the turn ran on (lastModel ?? effectiveModel).
+ *         // usage: { inputTokens, outputTokens, cacheReadTokens,
+ *         //          cacheCreationTokens, contextTokens, contextLimit } — the
+ *         //          LAST per-turn usage observed; omitted (with model) if none.
+ *         //          contextTokens = input + cacheRead + cacheCreation;
+ *         //          contextLimit  = getContextLimit(model). Stale-by-one-turn
+ *         //          by design (it reflects the just-completed turn's input).
  *     { type: "chat:error",            payload: { projectSlug, error } }
  *     { type: "pong" }
  *
  * Streaming is wired for real via HerdctlService.chat()'s onMessage callback
  * (the public trigger API supports it). The SDKMessage -> chat-event translation
  * (assistant text deltas, message boundaries, and paired tool_use -> tool_result
- * calls enriched with input summaries + wall-clock durations) is now done by
+ * calls enriched with input summaries + wall-clock durations) is done by
  * @herdctl/chat's `createSDKMessageHandler` — the shared, transport-agnostic
  * translator every herdctl chat surface uses — so paddock no longer reimplements
- * it. We compose it with a tiny wrapper that also captures the session id from
- * each SDK message (the translator only exposes text/boundary/tool events).
+ * it (and as of @herdctl/chat@0.4.1 it pairs CLI tool results correctly, so the
+ * prior `normalizeForTranslator` shim is gone). We compose it with a tiny wrapper
+ * that also captures, from each raw SDK message, the session id and the per-turn
+ * usage + model (the translator only exposes text/boundary/tool events).
  *
  * Field-name note: legacy clients may send `target` instead of `projectSlug`;
  * we accept both. Server events always carry both `projectSlug` and the legacy
@@ -39,60 +51,89 @@ import type { WebSocket } from "@fastify/websocket";
 import type { SDKMessage } from "@herdctl/core";
 import { createSDKMessageHandler, type SDKMessage as ChatSDKMessage } from "@herdctl/chat";
 import type { HerdctlService } from "./herdctl.js";
-import { keeperAgentName, SCRATCH_AGENT, SCRATCH_SLUG } from "./herdctl.js";
+import {
+  keeperAgentName,
+  SCRATCH_AGENT,
+  SCRATCH_SLUG,
+} from "./herdctl.js";
 import type { ProjectStore } from "./projects.js";
 import type { SweepService } from "./sweep.js";
+import { isKnownModel, getContextLimit, KEEPER_DEFAULT_MODEL } from "./models.js";
 
 /**
- * Normalize a user SDKMessage so the shared translator can pair tool results.
- *
- * The CLI runtime surfaces tool results twice: as a top-level `tool_use_result`
- * field AND as nested `tool_result` blocks inside `message.content[]`. Core's
- * `extractToolResults` (used by `@herdctl/chat`'s translator) short-circuits on
- * the top-level field, but that shape carries no usable `tool_use_id` — so the
- * translator can't pair the result with its `tool_use` and falls back to a
- * generic `toolName: "Tool"` with no input summary / duration.
- *
- * When a message has BOTH the id-less top-level field AND a nested
- * `tool_result` block that DOES carry a `tool_use_id`, we drop the top-level
- * field (on a shallow clone — never mutating the SDK's object) so extraction
- * falls through to the nested branch and the pairing (name/summary/duration) is
- * restored. No-op for every other message.
+ * Per-turn token usage as observed on the SDK stream, normalized to camelCase.
+ * Read defensively from either an assistant message (`m.message.usage`) or the
+ * final result message (`m.usage`) — fields are loosely typed in core.
  */
-function normalizeForTranslator(m: SDKMessage): SDKMessage {
-  const msg = m as unknown as {
+interface TurnUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+}
+
+/** A model id seen on the SDK stream paired (best-effort) with its usage. */
+interface ExtractedUsage {
+  usage: TurnUsage | null;
+  model: string | null;
+}
+
+function num(v: unknown): number {
+  return typeof v === "number" && Number.isFinite(v) ? v : 0;
+}
+
+/**
+ * Defensively extract per-turn usage + model from a raw SDK message. The SDK's
+ * `message` is typed `unknown` in core, and the CLI/SDK runtimes shape usage
+ * slightly differently, so every field access is guarded.
+ *
+ * - assistant message: `m.message.usage` (Anthropic usage block) + `m.message.model`.
+ * - result message: top-level `m.usage` (same field names).
+ *
+ * Returns `{ usage: null, model: null }` when neither is present.
+ */
+function extractUsage(m: SDKMessage): ExtractedUsage {
+  const raw = m as unknown as {
     type?: string;
-    tool_use_result?: unknown;
-    message?: { content?: unknown };
+    usage?: unknown;
+    message?: { usage?: unknown; model?: unknown } | unknown;
   };
-  if (msg.type !== "user" || msg.tool_use_result === undefined) return m;
 
-  // Does the top-level result already carry an id? If so, leave it alone.
-  const topLevel = msg.tool_use_result;
-  const topLevelHasId =
-    typeof topLevel === "object" &&
-    topLevel !== null &&
-    typeof (topLevel as { tool_use_id?: unknown }).tool_use_id === "string";
-  if (topLevelHasId) return m;
+  // Locate the usage block + model from whichever shape this message carries.
+  let usageBlock: unknown;
+  let model: string | null = null;
 
-  // Is there a nested tool_result block carrying a real tool_use_id?
-  const content = msg.message?.content;
-  const nestedHasId =
-    Array.isArray(content) &&
-    content.some(
-      (b) =>
-        b !== null &&
-        typeof b === "object" &&
-        (b as { type?: unknown }).type === "tool_result" &&
-        typeof (b as { tool_use_id?: unknown }).tool_use_id === "string",
-    );
-  if (!nestedHasId) return m;
+  const inner =
+    raw.message && typeof raw.message === "object"
+      ? (raw.message as { usage?: unknown; model?: unknown })
+      : undefined;
+  if (inner) {
+    if (inner.usage !== undefined) usageBlock = inner.usage;
+    if (typeof inner.model === "string") model = inner.model;
+  }
+  // Result messages (and some shapes) carry usage at the top level.
+  if (usageBlock === undefined && raw.usage !== undefined) usageBlock = raw.usage;
 
-  // Shallow clone and drop the id-less top-level field so extraction uses the
-  // nested (id-bearing) blocks. The SDK's original object is untouched.
-  const clone = { ...msg };
-  delete clone.tool_use_result;
-  return clone as unknown as SDKMessage;
+  if (usageBlock === undefined || usageBlock === null || typeof usageBlock !== "object") {
+    return { usage: null, model };
+  }
+
+  const u = usageBlock as {
+    input_tokens?: unknown;
+    output_tokens?: unknown;
+    cache_creation_input_tokens?: unknown;
+    cache_read_input_tokens?: unknown;
+  };
+  const usage: TurnUsage = {
+    inputTokens: num(u.input_tokens),
+    outputTokens: num(u.output_tokens),
+    cacheCreationTokens: num(u.cache_creation_input_tokens),
+    cacheReadTokens: num(u.cache_read_input_tokens),
+  };
+  // A usage block of all-zeros (e.g. a stub) is not informative; treat as none.
+  const anyTokens =
+    usage.inputTokens || usage.outputTokens || usage.cacheCreationTokens || usage.cacheReadTokens;
+  return { usage: anyTokens ? usage : null, model };
 }
 
 // --- client -> server --------------------------------------------------------
@@ -112,6 +153,12 @@ export interface ChatSendMessage {
      * context block (issue #1). No-op for scratch or when no overview exists.
      */
     preloadContext?: boolean;
+    /**
+     * Optional per-chat model override (a known model id). Unknown/absent ->
+     * the project's persisted model (scratch -> keeper default). The keeper /
+     * scratch agent is re-registered at this model before triggering. (§7.)
+     */
+    model?: string;
   };
 }
 
@@ -157,9 +204,28 @@ export interface ChatMessageBoundaryMessage {
   payload: Routing;
 }
 
+/** Per-turn token usage surfaced on chat:complete (camelCase, with the meter math). */
+export interface ChatCompleteUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  /** input + cacheRead + cacheCreation (what the context window holds). */
+  contextTokens: number;
+  /** getContextLimit(model). */
+  contextLimit: number;
+}
+
 export interface ChatCompleteMessage {
   type: "chat:complete";
-  payload: Routing & { success: boolean; error?: string };
+  payload: Routing & {
+    success: boolean;
+    error?: string;
+    /** The model this turn ran on (lastModel ?? effectiveModel). Omitted if unknown. */
+    model?: string;
+    /** Last per-turn usage observed; omitted (with model) if none was seen. */
+    usage?: ChatCompleteUsage;
+  };
 }
 
 export interface ChatErrorMessage {
@@ -197,6 +263,7 @@ export function isClientMessage(data: unknown): data is ClientMessage {
     const slug = p.projectSlug ?? p.target;
     if (typeof slug !== "string") return false;
     if (p.preloadContext !== undefined && typeof p.preloadContext !== "boolean") return false;
+    if (p.model !== undefined && typeof p.model !== "string") return false;
     return p.sessionId === undefined || p.sessionId === null || typeof p.sessionId === "string";
   }
   return false;
@@ -246,6 +313,15 @@ export function makeChatHandler(deps: {
       const isNewChat = sessionId === undefined || sessionId === null;
       let jobId: string | null = null;
       let resolvedSession: string | null = sessionId ?? null;
+      // Per-turn usage + model captured off the SDK stream (last non-null wins).
+      // Held on a mutable record (not bare `let`s) so the values assigned inside
+      // the streaming callback are visible to control-flow analysis afterwards.
+      const seen: { usage: TurnUsage | null; model: string | null } = {
+        usage: null,
+        model: null,
+      };
+      // The model the turn will run on; resolved below once we know the target.
+      let effectiveModel: string = KEEPER_DEFAULT_MODEL;
 
       const routing = (): Routing => ({
         projectSlug: slug,
@@ -284,12 +360,28 @@ export function makeChatHandler(deps: {
         let agentName: string;
         // Effective prompt — may be augmented with the project overview below.
         let prompt = message;
+        const requested = msg.payload.model;
         if (slug === SCRATCH_SLUG) {
           agentName = SCRATCH_AGENT;
+          // Scratch: honor a valid override, else the keeper default. Re-register
+          // the scratch agent at the requested model (no-op if unchanged).
+          effectiveModel =
+            requested && isKnownModel(requested) ? requested : KEEPER_DEFAULT_MODEL;
+          if (requested && isKnownModel(requested)) {
+            await deps.herdctl.ensureScratchModel(requested);
+          }
         } else {
-          // Verifies the project exists (throws if not).
-          await deps.projects.get(slug);
+          // Verifies the project exists (throws if not); we keep the object so
+          // we can resolve its model + re-register the keeper for an override.
+          const project = await deps.projects.get(slug);
           agentName = keeperAgentName(slug);
+
+          // Project chat: a valid override wins, else the project's model. Then
+          // ensure the (shared) keeper is registered at that model before the
+          // trigger. NOTE single-user last-write-wins caveat (see herdctl.ts).
+          effectiveModel =
+            requested && isKnownModel(requested) ? requested : project.model;
+          await deps.herdctl.ensureKeeperModel(project, effectiveModel);
 
           // Context preload (issue #1): only for a NEW chat, only when asked,
           // and only when the project actually has an OVERVIEW.md. Prepend it
@@ -318,14 +410,17 @@ export function makeChatHandler(deps: {
             // Capture the session id as it arrives mid-stream (the translator
             // only surfaces text/boundary/tool events, not routing metadata).
             if (m.session_id) resolvedSession = m.session_id;
-            // Restore tool-call pairing for the CLI runtime (drops an id-less
-            // top-level tool_use_result so the translator uses the nested,
-            // id-bearing tool_result blocks). No-op for other messages.
-            const normalized = normalizeForTranslator(m);
+            // Capture per-turn usage + model defensively; keep the last non-null
+            // usage / model seen (the final result message usually carries the
+            // authoritative usage).
+            const ex = extractUsage(m);
+            if (ex.usage) seen.usage = ex.usage;
+            if (ex.model) seen.model = ex.model;
             // @herdctl/core's SDKMessage types `message` as `unknown` (wider);
             // @herdctl/chat's translator declares a structurally narrower
             // SDKMessage. Same runtime object — cast across the package boundary.
-            await translate(normalized as unknown as ChatSDKMessage);
+            // (@herdctl/chat@0.4.1 pairs CLI tool results, so no shim needed.)
+            await translate(m as unknown as ChatSDKMessage);
           },
         });
 
@@ -337,6 +432,32 @@ export function makeChatHandler(deps: {
           deps.sweep.enqueue(slug);
         }
 
+        // Force a session-list refresh so a brand-new chat surfaces immediately
+        // (rather than waiting out the discovery cache). Non-fatal.
+        try {
+          deps.herdctl.invalidateSessions(agentName);
+        } catch {
+          /* non-fatal: stale-by-30s at worst */
+        }
+
+        // Surface the model + usage so the UI can render the context meter.
+        // Omit both if no usage was observed this turn (§7).
+        const completeModel = seen.model ?? effectiveModel;
+        const seenUsage = seen.usage;
+        const completeUsage: ChatCompleteUsage | undefined = seenUsage
+          ? {
+              inputTokens: seenUsage.inputTokens,
+              outputTokens: seenUsage.outputTokens,
+              cacheReadTokens: seenUsage.cacheReadTokens,
+              cacheCreationTokens: seenUsage.cacheCreationTokens,
+              contextTokens:
+                seenUsage.inputTokens +
+                seenUsage.cacheReadTokens +
+                seenUsage.cacheCreationTokens,
+              contextLimit: getContextLimit(completeModel),
+            }
+          : undefined;
+
         send({
           type: "chat:complete",
           payload: {
@@ -345,6 +466,7 @@ export function makeChatHandler(deps: {
             jobId: result.jobId ?? jobId,
             success: result.success,
             error: result.error?.message,
+            ...(completeUsage ? { model: completeModel, usage: completeUsage } : {}),
           },
         });
       } catch (err) {

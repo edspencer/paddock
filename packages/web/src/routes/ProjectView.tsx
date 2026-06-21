@@ -387,6 +387,7 @@ export function ProjectView() {
               onSessionEstablished={onSessionEstablished}
               onTurnComplete={onTurnComplete}
               preloadAvailable={project.hasOverview}
+              projectModel={project.model}
               isProjectChat
             />
           )}

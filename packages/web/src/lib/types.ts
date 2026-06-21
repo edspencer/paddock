@@ -31,6 +31,15 @@ export interface Project {
   hasOverview: boolean;
   /** Pinned file names rendered as sibling tabs (order-preserving). Default []. */
   pinned: string[];
+  /** The keeper model this project runs on. Always concrete (server resolves the default). */
+  model: string;
+}
+
+/** A selectable model (GET /api/models). `contextLimit` drives the context meter. */
+export interface ModelInfo {
+  id: string;
+  label: string;
+  contextLimit: number;
 }
 
 /** Render-kind hint for a project file, derived server-side from its extension. */
@@ -58,6 +67,8 @@ export interface UpdateProjectInput {
   domain?: string[];
   summary?: string;
   visibility?: "public" | "private";
+  /** The keeper model id; server re-registers the keeper on change (must be a known model). */
+  model?: string;
 }
 
 /** A chat = one Claude Code session, surfaced by the server's session discovery. */
@@ -107,6 +118,18 @@ interface Routing {
   jobId: string | null;
 }
 
+/** Per-turn token usage surfaced on chat:complete (camelCase; drives the context meter). */
+export interface ChatCompleteUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  /** input + cacheRead + cacheCreation (what the context window holds). */
+  contextTokens: number;
+  /** The model's context window size (getContextLimit(model) server-side). */
+  contextLimit: number;
+}
+
 export type ServerWsMessage =
   | { type: "chat:response"; payload: Routing & { chunk: string } }
   | {
@@ -122,7 +145,14 @@ export type ServerWsMessage =
   | { type: "chat:message_boundary"; payload: Routing }
   | {
       type: "chat:complete";
-      payload: Routing & { success: boolean; error?: string };
+      payload: Routing & {
+        success: boolean;
+        error?: string;
+        /** The model this turn ran on (server: lastModel ?? effectiveModel). Omitted if unknown. */
+        model?: string;
+        /** Last per-turn usage observed; omitted (with model) if none was seen. */
+        usage?: ChatCompleteUsage;
+      };
     }
   | { type: "chat:error"; payload: { projectSlug: string; target?: string; error: string } }
   | { type: "pong" };

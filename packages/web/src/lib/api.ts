@@ -7,6 +7,7 @@ import type {
   Chat,
   CreateProjectInput,
   HistoryMessage,
+  ModelInfo,
   Project,
   ProjectDetail,
   ProjectFile,
@@ -44,6 +45,17 @@ export class ApiError extends Error {
 }
 
 export const api = {
+  /** Selectable models + the keeper/sweeper defaults (drives the model picker). */
+  async getModels(): Promise<{
+    models: ModelInfo[];
+    keeperDefault: string;
+    sweeperDefault: string;
+  }> {
+    return req<{ models: ModelInfo[]; keeperDefault: string; sweeperDefault: string }>(
+      "/api/models",
+    );
+  },
+
   async listProjects(): Promise<Project[]> {
     const { projects } = await req<{ projects: Project[] }>("/api/projects");
     return projects;
@@ -62,7 +74,7 @@ export const api = {
     return project;
   },
 
-  /** Edit project metadata (status, summary, domain, name, visibility). */
+  /** Edit project metadata (status, summary, domain, name, visibility, model). */
   async updateProject(slug: string, patch: UpdateProjectInput): Promise<Project> {
     const { project } = await req<{ project: Project }>(
       `/api/projects/${encodeURIComponent(slug)}`,

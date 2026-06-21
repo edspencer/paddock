@@ -15,6 +15,7 @@
  *   GET  /api/projects/:slug/chats     list a project's sessions (chats)
  *   GET  /api/chats                    list one-off (scratch) sessions
  *   GET  /api/fleet                    fleet status
+ *   GET  /api/models                   selectable models + keeper/sweeper defaults
  *
  * THIN (chat sending happens over WS; these are convenience reads/echoes):
  *   POST /api/projects/:slug/chats     start-a-chat metadata (see TODO)
@@ -23,6 +24,7 @@ import type { FastifyInstance } from "fastify";
 import { ProjectError, type ProjectStore, type CreateProjectInput, type UpdateProjectInput } from "./projects.js";
 import type { HerdctlService } from "./herdctl.js";
 import { SCRATCH_SLUG, SCRATCH_AGENT, keeperAgentName } from "./herdctl.js";
+import { MODELS, KEEPER_DEFAULT_MODEL, SWEEPER_DEFAULT_MODEL, isKnownModel } from "./models.js";
 
 export interface RouteDeps {
   projects: ProjectStore;
@@ -33,6 +35,16 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
   const { projects, herdctl } = deps;
 
   app.get("/api/health", async () => ({ ok: true }));
+
+  // Selectable models + the keeper/sweeper defaults (CONTRACT-v3 §3). Static —
+  // sourced from the models module so the picker and context meter agree.
+  app.get("/api/models", async () => {
+    return {
+      models: MODELS,
+      keeperDefault: KEEPER_DEFAULT_MODEL,
+      sweeperDefault: SWEEPER_DEFAULT_MODEL,
+    };
+  });
 
   app.get("/api/fleet", async () => {
     try {
@@ -81,7 +93,19 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     "/api/projects/:slug",
     async (req, reply) => {
       try {
-        const project = await projects.update(req.params.slug, req.body ?? {});
+        const body = req.body ?? {};
+        // Validate an explicit model override before touching disk (400 if bad).
+        if (body.model !== undefined && !isKnownModel(body.model)) {
+          return reply.code(400).send({ error: `Unknown model: ${body.model}`, code: "invalid" });
+        }
+        const project = await projects.update(req.params.slug, body);
+        // Re-register the keeper so the new model takes effect (the keeper is a
+        // long-lived in-memory agent; addAgent replace:true updates its config).
+        try {
+          await herdctl.ensureProjectAgent(project);
+        } catch (err) {
+          req.log.warn({ err }, "keeper-agent re-registration failed after update");
+        }
         return { project };
       } catch (err) {
         return sendProjectError(reply, err);
