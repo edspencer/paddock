@@ -1,80 +1,113 @@
 /**
  * WebSocket chat transport.
  *
- * Protocol modeled on @herdctl/web's ws/types.ts:
- *   client -> server: chat:send
- *   server -> client: chat:response (text chunk)
- *                     chat:tool_call (structured tool result)
- *                     chat:complete (final, carries sessionId)
- *                     chat:error
+ * Protocol (the contract the frontend agent matches):
  *
- * Streaming IS wired for real here via HerdctlService.chat()'s onMessage
- * callback (the public trigger API supports it). The only TODO is richer
- * tool-call extraction parity with herdctl/web's web-chat-manager (which lives
- * in @herdctl/web, not @herdctl/core — see docs/INTEGRATION.md, question f).
+ *   client -> server:
+ *     { type: "chat:send", payload: {
+ *         projectSlug: string,        // project slug, or "scratch" for one-off
+ *         sessionId: string | null,   // resume an existing chat, or null = new
+ *         message: string,
+ *     } }
+ *     { type: "chat:cancel", payload: { jobId } }   // optional: stop a running turn
+ *     { type: "ping" }
+ *
+ *   server -> client (all carry projectSlug + sessionId + jobId for routing):
+ *     { type: "chat:response",         payload: { projectSlug, sessionId, jobId, chunk } }
+ *     { type: "chat:tool_call",        payload: { projectSlug, sessionId, jobId,
+ *                                                  toolName, inputSummary, output,
+ *                                                  isError, durationMs } }
+ *     { type: "chat:message_boundary", payload: { projectSlug, sessionId, jobId } }
+ *     { type: "chat:complete",         payload: { projectSlug, sessionId, jobId, success, error? } }
+ *     { type: "chat:error",            payload: { projectSlug, error } }
+ *     { type: "pong" }
+ *
+ * Streaming is wired for real via HerdctlService.chat()'s onMessage callback
+ * (the public trigger API supports it). Tool-call extraction reuses
+ * @herdctl/core's tool-parsing helpers (extractToolUseBlocks / extractToolResults
+ * / getToolInputSummary) so tool_use blocks nested in assistant content and the
+ * paired tool_result blocks in user messages are rendered correctly.
+ *
+ * Field-name note: legacy clients may send `target` instead of `projectSlug`;
+ * we accept both. Server events always carry both `projectSlug` and the legacy
+ * `target` alias so existing/early frontends keep working.
  */
 import type { WebSocket } from "@fastify/websocket";
-import type { SDKMessage } from "@herdctl/core";
+import {
+  type SDKMessage,
+  extractToolUseBlocks,
+  extractToolResults,
+  getToolInputSummary,
+  type ToolUseBlock,
+} from "@herdctl/core";
 import type { HerdctlService } from "./herdctl.js";
-import { keeperAgentName, SCRATCH_AGENT } from "./herdctl.js";
+import { keeperAgentName, SCRATCH_AGENT, SCRATCH_SLUG } from "./herdctl.js";
 import type { ProjectStore } from "./projects.js";
-
-/** Sentinel agentName for one-off chats (mirrors herdctl/web's "__adhoc__"). */
-export const ADHOC_AGENT = "__adhoc__";
 
 // --- client -> server --------------------------------------------------------
 
 export interface ChatSendMessage {
   type: "chat:send";
   payload: {
-    /** Project slug, or ADHOC_AGENT for one-off chats. */
-    target: string;
-    /** Session to resume; omit for a new chat. */
-    sessionId?: string;
+    /** Project slug, or "scratch" for one-off chats. (`target` accepted as alias.) */
+    projectSlug?: string;
+    target?: string;
+    /** Session to resume; null/omitted starts a new chat. */
+    sessionId?: string | null;
     message: string;
   };
+}
+
+export interface ChatCancelMessage {
+  type: "chat:cancel";
+  payload: { jobId: string };
 }
 
 export interface PingMessage {
   type: "ping";
 }
 
-export type ClientMessage = ChatSendMessage | PingMessage;
+export type ClientMessage = ChatSendMessage | ChatCancelMessage | PingMessage;
 
 // --- server -> client --------------------------------------------------------
 
+interface Routing {
+  projectSlug: string;
+  /** Alias for early frontends. */
+  target: string;
+  sessionId: string | null;
+  jobId: string | null;
+}
+
 export interface ChatResponseMessage {
   type: "chat:response";
-  payload: { target: string; sessionId: string | null; jobId: string | null; chunk: string };
+  payload: Routing & { chunk: string };
 }
 
 export interface ChatToolCallMessage {
   type: "chat:tool_call";
-  payload: {
-    target: string;
-    sessionId: string | null;
-    jobId: string | null;
+  payload: Routing & {
     toolName: string;
     inputSummary?: string;
     output: string;
     isError: boolean;
+    durationMs?: number;
   };
+}
+
+export interface ChatMessageBoundaryMessage {
+  type: "chat:message_boundary";
+  payload: Routing;
 }
 
 export interface ChatCompleteMessage {
   type: "chat:complete";
-  payload: {
-    target: string;
-    sessionId: string | null;
-    jobId: string | null;
-    success: boolean;
-    error?: string;
-  };
+  payload: Routing & { success: boolean; error?: string };
 }
 
 export interface ChatErrorMessage {
   type: "chat:error";
-  payload: { target: string; error: string };
+  payload: { projectSlug: string; target: string; error: string };
 }
 
 export interface PongMessage {
@@ -84,60 +117,119 @@ export interface PongMessage {
 export type ServerMessage =
   | ChatResponseMessage
   | ChatToolCallMessage
+  | ChatMessageBoundaryMessage
   | ChatCompleteMessage
   | ChatErrorMessage
   | PongMessage;
+
+function readSlug(p: ChatSendMessage["payload"]): string | undefined {
+  return p.projectSlug ?? p.target;
+}
 
 export function isClientMessage(data: unknown): data is ClientMessage {
   if (typeof data !== "object" || data === null) return false;
   const m = data as Record<string, unknown>;
   if (m.type === "ping") return true;
+  if (m.type === "chat:cancel") {
+    const p = m.payload as Record<string, unknown> | undefined;
+    return !!p && typeof p.jobId === "string";
+  }
   if (m.type === "chat:send") {
     const p = m.payload as Record<string, unknown> | undefined;
-    return (
-      !!p &&
-      typeof p.target === "string" &&
-      typeof p.message === "string" &&
-      (p.sessionId === undefined || typeof p.sessionId === "string")
-    );
+    if (!p || typeof p.message !== "string") return false;
+    const slug = p.projectSlug ?? p.target;
+    if (typeof slug !== "string") return false;
+    return p.sessionId === undefined || p.sessionId === null || typeof p.sessionId === "string";
   }
   return false;
 }
 
-/** Extract plain assistant text from an SDK message, if any. */
+/**
+ * Extract plain assistant text from an SDK message, if any.
+ *
+ * Assistant text lives either in `message.message.content[]` text blocks (the
+ * normal SDK shape) or in a top-level `content` string (legacy/back-compat).
+ */
 function assistantText(msg: SDKMessage): string | null {
-  if (msg.type === "assistant") {
-    if (typeof msg.content === "string" && msg.content.length > 0) return msg.content;
-    // SDK assistant messages nest the API message; pull text blocks.
-    const inner = msg.message as { content?: Array<{ type?: string; text?: string }> } | undefined;
-    if (inner?.content) {
-      const text = inner.content
-        .filter((b) => b.type === "text" && typeof b.text === "string")
-        .map((b) => b.text)
-        .join("");
-      return text.length > 0 ? text : null;
-    }
+  if (msg.type !== "assistant") return null;
+  const inner = msg.message as { content?: unknown } | undefined;
+  if (Array.isArray(inner?.content)) {
+    const text = inner.content
+      .filter(
+        (b): b is { type: "text"; text: string } =>
+          !!b &&
+          typeof b === "object" &&
+          (b as { type?: unknown }).type === "text" &&
+          typeof (b as { text?: unknown }).text === "string",
+      )
+      .map((b) => b.text)
+      .join("");
+    if (text.length > 0) return text;
   }
+  if (typeof msg.content === "string" && msg.content.length > 0) return msg.content;
   return null;
 }
 
-/** Extract a tool_call event from an SDK message, if present. */
-function toolCall(
-  msg: SDKMessage,
-): { toolName: string; inputSummary?: string; output: string; isError: boolean } | null {
-  if (msg.type === "tool_use" || msg.type === "tool_result") {
-    return {
-      toolName: msg.tool_name ?? msg.name ?? "tool",
-      inputSummary: msg.input ? JSON.stringify(msg.input).slice(0, 200) : undefined,
-      output: typeof msg.tool_use_result === "string" ? msg.tool_use_result : "",
-      isError: msg.success === false,
-    };
+/**
+ * The core tool-parsing helpers accept a looser structural shape than the
+ * (deliberately wide) SDKMessage. SDKMessage carries the same fields with
+ * `message`/`tool_use_result` typed as `unknown`, so this cast is sound.
+ */
+type ParsableMessage = {
+  type: string;
+  message?: { content?: unknown };
+  tool_use_result?: unknown;
+};
+function parsable(m: SDKMessage): ParsableMessage {
+  return m as unknown as ParsableMessage;
+}
+
+/**
+ * Extract tool results from a user message, PRESERVING the `tool_use_id`.
+ *
+ * Why not just `extractToolResults`? In the live SDK stream a user message
+ * carries the result BOTH as a top-level `tool_use_result` (a string/object
+ * with NO id) AND as a nested `message.content[]` `tool_result` block (which
+ * DOES have `tool_use_id` + `is_error`). The core helper short-circuits on the
+ * id-less top-level value, so pairing by id is lost. We read the nested blocks
+ * directly to keep the id (for correct tool-name pairing + durationMs), and
+ * fall back to the core helper only when there are no nested blocks.
+ */
+function extractResultsWithIds(
+  m: SDKMessage,
+): Array<{ output: string; isError: boolean; toolUseId?: string }> {
+  const inner = (m.message as { content?: unknown } | undefined)?.content;
+  if (Array.isArray(inner)) {
+    const out: Array<{ output: string; isError: boolean; toolUseId?: string }> = [];
+    for (const block of inner) {
+      if (!block || typeof block !== "object") continue;
+      const b = block as Record<string, unknown>;
+      if (b.type !== "tool_result") continue;
+      const toolUseId = typeof b.tool_use_id === "string" ? b.tool_use_id : undefined;
+      const isError = b.is_error === true;
+      let output = "";
+      if (typeof b.content === "string") {
+        output = b.content;
+      } else if (Array.isArray(b.content)) {
+        output = b.content
+          .filter(
+            (p): p is { type: "text"; text: string } =>
+              !!p &&
+              typeof p === "object" &&
+              (p as { type?: unknown }).type === "text" &&
+              typeof (p as { text?: unknown }).text === "string",
+          )
+          .map((p) => p.text)
+          .join("\n");
+      }
+      // If the nested block had no inline content, use the top-level result.
+      if (!output && typeof m.tool_use_result === "string") output = m.tool_use_result;
+      out.push({ output, isError, toolUseId });
+    }
+    if (out.length > 0) return out;
   }
-  // TODO: parity with @herdctl/web web-chat-manager — extract tool_use blocks
-  // nested inside assistant content + paired tool_result blocks from user
-  // messages. @herdctl/core exposes extractToolUseBlocks/extractToolResults
-  // in state/tool-parsing for this; wire them for richer inline rendering.
-  return null;
+  // No nested blocks — fall back to the core helper (id-less).
+  return extractToolResults(parsable(m));
 }
 
 /**
@@ -155,39 +247,72 @@ export function makeChatHandler(deps: { herdctl: HerdctlService; projects: Proje
       try {
         parsed = JSON.parse(raw.toString());
       } catch {
-        send({ type: "chat:error", payload: { target: "?", error: "Invalid JSON" } });
+        send({ type: "chat:error", payload: { projectSlug: "?", target: "?", error: "Invalid JSON" } });
         return;
       }
       if (!isClientMessage(parsed)) {
-        send({ type: "chat:error", payload: { target: "?", error: "Unknown message" } });
+        send({ type: "chat:error", payload: { projectSlug: "?", target: "?", error: "Unknown message" } });
         return;
       }
       if (parsed.type === "ping") {
         send({ type: "pong" });
         return;
       }
+      if (parsed.type === "chat:cancel") {
+        void deps.herdctl.cancel(parsed.payload.jobId).catch(() => undefined);
+        return;
+      }
       void onChatSend(parsed);
     });
 
     const onChatSend = async (msg: ChatSendMessage): Promise<void> => {
-      const { target, message, sessionId } = msg.payload;
+      const slug = readSlug(msg.payload) as string;
+      const { message, sessionId } = msg.payload;
       let jobId: string | null = null;
       let resolvedSession: string | null = sessionId ?? null;
 
+      const routing = (): Routing => ({
+        projectSlug: slug,
+        target: slug,
+        sessionId: resolvedSession,
+        jobId,
+      });
+
+      // Pairing state: tool_use id -> { name, inputSummary, startedAt }.
+      const pending = new Map<
+        string,
+        { name: string; inputSummary?: string; startedAt: number }
+      >();
+      // tool_use blocks with no id (rare) — keep a FIFO fallback.
+      const anonymous: Array<{ name: string; inputSummary?: string; startedAt: number }> = [];
+
+      const recordToolUse = (b: ToolUseBlock) => {
+        const entry = {
+          name: b.name,
+          inputSummary: getToolInputSummary(b.name, b.input),
+          startedAt: Date.now(),
+        };
+        if (b.id) pending.set(b.id, entry);
+        else anonymous.push(entry);
+      };
+
       try {
-        // Resolve the agent: a project slug -> keeper; ADHOC -> scratch.
+        // Resolve the agent: "scratch" -> scratch agent; otherwise keeper-<slug>.
         let agentName: string;
-        if (target === ADHOC_AGENT) {
+        let workingDir: string;
+        if (slug === SCRATCH_SLUG) {
           agentName = SCRATCH_AGENT;
+          workingDir = deps.herdctl.scratchDir;
         } else {
           // Verifies the project exists (throws if not).
-          await deps.projects.get(target);
-          agentName = keeperAgentName(target);
+          const project = await deps.projects.get(slug);
+          agentName = keeperAgentName(slug);
+          workingDir = project.dir;
         }
 
         const result = await deps.herdctl.chat(agentName, {
           prompt: message,
-          // omit -> agent-level fallback for resume; explicit null -> new chat
+          // omit -> agent-level fallback; explicit null -> new chat; id -> resume.
           resume: sessionId ?? null,
           triggerType: "web",
           onJobCreated: (id) => {
@@ -195,26 +320,75 @@ export function makeChatHandler(deps: { herdctl: HerdctlService; projects: Proje
           },
           onMessage: (m) => {
             if (m.session_id) resolvedSession = m.session_id;
-            const text = assistantText(m);
-            if (text) {
-              send({
-                type: "chat:response",
-                payload: { target, sessionId: resolvedSession, jobId, chunk: text },
-              });
+
+            if (m.type === "assistant") {
+              // 1) record any tool_use blocks for later pairing.
+              for (const b of extractToolUseBlocks(parsable(m))) recordToolUse(b);
+              // 2) stream assistant text deltas.
+              const text = assistantText(m);
+              if (text) {
+                send({ type: "chat:response", payload: { ...routing(), chunk: text } });
+              }
+              // 3) mark an assistant message boundary (one logical turn rendered).
+              send({ type: "chat:message_boundary", payload: routing() });
               return;
             }
-            const tc = toolCall(m);
-            if (tc) {
-              send({ type: "chat:tool_call", payload: { target, sessionId: resolvedSession, jobId, ...tc } });
+
+            if (m.type === "user" || m.type === "tool_result") {
+              // tool_result blocks (paired with the earlier tool_use by id).
+              for (const r of extractResultsWithIds(m)) {
+                let matched:
+                  | { name: string; inputSummary?: string; startedAt: number }
+                  | undefined;
+                if (r.toolUseId && pending.has(r.toolUseId)) {
+                  matched = pending.get(r.toolUseId);
+                  pending.delete(r.toolUseId);
+                } else {
+                  matched = anonymous.shift();
+                }
+                // If the tool produced no textual content, fall back to a
+                // compact serialization of the raw result (e.g. Write returns
+                // a structured object, not text).
+                let output = r.output;
+                if (!output && m.tool_use_result !== undefined) {
+                  output =
+                    typeof m.tool_use_result === "string"
+                      ? m.tool_use_result
+                      : JSON.stringify(m.tool_use_result);
+                }
+                send({
+                  type: "chat:tool_call",
+                  payload: {
+                    ...routing(),
+                    toolName: matched?.name ?? "tool",
+                    inputSummary: matched?.inputSummary,
+                    output,
+                    isError: r.isError,
+                    durationMs: matched ? Date.now() - matched.startedAt : undefined,
+                  },
+                });
+              }
+              return;
+            }
+
+            // Legacy/standalone tool_use message (no nested assistant block).
+            if (m.type === "tool_use") {
+              const name = m.tool_name ?? m.name ?? "tool";
+              recordToolUse({ id: m.tool_use_id, name, input: m.input });
             }
           },
         });
 
+        // A successful turn may have created a new session; drop the discovery
+        // cache for this working dir so the chat list reflects it immediately
+        // (rather than after the ~30s cache TTL).
+        if (result.success) deps.herdctl.invalidateSessions(workingDir);
+
         send({
           type: "chat:complete",
           payload: {
-            target,
-            sessionId: result.sessionId ?? resolvedSession,
+            ...routing(),
+            sessionId: result.success ? (result.sessionId ?? resolvedSession) : resolvedSession,
             jobId: result.jobId ?? jobId,
             success: result.success,
             error: result.error?.message,
@@ -223,7 +397,11 @@ export function makeChatHandler(deps: { herdctl: HerdctlService; projects: Proje
       } catch (err) {
         send({
           type: "chat:error",
-          payload: { target, error: err instanceof Error ? err.message : String(err) },
+          payload: {
+            projectSlug: slug,
+            target: slug,
+            error: err instanceof Error ? err.message : String(err),
+          },
         });
       }
     };

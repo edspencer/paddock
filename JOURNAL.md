@@ -92,6 +92,10 @@ Browser ──https──> Caddy(netops) ──> projects.valfenda.net LXC
 - New-LXC provisioning blocked → deploy onto **devbox** instead (Ed's #2 choice).
 - Public `@herdctl/core` missing a needed API → use local herdctl build for that
   piece + PR; document the gap here.
+- Max OAuth token fails ON THE LXC → Ed AUTHORIZED (2026-06-21) using the
+  commented-out Anthropic API key from `~/.zprofile`, but ONLY on the projects LXC
+  / processes running in it (not elsewhere). Try OAuth (Max) first; only fall back
+  to the API key (sdk runtime) if the token genuinely fails on the LXC.
 
 ## STATUS LOG (append-only; newest at bottom)
 
@@ -137,3 +141,75 @@ Browser ──https──> Caddy(netops) ──> projects.valfenda.net LXC
   (4) a streaming trigger handle (async iterator) for cleaner WS cancel/backpressure.
   Full detail + code in `docs/INTEGRATION.md`. Note: bumped generated default model
   to `claude-sonnet-4-6` (the docs' `claude-sonnet-4-20250514` is deprecated Sonnet 4.0).
+
+- 2026-06-21 — Sub-agent (backend, project-first chat server): **DONE + LIVE-VALIDATED.**
+  Made the backend a real end-to-end project-first chat server and PROVED it with
+  live Claude turns over WebSocket (Max OAuth token, `runtime: cli`, no API key).
+
+  **What I built on top of the scaffold (didn't rewrite what worked):**
+  - **Real WS streaming** (`ws.ts`): `chat:send {projectSlug|"scratch", sessionId|null,
+    message}` → `fleet.trigger(keeper, undefined, {prompt, resume, onMessage})`,
+    translating each SDKMessage to: `chat:response {chunk}` (assistant text deltas),
+    `chat:tool_call {toolName, inputSummary, output, isError, durationMs}`,
+    `chat:message_boundary`, `chat:complete {sessionId, success, error?}`,
+    `chat:error {error}`. Tool calls are paired tool_use→tool_result **by id** using
+    core's `extractToolUseBlocks`/`getToolInputSummary` + my own id-preserving
+    result parser (core's `extractToolResults` short-circuits on the id-less
+    top-level `tool_use_result`, losing pairing — so I read the nested
+    `message.content[]` `tool_result` blocks directly). Result: correct tool names,
+    input summaries, and real durations. Back-compat: accepts legacy `target` and
+    emits both `projectSlug` + `target` so the existing web client keeps working.
+  - **REST**: `GET /api/projects`, `POST /api/projects` (create+keeper+reload, kept),
+    enriched `GET /api/projects/:slug` (metadata + changelog text + its chats),
+    `GET /api/projects/:slug/chats`, **`GET /api/projects/:slug/chats/:sessionId/messages`**
+    (resolves the working dir server-side, no `?dir=` needed), `GET /api/chats`
+    (scratch sessions), `GET /api/chats/:sessionId/messages`.
+  - **Keeper agent gen**: `runtime: cli`, `working_directory` = project dir,
+    `model: claude-sonnet-4-6`, `max_turns: 200`, `permission_mode: acceptEdits`,
+    `denied_tools: [Bash(sudo *), Bash(rm -rf /), Bash(rm -rf /*), Bash(chmod 777 *)]`.
+    Docker isolation deferred (documented follow-up). Auth via process-env
+    `CLAUDE_CODE_OAUTH_TOKEN` (never hardcoded).
+  - **Portability fix (`config.ts`)**: canonicalize agent working dirs (resolve
+    symlinks) at startup so SessionDiscoveryService finds Claude transcripts. macOS
+    maps `/tmp`→`/private/tmp`; without this, session listing returned empty.
+    No-op on the Linux LXC. Also invalidate the discovery cache on `chat:complete`
+    so new sessions list immediately (vs the 30s TTL). PORT/data-root envs honored;
+    static SPA served from `packages/web/dist` in prod; no laptop-absolute paths.
+
+  **LIVE VALIDATION EVIDENCE (token sourced from ~/herds/.env into env, never
+  printed; `claude` CLI 2.1.167 on PATH; Max OAuth, no API key):**
+  Created project "Smoke Test", opened WS, sent "Say hello in one sentence, then
+  create a file called hello.txt containing the word PADDOCK in your working dir."
+  - (a) assistant text streamed as `chat:response` ("Hello! …", "Done! …"). ✓
+  - (b) `chat:tool_call` fired for the file op: `toolName=Write`,
+    `inputSummary=<dir>/hello.txt`, `isError=false`, `durationMs=74` (and a
+    `Bash pwd` tool_call, `durationMs=309`). ✓
+  - (c) `hello.txt` exists in the project dir containing exactly `PADDOCK`. ✓
+  - (d) `chat:complete` returned a real `sessionId`
+    (77f94bfb-…), `success=true`, with a `jobId`. ✓
+  - (e) session listable via `GET /api/projects/smoke-test/chats` (resumable=true)
+    and its 5 messages via the messages endpoint (roles user,assistant,tool,tool,assistant). ✓
+  - (f) **resume/continuity**: sent "What word did you put in that file?" with the
+    returned sessionId → "The word I put in the file is **PADDOCK**" and the SAME
+    sessionId came back (not a new one). ✓
+  Also validated the one-off **scratch** path end-to-end ("scratch-immediate-ok",
+  listed immediately via `/api/chats` after cache invalidation).
+  **typecheck + build clean** (server tsc, web tsc -b + vite, spike tsc).
+
+  **WS EVENT CONTRACT for the frontend agent** (server always includes both
+  `projectSlug` and the legacy `target` alias; `sessionId`/`jobId` on every event):
+  - client→server: `chat:send {projectSlug|"scratch", sessionId|null, message}`,
+    `chat:cancel {jobId}`, `ping`.
+  - server→client: `chat:response {…, chunk}`; `chat:tool_call {…, toolName,
+    inputSummary?, output, isError, durationMs?}`; `chat:message_boundary {…}`
+    (one per assistant message — use to separate turn bubbles); `chat:complete
+    {…, success, error?}` (the `sessionId` here is the canonical one to store for a
+    NEW chat); `chat:error {projectSlug, target, error}`; `pong`.
+
+  **Decisions/notes:** (1) scratch kept as a dedicated agent addressed by slug
+  "scratch" (working_directory = data/scratch), not a fake project dir — simplest,
+  reversible. (2) No Docker yet (POC reliability; LXC nesting is a follow-up).
+  (3) Did NOT touch `packages/web` — back-compat aliasing means the current client
+  still works; frontend agent should migrate to `projectSlug` + handle
+  `chat:message_boundary`/`durationMs`. (4) Minor: chat list has a ~30s discovery
+  cache TTL, now bypassed on completion via `invalidateAttributionCache`.

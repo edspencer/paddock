@@ -61,6 +61,12 @@ export function keeperAgentName(slug: string): string {
 /** The agent used for one-off / scratch chats. */
 export const SCRATCH_AGENT = "scratch";
 
+/**
+ * The slug clients use to address one-off chats over WS/REST. Routed to the
+ * scratch agent (working_directory = the scratch dir), not a real project.
+ */
+export const SCRATCH_SLUG = "scratch";
+
 export class HerdctlService {
   private fleet: FleetManager | null = null;
   private discovery: SessionDiscoveryService | null = null;
@@ -149,6 +155,11 @@ export class HerdctlService {
     });
   }
 
+  /** Cancel a running job (best-effort; used by WS chat:cancel). */
+  async cancel(jobId: string): Promise<void> {
+    await this.manager.cancelJob(jobId).catch(() => undefined);
+  }
+
   /** List a project's sessions (chats). */
   async listSessions(project: Project): Promise<DiscoveredSession[]> {
     if (!this.discovery) throw new Error("HerdctlService not initialized");
@@ -163,6 +174,16 @@ export class HerdctlService {
   async listScratchSessions(): Promise<DiscoveredSession[]> {
     if (!this.discovery) throw new Error("HerdctlService not initialized");
     return this.discovery.getAgentSessions(SCRATCH_AGENT, this.cfg.scratchDir, false);
+  }
+
+  /** The working directory used by one-off / scratch chats. */
+  get scratchDir(): string {
+    return this.cfg.scratchDir;
+  }
+
+  /** Invalidate session caches for a working dir (call after a new chat). */
+  invalidateSessions(workingDirectory: string): void {
+    this.discovery?.invalidateAttributionCache(workingDirectory);
   }
 
   /** Read the parsed messages of a session within a working directory. */
@@ -216,10 +237,20 @@ export class HerdctlService {
       defaults: {
         runtime: "cli",
         model: "claude-sonnet-4-6",
-        max_turns: 60,
+        // ~200 turns: enough for real multi-step coding sessions while still
+        // bounding runaway agents (CLAUDE.md: always set max_turns).
+        max_turns: 200,
+        // No Docker isolation yet (documented follow-up). The LXC has Docker
+        // nesting available, but for the POC we keep keeper agents native with
+        // acceptEdits + denied dangerous bash patterns.
         permission_mode: "acceptEdits",
         allowed_tools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "WebFetch", "WebSearch"],
-        denied_tools: ["Bash(sudo *)", "Bash(rm -rf /)", "Bash(chmod 777 *)"],
+        denied_tools: [
+          "Bash(sudo *)",
+          "Bash(rm -rf /)",
+          "Bash(rm -rf /*)",
+          "Bash(chmod 777 *)",
+        ],
       },
       agents: agentRefs,
     };

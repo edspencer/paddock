@@ -6,6 +6,7 @@
  */
 import path from "node:path";
 import os from "node:os";
+import fs from "node:fs";
 
 export interface PaddockConfig {
   /** HTTP/WS port. */
@@ -31,19 +32,58 @@ function abs(p: string): string {
   return path.isAbsolute(p) ? p : path.resolve(process.cwd(), p);
 }
 
+/**
+ * Canonicalize a path: resolve symlinks in the deepest EXISTING ancestor, then
+ * re-append the not-yet-created tail. This matters because Claude Code records
+ * session transcripts under the *real* working directory (e.g. macOS maps
+ * `/tmp` -> `/private/tmp`), and SessionDiscoveryService encodes the configured
+ * working_directory to find them. Without canonicalization the configured path
+ * and the recorded path diverge and session discovery returns nothing.
+ *
+ * On Linux (the deploy target) this is typically a no-op, but it keeps paddock
+ * portable and robust against symlinked data roots.
+ */
+function canonical(p: string): string {
+  const absolute = abs(p);
+  let dir = absolute;
+  const tail: string[] = [];
+  // Walk up to the first existing ancestor.
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    try {
+      const real = fs.realpathSync(dir);
+      return tail.length ? path.join(real, ...tail.reverse()) : real;
+    } catch {
+      const parent = path.dirname(dir);
+      if (parent === dir) return absolute; // reached root without resolving
+      tail.push(path.basename(dir));
+      dir = parent;
+    }
+  }
+}
+
 function envOr(name: string, fallback: string): string {
   const v = process.env[name];
   return v && v.trim().length > 0 ? v : fallback;
 }
 
 export function loadPaddockConfig(): PaddockConfig {
+  // Ensure the data root exists first so symlinks (e.g. /tmp -> /private/tmp on
+  // macOS) resolve consistently for every derived path below.
   const dataRoot = abs(envOr("PADDOCK_DATA_DIR", "./data"));
-  const projectsRoot = abs(envOr("PADDOCK_PROJECTS_DIR", path.join(dataRoot, "projects")));
-  const stateDir = abs(envOr("PADDOCK_STATE_DIR", path.join(dataRoot, ".herdctl")));
-  const herdctlConfigPath = abs(
+  try {
+    fs.mkdirSync(dataRoot, { recursive: true });
+  } catch {
+    /* best-effort; downstream mkdirs will surface real errors */
+  }
+  // working_directory of keeper/scratch agents MUST be canonical so session
+  // discovery (which encodes the real path) can find Claude transcripts.
+  const projectsRoot = canonical(envOr("PADDOCK_PROJECTS_DIR", path.join(dataRoot, "projects")));
+  const stateDir = canonical(envOr("PADDOCK_STATE_DIR", path.join(dataRoot, ".herdctl")));
+  const herdctlConfigPath = canonical(
     envOr("PADDOCK_HERDCTL_CONFIG", path.join(dataRoot, "herdctl.yaml")),
   );
-  const scratchDir = abs(envOr("PADDOCK_SCRATCH_DIR", path.join(dataRoot, "scratch")));
+  const scratchDir = canonical(envOr("PADDOCK_SCRATCH_DIR", path.join(dataRoot, "scratch")));
 
   // packages/server/src/config.ts -> packages/web/dist
   const defaultWebDist = path.resolve(

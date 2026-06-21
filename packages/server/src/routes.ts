@@ -18,6 +18,7 @@
 import type { FastifyInstance } from "fastify";
 import { ProjectError, type ProjectStore, type CreateProjectInput, type UpdateProjectInput } from "./projects.js";
 import type { HerdctlService } from "./herdctl.js";
+import { SCRATCH_SLUG } from "./herdctl.js";
 
 export interface RouteDeps {
   projects: ProjectStore;
@@ -60,7 +61,13 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
 
   app.get<{ Params: { slug: string } }>("/api/projects/:slug", async (req, reply) => {
     try {
-      return { project: await projects.get(req.params.slug) };
+      const project = await projects.get(req.params.slug);
+      // Enrich with changelog text + the project's chats (sessions).
+      const [changelog, sessions] = await Promise.all([
+        projects.readFile(project.slug, "CHANGELOG.md").catch(() => ""),
+        herdctl.listSessions(project).catch(() => []),
+      ]);
+      return { project, changelog, chats: sessions.map(toChatDto) };
     } catch (err) {
       return sendProjectError(reply, err);
     }
@@ -119,15 +126,29 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     try {
       const project = await projects.get(req.params.slug);
       return reply.code(201).send({
-        target: project.slug,
+        projectSlug: project.slug,
         sessionId: null,
         ws: "/ws",
-        note: "Open /ws and send chat:send with this target; session id arrives in chat:complete.",
+        note: "Open /ws and send chat:send with this projectSlug; session id arrives in chat:complete.",
       });
     } catch (err) {
       return sendProjectError(reply, err);
     }
   });
+
+  // Messages of a specific chat (session) within a project.
+  app.get<{ Params: { slug: string; sessionId: string } }>(
+    "/api/projects/:slug/chats/:sessionId/messages",
+    async (req, reply) => {
+      try {
+        const dir = await workingDirForSlug(req.params.slug);
+        const messages = await herdctl.sessionMessages(dir, req.params.sessionId).catch(() => []);
+        return { messages };
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
 
   // One-off chats (scratch dir).
   app.get("/api/chats", async () => {
@@ -135,14 +156,23 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     return { chats: sessions.map(toChatDto) };
   });
 
-  app.get<{ Querystring: { dir?: string } }>("/api/chats/:id/messages", async (req, reply) => {
-    // dir = the session's working directory (project dir or scratch dir).
-    const { dir } = req.query;
-    const id = (req.params as { id: string }).id;
-    if (!dir) return reply.code(400).send({ error: "missing ?dir=<working directory>" });
-    const messages = await herdctl.sessionMessages(dir, id).catch(() => []);
-    return { messages };
-  });
+  // Messages of a one-off (scratch) chat.
+  app.get<{ Params: { sessionId: string } }>(
+    "/api/chats/:sessionId/messages",
+    async (req) => {
+      const messages = await herdctl
+        .sessionMessages(herdctl.scratchDir, req.params.sessionId)
+        .catch(() => []);
+      return { messages };
+    },
+  );
+
+  /** Resolve a slug to the working directory whose sessions back it. */
+  async function workingDirForSlug(slug: string): Promise<string> {
+    if (slug === SCRATCH_SLUG) return herdctl.scratchDir;
+    const project = await projects.get(slug); // throws not_found
+    return project.dir;
+  }
 }
 
 function toChatDto(s: import("@herdctl/core").DiscoveredSession) {
