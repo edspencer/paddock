@@ -7,7 +7,11 @@
  *   GET  /api/projects/:slug           get one project
  *   PATCH /api/projects/:slug          update project metadata
  *   GET  /api/projects/:slug/files     list freeform files
+ *   GET  /api/projects/:slug/files/:name  one file + render-kind hint (#3)
  *   GET  /api/projects/:slug/changelog raw CHANGELOG.md
+ *   GET  /api/projects/:slug/overview  raw OVERVIEW.md (sweep-curated) (#2)
+ *   PUT  /api/projects/:slug/pins      pin a file {file} (#4)
+ *   DELETE /api/projects/:slug/pins/:file  unpin a file (#4)
  *   GET  /api/projects/:slug/chats     list a project's sessions (chats)
  *   GET  /api/chats                    list one-off (scratch) sessions
  *   GET  /api/fleet                    fleet status
@@ -121,6 +125,64 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
       return sendProjectError(reply, err);
     }
   });
+
+  // Raw OVERVIEW.md (the sweep-curated current-state context). Returns "" if
+  // the project has no overview yet (issue #2).
+  app.get<{ Params: { slug: string } }>("/api/projects/:slug/overview", async (req, reply) => {
+    try {
+      await projects.get(req.params.slug); // 404s for unknown slug
+      const content = await projects.readOverview(req.params.slug);
+      reply.header("content-type", "text/markdown; charset=utf-8");
+      return content;
+    } catch (err) {
+      return sendProjectError(reply, err);
+    }
+  });
+
+  // Single file content + a render-kind hint (markdown | html | text), derived
+  // from the extension. Path-traversal guarded by ProjectStore.readFile. Feeds
+  // the UI's markdown/Mermaid + sandboxed-iframe renderers (issue #3).
+  app.get<{ Params: { slug: string; name: string } }>(
+    "/api/projects/:slug/files/:name",
+    async (req, reply) => {
+      try {
+        await projects.get(req.params.slug); // 404s for unknown slug
+        const name = decodeURIComponent(req.params.name);
+        return await projects.readFileWithKind(req.params.slug, name);
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  // Pin a file as a sibling tab (issue #4). Validates the file exists + dedupes.
+  app.put<{ Params: { slug: string }; Body: { file?: string } }>(
+    "/api/projects/:slug/pins",
+    async (req, reply) => {
+      try {
+        const project = await projects.pinFile(req.params.slug, req.body?.file ?? "");
+        return { project };
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  // Unpin a file (URL-encoded name) (issue #4).
+  app.delete<{ Params: { slug: string; file: string } }>(
+    "/api/projects/:slug/pins/:file",
+    async (req, reply) => {
+      try {
+        const project = await projects.unpinFile(
+          req.params.slug,
+          decodeURIComponent(req.params.file),
+        );
+        return { project };
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
 
   // --- chats (sessions) --------------------------------------------------
 

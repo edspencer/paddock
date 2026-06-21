@@ -29,6 +29,17 @@ export type ProjectStatus =
 
 export type ProjectVisibility = "public" | "private";
 
+/** Render-kind hint for a project file (drives the UI renderer choice). */
+export type FileKind = "markdown" | "html" | "text";
+
+/** Derive a render kind from a file name's extension. */
+export function fileKind(name: string): FileKind {
+  const ext = name.slice(name.lastIndexOf(".")).toLowerCase();
+  if (ext === ".md" || ext === ".markdown") return "markdown";
+  if (ext === ".html" || ext === ".htm") return "html";
+  return "text";
+}
+
 export interface ProjectLink {
   label: string;
   url: string;
@@ -52,6 +63,11 @@ export interface ProjectYaml {
   updated: string; // YYYY-MM-DD (maintained automatically)
   summary: string;
   links?: ProjectLink[];
+  /**
+   * Files (relative names within the project dir) the user has pinned as
+   * sibling tabs in the UI. Order-preserving, deduped. Default [].
+   */
+  pinned?: string[];
 }
 
 /** API-facing project DTO (adds derived fields). */
@@ -60,6 +76,10 @@ export interface Project extends ProjectYaml {
   dir: string;
   /** Alias of `started` for callers that think in "created". */
   created: string;
+  /** Whether OVERVIEW.md exists in the project dir (sweep-curated context). */
+  hasOverview: boolean;
+  /** Always present in the DTO (defaults to []). */
+  pinned: string[];
 }
 
 export interface CreateProjectInput {
@@ -79,6 +99,7 @@ export type UpdateProjectInput = Partial<
 
 const PROJECT_FILE = "project.yaml";
 const CHANGELOG_FILE = "CHANGELOG.md";
+const OVERVIEW_FILE = "OVERVIEW.md";
 
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -185,6 +206,7 @@ export class ProjectStore {
       updated: now,
       summary: input.summary ?? "",
       links: input.links ?? [],
+      pinned: [],
     };
 
     const dir = this.dirFor(slug);
@@ -206,7 +228,8 @@ export class ProjectStore {
       "utf8",
     );
 
-    return this.toDto(dir, yaml);
+    // No OVERVIEW.md at creation — the first sweep writes it.
+    return this.toDto(dir, yaml, false);
   }
 
   /** Update mutable metadata fields and bump `updated`. */
@@ -220,7 +243,66 @@ export class ProjectStore {
       updated: today(),
     };
     await this.writeYaml(slug, next);
-    return this.toDto(current.dir, next);
+    return this.toDto(current.dir, next, await this.overviewExists(slug));
+  }
+
+  // --- overview (sweep-curated current state) ----------------------------
+
+  /** Read OVERVIEW.md, or "" if it doesn't exist yet. */
+  async readOverview(slug: string): Promise<string> {
+    try {
+      return await fs.readFile(path.join(this.dirFor(slug), OVERVIEW_FILE), "utf8");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return "";
+      throw err;
+    }
+  }
+
+  /** Replace OVERVIEW.md wholesale (the sweep regenerates it each time). */
+  async writeOverview(slug: string, content: string): Promise<void> {
+    await fs.writeFile(path.join(this.dirFor(slug), OVERVIEW_FILE), content, "utf8");
+  }
+
+  /** Whether OVERVIEW.md exists for this project. */
+  async overviewExists(slug: string): Promise<boolean> {
+    try {
+      await fs.access(path.join(this.dirFor(slug), OVERVIEW_FILE));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // --- pins (sibling-tab files) ------------------------------------------
+
+  /**
+   * Pin a file: validate it exists in the project dir, dedupe, persist in
+   * project.yaml. Returns the updated project. Throws ProjectError("invalid")
+   * if the file doesn't exist or escapes the project dir.
+   */
+  async pinFile(slug: string, file: string): Promise<Project> {
+    const current = await this.get(slug);
+    const name = file?.trim();
+    if (!name) throw new ProjectError("File name is required", "invalid");
+    // Reuse readFile's traversal guard + existence check (throws if missing).
+    await this.readFile(slug, name).catch(() => {
+      throw new ProjectError(`File not found: ${name}`, "invalid");
+    });
+    const pinned = current.pinned.includes(name)
+      ? current.pinned
+      : [...current.pinned, name];
+    const next: ProjectYaml = { ...this.stripDto(current), pinned, updated: today() };
+    await this.writeYaml(slug, next);
+    return this.toDto(current.dir, next, await this.overviewExists(slug));
+  }
+
+  /** Unpin a file (no-op if not pinned). Returns the updated project. */
+  async unpinFile(slug: string, file: string): Promise<Project> {
+    const current = await this.get(slug);
+    const pinned = current.pinned.filter((f) => f !== file);
+    const next: ProjectYaml = { ...this.stripDto(current), pinned, updated: today() };
+    await this.writeYaml(slug, next);
+    return this.toDto(current.dir, next, await this.overviewExists(slug));
   }
 
   /**
@@ -294,19 +376,45 @@ export class ProjectStore {
     return fs.readFile(resolved, "utf8");
   }
 
+  /**
+   * Read a file plus a render-kind hint derived from its extension, for the
+   * UI's markdown/Mermaid + sandboxed-iframe renderers (issue #3).
+   * Path-traversal guarded via readFile. Throws ProjectError("not_found") if
+   * the file is missing so the route can 404 cleanly.
+   */
+  async readFileWithKind(
+    slug: string,
+    name: string,
+  ): Promise<{ name: string; kind: FileKind; content: string }> {
+    let content: string;
+    try {
+      content = await this.readFile(slug, name);
+    } catch (err) {
+      if (err instanceof ProjectError) throw err; // traversal -> "invalid"
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        throw new ProjectError(`File not found: ${name}`, "not_found");
+      }
+      throw err;
+    }
+    return { name, kind: fileKind(name), content };
+  }
+
   // --- internals ---------------------------------------------------------
 
   private async readSafe(slug: string): Promise<Project | null> {
     const dir = this.dirFor(slug);
+    let yaml: ProjectYaml;
     try {
       const raw = await fs.readFile(path.join(dir, PROJECT_FILE), "utf8");
       const parsed = YAML.parse(raw) as Partial<ProjectYaml> | null;
       if (!parsed || typeof parsed !== "object") return null;
-      const yaml = this.normalize(parsed, slug);
-      return this.toDto(dir, yaml);
+      yaml = this.normalize(parsed, slug);
     } catch {
       return null;
     }
+    // overviewExists is a cheap fs.access; do it after the yaml parse succeeds.
+    const hasOverview = await this.overviewExists(slug);
+    return this.toDto(dir, yaml, hasOverview);
   }
 
   /** Fill defaults / coerce a parsed project.yaml into a complete ProjectYaml. */
@@ -322,6 +430,9 @@ export class ProjectStore {
       updated: p.updated ?? started,
       summary: p.summary ?? "",
       links: Array.isArray(p.links) ? p.links : [],
+      pinned: Array.isArray(p.pinned)
+        ? p.pinned.filter((f): f is string => typeof f === "string")
+        : [],
     };
   }
 
@@ -333,14 +444,21 @@ export class ProjectStore {
     await fs.writeFile(path.join(this.dirFor(slug), PROJECT_FILE), header + body, "utf8");
   }
 
-  private toDto(dir: string, yaml: ProjectYaml): Project {
-    return { ...yaml, dir, created: yaml.started };
+  private toDto(dir: string, yaml: ProjectYaml, hasOverview: boolean): Project {
+    return {
+      ...yaml,
+      pinned: yaml.pinned ?? [],
+      dir,
+      created: yaml.started,
+      hasOverview,
+    };
   }
 
   private stripDto(p: Project): ProjectYaml {
-    const { dir: _dir, created: _created, ...yaml } = p;
+    const { dir: _dir, created: _created, hasOverview: _hasOverview, ...yaml } = p;
     void _dir;
     void _created;
+    void _hasOverview;
     return yaml;
   }
 }

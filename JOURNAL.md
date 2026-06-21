@@ -525,3 +525,80 @@ Browser ──https──> Caddy(netops) ──> projects.valfenda.net LXC
   Claude transcripts from the deleted test projects may linger under the LXC's
   `~/.claude/projects/` but are unreachable/harmless. (d) Rollback `/opt/paddock.bak`
   left in place — `rm -rf /opt/paddock.bak` on the LXC to reclaim 251M once confident.
+
+- 2026-06-21 — Sub-agent (backend: overview + sweep engine, preload, file content,
+  pins — issues #1/#2/#3/#4/#6): **DONE + LIVE-VALIDATED (9/9 green).** Built on the
+  existing server; no rewrites. **typecheck + build clean** (server tsc, web tsc -b +
+  vite). Pushed to `main`.
+
+  **What I built:**
+  - **Overview + sweep engine (#2 + #6) — the headline.** New `packages/server/src/sweep.ts`
+    (`SweepService`). After a successful USER chat turn, `ws.ts` (at the `chat:complete`
+    success path, non-scratch only) calls `sweep.enqueue(slug)`. Guard rails, all proven:
+    (a) **per-project coalescing debounce** — at most one sweep per project per
+    `PADDOCK_SWEEP_MIN_INTERVAL_MS` (default 5 min); bursts collapse into one trailing
+    sweep via a single per-slug timer. (b) **skip if no new activity** — a per-project
+    watermark (max keeper-session mtime + last-swept time) persisted in
+    `<dataDir>/sweep-state.json` (survives restarts); a sweep whose newest session mtime
+    isn't past the watermark is skipped. (c) **no recursion** — sweeps trigger a dedicated
+    agent OUT OF BAND (`HerdctlService.runSweeper`, `triggerType:"manual"`, fresh session),
+    never via the WS user-chat path, so a sweep can't enqueue another. The sweeper is a
+    per-project **lightweight curator agent** (`sweeper-<slug>`, model
+    `claude-haiku-4-5-20251001` — verified current via the claude-api skill — tools
+    Read/Write/Glob/Grep only, Bash/Edit/WebFetch denied, acceptEdits, max_turns 20),
+    registered once like the keepers (generated yaml + reload; removed on project delete).
+    The curation prompt hands it a digest of recent transcripts + current OVERVIEW.md +
+    recent CHANGELOG and tells it to (1) **rewrite OVERVIEW.md** = synthesized current
+    state for an LLM to read at chat start (replaced), and (2) **append ONE dated bullet
+    to CHANGELOG.md** (append-only). Sweep failures are non-fatal (logged, never break
+    chat). `ProjectStore` gained `readOverview/writeOverview/overviewExists`; the project
+    DTO gained `hasOverview`. New `GET /api/projects/:slug/overview` (raw OVERVIEW.md).
+  - **Context preload (#1).** `chat:send` payload gained `preloadContext?: boolean`. When
+    the chat is NEW (sessionId null) AND the flag is true AND OVERVIEW.md exists, the
+    server prepends it as `"<project-context>\n…\n</project-context>\n\nMy request:\n…"`.
+    No-op for scratch / resumes / missing overview.
+  - **File content endpoint (#3).** `GET /api/projects/:slug/files/:name` →
+    `{ name, kind: "markdown"|"html"|"text", content }` (kind from extension; path-traversal
+    guarded via `ProjectStore.readFile`). 404 missing, 400 traversal.
+  - **Pins (#4).** `ProjectYaml` + DTO gained `pinned: string[]` (default []).
+    `PUT /api/projects/:slug/pins {file}` (validates existence, dedupes) and
+    `DELETE /api/projects/:slug/pins/:file` (URL-encoded). Persisted to project.yaml.
+
+  **LIVE VALIDATION (Max OAuth, claude CLI 2.1.167, dot-free temp PADDOCK_DATA_DIR,
+  PORT 4055, `PADDOCK_SWEEP_MIN_INTERVAL_MS=8000` to exercise debounce fast — same code
+  path as the 5-min default; token sourced into env, never printed):**
+  - Created "Sweep Demo" → new chat (no preload) asked it to write `plan.md` + `diagram.html`
+    → keeper wrote both (Write tool_calls), turn success. ✓
+  - A sweep **fired** (`sweeper-sweep-demo` job, distinct from `keeper-sweep-demo`):
+    `OVERVIEW.md` created (synthesized state) and ONE dated bullet appended to `CHANGELOG.md`.
+    DTO `hasOverview` flipped to true; `/overview` matched the file. `sweep-state.json`
+    watermark persisted. ✓
+  - **Debounce**: two rapid resumed turns within the interval → exactly **1** OVERVIEW
+    rewrite (coalesced, not 2). Across 4 user turns the log showed 3 `sweep: completed`
+    and **0 recursive** sweeps (count matched activity windows). ✓
+  - **Skip-if-no-activity**: isolated test pre-seeding a future watermark → enqueue logged
+    `sweep: skipped (no new activity)` and did NOT rewrite OVERVIEW.md. ✓
+  - **Preload**: NEW chat with `preloadContext:true` + vague question ("what files exist?")
+    → reply correctly listed `plan.md` and `diagram.html` from the injected overview,
+    without reading files. ✓
+  - **Files**: `/files/plan.md`→kind:markdown, `/files/diagram.html`→kind:html, missing→404,
+    `../../etc/hosts`→400. **Pins**: pinned both (deduped on repeat), nonexistent→400,
+    project.yaml `pinned` persisted, unpin→200 leaving one. ✓
+  Server stopped; temp data + the test Claude transcript removed; scratch scripts deleted.
+
+  **Contract for the frontend agent:** full delta in `docs/CONTRACT-v2.md`. Summary:
+  DTO `+hasOverview:boolean` `+pinned:string[]`; `chat:send` `+preloadContext?:boolean`
+  (new-chat overview inject); new `GET /:slug/overview`, `GET /:slug/files/:name`
+  (`{name,kind,content}`), `PUT /:slug/pins {file}`, `DELETE /:slug/pins/:file`.
+
+  **Honest notes / rough edges:** (a) **No push for sweeps** — they run out of band with
+  no WS event; the UI must pull (`GET /:slug`, `/overview`, `/changelog`) to reflect a
+  fresh sweep. A sweep-push WS channel is a clean future enhancement. (b) The sweeper is
+  **one agent per project** (not a single shared sweeper) because herdctl binds
+  `working_directory` per-agent and `TriggerOptions` has no cwd override — so each project
+  needs its own cwd-bound sweeper. Doubles the agent count; acceptable, and removed on
+  project delete. (c) The sweeper runs **without Docker isolation** like the keepers
+  (acceptEdits, Bash denied) — same documented follow-up. (d) Sweep min interval is 5 min
+  by default; the live test used 8s via env to exercise coalescing quickly — the prod
+  default is unchanged. (e) Not yet deployed to the LXC (code + push only, per scope);
+  redeploy is a separate step.

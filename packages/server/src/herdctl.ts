@@ -69,6 +69,28 @@ export function keeperAgentName(slug: string): string {
 export const SCRATCH_AGENT = "scratch";
 
 /**
+ * The dedicated lightweight curator agent used by the post-turn sweep. Runs on
+ * a cheap model (Haiku 4.5) with only read/write tools, no Bash. Registered
+ * once (like keepers). Its working_directory is set PER TRIGGER to the project
+ * being swept (via TriggerOptions has no cwd override, so the sweeper agent's
+ * cwd must be the project dir at trigger time) — see SweepService.
+ *
+ * NOTE: herdctl agents bind working_directory in their yaml. Because a single
+ * shared sweeper can only have one cwd, the SweepService instead registers ONE
+ * sweeper agent PER PROJECT (keeper-style) so each has the right cwd. The name
+ * is derived from the slug; the agent reads/writes that project's files.
+ */
+export const SWEEPER_PREFIX = "sweeper-";
+
+/** Maps a project slug to its sweeper agent name. */
+export function sweeperAgentName(slug: string): string {
+  return `${SWEEPER_PREFIX}${slug}`;
+}
+
+/** The model used by the sweeper agent (cheap curation/summarization). */
+export const SWEEPER_MODEL = "claude-haiku-4-5-20251001";
+
+/**
  * The slug clients use to address one-off chats over WS/REST. Routed to the
  * scratch agent (working_directory = the scratch dir), not a real project.
  */
@@ -163,11 +185,16 @@ export class HerdctlService {
   async removeProjectAgent(slug: string, survivingProjects: Project[]): Promise<void> {
     // Regenerate herdctl.yaml from the survivors (the deleted project is gone).
     await this.ensureConfigFile(survivingProjects);
-    // Drop the orphaned per-agent yaml file (ensureConfigFile only writes the
-    // survivors; it does not delete stale agent files).
+    // Drop the orphaned per-agent yaml files (ensureConfigFile only writes the
+    // survivors; it does not delete stale agent files). Both the keeper and the
+    // sweeper for this project are now orphaned.
     const agentsDir = path.join(path.dirname(this.cfg.herdctlConfigPath), "agents");
-    const orphan = path.join(agentsDir, `${keeperAgentName(slug)}.yaml`);
-    await fs.rm(orphan, { force: true }).catch(() => undefined);
+    await fs
+      .rm(path.join(agentsDir, `${keeperAgentName(slug)}.yaml`), { force: true })
+      .catch(() => undefined);
+    await fs
+      .rm(path.join(agentsDir, `${sweeperAgentName(slug)}.yaml`), { force: true })
+      .catch(() => undefined);
     if (this.fleet) {
       await this.fleet.reload();
     }
@@ -211,6 +238,29 @@ export class HerdctlService {
   /** Cancel a running job (best-effort; used by WS chat:cancel). */
   async cancel(jobId: string): Promise<void> {
     await this.manager.cancelJob(jobId).catch(() => undefined);
+  }
+
+  /**
+   * Run a project's sweeper (curator) agent with a fresh session and the given
+   * prompt. Used OUT OF BAND by SweepService — never from the user-chat path —
+   * so a sweep can never enqueue another sweep. resume:null forces a clean
+   * session each time (the sweep is stateless: it reads the project files +
+   * provided digest and rewrites OVERVIEW.md / appends to CHANGELOG.md).
+   */
+  async runSweeper(slug: string, prompt: string): Promise<TriggerResult> {
+    return this.manager.trigger(sweeperAgentName(slug), undefined, {
+      prompt,
+      resume: null,
+      triggerType: "manual",
+    });
+  }
+
+  /** Recent sessions for a project, used to build the sweep digest. */
+  async recentSessions(project: Project, limit = 10): Promise<DiscoveredSession[]> {
+    if (!this.discovery) throw new Error("HerdctlService not initialized");
+    return this.discovery.getAgentSessions(keeperAgentName(project.slug), project.dir, false, {
+      limit,
+    });
   }
 
   /** List a project's sessions (chats). */
@@ -273,11 +323,27 @@ export class HerdctlService {
       })),
     ];
 
-    // Write one agent yaml file per spec and collect path references.
+    // Write one keeper/scratch agent yaml file per spec.
     const agentRefs: Array<{ path: string }> = [];
     for (const spec of specs) {
       const file = path.join(agentsDir, `${spec.name}.yaml`);
       await fs.writeFile(file, this.renderAgentYaml(spec), "utf8");
+      agentRefs.push({ path: file });
+    }
+
+    // Plus one lightweight sweeper agent per project (curates OVERVIEW.md +
+    // CHANGELOG.md after each turn). Cheap model, Read/Write/Glob/Grep only,
+    // no Bash. working_directory = the project dir so it edits that project's
+    // files. Triggered out-of-band by SweepService (never via the user-chat
+    // path), so a sweep can't enqueue another sweep.
+    for (const p of projects) {
+      const name = sweeperAgentName(p.slug);
+      const file = path.join(agentsDir, `${name}.yaml`);
+      await fs.writeFile(
+        file,
+        this.renderSweeperYaml({ name, dir: p.dir, projectName: p.name }),
+        "utf8",
+      );
       agentRefs.push({ path: file });
     }
 
@@ -324,6 +390,38 @@ export class HerdctlService {
         "Honor any CLAUDE.md present. Keep CHANGELOG.md current. " +
         "Create branches for significant changes; never force-push.",
       default_prompt: "Summarize the current state of this project.",
+    };
+    return "# GENERATED by paddock-server — do not hand-edit.\n" + YAML.stringify(agent);
+  }
+
+  /**
+   * Render the per-project sweeper (curator) agent yaml. Lightweight: a cheap
+   * model, restricted to read/write/search tools (NO Bash — it only edits
+   * OVERVIEW.md / CHANGELOG.md). acceptEdits so it can write without prompts.
+   * Bounded with a small max_turns. Override the fleet defaults explicitly.
+   */
+  private renderSweeperYaml(spec: { name: string; dir: string; projectName: string }): string {
+    const agent = {
+      name: spec.name,
+      description: `Overview/changelog curator (sweeper) for project ${spec.projectName}.`,
+      working_directory: spec.dir,
+      model: SWEEPER_MODEL,
+      max_turns: 20,
+      permission_mode: "acceptEdits",
+      allowed_tools: ["Read", "Write", "Glob", "Grep"],
+      // Defaults include Bash/Edit/WebFetch/etc.; the sweeper must not have them.
+      denied_tools: ["Bash", "Edit", "WebFetch", "WebSearch"],
+      system_prompt:
+        "You are a concise project curator. You maintain two files in this " +
+        "project directory:\n" +
+        "- OVERVIEW.md: a synthesized snapshot of the project's CURRENT state, " +
+        "written for an LLM to read at the start of a new chat. You REPLACE it " +
+        "in full each time.\n" +
+        "- CHANGELOG.md: an append-only, reverse-chronological narrative. You " +
+        "APPEND one dated bullet per sweep; never rewrite existing entries.\n" +
+        "Be factual and terse. Do not invent details not present in the " +
+        "provided activity. Use only the Read/Write/Glob/Grep tools.",
+      default_prompt: "Curate OVERVIEW.md and CHANGELOG.md from recent activity.",
     };
     return "# GENERATED by paddock-server — do not hand-edit.\n" + YAML.stringify(agent);
   }

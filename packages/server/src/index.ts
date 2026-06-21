@@ -14,6 +14,7 @@ import { ProjectStore } from "./projects.js";
 import { HerdctlService } from "./herdctl.js";
 import { registerRoutes } from "./routes.js";
 import { makeChatHandler } from "./ws.js";
+import { SweepService } from "./sweep.js";
 
 async function main(): Promise<void> {
   const cfg = loadPaddockConfig();
@@ -38,11 +39,19 @@ async function main(): Promise<void> {
     app.log.error({ err }, "FleetManager init/start failed — chat will be unavailable");
   }
 
+  // --- post-turn curation sweep (overview + changelog) -------------------
+  const sweep = new SweepService({
+    herdctl,
+    projects,
+    dataDir: cfg.dataDir,
+    logger: app.log,
+  });
+
   // --- transport ---------------------------------------------------------
   await app.register(websocket);
   await registerRoutes(app, { projects, herdctl });
 
-  const chatHandler = makeChatHandler({ herdctl, projects });
+  const chatHandler = makeChatHandler({ herdctl, projects, sweep });
   await app.register(async (scoped) => {
     scoped.get("/ws", { websocket: true }, (socket) => {
       void chatHandler(socket);
@@ -70,6 +79,7 @@ async function main(): Promise<void> {
 
   // --- lifecycle ---------------------------------------------------------
   const close = async () => {
+    sweep.stop();
     await herdctl.stop().catch(() => undefined);
     await app.close().catch(() => undefined);
     process.exit(0);

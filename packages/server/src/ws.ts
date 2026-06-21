@@ -43,6 +43,7 @@ import {
 import type { HerdctlService } from "./herdctl.js";
 import { keeperAgentName, SCRATCH_AGENT, SCRATCH_SLUG } from "./herdctl.js";
 import type { ProjectStore } from "./projects.js";
+import type { SweepService } from "./sweep.js";
 
 // --- client -> server --------------------------------------------------------
 
@@ -55,6 +56,12 @@ export interface ChatSendMessage {
     /** Session to resume; null/omitted starts a new chat. */
     sessionId?: string | null;
     message: string;
+    /**
+     * When true AND this is a NEW chat (sessionId null/omitted) AND the project
+     * has an OVERVIEW.md, prepend that overview to the prompt as a delimited
+     * context block (issue #1). No-op for scratch or when no overview exists.
+     */
+    preloadContext?: boolean;
   };
 }
 
@@ -139,6 +146,7 @@ export function isClientMessage(data: unknown): data is ClientMessage {
     if (!p || typeof p.message !== "string") return false;
     const slug = p.projectSlug ?? p.target;
     if (typeof slug !== "string") return false;
+    if (p.preloadContext !== undefined && typeof p.preloadContext !== "boolean") return false;
     return p.sessionId === undefined || p.sessionId === null || typeof p.sessionId === "string";
   }
   return false;
@@ -236,7 +244,12 @@ function extractResultsWithIds(
  * Register the /ws route handler. Pure transport: it validates messages,
  * resolves the target agent, and streams a real trigger back to the socket.
  */
-export function makeChatHandler(deps: { herdctl: HerdctlService; projects: ProjectStore }) {
+export function makeChatHandler(deps: {
+  herdctl: HerdctlService;
+  projects: ProjectStore;
+  /** Optional: post-turn overview/changelog curation engine (issues #2/#6). */
+  sweep?: SweepService;
+}) {
   return async function handle(socket: WebSocket): Promise<void> {
     const send = (m: ServerMessage) => {
       if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(m));
@@ -267,7 +280,8 @@ export function makeChatHandler(deps: { herdctl: HerdctlService; projects: Proje
 
     const onChatSend = async (msg: ChatSendMessage): Promise<void> => {
       const slug = readSlug(msg.payload) as string;
-      const { message, sessionId } = msg.payload;
+      const { message, sessionId, preloadContext } = msg.payload;
+      const isNewChat = sessionId === undefined || sessionId === null;
       let jobId: string | null = null;
       let resolvedSession: string | null = sessionId ?? null;
 
@@ -300,6 +314,8 @@ export function makeChatHandler(deps: { herdctl: HerdctlService; projects: Proje
         // Resolve the agent: "scratch" -> scratch agent; otherwise keeper-<slug>.
         let agentName: string;
         let workingDir: string;
+        // Effective prompt — may be augmented with the project overview below.
+        let prompt = message;
         if (slug === SCRATCH_SLUG) {
           agentName = SCRATCH_AGENT;
           workingDir = deps.herdctl.scratchDir;
@@ -308,10 +324,24 @@ export function makeChatHandler(deps: { herdctl: HerdctlService; projects: Proje
           const project = await deps.projects.get(slug);
           agentName = keeperAgentName(slug);
           workingDir = project.dir;
+
+          // Context preload (issue #1): only for a NEW chat, only when asked,
+          // and only when the project actually has an OVERVIEW.md. Prepend it
+          // as a clearly delimited block so the keeper starts primed.
+          if (isNewChat && preloadContext) {
+            const overview = await deps.projects.readOverview(slug).catch(() => "");
+            if (overview.trim().length > 0) {
+              prompt =
+                "<project-context>\n" +
+                overview.trim() +
+                "\n</project-context>\n\nMy request:\n" +
+                message;
+            }
+          }
         }
 
         const result = await deps.herdctl.chat(agentName, {
-          prompt: message,
+          prompt,
           // omit -> agent-level fallback; explicit null -> new chat; id -> resume.
           resume: sessionId ?? null,
           triggerType: "web",
@@ -383,6 +413,14 @@ export function makeChatHandler(deps: { herdctl: HerdctlService; projects: Proje
         // cache for this working dir so the chat list reflects it immediately
         // (rather than after the ~30s cache TTL).
         if (result.success) deps.herdctl.invalidateSessions(workingDir);
+
+        // Post-turn sweep (issues #2/#6): on a successful USER turn in a real
+        // project, enqueue a coalesced/debounced curation sweep. Out of band —
+        // never blocks or breaks chat, and can't recurse (the sweep uses a
+        // separate agent triggered off the user-chat path). Skipped for scratch.
+        if (result.success && slug !== SCRATCH_SLUG && deps.sweep) {
+          deps.sweep.enqueue(slug);
+        }
 
         send({
           type: "chat:complete",

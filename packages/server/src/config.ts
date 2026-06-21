@@ -13,6 +13,8 @@ export interface PaddockConfig {
   port: number;
   /** Bind host. */
   host: string;
+  /** Absolute (canonical) path to the data root. Holds state files (e.g. sweep). */
+  dataDir: string;
   /** Absolute path to the root that contains per-project directories. */
   projectsRoot: string;
   /** Absolute path to the herdctl state directory (.herdctl). */
@@ -78,6 +80,7 @@ export function loadPaddockConfig(): PaddockConfig {
   }
   // working_directory of keeper/scratch agents MUST be canonical so session
   // discovery (which encodes the real path) can find Claude transcripts.
+  const dataDir = canonical(dataRoot);
   const projectsRoot = canonical(envOr("PADDOCK_PROJECTS_DIR", path.join(dataRoot, "projects")));
   const stateDir = canonical(envOr("PADDOCK_STATE_DIR", path.join(dataRoot, ".herdctl")));
   const herdctlConfigPath = canonical(
@@ -94,6 +97,7 @@ export function loadPaddockConfig(): PaddockConfig {
   return Object.freeze({
     port: Number(envOr("PORT", "4000")),
     host: envOr("HOST", "0.0.0.0"),
+    dataDir,
     projectsRoot,
     stateDir,
     herdctlConfigPath,
