@@ -5,12 +5,17 @@ import { useProjects } from "../lib/projects-context";
 import type { Chat, Project } from "../lib/types";
 import { StatusPill } from "../components/StatusPill";
 import { NewProjectModal } from "../components/NewProjectModal";
+import { EditProjectModal } from "../components/EditProjectModal";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { ProjectMenu } from "../components/ProjectMenu";
 import { ChatIcon, ClockIcon, PlusIcon, SparkIcon } from "../components/icons";
 import { relativeTime } from "../lib/format";
 
 export function ProjectsGrid() {
-  const { projects, loading, error, upsert } = useProjects();
+  const { projects, loading, error, upsert, remove } = useProjects();
   const [modalOpen, setModalOpen] = useState(false);
+  const [editing, setEditing] = useState<Project | null>(null);
+  const [deleting, setDeleting] = useState<Project | null>(null);
   const navigate = useNavigate();
 
   // Per-project session counts (best-effort, populated lazily).
@@ -81,23 +86,76 @@ export function ProjectsGrid() {
         {!loading && projects.length > 0 && (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {projects.map((p) => (
-              <ProjectCard key={p.slug} project={p} sessionCount={counts[p.slug]?.length} />
+              <ProjectCard
+                key={p.slug}
+                project={p}
+                sessionCount={counts[p.slug]?.length}
+                onEdit={() => setEditing(p)}
+                onDelete={() => setDeleting(p)}
+              />
             ))}
           </div>
         )}
       </div>
 
       <NewProjectModal open={modalOpen} onClose={() => setModalOpen(false)} onCreated={onCreated} />
+      {editing && (
+        <EditProjectModal
+          open
+          project={editing}
+          onClose={() => setEditing(null)}
+          onSaved={(p) => {
+            upsert(p);
+            setEditing(null);
+          }}
+        />
+      )}
+      <ConfirmDialog
+        open={deleting !== null}
+        title="Delete project?"
+        message={
+          <>
+            <span className="font-medium text-ink dark:text-ink-dark">{deleting?.name}</span> and
+            all its chats and files will be permanently removed. This cannot be undone.
+          </>
+        }
+        confirmLabel="Delete project"
+        onConfirm={async () => {
+          if (!deleting) return;
+          const slug = deleting.slug;
+          await api.deleteProject(slug);
+          remove(slug);
+          setDeleting(null);
+        }}
+        onClose={() => setDeleting(null)}
+      />
     </div>
   );
 }
 
-function ProjectCard({ project, sessionCount }: { project: Project; sessionCount?: number }) {
+function ProjectCard({
+  project,
+  sessionCount,
+  onEdit,
+  onDelete,
+}: {
+  project: Project;
+  sessionCount?: number;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
   return (
-    <Link to={`/projects/${project.slug}`} className="card flex flex-col gap-3">
+    <Link to={`/projects/${project.slug}`} className="card group/card relative flex flex-col gap-3">
       <div className="flex items-start justify-between gap-2">
-        <h2 className="font-semibold leading-snug">{project.name}</h2>
-        <StatusPill status={project.status} />
+        <h2 className="min-w-0 line-clamp-2 font-semibold leading-snug">{project.name}</h2>
+        <div className="flex shrink-0 items-center gap-1">
+          <StatusPill status={project.status} />
+          <ProjectMenu
+            onEdit={onEdit}
+            onDelete={onDelete}
+            label={`Actions for ${project.name}`}
+          />
+        </div>
       </div>
       {project.summary && (
         <p className="line-clamp-3 text-sm text-paddock-600 dark:text-paddock-400">
@@ -106,11 +164,14 @@ function ProjectCard({ project, sessionCount }: { project: Project; sessionCount
       )}
       {project.domain.length > 0 && (
         <div className="flex flex-wrap gap-1">
-          {project.domain.map((d) => (
-            <span key={d} className="tag">
+          {project.domain.slice(0, 4).map((d) => (
+            <span key={d} className="tag max-w-[10rem] truncate">
               {d}
             </span>
           ))}
+          {project.domain.length > 4 && (
+            <span className="tag">+{project.domain.length - 4}</span>
+          )}
         </div>
       )}
       <div className="mt-auto flex items-center justify-between gap-2 border-t border-paddock-200/70 pt-3 text-[11px] text-paddock-400 dark:border-paddock-800">

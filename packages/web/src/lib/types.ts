@@ -37,6 +37,15 @@ export interface CreateProjectInput {
   summary?: string;
 }
 
+/** Editable project metadata (slug + dates are immutable server-side). */
+export interface UpdateProjectInput {
+  name?: string;
+  status?: ProjectStatus;
+  domain?: string[];
+  summary?: string;
+  visibility?: "public" | "private";
+}
+
 /** A chat = one Claude Code session, surfaced by the server's session discovery. */
 export interface Chat {
   sessionId: string;

@@ -223,6 +223,27 @@ export class ProjectStore {
     return this.toDto(current.dir, next);
   }
 
+  /**
+   * Delete a project directory and everything in it (project.yaml, CHANGELOG.md,
+   * and any files the keeper agent created). Throws ProjectError("not_found")
+   * if the slug has no project.yaml, so callers can return a clean 404.
+   *
+   * Note: this removes the project DIRECTORY only. The caller (server) is
+   * responsible for dropping the generated keeper-agent yaml + regenerating
+   * herdctl.yaml + reloading the fleet — the inverse of the create flow.
+   */
+  async remove(slug: string): Promise<Project> {
+    const project = await this.get(slug); // throws not_found
+    const dir = this.dirFor(slug);
+    // Guard against deleting the projects root itself if a bad slug slipped in.
+    const resolved = path.resolve(dir);
+    if (resolved === path.resolve(this.root) || !resolved.startsWith(path.resolve(this.root) + path.sep)) {
+      throw new ProjectError("Refusing to delete outside the projects root", "invalid");
+    }
+    await fs.rm(dir, { recursive: true, force: true });
+    return project;
+  }
+
   /** Append a dated bullet to the project's CHANGELOG.md (under today's heading). */
   async appendChangelog(slug: string, line: string): Promise<void> {
     const dir = this.dirFor(slug);

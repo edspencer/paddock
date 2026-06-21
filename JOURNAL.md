@@ -325,3 +325,144 @@ Browser ──https──> Caddy(netops) ──> projects.valfenda.net LXC
   root devDependency; browser binaries live in the OS cache (NOT committed) and
   `.gitignore` extended with playwright output dirs. `scripts/e2e.mjs` is rerunnable:
   `BASE_URL=… PADDOCK_DATA_DIR=… node scripts/e2e.mjs` (exit 0 = all green).
+
+- 2026-06-21 — Sub-agent (DEPLOY to homelab LXC): **DONE. https://projects.valfenda.net
+  IS LIVE AND WORKING END-TO-END, with Claude Max OAuth (NO API-key fallback needed).**
+  Drove a real chat through the public HTTPS URL in a browser → keeper agent wrote a
+  file on disk under `/var/lib/paddock`. All 7 deploy steps applied; shared infra
+  touched surgically + additively, with backups, and existing services confirmed intact.
+
+  **What was deployed (LXC `projects` @ 192.168.1.83, CTID 123, pve-1):**
+  - **Code**: shipped the working tree to `/opt/paddock` via `tar | ssh` (rsync absent
+    on the LXC; excluded node_modules/dist/.git/data). `npm ci` (436 pkgs) + `npm run
+    build` → both packages built clean. Entrypoint `packages/server/dist/index.js`;
+    SPA served from `packages/web/dist` (relative `../../web/dist` resolves correctly).
+  - **Env**: `/etc/paddock.env` (mode 600, root) — `CLAUDE_CODE_OAUTH_TOKEN` piped over
+    ssh from `~/herds/.env` (never printed; verified 108-char `sk-ant-oat…` transferred
+    intact), `PORT=4000`, `HOST=0.0.0.0`, **`PADDOCK_DATA_DIR=/var/lib/paddock`
+    (DOT-FREE per the caveat above)**, `NODE_ENV=production`. Data dir created.
+  - **systemd**: `/etc/systemd/system/paddock.service` mirrors devbox's herdctl.service
+    (Type=simple, User=root, WorkingDirectory=/opt/paddock,
+    `ExecStart=/usr/bin/node packages/server/dist/index.js`, Restart=always,
+    EnvironmentFile=/etc/paddock.env). **PATH includes `/usr/local/bin`** (+ `/root/.local/bin`)
+    so keeper agents can spawn `claude` (2.1.185, symlinked at /usr/local/bin/claude).
+    `enable --now`; **active, listening 0.0.0.0:4000**; survives `systemctl restart`
+    (projects persist on disk). `/api/health`→`{"ok":true}`, `/api/projects`→JSON.
+
+  **TOKEN VERIFICATION ON THE LXC (the critical step) — OAuth WORKS:**
+  Created project "Deploy Smoke" via the API, opened a WS on the LXC, sent a prompt to
+  write a file. Result: assistant text streamed (`chat:response`), **Bash `pwd` (127ms)
+  + Write tool_calls fired**, `chat:complete success=true` with real sessionId
+  `2c00a035-…`. On disk: `/var/lib/paddock/projects/deploy-smoke/deploy-proof.txt` ==
+  `LXCLIVE`. Session listable + resumable via `/api/projects/deploy-smoke/chats`.
+  **No `runtime: sdk` / ANTHROPIC_API_KEY fallback was needed — Max OAuth authenticated
+  cleanly on the LXC.** (Note for future debugging: the WS client contract is
+  `{type:"chat:send", payload:{projectSlug, sessionId, message}}` — a flat-field
+  message is rejected as "Unknown message"; server replies are `{type, payload:{…}}`.)
+
+  **Shared infra changed (SURGICAL + ADDITIVE, backups taken, existing services
+  re-verified):**
+  - **Caddy on netops (192.168.1.33, docker `caddy`)**: backed up
+    `/opt/netops/caddy/Caddyfile` → `Caddyfile.bak.1782018728`, appended a
+    `projects.valfenda.net { tls{dns cloudflare …} reverse_proxy 192.168.1.83:4000 }`
+    block mirroring the devbox block EXACTLY. `caddy validate` → "Valid configuration";
+    hot `caddy reload`. **devbox.valfenda.net + podcasts.valfenda.net still HTTP 200**
+    after reload (no regression).
+  - **DNS (Unbound on OPNsense via API)**: added host override
+    `projects.valfenda.net → 192.168.1.33` (netops/Caddy), uuid
+    `27496a8f-f23b-4fd3-bf4f-2b5b95258cc3`; `unbound/service/reconfigure` → `{"status":"ok"}`.
+    `pihole reloaddns` on .53 (via `pihole-1` alias) and .54 (via `pihole-2` alias).
+    Note: pihole-2's host key had legitimately rotated (ecdsa→ed25519); removed ONLY the
+    stale `known_hosts` line for .54 (`ssh-keygen -R`) so ssh re-learned it — did NOT
+    disable host-key checking globally. `dig +short projects.valfenda.net` → 192.168.1.33
+    on Unbound, BOTH pi-holes, and the laptop default resolver. devbox still resolves
+    (no regression).
+  - **`~/herds/personal/homelab/IP-ALLOCATIONS.md`**: added the
+    `192.168.1.83 | projects | … | pve-1 LXC 123` row under Development Workloads.
+
+  **END-TO-END FROM THE LAPTOP (the headline result):**
+  - `curl https://projects.valfenda.net/` → HTTP 200, serves the SPA; **valid Let's
+    Encrypt cert** `CN=projects.valfenda.net` (issued 04:14 UTC, auto via DNS-01; no
+    wait needed). `/api/projects` + `/api/health` return JSON over HTTPS.
+  - **Playwright against the LIVE https URL**: created project "Live Verify 14043"
+    through the real UI, sent a chat over the live WS → keeper agent wrote
+    `/var/lib/paddock/projects/live-verify-14043/live-proof.txt` == `HTTPSLIVE`
+    (irrefutable proof the whole browser→Caddy→LXC→herdctl→Claude(OAuth)→tool chain
+    works). Session `f30eb1c6-…` persisted + resumable over HTTPS. Screenshots:
+    `docs/screenshots/live-01-landing|02-new-project|03-project-view|05-complete.png`
+    (05 shows the project view with the user bubble + a rendered Bash tool block + the
+    "connected" WS indicator).
+
+  **Remaining / honest caveats:** (1) two test projects ("Deploy Smoke",
+  "Live Verify 14043") were left on the LXC as living proof — delete their dirs under
+  `/var/lib/paddock/projects/` if a clean slate is wanted. (2) Keeper agents still run
+  WITHOUT Docker isolation (acceptEdits + denied dangerous bash) — the documented
+  follow-up; the LXC has `nesting=1` ready when we want to add it. (3) The web SPA
+  loads fonts from Google Fonts at runtime (system-ui fallback if offline). (4) Caddy
+  reload emits pre-existing `header_up`/formatting warnings from OTHER blocks (not from
+  ours) — cosmetic. Full applied state mirrored into `~/Code/paddock-deploy-notes.md`.
+
+- 2026-06-21 — Sub-agent (enhancements: project/chat management, self-hosted fonts,
+  polish): **DONE. 10/10 E2E green (all 7 proven flows + 3 new assertions).** Tight,
+  low-risk improvements on top of the live app; nothing in the proven flows changed
+  behaviorally. Built + typechecked clean; ran the FULL browser E2E against a real
+  server (Max OAuth, dot-free temp `PADDOCK_DATA_DIR`, real Claude turns) — all pass.
+
+  **1) Project management (backend + UI):**
+  - `DELETE /api/projects/:slug` — `ProjectStore.remove()` rm's the project dir (guarded
+    to stay under projectsRoot), then `HerdctlService.removeProjectAgent()` regenerates
+    herdctl.yaml from the SURVIVORS, deletes the orphaned `agents/keeper-<slug>.yaml`,
+    and `fleet.reload()` (the exact inverse of the create flow — `reload()` cleanly
+    computes removed agents + updates the scheduler). `PATCH /api/projects/:slug` already
+    existed and is now wired in the UI.
+  - UI: a reusable **"…" overflow menu** (`ProjectMenu`) on every project **card** AND in
+    the **project header** with **Edit details** + **Delete project**; a shared
+    **`ConfirmDialog`** (Esc-cancel, busy state, error surface) gates the destructive
+    delete; an **`EditProjectModal`** PATCHes status/summary/domain and the change is
+    reflected immediately (header + grid) AND verified persisted server-side by the E2E.
+    Local optimistic `remove()`/`upsert()` added to the projects context.
+  - E2E proves: deleted project disappears from the grid, its `keeper-<slug>` is gone
+    from `/api/fleet`, the project 404s, and its dir is removed on disk.
+
+  **2) Chat/session management — SUPPORTED (not skipped).** The public API surfaces
+  `getCliSessionFile(workingDir, sessionId)` (deep import
+  `@herdctl/core/dist/runner/runtime/cli-session-path.js`; no `exports` map gates it, and
+  it VALIDATES the sessionId — rejects path traversal). That computes the exact
+  `~/.claude/projects/<encoded-cwd>/<id>.jsonl` the SessionDiscoveryService reads, so
+  deleting a chat = `fs.unlink` that file + `invalidateAttributionCache`. Added
+  `DELETE /api/projects/:slug/chats/:sessionId` and `DELETE /api/chats/:sessionId`, plus a
+  hover **trash affordance** + confirm on every chat row (project + one-off lists).
+  Verified end-to-end by hand: endpoint returns `{ok,removed:true}`, list count drops,
+  transcript JSONL gone from disk. **Rename was skipped** (optional per spec; the
+  `SessionMetadataStore` custom-name write path isn't surfaced cleanly through the public
+  barrel — left as a clean follow-up rather than hacked).
+
+  **3) Self-hosted fonts (offline-safe on the LAN).** Removed the runtime Google Fonts
+  `<link>` from `index.html`. Inter + JetBrains Mono are **variable** fonts — the latin
+  subset is a single woff2 each — so `packages/web/public/fonts/{inter,jetbrains-mono}-latin.woff2`
+  (~48KB + ~31KB) cover all weights via `@font-face` (`font-weight: 100 900`/`100 800`,
+  `font-display: swap`) in `index.css`. `system-ui` fallback kept in the Tailwind stacks.
+  Vite copies `public/` → `dist/fonts/`; the server's static handler serves them
+  (`200 font/woff2`). E2E asserts **zero** requests to fonts.googleapis/gstatic, the local
+  woff2 serves 200, and `getComputedStyle(body).fontFamily` resolves to Inter.
+
+  **4) Polish.** Fixed sidebar domain-tag wrapping (cap 2 tags + `+N`, truncate, no-wrap
+  overflow). Card title `line-clamp-2` + `min-w-0` so it never collides with the status
+  pill/menu; card domains cap at 4 + `+N`, truncate. Dark-mode `.tag` contrast bumped
+  (`paddock-800`/`paddock-200`). Added `.btn-danger`, `.menu*` component classes.
+
+  **VALIDATION:** `npm run typecheck` + `npm run build` clean (web bundle 409KB/127KB
+  gzip, unchanged). Server stopped, temp data + this run's `~/.claude/projects/*` test
+  transcripts removed; no Playwright binaries committed. Screenshots refreshed under
+  `docs/screenshots/` incl. new **11-project-menu**, **12-delete-confirm**,
+  **13-edit-metadata** (overwrote 02–10 from this run). Committed + pushed to `main`.
+
+  **Honest notes:** (a) the chat-delete helper is a DEEP import into core's `dist/`
+  (public function, but not re-exported from the package barrel) — robust today (no
+  `exports` map), but a clean PR candidate is to surface `getCliSessionFile` (and a
+  first-class `deleteSession`/`removeAgent`) from `@herdctl/core`'s index (add to
+  docs/INTEGRATION.md gap list). (b) Session rename skipped (see above). (c) Deleting a
+  project does NOT delete its sessions' Claude transcripts under `~/.claude/projects/`
+  (they're orphaned but harmless, and unreachable once the project dir/keeper are gone);
+  could be added to the delete path later if desired. (d) No Docker isolation change —
+  out of scope here.

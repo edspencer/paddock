@@ -85,6 +85,23 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     },
   );
 
+  // Delete a project: remove its directory, drop the generated keeper-agent
+  // yaml, regenerate herdctl.yaml from the survivors, and hot-reload the fleet
+  // (the inverse of the create flow).
+  app.delete<{ Params: { slug: string } }>("/api/projects/:slug", async (req, reply) => {
+    try {
+      const project = await projects.remove(req.params.slug); // throws not_found
+      try {
+        await herdctl.removeProjectAgent(project.slug, await projects.list());
+      } catch (err) {
+        req.log.warn({ err }, "keeper-agent unregister failed (project dir already removed)");
+      }
+      return reply.code(200).send({ ok: true, slug: project.slug });
+    } catch (err) {
+      return sendProjectError(reply, err);
+    }
+  });
+
   app.get<{ Params: { slug: string } }>("/api/projects/:slug/files", async (req, reply) => {
     try {
       await projects.get(req.params.slug);
@@ -150,6 +167,20 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     },
   );
 
+  // Delete a chat (session) within a project: removes its transcript JSONL.
+  app.delete<{ Params: { slug: string; sessionId: string } }>(
+    "/api/projects/:slug/chats/:sessionId",
+    async (req, reply) => {
+      try {
+        const dir = await workingDirForSlug(req.params.slug);
+        const removed = await herdctl.deleteSession(dir, req.params.sessionId);
+        return reply.code(200).send({ ok: true, removed });
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
   // One-off chats (scratch dir).
   app.get("/api/chats", async () => {
     const sessions = await herdctl.listScratchSessions().catch(() => []);
@@ -164,6 +195,19 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
         .sessionMessages(herdctl.scratchDir, req.params.sessionId)
         .catch(() => []);
       return { messages };
+    },
+  );
+
+  // Delete a one-off (scratch) chat.
+  app.delete<{ Params: { sessionId: string } }>(
+    "/api/chats/:sessionId",
+    async (req, reply) => {
+      try {
+        const removed = await herdctl.deleteSession(herdctl.scratchDir, req.params.sessionId);
+        return reply.code(200).send({ ok: true, removed });
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
     },
   );
 

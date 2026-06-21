@@ -9,6 +9,7 @@ import type {
   HistoryMessage,
   Project,
   ProjectDetail,
+  UpdateProjectInput,
 } from "./types";
 
 const BASE = import.meta.env.VITE_API_BASE ?? "";
@@ -58,6 +59,37 @@ export const api = {
       body: JSON.stringify(input),
     });
     return project;
+  },
+
+  /** Edit project metadata (status, summary, domain, name, visibility). */
+  async updateProject(slug: string, patch: UpdateProjectInput): Promise<Project> {
+    const { project } = await req<{ project: Project }>(
+      `/api/projects/${encodeURIComponent(slug)}`,
+      { method: "PATCH", body: JSON.stringify(patch) },
+    );
+    return project;
+  },
+
+  /** Delete a project (dir + keeper agent). */
+  async deleteProject(slug: string): Promise<void> {
+    await req<{ ok: boolean }>(`/api/projects/${encodeURIComponent(slug)}`, {
+      method: "DELETE",
+    });
+  },
+
+  /** Delete a project chat (session transcript). */
+  async deleteProjectChat(slug: string, sessionId: string): Promise<void> {
+    await req<{ ok: boolean }>(
+      `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}`,
+      { method: "DELETE" },
+    );
+  },
+
+  /** Delete a one-off (scratch) chat. */
+  async deleteScratchChat(sessionId: string): Promise<void> {
+    await req<{ ok: boolean }>(`/api/chats/${encodeURIComponent(sessionId)}`, {
+      method: "DELETE",
+    });
   },
 
   async listProjectChats(slug: string): Promise<Chat[]> {

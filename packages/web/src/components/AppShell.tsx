@@ -86,12 +86,17 @@ export function AppShell() {
                 <StatusPill status={p.status} />
               </span>
               {p.domain.length > 0 && (
-                <span className="flex flex-wrap gap-1 pl-[18px]">
-                  {p.domain.slice(0, 3).map((d) => (
-                    <span key={d} className="tag">
+                <span className="flex min-w-0 items-center gap-1 overflow-hidden pl-[18px]">
+                  {p.domain.slice(0, 2).map((d) => (
+                    <span key={d} className="tag max-w-[7rem] truncate">
                       {d}
                     </span>
                   ))}
+                  {p.domain.length > 2 && (
+                    <span className="shrink-0 text-[11px] text-paddock-400">
+                      +{p.domain.length - 2}
+                    </span>
+                  )}
                 </span>
               )}
             </NavLink>

@@ -1,24 +1,32 @@
 import { useCallback, useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { useProjects } from "../lib/projects-context";
 import type { Chat, Project } from "../lib/types";
 import { StatusPill } from "../components/StatusPill";
 import { ChatPane } from "../components/ChatPane";
 import { Markdown } from "../components/Markdown";
-import { ChatIcon, ClockIcon, PlusIcon } from "../components/icons";
+import { ProjectMenu } from "../components/ProjectMenu";
+import { EditProjectModal } from "../components/EditProjectModal";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { ChatIcon, ClockIcon, PlusIcon, TrashIcon } from "../components/icons";
 import { relativeTime } from "../lib/format";
 
 type Tab = "chat" | "files";
 
 export function ProjectView() {
   const { slug = "" } = useParams();
-  const { refresh: refreshProjects } = useProjects();
+  const navigate = useNavigate();
+  const { refresh: refreshProjects, upsert, remove } = useProjects();
 
   const [project, setProject] = useState<Project | null>(null);
   const [chats, setChats] = useState<Chat[]>([]);
   const [changelog, setChangelog] = useState("");
   const [loadErr, setLoadErr] = useState<string | null>(null);
+
+  const [editOpen, setEditOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deletingChat, setDeletingChat] = useState<Chat | null>(null);
 
   // null = a fresh "new chat"; a sessionId = a resumed chat.
   const [activeSession, setActiveSession] = useState<string | null>(null);
@@ -74,6 +82,19 @@ export function ProjectView() {
     void refreshProjects();
   }, [refreshChats, refreshProjects]);
 
+  const confirmDeleteChat = useCallback(async () => {
+    if (!deletingChat) return;
+    const id = deletingChat.sessionId;
+    await api.deleteProjectChat(slug, id);
+    setChats((prev) => prev.filter((c) => c.sessionId !== id));
+    // If the deleted chat is open, drop back to a fresh "new chat".
+    if (activeSession === id) {
+      setActiveSession(null);
+      setChatKey((k) => k + 1);
+    }
+    setDeletingChat(null);
+  }, [deletingChat, slug, activeSession]);
+
   if (loadErr) {
     return (
       <div className="p-8">
@@ -103,6 +124,11 @@ export function ProjectView() {
             <ClockIcon width={12} height={12} />
             updated {relativeTime(project.updated)}
           </span>
+          <ProjectMenu
+            onEdit={() => setEditOpen(true)}
+            onDelete={() => setDeleteOpen(true)}
+            size={18}
+          />
         </div>
         {project.summary && (
           <p className="mt-1.5 text-sm text-paddock-600 dark:text-paddock-400">{project.summary}</p>
@@ -140,18 +166,34 @@ export function ProjectView() {
               </p>
             )}
             {chats.map((c) => (
-              <button
+              <div
                 key={c.sessionId}
-                onClick={() => openChat(c.sessionId)}
-                className={`mb-0.5 flex w-full flex-col items-start gap-0.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors ${
+                className={`group/chat relative mb-0.5 rounded-lg transition-colors ${
                   activeSession === c.sessionId
                     ? "bg-paddock-200/80 dark:bg-paddock-800"
                     : "hover:bg-paddock-200/50 dark:hover:bg-paddock-800/50"
                 }`}
               >
-                <span className="w-full truncate font-medium">{c.name}</span>
-                <span className="text-[11px] text-paddock-400">{relativeTime(c.updatedAt)}</span>
-              </button>
+                <button
+                  onClick={() => openChat(c.sessionId)}
+                  className="flex w-full flex-col items-start gap-0.5 rounded-lg px-2.5 py-2 pr-8 text-left text-sm"
+                >
+                  <span className="w-full truncate font-medium">{c.name}</span>
+                  <span className="text-[11px] text-paddock-400">{relativeTime(c.updatedAt)}</span>
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Delete chat ${c.name}`}
+                  title="Delete chat"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setDeletingChat(c);
+                  }}
+                  className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-rose-100 hover:text-rose-600 focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-rose-950/60 dark:hover:text-rose-400"
+                >
+                  <TrashIcon width={13} height={13} />
+                </button>
+              </div>
             ))}
           </div>
         </div>
@@ -180,6 +222,44 @@ export function ProjectView() {
           )}
         </div>
       </div>
+
+      {editOpen && (
+        <EditProjectModal
+          open
+          project={project}
+          onClose={() => setEditOpen(false)}
+          onSaved={(p) => {
+            setProject(p);
+            upsert(p);
+            setEditOpen(false);
+          }}
+        />
+      )}
+      <ConfirmDialog
+        open={deleteOpen}
+        title="Delete project?"
+        message={
+          <>
+            <span className="font-medium text-ink dark:text-ink-dark">{project.name}</span> and all
+            its chats and files will be permanently removed. This cannot be undone.
+          </>
+        }
+        confirmLabel="Delete project"
+        onConfirm={async () => {
+          await api.deleteProject(project.slug);
+          remove(project.slug);
+          navigate("/");
+        }}
+        onClose={() => setDeleteOpen(false)}
+      />
+      <ConfirmDialog
+        open={deletingChat !== null}
+        title="Delete chat?"
+        message="This chat's transcript will be permanently removed. This cannot be undone."
+        confirmLabel="Delete chat"
+        onConfirm={confirmDeleteChat}
+        onClose={() => setDeletingChat(null)}
+      />
     </div>
   );
 }

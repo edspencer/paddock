@@ -35,6 +35,13 @@ import {
   type AgentInfo,
   type FleetStatus,
 } from "@herdctl/core";
+// Deep import: the CLI session-path helpers are public + documented but not
+// surfaced through the package barrel (no `exports` map gates this). They
+// compute the exact `~/.claude/projects/<encoded-cwd>/<id>.jsonl` path the
+// SessionDiscoveryService reads from, and getCliSessionFile validates the
+// session id (rejects path traversal). This is the clean public way to locate
+// — and thus delete — a single CLI session transcript.
+import { getCliSessionFile } from "@herdctl/core/dist/runner/runtime/cli-session-path.js";
 import YAML from "yaml";
 import type { PaddockConfig } from "./config.js";
 import { claudeHome } from "./config.js";
@@ -139,6 +146,52 @@ export class HerdctlService {
     }
     // Touch project so TS knows it's intentionally part of the signature.
     void project;
+  }
+
+  /**
+   * Remove a project's keeper agent and hot-reload the fleet.
+   *
+   * The inverse of ensureProjectAgent: regenerate the config from the surviving
+   * projects (which no longer include the deleted one) and call `reload()`.
+   * FleetManager.reload() computes added/removed agents and updates the
+   * scheduler, so the dropped keeper is cleanly unregistered. Also deletes the
+   * now-orphaned per-agent yaml file so the config dir stays tidy.
+   *
+   * GAP (same as ensureProjectAgent): the public API has no `removeAgent`, so
+   * this uses the regenerate-config + reload path. See docs/INTEGRATION.md.
+   */
+  async removeProjectAgent(slug: string, survivingProjects: Project[]): Promise<void> {
+    // Regenerate herdctl.yaml from the survivors (the deleted project is gone).
+    await this.ensureConfigFile(survivingProjects);
+    // Drop the orphaned per-agent yaml file (ensureConfigFile only writes the
+    // survivors; it does not delete stale agent files).
+    const agentsDir = path.join(path.dirname(this.cfg.herdctlConfigPath), "agents");
+    const orphan = path.join(agentsDir, `${keeperAgentName(slug)}.yaml`);
+    await fs.rm(orphan, { force: true }).catch(() => undefined);
+    if (this.fleet) {
+      await this.fleet.reload();
+    }
+  }
+
+  /**
+   * Delete a single chat (session) by removing its CLI transcript JSONL, then
+   * invalidate the discovery cache so the list reflects it immediately.
+   *
+   * Returns true if a transcript file was removed, false if none existed.
+   * `getCliSessionFile` validates the session id (throws on traversal), so the
+   * sessionId is safe to use in the path.
+   */
+  async deleteSession(workingDirectory: string, sessionId: string): Promise<boolean> {
+    const file = getCliSessionFile(workingDirectory, sessionId);
+    let removed = false;
+    try {
+      await fs.unlink(file);
+      removed = true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    }
+    this.discovery?.invalidateAttributionCache(workingDirectory);
+    return removed;
   }
 
   /**

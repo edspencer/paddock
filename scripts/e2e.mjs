@@ -70,6 +70,11 @@ async function run() {
     if (m.type() === "error") console.error("[browser console.error]", m.text());
   });
 
+  // Track every network request so we can assert fonts are self-hosted (no
+  // runtime request to Google Fonts) and that the local font files load.
+  const requestedUrls = [];
+  page.on("request", (r) => requestedUrls.push(r.url()));
+
   // ---- Flow 1: Landing -----------------------------------------------------
   try {
     await page.goto(BASE_URL, { waitUntil: "networkidle" });
@@ -316,7 +321,158 @@ async function run() {
     fail("7. Final polished project view with conversation", e);
   }
 
+  // ---- Flow 8: Fonts are self-hosted (no Google Fonts request) -------------
+  try {
+    // index.html must not reference Google Fonts and the local woff2 must load.
+    const html = await page.content();
+    if (/fonts\.googleapis\.com|fonts\.gstatic\.com/.test(html)) {
+      throw new Error("index.html still references Google Fonts");
+    }
+    const googleReqs = requestedUrls.filter((u) =>
+      /fonts\.googleapis\.com|fonts\.gstatic\.com/.test(u),
+    );
+    if (googleReqs.length > 0) {
+      throw new Error(`Browser requested Google Fonts: ${googleReqs.slice(0, 3).join(", ")}`);
+    }
+    // The local Inter woff2 must have been fetched (preloaded in <head>).
+    const localFont = await fetchStatus(`${BASE_URL}/fonts/inter-latin.woff2`);
+    if (localFont !== 200) throw new Error(`local font not served (HTTP ${localFont})`);
+    // Confirm the font actually applied (Inter is the body font-family).
+    const bodyFont = await page.evaluate(() => getComputedStyle(document.body).fontFamily);
+    if (!/Inter/i.test(bodyFont)) throw new Error(`body font-family is "${bodyFont}", expected Inter`);
+    log(`fonts: 0 google requests, /fonts/inter-latin.woff2=200, body uses ${bodyFont}`);
+    pass("8. Fonts self-hosted (no Google Fonts request; local woff2 loads + applies)");
+  } catch (e) {
+    fail("8. Fonts self-hosted (no Google Fonts request; local woff2 loads + applies)", e);
+  }
+
+  // ---- Flow 9: Edit project metadata persists ------------------------------
+  const NEW_SUMMARY = `Edited by E2E at ${new Date().toISOString()}`;
+  try {
+    if (!projectSlug) throw new Error("No project from flow 2");
+    await page.goto(`${BASE_URL}/projects/${projectSlug}`, { waitUntil: "networkidle" });
+    await page.getByRole("heading", { name: PROJECT_NAME, level: 1 }).waitFor({ timeout: 10_000 });
+
+    // Open the "…" menu in the project header and choose Edit.
+    await page.getByRole("button", { name: /Project actions/i }).first().click();
+    await page.getByRole("menuitem", { name: /Edit details/i }).click();
+    await page.getByRole("heading", { name: "Edit project" }).waitFor({ timeout: 5_000 });
+    await shot(page, "13-edit-metadata.png");
+
+    // Change summary + status, then save.
+    const summaryInput = page.getByPlaceholder(/what this project is about/i);
+    await summaryInput.fill(NEW_SUMMARY);
+    await page.locator("select").first().selectOption("paused");
+    await page.getByRole("button", { name: /Save changes/i }).click();
+
+    // The header should reflect the new summary + status after save.
+    await waitFor(
+      async () => (await page.getByText(NEW_SUMMARY, { exact: false }).count()) > 0,
+      { timeout: 10_000, label: "edited summary visible in header" },
+    );
+    // Verify it persisted on the server (not just optimistic UI).
+    const persisted = await fetchJson(`${BASE_URL}/api/projects/${projectSlug}`);
+    if (persisted?.project?.summary !== NEW_SUMMARY) {
+      throw new Error(`server summary mismatch: ${JSON.stringify(persisted?.project?.summary)}`);
+    }
+    if (persisted?.project?.status !== "paused") {
+      throw new Error(`server status mismatch: ${JSON.stringify(persisted?.project?.status)}`);
+    }
+    log("edit persisted: summary + status === paused on the server");
+    pass("9. Edit project metadata persists (UI + server)");
+  } catch (e) {
+    await shot(page, "13-edit-metadata-FAIL.png").catch(() => {});
+    fail("9. Edit project metadata persists (UI + server)", e);
+  }
+
+  // ---- Flow 10: Delete a project (grid + fleet) ----------------------------
+  // Create a throwaway project specifically to delete, so the main project's
+  // session evidence stays intact for the earlier screenshots.
+  const DEL_NAME = "Delete Me";
+  let delSlug = null;
+  try {
+    await page.goto(BASE_URL, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: /New Project/i }).first().click();
+    await page.getByRole("heading", { name: "New project" }).waitFor({ timeout: 5_000 });
+    await page.getByPlaceholder("Garage Water Heater Replacement").fill(DEL_NAME);
+    await page.getByRole("button", { name: /Create project/i }).click();
+    await page.waitForURL(/\/projects\/[a-z0-9-]+$/i, { timeout: 20_000 });
+    delSlug = page.url().split("/projects/")[1];
+    log("created throwaway project to delete:", delSlug);
+
+    // Its keeper agent should be registered in the fleet.
+    const beforeFleet = await fetchJson(`${BASE_URL}/api/fleet`);
+    const keeperName = `keeper-${delSlug}`;
+    const hadKeeper = (beforeFleet?.agents ?? []).some((a) => a.name === keeperName);
+    if (!hadKeeper) throw new Error(`keeper ${keeperName} not in fleet before delete`);
+
+    // Open the project menu from the GRID and trigger delete + confirm.
+    await page.goto(BASE_URL, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: new RegExp(`Actions for ${DEL_NAME}`, "i") }).click();
+    await shot(page, "11-project-menu.png");
+    await page.getByRole("menuitem", { name: /Delete project/i }).click();
+    await page.getByRole("alertdialog").waitFor({ timeout: 5_000 });
+    await shot(page, "12-delete-confirm.png");
+    await page.getByRole("button", { name: /^Delete project$/i }).click();
+
+    // The card disappears from the grid.
+    await waitFor(
+      async () => {
+        const cards = await page.getByRole("heading", { name: DEL_NAME }).count();
+        return cards === 0;
+      },
+      { timeout: 10_000, label: "deleted project disappears from grid" },
+    );
+
+    // The keeper agent is gone from the fleet (config regenerated + reloaded).
+    await waitFor(
+      async () => {
+        const fleet = await fetchJson(`${BASE_URL}/api/fleet`);
+        return !(fleet?.agents ?? []).some((a) => a.name === keeperName);
+      },
+      { timeout: 15_000, label: "keeper removed from /api/fleet" },
+    );
+    // And the project itself is a 404 on the API.
+    const status = await fetchStatus(`${BASE_URL}/api/projects/${delSlug}`);
+    if (status !== 404) throw new Error(`expected 404 for deleted project, got ${status}`);
+    // On-disk: the project directory is gone (best-effort, needs DATA_DIR).
+    if (DATA_DIR) {
+      const dir = path.join(DATA_DIR, "projects", delSlug);
+      const exists = await fs
+        .stat(dir)
+        .then(() => true)
+        .catch(() => false);
+      if (exists) throw new Error(`project dir still on disk: ${dir}`);
+    }
+    log(`deleted ${delSlug}: gone from grid, keeper unregistered, API 404, dir removed`);
+    pass("10. Delete project removes it from the grid + keeper from /api/fleet");
+  } catch (e) {
+    await shot(page, "11-delete-FAIL.png").catch(() => {});
+    fail("10. Delete project removes it from the grid + keeper from /api/fleet", e);
+  }
+
   await browser.close();
+}
+
+/** Fetch a URL and return its HTTP status (no body). */
+async function fetchStatus(url) {
+  try {
+    const res = await fetch(url);
+    return res.status;
+  } catch {
+    return 0;
+  }
+}
+
+/** Fetch JSON from a URL, returning null on any error. */
+async function fetchJson(url) {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
 }
 
 /** Recursively find a file by name under a root (shallow-ish, skips node_modules). */
@@ -351,5 +507,5 @@ run()
     console.log("\n================ E2E SUMMARY ================");
     for (const r of results) console.log(`${r.ok ? "PASS" : "FAIL"}  ${r.name}`);
     console.log(`--------------------------------------------\n${passed}/${total} flows passed`);
-    process.exit(passed === total && total >= 7 ? 0 : 1);
+    process.exit(passed === total && total >= 10 ? 0 : 1);
   });

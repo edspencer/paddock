@@ -3,7 +3,8 @@ import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { SCRATCH_SLUG, type Chat } from "../lib/types";
 import { ChatPane } from "../components/ChatPane";
-import { ChatIcon, PlusIcon } from "../components/icons";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { ChatIcon, PlusIcon, TrashIcon } from "../components/icons";
 import { relativeTime } from "../lib/format";
 
 /**
@@ -15,10 +16,20 @@ export function OneOffChat() {
   const { sessionId } = useParams();
   const navigate = useNavigate();
   const [chats, setChats] = useState<Chat[]>([]);
+  const [deletingChat, setDeletingChat] = useState<Chat | null>(null);
 
   const refresh = useCallback(async () => {
     setChats(await api.listScratchChats().catch(() => []));
   }, []);
+
+  const confirmDeleteChat = useCallback(async () => {
+    if (!deletingChat) return;
+    const id = deletingChat.sessionId;
+    await api.deleteScratchChat(id);
+    setChats((prev) => prev.filter((c) => c.sessionId !== id));
+    setDeletingChat(null);
+    if (sessionId === id) navigate("/chat", { replace: true });
+  }, [deletingChat, sessionId, navigate]);
   useEffect(() => {
     void refresh();
   }, [refresh]);
@@ -61,18 +72,34 @@ export function OneOffChat() {
               <p className="px-2 py-2 text-sm text-paddock-500">No one-off chats yet.</p>
             )}
             {chats.map((c) => (
-              <button
+              <div
                 key={c.sessionId}
-                onClick={() => navigate(`/chat/${c.sessionId}`)}
-                className={`mb-0.5 flex w-full flex-col items-start gap-0.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors ${
+                className={`group/chat relative mb-0.5 rounded-lg transition-colors ${
                   sessionId === c.sessionId
                     ? "bg-paddock-200/80 dark:bg-paddock-800"
                     : "hover:bg-paddock-200/50 dark:hover:bg-paddock-800/50"
                 }`}
               >
-                <span className="w-full truncate font-medium">{c.name}</span>
-                <span className="text-[11px] text-paddock-400">{relativeTime(c.updatedAt)}</span>
-              </button>
+                <button
+                  onClick={() => navigate(`/chat/${c.sessionId}`)}
+                  className="flex w-full flex-col items-start gap-0.5 rounded-lg px-2.5 py-2 pr-8 text-left text-sm"
+                >
+                  <span className="w-full truncate font-medium">{c.name}</span>
+                  <span className="text-[11px] text-paddock-400">{relativeTime(c.updatedAt)}</span>
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Delete chat ${c.name}`}
+                  title="Delete chat"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setDeletingChat(c);
+                  }}
+                  className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-rose-100 hover:text-rose-600 focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-rose-950/60 dark:hover:text-rose-400"
+                >
+                  <TrashIcon width={13} height={13} />
+                </button>
+              </div>
             ))}
           </div>
         </div>
@@ -89,6 +116,15 @@ export function OneOffChat() {
           />
         </div>
       </div>
+
+      <ConfirmDialog
+        open={deletingChat !== null}
+        title="Delete chat?"
+        message="This one-off chat's transcript will be permanently removed. This cannot be undone."
+        confirmLabel="Delete chat"
+        onConfirm={confirmDeleteChat}
+        onClose={() => setDeletingChat(null)}
+      />
     </div>
   );
 }
