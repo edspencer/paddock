@@ -677,3 +677,82 @@ Browser ──https──> Caddy(netops) ──> projects.valfenda.net LXC
   preload checkbox sends `preloadContext:true` even when no overview exists yet (server
   no-ops it) — harmless; the UI disables the box in that state to set expectations.
   (e) **Not deployed to the LXC** (code + push only, per scope); redeploy is a separate step.
+
+- 2026-06-21 — Sub-agent (finalize / redeploy v2 features + worked example + live verify):
+  **DONE. UPGRADED SITE IS LIVE + HEALTHY at https://projects.valfenda.net. No rollback
+  needed.** Shipped current `main` (commit `5b3d32c` — overview/sweep, preload checkbox,
+  md+Mermaid + sandboxed-HTML rendering, pin-as-tab), built the real Garage Water Heater
+  worked example via a live keeper chat, and verified all five new features live in a real
+  browser (5/5 green).
+
+  **TASK A — redeploy with rollback safety (DONE):**
+  - **Rollback snapshot taken FIRST**: `cp -a /opt/paddock /opt/paddock.bak2` (251M).
+    Build + all health checks passed → **rollback path never exercised**; `.bak2` removed
+    at the end (all green). The older `/opt/paddock.bak` (prior agent's, 251M) was LEFT
+    in place as additional insurance.
+  - **Shipped** current `main` via `tar czf - … | ssh projects 'tar xzf - -C /opt/paddock'`
+    (rsync still absent). Excluded node_modules/.git/dist/docs(screenshots)/playwright.
+    Extracted OVER `/opt/paddock`; new lock sha matched local after extract.
+  - **Deps CHANGED → `npm install` ran** (unlike the prior redeploy): web added `mermaid`,
+    so `package-lock.json` differed (remote 210891B/sha `caedc7f9…` → local 253587B/sha
+    `b7f5822a…`). `npm install` added 111 packages (mermaid@11.15.0 + deps), removed 1.
+  - **`npm run build` BEFORE restart** — server `tsc` + web `vite` both clean. Mermaid is
+    code-split (main `index` chunk 421.82KB/130.87KB gzip + separate `mermaid.core` ~620KB
+    + per-diagram chunks that load only on demand). New `dist/fonts/*` present; built
+    `index.html` has 0 googleapis/gstatic refs.
+  - **`systemctl restart paddock`** (unchanged unit). **Health (LXC localhost + laptop
+    HTTPS)** all 200: `/api/health`, `/api/projects`, `/`, `/fonts/{inter,jetbrains-mono}-latin.woff2`;
+    valid LE cert `CN=projects.valfenda.net` (through Sep 2026). New code confirmed live:
+    `/api/projects/:slug/overview` now 200 (was 404), DTO now has `hasOverview`+`pinned`.
+  - **Fleet registered keeper + sweeper agents**: 9 agents total = `scratch` + 4 `keeper-*`
+    + **4 `sweeper-*`** (one per project; auto-generated yaml on startup). 0 errored.
+
+  **TASK B — Garage Water Heater worked example (DONE):**
+  - Drove a REAL keeper chat over the WS on the LXC (`scripts/ws-drive.mjs`, localhost:4000,
+    Max OAuth, new session `6909e0b4-…`). The keeper authored, in its working dir:
+    - **plan.md** (15KB) — real planning doc: Current Situation/Assumptions (12-yr-old 50-gal
+      gas tank in a cold unheated garage, 4-person high-demand household), Options (like-for-like
+      50-gal gas vs condensing gas tankless vs heat-pump hybrid, with garage-specific gotchas),
+      weighted Decision Criteria, a ```mermaid `flowchart TD` decision flow, Open Questions,
+      ordered Next Steps. **Recommends Option A (50-gal gas tank)** — the cold garage disqualifies
+      the HPWH and makes tankless 2-3× costlier. Concrete, not lorem.
+    - **spec.html** (19KB) — polished standalone HTML (`<!DOCTYPE html>`, inline `<style>`,
+      system font stack, constrained column, accent color, styled comparison table, pros/cons),
+      with a Mermaid system/plumbing diagram loaded from `cdn.jsdelivr.net/npm/mermaid@11` +
+      `mermaid.initialize` in a `<pre class="mermaid">` (cold water → tank → hot out, gas/electric
+      in, T&P → floor drain, B-vent → flue). Renders inside the sandboxed iframe.
+  - **Pinned BOTH** files via `PUT /pins` → `pinned:["plan.md","spec.html"]`.
+  - **Sweep ran + produced OVERVIEW.md**: `sweeper-garage-water-heater` job
+    `job-2026-06-21-28nok7` → `sweep: completed` (~1 min after the turn; watermark started
+    empty so delay was 0). `OVERVIEW.md` (5974B) is a high-quality synthesized snapshot
+    (status, verified baseline table, recommendation + runner-up + rejected option with
+    rationale), surfaced via `GET /overview`; `hasOverview=true`. `sweep-state.json` watermark
+    persisted. The CHANGELOG has today's entries for the added files. (Note: the keeper itself
+    also wrote CHANGELOG entries during the chat via Edit; the sweeper's curation runs on top.)
+
+  **TASK C — live verify + screenshots (Playwright vs the LIVE HTTPS URL) — 5/5 green:**
+  `scripts/live-feat-verify.mjs` drove a real Chromium against https://projects.valfenda.net:
+  (1) **Overview badge** present in the Garage Water Heater header (hasOverview). (2) **Both
+  files as pinned sibling tabs** (plan.md + spec.html). (3) **plan.md renders a Mermaid SVG**
+  (1 svg, 53 `<g>` elements — real geometry, no error fallback). (4) **spec.html renders in a
+  sandboxed iframe** (`sandbox="allow-scripts"`, NOT allow-same-origin; frame h1 "50-Gallon
+  Natural-Gas Storage Tank — Recommended Replacement"; a supplementary check confirmed the
+  CDN Mermaid plumbing diagram + comparison table render INSIDE the frame). (5) **Preload
+  checkbox present + default ON** on a new chat (checked, enabled). Screenshots in
+  `docs/screenshots/`: `live-feat-{overview,mermaid,html,html-mermaid,pins,preload}.png`.
+  **No infra regression**: `devbox.valfenda.net`→200; `paddock.service` active + enabled-on-boot;
+  projects health 200; fleet 9 agents, 0 errors.
+
+  **TASK D — issues**: closed **#1, #2, #3, #4, #5, #6** on edspencer/paddock (implemented +
+  deployed + live-verified, referencing commit `5b3d32c` + the live URL). **#7–#12 left open.**
+
+  **Honest notes:** (a) deployed commit `5b3d32c` (current `main` HEAD; clean tree —
+  `scripts/ws-drive.mjs` + `scripts/live-feat-verify.mjs` are new local verification helpers,
+  uncommitted, not shipped except ws-drive which was copied to the LXC's /opt/paddock/scripts).
+  (b) Keeper + sweeper agents still run WITHOUT Docker isolation (acceptEdits + denied dangerous
+  bash) — unchanged, documented follow-up. (c) `/opt/paddock.bak` (prior agent's, 251M) retained
+  on the LXC; `rm -rf` it to reclaim space once fully confident. (d) plan.md's flowchart uses
+  `\n` for label line breaks — Mermaid v11 renders these correctly (verified in the live SVG);
+  no change needed. (e) The Garage Water Heater project now has ONE real keeper chat (the
+  worked-example authoring session) left in place as living proof; the other 3 seeded projects
+  remain empty for Ed to start.
