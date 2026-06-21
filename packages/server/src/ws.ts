@@ -43,6 +43,58 @@ import { keeperAgentName, SCRATCH_AGENT, SCRATCH_SLUG } from "./herdctl.js";
 import type { ProjectStore } from "./projects.js";
 import type { SweepService } from "./sweep.js";
 
+/**
+ * Normalize a user SDKMessage so the shared translator can pair tool results.
+ *
+ * The CLI runtime surfaces tool results twice: as a top-level `tool_use_result`
+ * field AND as nested `tool_result` blocks inside `message.content[]`. Core's
+ * `extractToolResults` (used by `@herdctl/chat`'s translator) short-circuits on
+ * the top-level field, but that shape carries no usable `tool_use_id` — so the
+ * translator can't pair the result with its `tool_use` and falls back to a
+ * generic `toolName: "Tool"` with no input summary / duration.
+ *
+ * When a message has BOTH the id-less top-level field AND a nested
+ * `tool_result` block that DOES carry a `tool_use_id`, we drop the top-level
+ * field (on a shallow clone — never mutating the SDK's object) so extraction
+ * falls through to the nested branch and the pairing (name/summary/duration) is
+ * restored. No-op for every other message.
+ */
+function normalizeForTranslator(m: SDKMessage): SDKMessage {
+  const msg = m as unknown as {
+    type?: string;
+    tool_use_result?: unknown;
+    message?: { content?: unknown };
+  };
+  if (msg.type !== "user" || msg.tool_use_result === undefined) return m;
+
+  // Does the top-level result already carry an id? If so, leave it alone.
+  const topLevel = msg.tool_use_result;
+  const topLevelHasId =
+    typeof topLevel === "object" &&
+    topLevel !== null &&
+    typeof (topLevel as { tool_use_id?: unknown }).tool_use_id === "string";
+  if (topLevelHasId) return m;
+
+  // Is there a nested tool_result block carrying a real tool_use_id?
+  const content = msg.message?.content;
+  const nestedHasId =
+    Array.isArray(content) &&
+    content.some(
+      (b) =>
+        b !== null &&
+        typeof b === "object" &&
+        (b as { type?: unknown }).type === "tool_result" &&
+        typeof (b as { tool_use_id?: unknown }).tool_use_id === "string",
+    );
+  if (!nestedHasId) return m;
+
+  // Shallow clone and drop the id-less top-level field so extraction uses the
+  // nested (id-bearing) blocks. The SDK's original object is untouched.
+  const clone = { ...msg };
+  delete clone.tool_use_result;
+  return clone as unknown as SDKMessage;
+}
+
 // --- client -> server --------------------------------------------------------
 
 export interface ChatSendMessage {
@@ -266,10 +318,14 @@ export function makeChatHandler(deps: {
             // Capture the session id as it arrives mid-stream (the translator
             // only surfaces text/boundary/tool events, not routing metadata).
             if (m.session_id) resolvedSession = m.session_id;
+            // Restore tool-call pairing for the CLI runtime (drops an id-less
+            // top-level tool_use_result so the translator uses the nested,
+            // id-bearing tool_result blocks). No-op for other messages.
+            const normalized = normalizeForTranslator(m);
             // @herdctl/core's SDKMessage types `message` as `unknown` (wider);
             // @herdctl/chat's translator declares a structurally narrower
             // SDKMessage. Same runtime object — cast across the package boundary.
-            await translate(m as unknown as ChatSDKMessage);
+            await translate(normalized as unknown as ChatSDKMessage);
           },
         });
 

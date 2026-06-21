@@ -847,3 +847,89 @@ Browser ──https──> Caddy(netops) ──> projects.valfenda.net LXC
   "GAP/workaround" sections are now superseded by this entry — updating them is a doc-only
   follow-up). `spike.ts` untouched (still typechecks; `SessionDiscoveryService` remains a valid
   public export). **Not deployed** — redeploy is a separate agent's step.
+
+- 2026-06-21 — Sub-agent (redeploy on @herdctl/core@5.11.0 + chat@0.4.0 + live verify):
+  **DONE. UPGRADED SITE IS LIVE + HEALTHY at https://projects.valfenda.net on the new
+  herdctl. No rollback needed.** Shipped current `main` (`b5eaa87` — the 5.11.0 API
+  adoption + session rename), upgraded deps on the LXC, and verified live in a real
+  browser (8/8). **Caught + fixed one regression introduced by the adoption** (tool-block
+  fidelity) before declaring green.
+
+  **TASK A — redeploy with rollback safety (DONE):**
+  - **Rollback snapshot FIRST**: `cp -a /opt/paddock /opt/paddock.bak3` (409M, incl.
+    node_modules + both dists → instantly runnable). Build + all health checks passed →
+    **rollback path never exercised**; `.bak3` removed at the end. The older
+    `/opt/paddock.bak` (prior agent's, 251M) LEFT in place as extra insurance.
+  - **Shipped** `main` via `tar czf - … | ssh projects 'tar xzf - -C /opt/paddock'`
+    (rsync still absent). Excluded node_modules/.git/dist/docs(screenshots)/playwright.
+    Lock sha now matches local (`0a2b789d…`; old deployed was `b7f5822a…`).
+  - **Deps CHANGED → `npm install` RAN** (the point of this redeploy): `@herdctl/core`
+    `5.10.1 → 5.11.0`, `@herdctl/chat` added at `0.4.0`. `npm install` added 94 / removed 91.
+    **Both resolved to the PUBLISHED registry** (`registry.npmjs.org`, real dirs not symlinks);
+    new APIs confirmed present (`addAgent`/`getAgentSessions`/`setSessionName`/`deleteSession`
+    on FleetManager; `createSDKMessageHandler` from chat).
+  - **`npm run build` BEFORE restart** — server tsc + web vite both clean (mermaid still
+    code-split). `systemctl restart paddock`. Service log shows agents now `added
+    programmatically` (the new addAgent path), not yaml-gen+reload.
+  - **Health (LXC localhost + laptop HTTPS)** all 200: `/api/health`, `/api/projects`, `/`,
+    `/fonts/{inter,jetbrains-mono}-latin.woff2` (font/woff2),
+    `/api/projects/garage-water-heater/overview` (text/markdown); valid LE cert
+    `CN=projects.valfenda.net` (ssl_verify=0). **Fleet = 9** (`scratch` + 4 `keeper-*` +
+    4 `sweeper-*`), 0 errored.
+
+  **REGRESSION FOUND + FIXED (the honest headline):** the new shared translator
+  (`@herdctl/chat`'s `createSDKMessageHandler`) was emitting `toolName:"Tool"` with NO
+  inputSummary / durationMs. Root cause: it pairs tool_use→tool_result via core's
+  `extractToolResults`, which **short-circuits on the CLI runtime's id-less top-level
+  `tool_use_result`** (the exact bug the original hand-rolled translator worked around).
+  Without a `tool_use_id` the translator can't pair the call and falls back to the generic
+  name, dropping the summary + duration. **Fix (paddock-side, surgical):** a
+  `normalizeForTranslator()` shim in `ws.ts` that — only for a user message whose top-level
+  `tool_use_result` lacks an id BUT whose nested `message.content[]` has an id-bearing
+  `tool_result` — drops the top-level field on a shallow clone (SDK object untouched) so
+  extraction uses the nested id-bearing branch. Rebuilt server-only on the LXC + restarted.
+  **Verified**: WS now emits `Bash pwd 113ms` / `Write <path> 38ms` (real name + summary +
+  duration), exactly the pre-adoption fidelity. ⚠️ **This fix is UNCOMMITTED** — it lives in
+  the working tree + on the LXC but not in git. Ed should `git add packages/server/src/ws.ts
+  && git commit`. A cleaner long-term fix: make core's `extractToolResults` prefer the
+  id-bearing nested block, then paddock can drop the shim (herdctl PR candidate).
+
+  **TASK B — live verify (Playwright vs the LIVE HTTPS URL) — 8/8 green:**
+  `scripts/live-adopt-verify.mjs` drove a real Chromium against https://projects.valfenda.net:
+  - **Garage Water Heater (regression guard, step 4):** Overview badge present; plan.md +
+    spec.html as pinned sibling tabs; **plan.md renders a Mermaid SVG** (53 g-elements);
+    **spec.html renders in a sandboxed iframe** (`sandbox="allow-scripts"`, NOT
+    allow-same-origin; frame h1 = "50-Gallon Natural-Gas Storage Tank …"); **preload
+    checkbox present + default ON** on a new chat. (No regression — all the v2 features
+    survive the adoption.)
+  - **Throwaway test project (step 5):** created it; **keeper registered via addAgent**;
+    new chat **streamed text + a real tool block via the NEW createSDKMessageHandler path**
+    (`Bash pwd 113ms`, `Write <path> 38ms` — name/inputSummary/duration intact post-fix);
+    session saved + listable + resumable; **adopt.txt = `ADOPTED` on disk in the project
+    working dir**. **Session rename (issue #10):** renamed the chat via the **pencil/PATCH**
+    affordance to "Renamed By Adopt Verify" → showed immediately in the list AND **persisted
+    server-side** (re-fetched `/chats` returned the custom name). Then **deleted the throwaway
+    project** (via `removeAgent` path) → grid back to **exactly 4 real projects**, fleet back
+    to **9** (0 errored), no straggler dirs on disk.
+  - Screenshots: `docs/screenshots/live-adopt-{water-heater,chat,rename}.png`
+    (live-adopt-chat clearly shows the fixed `Bash pwd 113ms` + `Write … 38ms` tool blocks).
+  - **No infra regression**: `devbox.valfenda.net` + `podcasts.valfenda.net` → 200;
+    `paddock.service` active + enabled-on-boot.
+
+  **TASK C — issues:** closed **#9** (adopt merged herdctl programmatic APIs) and **#10**
+  (session rename) on edspencer/paddock, each commenting the live URL + that paddock now runs
+  on @herdctl/core@5.11.0 (+ #9 documents the translator-fidelity fix). **#7, #8, #11, #12
+  left open.**
+
+  **Honest notes / leftovers:** (a) **The ws.ts translator fix is uncommitted** (see above) —
+  commit it so git matches what's deployed; `b5eaa87` alone would re-introduce the "Tool"/no-
+  duration regression. (b) `scripts/live-adopt-verify.mjs` is a new local verification helper
+  (uncommitted; NOT shipped to the LXC). (c) The discovery-cache **freshness caveat** is real:
+  a 2nd new chat in an already-listed project can take up to the 30s TTL to appear in the UI
+  (the API/disk has it immediately; the verify re-fetches to surface it) — a public
+  `invalidateSessions(name)` / post-turn hook on FleetManager is a clean herdctl follow-up.
+  (d) Garage Water Heater kept its ONE worked-example chat (`6909e0b4…`); the 2 debug chats I
+  drove during root-cause were deleted via the `deleteSession` API (also incidentally proving
+  that path). (e) `/opt/paddock.bak3` removed (all green); older `/opt/paddock.bak` (251M)
+  retained — `ssh projects 'rm -rf /opt/paddock.bak'` to reclaim. (f) Keeper + sweeper agents
+  still run WITHOUT Docker isolation (unchanged follow-up, #7).
