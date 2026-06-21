@@ -106,3 +106,23 @@ export const PencilIcon = (p: IconProps) => (
     <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
   </svg>
 );
+
+export const FileIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+    <path d="M14 2v6h6" />
+  </svg>
+);
+
+export const PinIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M12 17v5" />
+    <path d="M9 10.76V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v6.76a2 2 0 0 0 .59 1.42l1.12 1.12A1 1 0 0 1 17 15H7a1 1 0 0 1-.71-1.7l1.12-1.12A2 2 0 0 0 9 10.76Z" />
+  </svg>
+);
+
+export const CheckIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M20 6 9 17l-5-5" />
+  </svg>
+);

@@ -451,6 +451,228 @@ async function run() {
     fail("10. Delete project removes it from the grid + keeper from /api/fleet", e);
   }
 
+  // ==========================================================================
+  // Issues #1, #3, #4 — preload checkbox, rich file rendering (markdown +
+  // Mermaid + sandboxed HTML), and pinned sibling tabs.
+  // ==========================================================================
+
+  // ---- Flow 11: New project + preload checkbox present & default ON (#1) ----
+  const RICH_NAME = "Rich Files Demo";
+  let richSlug = null;
+  try {
+    await page.goto(BASE_URL, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: /New Project/i }).first().click();
+    await page.getByRole("heading", { name: "New project" }).waitFor({ timeout: 5_000 });
+    await page.getByPlaceholder("Garage Water Heater Replacement").fill(RICH_NAME);
+    await page.getByRole("button", { name: /Create project/i }).click();
+    await page.waitForURL(/\/projects\/[a-z0-9-]+$/i, { timeout: 20_000 });
+    richSlug = page.url().split("/projects/")[1];
+    log("created rich-files project:", richSlug);
+
+    // Open a New Chat and assert the preload checkbox is present.
+    await page.getByRole("button", { name: /New Chat/i }).click();
+    const preload = page.getByRole("checkbox", { name: /Preload project context/i });
+    await preload.waitFor({ timeout: 5_000 });
+    const present = (await preload.count()) > 0;
+    if (!present) throw new Error("preload checkbox not present on new chat composer");
+    // Default ON for project chats (it's disabled when no overview exists yet,
+    // but the user-facing default state is checked = "on").
+    const labelChecked = await page.evaluate(() => {
+      const inputs = [...document.querySelectorAll('input[type="checkbox"]')];
+      const cb = inputs.find((i) =>
+        /Preload project context/i.test(i.closest("label")?.textContent ?? ""),
+      );
+      return cb ? { checked: cb.checked, disabled: cb.disabled } : null;
+    });
+    log("preload checkbox state:", JSON.stringify(labelChecked));
+    await shot(page, "24-preload-checkbox.png");
+    if (!labelChecked) throw new Error("could not locate preload checkbox input");
+    // Default ON: the checkbox reflects the user's intent (checked) even before
+    // a sweep has produced an overview (in which case it's disabled).
+    if (!labelChecked.checked) throw new Error("preload checkbox is not checked by default");
+    pass("11. New-chat preload checkbox present + default ON (#1)");
+  } catch (e) {
+    await shot(page, "24-preload-checkbox-FAIL.png").catch(() => {});
+    fail("11. New-chat preload checkbox present + default ON (#1)", e);
+  }
+
+  // ---- Flow 12: Agent writes plan.md (mermaid) + report.html ---------------
+  const RICH_PROMPT =
+    "Do exactly two things, no preamble. (1) Write a file named plan.md containing a '## Plan' heading, a short sentence, and a mermaid code fence with a simple `flowchart TD` of three steps A-->B-->C. (2) Write a file named report.html that is a small standalone HTML page with a <!DOCTYPE html>, an <h1>Report</h1>, and an inline <style> giving the h1 a color. Then stop.";
+  try {
+    if (!richSlug) throw new Error("No rich project from flow 11");
+    const composer = page.getByPlaceholder(/Message the keeper agent/i);
+    await composer.waitFor({ timeout: 5_000 });
+    await composer.fill(RICH_PROMPT);
+    await page.getByRole("button", { name: /^Send$/ }).click();
+
+    // Wait for the turn to complete (composer unlocks).
+    await waitFor(
+      async () => (await page.getByRole("button", { name: /^Send$/ }).count()) > 0,
+      { timeout: TURN_TIMEOUT, label: "rich-files turn complete" },
+    );
+
+    // Confirm both files exist on disk (best-effort, needs DATA_DIR).
+    if (DATA_DIR) {
+      const planPath = path.join(DATA_DIR, "projects", richSlug, "plan.md");
+      const htmlPath = path.join(DATA_DIR, "projects", richSlug, "report.html");
+      await waitFor(
+        async () => {
+          const a = await fs.stat(planPath).then(() => true).catch(() => false);
+          const b = await fs.stat(htmlPath).then(() => true).catch(() => false);
+          return a && b;
+        },
+        { timeout: 20_000, label: "plan.md + report.html written" },
+      );
+    }
+    pass("12. Agent writes plan.md (mermaid) + report.html");
+  } catch (e) {
+    fail("12. Agent writes plan.md (mermaid) + report.html", e);
+  }
+
+  // ---- Flow 13: Files list + open plan.md (markdown + Mermaid SVG) (#3) -----
+  try {
+    if (!richSlug) throw new Error("No rich project from flow 11");
+    // Go to the Files & Changelog tab.
+    await page.getByRole("button", { name: /Files & Changelog/i }).click();
+    // The files list should include plan.md and report.html (pull-refreshed
+    // after the turn). Re-fetch the project view to be safe.
+    await waitFor(
+      async () => {
+        const names = await page.locator(".font-mono").allInnerTexts();
+        return names.some((n) => /plan\.md/.test(n)) && names.some((n) => /report\.html/.test(n));
+      },
+      { timeout: 30_000, label: "files list shows plan.md + report.html" },
+    );
+    await shot(page, "20-files-list.png");
+
+    // Open plan.md — use an exact name so we hit the file-row open button, not
+    // the sidebar chat whose title also contains "plan.md", nor the pin button.
+    await page.getByRole("button", { name: "plan.md", exact: true }).click();
+    // Markdown heading "Plan" should render (an <h2> from '## Plan').
+    await waitFor(
+      async () => (await page.getByRole("heading", { name: /Plan/i }).count()) > 0,
+      { timeout: 15_000, label: "plan.md markdown heading renders" },
+    );
+    // The Mermaid diagram must render as real SVG (not raw ```mermaid text).
+    await waitFor(
+      async () => {
+        const svgs = await page.locator('[data-testid="mermaid"] svg').count();
+        return svgs > 0;
+      },
+      { timeout: 20_000, label: "Mermaid diagram renders as SVG" },
+    );
+    // And there should be NO raw "flowchart" text left in a <pre> (i.e. it was
+    // rendered, not dumped as a code block).
+    const svgCount = await page.locator('[data-testid="mermaid"] svg').count();
+    const nodeCount = await page
+      .locator('[data-testid="mermaid"] svg .node, [data-testid="mermaid"] svg g')
+      .count();
+    log(`plan.md: mermaid svg=${svgCount}, svg child groups=${nodeCount}`);
+    if (svgCount < 1) throw new Error("no Mermaid <svg> rendered");
+    await shot(page, "21-markdown-mermaid.png");
+    pass("13. plan.md renders markdown + Mermaid diagram as SVG (#3)");
+  } catch (e) {
+    await shot(page, "21-markdown-mermaid-FAIL.png").catch(() => {});
+    fail("13. plan.md renders markdown + Mermaid diagram as SVG (#3)", e);
+  }
+
+  // ---- Flow 14: Open report.html in a sandboxed iframe (#3) -----------------
+  try {
+    if (!richSlug) throw new Error("No rich project from flow 11");
+    // Back to the files list, then open report.html (exact name = file row).
+    await page.getByRole("button", { name: /← Files/ }).click();
+    await page.getByRole("button", { name: "report.html", exact: true }).click();
+    // A sandboxed iframe must render, with sandbox="allow-scripts" and NO
+    // allow-same-origin (the safety property we promised).
+    const frameLoc = page.locator('iframe[title="report.html"]');
+    await frameLoc.waitFor({ timeout: 15_000 });
+    const sandbox = await frameLoc.getAttribute("sandbox");
+    log("report.html iframe sandbox:", JSON.stringify(sandbox));
+    if (!sandbox || !/allow-scripts/.test(sandbox)) {
+      throw new Error(`iframe missing allow-scripts sandbox (got ${JSON.stringify(sandbox)})`);
+    }
+    if (/allow-same-origin/.test(sandbox)) {
+      throw new Error("iframe must NOT have allow-same-origin (isolation requirement)");
+    }
+    // The iframe's document should contain the <h1>Report</h1> we asked for.
+    const frame = await frameLoc.elementHandle();
+    const contentFrame = await frame.contentFrame();
+    await waitFor(
+      async () => {
+        try {
+          const h1 = await contentFrame.locator("h1").first().innerText();
+          return /report/i.test(h1);
+        } catch {
+          return false;
+        }
+      },
+      { timeout: 15_000, label: "report.html iframe shows <h1>Report</h1>" },
+    );
+    await shot(page, "22-html-iframe.png");
+    pass("14. report.html renders inside a sandboxed iframe (#3)");
+  } catch (e) {
+    await shot(page, "22-html-iframe-FAIL.png").catch(() => {});
+    fail("14. report.html renders inside a sandboxed iframe (#3)", e);
+  }
+
+  // ---- Flow 15: Pin both files as sibling tabs + unpin one (#4) ------------
+  try {
+    if (!richSlug) throw new Error("No rich project from flow 11");
+    // report.html is open in the Files reader from flow 14; pin it from there.
+    await page.getByRole("button", { name: /Pin as tab/i }).click();
+    // Back to the files list and pin plan.md via its row pin control
+    // (aria-label "Pin plan.md").
+    await page.getByRole("button", { name: /← Files/ }).click();
+    await page.getByRole("button", { name: "Pin plan.md", exact: true }).click();
+
+    // Two new sibling tabs should appear next to Chat | Files & Changelog.
+    const planTabBtn = page.getByRole("tab", { name: /Open plan\.md tab/i });
+    const htmlTabBtn = page.getByRole("tab", { name: /Open report\.html tab/i });
+    await waitFor(
+      async () => (await planTabBtn.count()) > 0 && (await htmlTabBtn.count()) > 0,
+      { timeout: 10_000, label: "two pinned tabs appear" },
+    );
+    // Verify on the server: project.yaml pinned reflects both.
+    const afterPin = await fetchJson(`${BASE_URL}/api/projects/${richSlug}`);
+    const pinned = afterPin?.project?.pinned ?? [];
+    log("server pinned after pinning both:", JSON.stringify(pinned));
+    if (!pinned.includes("plan.md") || !pinned.includes("report.html")) {
+      throw new Error(`server pinned missing files: ${JSON.stringify(pinned)}`);
+    }
+
+    // Switch to each pinned tab to confirm they render via FileView.
+    await planTabBtn.click();
+    await waitFor(
+      async () => (await page.locator('[data-testid="mermaid"] svg').count()) > 0,
+      { timeout: 15_000, label: "pinned plan.md tab renders Mermaid" },
+    );
+    await htmlTabBtn.click();
+    await page.locator('iframe[title="report.html"]').waitFor({ timeout: 10_000 });
+    await shot(page, "23-pinned-tabs.png");
+
+    // Unpin report.html via its tab "x". The tab should disappear and the
+    // server's pinned[] should drop it.
+    await page.getByRole("button", { name: /Unpin report\.html/i }).click();
+    await waitFor(
+      async () => (await page.getByRole("button", { name: /^report\.html$/ }).count()) === 0,
+      { timeout: 10_000, label: "report.html tab disappears after unpin" },
+    );
+    const afterUnpin = await fetchJson(`${BASE_URL}/api/projects/${richSlug}`);
+    const pinned2 = afterUnpin?.project?.pinned ?? [];
+    log("server pinned after unpinning report.html:", JSON.stringify(pinned2));
+    if (pinned2.includes("report.html")) {
+      throw new Error(`report.html still pinned on server: ${JSON.stringify(pinned2)}`);
+    }
+    if (!pinned2.includes("plan.md")) {
+      throw new Error(`plan.md should still be pinned: ${JSON.stringify(pinned2)}`);
+    }
+    pass("15. Pin two files as sibling tabs + unpin one (tab + project.yaml) (#4)");
+  } catch (e) {
+    await shot(page, "23-pinned-tabs-FAIL.png").catch(() => {});
+    fail("15. Pin two files as sibling tabs + unpin one (tab + project.yaml) (#4)", e);
+  }
+
   await browser.close();
 }
 
@@ -507,5 +729,5 @@ run()
     console.log("\n================ E2E SUMMARY ================");
     for (const r of results) console.log(`${r.ok ? "PASS" : "FAIL"}  ${r.name}`);
     console.log(`--------------------------------------------\n${passed}/${total} flows passed`);
-    process.exit(passed === total && total >= 10 ? 0 : 1);
+    process.exit(passed === total && total >= 15 ? 0 : 1);
   });

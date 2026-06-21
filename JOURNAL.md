@@ -602,3 +602,78 @@ Browser ──https──> Caddy(netops) ──> projects.valfenda.net LXC
   by default; the live test used 8s via env to exercise coalescing quickly — the prod
   default is unchanged. (e) Not yet deployed to the LXC (code + push only, per scope);
   redeploy is a separate step.
+
+- 2026-06-21 — Sub-agent (frontend: preload checkbox + rich file rendering + pinned
+  tabs — issues #1/#3/#4): **DONE. 15/15 E2E green in a real browser** (the 10 proven
+  flows + 5 new ones), including the headline assertions: **Mermaid renders as real SVG**,
+  **HTML renders in a sandboxed iframe**, **pinned sibling tabs**, and the **preload
+  checkbox default-ON**. Built on the existing UI against the v2 backend contract
+  (`docs/CONTRACT-v2.md`); the proven chat flow is unchanged. **typecheck + build clean.**
+  Pushed to `main`.
+
+  **What I added per issue:**
+  - **#1 — Context-preload checkbox (`ChatPane.tsx`).** A "Preload project context"
+    checkbox on the **new-chat composer**, **default ON** for project chats, **hidden for
+    one-off scratch chats** (gated by `isProjectChat && !initialSessionId`). It's enabled
+    only when `project.hasOverview` (disabled with a "(no overview yet)" note otherwise),
+    with a helper tooltip explaining it injects the project's curated OVERVIEW.md. On the
+    **first** turn of a never-resumed chat it sets `preloadContext: true` in `chat:send`
+    (threaded through `lib/ws.ts send(...)`); ignored on resumes/subsequent turns. A
+    subtle **"Overview ✓"** badge appears in the project header when `hasOverview`.
+    **Live-proven end-to-end**: a new preload chat on a project WITH an overview answered
+    "blue (#2a6ebb)" using ONLY the injected context (never read/listed files); the WS
+    frame carried `preloadContext:true, sessionId:null`.
+  - **#3 — Rich file rendering (`FileView.tsx`, `Mermaid.tsx`, `Markdown.tsx`).**
+    `FileView` fetches `GET /files/:name` and renders by `kind`: **markdown** via the
+    Markdown renderer with ```mermaid fences rendered as **real SVG** (new `mermaid@11`
+    dep, lazily imported, dark-theme-matched, `securityLevel:"strict"`, graceful error
+    fallback) + Starlight-like document typography (`.prose-doc` scope in `index.css`);
+    **html** in a **sandboxed `<iframe sandbox="allow-scripts" srcDoc=…>`** (no
+    allow-same-origin → null origin, isolated from the app) with a "sandboxed" note + sane
+    min-height; **text** as monospace `<pre>`. The Files tab lists files (`GET /files`) and
+    clicking one opens it in `FileView` (with a pin toggle).
+  - **#4 — Pin a file as a sibling tab (`ProjectView.tsx`).** Each file in the Files list
+    has a pin toggle (`PUT/DELETE /pins`); `project.pinned[]` renders as **sibling tabs**
+    next to Chat | Files & Changelog (order preserved by the server), each showing the file
+    via `FileView`, each with a small **x** to unpin (`DELETE /pins/:file`, URL-encoded).
+    Markdown (plan.md/OVERVIEW.md) and HTML (report.html) all pin/render correctly.
+    OVERVIEW.md surfaces naturally in Files (pinnable).
+  - **Pull model after a turn (`ProjectView`/`ChatPane`).** On `chat:complete` the pane
+    fires `onTurnComplete` → re-fetch `GET /:slug` + `/files` so a fresh sweep's
+    OVERVIEW/CHANGELOG/new files appear (no sweep push channel; this is the pull).
+
+  **E2E (extended `scripts/e2e.mjs`; Max OAuth, dot-free temp `PADDOCK_DATA_DIR`, real
+  Claude turns; PORT 4044) — per-assertion results, all PASS:**
+  - **11.** new-chat preload checkbox **present + checked by default** (`{checked:true}`). ✓
+  - **12.** keeper writes `plan.md` (with a `## Plan` + ```mermaid flowchart) + `report.html`
+    (standalone HTML, inline-styled `<h1>`). ✓
+  - **13.** Files list shows both; opening `plan.md` renders the **markdown heading** AND
+    the **Mermaid diagram as SVG** (`svg=1`, 16 child groups — not raw text). ✓
+  - **14.** opening `report.html` renders inside a **sandboxed iframe** with
+    `sandbox="allow-scripts"` and **NOT** `allow-same-origin`; the frame's `<h1>Report</h1>`
+    is present. ✓
+  - **15.** pinning both files adds **two sibling tabs**; server `pinned` =
+    `["report.html","plan.md"]`; switching to each renders (Mermaid SVG / iframe); unpinning
+    `report.html` via its **x** removes the tab AND drops it from `project.yaml`
+    (`pinned` → `["plan.md"]`). ✓
+  - The 10 prior flows (landing, create, streaming chat + tool blocks + on-disk file,
+    history hydration, resume continuity, one-off scratch, fonts self-hosted, edit-metadata,
+    delete-project) all still **PASS** — **the proven chat flow is intact**.
+  - Screenshots refreshed under `docs/screenshots/`: new **20-files-list**,
+    **21-markdown-mermaid**, **22-html-iframe**, **23-pinned-tabs**, **24-preload-checkbox**.
+
+  **Bundle-size impact:** the main app chunk is essentially unchanged (`index` 409→**422 KB
+  / 131 KB gzip**) because **mermaid is dynamically `import()`-ed** — it ships as separate
+  chunks (`mermaid.core` ~620 KB + per-diagram-type chunks) that load **only when a diagram
+  actually renders**, never on initial page load. No other deps added.
+
+  **Honest notes / rough edges:** (a) Mermaid is a big dependency; it's code-split so it
+  has zero first-paint cost, but the first diagram view incurs a one-time async load.
+  (b) The HTML iframe has a fixed reasonable min-height (480px) — no auto-resize to content
+  (can't measure a cross-origin/null-origin frame); acceptable and the safer choice.
+  (c) Sweeps are pull-only (re-fetch on turn completion / project focus) per the contract —
+  if a sweep finishes long after the turn, the user may need to revisit the project to see
+  the new OVERVIEW; a sweep-push WS channel remains a clean future enhancement. (d) The
+  preload checkbox sends `preloadContext:true` even when no overview exists yet (server
+  no-ops it) — harmless; the UI disables the box in that state to set expectations.
+  (e) **Not deployed to the LXC** (code + push only, per scope); redeploy is a separate step.

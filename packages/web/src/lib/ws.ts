@@ -105,13 +105,17 @@ class ChatClient {
     };
   }
 
-  send(projectSlug: string, message: string, sessionId: string | null): void {
-    this.transmit(
-      JSON.stringify({
-        type: "chat:send",
-        payload: { projectSlug, sessionId, message },
-      }),
-    );
+  send(
+    projectSlug: string,
+    message: string,
+    sessionId: string | null,
+    opts?: { preloadContext?: boolean },
+  ): void {
+    const payload: Record<string, unknown> = { projectSlug, sessionId, message };
+    // Only meaningful on the first turn of a NEW chat; the server ignores it
+    // otherwise. Omit when false to keep the wire clean.
+    if (opts?.preloadContext) payload.preloadContext = true;
+    this.transmit(JSON.stringify({ type: "chat:send", payload }));
   }
 
   cancel(jobId: string): void {

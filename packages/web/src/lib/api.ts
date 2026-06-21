@@ -9,6 +9,7 @@ import type {
   HistoryMessage,
   Project,
   ProjectDetail,
+  ProjectFile,
   UpdateProjectInput,
 } from "./types";
 
@@ -90,6 +91,39 @@ export const api = {
     await req<{ ok: boolean }>(`/api/chats/${encodeURIComponent(sessionId)}`, {
       method: "DELETE",
     });
+  },
+
+  /** List the freeform files in a project's directory. */
+  async listProjectFiles(slug: string): Promise<string[]> {
+    const { files } = await req<{ files: string[] }>(
+      `/api/projects/${encodeURIComponent(slug)}/files`,
+    );
+    return files;
+  },
+
+  /** Fetch one project file + a render-kind hint (markdown | html | text). */
+  async getProjectFile(slug: string, name: string): Promise<ProjectFile> {
+    return req<ProjectFile>(
+      `/api/projects/${encodeURIComponent(slug)}/files/${encodeURIComponent(name)}`,
+    );
+  },
+
+  /** Pin a file as a sibling tab. Returns the updated project (with pinned[]). */
+  async pinFile(slug: string, file: string): Promise<Project> {
+    const { project } = await req<{ project: Project }>(
+      `/api/projects/${encodeURIComponent(slug)}/pins`,
+      { method: "PUT", body: JSON.stringify({ file }) },
+    );
+    return project;
+  },
+
+  /** Unpin a file. Returns the updated project (with pinned[]). */
+  async unpinFile(slug: string, file: string): Promise<Project> {
+    const { project } = await req<{ project: Project }>(
+      `/api/projects/${encodeURIComponent(slug)}/pins/${encodeURIComponent(file)}`,
+      { method: "DELETE" },
+    );
+    return project;
   },
 
   async listProjectChats(slug: string): Promise<Chat[]> {

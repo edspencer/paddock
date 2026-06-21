@@ -27,6 +27,20 @@ export interface Project {
   summary: string;
   links?: ProjectLink[];
   dir: string;
+  /** True once a sweep has written OVERVIEW.md (drives the preload checkbox + Overview hint). */
+  hasOverview: boolean;
+  /** Pinned file names rendered as sibling tabs (order-preserving). Default []. */
+  pinned: string[];
+}
+
+/** Render-kind hint for a project file, derived server-side from its extension. */
+export type FileKind = "markdown" | "html" | "text";
+
+/** A single project file's content + how it should be rendered (GET /files/:name). */
+export interface ProjectFile {
+  name: string;
+  kind: FileKind;
+  content: string;
 }
 
 export interface CreateProjectInput {

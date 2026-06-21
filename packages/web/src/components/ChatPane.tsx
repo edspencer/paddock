@@ -30,6 +30,12 @@ export interface ChatPaneProps {
   loadHistory?: (sessionId: string) => Promise<HistoryMessage[]>;
   /** Called when a brand-new chat first gets a real session id (to refresh lists). */
   onSessionEstablished?: (sessionId: string) => void;
+  /** Called whenever a turn completes (pull model: re-fetch project/files for sweeps). */
+  onTurnComplete?: () => void;
+  /** True for a project chat (vs. a one-off scratch chat). Gates the preload checkbox. */
+  isProjectChat?: boolean;
+  /** Whether the project has an OVERVIEW.md to preload (issue #1). */
+  preloadAvailable?: boolean;
   emptyHint?: string;
   placeholder?: string;
 }
@@ -39,6 +45,9 @@ export function ChatPane({
   initialSessionId,
   loadHistory,
   onSessionEstablished,
+  onTurnComplete,
+  isProjectChat = false,
+  preloadAvailable = false,
   emptyHint,
   placeholder,
 }: ChatPaneProps) {
@@ -48,6 +57,14 @@ export function ChatPane({
   const [hydrating, setHydrating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [conn, setConn] = useState<ConnectionState>(chatClient.state);
+
+  // Issue #1: preload the project's curated OVERVIEW.md as context on the FIRST
+  // turn of a new project chat. Default ON for project chats. Only sent on the
+  // first message of a never-resumed session (the server ignores it otherwise).
+  const [preloadContext, setPreloadContext] = useState(true);
+  const showPreload = isProjectChat && !initialSessionId;
+  // The checkbox only has an effect once a turn has been sent on a brand-new chat.
+  const firstTurnSentRef = useRef(false);
 
   // Session id is kept in a ref (the WS sub needs the latest without re-subscribing).
   const sessionRef = useRef<string | null>(initialSessionId ?? null);
@@ -138,6 +155,9 @@ export function ChatPane({
           }
         }
         if (!meta.success && meta.error) setError(meta.error);
+        // Pull model: a completed turn may have triggered a sweep that rewrote
+        // OVERVIEW.md / CHANGELOG / added files — let the parent re-fetch.
+        onTurnComplete?.();
       },
       onError: (err) => {
         setStreaming(false);
@@ -150,7 +170,7 @@ export function ChatPane({
       sub.unsubscribe();
     };
     // Re-subscribe when the chat identity changes.
-  }, [projectSlug, initialSessionId, onSessionEstablished]);
+  }, [projectSlug, initialSessionId, onSessionEstablished, onTurnComplete]);
 
   // --- send / cancel ---------------------------------------------------------
   const send = useCallback(() => {
@@ -164,8 +184,12 @@ export function ChatPane({
     ]);
     setDraft("");
     setStreaming(true);
-    chatClient.send(projectSlug, text, sessionRef.current);
-  }, [draft, streaming, projectSlug]);
+    // Preload only applies to the very first turn of a never-resumed chat.
+    const isFirstTurnOfNewChat = isNewSessionRef.current && !firstTurnSentRef.current;
+    const preload = isProjectChat && isFirstTurnOfNewChat && preloadContext;
+    firstTurnSentRef.current = true;
+    chatClient.send(projectSlug, text, sessionRef.current, { preloadContext: preload });
+  }, [draft, streaming, projectSlug, isProjectChat, preloadContext]);
 
   const cancel = useCallback(() => {
     // jobId is captured off event metadata in the handlers below. The server
@@ -230,6 +254,13 @@ export function ChatPane({
       {/* composer */}
       <div className="border-t border-paddock-200 bg-canvas/80 backdrop-blur dark:border-paddock-800 dark:bg-canvas-dark/80">
         <div className="mx-auto w-full max-w-3xl px-4 py-3">
+          {showPreload && (
+            <PreloadToggle
+              checked={preloadContext}
+              available={preloadAvailable}
+              onChange={setPreloadContext}
+            />
+          )}
           <div className="flex items-end gap-2 rounded-2xl border border-paddock-300 bg-white p-2 shadow-sm focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/20 dark:border-paddock-700 dark:bg-paddock-900">
             <textarea
               className="max-h-48 min-h-[40px] flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none placeholder:text-paddock-400 dark:placeholder:text-paddock-600"
@@ -277,6 +308,51 @@ export function ChatPane({
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Issue #1 — the "Preload project context" checkbox shown on a NEW project
+ * chat's composer. When checked, the first turn injects the project's curated
+ * OVERVIEW.md as context. Disabled (with an explanatory note) until a sweep has
+ * produced an overview.
+ */
+function PreloadToggle({
+  checked,
+  available,
+  onChange,
+}: {
+  checked: boolean;
+  available: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <label
+      className={`group mb-2 inline-flex w-fit items-center gap-2 rounded-lg px-1 py-0.5 text-xs ${
+        available
+          ? "cursor-pointer text-paddock-600 dark:text-paddock-300"
+          : "cursor-not-allowed text-paddock-400"
+      }`}
+      title={
+        available
+          ? "Inject this project's curated OVERVIEW.md as context on the first message of this new chat, so the agent starts already knowing the project's state."
+          : "No project overview yet — a sweep writes OVERVIEW.md after some activity. The agent will still see the project's files."
+      }
+    >
+      <input
+        type="checkbox"
+        // Reflects the user's intent (default ON); disabled until a sweep has
+        // produced an overview to actually inject.
+        checked={checked}
+        disabled={!available}
+        onChange={(e) => onChange(e.target.checked)}
+        className="h-3.5 w-3.5 rounded border-paddock-300 accent-accent focus:ring-accent/30 disabled:opacity-50 dark:border-paddock-600"
+      />
+      <span className="font-medium">Preload project context</span>
+      <span className="text-paddock-400 transition-opacity">
+        {available ? "(injects OVERVIEW.md)" : "(no overview yet)"}
+      </span>
+    </label>
   );
 }
 

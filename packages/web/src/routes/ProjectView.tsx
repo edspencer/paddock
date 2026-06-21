@@ -6,13 +6,24 @@ import type { Chat, Project } from "../lib/types";
 import { StatusPill } from "../components/StatusPill";
 import { ChatPane } from "../components/ChatPane";
 import { Markdown } from "../components/Markdown";
+import { FileView } from "../components/FileView";
 import { ProjectMenu } from "../components/ProjectMenu";
 import { EditProjectModal } from "../components/EditProjectModal";
 import { ConfirmDialog } from "../components/ConfirmDialog";
-import { ChatIcon, ClockIcon, PlusIcon, TrashIcon } from "../components/icons";
+import {
+  ChatIcon,
+  CheckIcon,
+  ClockIcon,
+  FileIcon,
+  PinIcon,
+  PlusIcon,
+  TrashIcon,
+  XIcon,
+} from "../components/icons";
 import { relativeTime } from "../lib/format";
 
-type Tab = "chat" | "files";
+/** Built-in tabs are "chat" / "files"; a pinned file tab is `file:<name>`. */
+type Tab = "chat" | "files" | `file:${string}`;
 
 export function ProjectView() {
   const { slug = "" } = useParams();
@@ -22,6 +33,7 @@ export function ProjectView() {
   const [project, setProject] = useState<Project | null>(null);
   const [chats, setChats] = useState<Chat[]>([]);
   const [changelog, setChangelog] = useState("");
+  const [files, setFiles] = useState<string[]>([]);
   const [loadErr, setLoadErr] = useState<string | null>(null);
 
   const [editOpen, setEditOpen] = useState(false);
@@ -33,6 +45,8 @@ export function ProjectView() {
   // Bumping this remounts ChatPane to reset its transcript on switch.
   const [chatKey, setChatKey] = useState(0);
   const [tab, setTab] = useState<Tab>("chat");
+  // The file open in the Files tab's reader (null = the file list).
+  const [openFile, setOpenFile] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoadErr(null);
@@ -41,6 +55,8 @@ export function ProjectView() {
       setProject(detail.project);
       setChats(detail.chats);
       setChangelog(detail.changelog);
+      const fileList = await api.listProjectFiles(slug).catch(() => []);
+      setFiles(fileList);
     } catch (e) {
       setLoadErr(e instanceof Error ? e.message : "Failed to load project");
     }
@@ -50,6 +66,7 @@ export function ProjectView() {
     setProject(null);
     setActiveSession(null);
     setTab("chat");
+    setOpenFile(null);
     setChatKey((k) => k + 1);
     void load();
   }, [slug, load]);
@@ -58,6 +75,19 @@ export function ProjectView() {
   const refreshChats = useCallback(async () => {
     const list = await api.listProjectChats(slug).catch(() => null);
     if (list) setChats(list);
+  }, [slug]);
+
+  // After a turn completes, re-fetch the project + files (pull model): a fresh
+  // sweep may have written OVERVIEW.md / appended to CHANGELOG / added files.
+  const refreshAfterTurn = useCallback(async () => {
+    const detail = await api.getProjectDetail(slug).catch(() => null);
+    if (detail) {
+      setProject(detail.project);
+      setChats(detail.chats);
+      setChangelog(detail.changelog);
+    }
+    const fileList = await api.listProjectFiles(slug).catch(() => null);
+    if (fileList) setFiles(fileList);
   }, [slug]);
 
   const loadHistory = useCallback(
@@ -81,6 +111,34 @@ export function ProjectView() {
     void refreshChats();
     void refreshProjects();
   }, [refreshChats, refreshProjects]);
+
+  const onTurnComplete = useCallback(() => {
+    void refreshAfterTurn();
+    void refreshProjects();
+  }, [refreshAfterTurn, refreshProjects]);
+
+  const togglePin = useCallback(
+    async (file: string) => {
+      if (!project) return;
+      const pinned = project.pinned.includes(file)
+        ? await api.unpinFile(slug, file)
+        : await api.pinFile(slug, file);
+      setProject(pinned);
+      upsert(pinned);
+    },
+    [project, slug, upsert],
+  );
+
+  const unpinTab = useCallback(
+    async (file: string) => {
+      const updated = await api.unpinFile(slug, file);
+      setProject(updated);
+      upsert(updated);
+      // If the unpinned tab was active, fall back to Files.
+      setTab((t) => (t === `file:${file}` ? "files" : t));
+    },
+    [slug, upsert],
+  );
 
   const confirmDeleteChat = useCallback(async () => {
     if (!deletingChat) return;
@@ -108,6 +166,10 @@ export function ProjectView() {
     return <div className="p-8 text-sm text-paddock-500">Loading project…</div>;
   }
 
+  const pinned = project.pinned;
+  // The file currently shown by the active pinned tab, if any.
+  const activePinnedFile = tab.startsWith("file:") ? tab.slice("file:".length) : null;
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* Header */}
@@ -120,6 +182,15 @@ export function ProjectView() {
               {d}
             </span>
           ))}
+          {project.hasOverview && (
+            <span
+              title="A sweep has curated an OVERVIEW.md for this project. New chats can preload it as context."
+              className="inline-flex items-center gap-1 rounded-md bg-emerald-100 px-1.5 py-0.5 text-[11px] font-medium text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400"
+            >
+              <CheckIcon width={11} height={11} />
+              Overview
+            </span>
+          )}
           <span className="ml-auto inline-flex items-center gap-1 text-xs text-paddock-400">
             <ClockIcon width={12} height={12} />
             updated {relativeTime(project.updated)}
@@ -152,7 +223,7 @@ export function ProjectView() {
           </div>
           <div className="flex-1 overflow-y-auto px-2 pb-2">
             {/* The pending new chat, shown while it has no session id yet. */}
-            {activeSession === null && (
+            {activeSession === null && tab === "chat" && (
               <div className="mb-0.5 flex items-center gap-1.5 rounded-lg bg-paddock-200/80 px-2.5 py-2 text-sm dark:bg-paddock-800">
                 <ChatIcon width={13} height={13} className="text-paddock-500" />
                 <span className="font-medium italic text-paddock-600 dark:text-paddock-300">
@@ -169,7 +240,7 @@ export function ProjectView() {
               <div
                 key={c.sessionId}
                 className={`group/chat relative mb-0.5 rounded-lg transition-colors ${
-                  activeSession === c.sessionId
+                  activeSession === c.sessionId && tab === "chat"
                     ? "bg-paddock-200/80 dark:bg-paddock-800"
                     : "hover:bg-paddock-200/50 dark:hover:bg-paddock-800/50"
                 }`}
@@ -200,25 +271,51 @@ export function ProjectView() {
 
         {/* Main: tabs + content */}
         <div className="flex min-w-0 flex-1 flex-col">
-          <div className="flex gap-1 border-b border-paddock-200 px-4 dark:border-paddock-800">
+          <div className="flex items-center gap-1 overflow-x-auto border-b border-paddock-200 px-4 dark:border-paddock-800">
             <TabButton active={tab === "chat"} onClick={() => setTab("chat")}>
               Chat
             </TabButton>
             <TabButton active={tab === "files"} onClick={() => setTab("files")}>
               Files &amp; Changelog
             </TabButton>
+            {/* Pinned file tabs (sibling tabs), order preserved by the server. */}
+            {pinned.map((f) => (
+              <PinnedTab
+                key={f}
+                file={f}
+                active={tab === `file:${f}`}
+                onSelect={() => setTab(`file:${f}`)}
+                onUnpin={() => void unpinTab(f)}
+              />
+            ))}
           </div>
 
-          {tab === "chat" ? (
+          {tab === "chat" && (
             <ChatPane
               key={chatKey}
               projectSlug={project.slug}
               initialSessionId={activeSession ?? undefined}
               loadHistory={loadHistory}
               onSessionEstablished={onSessionEstablished}
+              onTurnComplete={onTurnComplete}
+              preloadAvailable={project.hasOverview}
+              isProjectChat
             />
-          ) : (
-            <FilesTab project={project} changelog={changelog} />
+          )}
+          {tab === "files" && (
+            <FilesTab
+              project={project}
+              changelog={changelog}
+              files={files}
+              openFile={openFile}
+              onOpenFile={setOpenFile}
+              onTogglePin={togglePin}
+            />
+          )}
+          {activePinnedFile && (
+            <div className="flex-1 overflow-y-auto">
+              <FileView slug={project.slug} name={activePinnedFile} />
+            </div>
           )}
         </div>
       </div>
@@ -264,10 +361,165 @@ export function ProjectView() {
   );
 }
 
-function FilesTab({ project, changelog }: { project: Project; changelog: string }) {
+/** A pinned-file sibling tab with a small unpin "x". */
+function PinnedTab({
+  file,
+  active,
+  onSelect,
+  onUnpin,
+}: {
+  file: string;
+  active: boolean;
+  onSelect: () => void;
+  onUnpin: () => void;
+}) {
+  return (
+    <div
+      className={`group/pin -mb-px flex items-center gap-1 border-b-2 pr-1 transition-colors ${
+        active
+          ? "border-accent"
+          : "border-transparent"
+      }`}
+    >
+      <button
+        onClick={onSelect}
+        title={file}
+        aria-label={`Open ${file} tab`}
+        role="tab"
+        aria-selected={active}
+        className={`flex items-center gap-1.5 py-2.5 pl-3 pr-1 text-sm font-medium transition-colors ${
+          active
+            ? "text-ink dark:text-ink-dark"
+            : "text-paddock-500 hover:text-paddock-700 dark:hover:text-paddock-300"
+        }`}
+      >
+        <PinIcon width={12} height={12} className="shrink-0 text-accent" />
+        <span className="max-w-[10rem] truncate">{file}</span>
+      </button>
+      <button
+        type="button"
+        aria-label={`Unpin ${file}`}
+        title={`Unpin ${file}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          onUnpin();
+        }}
+        className="flex h-5 w-5 items-center justify-center rounded text-paddock-400 opacity-60 transition hover:bg-paddock-200/70 hover:text-paddock-700 focus:opacity-100 group-hover/pin:opacity-100 dark:hover:bg-paddock-800"
+      >
+        <XIcon width={12} height={12} />
+      </button>
+    </div>
+  );
+}
+
+function FilesTab({
+  project,
+  changelog,
+  files,
+  openFile,
+  onOpenFile,
+  onTogglePin,
+}: {
+  project: Project;
+  changelog: string;
+  files: string[];
+  openFile: string | null;
+  onOpenFile: (name: string | null) => void;
+  onTogglePin: (file: string) => void;
+}) {
+  // When a file is open, show the reader with a back link.
+  if (openFile) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex items-center gap-2 border-b border-paddock-200 px-4 py-2 dark:border-paddock-800">
+          <button
+            onClick={() => onOpenFile(null)}
+            className="btn-subtle -ml-2 py-1.5 text-xs"
+          >
+            ← Files
+          </button>
+          <span className="font-mono text-sm text-paddock-700 dark:text-paddock-300">
+            {openFile}
+          </span>
+          <button
+            onClick={() => onTogglePin(openFile)}
+            className={`ml-auto inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
+              project.pinned.includes(openFile)
+                ? "bg-accent/10 text-accent"
+                : "text-paddock-500 hover:bg-paddock-200/60 dark:hover:bg-paddock-800/60"
+            }`}
+            title={project.pinned.includes(openFile) ? "Unpin (remove tab)" : "Pin as a tab"}
+          >
+            <PinIcon width={13} height={13} />
+            {project.pinned.includes(openFile) ? "Pinned" : "Pin as tab"}
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          <FileView slug={project.slug} name={openFile} />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex-1 overflow-y-auto">
       <div className="mx-auto max-w-3xl px-6 py-6">
+        <section className="mb-8">
+          <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-paddock-500">
+            Files
+          </h3>
+          {files.length === 0 ? (
+            <div className="card">
+              <p className="text-sm italic text-paddock-400">
+                No files yet. Files the keeper agent writes (and sweep-curated
+                OVERVIEW.md) will appear here.
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-hidden rounded-2xl border border-paddock-200 dark:border-paddock-800">
+              {files.map((f, i) => {
+                const isPinned = project.pinned.includes(f);
+                return (
+                  <div
+                    key={f}
+                    className={`group/file flex items-center gap-2 px-3 py-2.5 transition-colors hover:bg-paddock-100/70 dark:hover:bg-paddock-900/40 ${
+                      i > 0 ? "border-t border-paddock-200 dark:border-paddock-800" : ""
+                    }`}
+                  >
+                    <button
+                      onClick={() => onOpenFile(f)}
+                      className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                    >
+                      <FileIcon
+                        width={15}
+                        height={15}
+                        className="shrink-0 text-paddock-400"
+                      />
+                      <span className="truncate font-mono text-sm text-paddock-700 dark:text-paddock-200">
+                        {f}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={isPinned ? `Unpin ${f}` : `Pin ${f}`}
+                      title={isPinned ? "Unpin (remove tab)" : "Pin as a sibling tab"}
+                      onClick={() => onTogglePin(f)}
+                      className={`flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition ${
+                        isPinned
+                          ? "bg-accent/10 text-accent"
+                          : "text-paddock-400 opacity-0 hover:bg-paddock-200/70 hover:text-paddock-700 focus:opacity-100 group-hover/file:opacity-100 dark:hover:bg-paddock-800"
+                      }`}
+                    >
+                      <PinIcon width={12} height={12} />
+                      {isPinned ? "Pinned" : "Pin"}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
         <section className="mb-8">
           <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-paddock-500">
             Summary
@@ -334,7 +586,7 @@ function TabButton({
   return (
     <button
       onClick={onClick}
-      className={`-mb-px border-b-2 px-3 py-2.5 text-sm font-medium transition-colors ${
+      className={`-mb-px whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-medium transition-colors ${
         active
           ? "border-accent text-ink dark:text-ink-dark"
           : "border-transparent text-paddock-500 hover:text-paddock-700 dark:hover:text-paddock-300"

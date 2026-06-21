@@ -173,6 +173,48 @@
   }
 }
 
+/*
+ * Document-grade markdown typography for the file viewer (Starlight-like):
+ * roomier than the compact chat-bubble `.md`, with prominent headings, nicer
+ * tables, code, and blockquote "callouts". Scopes onto `.prose-doc .md`.
+ */
+@layer components {
+  .prose-doc .md {
+    @apply text-[15px] leading-7 text-paddock-800 dark:text-paddock-200;
+  }
+  .prose-doc .md h1 {
+    @apply mb-3 mt-6 border-b border-paddock-200 pb-2 text-2xl font-bold tracking-tight text-ink dark:border-paddock-800 dark:text-ink-dark;
+  }
+  .prose-doc .md h2 {
+    @apply mb-2 mt-6 text-xl font-semibold tracking-tight text-ink dark:text-ink-dark;
+  }
+  .prose-doc .md h3 {
+    @apply mb-2 mt-5 text-base font-semibold text-ink dark:text-ink-dark;
+  }
+  .prose-doc .md p {
+    @apply my-3;
+  }
+  .prose-doc .md ul {
+    @apply my-3 space-y-1.5;
+  }
+  .prose-doc .md ol {
+    @apply my-3 space-y-1.5;
+  }
+  .prose-doc .md blockquote {
+    @apply my-4 rounded-r-lg border-l-4 border-accent/70 bg-accent/5 py-2 pl-4 pr-3 text-paddock-700 dark:text-paddock-300;
+  }
+  .prose-doc .md pre {
+    @apply my-4 rounded-xl border border-paddock-200 p-4 dark:border-paddock-800;
+  }
+  .prose-doc .md table {
+    @apply my-4 overflow-hidden rounded-lg text-sm;
+  }
+  .prose-doc .md th,
+  .prose-doc .md td {
+    @apply px-3 py-1.5;
+  }
+}
+
 /* The blinking caret shown while assistant text is streaming in. */
 @layer utilities {
   .streaming-caret::after {
