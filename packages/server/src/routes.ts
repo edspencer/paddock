@@ -449,6 +449,47 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     },
   );
 
+  // Promote a one-off (scratch) chat into a new project (issue #20): create the
+  // project + keeper, then re-home the chat's transcript into it so it lists +
+  // resumes under the project. Returns { project, promoted } — `promoted:false`
+  // means the project was created but the transcript couldn't be moved (e.g. an
+  // unknown session id); the project is still usable.
+  app.post<{
+    Params: { sessionId: string };
+    Body: { name?: string; slug?: string; group?: string; summary?: string; domain?: string[] };
+  }>("/api/chats/:sessionId/promote", async (req, reply) => {
+    const body = req.body ?? {};
+    if (!body.name || !body.name.trim()) {
+      return reply.code(400).send({ error: "Project name is required", code: "invalid" });
+    }
+    try {
+      const project = await projects.create({
+        name: body.name,
+        slug: body.slug,
+        group: body.group,
+        summary: body.summary,
+        domain: Array.isArray(body.domain) ? body.domain : undefined,
+      });
+      // Register the keeper + sweeper (creates the project's .chats symlink)
+      // BEFORE moving the transcript into it.
+      try {
+        await herdctl.ensureProjectAgent(project);
+      } catch (err) {
+        req.log.warn({ err }, "promote: keeper registration failed (project still created)");
+      }
+      let promoted = false;
+      try {
+        await herdctl.promoteScratchSession(req.params.sessionId, project);
+        promoted = true;
+      } catch (err) {
+        req.log.warn({ err }, "promote: could not re-home scratch transcript");
+      }
+      return reply.code(201).send({ project, promoted, sessionId: req.params.sessionId });
+    } catch (err) {
+      return sendProjectError(reply, err);
+    }
+  });
+
   /** Resolve a slug to the agent name whose sessions back it. */
   async function agentForSlug(slug: string): Promise<string> {
     if (slug === SCRATCH_SLUG) return SCRATCH_AGENT;

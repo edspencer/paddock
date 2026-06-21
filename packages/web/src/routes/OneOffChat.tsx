@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { api } from "../lib/api";
+import { useProjects } from "../lib/projects-context";
 import { SCRATCH_SLUG, type Chat } from "../lib/types";
 import { ChatPane } from "../components/ChatPane";
 import { ConfirmDialog } from "../components/ConfirmDialog";
-import { ChatIcon, PlusIcon, TrashIcon } from "../components/icons";
+import { PromoteChatModal } from "../components/PromoteChatModal";
+import { ChatIcon, FolderIcon, PlusIcon, TrashIcon } from "../components/icons";
 import { relativeTime } from "../lib/format";
 
 /**
@@ -16,8 +18,11 @@ export function OneOffChat() {
   const { sessionId } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
+  const { upsert } = useProjects();
   const [chats, setChats] = useState<Chat[]>([]);
   const [deletingChat, setDeletingChat] = useState<Chat | null>(null);
+  const [promoting, setPromoting] = useState(false);
+  const currentChat = chats.find((c) => c.sessionId === sessionId);
 
   // Stable ChatPane mount key (same pattern as ProjectView): keep the pane
   // across the new->established transition (we mirror the id into /chat/:id with
@@ -60,14 +65,28 @@ export function OneOffChat() {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="border-b border-paddock-200 px-6 py-4 dark:border-paddock-800">
-        <div className="flex items-center gap-2">
-          <ChatIcon width={16} height={16} className="text-paddock-400" />
-          <h1 className="text-lg font-semibold tracking-tight">One-off chat</h1>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <ChatIcon width={16} height={16} className="text-paddock-400" />
+              <h1 className="text-lg font-semibold tracking-tight">One-off chat</h1>
+            </div>
+            <p className="mt-1 text-sm text-paddock-500">
+              A scratch conversation, not tied to a project. For anything you'll return to,
+              promote it to a project.
+            </p>
+          </div>
+          {sessionId && (
+            <button
+              className="btn-ghost shrink-0"
+              onClick={() => setPromoting(true)}
+              title="Turn this chat into a project (keeps its history)"
+            >
+              <FolderIcon width={15} height={15} />
+              Promote to project
+            </button>
+          )}
         </div>
-        <p className="mt-1 text-sm text-paddock-500">
-          A scratch conversation, not tied to a project. For anything you'll return to,
-          create a project instead.
-        </p>
       </header>
 
       <div className="flex min-h-0 flex-1">
@@ -138,6 +157,24 @@ export function OneOffChat() {
         onConfirm={confirmDeleteChat}
         onClose={() => setDeletingChat(null)}
       />
+
+      {sessionId && (
+        <PromoteChatModal
+          open={promoting}
+          sessionId={sessionId}
+          defaultName={currentChat?.name}
+          onClose={() => setPromoting(false)}
+          onPromoted={(project, promoted) => {
+            upsert(project);
+            setPromoting(false);
+            navigate(
+              promoted
+                ? `/projects/${project.slug}/chat/${sessionId}`
+                : `/projects/${project.slug}`,
+            );
+          }}
+        />
+      )}
     </div>
   );
 }

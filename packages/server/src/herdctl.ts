@@ -60,7 +60,7 @@ import YAML from "yaml";
 import type { PaddockConfig } from "./config.js";
 import type { Project } from "./projects.js";
 import { KEEPER_DEFAULT_MODEL, SWEEPER_DEFAULT_MODEL } from "./models.js";
-import { ensureProjectChats } from "./transcripts.js";
+import { ensureProjectChats, projectChatsDir } from "./transcripts.js";
 
 /** Options passed through to a streamed trigger. */
 export interface ChatTurnOptions {
@@ -353,6 +353,138 @@ export class HerdctlService {
   /** The working directory used by one-off / scratch chats. */
   get scratchDir(): string {
     return this.cfg.scratchDir;
+  }
+
+  /**
+   * Promote a one-off (scratch) chat into a project: re-home its transcript into
+   * the project's `.chats/` (rewriting the embedded `cwd` so resume targets the
+   * project dir) and synthesize a herdctl job record attributing the session to
+   * the project's keeper agent. After this + the cache invalidations below the
+   * chat lists and resumes under the project with NO restart — unlike
+   * `scripts/migrate-chat.sh`, which writes the same files from outside the
+   * process and therefore needs a restart to drop the attribution-index cache.
+   *
+   * The caller MUST have already created the project and registered its keeper
+   * (ensureProjectAgent), so the project's `.chats/` + transcript symlink exist.
+   * Throws if the scratch transcript can't be read (e.g. unknown session id).
+   */
+  async promoteScratchSession(sessionId: string, project: Project): Promise<void> {
+    if (!/^[A-Za-z0-9._-]+$/.test(sessionId)) {
+      throw new Error(`Invalid session id: ${sessionId}`);
+    }
+    const fromFile = path.join(projectChatsDir(this.cfg.scratchDir), `${sessionId}.jsonl`);
+    const toFile = path.join(projectChatsDir(project.dir), `${sessionId}.jsonl`);
+
+    // Read the scratch transcript (throws ENOENT for an unknown/absent session).
+    const raw = await fs.readFile(fromFile, "utf8");
+    // Rewrite ONLY the embedded `cwd` token. Claude Code writes compact JSON
+    // (`"cwd":"/abs/path"` — no spaces, no escaping for a plain abs path), the
+    // same assumption scripts/migrate-chat.sh relies on.
+    const rewritten = raw
+      .split(`"cwd":"${this.cfg.scratchDir}"`)
+      .join(`"cwd":"${project.dir}"`);
+
+    await fs.mkdir(projectChatsDir(project.dir), { recursive: true });
+    await fs.writeFile(toFile, rewritten, "utf8");
+
+    // Preserve the real last-activity time on the moved file.
+    const st = await fs.stat(fromFile).catch(() => null);
+    if (st) await fs.utimes(toFile, st.atime, st.mtime).catch(() => undefined);
+
+    // Drop the scratch copy AND evict the scratch agent's in-process tracking of
+    // this session. The latter is essential for same-process resume: the scratch
+    // agent that CREATED the session still "owns" the session id in herdctl's
+    // live session state, so resuming under the keeper without evicting it forks
+    // a fresh session instead of continuing (a process restart clears the same
+    // state, which is why it "worked after restart"). deleteSession removes the
+    // scratch transcript (already moved → no-op on content) and clears that state.
+    await this.manager.deleteSession(SCRATCH_AGENT, sessionId).catch(() => undefined);
+    await fs.rm(fromFile, { force: true });
+
+    // Re-attribute the session to the keeper, then drop the discovery +
+    // attribution caches so the move shows immediately.
+    await this.reattributeSession(sessionId, project, st ? st.mtime : new Date());
+    this.invalidateSessions(keeperAgentName(project.slug));
+    this.invalidateSessions(SCRATCH_AGENT);
+  }
+
+  /**
+   * Point every herdctl job record for `sessionId` at the project's keeper so
+   * the core attribution index (last-write-wins per session) lists the session
+   * under the project. A scratch chat writes one job record PER TURN (all
+   * `agent: scratch`); simply adding a keeper record alongside them is not
+   * enough — whichever record the index visits last wins. So we rewrite the
+   * `agent` field of all existing records for the session. When none exist
+   * (e.g. a transcript migrated from outside paddock), we synthesize one.
+   */
+  private async reattributeSession(
+    sessionId: string,
+    project: Project,
+    when: Date,
+  ): Promise<void> {
+    const jobsDir = path.join(this.cfg.stateDir, "jobs");
+    await fs.mkdir(jobsDir, { recursive: true });
+    const keeper = keeperAgentName(project.slug);
+
+    let entries: string[] = [];
+    try {
+      entries = await fs.readdir(jobsDir);
+    } catch {
+      entries = [];
+    }
+
+    let matched = 0;
+    for (const name of entries) {
+      if (!name.endsWith(".yaml")) continue;
+      const file = path.join(jobsDir, name);
+      let parsed: Record<string, unknown> | null = null;
+      try {
+        parsed = YAML.parse(await fs.readFile(file, "utf8")) as Record<string, unknown> | null;
+      } catch {
+        continue;
+      }
+      if (!parsed || parsed.session_id !== sessionId) continue;
+      matched++;
+      if (parsed.agent === keeper) continue;
+      parsed.agent = keeper;
+      await fs.writeFile(file, YAML.stringify(parsed), "utf8");
+    }
+
+    // No existing job records for the session — synthesize one (migration path).
+    if (matched === 0) await this.writeAdoptionJob(sessionId, project, when);
+  }
+
+  /**
+   * Write a herdctl job-metadata YAML mapping `sessionId -> keeper agent` so the
+   * core attribution index lists the session under the project. Mirrors the
+   * shape `scripts/migrate-chat.sh` writes (and the JobMetadataSchema: the id
+   * must match `job-YYYY-MM-DD-[a-z0-9]{6}`).
+   */
+  private async writeAdoptionJob(sessionId: string, project: Project, when: Date): Promise<void> {
+    const jobsDir = path.join(this.cfg.stateDir, "jobs");
+    await fs.mkdir(jobsDir, { recursive: true });
+    const iso = (Number.isNaN(when.getTime()) ? new Date() : when).toISOString();
+    const date = iso.slice(0, 10);
+    const jobId = `job-${date}-${sessionId.slice(0, 6).toLowerCase()}`;
+    const outputFile = path.join(jobsDir, `${jobId}.jsonl`);
+    const record = {
+      id: jobId,
+      agent: keeperAgentName(project.slug),
+      schedule: null,
+      trigger_type: "web",
+      status: "completed",
+      exit_reason: "success",
+      session_id: sessionId,
+      forked_from: null,
+      started_at: iso,
+      finished_at: iso,
+      duration_seconds: 0,
+      output_file: outputFile,
+    };
+    await fs.writeFile(path.join(jobsDir, `${jobId}.yaml`), YAML.stringify(record), "utf8");
+    // herdctl's listJobs tolerates a missing output file, but keep parity with
+    // a real job record (and migrate-chat.sh) by touching an empty one.
+    await fs.writeFile(outputFile, "", "utf8").catch(() => undefined);
   }
 
   /** Read the parsed messages of a session, by agent name. */

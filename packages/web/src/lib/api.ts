@@ -149,6 +149,21 @@ export const api = {
     });
   },
 
+  /**
+   * Promote a one-off (scratch) chat into a new project (issue #20). Creates the
+   * project and re-homes the chat's transcript into it. `promoted:false` means
+   * the project was created but the transcript couldn't be moved.
+   */
+  async promoteChat(
+    sessionId: string,
+    input: { name: string; group?: string; summary?: string; domain?: string[] },
+  ): Promise<{ project: Project; promoted: boolean }> {
+    return req<{ project: Project; promoted: boolean }>(
+      `/api/chats/${encodeURIComponent(sessionId)}/promote`,
+      { method: "POST", body: JSON.stringify(input) },
+    );
+  },
+
   /** List the freeform files in a project's directory. */
   async listProjectFiles(slug: string): Promise<string[]> {
     const { files } = await req<{ files: string[] }>(
