@@ -1024,3 +1024,12 @@ Browser ──https──> Caddy(netops) ──> projects.valfenda.net LXC
   history endpoint is the source of truth). (c) `view` is derived from the
   pathname string (`/projects/<slug>/files…`); robust for these routes. (d) Not
   deployed — a later consolidated redeploy handles it.
+
+## STATUS LOG — 2026-06-21 (v3 pass: model selection + context meter + tool-less sweeper)
+- Published herdctl **core 5.12.0** (mtime-aware session-discovery cache + `FleetManager.invalidateSessions`, PR #260) + **chat 0.4.1** (CLI tool-pairing fix, PR #258) via version PR #259.
+- Paddock adopted both: dropped the `normalizeForTranslator` shim from ws.ts; calls `invalidateSessions` after each turn.
+- Keeper default → **Opus** (`claude-opus-4-8`); sweeper → **Haiku**. `models.ts` registry + `GET /api/models`. project.yaml gains `model`; PATCH validates + re-registers keeper. Per-chat override via `chat:send.model` (re-register keeper; single-user last-write-wins).
+- **Tool-less sweeper**: `allowed_tools: []`, returns `<<<OVERVIEW>>>/<<<CHANGELOG>>>/<<<END>>>` markers; paddock parses + writes (parse-or-throw). 
+- `chat:complete` now carries per-turn `model` + `usage`; web shows a context-window meter + model picker (per-chat, localStorage `paddock:chatModel:<id>`).
+- Shipped as `main@14e31a0`; redeployed to LXC (one redeploy, deps bumped). Full isolated e2e verify green (tool pairing, model override, usage, sweeper). Deep-linking (7b2b162) also now live.
+- **Docker isolation (#7) assessment:** herdctl Docker writes transcripts to a FLAT `.herdctl/docker-sessions/` (in-container cwd is always `/workspace`→`-workspace`), NOT per-project `~/.claude/projects/<encoded-cwd>/`; host-side SessionDiscoveryService doesn't scan it and marks Docker sessions `resumable:false`. So paddock's per-project list+resume BREAKS under Docker today — needs herdctl-core changes (Docker-aware discovery, resumable-if-file-exists, per-project docker-sessions subdir). Auth (env-var OAuth) + the persistence/resume ENGINE already work. Not implemented; pending Ed's go-ahead.
