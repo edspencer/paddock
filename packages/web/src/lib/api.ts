@@ -3,15 +3,16 @@
 // Set VITE_API_BASE to point at a non-default server (defaults to same-origin,
 // which is correct both behind the dev proxy and in production where the server
 // serves the built SPA).
-import type {
-  Chat,
-  CreateProjectInput,
-  HistoryMessage,
-  ModelInfo,
-  Project,
-  ProjectDetail,
-  ProjectFile,
-  UpdateProjectInput,
+import {
+  type Chat,
+  type CreateProjectInput,
+  type HistoryMessage,
+  type ModelInfo,
+  type Project,
+  type ProjectDetail,
+  type ProjectFile,
+  SCRATCH_SLUG,
+  type UpdateProjectInput,
 } from "./types";
 
 const BASE = import.meta.env.VITE_API_BASE ?? "";
@@ -180,5 +181,25 @@ export const api = {
       `/api/chats/${encodeURIComponent(sessionId)}/messages`,
     );
     return messages;
+  },
+
+  /**
+   * Context-window usage for a chat, read from its transcript — drives the
+   * context meter for a chat opened from history (before any new turn streams a
+   * fresh usage). Returns null when the transcript carries no usage data.
+   * Routes to the scratch endpoint when the slug is the scratch slug.
+   */
+  async chatContext(
+    slug: string,
+    sessionId: string,
+  ): Promise<{ contextTokens: number; contextLimit: number } | null> {
+    const path =
+      slug === SCRATCH_SLUG
+        ? `/api/chats/${encodeURIComponent(sessionId)}/context`
+        : `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}/context`;
+    const { usage } = await req<{
+      usage: { contextTokens: number; contextLimit: number } | null;
+    }>(path);
+    return usage;
   },
 };

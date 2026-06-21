@@ -24,7 +24,13 @@ import type { FastifyInstance } from "fastify";
 import { ProjectError, type ProjectStore, type CreateProjectInput, type UpdateProjectInput } from "./projects.js";
 import type { HerdctlService } from "./herdctl.js";
 import { SCRATCH_SLUG, SCRATCH_AGENT, keeperAgentName } from "./herdctl.js";
-import { MODELS, KEEPER_DEFAULT_MODEL, SWEEPER_DEFAULT_MODEL, isKnownModel } from "./models.js";
+import {
+  MODELS,
+  KEEPER_DEFAULT_MODEL,
+  SWEEPER_DEFAULT_MODEL,
+  isKnownModel,
+  getContextLimit,
+} from "./models.js";
 
 export interface RouteDeps {
   projects: ProjectStore;
@@ -254,6 +260,33 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     },
   );
 
+  // Context-window usage for a project chat, read from the transcript's most
+  // recent turn. Lets the UI show "context used" for a chat opened from history,
+  // before any new turn streams a fresh usage value. `usage` is null when the
+  // transcript has no usage data.
+  app.get<{ Params: { slug: string; sessionId: string } }>(
+    "/api/projects/:slug/chats/:sessionId/context",
+    async (req, reply) => {
+      try {
+        const agent = await agentForSlug(req.params.slug);
+        let model = KEEPER_DEFAULT_MODEL;
+        if (req.params.slug !== SCRATCH_SLUG) {
+          const p = await projects.get(req.params.slug).catch(() => null);
+          if (p?.model) model = p.model;
+        }
+        const u = await herdctl.sessionUsage(agent, req.params.sessionId).catch(() => null);
+        return {
+          usage:
+            u && u.hasData
+              ? { contextTokens: u.inputTokens, contextLimit: getContextLimit(model) }
+              : null,
+        };
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
   // Delete a chat (session) within a project: removes its transcript JSONL.
   app.delete<{ Params: { slug: string; sessionId: string } }>(
     "/api/projects/:slug/chats/:sessionId",
@@ -301,6 +334,17 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
       return { messages };
     },
   );
+
+  // Context-window usage for a one-off (scratch) chat (see the project variant).
+  app.get<{ Params: { sessionId: string } }>("/api/chats/:sessionId/context", async (req) => {
+    const u = await herdctl.sessionUsage(SCRATCH_AGENT, req.params.sessionId).catch(() => null);
+    return {
+      usage:
+        u && u.hasData
+          ? { contextTokens: u.inputTokens, contextLimit: getContextLimit(KEEPER_DEFAULT_MODEL) }
+          : null,
+    };
+  });
 
   // Delete a one-off (scratch) chat.
   app.delete<{ Params: { sessionId: string } }>(

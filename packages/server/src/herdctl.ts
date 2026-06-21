@@ -51,6 +51,7 @@ import {
   type TriggerResult,
   type AgentInfo,
   type FleetStatus,
+  type SessionUsage,
 } from "@herdctl/core";
 import { createSDKMessageHandler, type SDKMessage as ChatSDKMessage } from "@herdctl/chat";
 import { promises as fs } from "node:fs";
@@ -351,6 +352,15 @@ export class HerdctlService {
   /** Read the parsed messages of a session, by agent name. */
   async sessionMessages(agentName: string, sessionId: string): Promise<ChatMessage[]> {
     return this.manager.getAgentSessionMessages(agentName, sessionId);
+  }
+
+  /**
+   * Token-usage for a session (most recent context-window fill level), read from
+   * the transcript. Lets the UI show "context used" for a chat opened from
+   * history — before any new turn streams a fresh usage value.
+   */
+  async sessionUsage(agentName: string, sessionId: string): Promise<SessionUsage> {
+    return this.manager.getAgentSessionUsage(agentName, sessionId);
   }
 
   // --- agent configs -----------------------------------------------------

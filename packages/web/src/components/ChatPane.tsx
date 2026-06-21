@@ -186,6 +186,30 @@ export function ChatPane({
       setTurns([]);
       setHydrating(false);
     }
+
+    // Seed the context meter from the transcript's last-turn usage so a chat
+    // opened from history (e.g. a resumed or migrated chat) shows context
+    // immediately — stale-by-one-turn, exactly like a live turn's usage. This
+    // resolves after the synchronous meter-reset effect below, so it wins.
+    if (initialSessionId) {
+      void api
+        .chatContext(projectSlug, initialSessionId)
+        .then((ctx) => {
+          if (cancelled || !ctx) return;
+          setUsage({
+            inputTokens: ctx.contextTokens,
+            outputTokens: 0,
+            cacheReadTokens: 0,
+            cacheCreationTokens: 0,
+            contextTokens: ctx.contextTokens,
+            contextLimit: ctx.contextLimit,
+          });
+        })
+        .catch(() => {
+          /* leave the meter at "—" */
+        });
+    }
+
     return () => {
       cancelled = true;
     };
