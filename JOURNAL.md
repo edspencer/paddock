@@ -466,3 +466,62 @@ Browser ──https──> Caddy(netops) ──> projects.valfenda.net LXC
   (they're orphaned but harmless, and unreachable once the project dir/keeper are gone);
   could be added to the delete path later if desired. (d) No Docker isolation change —
   out of scope here.
+
+- 2026-06-21 — Sub-agent (finalize / redeploy upgrade + clean-slate seed + live verify):
+  **DONE. UPGRADED SITE IS LIVE AND HEALTHY at https://projects.valfenda.net. No
+  rollback needed.** Shipped the latest `main` (commit `5824e7a` — project/chat delete,
+  edit metadata, self-hosted fonts, polish), wiped the test junk, seeded Ed's 4 real
+  projects, and proved the live upgrade end-to-end in a real browser.
+
+  **TASK A — redeploy with rollback safety (DONE):**
+  - **Rollback snapshot**: `cp -a /opt/paddock /opt/paddock.bak` (251M, includes the
+    prior working dist + node_modules) BEFORE touching anything. **RETAINED** as a
+    safety net (17G free on the LXC; cheap insurance for a live service).
+  - **Shipped** the working tree via `tar czf - … | ssh projects 'tar xzf - -C /opt/paddock'`
+    (rsync still absent on the LXC). Excluded node_modules/.git/dist/docs(screenshots)/
+    playwright. Extracted OVER `/opt/paddock`, **preserving the existing node_modules**
+    because `package-lock.json` is byte-identical to the deployed one (sha256
+    `caedc7f9…` both sides) → **deps unchanged, `npm install` correctly SKIPPED**.
+  - **Built BEFORE restart**: `npm run build` on the LXC → server `tsc` + web `vite`
+    both clean (web bundle 409KB/127KB gzip). New `dist/fonts/{inter,jetbrains-mono}-latin.woff2`
+    now present; built `index.html` has **0** googleapis/gstatic refs (was 2).
+  - **Restarted** `paddock.service`. **Health (LXC)**: `/api/health`→200 `{ok:true}`,
+    `/api/projects`→200, `/fonts/inter-latin.woff2`→**200 font/woff2**,
+    `/fonts/jetbrains-mono-latin.woff2`→**200 font/woff2**, `/`→200 text/html.
+    **Health (laptop, HTTPS)**: same all-200, valid LE cert `CN=projects.valfenda.net`.
+    Build succeeded + every check passed → **rollback path never exercised**.
+
+  **TASK B — clean slate + seed real projects (DONE):**
+  - **Deleted** the two test projects via the new `DELETE /api/projects/:slug`
+    (`deploy-smoke`, `live-verify-14043`) → gone from `/api/projects`, their
+    `keeper-*` agents gone from `/api/fleet`, dirs removed from
+    `/var/lib/paddock/projects/`. Fleet dropped to just `scratch`.
+  - **Seeded** 4 real projects via `POST /api/projects` (201 each), metadata-only,
+    kebab-case slugs, each with its keeper agent auto-registered, **chats empty**:
+    - `garage-water-heater` — Garage Water Heater — [home, plumbing]
+    - `multi-zone-ac` — Multi-Zone AC — [home, hvac]
+    - `garden-irrigation` — Garden Irrigation — [garden]
+    - `uk-tv-media` — UK TV / Media — [media]
+    Final fleet = `scratch` + the 4 `keeper-*`. Grid shows exactly these 4, no junk.
+
+  **TASK C — live verify + screenshots (DONE, 4/4 green):**
+  - New `scripts/live-final-verify.mjs` (reuses the proven e2e selectors) drove a real
+    Chromium against the LIVE HTTPS URL: (1) landing renders all 4 seeded projects, no
+    junk; (2) opened "Garage Water Heater"; (3) New Chat → sent "In one sentence, what
+    would you want to know to help plan replacing a garage water heater?" → **a real
+    streamed Claude reply rendered** ("I'd want to know: What are your current setup
+    details — fuel type (gas/electric/propane), tank size, age… budget… local code
+    requirements?"), session `d023ae8a-…` saved; (4) **0 Google-Fonts requests live**,
+    body font resolves to Inter. Screenshots: `docs/screenshots/live-final-{landing,
+    project,chat}.png`. The test chat was then **deleted** via the API so the landing is
+    clean with empty projects (Ed starts the real chats). Max OAuth used (no API-key fallback).
+  - **No infra regression**: `paddock.service` active + enabled-on-boot;
+    `devbox.valfenda.net`→200. `/opt/paddock.bak` retained (noted above).
+
+  **Honest notes:** (a) deployed commit is `5824e7a` (current `main` HEAD; clean tree —
+  nothing uncommitted shipped except, locally, the new `scripts/live-final-verify.mjs`,
+  which was NOT shipped to the LXC). (b) Keeper agents still run WITHOUT Docker isolation
+  (acceptEdits + denied dangerous bash) — unchanged, documented follow-up. (c) Orphaned
+  Claude transcripts from the deleted test projects may linger under the LXC's
+  `~/.claude/projects/` but are unreachable/harmless. (d) Rollback `/opt/paddock.bak`
+  left in place — `rm -rf /opt/paddock.bak` on the LXC to reclaim 251M once confident.
