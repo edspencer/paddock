@@ -1,0 +1,28 @@
+{
+  "name": "@paddock/server",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Paddock backend: Fastify + WebSocket wrapping @herdctl/core FleetManager and a project layer.",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:spike": "tsc -p tsconfig.spike.json",
+    "spike": "tsx src/spike.ts"
+  },
+  "dependencies": {
+    "@fastify/static": "7.0.4",
+    "@fastify/websocket": "10.0.1",
+    "@herdctl/core": "5.10.1",
+    "fastify": "4.28.1",
+    "yaml": "2.5.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.5.4",
+    "tsx": "4.19.1",
+    "typescript": "5.5.4"
+  }
+}

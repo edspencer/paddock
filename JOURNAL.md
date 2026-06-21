@@ -97,3 +97,43 @@ Browser ──https──> Caddy(netops) ──> projects.valfenda.net LXC
 
 - 2026-06-20 — Orchestrator: repo + JOURNAL created. Pre-flight green (gh=edspencer,
   Proxmox reachable, Max token available). Dispatching P1 (scaffold+contract, provision).
+
+- 2026-06-21 — Sub-agent F (scaffold + contract): **DONE.** npm-workspaces monorepo
+  with `packages/server` (Fastify + @fastify/websocket) and `packages/web` (Vite +
+  React + Tailwind, dark-mode, project-first shell). **Both build clean** (`tsc` for
+  server, `vite build` for web) and `npm run typecheck` passes. Smoke-tested the
+  server end-to-end: boots, FleetManager reaches `running`, `POST /api/projects`
+  creates a project dir (project.yaml + CHANGELOG.md), regenerates herdctl config,
+  hot-reloads, and the new `keeper-<slug>` agent appears live in `/api/fleet`.
+  Wrote `docs/INTEGRATION.md` (full public `@herdctl/core@5.10.1` contract) and a
+  REAL spike (`packages/server/src/spike.ts`) that typechecks AND runs against the
+  package — constructs+initializes a FleetManager + SessionDiscoveryService.
+
+  Integration contract verdict (verified against installed public package, not the
+  symlink):
+  - **(a) Construct/init:** `new FleetManager({configPath, stateDir})` →
+    `initialize()` → `start()`. (Also `initializeWebOnly()` for zero-agent mode.)
+  - **(b) Runtime agents — KEY FINDING:** NO programmatic `addAgent`. Agents load
+    from `herdctl.yaml` on disk; the `agents` array accepts **path refs only** (no
+    inline agents), and the `fleet` block is strict (name/description only). Dynamic
+    agents = write per-agent yaml + regen herdctl.yaml + `fleet.reload()`. **Proven
+    working** (smoke test). Paddock owns the generated config dir.
+  - **(c) Stream/sessions:** `trigger(agent, undefined, {prompt, resume, onMessage})`.
+    `onMessage(SDKMessage)` streams; `TriggerResult.sessionId` is the final id.
+    New chat = `resume:null`, resume = `resume:<id>`, fallback = `undefined`.
+  - **(d) Sessions model:** `SessionDiscoveryService.getAgentSessions(name, cwd,
+    docker)` + `getSessionMessages(cwd, id)`, keyed on the agent's working_directory
+    (= the project dir). Lower-level `listSessions`/`parseSessionMessages` also exported.
+  - **(e) Events:** EventEmitter — `job:output`, `job:completed/failed/cancelled`,
+    `config:reloaded`, `schedule:triggered`, `agent:started/stopped`, `error`, etc.
+  - **(f) Transport reuse:** NONE in core. HTTP/WS chat transport lives in
+    `@herdctl/web`/`@herdctl/chat`. We built our own (`ws.ts`), modeling the
+    `chat:send`→`chat:response/tool_call/complete/error` shapes on @herdctl/web.
+
+  GAPS needing a local herdctl change (PR candidates, all have app-layer
+  workarounds today): (1) programmatic `FleetManager.addAgent()` to avoid yaml+reload;
+  (2) first-class `fleet.getAgentSessions(name)` deriving cwd from config; (3) a
+  reusable transport-agnostic SDKMessage→chat translation helper in @herdctl/chat;
+  (4) a streaming trigger handle (async iterator) for cleaner WS cancel/backpressure.
+  Full detail + code in `docs/INTEGRATION.md`. Note: bumped generated default model
+  to `claude-sonnet-4-6` (the docs' `claude-sonnet-4-20250514` is deprecated Sonnet 4.0).

@@ -1,0 +1,22 @@
+{
+  "name": "paddock",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Project-first launchpad built on herdctl. Server-hosted, persistent Claude Code sessions organized by project.",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "npm run build -w packages/server && npm run build -w packages/web",
+    "build:server": "npm run build -w packages/server",
+    "build:web": "npm run build -w packages/web",
+    "dev": "npm run dev -w packages/server",
+    "dev:web": "npm run dev -w packages/web",
+    "typecheck": "npm run typecheck -w packages/server && npm run typecheck -w packages/web",
+    "start": "npm run start -w packages/server"
+  }
+}
