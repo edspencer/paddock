@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../lib/api";
 import type { Project, ProjectStatus } from "../lib/types";
+import { AREAS } from "../lib/areas";
 import { XIcon } from "./icons";
 
 const STATUSES: ProjectStatus[] = ["idea", "active", "paused", "blocked", "done"];
@@ -17,6 +18,7 @@ export function NewProjectModal({
   const [name, setName] = useState("");
   const [summary, setSummary] = useState("");
   const [domain, setDomain] = useState("");
+  const [group, setGroup] = useState("");
   const [status, setStatus] = useState<ProjectStatus>("active");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -27,6 +29,7 @@ export function NewProjectModal({
       setName("");
       setSummary("");
       setDomain("");
+      setGroup("");
       setStatus("active");
       setError(null);
     }
@@ -48,6 +51,7 @@ export function NewProjectModal({
       const project = await api.createProject({
         name: name.trim(),
         status,
+        group: group || undefined,
         summary: summary.trim() || undefined,
         domain: domain
           .split(",")
@@ -103,6 +107,18 @@ export function NewProjectModal({
             onChange={(e) => setSummary(e.target.value)}
             placeholder="One line on what this project is about"
           />
+        </label>
+
+        <label className="mb-4 block">
+          <span className="field-label">Area</span>
+          <select className="input" value={group} onChange={(e) => setGroup(e.target.value)}>
+            <option value="">Unsorted</option>
+            {AREAS.map((a) => (
+              <option key={a.slug} value={a.slug}>
+                {a.label}
+              </option>
+            ))}
+          </select>
         </label>
 
         <div className="mb-5 grid grid-cols-2 gap-3">

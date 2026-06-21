@@ -20,6 +20,9 @@ export interface Project {
   slug: string;
   status: ProjectStatus;
   domain: string[];
+  /** The project's area / home (e.g. "homelab", "house", "side-projects").
+   *  Always present; "" means Unsorted. Drives the sectioned landing page. */
+  group: string;
   visibility: "public" | "private";
   started: string;
   updated: string;
@@ -57,6 +60,7 @@ export interface CreateProjectInput {
   slug?: string;
   status?: ProjectStatus;
   domain?: string[];
+  group?: string;
   summary?: string;
 }
 
@@ -65,6 +69,7 @@ export interface UpdateProjectInput {
   name?: string;
   status?: ProjectStatus;
   domain?: string[];
+  group?: string;
   summary?: string;
   visibility?: "public" | "private";
   /** The keeper model id; server re-registers the keeper on change (must be a known model). */

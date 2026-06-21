@@ -63,6 +63,14 @@ export interface ProjectYaml {
   started: string; // YYYY-MM-DD
   updated: string; // YYYY-MM-DD (maintained automatically)
   summary: string;
+  /**
+   * The project's "area" — its single, exclusive home (Homelab / House / Side
+   * Projects). One per project (unlike the many cross-cutting `domain` tags);
+   * drives the sectioned landing page. Optional on disk: an absent/empty value
+   * means "Unsorted" and is rendered in its own section. Free-form so new areas
+   * can be added without a schema change; the UI knows the canonical set.
+   */
+  group?: string;
   links?: ProjectLink[];
   /**
    * Files (relative names within the project dir) the user has pinned as
@@ -78,6 +86,9 @@ export interface ProjectYaml {
 
 /** API-facing project DTO (adds derived fields). */
 export interface Project extends ProjectYaml {
+  /** The project's area — ALWAYS concrete in the DTO (`yaml.group ?? ""`). An
+   *  empty string means "Unsorted". */
+  group: string;
   /** Absolute path to the project directory (the keeper agent's cwd). */
   dir: string;
   /** Alias of `started` for callers that think in "created". */
@@ -98,6 +109,7 @@ export interface CreateProjectInput {
   slug?: string;
   status?: ProjectStatus;
   domain?: string[];
+  group?: string;
   visibility?: ProjectVisibility;
   summary?: string;
   links?: ProjectLink[];
@@ -105,7 +117,10 @@ export interface CreateProjectInput {
 
 /** Partial metadata update (slug + started are immutable). */
 export type UpdateProjectInput = Partial<
-  Pick<ProjectYaml, "name" | "status" | "domain" | "visibility" | "summary" | "links" | "model">
+  Pick<
+    ProjectYaml,
+    "name" | "status" | "domain" | "group" | "visibility" | "summary" | "links" | "model"
+  >
 >;
 
 const PROJECT_FILE = "project.yaml";
@@ -212,6 +227,9 @@ export class ProjectStore {
       slug,
       status: input.status ?? "active",
       domain: input.domain ?? [],
+      // Keep `group` off the yaml when empty so unsorted projects round-trip
+      // without a noisy `group: ""` line (mirrors the optional `model` handling).
+      ...(input.group?.trim() ? { group: input.group.trim().toLowerCase() } : {}),
       visibility: input.visibility ?? "public",
       started: now,
       updated: now,
@@ -436,6 +454,11 @@ export class ProjectStore {
       slug: p.slug ?? slug,
       status: (p.status as ProjectStatus) ?? "active",
       domain: Array.isArray(p.domain) ? p.domain : [],
+      // Carry `group` through only when it's a non-empty string (an absent area
+      // stays absent on disk — same round-trip discipline as `model`).
+      ...(typeof p.group === "string" && p.group.trim()
+        ? { group: p.group.trim().toLowerCase() }
+        : {}),
       visibility: (p.visibility as ProjectVisibility) ?? "public",
       started,
       updated: p.updated ?? started,
@@ -462,6 +485,8 @@ export class ProjectStore {
   private toDto(dir: string, yaml: ProjectYaml, hasOverview: boolean): Project {
     return {
       ...yaml,
+      // Always concrete in the DTO; "" means Unsorted.
+      group: yaml.group ?? "",
       pinned: yaml.pinned ?? [],
       // Always concrete in the DTO: an absent on-disk model resolves to the
       // keeper default (CONTRACT-v3 §4).
@@ -473,10 +498,11 @@ export class ProjectStore {
   }
 
   private stripDto(p: Project): ProjectYaml {
-    const { dir: _dir, created: _created, hasOverview: _hasOverview, ...yaml } = p;
+    const { dir: _dir, created: _created, hasOverview: _hasOverview, group, ...rest } = p;
     void _dir;
     void _created;
     void _hasOverview;
-    return yaml;
+    // Keep an empty area off the yaml so it isn't persisted as `group: ""`.
+    return group?.trim() ? { ...rest, group } : rest;
   }
 }

@@ -9,15 +9,28 @@ import { NewProjectModal } from "../components/NewProjectModal";
 import { EditProjectModal } from "../components/EditProjectModal";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ProjectMenu } from "../components/ProjectMenu";
-import { ChatIcon, ClockIcon, PlusIcon, SparkIcon, XIcon } from "../components/icons";
+import {
+  ChatIcon,
+  ChevronRightIcon,
+  ClockIcon,
+  PlusIcon,
+  SparkIcon,
+  XIcon,
+} from "../components/icons";
 import { relativeTime } from "../lib/format";
 import { tagColor } from "../lib/tagColor";
+import { areaBlurb, areaLabel, INBOX, orderAreaSlugs } from "../lib/areas";
 
 /**
- * The projects grid. Doubles as the /tags/:tag filter view: when `filterTag` is
- * set, only projects whose `domain` includes that tag are shown, the heading +
- * empty-state make the subset obvious, and an active-filter chip (with a clear
- * "×") appears above the grid. On the full grid (no filterTag) there's no chip.
+ * The projects grid. Two modes:
+ *
+ *  - **Full landing** (no `filterTag`): projects are grouped into collapsible
+ *    sections by their `group` (area) — Homelab / House / Side Projects / …,
+ *    Unsorted last — followed by an **Inbox** section listing one-off chats so
+ *    they're findable. Collapse state per section persists in localStorage.
+ *  - **Tag filter** (`/tags/:tag`): a flat grid of just the projects carrying
+ *    that domain tag, with a clearable filter chip. (No area sections here —
+ *    the filter already narrows the set.)
  */
 export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
   const { projects: allProjects, loading, error, upsert, remove } = useProjects();
@@ -32,6 +45,18 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
     () => (filterTag ? allProjects.filter((p) => p.domain.includes(filterTag)) : allProjects),
     [allProjects, filterTag],
   );
+
+  // Group the full list into ordered [areaSlug, projects[]] sections.
+  const sections = useMemo(() => {
+    const map = new Map<string, Project[]>();
+    for (const p of allProjects) {
+      const g = p.group ?? "";
+      const bucket = map.get(g);
+      if (bucket) bucket.push(p);
+      else map.set(g, [p]);
+    }
+    return orderAreaSlugs(map.keys()).map((slug) => [slug, map.get(slug) ?? []] as const);
+  }, [allProjects]);
 
   // Per-project session counts (best-effort, populated lazily).
   const [counts, setCounts] = useState<Record<string, Chat[]>>({});
@@ -48,11 +73,32 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
     };
   }, [slugs]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // One-off chats (the Inbox section). Only on the full landing.
+  const [inbox, setInbox] = useState<Chat[]>([]);
+  useEffect(() => {
+    if (filterTag) return;
+    let cancelled = false;
+    void api
+      .listScratchChats()
+      .then((chats) => {
+        if (!cancelled) setInbox(chats);
+      })
+      .catch(() => {
+        /* best-effort */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [filterTag]);
+
   const onCreated = (p: Project) => {
     upsert(p);
     setModalOpen(false);
     navigate(`/projects/${p.slug}`);
   };
+
+  const showEmpty =
+    !loading && !error && !filterTag && allProjects.length === 0 && inbox.length === 0;
 
   return (
     <div className="h-full overflow-y-auto">
@@ -119,11 +165,12 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
           <NoTagMatchState tag={filterTag} onClear={() => navigate("/")} />
         )}
 
-        {!loading && projects.length === 0 && !error && !filterTag && (
+        {showEmpty && (
           <EmptyState onCreate={() => setModalOpen(true)} onChat={() => navigate("/chat")} />
         )}
 
-        {!loading && projects.length > 0 && (
+        {/* Tag-filtered: a flat grid of matches. */}
+        {!loading && filterTag && projects.length > 0 && (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {projects.map((p) => (
               <ProjectCard
@@ -134,6 +181,23 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
                 onDelete={() => setDeleting(p)}
               />
             ))}
+          </div>
+        )}
+
+        {/* Full landing: collapsible area sections + the Inbox. */}
+        {!loading && !filterTag && !showEmpty && (
+          <div className="space-y-2">
+            {sections.map(([slug, ps]) => (
+              <AreaSection
+                key={slug || "unsorted"}
+                slug={slug}
+                projects={ps}
+                counts={counts}
+                onEdit={setEditing}
+                onDelete={setDeleting}
+              />
+            ))}
+            <InboxSection chats={inbox} />
           </div>
         )}
       </div>
@@ -170,6 +234,162 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
         onClose={() => setDeleting(null)}
       />
     </div>
+  );
+}
+
+/**
+ * Read/persist a section's collapsed state in localStorage. Default expanded.
+ * Keyed per area slug so each section remembers independently across reloads.
+ */
+function useCollapsed(key: string): [boolean, () => void] {
+  const storageKey = `paddock:area-collapsed:${key}`;
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(storageKey) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggle = () =>
+    setCollapsed((c) => {
+      const next = !c;
+      try {
+        localStorage.setItem(storageKey, next ? "1" : "0");
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  return [collapsed, toggle];
+}
+
+/** A collapsible section header (shared by area + Inbox sections). */
+function SectionHeader({
+  open,
+  label,
+  count,
+  blurb,
+  onToggle,
+}: {
+  open: boolean;
+  label: string;
+  count: number;
+  blurb?: string;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className="group/area flex w-full items-center gap-2 rounded-lg px-1 py-2 text-left hover:bg-paddock-100/60 dark:hover:bg-paddock-800/40"
+      aria-expanded={open}
+    >
+      <ChevronRightIcon
+        width={16}
+        height={16}
+        className={`shrink-0 text-paddock-400 transition-transform ${open ? "rotate-90" : ""}`}
+      />
+      <h2 className="text-[15px] font-semibold tracking-tight">{label}</h2>
+      <span className="rounded-full bg-paddock-200/70 px-2 py-0.5 text-[11px] font-medium text-paddock-500 dark:bg-paddock-800 dark:text-paddock-400">
+        {count}
+      </span>
+      {blurb && (
+        <span className="hidden min-w-0 truncate text-xs text-paddock-400 md:inline">
+          · {blurb}
+        </span>
+      )}
+    </button>
+  );
+}
+
+/** One area section: a collapsible header + a grid of that area's project cards. */
+function AreaSection({
+  slug,
+  projects,
+  counts,
+  onEdit,
+  onDelete,
+}: {
+  slug: string;
+  projects: Project[];
+  counts: Record<string, Chat[]>;
+  onEdit: (p: Project) => void;
+  onDelete: (p: Project) => void;
+}) {
+  const [collapsed, toggle] = useCollapsed(slug || "unsorted");
+  const open = !collapsed;
+  return (
+    <section className="mb-4">
+      <SectionHeader
+        open={open}
+        label={areaLabel(slug)}
+        count={projects.length}
+        blurb={areaBlurb(slug)}
+        onToggle={toggle}
+      />
+      {open && (
+        <div className="mt-2 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {projects.map((p) => (
+            <ProjectCard
+              key={p.slug}
+              project={p}
+              sessionCount={counts[p.slug]?.length}
+              onEdit={() => onEdit(p)}
+              onDelete={() => onDelete(p)}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** The Inbox section: collapsible header + a grid of one-off chat cards. */
+function InboxSection({ chats }: { chats: Chat[] }) {
+  const [collapsed, toggle] = useCollapsed(INBOX.slug);
+  const open = !collapsed;
+  if (chats.length === 0) return null;
+  return (
+    <section className="mb-4">
+      <SectionHeader
+        open={open}
+        label={INBOX.label}
+        count={chats.length}
+        blurb={INBOX.blurb}
+        onToggle={toggle}
+      />
+      {open && (
+        <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {chats.map((c) => (
+            <InboxChatCard key={c.sessionId} chat={c} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** A compact card for a one-off chat in the Inbox — links to the chat. */
+function InboxChatCard({ chat }: { chat: Chat }) {
+  return (
+    <Link
+      to={`/chat/${encodeURIComponent(chat.sessionId)}`}
+      className="card group/card flex flex-col gap-2 !p-4"
+    >
+      <div className="flex items-center gap-2">
+        <ChatIcon width={14} height={14} className="shrink-0 text-paddock-400" />
+        <span className="truncate text-sm font-medium">{chat.name}</span>
+      </div>
+      {chat.preview && (
+        <p className="line-clamp-2 text-xs text-paddock-500 dark:text-paddock-400">
+          {chat.preview}
+        </p>
+      )}
+      <div className="mt-auto flex items-center gap-1 text-[11px] text-paddock-400">
+        <ClockIcon width={12} height={12} />
+        {relativeTime(chat.updatedAt)}
+      </div>
+    </Link>
   );
 }
 

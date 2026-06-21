@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../lib/api";
 import type { Project, ProjectStatus } from "../lib/types";
+import { AREAS } from "../lib/areas";
 import { XIcon } from "./icons";
 
 const STATUSES: ProjectStatus[] = ["idea", "active", "paused", "blocked", "done", "abandoned"];
@@ -22,6 +23,7 @@ export function EditProjectModal({
 }) {
   const [summary, setSummary] = useState(project.summary);
   const [domain, setDomain] = useState(project.domain.join(", "));
+  const [group, setGroup] = useState(project.group ?? "");
   const [status, setStatus] = useState<ProjectStatus>(project.status);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -31,6 +33,7 @@ export function EditProjectModal({
     if (open) {
       setSummary(project.summary);
       setDomain(project.domain.join(", "));
+      setGroup(project.group ?? "");
       setStatus(project.status);
       setError(null);
     }
@@ -50,6 +53,7 @@ export function EditProjectModal({
     try {
       const updated = await api.updateProject(project.slug, {
         status,
+        group,
         summary: summary.trim(),
         domain: domain
           .split(",")
@@ -96,6 +100,22 @@ export function EditProjectModal({
             onChange={(e) => setSummary(e.target.value)}
             placeholder="One line on what this project is about"
           />
+        </label>
+
+        <label className="mb-4 block">
+          <span className="field-label">Area</span>
+          <select className="input" value={group} onChange={(e) => setGroup(e.target.value)}>
+            <option value="">Unsorted</option>
+            {AREAS.map((a) => (
+              <option key={a.slug} value={a.slug}>
+                {a.label}
+              </option>
+            ))}
+            {/* Preserve a custom/legacy area that isn't in the canonical list. */}
+            {group && !AREAS.some((a) => a.slug === group) && (
+              <option value={group}>{group}</option>
+            )}
+          </select>
         </label>
 
         <div className="mb-5 grid grid-cols-2 gap-3">
