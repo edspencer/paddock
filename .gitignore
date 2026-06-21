@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+.turbo/
+.astro/
+coverage/
+data/           # local project data (per-project dirs created at runtime)
