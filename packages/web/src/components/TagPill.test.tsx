@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
 import { TagPill } from "./TagPill";
 
 function renderTag(tag: string) {
@@ -11,16 +11,35 @@ function renderTag(tag: string) {
   );
 }
 
+/** Surfaces the current location so we can assert navigation. */
+function LocationProbe() {
+  const loc = useLocation();
+  return <span data-testid="loc">{loc.pathname}</span>;
+}
+
 describe("TagPill", () => {
   it("renders the tag text", () => {
     renderTag("plumbing");
     expect(screen.getByText("plumbing")).toBeInTheDocument();
   });
 
-  it("links to the /tags/:tag filter route (URL-encoded)", () => {
-    renderTag("home automation");
-    const link = screen.getByRole("link");
-    expect(link).toHaveAttribute("href", "/tags/home%20automation");
+  it("renders as a button (NOT an anchor) so it's valid nested inside link cards (issue #22)", () => {
+    renderTag("plumbing");
+    expect(screen.getByRole("button", { name: "plumbing" })).toBeInTheDocument();
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+  });
+
+  it("navigates to the /tags/:tag filter route (URL-encoded) on click", () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <TagPill tag="home automation" />
+        <Routes>
+          <Route path="*" element={<LocationProbe />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "home automation" }));
+    expect(screen.getByTestId("loc")).toHaveTextContent("/tags/home%20automation");
   });
 
   it("stops click propagation so a card link isn't also triggered", () => {
