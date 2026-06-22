@@ -1,7 +1,21 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- Apply the saved theme before first paint (no flash). Defaults to dark;
+         the in-app toggle (issue #23) persists `paddock:theme` in localStorage. -->
+    <script>
+      (function () {
+        try {
+          document.documentElement.classList.toggle(
+            "dark",
+            localStorage.getItem("paddock:theme") !== "light",
+          );
+        } catch (e) {
+          document.documentElement.classList.add("dark");
+        }
+      })();
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#141210" />
     <title>Paddock</title>

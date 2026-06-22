@@ -20,13 +20,10 @@ test("new one-off streams, then appears in the Recent list", async ({ page }) =>
   await expect(page.getByRole("button").filter({ hasText: new RegExp(msg) }).first()).toBeVisible();
 });
 
-test("one-off Recent list exposes Delete but (currently) no Rename affordance", async ({ page }) => {
-  // GAP — tracked by edspencer/paddock#24 ("one-off chats can be deleted but not
-  // renamed"). The project-chat session list has BOTH rename + delete, but the
-  // one-off (scratch) Recent list only renders a Delete button — even though the
-  // server supports PATCH /api/chats/:id (renameScratchChat). This asserts the
-  // CURRENT behavior so a future rename UI addition flips it (and surfaces the
-  // gap, not a defect).
+test("one-off Recent list supports rename + delete (#24)", async ({ page }) => {
+  // #24 fixed: the one-off (scratch) Recent list now has BOTH a Rename and a
+  // Delete control (the project-chat list already did), wired to the existing
+  // PATCH /api/chats/:id (renameScratchChat).
   await page.goto("/chat");
   const msg = uniq("OO rename");
   await sendChatTurn(page, msg, { placeholder: /Ask anything/i });
@@ -35,8 +32,13 @@ test("one-off Recent list exposes Delete but (currently) no Rename affordance", 
   const entry = page.locator(".group\\/chat").filter({ hasText: new RegExp(msg) }).first();
   await entry.hover();
   await expect(entry.getByRole("button", { name: /Delete chat/i })).toBeVisible();
-  // No rename control in the one-off list today.
-  await expect(entry.getByRole("button", { name: /Rename chat/i })).toHaveCount(0);
+  await expect(entry.getByRole("button", { name: /Rename chat/i })).toBeVisible();
+
+  // Rename via the window.prompt the button opens; the list reflects the new name.
+  const newName = uniq("Renamed OO");
+  page.once("dialog", (d) => d.accept(newName));
+  await entry.getByRole("button", { name: /Rename chat/i }).click();
+  await expect(page.locator(".group\\/chat").filter({ hasText: newName })).toBeVisible();
 });
 
 test("delete a one-off chat via the confirm dialog removes it from Recent", async ({ page }) => {

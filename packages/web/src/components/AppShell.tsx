@@ -1,15 +1,17 @@
 import { useMemo, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useProjects } from "../lib/projects-context";
+import { useTheme } from "../lib/theme";
 import type { Project } from "../lib/types";
 import { areaLabel, orderAreaSlugs } from "../lib/areas";
 import { StatusPill } from "./StatusPill";
 import { TagPill } from "./TagPill";
 import { NewProjectModal } from "./NewProjectModal";
-import { ChatIcon, FolderIcon, PlusIcon } from "./icons";
+import { ChatIcon, FolderIcon, MoonIcon, PlusIcon, SunIcon } from "./icons";
 
 export function AppShell() {
   const { projects, loading, upsert } = useProjects();
+  const { dark, toggle: toggleTheme } = useTheme();
   const [modalOpen, setModalOpen] = useState(false);
   const navigate = useNavigate();
 
@@ -93,8 +95,20 @@ export function AppShell() {
             ))}
         </nav>
 
-        <div className="border-t border-paddock-200 px-5 py-3 text-[11px] text-paddock-400 dark:border-paddock-800">
-          Project-first Claude Code, hosted.
+        <div className="border-t border-paddock-200 px-3 py-3 dark:border-paddock-800">
+          <button
+            type="button"
+            onClick={toggleTheme}
+            className="btn-subtle w-full justify-start"
+            aria-label={dark ? "Switch to light mode" : "Switch to dark mode"}
+            title="Toggle light / dark theme"
+          >
+            {dark ? <SunIcon width={15} height={15} /> : <MoonIcon width={15} height={15} />}
+            {dark ? "Light mode" : "Dark mode"}
+          </button>
+          <p className="mt-2 px-2 text-[11px] text-paddock-400">
+            Project-first Claude Code, hosted.
+          </p>
         </div>
       </aside>
 

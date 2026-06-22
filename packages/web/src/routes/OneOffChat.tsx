@@ -6,7 +6,7 @@ import { SCRATCH_SLUG, type Chat } from "../lib/types";
 import { ChatPane } from "../components/ChatPane";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { PromoteChatModal } from "../components/PromoteChatModal";
-import { ChatIcon, FolderIcon, PlusIcon, TrashIcon } from "../components/icons";
+import { ChatIcon, FolderIcon, PencilIcon, PlusIcon, TrashIcon } from "../components/icons";
 import { relativeTime } from "../lib/format";
 
 /**
@@ -48,6 +48,21 @@ export function OneOffChat() {
     setDeletingChat(null);
     if (sessionId === id) navigate("/chat", { replace: true });
   }, [deletingChat, sessionId, navigate]);
+
+  const renameChat = useCallback(async (chat: Chat) => {
+    const next = window.prompt("Rename chat", chat.name);
+    if (next === null) return; // cancelled
+    const name = next.trim();
+    await api.renameScratchChat(chat.sessionId, name || null);
+    setChats((prev) =>
+      prev.map((c) =>
+        c.sessionId === chat.sessionId
+          ? { ...c, name: name || c.preview || c.sessionId.slice(0, 8) }
+          : c,
+      ),
+    );
+  }, []);
+
   useEffect(() => {
     void refresh();
   }, [refresh]);
@@ -114,23 +129,37 @@ export function OneOffChat() {
               >
                 <button
                   onClick={() => navigate(`/chat/${c.sessionId}`)}
-                  className="flex w-full flex-col items-start gap-0.5 rounded-lg px-2.5 py-2 pr-8 text-left text-sm"
+                  className="flex w-full flex-col items-start gap-0.5 rounded-lg px-2.5 py-2 pr-14 text-left text-sm"
                 >
                   <span className="w-full truncate font-medium">{c.name}</span>
                   <span className="text-[11px] text-paddock-400">{relativeTime(c.updatedAt)}</span>
                 </button>
-                <button
-                  type="button"
-                  aria-label={`Delete chat ${c.name}`}
-                  title="Delete chat"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setDeletingChat(c);
-                  }}
-                  className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-rose-100 hover:text-rose-600 focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-rose-950/60 dark:hover:text-rose-400"
-                >
-                  <TrashIcon width={13} height={13} />
-                </button>
+                <div className="absolute right-1.5 top-1.5 flex items-center gap-0.5">
+                  <button
+                    type="button"
+                    aria-label={`Rename chat ${c.name}`}
+                    title="Rename chat"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void renameChat(c);
+                    }}
+                    className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-paddock-200 hover:text-paddock-700 focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-paddock-700 dark:hover:text-paddock-100"
+                  >
+                    <PencilIcon width={13} height={13} />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Delete chat ${c.name}`}
+                    title="Delete chat"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDeletingChat(c);
+                    }}
+                    className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-rose-100 hover:text-rose-600 focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-rose-950/60 dark:hover:text-rose-400"
+                  >
+                    <TrashIcon width={13} height={13} />
+                  </button>
+                </div>
               </div>
             ))}
           </div>
