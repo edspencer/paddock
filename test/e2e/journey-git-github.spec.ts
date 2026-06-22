@@ -40,16 +40,11 @@ test("Push is disabled when no remote is configured", async ({ page }) => {
   await expect(push).toBeDisabled();
 });
 
-// HARNESS LIMITATION (not a product bug): GithubAuth caches the token-file read
-// in-memory process-wide (github-auth.ts `loadToken` sets `this.cached` on first
-// call and never re-stats the file). Once ANY /api/git request runs this server
-// instance — which every other git test does — the disconnected status is cached
-// and seeding the token file afterward can't surface the "connected" state. We
-// can't bust that cache from a spec (would need a server restart or a reload hook
-// in packages/server, which this suite must not edit). Marked fixme so the
-// affordance is documented without a flaky/false-green assertion; see the bug
-// ledger ("GitHub connected-state not E2E-observable").
-test.fixme(
+// Previously fixme'd: GithubAuth memoized the "absent" token state, so a token
+// file seeded after any /api/git call wouldn't surface the connected state until
+// restart. Fixed (issue #25): `loadToken` now only memoizes a PRESENT token, so a
+// seeded token is picked up on the next status() call and this journey is real.
+test(
   "a seeded GitHub token surfaces the 'connected as @login' + Disconnect state",
   async ({ page }) => {
     seedGithubToken("e2euser");

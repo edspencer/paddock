@@ -164,7 +164,13 @@ export class GithubAuth {
   }
 
   private async loadToken(): Promise<StoredToken | null> {
-    if (this.cached !== undefined) return this.cached;
+    // Only memoize a PRESENT token. Caching the "absent" state too would mean a
+    // token file that appears later (e.g. written by another process, or seeded
+    // out of band) is never picked up until restart — the connected state would
+    // stay stale (issue #25). A present token is immutable here (disconnect()
+    // clears the cache), so caching it is safe; re-reading an absent file on each
+    // status()/token() call is cheap.
+    if (this.cached) return this.cached;
     try {
       this.cached = JSON.parse(await fs.readFile(this.tokenFile, "utf8")) as StoredToken;
     } catch {
