@@ -11,7 +11,11 @@ import { mkdtempSync } from "node:fs";
  * test:e2e` is expected to be run after a build. Screenshots + traces are
  * captured on failure.
  */
-const PORT = process.env.PADDOCK_E2E_PORT || "4317";
+// A per-suite default port (overridable). Distinct from other paddock test
+// worktrees' default so concurrent E2E runs don't share a server (with
+// reuseExistingServer they would otherwise connect to a FOREIGN server holding
+// different data, breaking the data-seeding specs).
+const PORT = process.env.PADDOCK_E2E_PORT || "4319";
 // One temp dir for the whole run, shared with the launcher so state is isolated.
 const TMP =
   process.env.PADDOCK_E2E_TMP || mkdtempSync(path.join(os.tmpdir(), "paddock-e2e-"));
@@ -38,7 +42,11 @@ export default defineConfig({
     cwd: path.resolve(path.dirname(new URL(import.meta.url).pathname), "../.."),
     url: `http://127.0.0.1:${PORT}/api/health`,
     timeout: 60_000,
-    reuseExistingServer: !process.env.CI,
+    // Never reuse a server already on the port: with a shared default port a
+    // stale/foreign server (e.g. another worktree's run) would be reused and
+    // serve different data, breaking the data-seeding specs. Always boot a
+    // fresh, isolated server for this run.
+    reuseExistingServer: false,
     env: {
       PADDOCK_E2E_PORT: PORT,
       PADDOCK_E2E_TMP: TMP,
