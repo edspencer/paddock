@@ -17,9 +17,15 @@
     "dev": "npm run dev -w packages/server",
     "dev:web": "npm run dev -w packages/web",
     "typecheck": "npm run typecheck -w packages/server && npm run typecheck -w packages/web",
-    "start": "npm run start -w packages/server"
+    "start": "npm run start -w packages/server",
+    "test": "npm run test -w packages/server && npm run test -w packages/web",
+    "test:server": "npm run test -w packages/server",
+    "test:web": "npm run test -w packages/web",
+    "test:e2e": "playwright test -c test/e2e/playwright.config.ts",
+    "test:e2e:live": "PADDOCK_TEST_LIVE=1 playwright test -c test/e2e/playwright.config.ts"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.0",
     "playwright": "^1.61.0"
   }
 }
