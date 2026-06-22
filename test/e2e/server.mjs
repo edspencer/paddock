@@ -13,7 +13,7 @@
  * The temp dir path is written to PADDOCK_E2E_TMP (passed by the config) so the
  * harness can clean it up; if absent we create one under the OS temp root.
  */
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { mkdtempSync, mkdirSync } from "node:fs";
 import os from "node:os";
@@ -31,7 +31,35 @@ const tmp = process.env.PADDOCK_E2E_TMP || mkdtempSync(path.join(os.tmpdir(), "p
 const home = path.join(tmp, "home");
 const dataDir = path.join(tmp, "data");
 mkdirSync(home, { recursive: true });
-mkdirSync(path.join(dataDir, "projects"), { recursive: true });
+const projectsDir = path.join(dataDir, "projects");
+mkdirSync(projectsDir, { recursive: true });
+
+// Git backing store: when PADDOCK_E2E_GIT=1, make the projects dir a real git
+// working tree so paddock's git features (the Changes tab, commit/push UI) light
+// up end-to-end. Identity + an initial empty commit are set so commits work
+// without global git config, and a project's first commit has a HEAD to diff
+// against. No remote is configured (push stays disabled, which is what the
+// "no remote" E2E asserts). Best-effort: if `git` is missing the dir stays a
+// plain folder and the git UI simply stays hidden (the non-repo path is also
+// covered by a spec).
+if (process.env.PADDOCK_E2E_GIT === "1") {
+  const git = (args) =>
+    spawnSync("git", args, {
+      cwd: projectsDir,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "Paddock E2E",
+        GIT_AUTHOR_EMAIL: "e2e@localhost",
+        GIT_COMMITTER_NAME: "Paddock E2E",
+        GIT_COMMITTER_EMAIL: "e2e@localhost",
+      },
+      stdio: "ignore",
+    });
+  git(["init", "-q", "-b", "main"]);
+  git(["config", "user.name", "Paddock E2E"]);
+  git(["config", "user.email", "e2e@localhost"]);
+  git(["commit", "-q", "--allow-empty", "-m", "init projects store"]);
+}
 
 const env = {
   ...process.env,
@@ -39,7 +67,7 @@ const env = {
   PORT: port,
   HOST: "127.0.0.1",
   PADDOCK_DATA_DIR: dataDir,
-  PADDOCK_PROJECTS_DIR: path.join(dataDir, "projects"),
+  PADDOCK_PROJECTS_DIR: projectsDir,
   PADDOCK_WEB_DIST: webDist,
   LOG_LEVEL: process.env.LOG_LEVEL || "warn",
 };

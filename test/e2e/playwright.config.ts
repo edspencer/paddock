@@ -43,6 +43,9 @@ export default defineConfig({
       PADDOCK_E2E_PORT: PORT,
       PADDOCK_E2E_TMP: TMP,
       PADDOCK_TEST_LIVE: process.env.PADDOCK_TEST_LIVE ?? "",
+      // Make the projects store a real git repo so the Changes / commit / push
+      // UI lights up end-to-end. Override to "0" to exercise the non-repo path.
+      PADDOCK_E2E_GIT: process.env.PADDOCK_E2E_GIT ?? "1",
     },
   },
 });
