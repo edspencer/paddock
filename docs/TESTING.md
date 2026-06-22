@@ -21,6 +21,18 @@ Pure-logic + component tests. No server, no fleet, no claude.
   - `models.test.ts` — the model list, defaults, lookups.
   - `transcripts.test.ts` — `encodeProjectDir`, `ensureProjectChats` incl. the
     symlink-healing + real-dir-migration branches (against a temp `CLAUDE_HOME`).
+  - `github-auth.test.ts` — the GitHub OAuth **device flow** with a mocked
+    global `fetch`: `clientId`/`status`, `startDeviceFlow` (happy + non-ok +
+    malformed), `pollDeviceFlow` (pending / slow_down / authorized / error /
+    non-JSON-body, the 0600 token file + login lookup), `token`/`disconnect`,
+    and the cache.
+  - `git.test.ts` — `GitService` against real temp repos: not-a-repo guards, a
+    configured **bare-origin remote** + push/ahead-behind, single-file diff, the
+    unborn-branch diff fallback, rename-prefix stripping, commit no-op/error.
+  - `sweep.test.ts` — `SweepService` with stubbed herdctl/projects: parse +
+    write, coalescing a burst into one sweep, skip-no-activity + the persisted
+    watermark, the unparseable-output retry (watermark not advanced),
+    sweeper-failure + project-deleted drops, `stop()`.
 - **Web** (`packages/web/src/**/*.test.{ts,tsx}`, jsdom + @testing-library/react):
   - `lib/areas.test.ts`, `lib/format.test.ts`.
   - `components/StatusPill`, `components/TagPill`.
@@ -49,6 +61,27 @@ temp data dir, with the fake `claude` first on `PATH`. Files:
 - `chat.test.ts` — a chat turn streamed over **WebSocket**, transcript written +
   discovered, history hydration on reload, context-usage readback, and **resume
   continuity** (set a codeword, resume, recall it).
+- `ws.test.ts` — WS transport edge cases: ping/pong, invalid-JSON + unknown +
+  malformed messages → `chat:error`, the `onChatSend` catch path (unknown
+  project), `preloadContext` (OVERVIEW.md injection for a new chat, no-op for
+  scratch / no-overview), per-chat **model override** (valid → ensureKeeper/
+  ScratchModel; unknown → fallback), `chat:tool_call` + `chat:message_boundary`
+  (via the fake's `[[TOOL]]` / `[[BOUNDARY]]` directives), `chat:cancel`, the
+  usage/model surfaced on `chat:complete`, and the legacy `target` alias.
+- `routes.test.ts` — REST coverage gaps: rename + delete chat (project +
+  scratch), pins (missing-file / traversal-guard / dedupe), the `/context`
+  endpoints (project + scratch, with + without usage), GET `/overview` +
+  `/changelog` + `/files/:name`, the thin `POST …/chats` echo, `/api/fleet`,
+  `/api/git/push`, git-route 404s, and the **GitHub device-flow endpoints**
+  (`connect`/`poll`/`disconnect`) driven with a mocked `fetch`.
+- `sweep.test.ts` — the post-turn curation sweep runs end-to-end: a project turn
+  enqueues a sweep, the (tool-less) sweeper returns marker-shaped text (via the
+  fake), `SweepService` parses it and writes `OVERVIEW.md` + appends a
+  `CHANGELOG.md` bullet; scratch turns are NOT swept. Uses
+  `startTestApp({ sweepIntervalMs: 0 })` so the trailing sweep fires immediately.
+- `app-static.test.ts` — `buildApp({ serveStatic:true })`: serving `index.html`
+  at `/` + the SPA fallback, the JSON 404 for unknown `/api` paths, and the
+  API-only degrade when the web dist is missing.
 - `promote.test.ts` — promote a one-off chat → project (#20): lists under the
   project, history hydrates, job re-attribution, transcript cwd-rewrite. (See
   "Known gaps" for resume-after-promote.)
@@ -88,15 +121,39 @@ JSONL file** it writes (it does *not* read the process's stdout). So the fake:
 - Built-in rules: "the codeword is X" / "what was the codeword?" (continuity),
   and a default `Acknowledged: <prompt>` echo so the E2E can assert streamed text.
 
+**Prompt directives + sweeper replies** (added for the ws/sweep coverage work —
+each is OPT-IN; a prompt with none of these is handled exactly as before):
+
+- `[[TOOL]]` anywhere in the prompt → the fake emits a paired `tool_use`
+  (assistant) + `tool_result` (user) around its reply, so `@herdctl/chat`'s
+  translator surfaces a `chat:tool_call` event (exercises ws.ts's `onToolCall`).
+- `[[BOUNDARY]]` → the fake emits a **second** assistant text block after the
+  first, so the translator fires `onBoundary` → `chat:message_boundary`. Note: a
+  brand-new session occasionally races the runtime's watcher on its first read,
+  so the `ws.test.ts` boundary case sends this turn as a **resume** of an
+  existing session (the transcript file already exists, watcher attaches
+  reliably).
+- **Sweeper curation prompts** (detected by the literal `<<<OVERVIEW>>>` the
+  sweeper system/user prompt asks for) → the fake returns a marker-shaped reply
+  (`<<<OVERVIEW>>> … <<<CHANGELOG>>> … <<<END>>>`) so `SweepService` can parse it
+  and write `OVERVIEW.md`/`CHANGELOG.md`. The exact text is overridable via
+  `PADDOCK_FAKE_SWEEP` (a file path whose contents become the sweeper reply).
+  This closes the prior "sweeper output missing markers" gap — the sweep now
+  runs cleanly in integration instead of erroring out of band.
+
 ### The test-app factory
 
 `startTestApp(opts)` (`packages/server/test/helpers/app.ts`) creates a temp
 `HOME` + data dir, prepends `test/bin` to `PATH`, optionally `git init`s the
 projects root, writes the fake script, and calls `buildApp({ serveStatic:false })`.
 Returns the wired app + a `teardown()` that stops the fleet, restores env, and
-removes the temp dir. WS tests use `listen()` + `connectWs()`
-(`test/helpers/ws.ts`), a tiny `ws` client with `mark()` + `waitFor({ from })`
-so a shared socket can scope each turn's events.
+removes the temp dir. Options: `script` (the fake-script map), `gitRepo` (init a
+git repo at the projects root), and `sweepIntervalMs` (sets
+`PADDOCK_SWEEP_MIN_INTERVAL_MS`; pass `0` to make the post-turn sweep fire on the
+next tick instead of waiting the 5-min default). WS tests use `listen()` +
+`connectWs()` (`test/helpers/ws.ts`), a tiny `ws` client with `mark()` +
+`waitFor({ from })` so a shared socket can scope each turn's events, plus
+`sendRaw(text)` to push a non-JSON frame (for the invalid-JSON path).
 
 ## Layer 3 — E2E (Playwright + fake claude)
 
@@ -147,16 +204,29 @@ a port or installing signal handlers — a pure seam, no behavior change.
 - `reattributeSession` / `writeAdoptionJob` are covered end-to-end via
   `promote.test.ts` (they're private). A direct unit test would need a small
   export seam; left as a follow-up.
-- The post-turn **sweeper** runs during integration chats but errors
-  ("sweeper output missing OVERVIEW/CHANGELOG markers") because the fake doesn't
-  emit the sweeper's marker format. It's out-of-band and non-fatal (logged,
-  doesn't affect chat), so it's left unscripted. Scripting a marker-shaped
-  sweeper reply + asserting OVERVIEW.md/CHANGELOG.md curation is a good
-  follow-up (would let `sweep.ts` be covered).
+- The post-turn **sweeper — NOW COVERED**. The fake emits a marker-shaped
+  sweeper reply (see "Prompt directives" above), so `sweep.test.ts` drives the
+  real curation end-to-end (OVERVIEW.md replaced, a CHANGELOG.md bullet
+  appended), and `test/unit/sweep.test.ts` covers the coalescing / skip /
+  watermark / retry branches. The sweep no longer errors out of band in
+  integration runs.
+- `github-auth.ts` (device flow) — **NOW COVERED** via `test/unit/github-auth.test.ts`
+  with a mocked global `fetch` (the device-code + token + user endpoints). Found
+  + fixed a bug along the way: `pollDeviceFlow` called `res.json()` with no
+  `res.ok`/parse guard, so a non-JSON token-endpoint response (gateway 5xx) threw
+  an unhandled `SyntaxError` instead of returning `{ status: "error" }`
+  (**issue #21**, fixed; regression test added).
+- `reattributeSession` / `writeAdoptionJob` are covered end-to-end via
+  `promote.test.ts` (they're private). A direct unit test would need a small
+  export seam; left as a follow-up.
 - E2E covers the happy paths; error states (offline socket, failed turn,
   validation errors in-browser), model-picker, context-meter, file pins/tabs,
   and the git UI are not yet driven from the browser.
-- `github-auth.ts` (device flow) is untested — it needs `fetch` mocking; a unit
-  test with a stubbed `fetch` is a clean follow-up.
-- No coverage thresholds wired up yet (herdctl uses 85%); add
-  `@vitest/coverage-v8` gating once the suite is broader.
+- `index.ts` (the process bootstrap: bind a port + signal handlers) and
+  `spike.ts` (a dev-only `@herdctl/core` exploration script, excluded from the
+  production build) are intentionally left at 0% — neither is server logic worth
+  a test. Excluding them, the meaningful `src/**` coverage is ~93% stmts.
+- Server coverage is now ~90% stmts / 84% branch over all `src/**` (~93% / ~84%
+  excluding index/spike), up from ~72% / ~67%. Wiring a
+  `@vitest/coverage-v8` threshold gate (herdctl uses 85%) is the natural next
+  step now that the suite is broad.

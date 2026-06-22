@@ -37,6 +37,12 @@ interface StartOptions {
   script?: Record<string, string>;
   /** Pre-create the projects root as a git repo (for git tests). */
   gitRepo?: boolean;
+  /**
+   * Override the post-turn sweep's min interval (ms). Set to 0 to make the sweep
+   * fire on the next tick instead of waiting the 5-min default — lets a test
+   * drive the curation path deterministically. Sets PADDOCK_SWEEP_MIN_INTERVAL_MS.
+   */
+  sweepIntervalMs?: number;
 }
 
 /**
@@ -67,6 +73,8 @@ export async function startTestApp(opts: StartOptions = {}): Promise<TestApp> {
     PADDOCK_WEB_DIST: process.env.PADDOCK_WEB_DIST,
     CLAUDE_HOME: process.env.CLAUDE_HOME,
     PADDOCK_FAKE_SCRIPT: process.env.PADDOCK_FAKE_SCRIPT,
+    PADDOCK_FAKE_SWEEP: process.env.PADDOCK_FAKE_SWEEP,
+    PADDOCK_SWEEP_MIN_INTERVAL_MS: process.env.PADDOCK_SWEEP_MIN_INTERVAL_MS,
     LOG_LEVEL: process.env.LOG_LEVEL,
   };
 
@@ -87,6 +95,12 @@ export async function startTestApp(opts: StartOptions = {}): Promise<TestApp> {
     process.env.PADDOCK_FAKE_SCRIPT = scriptPath;
   } else {
     delete process.env.PADDOCK_FAKE_SCRIPT;
+  }
+
+  if (opts.sweepIntervalMs !== undefined) {
+    process.env.PADDOCK_SWEEP_MIN_INTERVAL_MS = String(opts.sweepIntervalMs);
+  } else {
+    delete process.env.PADDOCK_SWEEP_MIN_INTERVAL_MS;
   }
 
   if (opts.gitRepo) {

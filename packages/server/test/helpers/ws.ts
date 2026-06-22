@@ -16,6 +16,8 @@ export interface WsEvent {
 
 export interface WsClient {
   send: (msg: unknown) => void;
+  /** Send a raw (already-serialized) frame — used to test invalid-JSON handling. */
+  sendRaw: (text: string) => void;
   /** All events received, in order. */
   events: WsEvent[];
   /** Current event count — pass to `waitFor`/`responseText` as a baseline so a
@@ -75,6 +77,7 @@ export async function connectWs(port: number): Promise<WsClient> {
 
   return {
     send: (msg: unknown) => ws.send(JSON.stringify(msg)),
+    sendRaw: (text: string) => ws.send(text),
     events,
     mark: () => events.length,
     waitFor: (pred, opts = {}) => {

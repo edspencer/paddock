@@ -45,6 +45,23 @@
  * transcript so it can answer continuity questions (e.g. "what was the
  * codeword?" → the value set in an earlier turn) — this is what makes resume
  * *testable*.
+ *
+ * ── Prompt directives (opt-in extras for coverage) ──────────────────────────
+ * These let server tests exercise the tool-call / message-boundary / sweep paths
+ * WITHOUT changing any existing behavior (a prompt with none of these markers is
+ * handled exactly as before). A directive is a literal token anywhere in the
+ * prompt text:
+ *   • [[TOOL]]      → emit a paired tool_use (assistant) + tool_result (user)
+ *                     around the reply, so @herdctl/chat's translator surfaces a
+ *                     chat:tool_call event.
+ *   • [[BOUNDARY]]  → emit a SECOND assistant text block after a tool result, so
+ *                     the translator fires onBoundary → chat:message_boundary.
+ * Sweeper coverage: when the prompt looks like the paddock sweeper's curation
+ * prompt (contains the literal "<<<OVERVIEW>>>" marker request), the fake emits a
+ * marker-shaped reply (<<<OVERVIEW>>> … <<<CHANGELOG>>> … <<<END>>>) so
+ * SweepService can parse it and write OVERVIEW.md/CHANGELOG.md. The exact text is
+ * overridable via PADDOCK_FAKE_SWEEP (a file path whose contents become the
+ * sweeper reply).
  */
 import fs from "node:fs";
 import os from "node:os";
@@ -118,6 +135,13 @@ function replyFor(prompt, script, priorText) {
     return script[trimmed];
   }
 
+  // Sweeper curation prompt → emit a marker-shaped reply SweepService can parse.
+  // Detected by the literal "<<<OVERVIEW>>>" the sweeper system/user prompt asks
+  // for. Overridable via PADDOCK_FAKE_SWEEP (a file whose contents are the reply).
+  if (trimmed.includes("<<<OVERVIEW>>>") || trimmed.includes("curating two files")) {
+    return sweeperReply(trimmed);
+  }
+
   // Continuity: "the codeword is X" / "remember the codeword: X"
   const setMatch = trimmed.match(/codeword(?:\s+is|:)\s+([A-Za-z0-9_-]+)/i);
   if (setMatch) {
@@ -138,6 +162,31 @@ function replyFor(prompt, script, priorText) {
   // Default: a short, deterministic acknowledgement that echoes the prompt so
   // tests can assert the text streamed through.
   return `Acknowledged: ${trimmed}`;
+}
+
+/**
+ * Build the sweeper's marker-shaped reply (the two sections SweepService parses).
+ * Overridable wholesale via PADDOCK_FAKE_SWEEP (a file path). The default echoes
+ * a tiny, deterministic OVERVIEW + one changelog line.
+ */
+function sweeperReply(prompt) {
+  const override = process.env.PADDOCK_FAKE_SWEEP;
+  if (override) {
+    try {
+      return fs.readFileSync(override, "utf8");
+    } catch {
+      /* fall through to the default */
+    }
+  }
+  return [
+    "<<<OVERVIEW>>>",
+    "# Project Overview",
+    "",
+    "Synthesized current state from recent activity.",
+    "<<<CHANGELOG>>>",
+    "Curated recent chat activity into the overview.",
+    "<<<END>>>",
+  ].join("\n");
 }
 
 /** Concatenate prior assistant + user text from an existing transcript file. */
@@ -200,7 +249,6 @@ function main() {
 
   const priorText = resuming ? readPriorText(file) : "";
   const reply = replyFor(prompt, script, priorText);
-  const messageId = `msg_${crypto.randomBytes(8).toString("hex")}`;
   const model = flags.model || "claude-opus-4-8";
 
   const append = (obj) => {
@@ -225,28 +273,89 @@ function main() {
   // Small gap so the watcher streams the assistant separately from the user line.
   sleep(60);
 
-  // 2) assistant line (text + usage). Single text block → one chat:response.
-  append({
+  const usage = {
+    input_tokens: 1200,
+    output_tokens: 64,
+    cache_read_input_tokens: 0,
+    cache_creation_input_tokens: 0,
+  };
+  const assistantText = (text) => ({
     parentUuid: null,
     isSidechain: false,
     type: "assistant",
     message: {
-      id: messageId,
+      id: `msg_${crypto.randomBytes(8).toString("hex")}`,
       role: "assistant",
       model,
-      content: [{ type: "text", text: reply }],
-      usage: {
-        input_tokens: 1200,
-        output_tokens: 64,
-        cache_read_input_tokens: 0,
-        cache_creation_input_tokens: 0,
-      },
+      content: [{ type: "text", text }],
+      usage,
     },
     uuid: crypto.randomUUID(),
     timestamp: nowIso(),
     cwd,
     sessionId,
   });
+
+  // Opt-in directives (see header): emit a tool_use/tool_result pair and/or a
+  // second assistant text block (boundary). A prompt with neither marker is
+  // handled exactly as before — a single assistant text line.
+  const wantsTool = (prompt || "").includes("[[TOOL]]");
+  const wantsBoundary = (prompt || "").includes("[[BOUNDARY]]");
+
+  if (wantsTool) {
+    // 2a) assistant turn carrying a tool_use block (the translator tracks it).
+    const toolUseId = `toolu_${crypto.randomBytes(8).toString("hex")}`;
+    append({
+      parentUuid: null,
+      isSidechain: false,
+      type: "assistant",
+      message: {
+        id: `msg_${crypto.randomBytes(8).toString("hex")}`,
+        role: "assistant",
+        model,
+        content: [{ type: "tool_use", id: toolUseId, name: "Read", input: { file_path: "notes.md" } }],
+        usage,
+      },
+      uuid: crypto.randomUUID(),
+      timestamp: nowIso(),
+      cwd,
+      sessionId,
+    });
+    sleep(30);
+    // 2b) the paired tool_result, on a user line (the translator pairs them →
+    // chat:tool_call). A tool result also resets the boundary text flag.
+    append({
+      parentUuid: null,
+      isSidechain: false,
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: toolUseId, content: "file contents here", is_error: false },
+        ],
+      },
+      uuid: crypto.randomUUID(),
+      timestamp: nowIso(),
+      cwd,
+      sessionId,
+    });
+    sleep(30);
+  }
+
+  // 2) assistant line (text + usage). Single text block → one chat:response.
+  append(assistantText(reply));
+
+  // A second assistant text block produces a message_boundary in the translator
+  // (a new assistant turn after a previous text run). Requires a preceding text
+  // run OR a tool result to have reset the flag; the [[TOOL]] path provides one,
+  // and a plain [[BOUNDARY]] gets the boundary from the first → second text run.
+  // Use a generous gap so the (polling) chokidar watcher reads the two assistant
+  // lines as SEPARATE appends — otherwise they batch into one read and the
+  // translator never sees a second distinct assistant turn (no boundary).
+  if (wantsBoundary) {
+    sleep(250);
+    append(assistantText("(boundary follow-up)"));
+  }
 
   sleep(40);
 
