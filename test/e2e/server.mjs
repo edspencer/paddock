@@ -13,9 +13,9 @@
  * The temp dir path is written to PADDOCK_E2E_TMP (passed by the config) so the
  * harness can clean it up; if absent we create one under the OS temp root.
  */
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, mkdirSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -30,35 +30,60 @@ const port = process.env.PADDOCK_E2E_PORT || "4317";
 const tmp = process.env.PADDOCK_E2E_TMP || mkdtempSync(path.join(os.tmpdir(), "paddock-e2e-"));
 const home = path.join(tmp, "home");
 const dataDir = path.join(tmp, "data");
-mkdirSync(home, { recursive: true });
 const projectsDir = path.join(dataDir, "projects");
+mkdirSync(home, { recursive: true });
 mkdirSync(projectsDir, { recursive: true });
 
-// Git backing store: when PADDOCK_E2E_GIT=1, make the projects dir a real git
-// working tree so paddock's git features (the Changes tab, commit/push UI) light
-// up end-to-end. Identity + an initial empty commit are set so commits work
-// without global git config, and a project's first commit has a HEAD to diff
-// against. No remote is configured (push stays disabled, which is what the
-// "no remote" E2E asserts). Best-effort: if `git` is missing the dir stays a
-// plain folder and the git UI simply stays hidden (the non-repo path is also
-// covered by a spec).
+// ── Additive harness extensions (for journey-*.spec.ts seeding) ─────────────
+// Optionally make the projects root a git repo so the Changes/git UI lights up.
+// Gated by PADDOCK_E2E_GIT=1 so the default server keeps its non-repo behavior
+// (the comprehensive suite runs a second, git-enabled Playwright project).
 if (process.env.PADDOCK_E2E_GIT === "1") {
-  const git = (args) =>
-    spawnSync("git", args, {
-      cwd: projectsDir,
-      env: {
-        ...process.env,
-        GIT_AUTHOR_NAME: "Paddock E2E",
-        GIT_AUTHOR_EMAIL: "e2e@localhost",
-        GIT_COMMITTER_NAME: "Paddock E2E",
-        GIT_COMMITTER_EMAIL: "e2e@localhost",
+  const gitEnv = {
+    ...process.env,
+    GIT_AUTHOR_NAME: "E2E",
+    GIT_AUTHOR_EMAIL: "e2e@example.com",
+    GIT_COMMITTER_NAME: "E2E",
+    GIT_COMMITTER_EMAIL: "e2e@example.com",
+  };
+  const g = (args) => execFileSync("git", args, { cwd: projectsDir, env: gitEnv, stdio: "ignore" });
+  g(["init", "-b", "main"]);
+  g(["config", "user.email", "e2e@example.com"]);
+  g(["config", "user.name", "E2E"]);
+  writeFileSync(path.join(projectsDir, ".gitkeep"), "");
+  g(["add", "-A"]);
+  g(["commit", "-m", "init"]);
+}
+
+// Expose the CANONICAL (realpath-resolved) data/projects paths so specs can seed
+// state on disk (projects, files, git changes). The server canonicalizes these
+// paths internally (macOS /var -> /private/var), so specs must use the resolved
+// form to write where the server reads. Written once at boot to PADDOCK_E2E_TMP.
+try {
+  const real = (p) => {
+    try {
+      return realpathSync(p);
+    } catch {
+      return p;
+    }
+  };
+  writeFileSync(
+    path.join(tmp, "paddock-e2e-paths.json"),
+    JSON.stringify(
+      {
+        tmp: real(tmp),
+        dataDir: real(dataDir),
+        projectsDir: real(projectsDir),
+        home: real(home),
+        git: process.env.PADDOCK_E2E_GIT === "1",
+        githubConfigured: !!process.env.PADDOCK_GITHUB_CLIENT_ID,
       },
-      stdio: "ignore",
-    });
-  git(["init", "-q", "-b", "main"]);
-  git(["config", "user.name", "Paddock E2E"]);
-  git(["config", "user.email", "e2e@localhost"]);
-  git(["commit", "-q", "--allow-empty", "-m", "init projects store"]);
+      null,
+      2,
+    ),
+  );
+} catch {
+  /* best-effort — specs fall back to deriving the path */
 }
 
 const env = {
