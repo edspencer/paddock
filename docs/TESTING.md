@@ -135,19 +135,15 @@ a port or installing signal handlers — a pure seam, no behavior change.
 
 ## Known gaps / TODO for follow-up agents
 
-- **Resume continuity after promote** (harness finding). After promoting a
-  one-off chat into a project, the chat lists + hydrates under the project and
-  its job records are re-attributed, but **resuming it forks a fresh session**
-  (the codeword is lost). Root cause: herdctl's JobExecutor only honors
-  `--resume` when the agent has a stored session-info file
-  (`.herdctl/sessions/<agent>.json`); `promoteScratchSession` re-homes the
-  transcript + rewrites job records but never writes the keeper's session-info,
-  so the keeper has none and the runtime starts fresh. Verified fix:
-  writing a keeper session-info file on promote makes resume continue the same
-  session (codeword recalled). `promote.test.ts` asserts the *current* (forking)
-  behavior with a comment, so fixing the gap will flip that assertion. This is
-  the resume half of the #20 saga the design doc calls out — the harness caught
-  it, as intended.
+- **Resume continuity after promote — FIXED** (the harness caught this, as
+  intended). After promoting a one-off chat into a project it used to fork a
+  fresh session on resume (codeword lost). Root cause was in herdctl's
+  JobExecutor: it dropped an explicit `--resume` when the agent had no stored
+  session-info file, so a keeper resuming an adopted session started fresh. Fixed
+  upstream in **@herdctl/core 5.13.1 (herdctl#263)** — the executor now adopts a
+  caller-provided resume when the transcript exists in the agent's working dir.
+  `promote.test.ts` now asserts the resumed turn continues the **same** session
+  and recalls the codeword.
 - `reattributeSession` / `writeAdoptionJob` are covered end-to-end via
   `promote.test.ts` (they're private). A direct unit test would need a small
   export seam; left as a follow-up.

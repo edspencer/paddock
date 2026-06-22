@@ -31,7 +31,7 @@ describe("integration: promote a scratch chat → project (real fleet, fake clau
     await t.teardown();
   });
 
-  it("promotes the chat: it lists under the project, history hydrates, re-attributes the job (resume continuity is a documented gap)", async () => {
+  it("promotes the chat: it lists under the project, history hydrates, re-attributes the job, and resumes with continuity", async () => {
     // 1) Start a one-off scratch chat that sets a codeword.
     const m1 = ws.mark();
     ws.send({
@@ -97,17 +97,14 @@ describe("integration: promote a scratch chat → project (real fleet, fake clau
     expect(transcript).toContain(`"cwd":"${body.project.dir}"`);
     expect(transcript).not.toContain(t.cfg.scratchDir + '"'); // scratch cwd rewritten away
 
-    // 6) Resume the promoted chat under the project.
+    // 6) Resume the promoted chat under the project — and CONTINUE it.
     //
-    // KNOWN GAP (harness finding): the resumed turn STREAMS and completes, but
-    // herdctl's JobExecutor only honors `--resume` when the agent has a stored
-    // session-info file (.herdctl/sessions/<agent>.json). promoteScratchSession
-    // re-homes the transcript + re-attributes the job records, but does NOT write
-    // the keeper's session-info — so the keeper has none, and the resume FORKS a
-    // fresh session instead of continuing (the codeword is lost). Writing a
-    // keeper session-info file on promote fixes it (verified separately). We
-    // assert the CURRENT behavior so a future fix flips this test from
-    // "forks/lost" to "continues/recalled". See docs/TESTING.md.
+    // This was a known gap (herdctl's JobExecutor dropped an explicit `--resume`
+    // when the agent had no stored session-info, so a promoted chat forked a
+    // fresh session under the keeper). Fixed upstream in @herdctl/core 5.13.1
+    // (herdctl#263): the executor now adopts a caller-provided resume when the
+    // transcript exists in the agent's working dir. So the resumed turn must now
+    // continue the SAME session and recall the codeword.
     const m2 = ws.mark();
     ws.send({
       type: "chat:send",
@@ -118,10 +115,10 @@ describe("integration: promote a scratch chat → project (real fleet, fake clau
       { from: m2 },
     );
     expect(c2.payload?.success).toBe(true);
-    // Current behavior: the turn forks a NEW session id (continuity not yet
-    // preserved across promote). When the gap is fixed, this becomes
-    // `toBe(sessionId)` and the reply will contain "artichoke".
-    expect(c2.payload?.sessionId).not.toBe(sessionId);
+    // Continuity: same session id (not a fork) and the prior turn's codeword is
+    // recalled from the moved transcript.
+    expect(c2.payload?.sessionId).toBe(sessionId);
+    expect(ws.responseText(m2).toLowerCase()).toContain("artichoke");
   });
 
   it("returns the project but promoted:false for an unknown session id", async () => {
