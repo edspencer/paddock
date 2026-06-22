@@ -513,6 +513,11 @@ export class HerdctlService {
       name: SCRATCH_AGENT,
       description: "One-off / scratch chats.",
       working_directory: this.cfg.scratchDir,
+      // Explicit CLI runtime (Max plan). The fleet `defaults.runtime` is dropped
+      // by @herdctl/core's config loader (runtime isn't a fleet-defaults field in
+      // 5.13.x), so without this the runner falls back to the SDK runtime. Set it
+      // per-agent to guarantee the Max/CLI path.
+      runtime: "cli",
       model: model ?? KEEPER_DEFAULT_MODEL,
       system_prompt:
         "You are a Claude Code agent for one-off chats. Be helpful and concise.",
@@ -536,6 +541,9 @@ export class HerdctlService {
       name: keeperAgentName(project.slug),
       description: project.summary || `Keeper agent for project ${project.name}.`,
       working_directory: project.dir,
+      // Explicit CLI runtime (Max plan) — see the scratch agent note: the fleet
+      // `defaults.runtime` is dropped by the core config loader, so set it here.
+      runtime: "cli",
       model: modelOverride ?? project.model ?? KEEPER_DEFAULT_MODEL,
       system_prompt:
         "You are a Claude Code keeper agent for this project directory. " +
@@ -560,6 +568,8 @@ export class HerdctlService {
       name: sweeperAgentName(project.slug),
       description: `Overview/changelog curator (sweeper) for project ${project.name}.`,
       working_directory: project.dir,
+      // Explicit CLI runtime (Max plan) — see the scratch agent note.
+      runtime: "cli",
       model: SWEEPER_DEFAULT_MODEL,
       // Tool-less: a handful of turns is plenty since there are no tool loops.
       max_turns: 4,
