@@ -113,7 +113,18 @@ export class GithubAuth {
         grant_type: "urn:ietf:params:oauth:grant-type:device_code",
       }),
     });
-    const j = (await res.json()) as unknown;
+    // The token endpoint normally returns JSON even for protocol errors
+    // (authorization_pending / slow_down / expired_token), but a transient
+    // infra failure (gateway 5xx, rate-limit HTML page) can return a non-JSON
+    // body. Parse defensively so the poll resolves to a clean error result
+    // instead of throwing an unhandled SyntaxError (issue #21) — mirrors the
+    // res.ok guard in startDeviceFlow.
+    let j: unknown;
+    try {
+      j = await res.json();
+    } catch {
+      return { status: "error", error: `token request failed (${res.status})` };
+    }
     const accessToken = field(j, "access_token");
     if (accessToken) {
       const login = await this.fetchLogin(accessToken);
