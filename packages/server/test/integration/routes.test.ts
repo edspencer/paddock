@@ -203,7 +203,8 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
     ).json();
     expect(ctx.usage).toBeTruthy();
     expect(ctx.usage.contextTokens).toBeGreaterThan(0);
-    expect(ctx.usage.contextLimit).toBe(200000);
+    // Default keeper/scratch model is Opus 4.8 → 1M context window.
+    expect(ctx.usage.contextLimit).toBe(1_000_000);
 
     const none = (
       await t.app.inject({
@@ -228,7 +229,8 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
       await t.app.inject({ method: "GET", url: `/api/chats/${sessionId}/context` })
     ).json();
     expect(ctx.usage).toBeTruthy();
-    expect(ctx.usage.contextLimit).toBe(200000);
+    // Default keeper/scratch model is Opus 4.8 → 1M context window.
+    expect(ctx.usage.contextLimit).toBe(1_000_000);
 
     const none = (
       await t.app.inject({ method: "GET", url: "/api/chats/no-such-session/context" })

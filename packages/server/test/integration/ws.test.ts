@@ -109,7 +109,8 @@ describe("integration: WS transport edge cases (real app, fake claude)", () => {
     expect(complete.payload?.model).toBeTruthy();
     const usage = complete.payload?.usage as Record<string, number>;
     expect(usage.contextTokens).toBeGreaterThan(0);
-    expect(usage.contextLimit).toBe(200000);
+    // Default keeper model is Opus 4.8 → 1M context window.
+    expect(usage.contextLimit).toBe(1_000_000);
     expect(usage.inputTokens).toBeGreaterThan(0);
   });
 

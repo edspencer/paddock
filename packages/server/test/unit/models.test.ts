@@ -31,15 +31,17 @@ describe("models", () => {
   });
 
   it("getContextLimit returns the model's limit, 200k fallback for unknown", () => {
-    expect(getContextLimit("claude-opus-4-8")).toBe(200000);
-    expect(getContextLimit("nope")).toBe(200000);
+    // Opus 4.8 runs a 1M context window on the Max/CLI runtime.
+    expect(getContextLimit("claude-opus-4-8")).toBe(1_000_000);
+    expect(getContextLimit("claude-haiku-4-5-20251001")).toBe(200_000);
+    expect(getContextLimit("nope")).toBe(200_000);
   });
 
   it("getModelInfo returns the full info or undefined", () => {
     expect(getModelInfo("claude-sonnet-4-6")).toEqual({
       id: "claude-sonnet-4-6",
       label: "Sonnet 4.6",
-      contextLimit: 200000,
+      contextLimit: 1_000_000,
     });
     expect(getModelInfo("nope")).toBeUndefined();
   });
