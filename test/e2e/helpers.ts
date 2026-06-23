@@ -203,6 +203,11 @@ export async function createProjectViaUI(
   opts: { name: string; area?: string; summary?: string; tags?: string; status?: string },
 ): Promise<string> {
   await page.goto("/");
+  // On a mobile viewport the sidebar (which holds "New Project") is an
+  // off-canvas drawer behind a hamburger; the hamburger is `lg:hidden`
+  // (display:none on desktop, so this no-ops there). Open it first.
+  const menu = page.getByRole("button", { name: /Open menu/i });
+  if (await menu.isVisible().catch(() => false)) await menu.click();
   await page.getByRole("button", { name: /New Project/i }).first().click();
   const dialog = page.locator("form").filter({ hasText: "New project" });
   await dialog.getByPlaceholder(/Garage Water Heater/i).fill(opts.name);

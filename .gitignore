@@ -17,3 +17,4 @@ test-results/
 playwright-report/
 ms-playwright/
 .playwright/
+test/e2e/.mobile-shots/

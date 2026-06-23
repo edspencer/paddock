@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useProjects } from "../lib/projects-context";
 import { useTheme } from "../lib/theme";
 import type { Project } from "../lib/types";
@@ -7,13 +7,21 @@ import { areaLabel, orderAreaSlugs } from "../lib/areas";
 import { StatusPill } from "./StatusPill";
 import { TagPill } from "./TagPill";
 import { NewProjectModal } from "./NewProjectModal";
-import { ChatIcon, FolderIcon, MoonIcon, PlusIcon, SunIcon } from "./icons";
+import { ChatIcon, FolderIcon, MenuIcon, MoonIcon, PlusIcon, SunIcon, XIcon } from "./icons";
 
 export function AppShell() {
   const { projects, loading, upsert } = useProjects();
   const { dark, toggle: toggleTheme } = useTheme();
   const [modalOpen, setModalOpen] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // The mobile nav is an off-canvas drawer; close it on any navigation so a
+  // project/chat tap doesn't leave it covering the content.
+  useEffect(() => {
+    setNavOpen(false);
+  }, [location.pathname]);
 
   // Group the sidebar list by area, in the same order as the landing page.
   // Subheaders only appear when there's more than one area in play.
@@ -35,9 +43,40 @@ export function AppShell() {
   };
 
   return (
-    <div className="flex h-screen overflow-hidden bg-canvas dark:bg-canvas-dark">
-      {/* Sidebar */}
-      <aside className="flex w-72 shrink-0 flex-col border-r border-paddock-200 bg-white/50 dark:border-paddock-800 dark:bg-paddock-900/30">
+    <div className="flex h-[100dvh] flex-col overflow-hidden bg-canvas dark:bg-canvas-dark lg:flex-row">
+      {/* Mobile top bar — hidden on lg+, where the sidebar is always present. */}
+      <header className="flex items-center gap-2 border-b border-paddock-200 px-3 py-2 dark:border-paddock-800 lg:hidden">
+        <button
+          type="button"
+          onClick={() => setNavOpen(true)}
+          aria-label="Open menu"
+          className="btn-subtle -ml-1 px-2 py-2"
+        >
+          <MenuIcon width={20} height={20} />
+        </button>
+        <NavLink to="/" className="flex items-center gap-2">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent text-sm text-white shadow-sm">
+            🐎
+          </span>
+          <span className="text-[15px] font-semibold tracking-tight">Paddock</span>
+        </NavLink>
+      </header>
+
+      {/* Drawer backdrop (mobile only, when open). */}
+      {navOpen && (
+        <div
+          className="fixed inset-0 z-30 bg-black/40 backdrop-blur-sm lg:hidden"
+          aria-hidden="true"
+          onClick={() => setNavOpen(false)}
+        />
+      )}
+
+      {/* Sidebar — a static column on lg+, an off-canvas drawer on mobile. */}
+      <aside
+        className={`fixed inset-y-0 left-0 z-40 flex w-72 max-w-[85%] shrink-0 flex-col border-r border-paddock-200 bg-canvas shadow-2xl transition-transform duration-200 ease-out dark:border-paddock-800 dark:bg-paddock-900 lg:static lg:z-auto lg:max-w-none lg:translate-x-0 lg:bg-white/50 lg:shadow-none dark:lg:bg-paddock-900/30 ${
+          navOpen ? "translate-x-0" : "-translate-x-full"
+        }`}
+      >
         <div className="flex items-center gap-2 px-5 py-4">
           <NavLink to="/" className="group flex items-center gap-2">
             <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent text-base text-white shadow-sm">
@@ -45,10 +84,24 @@ export function AppShell() {
             </span>
             <span className="text-[17px] font-semibold tracking-tight">Paddock</span>
           </NavLink>
+          <button
+            type="button"
+            onClick={() => setNavOpen(false)}
+            aria-label="Close menu"
+            className="btn-subtle ml-auto px-2 py-2 lg:hidden"
+          >
+            <XIcon width={18} height={18} />
+          </button>
         </div>
 
         <div className="space-y-1.5 px-3 pb-1">
-          <button className="btn-primary w-full" onClick={() => setModalOpen(true)}>
+          <button
+            className="btn-primary w-full"
+            onClick={() => {
+              setNavOpen(false);
+              setModalOpen(true);
+            }}
+          >
             <PlusIcon width={16} height={16} />
             New Project
           </button>
@@ -113,7 +166,7 @@ export function AppShell() {
       </aside>
 
       {/* Main pane */}
-      <main className="min-w-0 flex-1">
+      <main className="min-w-0 flex-1 overflow-hidden">
         <Outlet />
       </main>
 

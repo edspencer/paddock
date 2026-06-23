@@ -6,7 +6,7 @@ import { SCRATCH_SLUG, type Chat } from "../lib/types";
 import { ChatPane } from "../components/ChatPane";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { PromoteChatModal } from "../components/PromoteChatModal";
-import { ChatIcon, FolderIcon, PencilIcon, PlusIcon, TrashIcon } from "../components/icons";
+import { ChatIcon, FolderIcon, PencilIcon, PlusIcon, TrashIcon, XIcon } from "../components/icons";
 import { relativeTime } from "../lib/format";
 
 /**
@@ -22,7 +22,14 @@ export function OneOffChat() {
   const [chats, setChats] = useState<Chat[]>([]);
   const [deletingChat, setDeletingChat] = useState<Chat | null>(null);
   const [promoting, setPromoting] = useState(false);
+  // Mobile: the Recent list is an off-canvas drawer (static column on lg+).
+  const [recentOpen, setRecentOpen] = useState(false);
   const currentChat = chats.find((c) => c.sessionId === sessionId);
+
+  // Close the Recent drawer whenever the open chat changes (new / switched).
+  useEffect(() => {
+    setRecentOpen(false);
+  }, [sessionId]);
 
   // Stable ChatPane mount key (same pattern as ProjectView): keep the pane
   // across the new->established transition (we mirror the id into /chat/:id with
@@ -79,11 +86,20 @@ export function OneOffChat() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="border-b border-paddock-200 px-6 py-4 dark:border-paddock-800">
+      <header className="border-b border-paddock-200 px-4 py-4 dark:border-paddock-800 sm:px-6">
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="flex items-center gap-2">
-              <ChatIcon width={16} height={16} className="text-paddock-400" />
+              <button
+                type="button"
+                onClick={() => setRecentOpen(true)}
+                className="btn-subtle -ml-2 gap-1.5 px-2 py-1.5 lg:hidden"
+                aria-label="Show recent chats"
+              >
+                <ChatIcon width={16} height={16} />
+                Recent
+              </button>
+              <ChatIcon width={16} height={16} className="hidden text-paddock-400 lg:block" />
               <h1 className="text-lg font-semibold tracking-tight">One-off chat</h1>
             </div>
             <p className="mt-1 text-sm text-paddock-500">
@@ -105,12 +121,32 @@ export function OneOffChat() {
       </header>
 
       <div className="flex min-h-0 flex-1">
-        {/* Scratch session list */}
-        <div className="flex w-60 shrink-0 flex-col border-r border-paddock-200 bg-white/40 dark:border-paddock-800 dark:bg-paddock-900/20">
-          <div className="p-3">
+        {/* Recent backdrop (mobile only, when the drawer is open). */}
+        {recentOpen && (
+          <div
+            className="fixed inset-0 z-20 bg-black/40 lg:hidden"
+            aria-hidden="true"
+            onClick={() => setRecentOpen(false)}
+          />
+        )}
+        {/* Scratch session list — static column on lg+, off-canvas drawer on mobile. */}
+        <div
+          className={`fixed inset-y-0 left-0 z-30 flex w-60 max-w-[80%] shrink-0 flex-col border-r border-paddock-200 bg-canvas shadow-2xl transition-transform duration-200 ease-out dark:border-paddock-800 dark:bg-paddock-900 lg:static lg:z-auto lg:max-w-none lg:translate-x-0 lg:bg-white/40 lg:shadow-none dark:lg:bg-paddock-900/20 ${
+            recentOpen ? "translate-x-0" : "-translate-x-full"
+          }`}
+        >
+          <div className="flex items-center gap-2 p-3">
             <button className="btn-ghost w-full" onClick={() => navigate("/chat")}>
               <PlusIcon width={15} height={15} />
               New one-off
+            </button>
+            <button
+              type="button"
+              onClick={() => setRecentOpen(false)}
+              aria-label="Close recent chats"
+              className="btn-subtle shrink-0 px-2 py-2 lg:hidden"
+            >
+              <XIcon width={16} height={16} />
             </button>
           </div>
           <div className="section-label mb-1">Recent</div>

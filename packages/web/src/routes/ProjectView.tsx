@@ -76,6 +76,8 @@ export function ProjectView() {
   // the URL-driven chat/files tabs; selecting Chat/Files dismisses it.
   const [gitStatus, setGitStatus] = useState<GitProjectStatus | null>(null);
   const [showChanges, setShowChanges] = useState(false);
+  // Mobile: the session list is an off-canvas drawer (static column on lg+).
+  const [sessionsOpen, setSessionsOpen] = useState(false);
 
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -155,6 +157,7 @@ export function ProjectView() {
   // routed content (chat / file) shows through again.
   useEffect(() => {
     setShowChanges(false);
+    setSessionsOpen(false);
   }, [view, routeSessionId, routeFileName]);
 
   // --- URL-driven navigation (all tab/chat/file clicks change the route) -----
@@ -272,8 +275,20 @@ export function ProjectView() {
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* Header */}
-      <header className="border-b border-paddock-200 px-6 py-4 dark:border-paddock-800">
+      <header className="border-b border-paddock-200 px-4 py-4 dark:border-paddock-800 sm:px-6">
         <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setSessionsOpen(true)}
+            className="btn-subtle -ml-2 gap-1.5 px-2 py-1.5 lg:hidden"
+            aria-label="Show chats"
+          >
+            <ChatIcon width={16} height={16} />
+            Chats
+            {chats.length > 0 && (
+              <span className="text-[11px] text-paddock-400">{chats.length}</span>
+            )}
+          </button>
           <h1 className="text-xl font-semibold tracking-tight">{project.name}</h1>
           <StatusPill status={project.status} />
           {project.domain.map((d) => (
@@ -304,12 +319,32 @@ export function ProjectView() {
       </header>
 
       <div className="flex min-h-0 flex-1">
-        {/* Session list */}
-        <div className="flex w-64 shrink-0 flex-col border-r border-paddock-200 bg-white/40 dark:border-paddock-800 dark:bg-paddock-900/20">
-          <div className="p-3">
+        {/* Session-list backdrop (mobile only, when the drawer is open). */}
+        {sessionsOpen && (
+          <div
+            className="fixed inset-0 z-20 bg-black/40 lg:hidden"
+            aria-hidden="true"
+            onClick={() => setSessionsOpen(false)}
+          />
+        )}
+        {/* Session list — static column on lg+, off-canvas drawer on mobile. */}
+        <div
+          className={`fixed inset-y-0 left-0 z-30 flex w-64 max-w-[80%] shrink-0 flex-col border-r border-paddock-200 bg-canvas shadow-2xl transition-transform duration-200 ease-out dark:border-paddock-800 dark:bg-paddock-900 lg:static lg:z-auto lg:max-w-none lg:translate-x-0 lg:bg-white/40 lg:shadow-none dark:lg:bg-paddock-900/20 ${
+            sessionsOpen ? "translate-x-0" : "-translate-x-full"
+          }`}
+        >
+          <div className="flex items-center gap-2 p-3">
             <button className="btn-primary w-full" onClick={newChat}>
               <PlusIcon width={15} height={15} />
               New Chat
+            </button>
+            <button
+              type="button"
+              onClick={() => setSessionsOpen(false)}
+              aria-label="Close chats"
+              className="btn-subtle shrink-0 px-2 py-2 lg:hidden"
+            >
+              <XIcon width={16} height={16} />
             </button>
           </div>
           <div className="mb-1 flex items-center justify-between pr-3">

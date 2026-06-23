@@ -79,6 +79,12 @@ export const XIcon = (p: IconProps) => (
   </svg>
 );
 
+export const MenuIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M3 6h18M3 12h18M3 18h18" />
+  </svg>
+);
+
 export const ClockIcon = (p: IconProps) => (
   <svg {...base(p)}>
     <circle cx="12" cy="12" r="9" />

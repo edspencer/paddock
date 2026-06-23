@@ -49,7 +49,9 @@ describe("AppShell: sidebar shell", () => {
   it("renders the brand, the two CTAs, and the project count", () => {
     mockProjects = [makeProject({ slug: "a", group: "homelab" }), makeProject({ slug: "b", group: "homelab" })];
     renderShell();
-    expect(screen.getByText("Paddock")).toBeInTheDocument();
+    // "Paddock" appears twice: the mobile top bar + the sidebar (both render in
+    // jsdom, which ignores the responsive `lg:hidden` media query).
+    expect(screen.getAllByText("Paddock").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByRole("button", { name: /New Project/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /New one-off chat/i })).toBeInTheDocument();
     // Project count next to the "Projects" label.
