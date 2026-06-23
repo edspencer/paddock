@@ -54,7 +54,11 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
-      testIgnore: ["**/journey-git-*.spec.ts", "**/journey-mobile.spec.ts"],
+      testIgnore: [
+        "**/journey-git-*.spec.ts",
+        "**/journey-mobile.spec.ts",
+        "**/journey-mobile-git.spec.ts",
+      ],
       use: { ...devices["Desktop Chrome"], baseURL: `http://127.0.0.1:${PORT}` },
     },
     {
@@ -66,11 +70,17 @@ export default defineConfig({
       // Phone-sized run (Pixel 5 = 393×851, isMobile + hasTouch, Chromium-based,
       // so the same `chromium` browser install covers it — no extra browser in
       // CI). Exercises the responsive layout: the hamburger nav drawer + the
-      // in-project / one-off session-list drawers. Same non-git server as
-      // `chromium`.
+      // in-project / one-off session-list drawers, modals, and the file viewer.
+      // Same non-git server as `chromium`.
       name: "mobile",
       testMatch: "**/journey-mobile.spec.ts",
       use: { ...devices["Pixel 5"], baseURL: `http://127.0.0.1:${PORT}` },
+    },
+    {
+      // Phone-sized run against the GIT-enabled server, for the Changes/diff tab.
+      name: "mobile-git",
+      testMatch: "**/journey-mobile-git.spec.ts",
+      use: { ...devices["Pixel 5"], baseURL: `http://127.0.0.1:${GIT_PORT}` },
     },
   ],
   webServer: [

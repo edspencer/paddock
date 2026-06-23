@@ -197,13 +197,15 @@ export function ChangesPane({ slug, status, onStatusChange }: ChangesPaneProps) 
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1">
-        {/* Left: changed-files list. */}
-        <div className="flex w-72 shrink-0 flex-col border-r border-paddock-200 dark:border-paddock-800">
+      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+        {/* Left (top on mobile): changed-files list. Stacks above the diff on a
+            phone — the list is height-capped so the diff still gets real estate;
+            on lg+ it's the familiar fixed-width left column. */}
+        <div className="flex w-full shrink-0 flex-col border-b border-paddock-200 dark:border-paddock-800 lg:w-72 lg:border-b-0 lg:border-r">
           <div className="mb-1 mt-3 px-3">
             <span className="section-label px-0">Changed files</span>
           </div>
-          <div className="flex-1 overflow-y-auto px-2 pb-2">
+          <div className="max-h-[35vh] overflow-y-auto px-2 pb-2 lg:max-h-none lg:flex-1">
             {files.length === 0 ? (
               <p className="px-2 py-2 text-sm italic text-paddock-400">
                 No uncommitted changes. Files you author surface here for a checkpoint.
@@ -235,8 +237,8 @@ export function ChangesPane({ slug, status, onStatusChange }: ChangesPaneProps) 
           </div>
         </div>
 
-        {/* Right: diff view for the selected file. */}
-        <div className="min-w-0 flex-1">
+        {/* Right (below on mobile): diff view for the selected file. */}
+        <div className="min-h-0 min-w-0 flex-1">
           <DiffView slug={slug} file={selected} />
         </div>
       </div>
