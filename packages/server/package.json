@@ -23,6 +23,7 @@
     "@herdctl/chat": "^0.4.3",
     "@herdctl/core": "^5.13.1",
     "fastify": "4.28.1",
+    "jose": "^6.2.3",
     "yaml": "2.5.1"
   },
   "devDependencies": {
