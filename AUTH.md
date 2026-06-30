@@ -9,8 +9,7 @@ The auth layer is **provider-agnostic** — driven entirely by `PADDOCK_AUTH_*`
 environment variables — so it is not tied to any single proxy or IdP. It works
 with Authentik, oauth2-proxy, Authelia, Cloudflare Access, Keycloak, and others.
 
-All of it is **optional**. The default (`PADDOCK_AUTH_MODE=none`) is fully open,
-preserving Paddock's historical behaviour.
+All of it is **optional**. The default (`PADDOCK_AUTH_MODE=none`) is fully open.
 
 ---
 

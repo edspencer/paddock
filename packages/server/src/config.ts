@@ -125,10 +125,10 @@ function envOpt(name: string): string | undefined {
 
 /**
  * Resolve the provider-agnostic auth config from `PADDOCK_AUTH_*` env vars.
- * Everything is optional; the default is `none` (fully open), preserving the
- * historical behaviour. Validation of mode-specific requirements (e.g. a JWKS
- * URL in jwt mode) happens in the auth plugin so a misconfig surfaces as a clear
- * startup error rather than a silently-open server.
+ * Everything is optional; the default is `none` (fully open). Validation of
+ * mode-specific requirements (e.g. a JWKS URL in jwt mode) happens in the auth
+ * plugin so a misconfig surfaces as a clear startup error rather than a
+ * silently-open server.
  */
 function loadAuthConfig(): AuthConfig {
   const rawMode = envOr("PADDOCK_AUTH_MODE", "none").toLowerCase();
