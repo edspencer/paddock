@@ -8,6 +8,52 @@ import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
 
+/**
+ * User-authentication strategy.
+ *
+ * - `none`            — no auth; every request is anonymous (default, fully open).
+ * - `trusted-header`  — trust a reverse proxy to have authenticated the user and
+ *                       pass identity in headers. Spoofable unless the proxy is
+ *                       the only path to paddock (network-level trust).
+ * - `jwt`             — verify a signed JWT (issued by the proxy/IdP) against a
+ *                       remote JWKS. Self-contained / zero-trust: spoof-proof
+ *                       even if a request reaches paddock directly.
+ */
+export type AuthMode = "none" | "trusted-header" | "jwt";
+
+/**
+ * Resolved authentication configuration (provider-agnostic).
+ *
+ * Driven entirely by `PADDOCK_AUTH_*` env vars so paddock is not coupled to any
+ * single proxy/IdP (Authentik, oauth2-proxy, Authelia, Cloudflare Access,
+ * Keycloak, …). See AUTH.md for the modes and provider examples.
+ */
+export interface AuthConfig {
+  mode: AuthMode;
+  /** trusted-header: header carrying the username (required in that mode). */
+  userHeader: string;
+  /** trusted-header: optional header carrying the user's email. */
+  emailHeader?: string;
+  /**
+   * trusted-header / jwt: optional header carrying group membership. In
+   * trusted-header mode the value is split on comma; in jwt mode this overrides
+   * the claim source only when the proxy passes groups as a header (rare).
+   */
+  groupsHeader?: string;
+  /** jwt: header carrying the token. `Authorization` strips a leading `Bearer `. */
+  jwtHeader: string;
+  /** jwt: JWKS endpoint used to verify the token signature (required in jwt mode). */
+  jwksUrl?: string;
+  /** jwt: expected `iss` claim (validated when set). */
+  jwtIssuer?: string;
+  /** jwt: expected `aud` claim (validated when set). */
+  jwtAudience?: string;
+  /** jwt: claim to read the username from (falls back preferred_username→email→sub). */
+  usernameClaim?: string;
+  /** jwt: claim to read groups from (default `groups`). */
+  groupsClaim: string;
+}
+
 export interface PaddockConfig {
   /** HTTP/WS port. */
   port: number;
@@ -28,6 +74,8 @@ export interface PaddockConfig {
   webDist: string;
   /** Working directory for one-off / scratch chats. */
   scratchDir: string;
+  /** Provider-agnostic user-authentication config (see AUTH.md). */
+  auth: AuthConfig;
 }
 
 function abs(p: string): string {
@@ -69,6 +117,38 @@ function envOr(name: string, fallback: string): string {
   return v && v.trim().length > 0 ? v : fallback;
 }
 
+/** An env var's trimmed value, or undefined when unset/blank. */
+function envOpt(name: string): string | undefined {
+  const v = process.env[name];
+  return v && v.trim().length > 0 ? v.trim() : undefined;
+}
+
+/**
+ * Resolve the provider-agnostic auth config from `PADDOCK_AUTH_*` env vars.
+ * Everything is optional; the default is `none` (fully open). Validation of
+ * mode-specific requirements (e.g. a JWKS URL in jwt mode) happens in the auth
+ * plugin so a misconfig surfaces as a clear startup error rather than a
+ * silently-open server.
+ */
+function loadAuthConfig(): AuthConfig {
+  const rawMode = envOr("PADDOCK_AUTH_MODE", "none").toLowerCase();
+  const mode: AuthMode =
+    rawMode === "trusted-header" || rawMode === "jwt" ? rawMode : "none";
+
+  return {
+    mode,
+    userHeader: envOr("PADDOCK_AUTH_USER_HEADER", "X-Forwarded-User"),
+    emailHeader: envOpt("PADDOCK_AUTH_EMAIL_HEADER"),
+    groupsHeader: envOpt("PADDOCK_AUTH_GROUPS_HEADER"),
+    jwtHeader: envOr("PADDOCK_AUTH_JWT_HEADER", "Authorization"),
+    jwksUrl: envOpt("PADDOCK_AUTH_JWKS_URL"),
+    jwtIssuer: envOpt("PADDOCK_AUTH_JWT_ISSUER"),
+    jwtAudience: envOpt("PADDOCK_AUTH_JWT_AUDIENCE"),
+    usernameClaim: envOpt("PADDOCK_AUTH_USERNAME_CLAIM"),
+    groupsClaim: envOr("PADDOCK_AUTH_GROUPS_CLAIM", "groups"),
+  };
+}
+
 export function loadPaddockConfig(): PaddockConfig {
   // Ensure the data root exists first so symlinks (e.g. /tmp -> /private/tmp on
   // macOS) resolve consistently for every derived path below.
@@ -103,6 +183,7 @@ export function loadPaddockConfig(): PaddockConfig {
     herdctlConfigPath,
     webDist: abs(envOr("PADDOCK_WEB_DIST", defaultWebDist)),
     scratchDir,
+    auth: loadAuthConfig(),
   });
 }
 

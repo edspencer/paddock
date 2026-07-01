@@ -20,6 +20,7 @@ import { HerdctlService } from "./herdctl.js";
 import { GitService } from "./git.js";
 import { GithubAuth } from "./github-auth.js";
 import { registerRoutes } from "./routes.js";
+import { registerAuth } from "./auth.js";
 import { makeChatHandler } from "./ws.js";
 import { SweepService } from "./sweep.js";
 
@@ -54,6 +55,12 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   const app = Fastify({
     logger: { level: process.env.LOG_LEVEL ?? "info" },
   });
+
+  // --- auth (provider-agnostic) -----------------------------------------
+  // Registered first so its onRequest hook guards every REST + WS request
+  // (health probes are exempted inside). Default mode `none` is a no-op. Throws
+  // on a fatal misconfig (e.g. jwt mode without a JWKS URL) — fail closed.
+  registerAuth(app, cfg.auth);
 
   // --- project layer + herdctl ------------------------------------------
   const projects = new ProjectStore(cfg.projectsRoot);
