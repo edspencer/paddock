@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within, act } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { ProjectView } from "./ProjectView";
 import { makeProject, makeChat } from "../test/factories";
@@ -254,5 +254,37 @@ describe("ProjectView: delete project", () => {
     await waitFor(() => expect(apiFns.deleteProject).toHaveBeenCalledWith("p"));
     await waitFor(() => expect(remove).toHaveBeenCalledWith("p"));
     expect(await screen.findByText("HOME")).toBeInTheDocument();
+  });
+});
+
+describe("ProjectView: pending new chat (issue #36)", () => {
+  it("shows a pending sidebar entry when a new chat starts streaming, then reconciles on completion", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
+    renderAt("/projects/p/chat");
+    await screen.findByTestId("chat-pane");
+
+    // The new chat learns its session id mid-stream (before the turn completes).
+    await act(async () => {
+      chatPaneProps!.onSessionStarted!("sess-new");
+    });
+
+    // A real, clickable pending entry appears immediately (the pre-send
+    // placeholder is a plain div; the pending entry is a button). Match the
+    // ellipsis form so it isn't confused with the header's "New Chat" action.
+    expect(await screen.findByRole("button", { name: /New chat…/ })).toBeInTheDocument();
+
+    // The turn completes and the server list now carries the chat's real name.
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [makeChat({ sessionId: "sess-new", name: "Curated name" })],
+      }),
+    );
+    await act(async () => {
+      chatPaneProps!.onTurnComplete!();
+    });
+
+    // The optimistic entry reconciles into the real list entry.
+    expect(await screen.findByText("Curated name")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /New chat…/ })).not.toBeInTheDocument();
   });
 });

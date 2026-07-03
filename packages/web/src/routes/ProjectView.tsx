@@ -66,6 +66,11 @@ export function ProjectView() {
 
   const [project, setProject] = useState<Project | null>(null);
   const [chats, setChats] = useState<Chat[]>([]);
+  // A brand-new chat that has started streaming but isn't in the server list
+  // yet. Rendered as a real, persistent "pending" sidebar entry so the chat is
+  // visibly created the moment it starts (issue #36); cleared once the real
+  // entry appears in `chats`.
+  const [pendingChat, setPendingChat] = useState<string | null>(null);
   const [changelog, setChangelog] = useState("");
   const [files, setFiles] = useState<string[]>([]);
   const [loadErr, setLoadErr] = useState<string | null>(null);
@@ -174,6 +179,25 @@ export function ProjectView() {
     [navigate, slug],
   );
 
+  // A brand-new chat has started streaming and just learned its session id
+  // (mid-turn). Surface it as a real, persistent sidebar entry immediately and
+  // reflect the id in the URL, so the user can see the chat exists and safely
+  // navigate away without waiting for the turn to finish (issue #36).
+  const onSessionStarted = useCallback(
+    (sessionId: string) => {
+      setPendingChat(sessionId);
+      void refreshChats();
+      void refreshProjects();
+      if (!routeSessionId) {
+        navigate(`/projects/${slug}/chat/${encodeURIComponent(sessionId)}`, {
+          replace: true,
+          state: { established: true },
+        });
+      }
+    },
+    [refreshChats, refreshProjects, routeSessionId, navigate, slug],
+  );
+
   // When a brand-new chat first establishes its session id, reflect it in the
   // URL (replace) so a reload restores that chat and the sticky tab points at it.
   const onSessionEstablished = useCallback(
@@ -189,6 +213,13 @@ export function ProjectView() {
     },
     [refreshChats, refreshProjects, routeSessionId, navigate, slug],
   );
+
+  // Drop the optimistic pending entry once the real chat lands in the list.
+  useEffect(() => {
+    if (pendingChat && chats.some((c) => c.sessionId === pendingChat)) {
+      setPendingChat(null);
+    }
+  }, [chats, pendingChat]);
 
   const onTurnComplete = useCallback(() => {
     void refreshAfterTurn();
@@ -354,13 +385,35 @@ export function ProjectView() {
             )}
           </div>
           <div className="flex-1 overflow-y-auto px-2 pb-2">
-            {/* The pending new chat, shown while it has no session id yet. */}
-            {activeSession === null && view === "chat" && (
+            {/* A fresh new chat with nothing sent yet (no session id at all). */}
+            {activeSession === null && view === "chat" && !pendingChat && (
               <div className="mb-0.5 flex items-center gap-1.5 rounded-lg bg-paddock-200/80 px-2.5 py-2 text-sm dark:bg-paddock-800">
                 <ChatIcon width={13} height={13} className="text-paddock-500" />
                 <span className="font-medium italic text-paddock-600 dark:text-paddock-300">
                   New chat…
                 </span>
+              </div>
+            )}
+            {/* A new chat that has started streaming but isn't in the server
+                list yet — a real, clickable entry so it's clearly created and
+                safe to navigate away from (issue #36). */}
+            {pendingChat && !chats.some((c) => c.sessionId === pendingChat) && (
+              <div
+                className={`group/chat relative mb-0.5 rounded-lg transition-colors ${
+                  activeSession === pendingChat && view === "chat"
+                    ? "bg-paddock-200/80 dark:bg-paddock-800"
+                    : "hover:bg-paddock-200/50 dark:hover:bg-paddock-800/50"
+                }`}
+              >
+                <button
+                  onClick={() => openChat(pendingChat)}
+                  className="flex w-full items-center gap-1.5 rounded-lg px-2.5 py-2 text-left text-sm"
+                >
+                  <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent" />
+                  <span className="truncate font-medium italic text-paddock-600 dark:text-paddock-300">
+                    New chat…
+                  </span>
+                </button>
               </div>
             )}
             {chats.length === 0 && (
@@ -480,6 +533,7 @@ export function ProjectView() {
               initialSessionId={activeSession ?? undefined}
               loadHistory={loadHistory}
               onSessionEstablished={onSessionEstablished}
+              onSessionStarted={onSessionStarted}
               onTurnComplete={onTurnComplete}
               preloadAvailable={project.hasOverview}
               projectModel={project.model}

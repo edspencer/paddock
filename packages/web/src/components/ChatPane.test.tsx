@@ -218,6 +218,73 @@ describe("ChatPane: history hydration", () => {
   });
 });
 
+// Issue #36: a brand-new chat should announce its session id the moment it
+// learns it (mid-stream), so the sidebar can show a pending entry immediately.
+describe("ChatPane: onSessionStarted (issue #36)", () => {
+  it("fires as soon as a new chat learns its session id, before completion — once", async () => {
+    const onStarted = vi.fn();
+    render(<ChatPane projectSlug="proj" onSessionStarted={onStarted} />);
+    await screen.findByRole("button", { name: /^Send$/ });
+    await userEvent.type(screen.getByPlaceholderText(/Message the keeper agent/i), "go");
+    fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
+
+    act(() => sub().handlers.onResponse?.("streaming…", { sessionId: "sess-9", jobId: "j" }));
+    expect(onStarted).toHaveBeenCalledWith("sess-9");
+
+    // Further frames + completion must not fire it again.
+    act(() => {
+      sub().handlers.onResponse?.(" more", { sessionId: "sess-9", jobId: "j" });
+      sub().handlers.onComplete?.({ sessionId: "sess-9", jobId: "j", success: true });
+    });
+    expect(onStarted).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fire for a resumed (existing) chat", async () => {
+    const onStarted = vi.fn();
+    const loadHistory = vi.fn().mockResolvedValue([]);
+    render(
+      <ChatPane projectSlug="proj" initialSessionId="sess-existing" onSessionStarted={onStarted} loadHistory={loadHistory} />,
+    );
+    await screen.findByRole("button", { name: /^Send$/ });
+    await userEvent.type(screen.getByPlaceholderText(/Message the keeper agent/i), "go");
+    fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
+    act(() => {
+      sub().handlers.onResponse?.("reply", { sessionId: "sess-existing", jobId: "j" });
+      sub().handlers.onComplete?.({ sessionId: "sess-existing", jobId: "j", success: true });
+    });
+    expect(onStarted).not.toHaveBeenCalled();
+  });
+
+  it("keeps the picked model when the new chat's id is mirrored into the URL mid-stream", async () => {
+    const { rerender } = render(
+      <ChatPane projectSlug="proj" projectModel="claude-opus-4-8" isProjectChat onSessionStarted={vi.fn()} />,
+    );
+    const select = (await screen.findByTitle(/Model for this chat/i)) as HTMLSelectElement;
+    await waitFor(() => expect(select.value).toBe("claude-opus-4-8"));
+    fireEvent.change(select, { target: { value: "claude-sonnet-4" } });
+
+    await userEvent.type(screen.getByPlaceholderText(/Message the keeper agent/i), "go");
+    fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
+
+    // First streamed frame carries the new session id → onSessionStarted fires
+    // and the parent mirrors that id into initialSessionId mid-stream (no
+    // remount). The picker must NOT reset to the Opus default.
+    act(() => sub().handlers.onResponse?.("hi", { sessionId: "sess-new", jobId: "j" }));
+    rerender(
+      <ChatPane
+        projectSlug="proj"
+        projectModel="claude-opus-4-8"
+        isProjectChat
+        initialSessionId="sess-new"
+        onSessionStarted={vi.fn()}
+        loadHistory={vi.fn().mockResolvedValue([])}
+      />,
+    );
+    const after = (await screen.findByTitle(/Model for this chat/i)) as HTMLSelectElement;
+    await waitFor(() => expect(after.value).toBe("claude-sonnet-4"));
+  });
+});
+
 // Regression: issue #35 — since only one ChatPane is mounted per project, a
 // still-streaming chat's frames can be routed here after the user switches
 // away. A pane must apply only frames that belong to its own chat.

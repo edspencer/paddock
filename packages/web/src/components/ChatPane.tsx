@@ -32,6 +32,12 @@ export interface ChatPaneProps {
   loadHistory?: (sessionId: string) => Promise<HistoryMessage[]>;
   /** Called when a brand-new chat first gets a real session id (to refresh lists). */
   onSessionEstablished?: (sessionId: string) => void;
+  /**
+   * Called the moment a brand-new chat first learns its session id — typically
+   * mid-stream, well before the turn completes — so the parent can surface a
+   * pending list entry immediately (issue #36). Fires at most once per chat.
+   */
+  onSessionStarted?: (sessionId: string) => void;
   /** Called whenever a turn completes (pull model: re-fetch project/files for sweeps). */
   onTurnComplete?: () => void;
   /** True for a project chat (vs. a one-off scratch chat). Gates the preload checkbox. */
@@ -53,6 +59,7 @@ export function ChatPane({
   initialSessionId,
   loadHistory,
   onSessionEstablished,
+  onSessionStarted,
   onTurnComplete,
   isProjectChat = false,
   preloadAvailable = false,
@@ -104,6 +111,8 @@ export function ChatPane({
   // its server session id — the only state in which a session-less/first frame
   // is legitimately ours.
   const awaitingSessionRef = useRef(false);
+  // Guards the one-shot onSessionStarted notification for a brand-new chat.
+  const startedNotifiedRef = useRef(false);
   // The session id this pane established LIVE (a brand-new chat that just saved).
   // Used to ignore the parent mirroring that id into the URL (which flows back
   // as `initialSessionId`) so we don't needlessly re-hydrate the live transcript.
@@ -175,6 +184,7 @@ export function ChatPane({
     jobRef.current = null;
     streamingRef.current = false;
     awaitingSessionRef.current = false;
+    startedNotifiedRef.current = false;
     setError(null);
     setStreaming(false);
 
@@ -272,6 +282,19 @@ export function ChatPane({
       sessionRef.current = id;
       awaitingSessionRef.current = false;
       sub.setSessionId(id);
+      // Tell the parent as soon as a brand-new chat learns its id (mid-stream)
+      // so it can show a pending list entry right away — not at turn end.
+      if (isNewSessionRef.current && !startedNotifiedRef.current) {
+        startedNotifiedRef.current = true;
+        // The parent mirrors this id into the URL mid-stream. Treat that like
+        // the new->established transition so it does NOT re-hydrate the live
+        // transcript or reset the model picker to the default when
+        // initialSessionId flips: mark it established here and persist the
+        // picked model onto the now-known session-id key (mirrors onComplete).
+        establishedHereRef.current = id;
+        if (modelRef.current) writeChatModel(id, projectSlug, modelRef.current);
+        onSessionStarted?.(id);
+      }
     };
     const sub = chatClient.subscribe(projectSlug, sessionRef.current, {
       onResponse: (chunk, meta) => {
@@ -340,7 +363,7 @@ export function ChatPane({
       sub.unsubscribe();
     };
     // Re-subscribe when the chat identity changes.
-  }, [projectSlug, initialSessionId, onSessionEstablished, onTurnComplete]);
+  }, [projectSlug, initialSessionId, onSessionEstablished, onSessionStarted, onTurnComplete]);
 
   // --- send / cancel ---------------------------------------------------------
   const send = useCallback(() => {
