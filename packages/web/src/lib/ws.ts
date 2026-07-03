@@ -208,14 +208,23 @@ class ChatClient {
   /** Find the subscriber an incoming event belongs to. */
   private route(projectSlug: string, sessionId: string | null): Subscription | undefined {
     const candidates = [...this.subs.values()].filter((s) => s.projectSlug === projectSlug);
-    if (candidates.length <= 1) return candidates[0];
-    // Multiple chats on the same project (rare): prefer an exact session match,
-    // else the one still awaiting its first session id (a freshly-sent new chat).
-    return (
-      candidates.find((s) => sessionId && s.sessionId === sessionId) ??
-      candidates.find((s) => s.sessionId === null) ??
-      candidates[0]
-    );
+    if (candidates.length === 0) return undefined;
+    // Prefer an exact session match no matter how many chats are mounted.
+    if (sessionId) {
+      const exact = candidates.find((s) => s.sessionId === sessionId);
+      if (exact) return exact;
+    }
+    // No exact match: hand the frame to a chat still awaiting its first session
+    // id (a freshly-sent new chat). Crucially, a frame for a *known* session
+    // whose pane has since unmounted must NOT fall through to an unrelated chat
+    // — that straggler is the cross-session leak (issue #35). The mounted pane
+    // still applies its own session guard as a backstop.
+    const nascent = candidates.find((s) => s.sessionId === null);
+    if (nascent) return nascent;
+    // A session-less frame (very first frame, or an error) can only belong to a
+    // sole subscriber; with a known session and no match, drop it.
+    if (sessionId === null && candidates.length === 1) return candidates[0];
+    return undefined;
   }
 
   private dispatch(raw: string): void {
