@@ -548,9 +548,37 @@ export class HerdctlService {
       system_prompt:
         "You are a Claude Code keeper agent for this project directory. " +
         "Honor any CLAUDE.md present. Keep CHANGELOG.md current. " +
-        "Create branches for significant changes; never force-push.",
+        "Create branches for significant changes; never force-push." +
+        // Only when this instance opts in (PADDOCK_DEV_SERVERS_ENABLED) — keeps
+        // house/homelab prompts untouched. Uses the project's own slug so the
+        // agent addresses exactly its own dev server.
+        (this.cfg.devServers.enabled ? "\n\n" + this.devServersBlurb(project.slug) : ""),
       default_prompt: "Summarize the current state of this project.",
     };
+  }
+
+  /**
+   * The dev/preview-server capability blurb appended to a keeper's system prompt
+   * when the instance enables it (see DevServersConfig). Tells the agent how to
+   * run a long-running dev server for THIS project via the on-box `pm` CLI, that
+   * its running state is shared across every chat session (`pm status`), and how
+   * the raw LAN port is reached.
+   */
+  private devServersBlurb(slug: string): string {
+    const host = this.cfg.devServers.domain;
+    return [
+      "DEV/PREVIEW SERVERS: you can run a long-running dev server for this project",
+      `via the on-box \`pm\` CLI (this project's server name is \`${slug}\`):`,
+      `  pm start ${slug} -- <dev command>   # e.g. npm run dev — assigns/reuses a stable port`,
+      `  pm stop ${slug}                     # stop it   |   pm logs ${slug}   # tail logs`,
+      "  pm status                           # every project's server, port + URL. This state",
+      "                                      # is SHARED, so every chat session sees what is running.",
+      "`pm` exports the project's stable assigned port as PORT (and HOST=0.0.0.0) into your",
+      "server, so bind 0.0.0.0 and read PORT from the env (or pass $PORT). Once running the app",
+      `is reachable on the LAN at http://${host}:<port> — a raw port that BYPASSES Caddy/Authentik`,
+      "(an unauthenticated, LAN-only dev URL; do not expose secrets on it). Run `pm status` for",
+      "the exact port and URL.",
+    ].join("\n");
   }
 
   /**
