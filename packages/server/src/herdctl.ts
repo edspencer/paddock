@@ -518,6 +518,10 @@ export class HerdctlService {
       // 5.13.x), so without this the runner falls back to the SDK runtime. Set it
       // per-agent to guarantee the Max/CLI path.
       runtime: "cli",
+      // Load any CLAUDE.md present in the scratch dir via the cwd walk-up. As with
+      // the keeper, the CLI runtime only passes `--setting-sources` when this is
+      // set; harmless no-op if the scratch dir has no CLAUDE.md.
+      setting_sources: ["project"],
       model: model ?? KEEPER_DEFAULT_MODEL,
       system_prompt:
         "You are a Claude Code agent for one-off chats. Be helpful and concise.",
@@ -536,11 +540,20 @@ export class HerdctlService {
    * System prompt: on a dev-servers instance (PADDOCK_DEV_SERVERS_ENABLED — the
    * projects instance) we deliberately set NO `system_prompt`. herdctl's CLI
    * runtime then passes no `--system-prompt`, so Claude Code's full default
-   * coding prompt applies together with the project's CLAUDE.md hierarchy — the
-   * box's root CLAUDE.md (`/var/lib/paddock/projects/CLAUDE.md`, auto-loaded via
-   * the cwd walk-up) carries the keeper guidance plus the `pm` dev-server
-   * capability. Every other instance (house/homelab) keeps the terse replace
-   * prompt below, so their behavior is unchanged.
+   * coding prompt applies. Every other instance (house/homelab) keeps the terse
+   * replace prompt below, so their behavior is unchanged.
+   *
+   * CLAUDE.md discovery: omitting `--system-prompt` only preserves the default
+   * coding prompt — it does NOT, on its own, load CLAUDE.md. In headless
+   * `claude -p` mode CLAUDE.md / skills / agents auto-discovery is gated
+   * separately by `--setting-sources`, which @herdctl/core's CLI runtime passes
+   * ONLY when `setting_sources` is set on the agent. (The SDK runtime differs: it
+   * defaults settingSources to ["project"] whenever a working_directory is set —
+   * the CLI runtime does not, and paddock forces `runtime: cli`.) So we set
+   * `setting_sources: ["project"]` explicitly to load the project / backing-repo
+   * CLAUDE.md — e.g. the box's root `/var/lib/paddock/projects/CLAUDE.md` with the
+   * keeper guidance plus the `pm` dev-server capability — and project skills /
+   * agents, all via the cwd walk-up from the working directory.
    */
   private keeperAgentConfig(
     project: Project,
@@ -553,6 +566,12 @@ export class HerdctlService {
       // Explicit CLI runtime (Max plan) — see the scratch agent note: the fleet
       // `defaults.runtime` is dropped by the core config loader, so set it here.
       runtime: "cli",
+      // Load the project / backing-repo CLAUDE.md (+ project skills / agents) via
+      // the cwd walk-up. The CLI runtime only passes `--setting-sources` when this
+      // is set; without it, headless `claude -p` does NO CLAUDE.md discovery (the
+      // SDK runtime would default this to ["project"], but we force cli). See the
+      // doc comment above.
+      setting_sources: ["project"],
       model: modelOverride ?? project.model ?? KEEPER_DEFAULT_MODEL,
       default_prompt: "Summarize the current state of this project.",
     };
