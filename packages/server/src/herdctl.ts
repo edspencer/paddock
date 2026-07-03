@@ -532,12 +532,21 @@ export class HerdctlService {
    *
    * Model resolution: `modelOverride` (a per-chat override) wins, else the
    * project's persisted `model`, else the keeper default (Opus).
+   *
+   * System prompt: on a dev-servers instance (PADDOCK_DEV_SERVERS_ENABLED — the
+   * projects instance) we deliberately set NO `system_prompt`. herdctl's CLI
+   * runtime then passes no `--system-prompt`, so Claude Code's full default
+   * coding prompt applies together with the project's CLAUDE.md hierarchy — the
+   * box's root CLAUDE.md (`/var/lib/paddock/projects/CLAUDE.md`, auto-loaded via
+   * the cwd walk-up) carries the keeper guidance plus the `pm` dev-server
+   * capability. Every other instance (house/homelab) keeps the terse replace
+   * prompt below, so their behavior is unchanged.
    */
   private keeperAgentConfig(
     project: Project,
     modelOverride?: string,
   ): Record<string, unknown> & { name: string } {
-    return {
+    const config: Record<string, unknown> & { name: string } = {
       name: keeperAgentName(project.slug),
       description: project.summary || `Keeper agent for project ${project.name}.`,
       working_directory: project.dir,
@@ -545,40 +554,17 @@ export class HerdctlService {
       // `defaults.runtime` is dropped by the core config loader, so set it here.
       runtime: "cli",
       model: modelOverride ?? project.model ?? KEEPER_DEFAULT_MODEL,
-      system_prompt:
-        "You are a Claude Code keeper agent for this project directory. " +
-        "Honor any CLAUDE.md present. Keep CHANGELOG.md current. " +
-        "Create branches for significant changes; never force-push." +
-        // Only when this instance opts in (PADDOCK_DEV_SERVERS_ENABLED) — keeps
-        // house/homelab prompts untouched. Uses the project's own slug so the
-        // agent addresses exactly its own dev server.
-        (this.cfg.devServers.enabled ? "\n\n" + this.devServersBlurb(project.slug) : ""),
       default_prompt: "Summarize the current state of this project.",
     };
-  }
-
-  /**
-   * The dev/preview-server capability blurb appended to a keeper's system prompt
-   * when the instance enables it (see DevServersConfig). Tells the agent how to
-   * run a long-running dev server for THIS project via the on-box `pm` CLI, that
-   * its running state is shared across every chat session (`pm status`), and how
-   * the raw LAN port is reached.
-   */
-  private devServersBlurb(slug: string): string {
-    const host = this.cfg.devServers.domain;
-    return [
-      "DEV/PREVIEW SERVERS: you can run a long-running dev server for this project",
-      `via the on-box \`pm\` CLI (this project's server name is \`${slug}\`):`,
-      `  pm start ${slug} -- <dev command>   # e.g. npm run dev — assigns/reuses a stable port`,
-      `  pm stop ${slug}                     # stop it   |   pm logs ${slug}   # tail logs`,
-      "  pm status                           # every project's server, port + URL. This state",
-      "                                      # is SHARED, so every chat session sees what is running.",
-      "`pm` exports the project's stable assigned port as PORT (and HOST=0.0.0.0) into your",
-      "server, so bind 0.0.0.0 and read PORT from the env (or pass $PORT). Once running the app",
-      `is reachable on the LAN at http://${host}:<port> — a raw port that BYPASSES Caddy/Authentik`,
-      "(an unauthenticated, LAN-only dev URL; do not expose secrets on it). Run `pm status` for",
-      "the exact port and URL.",
-    ].join("\n");
+    // Only non-dev-servers instances get a replace system_prompt; the projects
+    // instance omits it so the default coding prompt + CLAUDE.md hierarchy apply.
+    if (!this.cfg.devServers.enabled) {
+      config.system_prompt =
+        "You are a Claude Code keeper agent for this project directory. " +
+        "Honor any CLAUDE.md present. Keep CHANGELOG.md current. " +
+        "Create branches for significant changes; never force-push.";
+    }
+    return config;
   }
 
   /**
