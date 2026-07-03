@@ -65,6 +65,16 @@ npm run dev:web      # http://localhost:5173  (proxies /api + /ws -> :4000)
 
 Open **http://localhost:5173/**.
 
+To run on different ports (e.g. when `:4000` is already taken by another
+instance) point the dev server at a backend on another port:
+
+```bash
+# Terminal 1 — backend on :4200
+PORT=4200 npm run dev
+# Terminal 2 — Vite on :4100, proxying to the :4200 backend
+PADDOCK_DEV_PORT=4100 PADDOCK_PROXY_TARGET=http://localhost:4200 npm run dev:web
+```
+
 ## Stopping
 
 ```bash
@@ -87,6 +97,8 @@ rm -rf /tmp/paddock-dev.*
 | `PADDOCK_WEB_DIST` | `packages/web/dist` | Built SPA served in production. |
 | `VITE_API_BASE` *(web build)* | same-origin | Point the SPA at a non-default API origin. |
 | `VITE_WS_BASE` *(web build)* | same-origin | Point the SPA at a non-default WS origin. |
+| `PADDOCK_DEV_PORT` *(Mode B)* | `5173` | Vite dev-server port. |
+| `PADDOCK_PROXY_TARGET` *(Mode B)* | `http://localhost:4000` | Backend origin the Vite dev server proxies `/api` + `/ws` to (WS target derived by swapping `http`→`ws`). |
 
 ## What "good" looks like end-to-end
 
