@@ -640,9 +640,12 @@ export class HerdctlService {
         // on it is auto-denied with no prompt. Built-in skills (claude-api,
         // code-review, deep-research, ...) ship inside the CLI binary and are
         // registered/visible regardless of setting-sources, so the ONLY thing
-        // blocking them was this missing tool. Skills that fan out to sub-agents
-        // or track progress also need Task/TodoWrite; add those if desired.
-        allowed_tools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "WebFetch", "WebSearch", "Skill"],
+        // blocking them was this missing tool. Skills routinely fan out to
+        // sub-agents (`Task`), track progress (`TodoWrite`), and edit notebooks
+        // (`NotebookEdit`), each of which is likewise permission-checked against
+        // this same allowlist — so include them here to keep skills functional
+        // end-to-end (adds no capability the keeper's existing tools don't).
+        allowed_tools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "WebFetch", "WebSearch", "Task", "TodoWrite", "Skill", "NotebookEdit"],
         denied_tools: ["Bash(sudo *)", "Bash(rm -rf /)", "Bash(rm -rf /*)", "Bash(chmod 777 *)"],
       },
     };
