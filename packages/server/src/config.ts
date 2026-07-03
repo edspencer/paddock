@@ -54,6 +54,21 @@ export interface AuthConfig {
   groupsClaim: string;
 }
 
+/**
+ * Dev/preview-server capability. When enabled, keeper agents are told (in their
+ * system prompt) that they may run long-running dev servers via the on-box `pm`
+ * CLI (a PM2 + shared-ports-registry wrapper). Driven entirely by env so it is
+ * scoped PER INSTANCE — only the instance whose env sets
+ * `PADDOCK_DEV_SERVERS_ENABLED` advertises the capability (e.g. the projects
+ * instance), leaving house/homelab prompts untouched.
+ */
+export interface DevServersConfig {
+  /** Whether keeper agents may run dev servers via `pm` (default false). */
+  enabled: boolean;
+  /** Host shown in dev-server URLs; must match the `pm` wrapper's PM_PUBLIC_HOST. */
+  domain: string;
+}
+
 export interface PaddockConfig {
   /** HTTP/WS port. */
   port: number;
@@ -76,6 +91,8 @@ export interface PaddockConfig {
   scratchDir: string;
   /** Provider-agnostic user-authentication config (see AUTH.md). */
   auth: AuthConfig;
+  /** Dev/preview-server capability advertised to keeper agents (per-instance). */
+  devServers: DevServersConfig;
 }
 
 function abs(p: string): string {
@@ -149,6 +166,20 @@ function loadAuthConfig(): AuthConfig {
   };
 }
 
+/**
+ * Resolve the dev/preview-server capability from env. Defaults to disabled, so a
+ * plain instance never advertises `pm`; the projects instance opts in by setting
+ * `PADDOCK_DEV_SERVERS_ENABLED=true` in its own env file. Accepts 1/true/yes.
+ */
+function loadDevServersConfig(): DevServersConfig {
+  const raw = envOr("PADDOCK_DEV_SERVERS_ENABLED", "false").toLowerCase();
+  const enabled = raw === "1" || raw === "true" || raw === "yes";
+  return {
+    enabled,
+    domain: envOr("PADDOCK_DEV_SERVERS_DOMAIN", "projects.valfenda.net"),
+  };
+}
+
 export function loadPaddockConfig(): PaddockConfig {
   // Ensure the data root exists first so symlinks (e.g. /tmp -> /private/tmp on
   // macOS) resolve consistently for every derived path below.
@@ -184,6 +215,7 @@ export function loadPaddockConfig(): PaddockConfig {
     webDist: abs(envOr("PADDOCK_WEB_DIST", defaultWebDist)),
     scratchDir,
     auth: loadAuthConfig(),
+    devServers: loadDevServersConfig(),
   });
 }
 
