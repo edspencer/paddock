@@ -335,4 +335,42 @@ describe("ChatPane: message boundaries", () => {
     expect(screen.getByText("first message")).toBeInTheDocument();
     expect(screen.getByText("second message")).toBeInTheDocument();
   });
+
+  // Regression: issue #30 — in a `text → tool → text → tool → text` turn every
+  // text bubble kept a stuck streaming caret because sealStreaming only cleared
+  // the trailing turn. The caret should sit only on the actively-streaming
+  // segment (at most one), and none should remain once the turn completes.
+  it("keeps at most one caret across tool-separated text and clears all on complete", async () => {
+    const { container } = render(<ChatPane projectSlug="proj" />);
+    await screen.findByRole("button", { name: /^Send$/ });
+    await userEvent.type(screen.getByPlaceholderText(/Message the keeper agent/i), "go");
+    fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
+
+    const meta = { sessionId: "s", jobId: "j" };
+    const tool = (n: number) => ({
+      toolName: `Bash-${n}`,
+      output: "ok",
+      isError: false,
+    });
+
+    act(() => {
+      sub().handlers.onResponse?.("segment A", meta);
+      sub().handlers.onToolCall?.(tool(1), meta);
+      sub().handlers.onResponse?.("segment B", meta);
+      sub().handlers.onToolCall?.(tool(2), meta);
+      sub().handlers.onResponse?.("segment C", meta);
+    });
+
+    // All three segments render as separate bubbles...
+    expect(screen.getByText("segment A")).toBeInTheDocument();
+    expect(screen.getByText("segment B")).toBeInTheDocument();
+    expect(screen.getByText("segment C")).toBeInTheDocument();
+    // ...but only the actively-streaming last one carries a caret.
+    expect(container.querySelectorAll(".streaming-caret")).toHaveLength(1);
+
+    act(() => sub().handlers.onComplete?.({ ...meta, success: true }));
+
+    // Turn done → no carets anywhere.
+    expect(container.querySelectorAll(".streaming-caret")).toHaveLength(0);
+  });
 });

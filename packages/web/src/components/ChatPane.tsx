@@ -251,7 +251,10 @@ export function ChatPane({
       },
       onToolCall: (tc, meta) => {
         if (meta.jobId) jobRef.current = meta.jobId;
-        setTurns((prev) => [...prev, { kind: "tool", id: nextId(), tool: tc }]);
+        // Seal the streaming text bubble before appending the tool row, so its
+        // caret clears the instant the tool call begins. Otherwise the bubble
+        // is no longer the trailing turn and nothing can ever clear its caret.
+        setTurns((prev) => [...sealStreaming(prev), { kind: "tool", id: nextId(), tool: tc }]);
       },
       onMessageBoundary: (meta) => {
         if (meta.jobId) jobRef.current = meta.jobId;
@@ -699,13 +702,17 @@ function appendAssistantText(
   });
 }
 
-/** Mark any trailing streaming assistant bubble as finished. */
+/**
+ * Mark every streaming assistant bubble as finished. Clearing all of them (not
+ * just the trailing turn) is what lets carets on tool-separated text segments
+ * vanish — in a `text → tool → text` turn each text bubble is sealed as its
+ * tool call begins, and any stragglers are cleared when the turn completes.
+ */
 function sealStreaming(prev: Turn[]): Turn[] {
-  const last = prev[prev.length - 1];
-  if (last && last.kind === "assistant" && last.streaming) {
-    return [...prev.slice(0, -1), { ...last, streaming: false }];
-  }
-  return prev;
+  if (!prev.some((t) => t.kind === "assistant" && t.streaming)) return prev;
+  return prev.map((t) =>
+    t.kind === "assistant" && t.streaming ? { ...t, streaming: false } : t,
+  );
 }
 
 /** Convert a hydrated history message into a rendered turn. */
