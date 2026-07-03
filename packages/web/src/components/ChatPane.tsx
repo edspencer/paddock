@@ -286,6 +286,13 @@ export function ChatPane({
       // so it can show a pending list entry right away — not at turn end.
       if (isNewSessionRef.current && !startedNotifiedRef.current) {
         startedNotifiedRef.current = true;
+        // The parent mirrors this id into the URL mid-stream. Treat that like
+        // the new->established transition so it does NOT re-hydrate the live
+        // transcript or reset the model picker to the default when
+        // initialSessionId flips: mark it established here and persist the
+        // picked model onto the now-known session-id key (mirrors onComplete).
+        establishedHereRef.current = id;
+        if (modelRef.current) writeChatModel(id, projectSlug, modelRef.current);
         onSessionStarted?.(id);
       }
     };

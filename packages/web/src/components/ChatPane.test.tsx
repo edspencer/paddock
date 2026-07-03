@@ -254,6 +254,35 @@ describe("ChatPane: onSessionStarted (issue #36)", () => {
     });
     expect(onStarted).not.toHaveBeenCalled();
   });
+
+  it("keeps the picked model when the new chat's id is mirrored into the URL mid-stream", async () => {
+    const { rerender } = render(
+      <ChatPane projectSlug="proj" projectModel="claude-opus-4-8" isProjectChat onSessionStarted={vi.fn()} />,
+    );
+    const select = (await screen.findByTitle(/Model for this chat/i)) as HTMLSelectElement;
+    await waitFor(() => expect(select.value).toBe("claude-opus-4-8"));
+    fireEvent.change(select, { target: { value: "claude-sonnet-4" } });
+
+    await userEvent.type(screen.getByPlaceholderText(/Message the keeper agent/i), "go");
+    fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
+
+    // First streamed frame carries the new session id → onSessionStarted fires
+    // and the parent mirrors that id into initialSessionId mid-stream (no
+    // remount). The picker must NOT reset to the Opus default.
+    act(() => sub().handlers.onResponse?.("hi", { sessionId: "sess-new", jobId: "j" }));
+    rerender(
+      <ChatPane
+        projectSlug="proj"
+        projectModel="claude-opus-4-8"
+        isProjectChat
+        initialSessionId="sess-new"
+        onSessionStarted={vi.fn()}
+        loadHistory={vi.fn().mockResolvedValue([])}
+      />,
+    );
+    const after = (await screen.findByTitle(/Model for this chat/i)) as HTMLSelectElement;
+    await waitFor(() => expect(after.value).toBe("claude-sonnet-4"));
+  });
 });
 
 // Regression: issue #35 — since only one ChatPane is mounted per project, a
