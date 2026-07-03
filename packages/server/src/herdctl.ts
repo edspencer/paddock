@@ -634,7 +634,18 @@ export class HerdctlService {
         // nesting available, but for the POC we keep keeper agents native with
         // acceptEdits + denied dangerous bash patterns.
         permission_mode: "acceptEdits",
-        allowed_tools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "WebFetch", "WebSearch"],
+        // `Skill` MUST be in the allowlist or every skill invocation is
+        // permission-denied in `-p` (non-interactive) mode — the CLI is spawned
+        // with an explicit `--allowedTools` list (cli-runtime), and any tool not
+        // on it is auto-denied with no prompt. Built-in skills (claude-api,
+        // code-review, deep-research, ...) ship inside the CLI binary and are
+        // registered/visible regardless of setting-sources, so the ONLY thing
+        // blocking them was this missing tool. Skills routinely fan out to
+        // sub-agents (`Task`), track progress (`TodoWrite`), and edit notebooks
+        // (`NotebookEdit`), each of which is likewise permission-checked against
+        // this same allowlist — so include them here to keep skills functional
+        // end-to-end (adds no capability the keeper's existing tools don't).
+        allowed_tools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "WebFetch", "WebSearch", "Task", "TodoWrite", "Skill", "NotebookEdit"],
         denied_tools: ["Bash(sudo *)", "Bash(rm -rf /)", "Bash(rm -rf /*)", "Bash(chmod 777 *)"],
       },
     };
