@@ -96,6 +96,14 @@ export function ChatPane({
   const sessionRef = useRef<string | null>(initialSessionId ?? null);
   const jobRef = useRef<string | null>(null);
   const isNewSessionRef = useRef<boolean>(!initialSessionId);
+  // True while this pane has an in-flight turn (from send() until complete/error).
+  // Used to session-guard incoming frames so a still-streaming chat's stragglers
+  // can't leak into a chat that was switched to mid-stream (issue #35).
+  const streamingRef = useRef(false);
+  // True when a brand-new chat has sent its first message but not yet learned
+  // its server session id — the only state in which a session-less/first frame
+  // is legitimately ours.
+  const awaitingSessionRef = useRef(false);
   // The session id this pane established LIVE (a brand-new chat that just saved).
   // Used to ignore the parent mirroring that id into the URL (which flows back
   // as `initialSessionId`) so we don't needlessly re-hydrate the live transcript.
@@ -165,6 +173,8 @@ export function ChatPane({
     sessionRef.current = initialSessionId ?? null;
     isNewSessionRef.current = !initialSessionId;
     jobRef.current = null;
+    streamingRef.current = false;
+    awaitingSessionRef.current = false;
     setError(null);
     setStreaming(false);
 
@@ -240,30 +250,56 @@ export function ChatPane({
 
   // --- subscribe to the shared socket for this chat -------------------------
   useEffect(() => {
+    // Guard against frames that belong to a different chat. Only one ChatPane is
+    // mounted per project, so a still-streaming chat's stragglers can be routed
+    // here after the user switches away (issue #35). Adopt only frames for our
+    // own session — or, for a brand-new chat, the first frames of the turn we
+    // just sent (identified by the awaiting/streaming flags).
+    const framesBelong = (meta: { sessionId: string | null; jobId: string | null }) => {
+      const mine = sessionRef.current;
+      if (mine) {
+        if (meta.sessionId === mine) return true;
+        // A session-less frame during our own in-flight turn (server hasn't
+        // stamped the id yet) is ours; one while idle is a straggler.
+        return meta.sessionId == null && streamingRef.current;
+      }
+      // Nascent chat: accept frames only once we've sent and are awaiting our
+      // own session id. Otherwise (a fresh chat the user is just looking at)
+      // reject everything so another chat's stream can't bleed in.
+      return awaitingSessionRef.current;
+    };
+    const adoptSession = (id: string) => {
+      sessionRef.current = id;
+      awaitingSessionRef.current = false;
+      sub.setSessionId(id);
+    };
     const sub = chatClient.subscribe(projectSlug, sessionRef.current, {
       onResponse: (chunk, meta) => {
+        if (!framesBelong(meta)) return;
         if (meta.jobId) jobRef.current = meta.jobId;
-        if (meta.sessionId) {
-          sessionRef.current = meta.sessionId;
-          sub.setSessionId(meta.sessionId);
-        }
+        if (meta.sessionId) adoptSession(meta.sessionId);
         appendAssistantText(setTurns, chunk);
       },
       onToolCall: (tc, meta) => {
+        if (!framesBelong(meta)) return;
         if (meta.jobId) jobRef.current = meta.jobId;
+        if (meta.sessionId) adoptSession(meta.sessionId);
         // Seal the streaming text bubble before appending the tool row, so its
         // caret clears the instant the tool call begins. Otherwise the bubble
         // is no longer the trailing turn and nothing can ever clear its caret.
         setTurns((prev) => [...sealStreaming(prev), { kind: "tool", id: nextId(), tool: tc }]);
       },
       onMessageBoundary: (meta) => {
+        if (!framesBelong(meta)) return;
         if (meta.jobId) jobRef.current = meta.jobId;
         // Seal the current streaming bubble so the next assistant message
         // renders as a separate turn.
         setTurns((prev) => sealStreaming(prev));
       },
       onComplete: (meta) => {
+        if (!framesBelong(meta)) return;
         if (meta.jobId) jobRef.current = meta.jobId;
+        streamingRef.current = false;
         setStreaming(false);
         setTurns((prev) => sealStreaming(prev));
         // Stale-by-one-turn context meter: store the last completed turn's
@@ -271,8 +307,7 @@ export function ChatPane({
         if (meta.usage) setUsage(meta.usage);
         if (meta.sessionId) {
           const wasNew = isNewSessionRef.current && sessionRef.current !== meta.sessionId;
-          sessionRef.current = meta.sessionId;
-          sub.setSessionId(meta.sessionId);
+          adoptSession(meta.sessionId);
           if (wasNew || isNewSessionRef.current) {
             isNewSessionRef.current = false;
             // Carry the new chat's picked model from its "new:<slug>" key onto
@@ -290,6 +325,11 @@ export function ChatPane({
         onTurnComplete?.();
       },
       onError: (err) => {
+        // chat:error carries no session id, so it can't be session-routed.
+        // Only surface it when this pane actually has a turn in flight —
+        // otherwise it's another chat's error leaking into an idle pane.
+        if (!streamingRef.current) return;
+        streamingRef.current = false;
         setStreaming(false);
         jobRef.current = null;
         setTurns((prev) => sealStreaming(prev));
@@ -314,6 +354,10 @@ export function ChatPane({
     ]);
     setDraft("");
     setStreaming(true);
+    streamingRef.current = true;
+    // A brand-new chat won't know its session id until the first frame arrives;
+    // flag that we're awaiting it so those frames are accepted as ours.
+    if (sessionRef.current === null) awaitingSessionRef.current = true;
     // Preload only applies to the very first turn of a never-resumed chat.
     const isFirstTurnOfNewChat = isNewSessionRef.current && !firstTurnSentRef.current;
     const preload = isProjectChat && isFirstTurnOfNewChat && preloadContext;

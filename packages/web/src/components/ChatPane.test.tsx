@@ -218,6 +218,59 @@ describe("ChatPane: history hydration", () => {
   });
 });
 
+// Regression: issue #35 — since only one ChatPane is mounted per project, a
+// still-streaming chat's frames can be routed here after the user switches
+// away. A pane must apply only frames that belong to its own chat.
+describe("ChatPane: session isolation (issue #35)", () => {
+  it("an established chat ignores frames carrying a different session id", async () => {
+    const loadHistory = vi.fn().mockResolvedValue([]);
+    render(<ChatPane projectSlug="proj" initialSessionId="sess-A" loadHistory={loadHistory} />);
+    await screen.findByRole("button", { name: /^Send$/ });
+
+    // A straggler from another chat (session B) must not render here.
+    act(() => sub().handlers.onResponse?.("leaked from B", { sessionId: "sess-B", jobId: "jb" }));
+    expect(screen.queryByText("leaked from B")).not.toBeInTheDocument();
+
+    // Our own session's frame renders normally.
+    act(() => sub().handlers.onResponse?.("belongs to A", { sessionId: "sess-A", jobId: "ja" }));
+    expect(await screen.findByText("belongs to A")).toBeInTheDocument();
+  });
+
+  it("a fresh, unsent chat ignores another chat's leaked text and does not adopt its session", async () => {
+    const onEstablished = vi.fn();
+    render(<ChatPane projectSlug="proj" onSessionEstablished={onEstablished} />);
+    await screen.findByRole("button", { name: /^Send$/ });
+
+    // Chat A is still streaming; its frames get routed to this nascent pane.
+    // Without a guard the text leaks in and the leaked chat:complete fires
+    // onSessionEstablished — navigating the fresh chat onto A's session.
+    act(() => {
+      sub().handlers.onResponse?.("A's streamed text", { sessionId: "sess-A", jobId: "ja" });
+      sub().handlers.onComplete?.({ sessionId: "sess-A", jobId: "ja", success: true });
+    });
+    expect(screen.queryByText("A's streamed text")).not.toBeInTheDocument();
+    expect(onEstablished).not.toHaveBeenCalled();
+  });
+
+  it("a fresh chat accepts its OWN first frames once it has sent", async () => {
+    const onEstablished = vi.fn();
+    render(<ChatPane projectSlug="proj" onSessionEstablished={onEstablished} />);
+    await screen.findByRole("button", { name: /^Send$/ });
+    await userEvent.type(screen.getByPlaceholderText(/Message the keeper agent/i), "hello");
+    fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
+
+    // Once we've sent, the turn's first frames (even before the id is known)
+    // are ours and are adopted.
+    act(() => {
+      sub().handlers.onResponse?.("streaming reply", { sessionId: null, jobId: "j" });
+      sub().handlers.onResponse?.(" continued", { sessionId: "sess-new", jobId: "j" });
+      sub().handlers.onComplete?.({ sessionId: "sess-new", jobId: "j", success: true });
+    });
+    expect(await screen.findByText("streaming reply continued")).toBeInTheDocument();
+    await waitFor(() => expect(onEstablished).toHaveBeenCalledWith("sess-new"));
+  });
+});
+
 describe("ChatPane: model picker", () => {
   it("defaults the picker to the project's model and sends it", async () => {
     render(<ChatPane projectSlug="proj" projectModel="claude-sonnet-4" isProjectChat />);

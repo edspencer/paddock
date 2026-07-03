@@ -222,6 +222,42 @@ describe("ws: dispatch + routing", () => {
     subB.unsubscribe();
   });
 
+  it("drops a straggler frame whose session no longer has a mounted pane (issue #35)", () => {
+    // Only chat C is mounted. A frame for session A — a chat whose pane just
+    // unmounted mid-stream — must NOT leak into C.
+    const c = handlers();
+    const sub = chatClient.subscribe("solo", "sess-C", c);
+    last().open();
+    last().emit({ type: "chat:response", payload: { projectSlug: "solo", sessionId: "sess-A", jobId: "jA", chunk: "leaked" } });
+    expect(c.onResponse).not.toHaveBeenCalled();
+    // C's own frames still arrive.
+    last().emit({ type: "chat:response", payload: { projectSlug: "solo", sessionId: "sess-C", jobId: "jC", chunk: "mine" } });
+    expect(c.onResponse).toHaveBeenCalledWith("mine", expect.anything());
+    sub.unsubscribe();
+  });
+
+  it("delivers a session-less frame to a sole subscriber", () => {
+    // Early frames of a turn can arrive before the server stamps the session id.
+    const c = handlers();
+    const sub = chatClient.subscribe("solo-null", "sess-C", c);
+    last().open();
+    last().emit({ type: "chat:response", payload: { projectSlug: "solo-null", sessionId: null, jobId: "j", chunk: "early" } });
+    expect(c.onResponse).toHaveBeenCalledWith("early", expect.anything());
+    sub.unsubscribe();
+  });
+
+  it("routes an unmatched frame to a nascent chat (ChatPane applies the final guard)", () => {
+    // A freshly-mounted new chat (sessionId null) is the only subscriber; the
+    // router hands it the frame, and the mounted pane's own session guard
+    // decides whether to apply it. Here we assert the routing half.
+    const nascent = handlers();
+    const sub = chatClient.subscribe("nascent", null, nascent);
+    last().open();
+    last().emit({ type: "chat:response", payload: { projectSlug: "nascent", sessionId: "sess-A", jobId: "jA", chunk: "x" } });
+    expect(nascent.onResponse).toHaveBeenCalled();
+    sub.unsubscribe();
+  });
+
   it("updates a subscription's sessionId via setSessionId so later events route", () => {
     const a = handlers();
     const b = handlers();
