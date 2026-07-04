@@ -1,0 +1,142 @@
+name: Release
+
+# App-mode release pipeline (Paddock is an app, not published npm libraries):
+#   1. On push to main, changesets maintains a "Version Packages" PR that bumps
+#      the app version (@paddock/server + @paddock/web are `fixed`, so they move
+#      together) and updates CHANGELOG.md.
+#   2. When that PR is merged, no changesets remain, the app version has changed,
+#      and no v<version> tag exists yet → the `artifacts` job builds & publishes:
+#        - the multi-arch Docker image  ghcr.io/edspencer/paddock:<version> + :latest
+#        - a self-contained release tarball attached to a GitHub Release v<version>
+#
+# Both jobs run in the SAME workflow run (the push that merges the version PR),
+# so we never rely on GITHUB_TOKEN pushing a tag to trigger a second workflow
+# (which GitHub blocks).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Version PR / detect release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      should_release: ${{ steps.detect.outputs.should_release }}
+      version: ${{ steps.detect.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Opens/updates the "Version Packages" PR while changesets are present.
+      # No `publish:` — the packages are private; we never npm-publish.
+      - name: Changesets version PR
+        id: changesets
+        uses: changesets/action@v1
+        with:
+          version: npm run changeset:version
+          commit: "chore: version packages"
+          title: "chore: version packages"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # After a version PR merges there are no changesets left. If the current
+      # app version has no v<version> tag yet, this is a fresh release.
+      - name: Detect release
+        id: detect
+        if: steps.changesets.outputs.hasChangesets == 'false'
+        run: |
+          VERSION="$(node -p "require('./packages/server/package.json').version")"
+          if git rev-parse -q --verify "refs/tags/v${VERSION}" >/dev/null; then
+            echo "v${VERSION} already released — nothing to do"
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "new release: v${VERSION}"
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          fi
+
+  artifacts:
+    name: Build & publish image + tarball
+    needs: release
+    if: needs.release.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub Release + tag
+      packages: write # push to GHCR
+    env:
+      VERSION: ${{ needs.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build (server + web)
+        run: npm run build
+
+      # ---- release tarball ----
+      - name: Build tarball
+        run: bash scripts/make-tarball.sh
+
+      # ---- Docker image → GHCR ----
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/edspencer/paddock
+          tags: |
+            type=raw,value=${{ env.VERSION }}
+            type=raw,value=latest
+
+      - name: Build & push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ---- GitHub Release (creates the v<version> tag at this SHA) ----
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v${VERSION}" \
+            --title "v${VERSION}" \
+            --generate-notes \
+            "paddock-${VERSION}.tgz" \
+            "paddock-${VERSION}.tgz.sha256"

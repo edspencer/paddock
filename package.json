@@ -22,9 +22,14 @@
     "test:server": "npm run test -w packages/server",
     "test:web": "npm run test -w packages/web",
     "test:e2e": "playwright test -c test/e2e/playwright.config.ts",
-    "test:e2e:live": "PADDOCK_TEST_LIVE=1 playwright test -c test/e2e/playwright.config.ts"
+    "test:e2e:live": "PADDOCK_TEST_LIVE=1 playwright test -c test/e2e/playwright.config.ts",
+    "changeset": "changeset",
+    "changeset:version": "changeset version && node scripts/sync-root-version.mjs && npm install --package-lock-only",
+    "version:print": "node -p \"require('./packages/server/package.json').version\""
   },
   "devDependencies": {
+    "@changesets/changelog-github": "^0.5.2",
+    "@changesets/cli": "^2.31.0",
     "@playwright/test": "^1.61.0",
     "playwright": "^1.61.0"
   }

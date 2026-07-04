@@ -1,0 +1,20 @@
+# Keep the build context small and deterministic. node_modules and dist are
+# rebuilt inside the image; everything else here is irrelevant to the build.
+**/node_modules
+**/dist
+.git
+.github
+.changeset
+**/.turbo
+**/coverage
+**/playwright-report
+**/test-results
+test/e2e/playwright-report
+test/e2e/test-results
+docs/screenshots
+*.log
+.DS_Store
+.env
+.env.*
+!.env.example
+paddock.bak*
