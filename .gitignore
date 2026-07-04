@@ -18,3 +18,8 @@ playwright-report/
 ms-playwright/
 .playwright/
 test/e2e/.mobile-shots/
+
+# Release artifacts (built by scripts/make-tarball.sh / CI)
+/paddock-*.tgz
+/paddock-*.tgz.sha256
+/dist-tarball/
