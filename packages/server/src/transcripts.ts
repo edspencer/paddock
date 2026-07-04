@@ -34,6 +34,76 @@ export function projectChatsDir(projectDir: string): string {
 }
 
 /**
+ * Text bodies of injected/synthetic ("meta") user lines in a session transcript.
+ *
+ * Claude Code writes injected context — a skill's `SKILL.md`, slash-command
+ * output, etc. — as its own `type:"user"` JSONL line flagged `isMeta:true`.
+ * @herdctl/core's parser ignores that flag and emits the body as an ordinary
+ * user message, so e.g. a skill's `SKILL.md` renders as a giant user bubble
+ * (issue #31). We re-read the raw transcript to recover which user texts were
+ * injected, keyed by their exact text so a caller can drop the matching parsed
+ * messages. Text is extracted the same way the parser does (string content
+ * verbatim, or `text` blocks joined with "\n") so the keys match exactly.
+ *
+ * Never throws: a missing/unreadable transcript yields an empty set (strip
+ * nothing), so history hydration degrades gracefully.
+ */
+export async function metaUserTexts(
+  projectDir: string,
+  sessionId: string,
+): Promise<Set<string>> {
+  const out = new Set<string>();
+  const file = path.join(projectChatsDir(projectDir), `${sessionId}.jsonl`);
+  let raw: string;
+  try {
+    raw = await fs.readFile(file, "utf8");
+  } catch {
+    return out;
+  }
+  for (const line of raw.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    if (!isMetaUserLine(parsed)) continue;
+    const text = extractLineText((parsed as { message?: { content?: unknown } }).message?.content);
+    if (text.length > 0) out.add(text);
+  }
+  return out;
+}
+
+function isMetaUserLine(parsed: unknown): boolean {
+  return (
+    typeof parsed === "object" &&
+    parsed !== null &&
+    (parsed as { type?: unknown }).type === "user" &&
+    (parsed as { isMeta?: unknown }).isMeta === true
+  );
+}
+
+/** Mirror of @herdctl/core's `extractTextContent`, so keys match its output. */
+function extractLineText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  const parts: string[] = [];
+  for (const block of content) {
+    if (
+      block &&
+      typeof block === "object" &&
+      (block as { type?: unknown }).type === "text" &&
+      typeof (block as { text?: unknown }).text === "string"
+    ) {
+      parts.push((block as { text: string }).text);
+    }
+  }
+  return parts.join("\n");
+}
+
+/**
  * Ensure `<projectDir>/.chats/` exists and that Claude Code's encoded transcript
  * path is a symlink pointing at it (migrating an existing real transcript dir in
  * the process). Safe to call on every agent registration. Never throws — a

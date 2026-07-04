@@ -60,7 +60,7 @@ import YAML from "yaml";
 import type { PaddockConfig } from "./config.js";
 import type { Project } from "./projects.js";
 import { KEEPER_DEFAULT_MODEL, SWEEPER_DEFAULT_MODEL } from "./models.js";
-import { ensureProjectChats, projectChatsDir } from "./transcripts.js";
+import { ensureProjectChats, metaUserTexts, projectChatsDir } from "./transcripts.js";
 
 /** Options passed through to a streamed trigger. */
 export interface ChatTurnOptions {
@@ -489,7 +489,19 @@ export class HerdctlService {
 
   /** Read the parsed messages of a session, by agent name. */
   async sessionMessages(agentName: string, sessionId: string): Promise<ChatMessage[]> {
-    return this.manager.getAgentSessionMessages(agentName, sessionId);
+    const messages = await this.manager.getAgentSessionMessages(agentName, sessionId);
+    // @herdctl/core's parser surfaces Claude Code's injected/synthetic
+    // (`isMeta:true`) user lines — a skill's SKILL.md, command output — as
+    // ordinary user messages, so e.g. a skill body renders as a giant user
+    // bubble (issue #31). Re-read the raw transcript to identify those injected
+    // texts and drop the matching user messages. Best-effort: any failure
+    // resolving the transcript leaves history untouched.
+    const info = await this.manager.getAgentInfoByName(agentName).catch(() => undefined);
+    const workingDir = info?.working_directory;
+    if (!workingDir) return messages;
+    const meta = await metaUserTexts(workingDir, sessionId);
+    if (meta.size === 0) return messages;
+    return messages.filter((m) => !(m.role === "user" && meta.has(m.content)));
   }
 
   /**
