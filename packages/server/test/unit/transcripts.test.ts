@@ -1,12 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import {
-  encodeProjectDir,
-  projectChatsDir,
-  ensureProjectChats,
-  metaUserTexts,
-} from "../../src/transcripts.js";
+import { encodeProjectDir, projectChatsDir, ensureProjectChats } from "../../src/transcripts.js";
 import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
 
 describe("encodeProjectDir", () => {
@@ -20,77 +15,6 @@ describe("encodeProjectDir", () => {
 describe("projectChatsDir", () => {
   it("is <projectDir>/.chats", () => {
     expect(projectChatsDir("/data/projects/p")).toBe(path.join("/data/projects/p", ".chats"));
-  });
-});
-
-describe("metaUserTexts", () => {
-  let projectDir: string;
-
-  beforeEach(async () => {
-    projectDir = await makeTmpDir("paddock-meta-");
-  });
-  afterEach(async () => {
-    await rmTmpDir(projectDir);
-  });
-
-  async function writeSession(sessionId: string, lines: unknown[]): Promise<void> {
-    const chats = projectChatsDir(projectDir);
-    await fs.mkdir(chats, { recursive: true });
-    await fs.writeFile(
-      path.join(chats, `${sessionId}.jsonl`),
-      lines.map((l) => JSON.stringify(l)).join("\n") + "\n",
-      "utf8",
-    );
-  }
-
-  it("returns the text of isMeta user lines (string content)", async () => {
-    await writeSession("s1", [
-      { type: "user", isMeta: true, message: { role: "user", content: "SKILL BODY" } },
-      { type: "user", message: { role: "user", content: "real question" } },
-      { type: "assistant", message: { role: "assistant", content: "answer" } },
-    ]);
-    const meta = await metaUserTexts(projectDir, "s1");
-    expect(meta.has("SKILL BODY")).toBe(true);
-    expect(meta.has("real question")).toBe(false);
-    expect(meta.size).toBe(1);
-  });
-
-  it("joins text blocks with newlines, matching the parser", async () => {
-    await writeSession("s2", [
-      {
-        type: "user",
-        isMeta: true,
-        message: {
-          role: "user",
-          content: [
-            { type: "text", text: "line one" },
-            { type: "text", text: "line two" },
-          ],
-        },
-      },
-    ]);
-    const meta = await metaUserTexts(projectDir, "s2");
-    expect(meta.has("line one\nline two")).toBe(true);
-  });
-
-  it("ignores non-user meta lines and empty-text meta lines", async () => {
-    await writeSession("s3", [
-      { type: "assistant", isMeta: true, message: { role: "assistant", content: "x" } },
-      { type: "user", isMeta: true, message: { role: "user", content: "" } },
-    ]);
-    const meta = await metaUserTexts(projectDir, "s3");
-    expect(meta.size).toBe(0);
-  });
-
-  it("skips malformed lines and returns an empty set for a missing transcript", async () => {
-    await writeSession("s4", [{ type: "user", isMeta: true, message: { role: "user", content: "keep" } }]);
-    // Append a garbage line that must not throw.
-    await fs.appendFile(path.join(projectChatsDir(projectDir), "s4.jsonl"), "not json\n", "utf8");
-    const meta = await metaUserTexts(projectDir, "s4");
-    expect(meta.has("keep")).toBe(true);
-
-    const missing = await metaUserTexts(projectDir, "does-not-exist");
-    expect(missing.size).toBe(0);
   });
 });
 

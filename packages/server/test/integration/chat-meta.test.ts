@@ -7,11 +7,11 @@ import { listen, connectWs, type WsClient, type WsEvent } from "../helpers/ws.js
 /**
  * Regression for issue #31: Claude Code writes injected context — a skill's
  * SKILL.md, slash-command output — as its own `type:"user"` JSONL line flagged
- * `isMeta:true`. @herdctl/core's parser ignores that flag and emits the body as
- * an ordinary user message, so a skill body rendered as a giant user bubble.
- * paddock's `sessionMessages` now re-reads the raw transcript and drops those
- * injected user lines. This exercises the REAL parser end-to-end so the
- * content-match against the parser's output is proven, not assumed.
+ * `isMeta:true`, and older @herdctl/core surfaced that body as an ordinary user
+ * message (a giant "user" bubble). @herdctl/core >=5.13.2 skips `isMeta` user
+ * lines in `parseSessionMessages`, so history hydration no longer includes them.
+ * This exercises the REAL parser end-to-end, verifying the upstream fix through
+ * paddock's message route (no paddock-side filtering involved).
  */
 describe("integration: injected (isMeta) user lines are stripped from history (#31)", () => {
   let t: TestApp;
