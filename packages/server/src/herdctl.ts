@@ -489,6 +489,9 @@ export class HerdctlService {
 
   /** Read the parsed messages of a session, by agent name. */
   async sessionMessages(agentName: string, sessionId: string): Promise<ChatMessage[]> {
+    // Injected/synthetic (`isMeta:true`) user lines — a skill's SKILL.md,
+    // command output — are dropped by @herdctl/core's parser (>=5.13.2), so a
+    // skill body no longer renders as a giant user bubble (issue #31).
     return this.manager.getAgentSessionMessages(agentName, sessionId);
   }
 
