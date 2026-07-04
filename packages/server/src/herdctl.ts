@@ -100,6 +100,40 @@ export function sweeperAgentName(slug: string): string {
 }
 
 /**
+ * The Claude Code tool pattern for the Playwright browser MCP. Must live on the
+ * agent allowlist (the CLI runtime auto-denies any tool not on `--allowedTools`,
+ * same reason `Skill` is listed) — so it is added to `defaults.allowed_tools`,
+ * which the keeper + scratch agents inherit and the tool-less sweeper overrides
+ * away. Harmless when the server isn't enabled: an allowed-but-absent tool is a
+ * no-op.
+ */
+export const BROWSER_MCP_TOOL = "mcp__playwright__*";
+
+/**
+ * The Playwright browser MCP server given to the keeper + scratch agents so
+ * Claude Code can drive a headless Chromium (navigate / click / fill / snapshot
+ * / screenshot). Returns `undefined` unless `PADDOCK_BROWSER_MCP=1` is set in
+ * the instance env, so a box WITHOUT the browser stack simply omits the server
+ * (no failed spawns) and enabling it is a per-box env flip — no code change.
+ *
+ * The browser is installed box-side by the homelab `paddock` Ansible role
+ * (`npm i -g @playwright/mcp` + `playwright install chromium`, exposing the
+ * `playwright-mcp` bin on PATH). The boxes are unprivileged LXCs, so Chromium
+ * must run headless + `--no-sandbox` (the container is the isolation boundary);
+ * `--isolated` keeps each session's profile in-memory (no persisted user-data
+ * dir). The tool-less sweeper deliberately never receives this server.
+ */
+export function browserMcpServers(): Record<string, unknown> | undefined {
+  if (process.env.PADDOCK_BROWSER_MCP !== "1") return undefined;
+  return {
+    playwright: {
+      command: "playwright-mcp",
+      args: ["--headless", "--no-sandbox", "--isolated"],
+    },
+  };
+}
+
+/**
  * The model used by the sweeper agent (cheap curation/summarization).
  *
  * Re-exported alias of `SWEEPER_DEFAULT_MODEL` (the canonical constant lives in
@@ -509,7 +543,7 @@ export class HerdctlService {
    * `ensureScratchModel`.
    */
   private scratchAgentConfig(model?: string): Record<string, unknown> & { name: string } {
-    return {
+    const config: Record<string, unknown> & { name: string } = {
       name: SCRATCH_AGENT,
       description: "One-off / scratch chats.",
       working_directory: this.cfg.scratchDir,
@@ -523,6 +557,11 @@ export class HerdctlService {
         "You are a Claude Code agent for one-off chats. Be helpful and concise.",
       default_prompt: "How can I help?",
     };
+    // Browser MCP (headless Chromium) when enabled for this box; `mcp__playwright__*`
+    // is already on the inherited defaults.allowed_tools.
+    const browser = browserMcpServers();
+    if (browser) config.mcp_servers = browser;
+    return config;
   }
 
   /**
@@ -564,6 +603,10 @@ export class HerdctlService {
         "Honor any CLAUDE.md present. Keep CHANGELOG.md current. " +
         "Create branches for significant changes; never force-push.";
     }
+    // Browser MCP (headless Chromium) when enabled for this box; `mcp__playwright__*`
+    // is already on the inherited defaults.allowed_tools.
+    const browser = browserMcpServers();
+    if (browser) config.mcp_servers = browser;
     return config;
   }
 
@@ -659,7 +702,11 @@ export class HerdctlService {
         // (`NotebookEdit`), each of which is likewise permission-checked against
         // this same allowlist — so include them here to keep skills functional
         // end-to-end (adds no capability the keeper's existing tools don't).
-        allowed_tools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "WebFetch", "WebSearch", "Task", "TodoWrite", "Skill", "NotebookEdit"],
+        // BROWSER_MCP_TOOL (mcp__playwright__*) is listed unconditionally: it is a
+        // no-op unless the keeper/scratch agent actually attaches the playwright
+        // server (gated by PADDOCK_BROWSER_MCP), and having it on the allowlist
+        // means enabling the browser is a per-box env flip with no code change.
+        allowed_tools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "WebFetch", "WebSearch", "Task", "TodoWrite", "Skill", "NotebookEdit", BROWSER_MCP_TOOL],
         denied_tools: ["Bash(sudo *)", "Bash(rm -rf /)", "Bash(rm -rf /*)", "Bash(chmod 777 *)"],
       },
     };
