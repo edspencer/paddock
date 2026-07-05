@@ -64,6 +64,13 @@ describe("AppShell: sidebar shell", () => {
     expect(screen.getByText(/No projects yet/i)).toBeInTheDocument();
   });
 
+  it("shows the Paddock version in the sidebar", () => {
+    renderShell();
+    // Injected from packages/web/package.json at build time (mirrored in the
+    // vitest config), rendered as `v<semver>`.
+    expect(screen.getByText(/^v\d+\.\d+\.\d+/)).toBeInTheDocument();
+  });
+
   it("shows loading skeletons while loading", () => {
     mockLoading = true;
     const { container } = renderShell();

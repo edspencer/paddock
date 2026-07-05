@@ -159,9 +159,7 @@ export function AppShell() {
             {dark ? <SunIcon width={15} height={15} /> : <MoonIcon width={15} height={15} />}
             {dark ? "Light mode" : "Dark mode"}
           </button>
-          <p className="mt-2 px-2 text-[11px] text-paddock-400">
-            Project-first Claude Code, hosted.
-          </p>
+          <p className="mt-2 px-2 text-[11px] text-paddock-400">v{__APP_VERSION__}</p>
         </div>
       </aside>
 
