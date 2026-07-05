@@ -370,6 +370,22 @@ export function ChatPane({
             /* keep whatever we already have */
           });
       },
+      onActive: ({ running, jobId }) => {
+        // The server reports this chat's live-turn status (#52). On a pane that
+        // navigated back to a still-streaming chat this restores the Stop button
+        // and the job id needed to cancel — state a remount would otherwise lose.
+        if (running) {
+          if (jobId) jobRef.current = jobId;
+          streamingRef.current = true;
+          setStreaming(true);
+        } else {
+          // The turn ended (possibly while we were away): clear the running UI.
+          streamingRef.current = false;
+          setStreaming(false);
+          jobRef.current = null;
+          setTurns((prev) => sealStreaming(prev));
+        }
+      },
     });
     return () => {
       sub.unsubscribe();
@@ -466,6 +482,12 @@ export function ChatPane({
           </div>
         </div>
       </div>
+
+      {/* Persistent "agent is working…" indicator while a turn is in flight
+          (#53) — independent of whether a bubble is currently painting, so it
+          shows during the initial thinking gap and between tool calls, and lights
+          up the instant you return to a still-streaming chat. */}
+      {streaming && <WorkingIndicator />}
 
       {error && (
         <div className="mx-auto mb-2 flex w-full max-w-3xl items-start gap-2 px-4">
@@ -662,6 +684,40 @@ function ContextMeter({ usage }: { usage: ChatCompleteUsage | null }) {
         {used}k / {limit}k ({Math.round(pct)}%)
       </span>
     </span>
+  );
+}
+
+/**
+ * A persistent "agent is working…" pill shown under the transcript while a turn
+ * is in flight (#53). Cycles a few lightweight status phrases (à la Claude Code's
+ * "reticulating splines") so it reads as alive even during a quiet thinking gap,
+ * and — because it's driven by the turn-level `streaming` state, now restored on
+ * return via chat:active — it lights up the moment you come back to a live chat.
+ */
+const WORKING_PHRASES = [
+  "working",
+  "thinking",
+  "reticulating splines",
+  "consulting the keeper",
+  "herding electrons",
+  "tending the paddock",
+];
+function WorkingIndicator() {
+  const [i, setI] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setI((n) => (n + 1) % WORKING_PHRASES.length), 2600);
+    return () => clearInterval(t);
+  }, []);
+  return (
+    <div className="mx-auto mb-2 w-full max-w-3xl px-4">
+      <div className="inline-flex items-center gap-2 rounded-full border border-paddock-200 bg-paddock-100/70 px-3 py-1 text-xs text-paddock-500 dark:border-paddock-800 dark:bg-paddock-900/50 dark:text-paddock-400">
+        <span className="relative flex h-1.5 w-1.5">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-60" />
+          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-accent" />
+        </span>
+        <span>{WORKING_PHRASES[i]}…</span>
+      </div>
+    </div>
   );
 }
 

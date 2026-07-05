@@ -262,4 +262,15 @@ export type ServerWsMessage =
       type: "chat:resync";
       payload: { projectSlug: string; target?: string; sessionId: string };
     }
+  | {
+      /** A session's live-turn status changed — drives Stop restore + indicators (issues #52/#53). */
+      type: "chat:active";
+      payload: {
+        projectSlug: string;
+        target?: string;
+        sessionId: string;
+        jobId: string | null;
+        running: boolean;
+      };
+    }
   | { type: "pong" };

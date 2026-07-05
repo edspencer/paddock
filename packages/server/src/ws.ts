@@ -59,7 +59,7 @@ import {
 import type { ProjectStore } from "./projects.js";
 import type { SweepService } from "./sweep.js";
 import { isKnownModel, getContextLimit, KEEPER_DEFAULT_MODEL } from "./models.js";
-import { SessionHub, type TurnHandle } from "./session-hub.js";
+import { SessionHub, type TurnHandle, type ActiveInfo } from "./session-hub.js";
 
 /**
  * Per-turn token usage as observed on the SDK stream, normalized to camelCase.
@@ -301,6 +301,25 @@ export interface ChatResyncMessage {
   payload: { projectSlug: string; target: string; sessionId: string };
 }
 
+/**
+ * A session's live-turn status (issues #52/#53). Broadcast to all clients on a
+ * turn's start/stop transition, sent as a snapshot to a newly-connected socket,
+ * and sent in reply to a `chat:subscribe` for a session with a running turn. It
+ * lets a client restore the Stop button + `jobId` for a returning/remounted pane
+ * (#52) and drive the in-chat + per-chat-sidebar streaming indicators (#53).
+ */
+export interface ChatActiveMessage {
+  type: "chat:active";
+  payload: {
+    projectSlug: string;
+    target: string;
+    sessionId: string;
+    /** The running turn's cancellable job id, when known. */
+    jobId: string | null;
+    running: boolean;
+  };
+}
+
 export interface PongMessage {
   type: "pong";
 }
@@ -312,6 +331,7 @@ export type ServerMessage =
   | ChatCompleteMessage
   | ChatErrorMessage
   | ChatResyncMessage
+  | ChatActiveMessage
   | PongMessage;
 
 function readSlug(p: ChatSendMessage["payload"]): string | undefined {
@@ -374,10 +394,43 @@ export function makeChatHandler(deps: {
   // it (issue #54). See session-hub.ts.
   const hub = new SessionHub();
 
+  // Every currently-connected socket, so a turn's start/stop transition can be
+  // broadcast to all clients — powering the per-chat sidebar streaming dots that
+  // must update even for chats whose pane isn't mounted (issue #53).
+  const clients = new Set<WebSocket>();
+  const activeFrame = (info: ActiveInfo): ChatActiveMessage => ({
+    type: "chat:active",
+    payload: {
+      projectSlug: info.projectSlug,
+      target: info.projectSlug,
+      sessionId: info.sessionId,
+      jobId: info.jobId,
+      running: info.running,
+    },
+  });
+  hub.onActive = (info) => {
+    const data = JSON.stringify(activeFrame(info));
+    for (const c of clients) {
+      if (c.readyState === c.OPEN) {
+        try {
+          c.send(data);
+        } catch {
+          /* a socket that throws on send is effectively gone */
+        }
+      }
+    }
+  };
+
   return async function handle(socket: WebSocket): Promise<void> {
     const send = (m: ServerMessage) => {
       if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(m));
     };
+
+    // Register this socket for active-turn broadcasts, and immediately catch it
+    // up on which sessions are currently running (so the sidebar dots and a
+    // returning pane's Stop button reflect reality from the first paint).
+    clients.add(socket);
+    for (const info of hub.runningSessions()) send(activeFrame(info));
 
     // Heartbeat: browsers auto-answer protocol ping frames with a pong, so a
     // client whose TCP has silently died (idle drop, sleep) fails to pong and is
@@ -404,6 +457,7 @@ export function makeChatHandler(deps: {
       // Drop this socket from every session fan-out set so the hub stops trying
       // to write to it (a running turn keeps going for other attached sockets).
       hub.unsubscribeSocket(socket);
+      clients.delete(socket);
     });
 
     socket.on("message", (raw: Buffer | string) => {
@@ -449,6 +503,12 @@ export function makeChatHandler(deps: {
           payload: { projectSlug: result.projectSlug, target: result.projectSlug, sessionId },
         });
       }
+      // Tell a (re)attaching pane whether its session has a live turn, so a chat
+      // the user navigated back to restores its Stop button + jobId and streaming
+      // indicator immediately — not only once the next frame happens to arrive
+      // (issues #52/#53).
+      const active = hub.activeInfo(sessionId);
+      if (active) send(activeFrame(active));
     };
 
     const onChatSend = async (msg: ChatSendMessage): Promise<void> => {

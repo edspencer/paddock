@@ -93,11 +93,31 @@ export type AttachResult =
   | { status: "replayed"; frames: number }
   | { status: "resync"; projectSlug: string };
 
+/**
+ * A session's live-turn status, surfaced so the UI can restore the Stop button
+ * and streaming indicators (issues #52/#53). Emitted on start/stop transitions
+ * via {@link SessionHub.onActive} and readable via {@link SessionHub.activeInfo}.
+ */
+export interface ActiveInfo {
+  sessionId: string;
+  projectSlug: string;
+  /** The running turn's cancellable job id, if known yet (null early in a turn). */
+  jobId: string | null;
+  running: boolean;
+}
+
 export class SessionHub {
   /** sessionId → the current (running or recently-completed) turn for that session. */
   private bySession = new Map<string, Turn>();
   /** sessionId → sockets attached to it (fan-out targets beyond the origin). */
   private subscribers = new Map<string, Set<HubSocket>>();
+
+  /**
+   * Notified on every running-state transition (turn start / stop) so the WS
+   * layer can broadcast a `chat:active` signal to clients — powering the Stop
+   * button restore (#52) and streaming indicators (#53). Set by the WS layer.
+   */
+  onActive: ((info: ActiveInfo) => void) | null = null;
 
   /**
    * Begin tracking a turn. Pass `sessionId` when it's already known (a resumed
@@ -180,6 +200,24 @@ export class SessionHub {
 
   // --- internals, driven by TurnHandle -------------------------------------
 
+  /** Whether a session currently has a RUNNING turn plus its job id, or null. */
+  activeInfo(sessionId: string): ActiveInfo | null {
+    const turn = this.bySession.get(sessionId);
+    if (!turn || !turn.running) return null;
+    return { sessionId, projectSlug: turn.projectSlug, jobId: turn.jobId, running: true };
+  }
+
+  /** Snapshot of every session with a running turn (for a newly-connected client). */
+  runningSessions(): ActiveInfo[] {
+    const out: ActiveInfo[] = [];
+    for (const [sessionId, turn] of this.bySession) {
+      if (turn.running) {
+        out.push({ sessionId, projectSlug: turn.projectSlug, jobId: turn.jobId, running: true });
+      }
+    }
+    return out;
+  }
+
   /** Register a turn under its resolved session id, evicting any prior turn there. */
   register(turn: Turn, sessionId: string): void {
     if (turn.sessionId === sessionId) return;
@@ -188,6 +226,8 @@ export class SessionHub {
     const prev = this.bySession.get(sessionId);
     if (prev && prev !== turn) this.evict(prev);
     this.bySession.set(sessionId, turn);
+    // A turn becomes visible-as-running the moment its session id is known.
+    if (turn.running) this.fireActive(turn);
   }
 
   /** Stamp `seq`, buffer (with trim), and fan out to origin + subscribers. */
@@ -209,9 +249,20 @@ export class SessionHub {
   end(turn: Turn): void {
     turn.running = false;
     if (turn.sessionId) {
+      this.fireActive(turn);
       turn.evictTimer = setTimeout(() => this.evict(turn), COMPLETED_TTL_MS);
       turn.evictTimer.unref?.();
     }
+  }
+
+  private fireActive(turn: Turn): void {
+    if (!this.onActive || !turn.sessionId) return;
+    this.onActive({
+      sessionId: turn.sessionId,
+      projectSlug: turn.projectSlug,
+      jobId: turn.jobId,
+      running: turn.running,
+    });
   }
 
   private recipients(turn: Turn): Set<HubSocket> {

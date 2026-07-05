@@ -50,6 +50,13 @@ export interface ChatHandlers {
    * #54). Rare fallback — the caller should reload this chat's history.
    */
   onResync?: () => void;
+  /**
+   * This chat's live-turn status changed (issues #52/#53): `running` true when a
+   * turn is in flight (restore the Stop button using `jobId` + show the working
+   * indicator), false when it ends. Fires on (re)subscribe for an already-running
+   * turn, so a pane the user navigated back to restores state immediately.
+   */
+  onActive?: (meta: { running: boolean; jobId: string | null }) => void;
 }
 
 export type ConnectionState = "connecting" | "open" | "closed";
@@ -101,6 +108,11 @@ class ChatClient {
   private manualClose = false;
   private stateListeners = new Set<(s: ConnectionState) => void>();
   private _state: ConnectionState = "closed";
+  // Sessions with a currently-running turn (issue #53), maintained from
+  // chat:active broadcasts so the sidebar can show a streaming dot on ANY chat —
+  // including ones whose pane isn't mounted.
+  private activeSessions = new Set<string>();
+  private activeListeners = new Set<(s: ReadonlySet<string>) => void>();
 
   constructor() {
     const proto = window.location.protocol === "https:" ? "wss" : "ws";
@@ -138,6 +150,27 @@ class ChatClient {
     if (this._state === s) return;
     this._state = s;
     for (const cb of this.stateListeners) cb(s);
+  }
+
+  /**
+   * Observe the set of sessions with a live turn (issue #53). Fires immediately
+   * with the current set and again whenever it changes. Used by the project
+   * sidebar to render a streaming dot next to each running chat.
+   */
+  onActiveSessions(cb: (running: ReadonlySet<string>) => void): () => void {
+    this.activeListeners.add(cb);
+    cb(new Set(this.activeSessions));
+    return () => this.activeListeners.delete(cb);
+  }
+
+  private setActive(sessionId: string, running: boolean): void {
+    const had = this.activeSessions.has(sessionId);
+    if (running) this.activeSessions.add(sessionId);
+    else this.activeSessions.delete(sessionId);
+    if (this.activeSessions.has(sessionId) !== had) {
+      const snapshot = new Set(this.activeSessions);
+      for (const cb of this.activeListeners) cb(snapshot);
+    }
   }
 
   /** Subscribe a chat. Returns an updater + an unsubscribe fn. */
@@ -434,6 +467,22 @@ class ChatClient {
     if (msg.type === "chat:resync") {
       const sub = this.route(slug, msg.payload.sessionId);
       sub?.handlers.onResync?.();
+      return;
+    }
+
+    if (msg.type === "chat:active") {
+      // App-level: update the running-sessions set that drives the sidebar dots,
+      // even for chats with no mounted pane.
+      this.setActive(msg.payload.sessionId, msg.payload.running);
+      // Pane-level: tell the matching mounted chat so it restores/clears its Stop
+      // button + streaming indicator (a returning pane learns its turn is live).
+      // EXACT session match only — never fall through to a nascent (new-chat) pane,
+      // which would wrongly show it as streaming another chat's turn.
+      for (const sub of this.subs.values()) {
+        if (sub.projectSlug === slug && sub.sessionId === msg.payload.sessionId) {
+          sub.handlers.onActive?.({ running: msg.payload.running, jobId: msg.payload.jobId });
+        }
+      }
       return;
     }
 

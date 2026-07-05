@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { api } from "../lib/api";
+import { chatClient } from "../lib/ws";
 import { useProjects } from "../lib/projects-context";
 import type { Chat, Project } from "../lib/types";
 import { StatusPill } from "../components/StatusPill";
@@ -71,6 +72,11 @@ export function ProjectView() {
   // visibly created the moment it starts (issue #36); cleared once the real
   // entry appears in `chats`.
   const [pendingChat, setPendingChat] = useState<string | null>(null);
+  // Sessions with a live turn right now (issue #53) — drives the per-chat
+  // streaming dot in the sidebar, updated in real time from the shared socket's
+  // chat:active broadcasts (works even for chats whose pane isn't mounted).
+  const [runningSessions, setRunningSessions] = useState<ReadonlySet<string>>(new Set());
+  useEffect(() => chatClient.onActiveSessions(setRunningSessions), []);
   const [changelog, setChangelog] = useState("");
   const [files, setFiles] = useState<string[]>([]);
   const [loadErr, setLoadErr] = useState<string | null>(null);
@@ -434,7 +440,16 @@ export function ProjectView() {
                   onClick={() => openChat(c.sessionId)}
                   className="flex w-full flex-col items-start gap-0.5 rounded-lg px-2.5 py-2 pr-14 text-left text-sm"
                 >
-                  <span className="w-full truncate font-medium">{c.name}</span>
+                  <span className="flex w-full items-center gap-1.5">
+                    {runningSessions.has(c.sessionId) && (
+                      <span
+                        title="Streaming a response…"
+                        aria-label="streaming"
+                        className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent"
+                      />
+                    )}
+                    <span className="truncate font-medium">{c.name}</span>
+                  </span>
                   <span className="text-[11px] text-paddock-400">{relativeTime(c.updatedAt)}</span>
                 </button>
                 <div className="absolute right-1.5 top-1.5 flex items-center gap-0.5">
