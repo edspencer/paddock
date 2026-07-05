@@ -121,14 +121,18 @@ export const BROWSER_MCP_TOOL = "mcp__playwright__*";
  * `playwright-mcp` bin on PATH). The boxes are unprivileged LXCs, so Chromium
  * must run headless + `--no-sandbox` (the container is the isolation boundary);
  * `--isolated` keeps each session's profile in-memory (no persisted user-data
- * dir). The tool-less sweeper deliberately never receives this server.
+ * dir). `--browser chromium` is REQUIRED: @playwright/mcp defaults to the
+ * `chrome` channel (branded Google Chrome), which isn't installed — without this
+ * flag the server tries to `playwright install chrome` at first use and stalls.
+ * The role installs the open-source `chromium` engine, so we select it here.
+ * The tool-less sweeper deliberately never receives this server.
  */
 export function browserMcpServers(): Record<string, unknown> | undefined {
   if (process.env.PADDOCK_BROWSER_MCP !== "1") return undefined;
   return {
     playwright: {
       command: "playwright-mcp",
-      args: ["--headless", "--no-sandbox", "--isolated"],
+      args: ["--headless", "--no-sandbox", "--isolated", "--browser", "chromium"],
     },
   };
 }
