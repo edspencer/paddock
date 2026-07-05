@@ -1,5 +1,12 @@
+import { readFileSync } from "node:fs";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+
+// Paddock version, injected as a compile-time constant so the SPA can display it
+// (workspace is fixed-versioned, so web's version is the release version).
+const pkgVersion = JSON.parse(
+  readFileSync(new URL("./package.json", import.meta.url), "utf-8"),
+).version as string;
 
 // Dev server config. The Vite dev server proxies /api + /ws to the
 // paddock-server. Both the dev-server port and the backend it proxies to are
@@ -16,6 +23,9 @@ const wsTarget = proxyTarget.replace(/^http/, "ws");
 
 export default defineConfig({
   plugins: [react()],
+  define: {
+    __APP_VERSION__: JSON.stringify(pkgVersion),
+  },
   server: {
     port: devPort,
     proxy: {
