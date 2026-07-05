@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { encodeProjectDir, projectChatsDir, ensureProjectChats } from "../../src/transcripts.js";
+import {
+  encodeProjectDir,
+  projectChatsDir,
+  ensureProjectChats,
+  readFirstUserText,
+} from "../../src/transcripts.js";
 import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
 
 describe("encodeProjectDir", () => {
@@ -15,6 +20,49 @@ describe("encodeProjectDir", () => {
 describe("projectChatsDir", () => {
   it("is <projectDir>/.chats", () => {
     expect(projectChatsDir("/data/projects/p")).toBe(path.join("/data/projects/p", ".chats"));
+  });
+});
+
+describe("readFirstUserText (issue #62)", () => {
+  let projectDir: string;
+  beforeEach(async () => {
+    projectDir = await makeTmpDir("paddock-firsttext-");
+  });
+  afterEach(async () => {
+    await rmTmpDir(projectDir);
+  });
+
+  async function writeTranscript(sessionId: string, lines: unknown[]): Promise<void> {
+    const dir = projectChatsDir(projectDir);
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(
+      path.join(dir, `${sessionId}.jsonl`),
+      lines.map((l) => JSON.stringify(l)).join("\n") + "\n",
+      "utf8",
+    );
+  }
+
+  it("returns the FIRST user message untruncated (string content)", async () => {
+    const long = "x".repeat(500);
+    await writeTranscript("s1", [
+      { type: "user", message: { content: long } },
+      { type: "assistant", message: { content: "reply" } },
+      { type: "user", message: { content: "second" } },
+    ]);
+    expect(await readFirstUserText(projectDir, "s1")).toBe(long); // not capped at 100
+  });
+
+  it("extracts text from array content and skips a tool_result-only message", async () => {
+    await writeTranscript("s2", [
+      { type: "user", message: { content: [{ type: "tool_result", content: "x" }] } },
+      { type: "user", message: { content: [{ type: "text", text: "the real ask" }] } },
+    ]);
+    expect(await readFirstUserText(projectDir, "s2")).toBe("the real ask");
+  });
+
+  it("returns undefined for a missing transcript or an invalid session id", async () => {
+    expect(await readFirstUserText(projectDir, "nope")).toBeUndefined();
+    expect(await readFirstUserText(projectDir, "../escape")).toBeUndefined();
   });
 });
 

@@ -26,6 +26,8 @@ import type { HerdctlService } from "./herdctl.js";
 import { SCRATCH_SLUG, SCRATCH_AGENT, keeperAgentName } from "./herdctl.js";
 import type { GitService } from "./git.js";
 import type { GithubAuth } from "./github-auth.js";
+import { readFirstUserText } from "./transcripts.js";
+import { PRELOAD_CONTEXT_OPEN, stripPreloadWrapper } from "./preload.js";
 import {
   MODELS,
   KEEPER_DEFAULT_MODEL,
@@ -122,7 +124,7 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
         projects.readFile(project.slug, "CHANGELOG.md").catch(() => ""),
         herdctl.listSessions(project).catch(() => []),
       ]);
-      return { project, changelog, chats: sessions.map(toChatDto) };
+      return { project, changelog, chats: await buildProjectChats(project.dir, sessions) };
     } catch (err) {
       return sendProjectError(reply, err);
     }
@@ -312,7 +314,7 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     try {
       const project = await projects.get(req.params.slug);
       const sessions = await herdctl.listSessions(project).catch(() => []);
-      return { chats: sessions.map(toChatDto) };
+      return { chats: await buildProjectChats(project.dir, sessions) };
     } catch (err) {
       return sendProjectError(reply, err);
     }
@@ -411,10 +413,11 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     },
   );
 
-  // One-off chats (scratch dir).
+  // One-off chats (scratch dir). Scratch chats never get context preload, so
+  // their previews are never polluted — no wrapper stripping needed.
   app.get("/api/chats", async () => {
     const sessions = await herdctl.listScratchSessions().catch(() => []);
-    return { chats: sessions.map(toChatDto) };
+    return { chats: sessions.map((s) => toChatDto(s)) };
   });
 
   // Messages of a one-off (scratch) chat.
@@ -514,15 +517,50 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
   }
 }
 
-function toChatDto(s: import("@herdctl/core").DiscoveredSession) {
+function toChatDto(
+  s: import("@herdctl/core").DiscoveredSession,
+  previewOverride?: string,
+) {
+  const preview = previewOverride ?? s.preview;
   return {
     sessionId: s.sessionId,
     workingDirectory: s.workingDirectory,
-    name: s.customName ?? s.autoName ?? s.preview ?? s.sessionId.slice(0, 8),
+    name: s.customName ?? s.autoName ?? preview ?? s.sessionId.slice(0, 8),
     updatedAt: s.mtime,
     resumable: s.resumable,
-    preview: s.preview,
+    preview,
   };
+}
+
+/** Claude Code's own preview cap (mirrors extractFirstMessagePreview). */
+const PREVIEW_MAX = 100;
+
+/**
+ * Build the chat DTOs for a PROJECT's sessions, cleaning names polluted by the
+ * preload wrapper (issue #62). When a chat has no better name (no user rename,
+ * no Claude-generated summary) AND its preview is the injected `<project-context>`
+ * block, we read the untruncated first user message and strip the wrapper so the
+ * name reflects the user's actual request. Only preload chats trigger the extra
+ * (head-of-file) read; everything else maps straight through.
+ */
+async function buildProjectChats(
+  projectDir: string,
+  sessions: import("@herdctl/core").DiscoveredSession[],
+) {
+  return Promise.all(
+    sessions.map(async (s) => {
+      const pollutedPreview =
+        !s.customName && !s.autoName && s.preview?.startsWith(PRELOAD_CONTEXT_OPEN);
+      if (!pollutedPreview) return toChatDto(s);
+
+      const full = await readFirstUserText(projectDir, s.sessionId).catch(() => undefined);
+      const cleaned = stripPreloadWrapper(full ?? s.preview ?? "").trim();
+      if (!cleaned) return toChatDto(s); // couldn't recover — leave as-is
+      const preview =
+        cleaned.length > PREVIEW_MAX ? `${cleaned.slice(0, PREVIEW_MAX)}...` : cleaned;
+      return toChatDto(s, preview);
+    }),
+  );
 }
 
 function sendProjectError(reply: import("fastify").FastifyReply, err: unknown) {

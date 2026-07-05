@@ -60,6 +60,7 @@ import type { ProjectStore } from "./projects.js";
 import type { SweepService } from "./sweep.js";
 import { isKnownModel, getContextLimit, KEEPER_DEFAULT_MODEL } from "./models.js";
 import { SessionHub, type TurnHandle, type ActiveInfo } from "./session-hub.js";
+import { wrapPreload } from "./preload.js";
 
 /**
  * Per-turn token usage as observed on the SDK stream, normalized to camelCase.
@@ -599,11 +600,9 @@ export function makeChatHandler(deps: {
           if (isNewChat && preloadContext) {
             const overview = await deps.projects.readOverview(slug).catch(() => "");
             if (overview.trim().length > 0) {
-              prompt =
-                "<project-context>\n" +
-                overview.trim() +
-                "\n</project-context>\n\nMy request:\n" +
-                message;
+              // Single-sourced wrapper (see preload.ts) so the chat-list can strip
+              // it back off for display (issue #62).
+              prompt = wrapPreload(overview, message);
             }
           }
         }
