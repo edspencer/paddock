@@ -69,6 +69,9 @@ function resetChatClient() {
     manualClose: boolean;
     reconnectTimer: ReturnType<typeof setTimeout> | null;
     pingTimer: ReturnType<typeof setInterval> | null;
+    pongTimer: ReturnType<typeof setTimeout> | null;
+    awaitingPong: boolean;
+    lastPongAt: number;
     subs: Map<symbol, unknown>;
     outbox: string[];
     reconnectAttempts: number;
@@ -92,6 +95,12 @@ function resetChatClient() {
     clearInterval(c.pingTimer);
     c.pingTimer = null;
   }
+  if (c.pongTimer) {
+    clearTimeout(c.pongTimer);
+    c.pongTimer = null;
+  }
+  c.awaitingPong = false;
+  c.lastPongAt = 0;
   c.subs.clear();
   c.outbox = [];
   c.reconnectAttempts = 0;
@@ -295,6 +304,78 @@ describe("ws: reconnect", () => {
     const before = FakeWebSocket.instances.length;
     last().onerror?.();
     vi.advanceTimersByTime(2000);
+    expect(FakeWebSocket.instances.length).toBeGreaterThan(before);
+    sub.unsubscribe();
+  });
+});
+
+describe("ws: heartbeat + revive (issue #46)", () => {
+  const PING_INTERVAL_MS = 25_000;
+  const PONG_TIMEOUT_MS = 10_000;
+  const pingsSent = (ws: FakeWebSocket) =>
+    ws.sent.filter((s) => JSON.parse(s).type === "ping").length;
+  const sentTypes = (ws: FakeWebSocket) => ws.sent.map((s) => JSON.parse(s).type);
+
+  it("closes and reconnects a socket that stops answering pings", () => {
+    vi.useFakeTimers();
+    const sub = chatClient.subscribe("hb", null, handlers());
+    last().open();
+    const ws1 = last();
+    // Next ping tick sends a ping…
+    vi.advanceTimersByTime(PING_INTERVAL_MS);
+    expect(pingsSent(ws1)).toBeGreaterThanOrEqual(1);
+    // …no pong arrives within the deadline → the dead socket is closed and a
+    // reconnect is scheduled + fires.
+    const before = FakeWebSocket.instances.length;
+    vi.advanceTimersByTime(PONG_TIMEOUT_MS + 1);
+    expect(ws1.readyState).toBe(FakeWebSocket.CLOSED);
+    vi.advanceTimersByTime(1000);
+    expect(FakeWebSocket.instances.length).toBeGreaterThan(before);
+    sub.unsubscribe();
+  });
+
+  it("keeps the socket open when pings are answered with pong", () => {
+    vi.useFakeTimers();
+    const sub = chatClient.subscribe("hb-ok", null, handlers());
+    last().open();
+    const ws = last();
+    vi.advanceTimersByTime(PING_INTERVAL_MS); // ping sent, awaiting pong
+    ws.emit({ type: "pong" }); // answered → deadline cleared
+    const before = FakeWebSocket.instances.length;
+    vi.advanceTimersByTime(PONG_TIMEOUT_MS + 1000);
+    expect(ws.readyState).toBe(FakeWebSocket.OPEN);
+    expect(FakeWebSocket.instances.length).toBe(before); // no reconnect
+    sub.unsubscribe();
+  });
+
+  it("queues a send on a stale (possibly half-open) socket and flushes on the probe pong", () => {
+    const sub = chatClient.subscribe("stale", null, handlers());
+    last().open();
+    const ws = last();
+    // Simulate a long idle with no pong observed (beyond the staleness window).
+    (chatClient as unknown as { lastPongAt: number }).lastPongAt = Date.now() - 60_000;
+
+    chatClient.send("stale", "hi", null);
+    // The message is NOT written into the maybe-dead socket; a liveness probe is.
+    expect(sentTypes(ws)).toContain("ping");
+    expect(sentTypes(ws)).not.toContain("chat:send");
+
+    // A pong confirms liveness and flushes the queued send.
+    ws.emit({ type: "pong" });
+    expect(sentTypes(ws)).toContain("chat:send");
+    sub.unsubscribe();
+  });
+
+  it("revives a dropped socket immediately when the tab becomes visible", () => {
+    const sub = chatClient.subscribe("vis", null, handlers());
+    last().open();
+    last().close(); // idle drop; a backoff reconnect is pending
+    const before = FakeWebSocket.instances.length;
+
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+
+    // Reconnected right away rather than waiting out the backoff.
     expect(FakeWebSocket.instances.length).toBeGreaterThan(before);
     sub.unsubscribe();
   });

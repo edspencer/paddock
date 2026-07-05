@@ -273,6 +273,12 @@ export function isClientMessage(data: unknown): data is ClientMessage {
  * Register the /ws route handler. Pure transport: it validates messages,
  * resolves the target agent, and streams a real trigger back to the socket.
  */
+// Server-side keepalive: how often to ping each client and, if the previous
+// ping went unanswered, reap the dead socket. Protocol-level ping frames also
+// keep intermediaries (proxies/NAT) from evicting an otherwise-idle connection.
+// See issue #46.
+const SERVER_PING_INTERVAL_MS = 30_000;
+
 export function makeChatHandler(deps: {
   herdctl: HerdctlService;
   projects: ProjectStore;
@@ -283,6 +289,28 @@ export function makeChatHandler(deps: {
     const send = (m: ServerMessage) => {
       if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(m));
     };
+
+    // Heartbeat: browsers auto-answer protocol ping frames with a pong, so a
+    // client whose TCP has silently died (idle drop, sleep) fails to pong and is
+    // terminated on the next tick — freeing server resources and letting the
+    // client's own reconnect take over. Cleared when the socket closes.
+    let isAlive = true;
+    socket.on("pong", () => {
+      isAlive = true;
+    });
+    const heartbeat = setInterval(() => {
+      if (!isAlive) {
+        socket.terminate();
+        return;
+      }
+      isAlive = false;
+      try {
+        socket.ping();
+      } catch {
+        socket.terminate();
+      }
+    }, SERVER_PING_INTERVAL_MS);
+    socket.on("close", () => clearInterval(heartbeat));
 
     socket.on("message", (raw: Buffer | string) => {
       let parsed: unknown;

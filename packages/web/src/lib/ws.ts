@@ -57,6 +57,13 @@ interface Subscription {
 }
 
 const PING_INTERVAL_MS = 25_000;
+// How long to wait for a `pong` after a `ping` before declaring the socket dead.
+const PONG_TIMEOUT_MS = 10_000;
+// A socket that hasn't produced a `pong` within this window is treated as
+// possibly half-open, so a send is queued (and a fresh probe/reconnect kicked)
+// rather than written into a dead-but-still-`OPEN` socket and silently lost.
+// Must exceed one full ping→pong cycle so healthy sockets are never seen stale.
+const STALE_MS = PING_INTERVAL_MS + PONG_TIMEOUT_MS + 5_000;
 const RECONNECT_BASE_MS = 500;
 const RECONNECT_MAX_MS = 10_000;
 
@@ -66,6 +73,10 @@ class ChatClient {
   private outbox: string[] = [];
   private subs = new Map<symbol, Subscription>();
   private pingTimer: ReturnType<typeof setInterval> | null = null;
+  private pongTimer: ReturnType<typeof setTimeout> | null = null;
+  private awaitingPong = false;
+  // Timestamp (ms) of the last observed `pong` or fresh open; 0 before any.
+  private lastPongAt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempts = 0;
   private manualClose = false;
@@ -76,6 +87,22 @@ class ChatClient {
     const proto = window.location.protocol === "https:" ? "wss" : "ws";
     const base = (import.meta.env.VITE_WS_BASE as string | undefined) ?? `${proto}://${window.location.host}`;
     this.url = `${base.replace(/^http/, "ws")}/ws`;
+
+    // A backgrounded/asleep tab has its timers throttled, so the ping keepalive
+    // stalls and an idle-dropped socket goes unnoticed (it stays `OPEN` with no
+    // `close` event). When the user returns or the network comes back, probe the
+    // socket's liveness (or reconnect) immediately instead of waiting for the
+    // next throttled tick. See issue #46.
+    if (typeof window !== "undefined") {
+      const revive = () => this.ensureLive();
+      window.addEventListener("online", revive);
+      window.addEventListener("focus", revive);
+      if (typeof document !== "undefined") {
+        document.addEventListener("visibilitychange", () => {
+          if (document.visibilityState === "visible") this.ensureLive();
+        });
+      }
+    }
   }
 
   get state(): ConnectionState {
@@ -136,12 +163,54 @@ class ChatClient {
   }
 
   private transmit(raw: string): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(raw);
+    if (this.isLive()) {
+      this.ws!.send(raw);
     } else {
+      // Not open, or open-but-stale (possible half-open drop). Queue and kick a
+      // liveness probe / reconnect; the outbox flushes once the socket is
+      // confirmed live (on `pong`) or freshly reopened (on `open`).
       this.outbox.push(raw);
+      this.ensureLive();
+    }
+  }
+
+  /**
+   * Whether the socket can be trusted to actually deliver right now: OPEN and
+   * having produced a `pong` within the staleness window. A socket silently
+   * killed while idle stays `readyState === OPEN`, so the freshness check is
+   * what prevents writing into the void.
+   */
+  private isLive(): boolean {
+    if (this.ws?.readyState !== WebSocket.OPEN) return false;
+    return Date.now() - this.lastPongAt < STALE_MS;
+  }
+
+  /**
+   * Ensure we have a live socket: reconnect if it's closed (cancelling any
+   * backoff wait so the user doesn't sit offline), or fire an immediate ping
+   * probe if it's open-but-unverified so a half-open drop is detected within
+   * `PONG_TIMEOUT_MS`.
+   */
+  private ensureLive(): void {
+    if (this.subs.size === 0) return; // no chat wants the socket
+    const rs = this.ws?.readyState;
+    if (rs === WebSocket.OPEN) {
+      this.sendPing();
+    } else if (rs !== WebSocket.CONNECTING) {
+      if (this.reconnectTimer) {
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+      }
+      this.reconnectAttempts = 0;
       this.connect();
     }
+  }
+
+  private flushOutbox(): void {
+    if (this.ws?.readyState !== WebSocket.OPEN || this.outbox.length === 0) return;
+    const pending = this.outbox;
+    this.outbox = [];
+    for (const m of pending) this.ws.send(m);
   }
 
   private connect(): void {
@@ -161,9 +230,10 @@ class ChatClient {
 
     ws.onopen = () => {
       this.reconnectAttempts = 0;
+      this.awaitingPong = false;
+      this.lastPongAt = Date.now();
       this.setState("open");
-      for (const m of this.outbox) ws.send(m);
-      this.outbox = [];
+      this.flushOutbox();
       this.startPing();
     };
     ws.onclose = () => {
@@ -180,16 +250,40 @@ class ChatClient {
 
   private startPing(): void {
     this.stopPing();
-    this.pingTimer = setInterval(() => {
-      if (this.ws?.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify({ type: "ping" }));
-      }
-    }, PING_INTERVAL_MS);
+    this.pingTimer = setInterval(() => this.sendPing(), PING_INTERVAL_MS);
+  }
+
+  /**
+   * Send a `ping` and arm a pong deadline. If no `pong` arrives within
+   * `PONG_TIMEOUT_MS` the socket is treated as dead and force-closed, which runs
+   * the normal `onclose` → reconnect path. A no-op if a probe is already in
+   * flight (its deadline covers this tick) or the socket isn't open.
+   */
+  private sendPing(): void {
+    if (this.ws?.readyState !== WebSocket.OPEN || this.awaitingPong) return;
+    this.awaitingPong = true;
+    try {
+      this.ws.send(JSON.stringify({ type: "ping" }));
+    } catch {
+      // A throw here means the socket is already unusable — reconnect.
+      this.awaitingPong = false;
+      this.ws.close();
+      return;
+    }
+    this.pongTimer = setTimeout(() => {
+      this.pongTimer = null;
+      // No pong within the deadline → half-open/dead socket. Closing it flips
+      // readyState off OPEN (so sends queue) and triggers reconnect via onclose.
+      if (this.awaitingPong) this.ws?.close();
+    }, PONG_TIMEOUT_MS);
   }
 
   private stopPing(): void {
     if (this.pingTimer) clearInterval(this.pingTimer);
     this.pingTimer = null;
+    if (this.pongTimer) clearTimeout(this.pongTimer);
+    this.pongTimer = null;
+    this.awaitingPong = false;
   }
 
   private scheduleReconnect(): void {
@@ -234,7 +328,18 @@ class ChatClient {
     } catch {
       return;
     }
-    if (msg.type === "pong") return;
+    if (msg.type === "pong") {
+      // Liveness confirmed: clear the deadline, refresh the freshness stamp, and
+      // flush anything queued while the socket was (briefly) considered stale.
+      this.awaitingPong = false;
+      if (this.pongTimer) {
+        clearTimeout(this.pongTimer);
+        this.pongTimer = null;
+      }
+      this.lastPongAt = Date.now();
+      this.flushOutbox();
+      return;
+    }
 
     const slug = msg.payload.projectSlug ?? (msg.payload as { target?: string }).target;
     if (!slug) return;
