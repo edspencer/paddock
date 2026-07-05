@@ -14,7 +14,8 @@
  * whose encoded path is still a real directory (existing transcripts), it migrates
  * those files into `.chats/` and replaces the directory with the symlink.
  */
-import { promises as fs } from "node:fs";
+import { promises as fs, createReadStream } from "node:fs";
+import { createInterface } from "node:readline";
 import path from "node:path";
 import { claudeHome } from "./config.js";
 
@@ -80,4 +81,66 @@ export async function ensureProjectChats(projectDir: string): Promise<void> {
   } catch {
     /* non-fatal: fall back to Claude Code's default location for this project */
   }
+}
+
+/**
+ * Read a session's FIRST user message text, untruncated, straight from its
+ * transcript JSONL (issue #62). Claude Code's own `preview` is capped at 100
+ * chars — for a preload chat that cap falls inside the injected OVERVIEW block,
+ * so the preview can't be un-wrapped. Reading the full first user message lets
+ * the chat-list strip the wrapper and show the user's real request.
+ *
+ * Streams line-by-line and stops at the first user text, so it only reads the
+ * head of the file. Returns undefined if the transcript is missing/unreadable or
+ * has no user text. The sessionId is validated to keep it inside `.chats/`.
+ */
+export async function readFirstUserText(
+  projectDir: string,
+  sessionId: string,
+): Promise<string | undefined> {
+  if (!/^[A-Za-z0-9._-]+$/.test(sessionId)) return undefined;
+  const file = path.join(projectChatsDir(projectDir), `${sessionId}.jsonl`);
+  const stream = createReadStream(file, { encoding: "utf8" });
+  // A missing/unreadable file rejects on the stream; swallow and return undefined.
+  stream.on("error", () => undefined);
+  const rl = createInterface({ input: stream, crlfDelay: Infinity });
+  try {
+    for await (const line of rl) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      let parsed: { type?: string; message?: { content?: unknown } };
+      try {
+        parsed = JSON.parse(trimmed);
+      } catch {
+        continue;
+      }
+      if (parsed.type !== "user") continue;
+      const text = extractUserText(parsed.message?.content);
+      if (text) return text;
+    }
+  } catch {
+    return undefined;
+  } finally {
+    rl.close();
+    stream.destroy();
+  }
+  return undefined;
+}
+
+/**
+ * Text of a transcript user message's `content` (string, or an array of blocks).
+ * A message carrying tool_result blocks isn't a real prompt — return "" so the
+ * caller skips it.
+ */
+function extractUserText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  if (content.some((b) => (b as { type?: string })?.type === "tool_result")) return "";
+  return content
+    .filter((b): b is { type: "text"; text: string } => {
+      const blk = b as { type?: string; text?: unknown };
+      return blk?.type === "text" && typeof blk.text === "string";
+    })
+    .map((b) => b.text)
+    .join("");
 }
