@@ -14,7 +14,7 @@ real chat history. A compaction is surfaced as a visible assistant note
 afterwards. Output otherwise streams over the same response/tool/complete events
 as a normal turn.
 
-Requires `@herdctl/core` with `FleetManager.openChatSession` (the streaming
+Requires `@herdctl/core` >= 5.14.0 (the `FleetManager.openChatSession` streaming
 session API). The session runs on the SDK runtime even though Paddock's keeper /
 scratch agents use the `cli` runtime for batch turns — same subscription auth,
 shared on-disk session store, so a CLI-created chat resumes cleanly.
