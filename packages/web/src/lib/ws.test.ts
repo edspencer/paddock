@@ -76,6 +76,7 @@ function resetChatClient() {
     outbox: string[];
     reconnectAttempts: number;
     _state: string;
+    activeSessions: Set<string>;
   };
   c.manualClose = true; // suppress the reconnect that onclose would schedule
   if (c.ws) {
@@ -105,6 +106,7 @@ function resetChatClient() {
   c.outbox = [];
   c.reconnectAttempts = 0;
   c._state = "closed";
+  c.activeSessions.clear();
 }
 
 function handlers(): Required<Pick<ChatHandlers, "onResponse" | "onToolCall" | "onMessageBoundary" | "onComplete" | "onError">> {
@@ -447,6 +449,47 @@ describe("ws: session re-attach (issue #54)", () => {
     last().open();
     last().emit({ type: "chat:resync", payload: { projectSlug: "rs", sessionId: "sess-1" } } as unknown as ServerWsMessage);
     expect(onResync).toHaveBeenCalledTimes(1);
+    sub.unsubscribe();
+  });
+});
+
+describe("ws: active-turn signal (issues #52/#53)", () => {
+  const emitActive = (ws: FakeWebSocket, sessionId: string, running: boolean, jobId: string | null = null) =>
+    ws.emit({ type: "chat:active", payload: { projectSlug: "p", sessionId, jobId, running } } as unknown as ServerWsMessage);
+
+  it("delivers chat:active to the exactly-matching chat's onActive (restores Stop, #52)", () => {
+    const onActive = vi.fn();
+    const sub = chatClient.subscribe("p", "sess-1", { ...handlers(), onActive });
+    last().open();
+    emitActive(last(), "sess-1", true, "job-9");
+    expect(onActive).toHaveBeenCalledWith({ running: true, jobId: "job-9" });
+    sub.unsubscribe();
+  });
+
+  it("does NOT deliver chat:active to a nascent (new-chat) pane", () => {
+    const onActive = vi.fn();
+    // A brand-new chat (sessionId null) must not be told another session is live.
+    const sub = chatClient.subscribe("p", null, { ...handlers(), onActive });
+    last().open();
+    emitActive(last(), "sess-other", true, "job-x");
+    expect(onActive).not.toHaveBeenCalled();
+    sub.unsubscribe();
+  });
+
+  it("onActiveSessions reflects the running set as chat:active arrives (sidebar dots, #53)", () => {
+    const seen: string[][] = [];
+    const off = chatClient.onActiveSessions((s) => seen.push([...s].sort()));
+    const sub = chatClient.subscribe("p", "sess-1", handlers());
+    last().open();
+    emitActive(last(), "sess-1", true);
+    emitActive(last(), "sess-2", true);
+    emitActive(last(), "sess-1", false);
+    // Initial empty, then after each transition.
+    expect(seen[0]).toEqual([]);
+    expect(seen).toContainEqual(["sess-1"]);
+    expect(seen).toContainEqual(["sess-1", "sess-2"]);
+    expect(seen.at(-1)).toEqual(["sess-2"]);
+    off();
     sub.unsubscribe();
   });
 });

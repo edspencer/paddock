@@ -182,4 +182,49 @@ describe("SessionHub", () => {
     turn.end();
     expect(hub.isRunning("s1")).toBe(false);
   });
+
+  // --- active-turn signal (issues #52/#53) --------------------------------
+
+  it("fires onActive(true) when the session id is known and onActive(false) on end", () => {
+    const hub = new SessionHub();
+    const events: Array<[string, boolean, string | null]> = [];
+    hub.onActive = (info) => events.push([info.sessionId, info.running, info.jobId]);
+
+    const turn = hub.startTurn("p", new FakeSocket(), "s1"); // registered → active true (jobId not yet known)
+    turn.setJobId("j1");
+    turn.end(); // → active false (jobId now known)
+
+    expect(events).toEqual([
+      ["s1", true, null],
+      ["s1", false, "j1"],
+    ]);
+  });
+
+  it("defers onActive(true) for a new chat until its session id arrives", () => {
+    const hub = new SessionHub();
+    const running: boolean[] = [];
+    hub.onActive = (info) => running.push(info.running);
+
+    const turn = hub.startTurn("p", new FakeSocket()); // no session yet → no signal
+    expect(running).toEqual([]);
+    turn.setSession("s9"); // now visible as running
+    expect(running).toEqual([true]);
+  });
+
+  it("exposes activeInfo + runningSessions while running, cleared on end", () => {
+    const hub = new SessionHub();
+    const turn = hub.startTurn("p", new FakeSocket(), "s1");
+    turn.setJobId("j1");
+    expect(hub.activeInfo("s1")).toEqual({
+      sessionId: "s1",
+      projectSlug: "p",
+      jobId: "j1",
+      running: true,
+    });
+    expect(hub.runningSessions().map((r) => r.sessionId)).toEqual(["s1"]);
+
+    turn.end();
+    expect(hub.activeInfo("s1")).toBeNull();
+    expect(hub.runningSessions()).toEqual([]);
+  });
 });
