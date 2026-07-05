@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
-import { ProjectStore, ProjectError, slugify, fileKind } from "../../src/projects.js";
+import { ProjectStore, ProjectError, slugify, fileKind, contentTypeFor } from "../../src/projects.js";
 import { KEEPER_DEFAULT_MODEL } from "../../src/models.js";
 import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
 
@@ -28,6 +28,23 @@ describe("fileKind", () => {
     expect(fileKind("page.HTM")).toBe("html");
     expect(fileKind("data.txt")).toBe("text");
     expect(fileKind("noext")).toBe("text");
+  });
+
+  it("maps image extensions to the image kind (issue #61)", () => {
+    for (const n of ["a.png", "b.JPG", "c.jpeg", "d.gif", "e.webp", "f.svg", "g.avif", "h.ico"]) {
+      expect(fileKind(n)).toBe("image");
+    }
+    // Non-image binaries still fall through to text (no dedicated kind yet).
+    expect(fileKind("archive.zip")).toBe("text");
+  });
+});
+
+describe("contentTypeFor", () => {
+  it("returns the image MIME for image extensions, octet-stream otherwise", () => {
+    expect(contentTypeFor("x.png")).toBe("image/png");
+    expect(contentTypeFor("x.JPG")).toBe("image/jpeg");
+    expect(contentTypeFor("x.svg")).toBe("image/svg+xml");
+    expect(contentTypeFor("x.bin")).toBe("application/octet-stream");
   });
 });
 
@@ -226,6 +243,34 @@ describe("ProjectStore", () => {
       code: "invalid",
     });
     await expect(store.readFileWithKind("files", "missing.md")).rejects.toMatchObject({
+      code: "not_found",
+    });
+  });
+
+  it("readFileWithKind returns image kind + empty content without UTF-8 mangling (issue #61)", async () => {
+    const p = await store.create({ name: "Img" });
+    // A 1×1 transparent PNG — real binary bytes with a high byte (0x89) that
+    // UTF-8 decoding would turn into a replacement character.
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    await fs.writeFile(path.join(p.dir, "pixel.png"), png);
+
+    const wk = await store.readFileWithKind("img", "pixel.png");
+    expect(wk).toEqual({ name: "pixel.png", kind: "image", content: "" });
+
+    const raw = await store.readFileBytes("img", "pixel.png");
+    expect(raw.mime).toBe("image/png");
+    expect(Buffer.compare(raw.bytes, png)).toBe(0); // byte-identical, not mangled
+  });
+
+  it("readFileBytes enforces the traversal guard and 404s on miss (issue #61)", async () => {
+    await store.create({ name: "Bytes" });
+    await expect(store.readFileBytes("bytes", "../../etc/passwd")).rejects.toMatchObject({
+      code: "invalid",
+    });
+    await expect(store.readFileBytes("bytes", "nope.png")).rejects.toMatchObject({
       code: "not_found",
     });
   });

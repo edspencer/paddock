@@ -9,6 +9,7 @@ import { AlertIcon } from "./icons";
  *  - markdown -> the Markdown renderer with live Mermaid diagrams
  *  - html     -> a SANDBOXED iframe (sandbox="allow-scripts", no same-origin)
  *                so arbitrary LLM-authored HTML/CSS/JS runs safely + isolated
+ *  - image    -> an <img> loaded from the raw-bytes endpoint (issue #61)
  *  - text     -> monospace preformatted
  *
  * Used both for the Files tab (clicking a file) and pinned sibling tabs.
@@ -60,6 +61,10 @@ export function FileView({ slug, name }: { slug: string; name: string }) {
     );
   }
 
+  if (file.kind === "image") {
+    return <ImageFileView slug={slug} name={file.name} />;
+  }
+
   if (file.kind === "html") {
     return <HtmlFileView name={file.name} content={file.content} />;
   }
@@ -104,6 +109,43 @@ function HtmlFileView({ name, content }: { name: string; content: string }) {
         srcDoc={content}
         className="min-h-[480px] w-full flex-1 bg-white"
       />
+    </div>
+  );
+}
+
+/**
+ * An image file (issue #61): the bytes load from the raw endpoint (correct
+ * Content-Type, not the JSON/UTF-8 path that mangled them) into a contained
+ * <img> over a neutral checkerboard so transparency reads clearly. A broken load
+ * falls back to an error note.
+ */
+function ImageFileView({ slug, name }: { slug: string; name: string }) {
+  const [failed, setFailed] = useState(false);
+  const checker =
+    "repeating-conic-gradient(rgb(0 0 0 / 0.06) 0% 25%, transparent 0% 50%) 50% / 20px 20px";
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex items-center gap-2 border-b border-paddock-200 bg-paddock-50/60 px-4 py-2 text-[11px] text-paddock-500 dark:border-paddock-800 dark:bg-paddock-900/40">
+        <span className="font-mono text-paddock-600 dark:text-paddock-300">{name}</span>
+      </div>
+      <div
+        className="flex flex-1 items-center justify-center overflow-auto p-6"
+        style={{ background: checker }}
+      >
+        {failed ? (
+          <div className="flex items-center gap-2 rounded-lg border border-rose-300/60 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/50 dark:text-rose-300">
+            <AlertIcon width={16} height={16} className="shrink-0" />
+            <span>Could not display this image.</span>
+          </div>
+        ) : (
+          <img
+            src={api.projectFileRawUrl(slug, name)}
+            alt={name}
+            onError={() => setFailed(true)}
+            className="max-h-full max-w-full object-contain shadow-sm"
+          />
+        )}
+      </div>
     </div>
   );
 }

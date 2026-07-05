@@ -172,11 +172,20 @@ export const api = {
     return files;
   },
 
-  /** Fetch one project file + a render-kind hint (markdown | html | text). */
+  /** Fetch one project file + a render-kind hint (markdown | html | text | image). */
   async getProjectFile(slug: string, name: string): Promise<ProjectFile> {
     return req<ProjectFile>(
       `/api/projects/${encodeURIComponent(slug)}/files/${encodeURIComponent(name)}`,
     );
+  },
+
+  /**
+   * The URL that streams a file's RAW BYTES with the correct Content-Type
+   * (issue #61) — used as an <img src> for image files, so binary bytes aren't
+   * mangled by the JSON/UTF-8 path.
+   */
+  projectFileRawUrl(slug: string, name: string): string {
+    return `${BASE}/api/projects/${encodeURIComponent(slug)}/files/${encodeURIComponent(name)}?raw=1`;
   },
 
   /** Pin a file as a sibling tab. Returns the updated project (with pinned[]). */

@@ -31,14 +31,38 @@ export type ProjectStatus =
 export type ProjectVisibility = "public" | "private";
 
 /** Render-kind hint for a project file (drives the UI renderer choice). */
-export type FileKind = "markdown" | "html" | "text";
+export type FileKind = "markdown" | "html" | "text" | "image";
+
+/**
+ * Image extensions → their MIME type, for the render kind + the raw byte
+ * endpoint's Content-Type (issue #61). SVG is included but is served with a
+ * locked-down CSP by the byte route (it can carry scripts).
+ */
+export const IMAGE_MIME: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".avif": "image/avif",
+  ".bmp": "image/bmp",
+  ".ico": "image/x-icon",
+  ".svg": "image/svg+xml",
+};
 
 /** Derive a render kind from a file name's extension. */
 export function fileKind(name: string): FileKind {
   const ext = name.slice(name.lastIndexOf(".")).toLowerCase();
   if (ext === ".md" || ext === ".markdown") return "markdown";
   if (ext === ".html" || ext === ".htm") return "html";
+  if (ext in IMAGE_MIME) return "image";
   return "text";
+}
+
+/** The MIME type for a file name's extension, defaulting to octet-stream. */
+export function contentTypeFor(name: string): string {
+  const ext = name.slice(name.lastIndexOf(".")).toLowerCase();
+  return IMAGE_MIME[ext] ?? "application/octet-stream";
 }
 
 export interface ProjectLink {
@@ -395,26 +419,72 @@ export class ProjectStore {
       .sort();
   }
 
-  /** Read a freeform file's contents (path-traversal guarded). */
-  async readFile(slug: string, name: string): Promise<string> {
+  /**
+   * Resolve a freeform file name to an absolute path inside the project dir,
+   * rejecting path traversal. The single guard shared by every file read.
+   */
+  private resolveInProject(slug: string, name: string): string {
     const dir = this.dirFor(slug);
     const resolved = path.resolve(dir, name);
     if (!resolved.startsWith(dir + path.sep)) {
       throw new ProjectError("Invalid file path", "invalid");
     }
-    return fs.readFile(resolved, "utf8");
+    return resolved;
+  }
+
+  /** Read a freeform file's contents as UTF-8 text (path-traversal guarded). */
+  async readFile(slug: string, name: string): Promise<string> {
+    return fs.readFile(this.resolveInProject(slug, name), "utf8");
+  }
+
+  /**
+   * Read a file's raw bytes + its MIME type (issue #61), for the binary/image
+   * endpoint. Path-traversal guarded; throws ProjectError("not_found") if the
+   * file is missing so the route can 404 cleanly. NOT decoded as text, so binary
+   * (image) bytes survive intact.
+   */
+  async readFileBytes(slug: string, name: string): Promise<{ bytes: Buffer; mime: string }> {
+    const resolved = this.resolveInProject(slug, name);
+    try {
+      const bytes = await fs.readFile(resolved);
+      return { bytes, mime: contentTypeFor(name) };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        throw new ProjectError(`File not found: ${name}`, "not_found");
+      }
+      throw err;
+    }
   }
 
   /**
    * Read a file plus a render-kind hint derived from its extension, for the
-   * UI's markdown/Mermaid + sandboxed-iframe renderers (issue #3).
-   * Path-traversal guarded via readFile. Throws ProjectError("not_found") if
-   * the file is missing so the route can 404 cleanly.
+   * UI's markdown/Mermaid + sandboxed-iframe renderers (issue #3) and the image
+   * viewer (issue #61).
+   *
+   * For an IMAGE the raw bytes are NOT returned here (decoding binary as UTF-8
+   * would mangle it): `content` is empty and the client fetches the bytes from
+   * the raw endpoint. We still stat the file so a missing image 404s. Path-
+   * traversal guarded; throws ProjectError("not_found") when missing.
    */
   async readFileWithKind(
     slug: string,
     name: string,
   ): Promise<{ name: string; kind: FileKind; content: string }> {
+    const kind = fileKind(name);
+    if (kind === "image") {
+      // Existence check only — the bytes go over the raw endpoint.
+      try {
+        await fs.stat(this.resolveInProject(slug, name));
+      } catch (err) {
+        if (err instanceof ProjectError) throw err;
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+          throw new ProjectError(`File not found: ${name}`, "not_found");
+        }
+        throw err;
+      }
+      return { name, kind, content: "" };
+    }
+
     let content: string;
     try {
       content = await this.readFile(slug, name);
@@ -425,7 +495,7 @@ export class ProjectStore {
       }
       throw err;
     }
-    return { name, kind: fileKind(name), content };
+    return { name, kind, content };
   }
 
   // --- internals ---------------------------------------------------------

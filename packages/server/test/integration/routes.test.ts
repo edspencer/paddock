@@ -116,6 +116,42 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
     expect(missing.statusCode).toBe(404);
   });
 
+  it("GET /files/:name for an image returns kind:image + empty content; ?raw=1 streams bytes (issue #61)", async () => {
+    const project = (
+      await t.app.inject({ method: "GET", url: "/api/projects/routes-proj" })
+    ).json().project;
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    await fs.writeFile(path.join(project.dir, "pixel.png"), png);
+
+    // JSON path: kind image, no mangled binary in content.
+    const meta = (
+      await t.app.inject({ method: "GET", url: "/api/projects/routes-proj/files/pixel.png" })
+    ).json();
+    expect(meta.kind).toBe("image");
+    expect(meta.content).toBe("");
+
+    // Raw path: real bytes + correct Content-Type + locked-down headers.
+    const raw = await t.app.inject({
+      method: "GET",
+      url: "/api/projects/routes-proj/files/pixel.png?raw=1",
+    });
+    expect(raw.statusCode).toBe(200);
+    expect(raw.headers["content-type"]).toBe("image/png");
+    expect(raw.headers["content-security-policy"]).toContain("sandbox");
+    expect(raw.headers["x-content-type-options"]).toBe("nosniff");
+    expect(Buffer.compare(raw.rawPayload, png)).toBe(0);
+
+    // Raw path 404s a missing file.
+    const rawMissing = await t.app.inject({
+      method: "GET",
+      url: "/api/projects/routes-proj/files/nope.png?raw=1",
+    });
+    expect(rawMissing.statusCode).toBe(404);
+  });
+
   it("GET /files (listing) 404s for an unknown project", async () => {
     const res = await t.app.inject({ method: "GET", url: "/api/projects/ghost/files" });
     expect(res.statusCode).toBe(404);
