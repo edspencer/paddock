@@ -212,6 +212,12 @@ interface Routing {
   target?: string;
   sessionId: string | null;
   jobId: string | null;
+  /**
+   * Per-turn, monotonic sequence number stamped by the server's SessionHub
+   * (issue #54). Used to re-attach a reconnected socket to a live turn and
+   * replay exactly the missed gap. Absent on frames not routed through the hub.
+   */
+  seq?: number;
 }
 
 /** Per-turn token usage surfaced on chat:complete (camelCase; drives the context meter). */
@@ -251,4 +257,9 @@ export type ServerWsMessage =
       };
     }
   | { type: "chat:error"; payload: { projectSlug: string; target?: string; error: string } }
+  | {
+      /** Re-attach fallback: the live turn's buffer aged out; re-hydrate from transcript (issue #54). */
+      type: "chat:resync";
+      payload: { projectSlug: string; target?: string; sessionId: string };
+    }
   | { type: "pong" };

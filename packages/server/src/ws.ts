@@ -59,6 +59,7 @@ import {
 import type { ProjectStore } from "./projects.js";
 import type { SweepService } from "./sweep.js";
 import { isKnownModel, getContextLimit, KEEPER_DEFAULT_MODEL } from "./models.js";
+import { SessionHub, type TurnHandle } from "./session-hub.js";
 
 /**
  * Per-turn token usage as observed on the SDK stream, normalized to camelCase.
@@ -188,6 +189,30 @@ export interface ChatCommandMessage {
   };
 }
 
+/**
+ * Attach a socket to a session's live stream (issue #54). Sent on (re)connect so
+ * a socket that dropped mid-turn can re-attach to the still-running turn and be
+ * replayed the frames it missed.
+ *
+ * `wantReplay` MUST be false on a fresh mount (which also hydrates the transcript
+ * over REST) so buffered frames don't duplicate the transcript; it is true only
+ * for a genuine reconnect of a socket that was mid-turn, with `lastSeq` = the
+ * last per-turn `seq` the client applied (the replay is exactly the gap after it).
+ */
+export interface ChatSubscribeMessage {
+  type: "chat:subscribe";
+  payload: {
+    projectSlug?: string;
+    target?: string;
+    /** The session to attach to. Required. */
+    sessionId: string;
+    /** Replay the missed gap of a live turn (reconnect); false = future frames only. */
+    wantReplay?: boolean;
+    /** Last per-turn `seq` the client applied; the server replays everything after it. */
+    lastSeq?: number;
+  };
+}
+
 export interface PingMessage {
   type: "ping";
 }
@@ -196,6 +221,7 @@ export type ClientMessage =
   | ChatSendMessage
   | ChatCommandMessage
   | ChatCancelMessage
+  | ChatSubscribeMessage
   | PingMessage;
 
 // --- server -> client --------------------------------------------------------
@@ -206,6 +232,13 @@ interface Routing {
   target: string;
   sessionId: string | null;
   jobId: string | null;
+  /**
+   * Per-turn, monotonic sequence number stamped by the SessionHub as the frame
+   * is emitted (issue #54). Lets a reconnecting client tell the server the last
+   * frame it applied so the exact missed gap can be replayed. Absent on frames
+   * not routed through the hub (e.g. chat:error).
+   */
+  seq?: number;
 }
 
 export interface ChatResponseMessage {
@@ -258,6 +291,16 @@ export interface ChatErrorMessage {
   payload: { projectSlug: string; target: string; error: string };
 }
 
+/**
+ * Tell a re-attaching client to re-hydrate from the transcript instead of a
+ * frame replay (issue #54). Emitted only when the missed gap has aged out of the
+ * turn's bounded buffer — the rare fallback that trades live-ness for correctness.
+ */
+export interface ChatResyncMessage {
+  type: "chat:resync";
+  payload: { projectSlug: string; target: string; sessionId: string };
+}
+
 export interface PongMessage {
   type: "pong";
 }
@@ -268,6 +311,7 @@ export type ServerMessage =
   | ChatMessageBoundaryMessage
   | ChatCompleteMessage
   | ChatErrorMessage
+  | ChatResyncMessage
   | PongMessage;
 
 function readSlug(p: ChatSendMessage["payload"]): string | undefined {
@@ -298,6 +342,13 @@ export function isClientMessage(data: unknown): data is ClientMessage {
     if (typeof slug !== "string") return false;
     return p.sessionId === undefined || p.sessionId === null || typeof p.sessionId === "string";
   }
+  if (m.type === "chat:subscribe") {
+    const p = m.payload as Record<string, unknown> | undefined;
+    if (!p || typeof p.sessionId !== "string" || p.sessionId.length === 0) return false;
+    if (p.wantReplay !== undefined && typeof p.wantReplay !== "boolean") return false;
+    if (p.lastSeq !== undefined && typeof p.lastSeq !== "number") return false;
+    return true;
+  }
   return false;
 }
 
@@ -317,6 +368,12 @@ export function makeChatHandler(deps: {
   /** Optional: post-turn overview/changelog curation engine (issues #2/#6). */
   sweep?: SweepService;
 }) {
+  // ONE hub shared across every socket this handler serves: it tracks each
+  // session's in-flight turn and fans its frames out to whichever socket(s) are
+  // currently attached, so a turn survives the death of the socket that started
+  // it (issue #54). See session-hub.ts.
+  const hub = new SessionHub();
+
   return async function handle(socket: WebSocket): Promise<void> {
     const send = (m: ServerMessage) => {
       if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(m));
@@ -342,7 +399,12 @@ export function makeChatHandler(deps: {
         socket.terminate();
       }
     }, SERVER_PING_INTERVAL_MS);
-    socket.on("close", () => clearInterval(heartbeat));
+    socket.on("close", () => {
+      clearInterval(heartbeat);
+      // Drop this socket from every session fan-out set so the hub stops trying
+      // to write to it (a running turn keeps going for other attached sockets).
+      hub.unsubscribeSocket(socket);
+    });
 
     socket.on("message", (raw: Buffer | string) => {
       let parsed: unknown;
@@ -364,6 +426,10 @@ export function makeChatHandler(deps: {
         void deps.herdctl.cancel(parsed.payload.jobId).catch(() => undefined);
         return;
       }
+      if (parsed.type === "chat:subscribe") {
+        onSubscribe(parsed);
+        return;
+      }
       if (parsed.type === "chat:command") {
         void onChatCommand(parsed);
         return;
@@ -371,12 +437,32 @@ export function makeChatHandler(deps: {
       void onChatSend(parsed);
     });
 
+    const onSubscribe = (msg: ChatSubscribeMessage): void => {
+      const { sessionId, wantReplay, lastSeq } = msg.payload;
+      const result = hub.attach(sessionId, socket, {
+        wantReplay: wantReplay === true,
+        afterSeq: typeof lastSeq === "number" ? lastSeq : -1,
+      });
+      if (result.status === "resync") {
+        send({
+          type: "chat:resync",
+          payload: { projectSlug: result.projectSlug, target: result.projectSlug, sessionId },
+        });
+      }
+    };
+
     const onChatSend = async (msg: ChatSendMessage): Promise<void> => {
       const slug = readSlug(msg.payload) as string;
       const { message, sessionId, preloadContext } = msg.payload;
       const isNewChat = sessionId === undefined || sessionId === null;
       let jobId: string | null = null;
       let resolvedSession: string | null = sessionId ?? null;
+      // Track this turn in the session hub so its frames fan out to whichever
+      // socket(s) are attached — not just this one — and a reconnecting client
+      // can re-attach + replay the missed gap (issue #54). A resumed chat's id is
+      // known now (re-attachable from frame 0); a new chat registers once the id
+      // arrives mid-stream (see turn.setSession below).
+      const turn: TurnHandle = hub.startTurn(slug, socket, sessionId ?? null);
       // Per-turn usage + model captured off the SDK stream (last non-null wins).
       // Held on a mutable record (not bare `let`s) so the values assigned inside
       // the streaming callback are visible to control-flow analysis afterwards.
@@ -399,13 +485,13 @@ export function makeChatHandler(deps: {
       // holds per-turn tool-pairing state).
       const translate = createSDKMessageHandler({
         onText: (chunk) => {
-          if (chunk) send({ type: "chat:response", payload: { ...routing(), chunk } });
+          if (chunk) turn.emit({ type: "chat:response", payload: { ...routing(), chunk } });
         },
         onBoundary: () => {
-          send({ type: "chat:message_boundary", payload: routing() });
+          turn.emit({ type: "chat:message_boundary", payload: routing() });
         },
         onToolCall: (call) => {
-          send({
+          turn.emit({
             type: "chat:tool_call",
             payload: {
               ...routing(),
@@ -469,11 +555,16 @@ export function makeChatHandler(deps: {
           triggerType: "web",
           onJobCreated: (id) => {
             jobId = id;
+            turn.setJobId(id);
           },
           onMessage: async (m: SDKMessage) => {
             // Capture the session id as it arrives mid-stream (the translator
             // only surfaces text/boundary/tool events, not routing metadata).
-            if (m.session_id) resolvedSession = m.session_id;
+            // Registering it with the hub makes the turn re-attachable by session.
+            if (m.session_id) {
+              resolvedSession = m.session_id;
+              turn.setSession(m.session_id);
+            }
             // Capture per-turn usage + model defensively; keep the last non-null
             // usage / model seen (the final result message usually carries the
             // authoritative usage).
@@ -522,26 +613,37 @@ export function makeChatHandler(deps: {
             }
           : undefined;
 
-        send({
+        // Ensure the turn is keyed under its final session id before the terminal
+        // frame, so a client re-attaching right at the end gets the completion.
+        const finalSession = result.success ? (result.sessionId ?? resolvedSession) : resolvedSession;
+        if (finalSession) turn.setSession(finalSession);
+        turn.emit({
           type: "chat:complete",
           payload: {
             ...routing(),
-            sessionId: result.success ? (result.sessionId ?? resolvedSession) : resolvedSession,
+            sessionId: finalSession,
             jobId: result.jobId ?? jobId,
             success: result.success,
             error: result.error?.message,
             ...(completeUsage ? { model: completeModel, usage: completeUsage } : {}),
           },
         });
+        turn.end();
       } catch (err) {
-        send({
-          type: "chat:error",
-          payload: {
-            projectSlug: slug,
-            target: slug,
-            error: err instanceof Error ? err.message : String(err),
-          },
-        });
+        const error = err instanceof Error ? err.message : String(err);
+        // The origin socket always gets the plain chat:error (its shape predates
+        // the hub and existing clients/tests rely on it). If the turn had already
+        // resolved a session, ALSO emit a terminal chat:complete through the hub
+        // so a client that re-attached after a mid-turn socket drop stops showing
+        // "streaming" instead of hanging with no terminal frame.
+        send({ type: "chat:error", payload: { projectSlug: slug, target: slug, error } });
+        if (resolvedSession) {
+          turn.emit({
+            type: "chat:complete",
+            payload: { ...routing(), success: false, error },
+          });
+        }
+        turn.end();
       }
     };
 
@@ -556,6 +658,10 @@ export function makeChatHandler(deps: {
       const { command, sessionId } = msg.payload;
       let resolvedSession: string | null = sessionId ?? null;
       const seen: { usage: TurnUsage | null; model: string | null } = { usage: null, model: null };
+      // Same hub-tracked turn as onChatSend so a slash-command turn also survives
+      // a mid-turn socket drop (issue #54). A command always targets an existing
+      // session, so it's re-attachable from its first frame.
+      const turn: TurnHandle = hub.startTurn(slug, socket, sessionId ?? null);
 
       const routing = (): Routing => ({
         projectSlug: slug,
@@ -566,13 +672,13 @@ export function makeChatHandler(deps: {
 
       const translate = createSDKMessageHandler({
         onText: (chunk) => {
-          if (chunk) send({ type: "chat:response", payload: { ...routing(), chunk } });
+          if (chunk) turn.emit({ type: "chat:response", payload: { ...routing(), chunk } });
         },
         onBoundary: () => {
-          send({ type: "chat:message_boundary", payload: routing() });
+          turn.emit({ type: "chat:message_boundary", payload: routing() });
         },
         onToolCall: (call) => {
-          send({
+          turn.emit({
             type: "chat:tool_call",
             payload: {
               ...routing(),
@@ -601,7 +707,10 @@ export function makeChatHandler(deps: {
           command,
           resume: resolvedSession,
           onMessage: async (m: SDKMessage) => {
-            if (m.session_id) resolvedSession = m.session_id;
+            if (m.session_id) {
+              resolvedSession = m.session_id;
+              turn.setSession(m.session_id);
+            }
             const ex = extractUsage(m);
             if (ex.usage) seen.usage = ex.usage;
             if (ex.model) seen.model = ex.model;
@@ -610,11 +719,11 @@ export function makeChatHandler(deps: {
             if (m.type === "system" && m.subtype === "compact_boundary") {
               const pre = (m.compact_metadata as { pre_tokens?: number } | undefined)?.pre_tokens;
               const detail = typeof pre === "number" ? ` (was ${pre.toLocaleString()} tokens)` : "";
-              send({
+              turn.emit({
                 type: "chat:response",
                 payload: { ...routing(), chunk: `🗜️ Context compacted${detail}.` },
               });
-              send({ type: "chat:message_boundary", payload: routing() });
+              turn.emit({ type: "chat:message_boundary", payload: routing() });
               return;
             }
             await translate(m as unknown as ChatSDKMessage);
@@ -643,7 +752,8 @@ export function makeChatHandler(deps: {
             }
           : undefined;
 
-        send({
+        if (resolvedSession) turn.setSession(resolvedSession);
+        turn.emit({
           type: "chat:complete",
           payload: {
             ...routing(),
@@ -651,15 +761,14 @@ export function makeChatHandler(deps: {
             ...(completeUsage ? { model: completeModel, usage: completeUsage } : {}),
           },
         });
+        turn.end();
       } catch (err) {
-        send({
-          type: "chat:error",
-          payload: {
-            projectSlug: slug,
-            target: slug,
-            error: err instanceof Error ? err.message : String(err),
-          },
-        });
+        const error = err instanceof Error ? err.message : String(err);
+        send({ type: "chat:error", payload: { projectSlug: slug, target: slug, error } });
+        if (resolvedSession) {
+          turn.emit({ type: "chat:complete", payload: { ...routing(), success: false, error } });
+        }
+        turn.end();
       }
     };
   };
