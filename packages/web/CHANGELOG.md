@@ -1,5 +1,21 @@
 # @paddock/web
 
+## 0.4.1
+
+### Patch Changes
+
+- [#63](https://github.com/edspencer/paddock/pull/63) [`e80c044`](https://github.com/edspencer/paddock/commit/e80c044c03ec1dc4b3f88626a18fe52fb59212bf) Thanks [@edspencer](https://github.com/edspencer)! - Render image files in the Files & Changelog tab instead of mangled binary text
+  (#61). Images had no render kind and the file path read every file as UTF-8, so
+  a `.png`/`.jpg`/etc. showed replacement-character mojibake.
+
+  Adds an `image` `FileKind` (png, jpg/jpeg, gif, webp, avif, bmp, ico, svg), a
+  raw-bytes endpoint (`GET /api/projects/:slug/files/:name?raw=1`) that streams the
+  file with the correct `Content-Type` (keeping the path-traversal guard), and an
+  `<img>` branch in the file viewer that loads from it. Image bytes are no longer
+  UTF-8-decoded. Byte responses carry a locked-down CSP (`sandbox; default-src
+'none'`) + `nosniff` so a directly-opened SVG/HTML file can't execute script in
+  the app's origin.
+
 ## 0.4.0
 
 ### Minor Changes

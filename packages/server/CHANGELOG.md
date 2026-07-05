@@ -1,5 +1,34 @@
 # @paddock/server
 
+## 0.4.1
+
+### Patch Changes
+
+- [#64](https://github.com/edspencer/paddock/pull/64) [`887c290`](https://github.com/edspencer/paddock/commit/887c29043f32012bfa3cb07dbf9502bc7440465e) Thanks [@edspencer](https://github.com/edspencer)! - Chat names no longer show the injected OVERVIEW blob (#62). For a project chat
+  with context preload, the first user message is the `<project-context>…` wrapper,
+  so the sidebar name fell back to unreadable overview text instead of the user's
+  request. (Claude Code's own 100-char preview truncates _inside_ the wrapper, so a
+  naive preview-string strip can't recover it.)
+
+  The chat list now, only when there's no better name (no user rename, no
+  Claude-generated summary) and the preview is the preload wrapper, reads the
+  untruncated first user message and strips Paddock's wrapper to show the real
+  request. The wrapper is single-sourced in `preload.ts` (built by the WS layer,
+  stripped by the chat list) so the two can't drift. Claude Code's `autoName` is
+  still preferred once available; scratch chats (never preloaded) are untouched.
+
+- [#63](https://github.com/edspencer/paddock/pull/63) [`e80c044`](https://github.com/edspencer/paddock/commit/e80c044c03ec1dc4b3f88626a18fe52fb59212bf) Thanks [@edspencer](https://github.com/edspencer)! - Render image files in the Files & Changelog tab instead of mangled binary text
+  (#61). Images had no render kind and the file path read every file as UTF-8, so
+  a `.png`/`.jpg`/etc. showed replacement-character mojibake.
+
+  Adds an `image` `FileKind` (png, jpg/jpeg, gif, webp, avif, bmp, ico, svg), a
+  raw-bytes endpoint (`GET /api/projects/:slug/files/:name?raw=1`) that streams the
+  file with the correct `Content-Type` (keeping the path-traversal guard), and an
+  `<img>` branch in the file viewer that loads from it. Image bytes are no longer
+  UTF-8-decoded. Byte responses carry a locked-down CSP (`sandbox; default-src
+'none'`) + `nosniff` so a directly-opened SVG/HTML file can't execute script in
+  the app's origin.
+
 ## 0.4.0
 
 ### Minor Changes
