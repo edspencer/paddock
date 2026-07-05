@@ -1,5 +1,11 @@
 # @paddock/web
 
+## 0.4.2
+
+### Patch Changes
+
+- [#67](https://github.com/edspencer/paddock/pull/67) [`46d5d5d`](https://github.com/edspencer/paddock/commit/46d5d5d9a15479fb9031dee0b9b12debb4aab1a5) Thanks [@edspencer](https://github.com/edspencer)! - Show the Paddock version in the sidebar. The bottom-left tagline ("Project-first Claude Code, hosted.") is replaced with the running version (e.g. `v0.4.1`), injected at build time from the package version via a Vite `__APP_VERSION__` define.
+
 ## 0.4.1
 
 ### Patch Changes
