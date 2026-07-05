@@ -1,5 +1,45 @@
 # @paddock/server
 
+## 0.4.0
+
+### Minor Changes
+
+- [#59](https://github.com/edspencer/paddock/pull/59) [`ef44f8b`](https://github.com/edspencer/paddock/commit/ef44f8b0da36d080e0f326b70fe4c7a11dd7a9e3) Thanks [@edspencer](https://github.com/edspencer)! - Surface which chats are streaming, and restore the Stop button when you return to
+  a live chat (#52, #53).
+
+  The server now exposes a session's live-turn status via a `chat:active` signal —
+  broadcast on every turn start/stop, sent as a snapshot to a newly-connected
+  socket, and sent in reply to a `chat:subscribe` for a running session. It carries
+  the running flag + the cancellable `jobId`.
+
+  - **#52 — Stop button restored on return.** Switching away from a still-streaming
+    chat and back remounts the pane, which previously lost all in-flight state, so
+    the composer showed Send (no Stop) and the running turn became uninterruptible.
+    A remounting pane now learns its turn is live (with the job id) the instant it
+    re-subscribes, so the Stop button — already correctly wired — comes back.
+  - **#53 — streaming indicators.** A persistent "agent is working…" pill (with
+    cycling status text) shows under the transcript whenever a turn is in flight,
+    including the initial thinking gap and the gaps between tool calls, and it lights
+    up immediately on return to a streaming chat. The project sidebar shows a small
+    pulsing dot next to any chat that is currently streaming — driven in real time
+    from the `chat:active` broadcasts, so it works even for chats whose pane isn't
+    mounted.
+
+- [#58](https://github.com/edspencer/paddock/pull/58) [`28f06ea`](https://github.com/edspencer/paddock/commit/28f06ea618ed58178327a78792735f9337af8ce5) Thanks [@edspencer](https://github.com/edspencer)! - Chat streams now survive a mid-turn socket drop (#54). A turn's frames were bound
+  to the single socket that started it and silently dropped whenever it wasn't
+  `OPEN`, so an idle/half-open drop (sleep, wifi change, tab suspend, the client's
+  own reconnect) stalled the live stream until a manual reload.
+
+  The server now tracks each session's in-flight turn in a `SessionHub` with a
+  bounded, seq-numbered frame buffer and fans frames out to whichever socket(s) are
+  attached — not just the origin. A new `chat:subscribe` message lets a
+  reconnecting client re-attach to a running turn and replay exactly the frames it
+  missed (by `seq`), so the stream resumes seamlessly with no gap and no
+  duplication. A just-completed turn's buffer lingers briefly so an end-of-turn
+  reconnect still receives the terminal frame; if the missed gap has aged out of
+  the buffer the server sends `chat:resync` and the client re-hydrates from the
+  transcript.
+
 ## 0.3.1
 
 ### Patch Changes
