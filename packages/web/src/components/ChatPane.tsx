@@ -381,6 +381,17 @@ export function ChatPane({
     // A brand-new chat won't know its session id until the first frame arrives;
     // flag that we're awaiting it so those frames are accepted as ours.
     if (sessionRef.current === null) awaitingSessionRef.current = true;
+
+    // A leading-slash draft is a slash command (e.g. "/compact"): route it to
+    // the streaming-session path so the CLI dispatches it, rather than sending
+    // it as a plain prompt. Commands carry no preload/model — they act on the
+    // current session as-is.
+    if (text.startsWith("/")) {
+      firstTurnSentRef.current = true;
+      chatClient.sendCommand(projectSlug, text, sessionRef.current);
+      return;
+    }
+
     // Preload only applies to the very first turn of a never-resumed chat.
     const isFirstTurnOfNewChat = isNewSessionRef.current && !firstTurnSentRef.current;
     const preload = isProjectChat && isFirstTurnOfNewChat && preloadContext;

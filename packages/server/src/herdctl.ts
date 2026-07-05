@@ -336,6 +336,48 @@ export class HerdctlService {
     });
   }
 
+  /**
+   * Run a slash command (e.g. `/compact`) against an agent's chat session.
+   *
+   * Unlike {@link chat}, which sends the text as a one-shot prompt via
+   * `trigger()`, this drives herdctl's streaming session (`openChatSession`) —
+   * the only mode in which the SDK dispatches slash commands and exposes control
+   * requests. The command runs against the resumed `sessionId`, so `/compact`
+   * compacts the real chat history. SDK messages stream via `onMessage` (same
+   * shape as {@link chat}); resolves when the turn completes, then closes the
+   * session. Returns the resolved session id.
+   */
+  async runCommand(
+    agentName: string,
+    opts: {
+      command: string;
+      resume?: string | null;
+      onMessage?: (msg: SDKMessage) => void | Promise<void>;
+    },
+  ): Promise<{ sessionId: string | null }> {
+    const session = await this.manager.openChatSession(agentName, { resume: opts.resume });
+    let sessionId: string | null = typeof opts.resume === "string" ? opts.resume : null;
+
+    // Consume the stream until the turn completes (a `result` message). Set up
+    // the consumer BEFORE sending so no early messages are missed.
+    const done = (async () => {
+      try {
+        for await (const m of session.messages) {
+          if (m.session_id) sessionId = m.session_id;
+          if (opts.onMessage) await opts.onMessage(m);
+          if (m.type === "result") break;
+        }
+      } catch {
+        // Stream error — fall through and let the caller surface completion.
+      }
+    })();
+
+    await session.send(opts.command);
+    await done;
+    await session.close();
+    return { sessionId };
+  }
+
   /** Cancel a running job (best-effort; used by WS chat:cancel). */
   async cancel(jobId: string): Promise<void> {
     await this.manager.cancelJob(jobId).catch(() => undefined);
