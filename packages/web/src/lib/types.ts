@@ -46,9 +46,13 @@ export interface ModelInfo {
 }
 
 /** Render-kind hint for a project file, derived server-side from its extension. */
-export type FileKind = "markdown" | "html" | "text";
+export type FileKind = "markdown" | "html" | "text" | "image";
 
-/** A single project file's content + how it should be rendered (GET /files/:name). */
+/**
+ * A single project file's content + how it should be rendered (GET /files/:name).
+ * For an `image` kind `content` is empty — the bytes are loaded from the raw
+ * endpoint (`?raw=1`) via an <img>; see `api.projectFileRawUrl` (issue #61).
+ */
 export interface ProjectFile {
   name: string;
   kind: FileKind;

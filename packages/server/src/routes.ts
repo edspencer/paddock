@@ -245,15 +245,31 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     }
   });
 
-  // Single file content + a render-kind hint (markdown | html | text), derived
-  // from the extension. Path-traversal guarded by ProjectStore.readFile. Feeds
-  // the UI's markdown/Mermaid + sandboxed-iframe renderers (issue #3).
-  app.get<{ Params: { slug: string; name: string } }>(
+  // Single file content + a render-kind hint (markdown | html | text | image),
+  // derived from the extension. Path-traversal guarded by ProjectStore. Feeds the
+  // UI's markdown/Mermaid + sandboxed-iframe renderers (issue #3).
+  //
+  // With `?raw=1` it instead streams the file's RAW BYTES with the correct
+  // Content-Type (issue #61) — how the image viewer loads an <img>, so binary
+  // bytes are no longer mangled by UTF-8 decoding. Byte responses are locked
+  // down (CSP sandbox + nosniff + inline disposition) so a directly-opened SVG
+  // or HTML file can't execute script in the app's origin.
+  app.get<{ Params: { slug: string; name: string }; Querystring: { raw?: string } }>(
     "/api/projects/:slug/files/:name",
     async (req, reply) => {
       try {
         await projects.get(req.params.slug); // 404s for unknown slug
         const name = decodeURIComponent(req.params.name);
+        if (req.query.raw !== undefined && req.query.raw !== "0" && req.query.raw !== "false") {
+          const { bytes, mime } = await projects.readFileBytes(req.params.slug, name);
+          return reply
+            .header("content-type", mime)
+            .header("content-disposition", "inline")
+            .header("x-content-type-options", "nosniff")
+            .header("content-security-policy", "sandbox; default-src 'none'")
+            .header("cache-control", "private, max-age=60")
+            .send(bytes);
+        }
         return await projects.readFileWithKind(req.params.slug, name);
       } catch (err) {
         return sendProjectError(reply, err);

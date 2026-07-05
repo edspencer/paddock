@@ -5,7 +5,14 @@ import { FileView } from "./FileView";
 const getProjectFile = vi.fn();
 vi.mock("../lib/api", async () => {
   const actual = await vi.importActual<typeof import("../lib/api")>("../lib/api");
-  return { ...actual, api: { getProjectFile: (...a: unknown[]) => getProjectFile(...a) } };
+  return {
+    ...actual,
+    api: {
+      getProjectFile: (...a: unknown[]) => getProjectFile(...a),
+      projectFileRawUrl: (slug: string, name: string) =>
+        `/api/projects/${slug}/files/${name}?raw=1`,
+    },
+  };
 });
 
 // Mermaid is heavy + async; stub it so a markdown file with a ```mermaid fence
@@ -48,6 +55,15 @@ describe("FileView: render-kind routing", () => {
     expect(frame.getAttribute("sandbox")).not.toContain("allow-same-origin");
     expect(frame.getAttribute("srcdoc")).toContain("<h1>hi</h1>");
     expect(screen.getByText(/sandboxed frame/i)).toBeInTheDocument();
+  });
+
+  it("renders an image file as an <img> loaded from the raw endpoint (issue #61)", async () => {
+    getProjectFile.mockResolvedValue({ name: "shot.png", kind: "image", content: "" });
+    render(<FileView slug="p" name="shot.png" />);
+    const img = (await screen.findByAltText("shot.png")) as HTMLImageElement;
+    expect(img.tagName).toBe("IMG");
+    // Loads the bytes from the raw endpoint, not the mangled JSON/UTF-8 content.
+    expect(img.getAttribute("src")).toContain("/files/shot.png?raw=1");
   });
 
   it("renders a text file as monospace preformatted content", async () => {
