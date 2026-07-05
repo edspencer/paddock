@@ -358,12 +358,24 @@ export function ChatPane({
         setTurns((prev) => sealStreaming(prev));
         setError(err);
       },
+      onResync: () => {
+        // Rare (#54): the server's live-turn buffer aged out before we could
+        // re-attach, so it asked us to re-hydrate. Reload the transcript to catch
+        // up on the gap; live frames for the still-running turn keep appending.
+        const sid = sessionRef.current;
+        if (!sid || !loadHistory) return;
+        void loadHistory(sid)
+          .then((msgs) => setTurns(msgs.map(historyToTurn)))
+          .catch(() => {
+            /* keep whatever we already have */
+          });
+      },
     });
     return () => {
       sub.unsubscribe();
     };
     // Re-subscribe when the chat identity changes.
-  }, [projectSlug, initialSessionId, onSessionEstablished, onSessionStarted, onTurnComplete]);
+  }, [projectSlug, initialSessionId, loadHistory, onSessionEstablished, onSessionStarted, onTurnComplete]);
 
   // --- send / cancel ---------------------------------------------------------
   const send = useCallback(() => {

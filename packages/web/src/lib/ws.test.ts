@@ -380,3 +380,73 @@ describe("ws: heartbeat + revive (issue #46)", () => {
     sub.unsubscribe();
   });
 });
+
+describe("ws: session re-attach (issue #54)", () => {
+  const subscribes = (ws: FakeWebSocket) =>
+    ws.sent.map((s) => JSON.parse(s)).filter((m) => m.type === "chat:subscribe");
+
+  it("a fresh subscribe attaches the session future-only (no replay)", () => {
+    const sub = chatClient.subscribe("re", "sess-1", handlers());
+    last().open();
+    const attach = subscribes(last()).at(-1);
+    expect(attach).toMatchObject({
+      type: "chat:subscribe",
+      payload: { projectSlug: "re", sessionId: "sess-1", wantReplay: false },
+    });
+    sub.unsubscribe();
+  });
+
+  it("re-attaches a MID-TURN chat on reconnect asking to replay the gap after its lastSeq", () => {
+    vi.useFakeTimers();
+    const sub = chatClient.subscribe("re", "sess-1", handlers());
+    last().open();
+    const ws1 = last();
+
+    // A turn is in flight and we've applied through seq 2.
+    chatClient.send("re", "hi", "sess-1");
+    ws1.emit({ type: "chat:response", payload: { projectSlug: "re", sessionId: "sess-1", jobId: "j", chunk: "a", seq: 0 } });
+    ws1.emit({ type: "chat:response", payload: { projectSlug: "re", sessionId: "sess-1", jobId: "j", chunk: "b", seq: 1 } });
+    ws1.emit({ type: "chat:tool_call", payload: { projectSlug: "re", sessionId: "sess-1", jobId: "j", toolName: "Read", output: "x", isError: false, seq: 2 } });
+
+    // The socket drops mid-turn and a new one connects.
+    ws1.close();
+    vi.advanceTimersByTime(1000);
+    const ws2 = last();
+    expect(ws2).not.toBe(ws1);
+    ws2.open();
+
+    // On reconnect it re-attaches with wantReplay + the exact gap cursor.
+    const attach = subscribes(ws2).at(-1);
+    expect(attach).toMatchObject({
+      payload: { projectSlug: "re", sessionId: "sess-1", wantReplay: true, lastSeq: 2 },
+    });
+    sub.unsubscribe();
+  });
+
+  it("after a turn completes, a reconnect re-attaches future-only (no stale replay)", () => {
+    vi.useFakeTimers();
+    const sub = chatClient.subscribe("re", "sess-1", handlers());
+    last().open();
+    const ws1 = last();
+    chatClient.send("re", "hi", "sess-1");
+    ws1.emit({ type: "chat:response", payload: { projectSlug: "re", sessionId: "sess-1", jobId: "j", chunk: "a", seq: 0 } });
+    ws1.emit({ type: "chat:complete", payload: { projectSlug: "re", sessionId: "sess-1", jobId: "j", success: true, seq: 1 } });
+
+    ws1.close();
+    vi.advanceTimersByTime(1000);
+    const ws2 = last();
+    ws2.open();
+    // Turn is over → turnActive is false → no replay requested (would duplicate).
+    expect(subscribes(ws2).at(-1)).toMatchObject({ payload: { wantReplay: false } });
+    sub.unsubscribe();
+  });
+
+  it("delivers chat:resync to onResync (transcript re-hydrate fallback)", () => {
+    const onResync = vi.fn();
+    const sub = chatClient.subscribe("rs", "sess-1", { ...handlers(), onResync });
+    last().open();
+    last().emit({ type: "chat:resync", payload: { projectSlug: "rs", sessionId: "sess-1" } } as unknown as ServerWsMessage);
+    expect(onResync).toHaveBeenCalledTimes(1);
+    sub.unsubscribe();
+  });
+});

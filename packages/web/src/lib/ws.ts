@@ -44,6 +44,12 @@ export interface ChatHandlers {
     usage?: ChatCompleteUsage;
   }) => void;
   onError?: (error: string) => void;
+  /**
+   * The server couldn't replay the missed gap of a live turn (its buffer aged
+   * out) and asks the client to re-hydrate from the transcript instead (issue
+   * #54). Rare fallback — the caller should reload this chat's history.
+   */
+  onResync?: () => void;
 }
 
 export type ConnectionState = "connecting" | "open" | "closed";
@@ -54,6 +60,19 @@ interface Subscription {
   /** Known session id, if resuming or once the server reports it. May update. */
   sessionId: string | null;
   handlers: ChatHandlers;
+  /**
+   * The highest per-turn `seq` this chat has applied for the CURRENT turn, or -1
+   * between turns (reset when a new turn is sent). On reconnect it's sent back so
+   * the server replays exactly the frames missed after it (issue #54).
+   */
+  lastSeq: number;
+  /**
+   * True while a turn is in flight for this chat (from send/first-frame until
+   * complete). Gates whether a reconnect asks for a gap replay vs. future-only
+   * frames — a fresh mount (no active turn) must NOT replay, or buffered frames
+   * would duplicate the transcript it just hydrated.
+   */
+  turnActive: boolean;
 }
 
 const PING_INTERVAL_MS = 25_000;
@@ -128,17 +147,45 @@ class ChatClient {
     handlers: ChatHandlers,
   ): { setSessionId: (id: string | null) => void; unsubscribe: () => void } {
     const key = Symbol("chat-sub");
-    this.subs.set(key, { projectSlug, sessionId, handlers });
+    const sub: Subscription = { projectSlug, sessionId, handlers, lastSeq: -1, turnActive: false };
+    this.subs.set(key, sub);
     this.connect();
+    // A fresh mount attaches future-only (no replay): it hydrates the transcript
+    // over REST, so replaying buffered frames would duplicate it.
+    if (sessionId) this.attachSession(sub, false);
     return {
       setSessionId: (id: string | null) => {
-        const sub = this.subs.get(key);
-        if (sub) sub.sessionId = id;
+        const s = this.subs.get(key);
+        if (!s) return;
+        s.sessionId = id;
+        // Now that this chat knows its session id, register the socket→session
+        // mapping so a later reconnect can re-attach this turn to a new socket.
+        if (id) this.attachSession(s, false);
       },
       unsubscribe: () => {
         this.subs.delete(key);
       },
     };
+  }
+
+  /**
+   * Tell the server this socket is attached to a chat's session (issue #54). When
+   * `wantReplay`, ask it to replay the frames missed after `sub.lastSeq` — used on
+   * a reconnect of a socket that was mid-turn. A no-op without a session id.
+   */
+  private attachSession(sub: Subscription, wantReplay: boolean): void {
+    if (!sub.sessionId) return;
+    this.transmit(
+      JSON.stringify({
+        type: "chat:subscribe",
+        payload: {
+          projectSlug: sub.projectSlug,
+          sessionId: sub.sessionId,
+          wantReplay,
+          lastSeq: sub.lastSeq,
+        },
+      }),
+    );
   }
 
   send(
@@ -155,7 +202,22 @@ class ChatClient {
     // re-registers the agent with it (last-write-wins per project). Omit when
     // unset so the server falls back to the project/keeper default.
     if (opts?.model) payload.model = opts.model;
+    this.markTurnStart(projectSlug, sessionId);
     this.transmit(JSON.stringify({ type: "chat:send", payload }));
+  }
+
+  /**
+   * A new turn is starting for a chat: reset its per-turn `seq` baseline and mark
+   * it in flight, so a reconnect mid-turn re-attaches with a gap replay from the
+   * right point (issue #54). Matches the chat by slug + (possibly null) session id.
+   */
+  private markTurnStart(projectSlug: string, sessionId: string | null): void {
+    for (const sub of this.subs.values()) {
+      if (sub.projectSlug === projectSlug && sub.sessionId === sessionId) {
+        sub.lastSeq = -1;
+        sub.turnActive = true;
+      }
+    }
   }
 
   /**
@@ -165,6 +227,7 @@ class ChatClient {
    * same response/tool/complete handlers as a normal turn.
    */
   sendCommand(projectSlug: string, command: string, sessionId: string | null): void {
+    this.markTurnStart(projectSlug, sessionId);
     this.transmit(
       JSON.stringify({ type: "chat:command", payload: { projectSlug, sessionId, command } }),
     );
@@ -246,6 +309,12 @@ class ChatClient {
       this.lastPongAt = Date.now();
       this.setState("open");
       this.flushOutbox();
+      // Re-attach every known chat to this (possibly new) socket. A chat that was
+      // mid-turn when the old socket dropped asks for a gap replay so its stream
+      // resumes seamlessly; an idle chat attaches future-only (issue #54).
+      for (const sub of this.subs.values()) {
+        if (sub.sessionId) this.attachSession(sub, sub.turnActive);
+      }
       this.startPing();
     };
     ws.onclose = () => {
@@ -362,10 +431,22 @@ class ChatClient {
       return;
     }
 
+    if (msg.type === "chat:resync") {
+      const sub = this.route(slug, msg.payload.sessionId);
+      sub?.handlers.onResync?.();
+      return;
+    }
+
     const { sessionId, jobId } = msg.payload;
     const sub = this.route(slug, sessionId);
     if (!sub) return;
     const meta = { sessionId, jobId };
+
+    // Track the per-turn seq so a reconnect can replay exactly the missed gap,
+    // and the in-flight flag so it knows whether to ask for a replay (issue #54).
+    const seq = (msg.payload as { seq?: number }).seq;
+    if (typeof seq === "number" && seq > sub.lastSeq) sub.lastSeq = seq;
+    sub.turnActive = msg.type !== "chat:complete";
 
     switch (msg.type) {
       case "chat:response":
