@@ -21,7 +21,7 @@
     "@fastify/static": "7.0.4",
     "@fastify/websocket": "10.0.1",
     "@herdctl/chat": "^0.4.3",
-    "@herdctl/core": "^5.13.2",
+    "@herdctl/core": "file:../../../herdctl/packages/core",
     "fastify": "4.28.1",
     "jose": "^6.2.3",
     "yaml": "2.5.1"

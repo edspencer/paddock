@@ -131,6 +131,18 @@ class ChatClient {
     this.transmit(JSON.stringify({ type: "chat:send", payload }));
   }
 
+  /**
+   * Run a slash command (e.g. `/compact`) in the current chat. Unlike `send`,
+   * the server drives herdctl's streaming session so the CLI dispatches the
+   * command instead of treating it as a plain prompt. Output arrives over the
+   * same response/tool/complete handlers as a normal turn.
+   */
+  sendCommand(projectSlug: string, command: string, sessionId: string | null): void {
+    this.transmit(
+      JSON.stringify({ type: "chat:command", payload: { projectSlug, sessionId, command } }),
+    );
+  }
+
   cancel(jobId: string): void {
     this.transmit(JSON.stringify({ type: "chat:cancel", payload: { jobId } }));
   }

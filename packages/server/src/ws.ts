@@ -167,11 +167,36 @@ export interface ChatCancelMessage {
   payload: { jobId: string };
 }
 
+/**
+ * Run a slash command (e.g. `/compact`) in the current chat.
+ *
+ * Unlike `chat:send`, this drives herdctl's streaming session so the CLI
+ * dispatches the command instead of treating the text as a plain prompt. The
+ * command acts on the resumed `sessionId`, so `/compact` compacts the real
+ * chat history. Output streams back over the same `chat:response` /
+ * `chat:tool_call` / `chat:complete` events as a normal turn.
+ */
+export interface ChatCommandMessage {
+  type: "chat:command";
+  payload: {
+    projectSlug?: string;
+    target?: string;
+    /** Session the command runs against. Required (a command needs a chat). */
+    sessionId?: string | null;
+    /** The full command text, including the leading slash (e.g. "/compact"). */
+    command: string;
+  };
+}
+
 export interface PingMessage {
   type: "ping";
 }
 
-export type ClientMessage = ChatSendMessage | ChatCancelMessage | PingMessage;
+export type ClientMessage =
+  | ChatSendMessage
+  | ChatCommandMessage
+  | ChatCancelMessage
+  | PingMessage;
 
 // --- server -> client --------------------------------------------------------
 
@@ -266,6 +291,13 @@ export function isClientMessage(data: unknown): data is ClientMessage {
     if (p.model !== undefined && typeof p.model !== "string") return false;
     return p.sessionId === undefined || p.sessionId === null || typeof p.sessionId === "string";
   }
+  if (m.type === "chat:command") {
+    const p = m.payload as Record<string, unknown> | undefined;
+    if (!p || typeof p.command !== "string" || p.command.length === 0) return false;
+    const slug = p.projectSlug ?? p.target;
+    if (typeof slug !== "string") return false;
+    return p.sessionId === undefined || p.sessionId === null || typeof p.sessionId === "string";
+  }
   return false;
 }
 
@@ -302,6 +334,10 @@ export function makeChatHandler(deps: {
       }
       if (parsed.type === "chat:cancel") {
         void deps.herdctl.cancel(parsed.payload.jobId).catch(() => undefined);
+        return;
+      }
+      if (parsed.type === "chat:command") {
+        void onChatCommand(parsed);
         return;
       }
       void onChatSend(parsed);
@@ -466,6 +502,124 @@ export function makeChatHandler(deps: {
             jobId: result.jobId ?? jobId,
             success: result.success,
             error: result.error?.message,
+            ...(completeUsage ? { model: completeModel, usage: completeUsage } : {}),
+          },
+        });
+      } catch (err) {
+        send({
+          type: "chat:error",
+          payload: {
+            projectSlug: slug,
+            target: slug,
+            error: err instanceof Error ? err.message : String(err),
+          },
+        });
+      }
+    };
+
+    /**
+     * Handle a slash command (`chat:command`) by driving herdctl's streaming
+     * session. Output is streamed back over the same events as a normal turn;
+     * a `compact_boundary` is surfaced as a synthetic assistant note so the UI
+     * shows a visible confirmation, and post-command usage refreshes the meter.
+     */
+    const onChatCommand = async (msg: ChatCommandMessage): Promise<void> => {
+      const slug = (msg.payload.projectSlug ?? msg.payload.target) as string;
+      const { command, sessionId } = msg.payload;
+      let resolvedSession: string | null = sessionId ?? null;
+      const seen: { usage: TurnUsage | null; model: string | null } = { usage: null, model: null };
+
+      const routing = (): Routing => ({
+        projectSlug: slug,
+        target: slug,
+        sessionId: resolvedSession,
+        jobId: null,
+      });
+
+      const translate = createSDKMessageHandler({
+        onText: (chunk) => {
+          if (chunk) send({ type: "chat:response", payload: { ...routing(), chunk } });
+        },
+        onBoundary: () => {
+          send({ type: "chat:message_boundary", payload: routing() });
+        },
+        onToolCall: (call) => {
+          send({
+            type: "chat:tool_call",
+            payload: {
+              ...routing(),
+              toolName: call.toolName,
+              inputSummary: call.inputSummary,
+              output: call.output,
+              isError: call.isError,
+              durationMs: call.durationMs,
+            },
+          });
+        },
+      });
+
+      try {
+        // Commands need an existing chat to act on; scratch resolves to its
+        // agent, a project to its keeper (verifying the project exists).
+        let agentName: string;
+        if (slug === SCRATCH_SLUG) {
+          agentName = SCRATCH_AGENT;
+        } else {
+          await deps.projects.get(slug); // throws if the project is unknown
+          agentName = keeperAgentName(slug);
+        }
+
+        const { sessionId: finalSession } = await deps.herdctl.runCommand(agentName, {
+          command,
+          resume: resolvedSession,
+          onMessage: async (m: SDKMessage) => {
+            if (m.session_id) resolvedSession = m.session_id;
+            const ex = extractUsage(m);
+            if (ex.usage) seen.usage = ex.usage;
+            if (ex.model) seen.model = ex.model;
+            // Surface a compaction as a visible assistant note (the SDK reports
+            // it as a system/compact_boundary, which the text translator skips).
+            if (m.type === "system" && m.subtype === "compact_boundary") {
+              const pre = (m.compact_metadata as { pre_tokens?: number } | undefined)?.pre_tokens;
+              const detail = typeof pre === "number" ? ` (was ${pre.toLocaleString()} tokens)` : "";
+              send({
+                type: "chat:response",
+                payload: { ...routing(), chunk: `🗜️ Context compacted${detail}.` },
+              });
+              send({ type: "chat:message_boundary", payload: routing() });
+              return;
+            }
+            await translate(m as unknown as ChatSDKMessage);
+          },
+        });
+        if (finalSession) resolvedSession = finalSession;
+
+        // Refresh the session list (a command can change history) — non-fatal.
+        try {
+          deps.herdctl.invalidateSessions(agentName);
+        } catch {
+          /* non-fatal */
+        }
+
+        const completeModel = seen.model ?? KEEPER_DEFAULT_MODEL;
+        const seenUsage = seen.usage;
+        const completeUsage: ChatCompleteUsage | undefined = seenUsage
+          ? {
+              inputTokens: seenUsage.inputTokens,
+              outputTokens: seenUsage.outputTokens,
+              cacheReadTokens: seenUsage.cacheReadTokens,
+              cacheCreationTokens: seenUsage.cacheCreationTokens,
+              contextTokens:
+                seenUsage.inputTokens + seenUsage.cacheReadTokens + seenUsage.cacheCreationTokens,
+              contextLimit: getContextLimit(completeModel),
+            }
+          : undefined;
+
+        send({
+          type: "chat:complete",
+          payload: {
+            ...routing(),
+            success: true,
             ...(completeUsage ? { model: completeModel, usage: completeUsage } : {}),
           },
         });
