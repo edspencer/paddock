@@ -12,7 +12,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { SweepService } from "../../src/sweep.js";
+import { SweepService, stripBoxConventions } from "../../src/sweep.js";
 import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
 
 /** A discovered-session stub (only the fields the sweep reads). */
@@ -217,5 +217,83 @@ describe("SweepService", () => {
     await new Promise((r) => setTimeout(r, 50));
     expect(runSweeper).not.toHaveBeenCalled();
     svc.stop();
+  });
+
+  it("normalizes the sweeper's OVERVIEW before writing (strips box-dev sections)", async () => {
+    const withBoxConventions =
+      "<<<OVERVIEW>>>\n# Demo\n\nA thing.\n\n" +
+      "## Local Development\n\nClone into scratch/clones and run `vite` on localhost:4100.\n\n" +
+      "## Architecture\n\nMatters.\n<<<CHANGELOG>>>\nDid a thing.\n<<<END>>>";
+    const { svc } = makeService({ sweeperText: withBoxConventions });
+    svc.enqueue("demo");
+    await vi.waitFor(() => expect(overviewWrites.length).toBe(1), { timeout: 2000 });
+    expect(overviewWrites[0]).toContain("# Demo");
+    expect(overviewWrites[0]).toContain("## Architecture");
+    expect(overviewWrites[0]).not.toContain("Local Development");
+    expect(overviewWrites[0]).not.toContain("localhost:4100");
+    svc.stop();
+  });
+});
+
+describe("stripBoxConventions", () => {
+  it("drops a Local Development section and keeps the rest", () => {
+    const input =
+      "# Demo\n\nWhat it is.\n\n" +
+      "## Local Development\n\nRun `vite` on localhost:4100, backend on :4200.\n\n" +
+      "## Architecture\n\nThe real project facts.\n";
+    const out = stripBoxConventions(input);
+    expect(out).toContain("# Demo");
+    expect(out).toContain("## Architecture");
+    expect(out).toContain("The real project facts.");
+    expect(out).not.toContain("Local Development");
+    expect(out).not.toContain("localhost:4100");
+    expect(out).not.toContain(":4200");
+  });
+
+  it("drops a dropped section's sub-headings but resumes at a same-level heading", () => {
+    const input =
+      "## Running Locally\n\ntext\n\n### Ports\n\n5001\n\n## Decisions\n\nkeep me\n";
+    const out = stripBoxConventions(input);
+    expect(out).not.toContain("Running Locally");
+    expect(out).not.toContain("Ports");
+    expect(out).not.toContain("5001");
+    expect(out).toContain("## Decisions");
+    expect(out).toContain("keep me");
+  });
+
+  it.each([
+    "## Dev Server",
+    "## Development Server",
+    "## Preview Server",
+    "## Run Locally",
+    "## How to Run",
+    "## Local Setup",
+    "### Dev Environment",
+    "# Serving the App",
+  ])("recognizes box-ops heading %s", (heading) => {
+    // Terminate with a level-1 heading so it closes a dropped section at any level.
+    const out = stripBoxConventions(`${heading}\n\ndrop this\n\n# Keep\n\nkeep this\n`);
+    expect(out).not.toContain("drop this");
+    expect(out).toContain("keep this");
+  });
+
+  it("leaves unrelated content untouched", () => {
+    const input = "# Project\n\n## Goals\n\nShip it.\n\n## Open Questions\n\nWhat next?\n";
+    expect(stripBoxConventions(input)).toBe(input.trimEnd());
+  });
+
+  it("does not treat 'development' inside prose or unrelated headings as a match", () => {
+    const input = "# App\n\n## Development Roadmap\n\nQ3 plans.\n";
+    expect(stripBoxConventions(input)).toContain("Development Roadmap");
+  });
+
+  it("returns the original when stripping would empty the document", () => {
+    const input = "## Local Development\n\nonly this section exists\n";
+    // Nothing survives → fall back to the original rather than write a blank file.
+    expect(stripBoxConventions(input)).toBe(input);
+  });
+
+  it("handles empty input", () => {
+    expect(stripBoxConventions("")).toBe("");
   });
 });
