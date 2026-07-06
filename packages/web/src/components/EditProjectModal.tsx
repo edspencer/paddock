@@ -1,14 +1,24 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../lib/api";
-import type { Project, ProjectStatus } from "../lib/types";
+import type { ModelInfo, Project, ProjectStatus } from "../lib/types";
 import { AREAS } from "../lib/areas";
 import { XIcon } from "./icons";
 
 const STATUSES: ProjectStatus[] = ["idea", "active", "paused", "blocked", "done", "abandoned"];
 
+/** Keeper permission modes offered here — mirrors the server's PERMISSION_MODES. */
+const PERMISSION_MODES: { value: string; label: string }[] = [
+  { value: "default", label: "Default (ask each time)" },
+  { value: "acceptEdits", label: "Accept edits" },
+  { value: "plan", label: "Plan only" },
+  { value: "bypassPermissions", label: "Bypass all (use with care)" },
+];
+
 /**
- * Edit a project's mutable metadata (status, summary, domain tags). The slug
- * and dates are immutable server-side, so they're not editable here.
+ * Edit a project's mutable metadata (status, summary, domain tags, area) plus
+ * its keeper-agent settings (model, permission mode, max turns, Docker sandbox —
+ * issue #12; changing these re-registers the keeper server-side). The slug and
+ * dates are immutable server-side, so they're not editable here.
  */
 export function EditProjectModal({
   open,
@@ -25,6 +35,12 @@ export function EditProjectModal({
   const [domain, setDomain] = useState(project.domain.join(", "));
   const [group, setGroup] = useState(project.group ?? "");
   const [status, setStatus] = useState<ProjectStatus>(project.status);
+  // Keeper-agent settings (issue #12).
+  const [model, setModel] = useState(project.model);
+  const [permissionMode, setPermissionMode] = useState(project.permissionMode);
+  const [maxTurns, setMaxTurns] = useState(String(project.maxTurns));
+  const [docker, setDocker] = useState(project.docker);
+  const [models, setModels] = useState<ModelInfo[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -35,6 +51,10 @@ export function EditProjectModal({
       setDomain(project.domain.join(", "));
       setGroup(project.group ?? "");
       setStatus(project.status);
+      setModel(project.model);
+      setPermissionMode(project.permissionMode);
+      setMaxTurns(String(project.maxTurns));
+      setDocker(project.docker);
       setError(null);
     }
     const onKey = (e: KeyboardEvent) => {
@@ -43,6 +63,23 @@ export function EditProjectModal({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open, busy, onClose, project]);
+
+  // Load the selectable models when the modal opens (for the model picker).
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    api
+      .getModels()
+      .then((r) => {
+        if (!cancelled) setModels(r.models);
+      })
+      .catch(() => {
+        /* non-fatal: the current model is still shown as the selected option */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   if (!open) return null;
 
@@ -59,6 +96,10 @@ export function EditProjectModal({
           .split(",")
           .map((d) => d.trim())
           .filter(Boolean),
+        model,
+        permissionMode,
+        maxTurns: Number(maxTurns),
+        docker,
       });
       onSaved(updated);
     } catch (err) {
@@ -142,6 +183,65 @@ export function EditProjectModal({
               ))}
             </select>
           </label>
+        </div>
+
+        {/* Keeper-agent settings (issue #12). Changing these re-registers the
+            project's keeper agent server-side. */}
+        <div className="mb-5 rounded-xl border border-paddock-200 p-3 dark:border-paddock-800">
+          <p className="field-label mb-2">Keeper agent</p>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="field-label">Model</span>
+              <select className="input" value={model} onChange={(e) => setModel(e.target.value)}>
+                {/* Keep the current model selectable even if the list hasn't
+                    loaded (or it's since been removed from the picker). */}
+                {!models.some((m) => m.id === model) && <option value={model}>{model}</option>}
+                {models.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="field-label">Permission mode</span>
+              <select
+                className="input"
+                value={permissionMode}
+                onChange={(e) => setPermissionMode(e.target.value)}
+              >
+                {!PERMISSION_MODES.some((m) => m.value === permissionMode) && (
+                  <option value={permissionMode}>{permissionMode}</option>
+                )}
+                {PERMISSION_MODES.map((m) => (
+                  <option key={m.value} value={m.value}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="field-label">Max turns</span>
+              <input
+                type="number"
+                min={1}
+                max={1000}
+                step={1}
+                className="input"
+                value={maxTurns}
+                onChange={(e) => setMaxTurns(e.target.value)}
+              />
+            </label>
+            <label className="flex cursor-pointer items-center gap-2 self-end pb-2">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-accent"
+                checked={docker}
+                onChange={(e) => setDocker(e.target.checked)}
+              />
+              <span className="text-sm text-paddock-700 dark:text-paddock-200">Docker sandbox</span>
+            </label>
+          </div>
         </div>
 
         {error && (

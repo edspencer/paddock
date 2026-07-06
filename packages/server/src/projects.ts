@@ -17,7 +17,12 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
-import { KEEPER_DEFAULT_MODEL } from "./models.js";
+import {
+  KEEPER_DEFAULT_MODEL,
+  KEEPER_DEFAULT_PERMISSION_MODE,
+  KEEPER_DEFAULT_MAX_TURNS,
+  KEEPER_DEFAULT_DOCKER,
+} from "./models.js";
 
 /** project.yaml status enum (matches the documented standard). */
 export type ProjectStatus =
@@ -106,6 +111,14 @@ export interface ProjectYaml {
    * absent value resolves to KEEPER_DEFAULT_MODEL in the DTO. (CONTRACT-v3 §4.)
    */
   model?: string;
+  /**
+   * Per-project keeper-agent overrides (issue #12). All optional on disk — an
+   * absent value inherits the fleet default and resolves to the concrete default
+   * in the DTO. `permissionMode`/`maxTurns`/`docker` (Docker isolation on/off).
+   */
+  permissionMode?: string;
+  maxTurns?: number;
+  docker?: boolean;
 }
 
 /** API-facing project DTO (adds derived fields). */
@@ -126,6 +139,12 @@ export interface Project extends ProjectYaml {
    * KEEPER_DEFAULT_MODEL`), even though it's optional on disk.
    */
   model: string;
+  /** Keeper permission mode — ALWAYS concrete in the DTO (issue #12). */
+  permissionMode: string;
+  /** Keeper max_turns — ALWAYS concrete in the DTO (issue #12). */
+  maxTurns: number;
+  /** Whether the keeper runs in a Docker sandbox — ALWAYS concrete (issue #12). */
+  docker: boolean;
 }
 
 export interface CreateProjectInput {
@@ -143,7 +162,17 @@ export interface CreateProjectInput {
 export type UpdateProjectInput = Partial<
   Pick<
     ProjectYaml,
-    "name" | "status" | "domain" | "group" | "visibility" | "summary" | "links" | "model"
+    | "name"
+    | "status"
+    | "domain"
+    | "group"
+    | "visibility"
+    | "summary"
+    | "links"
+    | "model"
+    | "permissionMode"
+    | "maxTurns"
+    | "docker"
   >
 >;
 
@@ -541,6 +570,11 @@ export class ProjectStore {
       // default (an absent model stays absent in the yaml so existing files
       // without `model` still round-trip unchanged).
       ...(typeof p.model === "string" ? { model: p.model } : {}),
+      // Keeper-agent overrides (issue #12): same round-trip discipline as model
+      // — carried only when present so files without them are unchanged.
+      ...(typeof p.permissionMode === "string" ? { permissionMode: p.permissionMode } : {}),
+      ...(typeof p.maxTurns === "number" ? { maxTurns: p.maxTurns } : {}),
+      ...(typeof p.docker === "boolean" ? { docker: p.docker } : {}),
     };
   }
 
@@ -561,6 +595,10 @@ export class ProjectStore {
       // Always concrete in the DTO: an absent on-disk model resolves to the
       // keeper default (CONTRACT-v3 §4).
       model: yaml.model ?? KEEPER_DEFAULT_MODEL,
+      // Keeper-agent overrides — always concrete in the DTO (issue #12).
+      permissionMode: yaml.permissionMode ?? KEEPER_DEFAULT_PERMISSION_MODE,
+      maxTurns: yaml.maxTurns ?? KEEPER_DEFAULT_MAX_TURNS,
+      docker: yaml.docker ?? KEEPER_DEFAULT_DOCKER,
       dir,
       created: yaml.started,
       hasOverview,

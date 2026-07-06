@@ -99,6 +99,46 @@ describe("integration: project CRUD over REST (real fleet, fake claude)", () => 
     expect(res.statusCode).toBe(400);
   });
 
+  it("PATCHes per-project keeper settings (issue #12)", async () => {
+    await t.app.inject({ method: "POST", url: "/api/projects", payload: { name: "Keeper Proj" } });
+    const patched = (
+      await t.app.inject({
+        method: "PATCH",
+        url: "/api/projects/keeper-proj",
+        payload: { permissionMode: "plan", maxTurns: 42, docker: true },
+      })
+    ).json();
+    expect(patched.project.permissionMode).toBe("plan");
+    expect(patched.project.maxTurns).toBe(42);
+    expect(patched.project.docker).toBe(true);
+    // Re-reading the project reflects the persisted settings.
+    const got = (
+      await t.app.inject({ method: "GET", url: "/api/projects/keeper-proj" })
+    ).json();
+    expect(got.project.permissionMode).toBe("plan");
+    expect(got.project.maxTurns).toBe(42);
+    expect(got.project.docker).toBe(true);
+  });
+
+  it("rejects invalid keeper settings on PATCH with 400 (issue #12)", async () => {
+    await t.app.inject({ method: "POST", url: "/api/projects", payload: { name: "Bad Keeper" } });
+    const bad = [
+      { permissionMode: "yolo" },
+      { maxTurns: 0 },
+      { maxTurns: 9999 },
+      { maxTurns: 1.5 },
+      { docker: "yes" },
+    ];
+    for (const payload of bad) {
+      const res = await t.app.inject({
+        method: "PATCH",
+        url: "/api/projects/bad-keeper",
+        payload,
+      });
+      expect(res.statusCode, JSON.stringify(payload)).toBe(400);
+    }
+  });
+
   it("pins and unpins a file", async () => {
     const created = (
       await t.app.inject({ method: "POST", url: "/api/projects", payload: { name: "Pin Proj" } })
