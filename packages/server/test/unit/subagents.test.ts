@@ -228,6 +228,28 @@ describe("subagents (issue #37)", () => {
       expect(enriched[2].toolCall).not.toHaveProperty("toolUseId");
     });
 
+    it("reports the sub-agent's RUN time (first→last transcript timestamp), not the launch", async () => {
+      await writeMain("s8", [
+        toolUse("Agent", "toolu_A", { subagent_type: "Explore", description: "runs a while" }),
+        toolResult("toolu_A", "done A"),
+      ]);
+      await writeSubagent(
+        "s8",
+        "aaa",
+        { agentType: "Explore", description: "runs a while", toolUseId: "toolu_A" },
+        [
+          { type: "user", message: { content: "go" }, timestamp: "2026-01-01T00:00:00.000Z" },
+          {
+            type: "assistant",
+            message: { id: "m1", content: [{ type: "text", text: "done" }] },
+            timestamp: "2026-01-01T00:00:12.500Z",
+          },
+        ],
+      );
+      const enriched = await enrichWithSubagents(projectDir, "s8", [toolMsg("Agent", "done A")]);
+      expect(enriched[0].toolCall?.subagentDurationMs).toBe(12_500);
+    });
+
     it("passes messages through unchanged when there are no Agent tool calls", async () => {
       const messages: ChatMessage[] = [toolMsg("Bash", "ls output")];
       const enriched = await enrichWithSubagents(projectDir, "nope", messages);

@@ -64,6 +64,13 @@ export type EnrichedToolCall = ChatToolCall & {
   prompt?: string;
   /** True when a sub-agent transcript exists on disk for this tool_use. */
   hasSubagent?: boolean;
+  /**
+   * The sub-agent's actual run time (first→last transcript timestamp), in ms.
+   * The tool call's own `durationMs` only measures how long the *launch* took —
+   * the Task/Agent tool returns immediately ("launched successfully") while the
+   * sub-agent runs on — so this is the meaningful figure to surface.
+   */
+  subagentDurationMs?: number;
 };
 
 export type EnrichedMessage = Omit<ChatMessage, "toolCall"> & { toolCall?: EnrichedToolCall };
@@ -204,7 +211,8 @@ export async function readSubagentMessages(
   // flat in the SAME session's subagents/ dir, so enriching this transcript's own
   // Task/Agent blocks against `subagents` lets the UI expand them recursively.
   const taskUses = await readTaskUsesFromFile(meta.transcriptPath);
-  return attachSubagentFields(messages, taskUses, subagents);
+  const durations = await subagentDurations(subagents);
+  return attachSubagentFields(messages, taskUses, subagents, durations);
 }
 
 /**
@@ -223,7 +231,42 @@ export async function enrichWithSubagents(
     readTaskToolUses(projectDir, sessionId),
     listSubagents(projectDir, sessionId),
   ]);
-  return attachSubagentFields(messages, taskUses, subagents);
+  const durations = await subagentDurations(subagents);
+  return attachSubagentFields(messages, taskUses, subagents, durations);
+}
+
+/**
+ * Compute each sub-agent's run time (ms) from the first→last timestamp in its
+ * own transcript. Keyed by toolUseId. Runs once per session on chat open (only
+ * over that session's sub-agent files), so the cost is bounded to the open chat.
+ */
+async function subagentDurations(
+  subagents: Map<string, SubagentMeta>,
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  await Promise.all(
+    [...subagents.values()].map(async (m) => {
+      const ms = await readSubagentDurationMs(m.transcriptPath);
+      if (ms !== undefined) out.set(m.toolUseId, ms);
+    }),
+  );
+  return out;
+}
+
+/**
+ * The elapsed wall-clock of a sub-agent transcript: the delta between its first
+ * and last `timestamp`. Scans for timestamps without a full JSON parse; returns
+ * undefined if the file is missing or has < 2 timestamps.
+ */
+async function readSubagentDurationMs(file: string): Promise<number | undefined> {
+  const raw = await fs.readFile(file, "utf8").catch(() => null);
+  if (raw === null) return undefined;
+  const matches = [...raw.matchAll(/"timestamp":"([^"]+)"/g)];
+  if (matches.length < 2) return undefined;
+  const first = Date.parse(matches[0][1]);
+  const last = Date.parse(matches[matches.length - 1][1]);
+  if (Number.isNaN(first) || Number.isNaN(last) || last < first) return undefined;
+  return last - first;
 }
 
 /** True when any message is a Task/Agent tool call worth enriching. */
@@ -240,6 +283,7 @@ function attachSubagentFields(
   messages: ChatMessage[],
   taskUses: TaskToolUse[],
   subagents: Map<string, SubagentMeta>,
+  durations: Map<string, number>,
 ): EnrichedMessage[] {
   let i = 0;
   return messages.map((m) => {
@@ -255,6 +299,7 @@ function attachSubagentFields(
         description: use.description,
         prompt: use.prompt,
         hasSubagent: subagents.has(use.toolUseId),
+        subagentDurationMs: durations.get(use.toolUseId),
       },
     };
   });

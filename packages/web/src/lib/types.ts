@@ -106,6 +106,8 @@ export interface ChatToolCall {
   prompt?: string;
   /** True when a sub-agent transcript exists on disk (i.e. it's expandable). */
   hasSubagent?: boolean;
+  /** The sub-agent's actual run time (first→last transcript timestamp), in ms. */
+  subagentDurationMs?: number;
 }
 
 export interface HistoryMessage {

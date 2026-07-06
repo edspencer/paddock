@@ -33,6 +33,7 @@ export interface ToolCall {
   description?: string;
   prompt?: string;
   hasSubagent?: boolean;
+  subagentDurationMs?: number;
 }
 
 /** Events delivered to a subscribed chat. */

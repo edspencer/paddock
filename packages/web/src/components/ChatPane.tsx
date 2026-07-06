@@ -811,7 +811,9 @@ function Dot({ delay }: { delay?: string }) {
 
 function ToolBlock({ tool }: { tool: ToolCall }) {
   const [open, setOpen] = useState(false);
-  const dur = formatDuration(tool.durationMs);
+  // For a sub-agent, show its actual run time (from its transcript) rather than
+  // the near-instant launch time the Task/Agent tool_call itself records.
+  const dur = formatDuration(tool.subagentDurationMs ?? tool.durationMs);
   const isSubagent = SUBAGENT_TOOLS.has(tool.toolName);
   // Expandable-into-steps only when the sub-agent's transcript is on disk.
   const expandable = Boolean(isSubagent && tool.hasSubagent && tool.toolUseId);
@@ -844,25 +846,25 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
             <SparkIcon
               width={13}
               height={13}
-              className={tool.isError ? "text-rose-500" : "text-accent"}
+              className={`shrink-0 ${tool.isError ? "text-rose-500" : "text-accent"}`}
             />
           ) : (
             <WrenchIcon
               width={13}
               height={13}
-              className={tool.isError ? "text-rose-500" : "text-paddock-500"}
+              className={`shrink-0 ${tool.isError ? "text-rose-500" : "text-paddock-500"}`}
             />
           )}
-          <span className="font-mono font-semibold text-paddock-700 dark:text-paddock-200">
+          <span className="shrink-0 whitespace-nowrap font-mono font-semibold text-paddock-700 dark:text-paddock-200">
             {label}
           </span>
           {isSubagent && (
-            <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent">
+            <span className="shrink-0 whitespace-nowrap rounded bg-accent/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent">
               sub-agent
             </span>
           )}
           {subtitle && (
-            <span className="truncate font-mono text-paddock-500 dark:text-paddock-400">
+            <span className="min-w-0 truncate font-mono text-paddock-500 dark:text-paddock-400">
               {subtitle}
             </span>
           )}
