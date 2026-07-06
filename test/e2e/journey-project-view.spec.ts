@@ -5,10 +5,11 @@ import { seedProject, uniq } from "./helpers";
  * Journey: Project view tabs + routing.
  *
  * The active tab is derived from the URL (deep-linkable + reload-safe):
+ *   /projects/:slug/home                -> Home tab (project overview)
  *   /projects/:slug/chat[/:sessionId]   -> Chat tab
  *   /projects/:slug/files[/:name]       -> Files tab / a file
  * The bare /projects/:slug redirects to the STICKY last tab (localStorage),
- * defaulting to chat. The Changes tab only appears on a git repo (covered in the
+ * defaulting to home. The Changes tab only appears on a git repo (covered in the
  * journey-git-* suite); here we assert it's ABSENT on a non-repo server.
  *
  * Disk-seeded with a couple of files so the Files tab has content.
@@ -25,7 +26,7 @@ test("Chat and Files tabs switch via the URL; deep-links highlight the right tab
 
   // Deep-link straight to the Files sub-route → Files tab active, files listed.
   await page.goto(`/projects/${slug}/files`);
-  await expect(page.getByRole("button", { name: /Files & Changelog/i })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Files$/ })).toBeVisible();
   await expect(page.getByText("notes.md")).toBeVisible();
   await expect(page.getByText("data.txt")).toBeVisible();
 
@@ -69,10 +70,10 @@ test("sticky last tab: bare /projects/:slug restores the last viewed sub-route a
   // Now hit the BARE project URL → it should redirect to the sticky Files tab.
   await page.goto(`/projects/${slug}`);
   await expect(page).toHaveURL(new RegExp(`/projects/${slug}/files`));
-  await expect(page.getByRole("button", { name: /Files & Changelog/i })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Files$/ })).toBeVisible();
 
-  // Default (no sticky stored) is chat — verify with a different, fresh project.
+  // Default (no sticky stored) is the Home tab — verify with a fresh project.
   const slug2 = seedProject({ name: uniq("PV Sticky Default") });
   await page.goto(`/projects/${slug2}`);
-  await expect(page).toHaveURL(new RegExp(`/projects/${slug2}/chat`));
+  await expect(page).toHaveURL(new RegExp(`/projects/${slug2}/home`));
 });
