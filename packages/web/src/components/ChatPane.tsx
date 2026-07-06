@@ -407,6 +407,10 @@ export function ChatPane({
       { kind: "user", id: nextId(), content: text },
     ]);
     setDraft("");
+    // Clearing the value doesn't undo the inline height the autosize handler
+    // grew the textarea to, so a multi-line message would leave the composer
+    // tall until the next keystroke. Reset it back to one row here.
+    if (composerRef.current) composerRef.current.style.height = "auto";
     setStreaming(true);
     streamingRef.current = true;
     // A brand-new chat won't know its session id until the first frame arrives;
