@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { useDictation, dictationSupported } from "./useDictation";
-import { api } from "./api";
+import { api, ApiError } from "./api";
 
 // Drive the record→transcribe machinery with a controllable fake MediaRecorder
 // and getUserMedia, since jsdom implements neither.
@@ -95,22 +95,84 @@ describe("useDictation", () => {
     );
   });
 
-  it("surfaces a transcription failure as error state", async () => {
-    vi.spyOn(api, "transcribe").mockRejectedValue(new Error("whisper server unreachable"));
-    const onText = vi.fn();
-    const { result } = renderHook(() => useDictation({ onText }));
-    await waitFor(() => expect(result.current.available).toBe(true));
-
+  /** Drive a full record→stop cycle so a queued transcription runs. */
+  async function recordOnce(result: { current: ReturnType<typeof useDictation> }) {
     await act(async () => {
       await result.current.start();
     });
     await act(async () => {
       result.current.stop();
     });
+  }
 
+  it("auto-retries once on a transient failure, then succeeds silently", async () => {
+    const onText = vi.fn();
+    const transcribe = vi
+      .spyOn(api, "transcribe")
+      .mockRejectedValueOnce(new ApiError("server warming up", 502))
+      .mockResolvedValueOnce("recovered text");
+    const { result } = renderHook(() => useDictation({ onText }));
+    await waitFor(() => expect(result.current.available).toBe(true));
+
+    await recordOnce(result);
+
+    await waitFor(() => expect(result.current.state).toBe("idle"), { timeout: 2000 });
+    expect(transcribe).toHaveBeenCalledTimes(2); // one auto-retry
+    expect(onText).toHaveBeenCalledWith("recovered text");
+    expect(result.current.error).toBeNull();
+  });
+
+  it("surfaces an error after the auto-retry also fails, and retry() re-submits the same clip", async () => {
+    const onText = vi.fn();
+    const transcribe = vi
+      .spyOn(api, "transcribe")
+      .mockRejectedValueOnce(new ApiError("boom", 502)) // initial
+      .mockRejectedValueOnce(new ApiError("boom", 502)) // auto-retry
+      .mockResolvedValueOnce("second time lucky"); // manual retry
+    const { result } = renderHook(() => useDictation({ onText }));
+    await waitFor(() => expect(result.current.available).toBe(true));
+
+    await recordOnce(result);
+    await waitFor(() => expect(result.current.state).toBe("error"), { timeout: 2000 });
+    expect(transcribe).toHaveBeenCalledTimes(2);
+    const firstBlob = transcribe.mock.calls[0][0];
+
+    // Manual retry re-submits the SAME audio (no re-recording).
+    await act(async () => {
+      result.current.retry();
+    });
+    await waitFor(() => expect(result.current.state).toBe("idle"), { timeout: 2000 });
+    expect(transcribe).toHaveBeenCalledTimes(3);
+    expect(transcribe.mock.calls[2][0]).toBe(firstBlob);
+    expect(onText).toHaveBeenCalledWith("second time lucky");
+  });
+
+  it("does NOT auto-retry a non-transient (400) failure", async () => {
+    const transcribe = vi
+      .spyOn(api, "transcribe")
+      .mockRejectedValue(new ApiError("Didn't catch any audio", 400));
+    const { result } = renderHook(() => useDictation({ onText: vi.fn() }));
+    await waitFor(() => expect(result.current.available).toBe(true));
+
+    await recordOnce(result);
     await waitFor(() => expect(result.current.state).toBe("error"));
-    expect(result.current.error).toMatch(/unreachable/);
-    expect(onText).not.toHaveBeenCalled();
+    expect(transcribe).toHaveBeenCalledTimes(1); // no retry
+    expect(result.current.error).toMatch(/audio/i);
+  });
+
+  it("dismiss() clears the error and drops the retained clip", async () => {
+    vi.spyOn(api, "transcribe").mockRejectedValue(new ApiError("nope", 400));
+    const { result } = renderHook(() => useDictation({ onText: vi.fn() }));
+    await waitFor(() => expect(result.current.available).toBe(true));
+
+    await recordOnce(result);
+    await waitFor(() => expect(result.current.state).toBe("error"));
+
+    await act(async () => {
+      result.current.dismiss();
+    });
+    expect(result.current.state).toBe("idle");
+    expect(result.current.error).toBeNull();
   });
 
   it("reports a denied-permission error without recording", async () => {

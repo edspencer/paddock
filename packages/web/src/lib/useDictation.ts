@@ -12,7 +12,10 @@
 // we surface that as a disabled button with an explanatory tooltip rather than a
 // silent no-op.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "./api";
+import { api, ApiError } from "./api";
+
+/** Backoff before the single automatic retry of a transient failure. */
+const RETRY_BACKOFF_MS = 500;
 
 export type DictationState = "idle" | "recording" | "transcribing" | "error";
 
@@ -31,6 +34,14 @@ export interface UseDictation {
   stop: () => void;
   /** Convenience: start if idle, stop if recording. */
   toggle: () => void;
+  /**
+   * After an error, re-attempt WITHOUT re-recording — re-submits the retained
+   * audio for a transcription failure, or re-opens the mic for a capture/
+   * permission failure (where no audio was captured).
+   */
+  retry: () => void;
+  /** Dismiss the current error and drop any retained audio. */
+  dismiss: () => void;
 }
 
 /** True when the browser can actually capture microphone audio. */
@@ -78,6 +89,10 @@ export function useDictation({ onText }: UseDictationOptions): UseDictation {
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const extRef = useRef<string>("webm");
+  // The last recorded clip, retained after a transcription failure so `retry`
+  // can re-submit the SAME audio without making the user speak again. Cleared
+  // on success, on a new recording, and on dismiss.
+  const lastBlobRef = useRef<Blob | null>(null);
   // Guards async setState after unmount.
   const mountedRef = useRef(true);
 
@@ -110,6 +125,8 @@ export function useDictation({ onText }: UseDictationOptions): UseDictation {
   const start = useCallback(async () => {
     if (!supported || state === "recording" || state === "transcribing") return;
     setError(null);
+    // A fresh recording supersedes any retained clip from a prior failure.
+    lastBlobRef.current = null;
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -133,7 +150,8 @@ export function useDictation({ onText }: UseDictationOptions): UseDictation {
       const type = recorder.mimeType || mimeType || "audio/webm";
       const blob = new Blob(chunksRef.current, { type });
       chunksRef.current = [];
-      void transcribe(blob);
+      lastBlobRef.current = blob;
+      void runTranscription(blob);
     };
     recorderRef.current = recorder;
     recorder.start();
@@ -141,10 +159,11 @@ export function useDictation({ onText }: UseDictationOptions): UseDictation {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supported, state]);
 
-  const transcribe = useCallback(
-    async (blob: Blob) => {
+  const runTranscription = useCallback(
+    async (blob: Blob, isAutoRetry = false): Promise<void> => {
       // Nothing captured (e.g. permission granted then immediately stopped).
       if (blob.size === 0) {
+        lastBlobRef.current = null;
         if (mountedRef.current) setState("idle");
         return;
       }
@@ -152,11 +171,22 @@ export function useDictation({ onText }: UseDictationOptions): UseDictation {
       try {
         const text = await api.transcribe(blob, `dictation.${extRef.current}`);
         if (text.trim()) onText(text.trim());
-        if (mountedRef.current) setState("idle");
+        lastBlobRef.current = null; // succeeded — nothing to retry
+        if (mountedRef.current) {
+          setError(null);
+          setState("idle");
+        }
       } catch (err) {
+        // Transient failures (network / 5xx — e.g. a whisper server still
+        // warming up) get one silent automatic retry before we bother the user.
+        if (isTransient(err) && !isAutoRetry) {
+          await delay(RETRY_BACKOFF_MS);
+          return runTranscription(blob, true);
+        }
+        // Keep lastBlobRef so `retry` can re-submit the same clip.
         if (mountedRef.current) {
           setState("error");
-          setError(err instanceof Error ? err.message : "transcription failed");
+          setError(errorMessage(err));
         }
       }
     },
@@ -166,7 +196,7 @@ export function useDictation({ onText }: UseDictationOptions): UseDictation {
   const stop = useCallback(() => {
     const rec = recorderRef.current;
     if (rec && rec.state !== "inactive") {
-      rec.stop(); // triggers onstop → transcribe
+      rec.stop(); // triggers onstop → runTranscription
     }
   }, []);
 
@@ -175,7 +205,44 @@ export function useDictation({ onText }: UseDictationOptions): UseDictation {
     else void start();
   }, [state, start, stop]);
 
-  return { state, available, supported, error, start, stop, toggle };
+  // Re-attempt after an error without re-recording: re-submit the retained clip
+  // if we have one, else re-open the mic (permission/capture failure).
+  const retry = useCallback(() => {
+    if (state === "recording" || state === "transcribing") return;
+    const blob = lastBlobRef.current;
+    if (blob) void runTranscription(blob);
+    else void start();
+  }, [state, runTranscription, start]);
+
+  const dismiss = useCallback(() => {
+    lastBlobRef.current = null;
+    setError(null);
+    setState("idle");
+  }, []);
+
+  return { state, available, supported, error, start, stop, toggle, retry, dismiss };
+}
+
+/** A failure worth one automatic retry: network errors and 5xx from the server. */
+function isTransient(err: unknown): boolean {
+  if (err instanceof ApiError) return err.status >= 500;
+  // A non-ApiError here means fetch itself threw (network/CORS/abort) → transient.
+  return true;
+}
+
+/** Best-effort human-readable message for a transcription failure. */
+function errorMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.status >= 500) return err.message || "Transcription service error — try again.";
+    if (err.status === 400) return err.message || "Didn't catch any audio — try again.";
+    return err.message || "Transcription failed.";
+  }
+  return "Couldn't reach the transcription service — check your connection and retry.";
+}
+
+/** A cancellable-free delay. */
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** Human-readable message for a getUserMedia failure. */

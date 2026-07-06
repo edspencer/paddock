@@ -7,7 +7,7 @@
 //   - server dictation disabled           → render nothing
 //   - server enabled, browser unsupported → disabled button, explanatory tooltip
 //   - server enabled, browser supported    → live mic / stop / spinner
-import { MicIcon, StopIcon } from "./icons";
+import { AlertIcon, MicIcon, StopIcon } from "./icons";
 import { useDictation } from "../lib/useDictation";
 
 export interface DictationButtonProps {
@@ -18,13 +18,14 @@ export interface DictationButtonProps {
 }
 
 export function DictationButton({ onText, disabled = false }: DictationButtonProps) {
-  const { state, available, supported, error, toggle } = useDictation({ onText });
+  const { state, available, supported, error, toggle, retry, dismiss } = useDictation({ onText });
 
   // Hide entirely until we know the server supports it, and when it doesn't.
   if (available !== true) return null;
 
   const recording = state === "recording";
   const transcribing = state === "transcribing";
+  const errored = state === "error";
 
   // Server has dictation, but this browser/context can't capture audio (most
   // commonly: served over plain HTTP, which blocks getUserMedia). Show a
@@ -43,51 +44,82 @@ export function DictationButton({ onText, disabled = false }: DictationButtonPro
     );
   }
 
-  const title = error
-    ? error
-    : recording
-      ? "Stop recording"
-      : transcribing
-        ? "Transcribing…"
+  const title = recording
+    ? "Stop recording"
+    : transcribing
+      ? "Transcribing…"
+      : errored
+        ? "Transcription failed — click to record again"
         : "Record a voice message";
 
   return (
-    <button
-      type="button"
-      onClick={toggle}
-      disabled={disabled || transcribing}
-      aria-label={recording ? "Stop recording" : "Record a voice message"}
-      aria-pressed={recording}
-      title={title}
-      data-state={state}
-      className={[
-        "flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors",
-        recording
-          ? "bg-rose-100 text-rose-600 dark:bg-rose-950/60 dark:text-rose-400"
-          : transcribing
-            ? // Transcribing: keep it bright (no dimming) so the spinner reads clearly.
-              "text-accent"
-            : "text-paddock-500 hover:bg-paddock-100 hover:text-paddock-700 dark:text-paddock-400 dark:hover:bg-paddock-800 dark:hover:text-paddock-200",
-        // Only dim when disabled by the parent (e.g. a turn is streaming) — NOT
-        // while transcribing, or the spinner looks washed-out and static.
-        disabled && "cursor-not-allowed opacity-60",
-        transcribing && "cursor-progress",
-      ]
-        .filter(Boolean)
-        .join(" ")}
-    >
-      {transcribing ? (
-        <Spinner />
-      ) : recording ? (
-        <StopIcon width={16} height={16} />
-      ) : (
-        <MicIcon width={18} height={18} />
+    <div className="relative flex items-center">
+      {/* Visible error surface (#voice): a failure would otherwise only show in
+          the button tooltip. Anchored above the mic so it doesn't reflow the
+          composer, with a one-click Retry that re-submits the same audio. */}
+      {errored && error && (
+        <div
+          role="alert"
+          className="absolute bottom-full right-0 z-10 mb-2 flex max-w-[240px] items-start gap-2 rounded-lg border border-rose-300/70 bg-rose-50 px-2.5 py-1.5 text-xs text-rose-700 shadow-md dark:border-rose-900/70 dark:bg-rose-950 dark:text-rose-300"
+        >
+          <AlertIcon width={14} height={14} className="mt-0.5 shrink-0" />
+          <span className="min-w-0 break-words">{error}</span>
+          <button
+            type="button"
+            onClick={retry}
+            className="shrink-0 font-medium text-rose-700 underline underline-offset-2 hover:text-rose-900 dark:text-rose-200 dark:hover:text-rose-100"
+          >
+            Retry
+          </button>
+          <button
+            type="button"
+            onClick={dismiss}
+            aria-label="Dismiss error"
+            className="shrink-0 text-rose-400 hover:text-rose-600 dark:hover:text-rose-200"
+          >
+            ✕
+          </button>
+        </div>
       )}
-      {recording && (
-        // Pulsing dot reinforces the live-recording state.
-        <span className="sr-only">recording</span>
-      )}
-    </button>
+      <button
+        type="button"
+        onClick={toggle}
+        disabled={disabled || transcribing}
+        aria-label={recording ? "Stop recording" : "Record a voice message"}
+        aria-pressed={recording}
+        title={title}
+        data-state={state}
+        className={[
+          "flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors",
+          recording
+            ? "bg-rose-100 text-rose-600 dark:bg-rose-950/60 dark:text-rose-400"
+            : transcribing
+              ? // Transcribing: keep it bright (no dimming) so the spinner reads clearly.
+                "text-accent"
+              : errored
+                ? "bg-rose-100 text-rose-600 dark:bg-rose-950/60 dark:text-rose-400"
+                : "text-paddock-500 hover:bg-paddock-100 hover:text-paddock-700 dark:text-paddock-400 dark:hover:bg-paddock-800 dark:hover:text-paddock-200",
+          // Only dim when disabled by the parent (e.g. a turn is streaming) — NOT
+          // while transcribing, or the spinner looks washed-out and static.
+          disabled && "cursor-not-allowed opacity-60",
+          transcribing && "cursor-progress",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+      >
+        {transcribing ? (
+          <Spinner />
+        ) : recording ? (
+          <StopIcon width={16} height={16} />
+        ) : (
+          <MicIcon width={18} height={18} />
+        )}
+        {recording && (
+          // Pulsing dot reinforces the live-recording state.
+          <span className="sr-only">recording</span>
+        )}
+      </button>
+    </div>
   );
 }
 
