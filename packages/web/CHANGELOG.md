@@ -1,5 +1,28 @@
 # @paddock/web
 
+## 0.6.0
+
+### Minor Changes
+
+- [#74](https://github.com/edspencer/paddock/pull/74) [`bc189ab`](https://github.com/edspencer/paddock/commit/bc189ab3396b597f0e9c41046d04740087c574d0) Thanks [@edspencer](https://github.com/edspencer)! - Render sub-agent (Task/Agent tool) activity in the chat UI (#37)
+
+  Sub-agent launches now render as a labelled, expandable block showing the
+  sub-agent type and description. Expanding lazy-loads the sub-agent's own
+  step-by-step transcript inline, recursively (a sub-agent that spawns its own
+  sub-agents is expandable to any depth). Implemented entirely paddock-side by
+  reading the on-disk `subagents/*.meta.json` sidecars and reusing
+  `@herdctl/core`'s `parseSessionMessages`; no upstream change. Handles both the
+  `Task` (Claude Code) and `Agent` (Agent SDK) tool names.
+
+### Patch Changes
+
+- [#71](https://github.com/edspencer/paddock/pull/71) [`30e24eb`](https://github.com/edspencer/paddock/commit/30e24eb5873bbb63f92bce36e8b81f072fc5b200) Thanks [@edspencer](https://github.com/edspencer)! - Lock document scroll on mobile so the app chrome no longer drags with the page.
+  The UI is a fixed-height shell whose panes scroll internally, but the document
+  itself was still scrollable — so on mobile Safari a swipe that started on the
+  "fixed" top bar or composer rubber-band-scrolled the whole page. Lock
+  `overflow` + `overscroll-behavior` on html/body (and keep momentum inside the
+  transcript with `overscroll-contain`); only the inner panes scroll now.
+
 ## 0.5.0
 
 ### Minor Changes
