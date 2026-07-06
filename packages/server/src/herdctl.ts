@@ -697,6 +697,12 @@ export class HerdctlService {
         'NO leading "- " and no date heading — just the bare sentence.>\n' +
         "<<<END>>>\n" +
         "\n" +
+        "OVERVIEW.md describes the PROJECT, not the box it runs on: never record " +
+        "box/environment operational conventions (how to run/build/expose a dev " +
+        "server, ports, localhost vs. dev hostnames/URLs, where to clone, process " +
+        "managers) — those are owned by the box's own CLAUDE.md and must not be " +
+        "re-described or contradicted here.\n" +
+        "\n" +
         "Be factual and terse. Do not invent details not present in the provided " +
         "activity. Output ONLY the two sections between the markers — no preamble, " +
         "no explanation, no tool use.",
