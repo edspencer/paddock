@@ -309,4 +309,44 @@ export const api = {
   async githubDisconnect(): Promise<void> {
     await req<{ ok: boolean }>("/api/git/github/disconnect", { method: "POST" });
   },
+
+  // --- Voice dictation (Whisper) --------------------------------------------
+
+  /**
+   * Whether this instance has voice dictation enabled (mode !== off and, for
+   * remote mode, an endpoint is configured). Drives whether the composer shows a
+   * mic button at all.
+   */
+  async transcriptionStatus(): Promise<{
+    available: boolean;
+    mode: "off" | "local" | "remote";
+    model: string;
+  }> {
+    return req<{ available: boolean; mode: "off" | "local" | "remote"; model: string }>(
+      "/api/transcription",
+    );
+  },
+
+  /**
+   * Transcribe a recorded audio blob to text via the server's whisper backend.
+   * Uses raw `fetch` (not `req`) so the browser sets the multipart boundary — do
+   * NOT force a JSON content-type here.
+   */
+  async transcribe(blob: Blob, filename = "dictation.webm"): Promise<string> {
+    const form = new FormData();
+    form.append("file", blob, filename);
+    const res = await fetch(`${BASE}/api/transcribe`, { method: "POST", body: form });
+    if (!res.ok) {
+      let detail = res.statusText;
+      try {
+        const body = (await res.json()) as { error?: string };
+        if (body.error) detail = body.error;
+      } catch {
+        /* ignore */
+      }
+      throw new ApiError(detail, res.status);
+    }
+    const { text } = (await res.json()) as { text: string };
+    return text;
+  },
 };
