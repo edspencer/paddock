@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter, Routes, Route } from "react-router-dom";
+import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
 import { ProjectRedirect } from "./ProjectRedirect";
 import { makeProject } from "../test/factories";
 import { writeLastTab } from "../lib/lastTab";
@@ -31,7 +31,10 @@ function renderRedirect() {
 }
 
 function DestProbe() {
-  return <div data-testid="dest">{window.location.pathname}</div>;
+  // Read the router's location (MemoryRouter doesn't touch window.location) so
+  // we can assert exactly where the redirect landed.
+  const loc = useLocation();
+  return <div data-testid="dest">{loc.pathname}</div>;
 }
 
 beforeEach(() => {
@@ -41,9 +44,11 @@ beforeEach(() => {
 });
 
 describe("ProjectRedirect", () => {
-  it("defaults to the chat tab when nothing is stored (no fetch)", async () => {
+  it("defaults to the home tab when nothing is stored (no fetch)", async () => {
     renderRedirect();
-    await waitFor(() => expect(screen.getByTestId("dest")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByTestId("dest")).toHaveTextContent("/projects/p/home"),
+    );
     // No validation fetch needed for the default.
     expect(getProjectDetail).not.toHaveBeenCalled();
   });
@@ -51,7 +56,9 @@ describe("ProjectRedirect", () => {
   it("restores a stored chat sub-path without validation", async () => {
     writeLastTab("p", "chat/sess-1");
     renderRedirect();
-    await waitFor(() => expect(screen.getByTestId("dest")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByTestId("dest")).toHaveTextContent("/projects/p/chat/sess-1"),
+    );
     expect(getProjectDetail).not.toHaveBeenCalled();
   });
 

@@ -5,12 +5,13 @@ import { readLastTab, validateSubPath } from "../lib/lastTab";
 
 /**
  * Bare `/projects/:slug` -> redirect to the STICKY last in-project tab for this
- * project (from localStorage), defaulting to `/chat` when nothing is stored.
+ * project (from localStorage), defaulting to `/home` (the project overview) when
+ * nothing is stored.
  *
  * A stored `files/<name>` tab is validated against the project's current pinned
  * + files lists (a file that was unpinned/removed falls back to `/files`); a
- * stored chat passes through (the chat route surfaces a missing session inline).
- * This is what the sidebar/grid links target so the restore always kicks in.
+ * stored home/chat tab passes through (the chat route surfaces a missing session
+ * inline). This is what the sidebar/grid links target so the restore kicks in.
  */
 export function ProjectRedirect() {
   const { slug = "" } = useParams();
@@ -20,13 +21,13 @@ export function ProjectRedirect() {
     let cancelled = false;
     const stored = readLastTab(slug);
 
-    // Nothing stored -> default straight to chat (no fetch needed).
+    // Nothing stored -> default straight to the project home (no fetch needed).
     if (!stored) {
-      setTarget("chat");
+      setTarget("home");
       return;
     }
-    // A chat sub-path needs no validation here.
-    if (stored.startsWith("chat")) {
+    // A home/chat sub-path needs no validation here.
+    if (stored === "home" || stored.startsWith("chat")) {
       setTarget(stored);
       return;
     }
