@@ -235,6 +235,27 @@ export const api = {
   },
 
   /**
+   * Nested steps of a sub-agent launched from a Task/Agent tool block (issue
+   * #37). `toolUseId` comes off the enriched tool call; sub-agents are flat under
+   * the session, so the same session id resolves every depth. Routes to the
+   * scratch endpoint when the slug is the scratch slug.
+   */
+  async subagentMessages(
+    slug: string,
+    sessionId: string,
+    toolUseId: string,
+  ): Promise<HistoryMessage[]> {
+    const base =
+      slug === SCRATCH_SLUG
+        ? `/api/chats/${encodeURIComponent(sessionId)}`
+        : `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}`;
+    const { messages } = await req<{ messages: HistoryMessage[] }>(
+      `${base}/subagents/${encodeURIComponent(toolUseId)}/messages`,
+    );
+    return messages;
+  },
+
+  /**
    * Context-window usage for a chat, read from its transcript — drives the
    * context meter for a chat opened from history (before any new turn streams a
    * fresh usage). Returns null when the transcript carries no usage data.

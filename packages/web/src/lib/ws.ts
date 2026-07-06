@@ -26,6 +26,14 @@ export interface ToolCall {
   output: string;
   isError: boolean;
   durationMs?: number;
+  // Sub-agent (Task/Agent) enrichment (issue #37). Populated only on tool calls
+  // hydrated from history — the live WS frame does not carry these.
+  toolUseId?: string;
+  subagentType?: string;
+  description?: string;
+  prompt?: string;
+  hasSubagent?: boolean;
+  subagentDurationMs?: number;
 }
 
 /** Events delivered to a subscribed chat. */

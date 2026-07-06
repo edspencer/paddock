@@ -28,6 +28,7 @@ import type { GitService } from "./git.js";
 import type { GithubAuth } from "./github-auth.js";
 import { type Transcriber, TranscriptionError } from "./transcribe.js";
 import { readFirstUserText } from "./transcripts.js";
+import { enrichWithSubagents, readSubagentMessages } from "./subagents.js";
 
 /**
  * The subset of @fastify/multipart's decorated request we use. The plugin
@@ -415,9 +416,33 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     async (req, reply) => {
       try {
         const agent = await agentForSlug(req.params.slug);
+        const projectDir = await projectDirForSlug(req.params.slug);
         const messages = await herdctl
           .sessionMessages(agent, req.params.sessionId)
           .catch(() => []);
+        return {
+          messages: await enrichWithSubagents(projectDir, req.params.sessionId, messages),
+        };
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  // Step-by-step transcript of a sub-agent launched from a Task/Agent tool block
+  // within a project chat (issue #37). `toolUseId` is the parent tool_use id
+  // carried on the enriched tool call; it resolves to the sub-agent's own
+  // transcript under `.chats/<sessionId>/subagents/`.
+  app.get<{ Params: { slug: string; sessionId: string; toolUseId: string } }>(
+    "/api/projects/:slug/chats/:sessionId/subagents/:toolUseId/messages",
+    async (req, reply) => {
+      try {
+        const projectDir = await projectDirForSlug(req.params.slug);
+        const messages = await readSubagentMessages(
+          projectDir,
+          req.params.sessionId,
+          req.params.toolUseId,
+        );
         return { messages };
       } catch (err) {
         return sendProjectError(reply, err);
@@ -497,6 +522,21 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
       const messages = await herdctl
         .sessionMessages(SCRATCH_AGENT, req.params.sessionId)
         .catch(() => []);
+      return {
+        messages: await enrichWithSubagents(herdctl.scratchDir, req.params.sessionId, messages),
+      };
+    },
+  );
+
+  // Sub-agent transcript within a one-off (scratch) chat (issue #37).
+  app.get<{ Params: { sessionId: string; toolUseId: string } }>(
+    "/api/chats/:sessionId/subagents/:toolUseId/messages",
+    async (req) => {
+      const messages = await readSubagentMessages(
+        herdctl.scratchDir,
+        req.params.sessionId,
+        req.params.toolUseId,
+      );
       return { messages };
     },
   );
@@ -584,6 +624,12 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     if (slug === SCRATCH_SLUG) return SCRATCH_AGENT;
     await projects.get(slug); // throws not_found for unknown slug
     return keeperAgentName(slug);
+  }
+
+  /** Resolve a slug to the on-disk project directory holding its `.chats/`. */
+  async function projectDirForSlug(slug: string): Promise<string> {
+    if (slug === SCRATCH_SLUG) return herdctl.scratchDir;
+    return (await projects.get(slug)).dir;
   }
 }
 

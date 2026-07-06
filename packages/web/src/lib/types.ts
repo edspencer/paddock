@@ -97,6 +97,17 @@ export interface ChatToolCall {
   output: string;
   isError: boolean;
   durationMs?: number;
+  // Sub-agent (Task/Agent tool) enrichment, added server-side (issue #37). Only
+  // present on Task/Agent tool calls read from history; undefined otherwise.
+  /** The parent tool_use id — the key to fetch this sub-agent's nested steps. */
+  toolUseId?: string;
+  subagentType?: string;
+  description?: string;
+  prompt?: string;
+  /** True when a sub-agent transcript exists on disk (i.e. it's expandable). */
+  hasSubagent?: boolean;
+  /** The sub-agent's actual run time (first→last transcript timestamp), in ms. */
+  subagentDurationMs?: number;
 }
 
 export interface HistoryMessage {

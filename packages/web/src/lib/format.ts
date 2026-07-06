@@ -47,10 +47,14 @@ export function relativeTime(iso?: string): string {
   return `${Math.round(days / 365)}y ago`;
 }
 
-/** Format a duration in ms compactly (e.g. 74ms, 1.3s, 12s). */
+/** Format a duration in ms compactly (e.g. 74ms, 1.3s, 12s, 3m 32s). */
 export function formatDuration(ms?: number): string | null {
   if (ms == null || Number.isNaN(ms)) return null;
   if (ms < 1000) return `${Math.round(ms)}ms`;
   const s = ms / 1000;
-  return s < 10 ? `${s.toFixed(1)}s` : `${Math.round(s)}s`;
+  if (s < 10) return `${s.toFixed(1)}s`;
+  if (s < 60) return `${Math.round(s)}s`;
+  const m = Math.floor(s / 60);
+  const rem = Math.round(s % 60);
+  return rem ? `${m}m ${rem}s` : `${m}m`;
 }
