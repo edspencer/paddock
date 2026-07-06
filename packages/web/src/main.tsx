@@ -1,13 +1,25 @@
-import React from "react";
+import React, { lazy } from "react";
 import ReactDOM from "react-dom/client";
 import { createBrowserRouter, RouterProvider, useParams } from "react-router-dom";
 import "./index.css";
 import { AppShell } from "./components/AppShell";
 import { ProjectsProvider } from "./lib/projects-context";
-import { ProjectsGrid } from "./routes/ProjectsGrid";
-import { ProjectView } from "./routes/ProjectView";
-import { ProjectRedirect } from "./routes/ProjectRedirect";
-import { OneOffChat } from "./routes/OneOffChat";
+
+// Route components are code-split (issue #11): each becomes its own async chunk
+// so the heavy chat/file/markdown code isn't in the entry bundle. AppShell wraps
+// <Outlet> in a Suspense boundary that covers these while they load.
+const ProjectsGrid = lazy(() =>
+  import("./routes/ProjectsGrid").then((m) => ({ default: m.ProjectsGrid })),
+);
+const ProjectView = lazy(() =>
+  import("./routes/ProjectView").then((m) => ({ default: m.ProjectView })),
+);
+const ProjectRedirect = lazy(() =>
+  import("./routes/ProjectRedirect").then((m) => ({ default: m.ProjectRedirect })),
+);
+const OneOffChat = lazy(() =>
+  import("./routes/OneOffChat").then((m) => ({ default: m.OneOffChat })),
+);
 
 /** /tags/:tag — the projects grid filtered to one domain tag (param decoded). */
 function TaggedProjects() {
