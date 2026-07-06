@@ -48,6 +48,14 @@ export const StopIcon = (p: IconProps) => (
   </svg>
 );
 
+export const MicIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <rect x="9" y="2" width="6" height="12" rx="3" />
+    <path d="M5 10a7 7 0 0 0 14 0" />
+    <path d="M12 17v4M8 21h8" />
+  </svg>
+);
+
 export const ChevronRightIcon = (p: IconProps) => (
   <svg {...base(p)}>
     <path d="m9 18 6-6-6-6" />

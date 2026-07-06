@@ -12,6 +12,7 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import websocket from "@fastify/websocket";
 import fastifyStatic from "@fastify/static";
+import fastifyMultipart from "@fastify/multipart";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { loadPaddockConfig, type PaddockConfig } from "./config.js";
@@ -19,6 +20,7 @@ import { ProjectStore } from "./projects.js";
 import { HerdctlService } from "./herdctl.js";
 import { GitService } from "./git.js";
 import { GithubAuth } from "./github-auth.js";
+import { makeTranscriber, type Transcriber } from "./transcribe.js";
 import { registerRoutes } from "./routes.js";
 import { registerAuth } from "./auth.js";
 import { makeChatHandler } from "./ws.js";
@@ -32,6 +34,7 @@ export interface BuiltApp {
   git: GitService;
   githubAuth: GithubAuth;
   sweep: SweepService;
+  transcriber: Transcriber;
   /** Tear down the fleet + close the server (no process.exit, for tests). */
   close: () => Promise<void>;
 }
@@ -69,6 +72,11 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   const herdctl = new HerdctlService(cfg);
   const git = new GitService(cfg.projectsRoot);
   const githubAuth = new GithubAuth(path.join(cfg.dataDir, "github-auth.json"));
+  const transcriber = makeTranscriber(cfg.transcription);
+  app.log.info(
+    { mode: cfg.transcription.mode, available: transcriber.available },
+    "voice dictation capability",
+  );
   const initialProjects = await projects.list();
   try {
     await herdctl.init(initialProjects);
@@ -88,7 +96,13 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
 
   // --- transport ---------------------------------------------------------
   await app.register(websocket);
-  await registerRoutes(app, { projects, herdctl, git, githubAuth });
+  // Multipart parses the mic-recording upload on POST /api/transcribe. The size
+  // cap mirrors the transcription config so an oversized blob is rejected before
+  // it's buffered in full.
+  await app.register(fastifyMultipart, {
+    limits: { fileSize: cfg.transcription.maxUploadBytes, files: 1 },
+  });
+  await registerRoutes(app, { projects, herdctl, git, githubAuth, transcriber });
 
   const chatHandler = makeChatHandler({ herdctl, projects, sweep });
   await app.register(async (scoped) => {
@@ -124,5 +138,5 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
     await app.close().catch(() => undefined);
   };
 
-  return { app, cfg, projects, herdctl, git, githubAuth, sweep, close };
+  return { app, cfg, projects, herdctl, git, githubAuth, sweep, transcriber, close };
 }
