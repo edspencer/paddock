@@ -4,6 +4,7 @@ import { api } from "../lib/api";
 import { useProjects } from "../lib/projects-context";
 import { SCRATCH_SLUG, type Chat } from "../lib/types";
 import { ChatPane } from "../components/ChatPane";
+import { ContextRing } from "../components/ContextRing";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { PromoteChatModal } from "../components/PromoteChatModal";
 import { ChatIcon, FolderIcon, PencilIcon, PlusIcon, TrashIcon, XIcon } from "../components/icons";
@@ -167,7 +168,10 @@ export function OneOffChat() {
                   onClick={() => navigate(`/chat/${c.sessionId}`)}
                   className="flex w-full flex-col items-start gap-0.5 rounded-lg px-2.5 py-2 pr-14 text-left text-sm"
                 >
-                  <span className="w-full truncate font-medium">{c.name}</span>
+                  <span className="flex w-full items-center gap-1.5">
+                    <ContextRing tokens={c.contextTokens} limit={c.contextLimit} />
+                    <span className="truncate font-medium">{c.name}</span>
+                  </span>
                   <span className="text-[11px] text-paddock-400">{relativeTime(c.updatedAt)}</span>
                 </button>
                 <div className="absolute right-1.5 top-1.5 flex items-center gap-0.5">

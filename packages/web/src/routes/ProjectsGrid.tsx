@@ -5,6 +5,7 @@ import { useProjects } from "../lib/projects-context";
 import type { Chat, Project } from "../lib/types";
 import { StatusPill } from "../components/StatusPill";
 import { TagPill } from "../components/TagPill";
+import { ContextRing } from "../components/ContextRing";
 import { NewProjectModal } from "../components/NewProjectModal";
 import { EditProjectModal } from "../components/EditProjectModal";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -377,6 +378,7 @@ function InboxChatCard({ chat }: { chat: Chat }) {
     >
       <div className="flex items-center gap-2">
         <ChatIcon width={14} height={14} className="shrink-0 text-paddock-400" />
+        <ContextRing tokens={chat.contextTokens} limit={chat.contextLimit} />
         <span className="truncate text-sm font-medium">{chat.name}</span>
       </div>
       {chat.preview && (

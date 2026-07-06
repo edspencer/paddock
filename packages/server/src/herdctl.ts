@@ -589,6 +589,34 @@ export class HerdctlService {
     return this.manager.getAgentSessionUsage(agentName, sessionId);
   }
 
+  /**
+   * mtime-keyed cache of session usage. A session's context fill only changes
+   * when its transcript is rewritten (and its mtime bumps), so keying on
+   * (agent, session) with the last-seen mtime lets the chat-list build skip
+   * re-scanning unchanged transcripts. One entry per session — a fresh mtime
+   * overwrites the stale one.
+   */
+  private usageCache = new Map<string, { mtime: string; usage: SessionUsage }>();
+
+  /**
+   * Like {@link sessionUsage}, but memoized on the session's transcript mtime so
+   * building the chat list (which needs every session's context fill for the
+   * per-chat usage ring, issue #77) doesn't re-scan every unchanged transcript
+   * on each load. `mtime` comes from the DiscoveredSession backing the chat.
+   */
+  async sessionUsageCached(
+    agentName: string,
+    sessionId: string,
+    mtime: string,
+  ): Promise<SessionUsage> {
+    const key = `${agentName}:${sessionId}`;
+    const hit = this.usageCache.get(key);
+    if (hit && hit.mtime === mtime) return hit.usage;
+    const usage = await this.manager.getAgentSessionUsage(agentName, sessionId);
+    this.usageCache.set(key, { mtime, usage });
+    return usage;
+  }
+
   // --- agent configs -----------------------------------------------------
 
   /**

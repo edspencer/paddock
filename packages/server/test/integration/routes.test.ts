@@ -274,6 +274,43 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
     expect(none.usage).toBeNull();
   });
 
+  // --- chat-list usage ring (issue #77) --------------------------------------
+
+  it("chat-list DTOs carry per-chat context usage after a turn", async () => {
+    const sessionId = await oneTurn("routes-proj", "hello for list usage");
+
+    // Project chat list (GET /api/projects/:slug/chats).
+    const chats = (
+      await t.app.inject({ method: "GET", url: "/api/projects/routes-proj/chats" })
+    ).json().chats as Array<{
+      sessionId: string;
+      contextTokens?: number;
+      contextLimit?: number;
+    }>;
+    const entry = chats.find((c) => c.sessionId === sessionId);
+    expect(entry).toBeTruthy();
+    expect(entry?.contextTokens).toBeGreaterThan(0);
+    // Default keeper model is Opus 4.8 → 1M context window.
+    expect(entry?.contextLimit).toBe(1_000_000);
+
+    // The same usage rides along on the project-detail response too.
+    const detail = (
+      await t.app.inject({ method: "GET", url: "/api/projects/routes-proj" })
+    ).json();
+    const detailEntry = (detail.chats as typeof chats).find((c) => c.sessionId === sessionId);
+    expect(detailEntry?.contextTokens).toBeGreaterThan(0);
+    expect(detailEntry?.contextLimit).toBe(1_000_000);
+  });
+
+  it("scratch chat-list DTOs carry per-chat context usage after a turn", async () => {
+    const sessionId = await oneTurn("scratch", "scratch for list usage");
+    const chats = (await t.app.inject({ method: "GET", url: "/api/chats" })).json()
+      .chats as Array<{ sessionId: string; contextTokens?: number; contextLimit?: number }>;
+    const entry = chats.find((c) => c.sessionId === sessionId);
+    expect(entry?.contextTokens).toBeGreaterThan(0);
+    expect(entry?.contextLimit).toBe(1_000_000);
+  });
+
   // --- rename + delete chat (project) ----------------------------------------
 
   it("PATCH a project chat sets then clears its custom name", async () => {
