@@ -19,6 +19,9 @@ export function makeProject(over: Partial<Project> = {}): Project {
     hasOverview: false,
     pinned: [],
     model: "claude-opus-4-8",
+    permissionMode: "acceptEdits",
+    maxTurns: 200,
+    docker: false,
     ...over,
   };
 }

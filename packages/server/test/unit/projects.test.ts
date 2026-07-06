@@ -180,6 +180,54 @@ describe("ProjectStore", () => {
     expect(parsed.model).toBe("claude-sonnet-4-6");
   });
 
+  it("keeper settings resolve to defaults and round-trip when set (issue #12)", async () => {
+    await store.create({ name: "K" });
+    // Defaults resolved in the DTO for a project that never set them.
+    const got = await store.get("k");
+    expect(got.permissionMode).toBe("acceptEdits");
+    expect(got.maxTurns).toBe(200);
+    expect(got.docker).toBe(false);
+
+    // Overrides persist to disk and survive a re-read.
+    const updated = await store.update("k", {
+      permissionMode: "plan",
+      maxTurns: 42,
+      docker: true,
+    });
+    expect(updated.permissionMode).toBe("plan");
+    expect(updated.maxTurns).toBe(42);
+    expect(updated.docker).toBe(true);
+
+    const parsed = YAML.parse(await fs.readFile(path.join(root, "k", "project.yaml"), "utf8"));
+    expect(parsed.permissionMode).toBe("plan");
+    expect(parsed.maxTurns).toBe(42);
+    expect(parsed.docker).toBe(true);
+
+    const reread = await store.get("k");
+    expect(reread.permissionMode).toBe("plan");
+    expect(reread.maxTurns).toBe(42);
+    expect(reread.docker).toBe(true);
+  });
+
+  it("keeper settings are absent from a sparse yaml until set (round-trip discipline)", async () => {
+    await fs.mkdir(path.join(root, "sparse2"));
+    await fs.writeFile(
+      path.join(root, "sparse2", "project.yaml"),
+      "name: Sparse2\nslug: sparse2\n",
+      "utf8",
+    );
+    const dto = await store.get("sparse2");
+    // DTO reports concrete defaults …
+    expect(dto.permissionMode).toBe("acceptEdits");
+    expect(dto.maxTurns).toBe(200);
+    expect(dto.docker).toBe(false);
+    // … but the on-disk yaml still has none of the keeper keys.
+    const parsed = YAML.parse(await fs.readFile(path.join(root, "sparse2", "project.yaml"), "utf8"));
+    expect(parsed.permissionMode).toBeUndefined();
+    expect(parsed.maxTurns).toBeUndefined();
+    expect(parsed.docker).toBeUndefined();
+  });
+
   it("normalize fills defaults for a sparse on-disk yaml", async () => {
     await fs.mkdir(path.join(root, "sparse"));
     await fs.writeFile(

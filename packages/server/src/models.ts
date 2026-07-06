@@ -39,6 +39,40 @@ export const MODELS: ModelInfo[] = [
 /** The model a project's keeper agent uses unless the project overrides it. */
 export const KEEPER_DEFAULT_MODEL = "claude-opus-4-8";
 
+/**
+ * Per-project keeper-agent settings surfaced in the project settings UI
+ * (issue #12). These mirror the fleet-wide `defaults` in herdctl.ts so a project
+ * that doesn't override a field inherits the same value it would have anyway —
+ * they're the single source of truth for both the defaults block and the DTO
+ * resolution.
+ */
+
+/**
+ * The keeper `permission_mode` values offered in the settings UI. A curated
+ * subset of herdctl's PermissionMode enum (default / acceptEdits / plan /
+ * bypassPermissions) — the niche delegate/dontAsk modes are omitted.
+ */
+export const PERMISSION_MODES = ["default", "acceptEdits", "plan", "bypassPermissions"] as const;
+export type PermissionMode = (typeof PERMISSION_MODES)[number];
+
+/** Keeper defaults (inherited when a project doesn't override the field). */
+export const KEEPER_DEFAULT_PERMISSION_MODE: PermissionMode = "acceptEdits";
+export const KEEPER_DEFAULT_MAX_TURNS = 200;
+export const KEEPER_DEFAULT_DOCKER = false;
+
+/** Upper bound on a project's `max_turns` (guards the UI + PATCH validation). */
+export const MAX_TURNS_LIMIT = 1000;
+
+/** Whether `m` is one of the offered keeper permission modes. */
+export function isKnownPermissionMode(m: string): m is PermissionMode {
+  return (PERMISSION_MODES as readonly string[]).includes(m);
+}
+
+/** Whether `n` is a valid keeper `max_turns` (positive integer within bounds). */
+export function isValidMaxTurns(n: unknown): n is number {
+  return typeof n === "number" && Number.isInteger(n) && n >= 1 && n <= MAX_TURNS_LIMIT;
+}
+
 /** The cheap model the post-turn sweeper (curator) always uses. */
 export const SWEEPER_DEFAULT_MODEL = "claude-haiku-4-5-20251001";
 

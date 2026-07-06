@@ -36,6 +36,12 @@ export interface Project {
   pinned: string[];
   /** The keeper model this project runs on. Always concrete (server resolves the default). */
   model: string;
+  /** Keeper permission mode. Always concrete (server resolves the default). Issue #12. */
+  permissionMode: string;
+  /** Keeper max_turns. Always concrete (server resolves the default). Issue #12. */
+  maxTurns: number;
+  /** Whether the keeper runs in a Docker sandbox. Always concrete. Issue #12. */
+  docker: boolean;
 }
 
 /** A selectable model (GET /api/models). `contextLimit` drives the context meter. */
@@ -78,6 +84,12 @@ export interface UpdateProjectInput {
   visibility?: "public" | "private";
   /** The keeper model id; server re-registers the keeper on change (must be a known model). */
   model?: string;
+  /** Keeper permission mode; server validates + re-registers the keeper (issue #12). */
+  permissionMode?: string;
+  /** Keeper max_turns (1–1000); server validates + re-registers the keeper (issue #12). */
+  maxTurns?: number;
+  /** Whether the keeper runs in a Docker sandbox; server re-registers on change (issue #12). */
+  docker?: boolean;
 }
 
 /** A chat = one Claude Code session, surfaced by the server's session discovery. */

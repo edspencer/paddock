@@ -52,6 +52,9 @@ import {
   SWEEPER_DEFAULT_MODEL,
   isKnownModel,
   getContextLimit,
+  isKnownPermissionMode,
+  isValidMaxTurns,
+  MAX_TURNS_LIMIT,
 } from "./models.js";
 
 export interface RouteDeps {
@@ -206,9 +209,23 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     async (req, reply) => {
       try {
         const body = req.body ?? {};
-        // Validate an explicit model override before touching disk (400 if bad).
+        // Validate explicit keeper-agent overrides before touching disk (400 if
+        // bad) — these re-register the keeper, so a bad value must not persist.
         if (body.model !== undefined && !isKnownModel(body.model)) {
           return reply.code(400).send({ error: `Unknown model: ${body.model}`, code: "invalid" });
+        }
+        if (body.permissionMode !== undefined && !isKnownPermissionMode(body.permissionMode)) {
+          return reply
+            .code(400)
+            .send({ error: `Unknown permission mode: ${body.permissionMode}`, code: "invalid" });
+        }
+        if (body.maxTurns !== undefined && !isValidMaxTurns(body.maxTurns)) {
+          return reply
+            .code(400)
+            .send({ error: `max_turns must be an integer 1–${MAX_TURNS_LIMIT}`, code: "invalid" });
+        }
+        if (body.docker !== undefined && typeof body.docker !== "boolean") {
+          return reply.code(400).send({ error: "docker must be a boolean", code: "invalid" });
         }
         const project = await projects.update(req.params.slug, body);
         // Re-register the keeper so the new model takes effect (the keeper is a

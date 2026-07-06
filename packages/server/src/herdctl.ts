@@ -59,7 +59,12 @@ import path from "node:path";
 import YAML from "yaml";
 import type { PaddockConfig } from "./config.js";
 import type { Project } from "./projects.js";
-import { KEEPER_DEFAULT_MODEL, SWEEPER_DEFAULT_MODEL } from "./models.js";
+import {
+  KEEPER_DEFAULT_MODEL,
+  SWEEPER_DEFAULT_MODEL,
+  KEEPER_DEFAULT_PERMISSION_MODE,
+  KEEPER_DEFAULT_MAX_TURNS,
+} from "./models.js";
 import { ensureProjectChats, projectChatsDir } from "./transcripts.js";
 
 /** Options passed through to a streamed trigger. */
@@ -642,8 +647,16 @@ export class HerdctlService {
       // `defaults.runtime` is dropped by the core config loader, so set it here.
       runtime: "cli",
       model: modelOverride ?? project.model ?? KEEPER_DEFAULT_MODEL,
+      // Per-project keeper settings (issue #12). The project DTO always carries
+      // concrete values (fleet defaults resolved in projects.ts), so setting
+      // them here just overrides the inherited fleet `defaults` per project.
+      permission_mode: project.permissionMode ?? KEEPER_DEFAULT_PERMISSION_MODE,
+      max_turns: project.maxTurns ?? KEEPER_DEFAULT_MAX_TURNS,
       default_prompt: "Summarize the current state of this project.",
     };
+    // Docker isolation: only set it when the project opts in, so a project that
+    // leaves it off keeps inheriting the fleet default (no Docker) unchanged.
+    if (project.docker) config.docker = { enabled: true };
     // Only non-dev-servers instances get a replace system_prompt; the projects
     // instance omits it so the default coding prompt + CLAUDE.md hierarchy apply.
     if (!this.cfg.devServers.enabled) {
@@ -740,12 +753,14 @@ export class HerdctlService {
         // agent run on it; each keeper sets its own model explicitly anyway.
         model: KEEPER_DEFAULT_MODEL,
         // ~200 turns: enough for real multi-step coding sessions while still
-        // bounding runaway agents (CLAUDE.md: always set max_turns).
-        max_turns: 200,
-        // No Docker isolation yet (documented follow-up). The LXC has Docker
-        // nesting available, but for the POC we keep keeper agents native with
-        // acceptEdits + denied dangerous bash patterns.
-        permission_mode: "acceptEdits",
+        // bounding runaway agents (CLAUDE.md: always set max_turns). A project
+        // can override this per-project (issue #12); this is the inherited
+        // default (shared constant so the DTO resolution stays in sync).
+        max_turns: KEEPER_DEFAULT_MAX_TURNS,
+        // Keeper agents run native (no Docker) with acceptEdits + denied
+        // dangerous bash patterns by default; a project can opt into Docker
+        // isolation or a different permission mode per-project (issue #12).
+        permission_mode: KEEPER_DEFAULT_PERMISSION_MODE,
         // `Skill` MUST be in the allowlist or every skill invocation is
         // permission-denied in `-p` (non-interactive) mode — the CLI is spawned
         // with an explicit `--allowedTools` list (cli-runtime), and any tool not
