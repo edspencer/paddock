@@ -3,6 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useProjects } from "../lib/projects-context";
 import { useTheme } from "../lib/theme";
 import type { Project } from "../lib/types";
+import { getBrand, logoIsImage } from "../lib/brand";
 import { areaLabel, orderAreaSlugs } from "../lib/areas";
 import { StatusPill } from "./StatusPill";
 import { TagPill } from "./TagPill";
@@ -16,12 +17,19 @@ export function AppShell() {
   const [navOpen, setNavOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
+  const brand = getBrand();
 
   // The mobile nav is an off-canvas drawer; close it on any navigation so a
   // project/chat tap doesn't leave it covering the content.
   useEffect(() => {
     setNavOpen(false);
   }, [location.pathname]);
+
+  // Keep the document title in sync with the brand name (covers dev, where the
+  // server doesn't inject the <title>; production already ships it injected).
+  useEffect(() => {
+    document.title = brand.name;
+  }, [brand.name]);
 
   // Group the sidebar list by area, in the same order as the landing page.
   // Subheaders only appear when there's more than one area in play.
@@ -55,10 +63,8 @@ export function AppShell() {
           <MenuIcon width={20} height={20} />
         </button>
         <NavLink to="/" className="flex items-center gap-2">
-          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent text-sm text-white shadow-sm">
-            🐎
-          </span>
-          <span className="text-[15px] font-semibold tracking-tight">Paddock</span>
+          <BrandLogo brand={brand} className="h-7 w-7 text-sm" />
+          <span className="text-[15px] font-semibold tracking-tight">{brand.name}</span>
         </NavLink>
       </header>
 
@@ -79,10 +85,8 @@ export function AppShell() {
       >
         <div className="flex items-center gap-2 px-5 py-4">
           <NavLink to="/" className="group flex items-center gap-2">
-            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent text-base text-white shadow-sm">
-              🐎
-            </span>
-            <span className="text-[17px] font-semibold tracking-tight">Paddock</span>
+            <BrandLogo brand={brand} className="h-8 w-8 text-base" />
+            <span className="text-[17px] font-semibold tracking-tight">{brand.name}</span>
           </NavLink>
           <button
             type="button"
@@ -177,6 +181,25 @@ export function AppShell() {
         onCreated={onCreated}
       />
     </div>
+  );
+}
+
+/**
+ * The instance logo chip (issue #34). Renders the configured logo as an <img>
+ * when it's a URL/path, otherwise as an inline glyph/emoji. The accent-colored
+ * chip background comes from the runtime `--accent` CSS variable via `bg-accent`.
+ */
+function BrandLogo({ brand, className = "" }: { brand: ReturnType<typeof getBrand>; className?: string }) {
+  return (
+    <span
+      className={`flex shrink-0 items-center justify-center overflow-hidden rounded-lg bg-accent text-white shadow-sm ${className}`}
+    >
+      {logoIsImage(brand.logo) ? (
+        <img src={brand.logo} alt="" className="h-full w-full object-cover" />
+      ) : (
+        brand.logo
+      )}
+    </span>
   );
 }
 

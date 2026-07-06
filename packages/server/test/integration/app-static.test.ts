@@ -23,7 +23,15 @@ interface Harness {
   restore: () => void;
 }
 
-async function boot(opts: { withDist: boolean }): Promise<Harness> {
+// The marker lives in the <body> (not the <title>) because branding injection
+// rewrites <title> to the configured name (issue #34).
+const FIXTURE_INDEX =
+  "<!doctype html><html><head><title>Paddock</title></head><body><div id=root>paddock SPA</div></body></html>";
+
+async function boot(opts: {
+  withDist: boolean;
+  brand?: { name?: string; logo?: string; accent?: string };
+}): Promise<Harness> {
   const tmp = await makeTmpDir("paddock-static-");
   const home = path.join(tmp, "home");
   const dataDir = path.join(tmp, "data");
@@ -33,7 +41,7 @@ async function boot(opts: { withDist: boolean }): Promise<Harness> {
   await fs.mkdir(projectsRoot, { recursive: true });
   if (opts.withDist) {
     await fs.mkdir(webDist, { recursive: true });
-    await fs.writeFile(path.join(webDist, "index.html"), "<!doctype html><title>paddock SPA</title>", "utf8");
+    await fs.writeFile(path.join(webDist, "index.html"), FIXTURE_INDEX, "utf8");
   }
 
   const saved: Record<string, string | undefined> = {
@@ -45,6 +53,9 @@ async function boot(opts: { withDist: boolean }): Promise<Harness> {
     CLAUDE_HOME: process.env.CLAUDE_HOME,
     LOG_LEVEL: process.env.LOG_LEVEL,
     PADDOCK_FAKE_SCRIPT: process.env.PADDOCK_FAKE_SCRIPT,
+    PADDOCK_BRAND_NAME: process.env.PADDOCK_BRAND_NAME,
+    PADDOCK_BRAND_LOGO: process.env.PADDOCK_BRAND_LOGO,
+    PADDOCK_BRAND_ACCENT: process.env.PADDOCK_BRAND_ACCENT,
   };
   process.env.HOME = home;
   delete process.env.CLAUDE_HOME;
@@ -54,6 +65,13 @@ async function boot(opts: { withDist: boolean }): Promise<Harness> {
   process.env.PADDOCK_PROJECTS_DIR = projectsRoot;
   process.env.PADDOCK_WEB_DIST = opts.withDist ? webDist : path.join(tmp, "no-such-dist");
   process.env.LOG_LEVEL = "silent";
+  // Branding env (issue #34) — set or clear per test.
+  for (const k of ["PADDOCK_BRAND_NAME", "PADDOCK_BRAND_LOGO", "PADDOCK_BRAND_ACCENT"]) {
+    delete process.env[k];
+  }
+  if (opts.brand?.name) process.env.PADDOCK_BRAND_NAME = opts.brand.name;
+  if (opts.brand?.logo) process.env.PADDOCK_BRAND_LOGO = opts.brand.logo;
+  if (opts.brand?.accent) process.env.PADDOCK_BRAND_ACCENT = opts.brand.accent;
 
   const built = await buildApp({ serveStatic: true });
   await built.app.ready();
@@ -83,11 +101,15 @@ describe("integration: app.ts static-SPA serving", () => {
     const root = await h.built.app.inject({ method: "GET", url: "/" });
     expect(root.statusCode).toBe(200);
     expect(root.body).toContain("paddock SPA");
+    // Default branding: the config global is injected but no accent override.
+    expect(root.body).toContain("window.__PADDOCK_CONFIG__=");
+    expect(root.body).not.toContain("<style>");
 
     // A client-side route (non-/api, non-/ws GET) falls back to index.html.
     const spaRoute = await h.built.app.inject({ method: "GET", url: "/projects/anything" });
     expect(spaRoute.statusCode).toBe(200);
     expect(spaRoute.body).toContain("paddock SPA");
+    expect(spaRoute.body).toContain("window.__PADDOCK_CONFIG__=");
 
     // The API still works (and an unknown /api path is a JSON 404, not the SPA).
     const api = await h.built.app.inject({ method: "GET", url: "/api/health" });
@@ -95,6 +117,24 @@ describe("integration: app.ts static-SPA serving", () => {
     const apiMiss = await h.built.app.inject({ method: "GET", url: "/api/nope" });
     expect(apiMiss.statusCode).toBe(404);
     expect(apiMiss.json().error).toBe("not found");
+  });
+
+  it("injects per-instance branding into the served index.html (issue #34)", async () => {
+    h = await boot({
+      withDist: true,
+      brand: { name: "Homelab", logo: "🏠", accent: "#3366cc" },
+    });
+    for (const url of ["/", "/index.html", "/projects/x/chat"]) {
+      const res = await h.built.app.inject({ method: "GET", url });
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toContain("<title>Homelab</title>");
+      expect(res.body).toContain('"name":"Homelab"');
+      expect(res.body).toContain('"logo":"🏠"');
+      // A custom accent emits the :root channel override.
+      expect(res.body).toContain("<style>:root{--accent:51 102 204;");
+      // The original body content is preserved.
+      expect(res.body).toContain("paddock SPA");
+    }
   });
 
   it("runs API-only (no crash) when serveStatic is on but the dist is missing", async () => {

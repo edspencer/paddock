@@ -28,6 +28,16 @@
 @layer base {
   :root {
     color-scheme: light dark;
+    /*
+     * Accent color as space-separated RGB channels so Tailwind's
+     * `rgb(var(--accent) / <alpha-value>)` tokens keep supporting opacity
+     * modifiers (bg-accent/15, ring-accent/20, …). These defaults are the
+     * terracotta palette; a branded instance overrides --accent* via a
+     * server-injected <style> in index.html (issue #34, PADDOCK_BRAND_ACCENT).
+     */
+    --accent: 194 96 60; /* #c2603c */
+    --accent-600: 168 78 47; /* #a84e2f */
+    --accent-700: 138 63 38; /* #8a3f26 */
   }
   html,
   body,
