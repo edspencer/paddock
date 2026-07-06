@@ -1,5 +1,27 @@
 # @paddock/server
 
+## 0.5.0
+
+### Minor Changes
+
+- [#69](https://github.com/edspencer/paddock/pull/69) [`394715f`](https://github.com/edspencer/paddock/commit/394715f093ced935a5f93956cfe70953c8f6cc61) Thanks [@edspencer](https://github.com/edspencer)! - Add voice dictation to the chat composer (#voice). A microphone button next to
+  Send lets you record a spoken message that is transcribed with Whisper and
+  dropped into the text area. Works on desktop and mobile.
+
+  Two backends, selected per-instance via `PADDOCK_WHISPER_*` env (mirroring
+  HushPod's whisper config so both can share one server):
+
+  - **remote** — POST audio to an OpenAI-compatible `/audio/transcriptions`
+    endpoint (`PADDOCK_WHISPER_ENDPOINT`, e.g. a GPU box running
+    whisper-server / faster-whisper-server / speaches).
+  - **local** — run whisper.cpp on the box via the optional `nodejs-whisper`
+    dependency (needs `ffmpeg`).
+
+  Dictation is **off by default** — a plain instance shows no mic button. When
+  enabled but the browser can't capture audio (e.g. served over plain HTTP, which
+  blocks `getUserMedia`), the button is shown disabled with an explanatory tooltip
+  rather than failing silently.
+
 ## 0.4.2
 
 ## 0.4.1

@@ -34,6 +34,19 @@
   #root {
     height: 100%;
   }
+  /*
+   * The app is a fixed-height shell (100dvh) whose panes scroll internally —
+   * the document itself never needs to scroll. Locking overflow + overscroll on
+   * the page stops mobile Safari from rubber-band-scrolling the WHOLE page when
+   * a swipe starts on non-scrolling chrome (the top bar or the composer), which
+   * made those "fixed" bars appear to drag with the page. Inner scroll panes
+   * (transcript, lists, file reader) still scroll normally.
+   */
+  html,
+  body {
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
   body {
     @apply bg-canvas text-ink antialiased;
     font-feature-settings: "cv05", "ss01";

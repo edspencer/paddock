@@ -20,14 +20,31 @@
  * THIN (chat sending happens over WS; these are convenience reads/echoes):
  *   POST /api/projects/:slug/chats     start-a-chat metadata (see TODO)
  */
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { ProjectError, type ProjectStore, type CreateProjectInput, type UpdateProjectInput } from "./projects.js";
 import type { HerdctlService } from "./herdctl.js";
 import { SCRATCH_SLUG, SCRATCH_AGENT, keeperAgentName } from "./herdctl.js";
 import type { GitService } from "./git.js";
 import type { GithubAuth } from "./github-auth.js";
+import { type Transcriber, TranscriptionError } from "./transcribe.js";
 import { readFirstUserText } from "./transcripts.js";
 import { enrichWithSubagents, readSubagentMessages } from "./subagents.js";
+
+/**
+ * The subset of @fastify/multipart's decorated request we use. The plugin
+ * decorates `req.file()` at runtime; we model just what we need here rather than
+ * rely on the plugin's global `declare module 'fastify'` augmentation, which is
+ * brittle under workspace hoisting (fastify can resolve to a different physical
+ * copy than the one the plugin augments).
+ */
+interface UploadedFile {
+  filename?: string;
+  mimetype?: string;
+  toBuffer(): Promise<Buffer>;
+}
+type MultipartRequest = FastifyRequest & {
+  file(): Promise<UploadedFile | undefined>;
+};
 import { PRELOAD_CONTEXT_OPEN, stripPreloadWrapper } from "./preload.js";
 import {
   MODELS,
@@ -42,10 +59,63 @@ export interface RouteDeps {
   herdctl: HerdctlService;
   git: GitService;
   githubAuth: GithubAuth;
+  transcriber: Transcriber;
 }
 
 export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Promise<void> {
-  const { projects, herdctl, git, githubAuth } = deps;
+  const { projects, herdctl, git, githubAuth, transcriber } = deps;
+
+  // --- voice dictation (#voice): capability probe + transcription -------
+  // The composer polls this to decide whether to show a mic button. `available`
+  // is false on instances with dictation off (or a misconfigured remote).
+  app.get("/api/transcription", async () => ({
+    available: transcriber.available,
+    mode: transcriber.mode,
+    model: transcriber.model,
+  }));
+
+  // Transcribe a recorded audio blob (multipart `file`) → `{ text }`. The mic
+  // button records WebM/Opus in the browser and POSTs it here; the server runs
+  // whisper (remote OpenAI-compatible endpoint or local whisper.cpp).
+  app.post("/api/transcribe", async (req, reply) => {
+    if (!transcriber.available) {
+      return reply.code(503).send({ error: "voice dictation is not enabled on this instance" });
+    }
+    let part: UploadedFile | undefined;
+    try {
+      part = await (req as MultipartRequest).file();
+    } catch (err) {
+      // @fastify/multipart throws on oversize / malformed uploads.
+      return reply.code(413).send({ error: (err as Error).message });
+    }
+    if (!part) {
+      return reply.code(400).send({ error: "no audio file in request" });
+    }
+    let audio: Buffer;
+    try {
+      audio = await part.toBuffer();
+    } catch (err) {
+      // Size-limit overruns surface here too (streamed past the cap).
+      return reply.code(413).send({ error: (err as Error).message });
+    }
+    try {
+      const result = await transcriber.transcribe({
+        audio,
+        filename: part.filename || "dictation.webm",
+        mimeType: part.mimetype || "audio/webm",
+      });
+      return {
+        text: result.text,
+        model: result.model,
+        mode: result.mode,
+        durationMs: result.durationMs,
+      };
+    } catch (err) {
+      const status = err instanceof TranscriptionError ? err.status : 502;
+      req.log.warn({ err }, "transcription failed");
+      return reply.code(status).send({ error: (err as Error).message });
+    }
+  });
 
   // --- git (backing store): fleet-level remote + connection state --------
   app.get("/api/git", async () => {

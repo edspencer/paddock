@@ -99,6 +99,49 @@ rm -rf /tmp/paddock-dev.*
 | `VITE_WS_BASE` *(web build)* | same-origin | Point the SPA at a non-default WS origin. |
 | `PADDOCK_DEV_PORT` *(Mode B)* | `5173` | Vite dev-server port. |
 | `PADDOCK_PROXY_TARGET` *(Mode B)* | `http://localhost:4000` | Backend origin the Vite dev server proxies `/api` + `/ws` to (WS target derived by swapping `http`→`ws`). |
+| `PADDOCK_WHISPER_MODE` | `off` (or `remote` if an endpoint is set) | Voice dictation backend: `off` \| `remote` \| `local`. |
+| `PADDOCK_WHISPER_ENDPOINT` | — | **remote:** OpenAI-compatible base URL, e.g. `http://192.168.1.200:8385/v1`. `/audio/transcriptions` is appended. |
+| `PADDOCK_WHISPER_MODEL` | `base` | Whisper model (`tiny`/`base`/`small`/…; `.en` variants for English-only). |
+| `PADDOCK_WHISPER_API_KEY` | — | **remote:** optional bearer token for the endpoint. |
+| `PADDOCK_WHISPER_LANGUAGE` | — | Optional spoken-language hint (e.g. `en`); unset ⇒ auto-detect. |
+| `PADDOCK_WHISPER_MAX_UPLOAD_BYTES` | `26214400` (25 MB) | Max accepted dictation upload size. |
+
+> **Voice dictation** (see [Voice dictation](#voice-dictation)) is off unless a
+> whisper backend is configured. `local` mode needs the optional `nodejs-whisper`
+> dependency plus a system `ffmpeg`.
+
+## Voice dictation
+
+The composer shows a **microphone button** next to Send when the instance has a
+whisper backend configured. Recording happens in the browser; the clip is POSTed
+to `/api/transcribe`, transcribed server-side, and the text is inserted into the
+draft.
+
+- **remote** (recommended): point `PADDOCK_WHISPER_ENDPOINT` at any
+  OpenAI-compatible whisper server (whisper-server, faster-whisper-server,
+  speaches, …). This is the same contract HushPod uses, so both can share one
+  server:
+
+  ```bash
+  export PADDOCK_WHISPER_ENDPOINT=http://192.168.1.200:8385/v1
+  export PADDOCK_WHISPER_MODEL=base
+  ```
+
+- **local**: run whisper.cpp on the box. Needs `ffmpeg` on `PATH` and the
+  optional dependency (`npm i -w @paddock/server nodejs-whisper`); the first
+  transcription compiles whisper.cpp and downloads the model.
+
+  ```bash
+  export PADDOCK_WHISPER_MODE=local
+  export PADDOCK_WHISPER_MODEL=base   # or base.en / small for more accuracy
+  ```
+
+`GET /api/transcription` reports `{ available, mode, model }` — the composer uses
+it to decide whether to show the button.
+
+> **Secure context required.** Browser mic capture (`getUserMedia`) only works
+> over HTTPS or `localhost`. On a plain-HTTP LAN URL the button appears disabled
+> with a tooltip; use the production HTTPS origin (or `localhost`) to record.
 
 ## What "good" looks like end-to-end
 

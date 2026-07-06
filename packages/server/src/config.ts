@@ -93,6 +93,40 @@ export interface PaddockConfig {
   auth: AuthConfig;
   /** Dev/preview-server capability advertised to keeper agents (per-instance). */
   devServers: DevServersConfig;
+  /** Voice-dictation (Whisper) capability (per-instance; default off). */
+  transcription: TranscriptionConfig;
+}
+
+/**
+ * Voice-dictation (Whisper) capability. Mirrors HushPod's whisper config so the
+ * two can share a transcription backend (e.g. Ed's laptop whisper server). Driven
+ * entirely by `PADDOCK_WHISPER_*` env so it is scoped PER INSTANCE and defaults
+ * to `off` — a plain instance advertises no mic button.
+ *
+ * - `off`    — dictation disabled (default). No mic button in the composer.
+ * - `remote` — POST audio to an OpenAI-compatible `/audio/transcriptions`
+ *              endpoint (e.g. `http://192.168.1.200:8385/v1`). The same kind of
+ *              server HushPod points at.
+ * - `local`  — run whisper.cpp on this box via nodejs-whisper (CPU; slower).
+ */
+export type WhisperMode = "off" | "local" | "remote";
+
+export interface TranscriptionConfig {
+  /** Dictation backend. `off` disables the composer mic button. */
+  mode: WhisperMode;
+  /** Whisper model name (e.g. `base`, `base.en`, `small`). */
+  model: string;
+  /**
+   * remote: OpenAI-compatible base URL, e.g. `http://192.168.1.200:8385/v1`.
+   * `/audio/transcriptions` is appended. Required in `remote` mode.
+   */
+  endpoint?: string;
+  /** remote: optional bearer token sent as `Authorization: Bearer …`. */
+  apiKey?: string;
+  /** Optional spoken-language hint (ISO-639-1, e.g. `en`). Unset ⇒ auto-detect. */
+  language?: string;
+  /** Max accepted upload size in bytes (guards the transcribe route). */
+  maxUploadBytes: number;
 }
 
 function abs(p: string): string {
@@ -180,6 +214,26 @@ function loadDevServersConfig(): DevServersConfig {
   };
 }
 
+/**
+ * Resolve the voice-dictation (Whisper) capability from env. Defaults to `off`,
+ * so a plain instance never shows a mic button. The mode defaults to `remote`
+ * when an endpoint is configured (the common case — point it at a shared whisper
+ * server), and can be forced with `PADDOCK_WHISPER_MODE`. Accepts local/remote/off.
+ */
+function loadTranscriptionConfig(): TranscriptionConfig {
+  const endpoint = envOpt("PADDOCK_WHISPER_ENDPOINT");
+  const rawMode = envOr("PADDOCK_WHISPER_MODE", endpoint ? "remote" : "off").toLowerCase();
+  const mode: WhisperMode = rawMode === "local" || rawMode === "remote" ? rawMode : "off";
+  return {
+    mode,
+    model: envOr("PADDOCK_WHISPER_MODEL", "base"),
+    endpoint,
+    apiKey: envOpt("PADDOCK_WHISPER_API_KEY"),
+    language: envOpt("PADDOCK_WHISPER_LANGUAGE"),
+    maxUploadBytes: Number(envOr("PADDOCK_WHISPER_MAX_UPLOAD_BYTES", String(25 * 1024 * 1024))),
+  };
+}
+
 export function loadPaddockConfig(): PaddockConfig {
   // Ensure the data root exists first so symlinks (e.g. /tmp -> /private/tmp on
   // macOS) resolve consistently for every derived path below.
@@ -216,6 +270,7 @@ export function loadPaddockConfig(): PaddockConfig {
     scratchDir,
     auth: loadAuthConfig(),
     devServers: loadDevServersConfig(),
+    transcription: loadTranscriptionConfig(),
   });
 }
 

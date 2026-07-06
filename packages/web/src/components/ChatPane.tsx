@@ -10,6 +10,7 @@ import {
 } from "react";
 import { chatClient, type ConnectionState, type ToolCall } from "../lib/ws";
 import { Markdown } from "./Markdown";
+import { DictationButton } from "./DictationButton";
 import { formatDuration } from "../lib/format";
 import { api } from "../lib/api";
 import { readChatModel, writeChatModel } from "../lib/chatModel";
@@ -90,6 +91,8 @@ export function ChatPane({
 }: ChatPaneProps) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [draft, setDraft] = useState("");
+  // The composer textarea, so dictated text can be appended and the box resized.
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const [streaming, setStreaming] = useState(false);
   const [hydrating, setHydrating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -436,6 +439,10 @@ export function ChatPane({
       { kind: "user", id: nextId(), content: text },
     ]);
     setDraft("");
+    // Clearing the value doesn't undo the inline height the autosize handler
+    // grew the textarea to, so a multi-line message would leave the composer
+    // tall until the next keystroke. Reset it back to one row here.
+    if (composerRef.current) composerRef.current.style.height = "auto";
     setStreaming(true);
     streamingRef.current = true;
     // A brand-new chat won't know its session id until the first frame arrives;
@@ -477,6 +484,20 @@ export function ChatPane({
     }
   };
 
+  // Append dictated text to the current draft (space-joined), then refocus and
+  // resize the textarea to fit — same autosize the onChange handler applies.
+  const insertDictation = useCallback((text: string) => {
+    setDraft((prev) => (prev.trim() ? `${prev.trimEnd()} ${text}` : text));
+    const el = composerRef.current;
+    if (el) {
+      requestAnimationFrame(() => {
+        el.style.height = "auto";
+        el.style.height = `${Math.min(el.scrollHeight, 192)}px`;
+        el.focus();
+      });
+    }
+  }, []);
+
   const empty = turns.length === 0 && !hydrating;
 
   return (
@@ -485,7 +506,7 @@ export function ChatPane({
       <div
         ref={scrollRef}
         onScroll={onScroll}
-        className="flex-1 overflow-y-auto"
+        className="flex-1 overflow-y-auto overscroll-contain"
       >
         <div className="mx-auto w-full max-w-3xl px-4 py-6">
           {hydrating && (
@@ -550,6 +571,7 @@ export function ChatPane({
           />
           <div className="flex items-end gap-2 rounded-2xl border border-paddock-300 bg-white p-2 shadow-sm focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/20 dark:border-paddock-700 dark:bg-paddock-900">
             <textarea
+              ref={composerRef}
               className="max-h-48 min-h-[40px] flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none placeholder:text-paddock-400 dark:placeholder:text-paddock-600"
               rows={1}
               value={draft}
@@ -562,6 +584,9 @@ export function ChatPane({
               }}
               onKeyDown={onKeyDown}
             />
+            {/* Voice dictation (#voice): renders nothing unless the instance has
+                a whisper backend configured. Disabled while a turn streams. */}
+            <DictationButton onText={insertDictation} disabled={streaming} />
             {streaming ? (
               <button
                 type="button"

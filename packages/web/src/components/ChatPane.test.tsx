@@ -59,6 +59,11 @@ vi.mock("../lib/api", async () => {
       getModels: (...a: unknown[]) => getModels(...a),
       chatContext: (...a: unknown[]) => chatContext(...a),
       subagentMessages: (...a: unknown[]) => subagentMessages(...a),
+      // The composer's DictationButton probes this on mount; default to
+      // "dictation off" so it renders nothing and these tests see the same
+      // composer they always have.
+      transcriptionStatus: () =>
+        Promise.resolve({ available: false, mode: "off" as const, model: "" }),
     },
   };
 });
