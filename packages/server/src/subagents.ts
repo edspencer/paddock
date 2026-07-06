@@ -80,8 +80,15 @@ export async function readTaskToolUses(
   sessionId: string,
 ): Promise<TaskToolUse[]> {
   if (!SAFE_SEGMENT.test(sessionId)) return [];
-  const file = path.join(projectChatsDir(projectDir), `${sessionId}.jsonl`);
+  return readTaskUsesFromFile(path.join(projectChatsDir(projectDir), `${sessionId}.jsonl`));
+}
 
+/**
+ * Recover paired Task/Agent tool_uses (in order) from an arbitrary transcript
+ * file — the main session file, or a sub-agent's own transcript (which lets a
+ * sub-agent's nested launches be enriched for recursive expansion).
+ */
+async function readTaskUsesFromFile(file: string): Promise<TaskToolUse[]> {
   const byId = new Map<string, TaskToolUse>();
   const order: string[] = [];
   const resultIds = new Set<string>();
@@ -184,12 +191,20 @@ export async function readSubagentMessages(
   projectDir: string,
   sessionId: string,
   toolUseId: string,
-): Promise<ChatMessage[]> {
+): Promise<EnrichedMessage[]> {
   if (!SAFE_SEGMENT.test(sessionId) || !SAFE_SEGMENT.test(toolUseId)) return [];
   const subagents = await listSubagents(projectDir, sessionId);
   const meta = subagents.get(toolUseId);
   if (!meta) return [];
-  return parseSessionMessages(meta.transcriptPath).catch(() => [] as ChatMessage[]);
+  const messages = await parseSessionMessages(meta.transcriptPath).catch(
+    () => [] as ChatMessage[],
+  );
+  if (!hasSubagentTool(messages)) return messages;
+  // A sub-agent may itself spawn sub-agents (spawnDepth > 1). Their sidecars are
+  // flat in the SAME session's subagents/ dir, so enriching this transcript's own
+  // Task/Agent blocks against `subagents` lets the UI expand them recursively.
+  const taskUses = await readTaskUsesFromFile(meta.transcriptPath);
+  return attachSubagentFields(messages, taskUses, subagents);
 }
 
 /**
@@ -203,16 +218,29 @@ export async function enrichWithSubagents(
   sessionId: string,
   messages: ChatMessage[],
 ): Promise<EnrichedMessage[]> {
-  const hasAgentTool = messages.some(
-    (m) => m.toolCall && SUBAGENT_TOOL_NAMES.has(m.toolCall.toolName),
-  );
-  if (!hasAgentTool) return messages;
-
+  if (!hasSubagentTool(messages)) return messages;
   const [taskUses, subagents] = await Promise.all([
     readTaskToolUses(projectDir, sessionId),
     listSubagents(projectDir, sessionId),
   ]);
+  return attachSubagentFields(messages, taskUses, subagents);
+}
 
+/** True when any message is a Task/Agent tool call worth enriching. */
+function hasSubagentTool(messages: ChatMessage[]): boolean {
+  return messages.some((m) => m.toolCall && SUBAGENT_TOOL_NAMES.has(m.toolCall.toolName));
+}
+
+/**
+ * Attach recovered sub-agent fields to each Task/Agent tool message by joining
+ * against `taskUses` in file order (both are file-ordered; only paired uses are
+ * present, so the join stays aligned). Other messages pass through untouched.
+ */
+function attachSubagentFields(
+  messages: ChatMessage[],
+  taskUses: TaskToolUse[],
+  subagents: Map<string, SubagentMeta>,
+): EnrichedMessage[] {
   let i = 0;
   return messages.map((m) => {
     if (!m.toolCall || !SUBAGENT_TOOL_NAMES.has(m.toolCall.toolName)) return m;

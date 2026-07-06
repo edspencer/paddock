@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { chatClient, type ConnectionState, type ToolCall } from "../lib/ws";
 import { Markdown } from "./Markdown";
 import { formatDuration } from "../lib/format";
@@ -22,6 +31,18 @@ type Turn =
 
 let idCounter = 0;
 const nextId = () => `t${++idCounter}`;
+
+/** Tool names that launch a sub-agent: `Task` (classic Claude Code), `Agent` (SDK). */
+const SUBAGENT_TOOLS = new Set(["Task", "Agent"]);
+
+/**
+ * Fetches a sub-agent's nested steps by its parent tool_use id (issue #37).
+ * Provided per-chat (bound to slug + session); consumed by ToolBlock so every
+ * depth of nesting can lazy-load through the same call. Null outside a chat.
+ */
+const SubagentFetchContext = createContext<
+  ((toolUseId: string) => Promise<HistoryMessage[]>) | null
+>(null);
 
 export interface ChatPaneProps {
   /** Project slug, or "scratch" for one-off chats. */
@@ -102,6 +123,17 @@ export function ChatPane({
   // Session id is kept in a ref (the WS sub needs the latest without re-subscribing).
   const sessionRef = useRef<string | null>(initialSessionId ?? null);
   const jobRef = useRef<string | null>(null);
+
+  // Lazy-loader for sub-agent nested steps (issue #37). Bound to this chat's slug
+  // + current session; the sessionRef read defers to click time so it's correct
+  // even for a chat whose session id was established mid-stream.
+  const fetchSubagent = useCallback(
+    (toolUseId: string): Promise<HistoryMessage[]> =>
+      sessionRef.current
+        ? api.subagentMessages(projectSlug, sessionRef.current, toolUseId)
+        : Promise.resolve([]),
+    [projectSlug],
+  );
   const isNewSessionRef = useRef<boolean>(!initialSessionId);
   // True while this pane has an in-flight turn (from send() until complete/error).
   // Used to session-guard incoming frames so a still-streaming chat's stragglers
@@ -475,11 +507,13 @@ export function ChatPane({
             </div>
           )}
 
-          <div className="space-y-4">
-            {turns.map((t) => (
-              <TurnView key={t.id} turn={t} />
-            ))}
-          </div>
+          <SubagentFetchContext.Provider value={fetchSubagent}>
+            <div className="space-y-4">
+              {turns.map((t) => (
+                <TurnView key={t.id} turn={t} />
+              ))}
+            </div>
+          </SubagentFetchContext.Provider>
         </div>
       </div>
 
@@ -778,13 +812,22 @@ function Dot({ delay }: { delay?: string }) {
 function ToolBlock({ tool }: { tool: ToolCall }) {
   const [open, setOpen] = useState(false);
   const dur = formatDuration(tool.durationMs);
+  const isSubagent = SUBAGENT_TOOLS.has(tool.toolName);
+  // Expandable-into-steps only when the sub-agent's transcript is on disk.
+  const expandable = Boolean(isSubagent && tool.hasSubagent && tool.toolUseId);
+  // Sub-agent header reads as "<type> — <description>"; other tools keep the
+  // classic "<toolName> <inputSummary>".
+  const label = isSubagent ? (tool.subagentType ?? tool.toolName) : tool.toolName;
+  const subtitle = isSubagent ? tool.description : tool.inputSummary;
   return (
     <div className="flex justify-start">
       <div
         className={`w-full max-w-[92%] overflow-hidden rounded-xl border text-xs transition-colors ${
           tool.isError
             ? "border-rose-300/70 bg-rose-50/60 dark:border-rose-900/60 dark:bg-rose-950/30"
-            : "border-paddock-200 bg-paddock-100/50 dark:border-paddock-800 dark:bg-paddock-900/40"
+            : isSubagent
+              ? "border-accent/40 bg-accent/[0.06] dark:border-accent/40 dark:bg-accent/10"
+              : "border-paddock-200 bg-paddock-100/50 dark:border-paddock-800 dark:bg-paddock-900/40"
         }`}
       >
         <button
@@ -797,17 +840,30 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
             height={13}
             className={`shrink-0 text-paddock-400 transition-transform ${open ? "rotate-90" : ""}`}
           />
-          <WrenchIcon
-            width={13}
-            height={13}
-            className={tool.isError ? "text-rose-500" : "text-paddock-500"}
-          />
+          {isSubagent ? (
+            <SparkIcon
+              width={13}
+              height={13}
+              className={tool.isError ? "text-rose-500" : "text-accent"}
+            />
+          ) : (
+            <WrenchIcon
+              width={13}
+              height={13}
+              className={tool.isError ? "text-rose-500" : "text-paddock-500"}
+            />
+          )}
           <span className="font-mono font-semibold text-paddock-700 dark:text-paddock-200">
-            {tool.toolName}
+            {label}
           </span>
-          {tool.inputSummary && (
+          {isSubagent && (
+            <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent">
+              sub-agent
+            </span>
+          )}
+          {subtitle && (
             <span className="truncate font-mono text-paddock-500 dark:text-paddock-400">
-              {tool.inputSummary}
+              {subtitle}
             </span>
           )}
           <span className="ml-auto flex shrink-0 items-center gap-2">
@@ -819,12 +875,66 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
             {dur && <span className="text-paddock-400">{dur}</span>}
           </span>
         </button>
-        {open && (
-          <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words border-t border-paddock-200/70 bg-paddock-50/80 px-3 py-2 font-mono text-[11.5px] leading-relaxed text-paddock-700 dark:border-paddock-800 dark:bg-paddock-950/60 dark:text-paddock-300">
-            {tool.output || "(no output)"}
-          </pre>
-        )}
+        {open &&
+          (expandable ? (
+            <NestedSteps toolUseId={tool.toolUseId!} />
+          ) : (
+            <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words border-t border-paddock-200/70 bg-paddock-50/80 px-3 py-2 font-mono text-[11.5px] leading-relaxed text-paddock-700 dark:border-paddock-800 dark:bg-paddock-950/60 dark:text-paddock-300">
+              {tool.output || "(no output)"}
+            </pre>
+          ))}
       </div>
+    </div>
+  );
+}
+
+/**
+ * A sub-agent's own step-by-step transcript, lazy-loaded on first expand and
+ * rendered inline (issue #37). Reuses TurnView, so any Task/Agent steps the
+ * sub-agent itself ran render as further-expandable ToolBlocks — arbitrary depth
+ * through the same SubagentFetchContext (sub-agents are flat under the session).
+ */
+function NestedSteps({ toolUseId }: { toolUseId: string }) {
+  const fetchSubagent = useContext(SubagentFetchContext);
+  const [msgs, setMsgs] = useState<HistoryMessage[] | null>(null);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    if (!fetchSubagent) {
+      setError(true);
+      return;
+    }
+    let cancelled = false;
+    setMsgs(null);
+    setError(false);
+    fetchSubagent(toolUseId)
+      .then((m) => !cancelled && setMsgs(m))
+      .catch(() => !cancelled && setError(true));
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchSubagent, toolUseId]);
+
+  const turns = useMemo(() => (msgs ?? []).map(historyToTurn), [msgs]);
+
+  return (
+    <div className="border-t border-paddock-200/70 bg-paddock-50/60 px-3 py-3 dark:border-paddock-800 dark:bg-paddock-950/40">
+      {error ? (
+        <div className="text-[11.5px] text-rose-500">couldn't load sub-agent steps</div>
+      ) : msgs === null ? (
+        <div className="flex items-center gap-1.5 text-[11.5px] text-paddock-400">
+          <Dot /> <Dot delay="150ms" /> <Dot delay="300ms" />
+          <span className="ml-1">loading sub-agent steps…</span>
+        </div>
+      ) : turns.length === 0 ? (
+        <div className="text-[11.5px] text-paddock-400">(no recorded steps)</div>
+      ) : (
+        <div className="space-y-3 border-l-2 border-accent/30 pl-3">
+          {turns.map((t) => (
+            <TurnView key={t.id} turn={t} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

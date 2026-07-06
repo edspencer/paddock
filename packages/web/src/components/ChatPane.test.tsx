@@ -50,6 +50,7 @@ vi.mock("../lib/ws", () => ({
 
 const getModels = vi.fn();
 const chatContext = vi.fn();
+const subagentMessages = vi.fn();
 vi.mock("../lib/api", async () => {
   const actual = await vi.importActual<typeof import("../lib/api")>("../lib/api");
   return {
@@ -57,6 +58,7 @@ vi.mock("../lib/api", async () => {
     api: {
       getModels: (...a: unknown[]) => getModels(...a),
       chatContext: (...a: unknown[]) => chatContext(...a),
+      subagentMessages: (...a: unknown[]) => subagentMessages(...a),
     },
   };
 });
@@ -79,6 +81,7 @@ beforeEach(() => {
   stateCb = null;
   getModels.mockReset().mockResolvedValue(MODELS);
   chatContext.mockReset().mockResolvedValue(null);
+  subagentMessages.mockReset().mockResolvedValue([]);
   localStorage.clear();
 });
 
@@ -215,6 +218,48 @@ describe("ChatPane: history hydration", () => {
     const loadHistory = vi.fn().mockRejectedValue(new Error("gone"));
     render(<ChatPane projectSlug="proj" initialSessionId="sess-1" loadHistory={loadHistory} />);
     expect(await screen.findByText(/Could not load this chat's history/i)).toBeInTheDocument();
+  });
+
+  // Issue #37: a Task/Agent tool call renders as a sub-agent block (type +
+  // description) and lazy-loads its nested steps on first expand.
+  it("renders a sub-agent block and lazy-loads its nested steps on expand", async () => {
+    const withSubagent: HistoryMessage[] = [
+      {
+        role: "tool",
+        content: "final sub-agent answer",
+        timestamp: "2026-06-21T10:00:03Z",
+        toolCall: {
+          toolName: "Agent",
+          output: "final sub-agent answer",
+          isError: false,
+          subagentType: "Explore",
+          description: "map the features",
+          toolUseId: "toolu_A",
+          hasSubagent: true,
+        },
+      },
+    ];
+    subagentMessages.mockResolvedValue([
+      {
+        role: "tool",
+        content: "grep output",
+        timestamp: "2026-06-21T10:00:04Z",
+        toolCall: { toolName: "Grep", output: "grep output", isError: false },
+      },
+    ]);
+    const loadHistory = vi.fn().mockResolvedValue(withSubagent);
+    render(<ChatPane projectSlug="proj" initialSessionId="sess-2" loadHistory={loadHistory} />);
+
+    // Header shows the sub-agent type + description, not raw "Agent".
+    const header = await screen.findByRole("button", { name: /Explore.*sub-agent.*map the features/i });
+    expect(header).toBeInTheDocument();
+    // Nested steps are NOT fetched until expanded.
+    expect(subagentMessages).not.toHaveBeenCalled();
+
+    await userEvent.click(header);
+    await waitFor(() => expect(subagentMessages).toHaveBeenCalledWith("proj", "sess-2", "toolu_A"));
+    // The nested step (a Grep tool block) renders inline.
+    expect(await screen.findByText("Grep")).toBeInTheDocument();
   });
 });
 

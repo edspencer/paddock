@@ -140,6 +140,40 @@ describe("subagents (issue #37)", () => {
       expect(messages.some((m) => m.content.includes("found it"))).toBe(true);
     });
 
+    it("enriches a sub-agent's OWN nested Task blocks for recursive expansion", async () => {
+      // Parent sub-agent (toolu_A) whose transcript itself launches a child
+      // sub-agent (toolu_child). Both sidecars are flat in the same session dir.
+      await writeSubagent(
+        "s7",
+        "parent",
+        { agentType: "general", description: "parent", toolUseId: "toolu_A" },
+        [
+          {
+            type: "assistant",
+            message: {
+              id: "m1",
+              content: [{ type: "tool_use", name: "Agent", id: "toolu_child", input: { subagent_type: "Explore", description: "dig deeper" } }],
+            },
+          },
+          { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "toolu_child", content: "child done" }] } },
+        ],
+      );
+      await writeSubagent(
+        "s7",
+        "child",
+        { agentType: "Explore", description: "dig deeper", toolUseId: "toolu_child", spawnDepth: 2 },
+        [{ type: "user", message: { content: "hi" } }],
+      );
+
+      const msgs = await readSubagentMessages(projectDir, "s7", "toolu_A");
+      const nested = msgs.find((m) => m.toolCall?.toolName === "Agent");
+      expect(nested?.toolCall).toMatchObject({
+        toolUseId: "toolu_child",
+        subagentType: "Explore",
+        hasSubagent: true, // the child sidecar exists → the UI can expand again
+      });
+    });
+
     it("returns [] for an unknown toolUseId or bad ids", async () => {
       expect(await readSubagentMessages(projectDir, "s5", "toolu_missing")).toEqual([]);
       expect(await readSubagentMessages(projectDir, "s5", "../escape")).toEqual([]);
