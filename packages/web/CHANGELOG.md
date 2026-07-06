@@ -1,5 +1,61 @@
 # @paddock/web
 
+## 0.7.0
+
+### Minor Changes
+
+- [#80](https://github.com/edspencer/paddock/pull/80) [`28ed532`](https://github.com/edspencer/paddock/commit/28ed5322b779e2ae74faa09c69deb9a968b3c3db) Thanks [@edspencer](https://github.com/edspencer)! - feat: configurable per-instance branding — title, logo, accent color (#34)
+
+  Running several Paddock instances side by side (Projects, Homelab, House, …)
+  now lets each be told apart at a glance. Three new env vars, all optional with
+  defaults that preserve today's look (🐎 / "Paddock" / terracotta):
+
+  - `PADDOCK_BRAND_NAME` — the wordmark + browser tab title.
+  - `PADDOCK_BRAND_LOGO` — the logo glyph/emoji, or a URL/absolute path to an
+    image (rendered as an `<img>`).
+  - `PADDOCK_BRAND_ACCENT` — the accent color (hex) driving the primary buttons
+    (New Project / New Chat) and the logo chip.
+
+  Branding is **runtime** config (one image serves every instance): the server
+  injects it into `index.html` at serve time — a `window.__PADDOCK_CONFIG__`
+  global plus a `:root` accent override — so there's no title/color flash before
+  first paint. The accent moved from build-time Tailwind constants to CSS custom
+  properties (`--accent*`, kept as RGB channels so opacity modifiers like
+  `bg-accent/15` still work); the 600/700 hover shades are derived from the base.
+
+- [#81](https://github.com/edspencer/paddock/pull/81) [`02b6ac2`](https://github.com/edspencer/paddock/commit/02b6ac23c5a9120840dea96dd4b05de5ec8498fe) Thanks [@edspencer](https://github.com/edspencer)! - feat: per-project keeper-agent settings UI (#12)
+
+  The Edit Project modal now surfaces a project's keeper-agent config, editable in
+  the UI: **model**, **permission mode**, **max turns**, and **Docker sandbox**
+  on/off. Previously only `model` was persisted per project (and not exposed in
+  the UI); `permission_mode`, `max_turns`, and `docker` existed only as fleet-wide
+  defaults.
+
+  Each setting is optional on disk and inherits the fleet default when unset (the
+  DTO resolves the concrete value). Saving validates the values server-side (400
+  on a bad model / permission mode / out-of-range max_turns / non-boolean docker)
+  and re-registers the project's keeper agent so the change takes effect. The
+  default values are now shared constants, so the fleet `defaults` block and the
+  per-project resolution stay in sync.
+
+### Patch Changes
+
+- [#79](https://github.com/edspencer/paddock/pull/79) [`b587822`](https://github.com/edspencer/paddock/commit/b58782263d9b4de27470637a3211d74eef637b9d) Thanks [@edspencer](https://github.com/edspencer)! - chore(web): code-split the bundle (#11)
+
+  The markdown renderer (react-markdown + remark-gfm) and the four top-level route
+  components are now loaded as separate async chunks instead of sitting in the
+  entry bundle:
+
+  - `Markdown` lazy-loads its renderer (`MarkdownRenderer`) via `React.lazy`, with
+    a plaintext fallback so streaming chat never flashes empty while the chunk
+    fetches. `mermaid` was already dynamically imported.
+  - The router (`main.tsx`) lazy-loads `ProjectsGrid`, `ProjectView`,
+    `ProjectRedirect`, and `OneOffChat`; `AppShell` wraps `<Outlet>` in a Suspense
+    boundary with an unobtrusive spinner.
+
+  Result: the entry chunk drops from ~474 kB / 144 kB gzip to ~230 kB / 74 kB gzip
+  (−48% gzip). react-markdown and each route now load on demand.
+
 ## 0.6.0
 
 ### Minor Changes
