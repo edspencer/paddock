@@ -64,8 +64,14 @@ export function DictationButton({ onText, disabled = false }: DictationButtonPro
         "flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors",
         recording
           ? "bg-rose-100 text-rose-600 dark:bg-rose-950/60 dark:text-rose-400"
-          : "text-paddock-500 hover:bg-paddock-100 hover:text-paddock-700 dark:text-paddock-400 dark:hover:bg-paddock-800 dark:hover:text-paddock-200",
-        (disabled || transcribing) && "cursor-not-allowed opacity-60",
+          : transcribing
+            ? // Transcribing: keep it bright (no dimming) so the spinner reads clearly.
+              "text-accent"
+            : "text-paddock-500 hover:bg-paddock-100 hover:text-paddock-700 dark:text-paddock-400 dark:hover:bg-paddock-800 dark:hover:text-paddock-200",
+        // Only dim when disabled by the parent (e.g. a turn is streaming) — NOT
+        // while transcribing, or the spinner looks washed-out and static.
+        disabled && "cursor-not-allowed opacity-60",
+        transcribing && "cursor-progress",
       ]
         .filter(Boolean)
         .join(" ")}
@@ -85,11 +91,15 @@ export function DictationButton({ onText, disabled = false }: DictationButtonPro
   );
 }
 
-/** Small inline spinner shown while a clip is being transcribed. */
+/**
+ * Small inline spinner shown while a clip is being transcribed. A faint accent
+ * ring with one solid accent segment, so the `animate-spin` rotation is clearly
+ * visible (high contrast, full opacity).
+ */
 function Spinner() {
   return (
     <span
-      className="h-4 w-4 animate-spin rounded-full border-2 border-paddock-300 border-t-accent dark:border-paddock-600"
+      className="h-[18px] w-[18px] animate-spin rounded-full border-2 border-accent/25 border-t-accent"
       role="status"
       aria-label="Transcribing"
     />
