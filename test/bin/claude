@@ -56,6 +56,9 @@
  *                     chat:tool_call event.
  *   • [[BOUNDARY]]  → emit a SECOND assistant text block after a tool result, so
  *                     the translator fires onBoundary → chat:message_boundary.
+ *   • [[HANG]]      → stream the assistant text, then block WITHOUT writing the
+ *                     result line, leaving the turn "running" until the process
+ *                     is killed. Lets a test exercise cancel/interrupt (Stop).
  * Sweeper coverage: when the prompt looks like the paddock sweeper's curation
  * prompt (contains the literal "<<<OVERVIEW>>>" marker request), the fake emits a
  * marker-shaped reply (<<<OVERVIEW>>> … <<<CHANGELOG>>> … <<<END>>>) so
@@ -344,6 +347,17 @@ function main() {
 
   // 2) assistant line (text + usage). Single text block → one chat:response.
   append(assistantText(reply));
+
+  // [[HANG]] (test-only): stream the assistant text, then block WITHOUT writing
+  // the result line — the turn stays "running" until herdctl aborts and kills
+  // this process. Exercises the cancel/interrupt path end-to-end (cancelJob →
+  // AbortController → subprocess.kill). Keep the event loop alive with a pending
+  // timer so the SIGTERM from that kill terminates us promptly — a synchronous
+  // spin-loop would swallow the signal.
+  if ((prompt || "").includes("[[HANG]]")) {
+    setInterval(() => {}, 1 << 30);
+    return;
+  }
 
   // A second assistant text block produces a message_boundary in the translator
   // (a new assistant turn after a previous text run). Requires a preceding text
