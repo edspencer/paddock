@@ -219,7 +219,7 @@ export class SweepService {
       throw new Error("sweeper output missing OVERVIEW/CHANGELOG markers");
     }
 
-    await this.projects.writeOverview(project.slug, parsed.overview);
+    await this.projects.writeOverview(project.slug, stripBoxConventions(parsed.overview));
     if (parsed.changelog) {
       // appendChangelog adds the leading "- " + dated heading, so the sweeper
       // returns the bare line.
@@ -316,6 +316,15 @@ export class SweepService {
         `\`## ${today}\` heading.)`,
       "<<<END>>>",
       "",
+      "IMPORTANT — OVERVIEW.md describes the PROJECT, not the box it runs on. Do " +
+        "NOT record box/environment operational conventions: how to run, build, " +
+        "start, preview, or expose a dev server; port numbers; localhost vs. dev " +
+        "hostnames or URLs; where to clone repos; process managers. Those are " +
+        "governed authoritatively by the box's own CLAUDE.md and must never be " +
+        "re-described, pinned, or contradicted here — a past chat mentioning a " +
+        "specific port or a localhost URL is NOT a project fact to record. Capture " +
+        "what the project IS plus its decisions, open questions, and next steps.",
+      "",
       "Be factual and terse; do not invent details not supported by the activity.",
     ]
       .filter((l) => l !== "")
@@ -408,6 +417,46 @@ function parseSweeperOutput(text: string): { overview: string; changelog: string
 
   return { overview, changelog };
 }
+
+/**
+ * Belt-and-suspenders normalizer for issue #42: keep box/environment
+ * operational conventions out of a curated OVERVIEW.md even when the sweeper
+ * slips them in despite the prompt. OVERVIEW.md is prepended to every new chat,
+ * so a stray "run the dev server on localhost:4100" line there silently
+ * overrides the box CLAUDE.md — a self-reinforcing wrong-setup loop.
+ *
+ * This drops whole markdown sections whose heading denotes "how to run / build /
+ * expose a dev server on this box" (heading + body, down to the next heading of
+ * the same or higher level). Scope is deliberately narrow: only sections headed
+ * by a recognized dev-ops phrase are removed; prose elsewhere is untouched. If
+ * stripping would empty the document, the original is returned (we never write a
+ * blank OVERVIEW).
+ */
+export function stripBoxConventions(overview: string): string {
+  if (!overview) return overview;
+  const out: string[] = [];
+  let dropAtLevel: number | null = null; // set while inside a dropped section
+  for (const line of overview.split("\n")) {
+    const h = /^(#{1,6})\s+(.*\S)\s*$/.exec(line);
+    if (h) {
+      const level = h[1].length;
+      // A heading at the same or higher level closes the dropped section.
+      if (dropAtLevel !== null && level <= dropAtLevel) dropAtLevel = null;
+      if (dropAtLevel === null && BOX_OPS_HEADING.test(h[2])) {
+        dropAtLevel = level;
+        continue; // drop the heading itself
+      }
+    }
+    if (dropAtLevel !== null) continue; // inside a dropped section
+    out.push(line);
+  }
+  const stripped = out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  return stripped.length > 0 ? stripped : overview;
+}
+
+/** Headings that denote box-level "how to run a dev server here" content. */
+const BOX_OPS_HEADING =
+  /\b(local[-\s]dev(elopment)?|dev(elopment)?\s+server|preview\s+server|running\s+locally|run\s+locally|running\s+the\s+app|serving\s+the\s+app|how\s+to\s+run|local\s+setup|dev\s+environment)\b/i;
 
 function envIntervalMs(): number | undefined {
   const v = process.env.PADDOCK_SWEEP_MIN_INTERVAL_MS;
