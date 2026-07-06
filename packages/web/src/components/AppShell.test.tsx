@@ -64,6 +64,22 @@ describe("AppShell: sidebar shell", () => {
     expect(screen.getByText(/No projects yet/i)).toBeInTheDocument();
   });
 
+  it("renders a configured brand name + logo from the injected global (issue #34)", () => {
+    type WithConfig = { __PADDOCK_CONFIG__?: unknown };
+    (globalThis as WithConfig).__PADDOCK_CONFIG__ = {
+      brand: { name: "Homelab", logo: "🏠", accent: "#3366cc" },
+    };
+    try {
+      renderShell();
+      expect(screen.getAllByText("Homelab").length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText("🏠").length).toBeGreaterThanOrEqual(1);
+      expect(screen.queryByText("Paddock")).not.toBeInTheDocument();
+      expect(document.title).toBe("Homelab");
+    } finally {
+      delete (globalThis as WithConfig).__PADDOCK_CONFIG__;
+    }
+  });
+
   it("shows the Paddock version in the sidebar", () => {
     renderShell();
     // Injected from packages/web/package.json at build time (mirrored in the

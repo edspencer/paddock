@@ -19,11 +19,15 @@ export default {
           900: "#28221a",
           950: "#171410",
         },
-        // Accent: a confident terracotta/clay — the single "action" color.
+        // Accent: the single "action" color. Runtime-configurable per instance
+        // (issue #34) — the channels come from CSS custom properties (defaults
+        // in index.css, overridable via a server-injected style). The
+        // `rgb(var(--x) / <alpha-value>)` form preserves opacity modifiers
+        // (bg-accent/15, ring-accent/20, …).
         accent: {
-          DEFAULT: "#c2603c",
-          600: "#a84e2f",
-          700: "#8a3f26",
+          DEFAULT: "rgb(var(--accent) / <alpha-value>)",
+          600: "rgb(var(--accent-600) / <alpha-value>)",
+          700: "rgb(var(--accent-700) / <alpha-value>)",
         },
         // Semantic surface + text tokens (drive base body styling).
         canvas: {

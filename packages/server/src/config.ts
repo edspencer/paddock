@@ -69,6 +69,22 @@ export interface DevServersConfig {
   domain: string;
 }
 
+/**
+ * Per-instance branding (issue #34). Lets several Paddock instances (Projects,
+ * Homelab, House, …) be told apart at a glance. All optional; the defaults
+ * preserve today's look (🐎 / "Paddock" / terracotta). Injected into index.html
+ * at serve time (so there's no title/color flash) and read by the SPA from a
+ * `window.__PADDOCK_CONFIG__` global.
+ */
+export interface BrandConfig {
+  /** Wordmark shown top-left and as the browser tab title. */
+  name: string;
+  /** Logo: an emoji/glyph, OR a URL/absolute path to an image (rendered as <img>). */
+  logo: string;
+  /** Accent color as a hex string driving the primary buttons + logo chip. */
+  accent: string;
+}
+
 export interface PaddockConfig {
   /** HTTP/WS port. */
   port: number;
@@ -95,6 +111,8 @@ export interface PaddockConfig {
   devServers: DevServersConfig;
   /** Voice-dictation (Whisper) capability (per-instance; default off). */
   transcription: TranscriptionConfig;
+  /** Per-instance branding (title/logo/accent; defaults preserve today's look). */
+  brand: BrandConfig;
 }
 
 /**
@@ -234,6 +252,19 @@ function loadTranscriptionConfig(): TranscriptionConfig {
   };
 }
 
+/**
+ * Resolve per-instance branding from env. Defaults preserve today's look, so a
+ * plain instance is unchanged; an operator running several instances from one
+ * image sets `PADDOCK_BRAND_*` in each instance's env to tell them apart.
+ */
+function loadBrandConfig(): BrandConfig {
+  return {
+    name: envOr("PADDOCK_BRAND_NAME", "Paddock"),
+    logo: envOr("PADDOCK_BRAND_LOGO", "🐎"),
+    accent: envOr("PADDOCK_BRAND_ACCENT", "#c2603c"),
+  };
+}
+
 export function loadPaddockConfig(): PaddockConfig {
   // Ensure the data root exists first so symlinks (e.g. /tmp -> /private/tmp on
   // macOS) resolve consistently for every derived path below.
@@ -271,6 +302,7 @@ export function loadPaddockConfig(): PaddockConfig {
     auth: loadAuthConfig(),
     devServers: loadDevServersConfig(),
     transcription: loadTranscriptionConfig(),
+    brand: loadBrandConfig(),
   });
 }
 
