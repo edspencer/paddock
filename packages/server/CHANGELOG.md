@@ -1,5 +1,28 @@
 # @paddock/server
 
+## 0.6.0
+
+### Minor Changes
+
+- [#74](https://github.com/edspencer/paddock/pull/74) [`bc189ab`](https://github.com/edspencer/paddock/commit/bc189ab3396b597f0e9c41046d04740087c574d0) Thanks [@edspencer](https://github.com/edspencer)! - Render sub-agent (Task/Agent tool) activity in the chat UI (#37)
+
+  Sub-agent launches now render as a labelled, expandable block showing the
+  sub-agent type and description. Expanding lazy-loads the sub-agent's own
+  step-by-step transcript inline, recursively (a sub-agent that spawns its own
+  sub-agents is expandable to any depth). Implemented entirely paddock-side by
+  reading the on-disk `subagents/*.meta.json` sidecars and reusing
+  `@herdctl/core`'s `parseSessionMessages`; no upstream change. Handles both the
+  `Task` (Claude Code) and `Agent` (Agent SDK) tool names.
+
+### Patch Changes
+
+- [#75](https://github.com/edspencer/paddock/pull/75) [`902cd26`](https://github.com/edspencer/paddock/commit/902cd26c67a35e0fb4f46c8ffbde075669299e1c) Thanks [@edspencer](https://github.com/edspencer)! - Make the chat **Stop** button actually interrupt a running turn. The stop path
+  calls `cancelJob`, which previously only rewrote the job's status file while the
+  agent kept running — so nothing stopped and the composer stayed locked. Bumping
+  `@herdctl/core` to the release that fixes `cancelJob` (it now aborts the live
+  run) means a cancel genuinely kills the turn; `trigger()` then returns and the
+  server emits the terminal `chat:complete`, so the UI unlocks.
+
 ## 0.5.0
 
 ### Minor Changes
