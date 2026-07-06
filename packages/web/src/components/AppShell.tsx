@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useProjects } from "../lib/projects-context";
 import { useTheme } from "../lib/theme";
@@ -163,9 +163,12 @@ export function AppShell() {
         </div>
       </aside>
 
-      {/* Main pane */}
+      {/* Main pane. The Suspense boundary covers the lazily-loaded route chunks
+          (issue #11) — a brief, unobtrusive fallback while a route's JS loads. */}
       <main className="min-w-0 flex-1 overflow-hidden">
-        <Outlet />
+        <Suspense fallback={<RouteFallback />}>
+          <Outlet />
+        </Suspense>
       </main>
 
       <NewProjectModal
@@ -173,6 +176,16 @@ export function AppShell() {
         onClose={() => setModalOpen(false)}
         onCreated={onCreated}
       />
+    </div>
+  );
+}
+
+/** Placeholder shown while a lazily-loaded route chunk is fetching (issue #11). */
+function RouteFallback() {
+  return (
+    <div className="flex h-full items-center justify-center" aria-busy="true" aria-live="polite">
+      <span className="h-6 w-6 animate-spin rounded-full border-2 border-paddock-300 border-t-accent dark:border-paddock-700 dark:border-t-accent" />
+      <span className="sr-only">Loading…</span>
     </div>
   );
 }
