@@ -491,6 +491,52 @@ describe("ChatPane: preload toggle (issue #1)", () => {
   });
 });
 
+describe("ChatPane: draft persistence", () => {
+  it("restores a persisted draft into the composer on mount", async () => {
+    localStorage.setItem("paddock:draft:new:proj", "half-typed thought");
+    render(<ChatPane projectSlug="proj" />);
+    const box = (await screen.findByPlaceholderText(
+      /Message the keeper agent/i,
+    )) as HTMLTextAreaElement;
+    expect(box.value).toBe("half-typed thought");
+    // A restored draft enables Send.
+    expect(screen.getByRole("button", { name: /^Send$/ })).toBeEnabled();
+  });
+
+  it("keys a resumed chat's draft by its session id", async () => {
+    localStorage.setItem("paddock:draft:sess-1", "resume this");
+    const loadHistory = vi.fn().mockResolvedValue([]);
+    render(<ChatPane projectSlug="proj" initialSessionId="sess-1" loadHistory={loadHistory} />);
+    const box = (await screen.findByPlaceholderText(
+      /Message the keeper agent/i,
+    )) as HTMLTextAreaElement;
+    expect(box.value).toBe("resume this");
+  });
+
+  it("persists the typed draft to localStorage as the user types", async () => {
+    render(<ChatPane projectSlug="proj" />);
+    await screen.findByRole("button", { name: /^Send$/ });
+    await userEvent.type(screen.getByPlaceholderText(/Message the keeper agent/i), "keep me");
+    await waitFor(() =>
+      expect(localStorage.getItem("paddock:draft:new:proj")).toBe("keep me"),
+    );
+  });
+
+  it("clears the persisted draft on send", async () => {
+    localStorage.setItem("paddock:draft:new:proj", "about to send");
+    render(<ChatPane projectSlug="proj" />);
+    const box = await screen.findByPlaceholderText(/Message the keeper agent/i);
+    await waitFor(() => expect((box as HTMLTextAreaElement).value).toBe("about to send"));
+    fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
+    expect(sends).toHaveLength(1);
+    // The composer emptied and the stored draft was forgotten.
+    expect((box as HTMLTextAreaElement).value).toBe("");
+    await waitFor(() =>
+      expect(localStorage.getItem("paddock:draft:new:proj")).toBeNull(),
+    );
+  });
+});
+
 describe("ChatPane: message boundaries", () => {
   it("splits the streamed text into separate assistant bubbles on a boundary", async () => {
     render(<ChatPane projectSlug="proj" />);
