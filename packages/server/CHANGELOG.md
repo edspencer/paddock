@@ -1,5 +1,57 @@
 # @paddock/server
 
+## 0.7.0
+
+### Minor Changes
+
+- [#80](https://github.com/edspencer/paddock/pull/80) [`28ed532`](https://github.com/edspencer/paddock/commit/28ed5322b779e2ae74faa09c69deb9a968b3c3db) Thanks [@edspencer](https://github.com/edspencer)! - feat: configurable per-instance branding — title, logo, accent color (#34)
+
+  Running several Paddock instances side by side (Projects, Homelab, House, …)
+  now lets each be told apart at a glance. Three new env vars, all optional with
+  defaults that preserve today's look (🐎 / "Paddock" / terracotta):
+
+  - `PADDOCK_BRAND_NAME` — the wordmark + browser tab title.
+  - `PADDOCK_BRAND_LOGO` — the logo glyph/emoji, or a URL/absolute path to an
+    image (rendered as an `<img>`).
+  - `PADDOCK_BRAND_ACCENT` — the accent color (hex) driving the primary buttons
+    (New Project / New Chat) and the logo chip.
+
+  Branding is **runtime** config (one image serves every instance): the server
+  injects it into `index.html` at serve time — a `window.__PADDOCK_CONFIG__`
+  global plus a `:root` accent override — so there's no title/color flash before
+  first paint. The accent moved from build-time Tailwind constants to CSS custom
+  properties (`--accent*`, kept as RGB channels so opacity modifiers like
+  `bg-accent/15` still work); the 600/700 hover shades are derived from the base.
+
+- [#81](https://github.com/edspencer/paddock/pull/81) [`02b6ac2`](https://github.com/edspencer/paddock/commit/02b6ac23c5a9120840dea96dd4b05de5ec8498fe) Thanks [@edspencer](https://github.com/edspencer)! - feat: per-project keeper-agent settings UI (#12)
+
+  The Edit Project modal now surfaces a project's keeper-agent config, editable in
+  the UI: **model**, **permission mode**, **max turns**, and **Docker sandbox**
+  on/off. Previously only `model` was persisted per project (and not exposed in
+  the UI); `permission_mode`, `max_turns`, and `docker` existed only as fleet-wide
+  defaults.
+
+  Each setting is optional on disk and inherits the fleet default when unset (the
+  DTO resolves the concrete value). Saving validates the values server-side (400
+  on a bad model / permission mode / out-of-range max_turns / non-boolean docker)
+  and re-registers the project's keeper agent so the change takes effect. The
+  default values are now shared constants, so the fleet `defaults` block and the
+  per-project resolution stay in sync.
+
+### Patch Changes
+
+- [#78](https://github.com/edspencer/paddock/pull/78) [`024e1a9`](https://github.com/edspencer/paddock/commit/024e1a90ec1a83f71f1fdf271f59cfe045bb07a5) Thanks [@edspencer](https://github.com/edspencer)! - fix(sweep): keep box/environment dev conventions out of curated OVERVIEW.md (#42)
+
+  The post-turn curation sweep could bake box-level operational conventions (how
+  to run/expose a dev server, ports, localhost-vs-dev-hostname, where to clone)
+  into a project's `OVERVIEW.md`. Because `OVERVIEW.md` is prepended to every new
+  chat, a stray "run on localhost:4100" line there silently overrode the box
+  `CLAUDE.md` — a self-reinforcing wrong-setup loop. Both curation prompts now
+  tell the curator that `OVERVIEW.md` describes the project (not the box) and must
+  not record those conventions, and a deterministic `stripBoxConventions`
+  normalizer drops any dev-server/how-to-run sections that slip through before the
+  file is written.
+
 ## 0.6.0
 
 ### Minor Changes
