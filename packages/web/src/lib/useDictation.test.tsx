@@ -175,6 +175,45 @@ describe("useDictation", () => {
     expect(result.current.error).toBeNull();
   });
 
+  /** A transcribe mock that hangs until its request is aborted, then rejects. */
+  function hangUntilAborted() {
+    return vi.spyOn(api, "transcribe").mockImplementation(
+      (_b, _f, signal?: AbortSignal) =>
+        new Promise<string>((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(signal.reason));
+        }),
+    );
+  }
+
+  it("cancel() abandons an in-flight transcription and returns to idle", async () => {
+    const onText = vi.fn();
+    hangUntilAborted();
+    const { result } = renderHook(() => useDictation({ onText }));
+    await waitFor(() => expect(result.current.available).toBe(true));
+
+    await recordOnce(result);
+    await waitFor(() => expect(result.current.state).toBe("transcribing"));
+
+    await act(async () => {
+      result.current.cancel();
+    });
+
+    await waitFor(() => expect(result.current.state).toBe("idle"));
+    expect(result.current.error).toBeNull();
+    expect(onText).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a client-side timeout as a retryable error", async () => {
+    hangUntilAborted();
+    const { result } = renderHook(() => useDictation({ onText: vi.fn(), timeoutMs: 50 }));
+    await waitFor(() => expect(result.current.available).toBe(true));
+
+    await recordOnce(result);
+
+    await waitFor(() => expect(result.current.state).toBe("error"), { timeout: 2000 });
+    expect(result.current.error).toMatch(/timed out/i);
+  });
+
   it("reports a denied-permission error without recording", async () => {
     const denied = Object.assign(new Error("denied"), { name: "NotAllowedError" });
     (navigator.mediaDevices.getUserMedia as ReturnType<typeof vi.fn>).mockRejectedValueOnce(denied);

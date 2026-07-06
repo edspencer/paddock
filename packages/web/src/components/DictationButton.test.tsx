@@ -118,4 +118,37 @@ describe("DictationButton", () => {
     // Error surface clears on success.
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
   });
+
+  it("lets you cancel an in-flight transcription from the button", async () => {
+    vi.spyOn(api, "transcriptionStatus").mockResolvedValue({
+      available: true,
+      mode: "remote",
+      model: "base",
+    });
+    // Hang until aborted so the transcription stays in-flight to be cancelled.
+    vi.spyOn(api, "transcribe").mockImplementation(
+      (_b, _f, signal?: AbortSignal) =>
+        new Promise<string>((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(signal.reason));
+        }),
+    );
+    const onText = vi.fn();
+    render(<DictationButton onText={onText} />);
+
+    await recordViaButton();
+
+    // While transcribing, the button is enabled and offers cancel (not disabled).
+    const cancelBtn = await screen.findByRole("button", { name: /cancel transcription/i });
+    expect(cancelBtn).toBeEnabled();
+    await act(async () => {
+      fireEvent.click(cancelBtn);
+    });
+
+    // Returns to an idle mic; nothing inserted, no error surfaced.
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /record a voice message/i })).toBeInTheDocument(),
+    );
+    expect(onText).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
 });

@@ -17,6 +17,17 @@ import { api, ApiError } from "./api";
 /** Backoff before the single automatic retry of a transient failure. */
 const RETRY_BACKOFF_MS = 500;
 
+/**
+ * Client-side ceiling on a single transcription request. The server aborts at
+ * 120s; we give up a bit sooner so a hung/slow request surfaces as a clean,
+ * retryable "timed out" instead of spinning indefinitely.
+ */
+const DEFAULT_TIMEOUT_MS = 90_000;
+
+// Abort reasons, so the catch can tell a user cancel from a client timeout.
+const ABORT_CANCEL = "paddock:cancel";
+const ABORT_TIMEOUT = "paddock:timeout";
+
 export type DictationState = "idle" | "recording" | "transcribing" | "error";
 
 export interface UseDictation {
@@ -42,6 +53,8 @@ export interface UseDictation {
   retry: () => void;
   /** Dismiss the current error and drop any retained audio. */
   dismiss: () => void;
+  /** Cancel an in-flight transcription (abandons it, returns to idle). */
+  cancel: () => void;
 }
 
 /** True when the browser can actually capture microphone audio. */
@@ -77,9 +90,14 @@ function pickMimeType(): { mimeType: string; ext: string } {
 export interface UseDictationOptions {
   /** Called with the transcribed text when a recording is transcribed. */
   onText: (text: string) => void;
+  /** Client-side per-request timeout in ms (default 90s). */
+  timeoutMs?: number;
 }
 
-export function useDictation({ onText }: UseDictationOptions): UseDictation {
+export function useDictation({
+  onText,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+}: UseDictationOptions): UseDictation {
   const [state, setState] = useState<DictationState>("idle");
   const [available, setAvailable] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -93,6 +111,8 @@ export function useDictation({ onText }: UseDictationOptions): UseDictation {
   // can re-submit the SAME audio without making the user speak again. Cleared
   // on success, on a new recording, and on dismiss.
   const lastBlobRef = useRef<Blob | null>(null);
+  // The in-flight transcription request, so `cancel` (and the timeout) can abort it.
+  const abortRef = useRef<AbortController | null>(null);
   // Guards async setState after unmount.
   const mountedRef = useRef(true);
 
@@ -111,6 +131,7 @@ export function useDictation({ onText }: UseDictationOptions): UseDictation {
     return () => {
       cancelled = true;
       mountedRef.current = false;
+      abortRef.current?.abort(ABORT_CANCEL);
       stopStream();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -168,8 +189,14 @@ export function useDictation({ onText }: UseDictationOptions): UseDictation {
         return;
       }
       if (mountedRef.current) setState("transcribing");
+
+      // Each attempt gets its own controller: a `cancel()` or the timeout aborts
+      // the in-flight fetch.
+      const controller = new AbortController();
+      abortRef.current = controller;
+      const timer = setTimeout(() => controller.abort(ABORT_TIMEOUT), timeoutMs);
       try {
-        const text = await api.transcribe(blob, `dictation.${extRef.current}`);
+        const text = await api.transcribe(blob, `dictation.${extRef.current}`, controller.signal);
         if (text.trim()) onText(text.trim());
         lastBlobRef.current = null; // succeeded — nothing to retry
         if (mountedRef.current) {
@@ -177,6 +204,24 @@ export function useDictation({ onText }: UseDictationOptions): UseDictation {
           setState("idle");
         }
       } catch (err) {
+        // User cancelled → silently return to idle (not an error), drop the clip.
+        if (controller.signal.aborted && controller.signal.reason === ABORT_CANCEL) {
+          lastBlobRef.current = null;
+          if (mountedRef.current) {
+            setError(null);
+            setState("idle");
+          }
+          return;
+        }
+        // Timed out → a retryable error (keep the clip); no auto-retry, since a
+        // retry would just wait out the same timeout again.
+        if (controller.signal.aborted && controller.signal.reason === ABORT_TIMEOUT) {
+          if (mountedRef.current) {
+            setState("error");
+            setError("Transcription timed out — try again.");
+          }
+          return;
+        }
         // Transient failures (network / 5xx — e.g. a whisper server still
         // warming up) get one silent automatic retry before we bother the user.
         if (isTransient(err) && !isAutoRetry) {
@@ -188,10 +233,17 @@ export function useDictation({ onText }: UseDictationOptions): UseDictation {
           setState("error");
           setError(errorMessage(err));
         }
+      } finally {
+        clearTimeout(timer);
+        if (abortRef.current === controller) abortRef.current = null;
       }
     },
-    [onText],
+    [onText, timeoutMs],
   );
+
+  const cancel = useCallback(() => {
+    abortRef.current?.abort(ABORT_CANCEL);
+  }, []);
 
   const stop = useCallback(() => {
     const rec = recorderRef.current;
@@ -220,7 +272,7 @@ export function useDictation({ onText }: UseDictationOptions): UseDictation {
     setState("idle");
   }, []);
 
-  return { state, available, supported, error, start, stop, toggle, retry, dismiss };
+  return { state, available, supported, error, start, stop, toggle, retry, dismiss, cancel };
 }
 
 /** A failure worth one automatic retry: network errors and 5xx from the server. */

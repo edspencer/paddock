@@ -332,10 +332,10 @@ export const api = {
    * Uses raw `fetch` (not `req`) so the browser sets the multipart boundary — do
    * NOT force a JSON content-type here.
    */
-  async transcribe(blob: Blob, filename = "dictation.webm"): Promise<string> {
+  async transcribe(blob: Blob, filename = "dictation.webm", signal?: AbortSignal): Promise<string> {
     const form = new FormData();
     form.append("file", blob, filename);
-    const res = await fetch(`${BASE}/api/transcribe`, { method: "POST", body: form });
+    const res = await fetch(`${BASE}/api/transcribe`, { method: "POST", body: form, signal });
     if (!res.ok) {
       let detail = res.statusText;
       try {

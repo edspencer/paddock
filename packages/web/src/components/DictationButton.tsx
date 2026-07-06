@@ -18,7 +18,9 @@ export interface DictationButtonProps {
 }
 
 export function DictationButton({ onText, disabled = false }: DictationButtonProps) {
-  const { state, available, supported, error, toggle, retry, dismiss } = useDictation({ onText });
+  const { state, available, supported, error, toggle, retry, dismiss, cancel } = useDictation({
+    onText,
+  });
 
   // Hide entirely until we know the server supports it, and when it doesn't.
   if (available !== true) return null;
@@ -47,10 +49,17 @@ export function DictationButton({ onText, disabled = false }: DictationButtonPro
   const title = recording
     ? "Stop recording"
     : transcribing
-      ? "Transcribing…"
+      ? "Transcribing… — click to cancel"
       : errored
         ? "Transcription failed — click to record again"
         : "Record a voice message";
+
+  // Click dispatch by state: cancel an in-flight transcription, else toggle
+  // (start when idle/errored, stop when recording).
+  const handleClick = () => {
+    if (transcribing) cancel();
+    else toggle();
+  };
 
   return (
     <div className="relative flex items-center">
@@ -83,32 +92,47 @@ export function DictationButton({ onText, disabled = false }: DictationButtonPro
       )}
       <button
         type="button"
-        onClick={toggle}
-        disabled={disabled || transcribing}
-        aria-label={recording ? "Stop recording" : "Record a voice message"}
+        onClick={handleClick}
+        // Never disabled while recording/transcribing — those clicks stop/cancel.
+        disabled={disabled && !recording && !transcribing}
+        aria-label={
+          recording
+            ? "Stop recording"
+            : transcribing
+              ? "Cancel transcription"
+              : "Record a voice message"
+        }
         aria-pressed={recording}
         title={title}
         data-state={state}
         className={[
-          "flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors",
+          "group flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors",
           recording
             ? "bg-rose-100 text-rose-600 dark:bg-rose-950/60 dark:text-rose-400"
             : transcribing
-              ? // Transcribing: keep it bright (no dimming) so the spinner reads clearly.
-                "text-accent"
+              ? // Transcribing: bright accent (spinner reads clearly); clickable to cancel.
+                "cursor-pointer text-accent hover:bg-rose-100 hover:text-rose-600 dark:hover:bg-rose-950/60 dark:hover:text-rose-400"
               : errored
                 ? "bg-rose-100 text-rose-600 dark:bg-rose-950/60 dark:text-rose-400"
                 : "text-paddock-500 hover:bg-paddock-100 hover:text-paddock-700 dark:text-paddock-400 dark:hover:bg-paddock-800 dark:hover:text-paddock-200",
-          // Only dim when disabled by the parent (e.g. a turn is streaming) — NOT
-          // while transcribing, or the spinner looks washed-out and static.
-          disabled && "cursor-not-allowed opacity-60",
-          transcribing && "cursor-progress",
+          disabled && !recording && !transcribing && "cursor-not-allowed opacity-60",
         ]
           .filter(Boolean)
           .join(" ")}
       >
         {transcribing ? (
-          <Spinner />
+          // Spinner by default; on hover/focus it becomes a stop icon to signal
+          // "click to cancel" (on touch, tapping the spinner cancels too).
+          <>
+            <span className="inline-flex group-hover:hidden group-focus-visible:hidden">
+              <Spinner />
+            </span>
+            <StopIcon
+              width={15}
+              height={15}
+              className="hidden group-hover:block group-focus-visible:block"
+            />
+          </>
         ) : recording ? (
           <StopIcon width={16} height={16} />
         ) : (
