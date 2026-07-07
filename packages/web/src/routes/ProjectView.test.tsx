@@ -273,6 +273,67 @@ describe("ProjectView: chat list (delete + rename)", () => {
   });
 });
 
+describe("ProjectView: chat search (issue #96)", () => {
+  const threeChats = () => ({
+    chats: [
+      makeChat({ sessionId: "s1", name: "Deploy pipeline", preview: "how do I ship" }),
+      makeChat({ sessionId: "s2", name: "Bug triage", preview: "the crash on load" }),
+      makeChat({ sessionId: "s3", name: "Random musings", preview: "deploy notes here" }),
+    ],
+  });
+
+  it("filters the chat list by name substring (case-insensitive)", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" }), threeChats()));
+    renderAt("/projects/p/chat");
+    await screen.findByText("Deploy pipeline");
+
+    fireEvent.change(screen.getByRole("textbox", { name: /Search chats/i }), {
+      target: { value: "bug" },
+    });
+    expect(screen.getByText("Bug triage")).toBeInTheDocument();
+    expect(screen.queryByText("Deploy pipeline")).not.toBeInTheDocument();
+    expect(screen.queryByText("Random musings")).not.toBeInTheDocument();
+  });
+
+  it("also matches the first-message preview", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" }), threeChats()));
+    renderAt("/projects/p/chat");
+    await screen.findByText("Deploy pipeline");
+
+    // "deploy" is in "Deploy pipeline"'s name and in "Random musings"'s preview.
+    fireEvent.change(screen.getByRole("textbox", { name: /Search chats/i }), {
+      target: { value: "deploy" },
+    });
+    expect(screen.getByText("Deploy pipeline")).toBeInTheDocument();
+    expect(screen.getByText("Random musings")).toBeInTheDocument();
+    expect(screen.queryByText("Bug triage")).not.toBeInTheDocument();
+  });
+
+  it("shows a no-match message and clearing restores the full list", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" }), threeChats()));
+    renderAt("/projects/p/chat");
+    await screen.findByText("Deploy pipeline");
+
+    const search = screen.getByRole("textbox", { name: /Search chats/i });
+    fireEvent.change(search, { target: { value: "zzzzz" } });
+    expect(screen.getByText(/No chats match/i)).toBeInTheDocument();
+    expect(screen.queryByText("Deploy pipeline")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Clear search/i }));
+    expect(screen.getByText("Deploy pipeline")).toBeInTheDocument();
+    expect(screen.getByText("Bug triage")).toBeInTheDocument();
+    expect(screen.getByText("Random musings")).toBeInTheDocument();
+  });
+
+  it("the compact + button starts a new chat", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" }), threeChats()));
+    renderAt("/projects/p/chat/s1");
+    await waitFor(() => expect(chatPaneProps?.initialSessionId).toBe("s1"));
+    fireEvent.click(screen.getByRole("button", { name: /^New Chat$/ }));
+    await waitFor(() => expect(chatPaneProps?.initialSessionId ?? "new").toBe("new"));
+  });
+});
+
 describe("ProjectView: archive chats (#95)", () => {
   it("hides the Archived section when no chats are archived", async () => {
     apiFns.getProjectDetail.mockResolvedValue(
