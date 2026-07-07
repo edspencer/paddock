@@ -19,10 +19,13 @@ import {
   AlertIcon,
   BranchIcon,
   ChevronRightIcon,
+  ClockIcon,
+  PencilIcon,
   SendIcon,
   SparkIcon,
   StopIcon,
   WrenchIcon,
+  XIcon,
 } from "./icons";
 import type { ChatCompleteUsage, HistoryMessage, ModelInfo } from "../lib/types";
 
@@ -120,6 +123,17 @@ export function ChatPane({
   const [hydrating, setHydrating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [conn, setConn] = useState<ConnectionState>(chatClient.state);
+
+  // Issue #91: a single message queued to auto-send when the current turn
+  // finishes. `queued` drives the toolbar above the composer; `queuedRef` is the
+  // same value read by the flush that fires inside the (stably-subscribed) socket
+  // handlers, which can't see the latest `queued` state. `null` = nothing queued.
+  const [queued, setQueued] = useState<string | null>(null);
+  const queuedRef = useRef<string | null>(null);
+  // Set when the user hits Stop, so the completion it triggers does NOT flush the
+  // queue (we hold rather than fire a follow-up into a cancelled turn). Cleared
+  // on the next completion.
+  const cancelledRef = useRef(false);
 
   // Issue #1: preload the project's curated OVERVIEW.md as context on the FIRST
   // turn of a new project chat. Default ON for project chats. Only sent on the
@@ -419,6 +433,12 @@ export function ChatPane({
         // Pull model: a completed turn may have triggered a sweep that rewrote
         // OVERVIEW.md / CHANGELOG / added files — let the parent re-fetch.
         onTurnComplete?.();
+        // Issue #91: the turn is free — auto-send any queued message as the next
+        // turn. Hold (don't flush) if this completion was a user Stop or a failed
+        // turn; leave the message queued for the user to send/edit instead.
+        const cancelled = cancelledRef.current;
+        cancelledRef.current = false;
+        if (meta.success && !cancelled) flushRef.current();
       },
       onError: (err) => {
         // chat:error carries no session id, so it can't be session-routed.
@@ -430,6 +450,9 @@ export function ChatPane({
         jobRef.current = null;
         setTurns((prev) => sealStreaming(prev));
         setError(err);
+        // Hold the queue on error (#91) but clear the cancel flag so it can't
+        // suppress a later turn's flush.
+        cancelledRef.current = false;
       },
       onResync: () => {
         // Rare (#54): the server's live-turn buffer aged out before we could
@@ -457,6 +480,7 @@ export function ChatPane({
           setStreaming(false);
           jobRef.current = null;
           setTurns((prev) => sealStreaming(prev));
+          cancelledRef.current = false;
         }
       },
     });
@@ -467,51 +491,117 @@ export function ChatPane({
   }, [projectSlug, initialSessionId, loadHistory, onSessionEstablished, onSessionStarted, onTurnComplete]);
 
   // --- send / cancel ---------------------------------------------------------
+  // The core send path, shared by a live composer submit and by the queue flush
+  // (issue #91). `text` is already trimmed/non-empty and we are NOT streaming.
+  const sendText = useCallback(
+    (text: string) => {
+      setError(null);
+      pinnedRef.current = true;
+      setTurns((prev) => [
+        ...sealStreaming(prev),
+        { kind: "user", id: nextId(), content: text },
+      ]);
+      // Clearing the value doesn't undo the inline height the autosize handler
+      // grew the textarea to, so a multi-line message would leave the composer
+      // tall until the next keystroke. Reset it back to one row here.
+      if (composerRef.current) composerRef.current.style.height = "auto";
+      setStreaming(true);
+      streamingRef.current = true;
+      // A brand-new chat won't know its session id until the first frame arrives;
+      // flag that we're awaiting it so those frames are accepted as ours.
+      if (sessionRef.current === null) awaitingSessionRef.current = true;
+
+      // A leading-slash draft is a slash command (e.g. "/compact"): route it to
+      // the streaming-session path so the CLI dispatches it, rather than sending
+      // it as a plain prompt. Commands carry no preload/model — they act on the
+      // current session as-is.
+      if (text.startsWith("/")) {
+        firstTurnSentRef.current = true;
+        chatClient.sendCommand(projectSlug, text, sessionRef.current);
+        return;
+      }
+
+      // Preload only applies to the very first turn of a never-resumed chat.
+      const isFirstTurnOfNewChat = isNewSessionRef.current && !firstTurnSentRef.current;
+      const preload = isProjectChat && isFirstTurnOfNewChat && preloadContext;
+      firstTurnSentRef.current = true;
+      chatClient.send(projectSlug, text, sessionRef.current, {
+        preloadContext: preload,
+        // Send the selected model so the server runs this turn on it. Omitted when
+        // unresolved (models not yet loaded) → the server uses the project default.
+        model: modelRef.current ?? undefined,
+      });
+    },
+    [projectSlug, isProjectChat, preloadContext],
+  );
+
   const send = useCallback(() => {
     const text = draft.trim();
-    if (!text || streaming) return;
-    setError(null);
-    pinnedRef.current = true;
-    setTurns((prev) => [
-      ...sealStreaming(prev),
-      { kind: "user", id: nextId(), content: text },
-    ]);
-    setDraft("");
-    // Clearing the value doesn't undo the inline height the autosize handler
-    // grew the textarea to, so a multi-line message would leave the composer
-    // tall until the next keystroke. Reset it back to one row here.
-    if (composerRef.current) composerRef.current.style.height = "auto";
-    setStreaming(true);
-    streamingRef.current = true;
-    // A brand-new chat won't know its session id until the first frame arrives;
-    // flag that we're awaiting it so those frames are accepted as ours.
-    if (sessionRef.current === null) awaitingSessionRef.current = true;
-
-    // A leading-slash draft is a slash command (e.g. "/compact"): route it to
-    // the streaming-session path so the CLI dispatches it, rather than sending
-    // it as a plain prompt. Commands carry no preload/model — they act on the
-    // current session as-is.
-    if (text.startsWith("/")) {
-      firstTurnSentRef.current = true;
-      chatClient.sendCommand(projectSlug, text, sessionRef.current);
+    if (!text) return;
+    // While a turn is in flight we can't send in parallel — queue the message
+    // instead of no-opping (issue #91). Append to any already-queued message so
+    // the slot stays single (Claude Code's model). The composer clears either
+    // way, and the queued toolbar surfaces it above the composer.
+    if (streaming) {
+      setQueued((prev) => {
+        const next = prev ? `${prev}\n${text}` : text;
+        queuedRef.current = next;
+        return next;
+      });
+      setDraft("");
+      if (composerRef.current) composerRef.current.style.height = "auto";
       return;
     }
+    setDraft("");
+    sendText(text);
+  }, [draft, streaming, sendText]);
 
-    // Preload only applies to the very first turn of a never-resumed chat.
-    const isFirstTurnOfNewChat = isNewSessionRef.current && !firstTurnSentRef.current;
-    const preload = isProjectChat && isFirstTurnOfNewChat && preloadContext;
-    firstTurnSentRef.current = true;
-    chatClient.send(projectSlug, text, sessionRef.current, {
-      preloadContext: preload,
-      // Send the selected model so the server runs this turn on it. Omitted when
-      // unresolved (models not yet loaded) → the server uses the project default.
-      model: modelRef.current ?? undefined,
+  // Auto-send the queued message as the next turn once the current one is free.
+  // Reads/clears queuedRef (not `queued` state) so the socket handlers — which
+  // close over a stale render — flush the latest queued text. No-op if empty.
+  const flushQueued = useCallback(() => {
+    const text = queuedRef.current;
+    if (!text) return;
+    queuedRef.current = null;
+    setQueued(null);
+    sendText(text);
+  }, [sendText]);
+  // Keep a ref to the latest flush so the stably-subscribed socket handlers can
+  // call it without being torn down/re-subscribed when `sendText` changes.
+  const flushRef = useRef(flushQueued);
+  flushRef.current = flushQueued;
+
+  // Pop the queued message back into the composer for editing. This CANCELS the
+  // pending auto-send (queuedRef → null): if the turn finishes mid-edit it must
+  // not fire in the background — it's a draft again until re-submitted (#91).
+  const editQueued = useCallback(() => {
+    const text = queuedRef.current;
+    if (text == null) return;
+    queuedRef.current = null;
+    setQueued(null);
+    setDraft((prev) => (prev.trim() ? `${text}\n${prev}` : text));
+    requestAnimationFrame(() => {
+      const el = composerRef.current;
+      if (el) {
+        el.style.height = "auto";
+        el.style.height = `${Math.min(el.scrollHeight, 192)}px`;
+        el.focus();
+      }
     });
-  }, [draft, streaming, projectSlug, isProjectChat, preloadContext]);
+  }, []);
+
+  // Discard the queued message entirely.
+  const clearQueued = useCallback(() => {
+    queuedRef.current = null;
+    setQueued(null);
+  }, []);
 
   const cancel = useCallback(() => {
     // jobId is captured off event metadata in the handlers below. The server
-    // emits chat:complete/error on cancel; the UI unlocks there.
+    // emits chat:complete/error on cancel; the UI unlocks there. Mark the turn
+    // as cancelled so its completion does NOT flush the queue (#91: hold rather
+    // than fire a follow-up into a stopped turn).
+    cancelledRef.current = true;
     if (jobRef.current) chatClient.cancel(jobRef.current);
   }, []);
 
@@ -591,6 +681,12 @@ export function ChatPane({
         </div>
       )}
 
+      {/* Queued-message toolbar (#91): the single message stacked to auto-send
+          when the current turn frees up. Sits directly above the composer. */}
+      {queued != null && (
+        <QueuedMessageBar text={queued} onEdit={editQueued} onClear={clearQueued} />
+      )}
+
       {/* composer */}
       <div className="border-t border-paddock-200 bg-canvas/80 backdrop-blur dark:border-paddock-800 dark:bg-canvas-dark/80">
         <div className="mx-auto w-full max-w-3xl px-4 py-3">
@@ -615,7 +711,11 @@ export function ChatPane({
               className="max-h-48 min-h-[40px] flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none placeholder:text-paddock-400 dark:placeholder:text-paddock-600"
               rows={1}
               value={draft}
-              placeholder={placeholder ?? "Message the keeper agent…"}
+              placeholder={
+                streaming
+                  ? "Queue a message to send next…"
+                  : (placeholder ?? "Message the keeper agent…")
+              }
               onChange={(e) => {
                 setDraft(e.target.value);
                 const el = e.target;
@@ -652,7 +752,7 @@ export function ChatPane({
           </div>
           <div className="mt-1.5 flex items-center justify-between px-1 text-[11px] text-paddock-400">
             <span>
-              <kbd className="font-sans">Enter</kbd> to send ·{" "}
+              <kbd className="font-sans">Enter</kbd> to {streaming ? "queue" : "send"} ·{" "}
               <kbd className="font-sans">Shift+Enter</kbd> for newline
             </span>
             <ConnDot state={conn} />
@@ -835,6 +935,75 @@ function WorkingIndicator() {
           <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-accent" />
         </span>
         <span>{WORKING_PHRASES[i]}…</span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Issue #91 — the slim "queued message" toolbar shown directly above the
+ * composer while a message is stacked to auto-send. Shows the queued message's
+ * first line + a "queued" indicator; hovering reveals Edit (pop it back into the
+ * composer, cancelling the pending auto-send) and Clear (discard it). At most one
+ * message is ever queued.
+ */
+function QueuedMessageBar({
+  text,
+  onEdit,
+  onClear,
+}: {
+  text: string;
+  onEdit: () => void;
+  onClear: () => void;
+}) {
+  const firstLine = text.split("\n", 1)[0];
+  // Everything past the first line is hidden by the single-line toolbar. Surface
+  // how much more there is so a multi-line queued message doesn't look truncated
+  // (issue #91 follow-up) — counts the hidden characters, newline(s) included.
+  const moreChars = text.length - firstLine.length;
+  return (
+    <div className="mx-auto mb-2 w-full max-w-3xl px-4">
+      <div className="group flex items-center gap-2 rounded-lg border border-accent/30 bg-accent/[0.06] px-3 py-1.5 text-xs dark:border-accent/40 dark:bg-accent/10">
+        <ClockIcon width={13} height={13} className="shrink-0 text-accent" />
+        <span className="shrink-0 font-semibold uppercase tracking-wide text-accent">
+          queued
+        </span>
+        <span
+          className="min-w-0 flex-1 truncate text-paddock-600 dark:text-paddock-300"
+          title={text}
+        >
+          {firstLine}
+        </span>
+        {moreChars > 0 && (
+          <span
+            className="shrink-0 tabular-nums text-paddock-400 dark:text-paddock-500"
+            title={`${moreChars} more character${moreChars === 1 ? "" : "s"} not shown — hover Edit to see the full message`}
+          >
+            +{moreChars} character{moreChars === 1 ? "" : "s"}
+          </span>
+        )}
+        {/* Revealed on hover/focus. Kept in the DOM (not conditionally mounted)
+            so they stay keyboard-reachable and testable. */}
+        <span className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+          <button
+            type="button"
+            onClick={onEdit}
+            title="Edit this message (cancels the pending auto-send)"
+            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-medium text-paddock-600 hover:bg-paddock-200/70 dark:text-paddock-300 dark:hover:bg-paddock-800"
+          >
+            <PencilIcon width={12} height={12} />
+            Edit
+          </button>
+          <button
+            type="button"
+            onClick={onClear}
+            title="Remove queued message"
+            aria-label="Remove queued message"
+            className="inline-flex items-center rounded p-1 text-paddock-500 hover:bg-paddock-200/70 hover:text-rose-600 dark:text-paddock-400 dark:hover:bg-paddock-800"
+          >
+            <XIcon width={12} height={12} />
+          </button>
+        </span>
       </div>
     </div>
   );
