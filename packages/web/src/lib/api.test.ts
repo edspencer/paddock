@@ -120,6 +120,24 @@ describe("api: writes build the right request", () => {
     expect(JSON.parse(init?.body as string)).toEqual({ name: null });
   });
 
+  it("archiveProjectChat POSTs { archived } to the archive endpoint", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ ok: true, archived: true }));
+    await api.archiveProjectChat("p", "s", true);
+    const [url, init] = call();
+    expect(url).toBe("/api/projects/p/chats/s/archive");
+    expect(init?.method).toBe("POST");
+    expect(JSON.parse(init?.body as string)).toEqual({ archived: true });
+  });
+
+  it("archiveScratchChat POSTs { archived:false } to unarchive a scratch chat", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ ok: true, archived: false }));
+    await api.archiveScratchChat("s9", false);
+    const [url, init] = call();
+    expect(url).toBe("/api/chats/s9/archive");
+    expect(init?.method).toBe("POST");
+    expect(JSON.parse(init?.body as string)).toEqual({ archived: false });
+  });
+
   it("promoteChat POSTs the build payload to the promote endpoint", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ project: makeProject(), promoted: true }));
     const res = await api.promoteChat("sess-9", { name: "X", group: "g" });

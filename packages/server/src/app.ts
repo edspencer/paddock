@@ -26,6 +26,7 @@ import { registerAuth } from "./auth.js";
 import { renderIndexHtml } from "./brand.js";
 import { makeChatHandler } from "./ws.js";
 import { SweepService } from "./sweep.js";
+import { ArchiveStore } from "./archive.js";
 
 export interface BuiltApp {
   app: FastifyInstance;
@@ -35,6 +36,7 @@ export interface BuiltApp {
   git: GitService;
   githubAuth: GithubAuth;
   sweep: SweepService;
+  archive: ArchiveStore;
   transcriber: Transcriber;
   /** Tear down the fleet + close the server (no process.exit, for tests). */
   close: () => Promise<void>;
@@ -73,6 +75,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   const herdctl = new HerdctlService(cfg);
   const git = new GitService(cfg.projectsRoot);
   const githubAuth = new GithubAuth(path.join(cfg.dataDir, "github-auth.json"));
+  const archive = new ArchiveStore(cfg.dataDir);
   const transcriber = makeTranscriber(cfg.transcription);
   app.log.info(
     { mode: cfg.transcription.mode, available: transcriber.available },
@@ -103,7 +106,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   await app.register(fastifyMultipart, {
     limits: { fileSize: cfg.transcription.maxUploadBytes, files: 1 },
   });
-  await registerRoutes(app, { projects, herdctl, git, githubAuth, transcriber });
+  await registerRoutes(app, { projects, herdctl, git, githubAuth, transcriber, archive });
 
   const chatHandler = makeChatHandler({ herdctl, projects, sweep });
   await app.register(async (scoped) => {
@@ -156,5 +159,5 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
     await app.close().catch(() => undefined);
   };
 
-  return { app, cfg, projects, herdctl, git, githubAuth, sweep, transcriber, close };
+  return { app, cfg, projects, herdctl, git, githubAuth, sweep, archive, transcriber, close };
 }

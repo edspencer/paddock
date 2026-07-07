@@ -149,6 +149,22 @@ export const api = {
     });
   },
 
+  /** Archive or unarchive a project chat (issue #95). Non-destructive toggle. */
+  async archiveProjectChat(slug: string, sessionId: string, archived: boolean): Promise<void> {
+    await req<{ ok: boolean }>(
+      `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}/archive`,
+      { method: "POST", body: JSON.stringify({ archived }) },
+    );
+  },
+
+  /** Archive or unarchive a one-off (scratch) chat (issue #95). */
+  async archiveScratchChat(sessionId: string, archived: boolean): Promise<void> {
+    await req<{ ok: boolean }>(`/api/chats/${encodeURIComponent(sessionId)}/archive`, {
+      method: "POST",
+      body: JSON.stringify({ archived }),
+    });
+  },
+
   /**
    * Promote a one-off (scratch) chat into a new project (issue #20). Creates the
    * project and re-homes the chat's transcript into it. `promoted:false` means

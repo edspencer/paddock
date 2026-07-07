@@ -101,6 +101,11 @@ export interface Chat {
   resumable: boolean;
   preview?: string;
   /**
+   * Whether the chat is filed away in the Archived section (issue #95). A
+   * non-destructive per-chat flag; archived chats stay fully functional.
+   */
+  archived?: boolean;
+  /**
    * Context-window fill as of the chat's last completed turn, for the chat-list
    * usage ring (issue #77). Both present together, or both absent when the
    * transcript has no usage data yet.
