@@ -198,7 +198,15 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
         projects.readFile(project.slug, "CHANGELOG.md").catch(() => ""),
         herdctl.listSessions(project).catch(() => []),
       ]);
-      return { project, changelog, chats: await buildProjectChats(project.dir, sessions) };
+      const usageOf = chatUsageResolver(
+        keeperAgentName(project.slug),
+        project.model ?? KEEPER_DEFAULT_MODEL,
+      );
+      return {
+        project,
+        changelog,
+        chats: await buildProjectChats(project.dir, sessions, usageOf),
+      };
     } catch (err) {
       return sendProjectError(reply, err);
     }
@@ -402,7 +410,11 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     try {
       const project = await projects.get(req.params.slug);
       const sessions = await herdctl.listSessions(project).catch(() => []);
-      return { chats: await buildProjectChats(project.dir, sessions) };
+      const usageOf = chatUsageResolver(
+        keeperAgentName(project.slug),
+        project.model ?? KEEPER_DEFAULT_MODEL,
+      );
+      return { chats: await buildProjectChats(project.dir, sessions, usageOf) };
     } catch (err) {
       return sendProjectError(reply, err);
     }
@@ -529,7 +541,12 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
   // their previews are never polluted — no wrapper stripping needed.
   app.get("/api/chats", async () => {
     const sessions = await herdctl.listScratchSessions().catch(() => []);
-    return { chats: sessions.map((s) => toChatDto(s)) };
+    const usageOf = chatUsageResolver(SCRATCH_AGENT, KEEPER_DEFAULT_MODEL);
+    return {
+      chats: await Promise.all(
+        sessions.map(async (s) => toChatDto(s, undefined, await usageOf(s))),
+      ),
+    };
   });
 
   // Messages of a one-off (scratch) chat.
@@ -636,6 +653,23 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     }
   });
 
+  /**
+   * A per-session context-usage lookup for building a chat list's usage rings
+   * (issue #77): reads each session's context fill (memoized on transcript
+   * mtime) and pairs it with the model's context limit. Returns null for a
+   * session with no usage data yet — the ring simply hides.
+   */
+  function chatUsageResolver(agentName: string, model: string) {
+    return async (
+      s: import("@herdctl/core").DiscoveredSession,
+    ): Promise<ChatUsage | null> => {
+      const u = await herdctl.sessionUsageCached(agentName, s.sessionId, s.mtime).catch(() => null);
+      return u && u.hasData
+        ? { contextTokens: u.inputTokens, contextLimit: getContextLimit(model) }
+        : null;
+    };
+  }
+
   /** Resolve a slug to the agent name whose sessions back it. */
   async function agentForSlug(slug: string): Promise<string> {
     if (slug === SCRATCH_SLUG) return SCRATCH_AGENT;
@@ -650,9 +684,13 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
   }
 }
 
+/** A chat's context-window fill for the chat-list usage ring (issue #77). */
+type ChatUsage = { contextTokens: number; contextLimit: number };
+
 function toChatDto(
   s: import("@herdctl/core").DiscoveredSession,
   previewOverride?: string,
+  usage?: ChatUsage | null,
 ) {
   const preview = previewOverride ?? s.preview;
   return {
@@ -662,6 +700,12 @@ function toChatDto(
     updatedAt: s.mtime,
     resumable: s.resumable,
     preview,
+    // The context-window fill as of the session's last completed turn, so the
+    // chat list can render a per-chat usage ring without opening the chat. Only
+    // present when the transcript has usage data.
+    ...(usage
+      ? { contextTokens: usage.contextTokens, contextLimit: usage.contextLimit }
+      : {}),
   };
 }
 
@@ -679,19 +723,24 @@ const PREVIEW_MAX = 100;
 async function buildProjectChats(
   projectDir: string,
   sessions: import("@herdctl/core").DiscoveredSession[],
+  usageOf?: (
+    s: import("@herdctl/core").DiscoveredSession,
+  ) => Promise<ChatUsage | null>,
 ) {
   return Promise.all(
     sessions.map(async (s) => {
+      // Resolve the usage ring and the (possibly cleaned) name in parallel.
+      const usage = usageOf ? await usageOf(s).catch(() => null) : null;
       const pollutedPreview =
         !s.customName && !s.autoName && s.preview?.startsWith(PRELOAD_CONTEXT_OPEN);
-      if (!pollutedPreview) return toChatDto(s);
+      if (!pollutedPreview) return toChatDto(s, undefined, usage);
 
       const full = await readFirstUserText(projectDir, s.sessionId).catch(() => undefined);
       const cleaned = stripPreloadWrapper(full ?? s.preview ?? "").trim();
-      if (!cleaned) return toChatDto(s); // couldn't recover — leave as-is
+      if (!cleaned) return toChatDto(s, undefined, usage); // couldn't recover — leave as-is
       const preview =
         cleaned.length > PREVIEW_MAX ? `${cleaned.slice(0, PREVIEW_MAX)}...` : cleaned;
-      return toChatDto(s, preview);
+      return toChatDto(s, preview, usage);
     }),
   );
 }

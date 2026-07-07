@@ -7,6 +7,7 @@ import type { Chat, Project } from "../lib/types";
 import { StatusPill } from "../components/StatusPill";
 import { TagPill } from "../components/TagPill";
 import { ChatPane } from "../components/ChatPane";
+import { ContextRing } from "../components/ContextRing";
 import { ChangesPane } from "../components/ChangesPane";
 import { Markdown } from "../components/Markdown";
 import { FileView } from "../components/FileView";
@@ -448,6 +449,7 @@ export function ProjectView() {
                         className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent"
                       />
                     )}
+                    <ContextRing tokens={c.contextTokens} limit={c.contextLimit} />
                     <span className="truncate font-medium">{c.name}</span>
                   </span>
                   <span className="text-[11px] text-paddock-400">{relativeTime(c.updatedAt)}</span>
