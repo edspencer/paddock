@@ -146,6 +146,18 @@ describe("ProjectView: tabs", () => {
     expect(screen.getByText("OVERVIEW.md")).toBeInTheDocument();
   });
 
+  it("the project name is a breadcrumb to the Home tab", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p", name: "Reactor" })),
+    );
+    renderAt("/projects/p/chat");
+    await screen.findByTestId("chat-pane");
+    // The name in the header is a button that navigates up to Home.
+    fireEvent.click(screen.getByRole("button", { name: "Reactor" }));
+    // Home renders — its "Edit details" overview action is present.
+    expect(await screen.findByRole("button", { name: /Edit details/i })).toBeInTheDocument();
+  });
+
   it("the Changes tab is hidden when the projects dir is not a git repo", async () => {
     apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
     renderAt("/projects/p/chat");

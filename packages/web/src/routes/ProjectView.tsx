@@ -323,39 +323,63 @@ export function ProjectView() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {/* Header */}
-      <header className="border-b border-paddock-200 px-4 py-4 dark:border-paddock-800 sm:px-6">
-        <div className="flex flex-wrap items-center gap-3">
+      {/* Header. On mobile it's a compact single-row breadcrumb (the project name
+          links to Home; the tags / overview badge / "updated" time and the
+          summary live on the Home tab, so they're desktop-only here). On lg+ it
+          wraps into the full rich header. */}
+      <header className="border-b border-paddock-200 px-3 py-2.5 dark:border-paddock-800 sm:px-6 lg:py-4">
+        <div className="flex items-center gap-2 lg:flex-wrap lg:gap-3">
           <button
             type="button"
             onClick={() => setSessionsOpen(true)}
-            className="btn-subtle -ml-2 gap-1.5 px-2 py-1.5 lg:hidden"
+            className="btn-subtle -ml-1 shrink-0 gap-1.5 px-2 py-1.5 lg:-ml-2 lg:hidden"
             aria-label="Show chats"
           >
             <ChatIcon width={16} height={16} />
-            Chats
+            <span className="hidden sm:inline">Chats</span>
             {chats.length > 0 && (
               <span className="text-[11px] text-paddock-400">{chats.length}</span>
             )}
           </button>
-          <h1 className="text-xl font-semibold tracking-tight">{project.name}</h1>
+          {/* The project name doubles as a breadcrumb up to the Home tab. */}
+          <h1 className="min-w-0 text-xl font-semibold tracking-tight">
+            <button
+              type="button"
+              onClick={goHome}
+              title="Project home"
+              className="block max-w-full truncate rounded transition-colors hover:text-accent"
+            >
+              {project.name}
+            </button>
+          </h1>
           <StatusPill status={project.status} />
           {project.domain.map((d) => (
-            <TagPill key={d} tag={d} />
+            <TagPill key={d} tag={d} className="hidden lg:inline-flex" />
           ))}
           {project.hasOverview && (
             <span
               title="A sweep has curated an OVERVIEW.md for this project. New chats can preload it as context."
-              className="inline-flex items-center gap-1 rounded-md bg-emerald-100 px-1.5 py-0.5 text-[11px] font-medium text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400"
+              className="hidden items-center gap-1 rounded-md bg-emerald-100 px-1.5 py-0.5 text-[11px] font-medium text-emerald-700 lg:inline-flex dark:bg-emerald-950/50 dark:text-emerald-400"
             >
               <CheckIcon width={11} height={11} />
               Overview
             </span>
           )}
-          <span className="ml-auto inline-flex items-center gap-1 text-xs text-paddock-400">
+          <span className="ml-auto hidden items-center gap-1 text-xs text-paddock-400 lg:inline-flex">
             <ClockIcon width={12} height={12} />
             updated {relativeTime(project.updated)}
           </span>
+          {/* Mobile-only shortcut to start a new chat (desktop has it in the
+              session-list column). */}
+          <button
+            type="button"
+            onClick={newChat}
+            aria-label="New chat"
+            title="New chat"
+            className="btn-subtle ml-auto shrink-0 px-2 py-1.5 lg:hidden"
+          >
+            <PlusIcon width={16} height={16} />
+          </button>
           <ProjectMenu
             onEdit={() => setEditOpen(true)}
             onDelete={() => setDeleteOpen(true)}
@@ -363,7 +387,9 @@ export function ProjectView() {
           />
         </div>
         {project.summary && (
-          <p className="mt-1.5 text-sm text-paddock-600 dark:text-paddock-400">{project.summary}</p>
+          <p className="mt-1.5 hidden text-sm text-paddock-600 lg:block dark:text-paddock-400">
+            {project.summary}
+          </p>
         )}
       </header>
 
@@ -498,7 +524,15 @@ export function ProjectView() {
 
         {/* Main: tabs + content. The active tab is derived from the URL. */}
         <div className="flex min-w-0 flex-1 flex-col">
-          <div className="flex items-center gap-1 overflow-x-auto border-b border-paddock-200 px-4 dark:border-paddock-800">
+          {/* On mobile the chat view hides the tab bar — the compact header
+              breadcrumb (name → Home) is the way back to the tabbed hub, so the
+              chat gets the full height. Tabs stay visible on Home/Files/Changes
+              and on lg+ everywhere. */}
+          <div
+            className={`items-center gap-1 overflow-x-auto border-b border-paddock-200 px-4 dark:border-paddock-800 ${
+              view === "chat" && !showChanges ? "hidden lg:flex" : "flex"
+            }`}
+          >
             <TabButton active={view === "home" && !showChanges} onClick={goHome}>
               Home
             </TabButton>
