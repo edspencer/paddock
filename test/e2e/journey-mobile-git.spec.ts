@@ -31,7 +31,9 @@ test("Changes tab + unified diff render on mobile (no page overflow)", async ({ 
     { git: true },
   );
 
-  await page.goto(`/projects/${slug}/chat`);
+  // On mobile the chat view hides the tab bar (the chat is a focused view); the
+  // tabs — including Changes — live on the Home hub, so drive Changes from Home.
+  await page.goto(`/projects/${slug}/home`);
   const changesTab = page.getByRole("button", { name: /^Changes/ });
   await expect(changesTab).toBeVisible({ timeout: 15_000 });
   await changesTab.click();
