@@ -17,6 +17,7 @@ interface FakeSub {
 }
 let subs: FakeSub[] = [];
 const sends: Array<{ slug: string; message: string; sessionId: string | null; opts?: unknown }> = [];
+const commands: Array<{ slug: string; message: string; sessionId: string | null }> = [];
 const cancels: string[] = [];
 let stateCb: ((s: string) => void) | null = null;
 
@@ -44,6 +45,8 @@ vi.mock("../lib/ws", () => ({
     },
     send: (slug: string, message: string, sessionId: string | null, opts?: unknown) =>
       sends.push({ slug, message, sessionId, opts }),
+    sendCommand: (slug: string, message: string, sessionId: string | null) =>
+      commands.push({ slug, message, sessionId }),
     cancel: (jobId: string) => cancels.push(jobId),
   },
 }));
@@ -82,6 +85,7 @@ const sub = () => subs[subs.length - 1];
 beforeEach(() => {
   subs = [];
   sends.length = 0;
+  commands.length = 0;
   cancels.length = 0;
   stateCb = null;
   getModels.mockReset().mockResolvedValue(MODELS);
@@ -620,5 +624,138 @@ describe("ChatPane: message boundaries", () => {
 
     // Turn done → no carets anywhere.
     expect(container.querySelectorAll(".streaming-caret")).toHaveLength(0);
+  });
+});
+
+// Issue #91: a single message can be queued mid-turn and auto-sends when the
+// current turn completes. Mirrors Claude Code's one-slot, append-on-resubmit
+// model.
+describe("ChatPane: message queue (issue #91)", () => {
+  const box = () => screen.getByPlaceholderText(/Message the keeper agent|Queue a message/i);
+
+  // Send a first message and drive the turn into the streaming state.
+  async function startTurn() {
+    await screen.findByRole("button", { name: /^Send$/ });
+    await userEvent.type(box(), "first turn");
+    fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
+    // Anchor the job id so Stop can cancel by id.
+    act(() => sub().handlers.onResponse?.("…", { sessionId: "s", jobId: "job-1" }));
+    expect(screen.getByRole("button", { name: /Stop/ })).toBeInTheDocument();
+  }
+
+  it("queues a message while streaming instead of sending it", async () => {
+    render(<ChatPane projectSlug="proj" />);
+    await startTurn();
+
+    await userEvent.type(box(), "follow up");
+    fireEvent.keyDown(box(), { key: "Enter" });
+
+    // No second send went out — the turn is still in flight.
+    expect(sends).toHaveLength(1);
+    // The queued toolbar surfaces it, and the composer cleared.
+    expect(screen.getByText("queued")).toBeInTheDocument();
+    expect(screen.getByText("follow up")).toBeInTheDocument();
+    expect((box() as HTMLTextAreaElement).value).toBe("");
+  });
+
+  it("auto-sends the queued message when the turn completes", async () => {
+    render(<ChatPane projectSlug="proj" />);
+    await startTurn();
+    await userEvent.type(box(), "the queued one");
+    fireEvent.keyDown(box(), { key: "Enter" });
+
+    act(() => sub().handlers.onComplete?.({ sessionId: "s", jobId: "job-1", success: true }));
+
+    // The queued message went out as the next turn and the toolbar cleared.
+    await waitFor(() => expect(sends).toHaveLength(2));
+    expect(sends[1].message).toBe("the queued one");
+    expect(screen.queryByText("queued")).not.toBeInTheDocument();
+    // And we're streaming again for that follow-up turn.
+    expect(screen.getByRole("button", { name: /Stop/ })).toBeInTheDocument();
+  });
+
+  it("appends to the queued message on re-submit (single slot)", async () => {
+    render(<ChatPane projectSlug="proj" />);
+    await startTurn();
+    await userEvent.type(box(), "line A");
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await userEvent.type(box(), "line B");
+    fireEvent.keyDown(box(), { key: "Enter" });
+
+    // Still one queued message; toolbar shows the first line only.
+    expect(screen.getByText("line A")).toBeInTheDocument();
+
+    act(() => sub().handlers.onComplete?.({ sessionId: "s", jobId: "job-1", success: true }));
+    await waitFor(() => expect(sends).toHaveLength(2));
+    expect(sends[1].message).toBe("line A\nline B");
+  });
+
+  it("holds the queue when the user hits Stop (does not auto-send)", async () => {
+    render(<ChatPane projectSlug="proj" />);
+    await startTurn();
+    await userEvent.type(box(), "should not fire");
+    fireEvent.keyDown(box(), { key: "Enter" });
+
+    fireEvent.click(screen.getByRole("button", { name: /Stop/ }));
+    expect(cancels).toEqual(["job-1"]);
+    // The server emits a completion for the cancelled turn — must NOT flush.
+    act(() => sub().handlers.onComplete?.({ sessionId: "s", jobId: "job-1", success: true }));
+
+    expect(sends).toHaveLength(1);
+    // The message stays queued for the user to send/edit.
+    expect(screen.getByText("should not fire")).toBeInTheDocument();
+  });
+
+  it("holds the queue when the turn errors (does not auto-send)", async () => {
+    render(<ChatPane projectSlug="proj" />);
+    await startTurn();
+    await userEvent.type(box(), "held on error");
+    fireEvent.keyDown(box(), { key: "Enter" });
+
+    act(() => sub().handlers.onError?.("boom"));
+    expect(sends).toHaveLength(1);
+    expect(screen.getByText("held on error")).toBeInTheDocument();
+  });
+
+  it("Clear discards the queued message", async () => {
+    render(<ChatPane projectSlug="proj" />);
+    await startTurn();
+    await userEvent.type(box(), "discard me");
+    fireEvent.keyDown(box(), { key: "Enter" });
+    expect(screen.getByText("discard me")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Remove queued message/i }));
+    expect(screen.queryByText("queued")).not.toBeInTheDocument();
+
+    // Completing the turn now sends nothing extra.
+    act(() => sub().handlers.onComplete?.({ sessionId: "s", jobId: "job-1", success: true }));
+    expect(sends).toHaveLength(1);
+  });
+
+  it("Edit pops the message back into the composer and cancels the pending auto-send", async () => {
+    render(<ChatPane projectSlug="proj" />);
+    await startTurn();
+    await userEvent.type(box(), "edit me");
+    fireEvent.keyDown(box(), { key: "Enter" });
+
+    fireEvent.click(screen.getByRole("button", { name: /Edit/ }));
+    // Popped back into the textarea; the toolbar cleared.
+    await waitFor(() => expect((box() as HTMLTextAreaElement).value).toBe("edit me"));
+    expect(screen.queryByText("queued")).not.toBeInTheDocument();
+
+    // The turn finishing mid-edit must NOT fire it in the background.
+    act(() => sub().handlers.onComplete?.({ sessionId: "s", jobId: "job-1", success: true }));
+    expect(sends).toHaveLength(1);
+  });
+
+  it("a queued slash command flushes via the command path", async () => {
+    render(<ChatPane projectSlug="proj" initialSessionId="s" loadHistory={vi.fn().mockResolvedValue([])} />);
+    await startTurn();
+    await userEvent.type(box(), "/compact");
+    fireEvent.keyDown(box(), { key: "Enter" });
+
+    act(() => sub().handlers.onComplete?.({ sessionId: "s", jobId: "job-1", success: true }));
+    await waitFor(() => expect(commands).toHaveLength(1));
+    expect(commands[0].message).toBe("/compact");
   });
 });
