@@ -596,12 +596,51 @@ export class HerdctlService {
   }
 
   /**
+   * Attribute an *in-flight* session to its agent the moment its id is known —
+   * mid first turn — so a brand-new chat lists in the sidebar immediately
+   * instead of only after the turn's `claude -p` process exits (issue #100).
+   *
+   * The core attribution index is built from herdctl job records, and herdctl
+   * writes the resolved `session_id` into a run's own job record only on
+   * completion. While the first turn runs, that record has `session_id: null`,
+   * so the session is unattributed and {@link SessionDiscoveryService.getAgentSessions}
+   * filters it out. We close that window with the SAME synthetic-job-record
+   * trick used for fork/promote: write an adoption record keyed to the session
+   * id, then drop the discovery + attribution caches so the next list call
+   * surfaces it. Idempotent — a stable per-session job id means a repeat call
+   * just overwrites the same file, and when the real run later finalizes its own
+   * record (same session id, same agent) the attribution is unchanged.
+   *
+   * @param sessionId - The freshly-resolved session id of the running turn
+   * @param agentName - The qualified agent the session belongs to (keeper or scratch)
+   */
+  async attributeRunningSession(sessionId: string, agentName: string): Promise<void> {
+    if (!/^[A-Za-z0-9._-]+$/.test(sessionId)) return;
+    await this.writeAgentAdoptionJob(sessionId, agentName, new Date());
+    this.invalidateSessions(agentName);
+  }
+
+  /**
    * Write a herdctl job-metadata YAML mapping `sessionId -> keeper agent` so the
    * core attribution index lists the session under the project. Mirrors the
    * shape `scripts/migrate-chat.sh` writes (and the JobMetadataSchema: the id
    * must match `job-YYYY-MM-DD-[a-z0-9]{6}`).
    */
   private async writeAdoptionJob(sessionId: string, project: Project, when: Date): Promise<void> {
+    await this.writeAgentAdoptionJob(sessionId, keeperAgentName(project.slug), when);
+  }
+
+  /**
+   * Underlying adoption-record writer, parametrized by the target agent name so
+   * it serves both project keepers (fork/promote/adopt) and the scratch agent
+   * (see {@link attributeRunningSession}). Writes a `<jobId>.yaml` mapping the
+   * session id to `agentName` plus a matching empty `.jsonl` output file.
+   */
+  private async writeAgentAdoptionJob(
+    sessionId: string,
+    agentName: string,
+    when: Date,
+  ): Promise<void> {
     const jobsDir = path.join(this.cfg.stateDir, "jobs");
     await fs.mkdir(jobsDir, { recursive: true });
     const iso = (Number.isNaN(when.getTime()) ? new Date() : when).toISOString();
@@ -610,7 +649,7 @@ export class HerdctlService {
     const outputFile = path.join(jobsDir, `${jobId}.jsonl`);
     const record = {
       id: jobId,
-      agent: keeperAgentName(project.slug),
+      agent: agentName,
       schedule: null,
       trigger_type: "web",
       status: "completed",

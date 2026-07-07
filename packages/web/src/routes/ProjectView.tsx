@@ -294,6 +294,24 @@ export function ProjectView() {
     }
   }, [chats, pendingChat]);
 
+  // When a session starts running that isn't in our chat list yet — a chat
+  // started from another client/tab, or one racing the initial refresh — pull
+  // the chat list once so the in-flight chat surfaces in the sidebar without
+  // waiting for its turn to finish (issue #100). The server attributes a new
+  // chat the moment its id is known, so the refetch reliably includes it. A
+  // seen-set keeps a running id (including ones from other projects, since the
+  // set is fleet-wide) from triggering more than one refetch — no refetch loop.
+  const reactedRunning = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    let sawFresh = false;
+    for (const id of runningSessions) {
+      if (reactedRunning.current.has(id)) continue;
+      reactedRunning.current.add(id);
+      if (!chats.some((c) => c.sessionId === id)) sawFresh = true;
+    }
+    if (sawFresh) void refreshChats();
+  }, [runningSessions, chats, refreshChats]);
+
   const onTurnComplete = useCallback(() => {
     void refreshAfterTurn();
     void refreshProjects();
