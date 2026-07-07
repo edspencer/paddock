@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { chatClient } from "../lib/ws";
@@ -24,6 +24,7 @@ import {
   PencilIcon,
   PinIcon,
   PlusIcon,
+  SearchIcon,
   TrashIcon,
   XIcon,
 } from "../components/icons";
@@ -78,6 +79,11 @@ export function ProjectView() {
 
   const [project, setProject] = useState<Project | null>(null);
   const [chats, setChats] = useState<Chat[]>([]);
+  // Live client-side filter for the chat list (issue #96). The whole list is
+  // already in memory, so a case-insensitive substring match over name (and the
+  // first-message preview, when present) needs no server round-trip. Derived
+  // with useMemo so it only recomputes when the query or the list changes.
+  const [chatSearch, setChatSearch] = useState("");
   // A brand-new chat that has started streaming but isn't in the server list
   // yet. Rendered as a real, persistent "pending" sidebar entry so the chat is
   // visibly created the moment it starts (issue #36); cleared once the real
@@ -107,6 +113,19 @@ export function ProjectView() {
 
   // The active chat session is the URL's sessionId (null = a fresh "new chat").
   const activeSession = routeSessionId ?? null;
+
+  // The chats actually rendered in the sidebar, after applying the search
+  // filter (issue #96). Empty query -> the full list unchanged.
+  const visibleChats = useMemo(() => {
+    const q = chatSearch.trim().toLowerCase();
+    if (!q) return chats;
+    return chats.filter(
+      (c) =>
+        c.name.toLowerCase().includes(q) ||
+        (c.preview?.toLowerCase().includes(q) ?? false),
+    );
+  }, [chats, chatSearch]);
+  const searching = chatSearch.trim().length > 0;
 
   // Fetch the project's git status; clears it (hiding the Changes tab) when the
   // projects dir isn't a repo or the request fails. Safe to call freely.
@@ -439,9 +458,40 @@ export function ProjectView() {
           }`}
         >
           <div className="flex items-center gap-2 p-3">
-            <button className="btn-primary w-full" onClick={newChat}>
-              <PlusIcon width={15} height={15} />
-              New Chat
+            <div className="relative min-w-0 flex-1">
+              <SearchIcon
+                width={15}
+                height={15}
+                className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-paddock-400"
+              />
+              <input
+                type="text"
+                value={chatSearch}
+                onChange={(e) => setChatSearch(e.target.value)}
+                placeholder="Search chats"
+                aria-label="Search chats"
+                className="input py-1.5 pl-8 pr-8"
+              />
+              {searching && (
+                <button
+                  type="button"
+                  onClick={() => setChatSearch("")}
+                  aria-label="Clear search"
+                  title="Clear search"
+                  className="absolute right-1.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-paddock-400 transition hover:bg-paddock-200 hover:text-paddock-700 dark:hover:bg-paddock-700 dark:hover:text-paddock-100"
+                >
+                  <XIcon width={13} height={13} />
+                </button>
+              )}
+            </div>
+            <button
+              type="button"
+              className="btn-primary h-9 w-9 shrink-0 p-0"
+              onClick={newChat}
+              aria-label="New Chat"
+              title="New Chat"
+            >
+              <PlusIcon width={16} height={16} />
             </button>
             <button
               type="button"
@@ -455,7 +505,9 @@ export function ProjectView() {
           <div className="mb-1 flex items-center justify-between pr-3">
             <span className="section-label">Chats</span>
             {chats.length > 0 && (
-              <span className="text-[11px] text-paddock-400">{chats.length}</span>
+              <span className="text-[11px] text-paddock-400">
+                {searching ? `${visibleChats.length}/${chats.length}` : chats.length}
+              </span>
             )}
           </div>
           <div className="flex-1 overflow-y-auto px-2 pb-2">
@@ -495,7 +547,12 @@ export function ProjectView() {
                 No saved chats yet. Send a message to start one.
               </p>
             )}
-            {chats.map((c) => (
+            {chats.length > 0 && searching && visibleChats.length === 0 && (
+              <p className="px-2 py-2 text-sm text-paddock-500">
+                No chats match “{chatSearch.trim()}”.
+              </p>
+            )}
+            {visibleChats.map((c) => (
               <div
                 key={c.sessionId}
                 className={`group/chat relative mb-0.5 rounded-lg transition-colors ${
