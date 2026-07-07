@@ -73,6 +73,13 @@ export interface ChatPaneProps {
    * falls back to the models response's `keeperDefault`.
    */
   projectModel?: string;
+  /**
+   * When set, this is a FORK composer: the chat has no session id yet, and its
+   * first message is sent with `forkFrom` so the server branches this source
+   * session (resumes its context, writes to a brand-new id). Cleared naturally
+   * once the forked chat establishes its own session id.
+   */
+  forkFrom?: string;
   emptyHint?: string;
   placeholder?: string;
 }
@@ -87,6 +94,7 @@ export function ChatPane({
   isProjectChat = false,
   preloadAvailable = false,
   projectModel,
+  forkFrom,
   emptyHint,
   placeholder,
 }: ChatPaneProps) {
@@ -479,8 +487,11 @@ export function ChatPane({
       // Send the selected model so the server runs this turn on it. Omitted when
       // unresolved (models not yet loaded) → the server uses the project default.
       model: modelRef.current ?? undefined,
+      // Fork the source session on the very first turn of a fork composer (while
+      // this chat has no id of its own). The server ignores it once resumed.
+      forkFrom: sessionRef.current === null ? forkFrom : undefined,
     });
-  }, [draft, streaming, projectSlug, isProjectChat, preloadContext]);
+  }, [draft, streaming, projectSlug, isProjectChat, preloadContext, forkFrom]);
 
   const cancel = useCallback(() => {
     // jobId is captured off event metadata in the handlers below. The server

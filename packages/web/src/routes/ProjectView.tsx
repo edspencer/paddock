@@ -15,6 +15,7 @@ import { ProjectMenu } from "../components/ProjectMenu";
 import { EditProjectModal } from "../components/EditProjectModal";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import {
+  BranchIcon,
   ChatIcon,
   CheckIcon,
   ClockIcon,
@@ -192,6 +193,21 @@ export function ProjectView() {
       navigate(`/projects/${slug}/chat/${encodeURIComponent(sessionId)}`),
     [navigate, slug],
   );
+  // Fork a chat: open a fresh composer (a new chat) that carries `forkFrom` in
+  // router state. The first message sent there forks the source session —
+  // resuming its context but writing to a brand-new id, leaving the source
+  // untouched. Works even while the source is still streaming.
+  const forkChat = useCallback(
+    (sessionId: string) =>
+      navigate(`/projects/${slug}/chat`, { state: { forkFrom: sessionId } }),
+    [navigate, slug],
+  );
+  // The source session to fork, sourced from router state, only while on a
+  // brand-new chat (no session id in the URL yet). Cleared once the forked chat
+  // establishes its own id (the establish navigation replaces this state).
+  const forkFrom = !routeSessionId
+    ? (location.state as { forkFrom?: string } | null)?.forkFrom
+    : undefined;
   const openFile = useCallback(
     (name: string) => navigate(`/projects/${slug}/files/${encodeURIComponent(name)}`),
     [navigate, slug],
@@ -476,7 +492,7 @@ export function ProjectView() {
               >
                 <button
                   onClick={() => openChat(c.sessionId)}
-                  className="flex w-full flex-col items-start gap-0.5 rounded-lg px-2.5 py-2 pr-14 text-left text-sm"
+                  className="flex w-full flex-col items-start gap-0.5 rounded-lg px-2.5 py-2 pr-[5.25rem] text-left text-sm"
                 >
                   <span className="flex w-full items-center gap-1.5">
                     {runningSessions.has(c.sessionId) && (
@@ -492,6 +508,18 @@ export function ProjectView() {
                   <span className="text-[11px] text-paddock-400">{relativeTime(c.updatedAt)}</span>
                 </button>
                 <div className="absolute right-1.5 top-1.5 flex items-center gap-0.5">
+                  <button
+                    type="button"
+                    aria-label={`Fork chat ${c.name}`}
+                    title="Fork chat — branch a new chat from this one's context"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      forkChat(c.sessionId);
+                    }}
+                    className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-paddock-200 hover:text-accent focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-paddock-700 dark:hover:text-accent"
+                  >
+                    <BranchIcon width={13} height={13} />
+                  </button>
                   <button
                     type="button"
                     aria-label={`Rename chat ${c.name}`}
@@ -616,6 +644,12 @@ export function ProjectView() {
               onTurnComplete={onTurnComplete}
               preloadAvailable={project.hasOverview}
               projectModel={project.model}
+              forkFrom={forkFrom}
+              emptyHint={
+                forkFrom
+                  ? "Forking this chat — your first message branches a new chat from its full context, leaving the original untouched."
+                  : undefined
+              }
               isProjectChat
             />
           )}

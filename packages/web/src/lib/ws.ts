@@ -233,12 +233,16 @@ class ChatClient {
     projectSlug: string,
     message: string,
     sessionId: string | null,
-    opts?: { preloadContext?: boolean; model?: string },
+    opts?: { preloadContext?: boolean; model?: string; forkFrom?: string },
   ): void {
     const payload: Record<string, unknown> = { projectSlug, sessionId, message };
     // Only meaningful on the first turn of a NEW chat; the server ignores it
     // otherwise. Omit when false to keep the wire clean.
     if (opts?.preloadContext) payload.preloadContext = true;
+    // Fork the given source session on this (first, new-chat) turn: the server
+    // resumes its context but writes to a brand-new id. Ignored once the chat
+    // has its own session id.
+    if (opts?.forkFrom) payload.forkFrom = opts.forkFrom;
     // The model the keeper/scratch agent should run this turn on. The server
     // re-registers the agent with it (last-write-wins per project). Omit when
     // unset so the server falls back to the project/keeper default.

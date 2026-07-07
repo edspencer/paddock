@@ -87,13 +87,14 @@ function parseArgs(argv) {
     else if (a === "--model") flags.model = argv[++i];
     else if (a === "--system-prompt") flags.systemPrompt = argv[++i];
     else if (a === "--resume") flags.resume = argv[++i];
+    else if (a === "--fork-session") flags.fork = true;
     else if (a === "--permission-mode") flags.permissionMode = argv[++i];
     else if (a === "--allowedTools") flags.allowedTools = argv[++i];
     else if (a === "--disallowedTools") argv[++i];
     else if (a === "--mcp-config") argv[++i];
     else if (a === "--setting-sources") argv[++i];
     else if (a === "--tools") argv[++i];
-    // --fork-session and unknown bare flags are ignored.
+    // Unknown bare flags are ignored.
   }
   return flags;
 }
@@ -246,11 +247,53 @@ function main() {
     /* the encoded path may be a symlink to <project>/.chats — that's fine */
   }
 
-  const resuming = !!flags.resume;
+  // A FORK (`--resume <src> --fork-session`) mirrors real Claude Code: it resumes
+  // the source's transcript as context but writes to a BRAND-NEW session file,
+  // leaving the source untouched. A plain resume appends to the source file.
+  const forking = !!(flags.fork && flags.resume);
+  const resuming = !!flags.resume && !forking;
   const sessionId = resuming ? flags.resume : crypto.randomUUID();
   const file = path.join(dir, `${sessionId}.jsonl`);
 
-  const priorText = resuming ? readPriorText(file) : "";
+  let priorText = "";
+  if (forking) {
+    // Seed the new file with the source's copied history (session ids rewritten
+    // to the new id so the child is internally consistent + discoverable), then
+    // fall through to append this turn — herdctl watches this new file for the
+    // fork's id and skips the copied history. The source file is never touched.
+    const srcFile = path.join(dir, `${flags.resume}.jsonl`);
+    priorText = readPriorText(srcFile);
+    try {
+      const copied = fs
+        .readFileSync(srcFile, "utf8")
+        .split("\n")
+        .filter((l) => l.trim())
+        .map((l) => {
+          try {
+            const o = JSON.parse(l);
+            if (o.sessionId) o.sessionId = sessionId;
+            if (o.session_id) o.session_id = sessionId;
+            return JSON.stringify(o);
+          } catch {
+            return l;
+          }
+        })
+        .join("\n");
+      if (copied) fs.writeFileSync(file, copied + "\n");
+    } catch {
+      /* source missing — behave like a fresh session */
+    }
+    // The forked file now exists with only the copied history. Pause so herdctl's
+    // watcher detects the new file and initializes its read offset PAST that
+    // history (it skips existing content on a fork/resume) BEFORE this turn's
+    // lines are appended below — otherwise the reply is written before the
+    // watcher starts and never streams. Real Claude Code has the same ordering:
+    // it copies the session, then takes real time to produce the new turn. The
+    // delay must exceed cli-runtime's waitForNewSessionFile poll interval (200ms).
+    sleep(350);
+  } else if (resuming) {
+    priorText = readPriorText(file);
+  }
   const reply = replyFor(prompt, script, priorText);
   const model = flags.model || "claude-opus-4-8";
 

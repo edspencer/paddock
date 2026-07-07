@@ -148,6 +148,14 @@ export interface ChatSendMessage {
     target?: string;
     /** Session to resume; null/omitted starts a new chat. */
     sessionId?: string | null;
+    /**
+     * When set (and `sessionId` is null/omitted), this is the FIRST turn of a
+     * forked chat: resume `forkFrom`'s transcript as context but write to a
+     * brand-new session id (Claude Code `--fork-session`), leaving the source
+     * chat untouched. Ignored once the forked chat has its own `sessionId`
+     * (subsequent turns are ordinary resumes). See the "Fork chat" feature.
+     */
+    forkFrom?: string;
     message: string;
     /**
      * When true AND this is a NEW chat (sessionId null/omitted) AND the project
@@ -516,6 +524,10 @@ export function makeChatHandler(deps: {
       const slug = readSlug(msg.payload) as string;
       const { message, sessionId, preloadContext } = msg.payload;
       const isNewChat = sessionId === undefined || sessionId === null;
+      // A fork applies only on the FIRST turn of the child (no session id yet):
+      // resume the source's context but write to a new id. Once the child has
+      // its own session id, later turns are ordinary resumes.
+      const forkFrom = isNewChat ? msg.payload.forkFrom : undefined;
       let jobId: string | null = null;
       let resolvedSession: string | null = sessionId ?? null;
       // Track this turn in the session hub so its frames fan out to whichever
@@ -596,8 +608,9 @@ export function makeChatHandler(deps: {
 
           // Context preload (issue #1): only for a NEW chat, only when asked,
           // and only when the project actually has an OVERVIEW.md. Prepend it
-          // as a clearly delimited block so the keeper starts primed.
-          if (isNewChat && preloadContext) {
+          // as a clearly delimited block so the keeper starts primed. Skipped
+          // for a fork — the forked context already carries the full history.
+          if (isNewChat && preloadContext && !forkFrom) {
             const overview = await deps.projects.readOverview(slug).catch(() => "");
             if (overview.trim().length > 0) {
               // Single-sourced wrapper (see preload.ts) so the chat-list can strip
@@ -611,6 +624,8 @@ export function makeChatHandler(deps: {
           prompt,
           // omit -> agent-level fallback; explicit null -> new chat; id -> resume.
           resume: sessionId ?? null,
+          // Fork the source session on the child's first turn (writes a new id).
+          fork: forkFrom,
           triggerType: "web",
           onJobCreated: (id) => {
             jobId = id;

@@ -537,6 +537,35 @@ describe("ChatPane: draft persistence", () => {
   });
 });
 
+describe("ChatPane: fork", () => {
+  it("sends forkFrom on the first turn of a fork composer (new chat)", async () => {
+    render(
+      <ChatPane projectSlug="proj" isProjectChat projectModel="claude-opus-4-8" forkFrom="src-session" />,
+    );
+    await screen.findByRole("button", { name: /^Send$/ });
+    await userEvent.type(screen.getByPlaceholderText(/Message the keeper agent/i), "branch off");
+    fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
+    expect(sends).toHaveLength(1);
+    expect((sends[0].opts as { forkFrom?: string }).forkFrom).toBe("src-session");
+  });
+
+  it("never forks once the chat already has a session id (a resumed chat)", async () => {
+    render(
+      <ChatPane
+        projectSlug="proj"
+        initialSessionId="existing-session"
+        forkFrom="src-session"
+        loadHistory={vi.fn().mockResolvedValue([])}
+      />,
+    );
+    await screen.findByRole("button", { name: /^Send$/ });
+    await userEvent.type(screen.getByPlaceholderText(/Message the keeper agent/i), "continue");
+    fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
+    expect(sends).toHaveLength(1);
+    expect((sends[0].opts as { forkFrom?: string }).forkFrom).toBeUndefined();
+  });
+});
+
 describe("ChatPane: message boundaries", () => {
   it("splits the streamed text into separate assistant bubbles on a boundary", async () => {
     render(<ChatPane projectSlug="proj" />);

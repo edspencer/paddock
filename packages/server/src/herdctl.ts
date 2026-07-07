@@ -72,6 +72,13 @@ export interface ChatTurnOptions {
   prompt: string;
   /** Session to resume; `null` forces a fresh session; omit for agent fallback. */
   resume?: string | null;
+  /**
+   * Session to FORK from. When set, this turn resumes `fork`'s transcript as
+   * context but writes to a brand-new session id (Claude Code `--fork-session`),
+   * leaving the source untouched. Takes precedence over `resume`. Used by the
+   * "Fork chat" feature to branch a conversation into an independent child.
+   */
+  fork?: string;
   onMessage?: (msg: SDKMessage) => void | Promise<void>;
   onJobCreated?: (jobId: string) => void;
   triggerType?: string;
@@ -155,6 +162,18 @@ export const SWEEPER_MODEL = SWEEPER_DEFAULT_MODEL;
  * scratch agent (working_directory = the scratch dir), not a real project.
  */
 export const SCRATCH_SLUG = "scratch";
+
+/**
+ * How many chat turns a project's keeper may run at once. herdctl defaults an
+ * agent to `max_concurrent: 1`, which would serialize a project's chats and make
+ * a second turn (e.g. the first message of a freshly *forked* chat sent while the
+ * parent is still streaming) fail with a ConcurrencyLimitError. Paddock is a
+ * single-user box that explicitly wants parallel chats per project — especially
+ * forks — so we lift the keeper's limit. (The shared-keeper model is still
+ * last-write-wins across concurrent chats of the same project; forks default to
+ * the parent's model, so that caveat rarely bites in practice.)
+ */
+const KEEPER_MAX_CONCURRENT = 10;
 
 export class HerdctlService {
   private fleet: FleetManager | null = null;
@@ -335,6 +354,7 @@ export class HerdctlService {
     return this.manager.trigger(agentName, undefined, {
       prompt: opts.prompt,
       resume: opts.resume,
+      fork: opts.fork,
       triggerType: opts.triggerType ?? "web",
       onMessage: opts.onMessage,
       onJobCreated: opts.onJobCreated,
@@ -680,6 +700,9 @@ export class HerdctlService {
       // them here just overrides the inherited fleet `defaults` per project.
       permission_mode: project.permissionMode ?? KEEPER_DEFAULT_PERMISSION_MODE,
       max_turns: project.maxTurns ?? KEEPER_DEFAULT_MAX_TURNS,
+      // Allow parallel chats per project (forks, and just multiple open chats)
+      // instead of herdctl's serialize-by-default max_concurrent: 1.
+      instances: { max_concurrent: KEEPER_MAX_CONCURRENT },
       default_prompt: "Summarize the current state of this project.",
     };
     // Docker isolation: only set it when the project opts in, so a project that
