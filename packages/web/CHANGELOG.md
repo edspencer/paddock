@@ -1,5 +1,46 @@
 # @paddock/web
 
+## 0.13.0
+
+### Minor Changes
+
+- [#99](https://github.com/edspencer/paddock/pull/99) [`b6382de`](https://github.com/edspencer/paddock/commit/b6382de2bcda9c341cfa88ab086c1416b0dbd8f4) Thanks [@edspencer](https://github.com/edspencer)! - feat: archive chats — non-destructive Archive/Unarchive + collapsible Archived section (#95)
+
+  Finished chats can now be filed away instead of only deleted. An Archive button
+  sits in each chat's hover menu (beside Fork/Rename/Delete) and toggles to
+  Unarchive on an already-archived chat. Archived chats move into a collapsible
+  **Archived** section pinned to the bottom of the chat list, collapsed by default
+  with a count badge; expanding it splits the list ~50/50 with each half scrolling
+  independently. When the currently open chat is archived, the section auto-expands
+  on load so you can see where you are. Archiving is a non-destructive toggle — the
+  transcript is untouched and the chat stays fully openable, resumable, and
+  forkable.
+
+  Server:
+
+  - New `ArchiveStore` sidecar (JSON in the data dir, keyed by agent+session) —
+    the same pattern as the sweep watermark; ready to move to @herdctl/core's
+    `SessionMetadataStore` when that field ships upstream.
+  - Chat DTOs carry an `archived` flag; `POST /api/projects/:slug/chats/:id/archive`
+    and `POST /api/chats/:id/archive` toggle it. Deleting a chat clears its flag.
+
+  Web:
+
+  - `archived` on the Chat type; `api.archiveProjectChat` / `api.archiveScratchChat`.
+  - ProjectView partitions the list into current + Archived, with the accordion,
+    count badge, 50/50 independent-scroll splitter, and deep-link auto-expand.
+
+- [#97](https://github.com/edspencer/paddock/pull/97) [`dc9b4ab`](https://github.com/edspencer/paddock/commit/dc9b4abfe8253b65c939b76602eda1cdc4b75f8d) Thanks [@edspencer](https://github.com/edspencer)! - feat: search the chat list from a compact search field (#96)
+
+  Replaces the full-width **New Chat** button above the chat sidebar with a
+  **search input + a compact square `+` button** (plus icon only). Typing filters
+  the chat list live — a case-insensitive substring match over each chat's name
+  and its first-message preview — with the count badge showing `matches/total`
+  while filtering. A clear (`×`) button and a "No chats match" empty state round
+  it out; the `+` button behaves exactly as New Chat did before. Filtering is
+  fully client-side (the list is already in memory), so there is no server
+  round-trip.
+
 ## 0.12.0
 
 ### Minor Changes
