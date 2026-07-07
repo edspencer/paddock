@@ -564,6 +564,39 @@ describe("ChatPane: fork", () => {
     expect(sends).toHaveLength(1);
     expect((sends[0].opts as { forkFrom?: string }).forkFrom).toBeUndefined();
   });
+
+  it("shows a 'Fork of <parent>' back-link and navigates to the parent on click", async () => {
+    const onOpenForkParent = vi.fn();
+    render(
+      <ChatPane
+        projectSlug="proj"
+        initialSessionId="child-session"
+        forkParent={{ sessionId: "parent-session", name: "bug fixes" }}
+        onOpenForkParent={onOpenForkParent}
+        loadHistory={vi.fn().mockResolvedValue([])}
+      />,
+    );
+    await screen.findByRole("button", { name: /^Send$/ });
+    expect(screen.getByText("Fork of")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "bug fixes" }));
+    expect(onOpenForkParent).toHaveBeenCalledWith("parent-session");
+  });
+
+  it("auto-focuses the composer when opened as a fork", async () => {
+    render(
+      <ChatPane projectSlug="proj" isProjectChat forkFrom="src-session" projectModel="claude-opus-4-8" />,
+    );
+    const box = await screen.findByPlaceholderText(/Message the keeper agent/i);
+    await waitFor(() => expect(box).toHaveFocus());
+  });
+
+  it("hides the preload toggle for a fork composer", async () => {
+    render(
+      <ChatPane projectSlug="proj" isProjectChat preloadAvailable forkFrom="src-session" />,
+    );
+    await screen.findByRole("button", { name: /^Send$/ });
+    expect(screen.queryByText(/Preload project context/i)).not.toBeInTheDocument();
+  });
 });
 
 describe("ChatPane: message boundaries", () => {

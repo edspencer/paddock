@@ -17,6 +17,7 @@ import { readChatModel, writeChatModel } from "../lib/chatModel";
 import { readDraft, writeDraft } from "../lib/draft";
 import {
   AlertIcon,
+  BranchIcon,
   ChevronRightIcon,
   SendIcon,
   SparkIcon,
@@ -80,6 +81,14 @@ export interface ChatPaneProps {
    * once the forked chat establishes its own session id.
    */
   forkFrom?: string;
+  /**
+   * The chat this one was forked from, shown as a "Fork of <name>" back-link in
+   * the composer footer. Present both while composing a fork (from the fork
+   * action) and when reopening an established fork (from local lineage). `onOpenForkParent`
+   * navigates to it.
+   */
+  forkParent?: { sessionId: string; name: string };
+  onOpenForkParent?: (sessionId: string) => void;
   emptyHint?: string;
   placeholder?: string;
 }
@@ -95,6 +104,8 @@ export function ChatPane({
   preloadAvailable = false,
   projectModel,
   forkFrom,
+  forkParent,
+  onOpenForkParent,
   emptyHint,
   placeholder,
 }: ChatPaneProps) {
@@ -114,7 +125,9 @@ export function ChatPane({
   // turn of a new project chat. Default ON for project chats. Only sent on the
   // first message of a never-resumed session (the server ignores it otherwise).
   const [preloadContext, setPreloadContext] = useState(true);
-  const showPreload = isProjectChat && !initialSessionId;
+  // Not for forks: a fork already inherits the parent's full context, so the
+  // preload toggle is redundant + confusing there (the server also ignores it).
+  const showPreload = isProjectChat && !initialSessionId && !forkFrom;
   // The checkbox only has an effect once a turn has been sent on a brand-new chat.
   const firstTurnSentRef = useRef(false);
 
@@ -311,6 +324,15 @@ export function ChatPane({
   useEffect(() => {
     writeDraft(initialSessionId, projectSlug, draft);
   }, [draft, initialSessionId, projectSlug]);
+
+  // Auto-focus the composer when this pane opens as a FORK — the user just
+  // clicked Fork and their next action is to type the first message, so put the
+  // cursor there. Only on a fork mount (forkFrom set); a normal chat open leaves
+  // focus alone.
+  useEffect(() => {
+    if (forkFrom) composerRef.current?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // --- subscribe to the shared socket for this chat -------------------------
   useEffect(() => {
@@ -590,6 +612,8 @@ export function ChatPane({
             model={model}
             onSelectModel={selectModel}
             usage={usage}
+            forkParent={forkParent}
+            onOpenForkParent={onOpenForkParent}
           />
           <div className="flex items-end gap-2 rounded-2xl border border-paddock-300 bg-white p-2 shadow-sm focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/20 dark:border-paddock-700 dark:bg-paddock-900">
             <textarea
@@ -701,11 +725,15 @@ function StatusRow({
   model,
   onSelectModel,
   usage,
+  forkParent,
+  onOpenForkParent,
 }: {
   models: ModelInfo[];
   model: string | null;
   onSelectModel: (id: string) => void;
   usage: ChatCompleteUsage | null;
+  forkParent?: { sessionId: string; name: string };
+  onOpenForkParent?: (sessionId: string) => void;
 }) {
   return (
     <div className="mb-2 flex items-center gap-3 px-1 text-[11px] text-paddock-400">
@@ -731,6 +759,22 @@ function StatusRow({
         </select>
       </label>
       <ContextMeter usage={usage} />
+      {/* Fork lineage: this chat was branched from another — link back to it.
+          Sits to the right (ml-auto) in the otherwise-empty gap of the row. */}
+      {forkParent && (
+        <span className="ml-auto inline-flex min-w-0 items-center gap-1">
+          <BranchIcon width={11} height={11} className="shrink-0 text-paddock-400" />
+          <span className="shrink-0">Fork of</span>
+          <button
+            type="button"
+            onClick={() => onOpenForkParent?.(forkParent.sessionId)}
+            title={`Open the chat this was forked from: ${forkParent.name}`}
+            className="truncate font-medium text-accent underline-offset-2 hover:underline"
+          >
+            {forkParent.name}
+          </button>
+        </span>
+      )}
     </div>
   );
 }
