@@ -518,6 +518,11 @@ export function makeChatHandler(deps: {
       const isNewChat = sessionId === undefined || sessionId === null;
       let jobId: string | null = null;
       let resolvedSession: string | null = sessionId ?? null;
+      // One-shot guard: a brand-new chat is attributed to its agent the instant
+      // its session id first streams back, so it lists in the sidebar mid-turn
+      // instead of only after the turn completes (issue #100). Resumed chats are
+      // already attributed, so this only runs for a new chat.
+      let attributed = false;
       // Track this turn in the session hub so its frames fan out to whichever
       // socket(s) are attached — not just this one — and a reconnecting client
       // can re-attach + replay the missed gap (issue #54). A resumed chat's id is
@@ -622,6 +627,20 @@ export function makeChatHandler(deps: {
             // Registering it with the hub makes the turn re-attachable by session.
             if (m.session_id) {
               resolvedSession = m.session_id;
+              // For a NEW chat, attribute the session to its agent BEFORE the
+              // hub broadcasts `chat:active`, so any client refetching its chat
+              // list in response is guaranteed to see the now-listed chat — it
+              // no longer waits for the turn to complete (issue #100). Awaited
+              // once (a quick local job-record write); never fatal to the turn.
+              if (isNewChat && !attributed) {
+                attributed = true;
+                // Non-fatal: on failure the chat simply falls back to appearing
+                // once its turn completes (the prior behavior), never breaking
+                // the live stream.
+                await deps.herdctl
+                  .attributeRunningSession(m.session_id, agentName)
+                  .catch(() => undefined);
+              }
               turn.setSession(m.session_id);
             }
             // Capture per-turn usage + model defensively; keep the last non-null

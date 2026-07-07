@@ -63,6 +63,22 @@ vi.mock("../lib/projects-context", () => ({
   useProjects: () => ({ projects: [], loading: false, error: null, refresh: vi.fn(), upsert, remove }),
 }));
 
+// ProjectView only uses `chatClient.onActiveSessions` (the running-turn set that
+// drives the sidebar streaming dots). Mock it so a test can drive that set —
+// simulating a chat starting to stream — and assert the #100 refetch behavior.
+let activeCb: ((s: ReadonlySet<string>) => void) | null = null;
+vi.mock("../lib/ws", () => ({
+  chatClient: {
+    onActiveSessions: (cb: (s: ReadonlySet<string>) => void) => {
+      activeCb = cb;
+      cb(new Set()); // fire once with the current (empty) set, like the real client
+      return () => {
+        activeCb = null;
+      };
+    },
+  },
+}));
+
 function detail(project: Project, over: Partial<ProjectDetail> = {}): ProjectDetail {
   return { project, changelog: "", chats: [], ...over };
 }
@@ -84,6 +100,7 @@ function renderAt(path: string) {
 
 beforeEach(() => {
   chatPaneProps = null;
+  activeCb = null;
   Object.values(apiFns).forEach((m) => m.mockReset());
   apiFns.listProjectFiles.mockResolvedValue([]);
   apiFns.gitStatus.mockResolvedValue({ repo: false, files: [], clean: true } as GitProjectStatus);
@@ -447,5 +464,51 @@ describe("ProjectView: pending new chat (issue #36)", () => {
     // The optimistic entry reconciles into the real list entry.
     expect(await screen.findByText("Curated name")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /New chat…/ })).not.toBeInTheDocument();
+  });
+});
+
+describe("ProjectView: in-flight chat visibility (#100)", () => {
+  it("pulls the chat list when a running session isn't listed yet, then shows it", async () => {
+    // Load a project with no chats.
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
+    renderAt("/projects/p/chat");
+    await screen.findByTestId("chat-pane");
+    // The mount fires onActiveSessions with an empty set — no refetch yet.
+    expect(apiFns.listProjectChats).not.toHaveBeenCalled();
+
+    // A chat starts streaming (e.g. from another tab) whose id isn't in the list.
+    // The server now attributes/ lists it, so ProjectView refetches and renders it.
+    apiFns.listProjectChats.mockResolvedValue([
+      makeChat({ sessionId: "s-running", name: "Long running chat" }),
+    ]);
+    await act(async () => {
+      activeCb!(new Set(["s-running"]));
+    });
+    await waitFor(() => expect(apiFns.listProjectChats).toHaveBeenCalled());
+    expect(await screen.findByText("Long running chat")).toBeInTheDocument();
+
+    // A repeat broadcast of the SAME running id does not trigger another refetch
+    // (the seen-set guards against a refetch loop).
+    apiFns.listProjectChats.mockClear();
+    await act(async () => {
+      activeCb!(new Set(["s-running"]));
+    });
+    expect(apiFns.listProjectChats).not.toHaveBeenCalled();
+  });
+
+  it("does not refetch for a running session already in the list", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [makeChat({ sessionId: "s-known", name: "Known chat" })],
+      }),
+    );
+    renderAt("/projects/p/chat");
+    await screen.findByText("Known chat");
+
+    // The already-listed chat starts a turn — nothing to pull, so no refetch.
+    await act(async () => {
+      activeCb!(new Set(["s-known"]));
+    });
+    expect(apiFns.listProjectChats).not.toHaveBeenCalled();
   });
 });
