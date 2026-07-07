@@ -194,40 +194,34 @@ export function ProjectView() {
       navigate(`/projects/${slug}/chat/${encodeURIComponent(sessionId)}`),
     [navigate, slug],
   );
-  // The chat currently being forked (parent id + name), remembered across the
-  // establish transition (which replaces router state) so we can name the child
-  // "Fork of <parent>" and record its lineage once it gets a session id.
-  const forkComposingRef = useRef<{ sessionId: string; name: string } | null>(null);
-  // Label for the pending sidebar entry — "Fork of <parent>" while a fork is
-  // being composed/streamed (before the renamed server entry arrives), else the
-  // default "New chat…".
-  const [pendingLabel, setPendingLabel] = useState<string | null>(null);
-
-  // Fork a chat: open a fresh composer (a new chat) that carries the parent's id
-  // + name in router state. The first message sent there forks the source
-  // session — resuming its context but writing to a brand-new id, leaving the
-  // source untouched. Works even while the source is still streaming.
+  // Fork a chat: eagerly duplicate it server-side into a NEW session in the same
+  // project, then jump straight to it. The fork exists immediately — a real,
+  // resumable chat with the parent's full history visible — titled
+  // "Fork of <parent>". We record the lineage locally for the composer back-link
+  // and pass `justForked` so the pane focuses the composer to continue.
   const forkChat = useCallback(
-    (chat: Chat) => {
-      forkComposingRef.current = { sessionId: chat.sessionId, name: chat.name };
-      navigate(`/projects/${slug}/chat`, {
-        state: { forkFrom: chat.sessionId, forkFromName: chat.name },
+    async (chat: Chat) => {
+      let newId: string;
+      try {
+        newId = await api.forkChat(slug, chat.sessionId, `Fork of ${chat.name}`);
+      } catch (e) {
+        setLoadErr(e instanceof Error ? e.message : "Failed to fork chat");
+        return;
+      }
+      writeForkParent(newId, { sessionId: chat.sessionId, name: chat.name });
+      await refreshChats();
+      navigate(`/projects/${slug}/chat/${encodeURIComponent(newId)}`, {
+        state: { justForked: true },
       });
     },
-    [navigate, slug],
+    [navigate, slug, refreshChats],
   );
-  // The source session to fork, sourced from router state, only while on a
-  // brand-new chat (no session id in the URL yet). Cleared once the forked chat
-  // establishes its own id (the establish navigation replaces this state).
-  const forkState = !routeSessionId
-    ? (location.state as { forkFrom?: string; forkFromName?: string } | null)
-    : null;
-  const forkFrom = forkState?.forkFrom;
-  // The "Fork of <parent>" back-link for the composer: while composing a fork,
-  // from router state; on an established/reopened fork, from local lineage.
-  const forkParent = forkFrom
-    ? { sessionId: forkFrom, name: forkState?.forkFromName ?? "chat" }
-    : readForkParent(routeSessionId);
+  // The chat this one was forked from (for the composer back-link), from local
+  // lineage recorded at fork time.
+  const forkParent = readForkParent(routeSessionId);
+  // True right after forking (router state), so the pane auto-focuses its
+  // composer to continue the new fork.
+  const justForked = (location.state as { justForked?: boolean } | null)?.justForked === true;
   const openFile = useCallback(
     (name: string) => navigate(`/projects/${slug}/files/${encodeURIComponent(name)}`),
     [navigate, slug],
@@ -240,20 +234,6 @@ export function ProjectView() {
   const onSessionStarted = useCallback(
     (sessionId: string) => {
       setPendingChat(sessionId);
-      // If this new chat is a fork, give it the title "Fork of <parent>" and
-      // record its lineage (for the composer back-link) the moment it gets an
-      // id — so the sidebar shows the fork's name immediately, not "New chat…".
-      const forked = forkComposingRef.current;
-      if (forked) {
-        forkComposingRef.current = null;
-        writeForkParent(sessionId, forked);
-        void api
-          .renameProjectChat(slug, sessionId, `Fork of ${forked.name}`)
-          .then(() => refreshChats())
-          .catch(() => {
-            /* best-effort: the chat still exists, just keeps its default name */
-          });
-      }
       void refreshChats();
       void refreshProjects();
       if (!routeSessionId) {
@@ -286,16 +266,8 @@ export function ProjectView() {
   useEffect(() => {
     if (pendingChat && chats.some((c) => c.sessionId === pendingChat)) {
       setPendingChat(null);
-      setPendingLabel(null);
     }
   }, [chats, pendingChat]);
-
-  // Forget a stale fork intent if the user navigated away from the fork composer
-  // without sending (e.g. clicked New Chat or another chat) — so it can't
-  // mislabel the next new chat. (onSessionStarted clears it on a real fork.)
-  useEffect(() => {
-    if (!forkFrom) forkComposingRef.current = null;
-  }, [forkFrom, routeSessionId]);
 
   const onTurnComplete = useCallback(() => {
     void refreshAfterTurn();
@@ -487,19 +459,12 @@ export function ProjectView() {
             )}
           </div>
           <div className="flex-1 overflow-y-auto px-2 pb-2">
-            {/* A fresh new chat with nothing sent yet (no session id at all).
-                When it's a fork-in-progress, name it "Fork of <parent>" and mark
-                it with the branch icon so it reads as a real, selected chat —
-                not a blank "New chat…". */}
+            {/* A fresh new chat with nothing sent yet (no session id at all). */}
             {activeSession === null && view === "chat" && !pendingChat && (
               <div className="mb-0.5 flex items-center gap-1.5 rounded-lg bg-paddock-200/80 px-2.5 py-2 text-sm dark:bg-paddock-800">
-                {forkParent ? (
-                  <BranchIcon width={13} height={13} className="shrink-0 text-accent" />
-                ) : (
-                  <ChatIcon width={13} height={13} className="text-paddock-500" />
-                )}
-                <span className="truncate font-medium italic text-paddock-600 dark:text-paddock-300">
-                  {forkParent ? `Fork of ${forkParent.name}` : "New chat…"}
+                <ChatIcon width={13} height={13} className="text-paddock-500" />
+                <span className="font-medium italic text-paddock-600 dark:text-paddock-300">
+                  New chat…
                 </span>
               </div>
             )}
@@ -520,7 +485,7 @@ export function ProjectView() {
                 >
                   <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent" />
                   <span className="truncate font-medium italic text-paddock-600 dark:text-paddock-300">
-                    {pendingLabel ?? "New chat…"}
+                    New chat…
                   </span>
                 </button>
               </div>
@@ -563,7 +528,7 @@ export function ProjectView() {
                     title="Fork chat — branch a new chat from this one's context"
                     onClick={(e) => {
                       e.stopPropagation();
-                      forkChat(c);
+                      void forkChat(c);
                     }}
                     className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-paddock-200 hover:text-accent focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-paddock-700 dark:hover:text-accent"
                   >
@@ -693,14 +658,9 @@ export function ProjectView() {
               onTurnComplete={onTurnComplete}
               preloadAvailable={project.hasOverview}
               projectModel={project.model}
-              forkFrom={forkFrom}
               forkParent={forkParent ?? undefined}
               onOpenForkParent={openChat}
-              emptyHint={
-                forkParent
-                  ? `Forked from “${forkParent.name}” — your first message continues from its context in this new chat.`
-                  : undefined
-              }
+              autoFocus={justForked}
               isProjectChat
             />
           )}

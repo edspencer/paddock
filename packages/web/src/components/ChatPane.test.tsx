@@ -538,33 +538,6 @@ describe("ChatPane: draft persistence", () => {
 });
 
 describe("ChatPane: fork", () => {
-  it("sends forkFrom on the first turn of a fork composer (new chat)", async () => {
-    render(
-      <ChatPane projectSlug="proj" isProjectChat projectModel="claude-opus-4-8" forkFrom="src-session" />,
-    );
-    await screen.findByRole("button", { name: /^Send$/ });
-    await userEvent.type(screen.getByPlaceholderText(/Message the keeper agent/i), "branch off");
-    fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
-    expect(sends).toHaveLength(1);
-    expect((sends[0].opts as { forkFrom?: string }).forkFrom).toBe("src-session");
-  });
-
-  it("never forks once the chat already has a session id (a resumed chat)", async () => {
-    render(
-      <ChatPane
-        projectSlug="proj"
-        initialSessionId="existing-session"
-        forkFrom="src-session"
-        loadHistory={vi.fn().mockResolvedValue([])}
-      />,
-    );
-    await screen.findByRole("button", { name: /^Send$/ });
-    await userEvent.type(screen.getByPlaceholderText(/Message the keeper agent/i), "continue");
-    fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
-    expect(sends).toHaveLength(1);
-    expect((sends[0].opts as { forkFrom?: string }).forkFrom).toBeUndefined();
-  });
-
   it("shows a 'Fork of <parent>' back-link and navigates to the parent on click", async () => {
     const onOpenForkParent = vi.fn();
     render(
@@ -582,20 +555,17 @@ describe("ChatPane: fork", () => {
     expect(onOpenForkParent).toHaveBeenCalledWith("parent-session");
   });
 
-  it("auto-focuses the composer when opened as a fork", async () => {
+  it("auto-focuses the composer when autoFocus is set (e.g. right after forking)", async () => {
     render(
-      <ChatPane projectSlug="proj" isProjectChat forkFrom="src-session" projectModel="claude-opus-4-8" />,
+      <ChatPane
+        projectSlug="proj"
+        initialSessionId="child-session"
+        autoFocus
+        loadHistory={vi.fn().mockResolvedValue([])}
+      />,
     );
     const box = await screen.findByPlaceholderText(/Message the keeper agent/i);
     await waitFor(() => expect(box).toHaveFocus());
-  });
-
-  it("hides the preload toggle for a fork composer", async () => {
-    render(
-      <ChatPane projectSlug="proj" isProjectChat preloadAvailable forkFrom="src-session" />,
-    );
-    await screen.findByRole("button", { name: /^Send$/ });
-    expect(screen.queryByText(/Preload project context/i)).not.toBeInTheDocument();
   });
 });
 

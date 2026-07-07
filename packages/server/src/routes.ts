@@ -537,6 +537,24 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     },
   );
 
+  // Fork a project chat: eagerly duplicate its transcript into a NEW session in
+  // the same project (leaving the source untouched) so the fork exists right
+  // away — a real, resumable chat with the parent's full history — rather than
+  // being created lazily on a first message. Optional `name` sets its title
+  // (e.g. "Fork of <parent>"). Returns the new session id.
+  app.post<{ Params: { slug: string; sessionId: string }; Body: { name?: string } }>(
+    "/api/projects/:slug/chats/:sessionId/fork",
+    async (req, reply) => {
+      try {
+        const project = await projects.get(req.params.slug);
+        const newId = await herdctl.forkSession(project, req.params.sessionId, req.body?.name);
+        return reply.code(201).send({ sessionId: newId });
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
   // One-off chats (scratch dir). Scratch chats never get context preload, so
   // their previews are never polluted — no wrapper stripping needed.
   app.get("/api/chats", async () => {

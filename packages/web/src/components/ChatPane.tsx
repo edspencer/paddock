@@ -80,15 +80,15 @@ export interface ChatPaneProps {
    * session (resumes its context, writes to a brand-new id). Cleared naturally
    * once the forked chat establishes its own session id.
    */
-  forkFrom?: string;
   /**
    * The chat this one was forked from, shown as a "Fork of <name>" back-link in
-   * the composer footer. Present both while composing a fork (from the fork
-   * action) and when reopening an established fork (from local lineage). `onOpenForkParent`
-   * navigates to it.
+   * the composer footer (from local fork lineage). `onOpenForkParent` navigates
+   * to it.
    */
   forkParent?: { sessionId: string; name: string };
   onOpenForkParent?: (sessionId: string) => void;
+  /** Focus the composer on mount (e.g. right after forking, to continue). */
+  autoFocus?: boolean;
   emptyHint?: string;
   placeholder?: string;
 }
@@ -103,9 +103,9 @@ export function ChatPane({
   isProjectChat = false,
   preloadAvailable = false,
   projectModel,
-  forkFrom,
   forkParent,
   onOpenForkParent,
+  autoFocus,
   emptyHint,
   placeholder,
 }: ChatPaneProps) {
@@ -125,9 +125,7 @@ export function ChatPane({
   // turn of a new project chat. Default ON for project chats. Only sent on the
   // first message of a never-resumed session (the server ignores it otherwise).
   const [preloadContext, setPreloadContext] = useState(true);
-  // Not for forks: a fork already inherits the parent's full context, so the
-  // preload toggle is redundant + confusing there (the server also ignores it).
-  const showPreload = isProjectChat && !initialSessionId && !forkFrom;
+  const showPreload = isProjectChat && !initialSessionId;
   // The checkbox only has an effect once a turn has been sent on a brand-new chat.
   const firstTurnSentRef = useRef(false);
 
@@ -325,12 +323,11 @@ export function ChatPane({
     writeDraft(initialSessionId, projectSlug, draft);
   }, [draft, initialSessionId, projectSlug]);
 
-  // Auto-focus the composer when this pane opens as a FORK — the user just
-  // clicked Fork and their next action is to type the first message, so put the
-  // cursor there. Only on a fork mount (forkFrom set); a normal chat open leaves
-  // focus alone.
+  // Auto-focus the composer on mount when asked (e.g. right after forking, so the
+  // user can immediately continue the new fork). A normal chat open leaves focus
+  // alone.
   useEffect(() => {
-    if (forkFrom) composerRef.current?.focus();
+    if (autoFocus) composerRef.current?.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -509,11 +506,8 @@ export function ChatPane({
       // Send the selected model so the server runs this turn on it. Omitted when
       // unresolved (models not yet loaded) → the server uses the project default.
       model: modelRef.current ?? undefined,
-      // Fork the source session on the very first turn of a fork composer (while
-      // this chat has no id of its own). The server ignores it once resumed.
-      forkFrom: sessionRef.current === null ? forkFrom : undefined,
     });
-  }, [draft, streaming, projectSlug, isProjectChat, preloadContext, forkFrom]);
+  }, [draft, streaming, projectSlug, isProjectChat, preloadContext]);
 
   const cancel = useCallback(() => {
     // jobId is captured off event metadata in the handlers below. The server

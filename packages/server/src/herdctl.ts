@@ -55,6 +55,7 @@ import {
 } from "@herdctl/core";
 import { createSDKMessageHandler, type SDKMessage as ChatSDKMessage } from "@herdctl/chat";
 import { promises as fs } from "node:fs";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import YAML from "yaml";
 import type { PaddockConfig } from "./config.js";
@@ -72,13 +73,6 @@ export interface ChatTurnOptions {
   prompt: string;
   /** Session to resume; `null` forces a fresh session; omit for agent fallback. */
   resume?: string | null;
-  /**
-   * Session to FORK from. When set, this turn resumes `fork`'s transcript as
-   * context but writes to a brand-new session id (Claude Code `--fork-session`),
-   * leaving the source untouched. Takes precedence over `resume`. Used by the
-   * "Fork chat" feature to branch a conversation into an independent child.
-   */
-  fork?: string;
   onMessage?: (msg: SDKMessage) => void | Promise<void>;
   onJobCreated?: (jobId: string) => void;
   triggerType?: string;
@@ -354,7 +348,6 @@ export class HerdctlService {
     return this.manager.trigger(agentName, undefined, {
       prompt: opts.prompt,
       resume: opts.resume,
-      fork: opts.fork,
       triggerType: opts.triggerType ?? "web",
       onMessage: opts.onMessage,
       onJobCreated: opts.onJobCreated,
@@ -511,6 +504,49 @@ export class HerdctlService {
     await this.reattributeSession(sessionId, project, st ? st.mtime : new Date());
     this.invalidateSessions(keeperAgentName(project.slug));
     this.invalidateSessions(SCRATCH_AGENT);
+  }
+
+  /**
+   * Fork a project chat: eagerly duplicate `sourceSessionId`'s transcript into a
+   * brand-new session in the SAME project, so the fork exists immediately — a
+   * real, resumable chat with the full parent history visible — rather than being
+   * materialized only when the user sends a first message. The source is left
+   * untouched (this is a copy, not a move).
+   *
+   * Same mechanics as {@link promoteScratchSession} (copy the JSONL, keep it
+   * discoverable + attributed), with two differences: a NEW session id is minted
+   * and rewritten onto every transcript line (so the copy is internally
+   * consistent with its new filename — Claude Code stamps appended lines with the
+   * file's id, and a mismatch is version-fragile), and the source file is kept.
+   * `cwd` is unchanged (the fork stays in the same project). Returns the new id.
+   */
+  async forkSession(project: Project, sourceSessionId: string, name?: string): Promise<string> {
+    if (!/^[A-Za-z0-9._-]+$/.test(sourceSessionId)) {
+      throw new Error(`Invalid session id: ${sourceSessionId}`);
+    }
+    const dir = projectChatsDir(project.dir);
+    // Read the source transcript (throws ENOENT for an unknown/absent session).
+    const raw = await fs.readFile(path.join(dir, `${sourceSessionId}.jsonl`), "utf8");
+
+    const newId = randomUUID();
+    // Rewrite the embedded session id on every line. Claude Code writes compact
+    // JSON (`"sessionId":"<id>"` / `"session_id":"<id>"` — no spaces), the same
+    // assumption promoteScratchSession/migrate-chat.sh rely on for `cwd`.
+    const rewritten = raw
+      .split(`"sessionId":"${sourceSessionId}"`)
+      .join(`"sessionId":"${newId}"`)
+      .split(`"session_id":"${sourceSessionId}"`)
+      .join(`"session_id":"${newId}"`);
+    await fs.writeFile(path.join(dir, `${newId}.jsonl`), rewritten, "utf8");
+
+    // Name it (e.g. "Fork of <parent>") and make it discoverable + attributed to
+    // the keeper immediately (a fresh transcript with no job records otherwise
+    // relies on cwd attribution alone).
+    const keeper = keeperAgentName(project.slug);
+    if (name) await this.manager.setSessionName(keeper, newId, name).catch(() => undefined);
+    await this.writeAdoptionJob(newId, project, new Date());
+    this.invalidateSessions(keeper);
+    return newId;
   }
 
   /**
