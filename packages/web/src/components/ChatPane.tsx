@@ -14,6 +14,7 @@ import { DictationButton } from "./DictationButton";
 import { formatDuration } from "../lib/format";
 import { api } from "../lib/api";
 import { readChatModel, writeChatModel } from "../lib/chatModel";
+import { readDraft, writeDraft } from "../lib/draft";
 import {
   AlertIcon,
   ChevronRightIcon,
@@ -90,7 +91,10 @@ export function ChatPane({
   placeholder,
 }: ChatPaneProps) {
   const [turns, setTurns] = useState<Turn[]>([]);
-  const [draft, setDraft] = useState("");
+  // Seed the composer from any unsent draft persisted for this chat. The pane is
+  // remounted on a real chat switch (keyed by the parent), so this initializer
+  // re-runs per chat and restores its own draft (see lib/draft.ts).
+  const [draft, setDraft] = useState(() => readDraft(initialSessionId, projectSlug));
   // The composer textarea, so dictated text can be appended and the box resized.
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const [streaming, setStreaming] = useState(false);
@@ -292,6 +296,13 @@ export function ChatPane({
     if (initialSessionId && initialSessionId === establishedHereRef.current) return;
     setUsage(null);
   }, [projectSlug, initialSessionId]);
+
+  // Persist the unsent draft for this chat so it survives a switch/reload.
+  // Writing an empty string removes the stored key, so clearing the composer
+  // (setDraft("") on send) forgets the draft without any explicit clear call.
+  useEffect(() => {
+    writeDraft(initialSessionId, projectSlug, draft);
+  }, [draft, initialSessionId, projectSlug]);
 
   // --- subscribe to the shared socket for this chat -------------------------
   useEffect(() => {
