@@ -1,5 +1,33 @@
 # @paddock/web
 
+## 0.8.0
+
+### Minor Changes
+
+- [#84](https://github.com/edspencer/paddock/pull/84) [`c1ecf0e`](https://github.com/edspencer/paddock/commit/c1ecf0ee47def5bbd87e9e39bfa081db118c84c6) Thanks [@edspencer](https://github.com/edspencer)! - feat: per-chat context-window ring in the chat list (#77)
+
+  Each chat in a project's chat list (and the scratch/one-off list + landing
+  preview) now shows a tiny circular gauge filled to that chat's context-window
+  usage, mirroring the in-chat `ContextMeter` (same `tokens / limit` percentage,
+  amber at ≥80%). The ring hides for chats with no usage data yet.
+
+  Server-side, the chat-list DTOs (`GET /api/projects/:slug`,
+  `/api/projects/:slug/chats`, `/api/chats`) now include `contextTokens` /
+  `contextLimit`, derived from the same `sessionUsage` + `getContextLimit` the
+  `/context` endpoint uses. Per-session usage reads are memoized on transcript
+  mtime (`HerdctlService.sessionUsageCached`) so an unchanged transcript isn't
+  re-scanned on every list build.
+
+- [#83](https://github.com/edspencer/paddock/pull/83) [`d382c5a`](https://github.com/edspencer/paddock/commit/d382c5a86825722cde9a751b8ba7c96b5ab2ab52) Thanks [@edspencer](https://github.com/edspencer)! - feat: persist unsent composer drafts per chat (#76)
+
+  Typing a message in a chat's composer and switching to another chat — or
+  refreshing the page — no longer loses the draft. Unsent composer text is now
+  persisted per chat in `localStorage` (keyed by session id, or `new:<slug>` for a
+  not-yet-established chat), restored when the chat is reopened, and forgotten once
+  the message is sent. Mirrors the existing per-chat model-selection persistence
+  (`lib/chatModel.ts`); storage access is guarded so private-mode / quota errors
+  never surface.
+
 ## 0.7.0
 
 ### Minor Changes
