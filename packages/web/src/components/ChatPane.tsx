@@ -17,6 +17,7 @@ import { readChatModel, writeChatModel } from "../lib/chatModel";
 import { readDraft, writeDraft } from "../lib/draft";
 import {
   AlertIcon,
+  BranchIcon,
   ChevronRightIcon,
   SendIcon,
   SparkIcon,
@@ -73,6 +74,21 @@ export interface ChatPaneProps {
    * falls back to the models response's `keeperDefault`.
    */
   projectModel?: string;
+  /**
+   * When set, this is a FORK composer: the chat has no session id yet, and its
+   * first message is sent with `forkFrom` so the server branches this source
+   * session (resumes its context, writes to a brand-new id). Cleared naturally
+   * once the forked chat establishes its own session id.
+   */
+  /**
+   * The chat this one was forked from, shown as a "Fork of <name>" back-link in
+   * the composer footer (from local fork lineage). `onOpenForkParent` navigates
+   * to it.
+   */
+  forkParent?: { sessionId: string; name: string };
+  onOpenForkParent?: (sessionId: string) => void;
+  /** Focus the composer on mount (e.g. right after forking, to continue). */
+  autoFocus?: boolean;
   emptyHint?: string;
   placeholder?: string;
 }
@@ -87,6 +103,9 @@ export function ChatPane({
   isProjectChat = false,
   preloadAvailable = false,
   projectModel,
+  forkParent,
+  onOpenForkParent,
+  autoFocus,
   emptyHint,
   placeholder,
 }: ChatPaneProps) {
@@ -303,6 +322,14 @@ export function ChatPane({
   useEffect(() => {
     writeDraft(initialSessionId, projectSlug, draft);
   }, [draft, initialSessionId, projectSlug]);
+
+  // Auto-focus the composer on mount when asked (e.g. right after forking, so the
+  // user can immediately continue the new fork). A normal chat open leaves focus
+  // alone.
+  useEffect(() => {
+    if (autoFocus) composerRef.current?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // --- subscribe to the shared socket for this chat -------------------------
   useEffect(() => {
@@ -579,6 +606,8 @@ export function ChatPane({
             model={model}
             onSelectModel={selectModel}
             usage={usage}
+            forkParent={forkParent}
+            onOpenForkParent={onOpenForkParent}
           />
           <div className="flex items-end gap-2 rounded-2xl border border-paddock-300 bg-white p-2 shadow-sm focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/20 dark:border-paddock-700 dark:bg-paddock-900">
             <textarea
@@ -690,11 +719,15 @@ function StatusRow({
   model,
   onSelectModel,
   usage,
+  forkParent,
+  onOpenForkParent,
 }: {
   models: ModelInfo[];
   model: string | null;
   onSelectModel: (id: string) => void;
   usage: ChatCompleteUsage | null;
+  forkParent?: { sessionId: string; name: string };
+  onOpenForkParent?: (sessionId: string) => void;
 }) {
   return (
     <div className="mb-2 flex items-center gap-3 px-1 text-[11px] text-paddock-400">
@@ -720,6 +753,22 @@ function StatusRow({
         </select>
       </label>
       <ContextMeter usage={usage} />
+      {/* Fork lineage: this chat was branched from another — link back to it.
+          Sits to the right (ml-auto) in the otherwise-empty gap of the row. */}
+      {forkParent && (
+        <span className="ml-auto inline-flex min-w-0 items-center gap-1">
+          <BranchIcon width={11} height={11} className="shrink-0 text-paddock-400" />
+          <span className="shrink-0">Fork of</span>
+          <button
+            type="button"
+            onClick={() => onOpenForkParent?.(forkParent.sessionId)}
+            title={`Open the chat this was forked from: ${forkParent.name}`}
+            className="truncate font-medium text-accent underline-offset-2 hover:underline"
+          >
+            {forkParent.name}
+          </button>
+        </span>
+      )}
     </div>
   );
 }

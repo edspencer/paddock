@@ -164,6 +164,20 @@ export const api = {
     );
   },
 
+  /**
+   * Fork a project chat: eagerly duplicates its transcript into a new session in
+   * the same project (source untouched) and returns the new session id. The fork
+   * is a real, resumable chat with the parent's full history from the start.
+   * Optional `name` sets its title (e.g. "Fork of <parent>").
+   */
+  async forkChat(slug: string, sessionId: string, name?: string): Promise<string> {
+    const { sessionId: newId } = await req<{ sessionId: string }>(
+      `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}/fork`,
+      { method: "POST", body: JSON.stringify({ name }) },
+    );
+    return newId;
+  },
+
   /** List the freeform files in a project's directory. */
   async listProjectFiles(slug: string): Promise<string[]> {
     const { files } = await req<{ files: string[] }>(

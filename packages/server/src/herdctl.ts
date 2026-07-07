@@ -55,6 +55,7 @@ import {
 } from "@herdctl/core";
 import { createSDKMessageHandler, type SDKMessage as ChatSDKMessage } from "@herdctl/chat";
 import { promises as fs } from "node:fs";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import YAML from "yaml";
 import type { PaddockConfig } from "./config.js";
@@ -155,6 +156,18 @@ export const SWEEPER_MODEL = SWEEPER_DEFAULT_MODEL;
  * scratch agent (working_directory = the scratch dir), not a real project.
  */
 export const SCRATCH_SLUG = "scratch";
+
+/**
+ * How many chat turns a project's keeper may run at once. herdctl defaults an
+ * agent to `max_concurrent: 1`, which would serialize a project's chats and make
+ * a second turn (e.g. the first message of a freshly *forked* chat sent while the
+ * parent is still streaming) fail with a ConcurrencyLimitError. Paddock is a
+ * single-user box that explicitly wants parallel chats per project — especially
+ * forks — so we lift the keeper's limit. (The shared-keeper model is still
+ * last-write-wins across concurrent chats of the same project; forks default to
+ * the parent's model, so that caveat rarely bites in practice.)
+ */
+const KEEPER_MAX_CONCURRENT = 10;
 
 export class HerdctlService {
   private fleet: FleetManager | null = null;
@@ -494,6 +507,49 @@ export class HerdctlService {
   }
 
   /**
+   * Fork a project chat: eagerly duplicate `sourceSessionId`'s transcript into a
+   * brand-new session in the SAME project, so the fork exists immediately — a
+   * real, resumable chat with the full parent history visible — rather than being
+   * materialized only when the user sends a first message. The source is left
+   * untouched (this is a copy, not a move).
+   *
+   * Same mechanics as {@link promoteScratchSession} (copy the JSONL, keep it
+   * discoverable + attributed), with two differences: a NEW session id is minted
+   * and rewritten onto every transcript line (so the copy is internally
+   * consistent with its new filename — Claude Code stamps appended lines with the
+   * file's id, and a mismatch is version-fragile), and the source file is kept.
+   * `cwd` is unchanged (the fork stays in the same project). Returns the new id.
+   */
+  async forkSession(project: Project, sourceSessionId: string, name?: string): Promise<string> {
+    if (!/^[A-Za-z0-9._-]+$/.test(sourceSessionId)) {
+      throw new Error(`Invalid session id: ${sourceSessionId}`);
+    }
+    const dir = projectChatsDir(project.dir);
+    // Read the source transcript (throws ENOENT for an unknown/absent session).
+    const raw = await fs.readFile(path.join(dir, `${sourceSessionId}.jsonl`), "utf8");
+
+    const newId = randomUUID();
+    // Rewrite the embedded session id on every line. Claude Code writes compact
+    // JSON (`"sessionId":"<id>"` / `"session_id":"<id>"` — no spaces), the same
+    // assumption promoteScratchSession/migrate-chat.sh rely on for `cwd`.
+    const rewritten = raw
+      .split(`"sessionId":"${sourceSessionId}"`)
+      .join(`"sessionId":"${newId}"`)
+      .split(`"session_id":"${sourceSessionId}"`)
+      .join(`"session_id":"${newId}"`);
+    await fs.writeFile(path.join(dir, `${newId}.jsonl`), rewritten, "utf8");
+
+    // Name it (e.g. "Fork of <parent>") and make it discoverable + attributed to
+    // the keeper immediately (a fresh transcript with no job records otherwise
+    // relies on cwd attribution alone).
+    const keeper = keeperAgentName(project.slug);
+    if (name) await this.manager.setSessionName(keeper, newId, name).catch(() => undefined);
+    await this.writeAdoptionJob(newId, project, new Date());
+    this.invalidateSessions(keeper);
+    return newId;
+  }
+
+  /**
    * Point every herdctl job record for `sessionId` at the project's keeper so
    * the core attribution index (last-write-wins per session) lists the session
    * under the project. A scratch chat writes one job record PER TURN (all
@@ -680,6 +736,9 @@ export class HerdctlService {
       // them here just overrides the inherited fleet `defaults` per project.
       permission_mode: project.permissionMode ?? KEEPER_DEFAULT_PERMISSION_MODE,
       max_turns: project.maxTurns ?? KEEPER_DEFAULT_MAX_TURNS,
+      // Allow parallel chats per project (forks, and just multiple open chats)
+      // instead of herdctl's serialize-by-default max_concurrent: 1.
+      instances: { max_concurrent: KEEPER_MAX_CONCURRENT },
       default_prompt: "Summarize the current state of this project.",
     };
     // Docker isolation: only set it when the project opts in, so a project that

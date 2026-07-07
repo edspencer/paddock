@@ -537,6 +537,38 @@ describe("ChatPane: draft persistence", () => {
   });
 });
 
+describe("ChatPane: fork", () => {
+  it("shows a 'Fork of <parent>' back-link and navigates to the parent on click", async () => {
+    const onOpenForkParent = vi.fn();
+    render(
+      <ChatPane
+        projectSlug="proj"
+        initialSessionId="child-session"
+        forkParent={{ sessionId: "parent-session", name: "bug fixes" }}
+        onOpenForkParent={onOpenForkParent}
+        loadHistory={vi.fn().mockResolvedValue([])}
+      />,
+    );
+    await screen.findByRole("button", { name: /^Send$/ });
+    expect(screen.getByText("Fork of")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "bug fixes" }));
+    expect(onOpenForkParent).toHaveBeenCalledWith("parent-session");
+  });
+
+  it("auto-focuses the composer when autoFocus is set (e.g. right after forking)", async () => {
+    render(
+      <ChatPane
+        projectSlug="proj"
+        initialSessionId="child-session"
+        autoFocus
+        loadHistory={vi.fn().mockResolvedValue([])}
+      />,
+    );
+    const box = await screen.findByPlaceholderText(/Message the keeper agent/i);
+    await waitFor(() => expect(box).toHaveFocus());
+  });
+});
+
 describe("ChatPane: message boundaries", () => {
   it("splits the streamed text into separate assistant bubbles on a boundary", async () => {
     render(<ChatPane projectSlug="proj" />);

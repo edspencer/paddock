@@ -15,6 +15,7 @@ import { ProjectMenu } from "../components/ProjectMenu";
 import { EditProjectModal } from "../components/EditProjectModal";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import {
+  BranchIcon,
   ChatIcon,
   CheckIcon,
   ClockIcon,
@@ -29,6 +30,7 @@ import {
 import { relativeTime } from "../lib/format";
 import { areaLabel } from "../lib/areas";
 import { clearLastTab, toSubPath, writeLastTab } from "../lib/lastTab";
+import { readForkParent, writeForkParent } from "../lib/forkLineage";
 import type { GitProjectStatus } from "../lib/types";
 
 /**
@@ -192,6 +194,34 @@ export function ProjectView() {
       navigate(`/projects/${slug}/chat/${encodeURIComponent(sessionId)}`),
     [navigate, slug],
   );
+  // Fork a chat: eagerly duplicate it server-side into a NEW session in the same
+  // project, then jump straight to it. The fork exists immediately — a real,
+  // resumable chat with the parent's full history visible — titled
+  // "Fork of <parent>". We record the lineage locally for the composer back-link
+  // and pass `justForked` so the pane focuses the composer to continue.
+  const forkChat = useCallback(
+    async (chat: Chat) => {
+      let newId: string;
+      try {
+        newId = await api.forkChat(slug, chat.sessionId, `Fork of ${chat.name}`);
+      } catch (e) {
+        setLoadErr(e instanceof Error ? e.message : "Failed to fork chat");
+        return;
+      }
+      writeForkParent(newId, { sessionId: chat.sessionId, name: chat.name });
+      await refreshChats();
+      navigate(`/projects/${slug}/chat/${encodeURIComponent(newId)}`, {
+        state: { justForked: true },
+      });
+    },
+    [navigate, slug, refreshChats],
+  );
+  // The chat this one was forked from (for the composer back-link), from local
+  // lineage recorded at fork time.
+  const forkParent = readForkParent(routeSessionId);
+  // True right after forking (router state), so the pane auto-focuses its
+  // composer to continue the new fork.
+  const justForked = (location.state as { justForked?: boolean } | null)?.justForked === true;
   const openFile = useCallback(
     (name: string) => navigate(`/projects/${slug}/files/${encodeURIComponent(name)}`),
     [navigate, slug],
@@ -476,7 +506,7 @@ export function ProjectView() {
               >
                 <button
                   onClick={() => openChat(c.sessionId)}
-                  className="flex w-full flex-col items-start gap-0.5 rounded-lg px-2.5 py-2 pr-14 text-left text-sm"
+                  className="flex w-full flex-col items-start gap-0.5 rounded-lg px-2.5 py-2 pr-[5.25rem] text-left text-sm"
                 >
                   <span className="flex w-full items-center gap-1.5">
                     {runningSessions.has(c.sessionId) && (
@@ -492,6 +522,18 @@ export function ProjectView() {
                   <span className="text-[11px] text-paddock-400">{relativeTime(c.updatedAt)}</span>
                 </button>
                 <div className="absolute right-1.5 top-1.5 flex items-center gap-0.5">
+                  <button
+                    type="button"
+                    aria-label={`Fork chat ${c.name}`}
+                    title="Fork chat — branch a new chat from this one's context"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void forkChat(c);
+                    }}
+                    className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-paddock-200 hover:text-accent focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-paddock-700 dark:hover:text-accent"
+                  >
+                    <BranchIcon width={13} height={13} />
+                  </button>
                   <button
                     type="button"
                     aria-label={`Rename chat ${c.name}`}
@@ -616,6 +658,9 @@ export function ProjectView() {
               onTurnComplete={onTurnComplete}
               preloadAvailable={project.hasOverview}
               projectModel={project.model}
+              forkParent={forkParent ?? undefined}
+              onOpenForkParent={openChat}
+              autoFocus={justForked}
               isProjectChat
             />
           )}
