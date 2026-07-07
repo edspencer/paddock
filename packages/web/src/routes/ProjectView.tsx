@@ -19,6 +19,7 @@ import {
   CheckIcon,
   ClockIcon,
   FileIcon,
+  LinkIcon,
   PencilIcon,
   PinIcon,
   PlusIcon,
@@ -26,14 +27,16 @@ import {
   XIcon,
 } from "../components/icons";
 import { relativeTime } from "../lib/format";
+import { areaLabel } from "../lib/areas";
 import { clearLastTab, toSubPath, writeLastTab } from "../lib/lastTab";
 import type { GitProjectStatus } from "../lib/types";
 
 /**
- * The active view ("chat" or "files") and the selected chat/file are derived
- * from the URL via the route's params, NOT local state. This makes every tab,
- * chat, and file deep-linkable + restorable on reload, and keeps the tab bar
- * highlighting correct on a direct load. Routes that mount this component:
+ * The active view ("home" | "chat" | "files") and the selected chat/file are
+ * derived from the URL via the route's params, NOT local state. This makes every
+ * tab, chat, and file deep-linkable + restorable on reload, and keeps the tab
+ * bar highlighting correct on a direct load. Routes that mount this component:
+ *   /projects/:slug/home                -> Home tab (project overview)
  *   /projects/:slug/chat[/:sessionId]   -> Chat tab (optionally a saved chat)
  *   /projects/:slug/files[/:name]       -> Files tab / a specific file (or pin)
  */
@@ -45,10 +48,15 @@ export function ProjectView() {
   const { refresh: refreshProjects, upsert, remove } = useProjects();
 
   // Which sub-route are we on? Derived from the URL pathname so it updates on
-  // client-side navigation (the presence of `/files` distinguishes the tab).
-  const view: "chat" | "files" = location.pathname.startsWith(`/projects/${slug}/files`)
+  // client-side navigation (the `/home` and `/files` segments distinguish those
+  // tabs; anything else is the chat tab).
+  const view: "home" | "chat" | "files" = location.pathname.startsWith(
+    `/projects/${slug}/files`,
+  )
     ? "files"
-    : "chat";
+    : location.pathname.startsWith(`/projects/${slug}/home`)
+      ? "home"
+      : "chat";
   const routeSessionId = view === "chat" ? params.sessionId : undefined;
   const routeFileName = view === "files" && params.name ? decodeURIComponent(params.name) : undefined;
 
@@ -132,9 +140,11 @@ export function ProjectView() {
   // `/projects/:slug` redirect can restore exactly where the user left off.
   useEffect(() => {
     const sub =
-      view === "chat"
-        ? toSubPath({ view: "chat", sessionId: routeSessionId })
-        : toSubPath({ view: "files", name: routeFileName });
+      view === "home"
+        ? toSubPath({ view: "home" })
+        : view === "chat"
+          ? toSubPath({ view: "chat", sessionId: routeSessionId })
+          : toSubPath({ view: "files", name: routeFileName });
     writeLastTab(slug, sub);
   }, [slug, view, routeSessionId, routeFileName]);
 
@@ -173,6 +183,7 @@ export function ProjectView() {
   }, [view, routeSessionId, routeFileName]);
 
   // --- URL-driven navigation (all tab/chat/file clicks change the route) -----
+  const goHome = useCallback(() => navigate(`/projects/${slug}/home`), [navigate, slug]);
   const goChat = useCallback(() => navigate(`/projects/${slug}/chat`), [navigate, slug]);
   const goFiles = useCallback(() => navigate(`/projects/${slug}/files`), [navigate, slug]);
   const newChat = goChat;
@@ -488,11 +499,14 @@ export function ProjectView() {
         {/* Main: tabs + content. The active tab is derived from the URL. */}
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex items-center gap-1 overflow-x-auto border-b border-paddock-200 px-4 dark:border-paddock-800">
+            <TabButton active={view === "home" && !showChanges} onClick={goHome}>
+              Home
+            </TabButton>
             <TabButton active={view === "chat" && !showChanges} onClick={goChat}>
               Chat
             </TabButton>
             <TabButton active={filesTabActive && !showChanges} onClick={goFiles}>
-              Files &amp; Changelog
+              Files
             </TabButton>
             {/* The Changes tab appears ONLY when the projects dir is a git repo.
                 It carries a subtle "N uncommitted" badge so pending work is
@@ -540,6 +554,20 @@ export function ProjectView() {
               onStatusChange={(s) => setGitStatus(s.repo ? s : null)}
             />
           )}
+          {!showChanges && view === "home" && (
+            <HomePane
+              project={project}
+              chats={chats}
+              changelog={changelog}
+              files={files}
+              runningSessions={runningSessions}
+              onOpenChat={openChat}
+              onNewChat={newChat}
+              onOpenFile={openFile}
+              onOpenFiles={goFiles}
+              onEditDetails={() => setEditOpen(true)}
+            />
+          )}
           {!showChanges && view === "chat" && (
             <ChatPane
               // Stable across the new->established transition; bumps only on a
@@ -557,11 +585,10 @@ export function ProjectView() {
               isProjectChat
             />
           )}
-          {/* Files tab with no file selected -> the files list + changelog. */}
+          {/* Files tab with no file selected -> the files list. */}
           {!showChanges && view === "files" && !viewingFile && (
             <FilesList
               project={project}
-              changelog={changelog}
               files={files}
               onOpenFile={openFile}
               onTogglePin={togglePin}
@@ -720,24 +747,22 @@ function FileReader({
   );
 }
 
-/** The Files & Changelog list (files index + summary + CHANGELOG). */
+/** The Files tab: the project's file index (summary + CHANGELOG live on Home). */
 function FilesList({
   project,
-  changelog,
   files,
   onOpenFile,
   onTogglePin,
 }: {
   project: Project;
-  changelog: string;
   files: string[];
   onOpenFile: (name: string) => void;
   onTogglePin: (file: string) => void;
 }) {
   return (
-    <div className="flex-1 overflow-y-auto">
+    <div className="flex-1 overflow-y-auto overscroll-contain">
       <div className="mx-auto max-w-3xl px-6 py-6">
-        <section className="mb-8">
+        <section>
           <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-paddock-500">
             Files
           </h3>
@@ -792,29 +817,185 @@ function FilesList({
             </div>
           )}
         </section>
+      </div>
+    </div>
+  );
+}
 
+/**
+ * The Home tab: the project's landing/overview. Gives `/projects/:slug` a real
+ * destination (instead of silently forwarding into a chat) and is the mobile
+ * navigation hub — summary + metadata + edit, recent chats, recent files, and
+ * the CHANGELOG, all deep-linkable via `/projects/:slug/home`.
+ */
+function HomePane({
+  project,
+  chats,
+  changelog,
+  files,
+  runningSessions,
+  onOpenChat,
+  onNewChat,
+  onOpenFile,
+  onOpenFiles,
+  onEditDetails,
+}: {
+  project: Project;
+  chats: Chat[];
+  changelog: string;
+  files: string[];
+  runningSessions: ReadonlySet<string>;
+  onOpenChat: (sessionId: string) => void;
+  onNewChat: () => void;
+  onOpenFile: (name: string) => void;
+  onOpenFiles: () => void;
+  onEditDetails: () => void;
+}) {
+  const recentChats = chats.slice(0, 6);
+  const recentFiles = files.slice(0, 6);
+  return (
+    <div className="flex-1 overflow-y-auto overscroll-contain">
+      <div className="mx-auto max-w-3xl px-6 py-6">
+        {/* Overview: summary + metadata + edit-details shortcut. */}
         <section className="mb-8">
-          <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-paddock-500">
-            Summary
-          </h3>
+          <div className="mb-2 flex items-center justify-between">
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-paddock-500">
+              Overview
+            </h3>
+            <button
+              onClick={onEditDetails}
+              className="btn-subtle -mr-1 gap-1.5 px-2 py-1 text-xs"
+            >
+              <PencilIcon width={13} height={13} />
+              Edit details
+            </button>
+          </div>
           <div className="card">
             {project.summary ? (
               <p className="text-sm text-paddock-700 dark:text-paddock-300">{project.summary}</p>
             ) : (
-              <p className="text-sm italic text-paddock-400">No summary set.</p>
+              <p className="text-sm italic text-paddock-400">No summary set yet.</p>
             )}
             <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-[13px] sm:grid-cols-3">
               <Meta label="Status" value={project.status} />
+              <Meta label="Area" value={areaLabel(project.group)} />
               <Meta label="Visibility" value={project.visibility} />
+              <Meta label="Model" value={project.model} />
               <Meta label="Started" value={project.started} />
               <Meta label="Updated" value={project.updated} />
               {project.domain.length > 0 && (
                 <Meta label="Domains" value={project.domain.join(", ")} />
               )}
             </dl>
+            {project.links && project.links.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {project.links.map((l) => (
+                  <a
+                    key={l.url}
+                    href={l.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 rounded-md bg-paddock-100 px-2 py-1 text-xs text-paddock-700 transition-colors hover:bg-paddock-200 dark:bg-paddock-900 dark:text-paddock-300 dark:hover:bg-paddock-800"
+                  >
+                    <LinkIcon width={12} height={12} />
+                    {l.label || l.url}
+                  </a>
+                ))}
+              </div>
+            )}
           </div>
         </section>
 
+        {/* Chats: recent sessions + a shortcut to start a new one. */}
+        <section className="mb-8">
+          <div className="mb-2 flex items-center justify-between">
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-paddock-500">
+              Chats
+              {chats.length > 0 && <span className="ml-1.5 text-paddock-400">{chats.length}</span>}
+            </h3>
+            <button onClick={onNewChat} className="btn-subtle -mr-1 gap-1.5 px-2 py-1 text-xs">
+              <PlusIcon width={13} height={13} />
+              New chat
+            </button>
+          </div>
+          {recentChats.length === 0 ? (
+            <div className="card">
+              <p className="text-sm italic text-paddock-400">
+                No chats yet. Start one to begin working with the keeper agent.
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-hidden rounded-2xl border border-paddock-200 dark:border-paddock-800">
+              {recentChats.map((c, i) => (
+                <button
+                  key={c.sessionId}
+                  onClick={() => onOpenChat(c.sessionId)}
+                  className={`flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-paddock-100/70 dark:hover:bg-paddock-900/40 ${
+                    i > 0 ? "border-t border-paddock-200 dark:border-paddock-800" : ""
+                  }`}
+                >
+                  {runningSessions.has(c.sessionId) ? (
+                    <span
+                      title="Streaming a response…"
+                      aria-label="streaming"
+                      className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent"
+                    />
+                  ) : (
+                    <ChatIcon width={14} height={14} className="shrink-0 text-paddock-400" />
+                  )}
+                  <span className="min-w-0 flex-1 truncate text-sm font-medium">{c.name}</span>
+                  <span className="shrink-0 text-[11px] text-paddock-400">
+                    {relativeTime(c.updatedAt)}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+
+        {/* Files: a preview of the file index; "View all" jumps to the Files tab. */}
+        <section className="mb-8">
+          <div className="mb-2 flex items-center justify-between">
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-paddock-500">
+              Files
+              {files.length > 0 && <span className="ml-1.5 text-paddock-400">{files.length}</span>}
+            </h3>
+            {files.length > recentFiles.length && (
+              <button onClick={onOpenFiles} className="btn-subtle -mr-1 px-2 py-1 text-xs">
+                View all
+              </button>
+            )}
+          </div>
+          {recentFiles.length === 0 ? (
+            <div className="card">
+              <p className="text-sm italic text-paddock-400">
+                No files yet. Files the keeper agent writes appear here.
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-hidden rounded-2xl border border-paddock-200 dark:border-paddock-800">
+              {recentFiles.map((f, i) => (
+                <button
+                  key={f}
+                  onClick={() => onOpenFile(f)}
+                  className={`flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-paddock-100/70 dark:hover:bg-paddock-900/40 ${
+                    i > 0 ? "border-t border-paddock-200 dark:border-paddock-800" : ""
+                  }`}
+                >
+                  <FileIcon width={15} height={15} className="shrink-0 text-paddock-400" />
+                  <span className="min-w-0 flex-1 truncate font-mono text-sm text-paddock-700 dark:text-paddock-200">
+                    {f}
+                  </span>
+                  {project.pinned.includes(f) && (
+                    <PinIcon width={12} height={12} className="shrink-0 text-accent" />
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+
+        {/* CHANGELOG.md — the curated project log. */}
         <section>
           <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-paddock-500">
             CHANGELOG.md

@@ -32,7 +32,9 @@ describe("lastTab read/write/clear", () => {
     expect(readLastTab("p")).toBeNull();
   });
 
-  it("accepts bare 'chat' and 'files'", () => {
+  it("accepts bare 'home', 'chat' and 'files'", () => {
+    writeLastTab("p", "home");
+    expect(readLastTab("p")).toBe("home");
     writeLastTab("p", "chat");
     expect(readLastTab("p")).toBe("chat");
     writeLastTab("p", "files");
@@ -47,6 +49,10 @@ describe("lastTab read/write/clear", () => {
 });
 
 describe("toSubPath", () => {
+  it("encodes the home tab", () => {
+    expect(toSubPath({ view: "home" })).toBe("home");
+  });
+
   it("encodes a chat with/without a session id", () => {
     expect(toSubPath({ view: "chat" })).toBe("chat");
     expect(toSubPath({ view: "chat", sessionId: "a/b" })).toBe("chat/a%2Fb");

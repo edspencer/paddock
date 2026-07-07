@@ -35,10 +35,11 @@ const router = createBrowserRouter([
       { index: true, element: <ProjectsGrid /> },
       // The projects grid, filtered to a single domain tag (click a tag pill).
       { path: "tags/:tag", element: <TaggedProjects /> },
-      // Bare project URL redirects to the sticky last tab (defaults to chat).
+      // Bare project URL redirects to the sticky last tab (defaults to home).
       { path: "projects/:slug", element: <ProjectRedirect /> },
       // Deep-linkable in-project sub-routes. The active tab is derived from the
       // URL (not local state), so a deep link / reload highlights the right tab.
+      { path: "projects/:slug/home", element: <ProjectView /> },
       { path: "projects/:slug/chat", element: <ProjectView /> },
       { path: "projects/:slug/chat/:sessionId", element: <ProjectView /> },
       { path: "projects/:slug/files", element: <ProjectView /> },

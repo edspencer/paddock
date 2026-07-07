@@ -47,7 +47,10 @@ export function AppShell() {
   const onCreated = (p: Project) => {
     upsert(p);
     setModalOpen(false);
-    navigate(`/projects/${p.slug}`);
+    // A brand-new project has an empty Home (no chats/files/changelog yet), so
+    // drop the user straight into a new chat to start working. (Re-opening an
+    // existing project via the sidebar/grid lands on Home — see ProjectRedirect.)
+    navigate(`/projects/${p.slug}/chat`);
   };
 
   return (

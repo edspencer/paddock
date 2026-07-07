@@ -69,6 +69,7 @@ function renderAt(path: string) {
   return render(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
+        <Route path="/projects/:slug/home" element={<ProjectView />} />
         <Route path="/projects/:slug/chat" element={<ProjectView />} />
         <Route path="/projects/:slug/chat/:sessionId" element={<ProjectView />} />
         <Route path="/projects/:slug/files" element={<ProjectView />} />
@@ -112,7 +113,7 @@ describe("ProjectView: header + load", () => {
 });
 
 describe("ProjectView: tabs", () => {
-  it("Chat tab renders the ChatPane; Files tab shows the files list + changelog", async () => {
+  it("Chat tab renders the ChatPane; Files tab shows the files list (changelog lives on Home)", async () => {
     apiFns.getProjectDetail.mockResolvedValue(
       detail(makeProject({ slug: "p" }), { changelog: "# Changes\n- did a thing" }),
     );
@@ -120,10 +121,29 @@ describe("ProjectView: tabs", () => {
     renderAt("/projects/p/chat");
     expect(await screen.findByTestId("chat-pane")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /Files & Changelog/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Files$/ }));
     expect(await screen.findByText("OVERVIEW.md")).toBeInTheDocument();
     expect(screen.getByText("page.html")).toBeInTheDocument();
+    // The changelog moved to the Home tab — it is not on the Files tab.
+    expect(screen.queryByText(/did a thing/)).not.toBeInTheDocument();
+  });
+
+  it("Home tab shows the project overview (summary) and the changelog", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p", summary: "the overview blurb" }), {
+        changelog: "# Changes\n- did a thing",
+        chats: [makeChat({ sessionId: "s1", name: "First chat" })],
+      }),
+    );
+    apiFns.listProjectFiles.mockResolvedValue(["OVERVIEW.md"]);
+    renderAt("/projects/p/home");
+    // Summary appears both in the header and the Home overview card.
+    expect(await screen.findAllByText("the overview blurb")).not.toHaveLength(0);
     expect(screen.getByText(/did a thing/)).toBeInTheDocument();
+    // Recent chats + files are surfaced on Home (the chat also appears in the
+    // session-list column, so match all occurrences).
+    expect(screen.getAllByText("First chat").length).toBeGreaterThan(0);
+    expect(screen.getByText("OVERVIEW.md")).toBeInTheDocument();
   });
 
   it("the Changes tab is hidden when the projects dir is not a git repo", async () => {

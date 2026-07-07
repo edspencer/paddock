@@ -94,7 +94,9 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
   const onCreated = (p: Project) => {
     upsert(p);
     setModalOpen(false);
-    navigate(`/projects/${p.slug}`);
+    // A brand-new project has an empty Home, so start the user in a new chat.
+    // (Re-opening an existing project lands on Home — see ProjectRedirect.)
+    navigate(`/projects/${p.slug}/chat`);
   };
 
   const showEmpty =
