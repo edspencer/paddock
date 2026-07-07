@@ -26,6 +26,7 @@ import type { HerdctlService } from "./herdctl.js";
 import { SCRATCH_SLUG, SCRATCH_AGENT, keeperAgentName } from "./herdctl.js";
 import type { GitService } from "./git.js";
 import type { GithubAuth } from "./github-auth.js";
+import type { ArchiveStore } from "./archive.js";
 import { type Transcriber, TranscriptionError } from "./transcribe.js";
 import { readFirstUserText } from "./transcripts.js";
 import { enrichWithSubagents, readSubagentMessages } from "./subagents.js";
@@ -63,10 +64,11 @@ export interface RouteDeps {
   git: GitService;
   githubAuth: GithubAuth;
   transcriber: Transcriber;
+  archive: ArchiveStore;
 }
 
 export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Promise<void> {
-  const { projects, herdctl, git, githubAuth, transcriber } = deps;
+  const { projects, herdctl, git, githubAuth, transcriber, archive } = deps;
 
   // --- voice dictation (#voice): capability probe + transcription -------
   // The composer polls this to decide whether to show a mic button. `available`
@@ -198,14 +200,14 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
         projects.readFile(project.slug, "CHANGELOG.md").catch(() => ""),
         herdctl.listSessions(project).catch(() => []),
       ]);
-      const usageOf = chatUsageResolver(
-        keeperAgentName(project.slug),
-        project.model ?? KEEPER_DEFAULT_MODEL,
-      );
+      const keeper = keeperAgentName(project.slug);
+      const usageOf = chatUsageResolver(keeper, project.model ?? KEEPER_DEFAULT_MODEL);
+      const archivedOf = (s: import("@herdctl/core").DiscoveredSession) =>
+        archive.isArchived(keeper, s.sessionId);
       return {
         project,
         changelog,
-        chats: await buildProjectChats(project.dir, sessions, usageOf),
+        chats: await buildProjectChats(project.dir, sessions, usageOf, archivedOf),
       };
     } catch (err) {
       return sendProjectError(reply, err);
@@ -410,11 +412,11 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     try {
       const project = await projects.get(req.params.slug);
       const sessions = await herdctl.listSessions(project).catch(() => []);
-      const usageOf = chatUsageResolver(
-        keeperAgentName(project.slug),
-        project.model ?? KEEPER_DEFAULT_MODEL,
-      );
-      return { chats: await buildProjectChats(project.dir, sessions, usageOf) };
+      const keeper = keeperAgentName(project.slug);
+      const usageOf = chatUsageResolver(keeper, project.model ?? KEEPER_DEFAULT_MODEL);
+      const archivedOf = (s: import("@herdctl/core").DiscoveredSession) =>
+        archive.isArchived(keeper, s.sessionId);
+      return { chats: await buildProjectChats(project.dir, sessions, usageOf, archivedOf) };
     } catch (err) {
       return sendProjectError(reply, err);
     }
@@ -513,6 +515,8 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
       try {
         const agent = await agentForSlug(req.params.slug);
         const removed = await herdctl.deleteSession(agent, req.params.sessionId);
+        // Drop any archived flag so a future session id can't inherit it.
+        await archive.setArchived(agent, req.params.sessionId, false).catch(() => undefined);
         return reply.code(200).send({ ok: true, removed });
       } catch (err) {
         return sendProjectError(reply, err);
@@ -555,6 +559,23 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     },
   );
 
+  // Archive (or unarchive) a project chat (#95). A non-destructive toggle on a
+  // persisted per-chat flag — the transcript is untouched and the chat stays
+  // openable/resumable/forkable; it just moves into the Archived section.
+  app.post<{ Params: { slug: string; sessionId: string }; Body: { archived?: boolean } }>(
+    "/api/projects/:slug/chats/:sessionId/archive",
+    async (req, reply) => {
+      try {
+        const agent = await agentForSlug(req.params.slug);
+        const archived = req.body?.archived !== false; // default true
+        await archive.setArchived(agent, req.params.sessionId, archived);
+        return reply.code(200).send({ ok: true, archived });
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
   // One-off chats (scratch dir). Scratch chats never get context preload, so
   // their previews are never polluted — no wrapper stripping needed.
   app.get("/api/chats", async () => {
@@ -562,7 +583,14 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     const usageOf = chatUsageResolver(SCRATCH_AGENT, KEEPER_DEFAULT_MODEL);
     return {
       chats: await Promise.all(
-        sessions.map(async (s) => toChatDto(s, undefined, await usageOf(s))),
+        sessions.map(async (s) =>
+          toChatDto(
+            s,
+            undefined,
+            await usageOf(s),
+            await archive.isArchived(SCRATCH_AGENT, s.sessionId).catch(() => false),
+          ),
+        ),
       ),
     };
   });
@@ -610,7 +638,23 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     async (req, reply) => {
       try {
         const removed = await herdctl.deleteSession(SCRATCH_AGENT, req.params.sessionId);
+        await archive.setArchived(SCRATCH_AGENT, req.params.sessionId, false).catch(() => undefined);
         return reply.code(200).send({ ok: true, removed });
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  // Archive (or unarchive) a one-off (scratch) chat (#95). Same non-destructive
+  // toggle as the project variant.
+  app.post<{ Params: { sessionId: string }; Body: { archived?: boolean } }>(
+    "/api/chats/:sessionId/archive",
+    async (req, reply) => {
+      try {
+        const archived = req.body?.archived !== false; // default true
+        await archive.setArchived(SCRATCH_AGENT, req.params.sessionId, archived);
+        return reply.code(200).send({ ok: true, archived });
       } catch (err) {
         return sendProjectError(reply, err);
       }
@@ -709,6 +753,7 @@ function toChatDto(
   s: import("@herdctl/core").DiscoveredSession,
   previewOverride?: string,
   usage?: ChatUsage | null,
+  archived = false,
 ) {
   const preview = previewOverride ?? s.preview;
   return {
@@ -718,6 +763,9 @@ function toChatDto(
     updatedAt: s.mtime,
     resumable: s.resumable,
     preview,
+    // Whether this chat is filed away in the Archived section (#95). Always
+    // present so the client can partition the list without a fallback.
+    archived,
     // The context-window fill as of the session's last completed turn, so the
     // chat list can render a per-chat usage ring without opening the chat. Only
     // present when the transcript has usage data.
@@ -744,21 +792,25 @@ async function buildProjectChats(
   usageOf?: (
     s: import("@herdctl/core").DiscoveredSession,
   ) => Promise<ChatUsage | null>,
+  archivedOf?: (
+    s: import("@herdctl/core").DiscoveredSession,
+  ) => Promise<boolean>,
 ) {
   return Promise.all(
     sessions.map(async (s) => {
-      // Resolve the usage ring and the (possibly cleaned) name in parallel.
+      // Resolve the usage ring, archived flag, and (possibly cleaned) name.
       const usage = usageOf ? await usageOf(s).catch(() => null) : null;
+      const archived = archivedOf ? await archivedOf(s).catch(() => false) : false;
       const pollutedPreview =
         !s.customName && !s.autoName && s.preview?.startsWith(PRELOAD_CONTEXT_OPEN);
-      if (!pollutedPreview) return toChatDto(s, undefined, usage);
+      if (!pollutedPreview) return toChatDto(s, undefined, usage, archived);
 
       const full = await readFirstUserText(projectDir, s.sessionId).catch(() => undefined);
       const cleaned = stripPreloadWrapper(full ?? s.preview ?? "").trim();
-      if (!cleaned) return toChatDto(s, undefined, usage); // couldn't recover — leave as-is
+      if (!cleaned) return toChatDto(s, undefined, usage, archived); // couldn't recover
       const preview =
         cleaned.length > PREVIEW_MAX ? `${cleaned.slice(0, PREVIEW_MAX)}...` : cleaned;
-      return toChatDto(s, preview, usage);
+      return toChatDto(s, preview, usage, archived);
     }),
   );
 }

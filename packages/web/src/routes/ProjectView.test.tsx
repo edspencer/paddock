@@ -33,6 +33,7 @@ const apiFns = {
   deleteProject: vi.fn(),
   deleteProjectChat: vi.fn(),
   renameProjectChat: vi.fn(),
+  archiveProjectChat: vi.fn(),
   listProjectChats: vi.fn(),
   projectChatMessages: vi.fn(),
 };
@@ -49,6 +50,7 @@ vi.mock("../lib/api", async () => {
       deleteProject: (...a: unknown[]) => apiFns.deleteProject(...a),
       deleteProjectChat: (...a: unknown[]) => apiFns.deleteProjectChat(...a),
       renameProjectChat: (...a: unknown[]) => apiFns.renameProjectChat(...a),
+      archiveProjectChat: (...a: unknown[]) => apiFns.archiveProjectChat(...a),
       listProjectChats: (...a: unknown[]) => apiFns.listProjectChats(...a),
       projectChatMessages: (...a: unknown[]) => apiFns.projectChatMessages(...a),
     },
@@ -329,6 +331,72 @@ describe("ProjectView: chat search (issue #96)", () => {
     await waitFor(() => expect(chatPaneProps?.initialSessionId).toBe("s1"));
     fireEvent.click(screen.getByRole("button", { name: /^New Chat$/ }));
     await waitFor(() => expect(chatPaneProps?.initialSessionId ?? "new").toBe("new"));
+  });
+});
+
+describe("ProjectView: archive chats (#95)", () => {
+  it("hides the Archived section when no chats are archived", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), { chats: [makeChat({ sessionId: "s1", name: "Active one" })] }),
+    );
+    renderAt("/projects/p/chat");
+    await screen.findByText("Active one");
+    expect(screen.queryByRole("button", { name: /^Archived/i })).not.toBeInTheDocument();
+  });
+
+  it("archives a chat: it moves into the Archived section and the toggle is persisted", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), { chats: [makeChat({ sessionId: "s1", name: "Filed away" })] }),
+    );
+    apiFns.archiveProjectChat.mockResolvedValue(undefined);
+    renderAt("/projects/p/chat");
+    await screen.findByText("Filed away");
+
+    fireEvent.click(screen.getByRole("button", { name: /Archive chat Filed away/i }));
+    await waitFor(() => expect(apiFns.archiveProjectChat).toHaveBeenCalledWith("p", "s1", true));
+
+    // The Archived accordion now exists with a count of 1, expanded so the chat
+    // is visible, and the row's toggle now reads "Unarchive".
+    const archivedHeader = await screen.findByRole("button", { name: /^Archived/i });
+    expect(within(archivedHeader).getByText("1")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Unarchive chat Filed away/i })).toBeInTheDocument();
+  });
+
+  it("partitions current vs. archived chats and unarchives on demand", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [
+          makeChat({ sessionId: "s1", name: "Current chat" }),
+          makeChat({ sessionId: "s2", name: "Archived chat", archived: true }),
+        ],
+      }),
+    );
+    apiFns.archiveProjectChat.mockResolvedValue(undefined);
+    renderAt("/projects/p/chat");
+
+    // Header count excludes the archived one; the Archived section shows 1.
+    await screen.findByText("Current chat");
+    const archivedHeader = screen.getByRole("button", { name: /^Archived/i });
+    expect(within(archivedHeader).getByText("1")).toBeInTheDocument();
+
+    // Expand and unarchive it.
+    fireEvent.click(archivedHeader);
+    fireEvent.click(await screen.findByRole("button", { name: /Unarchive chat Archived chat/i }));
+    await waitFor(() => expect(apiFns.archiveProjectChat).toHaveBeenCalledWith("p", "s2", false));
+  });
+
+  it("auto-expands the Archived section when the open chat is archived (deep-link)", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [makeChat({ sessionId: "s2", name: "Deep-linked archived", archived: true })],
+      }),
+    );
+    renderAt("/projects/p/chat/s2");
+    // Because the active chat is archived, the accordion opens on load so the row
+    // (and its Unarchive action) is visible without a click.
+    expect(
+      await screen.findByRole("button", { name: /Unarchive chat Deep-linked archived/i }),
+    ).toBeInTheDocument();
   });
 });
 

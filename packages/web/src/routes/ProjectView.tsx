@@ -15,9 +15,11 @@ import { ProjectMenu } from "../components/ProjectMenu";
 import { EditProjectModal } from "../components/EditProjectModal";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import {
+  ArchiveIcon,
   BranchIcon,
   ChatIcon,
   CheckIcon,
+  ChevronDownIcon,
   ClockIcon,
   FileIcon,
   LinkIcon,
@@ -110,6 +112,10 @@ export function ProjectView() {
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deletingChat, setDeletingChat] = useState<Chat | null>(null);
+  // Whether the collapsible "Archived" section is expanded (#95). Collapsed by
+  // default; auto-expands (once per session) when the open chat is archived.
+  const [archivedOpen, setArchivedOpen] = useState(false);
+  const autoExpandedFor = useRef<string | null>(null);
 
   // The active chat session is the URL's sessionId (null = a fresh "new chat").
   const activeSession = routeSessionId ?? null;
@@ -343,6 +349,136 @@ export function ProjectView() {
     [slug],
   );
 
+  // Archive or unarchive a chat (#95): toggle the persisted flag and optimistically
+  // move it between the current list and the Archived section. Non-destructive —
+  // the transcript is untouched and the chat stays fully usable.
+  const archiveChat = useCallback(
+    async (chat: Chat) => {
+      const next = !chat.archived;
+      setChats((prev) =>
+        prev.map((c) => (c.sessionId === chat.sessionId ? { ...c, archived: next } : c)),
+      );
+      // When archiving the last one out of an expanded section, keep it open so
+      // the user sees where it went; opening/closing is otherwise user-driven.
+      if (next) setArchivedOpen(true);
+      try {
+        await api.archiveProjectChat(slug, chat.sessionId, next);
+      } catch (e) {
+        // Roll back the optimistic move on failure.
+        setChats((prev) =>
+          prev.map((c) => (c.sessionId === chat.sessionId ? { ...c, archived: chat.archived } : c)),
+        );
+        setLoadErr(e instanceof Error ? e.message : "Failed to archive chat");
+      }
+    },
+    [slug],
+  );
+
+  // Partition the (search-filtered) chat list into the current (top) and
+  // archived (bottom) groups (#95). Search (#96) still finds archived chats — it
+  // just surfaces them in the Archived section. `activeTotal` is the unfiltered
+  // non-archived count, for the "N/total" badge while searching.
+  const activeChats = visibleChats.filter((c) => !c.archived);
+  const archivedChats = visibleChats.filter((c) => c.archived);
+  const activeTotal = chats.filter((c) => !c.archived).length;
+  const activeIsArchived = chats.some((c) => c.archived && c.sessionId === activeSession);
+
+  // Deep-link behavior: when the open chat is archived, expand the Archived
+  // section so the user can see where they are — once per session, so a manual
+  // collapse afterwards sticks (and a list refresh doesn't force it back open).
+  useEffect(() => {
+    if (activeIsArchived && autoExpandedFor.current !== activeSession) {
+      autoExpandedFor.current = activeSession;
+      setArchivedOpen(true);
+    }
+  }, [activeIsArchived, activeSession]);
+
+  // One chat row — used by both the current list and the Archived section, so
+  // the two stay identical (context ring, hover-menu actions) apart from where
+  // they live. The Archive action toggles label/icon between the two states.
+  const chatRow = (c: Chat) => (
+    <div
+      key={c.sessionId}
+      className={`group/chat relative mb-0.5 rounded-lg transition-colors ${
+        activeSession === c.sessionId && view === "chat"
+          ? "bg-paddock-200/80 dark:bg-paddock-800"
+          : "hover:bg-paddock-200/50 dark:hover:bg-paddock-800/50"
+      }`}
+    >
+      <button
+        onClick={() => openChat(c.sessionId)}
+        className="flex w-full flex-col items-start gap-0.5 rounded-lg px-2.5 py-2 pr-[6.75rem] text-left text-sm"
+      >
+        <span className="flex w-full items-center gap-1.5">
+          {runningSessions.has(c.sessionId) && (
+            <span
+              title="Streaming a response…"
+              aria-label="streaming"
+              className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent"
+            />
+          )}
+          <ContextRing tokens={c.contextTokens} limit={c.contextLimit} />
+          <span className="truncate font-medium">{c.name}</span>
+        </span>
+        <span className="text-[11px] text-paddock-400">{relativeTime(c.updatedAt)}</span>
+      </button>
+      <div className="absolute right-1.5 top-1.5 flex items-center gap-0.5">
+        <button
+          type="button"
+          aria-label={`Fork chat ${c.name}`}
+          title="Fork chat — branch a new chat from this one's context"
+          onClick={(e) => {
+            e.stopPropagation();
+            void forkChat(c);
+          }}
+          className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-paddock-200 hover:text-accent focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-paddock-700 dark:hover:text-accent"
+        >
+          <BranchIcon width={13} height={13} />
+        </button>
+        <button
+          type="button"
+          aria-label={`Rename chat ${c.name}`}
+          title="Rename chat"
+          onClick={(e) => {
+            e.stopPropagation();
+            void renameChat(c);
+          }}
+          className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-paddock-200 hover:text-paddock-700 focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-paddock-700 dark:hover:text-paddock-100"
+        >
+          <PencilIcon width={13} height={13} />
+        </button>
+        <button
+          type="button"
+          aria-label={`${c.archived ? "Unarchive" : "Archive"} chat ${c.name}`}
+          title={c.archived ? "Unarchive chat" : "Archive chat — file it away without deleting"}
+          onClick={(e) => {
+            e.stopPropagation();
+            void archiveChat(c);
+          }}
+          className={`flex h-6 w-6 items-center justify-center rounded-md transition focus:opacity-100 group-hover/chat:opacity-100 hover:bg-paddock-200 hover:text-accent dark:hover:bg-paddock-700 dark:hover:text-accent ${
+            c.archived
+              ? "text-accent opacity-100"
+              : "text-paddock-400 opacity-0"
+          }`}
+        >
+          <ArchiveIcon width={13} height={13} />
+        </button>
+        <button
+          type="button"
+          aria-label={`Delete chat ${c.name}`}
+          title="Delete chat"
+          onClick={(e) => {
+            e.stopPropagation();
+            setDeletingChat(c);
+          }}
+          className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-rose-100 hover:text-rose-600 focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-rose-950/60 dark:hover:text-rose-400"
+        >
+          <TrashIcon width={13} height={13} />
+        </button>
+      </div>
+    </div>
+  );
+
   if (loadErr) {
     return (
       <div className="p-8">
@@ -502,122 +638,98 @@ export function ProjectView() {
               <XIcon width={16} height={16} />
             </button>
           </div>
-          <div className="mb-1 flex items-center justify-between pr-3">
-            <span className="section-label">Chats</span>
-            {chats.length > 0 && (
-              <span className="text-[11px] text-paddock-400">
-                {searching ? `${visibleChats.length}/${chats.length}` : chats.length}
-              </span>
-            )}
-          </div>
-          <div className="flex-1 overflow-y-auto px-2 pb-2">
-            {/* A fresh new chat with nothing sent yet (no session id at all). */}
-            {activeSession === null && view === "chat" && !pendingChat && (
-              <div className="mb-0.5 flex items-center gap-1.5 rounded-lg bg-paddock-200/80 px-2.5 py-2 text-sm dark:bg-paddock-800">
-                <ChatIcon width={13} height={13} className="text-paddock-500" />
-                <span className="font-medium italic text-paddock-600 dark:text-paddock-300">
-                  New chat…
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="mb-1 flex items-center justify-between pr-3">
+              <span className="section-label">Chats</span>
+              {activeTotal > 0 && (
+                <span className="text-[11px] text-paddock-400">
+                  {searching ? `${activeChats.length}/${activeTotal}` : activeTotal}
                 </span>
-              </div>
-            )}
-            {/* A new chat that has started streaming but isn't in the server
-                list yet — a real, clickable entry so it's clearly created and
-                safe to navigate away from (issue #36). */}
-            {pendingChat && !chats.some((c) => c.sessionId === pendingChat) && (
-              <div
-                className={`group/chat relative mb-0.5 rounded-lg transition-colors ${
-                  activeSession === pendingChat && view === "chat"
-                    ? "bg-paddock-200/80 dark:bg-paddock-800"
-                    : "hover:bg-paddock-200/50 dark:hover:bg-paddock-800/50"
-                }`}
-              >
-                <button
-                  onClick={() => openChat(pendingChat)}
-                  className="flex w-full items-center gap-1.5 rounded-lg px-2.5 py-2 text-left text-sm"
-                >
-                  <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent" />
-                  <span className="truncate font-medium italic text-paddock-600 dark:text-paddock-300">
+              )}
+            </div>
+            {/* Current (non-archived) chats. When the Archived section is expanded
+                this pane takes the top ~50% and scrolls independently (#95). */}
+            <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+              {/* A fresh new chat with nothing sent yet (no session id at all). */}
+              {activeSession === null && view === "chat" && !pendingChat && (
+                <div className="mb-0.5 flex items-center gap-1.5 rounded-lg bg-paddock-200/80 px-2.5 py-2 text-sm dark:bg-paddock-800">
+                  <ChatIcon width={13} height={13} className="text-paddock-500" />
+                  <span className="font-medium italic text-paddock-600 dark:text-paddock-300">
                     New chat…
                   </span>
-                </button>
-              </div>
-            )}
-            {chats.length === 0 && (
-              <p className="px-2 py-2 text-sm text-paddock-500">
-                No saved chats yet. Send a message to start one.
-              </p>
-            )}
-            {chats.length > 0 && searching && visibleChats.length === 0 && (
-              <p className="px-2 py-2 text-sm text-paddock-500">
-                No chats match “{chatSearch.trim()}”.
-              </p>
-            )}
-            {visibleChats.map((c) => (
+                </div>
+              )}
+              {/* A new chat that has started streaming but isn't in the server
+                  list yet — a real, clickable entry so it's clearly created and
+                  safe to navigate away from (issue #36). */}
+              {pendingChat && !chats.some((c) => c.sessionId === pendingChat) && (
+                <div
+                  className={`group/chat relative mb-0.5 rounded-lg transition-colors ${
+                    activeSession === pendingChat && view === "chat"
+                      ? "bg-paddock-200/80 dark:bg-paddock-800"
+                      : "hover:bg-paddock-200/50 dark:hover:bg-paddock-800/50"
+                  }`}
+                >
+                  <button
+                    onClick={() => openChat(pendingChat)}
+                    className="flex w-full items-center gap-1.5 rounded-lg px-2.5 py-2 text-left text-sm"
+                  >
+                    <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent" />
+                    <span className="truncate font-medium italic text-paddock-600 dark:text-paddock-300">
+                      New chat…
+                    </span>
+                  </button>
+                </div>
+              )}
+              {chats.length === 0 && (
+                <p className="px-2 py-2 text-sm text-paddock-500">
+                  No saved chats yet. Send a message to start one.
+                </p>
+              )}
+              {chats.length > 0 && searching && visibleChats.length === 0 && (
+                <p className="px-2 py-2 text-sm text-paddock-500">
+                  No chats match “{chatSearch.trim()}”.
+                </p>
+              )}
+              {chats.length > 0 && !searching && activeChats.length === 0 && (
+                <p className="px-2 py-2 text-sm text-paddock-500">
+                  No active chats — see Archived below.
+                </p>
+              )}
+              {activeChats.map(chatRow)}
+            </div>
+            {/* Archived section (#95): a collapsible accordion pinned to the
+                bottom. Collapsed by default with a count badge; expanding it
+                animates up to a ~50% splitter, its list scrolling independently. */}
+            {archivedChats.length > 0 && (
               <div
-                key={c.sessionId}
-                className={`group/chat relative mb-0.5 rounded-lg transition-colors ${
-                  activeSession === c.sessionId && view === "chat"
-                    ? "bg-paddock-200/80 dark:bg-paddock-800"
-                    : "hover:bg-paddock-200/50 dark:hover:bg-paddock-800/50"
+                className={`flex flex-col border-t border-paddock-200 dark:border-paddock-800 ${
+                  archivedOpen ? "min-h-0 flex-1" : "shrink-0"
                 }`}
               >
                 <button
-                  onClick={() => openChat(c.sessionId)}
-                  className="flex w-full flex-col items-start gap-0.5 rounded-lg px-2.5 py-2 pr-[5.25rem] text-left text-sm"
+                  type="button"
+                  onClick={() => setArchivedOpen((o) => !o)}
+                  aria-expanded={archivedOpen}
+                  className="flex w-full items-center gap-1.5 px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-paddock-500 transition-colors hover:bg-paddock-200/40 dark:text-paddock-400 dark:hover:bg-paddock-800/40"
                 >
-                  <span className="flex w-full items-center gap-1.5">
-                    {runningSessions.has(c.sessionId) && (
-                      <span
-                        title="Streaming a response…"
-                        aria-label="streaming"
-                        className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent"
-                      />
-                    )}
-                    <ContextRing tokens={c.contextTokens} limit={c.contextLimit} />
-                    <span className="truncate font-medium">{c.name}</span>
+                  <ChevronDownIcon
+                    width={14}
+                    height={14}
+                    className={`shrink-0 transition-transform ${archivedOpen ? "" : "-rotate-90"}`}
+                  />
+                  <span>Archived</span>
+                  <span className="ml-auto rounded-full bg-paddock-200 px-1.5 py-0.5 text-[10px] font-semibold normal-case text-paddock-600 dark:bg-paddock-800 dark:text-paddock-300">
+                    {archivedChats.length}
                   </span>
-                  <span className="text-[11px] text-paddock-400">{relativeTime(c.updatedAt)}</span>
                 </button>
-                <div className="absolute right-1.5 top-1.5 flex items-center gap-0.5">
-                  <button
-                    type="button"
-                    aria-label={`Fork chat ${c.name}`}
-                    title="Fork chat — branch a new chat from this one's context"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void forkChat(c);
-                    }}
-                    className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-paddock-200 hover:text-accent focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-paddock-700 dark:hover:text-accent"
-                  >
-                    <BranchIcon width={13} height={13} />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`Rename chat ${c.name}`}
-                    title="Rename chat"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void renameChat(c);
-                    }}
-                    className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-paddock-200 hover:text-paddock-700 focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-paddock-700 dark:hover:text-paddock-100"
-                  >
-                    <PencilIcon width={13} height={13} />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`Delete chat ${c.name}`}
-                    title="Delete chat"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setDeletingChat(c);
-                    }}
-                    className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-rose-100 hover:text-rose-600 focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-rose-950/60 dark:hover:text-rose-400"
-                  >
-                    <TrashIcon width={13} height={13} />
-                  </button>
-                </div>
+                {archivedOpen && (
+                  <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+                    {archivedChats.map(chatRow)}
+                  </div>
+                )}
               </div>
-            ))}
+            )}
           </div>
         </div>
 
