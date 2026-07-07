@@ -13,6 +13,10 @@ the queued message (first line) with a "queued" indicator; hovering reveals
 and re-submitting while one is queued **appends** to it rather than stacking a
 second.
 
+When the queued message spans more than its first line, the toolbar appends a
+muted **"+N characters"** hint so it's clear the message continues beyond what's
+shown.
+
 Semantics: the queue is held (not fired) if the in-flight turn errors or is
 **Stop**ped, so a follow-up never lands in a cancelled/errored turn. A queued
 slash command flushes through the command path. The composer placeholder and the

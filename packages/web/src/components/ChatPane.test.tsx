@@ -690,6 +690,22 @@ describe("ChatPane: message queue (issue #91)", () => {
     expect(sends[1].message).toBe("line A\nline B");
   });
 
+  it("shows a '+N characters' hint only when the queued message spans more than one line", async () => {
+    render(<ChatPane projectSlug="proj" />);
+    await startTurn();
+
+    // A single-line queued message has nothing hidden → no counter.
+    await userEvent.type(box(), "one liner");
+    fireEvent.keyDown(box(), { key: "Enter" });
+    expect(screen.queryByText(/character/)).not.toBeInTheDocument();
+
+    // Appending a second line hides it behind the first → surface the count.
+    await userEvent.type(box(), "second");
+    fireEvent.keyDown(box(), { key: "Enter" });
+    // "one liner" + "\n" + "second" hides 7 characters (newline + "second").
+    expect(screen.getByText("+7 characters")).toBeInTheDocument();
+  });
+
   it("holds the queue when the user hits Stop (does not auto-send)", async () => {
     render(<ChatPane projectSlug="proj" />);
     await startTurn();

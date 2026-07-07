@@ -957,6 +957,10 @@ function QueuedMessageBar({
   onClear: () => void;
 }) {
   const firstLine = text.split("\n", 1)[0];
+  // Everything past the first line is hidden by the single-line toolbar. Surface
+  // how much more there is so a multi-line queued message doesn't look truncated
+  // (issue #91 follow-up) — counts the hidden characters, newline(s) included.
+  const moreChars = text.length - firstLine.length;
   return (
     <div className="mx-auto mb-2 w-full max-w-3xl px-4">
       <div className="group flex items-center gap-2 rounded-lg border border-accent/30 bg-accent/[0.06] px-3 py-1.5 text-xs dark:border-accent/40 dark:bg-accent/10">
@@ -970,9 +974,17 @@ function QueuedMessageBar({
         >
           {firstLine}
         </span>
+        {moreChars > 0 && (
+          <span
+            className="shrink-0 tabular-nums text-paddock-400 dark:text-paddock-500"
+            title={`${moreChars} more character${moreChars === 1 ? "" : "s"} not shown — hover Edit to see the full message`}
+          >
+            +{moreChars} character{moreChars === 1 ? "" : "s"}
+          </span>
+        )}
         {/* Revealed on hover/focus. Kept in the DOM (not conditionally mounted)
             so they stay keyboard-reachable and testable. */}
-        <span className="ml-auto flex shrink-0 items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+        <span className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
           <button
             type="button"
             onClick={onEdit}
