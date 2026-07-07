@@ -1,5 +1,45 @@
 # @paddock/server
 
+## 0.11.0
+
+### Minor Changes
+
+- [#89](https://github.com/edspencer/paddock/pull/89) [`2679f11`](https://github.com/edspencer/paddock/commit/2679f114e7a165bd863f72a103342516b3df8ce4) Thanks [@edspencer](https://github.com/edspencer)! - feat: fork a chat into an independent child (#77-follow-on)
+
+  A **Fork** button on each chat (in the project sidebar, beside Rename/Delete)
+  duplicates it into a new, independent chat in the same project. The fork is
+  created **eagerly**: clicking Fork immediately opens a real new chat at
+  `/chat/<new-id>` with the parent's **full conversation already populated** and
+  titled **"Fork of <parent>"** — so you can branch a conversation into several
+  parallel explorations when its context window fills up. The source is left
+  untouched, and continuing the fork resumes normally.
+
+  Server: `POST /api/projects/:slug/chats/:sessionId/fork` copies the session's
+  transcript into a brand-new session id (rewriting the embedded session id per
+  line, `cwd` unchanged), names it, writes an attribution job, and invalidates
+  discovery so it appears immediately — mirroring `promoteScratchSession`, minus
+  the move/delete. The keeper's `max_concurrent` is lifted from 1 so a project's
+  chats (and forks) can run in parallel.
+
+  Web: the Fork button calls the endpoint, records the parent lineage
+  (`lib/forkLineage`), refreshes the chat list, and navigates to the new chat
+  (auto-focusing the composer). The composer footer shows a **"Fork of <parent>"
+  back-link** to the source chat.
+
+  Validated end-to-end against real Claude Code: the copied transcript is a
+  discoverable, resumable session that continues with the inherited context, and
+  the source is untouched.
+
+### Patch Changes
+
+- [#90](https://github.com/edspencer/paddock/pull/90) [`d37fece`](https://github.com/edspencer/paddock/commit/d37fecee1a49af84a5ab30501420211735e20fd6) Thanks [@edspencer](https://github.com/edspencer)! - Bump `@herdctl/chat` (0.4.6 → 0.4.8) and `@herdctl/core` (5.14.1 → 5.15.1) to
+  pick up the synthetic-message fix (herdctl #293 / #294). After a `/compact`, the
+  Claude Code CLI emits a synthetic `"<synthetic>"` placeholder assistant turn
+  ("No response requested.") at the head of the next turn; herdctl now filters
+  those in both the live SDK-message translator and the transcript parser, so the
+  placeholder no longer streams into the chat before the real reply — nor renders
+  as a bubble when the chat is reopened.
+
 ## 0.10.0
 
 ## 0.9.0
