@@ -1,5 +1,18 @@
 # @paddock/web
 
+## 0.9.0
+
+### Minor Changes
+
+- [#73](https://github.com/edspencer/paddock/pull/73) [`4d3aeb0`](https://github.com/edspencer/paddock/commit/4d3aeb022b865e2fefe507fba5ad09faed4e8ccf) Thanks [@edspencer](https://github.com/edspencer)! - Add a project **Home** tab — a real landing/overview for each project. Opening a
+  project (the bare `/projects/:slug`) now defaults to `/home` instead of silently
+  forwarding into a chat. The Home tab gathers the project summary + metadata
+  (with an "Edit details" shortcut), recent chats, a preview of the files, and the
+  CHANGELOG — everything deep-linkable via `/projects/:slug/home` and restorable
+  via the sticky last-tab. Tabs are now **Home · Chat · Files · Changes**; the
+  former "Files & Changelog" tab is just **Files** (summary + changelog moved to
+  Home). This also gives the mobile UI a proper navigation hub.
+
 ## 0.8.0
 
 ### Minor Changes
