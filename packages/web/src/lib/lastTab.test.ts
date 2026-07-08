@@ -32,13 +32,20 @@ describe("lastTab read/write/clear", () => {
     expect(readLastTab("p")).toBeNull();
   });
 
-  it("accepts bare 'home', 'chat' and 'files'", () => {
+  it("accepts bare 'home', 'chat', 'files' and 'changes'", () => {
     writeLastTab("p", "home");
     expect(readLastTab("p")).toBe("home");
     writeLastTab("p", "chat");
     expect(readLastTab("p")).toBe("chat");
     writeLastTab("p", "files");
     expect(readLastTab("p")).toBe("files");
+    writeLastTab("p", "changes");
+    expect(readLastTab("p")).toBe("changes");
+  });
+
+  it("round-trips a changes sub-path with a file (issue #107)", () => {
+    writeLastTab("p", "changes/src%2Fapp.ts");
+    expect(readLastTab("p")).toBe("changes/src%2Fapp.ts");
   });
 
   it("clear forgets a project's tab", () => {
@@ -61,6 +68,11 @@ describe("toSubPath", () => {
   it("encodes a files tab with/without a name", () => {
     expect(toSubPath({ view: "files" })).toBe("files");
     expect(toSubPath({ view: "files", name: "my page.html" })).toBe("files/my%20page.html");
+  });
+
+  it("encodes a changes tab with/without a file (issue #107)", () => {
+    expect(toSubPath({ view: "changes" })).toBe("changes");
+    expect(toSubPath({ view: "changes", file: "src/app.ts" })).toBe("changes/src%2Fapp.ts");
   });
 });
 

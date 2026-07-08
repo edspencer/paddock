@@ -4,7 +4,8 @@
 // that navigating to a project via the main nav/sidebar (the bare
 // `/projects/:slug`) restores where they left off. Stored in localStorage under
 // a per-slug key. The stored value is the sub-path WITHOUT a leading slash, one
-// of: "home" | "chat" | "chat/<sessionId>" | "files" | "files/<encodedName>".
+// of: "home" | "chat" | "chat/<sessionId>" | "files" | "files/<encodedName>" |
+// "changes" | "changes/<encodedFile>".
 //
 // Scenario this satisfies: on project A viewing a pinned html file -> go to
 // project B -> click back to A in the nav -> land back on that html file tab.
@@ -15,7 +16,8 @@ const PREFIX = "paddock:lastTab:";
 export type SubPath =
   | { view: "home" }
   | { view: "chat"; sessionId?: string }
-  | { view: "files"; name?: string };
+  | { view: "files"; name?: string }
+  | { view: "changes"; file?: string };
 
 /** Read the stored sub-path for a project, or null if none/invalid. */
 export function readLastTab(slug: string): string | null {
@@ -47,7 +49,12 @@ export function clearLastTab(slug: string): void {
 
 /** Cheap shape check so a corrupt/foreign value never drives navigation. */
 function isValidShape(v: string): boolean {
-  return v === "home" || /^chat(\/[^/].*)?$/.test(v) || /^files(\/[^/].*)?$/.test(v);
+  return (
+    v === "home" ||
+    /^chat(\/[^/].*)?$/.test(v) ||
+    /^files(\/[^/].*)?$/.test(v) ||
+    /^changes(\/[^/].*)?$/.test(v)
+  );
 }
 
 /**
@@ -59,6 +66,9 @@ export function toSubPath(sub: SubPath): string {
   if (sub.view === "home") return "home";
   if (sub.view === "chat") {
     return sub.sessionId ? `chat/${encodeURIComponent(sub.sessionId)}` : "chat";
+  }
+  if (sub.view === "changes") {
+    return sub.file ? `changes/${encodeURIComponent(sub.file)}` : "changes";
   }
   return sub.name ? `files/${encodeURIComponent(sub.name)}` : "files";
 }

@@ -44,6 +44,7 @@ import type { GitProjectStatus } from "../lib/types";
  *   /projects/:slug/home                -> Home tab (project overview)
  *   /projects/:slug/chat[/:sessionId]   -> Chat tab (optionally a saved chat)
  *   /projects/:slug/files[/:name]       -> Files tab / a specific file (or pin)
+ *   /projects/:slug/changes[/:file]     -> Changes tab / a specific changed file
  */
 export function ProjectView() {
   const params = useParams();
@@ -53,17 +54,23 @@ export function ProjectView() {
   const { refresh: refreshProjects, upsert, remove } = useProjects();
 
   // Which sub-route are we on? Derived from the URL pathname so it updates on
-  // client-side navigation (the `/home` and `/files` segments distinguish those
-  // tabs; anything else is the chat tab).
-  const view: "home" | "chat" | "files" = location.pathname.startsWith(
+  // client-side navigation (the `/home`, `/files`, and `/changes` segments
+  // distinguish those tabs; anything else is the chat tab).
+  const view: "home" | "chat" | "files" | "changes" = location.pathname.startsWith(
     `/projects/${slug}/files`,
   )
     ? "files"
-    : location.pathname.startsWith(`/projects/${slug}/home`)
-      ? "home"
-      : "chat";
+    : location.pathname.startsWith(`/projects/${slug}/changes`)
+      ? "changes"
+      : location.pathname.startsWith(`/projects/${slug}/home`)
+        ? "home"
+        : "chat";
   const routeSessionId = view === "chat" ? params.sessionId : undefined;
   const routeFileName = view === "files" && params.name ? decodeURIComponent(params.name) : undefined;
+  // The specific changed file deep-linked via /changes/:file (or undefined for
+  // the Changes tab with no file selected — the pane defaults to the first one).
+  const routeChangeFile =
+    view === "changes" && params.file ? decodeURIComponent(params.file) : undefined;
 
   // Stable ChatPane mount key. The pane should reset when the user switches to a
   // DIFFERENT chat (new chat / a saved chat / after deleting the open one), but
@@ -102,10 +109,9 @@ export function ProjectView() {
 
   // Git backing store: the project's working-tree status. null = not yet loaded
   // or not a git repo (`status.repo === false`) — either way the Changes tab is
-  // hidden. The "Changes" tab is local UI state (not a route), so it overlays
-  // the URL-driven chat/files tabs; selecting Chat/Files dismisses it.
+  // hidden. The "Changes" tab is a real route (/changes[/:file]) like the other
+  // three, so it's deep-linkable and survives a reload (issue #107).
   const [gitStatus, setGitStatus] = useState<GitProjectStatus | null>(null);
-  const [showChanges, setShowChanges] = useState(false);
   // Mobile: the session list is an off-canvas drawer (static column on lg+).
   const [sessionsOpen, setSessionsOpen] = useState(false);
 
@@ -158,7 +164,6 @@ export function ProjectView() {
   useEffect(() => {
     setProject(null);
     setGitStatus(null);
-    setShowChanges(false);
     void load();
   }, [slug, load]);
 
@@ -171,9 +176,11 @@ export function ProjectView() {
         ? toSubPath({ view: "home" })
         : view === "chat"
           ? toSubPath({ view: "chat", sessionId: routeSessionId })
-          : toSubPath({ view: "files", name: routeFileName });
+          : view === "changes"
+            ? toSubPath({ view: "changes", file: routeChangeFile })
+            : toSubPath({ view: "files", name: routeFileName });
     writeLastTab(slug, sub);
-  }, [slug, view, routeSessionId, routeFileName]);
+  }, [slug, view, routeSessionId, routeFileName, routeChangeFile]);
 
   // Refresh just the chat list (e.g. after a new session is established).
   const refreshChats = useCallback(async () => {
@@ -202,17 +209,28 @@ export function ProjectView() {
     [slug],
   );
 
-  // Any navigation back to a URL-driven tab dismisses the Changes overlay so the
-  // routed content (chat / file) shows through again.
+  // Any tab/chat/file navigation closes the mobile session drawer.
   useEffect(() => {
-    setShowChanges(false);
     setSessionsOpen(false);
-  }, [view, routeSessionId, routeFileName]);
+  }, [view, routeSessionId, routeFileName, routeChangeFile]);
 
   // --- URL-driven navigation (all tab/chat/file clicks change the route) -----
   const goHome = useCallback(() => navigate(`/projects/${slug}/home`), [navigate, slug]);
   const goChat = useCallback(() => navigate(`/projects/${slug}/chat`), [navigate, slug]);
   const goFiles = useCallback(() => navigate(`/projects/${slug}/files`), [navigate, slug]);
+  const goChanges = useCallback(() => navigate(`/projects/${slug}/changes`), [navigate, slug]);
+  // Select a specific changed file in the Changes tab, reflecting it in the URL
+  // so a specific diff/file is deep-linkable (issue #107). null clears to the
+  // bare /changes route.
+  const openChangeFile = useCallback(
+    (file: string | null) =>
+      navigate(
+        file
+          ? `/projects/${slug}/changes/${encodeURIComponent(file)}`
+          : `/projects/${slug}/changes`,
+      ),
+    [navigate, slug],
+  );
   const newChat = goChat;
   const openChat = useCallback(
     (sessionId: string) =>
@@ -768,23 +786,23 @@ export function ProjectView() {
               and on lg+ everywhere. */}
           <div
             className={`items-center gap-1 overflow-x-auto border-b border-paddock-200 px-4 dark:border-paddock-800 ${
-              view === "chat" && !showChanges ? "hidden lg:flex" : "flex"
+              view === "chat" ? "hidden lg:flex" : "flex"
             }`}
           >
-            <TabButton active={view === "home" && !showChanges} onClick={goHome}>
+            <TabButton active={view === "home"} onClick={goHome}>
               Home
             </TabButton>
-            <TabButton active={view === "chat" && !showChanges} onClick={goChat}>
+            <TabButton active={view === "chat"} onClick={goChat}>
               Chat
             </TabButton>
-            <TabButton active={filesTabActive && !showChanges} onClick={goFiles}>
+            <TabButton active={filesTabActive} onClick={goFiles}>
               Files
             </TabButton>
             {/* The Changes tab appears ONLY when the projects dir is a git repo.
                 It carries a subtle "N uncommitted" badge so pending work is
                 visible without opening it. */}
             {gitStatus && (
-              <TabButton active={showChanges} onClick={() => setShowChanges(true)}>
+              <TabButton active={view === "changes"} onClick={goChanges}>
                 <span className="inline-flex items-center gap-1.5">
                   Changes
                   {gitStatus.files.length > 0 && (
@@ -806,27 +824,27 @@ export function ProjectView() {
               <PinnedTab
                 key={f}
                 file={f}
-                active={activePinnedFile === f && !showChanges}
-                onSelect={() => {
-                  setShowChanges(false);
-                  openFile(f);
-                }}
+                active={activePinnedFile === f}
+                onSelect={() => openFile(f)}
                 onUnpin={() => void unpinTab(f)}
               />
             ))}
           </div>
 
-          {/* The Changes panel overlays the routed tab content when open. It
-              owns refetching status post-commit and propagates it up so the tab
-              badge stays in sync. */}
-          {showChanges && gitStatus && (
+          {/* The Changes tab (its own /changes[/:file] route). It owns
+              refetching status post-commit and propagates it up so the tab badge
+              stays in sync; the selected file is URL-driven so a specific diff is
+              deep-linkable (issue #107). */}
+          {view === "changes" && gitStatus && (
             <ChangesPane
               slug={project.slug}
               status={gitStatus}
               onStatusChange={(s) => setGitStatus(s.repo ? s : null)}
+              selectedFile={routeChangeFile ?? null}
+              onSelectFile={openChangeFile}
             />
           )}
-          {!showChanges && view === "home" && (
+          {view === "home" && (
             <HomePane
               project={project}
               chats={chats}
@@ -840,7 +858,7 @@ export function ProjectView() {
               onEditDetails={() => setEditOpen(true)}
             />
           )}
-          {!showChanges && view === "chat" && (
+          {view === "chat" && (
             <ChatPane
               // Stable across the new->established transition; bumps only on a
               // real chat switch (see paneKeyRef above) so the live transcript
@@ -861,7 +879,7 @@ export function ProjectView() {
             />
           )}
           {/* Files tab with no file selected -> the files list. */}
-          {!showChanges && view === "files" && !viewingFile && (
+          {view === "files" && !viewingFile && (
             <FilesList
               project={project}
               files={files}
@@ -872,7 +890,7 @@ export function ProjectView() {
           {/* Any /files/:name (pinned or not) -> the single file reader. The
               same component renders regardless of pinned state, so pinning the
               file you're viewing only changes which tab is highlighted. */}
-          {!showChanges && view === "files" && viewingFile && (
+          {view === "files" && viewingFile && (
             <FileReader
               key={viewingFile}
               project={project}
