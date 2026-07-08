@@ -1,5 +1,62 @@
 # @paddock/server
 
+## 0.14.0
+
+### Minor Changes
+
+- [#110](https://github.com/edspencer/paddock/pull/110) [`bb5d62b`](https://github.com/edspencer/paddock/commit/bb5d62b63e5b81e9b41a22cb74355240563c2765) Thanks [@edspencer](https://github.com/edspencer)! - Slash-command autocomplete in the composer (#103).
+
+  Typing `/` as the first character of the composer now pops a keyboard-navigable
+  menu of the commands available to the chat's agent — built-ins (`/compact`,
+  `/clear`, …) plus the project's `.claude/commands` and any MCP-provided commands.
+  The menu filters by the text after the slash (case-insensitive substring on the
+  name), shows each command's name / argument hint / description, and supports
+  ArrowUp/ArrowDown to move, Enter/Tab to accept, Escape to dismiss, and
+  mouse hover/click. Accepting inserts `/name ` and closes the menu; a fully-typed
+  command sent with Enter still routes through the existing `sendCommand` path
+  unchanged (this is discovery/entry assistance only).
+
+  Server: a cached, read-only `GET /api/projects/:slug/commands` (and a
+  `GET /api/commands` scratch equivalent) backed by `@herdctl/core`'s new
+  `FleetManager.listAgentCommands` (herdctl#300). The list is stable per project
+  and each underlying call spawns a short-lived `claude` streaming subprocess, so
+  `HerdctlService.listCommands` memoizes per agent for the process lifetime and
+  de-duplicates concurrent first calls into a single subprocess. Bumps
+  `@herdctl/core` to `^5.16.0` for the new API and re-exported `SlashCommand` type.
+
+### Patch Changes
+
+- [#109](https://github.com/edspencer/paddock/pull/109) [`59d2b92`](https://github.com/edspencer/paddock/commit/59d2b92ec0cdc972b6626f87aa5b2dd2190125f9) Thanks [@edspencer](https://github.com/edspencer)! - Give the project Changes tab a real route, and show untracked files' content (#107).
+
+  The **Changes** tab was local component state overlaying the URL-driven Home /
+  Chat / Files tabs, so it couldn't be deep-linked or bookmarked, didn't survive a
+  refresh, and back/forward didn't treat entering/leaving it as navigation. It now
+  has its own route — `/projects/:slug/changes[/:file]` — mirroring `files[/:name]`:
+  the active tab is derived from the URL like the other three, and a specific
+  changed file's diff is deep-linkable via `/changes/:file`. The sticky "last tab"
+  persistence learns the `changes` sub-path too.
+
+  Selecting an **untracked** file no longer shows a "No diff for this file" dead
+  end. `git diff` emits nothing for an untracked path, so the Changes pane now falls
+  back to the file's **content** — reusing the existing `GET /files/:name` endpoint
+  and its render-kind hint: images render as an `<img>` from the raw-bytes endpoint,
+  everything else renders as text (with a "new file · untracked" header). Tracked
+  files with a real diff are unchanged.
+
+- [#105](https://github.com/edspencer/paddock/pull/105) [`bc093f3`](https://github.com/edspencer/paddock/commit/bc093f316eb0f3c4b83ef9d83adaec7e5ee3d777) Thanks [@edspencer](https://github.com/edspencer)! - Give chat-list titles the full row width at rest (#104).
+
+  Each chat row's title button reserved a fixed right padding (`pr-[6.75rem]`) for
+  the fork/rename/archive/delete actions at all times, even though those actions
+  live in an `absolute`, `opacity-0` overlay that only fades in on hover/focus. So
+  at rest a title was squeezed into ~half the available width and truncated early,
+  leaving a large empty gap where the (invisible) icons would appear.
+
+  The reserved padding is now conditional: a small default (`pr-2.5`) at rest,
+  bumped to `pr-[6.75rem]` under `group-hover/chat` / `group-focus-within/chat` so
+  the title contracts to make room only when the icons actually become visible.
+  Archived rows keep a persistent archive icon, so they retain just enough room
+  for that one icon (`pr-[3.75rem]`) at rest.
+
 ## 0.13.1
 
 ### Patch Changes
