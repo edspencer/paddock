@@ -423,9 +423,18 @@ export function ProjectView() {
           : "hover:bg-paddock-200/50 dark:hover:bg-paddock-800/50"
       }`}
     >
+      {/*
+        #104: the four row actions live in an absolute overlay that only fades in
+        on hover/focus, so at rest the title should use the full width and only
+        reserve space for the actions when they're actually visible. An archived
+        row keeps its archive icon shown persistently, so it retains just enough
+        room for that one icon at rest.
+      */}
       <button
         onClick={() => openChat(c.sessionId)}
-        className="flex w-full flex-col items-start gap-0.5 rounded-lg px-2.5 py-2 pr-[6.75rem] text-left text-sm"
+        className={`flex w-full flex-col items-start gap-0.5 rounded-lg px-2.5 py-2 text-left text-sm transition-[padding] group-hover/chat:pr-[6.75rem] group-focus-within/chat:pr-[6.75rem] ${
+          c.archived ? "pr-[3.75rem]" : "pr-2.5"
+        }`}
       >
         <span className="flex w-full items-center gap-1.5">
           {runningSessions.has(c.sessionId) && (
