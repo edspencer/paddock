@@ -12,7 +12,18 @@ const gitPush = vi.fn();
 const githubConnect = vi.fn();
 const githubPoll = vi.fn();
 const githubDisconnect = vi.fn();
-const apiMock = { gitInfo, gitStatus, gitDiff, gitCommit, gitPush, githubConnect, githubPoll, githubDisconnect };
+const getProjectFile = vi.fn();
+const apiMock = {
+  gitInfo,
+  gitStatus,
+  gitDiff,
+  gitCommit,
+  gitPush,
+  githubConnect,
+  githubPoll,
+  githubDisconnect,
+  getProjectFile,
+};
 vi.mock("../lib/api", async () => {
   const actual = await vi.importActual<typeof import("../lib/api")>("../lib/api");
   return {
@@ -26,6 +37,8 @@ vi.mock("../lib/api", async () => {
       githubConnect: (...a: unknown[]) => githubConnect(...a),
       githubPoll: (...a: unknown[]) => githubPoll(...a),
       githubDisconnect: (...a: unknown[]) => githubDisconnect(...a),
+      getProjectFile: (...a: unknown[]) => getProjectFile(...a),
+      projectFileRawUrl: (slug: string, name: string) => `/api/projects/${slug}/files/${name}?raw=1`,
     },
   };
 });
@@ -62,6 +75,7 @@ beforeEach(() => {
   apiMock.gitDiff.mockResolvedValue("diff --git a/notes.md b/notes.md\n@@ -1 +1 @@\n-old\n+new");
   apiMock.gitCommit.mockResolvedValue({ committed: true, hash: "abcdef1234" });
   apiMock.gitPush.mockResolvedValue({ pushed: true });
+  apiMock.getProjectFile.mockResolvedValue({ name: "new.txt", kind: "text", content: "" });
 });
 
 function renderPane(status = makeStatus(), onStatusChange = vi.fn()) {
@@ -88,14 +102,46 @@ describe("ChangesPane: status + diff", () => {
     expect(screen.getByText("-old")).toBeInTheDocument();
   });
 
-  it("selecting another file fetches its diff", async () => {
+  it("selecting a tracked file fetches its diff", async () => {
+    renderPane(
+      makeStatus({
+        files: [
+          { path: "a.md", status: "M", staged: false, untracked: false },
+          { path: "notes.md", status: "M", staged: false, untracked: false },
+        ],
+      }),
+    );
+    await waitFor(() => expect(apiMock.gitDiff).toHaveBeenCalledWith("proj", "a.md"));
+    fireEvent.click(screen.getByText("notes.md"));
+    await waitFor(() => expect(apiMock.gitDiff).toHaveBeenCalledWith("proj", "notes.md"));
+  });
+
+  it("selecting an untracked file shows its content, not a 'no diff' dead end (issue #107)", async () => {
+    apiMock.getProjectFile.mockResolvedValue({
+      name: "new.txt",
+      kind: "text",
+      content: "hello brand new file",
+    });
     renderPane();
     await waitFor(() => expect(apiMock.gitDiff).toHaveBeenCalledWith("proj", "notes.md"));
-    apiMock.gitDiff.mockResolvedValueOnce("");
     fireEvent.click(screen.getByText("new.txt"));
-    await waitFor(() => expect(apiMock.gitDiff).toHaveBeenCalledWith("proj", "new.txt"));
-    // An untracked/empty diff shows the explanatory message.
-    expect(await screen.findByText(/untracked files have no diff/i)).toBeInTheDocument();
+    // The content endpoint is used (no diff fetch for the untracked path).
+    await waitFor(() => expect(apiMock.getProjectFile).toHaveBeenCalledWith("proj", "new.txt"));
+    expect(apiMock.gitDiff).not.toHaveBeenCalledWith("proj", "new.txt");
+    expect(await screen.findByText("hello brand new file")).toBeInTheDocument();
+    expect(screen.getByText(/new file · untracked/i)).toBeInTheDocument();
+  });
+
+  it("renders an untracked image file as an <img> from the raw endpoint (issue #107)", async () => {
+    apiMock.getProjectFile.mockResolvedValue({ name: "shot.png", kind: "image", content: "" });
+    renderPane(
+      makeStatus({
+        files: [{ path: "shot.png", status: "??", staged: false, untracked: true }],
+      }),
+    );
+    fireEvent.click(screen.getByText("shot.png"));
+    const img = (await screen.findByAltText("shot.png")) as HTMLImageElement;
+    expect(img.getAttribute("src")).toContain("/files/shot.png?raw=1");
   });
 
   it("shows a clean state when there are no changes", () => {

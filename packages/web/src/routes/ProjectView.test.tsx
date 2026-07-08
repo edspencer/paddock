@@ -92,6 +92,8 @@ function renderAt(path: string) {
         <Route path="/projects/:slug/chat/:sessionId" element={<ProjectView />} />
         <Route path="/projects/:slug/files" element={<ProjectView />} />
         <Route path="/projects/:slug/files/:name" element={<ProjectView />} />
+        <Route path="/projects/:slug/changes" element={<ProjectView />} />
+        <Route path="/projects/:slug/changes/:file" element={<ProjectView />} />
         <Route path="/" element={<div>HOME</div>} />
       </Routes>
     </MemoryRouter>,
@@ -198,6 +200,31 @@ describe("ProjectView: tabs", () => {
     // Badge shows the uncommitted count.
     expect(within(changesTab).getByText("1")).toBeInTheDocument();
     fireEvent.click(changesTab);
+    expect(await screen.findByTestId("changes-pane")).toHaveTextContent("changes for p");
+  });
+
+  it("the Changes tab is a real route: a direct /changes URL opens it + survives reload (issue #107)", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
+    apiFns.gitStatus.mockResolvedValue({
+      repo: true,
+      branch: "main",
+      clean: false,
+      files: [{ path: "a.md", status: "M", staged: false, untracked: false }],
+    } as GitProjectStatus);
+    // Loading the URL directly (as a bookmark / refresh would) lands on Changes.
+    renderAt("/projects/p/changes");
+    expect(await screen.findByTestId("changes-pane")).toHaveTextContent("changes for p");
+  });
+
+  it("a deep-linked changed file (/changes/:file) opens Changes with that file (issue #107)", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
+    apiFns.gitStatus.mockResolvedValue({
+      repo: true,
+      branch: "main",
+      clean: false,
+      files: [{ path: "a.md", status: "M", staged: false, untracked: false }],
+    } as GitProjectStatus);
+    renderAt("/projects/p/changes/a.md");
     expect(await screen.findByTestId("changes-pane")).toHaveTextContent("changes for p");
   });
 });

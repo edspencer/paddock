@@ -14,7 +14,7 @@
 // guards). Styling mirrors the app's existing Tailwind/dark-mode idioms.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../lib/api";
-import type { GitFileChange, GitInfo, GitProjectStatus } from "../lib/types";
+import type { GitFileChange, GitInfo, GitProjectStatus, ProjectFile } from "../lib/types";
 import {
   AlertIcon,
   BranchIcon,
@@ -54,11 +54,37 @@ export interface ChangesPaneProps {
   status: GitProjectStatus;
   /** Re-fetch the project's status (after a commit) so the parent's badge updates too. */
   onStatusChange: (status: GitProjectStatus) => void;
+  /**
+   * The selected changed file (project-relative path), driven by the URL when
+   * the parent routes the Changes tab (/changes/:file, issue #107). When
+   * `onSelectFile` is provided the selection is CONTROLLED by the parent;
+   * otherwise the pane keeps its own internal selection.
+   */
+  selectedFile?: string | null;
+  /** Reflect a file selection in the URL (deep-linkable). */
+  onSelectFile?: (file: string | null) => void;
 }
 
-export function ChangesPane({ slug, status, onStatusChange }: ChangesPaneProps) {
+export function ChangesPane({
+  slug,
+  status,
+  onStatusChange,
+  selectedFile,
+  onSelectFile,
+}: ChangesPaneProps) {
   const [info, setInfo] = useState<GitInfo | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
+  // Uncontrolled selection fallback (used when the parent doesn't route file
+  // selection through the URL, e.g. in unit tests).
+  const [internalSelected, setInternalSelected] = useState<string | null>(null);
+  const controlled = onSelectFile !== undefined;
+  const rawSelected = controlled ? (selectedFile ?? null) : internalSelected;
+  const selectFile = useCallback(
+    (path: string | null) => {
+      if (controlled) onSelectFile?.(path);
+      else setInternalSelected(path);
+    },
+    [controlled, onSelectFile],
+  );
   const [message, setMessage] = useState("");
   const [committing, setCommitting] = useState(false);
   const [pushing, setPushing] = useState(false);
@@ -83,15 +109,14 @@ export function ChangesPane({ slug, status, onStatusChange }: ChangesPaneProps) 
     if (next) onStatusChange(next);
   }, [slug, onStatusChange]);
 
-  // Keep the selected file valid as the status list changes; default to the
-  // first changed file so the diff pane isn't empty when there's work to show.
-  useEffect(() => {
-    if (files.length === 0) {
-      setSelected(null);
-      return;
-    }
-    setSelected((cur) => (cur && files.some((f) => f.path === cur) ? cur : files[0].path));
-  }, [files]);
+  // The file whose diff/content is shown. The selection (from the URL or
+  // internal state) wins when it still refers to a changed file; otherwise we
+  // default to the first changed file so the pane isn't empty when there's work
+  // to show. Deriving this (rather than mutating state in an effect) avoids
+  // pushing a navigation just to pick a default.
+  const activePath =
+    rawSelected && files.some((f) => f.path === rawSelected) ? rawSelected : (files[0]?.path ?? null);
+  const activeFile = files.find((f) => f.path === activePath) ?? null;
 
   const onCommit = useCallback(async () => {
     const msg = message.trim();
@@ -211,7 +236,7 @@ export function ChangesPane({ slug, status, onStatusChange }: ChangesPaneProps) 
                 No uncommitted changes. Files you author surface here for a checkpoint.
               </p>
             ) : (
-              files.map((f) => <FileRow key={f.path} file={f} active={selected === f.path} onSelect={() => setSelected(f.path)} />)
+              files.map((f) => <FileRow key={f.path} file={f} active={activePath === f.path} onSelect={() => selectFile(f.path)} />)
             )}
           </div>
 
@@ -237,9 +262,10 @@ export function ChangesPane({ slug, status, onStatusChange }: ChangesPaneProps) 
           </div>
         </div>
 
-        {/* Right (below on mobile): diff view for the selected file. */}
+        {/* Right (below on mobile): diff for the selected file — or, for an
+            untracked file (no diff), its content (issue #107). */}
         <div className="min-h-0 min-w-0 flex-1">
-          <DiffView slug={slug} file={selected} />
+          <DiffView slug={slug} file={activeFile} />
         </div>
       </div>
     </div>
@@ -284,14 +310,23 @@ function FileRow({
   );
 }
 
-/** Fetches + renders a unified diff with simple +/- line coloring. */
-function DiffView({ slug, file }: { slug: string; file: string | null }) {
+/**
+ * Fetches + renders a unified diff with simple +/- line coloring. For an
+ * UNTRACKED file (which has no diff — `git diff` emits nothing until it's
+ * tracked) it instead shows the file's content, so clicking a brand-new file
+ * isn't a dead end (issue #107).
+ */
+function DiffView({ slug, file }: { slug: string; file: GitFileChange | null }) {
+  const path = file?.path ?? null;
+  const untracked = file?.untracked ?? false;
   const [diff, setDiff] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!file) {
+    // Untracked files have no diff — the content view handles them instead, so
+    // skip the (always-empty) diff fetch entirely.
+    if (!path || untracked) {
       setDiff("");
       setError(null);
       setLoading(false);
@@ -301,7 +336,7 @@ function DiffView({ slug, file }: { slug: string; file: string | null }) {
     setLoading(true);
     setError(null);
     api
-      .gitDiff(slug, file)
+      .gitDiff(slug, path)
       .then((text) => {
         if (!cancelled) setDiff(text);
       })
@@ -314,7 +349,7 @@ function DiffView({ slug, file }: { slug: string; file: string | null }) {
     return () => {
       cancelled = true;
     };
-  }, [slug, file]);
+  }, [slug, path, untracked]);
 
   if (!file) {
     return (
@@ -322,6 +357,11 @@ function DiffView({ slug, file }: { slug: string; file: string | null }) {
         Select a file to view its diff.
       </div>
     );
+  }
+  // Untracked: show the file's content (images as images, everything else as
+  // text) rather than a "no diff" dead end (issue #107).
+  if (untracked) {
+    return <UntrackedFileView slug={slug} name={file.path} />;
   }
   if (loading) {
     return (
@@ -345,9 +385,9 @@ function DiffView({ slug, file }: { slug: string; file: string | null }) {
   if (!diff.trim()) {
     return (
       <div className="flex h-full items-center justify-center p-6 text-center text-sm text-paddock-400">
-        No diff for this file
+        No textual diff for this file
         <br />
-        (untracked files have no diff until tracked).
+        (e.g. a mode or binary change).
       </div>
     );
   }
@@ -377,6 +417,95 @@ function diffLineClass(line: string): string {
   if (line.startsWith("-"))
     return "bg-rose-500/10 text-rose-700 dark:text-rose-400";
   return "text-paddock-600 dark:text-paddock-300";
+}
+
+/**
+ * Content view for an UNTRACKED (brand-new) file, shown in place of a diff since
+ * `git diff` emits nothing for it (issue #107). Reuses the existing
+ * `GET /files/:name` endpoint + render-kind hint: images render as an <img> from
+ * the raw-bytes endpoint, everything else renders as plain text. The whole file
+ * is new, so a green gutter echoes an all-added diff.
+ */
+function UntrackedFileView({ slug, name }: { slug: string; name: string }) {
+  const [file, setFile] = useState<ProjectFile | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    setFile(null);
+    api
+      .getProjectFile(slug, name)
+      .then((f) => {
+        if (!cancelled) setFile(f);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(e instanceof ApiError ? e.message : "Failed to load file");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [slug, name]);
+
+  const header = (
+    <div className="flex items-center gap-2 border-b border-paddock-200 bg-paddock-50/60 px-4 py-2 text-[11px] text-paddock-500 dark:border-paddock-800 dark:bg-paddock-900/40">
+      <span className="font-mono text-paddock-600 dark:text-paddock-300">{name}</span>
+      <span className="rounded bg-emerald-100 px-1.5 py-0.5 font-medium text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400">
+        new file · untracked
+      </span>
+    </div>
+  );
+
+  if (loading) {
+    return (
+      <div className="space-y-3 p-6">
+        <div className="h-3.5 w-2/3 animate-pulse rounded bg-paddock-200/70 dark:bg-paddock-800/70" />
+        <div className="h-3.5 w-1/2 animate-pulse rounded bg-paddock-200/70 dark:bg-paddock-800/70" />
+        <div className="h-3.5 w-3/5 animate-pulse rounded bg-paddock-200/70 dark:bg-paddock-800/70" />
+      </div>
+    );
+  }
+  if (error || !file) {
+    return (
+      <div className="p-6">
+        <div className="flex items-start gap-2 rounded-lg border border-rose-300/60 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/50 dark:text-rose-300">
+          <AlertIcon width={16} height={16} className="mt-0.5 shrink-0" />
+          <span>{error ?? "File not found."}</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (file.kind === "image") {
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        {header}
+        <div className="flex flex-1 items-center justify-center overflow-auto p-6">
+          <img
+            src={api.projectFileRawUrl(slug, name)}
+            alt={name}
+            className="max-h-full max-w-full object-contain shadow-sm"
+          />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      {header}
+      <div className="min-h-0 flex-1 overflow-auto bg-paddock-50/60 dark:bg-paddock-950/60">
+        <pre className="min-w-full whitespace-pre-wrap break-words border-l-2 border-emerald-500/40 px-4 py-3 font-mono text-[12px] leading-relaxed text-paddock-700 dark:text-paddock-200">
+          {file.content}
+        </pre>
+      </div>
+    </div>
+  );
 }
 
 /**
