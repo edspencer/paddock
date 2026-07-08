@@ -16,6 +16,8 @@
  *   GET  /api/chats                    list one-off (scratch) sessions
  *   GET  /api/fleet                    fleet status
  *   GET  /api/models                   selectable models + keeper/sweeper defaults
+ *   GET  /api/commands                 slash commands for one-off (scratch) chats (#103)
+ *   GET  /api/projects/:slug/commands  slash commands for a project's keeper (#103)
  *
  * THIN (chat sending happens over WS; these are convenience reads/echoes):
  *   POST /api/projects/:slug/chats     start-a-chat metadata (see TODO)
@@ -161,6 +163,18 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
       keeperDefault: KEEPER_DEFAULT_MODEL,
       sweeperDefault: SWEEPER_DEFAULT_MODEL,
     };
+  });
+
+  // Slash commands for one-off (scratch) chats — the scratch agent's equivalent
+  // of GET /api/projects/:slug/commands (issue #103). Same cached wrapper.
+  app.get("/api/commands", async (_req, reply) => {
+    try {
+      const commands = await herdctl.listCommands(SCRATCH_AGENT);
+      return { commands };
+    } catch (err) {
+      reply.code(503);
+      return { commands: [], error: (err as Error).message };
+    }
   });
 
   app.get("/api/fleet", async () => {
@@ -340,6 +354,22 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
       const content = await projects.readOverview(req.params.slug);
       reply.header("content-type", "text/markdown; charset=utf-8");
       return content;
+    } catch (err) {
+      return sendProjectError(reply, err);
+    }
+  });
+
+  // Slash commands available to a project's keeper agent, for the composer's
+  // autocomplete menu (issue #103). Built-ins (`/compact`, `/clear`, …) plus the
+  // project's `.claude/commands` and any MCP-provided commands. NOT per-session —
+  // a dedicated endpoint mirroring GET /api/models, not part of toChatDto. The
+  // underlying listAgentCommands spawns a short-lived `claude` subprocess, so the
+  // service memoizes the result per agent (see HerdctlService.listCommands).
+  app.get<{ Params: { slug: string } }>("/api/projects/:slug/commands", async (req, reply) => {
+    try {
+      await projects.get(req.params.slug); // 404s for unknown slug
+      const commands = await herdctl.listCommands(keeperAgentName(req.params.slug));
+      return { commands };
     } catch (err) {
       return sendProjectError(reply, err);
     }
