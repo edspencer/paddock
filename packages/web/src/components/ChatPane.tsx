@@ -808,7 +808,7 @@ export function ChatPane({
                 the textarea focused so the click still registers). */}
             {menuOpen && (
               <div
-                className="menu bottom-full left-0 mb-2 max-h-64 w-full max-w-md overflow-y-auto"
+                className="menu bottom-full left-0 mb-2 max-h-64 w-full overflow-y-auto"
                 role="menu"
                 aria-label="Slash commands"
               >
