@@ -18,6 +18,7 @@ import {
   type ProjectDetail,
   type ProjectFile,
   SCRATCH_SLUG,
+  type SlashCommand,
   type UpdateProjectInput,
 } from "./types";
 
@@ -82,6 +83,24 @@ export const api = {
     return req<{ models: ModelInfo[]; keeperDefault: string; sweeperDefault: string }>(
       "/api/models",
     );
+  },
+
+  /**
+   * Slash commands available to a project's keeper (issue #103) — drives the
+   * composer autocomplete. The list is stable per project, so callers load it
+   * once and cache in state (the server also memoizes it).
+   */
+  async projectCommands(slug: string): Promise<SlashCommand[]> {
+    const { commands } = await req<{ commands: SlashCommand[] }>(
+      `/api/projects/${encodeURIComponent(slug)}/commands`,
+    );
+    return commands;
+  },
+
+  /** Slash commands for one-off (scratch) chats (issue #103). */
+  async scratchCommands(): Promise<SlashCommand[]> {
+    const { commands } = await req<{ commands: SlashCommand[] }>("/api/commands");
+    return commands;
   },
 
   async listProjects(): Promise<Project[]> {

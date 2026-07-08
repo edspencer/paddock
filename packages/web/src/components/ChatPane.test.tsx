@@ -54,6 +54,8 @@ vi.mock("../lib/ws", () => ({
 const getModels = vi.fn();
 const chatContext = vi.fn();
 const subagentMessages = vi.fn();
+const projectCommands = vi.fn();
+const scratchCommands = vi.fn();
 vi.mock("../lib/api", async () => {
   const actual = await vi.importActual<typeof import("../lib/api")>("../lib/api");
   return {
@@ -62,6 +64,9 @@ vi.mock("../lib/api", async () => {
       getModels: (...a: unknown[]) => getModels(...a),
       chatContext: (...a: unknown[]) => chatContext(...a),
       subagentMessages: (...a: unknown[]) => subagentMessages(...a),
+      // Slash-command autocomplete source (issue #103).
+      projectCommands: (...a: unknown[]) => projectCommands(...a),
+      scratchCommands: (...a: unknown[]) => scratchCommands(...a),
       // The composer's DictationButton probes this on mount; default to
       // "dictation off" so it renders nothing and these tests see the same
       // composer they always have.
@@ -70,6 +75,12 @@ vi.mock("../lib/api", async () => {
     },
   };
 });
+
+const COMMANDS = [
+  { name: "compact", description: "Clear conversation history but keep a summary", argumentHint: "" },
+  { name: "clear", description: "Clear conversation history", argumentHint: "" },
+  { name: "review", description: "Review a pull request", argumentHint: "<pr>" },
+];
 
 const MODELS = {
   models: [
@@ -91,6 +102,8 @@ beforeEach(() => {
   getModels.mockReset().mockResolvedValue(MODELS);
   chatContext.mockReset().mockResolvedValue(null);
   subagentMessages.mockReset().mockResolvedValue([]);
+  projectCommands.mockReset().mockResolvedValue(COMMANDS);
+  scratchCommands.mockReset().mockResolvedValue(COMMANDS);
   localStorage.clear();
 });
 
@@ -164,6 +177,101 @@ describe("ChatPane: empty + send", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
     act(() => sub().handlers.onComplete?.({ sessionId: "s", jobId: "j", success: true }));
     await waitFor(() => expect(onTurnComplete).toHaveBeenCalled());
+  });
+});
+
+describe("ChatPane: slash-command autocomplete (#103)", () => {
+  const composer = () => screen.getByPlaceholderText(/Message the keeper agent/i);
+  const menu = () => screen.queryByRole("menu", { name: /slash commands/i });
+
+  it("fetches project commands for a project chat, scratch commands otherwise", async () => {
+    const { unmount } = render(<ChatPane projectSlug="proj" isProjectChat />);
+    await waitFor(() => expect(projectCommands).toHaveBeenCalledWith("proj"));
+    expect(scratchCommands).not.toHaveBeenCalled();
+    unmount();
+    render(<ChatPane projectSlug="scratch" />);
+    await waitFor(() => expect(scratchCommands).toHaveBeenCalled());
+  });
+
+  it("opens the menu on a leading slash and filters as the query narrows", async () => {
+    render(<ChatPane projectSlug="proj" isProjectChat />);
+    await waitFor(() => expect(projectCommands).toHaveBeenCalled());
+    expect(menu()).toBeNull();
+
+    await userEvent.type(composer(), "/");
+    await waitFor(() => expect(menu()).toBeInTheDocument());
+    // All three commands are offered for a bare slash.
+    expect(screen.getByRole("menuitem", { name: /\/compact/ })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /\/review/ })).toBeInTheDocument();
+
+    // Narrowing to "/cl" leaves only /clear (substring match on the name).
+    await userEvent.type(composer(), "cl");
+    await waitFor(() => {
+      expect(screen.getByRole("menuitem", { name: /\/clear/ })).toBeInTheDocument();
+      expect(screen.queryByRole("menuitem", { name: /\/review/ })).toBeNull();
+    });
+  });
+
+  it("does not open for a slash mid-text or once an argument is typed", async () => {
+    render(<ChatPane projectSlug="proj" isProjectChat />);
+    await waitFor(() => expect(projectCommands).toHaveBeenCalled());
+
+    // Slash not at the start → no menu.
+    await userEvent.type(composer(), "hello /compact");
+    expect(menu()).toBeNull();
+
+    await userEvent.clear(composer());
+    // A trailing space (moved on to arguments) closes the menu.
+    await userEvent.type(composer(), "/compact ");
+    expect(menu()).toBeNull();
+  });
+
+  it("Enter accepts the highlighted command instead of sending", async () => {
+    render(<ChatPane projectSlug="proj" isProjectChat />);
+    await waitFor(() => expect(projectCommands).toHaveBeenCalled());
+
+    await userEvent.type(composer(), "/");
+    await waitFor(() => expect(menu()).toBeInTheDocument());
+    // ArrowDown moves off the first row (/compact) to /clear, then Enter accepts.
+    fireEvent.keyDown(composer(), { key: "ArrowDown" });
+    fireEvent.keyDown(composer(), { key: "Enter" });
+
+    // Nothing was sent; the composer holds "/clear " (trailing space) and the
+    // menu closed because the query now contains whitespace.
+    expect(sends).toHaveLength(0);
+    expect(commands).toHaveLength(0);
+    expect(composer()).toHaveValue("/clear ");
+    await waitFor(() => expect(menu()).toBeNull());
+  });
+
+  it("Escape dismisses the menu without clearing the draft; Enter then sends the command", async () => {
+    render(<ChatPane projectSlug="proj" isProjectChat />);
+    await waitFor(() => expect(projectCommands).toHaveBeenCalled());
+
+    await userEvent.type(composer(), "/compact");
+    await waitFor(() => expect(menu()).toBeInTheDocument());
+    fireEvent.keyDown(composer(), { key: "Escape" });
+    await waitFor(() => expect(menu()).toBeNull());
+    expect(composer()).toHaveValue("/compact");
+
+    // With the menu dismissed, Enter falls through to send — a leading-slash
+    // message routes to the command path (chatClient.sendCommand), not send.
+    fireEvent.keyDown(composer(), { key: "Enter" });
+    expect(sends).toHaveLength(0);
+    expect(commands).toHaveLength(1);
+    expect(commands[0].message).toBe("/compact");
+  });
+
+  it("clicking a row accepts it", async () => {
+    render(<ChatPane projectSlug="proj" isProjectChat />);
+    await waitFor(() => expect(projectCommands).toHaveBeenCalled());
+
+    await userEvent.type(composer(), "/rev");
+    const row = await screen.findByRole("menuitem", { name: /\/review/ });
+    // onMouseDown drives selection (it preventDefaults to keep focus).
+    fireEvent.mouseDown(row);
+    expect(composer()).toHaveValue("/review ");
+    expect(sends).toHaveLength(0);
   });
 });
 

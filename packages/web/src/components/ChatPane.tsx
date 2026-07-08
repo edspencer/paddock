@@ -27,7 +27,7 @@ import {
   WrenchIcon,
   XIcon,
 } from "./icons";
-import type { ChatCompleteUsage, HistoryMessage, ModelInfo } from "../lib/types";
+import type { ChatCompleteUsage, HistoryMessage, ModelInfo, SlashCommand } from "../lib/types";
 
 /** One rendered item in the transcript. Assistant boundaries split bubbles. */
 type Turn =
@@ -150,6 +150,16 @@ export function ChatPane({
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [keeperDefault, setKeeperDefault] = useState<string | null>(null);
   const [model, setModel] = useState<string | null>(null);
+
+  // --- slash-command autocomplete (issue #103) -------------------------------
+  // The commands available to this chat's agent, fetched once per chat (the
+  // server memoizes the underlying subprocess). Drives the composer menu that
+  // pops when the draft starts with "/". `menuIndex` is the keyboard-highlighted
+  // row; `menuDismissed` lets Escape hide the menu without clearing the draft
+  // (reset the moment the user types again).
+  const [commands, setCommands] = useState<SlashCommand[]>([]);
+  const [menuIndex, setMenuIndex] = useState(0);
+  const [menuDismissed, setMenuDismissed] = useState(false);
   // The selected model is kept in a ref too so `send` reads the latest without
   // re-subscribing (the picker can change between sends without remounting).
   const modelRef = useRef<string | null>(null);
@@ -223,6 +233,57 @@ export function ChatPane({
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  // --- slash commands (fetched once per chat) --------------------------------
+  useEffect(() => {
+    let cancelled = false;
+    // Project chats query their keeper; one-off chats query the scratch agent.
+    void (isProjectChat ? api.projectCommands(projectSlug) : api.scratchCommands())
+      .then((cmds) => {
+        if (!cancelled) setCommands(cmds);
+      })
+      .catch(() => {
+        /* no menu if the list can't be fetched; sending is unaffected */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectSlug, isProjectChat]);
+
+  // The active slash query: the text after a leading "/", but only while the
+  // draft is still the bare command name (no whitespace yet). `null` means the
+  // menu should not consider itself triggered. Empty string = just typed "/".
+  const slashQuery = useMemo(() => {
+    if (!draft.startsWith("/")) return null;
+    const rest = draft.slice(1);
+    if (/\s/.test(rest)) return null; // moved on to typing arguments
+    return rest;
+  }, [draft]);
+
+  // Case-insensitive substring match on the command name, preserving list order.
+  const menuCommands = useMemo(() => {
+    if (slashQuery === null) return [];
+    const q = slashQuery.toLowerCase();
+    return commands.filter((c) => c.name.toLowerCase().includes(q));
+  }, [slashQuery, commands]);
+
+  const menuOpen = slashQuery !== null && !menuDismissed && menuCommands.length > 0;
+
+  // Reset the highlighted row whenever the filtered set changes, and re-arm a
+  // menu the user dismissed with Escape once they edit the query again.
+  useEffect(() => {
+    setMenuIndex(0);
+  }, [slashQuery]);
+  useEffect(() => {
+    setMenuDismissed(false);
+  }, [slashQuery]);
+
+  // Accept a command: replace the draft with "/name " (trailing space closes the
+  // menu — `slashQuery` becomes null — and positions the caret for arguments).
+  const acceptCommand = useCallback((cmd: SlashCommand) => {
+    setDraft(`/${cmd.name} `);
+    requestAnimationFrame(() => composerRef.current?.focus());
   }, []);
 
   // Keep the selected model in both state (for the <select>) and a ref (so
@@ -606,6 +667,41 @@ export function ChatPane({
   }, []);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // While the slash-command menu is open it owns Arrow/Tab/Enter/Escape, ahead
+    // of the send logic below (issue #103).
+    if (menuOpen) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setMenuIndex((i) => (i + 1) % menuCommands.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setMenuIndex((i) => (i - 1 + menuCommands.length) % menuCommands.length);
+        return;
+      }
+      if (e.key === "Tab") {
+        e.preventDefault();
+        acceptCommand(menuCommands[menuIndex]);
+        return;
+      }
+      // Enter COMPLETES a partial selection, but once the highlighted command is
+      // already fully typed it falls through to send — so `/compact`+Enter sends
+      // (incl. queueing mid-stream) rather than re-inserting, matching the CLI.
+      if (e.key === "Enter") {
+        const hit = menuCommands[menuIndex];
+        if (hit && hit.name !== slashQuery) {
+          e.preventDefault();
+          acceptCommand(hit);
+          return;
+        }
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setMenuDismissed(true);
+        return;
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       send();
@@ -705,7 +801,44 @@ export function ChatPane({
             forkParent={forkParent}
             onOpenForkParent={onOpenForkParent}
           />
-          <div className="flex items-end gap-2 rounded-2xl border border-paddock-300 bg-white p-2 shadow-sm focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/20 dark:border-paddock-700 dark:bg-paddock-900">
+          <div className="relative flex items-end gap-2 rounded-2xl border border-paddock-300 bg-white p-2 shadow-sm focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/20 dark:border-paddock-700 dark:bg-paddock-900">
+            {/* Slash-command autocomplete (issue #103). Pops above the composer
+                when the draft is a bare leading-slash command; keyboard nav lives
+                in onKeyDown, mouse selection in onMouseDown (preventDefault keeps
+                the textarea focused so the click still registers). */}
+            {menuOpen && (
+              <div
+                className="menu bottom-full left-0 mb-2 max-h-64 w-full overflow-y-auto"
+                role="menu"
+                aria-label="Slash commands"
+              >
+                {menuCommands.map((cmd, i) => (
+                  <button
+                    type="button"
+                    key={cmd.name}
+                    role="menuitem"
+                    className={`menu-item ${
+                      i === menuIndex ? "bg-paddock-100 dark:bg-paddock-800" : ""
+                    }`}
+                    onMouseEnter={() => setMenuIndex(i)}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      acceptCommand(cmd);
+                    }}
+                  >
+                    <span className="flex w-full items-baseline gap-2">
+                      <span className="font-mono font-medium text-accent">/{cmd.name}</span>
+                      {cmd.argumentHint && (
+                        <span className="shrink-0 text-paddock-400">{cmd.argumentHint}</span>
+                      )}
+                      {cmd.description && (
+                        <span className="ml-auto truncate text-paddock-500">{cmd.description}</span>
+                      )}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
             <textarea
               ref={composerRef}
               className="max-h-48 min-h-[40px] flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none placeholder:text-paddock-400 dark:placeholder:text-paddock-600"

@@ -52,6 +52,7 @@ import {
   type AgentInfo,
   type FleetStatus,
   type SessionUsage,
+  type SlashCommand,
 } from "@herdctl/core";
 import { createSDKMessageHandler, type SDKMessage as ChatSDKMessage } from "@herdctl/chat";
 import { promises as fs } from "node:fs";
@@ -710,6 +711,32 @@ export class HerdctlService {
     const usage = await this.manager.getAgentSessionUsage(agentName, sessionId);
     this.usageCache.set(key, { mtime, usage });
     return usage;
+  }
+
+  /**
+   * Slash commands available to an agent, memoized per agent name. The set is
+   * stable per project (built-ins + the project's `.claude/commands` + any
+   * MCP-provided commands) and each underlying `listAgentCommands` call spawns a
+   * short-lived `claude` streaming subprocess (open → query → close), so we
+   * cache aggressively. The cache is process-lifetime: it fills on first use and
+   * only clears on server restart — the same boot-only invalidation the fleet's
+   * agent registration already relies on. A concurrent first call is
+   * deduplicated by caching the in-flight promise, so a burst of composer fetches
+   * spawns exactly one subprocess.
+   */
+  private commandsCache = new Map<string, Promise<SlashCommand[]>>();
+
+  async listCommands(agentName: string): Promise<SlashCommand[]> {
+    const hit = this.commandsCache.get(agentName);
+    if (hit) return hit;
+    // Cache the promise (not the resolved value) so concurrent callers share one
+    // subprocess; drop it on rejection so a transient failure can be retried.
+    const pending = this.manager.listAgentCommands(agentName).catch((err) => {
+      this.commandsCache.delete(agentName);
+      throw err;
+    });
+    this.commandsCache.set(agentName, pending);
+    return pending;
   }
 
   // --- agent configs -----------------------------------------------------

@@ -51,6 +51,17 @@ export interface ModelInfo {
   contextLimit: number;
 }
 
+/**
+ * A slash command available to an agent, for the composer's autocomplete menu
+ * (issue #103). Mirrors herdctl's re-exported `SlashCommand`
+ * (`{ name, description, argumentHint }` from the Claude Agent SDK).
+ */
+export interface SlashCommand {
+  name: string;
+  description: string;
+  argumentHint: string;
+}
+
 /** Render-kind hint for a project file, derived server-side from its extension. */
 export type FileKind = "markdown" | "html" | "text" | "image";
 
