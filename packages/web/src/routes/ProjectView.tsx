@@ -442,22 +442,19 @@ export function ProjectView() {
       }`}
     >
       {/*
-        #115: a full-row click target sits behind the content so the whole row
-        opens the chat. The content layer is pointer-events-none so clicks fall
-        through to it — except the row-2 action buttons, which re-enable pointer
-        events. This lets the title use the full width (no reserved padding) and
-        drops the four hover actions onto the second row instead of overlaying
-        the title (#104).
+        #115: the title leads and the context/progress ring floats to the far
+        right of row 1; the four hover actions drop to row 2 (an absolute
+        container anchored bottom-right) instead of overlaying the title line
+        (#104), so the title uses the full width at rest and on hover — no
+        pr-[…] reservation needed. The title stays inside the click target so
+        the whole row opens the chat.
       */}
       <button
         type="button"
         onClick={() => openChat(c.sessionId)}
-        aria-label={`Open chat ${c.name}`}
-        className="absolute inset-0 h-full w-full rounded-lg"
-      />
-      <div className="pointer-events-none relative flex flex-col gap-0.5 px-2.5 py-2 text-sm">
-        {/* Row 1: title leads; the context/progress ring floats to the far
-            right. The ring spins while the chat is streaming (#115). */}
+        className="flex w-full flex-col items-start gap-0.5 rounded-lg px-2.5 py-2 text-left text-sm"
+      >
+        {/* Row 1: title + the context/progress ring (spins while streaming). */}
         <span className="flex w-full items-center gap-1.5">
           <span className="min-w-0 flex-1 truncate font-medium">{c.name}</span>
           <ContextRing
@@ -466,63 +463,61 @@ export function ProjectView() {
             working={runningSessions.has(c.sessionId)}
           />
         </span>
-        {/* Row 2: relative time on the left; the four hover/focus actions on
-            the right (reveal behavior unchanged). */}
-        <span className="flex w-full items-center gap-0.5">
-          <span className="text-[11px] text-paddock-400">{relativeTime(c.updatedAt)}</span>
-          <div className="pointer-events-auto ml-auto flex items-center gap-0.5">
-            <button
-              type="button"
-              aria-label={`Fork chat ${c.name}`}
-              title="Fork chat — branch a new chat from this one's context"
-              onClick={(e) => {
-                e.stopPropagation();
-                void forkChat(c);
-              }}
-              className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-paddock-200 hover:text-accent focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-paddock-700 dark:hover:text-accent"
-            >
-              <BranchIcon width={13} height={13} />
-            </button>
-            <button
-              type="button"
-              aria-label={`Rename chat ${c.name}`}
-              title="Rename chat"
-              onClick={(e) => {
-                e.stopPropagation();
-                void renameChat(c);
-              }}
-              className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-paddock-200 hover:text-paddock-700 focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-paddock-700 dark:hover:text-paddock-100"
-            >
-              <PencilIcon width={13} height={13} />
-            </button>
-            <button
-              type="button"
-              aria-label={`${c.archived ? "Unarchive" : "Archive"} chat ${c.name}`}
-              title={c.archived ? "Unarchive chat" : "Archive chat — file it away without deleting"}
-              onClick={(e) => {
-                e.stopPropagation();
-                void archiveChat(c);
-              }}
-              className={`flex h-6 w-6 items-center justify-center rounded-md transition focus:opacity-100 group-hover/chat:opacity-100 hover:bg-paddock-200 hover:text-accent dark:hover:bg-paddock-700 dark:hover:text-accent ${
-                c.archived ? "text-accent opacity-100" : "text-paddock-400 opacity-0"
-              }`}
-            >
-              <ArchiveIcon width={13} height={13} />
-            </button>
-            <button
-              type="button"
-              aria-label={`Delete chat ${c.name}`}
-              title="Delete chat"
-              onClick={(e) => {
-                e.stopPropagation();
-                setDeletingChat(c);
-              }}
-              className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-rose-100 hover:text-rose-600 focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-rose-950/60 dark:hover:text-rose-400"
-            >
-              <TrashIcon width={13} height={13} />
-            </button>
-          </div>
-        </span>
+        {/* Row 2 (left): relative time. The actions live on this row too, as
+            an absolute sibling anchored bottom-right (below). */}
+        <span className="text-[11px] text-paddock-400">{relativeTime(c.updatedAt)}</span>
+      </button>
+      <div className="absolute bottom-1 right-1.5 flex items-center gap-0.5">
+        <button
+          type="button"
+          aria-label={`Fork chat ${c.name}`}
+          title="Fork chat — branch a new chat from this one's context"
+          onClick={(e) => {
+            e.stopPropagation();
+            void forkChat(c);
+          }}
+          className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-paddock-200 hover:text-accent focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-paddock-700 dark:hover:text-accent"
+        >
+          <BranchIcon width={13} height={13} />
+        </button>
+        <button
+          type="button"
+          aria-label={`Rename chat ${c.name}`}
+          title="Rename chat"
+          onClick={(e) => {
+            e.stopPropagation();
+            void renameChat(c);
+          }}
+          className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-paddock-200 hover:text-paddock-700 focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-paddock-700 dark:hover:text-paddock-100"
+        >
+          <PencilIcon width={13} height={13} />
+        </button>
+        <button
+          type="button"
+          aria-label={`${c.archived ? "Unarchive" : "Archive"} chat ${c.name}`}
+          title={c.archived ? "Unarchive chat" : "Archive chat — file it away without deleting"}
+          onClick={(e) => {
+            e.stopPropagation();
+            void archiveChat(c);
+          }}
+          className={`flex h-6 w-6 items-center justify-center rounded-md transition focus:opacity-100 group-hover/chat:opacity-100 hover:bg-paddock-200 hover:text-accent dark:hover:bg-paddock-700 dark:hover:text-accent ${
+            c.archived ? "text-accent opacity-100" : "text-paddock-400 opacity-0"
+          }`}
+        >
+          <ArchiveIcon width={13} height={13} />
+        </button>
+        <button
+          type="button"
+          aria-label={`Delete chat ${c.name}`}
+          title="Delete chat"
+          onClick={(e) => {
+            e.stopPropagation();
+            setDeletingChat(c);
+          }}
+          className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-rose-100 hover:text-rose-600 focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-rose-950/60 dark:hover:text-rose-400"
+        >
+          <TrashIcon width={13} height={13} />
+        </button>
       </div>
     </div>
   );

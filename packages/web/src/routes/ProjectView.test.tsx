@@ -275,10 +275,7 @@ describe("ProjectView: chat list (delete + rename)", () => {
       detail(makeProject({ slug: "p" }), { chats: [makeChat({ sessionId: "s1", name: "First chat" })] }),
     );
     renderAt("/projects/p/chat");
-    await screen.findByText("First chat");
-    // The whole row is a click target labeled "Open chat <name>" (#115): the
-    // visible title sits in a pointer-events-none layer above it.
-    fireEvent.click(screen.getByRole("button", { name: /Open chat First chat/i }));
+    fireEvent.click(await screen.findByText("First chat"));
     await waitFor(() => expect(chatPaneProps?.initialSessionId).toBe("s1"));
   });
 
