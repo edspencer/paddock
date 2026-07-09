@@ -120,10 +120,15 @@ describe("send_file MCP tool", () => {
       expect(envelope?.content).toBeUndefined();
     });
 
-    it("returns a not-found error for a missing file", async () => {
+    it("returns a not-found error that lists the working-dir contents (so the agent can self-correct)", async () => {
       const { result } = await callTool({ file_path: "nope.md" }, dir);
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain("not found");
+      const text = result.content[0].text;
+      expect(text).toContain("not found");
+      // The error names the working dir and lists the real file next to it, so the
+      // agent doesn't have to shell out to `ls`/`find` to locate it.
+      expect(text).toContain(dir);
+      expect(text).toContain("real.md");
     });
 
     it("refuses a path that escapes the working directory (via symlink)", async () => {

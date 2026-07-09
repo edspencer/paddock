@@ -30,7 +30,7 @@
  * filename extension.
  */
 import { basename, extname, relative, resolve } from "node:path";
-import { realpath } from "node:fs/promises";
+import { readdir, realpath } from "node:fs/promises";
 import type { InjectedMcpServerDef, McpToolCallResult } from "@herdctl/core";
 
 /** The renderer the web side should use for a sent file. */
@@ -113,6 +113,27 @@ function inferLanguage(filename: string): string | undefined {
 
 function ok(envelope: SentFileEnvelope): McpToolCallResult {
   return { content: [{ type: "text", text: JSON.stringify(envelope) }] };
+}
+
+/**
+ * A short listing of a directory's top-level entries, to append to a
+ * file-not-found / escape error so the agent can immediately see the right
+ * filename instead of shelling out to `ls`/`find` to hunt for it (the main
+ * source of friction observed with screenshot flows). Files first, then dirs;
+ * capped so a large dir doesn't flood the tool result.
+ */
+async function describeDir(dir: string): Promise<string> {
+  try {
+    const entries = await readdir(dir, { withFileTypes: true });
+    const files = entries.filter((e) => e.isFile()).map((e) => e.name);
+    const dirs = entries.filter((e) => e.isDirectory()).map((e) => `${e.name}/`);
+    const shown = [...files, ...dirs].slice(0, 40);
+    if (shown.length === 0) return "It is currently empty.";
+    const more = files.length + dirs.length > shown.length ? ", …" : "";
+    return `Entries in it: ${shown.join(", ")}${more}.`;
+  } catch {
+    return "";
+  }
 }
 
 function fail(text: string): McpToolCallResult {
@@ -211,12 +232,21 @@ function createHandler(context: SendFileContext) {
       try {
         realPath = await realpath(resolved);
       } catch {
-        return fail(`Error: file not found: ${filePath}`);
+        return fail(
+          `Error: file not found: ${filePath} (looked for ${resolved}). ` +
+            `Your working directory is ${wd}. ${await describeDir(wd)} ` +
+            `Pass a path relative to your working directory (screenshots from the ` +
+            `browser tools are saved there).`,
+        );
       }
       const realWd = await realpath(wd);
       const rel = relative(realWd, realPath);
       if (rel.startsWith("..") || rel.startsWith("/")) {
-        return fail(`Error: file path escapes working directory: ${filePath}`);
+        return fail(
+          `Error: file path escapes your working directory: ${filePath} resolves to ` +
+            `${realPath}, outside ${wd}. Only files inside your working directory can be ` +
+            `sent. ${await describeDir(wd)}`,
+        );
       }
       const filename = filenameArg ?? basename(resolved);
       const kind = kindArg ?? inferKind(filename);
