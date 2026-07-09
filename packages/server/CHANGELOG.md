@@ -1,5 +1,37 @@
 # @paddock/server
 
+## 0.16.0
+
+### Minor Changes
+
+- [#118](https://github.com/edspencer/paddock/pull/118) [`d0c129d`](https://github.com/edspencer/paddock/commit/d0c129d209b33b76c2c4185aefef88d4d6ab2504) Thanks [@edspencer](https://github.com/edspencer)! - Refresh the model picker: add Fable 5 and Sonnet 5, retire Sonnet 4.6.
+
+  `packages/server/src/models.ts` (the single source of truth for the picker,
+  keeper/sweeper defaults, and context-meter limits) now offers **Opus 4.8**,
+  **Fable 5** (`claude-fable-5`), **Sonnet 5** (`claude-sonnet-5`), and **Haiku
+  4.5**. The stale **Sonnet 4.6** entry is replaced by Sonnet 5. Fable 5 and
+  Sonnet 5 both carry a 1M-token context window (matching Opus 4.8).
+
+  The keeper default (Opus 4.8) and sweeper default (Haiku 4.5) are unchanged.
+  Fable 5 was verified to run on the Max/CLI keeper runtime, so no plan/entitlement
+  change is required — it's a picker addition only.
+
+### Patch Changes
+
+- [#119](https://github.com/edspencer/paddock/pull/119) [`d9c0f2e`](https://github.com/edspencer/paddock/commit/d9c0f2e23a9c2bf0372a3fd4227a1abdf8d4364d) Thanks [@edspencer](https://github.com/edspencer)! - perf: don't block the project view on per-chat context-usage rings (#116)
+
+  Switching into a project scaled with its chat count (2–3s on chat-heavy
+  projects) because `GET /api/projects/:slug` computed a context-usage ring for
+  every chat, and each ring streams+parses that chat's entire transcript. The
+  whole ProjectView waited on this.
+
+  The chat list and project detail now come back usage-free (from cached
+  name/preview/mtime), so the view renders immediately. A new
+  `GET /api/projects/:slug/chats/usage` endpoint returns the per-chat usage map,
+  which the client fetches separately and merges into the sidebar rings after the
+  view has rendered (and again after a turn completes). Behavior is otherwise
+  unchanged — the rings still show the same fill.
+
 ## 0.15.0
 
 ### Minor Changes
