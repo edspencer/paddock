@@ -92,14 +92,14 @@ test.fixme("edit a project's keeper model from the UI → reflected on the chat 
   await page.getByRole("menuitem", { name: /Edit details/i }).click();
   const dialog = page.locator("form").filter({ hasText: "Edit project" });
   // EXPECTED (post-#12): a Model picker in the edit modal. Today it doesn't exist.
-  await dialog.getByRole("combobox", { name: /Model/i }).selectOption({ label: "Sonnet 4.6" });
+  await dialog.getByRole("combobox", { name: /Model/i }).selectOption({ label: "Sonnet 5" });
   await dialog.getByRole("button", { name: /Save changes/i }).click();
 
   // The chat composer's model picker should now default to the project's new model.
   const chatModel = page
     .getByRole("combobox")
     .filter({ has: page.getByRole("option", { name: /Sonnet/ }) });
-  await expect(chatModel).toHaveValue("claude-sonnet-4-6");
+  await expect(chatModel).toHaveValue("claude-sonnet-5");
 });
 
 test("delete (confirm dialog) → removed from grid + sidebar, returns to landing", async ({

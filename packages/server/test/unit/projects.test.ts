@@ -174,10 +174,10 @@ describe("ProjectStore", () => {
     await store.create({ name: "M" });
     const got = await store.get("m");
     expect(got.model).toBe(KEEPER_DEFAULT_MODEL);
-    const updated = await store.update("m", { model: "claude-sonnet-4-6" });
-    expect(updated.model).toBe("claude-sonnet-4-6");
+    const updated = await store.update("m", { model: "claude-sonnet-5" });
+    expect(updated.model).toBe("claude-sonnet-5");
     const parsed = YAML.parse(await fs.readFile(path.join(root, "m", "project.yaml"), "utf8"));
-    expect(parsed.model).toBe("claude-sonnet-4-6");
+    expect(parsed.model).toBe("claude-sonnet-5");
   });
 
   it("keeper settings resolve to defaults and round-trip when set (issue #12)", async () => {
