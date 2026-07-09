@@ -442,32 +442,32 @@ export function ProjectView() {
       }`}
     >
       {/*
-        #104: the four row actions live in an absolute overlay that only fades in
-        on hover/focus, so at rest the title should use the full width and only
-        reserve space for the actions when they're actually visible. An archived
-        row keeps its archive icon shown persistently, so it retains just enough
-        room for that one icon at rest.
+        #115: the title leads and the context/progress ring floats to the far
+        right of row 1; the four hover actions drop to row 2 (an absolute
+        container anchored bottom-right) instead of overlaying the title line
+        (#104), so the title uses the full width at rest and on hover — no
+        pr-[…] reservation needed. The title stays inside the click target so
+        the whole row opens the chat.
       */}
       <button
+        type="button"
         onClick={() => openChat(c.sessionId)}
-        className={`flex w-full flex-col items-start gap-0.5 rounded-lg px-2.5 py-2 text-left text-sm transition-[padding] group-hover/chat:pr-[6.75rem] group-focus-within/chat:pr-[6.75rem] ${
-          c.archived ? "pr-[3.75rem]" : "pr-2.5"
-        }`}
+        className="flex w-full flex-col items-start gap-0.5 rounded-lg px-2.5 py-2 text-left text-sm"
       >
+        {/* Row 1: title + the context/progress ring (spins while streaming). */}
         <span className="flex w-full items-center gap-1.5">
-          {runningSessions.has(c.sessionId) && (
-            <span
-              title="Streaming a response…"
-              aria-label="streaming"
-              className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent"
-            />
-          )}
-          <ContextRing tokens={c.contextTokens} limit={c.contextLimit} />
-          <span className="truncate font-medium">{c.name}</span>
+          <span className="min-w-0 flex-1 truncate font-medium">{c.name}</span>
+          <ContextRing
+            tokens={c.contextTokens}
+            limit={c.contextLimit}
+            working={runningSessions.has(c.sessionId)}
+          />
         </span>
+        {/* Row 2 (left): relative time. The actions live on this row too, as
+            an absolute sibling anchored bottom-right (below). */}
         <span className="text-[11px] text-paddock-400">{relativeTime(c.updatedAt)}</span>
       </button>
-      <div className="absolute right-1.5 top-1.5 flex items-center gap-0.5">
+      <div className="absolute bottom-1 right-1.5 flex items-center gap-0.5">
         <button
           type="button"
           aria-label={`Fork chat ${c.name}`}
@@ -501,9 +501,7 @@ export function ProjectView() {
             void archiveChat(c);
           }}
           className={`flex h-6 w-6 items-center justify-center rounded-md transition focus:opacity-100 group-hover/chat:opacity-100 hover:bg-paddock-200 hover:text-accent dark:hover:bg-paddock-700 dark:hover:text-accent ${
-            c.archived
-              ? "text-accent opacity-100"
-              : "text-paddock-400 opacity-0"
+            c.archived ? "text-accent opacity-100" : "text-paddock-400 opacity-0"
           }`}
         >
           <ArchiveIcon width={13} height={13} />
@@ -719,10 +717,12 @@ export function ProjectView() {
                     onClick={() => openChat(pendingChat)}
                     className="flex w-full items-center gap-1.5 rounded-lg px-2.5 py-2 text-left text-sm"
                   >
-                    <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent" />
-                    <span className="truncate font-medium italic text-paddock-600 dark:text-paddock-300">
+                    <span className="min-w-0 flex-1 truncate font-medium italic text-paddock-600 dark:text-paddock-300">
                       New chat…
                     </span>
+                    {/* #115: the merged spinning ring stands in for the old
+                        pulsing dot — an indeterminate spinner (no fill arc yet). */}
+                    <ContextRing working />
                   </button>
                 </div>
               )}
