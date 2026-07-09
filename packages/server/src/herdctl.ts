@@ -53,6 +53,7 @@ import {
   type FleetStatus,
   type SessionUsage,
   type SlashCommand,
+  type InjectedMcpServerDef,
 } from "@herdctl/core";
 import { createSDKMessageHandler, type SDKMessage as ChatSDKMessage } from "@herdctl/chat";
 import { promises as fs } from "node:fs";
@@ -77,6 +78,12 @@ export interface ChatTurnOptions {
   onMessage?: (msg: SDKMessage) => void | Promise<void>;
   onJobCreated?: (jobId: string) => void;
   triggerType?: string;
+  /**
+   * In-process MCP servers to inject for this turn (issue #112). herdctl's CLI
+   * runtime stands up a localhost HTTP bridge per server and auto-allowlists its
+   * `mcp__<key>__*` tools, so no change to the static `allowed_tools` is needed.
+   */
+  injectedMcpServers?: Record<string, InjectedMcpServerDef>;
 }
 
 /**
@@ -352,6 +359,7 @@ export class HerdctlService {
       triggerType: opts.triggerType ?? "web",
       onMessage: opts.onMessage,
       onJobCreated: opts.onJobCreated,
+      injectedMcpServers: opts.injectedMcpServers,
     });
   }
 

@@ -27,19 +27,30 @@ import {
   WrenchIcon,
   XIcon,
 } from "./icons";
-import type { ChatCompleteUsage, HistoryMessage, ModelInfo, SlashCommand } from "../lib/types";
+import type {
+  ChatCompleteUsage,
+  HistoryMessage,
+  ModelInfo,
+  SentFile,
+  SlashCommand,
+} from "../lib/types";
+import { SentFileBlock } from "./SentFileBlock";
 
 /** One rendered item in the transcript. Assistant boundaries split bubbles. */
 type Turn =
   | { kind: "user"; id: string; content: string }
   | { kind: "assistant"; id: string; content: string; streaming: boolean }
-  | { kind: "tool"; id: string; tool: ToolCall };
+  | { kind: "tool"; id: string; tool: ToolCall }
+  | { kind: "file"; id: string; file: SentFile };
 
 let idCounter = 0;
 const nextId = () => `t${++idCounter}`;
 
 /** Tool names that launch a sub-agent: `Task` (classic Claude Code), `Agent` (SDK). */
 const SUBAGENT_TOOLS = new Set(["Task", "Agent"]);
+
+/** The send_file MCP tool; its payload renders as a rich `file` turn (issue #112). */
+const SEND_FILE_TOOL_NAME = "mcp__paddock__send_file";
 
 /**
  * Fetches a sub-agent's nested steps by its parent tool_use id (issue #37).
@@ -459,6 +470,14 @@ export function ChatPane({
         // caret clears the instant the tool call begins. Otherwise the bubble
         // is no longer the trailing turn and nothing can ever clear its caret.
         setTurns((prev) => [...sealStreaming(prev), { kind: "tool", id: nextId(), tool: tc }]);
+      },
+      onFile: (file, meta) => {
+        if (!framesBelong(meta)) return;
+        if (meta.jobId) jobRef.current = meta.jobId;
+        if (meta.sessionId) adoptSession(meta.sessionId);
+        // Same sealing as a tool call: the agent paused its text to render a
+        // file, so close the streaming bubble before appending the file row.
+        setTurns((prev) => [...sealStreaming(prev), { kind: "file", id: nextId(), file }]);
       },
       onMessageBoundary: (meta) => {
         if (!framesBelong(meta)) return;
@@ -1166,7 +1185,14 @@ function TurnView({ turn }: { turn: Turn }) {
       </div>
     );
   }
+  if (turn.kind === "file") {
+    return <SentFileBlock file={turn.file} />;
+  }
   if (turn.kind === "tool") {
+    // The send_file tool renders its payload richly as a `file` turn (emitted
+    // mid-tool-call, so it lands just before this row). Suppress the generic
+    // tool widget for it to avoid a duplicate, low-value collapsed entry.
+    if (turn.tool.toolName === SEND_FILE_TOOL_NAME) return null;
     return <ToolBlock tool={turn.tool} />;
   }
   // assistant
