@@ -10,10 +10,16 @@
 #                                (HOME=/data so ~/.claude/projects survives restarts → resume works.)
 #   - GITHUB_TOKEN (optional)    Enables git push to the backing repo (configured by entrypoint).
 #
-# Multi-arch (linux/amd64, linux/arm64) is built in CI via buildx.
+# Multi-arch (linux/amd64, linux/arm64) is built in CI on native per-arch
+# runners (see release.yml); each leg pushes by digest and the manifests are
+# merged with `docker buildx imagetools create`.
 
 # ---- build stage ----------------------------------------------------------
-FROM node:22-slim AS build
+# Pinned to $BUILDPLATFORM: this stage only emits arch-independent JS
+# (tsc + vite dist/), so in an emulated cross-build (e.g. a local
+# `docker buildx build --platform linux/amd64,linux/arm64`) it runs once,
+# natively, instead of repeating npm ci + compile under QEMU per arch.
+FROM --platform=$BUILDPLATFORM node:22-slim AS build
 WORKDIR /app
 
 # Install deps first (cache layer) — workspace manifests before sources.
