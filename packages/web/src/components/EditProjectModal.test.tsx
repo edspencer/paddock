@@ -27,7 +27,7 @@ describe("EditProjectModal", () => {
     getModels.mockResolvedValue({
       models: [
         { id: "claude-opus-4-8", label: "Opus 4.8", contextLimit: 1_000_000 },
-        { id: "claude-sonnet-4-6", label: "Sonnet 4.6", contextLimit: 1_000_000 },
+        { id: "claude-sonnet-5", label: "Sonnet 5", contextLimit: 1_000_000 },
         { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5", contextLimit: 200_000 },
       ],
       keeperDefault: "claude-opus-4-8",
@@ -87,8 +87,8 @@ describe("EditProjectModal", () => {
     render(<EditProjectModal open project={project} onClose={() => {}} onSaved={vi.fn()} />);
 
     // Wait for the model list to load so the Sonnet option is selectable.
-    await screen.findByRole("option", { name: "Sonnet 4.6" });
-    fireEvent.change(screen.getByLabelText("Model"), { target: { value: "claude-sonnet-4-6" } });
+    await screen.findByRole("option", { name: "Sonnet 5" });
+    fireEvent.change(screen.getByLabelText("Model"), { target: { value: "claude-sonnet-5" } });
     fireEvent.change(screen.getByLabelText("Permission mode"), { target: { value: "plan" } });
     fireEvent.change(screen.getByLabelText("Max turns"), { target: { value: "50" } });
     fireEvent.click(screen.getByLabelText("Docker sandbox"));
@@ -99,7 +99,7 @@ describe("EditProjectModal", () => {
     expect(updateProject).toHaveBeenCalledWith(
       "p1",
       expect.objectContaining({
-        model: "claude-sonnet-4-6",
+        model: "claude-sonnet-5",
         permissionMode: "plan",
         maxTurns: 50,
         docker: true,

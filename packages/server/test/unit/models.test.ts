@@ -12,7 +12,8 @@ describe("models", () => {
   it("exposes the picker list in order with the keeper default first", () => {
     expect(MODELS.map((m) => m.id)).toEqual([
       "claude-opus-4-8",
-      "claude-sonnet-4-6",
+      "claude-fable-5",
+      "claude-sonnet-5",
       "claude-haiku-4-5-20251001",
     ]);
     expect(MODELS[0].id).toBe(KEEPER_DEFAULT_MODEL);
@@ -38,9 +39,9 @@ describe("models", () => {
   });
 
   it("getModelInfo returns the full info or undefined", () => {
-    expect(getModelInfo("claude-sonnet-4-6")).toEqual({
-      id: "claude-sonnet-4-6",
-      label: "Sonnet 4.6",
+    expect(getModelInfo("claude-fable-5")).toEqual({
+      id: "claude-fable-5",
+      label: "Fable 5",
       contextLimit: 1_000_000,
     });
     expect(getModelInfo("nope")).toBeUndefined();

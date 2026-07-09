@@ -38,14 +38,14 @@ test("model picker: switch model is reflected in the select", async ({ page }) =
   // Default model is the project keeper default (Opus 4.8).
   await expect(select).toBeVisible();
   // Switch to Sonnet and confirm the select reflects it.
-  await select.selectOption({ label: "Sonnet 4.6" });
-  await expect(select).toHaveValue("claude-sonnet-4-6");
+  await select.selectOption({ label: "Sonnet 5" });
+  await expect(select).toHaveValue("claude-sonnet-5");
 
   // Send a turn on the picked model; it still streams (the fake echoes).
   await sendChatTurn(page, "on sonnet");
   await expect(page.getByText(/Acknowledged: on sonnet/).first()).toBeVisible();
   // The picker keeps the chosen model after the turn.
-  await expect(select).toHaveValue("claude-sonnet-4-6");
+  await expect(select).toHaveValue("claude-sonnet-5");
 });
 
 test("new chat resets the pane; the prior chat is still listed and resumable", async ({ page }) => {
