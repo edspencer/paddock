@@ -17,6 +17,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { loadPaddockConfig, type PaddockConfig } from "./config.js";
 import { ProjectStore } from "./projects.js";
+import { AttachmentStore } from "./attachments.js";
 import { HerdctlService } from "./herdctl.js";
 import { GitService } from "./git.js";
 import { GithubAuth } from "./github-auth.js";
@@ -76,6 +77,10 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   const git = new GitService(cfg.projectsRoot);
   const githubAuth = new GithubAuth(path.join(cfg.dataDir, "github-auth.json"));
   const archive = new ArchiveStore(cfg.dataDir);
+  // Store for files shared via mcp__paddock__send_file (issue #112). Copies live
+  // outside any project working dir so they never show up as untracked repo files.
+  const attachments = new AttachmentStore(path.join(cfg.dataDir, "attachments"));
+  await attachments.init();
   const transcriber = makeTranscriber(cfg.transcription);
   app.log.info(
     { mode: cfg.transcription.mode, available: transcriber.available },
@@ -106,9 +111,9 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   await app.register(fastifyMultipart, {
     limits: { fileSize: cfg.transcription.maxUploadBytes, files: 1 },
   });
-  await registerRoutes(app, { projects, herdctl, git, githubAuth, transcriber, archive });
+  await registerRoutes(app, { projects, herdctl, git, githubAuth, transcriber, archive, attachments });
 
-  const chatHandler = makeChatHandler({ herdctl, projects, sweep });
+  const chatHandler = makeChatHandler({ herdctl, projects, sweep, attachments });
   await app.register(async (scoped) => {
     scoped.get("/ws", { websocket: true }, (socket) => {
       void chatHandler(socket);

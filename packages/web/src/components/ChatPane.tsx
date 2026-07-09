@@ -27,19 +27,64 @@ import {
   WrenchIcon,
   XIcon,
 } from "./icons";
-import type { ChatCompleteUsage, HistoryMessage, ModelInfo, SlashCommand } from "../lib/types";
+import type {
+  ChatCompleteUsage,
+  HistoryMessage,
+  ModelInfo,
+  SentFile,
+  SentFileEnvelope,
+  SlashCommand,
+} from "../lib/types";
+import { SentFileBlock } from "./SentFileBlock";
 
 /** One rendered item in the transcript. Assistant boundaries split bubbles. */
 type Turn =
   | { kind: "user"; id: string; content: string }
   | { kind: "assistant"; id: string; content: string; streaming: boolean }
-  | { kind: "tool"; id: string; tool: ToolCall };
+  | { kind: "tool"; id: string; tool: ToolCall }
+  | { kind: "file"; id: string; file: SentFile };
 
 let idCounter = 0;
 const nextId = () => `t${++idCounter}`;
 
 /** Tool names that launch a sub-agent: `Task` (classic Claude Code), `Agent` (SDK). */
 const SUBAGENT_TOOLS = new Set(["Task", "Agent"]);
+
+/** The send_file MCP tool; its payload renders as a rich `file` turn (issue #112). */
+const SEND_FILE_TOOL_NAME = "mcp__paddock__send_file";
+
+/**
+ * Resolve a `mcp__paddock__send_file` tool call into a renderable SentFile by
+ * parsing the JSON envelope the tool returns as its `output` (issue #112). This
+ * is the single path for both live (`onToolCall`) and reload (`historyToTurn`):
+ * the tool output is preserved verbatim on the live event AND by herdctl's
+ * history parser, so a refresh renders identically. A real-file send carries an
+ * opaque `attachmentId`; we point `rawUrl` at Paddock's attachment endpoint.
+ * Returns null if the tool isn't ours or the output isn't a valid envelope
+ * (caller falls back to the generic tool widget).
+ */
+function sentFileFromToolCall(tc: ToolCall): SentFile | null {
+  if (tc.toolName !== SEND_FILE_TOOL_NAME || !tc.output) return null;
+  let env: SentFileEnvelope;
+  try {
+    env = JSON.parse(tc.output) as SentFileEnvelope;
+  } catch {
+    return null;
+  }
+  if (!env || env.paddockSendFile !== 1 || typeof env.filename !== "string") return null;
+  return {
+    filename: env.filename,
+    kind: env.kind,
+    language: env.language,
+    message: env.message,
+    source: env.source,
+    content: env.source === "inline" ? env.content : undefined,
+    rawUrl:
+      env.source === "file" && env.attachmentId
+        ? api.chatFileRawUrl(env.attachmentId)
+        : undefined,
+  };
+}
 
 /**
  * Fetches a sub-agent's nested steps by its parent tool_use id (issue #37).
@@ -455,10 +500,16 @@ export function ChatPane({
         if (!framesBelong(meta)) return;
         if (meta.jobId) jobRef.current = meta.jobId;
         if (meta.sessionId) adoptSession(meta.sessionId);
-        // Seal the streaming text bubble before appending the tool row, so its
-        // caret clears the instant the tool call begins. Otherwise the bubble
-        // is no longer the trailing turn and nothing can ever clear its caret.
-        setTurns((prev) => [...sealStreaming(prev), { kind: "tool", id: nextId(), tool: tc }]);
+        // Seal the streaming text bubble before appending the row, so its caret
+        // clears the instant the tool call begins. Otherwise the bubble is no
+        // longer the trailing turn and nothing can ever clear its caret.
+        // A send_file call renders as a rich `file` turn (parsed from its output
+        // envelope); everything else is the generic tool widget.
+        const file = sentFileFromToolCall(tc);
+        const turn: Turn = file
+          ? { kind: "file", id: nextId(), file }
+          : { kind: "tool", id: nextId(), tool: tc };
+        setTurns((prev) => [...sealStreaming(prev), turn]);
       },
       onMessageBoundary: (meta) => {
         if (!framesBelong(meta)) return;
@@ -1166,6 +1217,9 @@ function TurnView({ turn }: { turn: Turn }) {
       </div>
     );
   }
+  if (turn.kind === "file") {
+    return <SentFileBlock file={turn.file} />;
+  }
   if (turn.kind === "tool") {
     return <ToolBlock tool={turn.tool} />;
   }
@@ -1360,9 +1414,15 @@ function sealStreaming(prev: Turn[]): Turn[] {
   );
 }
 
-/** Convert a hydrated history message into a rendered turn. */
+/**
+ * Convert a hydrated history message into a rendered turn. A `send_file` tool
+ * call rebuilds its rich `file` turn (parsing the same output envelope as the
+ * live path), so a reload renders identically (issue #112).
+ */
 function historyToTurn(m: HistoryMessage): Turn {
   if (m.role === "tool" && m.toolCall) {
+    const file = sentFileFromToolCall(m.toolCall);
+    if (file) return { kind: "file", id: nextId(), file };
     return { kind: "tool", id: nextId(), tool: m.toolCall };
   }
   if (m.role === "assistant") {

@@ -61,6 +61,8 @@ import type { SweepService } from "./sweep.js";
 import { isKnownModel, getContextLimit, KEEPER_DEFAULT_MODEL } from "./models.js";
 import { SessionHub, type TurnHandle, type ActiveInfo } from "./session-hub.js";
 import { wrapPreload } from "./preload.js";
+import { sendFileServerDef, SEND_FILE_SERVER_KEY } from "./send-file-mcp.js";
+import type { AttachmentStore } from "./attachments.js";
 
 /**
  * Per-turn token usage as observed on the SDK stream, normalized to camelCase.
@@ -386,6 +388,7 @@ const SERVER_PING_INTERVAL_MS = 30_000;
 export function makeChatHandler(deps: {
   herdctl: HerdctlService;
   projects: ProjectStore;
+  attachments: AttachmentStore;
   /** Optional: post-turn overview/changelog curation engine (issues #2/#6). */
   sweep?: SweepService;
 }) {
@@ -538,6 +541,9 @@ export function makeChatHandler(deps: {
       };
       // The model the turn will run on; resolved below once we know the target.
       let effectiveModel: string = KEEPER_DEFAULT_MODEL;
+      // The agent's working directory, so the send_file tool can resolve a real
+      // `file_path` (and sandbox it). Resolved alongside the agent below.
+      let sendFileWorkingDir: string | undefined;
 
       const routing = (): Routing => ({
         projectSlug: slug,
@@ -579,6 +585,7 @@ export function makeChatHandler(deps: {
         const requested = msg.payload.model;
         if (slug === SCRATCH_SLUG) {
           agentName = SCRATCH_AGENT;
+          sendFileWorkingDir = deps.herdctl.scratchDir;
           // Scratch: honor a valid override, else the keeper default. Re-register
           // the scratch agent at the requested model (no-op if unchanged).
           effectiveModel =
@@ -591,6 +598,7 @@ export function makeChatHandler(deps: {
           // we can resolve its model + re-register the keeper for an override.
           const project = await deps.projects.get(slug);
           agentName = keeperAgentName(slug);
+          sendFileWorkingDir = project.dir;
 
           // Project chat: a valid override wins, else the project's model. Then
           // ensure the (shared) keeper is registered at that model before the
@@ -612,11 +620,22 @@ export function makeChatHandler(deps: {
           }
         }
 
+        // Inject the Paddock send_file MCP tool for this turn. The tool returns a
+        // JSON envelope as its result `output`; the web renders it off the tool
+        // call itself (live + on reload), so no bespoke WS frame is needed. The
+        // working dir resolves a relative `file_path`; a real file's bytes are
+        // copied into the attachment store at send time (immutable snapshot).
+        const sendFile = sendFileServerDef({
+          workingDirectory: sendFileWorkingDir,
+          saveAttachment: (bytes, name) => deps.attachments.save(bytes, name),
+        });
+
         const result = await deps.herdctl.chat(agentName, {
           prompt,
           // omit -> agent-level fallback; explicit null -> new chat; id -> resume.
           resume: sessionId ?? null,
           triggerType: "web",
+          injectedMcpServers: { [SEND_FILE_SERVER_KEY]: sendFile },
           onJobCreated: (id) => {
             jobId = id;
             turn.setJobId(id);

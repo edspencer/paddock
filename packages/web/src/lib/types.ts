@@ -282,6 +282,42 @@ export interface ChatCompleteUsage {
   contextLimit: number;
 }
 
+/** Which renderer the chat should use for an agent-sent file (issue #112). */
+export type SentFileKind = "markdown" | "mermaid" | "code" | "text" | "html" | "image";
+
+/**
+ * The JSON envelope the `mcp__paddock__send_file` tool returns as its result
+ * `output`. The client parses this off the tool call (live + on reload) — see
+ * `sentFileFromToolCall` in ChatPane. `paddockSendFile` discriminates our
+ * envelope from any other tool's output.
+ */
+export interface SentFileEnvelope {
+  paddockSendFile: 1;
+  filename: string;
+  kind: SentFileKind;
+  language?: string;
+  /** "inline" carries `content`; "file" carries `attachmentId` (bytes in the store). */
+  source: "inline" | "file";
+  content?: string;
+  attachmentId?: string;
+  message?: string;
+}
+
+/** A rendered agent-sent file, resolved from the tool-call envelope. */
+export interface SentFile {
+  filename: string;
+  kind: SentFileKind;
+  /** Language hint for the `code` kind (drives the filename-chrome label). */
+  language?: string;
+  /** Optional note the agent attached. */
+  message?: string;
+  source: "inline" | "file";
+  /** inline: the verbatim content. file: undefined (fetch via `rawUrl`). */
+  content?: string;
+  /** file: URL to load the bytes from Paddock. inline: undefined. */
+  rawUrl?: string;
+}
+
 export type ServerWsMessage =
   | { type: "chat:response"; payload: Routing & { chunk: string } }
   | {

@@ -24,6 +24,7 @@
  */
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { ProjectError, type ProjectStore, type CreateProjectInput, type UpdateProjectInput } from "./projects.js";
+import { AttachmentStore, collectAttachmentIds } from "./attachments.js";
 import type { HerdctlService } from "./herdctl.js";
 import { SCRATCH_SLUG, SCRATCH_AGENT, keeperAgentName } from "./herdctl.js";
 import type { GitService } from "./git.js";
@@ -67,10 +68,11 @@ export interface RouteDeps {
   githubAuth: GithubAuth;
   transcriber: Transcriber;
   archive: ArchiveStore;
+  attachments: AttachmentStore;
 }
 
 export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Promise<void> {
-  const { projects, herdctl, git, githubAuth, transcriber, archive } = deps;
+  const { projects, herdctl, git, githubAuth, transcriber, archive, attachments } = deps;
 
   // --- voice dictation (#voice): capability probe + transcription -------
   // The composer polls this to decide whether to show a mic button. `available`
@@ -407,6 +409,25 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     },
   );
 
+  // Serve the RAW BYTES of a file the agent shared via `mcp__paddock__send_file`
+  // (issue #112). The bytes were copied into the attachment store AT SEND TIME
+  // and are addressed by an opaque id recorded in the chat transcript, so this
+  // endpoint only ever serves files that were explicitly sent — never an
+  // arbitrary path on the box. Used by the chat's image <img> and by the text
+  // fetch for file-kind sends, live and after reload. Locked down with the same
+  // nosniff + sandbox CSP as the project file raw endpoint.
+  app.get<{ Params: { id: string } }>("/api/chat-files/:id", async (req, reply) => {
+    const found = await attachments.read(req.params.id);
+    if (!found) return reply.code(404).send({ error: "not_found" });
+    return reply
+      .header("content-type", found.mime)
+      .header("content-disposition", "inline")
+      .header("x-content-type-options", "nosniff")
+      .header("content-security-policy", "sandbox; default-src 'none'")
+      .header("cache-control", "private, max-age=300")
+      .send(found.bytes);
+  });
+
   // Pin a file as a sibling tab (issue #4). Validates the file exists + dedupes.
   app.put<{ Params: { slug: string }; Body: { file?: string } }>(
     "/api/projects/:slug/pins",
@@ -544,6 +565,7 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     async (req, reply) => {
       try {
         const agent = await agentForSlug(req.params.slug);
+        await cleanupAttachments(agent, req.params.sessionId);
         const removed = await herdctl.deleteSession(agent, req.params.sessionId);
         // Drop any archived flag so a future session id can't inherit it.
         await archive.setArchived(agent, req.params.sessionId, false).catch(() => undefined);
@@ -667,6 +689,7 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     "/api/chats/:sessionId",
     async (req, reply) => {
       try {
+        await cleanupAttachments(SCRATCH_AGENT, req.params.sessionId);
         const removed = await herdctl.deleteSession(SCRATCH_AGENT, req.params.sessionId);
         await archive.setArchived(SCRATCH_AGENT, req.params.sessionId, false).catch(() => undefined);
         return reply.code(200).send({ ok: true, removed });
@@ -760,6 +783,20 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
         ? { contextTokens: u.inputTokens, contextLimit: getContextLimit(model) }
         : null;
     };
+  }
+
+  /**
+   * Remove the attachments a chat referenced, before its transcript is deleted
+   * (we read the transcript to find the ids). Best-effort — a failure here must
+   * never block the chat delete.
+   */
+  async function cleanupAttachments(agent: string, sessionId: string): Promise<void> {
+    try {
+      const messages = await herdctl.sessionMessages(agent, sessionId);
+      await attachments.remove(collectAttachmentIds(messages));
+    } catch {
+      /* best-effort: orphaned attachment files are harmless */
+    }
   }
 
   /** Resolve a slug to the agent name whose sessions back it. */

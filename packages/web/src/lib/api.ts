@@ -237,6 +237,15 @@ export const api = {
     return `${BASE}/api/projects/${encodeURIComponent(slug)}/files/${encodeURIComponent(name)}?raw=1`;
   },
 
+  /**
+   * The URL that streams the RAW BYTES of a file the agent shared via
+   * `mcp__paddock__send_file` (issue #112). The bytes were copied into the
+   * attachment store at send time and are addressed by an opaque id.
+   */
+  chatFileRawUrl(attachmentId: string): string {
+    return `${BASE}/api/chat-files/${encodeURIComponent(attachmentId)}`;
+  },
+
   /** Pin a file as a sibling tab. Returns the updated project (with pinned[]). */
   async pinFile(slug: string, file: string): Promise<Project> {
     const { project } = await req<{ project: Project }>(
