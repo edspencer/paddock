@@ -59,6 +59,34 @@ describe("SessionHub", () => {
     expect(dead.sent).toHaveLength(0); // not OPEN → skipped, not queued forever
   });
 
+  it("supports a client-less turn (null origin) without throwing, and fans out to a late subscriber (Paddock#111)", () => {
+    const hub = new SessionHub();
+    // A scheduler-fired wake starts a turn with NO origin socket.
+    const turn = hub.startTurn("p", null, "s1");
+    // Emitting must not throw despite the absent origin (frames are still buffered).
+    expect(() => turn.emit(frame("chat:response", { chunk: "woke" }))).not.toThrow();
+    // A client that attaches mid-turn still receives subsequent frames.
+    const late = new FakeSocket();
+    hub.subscribe("s1", late);
+    turn.emit(frame("chat:response", { chunk: "more" }));
+    expect(late.sent.map((m) => m.payload.chunk)).toEqual(["more"]);
+    turn.end();
+  });
+
+  it("re-broadcasts active state with the jobId the instant setJobId runs, arming Stop before any content frame (Paddock#111)", () => {
+    const hub = new SessionHub();
+    const seen: Array<{ running: boolean; jobId: string | null }> = [];
+    hub.onActive = (info) => seen.push({ running: info.running, jobId: info.jobId });
+    // A resumed chat: session id known at startTurn → an initial active fires
+    // with jobId still null (the job isn't created yet).
+    const turn = hub.startTurn("p", new FakeSocket(), "s1");
+    expect(seen).toEqual([{ running: true, jobId: null }]);
+    // The moment the job id resolves, a fresh active frame carries it — so the
+    // client can arm Stop without waiting for the first content frame.
+    turn.setJobId("job-42");
+    expect(seen[seen.length - 1]).toEqual({ running: true, jobId: "job-42" });
+  });
+
   it("re-attaches a reconnected socket and replays exactly the missed gap", () => {
     const hub = new SessionHub();
     const origin = new FakeSocket();
@@ -191,11 +219,12 @@ describe("SessionHub", () => {
     hub.onActive = (info) => events.push([info.sessionId, info.running, info.jobId]);
 
     const turn = hub.startTurn("p", new FakeSocket(), "s1"); // registered → active true (jobId not yet known)
-    turn.setJobId("j1");
-    turn.end(); // → active false (jobId now known)
+    turn.setJobId("j1"); // → active true again, now carrying the jobId (arms Stop early, Paddock#111)
+    turn.end(); // → active false
 
     expect(events).toEqual([
       ["s1", true, null],
+      ["s1", true, "j1"],
       ["s1", false, "j1"],
     ]);
   });

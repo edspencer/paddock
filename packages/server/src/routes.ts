@@ -58,6 +58,7 @@ import {
   getContextLimit,
   isKnownPermissionMode,
   isValidMaxTurns,
+  isKnownDriveMode,
   MAX_TURNS_LIMIT,
 } from "./models.js";
 
@@ -257,6 +258,11 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
         }
         if (body.docker !== undefined && typeof body.docker !== "boolean") {
           return reply.code(400).send({ error: "docker must be a boolean", code: "invalid" });
+        }
+        if (body.driveMode !== undefined && !isKnownDriveMode(body.driveMode)) {
+          return reply
+            .code(400)
+            .send({ error: `Unknown drive mode: ${body.driveMode}`, code: "invalid" });
         }
         const project = await projects.update(req.params.slug, body);
         // Re-register the keeper so the new model takes effect (the keeper is a

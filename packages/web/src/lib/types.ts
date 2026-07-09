@@ -42,6 +42,12 @@ export interface Project {
   maxTurns: number;
   /** Whether the keeper runs in a Docker sandbox. Always concrete. Issue #12. */
   docker: boolean;
+  /**
+   * How the keeper's chat turns are driven (Paddock#111). `undefined` = inherit
+   * the box-wide global default; `session` enables cross-turn autonomy
+   * (ScheduleWakeup / `/loop`), `batch` is the legacy one-shot path.
+   */
+  driveMode?: "batch" | "session";
 }
 
 /** A selectable model (GET /api/models). `contextLimit` drives the context meter. */
@@ -101,6 +107,8 @@ export interface UpdateProjectInput {
   maxTurns?: number;
   /** Whether the keeper runs in a Docker sandbox; server re-registers on change (issue #12). */
   docker?: boolean;
+  /** Keeper drive mode (Paddock#111); server validates + re-registers on change. */
+  driveMode?: "batch" | "session";
 }
 
 /** A chat = one Claude Code session, surfaced by the server's session discovery. */

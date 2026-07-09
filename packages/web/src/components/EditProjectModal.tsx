@@ -40,6 +40,8 @@ export function EditProjectModal({
   const [permissionMode, setPermissionMode] = useState(project.permissionMode);
   const [maxTurns, setMaxTurns] = useState(String(project.maxTurns));
   const [docker, setDocker] = useState(project.docker);
+  // driveMode (Paddock#111): "" = inherit the box-wide global default.
+  const [driveMode, setDriveMode] = useState<string>(project.driveMode ?? "");
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -55,6 +57,7 @@ export function EditProjectModal({
       setPermissionMode(project.permissionMode);
       setMaxTurns(String(project.maxTurns));
       setDocker(project.docker);
+      setDriveMode(project.driveMode ?? "");
       setError(null);
     }
     const onKey = (e: KeyboardEvent) => {
@@ -100,6 +103,8 @@ export function EditProjectModal({
         permissionMode,
         maxTurns: Number(maxTurns),
         docker,
+        // "" clears the per-project override (inherit the global default).
+        driveMode: driveMode === "" ? undefined : (driveMode as "batch" | "session"),
       });
       onSaved(updated);
     } catch (err) {
@@ -240,6 +245,18 @@ export function EditProjectModal({
                 onChange={(e) => setDocker(e.target.checked)}
               />
               <span className="text-sm text-paddock-700 dark:text-paddock-200">Docker sandbox</span>
+            </label>
+            <label className="block">
+              <span className="field-label">Drive mode</span>
+              <select
+                className="input"
+                value={driveMode}
+                onChange={(e) => setDriveMode(e.target.value)}
+              >
+                <option value="">Global default</option>
+                <option value="batch">Batch (one-shot per turn)</option>
+                <option value="session">Session (cross-turn autonomy)</option>
+              </select>
             </label>
           </div>
         </div>

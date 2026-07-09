@@ -48,17 +48,25 @@
  * `target` alias so existing/early frontends keep working.
  */
 import type { WebSocket } from "@fastify/websocket";
-import type { SDKMessage } from "@herdctl/core";
+import type { SDKMessage, RuntimeSession, SessionWakeEntry } from "@herdctl/core";
 import { createSDKMessageHandler, type SDKMessage as ChatSDKMessage } from "@herdctl/chat";
 import type { HerdctlService } from "./herdctl.js";
 import {
   keeperAgentName,
+  keeperSlugFromAgent,
   SCRATCH_AGENT,
   SCRATCH_SLUG,
 } from "./herdctl.js";
 import type { ProjectStore } from "./projects.js";
 import type { SweepService } from "./sweep.js";
-import { isKnownModel, getContextLimit, KEEPER_DEFAULT_MODEL } from "./models.js";
+import type { PaddockConfig } from "./config.js";
+import {
+  isKnownModel,
+  getContextLimit,
+  KEEPER_DEFAULT_MODEL,
+  isKnownDriveMode,
+  type DriveMode,
+} from "./models.js";
 import { SessionHub, type TurnHandle, type ActiveInfo } from "./session-hub.js";
 import { wrapPreload } from "./preload.js";
 import { sendFileServerDef, SEND_FILE_SERVER_KEY } from "./send-file-mcp.js";
@@ -389,6 +397,8 @@ export function makeChatHandler(deps: {
   herdctl: HerdctlService;
   projects: ProjectStore;
   attachments: AttachmentStore;
+  /** Server config — carries the global keeper drive-mode default (Paddock#111). */
+  cfg: PaddockConfig;
   /** Optional: post-turn overview/changelog curation engine (issues #2/#6). */
   sweep?: SweepService;
 }) {
@@ -424,6 +434,68 @@ export function makeChatHandler(deps: {
       }
     }
   };
+
+  // Drive scheduler-fired session wakes onto the hub (Paddock#111 gap 3). When a
+  // keeper scheduled a `ScheduleWakeup` / `/loop`, herdctl reaps the idle session
+  // and later resumes it at fire time, handing us the live (managed) session with
+  // NO client watching. We stream it exactly like a human turn — same translator,
+  // same hub — so the autonomous work lands in the transcript, drives the sidebar
+  // streaming dot (via `hub.onActive`), and is replayable by a client that opens
+  // the chat later. We do NOT close the session: it's managed, so the reaper tears
+  // it down when it goes idle again (and re-captures any fresh wakeups).
+  deps.herdctl.onSessionWake(async (session: RuntimeSession, entry: SessionWakeEntry) => {
+    const slug = keeperSlugFromAgent(entry.agent) ?? SCRATCH_SLUG;
+    let resolvedSession: string | null = entry.sessionId ?? null;
+    const turn: TurnHandle = hub.startTurn(slug, null, entry.sessionId);
+    const routing = (): Routing => ({
+      projectSlug: slug,
+      target: slug,
+      sessionId: resolvedSession,
+      jobId: turn.jobId,
+    });
+    const translate = createSDKMessageHandler({
+      onText: (chunk) => {
+        if (chunk) turn.emit({ type: "chat:response", payload: { ...routing(), chunk } });
+      },
+      onBoundary: () => {
+        turn.emit({ type: "chat:message_boundary", payload: routing() });
+      },
+      onToolCall: (call) => {
+        turn.emit({
+          type: "chat:tool_call",
+          payload: {
+            ...routing(),
+            toolName: call.toolName,
+            inputSummary: call.inputSummary,
+            output: call.output,
+            isError: call.isError,
+            durationMs: call.durationMs,
+          },
+        });
+      },
+    });
+    try {
+      for await (const m of session.messages) {
+        if (m.session_id) {
+          resolvedSession = m.session_id;
+          turn.setSession(m.session_id);
+        }
+        await translate(m as unknown as ChatSDKMessage);
+        if (m.type === "result") break;
+      }
+      turn.emit({
+        type: "chat:complete",
+        payload: { ...routing(), sessionId: resolvedSession, success: true },
+      });
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      turn.emit({ type: "chat:complete", payload: { ...routing(), success: false, error } });
+    } finally {
+      turn.end();
+    }
+    // Post-wake curation sweep, same as a human turn (never for scratch).
+    if (slug !== SCRATCH_SLUG && deps.sweep) deps.sweep.enqueue(slug);
+  });
 
   return async function handle(socket: WebSocket): Promise<void> {
     const send = (m: ServerMessage) => {
@@ -541,6 +613,10 @@ export function makeChatHandler(deps: {
       };
       // The model the turn will run on; resolved below once we know the target.
       let effectiveModel: string = KEEPER_DEFAULT_MODEL;
+      // How this turn is driven (Paddock#111): the global default unless the
+      // project overrides it (resolved in the project branch below). Scratch
+      // chats have no project, so they always take the global default.
+      let driveMode: DriveMode = deps.cfg.keeperDriveMode;
       // The agent's working directory, so the send_file tool can resolve a real
       // `file_path` (and sandbox it). Resolved alongside the agent below.
       let sendFileWorkingDir: string | undefined;
@@ -607,6 +683,13 @@ export function makeChatHandler(deps: {
             requested && isKnownModel(requested) ? requested : project.model;
           await deps.herdctl.ensureKeeperModel(project, effectiveModel);
 
+          // Per-project driveMode override wins over the global default
+          // (Paddock#111). An absent/invalid value inherits the global.
+          driveMode =
+            project.driveMode && isKnownDriveMode(project.driveMode)
+              ? project.driveMode
+              : deps.cfg.keeperDriveMode;
+
           // Context preload (issue #1): only for a NEW chat, only when asked,
           // and only when the project actually has an OVERVIEW.md. Prepend it
           // as a clearly delimited block so the keeper starts primed.
@@ -630,7 +713,15 @@ export function makeChatHandler(deps: {
           saveAttachment: (bytes, name) => deps.attachments.save(bytes, name),
         });
 
-        const result = await deps.herdctl.chat(agentName, {
+        // Session mode drives a persistent, herdctl-managed openChatSession so
+        // cross-turn autonomy (ScheduleWakeup / `/loop`) survives the turn
+        // boundary; batch mode keeps the legacy one-shot trigger. Both stream
+        // through the identical onMessage/onJobCreated contract (Paddock#111).
+        const drive =
+          driveMode === "session"
+            ? deps.herdctl.chatSession.bind(deps.herdctl)
+            : deps.herdctl.chat.bind(deps.herdctl);
+        const result = await drive(agentName, {
           prompt,
           // omit -> agent-level fallback; explicit null -> new chat; id -> resume.
           resume: sessionId ?? null,

@@ -64,9 +64,35 @@ export const KEEPER_DEFAULT_DOCKER = false;
 /** Upper bound on a project's `max_turns` (guards the UI + PATCH validation). */
 export const MAX_TURNS_LIMIT = 1000;
 
+/**
+ * How a keeper chat turn is driven (Paddock#111):
+ *  - `batch`   — one-shot `FleetManager.trigger()` per turn (the legacy path);
+ *                the `claude` process exits at the turn boundary, so scheduled
+ *                wakeups / background tasks silently die.
+ *  - `session` — a persistent, herdctl-managed `openChatSession` per turn
+ *                (`manageLifecycle: true`); the session is reaped when idle and
+ *                its timer-class wakeups are re-triggered through the scheduler,
+ *                so cross-turn autonomy (`ScheduleWakeup`, `/loop`) actually
+ *                works. See herdctl#307 (reaper) and herdctl#303 (SDK bump).
+ */
+export const DRIVE_MODES = ["batch", "session"] as const;
+export type DriveMode = (typeof DRIVE_MODES)[number];
+
+/**
+ * Default keeper drive mode. `batch` for now (§Paddock#111): merging the session
+ * path changes nothing until a box opts in via `PADDOCK_KEEPER_DRIVE_MODE` or a
+ * per-project override. May flip to `session` in a future release.
+ */
+export const KEEPER_DEFAULT_DRIVE_MODE: DriveMode = "batch";
+
 /** Whether `m` is one of the offered keeper permission modes. */
 export function isKnownPermissionMode(m: string): m is PermissionMode {
   return (PERMISSION_MODES as readonly string[]).includes(m);
+}
+
+/** Whether `m` is a known keeper drive mode. */
+export function isKnownDriveMode(m: string): m is DriveMode {
+  return (DRIVE_MODES as readonly string[]).includes(m);
 }
 
 /** Whether `n` is a valid keeper `max_turns` (positive integer within bounds). */
