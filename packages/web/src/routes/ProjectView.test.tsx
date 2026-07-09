@@ -35,6 +35,7 @@ const apiFns = {
   renameProjectChat: vi.fn(),
   archiveProjectChat: vi.fn(),
   listProjectChats: vi.fn(),
+  chatUsage: vi.fn(),
   projectChatMessages: vi.fn(),
 };
 vi.mock("../lib/api", async () => {
@@ -52,6 +53,7 @@ vi.mock("../lib/api", async () => {
       renameProjectChat: (...a: unknown[]) => apiFns.renameProjectChat(...a),
       archiveProjectChat: (...a: unknown[]) => apiFns.archiveProjectChat(...a),
       listProjectChats: (...a: unknown[]) => apiFns.listProjectChats(...a),
+      chatUsage: (...a: unknown[]) => apiFns.chatUsage(...a),
       projectChatMessages: (...a: unknown[]) => apiFns.projectChatMessages(...a),
     },
   };
@@ -107,6 +109,7 @@ beforeEach(() => {
   apiFns.listProjectFiles.mockResolvedValue([]);
   apiFns.gitStatus.mockResolvedValue({ repo: false, files: [], clean: true } as GitProjectStatus);
   apiFns.listProjectChats.mockResolvedValue([]);
+  apiFns.chatUsage.mockResolvedValue({});
   apiFns.projectChatMessages.mockResolvedValue([]);
   upsert.mockReset();
   remove.mockReset();
@@ -130,6 +133,26 @@ describe("ProjectView: header + load", () => {
     apiFns.getProjectDetail.mockRejectedValue(new Error("project gone"));
     renderAt("/projects/p/chat");
     expect(await screen.findByText("project gone")).toBeInTheDocument();
+  });
+
+  // Issue #116: the chat list renders immediately from a usage-free payload, and
+  // the per-chat context ring is filled in afterwards from the separate bulk
+  // usage endpoint (keyed by session id).
+  it("fills in a chat's context ring from the bulk usage endpoint after load", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [makeChat({ sessionId: "s1", name: "Sized chat" })],
+      }),
+    );
+    apiFns.chatUsage.mockResolvedValue({
+      s1: { contextTokens: 250_000, contextLimit: 1_000_000 },
+    });
+    renderAt("/projects/p/chat");
+    // The chat lists as soon as the (usage-free) detail resolves...
+    expect(await screen.findAllByText("Sized chat")).not.toHaveLength(0);
+    // ...and the ring appears once chatUsage resolves: 250k/1M = 25% full.
+    expect(await screen.findByLabelText(/Context 25% full/)).toBeInTheDocument();
+    expect(apiFns.chatUsage).toHaveBeenCalledWith("p");
   });
 });
 

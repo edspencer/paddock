@@ -79,6 +79,20 @@ describe("integration: chat turn over WS (real CLI runtime, fake claude)", () =>
     ).json();
     expect(ctx.usage).toBeTruthy();
     expect(ctx.usage.contextTokens).toBeGreaterThan(0);
+
+    // Issue #116: usage is NO LONGER inlined into the chat-list payload (that
+    // per-session transcript parse is what made project switching slow) — the
+    // list is cheap and the ring data comes from the bulk usage endpoint keyed
+    // by session id.
+    expect(chats.find((c: { sessionId: string }) => c.sessionId === sessionId)).not.toHaveProperty(
+      "contextTokens",
+    );
+    const bulk = (
+      await t.app.inject({ method: "GET", url: "/api/projects/chat-proj/chats/usage" })
+    ).json();
+    expect(bulk.usage[sessionId]).toBeTruthy();
+    expect(bulk.usage[sessionId].contextTokens).toBeGreaterThan(0);
+    expect(bulk.usage[sessionId].contextLimit).toBeGreaterThan(0);
   });
 
   it("resume continues the SAME session (continuity is testable)", async () => {

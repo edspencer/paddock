@@ -88,6 +88,15 @@ export function ProjectView() {
 
   const [project, setProject] = useState<Project | null>(null);
   const [chats, setChats] = useState<Chat[]>([]);
+  // Per-chat context-window usage for the sidebar rings (issue #77), keyed by
+  // session id. Fetched separately from the chat list (issue #116) so the view
+  // renders immediately — the per-session transcript parse this needs is what
+  // made switching into a chat-heavy project slow. Kept in its own map (rather
+  // than merged into `chats`) so it survives cheap chat-list refreshes that no
+  // longer carry usage. A chat with no entry simply renders no ring yet.
+  const [usageBySession, setUsageBySession] = useState<
+    Record<string, { contextTokens: number; contextLimit: number }>
+  >({});
   // Live client-side filter for the chat list (issue #96). The whole list is
   // already in memory, so a case-insensitive substring match over name (and the
   // first-message preview, when present) needs no server round-trip. Derived
@@ -146,6 +155,14 @@ export function ProjectView() {
     setGitStatus(next && next.repo ? next : null);
   }, [slug]);
 
+  // Fetch the per-chat usage rings (issue #116) — a separate, non-blocking round
+  // trip so the view never waits on the per-session transcript parse. Safe to
+  // call freely; a failure just leaves the rings unfilled.
+  const loadUsage = useCallback(async () => {
+    const usage = await api.chatUsage(slug).catch(() => null);
+    if (usage) setUsageBySession(usage);
+  }, [slug]);
+
   const load = useCallback(async () => {
     setLoadErr(null);
     try {
@@ -159,11 +176,14 @@ export function ProjectView() {
       setLoadErr(e instanceof Error ? e.message : "Failed to load project");
     }
     void refreshGit();
-  }, [slug, refreshGit]);
+    // Rings fill in after the view has rendered (issue #116).
+    void loadUsage();
+  }, [slug, refreshGit, loadUsage]);
 
   useEffect(() => {
     setProject(null);
     setGitStatus(null);
+    setUsageBySession({});
     void load();
   }, [slug, load]);
 
@@ -202,7 +222,9 @@ export function ProjectView() {
     // A completed turn may have authored/changed files — refresh git status so
     // the Changes badge stays accurate without opening the panel.
     void refreshGit();
-  }, [slug, refreshGit]);
+    // A completed turn changes the chat's context fill — refresh its ring (#116).
+    void loadUsage();
+  }, [slug, refreshGit, loadUsage]);
 
   const loadHistory = useCallback(
     (sessionId: string) => api.projectChatMessages(slug, sessionId),
@@ -462,7 +484,10 @@ export function ProjectView() {
               className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent"
             />
           )}
-          <ContextRing tokens={c.contextTokens} limit={c.contextLimit} />
+          <ContextRing
+            tokens={usageBySession[c.sessionId]?.contextTokens ?? c.contextTokens}
+            limit={usageBySession[c.sessionId]?.contextLimit ?? c.contextLimit}
+          />
           <span className="truncate font-medium">{c.name}</span>
         </span>
         <span className="text-[11px] text-paddock-400">{relativeTime(c.updatedAt)}</span>
