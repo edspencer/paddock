@@ -9,10 +9,10 @@
  * constants — so changing the available models or a context limit is a one-file
  * edit here.
  *
- * Context limits (verified against the Models API): Opus 4.8 and Sonnet 4.6
- * both have a 1,000,000-token context window; Haiku 4.5 is 200,000. On the
- * Max/CLI runtime the keeper agents run Opus 4.8 at its full 1M window, so the
- * context meter must use 1M for it — otherwise a long chat reads >100%.
+ * Context limits (verified against the Models API): Fable 5, Opus 4.8 and
+ * Sonnet 5 all have a 1,000,000-token context window; Haiku 4.5 is 200,000. On
+ * the Max/CLI runtime the keeper agents run Opus 4.8 at its full 1M window, so
+ * the context meter must use 1M for it — otherwise a long chat reads >100%.
  */
 
 /** A single selectable model: its id, a human label, and its context window. */
@@ -32,7 +32,8 @@ export interface ModelInfo {
  */
 export const MODELS: ModelInfo[] = [
   { id: "claude-opus-4-8", label: "Opus 4.8", contextLimit: 1_000_000 },
-  { id: "claude-sonnet-4-6", label: "Sonnet 4.6", contextLimit: 1_000_000 },
+  { id: "claude-fable-5", label: "Fable 5", contextLimit: 1_000_000 },
+  { id: "claude-sonnet-5", label: "Sonnet 5", contextLimit: 1_000_000 },
   { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5", contextLimit: 200_000 },
 ];
 

@@ -66,7 +66,8 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
     expect(body.sweeperDefault).toBe("claude-haiku-4-5-20251001");
     const ids = body.models.map((m: { id: string }) => m.id);
     expect(ids).toContain("claude-opus-4-8");
-    expect(ids).toContain("claude-sonnet-4-6");
+    expect(ids).toContain("claude-fable-5");
+    expect(ids).toContain("claude-sonnet-5");
     // Every model carries a positive context limit (drives the meter).
     for (const m of body.models) expect(m.contextLimit).toBeGreaterThan(0);
   });

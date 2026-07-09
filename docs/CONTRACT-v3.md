@@ -5,8 +5,12 @@ match the shapes below exactly (they are the wire contract between packages).
 
 Model IDs used throughout:
 - Opus (keeper default): `claude-opus-4-8`
-- Sonnet: `claude-sonnet-4-6`
+- Fable: `claude-fable-5`
+- Sonnet: `claude-sonnet-5`
 - Haiku (sweeper default): `claude-haiku-4-5-20251001`
+
+(The picker list is maintained in `packages/server/src/models.ts`; see there for the
+current entries and context limits, which supersede the illustrative block below.)
 
 Context limit: 200000 tokens for all three (Opus 4.8 has a 1M-context beta variant,
 but the keeper runs the standard 200k context via Max/CLI — keep 200000 unless told
@@ -26,8 +30,9 @@ otherwise).
 ```ts
 export interface ModelInfo { id: string; label: string; contextLimit: number; }
 export const MODELS: ModelInfo[] = [
-  { id: "claude-opus-4-8", label: "Opus 4.8", contextLimit: 200000 },
-  { id: "claude-sonnet-4-6", label: "Sonnet 4.6", contextLimit: 200000 },
+  { id: "claude-opus-4-8", label: "Opus 4.8", contextLimit: 1_000_000 },
+  { id: "claude-fable-5", label: "Fable 5", contextLimit: 1_000_000 },
+  { id: "claude-sonnet-5", label: "Sonnet 5", contextLimit: 1_000_000 },
   { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5", contextLimit: 200000 },
 ];
 export const KEEPER_DEFAULT_MODEL = "claude-opus-4-8";

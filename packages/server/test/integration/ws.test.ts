@@ -251,7 +251,7 @@ describe("integration: WS transport edge cases (real app, fake claude)", () => {
         projectSlug: "ws-proj",
         sessionId: null,
         message: "model override turn",
-        model: "claude-sonnet-4-6",
+        model: "claude-sonnet-5",
       },
     });
     const complete = await ws.waitFor(isComplete("ws-proj"), { from: mark });
@@ -259,7 +259,7 @@ describe("integration: WS transport edge cases (real app, fake claude)", () => {
     // ensureKeeperModel was called with the requested (valid) model.
     expect(spy).toHaveBeenCalled();
     const lastCall = spy.mock.calls.at(-1);
-    expect(lastCall?.[1]).toBe("claude-sonnet-4-6");
+    expect(lastCall?.[1]).toBe("claude-sonnet-5");
     spy.mockRestore();
   });
 
@@ -291,11 +291,11 @@ describe("integration: WS transport edge cases (real app, fake claude)", () => {
         projectSlug: "scratch",
         sessionId: null,
         message: "scratch model override",
-        model: "claude-sonnet-4-6",
+        model: "claude-sonnet-5",
       },
     });
     await ws.waitFor(isComplete("scratch"), { from: mark });
-    expect(spy).toHaveBeenCalledWith("claude-sonnet-4-6");
+    expect(spy).toHaveBeenCalledWith("claude-sonnet-5");
     spy.mockRestore();
   });
 
