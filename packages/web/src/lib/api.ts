@@ -237,6 +237,15 @@ export const api = {
     return `${BASE}/api/projects/${encodeURIComponent(slug)}/files/${encodeURIComponent(name)}?raw=1`;
   },
 
+  /**
+   * The URL that streams the RAW BYTES of a file the agent shared via
+   * `mcp__paddock__send_file` when it referenced a real `file_path` (issue #112).
+   * `path` is relative to the agent's working directory and sandboxed server-side.
+   */
+  chatFileRawUrl(slug: string, path: string): string {
+    return `${BASE}/api/chat-files/${encodeURIComponent(slug)}?path=${encodeURIComponent(path)}`;
+  },
+
   /** Pin a file as a sibling tab. Returns the updated project (with pinned[]). */
   async pinFile(slug: string, file: string): Promise<Project> {
     const { project } = await req<{ project: Project }>(

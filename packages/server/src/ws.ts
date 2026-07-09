@@ -259,26 +259,6 @@ export interface ChatToolCallMessage {
   };
 }
 
-/**
- * A file the agent chose to render inline via the `mcp__paddock__send_file`
- * tool (issue #112). Emitted mid-turn from the tool handler (which runs
- * in-process — see send-file-mcp.ts), so the browser can render it richly with
- * the same Markdown / Mermaid / image componentry as the Files tab. Live-only
- * for now: it is not persisted to the transcript, so it does not survive a
- * reload (Phase 2).
- */
-export interface ChatFileMessage {
-  type: "chat:file";
-  payload: Routing & {
-    filename: string;
-    kind: "markdown" | "mermaid" | "code" | "text" | "html" | "image";
-    language?: string;
-    content?: string;
-    dataUrl?: string;
-    message?: string;
-  };
-}
-
 export interface ChatMessageBoundaryMessage {
   type: "chat:message_boundary";
   payload: Routing;
@@ -349,7 +329,6 @@ export interface PongMessage {
 export type ServerMessage =
   | ChatResponseMessage
   | ChatToolCallMessage
-  | ChatFileMessage
   | ChatMessageBoundaryMessage
   | ChatCompleteMessage
   | ChatErrorMessage
@@ -639,15 +618,11 @@ export function makeChatHandler(deps: {
           }
         }
 
-        // Inject the Paddock send_file MCP tool for this turn. Its handler runs
-        // in-process, so it emits a `chat:file` frame straight through the hub
-        // (routed to whichever sockets are attached, sequenced for replay).
-        const sendFile = sendFileServerDef({
-          workingDirectory: sendFileWorkingDir,
-          onFile: (file) => {
-            turn.emit({ type: "chat:file", payload: { ...routing(), ...file } });
-          },
-        });
+        // Inject the Paddock send_file MCP tool for this turn. The tool returns a
+        // JSON envelope as its result `output`; the web renders it off the tool
+        // call itself (live + on reload), so no bespoke WS frame is needed. The
+        // working dir lets the tool resolve + sandbox a real `file_path`.
+        const sendFile = sendFileServerDef({ workingDirectory: sendFileWorkingDir });
 
         const result = await deps.herdctl.chat(agentName, {
           prompt,

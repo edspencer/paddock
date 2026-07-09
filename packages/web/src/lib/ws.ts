@@ -18,9 +18,7 @@
 //   chat:complete         { ..., success, error?, model?, usage? }
 //   chat:error            { projectSlug, error }
 //   pong
-import type { ChatCompleteUsage, SentFile, ServerWsMessage } from "./types";
-
-export type { SentFile } from "./types";
+import type { ChatCompleteUsage, ServerWsMessage } from "./types";
 
 export interface ToolCall {
   toolName: string;
@@ -42,8 +40,6 @@ export interface ToolCall {
 export interface ChatHandlers {
   onResponse?: (chunk: string, meta: { sessionId: string | null; jobId: string | null }) => void;
   onToolCall?: (tc: ToolCall, meta: { sessionId: string | null; jobId: string | null }) => void;
-  /** The agent rendered a file inline via `mcp__paddock__send_file` (issue #112). */
-  onFile?: (file: SentFile, meta: { sessionId: string | null; jobId: string | null }) => void;
   onMessageBoundary?: (meta: { sessionId: string | null; jobId: string | null }) => void;
   onComplete?: (meta: {
     sessionId: string | null;
@@ -525,12 +521,6 @@ class ChatClient {
           meta,
         );
         break;
-      case "chat:file": {
-        const { projectSlug: _p, target: _t, sessionId: _s, jobId: _j, seq: _q, ...file } =
-          msg.payload;
-        sub.handlers.onFile?.(file, meta);
-        break;
-      }
       case "chat:message_boundary":
         sub.handlers.onMessageBoundary?.(meta);
         break;

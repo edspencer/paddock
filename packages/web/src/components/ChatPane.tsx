@@ -32,6 +32,7 @@ import type {
   HistoryMessage,
   ModelInfo,
   SentFile,
+  SentFileEnvelope,
   SlashCommand,
 } from "../lib/types";
 import { SentFileBlock } from "./SentFileBlock";
@@ -51,6 +52,40 @@ const SUBAGENT_TOOLS = new Set(["Task", "Agent"]);
 
 /** The send_file MCP tool; its payload renders as a rich `file` turn (issue #112). */
 const SEND_FILE_TOOL_NAME = "mcp__paddock__send_file";
+
+/**
+ * Resolve a `mcp__paddock__send_file` tool call into a renderable SentFile by
+ * parsing the JSON envelope the tool returns as its `output` (issue #112). This
+ * is the single path for both live (`onToolCall`) and reload (`historyToTurn`):
+ * the tool output is preserved verbatim on the live event AND by herdctl's
+ * history parser, so a refresh renders identically. For a real-file send the
+ * envelope carries only the path; we point `rawUrl` at Paddock's sandboxed
+ * byte-serving endpoint (bytes are never in the transcript). Returns null if the
+ * tool isn't ours or the output isn't a valid envelope (caller falls back to the
+ * generic tool widget).
+ */
+function sentFileFromToolCall(
+  tc: ToolCall,
+  ctx: { slug: string },
+): SentFile | null {
+  if (tc.toolName !== SEND_FILE_TOOL_NAME || !tc.output) return null;
+  let env: SentFileEnvelope;
+  try {
+    env = JSON.parse(tc.output) as SentFileEnvelope;
+  } catch {
+    return null;
+  }
+  if (!env || env.paddockSendFile !== 1 || typeof env.filename !== "string") return null;
+  return {
+    filename: env.filename,
+    kind: env.kind,
+    language: env.language,
+    message: env.message,
+    source: env.source,
+    content: env.source === "inline" ? env.content : undefined,
+    rawUrl: env.source === "file" && env.path ? api.chatFileRawUrl(ctx.slug, env.path) : undefined,
+  };
+}
 
 /**
  * Fetches a sub-agent's nested steps by its parent tool_use id (issue #37).
@@ -338,7 +373,7 @@ export function ChatPane({
       void loadHistory(initialSessionId)
         .then((msgs) => {
           if (cancelled) return;
-          setTurns(msgs.map(historyToTurn));
+          setTurns(msgs.map((m) => historyToTurn(m, { slug: projectSlug })));
         })
         .catch(() => {
           if (!cancelled) setError("Could not load this chat's history.");
@@ -466,18 +501,16 @@ export function ChatPane({
         if (!framesBelong(meta)) return;
         if (meta.jobId) jobRef.current = meta.jobId;
         if (meta.sessionId) adoptSession(meta.sessionId);
-        // Seal the streaming text bubble before appending the tool row, so its
-        // caret clears the instant the tool call begins. Otherwise the bubble
-        // is no longer the trailing turn and nothing can ever clear its caret.
-        setTurns((prev) => [...sealStreaming(prev), { kind: "tool", id: nextId(), tool: tc }]);
-      },
-      onFile: (file, meta) => {
-        if (!framesBelong(meta)) return;
-        if (meta.jobId) jobRef.current = meta.jobId;
-        if (meta.sessionId) adoptSession(meta.sessionId);
-        // Same sealing as a tool call: the agent paused its text to render a
-        // file, so close the streaming bubble before appending the file row.
-        setTurns((prev) => [...sealStreaming(prev), { kind: "file", id: nextId(), file }]);
+        // Seal the streaming text bubble before appending the row, so its caret
+        // clears the instant the tool call begins. Otherwise the bubble is no
+        // longer the trailing turn and nothing can ever clear its caret.
+        // A send_file call renders as a rich `file` turn (parsed from its output
+        // envelope); everything else is the generic tool widget.
+        const file = sentFileFromToolCall(tc, { slug: projectSlug });
+        const turn: Turn = file
+          ? { kind: "file", id: nextId(), file }
+          : { kind: "tool", id: nextId(), tool: tc };
+        setTurns((prev) => [...sealStreaming(prev), turn]);
       },
       onMessageBoundary: (meta) => {
         if (!framesBelong(meta)) return;
@@ -541,7 +574,7 @@ export function ChatPane({
         const sid = sessionRef.current;
         if (!sid || !loadHistory) return;
         void loadHistory(sid)
-          .then((msgs) => setTurns(msgs.map(historyToTurn)))
+          .then((msgs) => setTurns(msgs.map((m) => historyToTurn(m, { slug: projectSlug }))))
           .catch(() => {
             /* keep whatever we already have */
           });
@@ -1189,10 +1222,6 @@ function TurnView({ turn }: { turn: Turn }) {
     return <SentFileBlock file={turn.file} />;
   }
   if (turn.kind === "tool") {
-    // The send_file tool renders its payload richly as a `file` turn (emitted
-    // mid-tool-call, so it lands just before this row). Suppress the generic
-    // tool widget for it to avoid a duplicate, low-value collapsed entry.
-    if (turn.tool.toolName === SEND_FILE_TOOL_NAME) return null;
     return <ToolBlock tool={turn.tool} />;
   }
   // assistant
@@ -1330,7 +1359,9 @@ function NestedSteps({ toolUseId }: { toolUseId: string }) {
     };
   }, [fetchSubagent, toolUseId]);
 
-  const turns = useMemo(() => (msgs ?? []).map(historyToTurn), [msgs]);
+  // Sub-agent transcripts never contain send_file calls (that tool isn't given
+  // to Task/Agent sub-agents), so an empty slug here is inert.
+  const turns = useMemo(() => (msgs ?? []).map((m) => historyToTurn(m, { slug: "" })), [msgs]);
 
   return (
     <div className="border-t border-paddock-200/70 bg-paddock-50/60 px-3 py-3 dark:border-paddock-800 dark:bg-paddock-950/40">
@@ -1386,9 +1417,15 @@ function sealStreaming(prev: Turn[]): Turn[] {
   );
 }
 
-/** Convert a hydrated history message into a rendered turn. */
-function historyToTurn(m: HistoryMessage): Turn {
+/**
+ * Convert a hydrated history message into a rendered turn. `ctx.slug` lets a
+ * `send_file` tool call rebuild its rich `file` turn (parsing the same output
+ * envelope as the live path), so a reload renders identically (issue #112).
+ */
+function historyToTurn(m: HistoryMessage, ctx: { slug: string }): Turn {
   if (m.role === "tool" && m.toolCall) {
+    const file = sentFileFromToolCall(m.toolCall, ctx);
+    if (file) return { kind: "file", id: nextId(), file };
     return { kind: "tool", id: nextId(), tool: m.toolCall };
   }
   if (m.role === "assistant") {

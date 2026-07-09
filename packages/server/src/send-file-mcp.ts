@@ -5,65 +5,64 @@
  * herdctl's `injectedMcpServers` mechanism. The keeper runs as a `claude -p`
  * subprocess (CLI runtime), which can't reach an in-process SDK MCP server
  * directly — so herdctl's CLI runtime stands up a localhost HTTP MCP bridge for
- * each injected server and auto-allowlists its `mcp__<name>__*` tools. This
- * handler therefore runs IN the Paddock Node process, capturing the current
- * chat turn via closure (`context.onFile`) so it can push a `chat:file` frame
- * straight into the live WS stream.
+ * each injected server and auto-allowlists its `mcp__<name>__*` tools.
+ *
+ * ── How the rendered file reaches (and persists in) the chat ────────────────
+ * The tool returns a small JSON ENVELOPE as its result `output`. That output is
+ * the one representation that survives everywhere:
+ *   - live: `@herdctl/chat`'s translator forwards it verbatim on the
+ *     `chat:tool_call` event;
+ *   - reload: `@herdctl/core`'s history parser preserves tool `output` verbatim
+ *     (it only summarizes tool *input*).
+ * So the web renders from the tool call itself — no separate WS event, and a
+ * refresh shows exactly what was there live. See ChatPane's `sentFileFromToolCall`.
  *
  * Two ways to send a file:
- *   - Inline / virtual: pass `content` + `filename` (a real-looking but possibly
- *     fictional name, MDX ```filename-chrome style). Nothing needs to exist on
- *     disk.
- *   - Real file: pass `file_path` (relative to the agent's working directory, or
- *     absolute within it). Read with a symlink-escape guard, mirroring herdctl's
- *     own file-sender.
+ *   - Inline / virtual: `content` + `filename` (a real-looking but possibly
+ *     fictional name). The content rides IN the envelope, so it stays in the
+ *     transcript and in the agent's context (the agent authored it and can
+ *     revise it on a later turn). Nothing needs to exist on disk.
+ *   - Real file: `file_path` (relative to the agent's working directory). Only
+ *     the PATH goes in the envelope — never the bytes — so the transcript stays
+ *     lean and Paddock loads the bytes on demand (sandboxed) when rendering.
  *
  * The optional `kind` selects the renderer; when omitted it's inferred from the
- * filename extension. This is the injected-server half of issue #112; the web
- * side renders the emitted `chat:file` frame with the existing Markdown / Mermaid
- * / image componentry.
+ * filename extension.
  */
-import { readFile, realpath } from "node:fs/promises";
 import { basename, extname, relative, resolve } from "node:path";
+import { realpath } from "node:fs/promises";
 import type { InjectedMcpServerDef, McpToolCallResult } from "@herdctl/core";
 
 /** The renderer the web side should use for a sent file. */
 export type SentFileKind = "markdown" | "mermaid" | "code" | "text" | "html" | "image";
 
-/** The payload handed to the WS layer (and forwarded to the browser). */
-export interface SentFile {
+/**
+ * The JSON envelope returned as the tool's result `output`. The web parses this
+ * off the tool call (live + on reload). `paddockSendFile` is a version/discriminator
+ * so the client can be sure a tool output is one of ours before parsing.
+ */
+export interface SentFileEnvelope {
+  paddockSendFile: 1;
   filename: string;
   kind: SentFileKind;
-  /** Language hint for the `code` kind (drives the filename-chrome label). */
   language?: string;
-  /** UTF-8 text for text-ish kinds (markdown/mermaid/code/text/html). */
+  /** "inline" carries `content`; "file" carries `path` and Paddock loads bytes. */
+  source: "inline" | "file";
   content?: string;
-  /** `data:` URL for the `image` kind (binary files are base64-inlined). */
-  dataUrl?: string;
-  /** Optional note the agent attached to the file. */
+  path?: string;
   message?: string;
 }
 
-/** Per-turn context: where to resolve real files, and where to route the result. */
+/** Per-turn context: where to resolve + sandbox a real `file_path`. */
 export interface SendFileContext {
   /** The agent's working directory — resolves + sandboxes `file_path`. */
   workingDirectory?: string;
-  /** Sink for a produced file (implemented by the WS layer as a `turn.emit`). */
-  onFile: (file: SentFile) => void;
 }
 
 const MARKDOWN_EXT = new Set([".md", ".mdx", ".markdown"]);
 const MERMAID_EXT = new Set([".mmd", ".mermaid"]);
 const HTML_EXT = new Set([".html", ".htm"]);
-const IMAGE_MIME: Record<string, string> = {
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".gif": "image/gif",
-  ".webp": "image/webp",
-  ".avif": "image/avif",
-  ".svg": "image/svg+xml",
-};
+const IMAGE_EXT = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".svg"]);
 /** Extension -> language label for the code-block filename chrome. */
 const LANGUAGE_BY_EXT: Record<string, string> = {
   ".ts": "typescript",
@@ -103,7 +102,7 @@ function inferKind(filename: string): SentFileKind {
   if (MARKDOWN_EXT.has(ext)) return "markdown";
   if (MERMAID_EXT.has(ext)) return "mermaid";
   if (HTML_EXT.has(ext)) return "html";
-  if (ext in IMAGE_MIME) return "image";
+  if (IMAGE_EXT.has(ext)) return "image";
   if (ext in LANGUAGE_BY_EXT) return "code";
   return "text";
 }
@@ -112,8 +111,8 @@ function inferLanguage(filename: string): string | undefined {
   return LANGUAGE_BY_EXT[extname(filename).toLowerCase()];
 }
 
-function ok(text: string): McpToolCallResult {
-  return { content: [{ type: "text", text }] };
+function ok(envelope: SentFileEnvelope): McpToolCallResult {
+  return { content: [{ type: "text", text: JSON.stringify(envelope) }] };
 }
 
 function fail(text: string): McpToolCallResult {
@@ -183,54 +182,53 @@ function createHandler(context: SendFileContext) {
         return fail("Error: provide either `content` (inline) or `file_path` (a real file).");
       }
 
-      let filename: string;
-      let kind: SentFileKind;
-      let content: string | undefined;
-      let dataUrl: string | undefined;
-
       if (rawContent !== undefined) {
-        // Inline / virtual file.
-        filename = filenameArg ?? "snippet.txt";
-        kind = kindArg ?? inferKind(filename);
+        // Inline / virtual file — content rides in the envelope.
+        const filename = filenameArg ?? "snippet.txt";
+        const kind = kindArg ?? inferKind(filename);
         if (kind === "image") {
           return fail("Error: inline `content` cannot be an image; use `file_path` for images.");
         }
-        content = rawContent;
-      } else {
-        // Real file — resolve + sandbox to the working directory (symlink-safe).
-        const wd = context.workingDirectory;
-        if (!wd) {
-          return fail("Error: no working directory available to resolve `file_path`.");
-        }
-        const resolved = resolve(wd, filePath as string);
-        let realPath: string;
-        try {
-          realPath = await realpath(resolved);
-        } catch {
-          return fail(`Error: file not found: ${filePath}`);
-        }
-        const realWd = await realpath(wd);
-        const rel = relative(realWd, realPath);
-        if (rel.startsWith("..") || rel.startsWith("/")) {
-          return fail(`Error: file path escapes working directory: ${filePath}`);
-        }
-        filename = filenameArg ?? basename(resolved);
-        kind = kindArg ?? inferKind(filename);
-        if (kind === "image") {
-          const ext = extname(filename).toLowerCase();
-          const mime = IMAGE_MIME[ext] ?? "application/octet-stream";
-          const buf = await readFile(realPath);
-          dataUrl = `data:${mime};base64,${buf.toString("base64")}`;
-        } else {
-          content = await readFile(realPath, "utf8");
-        }
+        return ok({
+          paddockSendFile: 1,
+          filename,
+          kind,
+          language: kind === "code" ? (languageArg ?? inferLanguage(filename)) : undefined,
+          source: "inline",
+          content: rawContent,
+          message,
+        });
       }
 
-      const language = kind === "code" ? (languageArg ?? inferLanguage(filename)) : undefined;
-
-      context.onFile({ filename, kind, language, content, dataUrl, message });
-
-      return ok(`Rendered "${filename}" in the chat (kind: ${kind}).`);
+      // Real file — resolve + sandbox to the working directory (symlink-safe).
+      // Only the PATH is recorded; the bytes are loaded later by Paddock.
+      const wd = context.workingDirectory;
+      if (!wd) {
+        return fail("Error: no working directory available to resolve `file_path`.");
+      }
+      const resolved = resolve(wd, filePath as string);
+      let realPath: string;
+      try {
+        realPath = await realpath(resolved);
+      } catch {
+        return fail(`Error: file not found: ${filePath}`);
+      }
+      const realWd = await realpath(wd);
+      const rel = relative(realWd, realPath);
+      if (rel.startsWith("..") || rel.startsWith("/")) {
+        return fail(`Error: file path escapes working directory: ${filePath}`);
+      }
+      const filename = filenameArg ?? basename(resolved);
+      const kind = kindArg ?? inferKind(filename);
+      return ok({
+        paddockSendFile: 1,
+        filename,
+        kind,
+        language: kind === "code" ? (languageArg ?? inferLanguage(filename)) : undefined,
+        source: "file",
+        path: rel,
+        message,
+      });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       return fail(`Error sending file: ${msg}`);
@@ -240,8 +238,8 @@ function createHandler(context: SendFileContext) {
 
 /**
  * Build the injected MCP server definition for the send-file tool, bound to a
- * per-turn context. Pass the returned record value under a stable server key
- * (`paddock`) so the tool surfaces to the agent as `mcp__paddock__send_file`.
+ * per-turn context. Pass the returned value under a stable server key (`paddock`)
+ * so the tool surfaces to the agent as `mcp__paddock__send_file`.
  */
 export function sendFileServerDef(context: SendFileContext): InjectedMcpServerDef {
   return {

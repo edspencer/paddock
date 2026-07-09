@@ -23,7 +23,9 @@
  *   POST /api/projects/:slug/chats     start-a-chat metadata (see TODO)
  */
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { ProjectError, type ProjectStore, type CreateProjectInput, type UpdateProjectInput } from "./projects.js";
+import { ProjectError, contentTypeFor, type ProjectStore, type CreateProjectInput, type UpdateProjectInput } from "./projects.js";
+import { promises as fsp } from "node:fs";
+import { relative as pathRelative, resolve as pathResolve } from "node:path";
 import type { HerdctlService } from "./herdctl.js";
 import { SCRATCH_SLUG, SCRATCH_AGENT, keeperAgentName } from "./herdctl.js";
 import type { GitService } from "./git.js";
@@ -401,6 +403,47 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
             .send(bytes);
         }
         return await projects.readFileWithKind(req.params.slug, name);
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  // Serve the RAW BYTES of a file the agent shared via `mcp__paddock__send_file`
+  // when it referenced a real `file_path` (issue #112). The send tool records
+  // only the path (never the bytes) in the transcript, so both the live render
+  // and a post-reload render load the bytes here, on demand. `path` is relative
+  // to the agent's working directory and sandboxed against it (realpath
+  // containment), so it can't escape to read arbitrary files. Locked down with
+  // the same nosniff + sandbox CSP as the project file raw endpoint.
+  app.get<{ Params: { slug: string }; Querystring: { path?: string } }>(
+    "/api/chat-files/:slug",
+    async (req, reply) => {
+      try {
+        const rel = req.query.path ?? "";
+        if (!rel) return reply.code(400).send({ error: "missing path" });
+        const workingDir = await projectDirForSlug(req.params.slug);
+        const realWd = await fsp.realpath(workingDir);
+        const target = pathResolve(realWd, rel);
+        let realTarget: string;
+        try {
+          realTarget = await fsp.realpath(target);
+        } catch {
+          return reply.code(404).send({ error: "not_found" });
+        }
+        const within = pathRelative(realWd, realTarget);
+        if (within.startsWith("..") || within.startsWith("/")) {
+          return reply.code(403).send({ error: "path escapes working directory" });
+        }
+        const bytes = await fsp.readFile(realTarget);
+        const mime = contentTypeFor(rel);
+        return reply
+          .header("content-type", mime === "application/octet-stream" ? "text/plain; charset=utf-8" : mime)
+          .header("content-disposition", "inline")
+          .header("x-content-type-options", "nosniff")
+          .header("content-security-policy", "sandbox; default-src 'none'")
+          .header("cache-control", "private, max-age=60")
+          .send(bytes);
       } catch (err) {
         return sendProjectError(reply, err);
       }
