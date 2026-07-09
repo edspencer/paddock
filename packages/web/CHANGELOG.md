@@ -1,5 +1,33 @@
 # @paddock/web
 
+## 0.16.0
+
+### Patch Changes
+
+- [#119](https://github.com/edspencer/paddock/pull/119) [`d9c0f2e`](https://github.com/edspencer/paddock/commit/d9c0f2e23a9c2bf0372a3fd4227a1abdf8d4364d) Thanks [@edspencer](https://github.com/edspencer)! - perf: don't block the project view on per-chat context-usage rings (#116)
+
+  Switching into a project scaled with its chat count (2–3s on chat-heavy
+  projects) because `GET /api/projects/:slug` computed a context-usage ring for
+  every chat, and each ring streams+parses that chat's entire transcript. The
+  whole ProjectView waited on this.
+
+  The chat list and project detail now come back usage-free (from cached
+  name/preview/mtime), so the view renders immediately. A new
+  `GET /api/projects/:slug/chats/usage` endpoint returns the per-chat usage map,
+  which the client fetches separately and merges into the sidebar rings after the
+  view has rendered (and again after a turn completes). Behavior is otherwise
+  unchanged — the rings still show the same fill.
+
+- [#117](https://github.com/edspencer/paddock/pull/117) [`c63d089`](https://github.com/edspencer/paddock/commit/c63d08998d74c8fb497d1fcdba2b3fb4704cd4bd) Thanks [@edspencer](https://github.com/edspencer)! - Chat list: merge the streaming dot into a spinning context ring and reflow rows.
+
+  The separate pulsing "response in-flight" dot is gone — the context ring now
+  doubles as the activity indicator: it spins while a chat is streaming (keeping
+  its context-fill arc, or showing an indeterminate spinner arc for a brand-new
+  chat with no usage yet) and reverts to the static gauge when idle. Each row is
+  reflowed so the title leads and the indicator floats to the far right of row 1,
+  while the four hover actions (fork / rename / archive / delete) drop to the
+  second row alongside the relative time instead of overlaying the title.
+
 ## 0.15.0
 
 ### Minor Changes
