@@ -110,11 +110,14 @@ export function DictationButton({ onText, disabled = false }: DictationButtonPro
           recording
             ? "bg-rose-100 text-rose-600 dark:bg-rose-950/60 dark:text-rose-400"
             : transcribing
-              ? // Transcribing: bright accent (spinner reads clearly); clickable to cancel.
-                "cursor-pointer text-accent hover:bg-rose-100 hover:text-rose-600 dark:hover:bg-rose-950/60 dark:hover:text-rose-400"
+              ? // Transcribing: bright accent (spinner reads clearly); clickable to
+                // cancel. Hover tint is can-hover-gated: on touch, the tap that
+                // stopped the recording leaves a sticky :hover which would tint
+                // this rose and make it look like it's still recording.
+                "cursor-pointer text-accent can-hover:hover:bg-rose-100 can-hover:hover:text-rose-600 dark:can-hover:hover:bg-rose-950/60 dark:can-hover:hover:text-rose-400"
               : errored
                 ? "bg-rose-100 text-rose-600 dark:bg-rose-950/60 dark:text-rose-400"
-                : "text-paddock-500 hover:bg-paddock-100 hover:text-paddock-700 dark:text-paddock-400 dark:hover:bg-paddock-800 dark:hover:text-paddock-200",
+                : "text-paddock-500 can-hover:hover:bg-paddock-100 can-hover:hover:text-paddock-700 dark:text-paddock-400 dark:can-hover:hover:bg-paddock-800 dark:can-hover:hover:text-paddock-200",
           disabled && !recording && !transcribing && "cursor-not-allowed opacity-60",
         ]
           .filter(Boolean)
@@ -122,15 +125,19 @@ export function DictationButton({ onText, disabled = false }: DictationButtonPro
       >
         {transcribing ? (
           // Spinner by default; on hover/focus it becomes a stop icon to signal
-          // "click to cancel" (on touch, tapping the spinner cancels too).
+          // "click to cancel". The hover swap is can-hover-gated: iOS Safari
+          // keeps a sticky :hover on the button after the tap that stopped the
+          // recording, which would replace the spinner with a stop icon and hide
+          // that transcription is in progress. On touch the spinner stays (and
+          // tapping it still cancels).
           <>
-            <span className="inline-flex group-hover:hidden group-focus-visible:hidden">
+            <span className="inline-flex can-hover:group-hover:hidden group-focus-visible:hidden">
               <Spinner />
             </span>
             <StopIcon
               width={15}
               height={15}
-              className="hidden group-hover:block group-focus-visible:block"
+              className="hidden can-hover:group-hover:block group-focus-visible:block"
             />
           </>
         ) : recording ? (
