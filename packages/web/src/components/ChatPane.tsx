@@ -58,16 +58,12 @@ const SEND_FILE_TOOL_NAME = "mcp__paddock__send_file";
  * parsing the JSON envelope the tool returns as its `output` (issue #112). This
  * is the single path for both live (`onToolCall`) and reload (`historyToTurn`):
  * the tool output is preserved verbatim on the live event AND by herdctl's
- * history parser, so a refresh renders identically. For a real-file send the
- * envelope carries only the path; we point `rawUrl` at Paddock's sandboxed
- * byte-serving endpoint (bytes are never in the transcript). Returns null if the
- * tool isn't ours or the output isn't a valid envelope (caller falls back to the
- * generic tool widget).
+ * history parser, so a refresh renders identically. A real-file send carries an
+ * opaque `attachmentId`; we point `rawUrl` at Paddock's attachment endpoint.
+ * Returns null if the tool isn't ours or the output isn't a valid envelope
+ * (caller falls back to the generic tool widget).
  */
-function sentFileFromToolCall(
-  tc: ToolCall,
-  ctx: { slug: string },
-): SentFile | null {
+function sentFileFromToolCall(tc: ToolCall): SentFile | null {
   if (tc.toolName !== SEND_FILE_TOOL_NAME || !tc.output) return null;
   let env: SentFileEnvelope;
   try {
@@ -83,7 +79,10 @@ function sentFileFromToolCall(
     message: env.message,
     source: env.source,
     content: env.source === "inline" ? env.content : undefined,
-    rawUrl: env.source === "file" && env.path ? api.chatFileRawUrl(ctx.slug, env.path) : undefined,
+    rawUrl:
+      env.source === "file" && env.attachmentId
+        ? api.chatFileRawUrl(env.attachmentId)
+        : undefined,
   };
 }
 
@@ -373,7 +372,7 @@ export function ChatPane({
       void loadHistory(initialSessionId)
         .then((msgs) => {
           if (cancelled) return;
-          setTurns(msgs.map((m) => historyToTurn(m, { slug: projectSlug })));
+          setTurns(msgs.map(historyToTurn));
         })
         .catch(() => {
           if (!cancelled) setError("Could not load this chat's history.");
@@ -506,7 +505,7 @@ export function ChatPane({
         // longer the trailing turn and nothing can ever clear its caret.
         // A send_file call renders as a rich `file` turn (parsed from its output
         // envelope); everything else is the generic tool widget.
-        const file = sentFileFromToolCall(tc, { slug: projectSlug });
+        const file = sentFileFromToolCall(tc);
         const turn: Turn = file
           ? { kind: "file", id: nextId(), file }
           : { kind: "tool", id: nextId(), tool: tc };
@@ -574,7 +573,7 @@ export function ChatPane({
         const sid = sessionRef.current;
         if (!sid || !loadHistory) return;
         void loadHistory(sid)
-          .then((msgs) => setTurns(msgs.map((m) => historyToTurn(m, { slug: projectSlug }))))
+          .then((msgs) => setTurns(msgs.map(historyToTurn)))
           .catch(() => {
             /* keep whatever we already have */
           });
@@ -1359,9 +1358,7 @@ function NestedSteps({ toolUseId }: { toolUseId: string }) {
     };
   }, [fetchSubagent, toolUseId]);
 
-  // Sub-agent transcripts never contain send_file calls (that tool isn't given
-  // to Task/Agent sub-agents), so an empty slug here is inert.
-  const turns = useMemo(() => (msgs ?? []).map((m) => historyToTurn(m, { slug: "" })), [msgs]);
+  const turns = useMemo(() => (msgs ?? []).map(historyToTurn), [msgs]);
 
   return (
     <div className="border-t border-paddock-200/70 bg-paddock-50/60 px-3 py-3 dark:border-paddock-800 dark:bg-paddock-950/40">
@@ -1418,13 +1415,13 @@ function sealStreaming(prev: Turn[]): Turn[] {
 }
 
 /**
- * Convert a hydrated history message into a rendered turn. `ctx.slug` lets a
- * `send_file` tool call rebuild its rich `file` turn (parsing the same output
- * envelope as the live path), so a reload renders identically (issue #112).
+ * Convert a hydrated history message into a rendered turn. A `send_file` tool
+ * call rebuilds its rich `file` turn (parsing the same output envelope as the
+ * live path), so a reload renders identically (issue #112).
  */
-function historyToTurn(m: HistoryMessage, ctx: { slug: string }): Turn {
+function historyToTurn(m: HistoryMessage): Turn {
   if (m.role === "tool" && m.toolCall) {
-    const file = sentFileFromToolCall(m.toolCall, ctx);
+    const file = sentFileFromToolCall(m.toolCall);
     if (file) return { kind: "file", id: nextId(), file };
     return { kind: "tool", id: nextId(), tool: m.toolCall };
   }

@@ -239,11 +239,11 @@ export const api = {
 
   /**
    * The URL that streams the RAW BYTES of a file the agent shared via
-   * `mcp__paddock__send_file` when it referenced a real `file_path` (issue #112).
-   * `path` is relative to the agent's working directory and sandboxed server-side.
+   * `mcp__paddock__send_file` (issue #112). The bytes were copied into the
+   * attachment store at send time and are addressed by an opaque id.
    */
-  chatFileRawUrl(slug: string, path: string): string {
-    return `${BASE}/api/chat-files/${encodeURIComponent(slug)}?path=${encodeURIComponent(path)}`;
+  chatFileRawUrl(attachmentId: string): string {
+    return `${BASE}/api/chat-files/${encodeURIComponent(attachmentId)}`;
   },
 
   /** Pin a file as a sibling tab. Returns the updated project (with pinned[]). */

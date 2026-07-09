@@ -296,10 +296,10 @@ export interface SentFileEnvelope {
   filename: string;
   kind: SentFileKind;
   language?: string;
-  /** "inline" carries `content`; "file" carries `path` (Paddock loads bytes). */
+  /** "inline" carries `content`; "file" carries `attachmentId` (bytes in the store). */
   source: "inline" | "file";
   content?: string;
-  path?: string;
+  attachmentId?: string;
   message?: string;
 }
 

@@ -29,8 +29,8 @@
  * The optional `kind` selects the renderer; when omitted it's inferred from the
  * filename extension.
  */
-import { basename, extname, relative, resolve } from "node:path";
-import { readdir, realpath } from "node:fs/promises";
+import { basename, extname, resolve } from "node:path";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import type { InjectedMcpServerDef, McpToolCallResult } from "@herdctl/core";
 
 /** The renderer the web side should use for a sent file. */
@@ -46,17 +46,27 @@ export interface SentFileEnvelope {
   filename: string;
   kind: SentFileKind;
   language?: string;
-  /** "inline" carries `content`; "file" carries `path` and Paddock loads bytes. */
+  /** "inline" carries `content`; "file" carries `attachmentId` (bytes in the store). */
   source: "inline" | "file";
   content?: string;
-  path?: string;
+  attachmentId?: string;
   message?: string;
 }
 
-/** Per-turn context: where to resolve + sandbox a real `file_path`. */
+/** Reject a runaway send; a chat attachment shouldn't be huge. */
+export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+
+/** Per-turn context for the send-file tool. */
 export interface SendFileContext {
-  /** The agent's working directory — resolves + sandboxes `file_path`. */
+  /** The agent's working directory — resolves a relative `file_path`. */
   workingDirectory?: string;
+  /**
+   * Copy a real file's bytes into the attachment store, returning its id. Called
+   * once at send time so the shared file is an immutable snapshot and the render
+   * endpoint never serves an arbitrary path. `filenameForExt` supplies the
+   * stored file's extension (for content-type on serve).
+   */
+  saveAttachment: (bytes: Buffer, filenameForExt: string) => Promise<string>;
 }
 
 const MARKDOWN_EXT = new Set([".md", ".mdx", ".markdown"]);
@@ -221,42 +231,45 @@ function createHandler(context: SendFileContext) {
         });
       }
 
-      // Real file — resolve + sandbox to the working directory (symlink-safe).
-      // Only the PATH is recorded; the bytes are loaded later by Paddock.
+      // Real file — copy its bytes into the attachment store NOW, so the shared
+      // file is an immutable snapshot (renders forever, even if the original is
+      // later edited/deleted) and the render endpoint only ever serves files that
+      // were explicitly sent — never an arbitrary on-box path. Because we copy
+      // rather than reference, there's no sandbox: a relative path resolves
+      // against the working dir, an absolute path is used as-is.
       const wd = context.workingDirectory;
-      if (!wd) {
-        return fail("Error: no working directory available to resolve `file_path`.");
-      }
-      const resolved = resolve(wd, filePath as string);
+      const resolved = wd ? resolve(wd, filePath as string) : resolve(filePath as string);
       let realPath: string;
       try {
         realPath = await realpath(resolved);
       } catch {
+        const where = wd ? ` Your working directory is ${wd}. ${await describeDir(wd)}` : "";
         return fail(
-          `Error: file not found: ${filePath} (looked for ${resolved}). ` +
-            `Your working directory is ${wd}. ${await describeDir(wd)} ` +
-            `Pass a path relative to your working directory (screenshots from the ` +
-            `browser tools are saved there).`,
+          `Error: file not found: ${filePath} (looked for ${resolved}).${where} ` +
+            `Pass a path to a file that exists (screenshots from the browser tools are ` +
+            `saved in your working directory).`,
         );
       }
-      const realWd = await realpath(wd);
-      const rel = relative(realWd, realPath);
-      if (rel.startsWith("..") || rel.startsWith("/")) {
+      const info = await stat(realPath);
+      if (!info.isFile()) {
+        return fail(`Error: not a regular file: ${filePath}`);
+      }
+      if (info.size > MAX_ATTACHMENT_BYTES) {
         return fail(
-          `Error: file path escapes your working directory: ${filePath} resolves to ` +
-            `${realPath}, outside ${wd}. Only files inside your working directory can be ` +
-            `sent. ${await describeDir(wd)}`,
+          `Error: file too large to send: ${info.size} bytes (limit ${MAX_ATTACHMENT_BYTES}).`,
         );
       }
+      const bytes = await readFile(realPath);
       const filename = filenameArg ?? basename(resolved);
       const kind = kindArg ?? inferKind(filename);
+      const attachmentId = await context.saveAttachment(bytes, filename);
       return ok({
         paddockSendFile: 1,
         filename,
         kind,
         language: kind === "code" ? (languageArg ?? inferLanguage(filename)) : undefined,
         source: "file",
-        path: rel,
+        attachmentId,
         message,
       });
     } catch (error) {

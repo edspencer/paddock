@@ -8,11 +8,11 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { symlinkSync } from "node:fs";
 import {
   sendFileServerDef,
   SEND_FILE_SERVER_KEY,
   SEND_FILE_TOOL_NAME,
+  MAX_ATTACHMENT_BYTES,
   type SentFileEnvelope,
 } from "../../src/send-file-mcp.js";
 import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
@@ -22,8 +22,15 @@ type Result = { content: Array<{ type: string; text: string }>; isError?: boolea
 async function callTool(
   args: Record<string, unknown>,
   workingDirectory?: string,
-): Promise<{ result: Result; envelope: SentFileEnvelope | null }> {
-  const def = sendFileServerDef({ workingDirectory });
+): Promise<{ result: Result; envelope: SentFileEnvelope | null; saved: Array<{ bytes: Buffer; name: string }> }> {
+  const saved: Array<{ bytes: Buffer; name: string }> = [];
+  const def = sendFileServerDef({
+    workingDirectory,
+    saveAttachment: async (bytes, name) => {
+      saved.push({ bytes, name });
+      return `11111111-2222-3333-4444-555555555555${name.slice(name.lastIndexOf("."))}`;
+    },
+  });
   const result = (await def.tools[0].handler(args)) as Result;
   let envelope: SentFileEnvelope | null = null;
   if (!result.isError) {
@@ -33,14 +40,14 @@ async function callTool(
       envelope = null;
     }
   }
-  return { result, envelope };
+  return { result, envelope, saved };
 }
 
 describe("send_file MCP tool", () => {
   it("names the server + tool as mcp__paddock__send_file", () => {
     expect(SEND_FILE_SERVER_KEY).toBe("paddock");
     expect(SEND_FILE_TOOL_NAME).toBe("mcp__paddock__send_file");
-    const def = sendFileServerDef({});
+    const def = sendFileServerDef({ saveAttachment: async () => "id" });
     expect(def.name).toBe("paddock");
     expect(def.tools[0].name).toBe("send_file");
   });
@@ -106,18 +113,36 @@ describe("send_file MCP tool", () => {
       await rmTmpDir(dir);
     });
 
-    it("records only the PATH for a real file (never the bytes)", async () => {
-      const { result, envelope } = await callTool({ file_path: "real.md" }, dir);
+    it("copies a real file's bytes to the store and returns an attachmentId", async () => {
+      const { result, envelope, saved } = await callTool({ file_path: "real.md" }, dir);
       expect(result.isError).toBeFalsy();
       expect(envelope).toMatchObject({
         paddockSendFile: 1,
         filename: "real.md",
         kind: "markdown",
         source: "file",
-        path: "real.md",
       });
-      // Crucially: the transcript-bound envelope must NOT inline the file bytes.
+      expect(envelope?.attachmentId).toBeTruthy();
+      // The envelope carries neither the bytes nor the on-disk path.
       expect(envelope?.content).toBeUndefined();
+      // The bytes were copied to the store exactly once, at send time.
+      expect(saved).toHaveLength(1);
+      expect(saved[0].bytes.toString("utf8")).toBe("# Real\n\nfrom disk");
+    });
+
+    it("copies a file referenced by an absolute path OUTSIDE the working dir", async () => {
+      const outside = await makeTmpDir("paddock-abs-");
+      await fs.writeFile(path.join(outside, "far.md"), "# Far\n\noutside the wd", "utf8");
+      const { result, envelope, saved } = await callTool(
+        { file_path: path.join(outside, "far.md") },
+        dir,
+      );
+      // Copy-on-send needs no sandbox: an out-of-wd path is read + snapshotted.
+      expect(result.isError).toBeFalsy();
+      expect(envelope?.source).toBe("file");
+      expect(envelope?.attachmentId).toBeTruthy();
+      expect(saved[0].bytes.toString("utf8")).toBe("# Far\n\noutside the wd");
+      await rmTmpDir(outside);
     });
 
     it("returns a not-found error that lists the working-dir contents (so the agent can self-correct)", async () => {
@@ -131,19 +156,13 @@ describe("send_file MCP tool", () => {
       expect(text).toContain("real.md");
     });
 
-    it("refuses a path that escapes the working directory (via symlink)", async () => {
-      const outside = await makeTmpDir("paddock-outside-");
-      await fs.writeFile(path.join(outside, "secret.md"), "secret", "utf8");
-      symlinkSync(path.join(outside, "secret.md"), path.join(dir, "link.md"));
-      const { result } = await callTool({ file_path: "link.md" }, dir);
+    it("rejects a file larger than the attachment size cap", async () => {
+      const big = path.join(dir, "big.bin");
+      await fs.writeFile(big, Buffer.alloc(MAX_ATTACHMENT_BYTES + 1));
+      const { result } = await callTool({ file_path: "big.bin" }, dir);
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain("escapes");
-      await rmTmpDir(outside);
-    });
-
-    it("errors when a real file_path is given but no working directory", async () => {
-      const { result } = await callTool({ file_path: "real.md" });
-      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("too large");
+      await fs.rm(big, { force: true });
     });
   });
 });

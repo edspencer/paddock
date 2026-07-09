@@ -62,6 +62,7 @@ import { isKnownModel, getContextLimit, KEEPER_DEFAULT_MODEL } from "./models.js
 import { SessionHub, type TurnHandle, type ActiveInfo } from "./session-hub.js";
 import { wrapPreload } from "./preload.js";
 import { sendFileServerDef, SEND_FILE_SERVER_KEY } from "./send-file-mcp.js";
+import type { AttachmentStore } from "./attachments.js";
 
 /**
  * Per-turn token usage as observed on the SDK stream, normalized to camelCase.
@@ -387,6 +388,7 @@ const SERVER_PING_INTERVAL_MS = 30_000;
 export function makeChatHandler(deps: {
   herdctl: HerdctlService;
   projects: ProjectStore;
+  attachments: AttachmentStore;
   /** Optional: post-turn overview/changelog curation engine (issues #2/#6). */
   sweep?: SweepService;
 }) {
@@ -621,8 +623,12 @@ export function makeChatHandler(deps: {
         // Inject the Paddock send_file MCP tool for this turn. The tool returns a
         // JSON envelope as its result `output`; the web renders it off the tool
         // call itself (live + on reload), so no bespoke WS frame is needed. The
-        // working dir lets the tool resolve + sandbox a real `file_path`.
-        const sendFile = sendFileServerDef({ workingDirectory: sendFileWorkingDir });
+        // working dir resolves a relative `file_path`; a real file's bytes are
+        // copied into the attachment store at send time (immutable snapshot).
+        const sendFile = sendFileServerDef({
+          workingDirectory: sendFileWorkingDir,
+          saveAttachment: (bytes, name) => deps.attachments.save(bytes, name),
+        });
 
         const result = await deps.herdctl.chat(agentName, {
           prompt,
