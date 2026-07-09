@@ -119,6 +119,13 @@ export interface ProjectYaml {
   permissionMode?: string;
   maxTurns?: number;
   docker?: boolean;
+  /**
+   * How the keeper's chat turns are driven — `batch` (one-shot trigger) or
+   * `session` (persistent managed openChatSession, enabling cross-turn autonomy;
+   * Paddock#111). Optional on disk: absent inherits the global default
+   * (`PADDOCK_KEEPER_DRIVE_MODE`, else KEEPER_DEFAULT_DRIVE_MODE).
+   */
+  driveMode?: string;
 }
 
 /** API-facing project DTO (adds derived fields). */
@@ -173,6 +180,7 @@ export type UpdateProjectInput = Partial<
     | "permissionMode"
     | "maxTurns"
     | "docker"
+    | "driveMode"
   >
 >;
 
@@ -575,6 +583,11 @@ export class ProjectStore {
       ...(typeof p.permissionMode === "string" ? { permissionMode: p.permissionMode } : {}),
       ...(typeof p.maxTurns === "number" ? { maxTurns: p.maxTurns } : {}),
       ...(typeof p.docker === "boolean" ? { docker: p.docker } : {}),
+      // driveMode (Paddock#111): carried only when explicitly set — an absent
+      // value means "inherit the global default" and is resolved at dispatch
+      // (`project.driveMode ?? cfg.keeperDriveMode`), NOT here, so the env-level
+      // global can still take effect for projects that don't override it.
+      ...(typeof p.driveMode === "string" ? { driveMode: p.driveMode } : {}),
     };
   }
 

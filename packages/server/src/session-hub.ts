@@ -65,8 +65,13 @@ interface Turn {
   /** Null until the turn's session id is known (a brand-new chat resolves it mid-stream). */
   sessionId: string | null;
   jobId: string | null;
-  /** The socket that started the turn; always a fan-out target while OPEN. */
-  origin: HubSocket;
+  /**
+   * The socket that started the turn; always a fan-out target while OPEN. `null`
+   * for a server-initiated turn with no client watching (a scheduler-fired
+   * wake — Paddock#111): frames are still buffered for replay so a client that
+   * attaches mid-turn (or opens the chat afterward) sees the woken work.
+   */
+  origin: HubSocket | null;
   frames: BufferedFrame[];
   /** `seq` of `frames[0]` after any trim — replays older than this need a resync. */
   baseSeq: number;
@@ -125,7 +130,7 @@ export class SessionHub {
    * frame; omit it for a brand-new chat and call {@link TurnHandle.setSession}
    * once the id arrives on the stream.
    */
-  startTurn(projectSlug: string, origin: HubSocket, sessionId?: string | null): TurnHandle {
+  startTurn(projectSlug: string, origin: HubSocket | null, sessionId?: string | null): TurnHandle {
     const turn: Turn = {
       projectSlug,
       sessionId: null,
@@ -255,6 +260,16 @@ export class SessionHub {
     }
   }
 
+  /**
+   * Re-broadcast a running turn's active state once its jobId becomes known, so
+   * clients can arm the Stop button before the first content frame (Paddock#111).
+   * No-op if the turn isn't running or its session id isn't resolved yet (a new
+   * chat learns the jobId together with its session id on the first frame).
+   */
+  jobIdResolved(turn: Turn): void {
+    if (turn.running) this.fireActive(turn);
+  }
+
   private fireActive(turn: Turn): void {
     if (!this.onActive || !turn.sessionId) return;
     this.onActive({
@@ -267,7 +282,9 @@ export class SessionHub {
 
   private recipients(turn: Turn): Set<HubSocket> {
     const set = new Set<HubSocket>();
-    set.add(turn.origin);
+    // A client-less woken turn (Paddock#111) has no origin; frames are still
+    // buffered for replay, they just have no live origin socket to fan out to.
+    if (turn.origin) set.add(turn.origin);
     if (turn.sessionId) {
       const subs = this.subscribers.get(turn.sessionId);
       if (subs) for (const s of subs) set.add(s);
@@ -311,6 +328,13 @@ export class TurnHandle {
 
   setJobId(id: string): void {
     this.turn.jobId = id;
+    // Push the now-known jobId to attached clients immediately (via chat:active),
+    // so the Stop button is ARMED even while the model is still "thinking" and no
+    // content frame has yet carried the jobId in its routing metadata. Without
+    // this, Stop silently no-ops during the (often long) pre-output phase because
+    // the client has no jobId to cancel — the original "Stop does nothing" bug
+    // (Paddock#111). Fixes both drive modes (batch + session).
+    this.hub.jobIdResolved(this.turn);
   }
 
   /** Register (or move) this turn under its now-known session id. Idempotent. */

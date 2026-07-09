@@ -7,6 +7,7 @@
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
+import { type DriveMode, KEEPER_DEFAULT_DRIVE_MODE, isKnownDriveMode } from "./models.js";
 
 /**
  * User-authentication strategy.
@@ -113,6 +114,13 @@ export interface PaddockConfig {
   transcription: TranscriptionConfig;
   /** Per-instance branding (title/logo/accent; defaults preserve today's look). */
   brand: BrandConfig;
+  /**
+   * Global default for how keeper chat turns are driven (Paddock#111), used when
+   * a project doesn't override `driveMode`. `batch` (legacy one-shot trigger) by
+   * default; set `PADDOCK_KEEPER_DRIVE_MODE=session` to make cross-turn autonomy
+   * (ScheduleWakeup / `/loop`) the box-wide default.
+   */
+  keeperDriveMode: DriveMode;
 }
 
 /**
@@ -303,7 +311,19 @@ export function loadPaddockConfig(): PaddockConfig {
     devServers: loadDevServersConfig(),
     transcription: loadTranscriptionConfig(),
     brand: loadBrandConfig(),
+    keeperDriveMode: loadKeeperDriveMode(),
   });
+}
+
+/**
+ * Resolve the global keeper drive mode from `PADDOCK_KEEPER_DRIVE_MODE`. Defaults
+ * to `batch` (KEEPER_DEFAULT_DRIVE_MODE); an unrecognized value falls back to the
+ * default rather than failing startup. A per-project `driveMode` still overrides
+ * this at dispatch.
+ */
+function loadKeeperDriveMode(): DriveMode {
+  const raw = envOpt("PADDOCK_KEEPER_DRIVE_MODE")?.toLowerCase();
+  return raw && isKnownDriveMode(raw) ? raw : KEEPER_DEFAULT_DRIVE_MODE;
 }
 
 /** Default Claude home, used for session discovery. */

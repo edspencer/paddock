@@ -54,6 +54,8 @@ import {
   type SessionUsage,
   type SlashCommand,
   type InjectedMcpServerDef,
+  type RuntimeSession,
+  type SessionWakeHandler,
 } from "@herdctl/core";
 import { createSDKMessageHandler, type SDKMessage as ChatSDKMessage } from "@herdctl/chat";
 import { promises as fs } from "node:fs";
@@ -92,6 +94,16 @@ export interface ChatTurnOptions {
  */
 export function keeperAgentName(slug: string): string {
   return `keeper-${slug}`;
+}
+
+/**
+ * Inverse of {@link keeperAgentName}: recover a project slug from a keeper agent
+ * name (`keeper-<slug>` → `<slug>`). Returns `null` for a non-keeper agent (e.g.
+ * scratch or a sweeper), so a scheduler-fired wake can route back to the right
+ * project or fall through to scratch (Paddock#111).
+ */
+export function keeperSlugFromAgent(agentName: string): string | null {
+  return agentName.startsWith("keeper-") ? agentName.slice("keeper-".length) : null;
 }
 
 /** The agent used for one-off / scratch chats. */
@@ -177,6 +189,13 @@ export const SCRATCH_SLUG = "scratch";
  */
 const KEEPER_MAX_CONCURRENT = 10;
 
+/**
+ * How long herdctl keeps a keeper's fallback session alive (Paddock#111). Sized
+ * to the reaper's 7-day recurring-wake expiry so a fallback resume still finds
+ * the session; explicit-id resume (Paddock's norm) bypasses this anyway.
+ */
+const KEEPER_SESSION_TIMEOUT = "168h";
+
 export class HerdctlService {
   private fleet: FleetManager | null = null;
   private started = false;
@@ -193,6 +212,15 @@ export class HerdctlService {
    * per-trigger model override is a herdctl follow-up.
    */
   private agentModels = new Map<string, string>();
+
+  /**
+   * Live session-mode turns keyed by the synthetic turn id we hand back as the
+   * `jobId` (Paddock#111). `openChatSession` creates no herdctl job record, so
+   * there's no core `jobId` to cancel via `cancelJob`; instead we register the
+   * live {@link RuntimeSession} here and Stop → `session.interrupt()` (see
+   * {@link cancel}). Entries are removed when the turn's stream ends.
+   */
+  private liveSessions = new Map<string, RuntimeSession>();
 
   constructor(private readonly cfg: PaddockConfig) {}
 
@@ -364,6 +392,96 @@ export class HerdctlService {
   }
 
   /**
+   * Session-mode counterpart to {@link chat} (Paddock#111). Drives the turn
+   * through a persistent, herdctl-managed `openChatSession` (`manageLifecycle:
+   * true`) instead of a one-shot `trigger()`, so a `ScheduleWakeup` / `/loop` the
+   * turn leaves behind is captured by the reaper (herdctl#307) and re-fired
+   * through the scheduler — i.e. cross-turn autonomy actually works. The turn
+   * itself streams identically (same `onMessage` shape), so callers are unchanged.
+   *
+   * Contract differences from {@link chat}:
+   *  - No herdctl job record exists, so the returned `jobId` is a synthetic turn
+   *    id we register in {@link liveSessions}; Stop maps to `session.interrupt()`
+   *    via {@link cancel}.
+   *  - We do NOT `close()` the session: it's managed, so the reaper tears it down
+   *    when idle (and captures its wakeups on the Stop hook). Per the core
+   *    contract, the message stream ending IS the reap.
+   */
+  async chatSession(agentName: string, opts: ChatTurnOptions): Promise<TriggerResult> {
+    const startedAt = new Date().toISOString();
+    const turnId = randomUUID();
+    let session: RuntimeSession;
+    try {
+      session = await this.manager.openChatSession(agentName, {
+        resume: opts.resume,
+        prompt: opts.prompt,
+        manageLifecycle: true,
+        injectedMcpServers: opts.injectedMcpServers,
+      });
+    } catch (err) {
+      return {
+        jobId: turnId,
+        agentName,
+        scheduleName: null,
+        startedAt,
+        prompt: opts.prompt,
+        success: false,
+        error: err instanceof Error ? err : new Error(String(err)),
+      };
+    }
+
+    this.liveSessions.set(turnId, session);
+    // Surface the synthetic id as the turn's jobId so the client renders Stop and
+    // a subsequent chat:cancel routes back to this live session.
+    opts.onJobCreated?.(turnId);
+
+    let sessionId: string | null = typeof opts.resume === "string" ? opts.resume : null;
+    let success = false;
+    let error: Error | undefined;
+    try {
+      // Consume the stream until the turn's terminal `result` (same pattern as
+      // runCommand). The reaper owns teardown after we return.
+      for await (const m of session.messages) {
+        if (m.session_id) sessionId = m.session_id;
+        if (opts.onMessage) await opts.onMessage(m);
+        if (m.type === "result") {
+          const errored =
+            (typeof m.subtype === "string" && m.subtype.startsWith("error")) ||
+            m.success === false;
+          success = !errored;
+          break;
+        }
+      }
+    } catch (err) {
+      error = err instanceof Error ? err : new Error(String(err));
+    } finally {
+      this.liveSessions.delete(turnId);
+    }
+
+    return {
+      jobId: turnId,
+      agentName,
+      scheduleName: null,
+      startedAt,
+      prompt: opts.prompt,
+      success,
+      sessionId: sessionId ?? undefined,
+      error,
+    };
+  }
+
+  /**
+   * Register the consumer that drives scheduler-fired session wakes (Paddock#111
+   * gap 3). herdctl resumes the woken session (`manageLifecycle: true`) and hands
+   * it here; the handler must consume the stream onto the hub/transcript so the
+   * autonomous turn is visible even though no client is watching. A no-op if the
+   * fleet has no lifecycle manager. Safe to call before/after {@link init}.
+   */
+  onSessionWake(handler: SessionWakeHandler | undefined): void {
+    this.manager.setSessionWakeHandler(handler);
+  }
+
+  /**
    * Run a slash command (e.g. `/compact`) against an agent's chat session.
    *
    * Unlike {@link chat}, which sends the text as a one-shot prompt via
@@ -405,9 +523,37 @@ export class HerdctlService {
     return { sessionId };
   }
 
-  /** Cancel a running job (best-effort; used by WS chat:cancel). */
-  async cancel(jobId: string): Promise<void> {
-    await this.manager.cancelJob(jobId).catch(() => undefined);
+  /**
+   * Cancel a running turn (Stop button → WS chat:cancel). Handles BOTH drive
+   * modes off the single id the client holds as `jobId`:
+   *  - **session mode** — the id is a synthetic turn id in {@link liveSessions};
+   *    interrupt the live `RuntimeSession` (there is no herdctl job to cancel).
+   *  - **batch mode** — the id is a real herdctl job id; abort it via `cancelJob`
+   *    (which kills the CLI subprocess / aborts the SDK query).
+   *
+   * Returns `true` if something was actually cancelled. Errors are logged rather
+   * than silently swallowed (the previous `.catch(() => undefined)` hid every
+   * failure, so a broken Stop looked like a no-op).
+   */
+  async cancel(jobId: string): Promise<boolean> {
+    const live = this.liveSessions.get(jobId);
+    if (live) {
+      try {
+        await live.interrupt();
+        return true;
+      } catch (err) {
+        console.warn(`[herdctl] session interrupt failed for ${jobId}:`, err);
+        return false;
+      }
+    }
+    try {
+      await this.manager.cancelJob(jobId);
+      return true;
+    } catch (err) {
+      // JobNotFoundError is expected if the turn already finished; log others.
+      console.warn(`[herdctl] cancelJob failed for ${jobId}:`, err);
+      return false;
+    }
   }
 
   /**
@@ -813,6 +959,15 @@ export class HerdctlService {
       // Allow parallel chats per project (forks, and just multiple open chats)
       // instead of herdctl's serialize-by-default max_concurrent: 1.
       instances: { max_concurrent: KEEPER_MAX_CONCURRENT },
+      // Session retention (Paddock#111): keep an agent-level session alive long
+      // enough that a scheduler-fired wake can still resume its transcript. Note
+      // Paddock always resumes by EXPLICIT session id, which bypasses this
+      // timeout — and the transcript itself is governed by Claude Code's
+      // `cleanupPeriodDays` (default 30d, adequate for realistic wake horizons;
+      // set out-of-band via .claude/settings.json if longer horizons are needed).
+      // So this is defense-in-depth for the fallback-resume path, sized to the
+      // reaper's 7-day recurring-wake expiry.
+      session: { timeout: KEEPER_SESSION_TIMEOUT },
       default_prompt: "Summarize the current state of this project.",
     };
     // Docker isolation: only set it when the project opts in, so a project that
@@ -937,7 +1092,14 @@ export class HerdctlService {
         // no-op unless the keeper/scratch agent actually attaches the playwright
         // server (gated by PADDOCK_BROWSER_MCP), and having it on the allowlist
         // means enabling the browser is a per-box env flip with no code change.
-        allowed_tools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "WebFetch", "WebSearch", "Task", "TodoWrite", "Skill", "NotebookEdit", BROWSER_MCP_TOOL],
+        // Timer-class autonomy tools (Paddock#111): `ScheduleWakeup` + the
+        // session-only `Cron*` set + `Monitor` must be on the allowlist or the
+        // runtime auto-denies them, so a keeper couldn't schedule a wake even in
+        // session mode. `ToolSearch` is the harness's deferred-tool loader —
+        // several of these surface as deferred tools reached through it. These
+        // only actually DO anything in session drive-mode (the reaper re-fires
+        // them); in batch mode they're inert (documented in the box CLAUDE.md).
+        allowed_tools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "WebFetch", "WebSearch", "Task", "TodoWrite", "Skill", "NotebookEdit", "ToolSearch", "ScheduleWakeup", "Monitor", "CronCreate", "CronList", "CronDelete", BROWSER_MCP_TOOL],
         denied_tools: ["Bash(sudo *)", "Bash(rm -rf /)", "Bash(rm -rf /*)", "Bash(chmod 777 *)"],
       },
     };
