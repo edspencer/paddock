@@ -217,13 +217,18 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
         herdctl.listSessions(project).catch(() => []),
       ]);
       const keeper = keeperAgentName(project.slug);
-      const usageOf = chatUsageResolver(keeper, project.model ?? KEEPER_DEFAULT_MODEL);
       const archivedOf = (s: import("@herdctl/core").DiscoveredSession) =>
         archive.isArchived(keeper, s.sessionId);
+      // Deliberately NO usage resolver here (issue #116): the per-chat context
+      // ring requires streaming+parsing each session's full transcript, which is
+      // O(chats × transcript size) and blocked the whole ProjectView from
+      // rendering (2–3s on chat-heavy projects). Chats come back immediately from
+      // cached name/preview/mtime; the client fills rings in afterwards via the
+      // separate GET .../chats/usage endpoint below.
       return {
         project,
         changelog,
-        chats: await buildProjectChats(project.dir, sessions, usageOf, archivedOf),
+        chats: await buildProjectChats(project.dir, sessions, undefined, archivedOf),
       };
     } catch (err) {
       return sendProjectError(reply, err);
@@ -464,14 +469,44 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
       const project = await projects.get(req.params.slug);
       const sessions = await herdctl.listSessions(project).catch(() => []);
       const keeper = keeperAgentName(project.slug);
-      const usageOf = chatUsageResolver(keeper, project.model ?? KEEPER_DEFAULT_MODEL);
       const archivedOf = (s: import("@herdctl/core").DiscoveredSession) =>
         archive.isArchived(keeper, s.sessionId);
-      return { chats: await buildProjectChats(project.dir, sessions, usageOf, archivedOf) };
+      // No usage resolver — see the GET /api/projects/:slug route (issue #116).
+      // Usage rings are fetched separately so a list refresh stays cheap.
+      return { chats: await buildProjectChats(project.dir, sessions, undefined, archivedOf) };
     } catch (err) {
       return sendProjectError(reply, err);
     }
   });
+
+  // Bulk context-window usage for ALL of a project's chats, keyed by session id
+  // (issue #116). This is the expensive part the chat list needs for its per-chat
+  // usage rings (issue #77) — each session's fill is read by streaming its
+  // transcript (memoized on transcript mtime). Split out of the project-detail
+  // and chat-list payloads so the ProjectView renders immediately and the client
+  // fills rings in progressively. Sessions with no usage data are omitted.
+  app.get<{ Params: { slug: string } }>(
+    "/api/projects/:slug/chats/usage",
+    async (req, reply) => {
+      try {
+        const project = await projects.get(req.params.slug);
+        const sessions = await herdctl.listSessions(project).catch(() => []);
+        const keeper = keeperAgentName(project.slug);
+        const usageOf = chatUsageResolver(keeper, project.model ?? KEEPER_DEFAULT_MODEL);
+        const entries = await Promise.all(
+          sessions.map(async (s) => {
+            const u = await usageOf(s).catch(() => null);
+            return u ? ([s.sessionId, u] as const) : null;
+          }),
+        );
+        const usage: Record<string, ChatUsage> = {};
+        for (const e of entries) if (e) usage[e[0]] = e[1];
+        return { usage };
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
 
   app.post<{ Params: { slug: string } }>("/api/projects/:slug/chats", async (req, reply) => {
     // A "new chat" is created lazily by the first WS chat:send with no

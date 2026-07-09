@@ -271,6 +271,22 @@ export const api = {
     return chats;
   },
 
+  /**
+   * Bulk context-window usage for every chat in a project, keyed by session id
+   * (issue #116). Fetched separately from the chat list so the ProjectView can
+   * render immediately and fill in the per-chat usage rings (issue #77)
+   * afterwards — the per-session transcript parse this needs is what made project
+   * switching slow. Sessions with no usage data are absent from the map.
+   */
+  async chatUsage(
+    slug: string,
+  ): Promise<Record<string, { contextTokens: number; contextLimit: number }>> {
+    const { usage } = await req<{
+      usage: Record<string, { contextTokens: number; contextLimit: number }>;
+    }>(`/api/projects/${encodeURIComponent(slug)}/chats/usage`);
+    return usage;
+  },
+
   async listScratchChats(): Promise<Chat[]> {
     const { chats } = await req<{ chats: Chat[] }>("/api/chats");
     return chats;

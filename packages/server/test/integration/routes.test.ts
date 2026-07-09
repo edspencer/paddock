@@ -277,10 +277,12 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
 
   // --- chat-list usage ring (issue #77) --------------------------------------
 
-  it("chat-list DTOs carry per-chat context usage after a turn", async () => {
+  it("per-chat context usage comes from the bulk usage endpoint, not the list (issue #116)", async () => {
     const sessionId = await oneTurn("routes-proj", "hello for list usage");
 
-    // Project chat list (GET /api/projects/:slug/chats).
+    // The chat list and project detail are now usage-FREE: the per-session
+    // transcript parse that fills the rings is deliberately kept off these hot
+    // paths so the ProjectView renders immediately (issue #116).
     const chats = (
       await t.app.inject({ method: "GET", url: "/api/projects/routes-proj/chats" })
     ).json().chats as Array<{
@@ -290,17 +292,23 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
     }>;
     const entry = chats.find((c) => c.sessionId === sessionId);
     expect(entry).toBeTruthy();
-    expect(entry?.contextTokens).toBeGreaterThan(0);
-    // Default keeper model is Opus 4.8 → 1M context window.
-    expect(entry?.contextLimit).toBe(1_000_000);
+    expect(entry).not.toHaveProperty("contextTokens");
+    expect(entry).not.toHaveProperty("contextLimit");
 
-    // The same usage rides along on the project-detail response too.
     const detail = (
       await t.app.inject({ method: "GET", url: "/api/projects/routes-proj" })
     ).json();
     const detailEntry = (detail.chats as typeof chats).find((c) => c.sessionId === sessionId);
-    expect(detailEntry?.contextTokens).toBeGreaterThan(0);
-    expect(detailEntry?.contextLimit).toBe(1_000_000);
+    expect(detailEntry).not.toHaveProperty("contextTokens");
+
+    // The rings are fed by the dedicated bulk endpoint, keyed by session id.
+    const usage = (
+      await t.app.inject({ method: "GET", url: "/api/projects/routes-proj/chats/usage" })
+    ).json().usage as Record<string, { contextTokens: number; contextLimit: number }>;
+    expect(usage[sessionId]).toBeTruthy();
+    expect(usage[sessionId].contextTokens).toBeGreaterThan(0);
+    // Default keeper model is Opus 4.8 → 1M context window.
+    expect(usage[sessionId].contextLimit).toBe(1_000_000);
   });
 
   it("scratch chat-list DTOs carry per-chat context usage after a turn", async () => {

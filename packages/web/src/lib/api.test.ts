@@ -80,6 +80,15 @@ describe("api: reads", () => {
     expect(call()[0]).toBe("/api/projects/proj/chats/sess-1/context");
     expect(usage).toBeNull();
   });
+
+  it("chatUsage unwraps the bulk usage map from the project usage endpoint", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ usage: { "sess-1": { contextTokens: 5, contextLimit: 10 } } }),
+    );
+    const usage = await api.chatUsage("a/b");
+    expect(call()[0]).toBe("/api/projects/a%2Fb/chats/usage");
+    expect(usage["sess-1"]).toEqual({ contextTokens: 5, contextLimit: 10 });
+  });
 });
 
 describe("api: writes build the right request", () => {
