@@ -4,6 +4,7 @@ import type { SentFile, SentFileKind } from "../lib/types";
 import { CodeBlock } from "./CodeBlock";
 import { Markdown } from "./Markdown";
 import { Mermaid } from "./Mermaid";
+import { ResizableBox } from "./ResizableBox";
 import { AlertIcon } from "./icons";
 
 /**
@@ -22,6 +23,8 @@ import { AlertIcon } from "./icons";
  */
 export function SentFileBlock({ file }: { file: SentFile }) {
   const [open, setOpen] = useState(true);
+  // Stable, reload-safe key for persisting this embed's height (#136).
+  const itemId = sentFileStableKey(file);
   return (
     <div className="flex animate-fade-in justify-start">
       <div className="w-full max-w-[92%] overflow-hidden rounded-2xl rounded-bl-md bg-white shadow-sm ring-1 ring-paddock-200/70 dark:bg-paddock-900 dark:ring-paddock-800">
@@ -43,13 +46,35 @@ export function SentFileBlock({ file }: { file: SentFile }) {
             {file.message}
           </div>
         ) : null}
-        {open ? <SentFileBody file={file} /> : null}
+        {open ? <SentFileBody file={file} itemId={itemId} /> : null}
       </div>
     </div>
   );
 }
 
-function SentFileBody({ file }: { file: SentFile }) {
+/**
+ * A stable, reload-safe key identifying THIS sent file, for persisting per-embed
+ * UI state (issue #136). A real-file send's `rawUrl` embeds its immutable
+ * attachment id (byte-for-byte identical live and after a reload); an inline
+ * send is keyed on a hash of its filename + kind + content. Deliberately NOT the
+ * transcript `turn.id`: a freshly-sent (live) turn is assigned an ephemeral
+ * counter id that differs from the stable uuid it's rebuilt with on reload, so a
+ * height set live would be orphaned on reload — whereas the file's own identity
+ * is stable across both.
+ */
+function sentFileStableKey(file: SentFile): string {
+  if (file.source === "file" && file.rawUrl) return `file:${file.rawUrl}`;
+  return `inline:${djb2(`${file.filename}\u0000${file.kind}\u0000${file.content ?? ""}`)}`;
+}
+
+/** Small deterministic non-crypto string hash (djb2) — stable across reloads. */
+function djb2(s: string): string {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+
+function SentFileBody({ file, itemId }: { file: SentFile; itemId?: string }) {
   if (file.kind === "image") {
     // Thread the agent's optional caption so the lightbox can show it (#137).
     return <ImageBody src={file.rawUrl} filename={file.filename} message={file.message} />;
@@ -67,9 +92,13 @@ function SentFileBody({ file }: { file: SentFile }) {
   // Text-ish kinds. Inline content renders directly; a file source loads its
   // text from the byte endpoint first.
   if (file.source === "inline") {
-    return <TextKind kind={file.kind} text={file.content ?? ""} language={file.language} />;
+    return (
+      <TextKind kind={file.kind} text={file.content ?? ""} language={file.language} itemId={itemId} />
+    );
   }
-  return <FetchedTextKind url={file.rawUrl} kind={file.kind} language={file.language} />;
+  return (
+    <FetchedTextKind url={file.rawUrl} kind={file.kind} language={file.language} itemId={itemId} />
+  );
 }
 
 /** Render already-resolved text by kind, reusing the Files-tab primitives. */
@@ -77,11 +106,19 @@ function TextKind({
   kind,
   text,
   language,
+  itemId,
 }: {
   kind: SentFileKind;
   text: string;
   /** Language hint carried on the sent file — drives `code` syntax highlighting. */
   language?: string;
+  /**
+   * Stable per-turn id (issue #135). When present, the long-scrollable kinds
+   * (code / text / markdown) are wrapped in a `ResizableBox` so their height is
+   * bounded + user-resizable + persisted (#136). Undefined on call paths / tests
+   * that have no id → render as-is (no bounding).
+   */
+  itemId?: string;
 }) {
   if (kind === "html") {
     // Sandboxed (scripts allowed, isolated from the app) — mirrors FileView.
@@ -103,23 +140,41 @@ function TextKind({
   }
   if (kind === "markdown") {
     return (
-      <article className="prose-doc max-w-none px-4 py-3">
-        <Markdown mermaid>{text}</Markdown>
-      </article>
+      <Resizable itemId={itemId}>
+        <article className="prose-doc max-w-none px-4 py-3">
+          <Markdown mermaid>{text}</Markdown>
+        </article>
+      </Resizable>
     );
   }
   if (kind === "code") {
     // Theme-aware syntax highlighting, lazy-loaded so hljs stays out of the
     // entry chunk (issue #127). Falls back to plain escaped text until (or if)
     // the highlighter chunk resolves.
-    return <CodeBlock code={text} language={language} />;
+    return (
+      <Resizable itemId={itemId}>
+        <CodeBlock code={text} language={language} />
+      </Resizable>
+    );
   }
   // text: plain monospace preformatted.
   return (
-    <pre className="overflow-x-auto whitespace-pre-wrap break-words px-4 py-3 font-mono text-[12.5px] leading-relaxed text-paddock-800 dark:text-paddock-200">
-      {text}
-    </pre>
+    <Resizable itemId={itemId}>
+      <pre className="overflow-x-auto whitespace-pre-wrap break-words px-4 py-3 font-mono text-[12.5px] leading-relaxed text-paddock-800 dark:text-paddock-200">
+        {text}
+      </pre>
+    </Resizable>
   );
+}
+
+/**
+ * Wrap a long text-ish embed in a `ResizableBox` when we have a stable item id
+ * to persist its height on; otherwise render the children as-is (current
+ * behaviour — no bounding, no handle).
+ */
+function Resizable({ itemId, children }: { itemId?: string; children: React.ReactNode }) {
+  if (!itemId) return <>{children}</>;
+  return <ResizableBox itemId={itemId}>{children}</ResizableBox>;
 }
 
 /** Load a file-source's text from Paddock, then render it by kind. */
@@ -127,10 +182,12 @@ function FetchedTextKind({
   url,
   kind,
   language,
+  itemId,
 }: {
   url?: string;
   kind: SentFileKind;
   language?: string;
+  itemId?: string;
 }) {
   const [state, setState] = useState<{ text: string } | { error: true } | null>(null);
   useEffect(() => {
@@ -160,7 +217,7 @@ function FetchedTextKind({
       </div>
     );
   }
-  return <TextKind kind={kind} text={state.text} language={language} />;
+  return <TextKind kind={kind} text={state.text} language={language} itemId={itemId} />;
 }
 
 function ImageBody({
