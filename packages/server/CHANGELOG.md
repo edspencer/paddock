@@ -1,5 +1,23 @@
 # @paddock/server
 
+## 0.17.1
+
+### Patch Changes
+
+- [#131](https://github.com/edspencer/paddock/pull/131) [`5df7543`](https://github.com/edspencer/paddock/commit/5df7543febc7747861795ec7a6386b646f69fddc) Thanks [@edspencer](https://github.com/edspencer)! - feat: inline PDF viewer for agent-sent files (#128)
+
+  A `.pdf` sent via `mcp__paddock__send_file` (`file_path`) now renders inline in
+  a scrollable viewer instead of decoding its bytes as UTF-8 garbage in a `<pre>`.
+
+  - Server infers `kind: "pdf"`, serves the bytes as `application/pdf`, and drops
+    the `sandbox` CSP for PDFs (a bare `sandbox` stops the browser's native viewer
+    from painting) while keeping `default-src 'none'` so nothing inside the PDF can
+    script or phone home. Inline `content` PDFs are rejected (binary needs a file).
+  - Web renders a native `<object>` viewer (no pdf.js / new deps) with an
+    open-in-new-tab + download fallback for browsers that can't inline a PDF.
+
+- [#132](https://github.com/edspencer/paddock/pull/132) [`27bf1b6`](https://github.com/edspencer/paddock/commit/27bf1b645eb257d9d9fe190b6b8d792e97ad6e56) Thanks [@edspencer](https://github.com/edspencer)! - Add an inline video player for files shared via `mcp__paddock__send_file` (issue #126). An agent can send a screen recording (e.g. a Playwright `recordVideo`) via `file_path` and the user sees a playable `<video>` with controls that survives page reload. The chat-file endpoint (`/api/chat-files/:id`) now supports HTTP byte ranges (`206 Partial Content`), which is what makes mobile Safari / iOS play a `<video>` at all; video is served with a plain `default-src 'none'` CSP (no `sandbox` token) so nothing interferes with playback. `.mp4`/`.webm`/`.mov`/`.m4v` infer the `video` kind (the image check still runs first so `.webp` is never confused with `.webm`), and the attachment size cap is raised to 100 MB. No new dependencies.
+
 ## 0.17.0
 
 ### Minor Changes
