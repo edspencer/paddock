@@ -6,9 +6,9 @@ import { createProjectViaUI, uniq } from "./helpers";
  *
  * Create with name/area/summary/tags (New Project modal) → land in the project,
  * and it appears under its area on the grid + in the sidebar. Edit
- * (area/status/summary/tags) → reflected on the project header, the grid, and
- * the sidebar. Delete (confirm dialog) → removed everywhere and we return to
- * the landing page.
+ * (area/status/summary/tags) via the Settings tab → reflected on the project
+ * header, the grid, and the sidebar. Delete (confirm dialog) → removed
+ * everywhere and we return to the landing page.
  *
  * Created via the UI (not disk-seeded) so the keeper agent is registered and the
  * project is fully real.
@@ -47,20 +47,20 @@ test("edit area/status/summary/tags → reflected on the project header + grid +
   const slug = await createProjectViaUI(page, { name, area: "Homelab", summary: "before" });
   await page.goto(`/projects/${slug}/chat`);
 
-  // Open the project actions menu in the header, choose Edit details.
+  // Open the project actions menu in the header, choose Edit details → the
+  // Settings tab (issue #122; the old modal was retired).
   await page.getByRole("button", { name: /Project actions/i }).click();
   await page.getByRole("menuitem", { name: /Edit details/i }).click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${slug}/settings`));
 
-  const dialog = page.locator("form").filter({ hasText: "Edit project" });
-  await expect(dialog).toBeVisible();
+  const settings = page.getByRole("main");
+  await expect(settings.getByRole("heading", { name: /Identity & metadata/i })).toBeVisible();
   // Change summary, area (House), status (paused), tags.
-  await dialog.getByPlaceholder(/One line on what/i).fill("after edit");
-  // Area select is the first combobox; Status is the second.
-  await dialog.getByRole("combobox").first().selectOption({ label: "House" });
-  await dialog.getByRole("combobox").nth(1).selectOption("paused");
-  await dialog.getByPlaceholder(/home, plumbing/i).fill("editedtag");
-  await dialog.getByRole("button", { name: /Save changes/i }).click();
-  await expect(dialog).toBeHidden();
+  await settings.getByPlaceholder(/One line on what/i).fill("after edit");
+  await settings.getByLabel("Area").selectOption({ label: "House" });
+  await settings.getByLabel("Status").selectOption("paused");
+  await settings.getByPlaceholder(/home, plumbing/i).fill("editedtag");
+  await settings.getByRole("button", { name: /Save changes/i }).click();
 
   // Header reflects the new summary + tag + status pill.
   await expect(page.getByText("after edit")).toBeVisible();
@@ -73,29 +73,25 @@ test("edit area/status/summary/tags → reflected on the project header + grid +
   await expect(page.locator("section a.card").filter({ hasText: name })).toBeVisible();
 });
 
-// GAP — tracked by edspencer/paddock#12 ("per-project settings UI"). The project
-// `model` is part of the API + DTO (UpdateProjectInput.model, Project.model) and
-// the PATCH route validates + re-registers the keeper on a model change, but the
-// Edit Project modal exposes NO model picker (only status/area/summary/tags) — so
-// the prompt's "edit ... model → reflected on the grid + sidebar" surface isn't
-// drivable from the UI today. Marked fixme so the intended journey is documented
-// and flips green once the model picker lands in the edit/settings UI.
-test.fixme("edit a project's keeper model from the UI → reflected on the chat picker", async ({
+// Previously a GAP (edspencer/paddock#12): the Edit modal exposed no model
+// picker, so a project's keeper `model` wasn't editable from the UI. The
+// Settings tab (issue #122) now surfaces it, so this journey is drivable.
+test("edit a project's keeper model from the UI → reflected on the chat picker", async ({
   page,
 }) => {
-  const { createProjectViaUI } = await import("./helpers");
   const name = uniq("LC Model");
   const slug = await createProjectViaUI(page, { name, area: "Homelab" });
   await page.goto(`/projects/${slug}/chat`);
 
   await page.getByRole("button", { name: /Project actions/i }).click();
   await page.getByRole("menuitem", { name: /Edit details/i }).click();
-  const dialog = page.locator("form").filter({ hasText: "Edit project" });
-  // EXPECTED (post-#12): a Model picker in the edit modal. Today it doesn't exist.
-  await dialog.getByRole("combobox", { name: /Model/i }).selectOption({ label: "Sonnet 5" });
-  await dialog.getByRole("button", { name: /Save changes/i }).click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${slug}/settings`));
+  // The Settings tab's keeper Model picker.
+  await page.getByRole("main").getByLabel("Model").selectOption({ label: "Sonnet 5" });
+  await page.getByRole("button", { name: /Save changes/i }).click();
 
-  // The chat composer's model picker should now default to the project's new model.
+  // A fresh chat's composer picker defaults to the project's (new) keeper model.
+  await page.goto(`/projects/${slug}/chat`);
   const chatModel = page
     .getByRole("combobox")
     .filter({ has: page.getByRole("option", { name: /Sonnet/ }) });
