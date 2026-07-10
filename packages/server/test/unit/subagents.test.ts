@@ -255,5 +255,26 @@ describe("subagents (issue #37)", () => {
       const enriched = await enrichWithSubagents(projectDir, "nope", messages);
       expect(enriched).toBe(messages); // same reference — cheap early return
     });
+
+    it("preserves the source uuid through enrichment (herdctl#312 / issue #135)", async () => {
+      // Pass-through path (no Agent tool calls): the per-message uuid survives.
+      const plain: ChatMessage[] = [
+        { role: "user", content: "hi", timestamp: "t", uuid: "u-user" },
+        { ...toolMsg("Bash", "ls"), uuid: "u-bash" },
+      ];
+      const passThrough = await enrichWithSubagents(projectDir, "none", plain);
+      expect(passThrough.map((m) => m.uuid)).toEqual(["u-user", "u-bash"]);
+
+      // Enriched path (Agent block gets sub-agent fields spread on): the uuid on
+      // the message must still be preserved alongside the added toolCall fields.
+      await writeMain("s-uuid", [
+        toolUse("Agent", "toolu_A", { subagent_type: "Explore", description: "d" }),
+        toolResult("toolu_A", "done"),
+      ]);
+      const withAgent: ChatMessage[] = [{ ...toolMsg("Agent", "done"), uuid: "u-agent" }];
+      const enriched = await enrichWithSubagents(projectDir, "s-uuid", withAgent);
+      expect(enriched[0].uuid).toBe("u-agent");
+      expect(enriched[0].toolCall).toMatchObject({ toolUseId: "toolu_A" });
+    });
   });
 });

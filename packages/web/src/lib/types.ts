@@ -162,6 +162,14 @@ export interface HistoryMessage {
   content: string;
   timestamp: string;
   toolCall?: ChatToolCall;
+  /**
+   * Stable id from the source transcript entry — the Claude Code JSONL `uuid`,
+   * surfaced by `@herdctl/core`'s `ChatMessage` (herdctl#312) and passed through
+   * verbatim by the server (issue #135). Optional: absent on older transcripts or
+   * a pre-uuid core. Used to give a reloaded turn a reload-stable id (see
+   * `historyToTurns` in ChatPane), so per-message UI state can persist (#136).
+   */
+  uuid?: string;
 }
 
 /** Enriched single-project response from GET /api/projects/:slug. */
