@@ -19,6 +19,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { startTestApp, type TestApp } from "../helpers/app.js";
 import { listen, connectWs, type WsClient, type WsEvent } from "../helpers/ws.js";
+import { AttachmentStore } from "../../src/attachments.js";
 
 const isComplete = (slug: string) => (e: WsEvent) =>
   e.type === "chat:complete" &&
@@ -156,6 +157,26 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
   it("GET /files (listing) 404s for an unknown project", async () => {
     const res = await t.app.inject({ method: "GET", url: "/api/projects/ghost/files" });
     expect(res.statusCode).toBe(404);
+  });
+
+  it("GET /api/chat-files/:id serves a .pdf as application/pdf WITHOUT the sandbox CSP (issue #128)", async () => {
+    // Drop a PDF straight into the attachment store the app reads from.
+    const store = new AttachmentStore(path.join(t.cfg.dataDir, "attachments"));
+    await store.init();
+    const id = await store.save(Buffer.from("%PDF-1.4\n%%EOF"), "report.pdf");
+
+    const res = await t.app.inject({ method: "GET", url: `/api/chat-files/${id}` });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["content-type"]).toBe("application/pdf");
+    // The native PDF viewer can't paint under a bare `sandbox` CSP.
+    expect(res.headers["content-security-policy"]).toBe("default-src 'none'");
+    expect(res.headers["content-security-policy"]).not.toContain("sandbox");
+    expect(res.headers["x-content-type-options"]).toBe("nosniff");
+
+    // A non-PDF attachment keeps the original locked-down sandbox CSP.
+    const txtId = await store.save(Buffer.from("hello"), "note.txt");
+    const txt = await t.app.inject({ method: "GET", url: `/api/chat-files/${txtId}` });
+    expect(txt.headers["content-security-policy"]).toContain("sandbox");
   });
 
   // --- pins: pin/unpin + traversal guard -------------------------------------

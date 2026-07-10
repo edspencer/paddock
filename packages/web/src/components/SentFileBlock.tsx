@@ -51,6 +51,11 @@ function SentFileBody({ file }: { file: SentFile }) {
   if (file.kind === "image") {
     return <ImageBody src={file.rawUrl} filename={file.filename} />;
   }
+  if (file.kind === "pdf") {
+    // A PDF is binary, so it's always a real file (source: "file") served from
+    // the byte endpoint — never inline content.
+    return <PdfBody src={file.rawUrl} filename={file.filename} />;
+  }
   // Text-ish kinds. Inline content renders directly; a file source loads its
   // text from the byte endpoint first.
   if (file.source === "inline") {
@@ -151,6 +156,56 @@ function ImageBody({ src, filename }: { src?: string; filename: string }) {
         className="max-h-[480px] max-w-full object-contain shadow-sm"
       />
     </div>
+  );
+}
+
+/**
+ * Render a PDF inline via the browser's NATIVE viewer (an <object> pointed at
+ * the byte endpoint) — no pdf.js, no heavy deps. Some browsers (notably mobile
+ * Safari/Chrome) won't inline-render a PDF; for them the <object>'s children act
+ * as fallback content: a small panel with open-in-new-tab + download links.
+ */
+function PdfBody({ src, filename }: { src?: string; filename: string }) {
+  if (!src) {
+    return (
+      <div className="flex items-center gap-2 px-4 py-3 text-sm text-rose-700 dark:text-rose-300">
+        <AlertIcon width={16} height={16} className="shrink-0" />
+        <span>Could not display this PDF.</span>
+      </div>
+    );
+  }
+  return (
+    <object
+      data={src}
+      type="application/pdf"
+      aria-label={filename}
+      className="h-[600px] w-full bg-paddock-50 dark:bg-paddock-950"
+    >
+      <div className="flex flex-col items-center gap-3 px-4 py-8 text-center text-sm text-paddock-600 dark:text-paddock-300">
+        <FileIcon />
+        <span className="font-mono text-paddock-700 dark:text-paddock-200">{filename}</span>
+        <span className="text-xs text-paddock-500 dark:text-paddock-400">
+          This browser can’t show the PDF inline.
+        </span>
+        <div className="flex items-center gap-2">
+          <a
+            href={src}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="rounded-md bg-paddock-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-paddock-700"
+          >
+            Open in new tab
+          </a>
+          <a
+            href={src}
+            download={filename}
+            className="rounded-md px-3 py-1.5 text-xs font-medium text-paddock-600 ring-1 ring-paddock-300 hover:bg-paddock-100 dark:text-paddock-300 dark:ring-paddock-700 dark:hover:bg-paddock-800"
+          >
+            Download
+          </a>
+        </div>
+      </div>
+    </object>
   );
 }
 

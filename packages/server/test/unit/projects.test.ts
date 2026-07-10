@@ -46,6 +46,13 @@ describe("contentTypeFor", () => {
     expect(contentTypeFor("x.svg")).toBe("image/svg+xml");
     expect(contentTypeFor("x.bin")).toBe("application/octet-stream");
   });
+
+  it("serves a .pdf as application/pdf (not octet-stream / text)", () => {
+    expect(contentTypeFor("x.pdf")).toBe("application/pdf");
+    expect(contentTypeFor("x.PDF")).toBe("application/pdf");
+    // A .pdf must NOT be classified as an image kind.
+    expect(fileKind("x.pdf")).toBe("text");
+  });
 });
 
 describe("ProjectStore", () => {

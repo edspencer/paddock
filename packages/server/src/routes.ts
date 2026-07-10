@@ -430,11 +430,19 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
   app.get<{ Params: { id: string } }>("/api/chat-files/:id", async (req, reply) => {
     const found = await attachments.read(req.params.id);
     if (!found) return reply.code(404).send({ error: "not_found" });
+    // CSP: PDFs must NOT get the `sandbox` token. The browser's native PDF
+    // viewer renders inside an <object>/<iframe>, and a bare `sandbox` (no
+    // allowances) makes Chrome/Firefox refuse to paint the embedded PDF. We
+    // still lock it down with `default-src 'none'`, which denies any
+    // script/network the PDF might try — the viewer paints, nothing else runs.
+    // Every other attachment keeps the original sandbox CSP byte-for-byte.
+    const csp =
+      found.mime === "application/pdf" ? "default-src 'none'" : "sandbox; default-src 'none'";
     return reply
       .header("content-type", found.mime)
       .header("content-disposition", "inline")
       .header("x-content-type-options", "nosniff")
-      .header("content-security-policy", "sandbox; default-src 'none'")
+      .header("content-security-policy", csp)
       .header("cache-control", "private, max-age=300")
       .send(found.bytes);
   });

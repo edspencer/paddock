@@ -38,6 +38,12 @@ describe("AttachmentStore", () => {
     expect(read?.mime).toBe("image/png");
   });
 
+  it("serves a pdf id as application/pdf (not rewritten to text/plain)", async () => {
+    const id = await store.save(Buffer.from("%PDF-1.4"), "report.pdf");
+    const read = await store.read(id);
+    expect(read?.mime).toBe("application/pdf");
+  });
+
   it("returns null for a malformed id (no path traversal)", async () => {
     expect(await store.read("../etc/passwd")).toBeNull();
     expect(await store.read("not-a-uuid")).toBeNull();

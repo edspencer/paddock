@@ -34,7 +34,7 @@ import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import type { InjectedMcpServerDef, McpToolCallResult } from "@herdctl/core";
 
 /** The renderer the web side should use for a sent file. */
-export type SentFileKind = "markdown" | "mermaid" | "code" | "text" | "html" | "image";
+export type SentFileKind = "markdown" | "mermaid" | "code" | "text" | "html" | "image" | "pdf";
 
 /**
  * The JSON envelope returned as the tool's result `output`. The web parses this
@@ -73,6 +73,7 @@ const MARKDOWN_EXT = new Set([".md", ".mdx", ".markdown"]);
 const MERMAID_EXT = new Set([".mmd", ".mermaid"]);
 const HTML_EXT = new Set([".html", ".htm"]);
 const IMAGE_EXT = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".svg"]);
+const PDF_EXT = new Set([".pdf"]);
 /** Extension -> language label for the code-block filename chrome. */
 const LANGUAGE_BY_EXT: Record<string, string> = {
   ".ts": "typescript",
@@ -113,6 +114,7 @@ function inferKind(filename: string): SentFileKind {
   if (MERMAID_EXT.has(ext)) return "mermaid";
   if (HTML_EXT.has(ext)) return "html";
   if (IMAGE_EXT.has(ext)) return "image";
+  if (PDF_EXT.has(ext)) return "pdf";
   if (ext in LANGUAGE_BY_EXT) return "code";
   return "text";
 }
@@ -160,7 +162,8 @@ const TOOL_DESCRIPTION =
   "for a code snippet or a Markdown/Mermaid block — the filename can be illustrative, e.g. " +
   "`example.tsx` or `architecture.mmd`); or (2) pass `file_path` to render a real file from " +
   "your working directory. Markdown renders formatted, ```mermaid``` blocks (or a .mmd file / " +
-  "kind:'mermaid') render as diagrams, and code renders with a filename header. Prefer this " +
+  "kind:'mermaid') render as diagrams, and code renders with a filename header. A real .pdf " +
+  "(via `file_path`) renders inline in a scrollable PDF viewer. Prefer this " +
   "over pasting long content into your text reply.";
 
 const TOOL_INPUT_SCHEMA: Record<string, unknown> = {
@@ -183,7 +186,7 @@ const TOOL_INPUT_SCHEMA: Record<string, unknown> = {
     },
     kind: {
       type: "string",
-      enum: ["markdown", "mermaid", "code", "text", "html", "image"],
+      enum: ["markdown", "mermaid", "code", "text", "html", "image", "pdf"],
       description:
         "Renderer to use. Optional — inferred from the filename extension when omitted.",
     },
@@ -219,6 +222,9 @@ function createHandler(context: SendFileContext) {
         const kind = kindArg ?? inferKind(filename);
         if (kind === "image") {
           return fail("Error: inline `content` cannot be an image; use `file_path` for images.");
+        }
+        if (kind === "pdf") {
+          return fail("Error: inline `content` cannot be a PDF; use `file_path` for PDFs.");
         }
         return ok({
           paddockSendFile: 1,
