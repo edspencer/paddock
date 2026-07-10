@@ -291,7 +291,7 @@ export interface ChatCompleteUsage {
 }
 
 /** Which renderer the chat should use for an agent-sent file (issue #112). */
-export type SentFileKind = "markdown" | "mermaid" | "code" | "text" | "html" | "image";
+export type SentFileKind = "markdown" | "mermaid" | "code" | "text" | "html" | "image" | "video";
 
 /**
  * The JSON envelope the `mcp__paddock__send_file` tool returns as its result

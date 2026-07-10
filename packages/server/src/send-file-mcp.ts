@@ -34,7 +34,7 @@ import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import type { InjectedMcpServerDef, McpToolCallResult } from "@herdctl/core";
 
 /** The renderer the web side should use for a sent file. */
-export type SentFileKind = "markdown" | "mermaid" | "code" | "text" | "html" | "image";
+export type SentFileKind = "markdown" | "mermaid" | "code" | "text" | "html" | "image" | "video";
 
 /**
  * The JSON envelope returned as the tool's result `output`. The web parses this
@@ -53,8 +53,12 @@ export interface SentFileEnvelope {
   message?: string;
 }
 
-/** Reject a runaway send; a chat attachment shouldn't be huge. */
-export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+/**
+ * Reject a runaway send; a chat attachment shouldn't be huge. Sized generously
+ * for video: a short screen recording (e.g. a Playwright `recordVideo`) routinely
+ * exceeds the old 25 MB image ceiling, so we allow up to 100 MB.
+ */
+export const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
 
 /** Per-turn context for the send-file tool. */
 export interface SendFileContext {
@@ -73,6 +77,9 @@ const MARKDOWN_EXT = new Set([".md", ".mdx", ".markdown"]);
 const MERMAID_EXT = new Set([".mmd", ".mermaid"]);
 const HTML_EXT = new Set([".html", ".htm"]);
 const IMAGE_EXT = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".svg"]);
+// Video extensions render inline as a <video> player. Note `.webm` (video) is
+// distinct from `.webp` (image); the IMAGE check runs first so they never collide.
+const VIDEO_EXT = new Set([".mp4", ".webm", ".mov", ".m4v"]);
 /** Extension -> language label for the code-block filename chrome. */
 const LANGUAGE_BY_EXT: Record<string, string> = {
   ".ts": "typescript",
@@ -112,7 +119,9 @@ function inferKind(filename: string): SentFileKind {
   if (MARKDOWN_EXT.has(ext)) return "markdown";
   if (MERMAID_EXT.has(ext)) return "mermaid";
   if (HTML_EXT.has(ext)) return "html";
+  // IMAGE before VIDEO so `.webp` (image) is never confused with `.webm` (video).
   if (IMAGE_EXT.has(ext)) return "image";
+  if (VIDEO_EXT.has(ext)) return "video";
   if (ext in LANGUAGE_BY_EXT) return "code";
   return "text";
 }
@@ -160,8 +169,9 @@ const TOOL_DESCRIPTION =
   "for a code snippet or a Markdown/Mermaid block — the filename can be illustrative, e.g. " +
   "`example.tsx` or `architecture.mmd`); or (2) pass `file_path` to render a real file from " +
   "your working directory. Markdown renders formatted, ```mermaid``` blocks (or a .mmd file / " +
-  "kind:'mermaid') render as diagrams, and code renders with a filename header. Prefer this " +
-  "over pasting long content into your text reply.";
+  "kind:'mermaid') render as diagrams, and code renders with a filename header. Videos " +
+  "(mp4/webm) sent via a real `file_path` render as an inline player with controls — keep them " +
+  "short. Prefer this over pasting long content into your text reply.";
 
 const TOOL_INPUT_SCHEMA: Record<string, unknown> = {
   type: "object",
@@ -183,7 +193,7 @@ const TOOL_INPUT_SCHEMA: Record<string, unknown> = {
     },
     kind: {
       type: "string",
-      enum: ["markdown", "mermaid", "code", "text", "html", "image"],
+      enum: ["markdown", "mermaid", "code", "text", "html", "image", "video"],
       description:
         "Renderer to use. Optional — inferred from the filename extension when omitted.",
     },
@@ -219,6 +229,9 @@ function createHandler(context: SendFileContext) {
         const kind = kindArg ?? inferKind(filename);
         if (kind === "image") {
           return fail("Error: inline `content` cannot be an image; use `file_path` for images.");
+        }
+        if (kind === "video") {
+          return fail("Error: inline `content` cannot be a video; use `file_path` for videos.");
         }
         return ok({
           paddockSendFile: 1,

@@ -103,11 +103,29 @@ describe("send_file MCP tool", () => {
     expect(result.isError).toBe(true);
   });
 
+  it("rejects inline content declared as a video (issue #126)", async () => {
+    for (const filename of ["clip.mp4", "clip.webm", "clip.mov", "clip.m4v"]) {
+      const { result } = await callTool({ content: "not really a video", filename });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("cannot be a video");
+    }
+  });
+
+  it("does NOT confuse .webp (image) with .webm (video) — the extension collision guard", async () => {
+    // Both inline sends are rejected, but for DIFFERENT reasons, proving each
+    // extension infers the kind we expect (image runs before video in inferKind).
+    const webp = await callTool({ content: "x", filename: "a.webp" });
+    expect(webp.result.content[0].text).toContain("cannot be an image");
+    const webm = await callTool({ content: "x", filename: "a.webm" });
+    expect(webm.result.content[0].text).toContain("cannot be a video");
+  });
+
   describe("real files", () => {
     let dir: string;
     beforeAll(async () => {
       dir = await makeTmpDir("paddock-sendfile-");
       await fs.writeFile(path.join(dir, "real.md"), "# Real\n\nfrom disk", "utf8");
+      await fs.writeFile(path.join(dir, "clip.mp4"), Buffer.from([0, 1, 2, 3]));
     });
     afterAll(async () => {
       await rmTmpDir(dir);
@@ -128,6 +146,14 @@ describe("send_file MCP tool", () => {
       // The bytes were copied to the store exactly once, at send time.
       expect(saved).toHaveLength(1);
       expect(saved[0].bytes.toString("utf8")).toBe("# Real\n\nfrom disk");
+    });
+
+    it("infers the video kind for a real .mp4 file and stores its bytes (issue #126)", async () => {
+      const { result, envelope, saved } = await callTool({ file_path: "clip.mp4" }, dir);
+      expect(result.isError).toBeFalsy();
+      expect(envelope).toMatchObject({ filename: "clip.mp4", kind: "video", source: "file" });
+      expect(envelope?.attachmentId).toBeTruthy();
+      expect(Buffer.compare(saved[0].bytes, Buffer.from([0, 1, 2, 3]))).toBe(0);
     });
 
     it("copies a file referenced by an absolute path OUTSIDE the working dir", async () => {

@@ -46,6 +46,15 @@ describe("contentTypeFor", () => {
     expect(contentTypeFor("x.svg")).toBe("image/svg+xml");
     expect(contentTypeFor("x.bin")).toBe("application/octet-stream");
   });
+
+  it("returns the video MIME for video extensions (issue #126)", () => {
+    expect(contentTypeFor("x.mp4")).toBe("video/mp4");
+    expect(contentTypeFor("x.webm")).toBe("video/webm");
+    expect(contentTypeFor("x.mov")).toBe("video/quicktime");
+    expect(contentTypeFor("x.m4v")).toBe("video/x-m4v");
+    // .webp stays an image, never a video (extension-collision guard).
+    expect(contentTypeFor("x.webp")).toBe("image/webp");
+  });
 });
 
 describe("ProjectStore", () => {

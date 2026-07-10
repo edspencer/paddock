@@ -51,6 +51,11 @@ function SentFileBody({ file }: { file: SentFile }) {
   if (file.kind === "image") {
     return <ImageBody src={file.rawUrl} filename={file.filename} />;
   }
+  // A video is always a real file (rejected inline server-side) → load from the
+  // byte endpoint, which advertises byte-range support so it plays on iOS.
+  if (file.kind === "video") {
+    return <VideoBody src={file.rawUrl} filename={file.filename} />;
+  }
   // Text-ish kinds. Inline content renders directly; a file source loads its
   // text from the byte endpoint first.
   if (file.source === "inline") {
@@ -150,6 +155,45 @@ function ImageBody({ src, filename }: { src?: string; filename: string }) {
         onError={() => setFailed(true)}
         className="max-h-[480px] max-w-full object-contain shadow-sm"
       />
+    </div>
+  );
+}
+
+/**
+ * A file-source video, rendered as an inline HTML5 player. `playsInline` keeps
+ * iOS from hijacking playback into fullscreen, and `preload="metadata"` fetches
+ * just enough to show the poster frame + duration without pulling the whole clip.
+ * iOS Safari only plays a `<video>` when the server supports HTTP byte ranges —
+ * the `/api/chat-files/:id` endpoint answers `Range:` with `206`, which is what
+ * actually makes mobile playback work (see routes.ts). The nested content is the
+ * fallback for a browser that can't decode the format: a note + a download link.
+ */
+function VideoBody({ src, filename }: { src?: string; filename: string }) {
+  if (!src) {
+    return (
+      <div className="flex items-center gap-2 px-4 py-3 text-sm text-rose-700 dark:text-rose-300">
+        <AlertIcon width={16} height={16} className="shrink-0" />
+        <span>Could not display this video.</span>
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center justify-center overflow-hidden bg-paddock-950 p-4">
+      <video
+        src={src}
+        controls
+        playsInline
+        preload="metadata"
+        className="max-h-[480px] w-full rounded-sm shadow-sm"
+      >
+        {/* Fallback for a format the browser can't play. */}
+        <p className="p-4 text-sm text-paddock-200">
+          Your browser can’t play this video.{" "}
+          <a href={src} download={filename} className="underline">
+            Download {filename}
+          </a>
+        </p>
+      </video>
     </div>
   );
 }

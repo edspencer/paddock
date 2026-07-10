@@ -427,16 +427,47 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
   // arbitrary path on the box. Used by the chat's image <img> and by the text
   // fetch for file-kind sends, live and after reload. Locked down with the same
   // nosniff + sandbox CSP as the project file raw endpoint.
+  //
+  // HTTP byte-range support (issue #126) is what makes an inline <video> play,
+  // especially on iOS Safari: it sends a `Range:` request and REFUSES to play if
+  // the server answers `200` with the whole body instead of `206 Partial Content`.
+  // So we always advertise `Accept-Ranges: bytes` and honor a `Range` header.
+  //
+  // CSP: the `sandbox` token is right for a directly-opened image/HTML/SVG (it
+  // stops a hostile file executing script in our origin), but it is meaningless
+  // for a media subresource and we keep it OFF for video/PDF so nothing can
+  // interfere with playback — those get a plain `default-src 'none'`. Everything
+  // else keeps the byte-for-byte `sandbox; default-src 'none'` as before.
   app.get<{ Params: { id: string } }>("/api/chat-files/:id", async (req, reply) => {
     const found = await attachments.read(req.params.id);
     if (!found) return reply.code(404).send({ error: "not_found" });
-    return reply
-      .header("content-type", found.mime)
+    const { bytes, mime } = found;
+    const total = bytes.length;
+    const csp = cspFor(mime);
+
+    reply
+      .header("content-type", mime)
       .header("content-disposition", "inline")
       .header("x-content-type-options", "nosniff")
-      .header("content-security-policy", "sandbox; default-src 'none'")
+      .header("content-security-policy", csp)
       .header("cache-control", "private, max-age=300")
-      .send(found.bytes);
+      .header("accept-ranges", "bytes");
+
+    const range = parseRangeHeader(req.headers.range, total);
+    if (range === "unsatisfiable") {
+      // Malformed / out-of-bounds range → 416 with the resource's full size.
+      return reply.code(416).header("content-range", `bytes */${total}`).send();
+    }
+    if (range) {
+      const { start, end } = range;
+      return reply
+        .code(206)
+        .header("content-range", `bytes ${start}-${end}/${total}`)
+        .header("content-length", String(end - start + 1))
+        .send(bytes.subarray(start, end + 1));
+    }
+    // No (or unhandled) Range header → full body, 200.
+    return reply.send(bytes);
   });
 
   // Pin a file as a sibling tab (issue #4). Validates the file exists + dedupes.
@@ -921,6 +952,52 @@ async function buildProjectChats(
       return toChatDto(s, preview, usage, archived);
     }),
   );
+}
+
+/**
+ * The Content-Security-Policy to serve a chat attachment with, chosen from its
+ * MIME type (issue #126). A media/PDF subresource gets a bare `default-src
+ * 'none'` (the `sandbox` token does nothing useful for it and we don't want it
+ * anywhere near `<video>` playback); everything else keeps the locked-down
+ * `sandbox; default-src 'none'` that guards a directly-opened image/HTML/SVG.
+ */
+function cspFor(mime: string): string {
+  const base = mime.split(";")[0].trim().toLowerCase();
+  if (base.startsWith("video/") || base === "application/pdf") return "default-src 'none'";
+  return "sandbox; default-src 'none'";
+}
+
+/**
+ * Parse an HTTP `Range` header against a known total size (issue #126). Supports
+ * the single-range forms `bytes=start-`, `bytes=start-end`, and the suffix
+ * `bytes=-N` (last N bytes). Returns the resolved `{ start, end }` (inclusive),
+ * `"unsatisfiable"` for a malformed/out-of-bounds range (→ 416), or `null` when
+ * there is no range to honor (→ serve the full body, 200).
+ */
+export function parseRangeHeader(
+  header: string | undefined,
+  total: number,
+): { start: number; end: number } | "unsatisfiable" | null {
+  if (!header) return null;
+  const m = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+  if (!m) return null; // multi-range or a form we don't handle → fall back to 200
+  const [, startStr, endStr] = m;
+  if (startStr === "" && endStr === "") return null;
+
+  let start: number;
+  let end: number;
+  if (startStr === "") {
+    // Suffix form `bytes=-N`: the last N bytes.
+    const n = Number(endStr);
+    if (n === 0) return "unsatisfiable";
+    start = Math.max(0, total - n);
+    end = total - 1;
+  } else {
+    start = Number(startStr);
+    end = endStr === "" ? total - 1 : Math.min(Number(endStr), total - 1);
+  }
+  if (start > end || start >= total) return "unsatisfiable";
+  return { start, end };
 }
 
 function sendProjectError(reply: import("fastify").FastifyReply, err: unknown) {
