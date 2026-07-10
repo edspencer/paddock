@@ -372,7 +372,7 @@ export function ChatPane({
       void loadHistory(initialSessionId)
         .then((msgs) => {
           if (cancelled) return;
-          setTurns(msgs.map(historyToTurn));
+          setTurns(historyToTurns(msgs));
         })
         .catch(() => {
           if (!cancelled) setError("Could not load this chat's history.");
@@ -573,7 +573,7 @@ export function ChatPane({
         const sid = sessionRef.current;
         if (!sid || !loadHistory) return;
         void loadHistory(sid)
-          .then((msgs) => setTurns(msgs.map(historyToTurn)))
+          .then((msgs) => setTurns(historyToTurns(msgs)))
           .catch(() => {
             /* keep whatever we already have */
           });
@@ -1358,7 +1358,7 @@ function NestedSteps({ toolUseId }: { toolUseId: string }) {
     };
   }, [fetchSubagent, toolUseId]);
 
-  const turns = useMemo(() => (msgs ?? []).map(historyToTurn), [msgs]);
+  const turns = useMemo(() => historyToTurns(msgs ?? []), [msgs]);
 
   return (
     <div className="border-t border-paddock-200/70 bg-paddock-50/60 px-3 py-3 dark:border-paddock-800 dark:bg-paddock-950/40">
@@ -1415,18 +1415,48 @@ function sealStreaming(prev: Turn[]): Turn[] {
 }
 
 /**
- * Convert a hydrated history message into a rendered turn. A `send_file` tool
- * call rebuilds its rich `file` turn (parsing the same output envelope as the
- * live path), so a reload renders identically (issue #112).
+ * Convert a hydrated history message into a rendered turn, tagged with a
+ * caller-resolved `id` (see `historyToTurns`). A `send_file` tool call rebuilds
+ * its rich `file` turn (parsing the same output envelope as the live path), so a
+ * reload renders identically (issue #112).
  */
-function historyToTurn(m: HistoryMessage): Turn {
+function historyToTurn(m: HistoryMessage, id: string): Turn {
   if (m.role === "tool" && m.toolCall) {
     const file = sentFileFromToolCall(m.toolCall);
-    if (file) return { kind: "file", id: nextId(), file };
-    return { kind: "tool", id: nextId(), tool: m.toolCall };
+    if (file) return { kind: "file", id, file };
+    return { kind: "tool", id, tool: m.toolCall };
   }
   if (m.role === "assistant") {
-    return { kind: "assistant", id: nextId(), content: m.content, streaming: false };
+    return { kind: "assistant", id, content: m.content, streaming: false };
   }
-  return { kind: "user", id: nextId(), content: m.content };
+  return { kind: "user", id, content: m.content };
+}
+
+/**
+ * Build the rendered turns for a reloaded transcript, giving each a STABLE,
+ * UNIQUE id derived from the source message's `uuid` (issue #135). The same
+ * transcript yields the same ids across reloads, so per-message UI state (e.g. a
+ * custom embed height, #136) can be keyed on `turn.id` and persist — unlike the
+ * ephemeral render counter, which is reassigned on every render.
+ *
+ * A single JSONL entry can parse into several messages that SHARE one `uuid` (an
+ * assistant entry carrying text + tool_use, or multiple tool_uses — the herdctl
+ * `uuid` is a stable anchor, not a unique key). We suffix the 2nd+ message
+ * carrying a given uuid with `#<n>` so React keys stay unique while remaining
+ * deterministic. A message with no `uuid` (older transcript / pre-uuid core)
+ * falls back to the render counter — unique per render, but not reload-stable.
+ */
+export function historyToTurns(msgs: HistoryMessage[]): Turn[] {
+  const seen = new Map<string, number>();
+  return msgs.map((m) => {
+    let id: string;
+    if (m.uuid) {
+      const n = seen.get(m.uuid) ?? 0;
+      seen.set(m.uuid, n + 1);
+      id = n === 0 ? m.uuid : `${m.uuid}#${n}`;
+    } else {
+      id = nextId();
+    }
+    return historyToTurn(m, id);
+  });
 }
