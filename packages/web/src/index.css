@@ -238,6 +238,86 @@
   }
 }
 
+/*
+ * Syntax-highlighting token colors for agent-sent code (issue #127).
+ *
+ * Hand-written to match the Paddock palette in both themes — we deliberately do
+ * NOT import a prebuilt highlight.js theme (keeps theme control + avoids an extra
+ * chunk). `.hljs` inherits the card foreground; the `.hljs-*` token classes are
+ * highlight.js's scope names. Light values first, `.dark` overrides after.
+ *
+ * NOTE: these are intentionally NOT inside `@layer components`. highlight.js
+ * emits the `.hljs-*` class names at RUNTIME, so Tailwind's content scan never
+ * sees them — and Tailwind tree-shakes unused rules *within* `@layer`, which
+ * would silently strip every token color (only `.hljs`/`.hljs-keyword` happen to
+ * appear in source/tests and would survive). Kept un-layered so they're always
+ * emitted; the cascade still lands after the utilities layer below.
+ */
+.hljs {
+  @apply text-paddock-800 dark:text-paddock-200;
+}
+.hljs-comment,
+.hljs-quote {
+  @apply italic text-paddock-400 dark:text-paddock-500;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-operator {
+  @apply font-medium text-accent-700 dark:text-accent;
+}
+.hljs-literal,
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet {
+  @apply text-amber-600 dark:text-amber-400;
+}
+.hljs-string,
+.hljs-regexp,
+.hljs-meta .hljs-string {
+  @apply text-emerald-700 dark:text-emerald-400;
+}
+.hljs-built_in,
+.hljs-type,
+.hljs-class .hljs-title {
+  @apply text-sky-700 dark:text-sky-300;
+}
+.hljs-title,
+.hljs-title.function_,
+.hljs-function .hljs-title,
+.hljs-section {
+  @apply text-violet-700 dark:text-violet-300;
+}
+.hljs-variable,
+.hljs-template-variable,
+.hljs-params {
+  @apply text-paddock-700 dark:text-paddock-300;
+}
+.hljs-attr,
+.hljs-attribute,
+.hljs-property {
+  @apply text-sky-700 dark:text-sky-300;
+}
+.hljs-name,
+.hljs-tag {
+  @apply text-rose-600 dark:text-rose-400;
+}
+.hljs-meta,
+.hljs-punctuation {
+  @apply text-paddock-400 dark:text-paddock-500;
+}
+.hljs-emphasis {
+  @apply italic;
+}
+.hljs-strong {
+  @apply font-semibold;
+}
+.hljs-deletion {
+  @apply text-rose-700 dark:text-rose-400;
+}
+.hljs-addition {
+  @apply text-emerald-700 dark:text-emerald-400;
+}
+
 /* The blinking caret shown while assistant text is streaming in. */
 @layer utilities {
   .streaming-caret::after {
