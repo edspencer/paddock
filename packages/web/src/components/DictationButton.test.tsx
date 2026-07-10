@@ -119,6 +119,30 @@ describe("DictationButton", () => {
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
   });
 
+  it("shows the transcribing spinner even under :hover (iOS sticky-hover regression)", async () => {
+    vi.spyOn(api, "transcriptionStatus").mockResolvedValue({
+      available: true,
+      mode: "remote",
+      model: "base",
+    });
+    // Hang so the transcription stays in flight while we inspect the button.
+    vi.spyOn(api, "transcribe").mockImplementation(() => new Promise<string>(() => {}));
+    render(<DictationButton onText={vi.fn()} />);
+
+    await recordViaButton();
+
+    // The spinner must be rendered while transcribing…
+    const spinner = await screen.findByRole("status", { name: /transcribing/i });
+    // …and its hover swap-out must be gated on a hover-capable pointer
+    // (`can-hover:group-hover:hidden`, not a bare `group-hover:hidden`).
+    // On iOS, tapping "stop" leaves a sticky :hover on the button; an ungated
+    // swap hides the spinner and shows a stop icon, so nothing appears to be
+    // happening (the original bug).
+    const wrapper = spinner.parentElement!;
+    expect(wrapper.className).toContain("can-hover:group-hover:hidden");
+    expect(wrapper.className).not.toMatch(/(^|\s)group-hover:hidden/);
+  });
+
   it("lets you cancel an in-flight transcription from the button", async () => {
     vi.spyOn(api, "transcriptionStatus").mockResolvedValue({
       available: true,

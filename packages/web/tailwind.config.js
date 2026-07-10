@@ -1,3 +1,5 @@
+import plugin from "tailwindcss/plugin";
+
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
@@ -66,5 +68,12 @@ export default {
       },
     },
   },
-  plugins: [],
+  plugins: [
+    // `can-hover:` — applies only when the device has a real hover-capable
+    // pointer. Touch browsers (iOS Safari especially) apply a *sticky* :hover
+    // on tap that persists until the next tap elsewhere, so any hover-only
+    // affordance (icon swaps, reveals) must be gated behind this variant or it
+    // gets stuck on after a tap.
+    plugin(({ addVariant }) => addVariant("can-hover", "@media (hover: hover)")),
+  ],
 };
