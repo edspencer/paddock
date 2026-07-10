@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { SentFile, SentFileKind } from "../lib/types";
+import { CodeBlock } from "./CodeBlock";
 import { Markdown } from "./Markdown";
 import { Mermaid } from "./Mermaid";
 import { AlertIcon } from "./icons";
@@ -59,13 +60,22 @@ function SentFileBody({ file }: { file: SentFile }) {
   // Text-ish kinds. Inline content renders directly; a file source loads its
   // text from the byte endpoint first.
   if (file.source === "inline") {
-    return <TextKind kind={file.kind} text={file.content ?? ""} />;
+    return <TextKind kind={file.kind} text={file.content ?? ""} language={file.language} />;
   }
-  return <FetchedTextKind url={file.rawUrl} kind={file.kind} />;
+  return <FetchedTextKind url={file.rawUrl} kind={file.kind} language={file.language} />;
 }
 
 /** Render already-resolved text by kind, reusing the Files-tab primitives. */
-function TextKind({ kind, text }: { kind: SentFileKind; text: string }) {
+function TextKind({
+  kind,
+  text,
+  language,
+}: {
+  kind: SentFileKind;
+  text: string;
+  /** Language hint carried on the sent file — drives `code` syntax highlighting. */
+  language?: string;
+}) {
   if (kind === "html") {
     // Sandboxed (scripts allowed, isolated from the app) — mirrors FileView.
     return (
@@ -91,7 +101,13 @@ function TextKind({ kind, text }: { kind: SentFileKind; text: string }) {
       </article>
     );
   }
-  // code + text: monospace preformatted. Syntax highlighting is a follow-up.
+  if (kind === "code") {
+    // Theme-aware syntax highlighting, lazy-loaded so hljs stays out of the
+    // entry chunk (issue #127). Falls back to plain escaped text until (or if)
+    // the highlighter chunk resolves.
+    return <CodeBlock code={text} language={language} />;
+  }
+  // text: plain monospace preformatted.
   return (
     <pre className="overflow-x-auto whitespace-pre-wrap break-words px-4 py-3 font-mono text-[12.5px] leading-relaxed text-paddock-800 dark:text-paddock-200">
       {text}
@@ -100,7 +116,15 @@ function TextKind({ kind, text }: { kind: SentFileKind; text: string }) {
 }
 
 /** Load a file-source's text from Paddock, then render it by kind. */
-function FetchedTextKind({ url, kind }: { url?: string; kind: SentFileKind }) {
+function FetchedTextKind({
+  url,
+  kind,
+  language,
+}: {
+  url?: string;
+  kind: SentFileKind;
+  language?: string;
+}) {
   const [state, setState] = useState<{ text: string } | { error: true } | null>(null);
   useEffect(() => {
     if (!url) {
@@ -129,7 +153,7 @@ function FetchedTextKind({ url, kind }: { url?: string; kind: SentFileKind }) {
       </div>
     );
   }
-  return <TextKind kind={kind} text={state.text} />;
+  return <TextKind kind={kind} text={state.text} language={language} />;
 }
 
 function ImageBody({ src, filename }: { src?: string; filename: string }) {

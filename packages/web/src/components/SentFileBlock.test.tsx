@@ -104,4 +104,25 @@ describe("SentFileBlock", () => {
     );
     await waitFor(() => expect(screen.getByText(/could not load/i)).toBeInTheDocument());
   });
+
+  it("routes a code kind through the syntax highlighter (eventually gets an hljs class)", async () => {
+    const { container } = render(
+      <SentFileBlock
+        file={inline({ filename: "a.py", kind: "code", language: "python", content: "def hi():\n    return 1" })}
+      />,
+    );
+    // Baseline text is present immediately; the highlighter upgrades it async.
+    expect(screen.getByText(/def hi/)).toBeInTheDocument();
+    await waitFor(() => expect(container.querySelector("code.hljs")).not.toBeNull());
+  });
+
+  it("keeps a text kind as a plain pre (never highlighted)", async () => {
+    const { container } = render(
+      <SentFileBlock file={inline({ filename: "n.txt", kind: "text", content: "plain body" })} />,
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    expect(container.querySelector("code.hljs")).toBeNull();
+    expect(container.querySelector("pre")).not.toBeNull();
+    expect(screen.getByText("plain body")).toBeInTheDocument();
+  });
 });
