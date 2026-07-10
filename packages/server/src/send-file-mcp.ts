@@ -34,7 +34,15 @@ import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import type { InjectedMcpServerDef, McpToolCallResult } from "@herdctl/core";
 
 /** The renderer the web side should use for a sent file. */
-export type SentFileKind = "markdown" | "mermaid" | "code" | "text" | "html" | "image" | "video";
+export type SentFileKind =
+  | "markdown"
+  | "mermaid"
+  | "code"
+  | "text"
+  | "html"
+  | "image"
+  | "video"
+  | "pdf";
 
 /**
  * The JSON envelope returned as the tool's result `output`. The web parses this
@@ -80,6 +88,7 @@ const IMAGE_EXT = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".
 // Video extensions render inline as a <video> player. Note `.webm` (video) is
 // distinct from `.webp` (image); the IMAGE check runs first so they never collide.
 const VIDEO_EXT = new Set([".mp4", ".webm", ".mov", ".m4v"]);
+const PDF_EXT = new Set([".pdf"]);
 /** Extension -> language label for the code-block filename chrome. */
 const LANGUAGE_BY_EXT: Record<string, string> = {
   ".ts": "typescript",
@@ -122,6 +131,7 @@ function inferKind(filename: string): SentFileKind {
   // IMAGE before VIDEO so `.webp` (image) is never confused with `.webm` (video).
   if (IMAGE_EXT.has(ext)) return "image";
   if (VIDEO_EXT.has(ext)) return "video";
+  if (PDF_EXT.has(ext)) return "pdf";
   if (ext in LANGUAGE_BY_EXT) return "code";
   return "text";
 }
@@ -171,7 +181,8 @@ const TOOL_DESCRIPTION =
   "your working directory. Markdown renders formatted, ```mermaid``` blocks (or a .mmd file / " +
   "kind:'mermaid') render as diagrams, and code renders with a filename header. Videos " +
   "(mp4/webm) sent via a real `file_path` render as an inline player with controls — keep them " +
-  "short. Prefer this over pasting long content into your text reply.";
+  "short. A real .pdf (via `file_path`) renders inline in a scrollable PDF viewer. Prefer " +
+  "this over pasting long content into your text reply.";
 
 const TOOL_INPUT_SCHEMA: Record<string, unknown> = {
   type: "object",
@@ -193,7 +204,7 @@ const TOOL_INPUT_SCHEMA: Record<string, unknown> = {
     },
     kind: {
       type: "string",
-      enum: ["markdown", "mermaid", "code", "text", "html", "image", "video"],
+      enum: ["markdown", "mermaid", "code", "text", "html", "image", "video", "pdf"],
       description:
         "Renderer to use. Optional — inferred from the filename extension when omitted.",
     },
@@ -232,6 +243,9 @@ function createHandler(context: SendFileContext) {
         }
         if (kind === "video") {
           return fail("Error: inline `content` cannot be a video; use `file_path` for videos.");
+        }
+        if (kind === "pdf") {
+          return fail("Error: inline `content` cannot be a PDF; use `file_path` for PDFs.");
         }
         return ok({
           paddockSendFile: 1,

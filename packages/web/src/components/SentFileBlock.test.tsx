@@ -83,6 +83,27 @@ describe("SentFileBlock", () => {
     expect(screen.getByText(/could not display/i)).toBeInTheDocument();
   });
 
+  it("renders a file-source PDF in an <object> pointing at the rawUrl (no <pre>)", () => {
+    const rawUrl = "/api/chat-files/abc.pdf";
+    const { container } = render(
+      <SentFileBlock file={{ filename: "report.pdf", kind: "pdf", source: "file", rawUrl }} />,
+    );
+    const obj = container.querySelector("object");
+    expect(obj).not.toBeNull();
+    expect(obj?.getAttribute("data")).toBe(rawUrl);
+    expect(obj?.getAttribute("type")).toBe("application/pdf");
+    // The garbage text path must NOT be used for a PDF.
+    expect(container.querySelector("pre")).toBeNull();
+    // The fallback links point at the same bytes (open + download).
+    const link = screen.getByRole("link", { name: /open in new tab/i }) as HTMLAnchorElement;
+    expect(link.getAttribute("href")).toBe(rawUrl);
+  });
+
+  it("shows a fallback when a PDF has no rawUrl", () => {
+    render(<SentFileBlock file={{ filename: "report.pdf", kind: "pdf", source: "file" }} />);
+    expect(screen.getByText(/could not display/i)).toBeInTheDocument();
+  });
+
   it("loads a file-source text file's bytes from rawUrl and renders them", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("fetched body", { status: 200 }),
@@ -103,5 +124,26 @@ describe("SentFileBlock", () => {
       />,
     );
     await waitFor(() => expect(screen.getByText(/could not load/i)).toBeInTheDocument());
+  });
+
+  it("routes a code kind through the syntax highlighter (eventually gets an hljs class)", async () => {
+    const { container } = render(
+      <SentFileBlock
+        file={inline({ filename: "a.py", kind: "code", language: "python", content: "def hi():\n    return 1" })}
+      />,
+    );
+    // Baseline text is present immediately; the highlighter upgrades it async.
+    expect(screen.getByText(/def hi/)).toBeInTheDocument();
+    await waitFor(() => expect(container.querySelector("code.hljs")).not.toBeNull());
+  });
+
+  it("keeps a text kind as a plain pre (never highlighted)", async () => {
+    const { container } = render(
+      <SentFileBlock file={inline({ filename: "n.txt", kind: "text", content: "plain body" })} />,
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    expect(container.querySelector("code.hljs")).toBeNull();
+    expect(container.querySelector("pre")).not.toBeNull();
+    expect(screen.getByText("plain body")).toBeInTheDocument();
   });
 });

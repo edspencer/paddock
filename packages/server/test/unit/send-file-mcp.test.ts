@@ -120,12 +120,24 @@ describe("send_file MCP tool", () => {
     expect(webm.result.content[0].text).toContain("cannot be a video");
   });
 
+  it("rejects inline content inferred as a PDF from a .pdf filename", async () => {
+    const { result } = await callTool({ content: "%PDF-1.4", filename: "report.pdf" });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("PDF");
+  });
+
+  it("rejects inline content with an explicit kind:'pdf'", async () => {
+    const { result } = await callTool({ content: "whatever", filename: "doc.txt", kind: "pdf" });
+    expect(result.isError).toBe(true);
+  });
+
   describe("real files", () => {
     let dir: string;
     beforeAll(async () => {
       dir = await makeTmpDir("paddock-sendfile-");
       await fs.writeFile(path.join(dir, "real.md"), "# Real\n\nfrom disk", "utf8");
       await fs.writeFile(path.join(dir, "clip.mp4"), Buffer.from([0, 1, 2, 3]));
+      await fs.writeFile(path.join(dir, "doc.pdf"), Buffer.from("%PDF-1.4\n%%EOF"));
     });
     afterAll(async () => {
       await rmTmpDir(dir);
@@ -154,6 +166,15 @@ describe("send_file MCP tool", () => {
       expect(envelope).toMatchObject({ filename: "clip.mp4", kind: "video", source: "file" });
       expect(envelope?.attachmentId).toBeTruthy();
       expect(Buffer.compare(saved[0].bytes, Buffer.from([0, 1, 2, 3]))).toBe(0);
+    });
+
+    it("infers the pdf kind for a real .pdf file and stores its bytes", async () => {
+      const { result, envelope, saved } = await callTool({ file_path: "doc.pdf" }, dir);
+      expect(result.isError).toBeFalsy();
+      expect(envelope).toMatchObject({ filename: "doc.pdf", kind: "pdf", source: "file" });
+      expect(envelope?.attachmentId).toBeTruthy();
+      expect(saved).toHaveLength(1);
+      expect(saved[0].bytes.toString("utf8")).toContain("%PDF-1.4");
     });
 
     it("copies a file referenced by an absolute path OUTSIDE the working dir", async () => {
