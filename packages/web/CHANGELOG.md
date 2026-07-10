@@ -1,5 +1,45 @@
 # @paddock/web
 
+## 0.18.1
+
+### Patch Changes
+
+- [#140](https://github.com/edspencer/paddock/pull/140) [`86a4895`](https://github.com/edspencer/paddock/commit/86a4895fe053fb24aa505ae61676bf163ff1a31e) Thanks [@edspencer](https://github.com/edspencer)! - Add a hover/focus action bar and an image lightbox to sent media embeds (#137).
+
+  Sent **images** and **PDFs** now surface a small bottom-right cluster of icon
+  actions over the embed:
+
+  - **Download** (`<a download>`, same-origin so it keeps the original filename),
+  - **Open in new tab** (`GET /api/chat-files/:id` already serves the attachment
+    inline and is directly openable — no server work), and
+  - **Maximize** (images only) → a full-viewport **lightbox** portaled to
+    `<body>`: the image at up to the window size with the filename + the agent's
+    caption beneath it, **Esc** / backdrop-click to close, scroll-lock while open.
+
+  The cluster reveals on hover/focus on hover-capable devices and stays visible on
+  touch (reusing the `can-hover` Tailwind variant). PDFs omit Maximize — the
+  native `<object>` viewer already offers fullscreen/print/save, so open-in-new-tab
+  is the cross-browser pop-out. Everything keys off the existing `file.rawUrl`.
+
+- [#138](https://github.com/edspencer/paddock/pull/138) [`4a121b6`](https://github.com/edspencer/paddock/commit/4a121b6dd43863833db5c316af86d45d45b8692d) Thanks [@edspencer](https://github.com/edspencer)! - Give reloaded transcript turns a stable, reload-safe id derived from the source message's uuid (#135).
+
+  Every rendered `Turn` previously got an in-memory render counter (`t${n}`) that was reassigned on each render, so nothing could remember state about a specific message across reloads. Now:
+
+  - **Server:** bump `@herdctl/core` to a version that surfaces `ChatMessage.uuid` (the Claude Code JSONL per-entry uuid; herdctl#312). It flows through the messages endpoint unchanged (the `EnrichedMessage` DTO inherits it and `enrichWithSubagents` preserves it).
+  - **Web:** `HistoryMessage` gains an optional `uuid`, and `historyToTurns` keys each turn's id on it. A single JSONL entry can yield sibling messages that share one uuid (text + tool_use, or multiple tool_uses), so the 2nd+ sibling is suffixed `#<n>` to keep React keys unique while staying deterministic. Messages without a uuid (older transcripts) fall back to the render counter.
+
+  This is the foundation for per-message UI state that persists across reloads (e.g. resizable transcript items, #136). No visible behavior change on its own.
+
+- [#141](https://github.com/edspencer/paddock/pull/141) [`3f62d63`](https://github.com/edspencer/paddock/commit/3f62d63412dfb8baa045b5e8371316539a9bd612) Thanks [@edspencer](https://github.com/edspencer)! - Bound + resize long sent-file text embeds, with a per-item height that persists across reloads (#136).
+
+  A long sent-file **code / text / markdown** embed (e.g. a 500-line code file) previously rendered every line inline and dominated the transcript. Now such an embed is wrapped in a `ResizableBox`:
+
+  - **Bounded by default:** content taller than 360px gets a fixed height with an internal scroll; shorter content is untouched (no fixed height, no scrollbar, no handle).
+  - **Resizable:** a subtle drag handle along the bottom edge (pointer-capture drag, double-click to reset, ArrowUp/ArrowDown to nudge) lets you set a custom height per embed.
+  - **Persisted:** the chosen height is saved to `localStorage` (device-sticky) and restored on render, so it survives chat switches and page reloads. The key is the file's own stable identity — a real file's immutable attachment id (from `rawUrl`), or a content hash for an inline send — which is byte-for-byte identical live and after a reload (unlike the transcript `turn.id`, which is an ephemeral counter on a freshly-sent turn and only becomes the stable uuid once reloaded).
+
+  `html` (iframe), `mermaid`, `image`, `pdf`, and `video` embeds are unchanged. Web-only; no server changes.
+
 ## 0.18.0
 
 ### Minor Changes
