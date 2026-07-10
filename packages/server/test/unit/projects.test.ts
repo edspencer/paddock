@@ -209,6 +209,31 @@ describe("ProjectStore", () => {
     expect(reread.docker).toBe(true);
   });
 
+  it("driveMode override sets, persists, and clears back to inherit (issue #122)", async () => {
+    await store.create({ name: "D" });
+    // No override initially — the field is absent from the DTO + yaml.
+    const created = await store.get("d");
+    expect(created.driveMode).toBeUndefined();
+
+    // Setting an override persists to disk.
+    const set = await store.update("d", { driveMode: "session" });
+    expect(set.driveMode).toBe("session");
+    let parsed = YAML.parse(await fs.readFile(path.join(root, "d", "project.yaml"), "utf8"));
+    expect(parsed.driveMode).toBe("session");
+
+    // An unrelated update leaves the override untouched (undefined = no change).
+    const untouched = await store.update("d", { summary: "hi" });
+    expect(untouched.driveMode).toBe("session");
+
+    // `null` CLEARS the override -> inherit the global default (field removed).
+    const cleared = await store.update("d", { driveMode: null });
+    expect(cleared.driveMode).toBeUndefined();
+    parsed = YAML.parse(await fs.readFile(path.join(root, "d", "project.yaml"), "utf8"));
+    expect("driveMode" in parsed).toBe(false);
+    // Re-read from disk confirms it stayed cleared.
+    expect((await store.get("d")).driveMode).toBeUndefined();
+  });
+
   it("keeper settings are absent from a sparse yaml until set (round-trip discipline)", async () => {
     await fs.mkdir(path.join(root, "sparse2"));
     await fs.writeFile(

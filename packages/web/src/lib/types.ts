@@ -107,8 +107,12 @@ export interface UpdateProjectInput {
   maxTurns?: number;
   /** Whether the keeper runs in a Docker sandbox; server re-registers on change (issue #12). */
   docker?: boolean;
-  /** Keeper drive mode (Paddock#111); server validates + re-registers on change. */
-  driveMode?: "batch" | "session";
+  /**
+   * Keeper drive mode (Paddock#111); server validates + re-registers on change.
+   * `null` clears the per-project override so it inherits the box-wide global
+   * default again (issue #122's reset-to-inherit).
+   */
+  driveMode?: "batch" | "session" | null;
 }
 
 /** A chat = one Claude Code session, surfaced by the server's session discovery. */

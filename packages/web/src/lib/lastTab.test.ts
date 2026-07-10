@@ -23,7 +23,7 @@ describe("lastTab read/write/clear", () => {
   it("refuses to persist an invalid shape", () => {
     writeLastTab("p", "../etc/passwd");
     expect(readLastTab("p")).toBeNull();
-    writeLastTab("p", "settings");
+    writeLastTab("p", "bogus");
     expect(readLastTab("p")).toBeNull();
   });
 
@@ -32,7 +32,7 @@ describe("lastTab read/write/clear", () => {
     expect(readLastTab("p")).toBeNull();
   });
 
-  it("accepts bare 'home', 'chat', 'files' and 'changes'", () => {
+  it("accepts bare 'home', 'chat', 'files', 'changes' and 'settings'", () => {
     writeLastTab("p", "home");
     expect(readLastTab("p")).toBe("home");
     writeLastTab("p", "chat");
@@ -41,6 +41,8 @@ describe("lastTab read/write/clear", () => {
     expect(readLastTab("p")).toBe("files");
     writeLastTab("p", "changes");
     expect(readLastTab("p")).toBe("changes");
+    writeLastTab("p", "settings");
+    expect(readLastTab("p")).toBe("settings");
   });
 
   it("round-trips a changes sub-path with a file (issue #107)", () => {

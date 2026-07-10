@@ -70,6 +70,9 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
     expect(ids).toContain("claude-sonnet-5");
     // Every model carries a positive context limit (drives the meter).
     for (const m of body.models) expect(m.contextLimit).toBeGreaterThan(0);
+    // The box-wide keeper drive-mode default (issue #122): the Settings tab reads
+    // it to show the effective inherited value. Defaults to batch.
+    expect(["batch", "session"]).toContain(body.keeperDriveModeDefault);
   });
 
   // --- overview + changelog + files ------------------------------------------

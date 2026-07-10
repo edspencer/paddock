@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 import { useProjects } from "../lib/projects-context";
@@ -7,7 +7,6 @@ import { StatusPill } from "../components/StatusPill";
 import { TagPill } from "../components/TagPill";
 import { ContextRing } from "../components/ContextRing";
 import { NewProjectModal } from "../components/NewProjectModal";
-import { EditProjectModal } from "../components/EditProjectModal";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ProjectMenu } from "../components/ProjectMenu";
 import {
@@ -35,9 +34,14 @@ import { areaBlurb, areaLabel, INBOX, orderAreaSlugs } from "../lib/areas";
 export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
   const { projects: allProjects, loading, error, upsert, remove } = useProjects();
   const [modalOpen, setModalOpen] = useState(false);
-  const [editing, setEditing] = useState<Project | null>(null);
   const [deleting, setDeleting] = useState<Project | null>(null);
   const navigate = useNavigate();
+  // "Edit" now deep-links to the project's Settings tab (issue #122) rather than
+  // opening a modal — the tab is the single source of truth for project settings.
+  const editProject = useCallback(
+    (p: Project) => navigate(`/projects/${p.slug}/settings`),
+    [navigate],
+  );
 
   // When filtering by tag, narrow to projects carrying that domain tag. The
   // full unfiltered list still drives the lazy session-count fetch below.
@@ -179,7 +183,7 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
                 key={p.slug}
                 project={p}
                 sessionCount={counts[p.slug]?.length}
-                onEdit={() => setEditing(p)}
+                onEdit={() => editProject(p)}
                 onDelete={() => setDeleting(p)}
               />
             ))}
@@ -195,7 +199,7 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
                 slug={slug}
                 projects={ps}
                 counts={counts}
-                onEdit={setEditing}
+                onEdit={editProject}
                 onDelete={setDeleting}
               />
             ))}
@@ -205,17 +209,6 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
       </div>
 
       <NewProjectModal open={modalOpen} onClose={() => setModalOpen(false)} onCreated={onCreated} />
-      {editing && (
-        <EditProjectModal
-          open
-          project={editing}
-          onClose={() => setEditing(null)}
-          onSaved={(p) => {
-            upsert(p);
-            setEditing(null);
-          }}
-        />
-      )}
       <ConfirmDialog
         open={deleting !== null}
         title="Delete project?"

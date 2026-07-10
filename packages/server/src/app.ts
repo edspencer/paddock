@@ -111,7 +111,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   await app.register(fastifyMultipart, {
     limits: { fileSize: cfg.transcription.maxUploadBytes, files: 1 },
   });
-  await registerRoutes(app, { projects, herdctl, git, githubAuth, transcriber, archive, attachments });
+  await registerRoutes(app, { projects, herdctl, git, githubAuth, transcriber, archive, attachments, cfg });
 
   const chatHandler = makeChatHandler({ herdctl, projects, sweep, attachments, cfg });
   await app.register(async (scoped) => {

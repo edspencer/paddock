@@ -12,7 +12,7 @@ import { ChangesPane } from "../components/ChangesPane";
 import { Markdown } from "../components/Markdown";
 import { FileView } from "../components/FileView";
 import { ProjectMenu } from "../components/ProjectMenu";
-import { EditProjectModal } from "../components/EditProjectModal";
+import { SettingsPane } from "../components/SettingsPane";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import {
   ArchiveIcon,
@@ -28,6 +28,7 @@ import {
   PlusIcon,
   SearchIcon,
   TrashIcon,
+  WrenchIcon,
   XIcon,
 } from "../components/icons";
 import { relativeTime } from "../lib/format";
@@ -45,6 +46,7 @@ import type { GitProjectStatus } from "../lib/types";
  *   /projects/:slug/chat[/:sessionId]   -> Chat tab (optionally a saved chat)
  *   /projects/:slug/files[/:name]       -> Files tab / a specific file (or pin)
  *   /projects/:slug/changes[/:file]     -> Changes tab / a specific changed file
+ *   /projects/:slug/settings            -> Settings tab (all per-project settings)
  */
 export function ProjectView() {
   const params = useParams();
@@ -56,15 +58,16 @@ export function ProjectView() {
   // Which sub-route are we on? Derived from the URL pathname so it updates on
   // client-side navigation (the `/home`, `/files`, and `/changes` segments
   // distinguish those tabs; anything else is the chat tab).
-  const view: "home" | "chat" | "files" | "changes" = location.pathname.startsWith(
-    `/projects/${slug}/files`,
-  )
-    ? "files"
-    : location.pathname.startsWith(`/projects/${slug}/changes`)
-      ? "changes"
-      : location.pathname.startsWith(`/projects/${slug}/home`)
-        ? "home"
-        : "chat";
+  const view: "home" | "chat" | "files" | "changes" | "settings" =
+    location.pathname.startsWith(`/projects/${slug}/files`)
+      ? "files"
+      : location.pathname.startsWith(`/projects/${slug}/changes`)
+        ? "changes"
+        : location.pathname.startsWith(`/projects/${slug}/settings`)
+          ? "settings"
+          : location.pathname.startsWith(`/projects/${slug}/home`)
+            ? "home"
+            : "chat";
   const routeSessionId = view === "chat" ? params.sessionId : undefined;
   const routeFileName = view === "files" && params.name ? decodeURIComponent(params.name) : undefined;
   // The specific changed file deep-linked via /changes/:file (or undefined for
@@ -124,7 +127,6 @@ export function ProjectView() {
   // Mobile: the session list is an off-canvas drawer (static column on lg+).
   const [sessionsOpen, setSessionsOpen] = useState(false);
 
-  const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deletingChat, setDeletingChat] = useState<Chat | null>(null);
   // Whether the collapsible "Archived" section is expanded (#95). Collapsed by
@@ -194,11 +196,13 @@ export function ProjectView() {
     const sub =
       view === "home"
         ? toSubPath({ view: "home" })
-        : view === "chat"
-          ? toSubPath({ view: "chat", sessionId: routeSessionId })
-          : view === "changes"
-            ? toSubPath({ view: "changes", file: routeChangeFile })
-            : toSubPath({ view: "files", name: routeFileName });
+        : view === "settings"
+          ? toSubPath({ view: "settings" })
+          : view === "chat"
+            ? toSubPath({ view: "chat", sessionId: routeSessionId })
+            : view === "changes"
+              ? toSubPath({ view: "changes", file: routeChangeFile })
+              : toSubPath({ view: "files", name: routeFileName });
     writeLastTab(slug, sub);
   }, [slug, view, routeSessionId, routeFileName, routeChangeFile]);
 
@@ -241,6 +245,7 @@ export function ProjectView() {
   const goChat = useCallback(() => navigate(`/projects/${slug}/chat`), [navigate, slug]);
   const goFiles = useCallback(() => navigate(`/projects/${slug}/files`), [navigate, slug]);
   const goChanges = useCallback(() => navigate(`/projects/${slug}/changes`), [navigate, slug]);
+  const goSettings = useCallback(() => navigate(`/projects/${slug}/settings`), [navigate, slug]);
   // Select a specific changed file in the Changes tab, reflecting it in the URL
   // so a specific diff/file is deep-linkable (issue #107). null clears to the
   // bare /changes route.
@@ -634,7 +639,7 @@ export function ProjectView() {
             <PlusIcon width={16} height={16} />
           </button>
           <ProjectMenu
-            onEdit={() => setEditOpen(true)}
+            onEdit={goSettings}
             onDelete={() => setDeleteOpen(true)}
             size={18}
           />
@@ -843,6 +848,12 @@ export function ProjectView() {
                 </span>
               </TabButton>
             )}
+            <TabButton active={view === "settings"} onClick={goSettings}>
+              <span className="inline-flex items-center gap-1.5">
+                <WrenchIcon width={13} height={13} />
+                Settings
+              </span>
+            </TabButton>
             {/* Pinned file tabs (sibling tabs), order preserved by the server.
                 Each links to /files/:name so the tab is deep-linkable. */}
             {pinned.map((f) => (
@@ -869,6 +880,15 @@ export function ProjectView() {
               onSelectFile={openChangeFile}
             />
           )}
+          {view === "settings" && (
+            <SettingsPane
+              project={project}
+              onSaved={(p) => {
+                setProject(p);
+                upsert(p);
+              }}
+            />
+          )}
           {view === "home" && (
             <HomePane
               project={project}
@@ -880,7 +900,7 @@ export function ProjectView() {
               onNewChat={newChat}
               onOpenFile={openFile}
               onOpenFiles={goFiles}
-              onEditDetails={() => setEditOpen(true)}
+              onEditDetails={goSettings}
             />
           )}
           {view === "chat" && (
@@ -927,18 +947,6 @@ export function ProjectView() {
         </div>
       </div>
 
-      {editOpen && (
-        <EditProjectModal
-          open
-          project={project}
-          onClose={() => setEditOpen(false)}
-          onSaved={(p) => {
-            setProject(p);
-            upsert(p);
-            setEditOpen(false);
-          }}
-        />
-      )}
       <ConfirmDialog
         open={deleteOpen}
         title="Delete project?"
