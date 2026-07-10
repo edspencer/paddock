@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { SentFileBlock } from "./SentFileBlock";
 import type { SentFile } from "../lib/types";
 
@@ -145,5 +145,63 @@ describe("SentFileBlock", () => {
     expect(container.querySelector("code.hljs")).toBeNull();
     expect(container.querySelector("pre")).not.toBeNull();
     expect(screen.getByText("plain body")).toBeInTheDocument();
+  });
+});
+
+describe("media action bar + image lightbox (#137)", () => {
+  const image: SentFile = {
+    filename: "shot.png",
+    kind: "image",
+    source: "file",
+    rawUrl: "/api/chat-files/img.png",
+    message: "a nice screenshot",
+  };
+
+  it("renders Download, Open-in-new-tab, and Maximize over an image (keyed to rawUrl)", () => {
+    render(<SentFileBlock file={image} />);
+    const download = screen.getByRole("link", { name: /download shot\.png/i }) as HTMLAnchorElement;
+    expect(download.getAttribute("href")).toBe(image.rawUrl);
+    expect(download.hasAttribute("download")).toBe(true);
+    const open = screen.getByRole("link", { name: /open shot\.png in new tab/i }) as HTMLAnchorElement;
+    expect(open.getAttribute("href")).toBe(image.rawUrl);
+    expect(open.getAttribute("target")).toBe("_blank");
+    expect(screen.getByRole("button", { name: /maximize/i })).toBeInTheDocument();
+  });
+
+  it("opens the lightbox on Maximize (image at rawUrl + filename/caption) and closes on Escape", () => {
+    render(<SentFileBlock file={image} />);
+    fireEvent.click(screen.getByRole("button", { name: /maximize/i }));
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toBeInTheDocument();
+    const lightboxImg = within(dialog).getByAltText("shot.png") as HTMLImageElement;
+    expect(lightboxImg.getAttribute("src")).toBe(image.rawUrl);
+    // The filename + the agent's caption both show beneath the lightbox image.
+    expect(within(dialog).getByText("shot.png")).toBeInTheDocument();
+    expect(within(dialog).getByText("a nice screenshot")).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("closes the lightbox on a backdrop click", () => {
+    render(<SentFileBlock file={image} />);
+    fireEvent.click(screen.getByRole("button", { name: /maximize/i }));
+    fireEvent.click(screen.getByRole("dialog"));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("shows Download + Open-in-new-tab but NO Maximize on a PDF", () => {
+    render(
+      <SentFileBlock
+        file={{ filename: "report.pdf", kind: "pdf", source: "file", rawUrl: "/api/chat-files/r.pdf" }}
+      />,
+    );
+    const download = screen.getByRole("link", {
+      name: /download report\.pdf/i,
+    }) as HTMLAnchorElement;
+    expect(download.getAttribute("href")).toBe("/api/chat-files/r.pdf");
+    expect(
+      screen.getByRole("link", { name: /open report\.pdf in new tab/i }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /maximize/i })).not.toBeInTheDocument();
   });
 });
