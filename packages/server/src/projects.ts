@@ -55,6 +55,18 @@ export const IMAGE_MIME: Record<string, string> = {
   ".svg": "image/svg+xml",
 };
 
+/**
+ * Non-image document extensions → their MIME type. Kept SEPARATE from
+ * `IMAGE_MIME` on purpose: the file-kind classifier (`fileKind`) treats every
+ * `IMAGE_MIME` entry as `kind: "image"`, so a `.pdf` must not live there. It's
+ * used only for the byte endpoint's Content-Type (a PDF must serve as
+ * `application/pdf`, not the octet-stream the attachment store rewrites to
+ * `text/plain`).
+ */
+export const DOCUMENT_MIME: Record<string, string> = {
+  ".pdf": "application/pdf",
+};
+
 /** Derive a render kind from a file name's extension. */
 export function fileKind(name: string): FileKind {
   const ext = name.slice(name.lastIndexOf(".")).toLowerCase();
@@ -67,7 +79,7 @@ export function fileKind(name: string): FileKind {
 /** The MIME type for a file name's extension, defaulting to octet-stream. */
 export function contentTypeFor(name: string): string {
   const ext = name.slice(name.lastIndexOf(".")).toLowerCase();
-  return IMAGE_MIME[ext] ?? "application/octet-stream";
+  return IMAGE_MIME[ext] ?? DOCUMENT_MIME[ext] ?? "application/octet-stream";
 }
 
 export interface ProjectLink {
