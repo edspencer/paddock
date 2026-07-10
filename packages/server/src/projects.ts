@@ -56,6 +56,19 @@ export const IMAGE_MIME: Record<string, string> = {
 };
 
 /**
+ * Video extensions → their MIME type, for the raw byte endpoint's Content-Type
+ * (issue #126). Kept SEPARATE from IMAGE_MIME so the image file-kind classifier
+ * (`fileKind`) is untouched — video only affects the content-type served, which
+ * (together with HTTP range support) is what lets a `<video>` play, incl. iOS.
+ */
+export const VIDEO_MIME: Record<string, string> = {
+  ".mp4": "video/mp4",
+  ".webm": "video/webm",
+  ".mov": "video/quicktime",
+  ".m4v": "video/x-m4v",
+};
+
+/**
  * Non-image document extensions → their MIME type. Kept SEPARATE from
  * `IMAGE_MIME` on purpose: the file-kind classifier (`fileKind`) treats every
  * `IMAGE_MIME` entry as `kind: "image"`, so a `.pdf` must not live there. It's
@@ -79,7 +92,9 @@ export function fileKind(name: string): FileKind {
 /** The MIME type for a file name's extension, defaulting to octet-stream. */
 export function contentTypeFor(name: string): string {
   const ext = name.slice(name.lastIndexOf(".")).toLowerCase();
-  return IMAGE_MIME[ext] ?? DOCUMENT_MIME[ext] ?? "application/octet-stream";
+  return (
+    IMAGE_MIME[ext] ?? VIDEO_MIME[ext] ?? DOCUMENT_MIME[ext] ?? "application/octet-stream"
+  );
 }
 
 export interface ProjectLink {

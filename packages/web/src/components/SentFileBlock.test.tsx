@@ -57,6 +57,27 @@ describe("SentFileBlock", () => {
     expect(img.getAttribute("src")).toBe(rawUrl);
   });
 
+  it("renders a file-source video as an inline <video> from its rawUrl (issue #126)", () => {
+    const rawUrl = "/api/chat-files/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.mp4";
+    const { container } = render(
+      <SentFileBlock file={{ filename: "clip.mp4", kind: "video", source: "file", rawUrl }} />,
+    );
+    const video = container.querySelector("video") as HTMLVideoElement;
+    expect(video).not.toBeNull();
+    expect(video.getAttribute("src")).toBe(rawUrl);
+    // Controls + inline playback (iOS) are what make the player usable.
+    expect(video.hasAttribute("controls")).toBe(true);
+    expect(video.hasAttribute("playsinline")).toBe(true);
+    // A video is never rendered as an image or a preformatted text block.
+    expect(container.querySelector("img")).toBeNull();
+    expect(container.querySelector("pre")).toBeNull();
+  });
+
+  it("shows a fallback when a video has no rawUrl (issue #126)", () => {
+    render(<SentFileBlock file={{ filename: "clip.mp4", kind: "video", source: "file" }} />);
+    expect(screen.getByText(/could not display this video/i)).toBeInTheDocument();
+  });
+
   it("shows a fallback when an image has no rawUrl", () => {
     render(<SentFileBlock file={{ filename: "p.png", kind: "image", source: "file" }} />);
     expect(screen.getByText(/could not display/i)).toBeInTheDocument();

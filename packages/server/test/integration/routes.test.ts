@@ -154,6 +154,66 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
     expect(rawMissing.statusCode).toBe(404);
   });
 
+  // --- chat attachments: byte-range serving (issue #126) ---------------------
+
+  it("GET /api/chat-files/:id honors HTTP byte ranges (206) for inline video playback", async () => {
+    // Seed an attachment directly in the store's flat dir (the endpoint serves by
+    // id, so no chat/transcript is needed). A uuid-shaped id + .mp4 ext matches
+    // the store's ID_RE and resolves the video/mp4 content-type.
+    const id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.mp4";
+    const body = Buffer.from("VIDEODATA0123456789"); // 19 bytes of stand-in payload
+    const attachDir = path.join(t.cfg.dataDir, "attachments");
+    await fs.mkdir(attachDir, { recursive: true });
+    await fs.writeFile(path.join(attachDir, id), body);
+
+    // No Range → 200, full body, and range support advertised.
+    const full = await t.app.inject({ method: "GET", url: `/api/chat-files/${id}` });
+    expect(full.statusCode).toBe(200);
+    expect(full.headers["content-type"]).toBe("video/mp4");
+    expect(full.headers["accept-ranges"]).toBe("bytes");
+    // Video/PDF drop the `sandbox` token so nothing interferes with playback.
+    expect(full.headers["content-security-policy"]).toBe("default-src 'none'");
+    expect(Buffer.compare(full.rawPayload, body)).toBe(0);
+
+    // Range: bytes=0-3 → 206 with the first 4 bytes + a matching Content-Range.
+    const part = await t.app.inject({
+      method: "GET",
+      url: `/api/chat-files/${id}`,
+      headers: { range: "bytes=0-3" },
+    });
+    expect(part.statusCode).toBe(206);
+    expect(part.headers["content-range"]).toBe(`bytes 0-3/${body.length}`);
+    expect(part.headers["content-length"]).toBe("4");
+    expect(part.headers["accept-ranges"]).toBe("bytes");
+    expect(Buffer.compare(part.rawPayload, body.subarray(0, 4))).toBe(0);
+
+    // A suffix range (last 5 bytes) also resolves to 206.
+    const suffix = await t.app.inject({
+      method: "GET",
+      url: `/api/chat-files/${id}`,
+      headers: { range: "bytes=-5" },
+    });
+    expect(suffix.statusCode).toBe(206);
+    expect(suffix.headers["content-range"]).toBe(`bytes ${body.length - 5}-${body.length - 1}/${body.length}`);
+    expect(Buffer.compare(suffix.rawPayload, body.subarray(body.length - 5))).toBe(0);
+
+    // An out-of-bounds range → 416 with the resource's total size.
+    const bad = await t.app.inject({
+      method: "GET",
+      url: `/api/chat-files/${id}`,
+      headers: { range: `bytes=${body.length}-` },
+    });
+    expect(bad.statusCode).toBe(416);
+    expect(bad.headers["content-range"]).toBe(`bytes */${body.length}`);
+
+    // Unknown id still 404s.
+    const missing = await t.app.inject({
+      method: "GET",
+      url: "/api/chat-files/00000000-0000-0000-0000-000000000000.mp4",
+    });
+    expect(missing.statusCode).toBe(404);
+  });
+
   it("GET /files (listing) 404s for an unknown project", async () => {
     const res = await t.app.inject({ method: "GET", url: "/api/projects/ghost/files" });
     expect(res.statusCode).toBe(404);
