@@ -79,10 +79,18 @@ export const api = {
     models: ModelInfo[];
     keeperDefault: string;
     sweeperDefault: string;
+    /** Box-wide default drive mode (PADDOCK_KEEPER_DRIVE_MODE) a project inherits
+     *  when its own `driveMode` is unset; shown as the effective value in the
+     *  project Settings tab (issue #122). Optional for back-compat with older
+     *  servers / test mocks. */
+    keeperDriveModeDefault?: "batch" | "session";
   }> {
-    return req<{ models: ModelInfo[]; keeperDefault: string; sweeperDefault: string }>(
-      "/api/models",
-    );
+    return req<{
+      models: ModelInfo[];
+      keeperDefault: string;
+      sweeperDefault: string;
+      keeperDriveModeDefault?: "batch" | "session";
+    }>("/api/models");
   },
 
   /**

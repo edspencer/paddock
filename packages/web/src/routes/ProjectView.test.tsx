@@ -37,6 +37,8 @@ const apiFns = {
   listProjectChats: vi.fn(),
   chatUsage: vi.fn(),
   projectChatMessages: vi.fn(),
+  getModels: vi.fn(),
+  updateProject: vi.fn(),
 };
 vi.mock("../lib/api", async () => {
   const actual = await vi.importActual<typeof import("../lib/api")>("../lib/api");
@@ -55,6 +57,8 @@ vi.mock("../lib/api", async () => {
       listProjectChats: (...a: unknown[]) => apiFns.listProjectChats(...a),
       chatUsage: (...a: unknown[]) => apiFns.chatUsage(...a),
       projectChatMessages: (...a: unknown[]) => apiFns.projectChatMessages(...a),
+      getModels: (...a: unknown[]) => apiFns.getModels(...a),
+      updateProject: (...a: unknown[]) => apiFns.updateProject(...a),
     },
   };
 });
@@ -96,6 +100,7 @@ function renderAt(path: string) {
         <Route path="/projects/:slug/files/:name" element={<ProjectView />} />
         <Route path="/projects/:slug/changes" element={<ProjectView />} />
         <Route path="/projects/:slug/changes/:file" element={<ProjectView />} />
+        <Route path="/projects/:slug/settings" element={<ProjectView />} />
         <Route path="/" element={<div>HOME</div>} />
       </Routes>
     </MemoryRouter>,
@@ -111,6 +116,15 @@ beforeEach(() => {
   apiFns.listProjectChats.mockResolvedValue([]);
   apiFns.chatUsage.mockResolvedValue({});
   apiFns.projectChatMessages.mockResolvedValue([]);
+  apiFns.getModels.mockResolvedValue({
+    models: [{ id: "claude-opus-4-8", label: "Opus 4.8", contextLimit: 1_000_000 }],
+    keeperDefault: "claude-opus-4-8",
+    sweeperDefault: "claude-haiku-4-5-20251001",
+    keeperDriveModeDefault: "batch",
+  });
+  apiFns.updateProject.mockImplementation((_slug: string, patch: Partial<Project>) =>
+    Promise.resolve(makeProject({ slug: "p", ...patch })),
+  );
   upsert.mockReset();
   remove.mockReset();
   localStorage.clear();
@@ -200,6 +214,26 @@ describe("ProjectView: tabs", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reactor" }));
     // Home renders — its "Edit details" overview action is present.
     expect(await screen.findByRole("button", { name: /Edit details/i })).toBeInTheDocument();
+  });
+
+  it("the Settings tab opens the SettingsPane and deep-links (issue #122)", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p", name: "Reactor", summary: "fusion" })),
+    );
+    renderAt("/projects/p/chat");
+    await screen.findByTestId("chat-pane");
+    fireEvent.click(screen.getByRole("button", { name: /^Settings$/ }));
+    // The pane's Save bar + a keeper field render.
+    expect(await screen.findByRole("button", { name: /save changes/i })).toBeInTheDocument();
+    expect(screen.getByLabelText("Model")).toBeInTheDocument();
+  });
+
+  it("Settings deep-links directly via /settings", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
+    renderAt("/projects/p/settings");
+    expect(await screen.findByRole("button", { name: /save changes/i })).toBeInTheDocument();
+    // The "Edit" affordances route here rather than opening a modal.
+    expect(screen.getByText(/Identity & metadata/i)).toBeInTheDocument();
   });
 
   it("the Changes tab is hidden when the projects dir is not a git repo", async () => {

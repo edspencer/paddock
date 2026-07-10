@@ -30,6 +30,7 @@ import { SCRATCH_SLUG, SCRATCH_AGENT, keeperAgentName } from "./herdctl.js";
 import type { GitService } from "./git.js";
 import type { GithubAuth } from "./github-auth.js";
 import type { ArchiveStore } from "./archive.js";
+import type { PaddockConfig } from "./config.js";
 import { type Transcriber, TranscriptionError } from "./transcribe.js";
 import { readFirstUserText } from "./transcripts.js";
 import { enrichWithSubagents, readSubagentMessages } from "./subagents.js";
@@ -70,10 +71,11 @@ export interface RouteDeps {
   transcriber: Transcriber;
   archive: ArchiveStore;
   attachments: AttachmentStore;
+  cfg: PaddockConfig;
 }
 
 export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Promise<void> {
-  const { projects, herdctl, git, githubAuth, transcriber, archive, attachments } = deps;
+  const { projects, herdctl, git, githubAuth, transcriber, archive, attachments, cfg } = deps;
 
   // --- voice dictation (#voice): capability probe + transcription -------
   // The composer polls this to decide whether to show a mic button. `available`
@@ -160,11 +162,15 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
 
   // Selectable models + the keeper/sweeper defaults (CONTRACT-v3 §3). Static —
   // sourced from the models module so the picker and context meter agree.
+  // `keeperDriveModeDefault` is the box-wide `PADDOCK_KEEPER_DRIVE_MODE` (per
+  // instance, not static): the Settings tab shows it as the effective value a
+  // project inherits when its own `driveMode` is left on "Global default".
   app.get("/api/models", async () => {
     return {
       models: MODELS,
       keeperDefault: KEEPER_DEFAULT_MODEL,
       sweeperDefault: SWEEPER_DEFAULT_MODEL,
+      keeperDriveModeDefault: cfg.keeperDriveMode,
     };
   });
 
@@ -259,7 +265,13 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
         if (body.docker !== undefined && typeof body.docker !== "boolean") {
           return reply.code(400).send({ error: "docker must be a boolean", code: "invalid" });
         }
-        if (body.driveMode !== undefined && !isKnownDriveMode(body.driveMode)) {
+        // `null` is valid — it clears the per-project override (inherit the
+        // global default, issue #122). Only a non-null, unknown string is a 400.
+        if (
+          body.driveMode !== undefined &&
+          body.driveMode !== null &&
+          !isKnownDriveMode(body.driveMode)
+        ) {
           return reply
             .code(400)
             .send({ error: `Unknown drive mode: ${body.driveMode}`, code: "invalid" });

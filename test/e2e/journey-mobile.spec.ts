@@ -147,14 +147,19 @@ test("Files tab + rich Markdown render on mobile (tables/code/mermaid don't blow
   await page.screenshot({ path: `${SHOTS}09-file-mermaid.png`, fullPage: true });
 });
 
-test("Edit Project modal fits the phone", async ({ page }) => {
+test("Project Settings tab fits the phone", async ({ page }) => {
   const slug = seedProject({ name: uniq("MOB Edit"), group: "house", summary: "edit me" });
   await page.goto(`/projects/${slug}/files`);
+  // Edit details now opens the Settings tab (issue #122), not a modal.
   await page.getByRole("button", { name: /Project actions/i }).first().click();
   await page.getByRole("menuitem", { name: /Edit details/i }).click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${slug}/settings`));
+  await expect(
+    page.getByRole("main").getByRole("heading", { name: /Identity & metadata/i }),
+  ).toBeVisible();
   await expect(page.getByRole("button", { name: /Save changes|Save/i }).first()).toBeInViewport();
   expect(await hOverflow(page)).toBeLessThanOrEqual(1);
-  await page.screenshot({ path: `${SHOTS}10-edit-modal.png` });
+  await page.screenshot({ path: `${SHOTS}10-settings-tab.png` });
 });
 
 test("mobile screenshots (visual capture)", async ({ page }) => {

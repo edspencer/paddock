@@ -207,9 +207,16 @@ export type UpdateProjectInput = Partial<
     | "permissionMode"
     | "maxTurns"
     | "docker"
-    | "driveMode"
   >
->;
+> & {
+  /**
+   * Keeper drive mode (Paddock#111). A string sets a per-project override;
+   * `null` CLEARS the override so the project inherits the box-wide global
+   * default again (issue #122's reset-to-inherit); `undefined`/absent leaves the
+   * current value untouched.
+   */
+  driveMode?: string | null;
+};
 
 const PROJECT_FILE = "project.yaml";
 const CHANGELOG_FILE = "CHANGELOG.md";
@@ -352,13 +359,23 @@ export class ProjectStore {
   /** Update mutable metadata fields and bump `updated`. */
   async update(slug: string, patch: UpdateProjectInput): Promise<Project> {
     const current = await this.get(slug);
+    // driveMode is tri-state (set / clear / leave), so it's applied explicitly
+    // below rather than via the blanket spread — a plain spread can't express
+    // "delete this field", which is how an override is cleared back to inherit.
+    const { driveMode: driveModePatch, ...rest } = patch;
     const next: ProjectYaml = {
       ...this.stripDto(current),
-      ...patch,
+      ...rest,
       slug: current.slug, // immutable
       started: current.started, // immutable
       updated: today(),
     };
+    if (driveModePatch === null) {
+      // Clear the per-project override -> inherit the global default (issue #122).
+      delete next.driveMode;
+    } else if (driveModePatch !== undefined) {
+      next.driveMode = driveModePatch;
+    }
     await this.writeYaml(slug, next);
     return this.toDto(current.dir, next, await this.overviewExists(slug));
   }
