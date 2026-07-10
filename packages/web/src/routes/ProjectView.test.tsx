@@ -433,6 +433,23 @@ describe("ProjectView: chat search (issue #96)", () => {
     fireEvent.click(screen.getByRole("button", { name: /^New Chat$/ }));
     await waitFor(() => expect(chatPaneProps?.initialSessionId ?? "new").toBe("new"));
   });
+
+  // Concurrent-new-chat fusion: while a brand-new chat streams, its establish nav
+  // (`/chat` -> `/chat/:id`) may still be in flight, so the route is momentarily
+  // session-less. Clicking "New Chat" then navigates to the SAME `/chat` route, so
+  // route-driven remounting alone wouldn't reset the (still-streaming) pane — the
+  // next message would be queued into that live turn, fusing the two chats. The
+  // new-chat nonce must force a genuinely fresh ChatPane instance regardless.
+  it("New Chat forces a fresh pane even when the route is already a session-less new chat", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" }), threeChats()));
+    renderAt("/projects/p/chat");
+    const before = await screen.findByTestId("chat-pane");
+    expect(chatPaneProps?.initialSessionId ?? "new").toBe("new");
+    fireEvent.click(screen.getByRole("button", { name: /^New Chat$/ }));
+    // A remount replaces the DOM node; a mere re-render (the bug) would keep it.
+    await waitFor(() => expect(screen.getByTestId("chat-pane")).not.toBe(before));
+    expect(chatPaneProps?.initialSessionId ?? "new").toBe("new");
+  });
 });
 
 describe("ProjectView: archive chats (#95)", () => {

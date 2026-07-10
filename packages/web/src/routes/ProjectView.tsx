@@ -87,7 +87,16 @@ export function ProjectView() {
     if (!established) paneKeyRef.current.counter += 1;
     paneKeyRef.current.session = routeSessionId ?? null;
   }
-  const chatPaneKey = paneKeyRef.current.counter;
+  // Explicit "New Chat" reset. Route-driven remounting alone is not enough: while
+  // a brand-new chat is streaming, its establish navigation (`/chat` -> `/chat/:id`
+  // via replace) can still be in flight, so `routeSessionId` is momentarily null.
+  // Clicking "New Chat" then navigates to `/chat` — no change to `routeSessionId`,
+  // so the pane key wouldn't bump and the still-streaming pane would persist, and
+  // the next message would be QUEUED into that live turn (fusing the two chats and
+  // creating no second chat). Bumping this nonce on every explicit new-chat action
+  // forces a genuinely fresh pane regardless of the establish race.
+  const [newChatNonce, setNewChatNonce] = useState(0);
+  const chatPaneKey = `${paneKeyRef.current.counter}:${newChatNonce}`;
 
   const [project, setProject] = useState<Project | null>(null);
   const [chats, setChats] = useState<Chat[]>([]);
@@ -258,7 +267,14 @@ export function ProjectView() {
       ),
     [navigate, slug],
   );
-  const newChat = goChat;
+  // Start a brand-new chat. Bump the pane nonce first so the ChatPane is force-
+  // remounted into a clean, session-less composer even when the current pane is a
+  // still-streaming new chat whose establish navigation hasn't landed yet (which
+  // would otherwise leave `routeSessionId` null and make `goChat` a no-op).
+  const newChat = useCallback(() => {
+    setNewChatNonce((n) => n + 1);
+    goChat();
+  }, [goChat]);
   const openChat = useCallback(
     (sessionId: string) =>
       navigate(`/projects/${slug}/chat/${encodeURIComponent(sessionId)}`),
