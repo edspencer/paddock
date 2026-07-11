@@ -31,7 +31,7 @@ import {
   WrenchIcon,
   XIcon,
 } from "../components/icons";
-import { relativeTime } from "../lib/format";
+import { relativeTime, sessionUsageOf } from "../lib/format";
 import { areaLabel } from "../lib/areas";
 import { clearLastTab, toSubPath, writeLastTab } from "../lib/lastTab";
 import { readForkParent, writeForkParent } from "../lib/forkLineage";
@@ -506,6 +506,7 @@ export function ProjectView() {
           <ContextRing
             tokens={usageBySession[c.sessionId]?.contextTokens ?? c.contextTokens}
             limit={usageBySession[c.sessionId]?.contextLimit ?? c.contextLimit}
+            usage={sessionUsageOf(usageBySession[c.sessionId] ?? c)}
             working={runningSessions.has(c.sessionId)}
           />
         </span>

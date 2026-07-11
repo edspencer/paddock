@@ -12,6 +12,8 @@
 // indeterminate spinner arc — so activity is visible before the first usage
 // value arrives. This replaces the separate pulsing streaming dot.
 
+import { formatSessionUsage, type SessionUsageParts } from "../lib/format";
+
 const RADIUS = 8;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 // The arc length shown when spinning without real usage data — a quarter turn
@@ -21,6 +23,7 @@ const INDETERMINATE_DASH = 0.25 * CIRCUMFERENCE;
 export function ContextRing({
   tokens,
   limit,
+  usage,
   size = 14,
   working = false,
 }: {
@@ -28,6 +31,12 @@ export function ContextRing({
   tokens?: number;
   /** The model's context-window size. */
   limit?: number;
+  /**
+   * The chat's cumulative token totals + cost (issue #NNN). When present, a
+   * "session so far" line is appended to the tooltip. Absent for a never-run
+   * chat or where the caller doesn't have it (e.g. the live streaming spinner).
+   */
+  usage?: SessionUsageParts;
   /** Rendered width/height in px (viewBox is fixed at 20×20). */
   size?: number;
   /** When the chat is streaming: spin the ring (keeping any fill arc). */
@@ -46,11 +55,15 @@ export function ContextRing({
   const used = hasUsage ? Math.round(tokens! / 1000) : 0;
   const cap = hasUsage ? Math.round(limit! / 1000) : 0;
 
+  // Cumulative "session so far" line, appended to the idle tooltip when the
+  // caller has the chat's totals (issue #NNN).
+  const sessionLine = usage ? `\nSession so far: ${formatSessionUsage(usage)}` : "";
+
   const title = working
     ? hasUsage
       ? `Streaming a response… — context window ${Math.round(pct)}% full (${tokens!.toLocaleString()} / ${limit!.toLocaleString()} tokens)`
       : "Streaming a response…"
-    : `Context window ${Math.round(pct)}% full as of the last completed turn (${tokens!.toLocaleString()} / ${limit!.toLocaleString()} tokens)`;
+    : `Context window ${Math.round(pct)}% full as of the last completed turn (${tokens!.toLocaleString()} / ${limit!.toLocaleString()} tokens)${sessionLine}`;
 
   const label = working
     ? hasUsage

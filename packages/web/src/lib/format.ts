@@ -73,6 +73,26 @@ export interface SessionUsageParts {
 }
 
 /**
+ * Narrow an object carrying the (possibly optional/absent) cumulative usage
+ * fields — a `Chat` or a `ChatUsage` — to a concrete {@link SessionUsageParts},
+ * or `undefined` when there's no usage data yet (`totalTokens` absent). Lets the
+ * ring call sites pass `usage={sessionUsageOf(chat)}` uniformly.
+ */
+export function sessionUsageOf(
+  x?: Partial<SessionUsageParts> | null,
+): SessionUsageParts | undefined {
+  if (!x || x.totalTokens == null) return undefined;
+  return {
+    inputTokens: x.inputTokens ?? 0,
+    outputTokens: x.outputTokens ?? 0,
+    cacheReadTokens: x.cacheReadTokens ?? 0,
+    cacheCreationTokens: x.cacheCreationTokens ?? 0,
+    totalTokens: x.totalTokens,
+    costUsd: x.costUsd ?? null,
+  };
+}
+
+/**
  * A one-line summary of a chat's cumulative token consumption, e.g.
  * "1.25M tokens · 910K in / 340K out · ~$4.10 at API rates". The dollar clause is
  * dropped when the model has no known pricing (`costUsd == null`). "in" folds the
