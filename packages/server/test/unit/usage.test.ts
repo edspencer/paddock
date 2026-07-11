@@ -3,10 +3,10 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { projectChatsDir } from "../../src/transcripts.js";
 import { readSessionTokenUsage, readSessionTokenUsageFile } from "../../src/usage.js";
-import { estimateCostUsd } from "../../src/models.js";
+import { estimateCostUsd, estimateCostUsdByModel } from "../../src/models.js";
 import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
 
-/** An assistant transcript line with a usage block. */
+/** An assistant transcript line with a usage block (and optional model). */
 function assistant(
   id: string,
   usage: {
@@ -15,8 +15,9 @@ function assistant(
     cache_creation_input_tokens?: number;
     cache_read_input_tokens?: number;
   },
+  model?: string,
 ): unknown {
-  return { type: "assistant", message: { id, usage } };
+  return { type: "assistant", message: { id, model, usage } };
 }
 
 describe("cumulative session token usage (issue #152)", () => {
@@ -89,7 +90,32 @@ describe("cumulative session token usage (issue #152)", () => {
       outputTotal: 0,
       cacheReadTotal: 0,
       cacheCreationTotal: 0,
+      byModel: {},
     });
+  });
+
+  it("buckets token totals by the model each turn ran on", async () => {
+    const file = await write("s-multi", [
+      assistant("m1", { input_tokens: 100, output_tokens: 40 }, "claude-opus-4-8"),
+      assistant("m2", { input_tokens: 50, output_tokens: 60 }, "claude-haiku-4-5-20251001"),
+      assistant("m3", { input_tokens: 5, output_tokens: 5 }, "claude-haiku-4-5-20251001"),
+    ]);
+    const u = await readSessionTokenUsageFile(file);
+    // Flat totals stay model-agnostic.
+    expect(u.inputTotal).toBe(155);
+    expect(u.outputTotal).toBe(105);
+    // Per-model split: one Opus turn, two Haiku turns folded together.
+    expect(u.byModel["claude-opus-4-8"]).toMatchObject({ inputTokens: 100, outputTokens: 40 });
+    expect(u.byModel["claude-haiku-4-5-20251001"]).toMatchObject({
+      inputTokens: 55,
+      outputTokens: 65,
+    });
+  });
+
+  it("files turns with no recorded model under the empty-string key", async () => {
+    const file = await write("s-nomodel", [assistant("m1", { input_tokens: 10, output_tokens: 5 })]);
+    const u = await readSessionTokenUsageFile(file);
+    expect(u.byModel[""]).toMatchObject({ inputTokens: 10, outputTokens: 5 });
   });
 
   it("rejects an unsafe session id (path traversal)", async () => {
@@ -127,5 +153,60 @@ describe("estimateCostUsd (models)", () => {
         cacheReadTokens: 0,
       }),
     ).toBeNull();
+  });
+});
+
+describe("estimateCostUsdByModel (models)", () => {
+  it("prices each model group at its own rate and sums them", () => {
+    // Regression for the live bug: a Haiku chat must NOT be billed at Opus rates.
+    // Haiku (in $1/1M, out $5/1M): 1M in + 1M out = $1 + $5 = $6.
+    const haikuOnly = estimateCostUsdByModel({
+      "claude-haiku-4-5-20251001": {
+        inputTokens: 1_000_000,
+        outputTokens: 1_000_000,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+      },
+    });
+    expect(haikuOnly).toBeCloseTo(6, 6);
+
+    // Mixed chat: Opus 1M in ($5) + Haiku 1M out ($5) = $10.
+    const mixed = estimateCostUsdByModel({
+      "claude-opus-4-8": {
+        inputTokens: 1_000_000,
+        outputTokens: 0,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+      },
+      "claude-haiku-4-5-20251001": {
+        inputTokens: 0,
+        outputTokens: 1_000_000,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+      },
+    });
+    expect(mixed).toBeCloseTo(10, 6);
+  });
+
+  it("skips unpriced model groups but still returns the priced remainder", () => {
+    const cost = estimateCostUsdByModel({
+      "claude-haiku-4-5-20251001": {
+        inputTokens: 1_000_000,
+        outputTokens: 0,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+      },
+      "": { inputTokens: 500, outputTokens: 500, cacheCreationTokens: 0, cacheReadTokens: 0 },
+    });
+    expect(cost).toBeCloseTo(1, 6); // only the Haiku $1 counts; "" is unpriced
+  });
+
+  it("returns null when no group can be priced", () => {
+    expect(
+      estimateCostUsdByModel({
+        "": { inputTokens: 100, outputTokens: 100, cacheCreationTokens: 0, cacheReadTokens: 0 },
+      }),
+    ).toBeNull();
+    expect(estimateCostUsdByModel({})).toBeNull();
   });
 });
