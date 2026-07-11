@@ -27,6 +27,7 @@ import { promises as fs } from "node:fs";
 import { createInterface } from "node:readline";
 import path from "node:path";
 import { projectChatsDir } from "./transcripts.js";
+import type { TokenTotals } from "./models.js";
 
 /** sessionId is a path segment — keep it inside `.chats/`. */
 const SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/;
@@ -51,6 +52,14 @@ export interface SessionTokenUsage {
   cacheReadTotal: number;
   /** Cumulative cache-creation (write) input tokens across every turn. */
   cacheCreationTotal: number;
+  /**
+   * The same token totals split by the model that produced them (keyed by the
+   * `message.model` on each assistant turn). A chat can span models — the
+   * composer switches model per turn, and the running model may differ from the
+   * project default — so cost must be priced per-model, not at one blended rate.
+   * The flat `*Total` fields above stay model-agnostic for the token headline.
+   */
+  byModel: Record<string, TokenTotals>;
 }
 
 const EMPTY: SessionTokenUsage = {
@@ -61,6 +70,7 @@ const EMPTY: SessionTokenUsage = {
   outputTotal: 0,
   cacheReadTotal: 0,
   cacheCreationTotal: 0,
+  byModel: {},
 };
 
 function num(v: unknown): number {
@@ -81,6 +91,7 @@ export async function readSessionTokenUsageFile(file: string): Promise<SessionTo
   let outputTotal = 0;
   let cacheReadTotal = 0;
   let cacheCreationTotal = 0;
+  const byModel: Record<string, TokenTotals> = {};
 
   const stream = createReadStream(file, { encoding: "utf8" });
   stream.on("error", () => undefined);
@@ -89,7 +100,10 @@ export async function readSessionTokenUsageFile(file: string): Promise<SessionTo
     for await (const line of rl) {
       const trimmed = line.trim();
       if (!trimmed) continue;
-      let parsed: { type?: string; message?: { id?: unknown; usage?: Record<string, unknown> } };
+      let parsed: {
+        type?: string;
+        message?: { id?: unknown; model?: unknown; usage?: Record<string, unknown> };
+      };
       try {
         parsed = JSON.parse(trimmed);
       } catch {
@@ -115,6 +129,20 @@ export async function readSessionTokenUsageFile(file: string): Promise<SessionTo
       outputTotal += output;
       cacheCreationTotal += cacheCreation;
       cacheReadTotal += cacheRead;
+      // Bucket the same tokens under the model that produced them, so cost is
+      // priced per-model rather than at one blended rate. Turns with no recorded
+      // model land under "" and are treated as unpriced downstream.
+      const model = typeof message.model === "string" ? message.model : "";
+      const bucket = (byModel[model] ??= {
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+      });
+      bucket.inputTokens += input;
+      bucket.outputTokens += output;
+      bucket.cacheReadTokens += cacheRead;
+      bucket.cacheCreationTokens += cacheCreation;
       // Context fill of this turn — the last one to run wins (matches core).
       contextTokens = input + cacheCreation + cacheRead;
     }
@@ -133,6 +161,7 @@ export async function readSessionTokenUsageFile(file: string): Promise<SessionTo
     outputTotal,
     cacheReadTotal,
     cacheCreationTotal,
+    byModel,
   };
 }
 

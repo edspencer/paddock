@@ -57,7 +57,7 @@ import {
   SWEEPER_DEFAULT_MODEL,
   isKnownModel,
   getContextLimit,
-  estimateCostUsd,
+  estimateCostUsdByModel,
   isKnownPermissionMode,
   isValidMaxTurns,
   isKnownDriveMode,
@@ -927,7 +927,10 @@ function toChatUsage(u: SessionTokenUsage, model: string): ChatUsage | null {
     ...totals,
     totalTokens:
       u.inputTotal + u.outputTotal + u.cacheReadTotal + u.cacheCreationTotal,
-    costUsd: estimateCostUsd(model, totals),
+    // Price per the model each turn actually ran on (u.byModel), not the passed
+    // project/chat default — a chat's turns can span models, so a single blended
+    // rate misprices (a Haiku chat billed at the Opus default would be 5× high).
+    costUsd: estimateCostUsdByModel(u.byModel),
   };
 }
 
