@@ -98,6 +98,34 @@ describe("subagents (issue #37)", () => {
       expect(await readTaskToolUses(projectDir, "s3")).toEqual([]);
       expect(await readTaskToolUses(projectDir, "../escape")).toEqual([]);
     });
+
+    it("re-reads after the transcript's mtime advances (mtime-cache invalidation, #147)", async () => {
+      // First open: one paired Agent tool_use — this populates the mtime cache.
+      await writeMain("scache", [
+        toolUse("Agent", "toolu_A", { description: "first" }),
+        toolResult("toolu_A", "done A"),
+      ]);
+      expect((await readTaskToolUses(projectDir, "scache")).map((u) => u.toolUseId)).toEqual([
+        "toolu_A",
+      ]);
+
+      // A new turn appends a second sub-agent. Rewriting the file bumps its mtime,
+      // so the cached (stale) result must be dropped and the new one returned.
+      await writeMain("scache", [
+        toolUse("Agent", "toolu_A", { description: "first" }),
+        toolResult("toolu_A", "done A"),
+        toolUse("Task", "toolu_B", { description: "second" }),
+        toolResult("toolu_B", "done B"),
+      ]);
+      const file = path.join(projectChatsDir(projectDir), "scache.jsonl");
+      const later = new Date(Date.now() + 5000);
+      await fs.utimes(file, later, later);
+
+      expect((await readTaskToolUses(projectDir, "scache")).map((u) => u.toolUseId)).toEqual([
+        "toolu_A",
+        "toolu_B",
+      ]);
+    });
   });
 
   describe("listSubagents", () => {
