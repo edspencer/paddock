@@ -195,3 +195,26 @@ export function estimateCostUsd(modelId: string, t: TokenTotals): number | null 
     1_000_000;
   return usd;
 }
+
+/**
+ * Cost of a chat that may span several models, priced from each model's own
+ * rate. A chat's turns can run on different models (the composer lets you switch
+ * model per turn, and the project default may differ from what actually ran), so
+ * pricing the whole chat at one model — e.g. the project default — misprices by
+ * the ratio between them (a Haiku chat billed at Opus rates is 5× too high).
+ * Keys are the `message.model` recorded on each assistant turn; totals for a
+ * model with no known pricing are skipped. Returns the summed cost, or `null`
+ * only when *no* group could be priced (so an entirely-unknown-model chat hides
+ * its cost rather than showing $0.00).
+ */
+export function estimateCostUsdByModel(byModel: Record<string, TokenTotals>): number | null {
+  let usd = 0;
+  let priced = false;
+  for (const [modelId, totals] of Object.entries(byModel)) {
+    const c = estimateCostUsd(modelId, totals);
+    if (c == null) continue;
+    usd += c;
+    priced = true;
+  }
+  return priced ? usd : null;
+}
