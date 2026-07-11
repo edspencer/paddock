@@ -3,7 +3,7 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { chatClient } from "../lib/ws";
 import { useProjects } from "../lib/projects-context";
-import type { Chat, Project } from "../lib/types";
+import type { Chat, ChatUsage, Project } from "../lib/types";
 import { StatusPill } from "../components/StatusPill";
 import { TagPill } from "../components/TagPill";
 import { ChatPane } from "../components/ChatPane";
@@ -31,7 +31,7 @@ import {
   WrenchIcon,
   XIcon,
 } from "../components/icons";
-import { relativeTime } from "../lib/format";
+import { relativeTime, sessionUsageOf } from "../lib/format";
 import { areaLabel } from "../lib/areas";
 import { clearLastTab, toSubPath, writeLastTab } from "../lib/lastTab";
 import { readForkParent, writeForkParent } from "../lib/forkLineage";
@@ -106,9 +106,7 @@ export function ProjectView() {
   // made switching into a chat-heavy project slow. Kept in its own map (rather
   // than merged into `chats`) so it survives cheap chat-list refreshes that no
   // longer carry usage. A chat with no entry simply renders no ring yet.
-  const [usageBySession, setUsageBySession] = useState<
-    Record<string, { contextTokens: number; contextLimit: number }>
-  >({});
+  const [usageBySession, setUsageBySession] = useState<Record<string, ChatUsage>>({});
   // Live client-side filter for the chat list (issue #96). The whole list is
   // already in memory, so a case-insensitive substring match over name (and the
   // first-message preview, when present) needs no server round-trip. Derived
@@ -506,6 +504,7 @@ export function ProjectView() {
           <ContextRing
             tokens={usageBySession[c.sessionId]?.contextTokens ?? c.contextTokens}
             limit={usageBySession[c.sessionId]?.contextLimit ?? c.contextLimit}
+            usage={sessionUsageOf(usageBySession[c.sessionId] ?? c)}
             working={runningSessions.has(c.sessionId)}
           />
         </span>

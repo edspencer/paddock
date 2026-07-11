@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { relativeTime, formatDuration } from "./format";
+import {
+  relativeTime,
+  formatDuration,
+  formatTokens,
+  formatUsd,
+  formatSessionUsage,
+  sessionUsageOf,
+} from "./format";
 
 describe("format: relativeTime", () => {
   beforeEach(() => {
@@ -79,5 +86,61 @@ describe("format: formatDuration", () => {
   it("rounds to whole seconds at/over 10s", () => {
     expect(formatDuration(12000)).toBe("12s");
     expect(formatDuration(12400)).toBe("12s");
+  });
+});
+
+describe("format: token + cost helpers (issue #152)", () => {
+  it("formatTokens is compact and rounds", () => {
+    expect(formatTokens(523)).toBe("523");
+    expect(formatTokens(340_000)).toBe("340K");
+    expect(formatTokens(1_250_000)).toBe("1.25M");
+    expect(formatTokens(12_000_000)).toBe("12M");
+    expect(formatTokens(0)).toBe("0");
+    expect(formatTokens(-5)).toBe("0");
+  });
+
+  it("formatUsd guards tiny/zero amounts", () => {
+    expect(formatUsd(4.1)).toBe("$4.10");
+    expect(formatUsd(0.004)).toBe("<$0.01");
+    expect(formatUsd(0)).toBe("$0.00");
+  });
+
+  it("formatSessionUsage folds input-side classes and appends cost", () => {
+    expect(
+      formatSessionUsage({
+        inputTokens: 100_000,
+        outputTokens: 340_000,
+        cacheReadTokens: 800_000,
+        cacheCreationTokens: 10_000,
+        totalTokens: 1_250_000,
+        costUsd: 4.1,
+      }),
+    ).toBe("1.25M tokens · 910K in / 340K out · ~$4.10 at API rates");
+  });
+
+  it("formatSessionUsage drops the cost clause when pricing is unknown", () => {
+    expect(
+      formatSessionUsage({
+        inputTokens: 10,
+        outputTokens: 5,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        totalTokens: 15,
+        costUsd: null,
+      }),
+    ).toBe("15 tokens · 10 in / 5 out");
+  });
+
+  it("sessionUsageOf returns undefined without totals, else a filled object", () => {
+    expect(sessionUsageOf(undefined)).toBeUndefined();
+    expect(sessionUsageOf({ contextTokens: 5 })).toBeUndefined();
+    expect(sessionUsageOf({ totalTokens: 15, inputTokens: 10, outputTokens: 5 })).toEqual({
+      inputTokens: 10,
+      outputTokens: 5,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      totalTokens: 15,
+      costUsd: null,
+    });
   });
 });

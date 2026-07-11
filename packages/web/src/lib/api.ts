@@ -5,6 +5,7 @@
 // serves the built SPA).
 import {
   type Chat,
+  type ChatUsage,
   type CreateProjectInput,
   type DeviceFlowStart,
   type GitCommitResult,
@@ -286,11 +287,9 @@ export const api = {
    * afterwards — the per-session transcript parse this needs is what made project
    * switching slow. Sessions with no usage data are absent from the map.
    */
-  async chatUsage(
-    slug: string,
-  ): Promise<Record<string, { contextTokens: number; contextLimit: number }>> {
+  async chatUsage(slug: string): Promise<Record<string, ChatUsage>> {
     const { usage } = await req<{
-      usage: Record<string, { contextTokens: number; contextLimit: number }>;
+      usage: Record<string, ChatUsage>;
     }>(`/api/projects/${encodeURIComponent(slug)}/chats/usage`);
     return usage;
   },
@@ -343,17 +342,12 @@ export const api = {
    * fresh usage). Returns null when the transcript carries no usage data.
    * Routes to the scratch endpoint when the slug is the scratch slug.
    */
-  async chatContext(
-    slug: string,
-    sessionId: string,
-  ): Promise<{ contextTokens: number; contextLimit: number } | null> {
+  async chatContext(slug: string, sessionId: string): Promise<ChatUsage | null> {
     const path =
       slug === SCRATCH_SLUG
         ? `/api/chats/${encodeURIComponent(sessionId)}/context`
         : `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}/context`;
-    const { usage } = await req<{
-      usage: { contextTokens: number; contextLimit: number } | null;
-    }>(path);
+    const { usage } = await req<{ usage: ChatUsage | null }>(path);
     return usage;
   },
 

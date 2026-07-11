@@ -31,12 +31,14 @@ import {
 } from "./icons";
 import type {
   ChatCompleteUsage,
+  ChatUsage,
   HistoryMessage,
   ModelInfo,
   SentFile,
   SentFileEnvelope,
   SlashCommand,
 } from "../lib/types";
+import { formatSessionUsage, formatTokens, formatUsd } from "../lib/format";
 import { SentFileBlock } from "./SentFileBlock";
 
 /** One rendered item in the transcript. Assistant boundaries split bubbles. */
@@ -213,6 +215,11 @@ export function ChatPane({
   // Last completed turn's usage for THIS chat (stale-by-one-turn by design).
   // Reset whenever the chat identity changes (see the hydration effect below).
   const [usage, setUsage] = useState<ChatCompleteUsage | null>(null);
+  // Cumulative lifetime token totals + cost for THIS chat (issue #152), read
+  // from the transcript via /context on open and refreshed after each completed
+  // turn. Kept separate from `usage` (the per-turn context-fill meter) because
+  // the live ws chat:complete frame only knows the current turn.
+  const [sessionUsage, setSessionUsage] = useState<ChatUsage | null>(null);
 
   // The chat's default model: project model for project chats, else keeperDefault.
   const defaultModel = (isProjectChat ? projectModel : keeperDefault) ?? keeperDefault;
@@ -404,6 +411,8 @@ export function ChatPane({
             contextTokens: ctx.contextTokens,
             contextLimit: ctx.contextLimit,
           });
+          // Cumulative session totals (issue #152) come from the same payload.
+          setSessionUsage(ctx);
         })
         .catch(() => {
           /* leave the meter at "—" */
@@ -436,6 +445,7 @@ export function ChatPane({
   useEffect(() => {
     if (initialSessionId && initialSessionId === establishedHereRef.current) return;
     setUsage(null);
+    setSessionUsage(null);
   }, [projectSlug, initialSessionId]);
 
   // Persist the unsent draft for this chat so it survives a switch/reload.
@@ -529,6 +539,21 @@ export function ChatPane({
         // Stale-by-one-turn context meter: store the last completed turn's
         // usage for this chat (omitted by the server when none was observed).
         if (meta.usage) setUsage(meta.usage);
+        // Refresh the cumulative session totals (issue #152) now that the turn
+        // just written a fresh usage line to the transcript. Best-effort — the
+        // per-turn meter above already updated; this only re-tots the lifetime
+        // figure. Uses the (possibly newly-minted) session id from the frame.
+        {
+          const sid = meta.sessionId ?? sessionRef.current;
+          if (sid) {
+            void api
+              .chatContext(projectSlug, sid)
+              .then((ctx) => setSessionUsage(ctx))
+              .catch(() => {
+                /* leave the prior cumulative figure in place */
+              });
+          }
+        }
         if (meta.sessionId) {
           const wasNew = isNewSessionRef.current && sessionRef.current !== meta.sessionId;
           adoptSession(meta.sessionId);
@@ -860,6 +885,7 @@ export function ChatPane({
             model={model}
             onSelectModel={selectModel}
             usage={usage}
+            sessionUsage={sessionUsage}
             forkParent={forkParent}
             onOpenForkParent={onOpenForkParent}
           />
@@ -1014,6 +1040,7 @@ function StatusRow({
   model,
   onSelectModel,
   usage,
+  sessionUsage,
   forkParent,
   onOpenForkParent,
 }: {
@@ -1021,6 +1048,7 @@ function StatusRow({
   model: string | null;
   onSelectModel: (id: string) => void;
   usage: ChatCompleteUsage | null;
+  sessionUsage: ChatUsage | null;
   forkParent?: { sessionId: string; name: string };
   onOpenForkParent?: (sessionId: string) => void;
 }) {
@@ -1048,6 +1076,7 @@ function StatusRow({
         </select>
       </label>
       <ContextMeter usage={usage} />
+      <SessionCost usage={sessionUsage} />
       {/* Fork lineage: this chat was branched from another — link back to it.
           Sits to the right (ml-auto) in the otherwise-empty gap of the row. */}
       {forkParent && (
@@ -1097,6 +1126,27 @@ function ContextMeter({ usage }: { usage: ChatCompleteUsage | null }) {
       <span className={warn ? "text-amber-600 dark:text-amber-400" : undefined}>
         {used}k / {limit}k ({Math.round(pct)}%)
       </span>
+    </span>
+  );
+}
+
+/**
+ * A compact "this chat has cost N tokens (~$X at API rates)" chip, sitting next
+ * to the context meter (issue #152). Unlike the meter (last-turn context fill),
+ * this is the chat's *cumulative* consumption. The headline shows the dollar
+ * estimate when the model has known pricing, else the total token count; the
+ * full breakdown is in the tooltip. Hidden until there's usage.
+ */
+function SessionCost({ usage }: { usage: ChatUsage | null }) {
+  if (!usage || usage.totalTokens <= 0) return null;
+  const headline = usage.costUsd != null ? `~${formatUsd(usage.costUsd)}` : formatTokens(usage.totalTokens);
+  return (
+    <span
+      className="inline-flex shrink-0 items-center gap-1"
+      title={`Session so far: ${formatSessionUsage(usage)}`}
+    >
+      <span aria-hidden="true">·</span>
+      <span>{headline}</span>
     </span>
   );
 }

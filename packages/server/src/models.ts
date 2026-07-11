@@ -15,6 +15,22 @@
  * the context meter must use 1M for it — otherwise a long chat reads >100%.
  */
 
+/**
+ * Public first-party API list price per 1M tokens, used only to put a
+ * ballpark dollar figure on a chat's cumulative token consumption (issue #152).
+ * On the Max/CLI runtime the keeper agents don't draw against a per-token
+ * quota, so this is an "at API rates" estimate for comparison, not real spend —
+ * the token counts are the honest metric. Cache-write / cache-read rates are the
+ * standard multiples of the input rate (5-minute ephemeral write = 1.25×, read =
+ * 0.1×), applied in {@link estimateCostUsd}.
+ */
+export interface ModelPricing {
+  /** USD per 1M input tokens. */
+  inputPer1M: number;
+  /** USD per 1M output tokens. */
+  outputPer1M: number;
+}
+
 /** A single selectable model: its id, a human label, and its context window. */
 export interface ModelInfo {
   /** The Claude model id passed to herdctl / the SDK (e.g. "claude-opus-4-8"). */
@@ -23,6 +39,8 @@ export interface ModelInfo {
   label: string;
   /** Total context window in tokens (used for the context meter). */
   contextLimit: number;
+  /** First-party list price per 1M tokens, for the cumulative-cost estimate. */
+  pricing?: ModelPricing;
 }
 
 /**
@@ -31,10 +49,30 @@ export interface ModelInfo {
  * renders.
  */
 export const MODELS: ModelInfo[] = [
-  { id: "claude-opus-4-8", label: "Opus 4.8", contextLimit: 1_000_000 },
-  { id: "claude-fable-5", label: "Fable 5", contextLimit: 1_000_000 },
-  { id: "claude-sonnet-5", label: "Sonnet 5", contextLimit: 1_000_000 },
-  { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5", contextLimit: 200_000 },
+  {
+    id: "claude-opus-4-8",
+    label: "Opus 4.8",
+    contextLimit: 1_000_000,
+    pricing: { inputPer1M: 5, outputPer1M: 25 },
+  },
+  {
+    id: "claude-fable-5",
+    label: "Fable 5",
+    contextLimit: 1_000_000,
+    pricing: { inputPer1M: 10, outputPer1M: 50 },
+  },
+  {
+    id: "claude-sonnet-5",
+    label: "Sonnet 5",
+    contextLimit: 1_000_000,
+    pricing: { inputPer1M: 3, outputPer1M: 15 },
+  },
+  {
+    id: "claude-haiku-4-5-20251001",
+    label: "Haiku 4.5",
+    contextLimit: 200_000,
+    pricing: { inputPer1M: 1, outputPer1M: 5 },
+  },
 ];
 
 /** The model a project's keeper agent uses unless the project overrides it. */
@@ -122,4 +160,61 @@ export function getContextLimit(id: string): number {
 /** The full ModelInfo for a model id, or undefined if it isn't a known model. */
 export function getModelInfo(id: string): ModelInfo | undefined {
   return MODELS.find((m) => m.id === id);
+}
+
+/** Cache-write (5-minute ephemeral) is 1.25× the input rate; cache-read is 0.1×. */
+const CACHE_WRITE_MULTIPLIER = 1.25;
+const CACHE_READ_MULTIPLIER = 0.1;
+
+/** The four cumulative token totals a chat's dollar estimate is priced from. */
+export interface TokenTotals {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+}
+
+/**
+ * Ballpark USD cost of a chat's cumulative token consumption at first-party API
+ * list prices, or `null` for a model with no known pricing. Each token class is
+ * priced separately — input, output, cache-write (1.25× input) and cache-read
+ * (0.1× input) — because a single grand sum of "context tokens" would both
+ * double-count (each turn's input re-reflects the whole growing context, which
+ * is why {@link TokenTotals} must come from a per-turn cumulative sum) and
+ * misprice (output is 5× input, cache-read a tenth of it).
+ */
+export function estimateCostUsd(modelId: string, t: TokenTotals): number | null {
+  const pricing = getModelInfo(modelId)?.pricing;
+  if (!pricing) return null;
+  const { inputPer1M, outputPer1M } = pricing;
+  const usd =
+    (t.inputTokens * inputPer1M +
+      t.cacheCreationTokens * inputPer1M * CACHE_WRITE_MULTIPLIER +
+      t.cacheReadTokens * inputPer1M * CACHE_READ_MULTIPLIER +
+      t.outputTokens * outputPer1M) /
+    1_000_000;
+  return usd;
+}
+
+/**
+ * Cost of a chat that may span several models, priced from each model's own
+ * rate. A chat's turns can run on different models (the composer lets you switch
+ * model per turn, and the project default may differ from what actually ran), so
+ * pricing the whole chat at one model — e.g. the project default — misprices by
+ * the ratio between them (a Haiku chat billed at Opus rates is 5× too high).
+ * Keys are the `message.model` recorded on each assistant turn; totals for a
+ * model with no known pricing are skipped. Returns the summed cost, or `null`
+ * only when *no* group could be priced (so an entirely-unknown-model chat hides
+ * its cost rather than showing $0.00).
+ */
+export function estimateCostUsdByModel(byModel: Record<string, TokenTotals>): number | null {
+  let usd = 0;
+  let priced = false;
+  for (const [modelId, totals] of Object.entries(byModel)) {
+    const c = estimateCostUsd(modelId, totals);
+    if (c == null) continue;
+    usd += c;
+    priced = true;
+  }
+  return priced ? usd : null;
 }

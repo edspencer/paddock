@@ -47,6 +47,63 @@ export function relativeTime(iso?: string): string {
   return `${Math.round(days / 365)}y ago`;
 }
 
+/** Compact token count: 523 → "523", 340_000 → "340K", 1_250_000 → "1.25M". */
+export function formatTokens(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return "0";
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 2)}M`;
+  if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
+  return `${Math.round(n)}`;
+}
+
+/** A ballpark USD figure: 4.1 → "$4.10", 0.004 → "<$0.01", 0 → "$0.00". */
+export function formatUsd(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return "$0.00";
+  if (n < 0.01) return "<$0.01";
+  return `$${n.toFixed(2)}`;
+}
+
+/** The cumulative token/cost fields shared by ChatUsage (see lib/types.ts). */
+export interface SessionUsageParts {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  totalTokens: number;
+  costUsd: number | null;
+}
+
+/**
+ * Narrow an object carrying the (possibly optional/absent) cumulative usage
+ * fields — a `Chat` or a `ChatUsage` — to a concrete {@link SessionUsageParts},
+ * or `undefined` when there's no usage data yet (`totalTokens` absent). Lets the
+ * ring call sites pass `usage={sessionUsageOf(chat)}` uniformly.
+ */
+export function sessionUsageOf(
+  x?: Partial<SessionUsageParts> | null,
+): SessionUsageParts | undefined {
+  if (!x || x.totalTokens == null) return undefined;
+  return {
+    inputTokens: x.inputTokens ?? 0,
+    outputTokens: x.outputTokens ?? 0,
+    cacheReadTokens: x.cacheReadTokens ?? 0,
+    cacheCreationTokens: x.cacheCreationTokens ?? 0,
+    totalTokens: x.totalTokens,
+    costUsd: x.costUsd ?? null,
+  };
+}
+
+/**
+ * A one-line summary of a chat's cumulative token consumption, e.g.
+ * "1.25M tokens · 910K in / 340K out · ~$4.10 at API rates". The dollar clause is
+ * dropped when the model has no known pricing (`costUsd == null`). "in" folds the
+ * input-side classes (fresh input + cache read + cache write) together.
+ */
+export function formatSessionUsage(u: SessionUsageParts): string {
+  const inSide = u.inputTokens + u.cacheReadTokens + u.cacheCreationTokens;
+  const base = `${formatTokens(u.totalTokens)} tokens · ${formatTokens(inSide)} in / ${formatTokens(u.outputTokens)} out`;
+  return u.costUsd == null ? base : `${base} · ~${formatUsd(u.costUsd)} at API rates`;
+}
+
 /** Format a duration in ms compactly (e.g. 74ms, 1.3s, 12s, 3m 32s). */
 export function formatDuration(ms?: number): string | null {
   if (ms == null || Number.isNaN(ms)) return null;

@@ -8,7 +8,7 @@ import { ContextRing } from "../components/ContextRing";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { PromoteChatModal } from "../components/PromoteChatModal";
 import { ChatIcon, FolderIcon, PencilIcon, PlusIcon, TrashIcon, XIcon } from "../components/icons";
-import { relativeTime } from "../lib/format";
+import { relativeTime, sessionUsageOf } from "../lib/format";
 
 /**
  * One-off (scratch) chats — deliberately secondary to projects. Routed to the
@@ -169,7 +169,11 @@ export function OneOffChat() {
                   className="flex w-full flex-col items-start gap-0.5 rounded-lg px-2.5 py-2 pr-14 text-left text-sm"
                 >
                   <span className="flex w-full items-center gap-1.5">
-                    <ContextRing tokens={c.contextTokens} limit={c.contextLimit} />
+                    <ContextRing
+                      tokens={c.contextTokens}
+                      limit={c.contextLimit}
+                      usage={sessionUsageOf(c)}
+                    />
                     <span className="truncate font-medium">{c.name}</span>
                   </span>
                   <span className="text-[11px] text-paddock-400">{relativeTime(c.updatedAt)}</span>

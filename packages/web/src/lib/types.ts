@@ -129,12 +129,38 @@ export interface Chat {
    */
   archived?: boolean;
   /**
-   * Context-window fill as of the chat's last completed turn, for the chat-list
-   * usage ring (issue #77). Both present together, or both absent when the
+   * Context-window fill as of the chat's last completed turn (for the usage
+   * ring, issue #77) plus the chat's cumulative lifetime token totals and cost
+   * estimate (issue #152). All present together, or all absent when the
    * transcript has no usage data yet.
    */
   contextTokens?: number;
   contextLimit?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
+  totalTokens?: number;
+  costUsd?: number | null;
+}
+
+/**
+ * A chat's usage as computed server-side from its transcript (issue #152): the
+ * last-turn context fill (`contextTokens` / `contextLimit`, issue #77) plus the
+ * chat's cumulative lifetime token totals and a ballpark dollar estimate at
+ * first-party API rates. `costUsd` is null for a model with no known pricing.
+ * On the Max/CLI runtime this cost is informational (no per-token quota) — the
+ * token counts are the honest figure.
+ */
+export interface ChatUsage {
+  contextTokens: number;
+  contextLimit: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  totalTokens: number;
+  costUsd: number | null;
 }
 
 /** A persisted message hydrated from a session's transcript (core ChatMessage). */

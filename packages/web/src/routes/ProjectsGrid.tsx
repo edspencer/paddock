@@ -17,7 +17,7 @@ import {
   SparkIcon,
   XIcon,
 } from "../components/icons";
-import { relativeTime } from "../lib/format";
+import { relativeTime, sessionUsageOf } from "../lib/format";
 import { areaBlurb, areaLabel, INBOX, orderAreaSlugs } from "../lib/areas";
 
 /**
@@ -373,7 +373,11 @@ function InboxChatCard({ chat }: { chat: Chat }) {
     >
       <div className="flex items-center gap-2">
         <ChatIcon width={14} height={14} className="shrink-0 text-paddock-400" />
-        <ContextRing tokens={chat.contextTokens} limit={chat.contextLimit} />
+        <ContextRing
+          tokens={chat.contextTokens}
+          limit={chat.contextLimit}
+          usage={sessionUsageOf(chat)}
+        />
         <span className="truncate text-sm font-medium">{chat.name}</span>
       </div>
       {chat.preview && (

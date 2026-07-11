@@ -46,6 +46,7 @@ describe("models", () => {
       id: "claude-fable-5",
       label: "Fable 5",
       contextLimit: 1_000_000,
+      pricing: { inputPer1M: 10, outputPer1M: 50 },
     });
     expect(getModelInfo("nope")).toBeUndefined();
   });
