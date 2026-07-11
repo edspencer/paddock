@@ -34,6 +34,60 @@ const SUBAGENT_TOOL_NAMES = new Set(["Task", "Agent"]);
 /** Both sessionId and toolUseId are path segments — keep them inside `.chats/`. */
 const SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/;
 
+// ---------------------------------------------------------------------------
+// mtime-keyed memo (issue #147)
+//
+// Opening a sub-agent-bearing chat used to re-stream the whole main transcript a
+// second time (to recover Task/Agent tool_use ids that core's parser drops) and
+// read every sub-agent .jsonl in full — on *every* open, including a plain
+// refresh of an unchanged chat. Transcripts are immutable except when a new turn
+// appends (which bumps mtime), so memoize these per-file reads keyed on the
+// file's mtime: a refresh of an unchanged chat now skips both the second parse
+// and the sub-agent reads. Mirrors core's mtime caches (herdctl #351).
+// ---------------------------------------------------------------------------
+
+/** Max files retained per mtime cache (small structures; bound to cap memory). */
+const MTIME_CACHE_MAX = 64;
+
+type MtimeCache<T> = Map<string, { mtimeMs: number; value: T }>;
+
+const taskUsesCache: MtimeCache<TaskToolUse[]> = new Map();
+const durationCache: MtimeCache<number | undefined> = new Map();
+
+/** The file's mtime in epoch ms, or undefined if it can't be stat'd. */
+async function statMtimeMs(file: string): Promise<number | undefined> {
+  try {
+    return (await fs.stat(file)).mtimeMs;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Return the cached value if the recorded mtime still matches (LRU-touch on hit). */
+function mtimeCacheGet<T>(
+  cache: MtimeCache<T>,
+  file: string,
+  mtimeMs: number,
+): { hit: true; value: T } | { hit: false } {
+  const entry = cache.get(file);
+  if (entry && entry.mtimeMs === mtimeMs) {
+    cache.delete(file);
+    cache.set(file, entry); // re-insert to mark most-recently-used
+    return { hit: true, value: entry.value };
+  }
+  return { hit: false };
+}
+
+/** Store a value against the file's mtime, evicting the least-recently-used past the cap. */
+function mtimeCacheSet<T>(cache: MtimeCache<T>, file: string, mtimeMs: number, value: T): void {
+  cache.set(file, { mtimeMs, value });
+  while (cache.size > MTIME_CACHE_MAX) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+}
+
 /** The parent-turn view of a sub-agent launch, recovered from the main transcript. */
 export interface TaskToolUse {
   toolUseId: string;
@@ -96,6 +150,17 @@ export async function readTaskToolUses(
  * sub-agent's nested launches be enriched for recursive expansion).
  */
 async function readTaskUsesFromFile(file: string): Promise<TaskToolUse[]> {
+  const mtimeMs = await statMtimeMs(file);
+  if (mtimeMs !== undefined) {
+    const cached = mtimeCacheGet(taskUsesCache, file, mtimeMs);
+    if (cached.hit) return cached.value;
+  }
+  const value = await readTaskUsesFromFileUncached(file);
+  if (mtimeMs !== undefined) mtimeCacheSet(taskUsesCache, file, mtimeMs, value);
+  return value;
+}
+
+async function readTaskUsesFromFileUncached(file: string): Promise<TaskToolUse[]> {
   const byId = new Map<string, TaskToolUse>();
   const order: string[] = [];
   const resultIds = new Set<string>();
@@ -259,6 +324,19 @@ async function subagentDurations(
  * undefined if the file is missing or has < 2 timestamps.
  */
 async function readSubagentDurationMs(file: string): Promise<number | undefined> {
+  const mtimeMs = await statMtimeMs(file);
+  if (mtimeMs !== undefined) {
+    const cached = mtimeCacheGet(durationCache, file, mtimeMs);
+    if (cached.hit) return cached.value;
+  }
+  const value = await readSubagentDurationMsUncached(file);
+  // Cache even undefined (missing/malformed) so a repeat open of an unchanged,
+  // duration-less transcript doesn't re-read the whole file every time.
+  if (mtimeMs !== undefined) mtimeCacheSet(durationCache, file, mtimeMs, value);
+  return value;
+}
+
+async function readSubagentDurationMsUncached(file: string): Promise<number | undefined> {
   const raw = await fs.readFile(file, "utf8").catch(() => null);
   if (raw === null) return undefined;
   const matches = [...raw.matchAll(/"timestamp":"([^"]+)"/g)];
