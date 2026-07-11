@@ -77,6 +77,7 @@ function resetChatClient() {
     reconnectAttempts: number;
     _state: string;
     activeSessions: Set<string>;
+    knownSessions: Set<string>;
   };
   c.manualClose = true; // suppress the reconnect that onclose would schedule
   if (c.ws) {
@@ -107,6 +108,7 @@ function resetChatClient() {
   c.reconnectAttempts = 0;
   c._state = "closed";
   c.activeSessions.clear();
+  c.knownSessions.clear();
 }
 
 function handlers(): Required<Pick<ChatHandlers, "onResponse" | "onToolCall" | "onMessageBoundary" | "onComplete" | "onError">> {
@@ -267,6 +269,31 @@ describe("ws: dispatch + routing", () => {
     last().emit({ type: "chat:response", payload: { projectSlug: "nascent", sessionId: "sess-A", jobId: "jA", chunk: "x" } });
     expect(nascent.onResponse).toHaveBeenCalled();
     sub.unsubscribe();
+  });
+
+  it("drops a KNOWN session's straggler instead of leaking it into a nascent chat", () => {
+    // The concurrent-new-chat fusion bug: chat A streams, the user starts another
+    // new chat (A's pane unmounts) but A keeps streaming server-side. A's
+    // stragglers carry A's (now-known) session id; they must be DROPPED, never
+    // handed to the nascent second chat — otherwise A's response bleeds into it
+    // and the two chats fuse.
+    const a = handlers();
+    const subA = chatClient.subscribe("proj", "sess-A", a);
+    last().open();
+    // A receives its own frame -> sess-A is now a known session.
+    last().emit({ type: "chat:response", payload: { projectSlug: "proj", sessionId: "sess-A", jobId: "jA", chunk: "a1" } });
+    expect(a.onResponse).toHaveBeenCalledWith("a1", expect.anything());
+    // The user starts a second new chat: A's pane unmounts, a nascent sub mounts.
+    subA.unsubscribe();
+    const nascent = handlers();
+    const subN = chatClient.subscribe("proj", null, nascent);
+    // A's turn keeps streaming: a straggler for the KNOWN session sess-A arrives.
+    last().emit({ type: "chat:response", payload: { projectSlug: "proj", sessionId: "sess-A", jobId: "jA", chunk: "a2" } });
+    expect(nascent.onResponse).not.toHaveBeenCalled();
+    // The nascent chat's OWN first reveal (an as-yet-unknown session) still lands.
+    last().emit({ type: "chat:response", payload: { projectSlug: "proj", sessionId: "sess-B", jobId: "jB", chunk: "b1" } });
+    expect(nascent.onResponse).toHaveBeenCalledWith("b1", expect.anything());
+    subN.unsubscribe();
   });
 
   it("updates a subscription's sessionId via setSessionId so later events route", () => {

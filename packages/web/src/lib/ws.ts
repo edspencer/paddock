@@ -121,6 +121,12 @@ class ChatClient {
   // including ones whose pane isn't mounted.
   private activeSessions = new Set<string>();
   private activeListeners = new Set<(s: ReadonlySet<string>) => void>();
+  // Every session id this client has ever attached a subscription to. Used by
+  // route() to tell a straggler frame from an unmounted chat (a KNOWN session)
+  // apart from a brand-new chat's very first session reveal (an unknown session),
+  // so the former is never mis-delivered to a nascent new-chat pane. Grows with
+  // the number of distinct chats touched this page-load — negligible (UUIDs).
+  private knownSessions = new Set<string>();
 
   constructor() {
     const proto = window.location.protocol === "https:" ? "wss" : "ws";
@@ -216,6 +222,9 @@ class ChatClient {
    */
   private attachSession(sub: Subscription, wantReplay: boolean): void {
     if (!sub.sessionId) return;
+    // Remember this session so a later straggler frame for it (after the pane
+    // unmounts) is dropped by route() rather than leaking into a new-chat pane.
+    this.knownSessions.add(sub.sessionId);
     this.transmit(
       JSON.stringify({
         type: "chat:subscribe",
@@ -429,12 +438,19 @@ class ChatClient {
     if (sessionId) {
       const exact = candidates.find((s) => s.sessionId === sessionId);
       if (exact) return exact;
+      // No live subscriber for a *known* session: this is a straggler from a chat
+      // whose pane has since unmounted (e.g. the user started another new chat
+      // while this turn kept streaming). It must be DROPPED — never handed to a
+      // nascent new-chat pane below, or the still-streaming chat's frames bleed
+      // into the new chat and the two fuse (issues #35, #100-follow-up). A
+      // brand-new chat's own first session-bearing frame is for a session we've
+      // never attached, so it stays unknown here and still reaches the nascent
+      // pane. This is the routing half of the guard the mounted pane's
+      // framesBelong() enforces as a backstop.
+      if (this.knownSessions.has(sessionId)) return undefined;
     }
-    // No exact match: hand the frame to a chat still awaiting its first session
-    // id (a freshly-sent new chat). Crucially, a frame for a *known* session
-    // whose pane has since unmounted must NOT fall through to an unrelated chat
-    // — that straggler is the cross-session leak (issue #35). The mounted pane
-    // still applies its own session guard as a backstop.
+    // No exact match and (if any) an unknown session id: hand the frame to a chat
+    // still awaiting its first session id (a freshly-sent new chat).
     const nascent = candidates.find((s) => s.sessionId === null);
     if (nascent) return nascent;
     // A session-less frame (very first frame, or an error) can only belong to a
