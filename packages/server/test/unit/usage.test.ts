@@ -19,7 +19,7 @@ function assistant(
   return { type: "assistant", message: { id, usage } };
 }
 
-describe("cumulative session token usage (issue #NNN)", () => {
+describe("cumulative session token usage (issue #152)", () => {
   let projectDir: string;
 
   beforeEach(async () => {

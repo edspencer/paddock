@@ -131,7 +131,7 @@ export interface Chat {
   /**
    * Context-window fill as of the chat's last completed turn (for the usage
    * ring, issue #77) plus the chat's cumulative lifetime token totals and cost
-   * estimate (issue #NNN). All present together, or all absent when the
+   * estimate (issue #152). All present together, or all absent when the
    * transcript has no usage data yet.
    */
   contextTokens?: number;
@@ -145,7 +145,7 @@ export interface Chat {
 }
 
 /**
- * A chat's usage as computed server-side from its transcript (issue #NNN): the
+ * A chat's usage as computed server-side from its transcript (issue #152): the
  * last-turn context fill (`contextTokens` / `contextLimit`, issue #77) plus the
  * chat's cumulative lifetime token totals and a ballpark dollar estimate at
  * first-party API rates. `costUsd` is null for a model with no known pricing.

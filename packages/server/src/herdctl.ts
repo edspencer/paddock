@@ -833,7 +833,7 @@ export class HerdctlService {
   // read directly from the transcript in ./usage.ts (readSessionTokenUsage) —
   // paddock owns the `.chats/` layout, and core's SessionUsage only exposes the
   // last-turn fill, so the cumulative extractor supersedes the old
-  // sessionUsage/sessionUsageCached wrappers that used to live here (issue #NNN).
+  // sessionUsage/sessionUsageCached wrappers that used to live here (issue #152).
 
   /**
    * Slash commands available to an agent, memoized per agent name. The set is

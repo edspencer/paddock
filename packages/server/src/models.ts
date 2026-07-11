@@ -17,7 +17,7 @@
 
 /**
  * Public first-party API list price per 1M tokens, used only to put a
- * ballpark dollar figure on a chat's cumulative token consumption (issue #NNN).
+ * ballpark dollar figure on a chat's cumulative token consumption (issue #152).
  * On the Max/CLI runtime the keeper agents don't draw against a per-token
  * quota, so this is an "at API rates" estimate for comparison, not real spend —
  * the token counts are the honest metric. Cache-write / cache-read rates are the

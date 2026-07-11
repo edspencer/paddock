@@ -1,5 +1,5 @@
 /**
- * Cumulative per-chat token usage — issue #NNN.
+ * Cumulative per-chat token usage — issue #152.
  *
  * `@herdctl/core`'s `extractSessionUsage` streams a transcript but keeps only the
  * *last* assistant turn's `input + cache_read + cache_creation` — the current

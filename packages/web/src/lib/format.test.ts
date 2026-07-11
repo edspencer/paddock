@@ -89,7 +89,7 @@ describe("format: formatDuration", () => {
   });
 });
 
-describe("format: token + cost helpers (issue #NNN)", () => {
+describe("format: token + cost helpers (issue #152)", () => {
   it("formatTokens is compact and rounds", () => {
     expect(formatTokens(523)).toBe("523");
     expect(formatTokens(340_000)).toBe("340K");

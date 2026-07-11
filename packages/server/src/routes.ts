@@ -847,7 +847,7 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
 
   /**
    * A per-session usage lookup for building a chat list's usage rings (issue
-   * #77) + cumulative token/cost figures (issue #NNN): reads each session's
+   * #77) + cumulative token/cost figures (issue #152): reads each session's
    * transcript (memoized on its mtime, in usage.ts) and pairs the parsed totals
    * with the model. Returns null for a session with no usage data yet — the ring
    * simply hides. Keyed on `projectDir` (not the agent name) because paddock
@@ -893,7 +893,7 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
 /**
  * A chat's usage for the UI: the last-turn context fill (issue #77) plus the
  * chat's cumulative lifetime token totals and a ballpark dollar estimate at API
- * rates (issue #NNN). `costUsd` is null for a model with no known pricing.
+ * rates (issue #152). `costUsd` is null for a model with no known pricing.
  */
 type ChatUsage = {
   contextTokens: number;
@@ -950,7 +950,7 @@ function toChatDto(
     archived,
     // The context-window fill as of the session's last completed turn (for the
     // per-chat usage ring) plus the chat's cumulative token totals and cost
-    // estimate (issue #NNN), so the list can render both without opening the
+    // estimate (issue #152), so the list can render both without opening the
     // chat. Only present when the transcript has usage data.
     ...(usage ?? {}),
   };

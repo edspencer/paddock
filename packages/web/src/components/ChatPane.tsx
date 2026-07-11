@@ -213,7 +213,7 @@ export function ChatPane({
   // Last completed turn's usage for THIS chat (stale-by-one-turn by design).
   // Reset whenever the chat identity changes (see the hydration effect below).
   const [usage, setUsage] = useState<ChatCompleteUsage | null>(null);
-  // Cumulative lifetime token totals + cost for THIS chat (issue #NNN), read
+  // Cumulative lifetime token totals + cost for THIS chat (issue #152), read
   // from the transcript via /context on open and refreshed after each completed
   // turn. Kept separate from `usage` (the per-turn context-fill meter) because
   // the live ws chat:complete frame only knows the current turn.
@@ -409,7 +409,7 @@ export function ChatPane({
             contextTokens: ctx.contextTokens,
             contextLimit: ctx.contextLimit,
           });
-          // Cumulative session totals (issue #NNN) come from the same payload.
+          // Cumulative session totals (issue #152) come from the same payload.
           setSessionUsage(ctx);
         })
         .catch(() => {
@@ -537,7 +537,7 @@ export function ChatPane({
         // Stale-by-one-turn context meter: store the last completed turn's
         // usage for this chat (omitted by the server when none was observed).
         if (meta.usage) setUsage(meta.usage);
-        // Refresh the cumulative session totals (issue #NNN) now that the turn
+        // Refresh the cumulative session totals (issue #152) now that the turn
         // just written a fresh usage line to the transcript. Best-effort — the
         // per-turn meter above already updated; this only re-tots the lifetime
         // figure. Uses the (possibly newly-minted) session id from the frame.
@@ -1121,7 +1121,7 @@ function ContextMeter({ usage }: { usage: ChatCompleteUsage | null }) {
 
 /**
  * A compact "this chat has cost N tokens (~$X at API rates)" chip, sitting next
- * to the context meter (issue #NNN). Unlike the meter (last-turn context fill),
+ * to the context meter (issue #152). Unlike the meter (last-turn context fill),
  * this is the chat's *cumulative* consumption. The headline shows the dollar
  * estimate when the model has known pricing, else the total token count; the
  * full breakdown is in the tooltip. Hidden until there's usage.

@@ -32,7 +32,7 @@ export function ContextRing({
   /** The model's context-window size. */
   limit?: number;
   /**
-   * The chat's cumulative token totals + cost (issue #NNN). When present, a
+   * The chat's cumulative token totals + cost (issue #152). When present, a
    * "session so far" line is appended to the tooltip. Absent for a never-run
    * chat or where the caller doesn't have it (e.g. the live streaming spinner).
    */
@@ -56,7 +56,7 @@ export function ContextRing({
   const cap = hasUsage ? Math.round(limit! / 1000) : 0;
 
   // Cumulative "session so far" line, appended to the idle tooltip when the
-  // caller has the chat's totals (issue #NNN).
+  // caller has the chat's totals (issue #152).
   const sessionLine = usage ? `\nSession so far: ${formatSessionUsage(usage)}` : "";
 
   const title = working
