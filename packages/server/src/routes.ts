@@ -57,11 +57,13 @@ import {
   SWEEPER_DEFAULT_MODEL,
   isKnownModel,
   getContextLimit,
+  estimateCostUsd,
   isKnownPermissionMode,
   isValidMaxTurns,
   isKnownDriveMode,
   MAX_TURNS_LIMIT,
 } from "./models.js";
+import { readSessionTokenUsage, type SessionTokenUsage } from "./usage.js";
 
 export interface RouteDeps {
   projects: ProjectStore;
@@ -540,8 +542,7 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
       try {
         const project = await projects.get(req.params.slug);
         const sessions = await herdctl.listSessions(project).catch(() => []);
-        const keeper = keeperAgentName(project.slug);
-        const usageOf = chatUsageResolver(keeper, project.model ?? KEEPER_DEFAULT_MODEL);
+        const usageOf = chatUsageResolver(project.dir, project.model ?? KEEPER_DEFAULT_MODEL);
         const entries = await Promise.all(
           sessions.map(async (s) => {
             const u = await usageOf(s).catch(() => null);
@@ -624,19 +625,14 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     "/api/projects/:slug/chats/:sessionId/context",
     async (req, reply) => {
       try {
-        const agent = await agentForSlug(req.params.slug);
+        const projectDir = await projectDirForSlug(req.params.slug);
         let model = KEEPER_DEFAULT_MODEL;
         if (req.params.slug !== SCRATCH_SLUG) {
           const p = await projects.get(req.params.slug).catch(() => null);
           if (p?.model) model = p.model;
         }
-        const u = await herdctl.sessionUsage(agent, req.params.sessionId).catch(() => null);
-        return {
-          usage:
-            u && u.hasData
-              ? { contextTokens: u.inputTokens, contextLimit: getContextLimit(model) }
-              : null,
-        };
+        const u = await readSessionTokenUsage(projectDir, req.params.sessionId).catch(() => null);
+        return { usage: u ? toChatUsage(u, model) : null };
       } catch (err) {
         return sendProjectError(reply, err);
       }
@@ -716,7 +712,7 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
   // their previews are never polluted — no wrapper stripping needed.
   app.get("/api/chats", async () => {
     const sessions = await herdctl.listScratchSessions().catch(() => []);
-    const usageOf = chatUsageResolver(SCRATCH_AGENT, KEEPER_DEFAULT_MODEL);
+    const usageOf = chatUsageResolver(herdctl.scratchDir, KEEPER_DEFAULT_MODEL);
     return {
       chats: await Promise.all(
         sessions.map(async (s) =>
@@ -759,13 +755,10 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
 
   // Context-window usage for a one-off (scratch) chat (see the project variant).
   app.get<{ Params: { sessionId: string } }>("/api/chats/:sessionId/context", async (req) => {
-    const u = await herdctl.sessionUsage(SCRATCH_AGENT, req.params.sessionId).catch(() => null);
-    return {
-      usage:
-        u && u.hasData
-          ? { contextTokens: u.inputTokens, contextLimit: getContextLimit(KEEPER_DEFAULT_MODEL) }
-          : null,
-    };
+    const u = await readSessionTokenUsage(herdctl.scratchDir, req.params.sessionId).catch(
+      () => null,
+    );
+    return { usage: u ? toChatUsage(u, KEEPER_DEFAULT_MODEL) : null };
   });
 
   // Delete a one-off (scratch) chat.
@@ -853,19 +846,19 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
   });
 
   /**
-   * A per-session context-usage lookup for building a chat list's usage rings
-   * (issue #77): reads each session's context fill (memoized on transcript
-   * mtime) and pairs it with the model's context limit. Returns null for a
-   * session with no usage data yet — the ring simply hides.
+   * A per-session usage lookup for building a chat list's usage rings (issue
+   * #77) + cumulative token/cost figures (issue #NNN): reads each session's
+   * transcript (memoized on its mtime, in usage.ts) and pairs the parsed totals
+   * with the model. Returns null for a session with no usage data yet — the ring
+   * simply hides. Keyed on `projectDir` (not the agent name) because paddock
+   * resolves transcripts directly under `<projectDir>/.chats/`.
    */
-  function chatUsageResolver(agentName: string, model: string) {
+  function chatUsageResolver(projectDir: string, model: string) {
     return async (
       s: import("@herdctl/core").DiscoveredSession,
     ): Promise<ChatUsage | null> => {
-      const u = await herdctl.sessionUsageCached(agentName, s.sessionId, s.mtime).catch(() => null);
-      return u && u.hasData
-        ? { contextTokens: u.inputTokens, contextLimit: getContextLimit(model) }
-        : null;
+      const u = await readSessionTokenUsage(projectDir, s.sessionId).catch(() => null);
+      return u ? toChatUsage(u, model) : null;
     };
   }
 
@@ -897,8 +890,46 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
   }
 }
 
-/** A chat's context-window fill for the chat-list usage ring (issue #77). */
-type ChatUsage = { contextTokens: number; contextLimit: number };
+/**
+ * A chat's usage for the UI: the last-turn context fill (issue #77) plus the
+ * chat's cumulative lifetime token totals and a ballpark dollar estimate at API
+ * rates (issue #NNN). `costUsd` is null for a model with no known pricing.
+ */
+type ChatUsage = {
+  contextTokens: number;
+  contextLimit: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  totalTokens: number;
+  costUsd: number | null;
+};
+
+/**
+ * Build the wire `ChatUsage` from a parsed {@link SessionTokenUsage} and the
+ * chat's model. Returns null when the transcript has no usage yet, so the ring
+ * simply hides. `totalTokens` is a headline "tokens this chat consumed" figure —
+ * output plus the (context-growing) input/cache reads — while `costUsd` prices
+ * each class separately (see {@link estimateCostUsd}).
+ */
+function toChatUsage(u: SessionTokenUsage, model: string): ChatUsage | null {
+  if (!u.hasData) return null;
+  const totals = {
+    inputTokens: u.inputTotal,
+    outputTokens: u.outputTotal,
+    cacheReadTokens: u.cacheReadTotal,
+    cacheCreationTokens: u.cacheCreationTotal,
+  };
+  return {
+    contextTokens: u.contextTokens,
+    contextLimit: getContextLimit(model),
+    ...totals,
+    totalTokens:
+      u.inputTotal + u.outputTotal + u.cacheReadTotal + u.cacheCreationTotal,
+    costUsd: estimateCostUsd(model, totals),
+  };
+}
 
 function toChatDto(
   s: import("@herdctl/core").DiscoveredSession,
@@ -917,12 +948,11 @@ function toChatDto(
     // Whether this chat is filed away in the Archived section (#95). Always
     // present so the client can partition the list without a fallback.
     archived,
-    // The context-window fill as of the session's last completed turn, so the
-    // chat list can render a per-chat usage ring without opening the chat. Only
-    // present when the transcript has usage data.
-    ...(usage
-      ? { contextTokens: usage.contextTokens, contextLimit: usage.contextLimit }
-      : {}),
+    // The context-window fill as of the session's last completed turn (for the
+    // per-chat usage ring) plus the chat's cumulative token totals and cost
+    // estimate (issue #NNN), so the list can render both without opening the
+    // chat. Only present when the transcript has usage data.
+    ...(usage ?? {}),
   };
 }
 
