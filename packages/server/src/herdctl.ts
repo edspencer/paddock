@@ -653,6 +653,60 @@ export class HerdctlService {
     return out;
   }
 
+  /**
+   * Per-project variant of {@link lastTurnCompletedAt} for the sidebar unread
+   * badge (#161): group the same cheap job-record scan by the KEEPER agent that
+   * owns each session, so the projects-list payload can carry a compact
+   * `{ sessionId, lastTurnCompletedAt }` list per project WITHOUT the N+1
+   * `listSessions` fan-out or any transcript parse. Returns `slug -> (sessionId
+   * -> latest finished_at)`.
+   *
+   * Only keeper-attributed records (`agent: keeper-<slug>`) are kept — scratch
+   * and sweeper records carry their own session ids that are not project chats,
+   * so `keeperSlugFromAgent` returning `null` naturally filters them out. A chat
+   * promoted from scratch is grouped under its keeper slug (its keeper record).
+   */
+  async lastTurnCompletedAtByProject(): Promise<Map<string, Map<string, string>>> {
+    const jobsDir = path.join(this.cfg.stateDir, "jobs");
+    const out = new Map<string, Map<string, string>>();
+    let entries: string[];
+    try {
+      entries = await fs.readdir(jobsDir);
+    } catch {
+      return out; // no jobs dir yet (fresh instance)
+    }
+    await Promise.all(
+      entries.map(async (name) => {
+        if (!name.endsWith(".yaml")) return;
+        let parsed: Record<string, unknown> | null = null;
+        try {
+          parsed = YAML.parse(await fs.readFile(path.join(jobsDir, name), "utf8")) as
+            | Record<string, unknown>
+            | null;
+        } catch {
+          return; // skip an unreadable/half-written record
+        }
+        const sid = parsed?.session_id;
+        const finished = parsed?.finished_at;
+        const agent = parsed?.agent;
+        if (typeof sid !== "string" || typeof finished !== "string" || typeof agent !== "string") {
+          return;
+        }
+        const slug = keeperSlugFromAgent(agent);
+        if (!slug) return; // only keeper (project) chats — skip scratch/sweeper
+        let bySession = out.get(slug);
+        if (!bySession) {
+          bySession = new Map<string, string>();
+          out.set(slug, bySession);
+        }
+        // ISO-8601 UTC strings sort lexicographically in chronological order.
+        const prev = bySession.get(sid);
+        if (!prev || finished > prev) bySession.set(sid, finished);
+      }),
+    );
+    return out;
+  }
+
   /** The working directory used by one-off / scratch chats. */
   get scratchDir(): string {
     return this.cfg.scratchDir;
