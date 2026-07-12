@@ -1,5 +1,26 @@
 # @paddock/web
 
+## 0.19.1
+
+### Patch Changes
+
+- [#156](https://github.com/edspencer/paddock/pull/156) [`b57d7d9`](https://github.com/edspencer/paddock/commit/b57d7d980388d5a0bf4bf00854a27ccfaf318082) Thanks [@edspencer](https://github.com/edspencer)! - fix(web): roll back transcript virtualization (broken scrolling); keep memoized TurnView
+
+  The react-virtuoso windowing added in #148 broke scrolling back through history on
+  real, variable-height chats (markdown, code blocks, tool blocks). As tall bubbles
+  were measured on scroll, Virtuoso's total height estimate kept ballooning (measured
+  ~22k → ~37k px on a 350-turn chat) and the scroll position jumped — scrolling _up_
+  would snap the viewport _down_. Initial open was fine, but reading history was
+  janky/unusable.
+
+  Reverted to the plain, reliable transcript list (single scroll container, stable
+  scroll height, precise scroll position) and removed the `react-virtuoso`
+  dependency. **`React.memo(TurnView)` is kept** — it's the change that fixes
+  composer-typing / streaming lag and is unaffected by the scrolling problem. The
+  large-chat open cost this was meant to address is now largely covered by the
+  server-side wins in 5.19.1 + Paddock #147 (message/subagent mtime caches), so the
+  plain list performs acceptably while scrolling correctly.
+
 ## 0.19.0
 
 ### Minor Changes
