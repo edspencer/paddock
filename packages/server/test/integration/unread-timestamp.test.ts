@@ -70,4 +70,34 @@ describe("integration: chat DTO exposes lastTurnCompletedAt (issue #160)", () =>
       .chats.find((c: { sessionId: string }) => c.sessionId === sessionId);
     expect(typeof detailChat.lastTurnCompletedAt).toBe("string");
   });
+
+  it("folds a per-project chatTurns list into GET /api/projects for the sidebar unread badge (#161)", async () => {
+    const slug = await freshProject();
+    const mark = ws.mark();
+    ws.send({
+      type: "chat:send",
+      payload: { projectSlug: slug, sessionId: null, message: "hi again" },
+    });
+    const complete = await ws.waitFor(isComplete(slug), { from: mark });
+    const sessionId = complete.payload!.sessionId as string;
+
+    const project = (await t.app.inject({ method: "GET", url: "/api/projects" }))
+      .json()
+      .projects.find((p: { slug: string }) => p.slug === slug) as {
+      chatTurns?: { sessionId: string; lastTurnCompletedAt: string }[];
+    };
+    expect(project).toBeTruthy();
+    expect(Array.isArray(project.chatTurns)).toBe(true);
+    const turn = project.chatTurns!.find((c) => c.sessionId === sessionId);
+    expect(turn).toBeTruthy();
+    expect(Number.isFinite(Date.parse(turn!.lastTurnCompletedAt))).toBe(true);
+    // Attribution is per-project: this session appears ONLY under its own project.
+    const others = (await t.app.inject({ method: "GET", url: "/api/projects" }))
+      .json()
+      .projects.filter(
+        (p: { slug: string; chatTurns?: { sessionId: string }[] }) =>
+          p.slug !== slug && (p.chatTurns ?? []).some((c) => c.sessionId === sessionId),
+      );
+    expect(others).toEqual([]);
+  });
 });
