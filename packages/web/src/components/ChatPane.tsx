@@ -459,11 +459,12 @@ export function ChatPane({
     writeDraft(initialSessionId, projectSlug, draft);
   }, [draft, initialSessionId, projectSlug]);
 
-  // Auto-focus the composer on mount when asked (e.g. right after forking, so the
-  // user can immediately continue the new fork). A normal chat open leaves focus
-  // alone.
+  // Auto-focus the composer on mount for a fresh chat so the user can type right
+  // away: right after forking (autoFocus), and when starting a New Chat — which
+  // remounts this pane with no initialSessionId. A normal open of an existing
+  // chat (initialSessionId present, not forked) leaves focus alone.
   useEffect(() => {
-    if (autoFocus) composerRef.current?.focus();
+    if (autoFocus || !initialSessionId) composerRef.current?.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

@@ -180,6 +180,29 @@ describe("ChatPane: empty + send", () => {
   });
 });
 
+describe("ChatPane: composer auto-focus (#159)", () => {
+  const composer = () => screen.getByPlaceholderText(/Message the keeper agent/i);
+
+  it("focuses the composer on mount for a session-less (New Chat) pane", async () => {
+    render(<ChatPane projectSlug="proj" isProjectChat />);
+    await waitFor(() => expect(composer()).toHaveFocus());
+  });
+
+  it("focuses the composer on mount when autoFocus is set (fork)", async () => {
+    render(<ChatPane projectSlug="proj" isProjectChat autoFocus />);
+    await waitFor(() => expect(composer()).toHaveFocus());
+  });
+
+  it("does NOT focus the composer when opening an existing chat", async () => {
+    const loadHistory = vi.fn().mockResolvedValue([]);
+    render(
+      <ChatPane projectSlug="proj" initialSessionId="sess-1" loadHistory={loadHistory} isProjectChat />,
+    );
+    await waitFor(() => expect(loadHistory).toHaveBeenCalledWith("sess-1"));
+    expect(composer()).not.toHaveFocus();
+  });
+});
+
 describe("ChatPane: slash-command autocomplete (#103)", () => {
   const composer = () => screen.getByPlaceholderText(/Message the keeper agent/i);
   const menu = () => screen.queryByRole("menu", { name: /slash commands/i });
