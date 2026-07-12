@@ -1,14 +1,103 @@
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useProjects } from "../lib/projects-context";
 import { useTheme } from "../lib/theme";
 import type { Project } from "../lib/types";
 import { getBrand, logoIsImage } from "../lib/brand";
 import { areaLabel, orderAreaSlugs } from "../lib/areas";
-import { StatusPill } from "./StatusPill";
+import { chatClient } from "../lib/ws";
+import { LAST_SEEN_EVENT, readLastSeen } from "../lib/lastSeen";
 import { TagPill } from "./TagPill";
 import { NewProjectModal } from "./NewProjectModal";
 import { ChatIcon, FolderIcon, MenuIcon, MoonIcon, PlusIcon, SunIcon, XIcon } from "./icons";
+
+/** Per-project sidebar counts (#161): unread replies + in-flight turns. */
+interface ProjectBadge {
+  unread: number;
+  inflight: number;
+}
+
+/**
+ * Compute per-project unread + in-flight counts for the sidebar (#161), with no
+ * new fetch or polling:
+ *  - UNREAD rides the projects payload's `chatTurns` (`{ sessionId,
+ *    lastTurnCompletedAt }`, folded in server-side) compared against the
+ *    per-chat localStorage `lastSeen` marker (#160). Live turn-completions seen
+ *    over the WS bump it too, so a reply landing counts without a reload.
+ *  - IN-FLIGHT rides the existing WS `chat:active` set (now carrying
+ *    `projectSlug`), grouped by project — near-real-time, zero polling.
+ * Recomputes on projects refresh, WS active changes, and `lastSeen` writes.
+ */
+function useProjectBadges(projects: Project[]): Map<string, ProjectBadge> {
+  // sessionId -> projectSlug for every currently-running turn (from the WS set).
+  const [active, setActive] = useState<ReadonlyMap<string, string>>(new Map());
+  // sessionId -> { slug, at(ms) } completion signals: seeded from the server
+  // payload and augmented live when a turn stops. Kept in a ref (not state) so
+  // it accumulates across refetches; `version` forces the memo to recompute.
+  const completionsRef = useRef(new Map<string, { slug: string; at: number }>());
+  const [version, setVersion] = useState(0);
+
+  // Fold the server's per-chat completed-turn timestamps in whenever the list
+  // changes (keeping the newest per session).
+  useEffect(() => {
+    const m = completionsRef.current;
+    for (const p of projects) {
+      for (const t of p.chatTurns ?? []) {
+        const at = Date.parse(t.lastTurnCompletedAt);
+        if (!Number.isFinite(at)) continue;
+        const prev = m.get(t.sessionId);
+        if (!prev || at > prev.at) m.set(t.sessionId, { slug: p.slug, at });
+      }
+    }
+    setVersion((v) => v + 1);
+  }, [projects]);
+
+  // Live in-flight set + a completion signal each time a turn stops running.
+  useEffect(() => {
+    const prev = new Map<string, string>();
+    return chatClient.onActiveInfos((infos) => {
+      for (const [sid, slug] of prev) {
+        if (!infos.has(sid)) completionsRef.current.set(sid, { slug, at: Date.now() });
+      }
+      prev.clear();
+      for (const [sid, slug] of infos) prev.set(sid, slug);
+      setActive(new Map(infos));
+      setVersion((v) => v + 1);
+    });
+  }, []);
+
+  // Recompute when a `lastSeen` marker changes (opening a chat clears its
+  // unread) — same-tab custom event + cross-tab `storage`.
+  useEffect(() => {
+    const bump = () => setVersion((v) => v + 1);
+    window.addEventListener(LAST_SEEN_EVENT, bump);
+    window.addEventListener("storage", bump);
+    return () => {
+      window.removeEventListener(LAST_SEEN_EVENT, bump);
+      window.removeEventListener("storage", bump);
+    };
+  }, []);
+
+  return useMemo(() => {
+    const badges = new Map<string, ProjectBadge>();
+    const ensure = (slug: string): ProjectBadge => {
+      let b = badges.get(slug);
+      if (!b) {
+        b = { unread: 0, inflight: 0 };
+        badges.set(slug, b);
+      }
+      return b;
+    };
+    for (const [sid, { slug, at }] of completionsRef.current) {
+      // A currently-running turn hasn't "landed" a reply yet — count it only as
+      // in-flight below, never as unread.
+      if (!active.has(sid) && at > readLastSeen(sid)) ensure(slug).unread += 1;
+    }
+    for (const slug of active.values()) ensure(slug).inflight += 1;
+    return badges;
+    // `version` is the recompute trigger (completionsRef mutates in place).
+  }, [active, version]);
+}
 
 export function AppShell() {
   const { projects, loading, upsert } = useProjects();
@@ -43,6 +132,8 @@ export function AppShell() {
     }
     return orderAreaSlugs(map.keys()).map((slug) => [slug, map.get(slug) ?? []] as const);
   }, [projects]);
+
+  const badges = useProjectBadges(projects);
 
   const onCreated = (p: Project) => {
     upsert(p);
@@ -149,7 +240,7 @@ export function AppShell() {
                   </div>
                 )}
                 {ps.map((p) => (
-                  <ProjectNavLink key={p.slug} project={p} />
+                  <ProjectNavLink key={p.slug} project={p} badge={badges.get(p.slug)} />
                 ))}
               </div>
             ))}
@@ -216,8 +307,13 @@ function RouteFallback() {
   );
 }
 
-/** A single project entry in the sidebar nav (name + status + up to two tags). */
-function ProjectNavLink({ project: p }: { project: Project }) {
+/**
+ * A single project entry in the sidebar nav (name + chat-count badges + up to
+ * two tags). Per #161 the per-row project StatusPill is gone (status stays
+ * editable in Settings); its space now shows two subtle, glanceable counts:
+ * unread replies (primary) and in-flight turns (secondary), each only when > 0.
+ */
+function ProjectNavLink({ project: p, badge }: { project: Project; badge?: ProjectBadge }) {
   return (
     <NavLink
       to={`/projects/${p.slug}`}
@@ -238,7 +334,7 @@ function ProjectNavLink({ project: p }: { project: Project }) {
           />
           <span className="truncate font-medium">{p.name}</span>
         </span>
-        <StatusPill status={p.status} />
+        <ProjectBadges badge={badge} />
       </span>
       {p.domain.length > 0 && (
         <span className="flex min-w-0 items-center gap-1 overflow-hidden pl-[18px]">
@@ -251,5 +347,43 @@ function ProjectNavLink({ project: p }: { project: Project }) {
         </span>
       )}
     </NavLink>
+  );
+}
+
+/**
+ * The two subtle per-project counts shown where the StatusPill used to live
+ * (#161): a filled accent pill for UNREAD replies (primary) and a hollow
+ * spinner + count for IN-FLIGHT turns (secondary). Each renders only when > 0;
+ * nothing renders when the project is quiet, keeping the row calm.
+ */
+function ProjectBadges({ badge }: { badge?: ProjectBadge }) {
+  const unread = badge?.unread ?? 0;
+  const inflight = badge?.inflight ?? 0;
+  if (unread === 0 && inflight === 0) return null;
+  return (
+    <span className="flex shrink-0 items-center gap-1.5">
+      {inflight > 0 && (
+        <span
+          className="flex items-center gap-1 text-[11px] tabular-nums text-paddock-500 dark:text-paddock-400"
+          title={`${inflight} chat${inflight === 1 ? "" : "s"} in flight`}
+          aria-label={`${inflight} chat${inflight === 1 ? "" : "s"} in flight`}
+        >
+          <span
+            aria-hidden="true"
+            className="h-2.5 w-2.5 animate-spin rounded-full border-[1.5px] border-paddock-400 border-t-transparent dark:border-paddock-500 dark:border-t-transparent"
+          />
+          {inflight}
+        </span>
+      )}
+      {unread > 0 && (
+        <span
+          className="inline-flex min-w-[1.1rem] items-center justify-center rounded-full bg-accent px-1.5 py-0.5 text-[11px] font-semibold leading-none tabular-nums text-white"
+          title={`${unread} unread ${unread === 1 ? "reply" : "replies"}`}
+          aria-label={`${unread} unread ${unread === 1 ? "reply" : "replies"}`}
+        >
+          {unread}
+        </span>
+      )}
+    </span>
   );
 }

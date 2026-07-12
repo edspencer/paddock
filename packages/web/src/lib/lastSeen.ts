@@ -13,6 +13,14 @@
 
 const PREFIX = "paddock:lastSeen:";
 
+/**
+ * Same-tab notification that a `lastSeen` marker changed (the `storage` event
+ * only fires in OTHER tabs). The sidebar unread badge (#161) listens for this
+ * to recompute its per-project counts the moment the user opens a chat, so the
+ * badge clears without a reload.
+ */
+export const LAST_SEEN_EVENT = "paddock:lastSeen-changed";
+
 /** The localStorage key for a chat's last-seen timestamp. */
 export function lastSeenKey(sessionId: string): string {
   return PREFIX + sessionId;
@@ -43,5 +51,11 @@ export function writeLastSeen(sessionId: string, when: number = Date.now()): voi
     localStorage.setItem(lastSeenKey(sessionId), String(when));
   } catch {
     /* ignore (private mode / quota) */
+  }
+  // Let the sidebar badge recompute in THIS tab (storage events don't self-fire).
+  try {
+    window.dispatchEvent(new CustomEvent(LAST_SEEN_EVENT, { detail: { sessionId } }));
+  } catch {
+    /* ignore (non-browser / no window) */
   }
 }

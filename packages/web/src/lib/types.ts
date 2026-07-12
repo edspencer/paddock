@@ -48,6 +48,14 @@ export interface Project {
    * (ScheduleWakeup / `/loop`), `batch` is the legacy one-shot path.
    */
   driveMode?: "batch" | "session";
+  /**
+   * Compact per-chat "last completed turn" timestamps for the sidebar UNREAD
+   * badge (#161): one entry per project chat that has a completed keeper turn,
+   * `lastTurnCompletedAt` being its most recent (from job records, not a
+   * transcript parse). The sidebar counts entries whose time is newer than the
+   * localStorage `lastSeen` marker (#160). Absent/[] means no completed chats.
+   */
+  chatTurns?: { sessionId: string; lastTurnCompletedAt: string }[];
 }
 
 /** A selectable model (GET /api/models). `contextLimit` drives the context meter. */
