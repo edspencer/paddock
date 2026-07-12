@@ -378,6 +378,60 @@ describe("ChatPane: history hydration", () => {
     // The nested step (a Grep tool block) renders inline.
     expect(await screen.findByText("Grep")).toBeInTheDocument();
   });
+
+  // Issue #166: a sub-agent block shows its estimated cost next to the duration.
+  it("renders the sub-agent's estimated cost next to the duration", async () => {
+    const withCost: HistoryMessage[] = [
+      {
+        role: "tool",
+        content: "final sub-agent answer",
+        timestamp: "2026-06-21T10:00:03Z",
+        toolCall: {
+          toolName: "Agent",
+          output: "final sub-agent answer",
+          isError: false,
+          subagentType: "Explore",
+          description: "map the features",
+          toolUseId: "toolu_A",
+          hasSubagent: true,
+          subagentDurationMs: 12_500,
+          subagentCostUsd: 0.0234,
+        },
+      },
+    ];
+    const loadHistory = vi.fn().mockResolvedValue(withCost);
+    render(<ChatPane projectSlug="proj" initialSessionId="sess-3" loadHistory={loadHistory} />);
+
+    // Both the duration (12.5s) and the ~$0.02 cost render in the header row.
+    expect(await screen.findByText("12.5s")).toBeInTheDocument();
+    expect(screen.getByText("~$0.02")).toBeInTheDocument();
+  });
+
+  it("renders no cost string when the sub-agent has no priced cost", async () => {
+    const noCost: HistoryMessage[] = [
+      {
+        role: "tool",
+        content: "final sub-agent answer",
+        timestamp: "2026-06-21T10:00:03Z",
+        toolCall: {
+          toolName: "Agent",
+          output: "final sub-agent answer",
+          isError: false,
+          subagentType: "Explore",
+          description: "map the features",
+          toolUseId: "toolu_A",
+          hasSubagent: true,
+          subagentDurationMs: 12_500,
+          subagentCostUsd: null,
+        },
+      },
+    ];
+    const loadHistory = vi.fn().mockResolvedValue(noCost);
+    render(<ChatPane projectSlug="proj" initialSessionId="sess-4" loadHistory={loadHistory} />);
+
+    expect(await screen.findByText("12.5s")).toBeInTheDocument();
+    expect(screen.queryByText(/^~\$/)).not.toBeInTheDocument();
+  });
 });
 
 // Issue #36: a brand-new chat should announce its session id the moment it
