@@ -394,7 +394,7 @@ describe("ChatPane: history hydration", () => {
           description: "map the features",
           toolUseId: "toolu_A",
           hasSubagent: true,
-          subagentDurationMs: 12_500,
+          subagentDurationMs: 5_500,
           subagentCostUsd: 0.0234,
         },
       },
@@ -403,7 +403,7 @@ describe("ChatPane: history hydration", () => {
     render(<ChatPane projectSlug="proj" initialSessionId="sess-3" loadHistory={loadHistory} />);
 
     // Both the duration (12.5s) and the ~$0.02 cost render in the header row.
-    expect(await screen.findByText("12.5s")).toBeInTheDocument();
+    expect(await screen.findByText("5.5s")).toBeInTheDocument();
     expect(screen.getByText("~$0.02")).toBeInTheDocument();
   });
 
@@ -421,7 +421,7 @@ describe("ChatPane: history hydration", () => {
           description: "map the features",
           toolUseId: "toolu_A",
           hasSubagent: true,
-          subagentDurationMs: 12_500,
+          subagentDurationMs: 5_500,
           subagentCostUsd: null,
         },
       },
@@ -429,7 +429,7 @@ describe("ChatPane: history hydration", () => {
     const loadHistory = vi.fn().mockResolvedValue(noCost);
     render(<ChatPane projectSlug="proj" initialSessionId="sess-4" loadHistory={loadHistory} />);
 
-    expect(await screen.findByText("12.5s")).toBeInTheDocument();
+    expect(await screen.findByText("5.5s")).toBeInTheDocument();
     expect(screen.queryByText(/^~\$/)).not.toBeInTheDocument();
   });
 });
