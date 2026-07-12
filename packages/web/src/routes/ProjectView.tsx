@@ -3,7 +3,7 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { chatClient } from "../lib/ws";
 import { useProjects } from "../lib/projects-context";
-import type { Chat, ChatUsage, Project } from "../lib/types";
+import type { Chat, ChatCompleteUsage, ChatUsage, Project } from "../lib/types";
 import { StatusPill } from "../components/StatusPill";
 import { TagPill } from "../components/TagPill";
 import { ChatPane } from "../components/ChatPane";
@@ -106,7 +106,15 @@ export function ProjectView() {
   // made switching into a chat-heavy project slow. Kept in its own map (rather
   // than merged into `chats`) so it survives cheap chat-list refreshes that no
   // longer carry usage. A chat with no entry simply renders no ring yet.
-  const [usageBySession, setUsageBySession] = useState<Record<string, ChatUsage>>({});
+  //
+  // An entry is either the full disk-computed usage (`ChatUsage`, from
+  // `/chats/usage`) OR the live per-turn frame (`ChatCompleteUsage`, seeded on
+  // turn-complete — issue #164). The live shape lacks the cumulative
+  // `totalTokens`/`costUsd`, which only degrades the cost tooltip until the next
+  // `loadUsage()` fills them; the ring itself needs only context tokens/limit.
+  const [usageBySession, setUsageBySession] = useState<
+    Record<string, ChatUsage | ChatCompleteUsage>
+  >({});
   // Live client-side filter for the chat list (issue #96). The whole list is
   // already in memory, so a case-insensitive substring match over name (and the
   // first-message preview, when present) needs no server round-trip. Derived
@@ -169,7 +177,12 @@ export function ProjectView() {
   // call freely; a failure just leaves the rings unfilled.
   const loadUsage = useCallback(async () => {
     const usage = await api.chatUsage(slug).catch(() => null);
-    if (usage) setUsageBySession(usage);
+    // MERGE (don't replace): a brand-new chat whose transcript usage line isn't
+    // durably readable yet is omitted from this disk-derived map (the read
+    // race). Merging preserves any live turn-complete seed (issue #164) so its
+    // ring doesn't vanish when the same-instant disk re-read comes back empty;
+    // the disk figures overwrite the seed for sessions it does have.
+    if (usage) setUsageBySession((prev) => ({ ...prev, ...usage }));
   }, [slug]);
 
   const load = useCallback(async () => {
@@ -371,10 +384,21 @@ export function ProjectView() {
     if (sawFresh) void refreshChats();
   }, [runningSessions, chats, refreshChats]);
 
-  const onTurnComplete = useCallback(() => {
-    void refreshAfterTurn();
-    void refreshProjects();
-  }, [refreshAfterTurn, refreshProjects]);
+  const onTurnComplete = useCallback(
+    (live?: { sessionId: string; usage: ChatCompleteUsage }) => {
+      // Seed the chat-list ring from the live per-turn usage the pane already
+      // holds (issue #164). This makes a brand-new chat's ring appear the
+      // instant its first turn ends, instead of waiting on the mtime-memoized
+      // disk re-read in loadUsage() — which, for a session with no prior entry,
+      // can race and leave the ring blank until a full page reload.
+      if (live) {
+        setUsageBySession((prev) => ({ ...prev, [live.sessionId]: live.usage }));
+      }
+      void refreshAfterTurn();
+      void refreshProjects();
+    },
+    [refreshAfterTurn, refreshProjects],
+  );
 
   const togglePin = useCallback(
     async (file: string) => {

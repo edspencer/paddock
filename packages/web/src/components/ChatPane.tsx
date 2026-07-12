@@ -113,8 +113,13 @@ export interface ChatPaneProps {
    * pending list entry immediately (issue #36). Fires at most once per chat.
    */
   onSessionStarted?: (sessionId: string) => void;
-  /** Called whenever a turn completes (pull model: re-fetch project/files for sweeps). */
-  onTurnComplete?: () => void;
+  /**
+   * Called whenever a turn completes (pull model: re-fetch project/files for
+   * sweeps). Carries the turn's live per-turn usage + session id when the
+   * `chat:complete` frame reported one, so the parent can seed the chat-list
+   * context ring immediately instead of waiting on a disk re-read (issue #164).
+   */
+  onTurnComplete?: (live?: { sessionId: string; usage: ChatCompleteUsage }) => void;
   /** True for a project chat (vs. a one-off scratch chat). Gates the preload checkbox. */
   isProjectChat?: boolean;
   /** Whether the project has an OVERVIEW.md to preload (issue #1). */
@@ -569,8 +574,13 @@ export function ChatPane({
         }
         if (!meta.success && meta.error) setError(meta.error);
         // Pull model: a completed turn may have triggered a sweep that rewrote
-        // OVERVIEW.md / CHANGELOG / added files — let the parent re-fetch.
-        onTurnComplete?.();
+        // OVERVIEW.md / CHANGELOG / added files — let the parent re-fetch. Hand
+        // up the live per-turn usage (already accurate, no disk dependency) so
+        // the parent can seed the chat-list ring immediately (issue #164).
+        {
+          const sid = meta.sessionId ?? sessionRef.current;
+          onTurnComplete?.(sid && meta.usage ? { sessionId: sid, usage: meta.usage } : undefined);
+        }
         // Issue #91: the turn is free — auto-send any queued message as the next
         // turn. Hold (don't flush) if this completion was a user Stop or a failed
         // turn; leave the message queued for the user to send/edit instead.
