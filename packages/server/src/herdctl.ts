@@ -602,6 +602,57 @@ export class HerdctlService {
     return this.manager.getAgentSessions(SCRATCH_AGENT);
   }
 
+  /**
+   * Map each chat session id to the ISO timestamp of its most recent COMPLETED
+   * turn, read cheaply from herdctl's job-metadata records (NOT by parsing
+   * transcripts). In the default batch drive mode every keeper turn runs via
+   * `trigger()`, which writes a `job-*.yaml` whose `finished_at` is stamped when
+   * the turn finishes and whose `session_id` is filled in on completion — so the
+   * latest `finished_at` across a session's records is exactly "the agent last
+   * finished a turn." This is the server signal for the unread affordance (#160,
+   * reused per-project by #161): unlike the transcript mtime (`DiscoveredSession.
+   * mtime`) it does NOT tick on the user's own sends.
+   *
+   * Records still running (no `finished_at`) or not yet session-resolved (no
+   * `session_id`) are skipped. The synthetic adoption records paddock writes
+   * carry an earlier, mid-turn `finished_at`, so the max naturally prefers the
+   * real completion. Session-mode turns (`openChatSession`) write no job record,
+   * so their chats have no server timestamp and rely on the client live event.
+   *
+   * One `readdir` + per-file parse of the shared jobs dir — the same access
+   * pattern as {@link reattributeSession}, far cheaper than a transcript scan.
+   */
+  async lastTurnCompletedAt(): Promise<Map<string, string>> {
+    const jobsDir = path.join(this.cfg.stateDir, "jobs");
+    const out = new Map<string, string>();
+    let entries: string[];
+    try {
+      entries = await fs.readdir(jobsDir);
+    } catch {
+      return out; // no jobs dir yet (fresh instance)
+    }
+    await Promise.all(
+      entries.map(async (name) => {
+        if (!name.endsWith(".yaml")) return;
+        let parsed: Record<string, unknown> | null = null;
+        try {
+          parsed = YAML.parse(await fs.readFile(path.join(jobsDir, name), "utf8")) as
+            | Record<string, unknown>
+            | null;
+        } catch {
+          return; // skip an unreadable/half-written record
+        }
+        const sid = parsed?.session_id;
+        const finished = parsed?.finished_at;
+        if (typeof sid !== "string" || typeof finished !== "string") return;
+        // ISO-8601 UTC strings sort lexicographically in chronological order.
+        const prev = out.get(sid);
+        if (!prev || finished > prev) out.set(sid, finished);
+      }),
+    );
+    return out;
+  }
+
   /** The working directory used by one-off / scratch chats. */
   get scratchDir(): string {
     return this.cfg.scratchDir;

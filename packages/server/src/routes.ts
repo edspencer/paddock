@@ -221,9 +221,10 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     try {
       const project = await projects.get(req.params.slug);
       // Enrich with changelog text + the project's chats (sessions).
-      const [changelog, sessions] = await Promise.all([
+      const [changelog, sessions, lastTurnAt] = await Promise.all([
         projects.readFile(project.slug, "CHANGELOG.md").catch(() => ""),
         herdctl.listSessions(project).catch(() => []),
+        herdctl.lastTurnCompletedAt().catch(() => new Map<string, string>()),
       ]);
       const keeper = keeperAgentName(project.slug);
       const archivedOf = (s: import("@herdctl/core").DiscoveredSession) =>
@@ -237,7 +238,7 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
       return {
         project,
         changelog,
-        chats: await buildProjectChats(project.dir, sessions, undefined, archivedOf),
+        chats: await buildProjectChats(project.dir, sessions, undefined, archivedOf, lastTurnAt),
       };
     } catch (err) {
       return sendProjectError(reply, err);
@@ -518,13 +519,18 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
   app.get<{ Params: { slug: string } }>("/api/projects/:slug/chats", async (req, reply) => {
     try {
       const project = await projects.get(req.params.slug);
-      const sessions = await herdctl.listSessions(project).catch(() => []);
+      const [sessions, lastTurnAt] = await Promise.all([
+        herdctl.listSessions(project).catch(() => []),
+        herdctl.lastTurnCompletedAt().catch(() => new Map<string, string>()),
+      ]);
       const keeper = keeperAgentName(project.slug);
       const archivedOf = (s: import("@herdctl/core").DiscoveredSession) =>
         archive.isArchived(keeper, s.sessionId);
       // No usage resolver — see the GET /api/projects/:slug route (issue #116).
       // Usage rings are fetched separately so a list refresh stays cheap.
-      return { chats: await buildProjectChats(project.dir, sessions, undefined, archivedOf) };
+      return {
+        chats: await buildProjectChats(project.dir, sessions, undefined, archivedOf, lastTurnAt),
+      };
     } catch (err) {
       return sendProjectError(reply, err);
     }
@@ -939,6 +945,7 @@ function toChatDto(
   previewOverride?: string,
   usage?: ChatUsage | null,
   archived = false,
+  lastTurnCompletedAt?: string,
 ) {
   const preview = previewOverride ?? s.preview;
   return {
@@ -951,6 +958,10 @@ function toChatDto(
     // Whether this chat is filed away in the Archived section (#95). Always
     // present so the client can partition the list without a fallback.
     archived,
+    // ISO timestamp of the last turn the agent FINISHED (from job records, not
+    // mtime) — the unread signal (#160). Absent when no completed job record
+    // exists yet (session-mode chats, or a brand-new chat still on turn 1).
+    ...(lastTurnCompletedAt ? { lastTurnCompletedAt } : {}),
     // The context-window fill as of the session's last completed turn (for the
     // per-chat usage ring) plus the chat's cumulative token totals and cost
     // estimate (issue #152), so the list can render both without opening the
@@ -979,22 +990,24 @@ async function buildProjectChats(
   archivedOf?: (
     s: import("@herdctl/core").DiscoveredSession,
   ) => Promise<boolean>,
+  lastTurnAt?: ReadonlyMap<string, string>,
 ) {
   return Promise.all(
     sessions.map(async (s) => {
       // Resolve the usage ring, archived flag, and (possibly cleaned) name.
       const usage = usageOf ? await usageOf(s).catch(() => null) : null;
       const archived = archivedOf ? await archivedOf(s).catch(() => false) : false;
+      const turnAt = lastTurnAt?.get(s.sessionId);
       const pollutedPreview =
         !s.customName && !s.autoName && s.preview?.startsWith(PRELOAD_CONTEXT_OPEN);
-      if (!pollutedPreview) return toChatDto(s, undefined, usage, archived);
+      if (!pollutedPreview) return toChatDto(s, undefined, usage, archived, turnAt);
 
       const full = await readFirstUserText(projectDir, s.sessionId).catch(() => undefined);
       const cleaned = stripPreloadWrapper(full ?? s.preview ?? "").trim();
-      if (!cleaned) return toChatDto(s, undefined, usage, archived); // couldn't recover
+      if (!cleaned) return toChatDto(s, undefined, usage, archived, turnAt); // couldn't recover
       const preview =
         cleaned.length > PREVIEW_MAX ? `${cleaned.slice(0, PREVIEW_MAX)}...` : cleaned;
-      return toChatDto(s, preview, usage, archived);
+      return toChatDto(s, preview, usage, archived, turnAt);
     }),
   );
 }

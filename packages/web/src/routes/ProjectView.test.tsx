@@ -518,6 +518,83 @@ describe("ProjectView: archive chats (#95)", () => {
   });
 });
 
+describe("ProjectView: unread affordance (#160)", () => {
+  const FUTURE = "2999-01-01T00:00:00.000Z"; // always newer than lastSeen(0)
+
+  // The row <button> that wraps a chat's title (the unread dot lives inside it).
+  function rowButton(name: string): HTMLElement {
+    return screen.getByText(name).closest("button") as HTMLElement;
+  }
+
+  it("shows the unread cue for a chat whose last turn completed after lastSeen", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [makeChat({ sessionId: "s1", name: "Away chat", lastTurnCompletedAt: FUTURE })],
+      }),
+    );
+    // A session-less new chat is open, so "Away chat" is NOT the focused chat.
+    renderAt("/projects/p/chat");
+    await screen.findByText("Away chat");
+    expect(within(rowButton("Away chat")).getByLabelText("Unread reply")).toBeInTheDocument();
+  });
+
+  it("never shows the unread cue for the currently-open chat", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [makeChat({ sessionId: "s1", name: "Open chat", lastTurnCompletedAt: FUTURE })],
+      }),
+    );
+    renderAt("/projects/p/chat/s1"); // s1 IS the focused chat
+    await screen.findByText("Open chat");
+    expect(within(rowButton("Open chat")).queryByLabelText("Unread reply")).not.toBeInTheDocument();
+  });
+
+  it("does not show the cue once lastSeen is newer than the completed turn", async () => {
+    localStorage.setItem("paddock:lastSeen:s1", String(Date.parse(FUTURE) + 1));
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [makeChat({ sessionId: "s1", name: "Seen chat", lastTurnCompletedAt: FUTURE })],
+      }),
+    );
+    renderAt("/projects/p/chat");
+    await screen.findByText("Seen chat");
+    expect(within(rowButton("Seen chat")).queryByLabelText("Unread reply")).not.toBeInTheDocument();
+  });
+
+  it("opening an unread chat clears its cue", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [makeChat({ sessionId: "s1", name: "Click me", lastTurnCompletedAt: FUTURE })],
+      }),
+    );
+    renderAt("/projects/p/chat");
+    await screen.findByText("Click me");
+    expect(within(rowButton("Click me")).getByLabelText("Unread reply")).toBeInTheDocument();
+
+    fireEvent.click(rowButton("Click me"));
+    await waitFor(() => expect(chatPaneProps?.initialSessionId).toBe("s1"));
+    // Now the focused chat — cue gone (and lastSeen persisted).
+    expect(within(rowButton("Click me")).queryByLabelText("Unread reply")).not.toBeInTheDocument();
+  });
+
+  it("flags a NON-focused chat unread live when its turn completes (running-set transition)", async () => {
+    // No server timestamp — the live turn-complete event is the only signal.
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [makeChat({ sessionId: "s1", name: "Streaming chat" })],
+      }),
+    );
+    renderAt("/projects/p/chat"); // a new chat is open, so s1 is not focused
+    await screen.findByText("Streaming chat");
+    expect(within(rowButton("Streaming chat")).queryByLabelText("Unread reply")).not.toBeInTheDocument();
+
+    // s1's turn starts, then completes: it leaves the running set → unread.
+    await act(async () => activeCb!(new Set(["s1"])));
+    await act(async () => activeCb!(new Set()));
+    expect(within(rowButton("Streaming chat")).getByLabelText("Unread reply")).toBeInTheDocument();
+  });
+});
+
 describe("ProjectView: delete project", () => {
   it("deletes the project and navigates home", async () => {
     apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p", name: "Goner" })));
