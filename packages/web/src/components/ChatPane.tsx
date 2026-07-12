@@ -37,7 +37,13 @@ import type {
   SentFileEnvelope,
   SlashCommand,
 } from "../lib/types";
-import { formatSessionUsage, formatTokens, formatUsd } from "../lib/format";
+import {
+  formatSessionUsage,
+  formatTokens,
+  formatUsd,
+  isCompactContinuation,
+  slashCommandEcho,
+} from "../lib/format";
 import { SentFileBlock } from "./SentFileBlock";
 
 /** One rendered item in the transcript. Assistant boundaries split bubbles. */
@@ -45,7 +51,14 @@ type Turn =
   | { kind: "user"; id: string; content: string }
   | { kind: "assistant"; id: string; content: string; streaming: boolean }
   | { kind: "tool"; id: string; tool: ToolCall }
-  | { kind: "file"; id: string; file: SentFile };
+  | { kind: "file"; id: string; file: SentFile }
+  // A `/compact` (or other) slash-command echo, rendered as a compact chip
+  // rather than the raw `<command-name>…` XML as a user bubble (issue #106).
+  | { kind: "command"; id: string; command: string }
+  // CC's post-compaction continuation summary, rendered as a "conversation
+  // compacted" boundary (the summary is revealable) instead of a user bubble,
+  // so a compacted chat no longer looks corrupted (issue #106).
+  | { kind: "compact"; id: string; summary: string };
 
 let idCounter = 0;
 const nextId = () => `t${++idCounter}`;
@@ -1258,6 +1271,30 @@ function ConnDot({ state }: { state: ConnectionState }) {
   );
 }
 
+/**
+ * A "conversation compacted" boundary for CC's post-`/compact` continuation
+ * summary (issue #106). Shown as a centered divider — the reload-time equivalent
+ * of the live "🗜️ Context compacted" note — with the (machine-generated) summary
+ * text tucked behind a disclosure so nothing is lost but the chat no longer looks
+ * like it ended on a stray user message.
+ */
+function CompactBoundary({ summary }: { summary: string }) {
+  return (
+    <div className="animate-fade-in py-1">
+      <details className="group">
+        <summary className="flex cursor-pointer list-none items-center gap-3 text-xs text-ink-subtle dark:text-ink-dark/60">
+          <span className="h-px flex-1 bg-paddock-200/70 dark:bg-paddock-800" />
+          <span className="whitespace-nowrap">🗜️ conversation compacted</span>
+          <span className="h-px flex-1 bg-paddock-200/70 dark:bg-paddock-800" />
+        </summary>
+        <div className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-paddock-50 px-3 py-2 text-xs text-ink-subtle ring-1 ring-paddock-200/70 dark:bg-paddock-950 dark:text-ink-dark/70 dark:ring-paddock-800">
+          {summary}
+        </div>
+      </details>
+    </div>
+  );
+}
+
 // Memoized so unchanged turns bail out of reconciliation when ChatPane state that
 // is independent of the transcript churns — composer `draft` (every keystroke),
 // streaming appends, the slash menu, connection/model state. `turns` are rebuilt
@@ -1279,6 +1316,20 @@ const TurnView = memo(function TurnView({ turn }: { turn: Turn }) {
   }
   if (turn.kind === "tool") {
     return <ToolBlock tool={turn.tool} />;
+  }
+  if (turn.kind === "command") {
+    // A slash-command echo (e.g. `/compact`) — a centered, unobtrusive chip, not
+    // a user bubble of raw `<command-name>…` XML (issue #106).
+    return (
+      <div className="flex animate-fade-in justify-center">
+        <span className="rounded-full bg-paddock-100 px-2.5 py-0.5 font-mono text-xs text-ink-subtle ring-1 ring-paddock-200/70 dark:bg-paddock-900 dark:text-ink-dark/70 dark:ring-paddock-800">
+          {turn.command}
+        </span>
+      </div>
+    );
+  }
+  if (turn.kind === "compact") {
+    return <CompactBoundary summary={turn.summary} />;
   }
   // assistant
   return (
@@ -1485,6 +1536,16 @@ function historyToTurn(m: HistoryMessage, id: string): Turn {
   }
   if (m.role === "assistant") {
     return { kind: "assistant", id, content: m.content, streaming: false };
+  }
+  // A `role:"user"` message may actually be a CC-injected transcript artifact,
+  // not something the human typed. Surface these as their own clean markers
+  // rather than raw user bubbles (issue #106).
+  if (isCompactContinuation(m.content)) {
+    return { kind: "compact", id, summary: m.content };
+  }
+  const command = slashCommandEcho(m.content);
+  if (command) {
+    return { kind: "command", id, command };
   }
   return { kind: "user", id, content: m.content };
 }

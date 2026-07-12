@@ -115,3 +115,45 @@ export function formatDuration(ms?: number): string | null {
   const rem = Math.round(s % 60);
   return rem ? `${m}m ${rem}s` : `${m}m`;
 }
+
+// ── Compaction / slash-command transcript artifacts (issue #106) ────────────
+//
+// Claude Code writes several `type:"user"` transcript entries that the human
+// never actually typed. @herdctl/core's parser drops the ones flagged
+// `isMeta:true` (the `<local-command-caveat>`, injected "Continue from where you
+// left off." etc.), but two survive with `isMeta` unset and, exposed to us only
+// as a plain `role:"user"` string, would otherwise render as the user's own chat
+// bubbles — making a compacted chat look corrupted (it can even end on one):
+//
+//   1. the `/compact` (or any) slash-command echo, an XML blob, and
+//   2. the post-compaction continuation summary CC injects on resume.
+//
+// We detect both from their content so the renderer can show a clean marker
+// instead of a raw bubble. Detection is intentionally forgiving of leading
+// whitespace.
+
+/** CC's post-compaction continuation preamble; stable across manual/auto compaction. */
+const COMPACT_CONTINUATION_PREFIX =
+  "This session is being continued from a previous conversation";
+
+/**
+ * True when a `role:"user"` message is CC's post-`/compact` continuation summary
+ * ("This session is being continued from a previous conversation…"). Rendered as
+ * a "conversation compacted" boundary rather than a user bubble (issue #106).
+ */
+export function isCompactContinuation(content: string): boolean {
+  return content.trimStart().startsWith(COMPACT_CONTINUATION_PREFIX);
+}
+
+/**
+ * If a `role:"user"` message is a slash-command echo CC writes as
+ * `<command-name>/compact</command-name><command-message>…</command-message>…`,
+ * return the command (e.g. "/compact"); otherwise null. Used to render a compact
+ * command chip instead of the raw XML as a user bubble (issue #106).
+ */
+export function slashCommandEcho(content: string): string | null {
+  const m = /^\s*<command-name>([^<]*)<\/command-name>/.exec(content);
+  if (!m) return null;
+  const name = m[1].trim();
+  return name.length > 0 ? name : null;
+}
