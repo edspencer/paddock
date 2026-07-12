@@ -367,14 +367,14 @@ describe("ChatPane: history hydration", () => {
     // The command echo renders as a "/compact" chip, not raw <command-name> XML.
     expect(screen.getByText("/compact")).toBeInTheDocument();
     expect(screen.queryByText(/command-name/)).not.toBeInTheDocument();
-    // The continuation summary renders as a "conversation compacted" boundary; its
-    // machine-generated body is tucked behind a disclosure, not shown as a bubble.
-    expect(screen.getByText(/conversation compacted/i)).toBeInTheDocument();
-    expect(
-      screen.queryByText(/This session is being continued from a previous conversation/),
-    ).not.toBeInTheDocument();
-    // The summary body is present in the DOM (inside <details>) but not as a bubble.
-    expect(screen.getByText(/SEKRET-SUMMARY-BODY/)).toBeInTheDocument();
+    // The continuation summary renders as a "conversation compacted" boundary,
+    // with its machine-generated body tucked inside a <details> disclosure (still
+    // in the DOM, but as a labelled boundary — not the user's own accent bubble).
+    const boundary = screen.getByText(/conversation compacted/i);
+    expect(boundary).toBeInTheDocument();
+    expect(boundary.closest("details")).not.toBeNull();
+    const summaryBody = screen.getByText(/SEKRET-SUMMARY-BODY/);
+    expect(summaryBody.closest("details")).not.toBeNull();
   });
 
   // Issue #37: a Task/Agent tool call renders as a sub-agent block (type +
