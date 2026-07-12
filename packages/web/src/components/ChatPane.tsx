@@ -1323,6 +1323,9 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
   // For a sub-agent, show its actual run time (from its transcript) rather than
   // the near-instant launch time the Task/Agent tool_call itself records.
   const dur = formatDuration(tool.subagentDurationMs ?? tool.durationMs);
+  // A sub-agent's estimated API-rate cost, priced server-side per-model (issue
+  // #166). Rendered next to the duration; null when its model has no pricing.
+  const cost = tool.subagentCostUsd != null ? `~${formatUsd(tool.subagentCostUsd)}` : null;
   const isSubagent = SUBAGENT_TOOLS.has(tool.toolName);
   // Expandable-into-steps only when the sub-agent's transcript is on disk.
   const expandable = Boolean(isSubagent && tool.hasSubagent && tool.toolUseId);
@@ -1384,6 +1387,7 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
               </span>
             )}
             {dur && <span className="text-paddock-400">{dur}</span>}
+            {cost && <span className="text-paddock-400">{cost}</span>}
           </span>
         </button>
         {open &&
