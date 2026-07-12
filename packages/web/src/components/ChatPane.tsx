@@ -9,7 +9,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { chatClient, type ConnectionState, type ToolCall } from "../lib/ws";
 import { Markdown } from "./Markdown";
 import { DictationButton } from "./DictationButton";
@@ -802,17 +801,9 @@ export function ChatPane({
 
   const empty = turns.length === 0 && !hydrating;
 
-  // Large chats window the transcript so open/scroll don't mount every turn (#148).
-  // Small chats keep the exact plain-map path (byte-identical, and what the render
-  // tests exercise). `empty`/`hydrating` only occur at 0 turns → always plain.
-  const virtualized = turns.length > VIRTUALIZE_THRESHOLD;
-
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* transcript */}
-      {virtualized ? (
-        <VirtualTranscript turns={turns} fetchSubagent={fetchSubagent} />
-      ) : (
       <div
         ref={scrollRef}
         onScroll={onScroll}
@@ -847,7 +838,6 @@ export function ChatPane({
           </SubagentFetchContext.Provider>
         </div>
       </div>
-      )}
 
       {/* Persistent "agent is working…" indicator while a turn is in flight
           (#53) — independent of whether a bubble is currently painting, so it
@@ -1266,69 +1256,6 @@ function ConnDot({ state }: { state: ConnectionState }) {
       {map.t}
     </span>
   );
-}
-
-/**
- * Above this many turns the transcript is windowed (see {@link VirtualTranscript})
- * instead of mounting every turn at once. Below it, the plain map is kept — small
- * chats pay nothing, behaviour is byte-identical, and jsdom render tests (a few
- * turns) exercise the exact same path they always did. The large-chat case (a
- * ~500K-token chat is 1000+ turns) is the one that mounted tens of thousands of
- * DOM nodes in a single layout on open. (#148)
- */
-const VIRTUALIZE_THRESHOLD = 80;
-
-/** Vertical gap between turns (mirrors the `space-y-4` of the non-virtual list). */
-const TURN_GAP_CLASS = "pb-4";
-
-/**
- * Windowed transcript for large chats: renders only the on-screen turns via
- * react-virtuoso, so initial open + scroll no longer scale with total turn count
- * in the DOM. Pin-to-bottom (for streaming and on open) is delegated to
- * Virtuoso's `followOutput` + `initialTopMostItemIndex`, matching the manual
- * pinnedRef behaviour of the non-virtual path.
- */
-function VirtualTranscript({
-  turns,
-  fetchSubagent,
-}: {
-  turns: Turn[];
-  fetchSubagent: ((toolUseId: string) => Promise<HistoryMessage[]>) | null;
-}) {
-  const ref = useRef<VirtuosoHandle>(null);
-  return (
-    <div className="min-h-0 flex-1">
-      <SubagentFetchContext.Provider value={fetchSubagent}>
-        <Virtuoso
-          ref={ref}
-          style={{ height: "100%" }}
-          className="overscroll-contain"
-          data={turns}
-          // Land at the bottom on open (a refresh shows the latest turn), like the
-          // non-virtual path's initial pinned scroll.
-          initialTopMostItemIndex={Math.max(0, turns.length - 1)}
-          // Stick to the bottom as turns stream in, but only while already there —
-          // don't yank the viewport if the user has scrolled up to read.
-          followOutput={(atBottom) => (atBottom ? "auto" : false)}
-          atBottomThreshold={80}
-          increaseViewportBy={600}
-          components={{ Header: TranscriptSpacer, Footer: TranscriptSpacer }}
-          itemContent={(_index, turn) => (
-            <div className="mx-auto w-full max-w-3xl px-4">
-              <div className={TURN_GAP_CLASS}>
-                <TurnView turn={turn} />
-              </div>
-            </div>
-          )}
-        />
-      </SubagentFetchContext.Provider>
-    </div>
-  );
-}
-
-/** Top/bottom breathing room inside the virtual list (mirrors the `py-6` padding). */
-function TranscriptSpacer() {
-  return <div className="h-6" />;
 }
 
 // Memoized so unchanged turns bail out of reconciliation when ChatPane state that
