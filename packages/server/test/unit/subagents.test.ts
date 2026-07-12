@@ -9,6 +9,7 @@ import {
   readSubagentMessages,
   enrichWithSubagents,
 } from "../../src/subagents.js";
+import { estimateCostUsdByModel, type TokenTotals } from "../../src/models.js";
 import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
 
 describe("subagents (issue #37)", () => {
@@ -276,6 +277,109 @@ describe("subagents (issue #37)", () => {
       );
       const enriched = await enrichWithSubagents(projectDir, "s8", [toolMsg("Agent", "done A")]);
       expect(enriched[0].toolCall?.subagentDurationMs).toBe(12_500);
+    });
+
+    it("prices the sub-agent's cost per-model from its own transcript usage (issue #166)", async () => {
+      await writeMain("s-cost", [
+        toolUse("Agent", "toolu_A", { subagent_type: "general", description: "does work" }),
+        toolResult("toolu_A", "done A"),
+      ]);
+      // A sub-agent transcript with two assistant usage turns, one per model, so
+      // the per-model pricing path (not a blended rate) is exercised.
+      const usageTurn = (
+        id: string,
+        model: string,
+        u: Record<string, number>,
+        ts: string,
+      ) => ({
+        type: "assistant",
+        message: {
+          id,
+          model,
+          content: [{ type: "text", text: "working" }],
+          usage: u,
+        },
+        timestamp: ts,
+      });
+      await writeSubagent(
+        "s-cost",
+        "aaa",
+        { agentType: "general", description: "does work", toolUseId: "toolu_A" },
+        [
+          usageTurn(
+            "m1",
+            "claude-haiku-4-5-20251001",
+            {
+              input_tokens: 1000,
+              output_tokens: 2000,
+              cache_read_input_tokens: 5000,
+              cache_creation_input_tokens: 800,
+            },
+            "2026-01-01T00:00:00.000Z",
+          ),
+          usageTurn(
+            "m2",
+            "claude-opus-4-8",
+            {
+              input_tokens: 300,
+              output_tokens: 400,
+              cache_read_input_tokens: 10000,
+              cache_creation_input_tokens: 200,
+            },
+            "2026-01-01T00:00:05.000Z",
+          ),
+        ],
+      );
+
+      // Expected: the exact same cost the per-chat path would compute for these
+      // per-model token totals, derived independently from the primitive.
+      const byModel: Record<string, TokenTotals> = {
+        "claude-haiku-4-5-20251001": {
+          inputTokens: 1000,
+          outputTokens: 2000,
+          cacheReadTokens: 5000,
+          cacheCreationTokens: 800,
+        },
+        "claude-opus-4-8": {
+          inputTokens: 300,
+          outputTokens: 400,
+          cacheReadTokens: 10000,
+          cacheCreationTokens: 200,
+        },
+      };
+      const expected = estimateCostUsdByModel(byModel);
+      expect(expected).not.toBeNull();
+
+      const enriched = await enrichWithSubagents(projectDir, "s-cost", [toolMsg("Agent", "done A")]);
+      expect(enriched[0].toolCall?.subagentCostUsd).toBeCloseTo(expected!, 10);
+    });
+
+    it("leaves subagentCostUsd null for a sub-agent whose model has no pricing", async () => {
+      await writeMain("s-nopricing", [
+        toolUse("Agent", "toolu_A", { subagent_type: "general", description: "unknown model" }),
+        toolResult("toolu_A", "done A"),
+      ]);
+      await writeSubagent(
+        "s-nopricing",
+        "aaa",
+        { agentType: "general", description: "unknown model", toolUseId: "toolu_A" },
+        [
+          {
+            type: "assistant",
+            message: {
+              id: "m1",
+              model: "some-unpriced-model",
+              content: [{ type: "text", text: "hi" }],
+              usage: { input_tokens: 10, output_tokens: 20 },
+            },
+            timestamp: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+      );
+      const enriched = await enrichWithSubagents(projectDir, "s-nopricing", [
+        toolMsg("Agent", "done A"),
+      ]);
+      expect(enriched[0].toolCall?.subagentCostUsd).toBeNull();
     });
 
     it("passes messages through unchanged when there are no Agent tool calls", async () => {

@@ -113,8 +113,13 @@ export interface ChatPaneProps {
    * pending list entry immediately (issue #36). Fires at most once per chat.
    */
   onSessionStarted?: (sessionId: string) => void;
-  /** Called whenever a turn completes (pull model: re-fetch project/files for sweeps). */
-  onTurnComplete?: () => void;
+  /**
+   * Called whenever a turn completes (pull model: re-fetch project/files for
+   * sweeps). Carries the turn's live per-turn usage + session id when the
+   * `chat:complete` frame reported one, so the parent can seed the chat-list
+   * context ring immediately instead of waiting on a disk re-read (issue #164).
+   */
+  onTurnComplete?: (live?: { sessionId: string; usage: ChatCompleteUsage }) => void;
   /** True for a project chat (vs. a one-off scratch chat). Gates the preload checkbox. */
   isProjectChat?: boolean;
   /** Whether the project has an OVERVIEW.md to preload (issue #1). */
@@ -454,11 +459,12 @@ export function ChatPane({
     writeDraft(initialSessionId, projectSlug, draft);
   }, [draft, initialSessionId, projectSlug]);
 
-  // Auto-focus the composer on mount when asked (e.g. right after forking, so the
-  // user can immediately continue the new fork). A normal chat open leaves focus
-  // alone.
+  // Auto-focus the composer on mount for a fresh chat so the user can type right
+  // away: right after forking (autoFocus), and when starting a New Chat — which
+  // remounts this pane with no initialSessionId. A normal open of an existing
+  // chat (initialSessionId present, not forked) leaves focus alone.
   useEffect(() => {
-    if (autoFocus) composerRef.current?.focus();
+    if (autoFocus || !initialSessionId) composerRef.current?.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -569,8 +575,13 @@ export function ChatPane({
         }
         if (!meta.success && meta.error) setError(meta.error);
         // Pull model: a completed turn may have triggered a sweep that rewrote
-        // OVERVIEW.md / CHANGELOG / added files — let the parent re-fetch.
-        onTurnComplete?.();
+        // OVERVIEW.md / CHANGELOG / added files — let the parent re-fetch. Hand
+        // up the live per-turn usage (already accurate, no disk dependency) so
+        // the parent can seed the chat-list ring immediately (issue #164).
+        {
+          const sid = meta.sessionId ?? sessionRef.current;
+          onTurnComplete?.(sid && meta.usage ? { sessionId: sid, usage: meta.usage } : undefined);
+        }
         // Issue #91: the turn is free — auto-send any queued message as the next
         // turn. Hold (don't flush) if this completion was a user Stop or a failed
         // turn; leave the message queued for the user to send/edit instead.
@@ -1312,6 +1323,9 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
   // For a sub-agent, show its actual run time (from its transcript) rather than
   // the near-instant launch time the Task/Agent tool_call itself records.
   const dur = formatDuration(tool.subagentDurationMs ?? tool.durationMs);
+  // A sub-agent's estimated API-rate cost, priced server-side per-model (issue
+  // #166). Rendered next to the duration; null when its model has no pricing.
+  const cost = tool.subagentCostUsd != null ? `~${formatUsd(tool.subagentCostUsd)}` : null;
   const isSubagent = SUBAGENT_TOOLS.has(tool.toolName);
   // Expandable-into-steps only when the sub-agent's transcript is on disk.
   const expandable = Boolean(isSubagent && tool.hasSubagent && tool.toolUseId);
@@ -1373,6 +1387,7 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
               </span>
             )}
             {dur && <span className="text-paddock-400">{dur}</span>}
+            {cost && <span className="text-paddock-400">{cost}</span>}
           </span>
         </button>
         {open &&

@@ -34,6 +34,8 @@ export interface ToolCall {
   prompt?: string;
   hasSubagent?: boolean;
   subagentDurationMs?: number;
+  /** The sub-agent's estimated API-rate cost (USD), priced per-model (issue #166). */
+  subagentCostUsd?: number | null;
 }
 
 /** Events delivered to a subscribed chat. */

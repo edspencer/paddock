@@ -197,6 +197,11 @@ export interface ChatToolCall {
   hasSubagent?: boolean;
   /** The sub-agent's actual run time (first→last transcript timestamp), in ms. */
   subagentDurationMs?: number;
+  /**
+   * The sub-agent's estimated API-rate cost (USD), priced per-model from its own
+   * transcript (issue #166). `null` when its model has no known pricing.
+   */
+  subagentCostUsd?: number | null;
 }
 
 export interface HistoryMessage {

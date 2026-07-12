@@ -180,6 +180,29 @@ describe("ChatPane: empty + send", () => {
   });
 });
 
+describe("ChatPane: composer auto-focus (#159)", () => {
+  const composer = () => screen.getByPlaceholderText(/Message the keeper agent/i);
+
+  it("focuses the composer on mount for a session-less (New Chat) pane", async () => {
+    render(<ChatPane projectSlug="proj" isProjectChat />);
+    await waitFor(() => expect(composer()).toHaveFocus());
+  });
+
+  it("focuses the composer on mount when autoFocus is set (fork)", async () => {
+    render(<ChatPane projectSlug="proj" isProjectChat autoFocus />);
+    await waitFor(() => expect(composer()).toHaveFocus());
+  });
+
+  it("does NOT focus the composer when opening an existing chat", async () => {
+    const loadHistory = vi.fn().mockResolvedValue([]);
+    render(
+      <ChatPane projectSlug="proj" initialSessionId="sess-1" loadHistory={loadHistory} isProjectChat />,
+    );
+    await waitFor(() => expect(loadHistory).toHaveBeenCalledWith("sess-1"));
+    expect(composer()).not.toHaveFocus();
+  });
+});
+
 describe("ChatPane: slash-command autocomplete (#103)", () => {
   const composer = () => screen.getByPlaceholderText(/Message the keeper agent/i);
   const menu = () => screen.queryByRole("menu", { name: /slash commands/i });
@@ -377,6 +400,60 @@ describe("ChatPane: history hydration", () => {
     await waitFor(() => expect(subagentMessages).toHaveBeenCalledWith("proj", "sess-2", "toolu_A"));
     // The nested step (a Grep tool block) renders inline.
     expect(await screen.findByText("Grep")).toBeInTheDocument();
+  });
+
+  // Issue #166: a sub-agent block shows its estimated cost next to the duration.
+  it("renders the sub-agent's estimated cost next to the duration", async () => {
+    const withCost: HistoryMessage[] = [
+      {
+        role: "tool",
+        content: "final sub-agent answer",
+        timestamp: "2026-06-21T10:00:03Z",
+        toolCall: {
+          toolName: "Agent",
+          output: "final sub-agent answer",
+          isError: false,
+          subagentType: "Explore",
+          description: "map the features",
+          toolUseId: "toolu_A",
+          hasSubagent: true,
+          subagentDurationMs: 5_500,
+          subagentCostUsd: 0.0234,
+        },
+      },
+    ];
+    const loadHistory = vi.fn().mockResolvedValue(withCost);
+    render(<ChatPane projectSlug="proj" initialSessionId="sess-3" loadHistory={loadHistory} />);
+
+    // Both the duration (12.5s) and the ~$0.02 cost render in the header row.
+    expect(await screen.findByText("5.5s")).toBeInTheDocument();
+    expect(screen.getByText("~$0.02")).toBeInTheDocument();
+  });
+
+  it("renders no cost string when the sub-agent has no priced cost", async () => {
+    const noCost: HistoryMessage[] = [
+      {
+        role: "tool",
+        content: "final sub-agent answer",
+        timestamp: "2026-06-21T10:00:03Z",
+        toolCall: {
+          toolName: "Agent",
+          output: "final sub-agent answer",
+          isError: false,
+          subagentType: "Explore",
+          description: "map the features",
+          toolUseId: "toolu_A",
+          hasSubagent: true,
+          subagentDurationMs: 5_500,
+          subagentCostUsd: null,
+        },
+      },
+    ];
+    const loadHistory = vi.fn().mockResolvedValue(noCost);
+    render(<ChatPane projectSlug="proj" initialSessionId="sess-4" loadHistory={loadHistory} />);
+
+    expect(await screen.findByText("5.5s")).toBeInTheDocument();
+    expect(screen.queryByText(/^~\$/)).not.toBeInTheDocument();
   });
 });
 

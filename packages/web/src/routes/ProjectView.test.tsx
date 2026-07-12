@@ -645,6 +645,43 @@ describe("ProjectView: pending new chat (issue #36)", () => {
   });
 });
 
+describe("ProjectView: new-chat ring seeds from live usage (#164)", () => {
+  it("shows a brand-new chat's context ring from the turn-complete frame even when the disk usage read omits it", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
+    // The disk-derived usage endpoint omits the brand-new session (the read
+    // race the ticket describes): it never yields an entry for it, so the ring
+    // used to stay blank until a full page reload.
+    apiFns.chatUsage.mockResolvedValue({});
+    renderAt("/projects/p/chat");
+    await screen.findByTestId("chat-pane");
+
+    // The turn completes: the server list now carries the new chat, and the
+    // pane hands up the live per-turn usage from the chat:complete frame.
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [makeChat({ sessionId: "sess-new", name: "Fresh chat" })],
+      }),
+    );
+    await act(async () => {
+      chatPaneProps!.onTurnComplete!({
+        sessionId: "sess-new",
+        usage: {
+          inputTokens: 100_000,
+          outputTokens: 20_000,
+          cacheReadTokens: 200_000,
+          cacheCreationTokens: 0,
+          contextTokens: 300_000,
+          contextLimit: 1_000_000,
+        },
+      });
+    });
+
+    // The ring renders immediately from the live seed (300k/1M = 30%), without
+    // a reload, even though chatUsage returned nothing for this session.
+    expect(await screen.findByLabelText(/Context 30% full/)).toBeInTheDocument();
+  });
+});
+
 describe("ProjectView: in-flight chat visibility (#100)", () => {
   it("pulls the chat list when a running session isn't listed yet, then shows it", async () => {
     // Load a project with no chats.
