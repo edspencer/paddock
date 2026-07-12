@@ -129,6 +129,14 @@ export interface Chat {
    */
   archived?: boolean;
   /**
+   * ISO timestamp of the last turn the agent FINISHED (from server job records,
+   * NOT mtime — so it doesn't tick on the user's own sends). Drives the unread
+   * affordance (#160): a chat is unread when this is newer than the locally
+   * stored last-seen time (`lib/lastSeen.ts`). Absent when no completed turn
+   * has been recorded yet.
+   */
+  lastTurnCompletedAt?: string;
+  /**
    * Context-window fill as of the chat's last completed turn (for the usage
    * ring, issue #77) plus the chat's cumulative lifetime token totals and cost
    * estimate (issue #152). All present together, or all absent when the
