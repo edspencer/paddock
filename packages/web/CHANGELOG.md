@@ -1,5 +1,19 @@
 # @paddock/web
 
+## 0.19.2
+
+### Patch Changes
+
+- [#169](https://github.com/edspencer/paddock/pull/169) [`02f2d89`](https://github.com/edspencer/paddock/commit/02f2d891622fc089ee14dc09a683f36935243b4d) Thanks [@edspencer](https://github.com/edspencer)! - Auto-focus the composer textarea when starting a New Chat, so you can type immediately (#159).
+
+- [#174](https://github.com/edspencer/paddock/pull/174) [`f32d424`](https://github.com/edspencer/paddock/commit/f32d42440f80e82c56675f82c4c9364a0a038454) Thanks [@edspencer](https://github.com/edspencer)! - Show a brand-new chat's context-usage ring in the chat list immediately after its first turn, instead of only after a full page refresh (#164). The ring is now seeded from the live `chat:complete` usage the pane already holds, so it no longer depends on a same-instant, mtime-memoized disk re-read that can race and omit the new session.
+
+- [#172](https://github.com/edspencer/paddock/pull/172) [`ff84e5d`](https://github.com/edspencer/paddock/commit/ff84e5dece1c34a62924eecae8fc353d5f3227df) Thanks [@edspencer](https://github.com/edspencer)! - Sidebar per-project badges: unread-reply count + in-flight count, replacing the per-row StatusPill (#161)
+
+- [#170](https://github.com/edspencer/paddock/pull/170) [`4ebea5f`](https://github.com/edspencer/paddock/commit/4ebea5ff9a9c82a1e70f3e454d3bf68ce8e18dfa) Thanks [@edspencer](https://github.com/edspencer)! - Show a sub-agent's estimated API-rate cost (USD) next to its duration in the expandable sub-agent block, priced per-model from the sub-agent's own transcript (#166)
+
+- [#171](https://github.com/edspencer/paddock/pull/171) [`13a2ff8`](https://github.com/edspencer/paddock/commit/13a2ff85b3e50031253ca04174da9cd31abfb9e5) Thanks [@edspencer](https://github.com/edspencer)! - Add a subtle "unread" affordance to per-project chat rows: a chat is marked unread when the agent finishes a turn while the user isn't viewing it, and read when opened/focused. Adds a `lastTurnCompletedAt` chat DTO field sourced from herdctl job records (#160).
+
 ## 0.19.1
 
 ### Patch Changes
