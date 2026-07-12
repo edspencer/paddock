@@ -27,6 +27,8 @@ import { createInterface } from "node:readline";
 import path from "node:path";
 import { parseSessionMessages, type ChatMessage, type ChatToolCall } from "@herdctl/core";
 import { projectChatsDir } from "./transcripts.js";
+import { readSessionTokenUsageFile } from "./usage.js";
+import { estimateCostUsdByModel } from "./models.js";
 
 /** Tool names that launch a sub-agent. `Task` = classic Claude Code, `Agent` = Agent SDK. */
 const SUBAGENT_TOOL_NAMES = new Set(["Task", "Agent"]);
@@ -53,6 +55,7 @@ type MtimeCache<T> = Map<string, { mtimeMs: number; value: T }>;
 
 const taskUsesCache: MtimeCache<TaskToolUse[]> = new Map();
 const durationCache: MtimeCache<number | undefined> = new Map();
+const costCache: MtimeCache<number | null> = new Map();
 
 /** The file's mtime in epoch ms, or undefined if it can't be stat'd. */
 async function statMtimeMs(file: string): Promise<number | undefined> {
@@ -125,6 +128,14 @@ export type EnrichedToolCall = ChatToolCall & {
    * sub-agent runs on — so this is the meaningful figure to surface.
    */
   subagentDurationMs?: number;
+  /**
+   * The sub-agent's estimated API-rate cost in USD, priced per-model from its own
+   * transcript's cumulative token usage (issue #166). `null` when the sub-agent
+   * ran on a model with no known pricing; `undefined` for a non-sub-agent tool.
+   * A parent sub-agent's cost does not include its nested children's cost — each
+   * sub-agent is priced from only its own transcript (see {@link subagentCosts}).
+   */
+  subagentCostUsd?: number | null;
 };
 
 export type EnrichedMessage = Omit<ChatMessage, "toolCall"> & { toolCall?: EnrichedToolCall };
@@ -276,8 +287,11 @@ export async function readSubagentMessages(
   // flat in the SAME session's subagents/ dir, so enriching this transcript's own
   // Task/Agent blocks against `subagents` lets the UI expand them recursively.
   const taskUses = await readTaskUsesFromFile(meta.transcriptPath);
-  const durations = await subagentDurations(subagents);
-  return attachSubagentFields(messages, taskUses, subagents, durations);
+  const [durations, costs] = await Promise.all([
+    subagentDurations(subagents),
+    subagentCosts(subagents),
+  ]);
+  return attachSubagentFields(messages, taskUses, subagents, durations, costs);
 }
 
 /**
@@ -296,8 +310,11 @@ export async function enrichWithSubagents(
     readTaskToolUses(projectDir, sessionId),
     listSubagents(projectDir, sessionId),
   ]);
-  const durations = await subagentDurations(subagents);
-  return attachSubagentFields(messages, taskUses, subagents, durations);
+  const [durations, costs] = await Promise.all([
+    subagentDurations(subagents),
+    subagentCosts(subagents),
+  ]);
+  return attachSubagentFields(messages, taskUses, subagents, durations, costs);
 }
 
 /**
@@ -347,6 +364,42 @@ async function readSubagentDurationMsUncached(file: string): Promise<number | un
   return last - first;
 }
 
+/**
+ * Compute each sub-agent's estimated API-rate cost (USD) from its own transcript,
+ * keyed by toolUseId. Reuses the same primitives as the per-chat cost: accumulate
+ * per-model token usage over the sub-agent transcript ({@link readSessionTokenUsageFile})
+ * then price it per-model ({@link estimateCostUsdByModel}). Like durations, this
+ * runs once per session on chat open and only over that session's sub-agent files.
+ *
+ * A parent sub-agent's cost reflects only its own transcript's usage — nested
+ * children run in their own sibling transcripts, so their cost is priced under
+ * their own tool_use ids, not folded into the parent (acceptable first cut).
+ */
+async function subagentCosts(
+  subagents: Map<string, SubagentMeta>,
+): Promise<Map<string, number | null>> {
+  const out = new Map<string, number | null>();
+  await Promise.all(
+    [...subagents.values()].map(async (m) => {
+      out.set(m.toolUseId, await readSubagentCostUsd(m.transcriptPath));
+    }),
+  );
+  return out;
+}
+
+/** The estimated cost of a sub-agent transcript, memoized on its mtime. */
+async function readSubagentCostUsd(file: string): Promise<number | null> {
+  const mtimeMs = await statMtimeMs(file);
+  if (mtimeMs !== undefined) {
+    const cached = mtimeCacheGet(costCache, file, mtimeMs);
+    if (cached.hit) return cached.value;
+  }
+  const usage = await readSessionTokenUsageFile(file);
+  const value = estimateCostUsdByModel(usage.byModel);
+  if (mtimeMs !== undefined) mtimeCacheSet(costCache, file, mtimeMs, value);
+  return value;
+}
+
 /** True when any message is a Task/Agent tool call worth enriching. */
 function hasSubagentTool(messages: ChatMessage[]): boolean {
   return messages.some((m) => m.toolCall && SUBAGENT_TOOL_NAMES.has(m.toolCall.toolName));
@@ -362,6 +415,7 @@ function attachSubagentFields(
   taskUses: TaskToolUse[],
   subagents: Map<string, SubagentMeta>,
   durations: Map<string, number>,
+  costs: Map<string, number | null>,
 ): EnrichedMessage[] {
   let i = 0;
   return messages.map((m) => {
@@ -378,6 +432,7 @@ function attachSubagentFields(
         prompt: use.prompt,
         hasSubagent: subagents.has(use.toolUseId),
         subagentDurationMs: durations.get(use.toolUseId),
+        subagentCostUsd: costs.get(use.toolUseId),
       },
     };
   });
