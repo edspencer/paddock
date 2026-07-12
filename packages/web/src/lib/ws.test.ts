@@ -76,7 +76,7 @@ function resetChatClient() {
     outbox: string[];
     reconnectAttempts: number;
     _state: string;
-    activeSessions: Set<string>;
+    activeSessions: Map<string, string>;
     knownSessions: Set<string>;
   };
   c.manualClose = true; // suppress the reconnect that onclose would schedule

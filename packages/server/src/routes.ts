@@ -199,7 +199,26 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
   // --- projects ----------------------------------------------------------
 
   app.get("/api/projects", async () => {
-    return { projects: await projects.list() };
+    // Fold a compact per-project list of `{ sessionId, lastTurnCompletedAt }`
+    // into the payload so the sidebar can compute each project's UNREAD count
+    // (#161) client-side (vs localStorage `lastSeen`, per #160) — sourced from
+    // the SAME cheap job-record scan as the per-chat unread signal, grouped by
+    // keeper agent. No `listSessions` fan-out, no transcript parse.
+    const [list, turnsByProject] = await Promise.all([
+      projects.list(),
+      herdctl.lastTurnCompletedAtByProject().catch(() => new Map<string, Map<string, string>>()),
+    ]);
+    const projectsOut = list.map((p) => {
+      const bySession = turnsByProject.get(p.slug);
+      const chatTurns = bySession
+        ? [...bySession].map(([sessionId, lastTurnCompletedAt]) => ({
+            sessionId,
+            lastTurnCompletedAt,
+          }))
+        : [];
+      return { ...p, chatTurns };
+    });
+    return { projects: projectsOut };
   });
 
   app.post<{ Body: CreateProjectInput }>("/api/projects", async (req, reply) => {

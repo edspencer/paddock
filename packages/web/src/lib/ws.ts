@@ -120,9 +120,12 @@ class ChatClient {
   private _state: ConnectionState = "closed";
   // Sessions with a currently-running turn (issue #53), maintained from
   // chat:active broadcasts so the sidebar can show a streaming dot on ANY chat —
-  // including ones whose pane isn't mounted.
-  private activeSessions = new Set<string>();
+  // including ones whose pane isn't mounted. Keyed by sessionId -> projectSlug
+  // so the projects sidebar can also group in-flight turns BY project (#161)
+  // with no new polling; `onActiveSessions` still exposes just the id set.
+  private activeSessions = new Map<string, string>();
   private activeListeners = new Set<(s: ReadonlySet<string>) => void>();
+  private activeInfoListeners = new Set<(m: ReadonlyMap<string, string>) => void>();
   // Every session id this client has ever attached a subscription to. Used by
   // route() to tell a straggler frame from an unmounted chat (a KNOWN session)
   // apart from a brand-new chat's very first session reveal (an unknown session),
@@ -175,17 +178,31 @@ class ChatClient {
    */
   onActiveSessions(cb: (running: ReadonlySet<string>) => void): () => void {
     this.activeListeners.add(cb);
-    cb(new Set(this.activeSessions));
+    cb(new Set(this.activeSessions.keys()));
     return () => this.activeListeners.delete(cb);
   }
 
-  private setActive(sessionId: string, running: boolean): void {
+  /**
+   * Like {@link onActiveSessions} but exposes the running sessions WITH their
+   * `projectSlug` (sessionId -> slug), so the projects sidebar can count
+   * in-flight turns per project (#161). Fires immediately with the current map
+   * and again whenever the running set changes.
+   */
+  onActiveInfos(cb: (running: ReadonlyMap<string, string>) => void): () => void {
+    this.activeInfoListeners.add(cb);
+    cb(new Map(this.activeSessions));
+    return () => this.activeInfoListeners.delete(cb);
+  }
+
+  private setActive(sessionId: string, running: boolean, projectSlug: string): void {
     const had = this.activeSessions.has(sessionId);
-    if (running) this.activeSessions.add(sessionId);
+    if (running) this.activeSessions.set(sessionId, projectSlug);
     else this.activeSessions.delete(sessionId);
     if (this.activeSessions.has(sessionId) !== had) {
-      const snapshot = new Set(this.activeSessions);
-      for (const cb of this.activeListeners) cb(snapshot);
+      const keys = new Set(this.activeSessions.keys());
+      for (const cb of this.activeListeners) cb(keys);
+      const infos = new Map(this.activeSessions);
+      for (const cb of this.activeInfoListeners) cb(infos);
     }
   }
 
@@ -499,7 +516,7 @@ class ChatClient {
     if (msg.type === "chat:active") {
       // App-level: update the running-sessions set that drives the sidebar dots,
       // even for chats with no mounted pane.
-      this.setActive(msg.payload.sessionId, msg.payload.running);
+      this.setActive(msg.payload.sessionId, msg.payload.running, slug);
       // Pane-level: tell the matching mounted chat so it restores/clears its Stop
       // button + streaming indicator (a returning pane learns its turn is live).
       // EXACT session match only — never fall through to a nascent (new-chat) pane,
