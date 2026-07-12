@@ -77,7 +77,7 @@ import type { AttachmentStore } from "./attachments.js";
  * Read defensively from either an assistant message (`m.message.usage`) or the
  * final result message (`m.usage`) — fields are loosely typed in core.
  */
-interface TurnUsage {
+export interface TurnUsage {
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
@@ -104,7 +104,7 @@ function num(v: unknown): number {
  *
  * Returns `{ usage: null, model: null }` when neither is present.
  */
-function extractUsage(m: SDKMessage): ExtractedUsage {
+export function extractUsage(m: SDKMessage): ExtractedUsage {
   const raw = m as unknown as {
     type?: string;
     usage?: unknown;
@@ -146,6 +146,40 @@ function extractUsage(m: SDKMessage): ExtractedUsage {
   const anyTokens =
     usage.inputTokens || usage.outputTokens || usage.cacheCreationTokens || usage.cacheReadTokens;
   return { usage: anyTokens ? usage : null, model };
+}
+
+/**
+ * The context snapshot a usage block implies: the tokens resident in the model's
+ * context window for this turn (fresh input + cache reads + cache creation).
+ */
+function contextTokensOf(u: TurnUsage): number {
+  return u.inputTokens + u.cacheReadTokens + u.cacheCreationTokens;
+}
+
+/**
+ * Merge the turn's running usage with a newly-seen block, keeping whichever best
+ * reflects the context snapshot (issue #165).
+ *
+ * A turn emits two usage-bearing messages: the assistant message (full usage,
+ * carrying `cache_read_input_tokens`/`cache_creation_input_tokens`) followed by
+ * the terminal `result` message, whose top-level usage carries `input_tokens`
+ * but ZEROED cache fields. A naive "keep the last non-null usage" therefore lets
+ * the cache-less result block clobber the assistant block, dropping the cache
+ * tokens and under-reporting context (meter showed 3,071 instead of 21,461).
+ *
+ * So we keep the block with the MAX contextTokens (input + cacheRead +
+ * cacheCreation): the cache-less result block can never lower the snapshot, yet
+ * if the result block is the ONLY usage seen this turn (some runtimes) it is
+ * still adopted. `outputTokens` is tracked separately as the max seen, since the
+ * result message typically carries the final cumulative output.
+ */
+export function pickTurnUsage(prev: TurnUsage | null, next: TurnUsage): TurnUsage {
+  if (!prev) return next;
+  const chosen = contextTokensOf(next) >= contextTokensOf(prev) ? next : prev;
+  return {
+    ...chosen,
+    outputTokens: Math.max(prev.outputTokens, next.outputTokens),
+  };
 }
 
 // --- client -> server --------------------------------------------------------
@@ -753,11 +787,12 @@ export function makeChatHandler(deps: {
               }
               turn.setSession(m.session_id);
             }
-            // Capture per-turn usage + model defensively; keep the last non-null
-            // usage / model seen (the final result message usually carries the
-            // authoritative usage).
+            // Capture per-turn usage + model defensively. Keep the usage block
+            // with the largest context snapshot (issue #165): the terminal
+            // result message zeroes the cache fields, so "keep last" would drop
+            // the assistant block's cache tokens and under-report context.
             const ex = extractUsage(m);
-            if (ex.usage) seen.usage = ex.usage;
+            if (ex.usage) seen.usage = pickTurnUsage(seen.usage, ex.usage);
             if (ex.model) seen.model = ex.model;
             // @herdctl/core's SDKMessage types `message` as `unknown` (wider);
             // @herdctl/chat's translator declares a structurally narrower
@@ -899,8 +934,10 @@ export function makeChatHandler(deps: {
               resolvedSession = m.session_id;
               turn.setSession(m.session_id);
             }
+            // Keep the largest context snapshot (issue #165) — see the note on
+            // pickTurnUsage; the cache-less result block must not clobber it.
             const ex = extractUsage(m);
-            if (ex.usage) seen.usage = ex.usage;
+            if (ex.usage) seen.usage = pickTurnUsage(seen.usage, ex.usage);
             if (ex.model) seen.model = ex.model;
             // Surface a compaction as a visible assistant note (the SDK reports
             // it as a system/compact_boundary, which the text translator skips).
