@@ -460,6 +460,44 @@ export function ProjectView() {
   const activeTotal = chats.filter((c) => !c.archived).length;
   const activeIsArchived = chats.some((c) => c.archived && c.sessionId === activeSession);
 
+  // Belt-and-suspenders for the open chat vanishing from the list (#154). The
+  // post-turn sweep can transiently steal a live keeper chat's session id (its
+  // job gets stamped `sweeper-<slug>`), so `getAgentSessions("keeper-<slug>")`
+  // filters that chat out of `chats` until the next keeper turn re-attributes it
+  // — the chat flickers out of the sidebar even though it's open and intact
+  // (root cause + proper fix: herdctl#357). Remember the open chat's last-seen
+  // DTO so, if it drops out of `chats` while still open, we can keep rendering
+  // its row instead of leaving the open chat rowless.
+  const lastActiveChatRef = useRef<Chat | null>(null);
+  useEffect(() => {
+    const found = chats.find((c) => c.sessionId === activeSession);
+    if (found) lastActiveChatRef.current = found;
+    // Drop a stale cache once we navigate to a different chat (or to a new one).
+    else if (lastActiveChatRef.current?.sessionId !== activeSession)
+      lastActiveChatRef.current = null;
+  }, [chats, activeSession]);
+
+  // The open chat is missing from the list (and isn't the fresh-new or pending
+  // placeholder): synthesize a row for it so it always has a sidebar entry.
+  // Prefer its last-seen DTO (full name/ring/actions); fall back to a minimal
+  // row keyed by session id on a cold load where it was never in the list.
+  const openChatMissing =
+    !!activeSession &&
+    view === "chat" &&
+    pendingChat !== activeSession &&
+    !chats.some((c) => c.sessionId === activeSession);
+  const fallbackChat: Chat | null = openChatMissing
+    ? lastActiveChatRef.current?.sessionId === activeSession
+      ? lastActiveChatRef.current
+      : {
+          sessionId: activeSession,
+          workingDirectory: "",
+          name: "Current chat",
+          updatedAt: "",
+          resumable: true,
+        }
+    : null;
+
   // Deep-link behavior: when the open chat is archived, expand the Archived
   // section so the user can see where they are — once per session, so a manual
   // collapse afterwards sticks (and a list refresh doesn't force it back open).
@@ -771,17 +809,20 @@ export function ProjectView() {
                   </button>
                 </div>
               )}
-              {chats.length === 0 && (
+              {/* The open chat, kept visible even if it's momentarily missing
+                  from the list (mis-attributed by the post-turn sweep, #154). */}
+              {fallbackChat && chatRow(fallbackChat)}
+              {chats.length === 0 && !fallbackChat && (
                 <p className="px-2 py-2 text-sm text-paddock-500">
                   No saved chats yet. Send a message to start one.
                 </p>
               )}
-              {chats.length > 0 && searching && visibleChats.length === 0 && (
+              {chats.length > 0 && searching && visibleChats.length === 0 && !fallbackChat && (
                 <p className="px-2 py-2 text-sm text-paddock-500">
                   No chats match “{chatSearch.trim()}”.
                 </p>
               )}
-              {chats.length > 0 && !searching && activeChats.length === 0 && (
+              {chats.length > 0 && !searching && activeChats.length === 0 && !fallbackChat && (
                 <p className="px-2 py-2 text-sm text-paddock-500">
                   No active chats — see Archived below.
                 </p>

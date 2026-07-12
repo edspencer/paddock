@@ -374,6 +374,54 @@ describe("ProjectView: chat list (delete + rename)", () => {
   });
 });
 
+// Issue #154: the open chat must never lack a sidebar row, even when it's
+// momentarily missing from the list because the post-turn sweep stole its
+// session id (mis-attributed to `sweeper-<slug>` → filtered out of the keeper's
+// sessions). ProjectView renders a fallback row for the open activeSession.
+describe("ProjectView: open chat missing from list (#154)", () => {
+  it("renders a fallback row (not a rowless list) when the open chat is absent", async () => {
+    // The list comes back empty (mis-attributed), but we opened /chat/ghost.
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" }), { chats: [] }));
+    renderAt("/projects/p/chat/ghost");
+    // The open chat still has a row instead of the empty-state message.
+    expect(await screen.findByText("Current chat")).toBeInTheDocument();
+    expect(screen.queryByText(/No saved chats yet/i)).not.toBeInTheDocument();
+    // And the chat pane is genuinely open on that session.
+    await waitFor(() => expect(chatPaneProps?.initialSessionId).toBe("ghost"));
+  });
+
+  it("keeps the open chat's real row when it drops out of a list refresh", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), { chats: [makeChat({ sessionId: "s1", name: "Live chat" })] }),
+    );
+    // A later refresh (triggered below) returns a list that no longer has s1 —
+    // exactly the sweep mis-attribution flicker.
+    apiFns.listProjectChats.mockResolvedValue([]);
+    renderAt("/projects/p/chat/s1");
+    await screen.findByText("Live chat");
+
+    // A running session we've never seen triggers the #100 refetch, which now
+    // returns a list without s1.
+    act(() => activeCb?.(new Set(["some-other-session"])));
+
+    // s1 is gone from `chats`, but its cached row keeps the open chat visible —
+    // with its real name, not the generic fallback.
+    await waitFor(() => expect(apiFns.listProjectChats).toHaveBeenCalled());
+    expect(screen.getByText("Live chat")).toBeInTheDocument();
+    expect(screen.queryByText("Current chat")).not.toBeInTheDocument();
+  });
+
+  it("shows no fallback row when the open chat is present in the list", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), { chats: [makeChat({ sessionId: "s1", name: "Real chat" })] }),
+    );
+    renderAt("/projects/p/chat/s1");
+    await screen.findByText("Real chat");
+    // No synthetic "Current chat" row when the real one is listed.
+    expect(screen.queryByText("Current chat")).not.toBeInTheDocument();
+  });
+});
+
 describe("ProjectView: chat search (issue #96)", () => {
   const threeChats = () => ({
     chats: [
