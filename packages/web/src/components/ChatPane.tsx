@@ -201,8 +201,9 @@ export function ChatPane({
   // on the next completion.
   const cancelledRef = useRef(false);
 
-  // Issue #1: preload the project's curated OVERVIEW.md as context on the FIRST
-  // turn of a new project chat. Default ON for project chats. Only sent on the
+  // Issue #1/#188: preload the project's curated OVERVIEW.md + CHANGELOG.md as
+  // context on the FIRST turn of a new project chat. Default ON for project
+  // chats. Only sent on the
   // first message of a never-resumed session (the server ignores it otherwise).
   const [preloadContext, setPreloadContext] = useState(true);
   const showPreload = isProjectChat && !initialSessionId;
@@ -999,10 +1000,10 @@ export function ChatPane({
 }
 
 /**
- * Issue #1 — the "Preload project context" checkbox shown on a NEW project
+ * Issue #1/#188 — the "Preload project context" checkbox shown on a NEW project
  * chat's composer. When checked, the first turn injects the project's curated
- * OVERVIEW.md as context. Disabled (with an explanatory note) until a sweep has
- * produced an overview.
+ * OVERVIEW.md (current state) and CHANGELOG.md (history) as context. Disabled
+ * (with an explanatory note) until a sweep has produced an overview.
  */
 function PreloadToggle({
   checked,
@@ -1022,7 +1023,7 @@ function PreloadToggle({
       }`}
       title={
         available
-          ? "Inject this project's curated OVERVIEW.md as context on the first message of this new chat, so the agent starts already knowing the project's state."
+          ? "Inject this project's curated OVERVIEW.md (current state) and CHANGELOG.md (history) as context on the first message of this new chat, so the agent starts already knowing the project's state and narrative."
           : "No project overview yet — a sweep writes OVERVIEW.md after some activity. The agent will still see the project's files."
       }
     >
@@ -1037,7 +1038,7 @@ function PreloadToggle({
       />
       <span className="font-medium">Preload project context</span>
       <span className="text-paddock-400 transition-opacity">
-        {available ? "(injects OVERVIEW.md)" : "(no overview yet)"}
+        {available ? "(injects OVERVIEW.md + CHANGELOG.md)" : "(no overview yet)"}
       </span>
     </label>
   );

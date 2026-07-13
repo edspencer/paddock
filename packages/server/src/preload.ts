@@ -4,17 +4,21 @@
  * drift (issue #62).
  *
  * On the first turn of a new project chat with preload enabled, the server
- * prepends the project's OVERVIEW.md to the user's message as a delimited block:
+ * prepends the project's curated context — OVERVIEW.md (current state) plus
+ * CHANGELOG.md (cross-session history, issue #188) — to the user's message as a
+ * delimited block:
  *
  *   <project-context>
  *   …OVERVIEW.md…
+ *
+ *   …CHANGELOG.md…
  *   </project-context>
  *
  *   My request:
  *   <the user's actual message>
  *
  * That block becomes the session's first user message, so Claude Code's derived
- * preview (and thus the sidebar name) is the overview text, not the request —
+ * preview (and thus the sidebar name) is the context text, not the request —
  * exactly the #62 complaint. {@link stripPreloadWrapper} recovers the request.
  */
 
@@ -22,9 +26,23 @@ export const PRELOAD_CONTEXT_OPEN = "<project-context>";
 /** The literal boundary between the context block and the user's real request. */
 export const PRELOAD_REQUEST_MARKER = "</project-context>\n\nMy request:\n";
 
+/**
+ * Assemble the preload context body from the project's curated docs (issue
+ * #188). OVERVIEW.md carries current state; CHANGELOG.md carries the
+ * cross-session narrative — both reach the chat so the history is no longer
+ * write-only. Each doc self-labels via its own `#` heading, so they are joined
+ * with a blank line; empty docs are dropped.
+ */
+export function composePreloadContext(overview: string, changelog: string): string {
+  return [overview, changelog]
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .join("\n\n");
+}
+
 /** Build the preload-wrapped prompt for a new project chat's first turn. */
-export function wrapPreload(overview: string, message: string): string {
-  return `${PRELOAD_CONTEXT_OPEN}\n${overview.trim()}\n${PRELOAD_REQUEST_MARKER}${message}`;
+export function wrapPreload(context: string, message: string): string {
+  return `${PRELOAD_CONTEXT_OPEN}\n${context.trim()}\n${PRELOAD_REQUEST_MARKER}${message}`;
 }
 
 /**

@@ -161,10 +161,12 @@ describe("integration: WS transport edge cases (real app, fake claude)", () => {
 
   // --- preloadContext (dedicated project to avoid sweeper session noise) ------
 
-  it("preloadContext prepends the project OVERVIEW.md for a NEW chat", async () => {
+  it("preloadContext prepends the project OVERVIEW.md AND CHANGELOG.md for a NEW chat", async () => {
     await t.app.inject({ method: "POST", url: "/api/projects", payload: { name: "Preload Proj" } });
-    // Seed an overview the keeper should be primed with.
+    // Seed an overview + a changelog the keeper should be primed with (issue #188:
+    // the cross-session narrative must reach the chat, not just current state).
     await t.projects.writeOverview("preload-proj", "OVERVIEW: the secret is 'velvet'.");
+    await t.projects.appendChangelog("preload-proj", "shipped the tangerine feature");
 
     const mark = ws.mark();
     ws.send({
@@ -179,8 +181,8 @@ describe("integration: WS transport edge cases (real app, fake claude)", () => {
     const complete = await ws.waitFor(isComplete("preload-proj"), { from: mark });
     const sessionId = complete.payload?.sessionId as string;
 
-    // The transcript's first user message must contain the injected overview
-    // block (the fake records the exact prompt it received on stdin).
+    // The transcript's first user message must contain the injected context
+    // block with BOTH docs (the fake records the exact prompt it got on stdin).
     const messages = (
       await t.app.inject({
         method: "GET",
@@ -189,7 +191,8 @@ describe("integration: WS transport edge cases (real app, fake claude)", () => {
     ).json().messages;
     const firstUser = messages.find((m: { role: string }) => m.role === "user");
     expect(firstUser.content).toContain("<project-context>");
-    expect(firstUser.content).toContain("velvet");
+    expect(firstUser.content).toContain("velvet"); // overview
+    expect(firstUser.content).toContain("tangerine"); // changelog (issue #188)
     expect(firstUser.content).toContain("My request:");
     expect(firstUser.content).toContain("primed question");
   });
