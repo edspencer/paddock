@@ -1,5 +1,13 @@
 # @paddock/web
 
+## 0.20.0
+
+### Patch Changes
+
+- [#162](https://github.com/edspencer/paddock/pull/162) [`8f74dfa`](https://github.com/edspencer/paddock/commit/8f74dfaac7d8c7e1b6caaa892e61148d651fe00f) Thanks [@edspencer](https://github.com/edspencer)! - Render CC's post-`/compact` transcript artifacts as clean markers instead of raw user bubbles (#106). The `<command-name>…</command-name>` slash-command echo now shows as a compact `/compact` chip, and the "This session is being continued…" continuation summary renders as a "🗜️ conversation compacted" boundary with the machine-generated summary tucked behind a disclosure — so a compacted chat no longer looks corrupted (it could previously even end on a stray user-styled summary bubble).
+
+- [#163](https://github.com/edspencer/paddock/pull/163) [`190f335`](https://github.com/edspencer/paddock/commit/190f335bdc4697b30f9b7b837c0f32eee31ed6e9) Thanks [@edspencer](https://github.com/edspencer)! - Keep the open chat's sidebar row even when it's momentarily missing from the chat list (#154). The post-turn sweep can transiently steal a live keeper chat's `session_id` (its job gets stamped `sweeper-<slug>`), so `getAgentSessions("keeper-<slug>")` filters that chat out until the next keeper turn re-attributes it — the chat flickers out of the sidebar though it's open and intact (upstream root cause: herdctl#357). `ProjectView` now renders a fallback row for the open `activeSession` when it's absent from the list, preferring its last-seen DTO (real name, ring, actions) and falling back to a minimal "Current chat" row on a cold load, so an open chat can never be left rowless.
+
 ## 0.19.2
 
 ### Patch Changes
