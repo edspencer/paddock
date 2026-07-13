@@ -1,5 +1,25 @@
 # @paddock/web
 
+## 0.20.1
+
+### Patch Changes
+
+- [#192](https://github.com/edspencer/paddock/pull/192) [`3b93dc4`](https://github.com/edspencer/paddock/commit/3b93dc40abceac45a72f3f11c8c2dd186689efc2) Thanks [@edspencer](https://github.com/edspencer)! - Persist chat read/unread state server-side (#189)
+
+  Read-state (per-chat "last seen") moves off browser localStorage into a
+  write-through JSON sidecar (`read-state.json`) in the data dir, so it follows a
+  user across devices hitting the same instance. Keyed by username WHEN a real
+  identity is present (trusted-header / jwt), else a single shared bucket
+  (`none` mode / anonymous) — forward-compatible with multi-user without gating
+  chat visibility. The chat DTO (list + detail) and `/api/projects` `chatTurns`
+  now carry `lastSeen`; new `POST /api/projects/:slug/chats/:sessionId/seen`
+  (and scratch `/api/chats/:sessionId/seen`) mark a chat seen, and `GET /api/me`
+  exposes the principal. The web `lastSeen` helper becomes a thin cache layering
+  the server value (source of truth) over an optimistic localStorage mirror.
+
+- [#191](https://github.com/edspencer/paddock/pull/191) [`16b6332`](https://github.com/edspencer/paddock/commit/16b63326db4e0787a53682637ffcc2b463b42999) Thanks [@edspencer](https://github.com/edspencer)! - Stop rendering internal `<task-notification>` blocks as raw-XML chat bubbles (#181). When a background agent (Task/Agent tool) stops or completes, the Claude Code harness injects a `<task-notification>` block as a synthetic `role:"user"` transcript entry. It isn't flagged `isMeta:true`, so it survives `@herdctl/core`'s parser and used to render as a raw-XML user bubble on reload. Paddock now detects it (like the #106 compaction/slash-command artifacts) and renders a subtle, centered system-status line carrying the human-readable `<summary>` (full text on hover) instead.
+  </content>
+
 ## 0.20.0
 
 ### Patch Changes

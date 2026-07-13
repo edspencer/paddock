@@ -1,5 +1,28 @@
 # @paddock/server
 
+## 0.20.1
+
+### Patch Changes
+
+- [#185](https://github.com/edspencer/paddock/pull/185) [`6a0d0a7`](https://github.com/edspencer/paddock/commit/6a0d0a7ac963567e8d20075830958b24b3e1bec0) Thanks [@edspencer](https://github.com/edspencer)! - Decouple the keeper/scratch replace system-prompt from `PADDOCK_DEV_SERVERS_ENABLED` (#176). Whether an agent uses the native Claude Code system prompt + CLAUDE.md hierarchy vs. a terse Paddock replace prompt is now its own explicit decision, driven by `PADDOCK_KEEPER_NATIVE_PROMPT` (default `true` — native — on every instance) instead of piggy-backing on the unrelated dev-servers capability flag. Scratch chats now also get the native default + instance-wide CLAUDE.md by default. Set `PADDOCK_KEEPER_NATIVE_PROMPT=false` to keep the old replace prompt on an instance with no CLAUDE.md files.
+
+- [#193](https://github.com/edspencer/paddock/pull/193) [`85db081`](https://github.com/edspencer/paddock/commit/85db081c386da47d4c101db6885ca154f675cb81) Thanks [@edspencer](https://github.com/edspencer)! - Preload now injects `CHANGELOG.md` alongside `OVERVIEW.md` (#188). Previously the "Preload project context" checkbox only prepended `OVERVIEW.md` to a new project chat's first turn, so the cross-session narrative in `CHANGELOG.md` — written by the sweeper but never fed to a chat — was effectively write-only. The checkbox now opts into **both**: when a curated overview exists, the first turn's `<project-context>` block carries the overview (current state) _and_ the changelog (history). Gating is unchanged (still requires an `OVERVIEW.md`, i.e. a sweep has run), and the display-strip round-trip is preserved.
+
+- [#192](https://github.com/edspencer/paddock/pull/192) [`3b93dc4`](https://github.com/edspencer/paddock/commit/3b93dc40abceac45a72f3f11c8c2dd186689efc2) Thanks [@edspencer](https://github.com/edspencer)! - Persist chat read/unread state server-side (#189)
+
+  Read-state (per-chat "last seen") moves off browser localStorage into a
+  write-through JSON sidecar (`read-state.json`) in the data dir, so it follows a
+  user across devices hitting the same instance. Keyed by username WHEN a real
+  identity is present (trusted-header / jwt), else a single shared bucket
+  (`none` mode / anonymous) — forward-compatible with multi-user without gating
+  chat visibility. The chat DTO (list + detail) and `/api/projects` `chatTurns`
+  now carry `lastSeen`; new `POST /api/projects/:slug/chats/:sessionId/seen`
+  (and scratch `/api/chats/:sessionId/seen`) mark a chat seen, and `GET /api/me`
+  exposes the principal. The web `lastSeen` helper becomes a thin cache layering
+  the server value (source of truth) over an optimistic localStorage mirror.
+
+- [#186](https://github.com/edspencer/paddock/pull/186) [`f78dc05`](https://github.com/edspencer/paddock/commit/f78dc056dd64f77e434a56e8a305ef37618357b1) Thanks [@edspencer](https://github.com/edspencer)! - Sweeper now maintains a per-project `CLAUDE.md` (durable identity & conventions) alongside `OVERVIEW.md` (current state) and `CHANGELOG.md` (history) (#177). A minimal `CLAUDE.md` is seeded at project creation, and each sweep may emit an optional `<<<CLAUDE>>>` section carrying only genuinely-new durable facts; `SweepService` **appends** them under a managed "Curated notes" heading rather than rewriting, so human-authored conventions are never clobbered. When the sweeper has nothing durable to add it emits `NOCHANGE` and the file is left untouched. Pairs with #176 so the per-project `CLAUDE.md` is auto-loaded as the project layer of the two-level native-context model.
+
 ## 0.20.0
 
 ### Minor Changes
