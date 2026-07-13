@@ -42,7 +42,9 @@ import {
   formatTokens,
   formatUsd,
   isCompactContinuation,
+  isTaskNotification,
   slashCommandEcho,
+  taskNotificationSummary,
 } from "../lib/format";
 import { SentFileBlock } from "./SentFileBlock";
 
@@ -58,7 +60,10 @@ type Turn =
   // CC's post-compaction continuation summary, rendered as a "conversation
   // compacted" boundary (the summary is revealable) instead of a user bubble,
   // so a compacted chat no longer looks corrupted (issue #106).
-  | { kind: "compact"; id: string; summary: string };
+  | { kind: "compact"; id: string; summary: string }
+  // An internal background-agent `<task-notification>` block, rendered as a
+  // subtle system-status line rather than a raw-XML user bubble (issue #181).
+  | { kind: "notification"; id: string; summary: string };
 
 let idCounter = 0;
 const nextId = () => `t${++idCounter}`;
@@ -1342,6 +1347,21 @@ const TurnView = memo(function TurnView({ turn }: { turn: Turn }) {
   if (turn.kind === "compact") {
     return <CompactBoundary summary={turn.summary} />;
   }
+  if (turn.kind === "notification") {
+    // An internal background-agent `<task-notification>` (issue #181): a subtle,
+    // centered system-status line carrying the human-readable summary, never a
+    // raw-XML user bubble. Full text on hover for the longer "stopped" variants.
+    return (
+      <div className="flex animate-fade-in justify-center">
+        <span
+          className="max-w-[85%] truncate rounded-full bg-paddock-50 px-2.5 py-0.5 text-xs italic text-ink-subtle/80 ring-1 ring-paddock-200/60 dark:bg-paddock-950 dark:text-ink-dark/60 dark:ring-paddock-800/70"
+          title={turn.summary}
+        >
+          {turn.summary}
+        </span>
+      </div>
+    );
+  }
   // assistant
   return (
     <div className="flex animate-fade-in justify-start">
@@ -1561,6 +1581,11 @@ function historyToTurn(m: HistoryMessage, id: string): Turn {
   const command = slashCommandEcho(m.content);
   if (command) {
     return { kind: "command", id, command };
+  }
+  // A background-agent `<task-notification>` block (harness metadata, not typed
+  // by the human) — a subtle status line instead of a raw-XML bubble (issue #181).
+  if (isTaskNotification(m.content)) {
+    return { kind: "notification", id, summary: taskNotificationSummary(m.content) };
   }
   return { kind: "user", id, content: m.content };
 }
