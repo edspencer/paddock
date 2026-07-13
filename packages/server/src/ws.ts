@@ -68,7 +68,7 @@ import {
   type DriveMode,
 } from "./models.js";
 import { SessionHub, type TurnHandle, type ActiveInfo } from "./session-hub.js";
-import { wrapPreload } from "./preload.js";
+import { wrapPreload, composePreloadContext } from "./preload.js";
 import { sendFileServerDef, SEND_FILE_SERVER_KEY } from "./send-file-mcp.js";
 import type { AttachmentStore } from "./attachments.js";
 
@@ -724,15 +724,20 @@ export function makeChatHandler(deps: {
               ? project.driveMode
               : deps.cfg.keeperDriveMode;
 
-          // Context preload (issue #1): only for a NEW chat, only when asked,
-          // and only when the project actually has an OVERVIEW.md. Prepend it
-          // as a clearly delimited block so the keeper starts primed.
+          // Context preload (issues #1/#188): only for a NEW chat, only when
+          // asked, and only when the project actually has an OVERVIEW.md (the
+          // signal that a sweep has curated real state). When it fires, inject
+          // BOTH the overview (current state) AND the CHANGELOG.md (cross-session
+          // history) so the narrative reaches the chat instead of being
+          // write-only — the checkbox opts into both. Prepend as a clearly
+          // delimited block so the keeper starts primed.
           if (isNewChat && preloadContext) {
             const overview = await deps.projects.readOverview(slug).catch(() => "");
             if (overview.trim().length > 0) {
+              const changelog = await deps.projects.readChangelog(slug).catch(() => "");
               // Single-sourced wrapper (see preload.ts) so the chat-list can strip
               // it back off for display (issue #62).
-              prompt = wrapPreload(overview, message);
+              prompt = wrapPreload(composePreloadContext(overview, changelog), message);
             }
           }
         }

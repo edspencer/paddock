@@ -436,6 +436,16 @@ export class ProjectStore {
     await fs.writeFile(path.join(this.dirFor(slug), OVERVIEW_FILE), content, "utf8");
   }
 
+  /** Read CHANGELOG.md, or "" if it doesn't exist yet (issue #188). */
+  async readChangelog(slug: string): Promise<string> {
+    try {
+      return await fs.readFile(path.join(this.dirFor(slug), CHANGELOG_FILE), "utf8");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return "";
+      throw err;
+    }
+  }
+
   /** Whether OVERVIEW.md exists for this project. */
   async overviewExists(slug: string): Promise<boolean> {
     try {

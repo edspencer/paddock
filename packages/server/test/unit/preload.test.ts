@@ -3,7 +3,12 @@
  * chat-list strips; single-sourcing them here keeps the two in lock-step.
  */
 import { describe, it, expect } from "vitest";
-import { wrapPreload, stripPreloadWrapper, PRELOAD_CONTEXT_OPEN } from "../../src/preload.js";
+import {
+  wrapPreload,
+  stripPreloadWrapper,
+  composePreloadContext,
+  PRELOAD_CONTEXT_OPEN,
+} from "../../src/preload.js";
 
 describe("preload wrapper", () => {
   it("strips the wrapper back to exactly the user's request", () => {
@@ -30,5 +35,27 @@ describe("preload wrapper", () => {
     // before the </project-context> marker — nothing to strip, so leave as-is.
     const truncated = "<project-context>\n# Overview\nsome long overview text that got cut";
     expect(stripPreloadWrapper(truncated)).toBe(truncated);
+  });
+});
+
+describe("composePreloadContext (issue #188)", () => {
+  it("joins overview and changelog, both trimmed, with a blank line", () => {
+    const ctx = composePreloadContext("  # Overview\nstate  ", "  # Changelog\nhistory  ");
+    expect(ctx).toBe("# Overview\nstate\n\n# Changelog\nhistory");
+  });
+
+  it("keeps the changelog inside the wrapped block and strips back to the request", () => {
+    const ctx = composePreloadContext("# Overview\nstate", "# Changelog\nhistory");
+    const wrapped = wrapPreload(ctx, "do the thing");
+    expect(wrapped).toContain("# Overview");
+    expect(wrapped).toContain("# Changelog\nhistory");
+    // The request marker is intact, so display still recovers the raw request.
+    expect(stripPreloadWrapper(wrapped)).toBe("do the thing");
+  });
+
+  it("drops an empty doc rather than emitting stray blank lines", () => {
+    expect(composePreloadContext("# Overview\nstate", "   ")).toBe("# Overview\nstate");
+    expect(composePreloadContext("", "# Changelog\nhistory")).toBe("# Changelog\nhistory");
+    expect(composePreloadContext("  ", "")).toBe("");
   });
 });
