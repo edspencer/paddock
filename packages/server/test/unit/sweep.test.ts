@@ -29,6 +29,10 @@ interface StubOverrides {
   sessions?: Array<ReturnType<typeof session>>;
   sweeperText?: string;
   sweeperSuccess?: boolean;
+  /** Pre-existing CLAUDE.md content the sweeper is shown (issue #177). */
+  claudeMd?: string;
+  /** Make appendClaudeMd reject to exercise the non-fatal path. */
+  claudeAppendThrows?: boolean;
 }
 
 describe("SweepService", () => {
@@ -36,6 +40,7 @@ describe("SweepService", () => {
   let project: { slug: string; name: string; dir: string; summary: string };
   let overviewWrites: string[];
   let changelogAppends: string[];
+  let claudeAppends: string[];
 
   beforeEach(async () => {
     dataDir = await makeTmpDir("paddock-sweep-");
@@ -43,6 +48,7 @@ describe("SweepService", () => {
     await fs.mkdir(project.dir, { recursive: true });
     overviewWrites = [];
     changelogAppends = [];
+    claudeAppends = [];
   });
   afterEach(async () => {
     await rmTmpDir(dataDir);
@@ -75,11 +81,16 @@ describe("SweepService", () => {
       }),
       readOverview: vi.fn(async () => ""),
       readFile: vi.fn(async () => "# Changelog\n"),
+      readClaudeMd: vi.fn(async () => o.claudeMd ?? ""),
       writeOverview: vi.fn(async (_slug: string, content: string) => {
         overviewWrites.push(content);
       }),
       appendChangelog: vi.fn(async (_slug: string, line: string) => {
         changelogAppends.push(line);
+      }),
+      appendClaudeMd: vi.fn(async (_slug: string, addition: string) => {
+        if (o.claudeAppendThrows) throw new Error("disk full");
+        claudeAppends.push(addition);
       }),
     };
     const svc = new SweepService({
@@ -101,6 +112,49 @@ describe("SweepService", () => {
     await vi.waitFor(() => expect(overviewWrites.length).toBeGreaterThan(0), { timeout: 2000 });
     expect(overviewWrites[0]).toContain("# Overview");
     expect(changelogAppends[0]).toBe("Did a thing.");
+    // A reply with no <<<CLAUDE>>> section (the OK_REPLY) must not touch CLAUDE.md.
+    expect(claudeAppends).toEqual([]);
+    svc.stop();
+  });
+
+  it("appends to CLAUDE.md when the reply carries a <<<CLAUDE>>> section (#177)", async () => {
+    const reply =
+      "<<<OVERVIEW>>>\n# Overview\nState.\n<<<CHANGELOG>>>\nDid a thing.\n" +
+      "<<<CLAUDE>>>\n- Durable: the API is versioned under /v2.\n<<<END>>>";
+    const { svc } = makeService({ sweeperText: reply });
+    svc.enqueue("demo");
+    await vi.waitFor(() => expect(claudeAppends.length).toBe(1), { timeout: 2000 });
+    expect(claudeAppends[0]).toBe("- Durable: the API is versioned under /v2.");
+    // The changelog must NOT absorb the CLAUDE marker/section.
+    expect(changelogAppends[0]).toBe("Did a thing.");
+    expect(overviewWrites[0]).toContain("# Overview");
+    svc.stop();
+  });
+
+  it("does NOT touch CLAUDE.md when the CLAUDE section is NOCHANGE (#177)", async () => {
+    const reply =
+      "<<<OVERVIEW>>>\n# Overview\nState.\n<<<CHANGELOG>>>\nDid a thing.\n" +
+      "<<<CLAUDE>>>\nNOCHANGE\n<<<END>>>";
+    const { svc } = makeService({ sweeperText: reply });
+    svc.enqueue("demo");
+    await vi.waitFor(() => expect(overviewWrites.length).toBe(1), { timeout: 2000 });
+    // Give any stray append a chance to land, then assert none did.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(claudeAppends).toEqual([]);
+    svc.stop();
+  });
+
+  it("treats a CLAUDE.md append failure as non-fatal (OVERVIEW/CHANGELOG still written) (#177)", async () => {
+    const reply =
+      "<<<OVERVIEW>>>\n# Overview\nState.\n<<<CHANGELOG>>>\nDid a thing.\n" +
+      "<<<CLAUDE>>>\n- something durable\n<<<END>>>";
+    const { svc } = makeService({ sweeperText: reply, claudeAppendThrows: true });
+    svc.enqueue("demo");
+    await vi.waitFor(() => expect(overviewWrites.length).toBe(1), { timeout: 2000 });
+    expect(changelogAppends[0]).toBe("Did a thing.");
+    // The append threw but was swallowed → the watermark still advanced.
+    const state = JSON.parse(await fs.readFile(path.join(dataDir, "sweep-state.json"), "utf8"));
+    expect(state.demo.lastSweptSessionMtime).toBe("2026-06-20T00:00:00.000Z");
     svc.stop();
   });
 

@@ -189,6 +189,8 @@ function sweeperReply(prompt) {
     "Synthesized current state from recent activity.",
     "<<<CHANGELOG>>>",
     "Curated recent chat activity into the overview.",
+    "<<<CLAUDE>>>",
+    "- A durable convention discovered from recent activity.",
     "<<<END>>>",
   ].join("\n");
 }
