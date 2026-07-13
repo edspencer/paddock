@@ -8,6 +8,8 @@ import {
   sessionUsageOf,
   isCompactContinuation,
   slashCommandEcho,
+  isTaskNotification,
+  taskNotificationSummary,
 } from "./format";
 
 describe("format: relativeTime", () => {
@@ -176,5 +178,43 @@ describe("format: compaction transcript artifacts (#106)", () => {
     expect(slashCommandEcho("run /compact please")).toBeNull();
     expect(slashCommandEcho("<command-name></command-name>")).toBeNull();
     expect(slashCommandEcho("just some text")).toBeNull();
+  });
+});
+
+describe("format: task-notification artifacts (#181)", () => {
+  const notification = [
+    "<task-notification>",
+    "<task-id>a7ba46246fc924818</task-id>",
+    "<status>completed</status>",
+    '<summary>Agent "Map Paddock auth/identity model" finished</summary>',
+    "<note>A task-notification fires each time this agent stops…</note>",
+    "</task-notification>",
+  ].join("\n");
+
+  it("isTaskNotification matches a harness task-notification block", () => {
+    expect(isTaskNotification(notification)).toBe(true);
+    // Forgiving of leading whitespace, like the other #106 detectors.
+    expect(isTaskNotification("  \n" + notification)).toBe(true);
+  });
+
+  it("isTaskNotification ignores ordinary user text mentioning the tag", () => {
+    expect(isTaskNotification("what is a <task-notification>?")).toBe(false);
+    expect(isTaskNotification("please stop the background agent")).toBe(false);
+    expect(isTaskNotification("")).toBe(false);
+  });
+
+  it("taskNotificationSummary extracts the human-readable <summary>", () => {
+    expect(taskNotificationSummary(notification)).toBe(
+      'Agent "Map Paddock auth/identity model" finished',
+    );
+  });
+
+  it("taskNotificationSummary falls back when <summary> is absent or empty", () => {
+    expect(taskNotificationSummary("<task-notification></task-notification>")).toBe(
+      "Background agent updated",
+    );
+    expect(taskNotificationSummary("<task-notification><summary>  </summary>")).toBe(
+      "Background agent updated",
+    );
   });
 });

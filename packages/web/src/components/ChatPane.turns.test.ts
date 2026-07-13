@@ -54,6 +54,31 @@ describe("historyToTurns (issue #135: stable per-message id)", () => {
     expect(turns[0].id).not.toBe(turns[1].id);
   });
 
+  it("renders a `<task-notification>` user message as a subtle notification turn (issue #181)", () => {
+    const notification = [
+      "<task-notification>",
+      "<task-id>a28e47ea552aa4a31</task-id>",
+      "<status>killed</status>",
+      '<summary>Agent "Map current unread + persistence" was stopped by user</summary>',
+      "<note>A task-notification fires each time this agent stops…</note>",
+      "</task-notification>",
+    ].join("\n");
+    const turns = historyToTurns([msg({ role: "user", uuid: "n-1", content: notification })]);
+    expect(turns[0].kind).toBe("notification");
+    expect(turns[0].id).toBe("n-1");
+    // The raw XML is replaced by the human-readable summary.
+    expect(turns[0]).toMatchObject({
+      summary: 'Agent "Map current unread + persistence" was stopped by user',
+    });
+  });
+
+  it("leaves a genuine user message that merely mentions the tag as a user bubble", () => {
+    const turns = historyToTurns([
+      msg({ role: "user", uuid: "u-9", content: "why does <task-notification> show up?" }),
+    ]);
+    expect(turns[0].kind).toBe("user");
+  });
+
   it("rebuilds a send_file tool call as a `file` turn, keyed on its uuid", () => {
     const envelope = JSON.stringify({
       paddockSendFile: 1,
