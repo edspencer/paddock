@@ -35,7 +35,7 @@ import { relativeTime, sessionUsageOf } from "../lib/format";
 import { areaLabel } from "../lib/areas";
 import { clearLastTab, toSubPath, writeLastTab } from "../lib/lastTab";
 import { readForkParent, writeForkParent } from "../lib/forkLineage";
-import { readLastSeen, writeLastSeen } from "../lib/lastSeen";
+import { readLastSeen, writeLastSeen, setServerLastSeen } from "../lib/lastSeen";
 import type { GitProjectStatus } from "../lib/types";
 
 /**
@@ -142,16 +142,25 @@ export function ProjectView() {
   // the (localStorage-backed) derivation below recomputes.
   const [liveUnread, setLiveUnread] = useState<ReadonlySet<string>>(new Set());
   const [seenVersion, setSeenVersion] = useState(0);
-  const markSeen = useCallback((sessionId: string) => {
-    writeLastSeen(sessionId);
-    setLiveUnread((prev) => {
-      if (!prev.has(sessionId)) return prev;
-      const next = new Set(prev);
-      next.delete(sessionId);
-      return next;
-    });
-    setSeenVersion((v) => v + 1);
-  }, []);
+  const markSeen = useCallback(
+    (sessionId: string) => {
+      const when = Date.now();
+      // Optimistic same-tab clear (localStorage mirror + event), then persist to
+      // the server (#189) so read-state follows the user across devices. The POST
+      // is fire-and-forget — the mirror already cleared the cue; a failure just
+      // means the next refetch re-derives from whatever the server has.
+      writeLastSeen(sessionId, when);
+      void api.markChatSeen(slug, sessionId, when).catch(() => undefined);
+      setLiveUnread((prev) => {
+        if (!prev.has(sessionId)) return prev;
+        const next = new Set(prev);
+        next.delete(sessionId);
+        return next;
+      });
+      setSeenVersion((v) => v + 1);
+    },
+    [slug],
+  );
   const [changelog, setChangelog] = useState("");
   const [files, setFiles] = useState<string[]>([]);
   const [loadErr, setLoadErr] = useState<string | null>(null);
@@ -553,6 +562,13 @@ export function ProjectView() {
       setArchivedOpen(true);
     }
   }, [activeIsArchived, activeSession]);
+
+  // Fold the server-backed read-state (#189) from each chat DTO into the shared
+  // client cache whenever the list changes, so `readLastSeen` prefers it. This
+  // is what makes a chat opened on ANOTHER device show as read here.
+  useEffect(() => {
+    for (const c of chats) setServerLastSeen(c.sessionId, c.lastSeen);
+  }, [chats]);
 
   // The set of unread chats, re-derived whenever the list, the focused chat, a
   // live completion, or a mark-seen changes. The currently-open chat is NEVER

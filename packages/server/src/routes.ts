@@ -30,6 +30,7 @@ import { SCRATCH_SLUG, SCRATCH_AGENT, keeperAgentName } from "./herdctl.js";
 import type { GitService } from "./git.js";
 import type { GithubAuth } from "./github-auth.js";
 import type { ArchiveStore } from "./archive.js";
+import type { ReadStateStore } from "./read-state.js";
 import type { PaddockConfig } from "./config.js";
 import { type Transcriber, TranscriptionError } from "./transcribe.js";
 import { readFirstUserText } from "./transcripts.js";
@@ -72,12 +73,22 @@ export interface RouteDeps {
   githubAuth: GithubAuth;
   transcriber: Transcriber;
   archive: ArchiveStore;
+  readState: ReadStateStore;
   attachments: AttachmentStore;
   cfg: PaddockConfig;
 }
 
 export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Promise<void> {
-  const { projects, herdctl, git, githubAuth, transcriber, archive, attachments, cfg } = deps;
+  const { projects, herdctl, git, githubAuth, transcriber, archive, readState, attachments, cfg } =
+    deps;
+
+  // Resolve the read-state key's user segment from the authenticated principal:
+  // a REAL identity (trusted-header / jwt) keys read-state by username; an
+  // anonymous principal (`none` mode) uses the shared bucket (null → no user
+  // segment). This is the ONLY place user identity is consumed — read-state is
+  // user-keyed-when-present; chat VISIBILITY is deliberately not gated (#189).
+  const readStateUser = (req: FastifyRequest): string | null =>
+    req.user && !req.user.anonymous ? req.user.username : null;
 
   // --- voice dictation (#voice): capability probe + transcription -------
   // The composer polls this to decide whether to show a mic button. `available`
@@ -130,6 +141,13 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
       return reply.code(status).send({ error: (err as Error).message });
     }
   });
+
+  // --- identity ----------------------------------------------------------
+  // The authenticated principal for this request (#189). In `none` mode this is
+  // the frozen anonymous principal (`{ username: "anonymous", anonymous: true }`);
+  // in trusted-header / jwt modes it's the real proxy/IdP identity. The web app
+  // uses it to surface who it is and to know whether read-state is user-keyed.
+  app.get("/api/me", async (req) => req.user);
 
   // --- git (backing store): fleet-level remote + connection state --------
   app.get("/api/git", async () => {
@@ -198,26 +216,35 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
 
   // --- projects ----------------------------------------------------------
 
-  app.get("/api/projects", async () => {
-    // Fold a compact per-project list of `{ sessionId, lastTurnCompletedAt }`
-    // into the payload so the sidebar can compute each project's UNREAD count
-    // (#161) client-side (vs localStorage `lastSeen`, per #160) — sourced from
-    // the SAME cheap job-record scan as the per-chat unread signal, grouped by
-    // keeper agent. No `listSessions` fan-out, no transcript parse.
+  app.get("/api/projects", async (req) => {
+    // Fold a compact per-project list of `{ sessionId, lastTurnCompletedAt,
+    // lastSeen }` into the payload so the sidebar can compute each project's
+    // UNREAD count (#161) server-backed (#189) — the completed-turn side comes
+    // from the SAME cheap job-record scan as the per-chat unread signal, grouped
+    // by keeper agent; `lastSeen` is the server-side read-state (in-memory after
+    // first load). No `listSessions` fan-out, no transcript parse.
     const [list, turnsByProject] = await Promise.all([
       projects.list(),
       herdctl.lastTurnCompletedAtByProject().catch(() => new Map<string, Map<string, string>>()),
     ]);
-    const projectsOut = list.map((p) => {
-      const bySession = turnsByProject.get(p.slug);
-      const chatTurns = bySession
-        ? [...bySession].map(([sessionId, lastTurnCompletedAt]) => ({
-            sessionId,
-            lastTurnCompletedAt,
-          }))
-        : [];
-      return { ...p, chatTurns };
-    });
+    const user = readStateUser(req);
+    const projectsOut = await Promise.all(
+      list.map(async (p) => {
+        const bySession = turnsByProject.get(p.slug);
+        const keeper = keeperAgentName(p.slug);
+        const chatTurns = bySession
+          ? await Promise.all(
+              [...bySession].map(async ([sessionId, lastTurnCompletedAt]) => {
+                const lastSeen = await readState
+                  .getLastSeen(user, keeper, sessionId)
+                  .catch(() => 0);
+                return { sessionId, lastTurnCompletedAt, ...(lastSeen ? { lastSeen } : {}) };
+              }),
+            )
+          : [];
+        return { ...p, chatTurns };
+      }),
+    );
     return { projects: projectsOut };
   });
 
@@ -248,6 +275,9 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
       const keeper = keeperAgentName(project.slug);
       const archivedOf = (s: import("@herdctl/core").DiscoveredSession) =>
         archive.isArchived(keeper, s.sessionId);
+      const user = readStateUser(req);
+      const lastSeenOf = (s: import("@herdctl/core").DiscoveredSession) =>
+        readState.getLastSeen(user, keeper, s.sessionId);
       // Deliberately NO usage resolver here (issue #116): the per-chat context
       // ring requires streaming+parsing each session's full transcript, which is
       // O(chats × transcript size) and blocked the whole ProjectView from
@@ -257,7 +287,14 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
       return {
         project,
         changelog,
-        chats: await buildProjectChats(project.dir, sessions, undefined, archivedOf, lastTurnAt),
+        chats: await buildProjectChats(
+          project.dir,
+          sessions,
+          undefined,
+          archivedOf,
+          lastTurnAt,
+          lastSeenOf,
+        ),
       };
     } catch (err) {
       return sendProjectError(reply, err);
@@ -545,10 +582,20 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
       const keeper = keeperAgentName(project.slug);
       const archivedOf = (s: import("@herdctl/core").DiscoveredSession) =>
         archive.isArchived(keeper, s.sessionId);
+      const user = readStateUser(req);
+      const lastSeenOf = (s: import("@herdctl/core").DiscoveredSession) =>
+        readState.getLastSeen(user, keeper, s.sessionId);
       // No usage resolver — see the GET /api/projects/:slug route (issue #116).
       // Usage rings are fetched separately so a list refresh stays cheap.
       return {
-        chats: await buildProjectChats(project.dir, sessions, undefined, archivedOf, lastTurnAt),
+        chats: await buildProjectChats(
+          project.dir,
+          sessions,
+          undefined,
+          archivedOf,
+          lastTurnAt,
+          lastSeenOf,
+        ),
       };
     } catch (err) {
       return sendProjectError(reply, err);
@@ -733,11 +780,35 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     },
   );
 
+  // Mark a project chat SEEN (#189): persist the user's last-viewed moment for
+  // this chat server-side (keyed by user when present, else a shared bucket), so
+  // the unread affordance (#160/#161) follows the user across devices. Body's
+  // optional `when` (epoch-ms) lets the client pass its own timestamp; defaults
+  // to now. Mirrors the archive toggle's shape/validation. Monotonic in the
+  // store (an older `when` is a no-op), so it never resurrects a stale unread.
+  app.post<{ Params: { slug: string; sessionId: string }; Body: { when?: number } }>(
+    "/api/projects/:slug/chats/:sessionId/seen",
+    async (req, reply) => {
+      try {
+        const agent = await agentForSlug(req.params.slug);
+        const when =
+          typeof req.body?.when === "number" && Number.isFinite(req.body.when)
+            ? req.body.when
+            : Date.now();
+        await readState.setLastSeen(readStateUser(req), agent, req.params.sessionId, when);
+        return reply.code(200).send({ ok: true, lastSeen: when });
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
   // One-off chats (scratch dir). Scratch chats never get context preload, so
   // their previews are never polluted — no wrapper stripping needed.
-  app.get("/api/chats", async () => {
+  app.get("/api/chats", async (req) => {
     const sessions = await herdctl.listScratchSessions().catch(() => []);
     const usageOf = chatUsageResolver(herdctl.scratchDir, KEEPER_DEFAULT_MODEL);
+    const user = readStateUser(req);
     return {
       chats: await Promise.all(
         sessions.map(async (s) =>
@@ -746,6 +817,8 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
             undefined,
             await usageOf(s),
             await archive.isArchived(SCRATCH_AGENT, s.sessionId).catch(() => false),
+            undefined,
+            await readState.getLastSeen(user, SCRATCH_AGENT, s.sessionId).catch(() => 0),
           ),
         ),
       ),
@@ -810,6 +883,23 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
         const archived = req.body?.archived !== false; // default true
         await archive.setArchived(SCRATCH_AGENT, req.params.sessionId, archived);
         return reply.code(200).send({ ok: true, archived });
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  // Mark a one-off (scratch) chat SEEN (#189). Same as the project variant.
+  app.post<{ Params: { sessionId: string }; Body: { when?: number } }>(
+    "/api/chats/:sessionId/seen",
+    async (req, reply) => {
+      try {
+        const when =
+          typeof req.body?.when === "number" && Number.isFinite(req.body.when)
+            ? req.body.when
+            : Date.now();
+        await readState.setLastSeen(readStateUser(req), SCRATCH_AGENT, req.params.sessionId, when);
+        return reply.code(200).send({ ok: true, lastSeen: when });
       } catch (err) {
         return sendProjectError(reply, err);
       }
@@ -965,6 +1055,7 @@ function toChatDto(
   usage?: ChatUsage | null,
   archived = false,
   lastTurnCompletedAt?: string,
+  lastSeen?: number,
 ) {
   const preview = previewOverride ?? s.preview;
   return {
@@ -981,6 +1072,10 @@ function toChatDto(
     // mtime) — the unread signal (#160). Absent when no completed job record
     // exists yet (session-mode chats, or a brand-new chat still on turn 1).
     ...(lastTurnCompletedAt ? { lastTurnCompletedAt } : {}),
+    // Epoch-ms the user last viewed this chat (server-side read-state, #189) —
+    // the source of truth for the unread affordance, so it follows the user
+    // across devices. 0/absent means never seen on this instance.
+    ...(lastSeen ? { lastSeen } : {}),
     // The context-window fill as of the session's last completed turn (for the
     // per-chat usage ring) plus the chat's cumulative token totals and cost
     // estimate (issue #152), so the list can render both without opening the
@@ -1010,23 +1105,28 @@ async function buildProjectChats(
     s: import("@herdctl/core").DiscoveredSession,
   ) => Promise<boolean>,
   lastTurnAt?: ReadonlyMap<string, string>,
+  lastSeenOf?: (
+    s: import("@herdctl/core").DiscoveredSession,
+  ) => Promise<number>,
 ) {
   return Promise.all(
     sessions.map(async (s) => {
-      // Resolve the usage ring, archived flag, and (possibly cleaned) name.
+      // Resolve the usage ring, archived flag, read-state, and (cleaned) name.
       const usage = usageOf ? await usageOf(s).catch(() => null) : null;
       const archived = archivedOf ? await archivedOf(s).catch(() => false) : false;
       const turnAt = lastTurnAt?.get(s.sessionId);
+      const lastSeen = lastSeenOf ? await lastSeenOf(s).catch(() => 0) : 0;
       const pollutedPreview =
         !s.customName && !s.autoName && s.preview?.startsWith(PRELOAD_CONTEXT_OPEN);
-      if (!pollutedPreview) return toChatDto(s, undefined, usage, archived, turnAt);
+      if (!pollutedPreview) return toChatDto(s, undefined, usage, archived, turnAt, lastSeen);
 
       const full = await readFirstUserText(projectDir, s.sessionId).catch(() => undefined);
       const cleaned = stripPreloadWrapper(full ?? s.preview ?? "").trim();
-      if (!cleaned) return toChatDto(s, undefined, usage, archived, turnAt); // couldn't recover
+      // couldn't recover
+      if (!cleaned) return toChatDto(s, undefined, usage, archived, turnAt, lastSeen);
       const preview =
         cleaned.length > PREVIEW_MAX ? `${cleaned.slice(0, PREVIEW_MAX)}...` : cleaned;
-      return toChatDto(s, preview, usage, archived, turnAt);
+      return toChatDto(s, preview, usage, archived, turnAt, lastSeen);
     }),
   );
 }

@@ -74,7 +74,41 @@ export class ApiError extends Error {
   }
 }
 
+/** The authenticated principal (GET /api/me). Anonymous in `none` mode (#189). */
+export interface Me {
+  username: string;
+  email?: string;
+  groups?: string[];
+  anonymous?: boolean;
+}
+
 export const api = {
+  /**
+   * The current user (#189). In `none` mode this is the anonymous principal
+   * (`{ username: "anonymous", anonymous: true }`); behind a proxy/IdP it's the
+   * real identity. Read-state is keyed by this user when it's non-anonymous.
+   */
+  async me(): Promise<Me> {
+    return req<Me>("/api/me");
+  },
+
+  /**
+   * Mark a chat SEEN (#189): persist the user's last-viewed moment server-side
+   * so the unread affordance follows them across devices. Fire-and-forget from
+   * the UI (the local mirror clears the cue optimistically). `when` defaults to
+   * the server's now. Routes to the scratch endpoint for the scratch slug.
+   */
+  async markChatSeen(slug: string, sessionId: string, when?: number): Promise<void> {
+    const path =
+      slug === SCRATCH_SLUG
+        ? `/api/chats/${encodeURIComponent(sessionId)}/seen`
+        : `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}/seen`;
+    await req<{ ok: boolean; lastSeen: number }>(path, {
+      method: "POST",
+      body: JSON.stringify(when !== undefined ? { when } : {}),
+    });
+  },
+
   /** Selectable models + the keeper/sweeper defaults (drives the model picker). */
   async getModels(): Promise<{
     models: ModelInfo[];
