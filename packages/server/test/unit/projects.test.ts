@@ -96,6 +96,44 @@ describe("ProjectStore", () => {
     expect("model" in parsed).toBe(false);
     const changelog = await fs.readFile(path.join(root, "water-heater", "CHANGELOG.md"), "utf8");
     expect(changelog).toContain("Project opened.");
+    // A minimal per-project CLAUDE.md is seeded at creation (issue #177).
+    const claude = await fs.readFile(path.join(root, "water-heater", "CLAUDE.md"), "utf8");
+    expect(claude).toContain("# Water Heater");
+    expect(claude).toContain("Durable project identity & conventions");
+  });
+
+  it("seeds CLAUDE.md with the summary when one is given (#177)", async () => {
+    await store.create({ name: "Themed", summary: "A themed thing." });
+    const claude = await store.readClaudeMd("themed");
+    expect(claude).toContain("# Themed");
+    expect(claude).toContain("A themed thing.");
+  });
+
+  it("appendClaudeMd amends under a Curated notes heading, preserving prior content (#177)", async () => {
+    await store.create({ name: "Amend", summary: "Base." });
+    const seeded = await store.readClaudeMd("amend");
+
+    await store.appendClaudeMd("amend", "- First durable fact.");
+    let body = await store.readClaudeMd("amend");
+    // Human-authored seed (name + summary) is preserved verbatim above the note.
+    expect(body.startsWith(seeded.trimEnd())).toBe(true);
+    expect(body).toContain("## Curated notes");
+    expect(body).toContain("- First durable fact.");
+
+    // A second append reuses the SAME heading (not a duplicate) and keeps both.
+    await store.appendClaudeMd("amend", "- Second durable fact.");
+    body = await store.readClaudeMd("amend");
+    expect(body.match(/## Curated notes/g)?.length).toBe(1);
+    expect(body).toContain("- First durable fact.");
+    expect(body).toContain("- Second durable fact.");
+  });
+
+  it("appendClaudeMd is a no-op for blank input (#177)", async () => {
+    await store.create({ name: "Blank" });
+    const before = await store.readClaudeMd("blank");
+    await store.appendClaudeMd("blank", "   \n  ");
+    expect(await store.readClaudeMd("blank")).toBe(before);
+    expect(before).not.toContain("## Curated notes");
   });
 
   it("create honors explicit slug, status, group, summary, domain", async () => {

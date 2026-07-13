@@ -1072,8 +1072,9 @@ export class HerdctlService {
   /**
    * A project's sweeper (curator) agent config. TOOL-LESS: the sweeper has NO
    * tools (`allowed_tools: []`) — it never reads or writes files. Instead it
-   * RETURNS the curated content as plain assistant text in two marked sections;
-   * SweepService parses that text and writes OVERVIEW.md / CHANGELOG.md itself.
+   * RETURNS the curated content as plain assistant text in marked sections
+   * (OVERVIEW / CHANGELOG / optional CLAUDE, issue #177); SweepService parses
+   * that text and writes OVERVIEW.md / CHANGELOG.md / CLAUDE.md itself.
    *
    * This is cheaper and far more predictable than letting a Haiku agent drive
    * file edits: no tool-loop turns, no partial writes, no permission_mode /
@@ -1093,9 +1094,10 @@ export class HerdctlService {
       allowed_tools: [],
       system_prompt:
         "You are a concise project curator. You DO NOT use any tools — you only " +
-        "return text. From the recent activity, the current OVERVIEW.md, and the " +
-        "recent CHANGELOG.md provided in the user message, produce EXACTLY two " +
-        "sections wrapped in these literal markers, and NOTHING else:\n" +
+        "return text. From the recent activity, the current OVERVIEW.md, the " +
+        "recent CHANGELOG.md, and the current CLAUDE.md provided in the user " +
+        "message, produce these three sections wrapped in these literal markers, " +
+        "and NOTHING else:\n" +
         "\n" +
         "<<<OVERVIEW>>>\n" +
         "<the full markdown OVERVIEW.md, which REPLACES the current one wholesale: " +
@@ -1105,6 +1107,13 @@ export class HerdctlService {
         "<<<CHANGELOG>>>\n" +
         "<exactly ONE changelog bullet line summarizing this recent activity, with " +
         'NO leading "- " and no date heading — just the bare sentence.>\n' +
+        "<<<CLAUDE>>>\n" +
+        "<ONLY genuinely NEW, DURABLE facts to APPEND to CLAUDE.md — long-lived " +
+        "identity/conventions (what the project fundamentally is, key decisions, " +
+        "how we work on it) NOT already in the current CLAUDE.md. Bare markdown " +
+        "bullets. CLAUDE.md is amend-only and rarely changes — never restate " +
+        "current state/tasks/history or rewrite existing content. If there is " +
+        "nothing genuinely new and durable to add, output exactly NOCHANGE.>\n" +
         "<<<END>>>\n" +
         "\n" +
         "OVERVIEW.md describes the PROJECT, not the box it runs on: never record " +

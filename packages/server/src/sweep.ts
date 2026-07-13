@@ -17,14 +17,18 @@
  *     the WS user-chat path, so a sweep can NEVER enqueue another sweep — no
  *     recursion.
  *
- * The sweeper is TOOL-LESS: it returns the curated content as plain text in two
- * marked sections (`<<<OVERVIEW>>> ... <<<CHANGELOG>>> ... <<<END>>>`), and THIS
- * service parses that text and writes the files itself — replacing OVERVIEW.md
- * wholesale (current synthesized state for an LLM to read at the start of a new
- * chat) and appending ONE dated bullet to CHANGELOG.md (append-only narrative).
- * If the returned text is unparseable the sweep throws (so the mtime watermark
- * doesn't advance and the next sweep retries) — no partial/garbage writes. All
- * sweep failures are non-fatal: they're logged and never break chat.
+ * The sweeper is TOOL-LESS: it returns the curated content as plain text in
+ * marked sections (`<<<OVERVIEW>>> ... <<<CHANGELOG>>> [ <<<CLAUDE>>> ... ]
+ * <<<END>>>`), and THIS service parses that text and writes the files itself —
+ * replacing OVERVIEW.md wholesale (current synthesized state for an LLM to read
+ * at the start of a new chat), appending ONE dated bullet to CHANGELOG.md
+ * (append-only narrative), and — only when the sweeper reports a genuinely NEW
+ * durable fact (issue #177) — AMENDING CLAUDE.md (durable project identity &
+ * conventions; append-only, never a wholesale rewrite, so human-authored content
+ * is preserved). If the returned text is unparseable the sweep throws (so the
+ * mtime watermark doesn't advance and the next sweep retries) — no
+ * partial/garbage writes. All sweep failures are non-fatal: they're logged and
+ * never break chat.
  */
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -189,9 +193,10 @@ export class SweepService {
     project: Project,
     sessions: Awaited<ReturnType<HerdctlService["recentSessions"]>>,
   ): Promise<void> {
-    const [overview, changelog, digest] = await Promise.all([
+    const [overview, changelog, claudeMd, digest] = await Promise.all([
       this.projects.readOverview(project.slug),
       this.projects.readFile(project.slug, "CHANGELOG.md").catch(() => ""),
+      this.projects.readClaudeMd(project.slug).catch(() => ""),
       this.buildDigest(project, sessions),
     ]);
 
@@ -199,6 +204,7 @@ export class SweepService {
       project,
       overview,
       changelog,
+      claudeMd,
       digest,
     });
 
@@ -225,6 +231,16 @@ export class SweepService {
       // returns the bare line.
       await this.projects.appendChangelog(project.slug, parsed.changelog);
     }
+    // CLAUDE.md (issue #177): only when the sweeper returned a genuinely-new
+    // durable fact (a <<<CLAUDE>>> section that wasn't NOCHANGE). Amend-only —
+    // never clobbers human-authored conventions. A failure here is non-fatal:
+    // OVERVIEW/CHANGELOG are already written and the watermark should still
+    // advance, so warn rather than throw.
+    if (parsed.claude) {
+      await this.projects.appendClaudeMd(project.slug, parsed.claude).catch((err) => {
+        this.log.warn({ err, slug: project.slug }, "sweep: CLAUDE.md append failed (non-fatal)");
+      });
+    }
 
     this.log.info(
       {
@@ -232,6 +248,7 @@ export class SweepService {
         sessionId: result.sessionId,
         jobId: result.jobId,
         wroteChangelog: Boolean(parsed.changelog),
+        wroteClaude: Boolean(parsed.claude),
       },
       "sweep: completed",
     );
@@ -278,15 +295,16 @@ export class SweepService {
     project: Project;
     overview: string;
     changelog: string;
+    claudeMd: string;
     digest: string;
   }): string {
-    const { project, overview, changelog, digest } = args;
+    const { project, overview, changelog, claudeMd, digest } = args;
     const today = new Date().toISOString().slice(0, 10);
     return [
       `Project: ${project.name} (slug: ${project.slug})`,
       project.summary ? `Summary: ${project.summary}` : "",
       "",
-      "You are curating two files in this project directory based on recent chat activity.",
+      "You are curating project context files based on recent chat activity.",
       "",
       "=== RECENT SESSION ACTIVITY (digest) ===",
       digest,
@@ -297,8 +315,11 @@ export class SweepService {
       "=== RECENT CHANGELOG.md (tail) ===",
       trim(changelog, 2000) || "(empty)",
       "",
+      "=== CURRENT CLAUDE.md (durable identity & conventions) ===",
+      trim(claudeMd, 2000) || "(none yet)",
+      "",
       "=== YOUR TASKS ===",
-      "Do NOT use any tools. Output ONLY the two sections below, nothing else " +
+      "Do NOT use any tools. Output ONLY the three sections below, nothing else " +
         "(no preamble, no explanation). Use these LITERAL markers exactly:",
       "",
       "<<<OVERVIEW>>>",
@@ -314,6 +335,16 @@ export class SweepService {
         'activity, with NO leading "- " and no date heading — just the bare ' +
         "sentence. (The system adds the bullet marker and today's " +
         `\`## ${today}\` heading.)`,
+      "<<<CLAUDE>>>",
+      "Then ONLY genuinely NEW, DURABLE facts about the project's identity or " +
+        "conventions to APPEND to CLAUDE.md — long-lived things (what the " +
+        "project fundamentally is, key architectural decisions, how we work on " +
+        "it) that are NOT already present in the CURRENT CLAUDE.md above. Return " +
+        "bare markdown (e.g. one or a few bullet lines). This file is amend-only " +
+        "and rarely changes: do NOT restate current state, tasks, or history " +
+        "(those belong in OVERVIEW.md / CHANGELOG.md), and do NOT rewrite what is " +
+        "already there. If there is nothing genuinely new and durable to add, " +
+        "output exactly NOCHANGE and nothing else in this section.",
       "<<<END>>>",
       "",
       "IMPORTANT — OVERVIEW.md describes the PROJECT, not the box it runs on. Do " +
@@ -376,20 +407,29 @@ function trim(s: string, max: number): string {
  * Parse the tool-less sweeper's marked output into the overview body + a single
  * changelog line.
  *
- * Expected shape (markers are literal):
+ * Expected shape (markers are literal; `<<<CLAUDE>>>` is OPTIONAL, issue #177):
  *
  *   <<<OVERVIEW>>>
  *   ...full markdown overview (replaces OVERVIEW.md wholesale)...
  *   <<<CHANGELOG>>>
  *   ...one bullet line (no leading "- ")...
+ *   <<<CLAUDE>>>
+ *   ...NEW durable facts to append to CLAUDE.md, or the literal NOCHANGE...
  *   <<<END>>>
  *
  * Returns null if the OVERVIEW/CHANGELOG markers are absent or the overview is
  * empty — the caller treats that as a failure and retries (no partial writes).
  * The `<<<END>>>` marker is optional (EOF is accepted). The changelog line is
  * trimmed to a single line; an empty changelog is allowed (overview-only write).
+ *
+ * `claude` is the amend-only CLAUDE.md addition (issue #177): non-null ONLY when
+ * a real `<<<CLAUDE>>>` section carries non-empty content that isn't `NOCHANGE`.
+ * Backward-compatible: a reply with no `<<<CLAUDE>>>` marker yields `claude:
+ * null` (older sweeper output, or nothing durable to add).
  */
-function parseSweeperOutput(text: string): { overview: string; changelog: string } | null {
+function parseSweeperOutput(
+  text: string,
+): { overview: string; changelog: string; claude: string | null } | null {
   if (!text) return null;
   const overviewIdx = text.indexOf("<<<OVERVIEW>>>");
   const changelogIdx = text.indexOf("<<<CHANGELOG>>>");
@@ -401,10 +441,14 @@ function parseSweeperOutput(text: string): { overview: string; changelog: string
   if (overview.length === 0) return null;
 
   const endIdx = text.indexOf("<<<END>>>", changelogIdx);
-  const rawChangelog = text.slice(
-    changelogIdx + "<<<CHANGELOG>>>".length,
-    endIdx === -1 ? undefined : endIdx,
-  );
+  // The CLAUDE section (if present) closes the changelog; otherwise <<<END>>> or
+  // EOF does. Match "<<<CLAUDE" so the `<<<CLAUDE:NOCHANGE>>>` variant also
+  // delimits the changelog rather than leaking into it.
+  const claudeMarkerIdx = text.indexOf("<<<CLAUDE", changelogIdx);
+  const changelogEnd = [claudeMarkerIdx, endIdx]
+    .filter((i) => i !== -1)
+    .reduce<number | undefined>((min, i) => (min === undefined || i < min ? i : min), undefined);
+  const rawChangelog = text.slice(changelogIdx + "<<<CHANGELOG>>>".length, changelogEnd);
   // Collapse to the first non-empty line, stripping any leading "- " the model
   // added despite instructions (appendChangelog adds its own bullet marker).
   const changelog =
@@ -415,7 +459,19 @@ function parseSweeperOutput(text: string): { overview: string; changelog: string
       ?.replace(/^[-*]\s+/, "")
       .trim() ?? "";
 
-  return { overview, changelog };
+  // CLAUDE.md addition (#177): only a full `<<<CLAUDE>>>` marker (not the
+  // `:NOCHANGE` variant) with non-empty, non-NOCHANGE content counts.
+  let claude: string | null = null;
+  const claudeIdx = text.indexOf("<<<CLAUDE>>>", changelogIdx);
+  if (claudeIdx !== -1) {
+    const claudeEnd = text.indexOf("<<<END>>>", claudeIdx);
+    const rawClaude = text
+      .slice(claudeIdx + "<<<CLAUDE>>>".length, claudeEnd === -1 ? undefined : claudeEnd)
+      .trim();
+    if (rawClaude.length > 0 && !/^NOCHANGE$/i.test(rawClaude)) claude = rawClaude;
+  }
+
+  return { overview, changelog, claude };
 }
 
 /**

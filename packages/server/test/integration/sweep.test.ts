@@ -13,6 +13,8 @@
  * we POLL the project's overview endpoint until it's populated.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import { promises as fs } from "node:fs";
+import path from "node:path";
 import { startTestApp, type TestApp } from "../helpers/app.js";
 import { listen, connectWs, type WsClient, type WsEvent } from "../helpers/ws.js";
 
@@ -71,6 +73,14 @@ describe("integration: post-turn sweep curates OVERVIEW + CHANGELOG", () => {
       await t.app.inject({ method: "GET", url: "/api/projects/sweep-proj" })
     ).json().project;
     expect(project.hasOverview).toBe(true);
+
+    // CLAUDE.md (issue #177): seeded at creation, then AMENDED by the sweep with
+    // the fake's <<<CLAUDE>>> durable note under a "Curated notes" heading — the
+    // seed header (identity) is preserved above it (amend-only, no clobber).
+    const claude = await fs.readFile(path.join(project.dir, "CLAUDE.md"), "utf8");
+    expect(claude).toContain("# Sweep Proj");
+    expect(claude).toContain("## Curated notes");
+    expect(claude).toContain("A durable convention discovered from recent activity.");
   });
 
   it("does NOT sweep scratch chats", async () => {

@@ -221,6 +221,10 @@ export type UpdateProjectInput = Partial<
 const PROJECT_FILE = "project.yaml";
 const CHANGELOG_FILE = "CHANGELOG.md";
 const OVERVIEW_FILE = "OVERVIEW.md";
+const CLAUDE_FILE = "CLAUDE.md";
+
+/** Heading under which the sweeper appends newly-discovered durable facts. */
+const CLAUDE_CURATED_HEADING = "## Curated notes";
 
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -245,6 +249,31 @@ export function slugify(name: string): string {
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * Minimal seed for a per-project CLAUDE.md (issue #177): the durable-identity
+ * layer of the two-level native-context model (instance-wide + per-project
+ * CLAUDE.md, loaded natively once #176 lands). Deliberately terse — the sweeper
+ * amends it conservatively over time under "Curated notes"; everything a human
+ * writes is preserved. OVERVIEW.md holds current state, CHANGELOG.md holds
+ * history; this file holds only what the project durably IS and how we work on it.
+ */
+function claudeTemplate(name: string, summary: string): string {
+  return [
+    `# ${name}`,
+    "",
+    summary?.trim() || "<!-- One-line description of what this project is. -->",
+    "",
+    "<!--",
+    "Durable project identity & conventions — what this project fundamentally is,",
+    "key long-lived facts, and how we work on it. Changes rarely. Current state",
+    "lives in OVERVIEW.md; per-turn history lives in CHANGELOG.md. Content you",
+    "write here is preserved; the curator only APPENDS newly-discovered durable",
+    'facts under the "Curated notes" heading below.',
+    "-->",
+    "",
+  ].join("\n");
 }
 
 export class ProjectStore {
@@ -352,6 +381,16 @@ export class ProjectStore {
       "utf8",
     );
 
+    // Seed a minimal per-project CLAUDE.md (issue #177) so there is always a
+    // durable-identity file for Claude Code to load natively (paired with #176)
+    // and for the sweeper to amend. Human-authored content is preserved; the
+    // sweeper only appends new durable facts under the "Curated notes" heading.
+    await fs.writeFile(
+      path.join(dir, CLAUDE_FILE),
+      claudeTemplate(name, yaml.summary),
+      "utf8",
+    );
+
     // No OVERVIEW.md at creation — the first sweep writes it.
     return this.toDto(dir, yaml, false);
   }
@@ -405,6 +444,45 @@ export class ProjectStore {
     } catch {
       return false;
     }
+  }
+
+  // --- CLAUDE.md (durable identity & conventions, sweep-amended) ----------
+
+  /** Read CLAUDE.md, or "" if it doesn't exist yet (issue #177). */
+  async readClaudeMd(slug: string): Promise<string> {
+    try {
+      return await fs.readFile(path.join(this.dirFor(slug), CLAUDE_FILE), "utf8");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return "";
+      throw err;
+    }
+  }
+
+  /**
+   * APPEND a newly-discovered durable fact to CLAUDE.md (issue #177) — never a
+   * wholesale rewrite. Unlike OVERVIEW.md (regenerated each sweep), CLAUDE.md is
+   * amend-only so human-authored identity/conventions are never clobbered: the
+   * addition is placed under a managed "Curated notes" heading (created once if
+   * absent), leaving everything above it untouched. The file is seeded from the
+   * template if it somehow doesn't exist yet (older projects predating #177).
+   * A blank addition is a no-op.
+   */
+  async appendClaudeMd(slug: string, addition: string): Promise<void> {
+    const trimmed = addition.trim();
+    if (!trimmed) return;
+    const dir = this.dirFor(slug);
+    const file = path.join(dir, CLAUDE_FILE);
+    let body: string;
+    try {
+      body = await fs.readFile(file, "utf8");
+    } catch {
+      body = claudeTemplate(slug, "");
+    }
+    if (!body.includes(CLAUDE_CURATED_HEADING)) {
+      body = `${body.trimEnd()}\n\n${CLAUDE_CURATED_HEADING}\n`;
+    }
+    body = `${body.trimEnd()}\n\n${trimmed}\n`;
+    await fs.writeFile(file, body, "utf8");
   }
 
   // --- pins (sibling-tab files) ------------------------------------------
