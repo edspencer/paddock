@@ -157,3 +157,31 @@ export function slashCommandEcho(content: string): string | null {
   const name = m[1].trim();
   return name.length > 0 ? name : null;
 }
+
+// ── Background-agent task notifications (issue #181) ─────────────────────────
+//
+// When a background agent (Task/Agent tool) stops or completes, the Claude Code
+// harness injects a `<task-notification>` block as a synthetic `role:"user"`
+// transcript entry (`origin.kind:"task-notification"`). It is internal harness
+// metadata — not something the human typed — but it isn't flagged `isMeta:true`,
+// so it survives @herdctl/core's parser and, exposed to us only as a plain
+// `role:"user"` string, would otherwise render as a raw-XML user bubble
+// (`<task-notification>…</task-notification>`). We detect it from its content and
+// surface a subtle system-status line with the human-readable `<summary>` instead
+// of the raw XML (issue #181). Detection is forgiving of leading whitespace.
+
+/** True when a `role:"user"` message is an internal `<task-notification>` block. */
+export function isTaskNotification(content: string): boolean {
+  return content.trimStart().startsWith("<task-notification>");
+}
+
+/**
+ * The human-readable one-line summary from a `<task-notification>` block (its
+ * `<summary>…</summary>` text, e.g. `Agent "…" finished`). Falls back to a
+ * generic label when the tag is absent or empty. See {@link isTaskNotification}.
+ */
+export function taskNotificationSummary(content: string): string {
+  const m = /<summary>([\s\S]*?)<\/summary>/.exec(content);
+  const summary = m?.[1]?.trim();
+  return summary && summary.length > 0 ? summary : "Background agent updated";
+}
