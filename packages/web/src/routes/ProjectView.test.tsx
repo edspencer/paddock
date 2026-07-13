@@ -34,6 +34,7 @@ const apiFns = {
   deleteProjectChat: vi.fn(),
   renameProjectChat: vi.fn(),
   archiveProjectChat: vi.fn(),
+  markChatSeen: vi.fn(),
   listProjectChats: vi.fn(),
   chatUsage: vi.fn(),
   projectChatMessages: vi.fn(),
@@ -54,6 +55,7 @@ vi.mock("../lib/api", async () => {
       deleteProjectChat: (...a: unknown[]) => apiFns.deleteProjectChat(...a),
       renameProjectChat: (...a: unknown[]) => apiFns.renameProjectChat(...a),
       archiveProjectChat: (...a: unknown[]) => apiFns.archiveProjectChat(...a),
+      markChatSeen: (...a: unknown[]) => apiFns.markChatSeen(...a),
       listProjectChats: (...a: unknown[]) => apiFns.listProjectChats(...a),
       chatUsage: (...a: unknown[]) => apiFns.chatUsage(...a),
       projectChatMessages: (...a: unknown[]) => apiFns.projectChatMessages(...a),
@@ -114,6 +116,7 @@ beforeEach(() => {
   apiFns.listProjectFiles.mockResolvedValue([]);
   apiFns.gitStatus.mockResolvedValue({ repo: false, files: [], clean: true } as GitProjectStatus);
   apiFns.listProjectChats.mockResolvedValue([]);
+  apiFns.markChatSeen.mockResolvedValue(undefined);
   apiFns.chatUsage.mockResolvedValue({});
   apiFns.projectChatMessages.mockResolvedValue([]);
   apiFns.getModels.mockResolvedValue({

@@ -6,7 +6,7 @@ import type { Project } from "../lib/types";
 import { getBrand, logoIsImage } from "../lib/brand";
 import { areaLabel, orderAreaSlugs } from "../lib/areas";
 import { chatClient } from "../lib/ws";
-import { LAST_SEEN_EVENT, readLastSeen } from "../lib/lastSeen";
+import { LAST_SEEN_EVENT, readLastSeen, setServerLastSeen } from "../lib/lastSeen";
 import { TagPill } from "./TagPill";
 import { NewProjectModal } from "./NewProjectModal";
 import { ChatIcon, FolderIcon, MenuIcon, MoonIcon, PlusIcon, SunIcon, XIcon } from "./icons";
@@ -21,9 +21,10 @@ interface ProjectBadge {
  * Compute per-project unread + in-flight counts for the sidebar (#161), with no
  * new fetch or polling:
  *  - UNREAD rides the projects payload's `chatTurns` (`{ sessionId,
- *    lastTurnCompletedAt }`, folded in server-side) compared against the
- *    per-chat localStorage `lastSeen` marker (#160). Live turn-completions seen
- *    over the WS bump it too, so a reply landing counts without a reload.
+ *    lastTurnCompletedAt, lastSeen }`, folded in server-side) compared against
+ *    the server-backed `lastSeen` read-state (#160/#189), mirrored locally for
+ *    optimistic same-tab clears. Live turn-completions seen over the WS bump it
+ *    too, so a reply landing counts without a reload.
  *  - IN-FLIGHT rides the existing WS `chat:active` set (now carrying
  *    `projectSlug`), grouped by project — near-real-time, zero polling.
  * Recomputes on projects refresh, WS active changes, and `lastSeen` writes.
@@ -43,6 +44,9 @@ function useProjectBadges(projects: Project[]): Map<string, ProjectBadge> {
     const m = completionsRef.current;
     for (const p of projects) {
       for (const t of p.chatTurns ?? []) {
+        // Fold the server-backed read-state (#189) into the shared cache so the
+        // unread count reads from the cross-device source of truth.
+        setServerLastSeen(t.sessionId, t.lastSeen);
         const at = Date.parse(t.lastTurnCompletedAt);
         if (!Number.isFinite(at)) continue;
         const prev = m.get(t.sessionId);

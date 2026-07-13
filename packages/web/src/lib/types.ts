@@ -53,9 +53,11 @@ export interface Project {
    * badge (#161): one entry per project chat that has a completed keeper turn,
    * `lastTurnCompletedAt` being its most recent (from job records, not a
    * transcript parse). The sidebar counts entries whose time is newer than the
-   * localStorage `lastSeen` marker (#160). Absent/[] means no completed chats.
+   * server-backed `lastSeen` read-state (#160/#189). Absent/[] means no completed
+   * chats. `lastSeen` is the per-user (or shared) last-viewed epoch-ms, absent
+   * when the chat has never been seen on this instance.
    */
-  chatTurns?: { sessionId: string; lastTurnCompletedAt: string }[];
+  chatTurns?: { sessionId: string; lastTurnCompletedAt: string; lastSeen?: number }[];
 }
 
 /** A selectable model (GET /api/models). `contextLimit` drives the context meter. */
@@ -144,6 +146,13 @@ export interface Chat {
    * has been recorded yet.
    */
   lastTurnCompletedAt?: string;
+  /**
+   * Server-side read-state (#189): the epoch-ms the user last viewed this chat,
+   * keyed by user when a real identity is present, else a shared bucket. The
+   * cross-device source of truth for the unread affordance — folded into the
+   * client cache (`lib/lastSeen.ts`) on load. Absent when never seen.
+   */
+  lastSeen?: number;
   /**
    * Context-window fill as of the chat's last completed turn (for the usage
    * ring, issue #77) plus the chat's cumulative lifetime token totals and cost
