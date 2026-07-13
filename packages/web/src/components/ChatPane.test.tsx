@@ -360,6 +360,46 @@ describe("ChatPane: history hydration", () => {
     expect(await screen.findByText(/Could not load this chat's history/i)).toBeInTheDocument();
   });
 
+  // Issue #106: CC-injected `role:"user"` transcript artifacts — the `/compact`
+  // echo and the post-compaction continuation summary — must NOT render as the
+  // user's own chat bubbles (they made a compacted chat look corrupted).
+  it("renders compaction artifacts as markers, not raw user bubbles (#106)", async () => {
+    const compactHistory: HistoryMessage[] = [
+      { role: "user", content: "do the thing", timestamp: "2026-06-21T10:00:00Z" },
+      {
+        role: "user",
+        content:
+          "<command-name>/compact</command-name>\n            " +
+          "<command-message>compact</command-message>\n            <command-args></command-args>",
+        timestamp: "2026-06-21T10:00:01Z",
+      },
+      {
+        role: "user",
+        content:
+          "This session is being continued from a previous conversation that ran out " +
+          "of context. The summary below covers the earlier portion of the conversation." +
+          "\n\nSummary:\n1. Primary Request and Intent: SEKRET-SUMMARY-BODY",
+        timestamp: "2026-06-21T10:00:02Z",
+      },
+    ];
+    const loadHistory = vi.fn().mockResolvedValue(compactHistory);
+    render(<ChatPane projectSlug="proj" initialSessionId="sess-c" loadHistory={loadHistory} />);
+
+    // The genuine user message still renders.
+    await waitFor(() => expect(screen.getByText("do the thing")).toBeInTheDocument());
+    // The command echo renders as a "/compact" chip, not raw <command-name> XML.
+    expect(screen.getByText("/compact")).toBeInTheDocument();
+    expect(screen.queryByText(/command-name/)).not.toBeInTheDocument();
+    // The continuation summary renders as a "conversation compacted" boundary,
+    // with its machine-generated body tucked inside a <details> disclosure (still
+    // in the DOM, but as a labelled boundary — not the user's own accent bubble).
+    const boundary = screen.getByText(/conversation compacted/i);
+    expect(boundary).toBeInTheDocument();
+    expect(boundary.closest("details")).not.toBeNull();
+    const summaryBody = screen.getByText(/SEKRET-SUMMARY-BODY/);
+    expect(summaryBody.closest("details")).not.toBeNull();
+  });
+
   // Issue #37: a Task/Agent tool call renders as a sub-agent block (type +
   // description) and lazy-loads its nested steps on first expand.
   it("renders a sub-agent block and lazy-loads its nested steps on expand", async () => {

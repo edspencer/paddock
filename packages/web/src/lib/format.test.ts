@@ -6,6 +6,8 @@ import {
   formatUsd,
   formatSessionUsage,
   sessionUsageOf,
+  isCompactContinuation,
+  slashCommandEcho,
 } from "./format";
 
 describe("format: relativeTime", () => {
@@ -142,5 +144,37 @@ describe("format: token + cost helpers (issue #152)", () => {
       totalTokens: 15,
       costUsd: null,
     });
+  });
+});
+
+describe("format: compaction transcript artifacts (#106)", () => {
+  it("isCompactContinuation matches CC's continuation preamble", () => {
+    const summary =
+      "This session is being continued from a previous conversation that ran out " +
+      "of context. The summary below covers the earlier portion of the conversation.\n\n" +
+      "Summary:\n1. Primary Request and Intent: …";
+    expect(isCompactContinuation(summary)).toBe(true);
+    // Forgiving of leading whitespace.
+    expect(isCompactContinuation("  \n" + summary)).toBe(true);
+  });
+
+  it("isCompactContinuation ignores ordinary user text", () => {
+    expect(isCompactContinuation("This session is great, thanks!")).toBe(false);
+    expect(isCompactContinuation("please compact the code")).toBe(false);
+    expect(isCompactContinuation("")).toBe(false);
+  });
+
+  it("slashCommandEcho extracts the command name from a CC command echo", () => {
+    const echo =
+      "<command-name>/compact</command-name>\n            " +
+      "<command-message>compact</command-message>\n            <command-args></command-args>";
+    expect(slashCommandEcho(echo)).toBe("/compact");
+    expect(slashCommandEcho("<command-name>/context</command-name>…")).toBe("/context");
+  });
+
+  it("slashCommandEcho returns null for non-echoes", () => {
+    expect(slashCommandEcho("run /compact please")).toBeNull();
+    expect(slashCommandEcho("<command-name></command-name>")).toBeNull();
+    expect(slashCommandEcho("just some text")).toBeNull();
   });
 });
