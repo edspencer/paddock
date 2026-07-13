@@ -984,10 +984,16 @@ export class HerdctlService {
       // per-agent to guarantee the Max/CLI path.
       runtime: "cli",
       model: model ?? KEEPER_DEFAULT_MODEL,
-      system_prompt:
-        "You are a Claude Code agent for one-off chats. Be helpful and concise.",
       default_prompt: "How can I help?",
     };
+    // Scratch chats get the native default coding prompt + CLAUDE.md hierarchy by
+    // default (issue #176), so an instance-wide CLAUDE.md (a common ancestor of
+    // the scratch dir) reaches out-of-project chats too. Only a non-native
+    // instance gets the terse replace prompt.
+    if (!this.cfg.nativeSystemPrompt) {
+      config.system_prompt =
+        "You are a Claude Code agent for one-off chats. Be helpful and concise.";
+    }
     // Browser MCP (headless Chromium) when enabled for this box; `mcp__playwright__*`
     // is already on the inherited defaults.allowed_tools.
     const browser = browserMcpServers();
@@ -1003,14 +1009,15 @@ export class HerdctlService {
    * Model resolution: `modelOverride` (a per-chat override) wins, else the
    * project's persisted `model`, else the keeper default (Opus).
    *
-   * System prompt: on a dev-servers instance (PADDOCK_DEV_SERVERS_ENABLED — the
-   * projects instance) we deliberately set NO `system_prompt`. herdctl's CLI
-   * runtime then passes no `--system-prompt`, so Claude Code's full default
-   * coding prompt applies together with the project's CLAUDE.md hierarchy — the
-   * box's root CLAUDE.md (`/var/lib/paddock/projects/CLAUDE.md`, auto-loaded via
-   * the cwd walk-up) carries the keeper guidance plus the `pm` dev-server
-   * capability. Every other instance (house/homelab) keeps the terse replace
-   * prompt below, so their behavior is unchanged.
+   * System prompt: by default (`nativeSystemPrompt`, issue #176) we set NO
+   * `system_prompt`, so herdctl's CLI runtime passes no `--system-prompt` and
+   * Claude Code's full default coding prompt applies together with the project's
+   * CLAUDE.md hierarchy — the box's root CLAUDE.md (auto-loaded via the cwd
+   * walk-up, e.g. `/var/lib/paddock/projects/CLAUDE.md`) plus a per-project
+   * CLAUDE.md. This is now its OWN decision, independent of
+   * `PADDOCK_DEV_SERVERS_ENABLED` (a `pm`-capability flag it used to be
+   * conflated with). An instance with no CLAUDE.md files can opt back into the
+   * terse replace prompt below with `PADDOCK_KEEPER_NATIVE_PROMPT=false`.
    */
   private keeperAgentConfig(
     project: Project,
@@ -1046,9 +1053,10 @@ export class HerdctlService {
     // Docker isolation: only set it when the project opts in, so a project that
     // leaves it off keeps inheriting the fleet default (no Docker) unchanged.
     if (project.docker) config.docker = { enabled: true };
-    // Only non-dev-servers instances get a replace system_prompt; the projects
-    // instance omits it so the default coding prompt + CLAUDE.md hierarchy apply.
-    if (!this.cfg.devServers.enabled) {
+    // Native by default: omit the replace prompt so the default coding prompt +
+    // CLAUDE.md hierarchy apply (issue #176). Only a non-native instance
+    // (PADDOCK_KEEPER_NATIVE_PROMPT=false) gets the terse replace prompt.
+    if (!this.cfg.nativeSystemPrompt) {
       config.system_prompt =
         "You are a Claude Code keeper agent for this project directory. " +
         "Honor any CLAUDE.md present. Keep CHANGELOG.md current. " +

@@ -121,6 +121,20 @@ export interface PaddockConfig {
    * (ScheduleWakeup / `/loop`) the box-wide default.
    */
   keeperDriveMode: DriveMode;
+  /**
+   * Whether keeper AND scratch agents use the native Claude Code system prompt +
+   * project CLAUDE.md hierarchy (true, the default) instead of a terse Paddock
+   * "replace" system prompt (false). Driven by `PADDOCK_KEEPER_NATIVE_PROMPT`.
+   *
+   * This is DELIBERATELY decoupled from {@link DevServersConfig.enabled} (issue
+   * #176): the dev-servers flag advertises a `pm` capability and has nothing to
+   * do with which system prompt an agent gets. When native (the default on every
+   * instance), an instance-wide `CLAUDE.md` (a common ancestor of `projects/` and
+   * the scratch dir) plus a per-project `CLAUDE.md` are auto-loaded — the two-
+   * level native-context model. Set `PADDOCK_KEEPER_NATIVE_PROMPT=false` to fall
+   * back to the terse replace prompt (e.g. an instance with no CLAUDE.md files).
+   */
+  nativeSystemPrompt: boolean;
 }
 
 /**
@@ -312,7 +326,20 @@ export function loadPaddockConfig(): PaddockConfig {
     transcription: loadTranscriptionConfig(),
     brand: loadBrandConfig(),
     keeperDriveMode: loadKeeperDriveMode(),
+    nativeSystemPrompt: loadNativeSystemPrompt(),
   });
+}
+
+/**
+ * Resolve whether keeper/scratch agents use the native system prompt + CLAUDE.md
+ * hierarchy (issue #176). Defaults to `true` (native) on every instance so a
+ * seeded instance-wide + per-project `CLAUDE.md` is auto-loaded; set
+ * `PADDOCK_KEEPER_NATIVE_PROMPT` to 0/false/no to fall back to the terse replace
+ * prompt. Intentionally independent of `PADDOCK_DEV_SERVERS_ENABLED`.
+ */
+function loadNativeSystemPrompt(): boolean {
+  const raw = envOr("PADDOCK_KEEPER_NATIVE_PROMPT", "true").toLowerCase();
+  return !(raw === "0" || raw === "false" || raw === "no");
 }
 
 /**
