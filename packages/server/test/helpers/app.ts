@@ -75,11 +75,18 @@ export async function startTestApp(opts: StartOptions = {}): Promise<TestApp> {
     PADDOCK_FAKE_SCRIPT: process.env.PADDOCK_FAKE_SCRIPT,
     PADDOCK_FAKE_SWEEP: process.env.PADDOCK_FAKE_SWEEP,
     PADDOCK_SWEEP_MIN_INTERVAL_MS: process.env.PADDOCK_SWEEP_MIN_INTERVAL_MS,
+    PADDOCK_KEEPER_DRIVE_MODE: process.env.PADDOCK_KEEPER_DRIVE_MODE,
     LOG_LEVEL: process.env.LOG_LEVEL,
   };
 
   process.env.HOME = home;
   delete process.env.CLAUDE_HOME; // fall back to $HOME/.claude, matching the CLI runtime
+  // Hermetic drive mode: the projects box exports PADDOCK_KEEPER_DRIVE_MODE=session,
+  // which would route these turns through openChatSession → the SDK runtime, bypassing
+  // the fake `claude` (SDK runtime needs a real login → "Not logged in"). Force the
+  // default batch/CLI-runtime path so the suite is deterministic regardless of the box
+  // env (CI has it unset; a dev box may not). The session path has its own coverage.
+  delete process.env.PADDOCK_KEEPER_DRIVE_MODE;
   process.env.PATH = `${FAKE_BIN}${path.delimiter}${process.env.PATH ?? ""}`;
   process.env.PADDOCK_DATA_DIR = dataDir;
   process.env.PADDOCK_PROJECTS_DIR = projectsRoot;
