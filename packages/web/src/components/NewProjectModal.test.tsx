@@ -107,5 +107,13 @@ describe("NewProjectModal", () => {
       expect(screen.getByText(/Project already exists/i)).toBeInTheDocument(),
     );
     expect(onCreated).not.toHaveBeenCalled();
+
+    // The error must PERSIST after the busy→idle toggle settles (regression: the
+    // reset effect used to re-fire on `busy` and wipe both the error and the
+    // form). Give the finally() re-render a chance to land, then re-assert.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.getByText(/Project already exists/i)).toBeInTheDocument();
+    // The typed name is retained so the user can fix + resubmit (not blanked).
+    expect(screen.getByPlaceholderText(/Garage Water Heater/i)).toHaveValue("Bare");
   });
 });

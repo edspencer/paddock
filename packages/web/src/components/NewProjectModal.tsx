@@ -24,7 +24,11 @@ export function NewProjectModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Reset on open; close on Escape.
+  // Reset the form ONLY on an open transition. Deliberately keyed on `open`
+  // alone: folding `busy` in here (as an earlier version did) re-ran the reset on
+  // every Create click — the `finally { setBusy(false) }` toggle then wiped the
+  // just-set error, so a failed create (e.g. an invalid repo URL, issue #187)
+  // silently blanked the form with no message.
   useEffect(() => {
     if (open) {
       setName("");
@@ -35,6 +39,10 @@ export function NewProjectModal({
       setRepo("");
       setError(null);
     }
+  }, [open]);
+
+  // Escape-to-close (ignored while a create is in flight).
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && open && !busy) onClose();
     };
