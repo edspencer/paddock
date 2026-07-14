@@ -1,5 +1,25 @@
 # @paddock/server
 
+## 0.22.0
+
+### Minor Changes
+
+- [#205](https://github.com/edspencer/paddock/pull/205) [`1c0682c`](https://github.com/edspencer/paddock/commit/1c0682c08d8c63ae5516dd2a71a7f2591c3922c7) Thanks [@edspencer](https://github.com/edspencer)! - Ship the web UI as an installable PWA (#199): add a web app manifest, brand
+  icons (192/512 + maskable + apple-touch-icon), browser-tab favicons (16/32 PNG +
+  `favicon.ico`; the app previously had none), iOS standalone `<head>` tags, and
+  a dependency-free service worker (registered in production only) that caches the
+  app shell for offline launch. Navigations are network-first with a cached-shell
+  fallback (covering both true-offline and app-server-down cases); `/api` and `/ws`
+  are never cached. This enables Add-to-Home-Screen + full-screen standalone launch
+  and is the prerequisite for Web Push notifications (#200).
+
+### Patch Changes
+
+- [#210](https://github.com/edspencer/paddock/pull/210) [`fbbc5a4`](https://github.com/edspencer/paddock/commit/fbbc5a4541c54318e5f7ddb50df3247caa9ff510) Thanks [@edspencer](https://github.com/edspencer)! - Repo-backed projects now do a **full clone** (not `--depth 1`). A repo-backed
+  project is where you do engineering, so the keeper should have real history —
+  `git log`, blame, bisect, and a non-shallow base for branches/PRs — from the
+  moment the project is created.
+
 ## 0.21.1
 
 ### Patch Changes

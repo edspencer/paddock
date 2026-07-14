@@ -1,5 +1,53 @@
 # @paddock/web
 
+## 0.22.0
+
+### Minor Changes
+
+- [#205](https://github.com/edspencer/paddock/pull/205) [`1c0682c`](https://github.com/edspencer/paddock/commit/1c0682c08d8c63ae5516dd2a71a7f2591c3922c7) Thanks [@edspencer](https://github.com/edspencer)! - Ship the web UI as an installable PWA (#199): add a web app manifest, brand
+  icons (192/512 + maskable + apple-touch-icon), browser-tab favicons (16/32 PNG +
+  `favicon.ico`; the app previously had none), iOS standalone `<head>` tags, and
+  a dependency-free service worker (registered in production only) that caches the
+  app shell for offline launch. Navigations are network-first with a cached-shell
+  fallback (covering both true-offline and app-server-down cases); `/api` and `/ws`
+  are never cached. This enables Add-to-Home-Screen + full-screen standalone launch
+  and is the prerequisite for Web Push notifications (#200).
+
+### Patch Changes
+
+- [#203](https://github.com/edspencer/paddock/pull/203) [`1812631`](https://github.com/edspencer/paddock/commit/18126311c66089f4b6c51e7194e8534b749ebc73) Thanks [@edspencer](https://github.com/edspencer)! - Fix mobile input focus-zoom and add safe-area chrome. iOS Safari auto-zoomed
+  (and broke the fixed 100dvh layout) whenever a sub-16px input/textarea was
+  focused; form controls are now 16px on small screens, so focus-zoom is
+  prevented without disabling pinch-to-zoom. Also adds `viewport-fit=cover` with
+  `env(safe-area-inset-*)` padding on the mobile top bar and composer (no longer
+  tucked under the notch / home indicator), removes the grey tap-highlight flash
+  on interactive controls, and sets `autoCapitalize="sentences"` on the composer.
+
+- [#204](https://github.com/edspencer/paddock/pull/204) [`89b2710`](https://github.com/edspencer/paddock/commit/89b271088464b9cf45cece5f68ae3cbad2280e85) Thanks [@edspencer](https://github.com/edspencer)! - fix(web): persist the queued message so it survives a chat switch / reload (#197)
+
+  The message queue (#91) kept its single stacked follow-up only in component-local
+  React state, so navigating away from a chat and back — or refreshing — silently
+  dropped it (surprising, since the composer draft right beside it already
+  persists). The queued message is now stored per-chat in localStorage, keyed like
+  the draft (`new:<slug>` before a session id exists, the session id after),
+  hydrated when the pane remounts, and forgotten when the queue flushes / is edited
+  / is cleared. A restored queue still auto-flushes on the next completed turn.
+
+- [#198](https://github.com/edspencer/paddock/pull/198) [`47cb6eb`](https://github.com/edspencer/paddock/commit/47cb6ebe198d9de0b30fbdbb37341e06f2001093) Thanks [@edspencer](https://github.com/edspencer)! - fix(web): Stop button is a silent no-op when clicked in the pre-arm window (#196)
+
+  The composer flips Send → Stop the instant a turn starts streaming, but the
+  client could only send `chat:cancel` once it knew the turn's `jobId` — which the
+  server round-trips a beat later (via the first frame / `chat:active`). Clicking
+  Stop in that gap silently did nothing: no cancel was sent and the turn ran to
+  completion. The window is usually 1–5s but can stretch to ~12s on a new chat's
+  first turn under load.
+
+  Now a Stop clicked before the jobId is known is _deferred_: the intent is
+  remembered and the cancel fires the instant the jobId arrives. Also nulls
+  `jobRef` at the start of every turn so a Stop in turn 2+'s pre-arm window can't
+  fire `chat:cancel` against the previous turn's already-finished job id (a
+  server-side no-op that left the new turn running).
+
 ## 0.21.1
 
 ## 0.21.0
