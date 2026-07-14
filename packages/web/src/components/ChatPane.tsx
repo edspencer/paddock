@@ -951,7 +951,6 @@ export function ChatPane({
               ref={composerRef}
               className="max-h-48 min-h-[40px] flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none placeholder:text-paddock-400 dark:placeholder:text-paddock-600"
               rows={1}
-              enterKeyHint="send"
               autoCapitalize="sentences"
               value={draft}
               placeholder={
