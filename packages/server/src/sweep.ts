@@ -236,7 +236,13 @@ export class SweepService {
     // never clobbers human-authored conventions. A failure here is non-fatal:
     // OVERVIEW/CHANGELOG are already written and the watermark should still
     // advance, so warn rather than throw.
-    if (parsed.claude) {
+    //
+    // REPO-BACKED projects (issue #187): the CLAUDE.md is the external repo's
+    // OWN, upstream-owned file — the sweeper must NEVER write it (that would
+    // dirty the checkout and, if pushed, leak curation upstream). OVERVIEW.md +
+    // CHANGELOG.md are still curated (sidecarred in the metadata dir), just not
+    // CLAUDE.md. So skip the amend entirely for repo-backed projects.
+    if (parsed.claude && !project.repoBacked) {
       await this.projects.appendClaudeMd(project.slug, parsed.claude).catch((err) => {
         this.log.warn({ err, slug: project.slug }, "sweep: CLAUDE.md append failed (non-fatal)");
       });

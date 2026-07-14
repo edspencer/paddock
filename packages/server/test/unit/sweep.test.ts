@@ -131,6 +131,25 @@ describe("SweepService", () => {
     svc.stop();
   });
 
+  it("does NOT touch CLAUDE.md for a repo-backed project — the repo owns it (#187)", async () => {
+    // A repo-backed project's CLAUDE.md is the external repo's own, upstream-
+    // owned file; the sweeper must never write it even when it reports a durable
+    // fact. OVERVIEW + CHANGELOG are still curated (sidecarred).
+    (project as { repoBacked?: boolean }).repoBacked = true;
+    const reply =
+      "<<<OVERVIEW>>>\n# Overview\nState.\n<<<CHANGELOG>>>\nDid a thing.\n" +
+      "<<<CLAUDE>>>\n- Durable: the API is versioned under /v2.\n<<<END>>>";
+    const { svc } = makeService({ sweeperText: reply });
+    svc.enqueue("demo");
+    await vi.waitFor(() => expect(overviewWrites.length).toBe(1), { timeout: 2000 });
+    await new Promise((r) => setTimeout(r, 50));
+    // OVERVIEW + CHANGELOG curated as usual; CLAUDE.md untouched.
+    expect(overviewWrites[0]).toContain("# Overview");
+    expect(changelogAppends[0]).toBe("Did a thing.");
+    expect(claudeAppends).toEqual([]);
+    svc.stop();
+  });
+
   it("does NOT touch CLAUDE.md when the CLAUDE section is NOCHANGE (#177)", async () => {
     const reply =
       "<<<OVERVIEW>>>\n# Overview\nState.\n<<<CHANGELOG>>>\nDid a thing.\n" +

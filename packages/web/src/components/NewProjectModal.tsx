@@ -20,10 +20,15 @@ export function NewProjectModal({
   const [domain, setDomain] = useState("");
   const [group, setGroup] = useState("");
   const [status, setStatus] = useState<ProjectStatus>("active");
+  const [repo, setRepo] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Reset on open; close on Escape.
+  // Reset the form ONLY on an open transition. Deliberately keyed on `open`
+  // alone: folding `busy` in here (as an earlier version did) re-ran the reset on
+  // every Create click — the `finally { setBusy(false) }` toggle then wiped the
+  // just-set error, so a failed create (e.g. an invalid repo URL, issue #187)
+  // silently blanked the form with no message.
   useEffect(() => {
     if (open) {
       setName("");
@@ -31,8 +36,13 @@ export function NewProjectModal({
       setDomain("");
       setGroup("");
       setStatus("active");
+      setRepo("");
       setError(null);
     }
+  }, [open]);
+
+  // Escape-to-close (ignored while a create is in flight).
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && open && !busy) onClose();
     };
@@ -53,6 +63,7 @@ export function NewProjectModal({
         status,
         group: group || undefined,
         summary: summary.trim() || undefined,
+        repo: repo.trim() || undefined,
         domain: domain
           .split(",")
           .map((d) => d.trim())
@@ -119,6 +130,21 @@ export function NewProjectModal({
               </option>
             ))}
           </select>
+        </label>
+
+        <label className="mb-4 block">
+          <span className="field-label">Git repository URL (optional)</span>
+          <input
+            className="input"
+            value={repo}
+            onChange={(e) => setRepo(e.target.value)}
+            placeholder="https://github.com/owner/repo.git"
+          />
+          <span className="mt-1 block text-xs text-paddock-400 dark:text-paddock-500">
+            Link an external repo and Paddock clones it as the project's working
+            directory — the repo's own CLAUDE.md, branches &amp; PR flow apply. Leave
+            blank for a notebook project.
+          </span>
         </label>
 
         <div className="mb-5 grid grid-cols-2 gap-3">

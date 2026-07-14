@@ -1,10 +1,43 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { promises as fs } from "node:fs";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import path from "node:path";
 import YAML from "yaml";
-import { ProjectStore, ProjectError, slugify, fileKind, contentTypeFor } from "../../src/projects.js";
+import {
+  ProjectStore,
+  ProjectError,
+  slugify,
+  fileKind,
+  contentTypeFor,
+  repoCheckoutName,
+  workingDirFor,
+  isValidRepoUrl,
+} from "../../src/projects.js";
 import { KEEPER_DEFAULT_MODEL } from "../../src/models.js";
 import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
+
+const run = promisify(execFile);
+
+/**
+ * Create a local git repo (issue #187 test fixture) with a CLAUDE.md + README so
+ * a repo-backed project can be cloned WITHOUT any network. Returns its path; a
+ * plain filesystem path is an accepted repo URL (isValidRepoUrl).
+ */
+async function makeSourceRepo(dir: string): Promise<string> {
+  await fs.mkdir(dir, { recursive: true });
+  await run("git", ["init", "-q", "-b", "main", dir]);
+  await fs.writeFile(path.join(dir, "CLAUDE.md"), "# Upstream Repo\n\nThe repo's own identity file.\n");
+  await fs.writeFile(path.join(dir, "README.md"), "# demo repo\n");
+  await run("git", ["-C", dir, "add", "-A"]);
+  await run("git", [
+    "-C", dir,
+    "-c", "user.name=Test",
+    "-c", "user.email=test@example.com",
+    "commit", "-q", "-m", "init",
+  ]);
+  return dir;
+}
 
 describe("slugify", () => {
   it("lowercases, trims, and kebab-cases", () => {
@@ -61,6 +94,37 @@ describe("contentTypeFor", () => {
     expect(contentTypeFor("x.PDF")).toBe("application/pdf");
     // A .pdf must NOT be classified as an image kind.
     expect(fileKind("x.pdf")).toBe("text");
+  });
+});
+
+describe("repo-backed helpers (issue #187)", () => {
+  it("repoCheckoutName derives a filesystem-safe basename, sans .git", () => {
+    expect(repoCheckoutName("https://github.com/owner/paddock.git")).toBe("paddock");
+    expect(repoCheckoutName("https://github.com/owner/paddock")).toBe("paddock");
+    expect(repoCheckoutName("git@github.com:owner/My.Repo.git")).toBe("My.Repo");
+    expect(repoCheckoutName("/local/path/to/repo/")).toBe("repo");
+    expect(repoCheckoutName("file:///tmp/x/demo.git")).toBe("demo");
+    // Degenerate input never yields an empty / traversal-y name.
+    expect(repoCheckoutName("https://host/")).toBe("host");
+    expect(repoCheckoutName("...")).toBe("repo");
+  });
+
+  it("workingDirFor is the checkout for repo-backed, else the dir itself", () => {
+    expect(workingDirFor("/d/projects/p")).toBe("/d/projects/p");
+    expect(workingDirFor("/d/projects/p", "https://github.com/o/repo.git")).toBe(
+      "/d/projects/p/repo",
+    );
+  });
+
+  it("isValidRepoUrl accepts real git URLs and rejects junk", () => {
+    expect(isValidRepoUrl("https://github.com/o/r.git")).toBe(true);
+    expect(isValidRepoUrl("git@github.com:o/r.git")).toBe(true);
+    expect(isValidRepoUrl("ssh://git@host/o/r.git")).toBe(true);
+    expect(isValidRepoUrl("file:///tmp/repo")).toBe(true);
+    expect(isValidRepoUrl("/abs/local/repo")).toBe(true);
+    expect(isValidRepoUrl("")).toBe(false);
+    expect(isValidRepoUrl("not a url")).toBe(false);
+    expect(isValidRepoUrl("ftp://host/x")).toBe(false);
   });
 });
 
@@ -429,6 +493,70 @@ describe("ProjectStore", () => {
     await store.remove("del");
     await expect(fs.access(p.dir)).rejects.toBeTruthy();
     await expect(store.remove("del")).rejects.toMatchObject({ code: "not_found" });
+  });
+
+  // --- repo-backed projects (issue #187) --------------------------------
+
+  it("notebook project: repoBacked false, workingDir === dir", async () => {
+    const p = await store.create({ name: "Notebook" });
+    expect(p.repoBacked).toBe(false);
+    expect(p.repo).toBeUndefined();
+    expect(p.workingDir).toBe(p.dir);
+  });
+
+  it("repo-backed create clones the repo, sets workingDir to the checkout, and skips CLAUDE.md", async () => {
+    const src = await makeSourceRepo(path.join(root, "_src", "demo.git"));
+    const p = await store.create({ name: "Repo Proj", repo: src });
+
+    // DTO: repo-backed, cwd is the nested checkout (named after the repo).
+    expect(p.repoBacked).toBe(true);
+    expect(p.repo).toBe(src);
+    expect(p.workingDir).toBe(path.join(p.dir, "demo"));
+
+    // The repo was actually cloned into the checkout (its files are present).
+    expect(await fs.readFile(path.join(p.workingDir, "CLAUDE.md"), "utf8")).toContain(
+      "Upstream Repo",
+    );
+    expect(await fs.access(path.join(p.workingDir, ".git")).then(() => true)).toBe(true);
+
+    // The sweeper-owned per-project CLAUDE.md is NOT seeded at the metadata dir —
+    // a repo-backed project defers to the repo's OWN CLAUDE.md (in the checkout).
+    await expect(fs.access(path.join(p.dir, "CLAUDE.md"))).rejects.toBeTruthy();
+
+    // OVERVIEW/CHANGELOG are still sidecarred in the metadata dir.
+    expect(await fs.readFile(path.join(p.dir, "CHANGELOG.md"), "utf8")).toContain(
+      "Project opened.",
+    );
+
+    // A sidecar .gitignore keeps the nested checkout out of the data repo.
+    const gi = await fs.readFile(path.join(p.dir, ".gitignore"), "utf8");
+    expect(gi).toContain("/demo/");
+    expect(gi).toContain("/.chats/");
+
+    // `repo` persists in project.yaml and round-trips through get().
+    const parsed = YAML.parse(await fs.readFile(path.join(p.dir, "project.yaml"), "utf8"));
+    expect(parsed.repo).toBe(src);
+    const reread = await store.get(p.slug);
+    expect(reread.repoBacked).toBe(true);
+    expect(reread.workingDir).toBe(path.join(p.dir, "demo"));
+  });
+
+  it("repo-backed create rejects an invalid repo URL without leaving a project behind", async () => {
+    await expect(store.create({ name: "Bad", repo: "not a url" })).rejects.toMatchObject({
+      code: "invalid",
+    });
+    await expect(store.exists("bad")).resolves.toBe(false);
+  });
+
+  it("repo-backed create rolls back the dir when the clone fails", async () => {
+    // A well-formed but nonexistent local path is a valid URL that git can't clone.
+    const bogus = path.join(root, "_src", "does-not-exist.git");
+    await expect(store.create({ name: "Ghost", repo: bogus })).rejects.toMatchObject({
+      code: "invalid",
+    });
+    // The half-created project dir was cleaned up.
+    await expect(store.exists("ghost")).resolves.toBe(false);
+    await expect(fs.access(path.join(root, "ghost"))).rejects.toBeTruthy();
   });
 });
 

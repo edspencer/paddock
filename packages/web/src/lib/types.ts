@@ -30,6 +30,15 @@ export interface Project {
   summary: string;
   links?: ProjectLink[];
   dir: string;
+  /**
+   * The keeper's working directory (cwd). Equals `dir` for a notebook project;
+   * for a repo-backed project it's the nested checkout under `dir` (issue #187).
+   */
+  workingDir: string;
+  /** Whether this project is backed by an external git repo (issue #187). */
+  repoBacked: boolean;
+  /** The external git repo URL, when repo-backed (issue #187). */
+  repo?: string;
   /** True once a sweep has written OVERVIEW.md (drives the preload checkbox + Overview hint). */
   hasOverview: boolean;
   /** Pinned file names rendered as sibling tabs (order-preserving). Default []. */
@@ -99,6 +108,12 @@ export interface CreateProjectInput {
   domain?: string[];
   group?: string;
   summary?: string;
+  /**
+   * External git repo URL to back this project (issue #187). When set the
+   * project is created repo-backed (Paddock clones it and the keeper's cwd is the
+   * checkout). Absent ⇒ a notebook project.
+   */
+  repo?: string;
 }
 
 /** Editable project metadata (slug + dates are immutable server-side). */

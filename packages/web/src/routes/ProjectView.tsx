@@ -802,6 +802,18 @@ export function ProjectView() {
               Overview
             </span>
           )}
+          {project.repoBacked && (
+            <a
+              href={repoHref(project.repo)}
+              target="_blank"
+              rel="noreferrer"
+              title={`Repo-backed project — the keeper works in a clone of ${project.repo}`}
+              className="hidden items-center gap-1 rounded-md bg-sky-100 px-1.5 py-0.5 text-[11px] font-medium text-sky-700 lg:inline-flex dark:bg-sky-950/50 dark:text-sky-400"
+            >
+              <BranchIcon width={11} height={11} />
+              Repo
+            </a>
+          )}
           <span className="ml-auto hidden items-center gap-1 text-xs text-paddock-400 lg:inline-flex">
             <ClockIcon width={12} height={12} />
             updated {relativeTime(project.updated)}
@@ -1394,6 +1406,9 @@ function HomePane({
               {project.domain.length > 0 && (
                 <Meta label="Domains" value={project.domain.join(", ")} />
               )}
+              {project.repoBacked && project.repo && (
+                <Meta label="Repo" value={project.repo} />
+              )}
             </dl>
             {project.links && project.links.length > 0 && (
               <div className="mt-3 flex flex-wrap gap-2">
@@ -1523,6 +1538,24 @@ function HomePane({
       </div>
     </div>
   );
+}
+
+/**
+ * Best-effort browsable URL for a repo-backed project's repo (issue #187): strip
+ * a trailing `.git`, and rewrite an `scp`-style `git@host:owner/repo` into
+ * `https://host/owner/repo` so the "Repo" badge links somewhere useful. A plain
+ * https/http URL passes through; anything unrecognized (a local path) falls back
+ * to `#` so the badge is inert rather than broken.
+ */
+function repoHref(repo?: string): string {
+  if (!repo) return "#";
+  const trimmed = repo.trim().replace(/\.git$/i, "");
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  const scp = /^git@([^:]+):(.+)$/.exec(trimmed);
+  if (scp) return `https://${scp[1]}/${scp[2]}`;
+  const ssh = /^ssh:\/\/git@([^/]+)\/(.+)$/i.exec(trimmed);
+  if (ssh) return `https://${ssh[1]}/${ssh[2]}`;
+  return "#";
 }
 
 function Meta({ label, value }: { label: string; value: string }) {
