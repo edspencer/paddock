@@ -458,4 +458,9 @@ export type ServerWsMessage =
         running: boolean;
       };
     }
+  | {
+      /** The server auto-sent the queued message, so clear localStorage (#197). */
+      type: "chat:queued_flushed";
+      payload: { projectSlug: string; target?: string; sessionId: string };
+    }
   | { type: "pong" };

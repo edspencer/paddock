@@ -19,6 +19,7 @@ let subs: FakeSub[] = [];
 const sends: Array<{ slug: string; message: string; sessionId: string | null; opts?: unknown }> = [];
 const commands: Array<{ slug: string; message: string; sessionId: string | null }> = [];
 const cancels: string[] = [];
+const queuedSets: Array<{ slug: string; sessionId: string; text: string | null }> = [];
 let stateCb: ((s: string) => void) | null = null;
 
 vi.mock("../lib/ws", () => ({
@@ -48,6 +49,8 @@ vi.mock("../lib/ws", () => ({
     sendCommand: (slug: string, message: string, sessionId: string | null) =>
       commands.push({ slug, message, sessionId }),
     cancel: (jobId: string) => cancels.push(jobId),
+    setQueued: (slug: string, sessionId: string, text: string | null) =>
+      queuedSets.push({ slug, sessionId, text }),
   },
 }));
 
@@ -98,6 +101,7 @@ beforeEach(() => {
   sends.length = 0;
   commands.length = 0;
   cancels.length = 0;
+  queuedSets.length = 0;
   stateCb = null;
   getModels.mockReset().mockResolvedValue(MODELS);
   chatContext.mockReset().mockResolvedValue(null);
@@ -897,6 +901,48 @@ describe("ChatPane: message queue (issue #91)", () => {
     expect(screen.queryByText("queued")).not.toBeInTheDocument();
     // And we're streaming again for that follow-up turn.
     expect(screen.getByRole("button", { name: /Stop/ })).toBeInTheDocument();
+  });
+
+  it("persists the queued message across a remount and hydrates it back (#197)", async () => {
+    const loadHistory = vi.fn().mockResolvedValue([]);
+    const { unmount } = render(
+      <ChatPane projectSlug="proj" isProjectChat initialSessionId="s1" loadHistory={loadHistory} />,
+    );
+    await screen.findByRole("button", { name: /^Send$/ });
+    // Put a turn in flight, then queue a follow-up.
+    await userEvent.type(box(), "first turn");
+    fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
+    act(() => sub().handlers.onResponse?.("…", { sessionId: "s1", jobId: "job-1" }));
+    await userEvent.type(box(), "remembered follow-up");
+    fireEvent.keyDown(box(), { key: "Enter" });
+    expect(screen.getByText("queued")).toBeInTheDocument();
+    // It's persisted under the session-keyed slot.
+    expect(localStorage.getItem("paddock:queued:s1")).toBe("remembered follow-up");
+
+    // Navigating away unmounts the pane — the queued message must NOT be lost.
+    unmount();
+    render(
+      <ChatPane projectSlug="proj" isProjectChat initialSessionId="s1" loadHistory={loadHistory} />,
+    );
+    // Re-opening the chat restores the queued toolbar + its text.
+    expect(await screen.findByText("queued")).toBeInTheDocument();
+    expect(screen.getByText("remembered follow-up")).toBeInTheDocument();
+  });
+
+  it("clears the persisted queued message once it flushes (#197)", async () => {
+    render(
+      <ChatPane projectSlug="proj" isProjectChat initialSessionId="s1" loadHistory={vi.fn().mockResolvedValue([])} />,
+    );
+    await screen.findByRole("button", { name: /^Send$/ });
+    await userEvent.type(box(), "first turn");
+    fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
+    act(() => sub().handlers.onResponse?.("…", { sessionId: "s1", jobId: "job-1" }));
+    await userEvent.type(box(), "flush me");
+    fireEvent.keyDown(box(), { key: "Enter" });
+    expect(localStorage.getItem("paddock:queued:s1")).toBe("flush me");
+    // Turn completes → queue auto-flushes → the persisted slot is forgotten.
+    act(() => sub().handlers.onComplete?.({ sessionId: "s1", jobId: "job-1", success: true }));
+    await waitFor(() => expect(localStorage.getItem("paddock:queued:s1")).toBeNull());
   });
 
   it("appends to the queued message on re-submit (single slot)", async () => {

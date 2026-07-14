@@ -276,6 +276,16 @@ class ChatClient {
   }
 
   /**
+   * Store a queued message on the server so it persists across browser close
+   * and auto-sends when the current turn completes (#197). The message is also
+   * persisted to localStorage for live editing UX.
+   */
+  setQueued(projectSlug: string, sessionId: string, text: string | null): void {
+    const payload: Record<string, unknown> = { projectSlug, sessionId, text };
+    this.transmit(JSON.stringify({ type: "chat:set_queue", payload }));
+  }
+
+  /**
    * A new turn is starting for a chat: reset its per-turn `seq` baseline and mark
    * it in flight, so a reconnect mid-turn re-attaches with a gap replay from the
    * right point (issue #54). Matches the chat by slug + (possibly null) session id.
@@ -525,6 +535,19 @@ class ChatClient {
         if (sub.projectSlug === slug && sub.sessionId === msg.payload.sessionId) {
           sub.handlers.onActive?.({ running: msg.payload.running, jobId: msg.payload.jobId });
         }
+      }
+      return;
+    }
+
+    if (msg.type === "chat:queued_flushed") {
+      // The server auto-sent the queued message, so clear the localStorage
+      // for this chat (#197).
+      const { sessionId } = msg.payload;
+      if (sessionId) {
+        // Import writeQueued inline to avoid a circular dependency.
+        void import("./queued.js").then(({ writeQueued }) => {
+          writeQueued(sessionId, slug, null);
+        });
       }
       return;
     }
