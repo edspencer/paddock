@@ -892,7 +892,7 @@ export function ChatPane({
 
       {/* composer */}
       <div className="border-t border-paddock-200 bg-canvas/80 backdrop-blur dark:border-paddock-800 dark:bg-canvas-dark/80">
-        <div className="mx-auto w-full max-w-3xl px-4 py-3">
+        <div className="pb-safe mx-auto w-full max-w-3xl px-4 pt-3">
           {showPreload && (
             <PreloadToggle
               checked={preloadContext}
@@ -951,6 +951,7 @@ export function ChatPane({
               ref={composerRef}
               className="max-h-48 min-h-[40px] flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none placeholder:text-paddock-400 dark:placeholder:text-paddock-600"
               rows={1}
+              autoCapitalize="sentences"
               value={draft}
               placeholder={
                 streaming
