@@ -68,7 +68,11 @@
     input,
     textarea,
     select {
-      font-size: 16px;
+      /* !important so the rule wins over Tailwind's `text-sm` utility class
+         (higher specificity) that the composer/modal inputs carry — otherwise
+         they stay 14px and Safari still focus-zooms. Nothing is intentionally
+         sub-16px on mobile, so a blanket override is safe. */
+      font-size: 16px !important;
     }
   }
   /* Kill the grey flash box iOS/Android paint over tapped controls. */
