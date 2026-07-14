@@ -11,12 +11,15 @@ import {
   selfMcpServerDef,
   SELF_MCP_SERVER_KEY,
   SELF_MCP_TOOL_NAMES,
+  SELF_MCP_WRITE_TOOL_NAMES,
+  FORK_BATCH_MAX,
   clampLimit,
   truncateText,
   READ_CHAT_DEFAULT_LIMIT,
   READ_CHAT_MAX_LIMIT,
   READ_CHAT_MAX_TEXT,
   type SelfMcpContext,
+  type SelfMcpWriteContext,
   type SelfMcpChat,
   type SelfMcpMessage,
   type SelfMcpProject,
@@ -153,5 +156,213 @@ describe("self-management MCP (Phase 1, read-only)", () => {
     expect(clampLimit(15)).toBe(15);
     expect(truncateText("short")).toBe("short");
     expect(truncateText("y".repeat(READ_CHAT_MAX_TEXT + 1))).toContain("[truncated 1 chars]");
+  });
+});
+
+// ── Phase 2: write tools ────────────────────────────────────────────────────
+
+interface RecordingWrite extends SelfMcpWriteContext {
+  calls: {
+    createChat: Array<{ projectSlug: string; prompt: string; opts?: { name?: string; preloadContext?: boolean } }>;
+    forkChat: Array<{ projectSlug: string; sourceSessionId: string; prompt?: string; name?: string }>;
+    sendMessage: Array<{ projectSlug: string; sessionId: string; prompt: string }>;
+  };
+}
+
+function fakeWrite(over: Partial<SelfMcpWriteContext> = {}): RecordingWrite {
+  const calls: RecordingWrite["calls"] = { createChat: [], forkChat: [], sendMessage: [] };
+  let n = 0;
+  const base: SelfMcpWriteContext = {
+    currentProjectSlug: "paddock",
+    currentSessionId: () => "current-sid",
+    createChat: async (projectSlug, prompt, opts) => {
+      calls.createChat.push({ projectSlug, prompt, opts });
+      return { sessionId: `new-${++n}` };
+    },
+    forkChat: async (args) => {
+      calls.forkChat.push({ ...args });
+      return { sessionId: `fork-${++n}` };
+    },
+    sendMessage: async (projectSlug, sessionId, prompt) => {
+      calls.sendMessage.push({ projectSlug, sessionId, prompt });
+    },
+    ...over,
+  };
+  return { ...base, calls };
+}
+
+function writeToolByName(context: SelfMcpContext, write: SelfMcpWriteContext, name: string) {
+  const def = selfMcpServerDef(context, write);
+  const tool = def.tools.find((t) => t.name === name);
+  if (!tool) throw new Error(`no such tool: ${name}`);
+  return tool;
+}
+
+async function callWrite(
+  write: SelfMcpWriteContext,
+  name: string,
+  args: Record<string, unknown> = {},
+): Promise<{ result: Result; json: any }> {
+  const result = (await writeToolByName(fakeContext(), write, name).handler(args)) as Result;
+  let json: any = null;
+  if (!result.isError) json = JSON.parse(result.content[0].text);
+  return { result, json };
+}
+
+describe("self-management MCP (Phase 2, write tools)", () => {
+  it("exposes only the 3 read tools WITHOUT a write ctx, and 7 tools WITH one", () => {
+    const readOnly = selfMcpServerDef(fakeContext());
+    expect(readOnly.tools.map((t) => t.name).sort()).toEqual(["list_chats", "list_projects", "read_chat"]);
+
+    const withWrite = selfMcpServerDef(fakeContext(), fakeWrite());
+    expect(withWrite.tools).toHaveLength(7);
+    expect(withWrite.tools.map((t) => t.name).sort()).toEqual([
+      "create_chat",
+      "fork_chat",
+      "fork_chat_batch",
+      "list_chats",
+      "list_projects",
+      "read_chat",
+      "send_message",
+    ]);
+  });
+
+  it("names the write tools as mcp__paddock_manage__*", () => {
+    expect(SELF_MCP_WRITE_TOOL_NAMES.createChat).toBe("mcp__paddock_manage__create_chat");
+    expect(SELF_MCP_WRITE_TOOL_NAMES.forkChat).toBe("mcp__paddock_manage__fork_chat");
+    expect(SELF_MCP_WRITE_TOOL_NAMES.sendMessage).toBe("mcp__paddock_manage__send_message");
+    expect(SELF_MCP_WRITE_TOOL_NAMES.forkChatBatch).toBe("mcp__paddock_manage__fork_chat_batch");
+  });
+
+  it("create_chat defaults project to current and passes name/preload through", async () => {
+    const write = fakeWrite();
+    const { json } = await callWrite(write, "create_chat", {
+      prompt: "do the thing",
+      name: "Worker",
+      preload_context: true,
+    });
+    expect(json).toEqual({ created: true, project: "paddock", sessionId: "new-1" });
+    expect(write.calls.createChat).toEqual([
+      { projectSlug: "paddock", prompt: "do the thing", opts: { name: "Worker", preloadContext: true } },
+    ]);
+  });
+
+  it("create_chat honors an explicit project", async () => {
+    const write = fakeWrite();
+    await callWrite(write, "create_chat", { prompt: "hi", project: "herdctl" });
+    expect(write.calls.createChat[0].projectSlug).toBe("herdctl");
+  });
+
+  it("create_chat rejects an empty prompt", async () => {
+    const write = fakeWrite();
+    const { result } = await callWrite(write, "create_chat", { prompt: "   " });
+    expect(result.isError).toBe(true);
+    expect(write.calls.createChat).toHaveLength(0);
+  });
+
+  it("fork_chat defaults the source to currentSessionId()", async () => {
+    const write = fakeWrite();
+    const { json } = await callWrite(write, "fork_chat", { prompt: "explore option A" });
+    expect(json).toEqual({ forked: true, project: "paddock", sessionId: "fork-1", from: "current-sid" });
+    expect(write.calls.forkChat).toEqual([
+      { projectSlug: "paddock", sourceSessionId: "current-sid", prompt: "explore option A", name: undefined },
+    ]);
+  });
+
+  it("fork_chat uses an explicit session_id + project when given", async () => {
+    const write = fakeWrite();
+    const { json } = await callWrite(write, "fork_chat", {
+      session_id: "other-sid",
+      project: "herdctl",
+      name: "Branch",
+    });
+    expect(json.from).toBe("other-sid");
+    expect(write.calls.forkChat[0]).toEqual({
+      projectSlug: "herdctl",
+      sourceSessionId: "other-sid",
+      prompt: undefined,
+      name: "Branch",
+    });
+  });
+
+  it("fork_chat errors when no current session and no session_id arg", async () => {
+    const write = fakeWrite({ currentSessionId: () => null });
+    const { result } = await callWrite(write, "fork_chat", {});
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("no chat to fork");
+    expect(write.calls.forkChat).toHaveLength(0);
+  });
+
+  it("send_message passes through and defaults project to current", async () => {
+    const write = fakeWrite();
+    const { json } = await callWrite(write, "send_message", { session_id: "bbb", prompt: "ping" });
+    expect(json).toEqual({ sent: true, project: "paddock", sessionId: "bbb" });
+    expect(write.calls.sendMessage).toEqual([{ projectSlug: "paddock", sessionId: "bbb", prompt: "ping" }]);
+  });
+
+  it("send_message requires session_id and prompt", async () => {
+    const write = fakeWrite();
+    const noSession = await callWrite(write, "send_message", { prompt: "hi" });
+    expect(noSession.result.isError).toBe(true);
+    const noPrompt = await callWrite(write, "send_message", { session_id: "bbb" });
+    expect(noPrompt.result.isError).toBe(true);
+    expect(write.calls.sendMessage).toHaveLength(0);
+  });
+
+  it("fork_chat_batch forks once per prompt, applies name_prefix, returns count", async () => {
+    const write = fakeWrite();
+    const { json } = await callWrite(write, "fork_chat_batch", {
+      prompts: ["item 1", "item 2", "item 3"],
+      name_prefix: "Item",
+    });
+    expect(json.count).toBe(3);
+    expect(json.source).toBe("current-sid");
+    expect(json.forks).toHaveLength(3);
+    expect(write.calls.forkChat).toHaveLength(3);
+    expect(write.calls.forkChat.map((c) => c.name)).toEqual(["Item 1", "Item 2", "Item 3"]);
+    expect(write.calls.forkChat.map((c) => c.prompt)).toEqual(["item 1", "item 2", "item 3"]);
+    expect(write.calls.forkChat.every((c) => c.sourceSessionId === "current-sid")).toBe(true);
+  });
+
+  it("fork_chat_batch errors on an empty array", async () => {
+    const write = fakeWrite();
+    const { result } = await callWrite(write, "fork_chat_batch", { prompts: [] });
+    expect(result.isError).toBe(true);
+    expect(write.calls.forkChat).toHaveLength(0);
+  });
+
+  it("fork_chat_batch errors over FORK_BATCH_MAX", async () => {
+    const write = fakeWrite();
+    const prompts = Array.from({ length: FORK_BATCH_MAX + 1 }, (_, i) => `p${i}`);
+    const { result } = await callWrite(write, "fork_chat_batch", { prompts });
+    expect(result.isError).toBe(true);
+    expect(write.calls.forkChat).toHaveLength(0);
+  });
+
+  it("fork_chat_batch errors on a non-string/empty entry", async () => {
+    const write = fakeWrite();
+    const bad = await callWrite(write, "fork_chat_batch", { prompts: ["ok", 42] });
+    expect(bad.result.isError).toBe(true);
+    const blank = await callWrite(write, "fork_chat_batch", { prompts: ["ok", "  "] });
+    expect(blank.result.isError).toBe(true);
+    expect(write.calls.forkChat).toHaveLength(0);
+  });
+
+  it("fork_chat_batch errors when no current session and no session_id arg", async () => {
+    const write = fakeWrite({ currentSessionId: () => null });
+    const { result } = await callWrite(write, "fork_chat_batch", { prompts: ["a"] });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("no chat to fork");
+  });
+
+  it("surfaces a write-callback throw as an isError result rather than throwing", async () => {
+    const write = fakeWrite({
+      createChat: async () => {
+        throw new Error("fleet exploded");
+      },
+    });
+    const { result } = await callWrite(write, "create_chat", { prompt: "go" });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("fleet exploded");
   });
 });
