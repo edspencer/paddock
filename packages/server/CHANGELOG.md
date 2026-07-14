@@ -1,5 +1,17 @@
 # @paddock/server
 
+## 0.21.1
+
+### Patch Changes
+
+- [#209](https://github.com/edspencer/paddock/pull/209) [`9425c27`](https://github.com/edspencer/paddock/commit/9425c2754808190e15a75620b715b26eed681ae4) Thanks [@edspencer](https://github.com/edspencer)! - Bump `@herdctl/core` to 5.20.0. This fixes the session-reaper closing a keeper's
+  streaming session out from under it when a **synchronous** subagent finishes —
+  the "keeper stops right after a subagent completes" stall seen on session
+  drive-mode instances (herdctl #366 / PR #367). Also picks up the harness
+  `<task-notification>` transcript-parser fix (herdctl #364).
+
+- [#207](https://github.com/edspencer/paddock/pull/207) [`965656c`](https://github.com/edspencer/paddock/commit/965656c92c3ae90f8386f12bc28b856d3a548183) Thanks [@edspencer](https://github.com/edspencer)! - Bump `@herdctl/core` to `^5.19.2`. This picks up the CLI session-path fix for herdctl#357: new CLI sessions are now identified by set-difference against a pre-spawn snapshot of `.jsonl` files rather than the old newest-by-mtime heuristic, which is the root cause of keeper chats intermittently getting mis-attributed to the post-turn sweep and vanishing from the sidebar (paddock#154).
+
 ## 0.21.0
 
 ### Minor Changes

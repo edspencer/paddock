@@ -1,6 +1,6 @@
 {
   "name": "paddock",
-  "version": "0.21.0",
+  "version": "0.21.1",
   "private": true,
   "description": "Project-first launchpad built on herdctl. Server-hosted, persistent Claude Code sessions organized by project.",
   "type": "module",
