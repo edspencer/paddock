@@ -16,6 +16,7 @@ import { formatDuration } from "../lib/format";
 import { api } from "../lib/api";
 import { readChatModel, writeChatModel } from "../lib/chatModel";
 import { readDraft, writeDraft } from "../lib/draft";
+import { readQueued, writeQueued } from "../lib/queued";
 import {
   AlertIcon,
   BranchIcon,
@@ -199,8 +200,14 @@ export function ChatPane({
   // finishes. `queued` drives the toolbar above the composer; `queuedRef` is the
   // same value read by the flush that fires inside the (stably-subscribed) socket
   // handlers, which can't see the latest `queued` state. `null` = nothing queued.
-  const [queued, setQueued] = useState<string | null>(null);
-  const queuedRef = useRef<string | null>(null);
+  // Issue #197: hydrate any message persisted for this chat so it survives a chat
+  // switch / reload instead of being silently dropped (mirrors the composer draft
+  // above; see lib/queued.ts). queuedRef is seeded to match so a restored queue
+  // still auto-flushes on the next completed turn.
+  const [queued, setQueued] = useState<string | null>(() =>
+    readQueued(initialSessionId, projectSlug),
+  );
+  const queuedRef = useRef<string | null>(queued);
   // Set when the user hits Stop, so the completion it triggers does NOT flush the
   // queue (we hold rather than fire a follow-up into a cancelled turn). Cleared
   // on the next completion.
@@ -477,6 +484,14 @@ export function ChatPane({
   useEffect(() => {
     writeDraft(initialSessionId, projectSlug, draft);
   }, [draft, initialSessionId, projectSlug]);
+
+  // Issue #197: persist the queued message so it survives a chat switch / reload
+  // too — otherwise navigating away and back silently drops it. Every queue
+  // mutation (enqueue / flush / edit / clear) flows through setQueued, so keying
+  // off `queued` covers them all; writing null/"" forgets the key.
+  useEffect(() => {
+    writeQueued(initialSessionId, projectSlug, queued);
+  }, [queued, initialSessionId, projectSlug]);
 
   // Auto-focus the composer on mount for a fresh chat so the user can type right
   // away: right after forking (autoFocus), and when starting a New Chat — which

@@ -899,6 +899,48 @@ describe("ChatPane: message queue (issue #91)", () => {
     expect(screen.getByRole("button", { name: /Stop/ })).toBeInTheDocument();
   });
 
+  it("persists the queued message across a remount and hydrates it back (#197)", async () => {
+    const loadHistory = vi.fn().mockResolvedValue([]);
+    const { unmount } = render(
+      <ChatPane projectSlug="proj" isProjectChat initialSessionId="s1" loadHistory={loadHistory} />,
+    );
+    await screen.findByRole("button", { name: /^Send$/ });
+    // Put a turn in flight, then queue a follow-up.
+    await userEvent.type(box(), "first turn");
+    fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
+    act(() => sub().handlers.onResponse?.("…", { sessionId: "s1", jobId: "job-1" }));
+    await userEvent.type(box(), "remembered follow-up");
+    fireEvent.keyDown(box(), { key: "Enter" });
+    expect(screen.getByText("queued")).toBeInTheDocument();
+    // It's persisted under the session-keyed slot.
+    expect(localStorage.getItem("paddock:queued:s1")).toBe("remembered follow-up");
+
+    // Navigating away unmounts the pane — the queued message must NOT be lost.
+    unmount();
+    render(
+      <ChatPane projectSlug="proj" isProjectChat initialSessionId="s1" loadHistory={loadHistory} />,
+    );
+    // Re-opening the chat restores the queued toolbar + its text.
+    expect(await screen.findByText("queued")).toBeInTheDocument();
+    expect(screen.getByText("remembered follow-up")).toBeInTheDocument();
+  });
+
+  it("clears the persisted queued message once it flushes (#197)", async () => {
+    render(
+      <ChatPane projectSlug="proj" isProjectChat initialSessionId="s1" loadHistory={vi.fn().mockResolvedValue([])} />,
+    );
+    await screen.findByRole("button", { name: /^Send$/ });
+    await userEvent.type(box(), "first turn");
+    fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
+    act(() => sub().handlers.onResponse?.("…", { sessionId: "s1", jobId: "job-1" }));
+    await userEvent.type(box(), "flush me");
+    fireEvent.keyDown(box(), { key: "Enter" });
+    expect(localStorage.getItem("paddock:queued:s1")).toBe("flush me");
+    // Turn completes → queue auto-flushes → the persisted slot is forgotten.
+    act(() => sub().handlers.onComplete?.({ sessionId: "s1", jobId: "job-1", success: true }));
+    await waitFor(() => expect(localStorage.getItem("paddock:queued:s1")).toBeNull());
+  });
+
   it("appends to the queued message on re-submit (single slot)", async () => {
     render(<ChatPane projectSlug="proj" />);
     await startTurn();
