@@ -249,7 +249,11 @@ export class HerdctlService {
     // ensureProjectChats relocates this project's transcripts into <dir>/.chats
     // (migrating any existing real transcript dir) so the project is portable.
     for (const project of projects) {
-      await ensureProjectChats(project.dir);
+      // Symlink Claude's encoded transcript dir for the keeper's cwd (workingDir)
+      // at the .chats store in the metadata dir — so repo-backed transcripts stay
+      // out of the external checkout's working tree (issue #187). For a notebook
+      // project workingDir === dir, so this is the classic behavior.
+      await ensureProjectChats(project.workingDir, project.dir);
       await this.fleet.addAgent(this.keeperAgentConfig(project), { replace: true });
       await this.fleet.addAgent(this.sweeperAgentConfig(project), { replace: true });
       this.agentModels.set(keeperAgentName(project.slug), project.model ?? KEEPER_DEFAULT_MODEL);
@@ -294,7 +298,7 @@ export class HerdctlService {
    */
   async ensureProjectAgent(project: Project): Promise<void> {
     if (!this.fleet) return;
-    await ensureProjectChats(project.dir);
+    await ensureProjectChats(project.workingDir, project.dir);
     await this.fleet.addAgent(this.keeperAgentConfig(project), { replace: true });
     await this.fleet.addAgent(this.sweeperAgentConfig(project), { replace: true });
     // Record the keeper's resolved model so per-chat overrides can detect a
@@ -737,9 +741,12 @@ export class HerdctlService {
     // Rewrite ONLY the embedded `cwd` token. Claude Code writes compact JSON
     // (`"cwd":"/abs/path"` — no spaces, no escaping for a plain abs path), the
     // same assumption scripts/migrate-chat.sh relies on.
+    // Rewrite the embedded cwd to the project's KEEPER cwd. For a repo-backed
+    // project that's the nested checkout (workingDir), not the metadata dir, so a
+    // promoted scratch chat resumes in the right place (issue #187).
     const rewritten = raw
       .split(`"cwd":"${this.cfg.scratchDir}"`)
-      .join(`"cwd":"${project.dir}"`);
+      .join(`"cwd":"${project.workingDir}"`);
 
     await fs.mkdir(projectChatsDir(project.dir), { recursive: true });
     await fs.writeFile(toFile, rewritten, "utf8");
@@ -1026,7 +1033,10 @@ export class HerdctlService {
     const config: Record<string, unknown> & { name: string } = {
       name: keeperAgentName(project.slug),
       description: project.summary || `Keeper agent for project ${project.name}.`,
-      working_directory: project.dir,
+      // Repo-backed projects (issue #187): the keeper runs INSIDE the cloned
+      // checkout (project.workingDir), so the repo's own CLAUDE.md + git tooling
+      // apply. For a notebook project workingDir === dir, so this is unchanged.
+      working_directory: project.workingDir,
       // Explicit CLI runtime (Max plan) — see the scratch agent note: the fleet
       // `defaults.runtime` is dropped by the core config loader, so set it here.
       runtime: "cli",

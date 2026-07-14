@@ -35,17 +35,28 @@ export function projectChatsDir(projectDir: string): string {
 }
 
 /**
- * Ensure `<projectDir>/.chats/` exists and that Claude Code's encoded transcript
- * path is a symlink pointing at it (migrating an existing real transcript dir in
- * the process). Safe to call on every agent registration. Never throws — a
- * failure here must not block agent registration or chat.
+ * Ensure `<chatsHostDir>/.chats/` exists and that Claude Code's encoded
+ * transcript path for `workingDir` is a symlink pointing at it (migrating an
+ * existing real transcript dir in the process). Safe to call on every agent
+ * registration. Never throws — a failure here must not block agent registration
+ * or chat.
+ *
+ * `workingDir` is the agent's cwd (which Claude encodes into the transcript dir
+ * name); `chatsHostDir` is where the `.chats/` store actually lives. For a
+ * notebook project these are the same dir (the default). For a REPO-BACKED
+ * project (issue #187) the keeper's cwd is the nested checkout but the `.chats/`
+ * store stays in the project's metadata dir (the data repo) — so transcripts
+ * never pollute the external repo's working tree — hence the two are split.
  */
-export async function ensureProjectChats(projectDir: string): Promise<void> {
+export async function ensureProjectChats(
+  workingDir: string,
+  chatsHostDir: string = workingDir,
+): Promise<void> {
   try {
-    const chatsDir = projectChatsDir(projectDir);
+    const chatsDir = projectChatsDir(chatsHostDir);
     await fs.mkdir(chatsDir, { recursive: true });
 
-    const encoded = path.join(claudeHome(), "projects", encodeProjectDir(projectDir));
+    const encoded = path.join(claudeHome(), "projects", encodeProjectDir(workingDir));
     await fs.mkdir(path.dirname(encoded), { recursive: true });
 
     const st = await fs.lstat(encoded).catch(() => null);

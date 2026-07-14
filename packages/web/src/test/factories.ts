@@ -16,6 +16,8 @@ export function makeProject(over: Partial<Project> = {}): Project {
     summary: "",
     links: [],
     dir: `/data/projects/${slug}`,
+    workingDir: `/data/projects/${slug}`,
+    repoBacked: false,
     hasOverview: false,
     pinned: [],
     model: "claude-opus-4-8",

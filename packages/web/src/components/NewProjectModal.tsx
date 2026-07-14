@@ -20,6 +20,7 @@ export function NewProjectModal({
   const [domain, setDomain] = useState("");
   const [group, setGroup] = useState("");
   const [status, setStatus] = useState<ProjectStatus>("active");
+  const [repo, setRepo] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -31,6 +32,7 @@ export function NewProjectModal({
       setDomain("");
       setGroup("");
       setStatus("active");
+      setRepo("");
       setError(null);
     }
     const onKey = (e: KeyboardEvent) => {
@@ -53,6 +55,7 @@ export function NewProjectModal({
         status,
         group: group || undefined,
         summary: summary.trim() || undefined,
+        repo: repo.trim() || undefined,
         domain: domain
           .split(",")
           .map((d) => d.trim())
@@ -119,6 +122,21 @@ export function NewProjectModal({
               </option>
             ))}
           </select>
+        </label>
+
+        <label className="mb-4 block">
+          <span className="field-label">Git repository URL (optional)</span>
+          <input
+            className="input"
+            value={repo}
+            onChange={(e) => setRepo(e.target.value)}
+            placeholder="https://github.com/owner/repo.git"
+          />
+          <span className="mt-1 block text-xs text-paddock-400 dark:text-paddock-500">
+            Link an external repo and Paddock clones it as the project's working
+            directory — the repo's own CLAUDE.md, branches &amp; PR flow apply. Leave
+            blank for a notebook project.
+          </span>
         </label>
 
         <div className="mb-5 grid grid-cols-2 gap-3">

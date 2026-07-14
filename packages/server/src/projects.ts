@@ -23,6 +23,7 @@ import {
   KEEPER_DEFAULT_MAX_TURNS,
   KEEPER_DEFAULT_DOCKER,
 } from "./models.js";
+import { cloneRepo } from "./git.js";
 
 /** project.yaml status enum (matches the documented standard). */
 export type ProjectStatus =
@@ -153,6 +154,16 @@ export interface ProjectYaml {
    * (`PADDOCK_KEEPER_DRIVE_MODE`, else KEEPER_DEFAULT_DRIVE_MODE).
    */
   driveMode?: string;
+  /**
+   * External git repo URL that backs this project (issue #187). When present the
+   * project is REPO-BACKED: Paddock clones the repo into a nested `.gitignore`d
+   * checkout under the project dir and the keeper's working directory is that
+   * checkout (so the repo's OWN `CLAUDE.md`, git history, branches and PR flow
+   * work natively). Absent ⇒ a NOTEBOOK project (the classic type: cwd = the
+   * project dir in the instance data repo). Set at creation; immutable thereafter
+   * (like `slug`/`started`).
+   */
+  repo?: string;
 }
 
 /** API-facing project DTO (adds derived fields). */
@@ -160,8 +171,23 @@ export interface Project extends ProjectYaml {
   /** The project's area — ALWAYS concrete in the DTO (`yaml.group ?? ""`). An
    *  empty string means "Unsorted". */
   group: string;
-  /** Absolute path to the project directory (the keeper agent's cwd). */
+  /**
+   * Absolute path to the project's METADATA directory — the per-slug dir in the
+   * instance data repo that holds `project.yaml`, `OVERVIEW.md`, `CHANGELOG.md`,
+   * `.chats/`, and (for a notebook project) `CLAUDE.md`. For a NOTEBOOK project
+   * this is also the keeper's cwd; for a REPO-BACKED project the cwd is
+   * {@link workingDir} (the nested checkout) instead — see #187.
+   */
   dir: string;
+  /**
+   * The keeper agent's working directory (cwd). For a notebook project this
+   * equals {@link dir}; for a repo-backed project it's the nested checkout
+   * (`<dir>/<repo-name>`), so the repo's own `CLAUDE.md` + git tooling apply
+   * (issue #187). Always concrete in the DTO.
+   */
+  workingDir: string;
+  /** Whether this project is backed by an external git repo (issue #187). */
+  repoBacked: boolean;
   /** Alias of `started` for callers that think in "created". */
   created: string;
   /** Whether OVERVIEW.md exists in the project dir (sweep-curated context). */
@@ -190,6 +216,13 @@ export interface CreateProjectInput {
   visibility?: ProjectVisibility;
   summary?: string;
   links?: ProjectLink[];
+  /**
+   * External git repo URL to back this project (issue #187). When set, the
+   * project is created as REPO-BACKED: the repo is cloned into a nested
+   * `.gitignore`d checkout and the keeper's cwd becomes that checkout. Absent ⇒
+   * a notebook project (the classic type).
+   */
+  repo?: string;
 }
 
 /** Partial metadata update (slug + started are immutable). */
@@ -227,6 +260,50 @@ const CLAUDE_FILE = "CLAUDE.md";
 const CLAUDE_CURATED_HEADING = "## Curated notes";
 
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+/**
+ * Accepted repo-URL shapes for a repo-backed project (issue #187): https(s),
+ * ssh (`git@host:owner/repo`), git://, and a local `file://` or absolute path
+ * (the last two make deterministic tests possible without a network). Anything
+ * else is rejected up front so a bad value never reaches `git clone`.
+ */
+const REPO_URL_RE =
+  /^(?:https?:\/\/|git:\/\/|ssh:\/\/|file:\/\/|\/|git@[^\s]+:).+/i;
+
+/** Validate a candidate repo URL (issue #187). */
+export function isValidRepoUrl(url: string): boolean {
+  const u = url.trim();
+  return u.length > 0 && u.length <= 512 && REPO_URL_RE.test(u);
+}
+
+/**
+ * Derive the checkout directory NAME for a repo-backed project from its repo URL
+ * (issue #187) — the repo's own basename, sans a trailing `.git`, sanitised to a
+ * filesystem-safe token. The keeper's cwd becomes `<projectDir>/<thisName>`, so
+ * the cwd basename reads like the repo (e.g. `paddock`). Deterministic (same URL
+ * ⇒ same name), which is why `repo` is immutable once set.
+ */
+export function repoCheckoutName(repo: string): string {
+  const cleaned = repo
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\.git$/i, "");
+  const base = cleaned.split(/[/:]/).pop() ?? "";
+  const safe = base.replace(/[^A-Za-z0-9._-]/g, "-").replace(/^[-.]+|[-.]+$/g, "");
+  return safe || "repo";
+}
+
+/**
+ * Resolve a project's working directory (keeper cwd) from its metadata dir + repo
+ * URL: the nested checkout for a repo-backed project, else the metadata dir
+ * itself for a notebook project (issue #187).
+ */
+export function workingDirFor(dir: string, repo?: string): string {
+  return repo ? path.join(dir, repoCheckoutName(repo)) : dir;
+}
+
+/** Filename of the sidecar `.gitignore` that keeps a nested checkout out of the data repo. */
+const GITIGNORE_FILE = ".gitignore";
 
 export class ProjectError extends Error {
   constructor(
@@ -345,6 +422,13 @@ export class ProjectStore {
       throw new ProjectError(`Project already exists: ${slug}`, "exists");
     }
 
+    // Repo-backed project (issue #187): validate the URL up front so a bad value
+    // never reaches `git clone` and the project isn't half-created.
+    const repo = input.repo?.trim() || undefined;
+    if (repo && !isValidRepoUrl(repo)) {
+      throw new ProjectError(`Invalid repo URL: ${repo}`, "invalid");
+    }
+
     const now = today();
     const yaml: ProjectYaml = {
       name,
@@ -360,10 +444,38 @@ export class ProjectStore {
       summary: input.summary ?? "",
       links: input.links ?? [],
       pinned: [],
+      // Carry `repo` only when repo-backed (same round-trip discipline as model).
+      ...(repo ? { repo } : {}),
     };
 
     const dir = this.dirFor(slug);
     await fs.mkdir(dir, { recursive: true });
+
+    // For a repo-backed project, clone the external repo into the nested checkout
+    // BEFORE writing any metadata, so a clone failure rolls the whole thing back
+    // (rm the freshly-made dir) rather than leaving a broken project.yaml behind.
+    if (repo) {
+      const checkoutName = repoCheckoutName(repo);
+      const checkoutDir = path.join(dir, checkoutName);
+      try {
+        await cloneRepo(repo, checkoutDir);
+      } catch (err) {
+        await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+        throw new ProjectError(
+          err instanceof Error ? err.message : `Failed to clone ${repo}`,
+          "invalid",
+        );
+      }
+      // Keep the nested checkout (a full git repo) OUT of the instance data repo:
+      // a sidecar `.gitignore` ignores the checkout dir (git-in-git per #187's
+      // option A). `.chats/` (our transcript store) is likewise data-repo noise.
+      await fs.writeFile(
+        path.join(dir, GITIGNORE_FILE),
+        [`# Repo-backed project checkout (issue #187) — not tracked by the data repo.`, `/${checkoutName}/`, `/.chats/`, ""].join("\n"),
+        "utf8",
+      );
+    }
+
     await this.writeYaml(slug, yaml);
     await fs.writeFile(
       path.join(dir, CHANGELOG_FILE),
@@ -381,15 +493,17 @@ export class ProjectStore {
       "utf8",
     );
 
-    // Seed a minimal per-project CLAUDE.md (issue #177) so there is always a
-    // durable-identity file for Claude Code to load natively (paired with #176)
-    // and for the sweeper to amend. Human-authored content is preserved; the
-    // sweeper only appends new durable facts under the "Curated notes" heading.
-    await fs.writeFile(
-      path.join(dir, CLAUDE_FILE),
-      claudeTemplate(name, yaml.summary),
-      "utf8",
-    );
+    // Seed a minimal per-project CLAUDE.md (issue #177) — but ONLY for a NOTEBOOK
+    // project. A repo-backed project defers to the repo's OWN CLAUDE.md (loaded
+    // natively via the cwd walk-up from the checkout); the sweeper must never
+    // touch that upstream-owned file, so we don't seed a competing one (#187).
+    if (!repo) {
+      await fs.writeFile(
+        path.join(dir, CLAUDE_FILE),
+        claudeTemplate(name, yaml.summary),
+        "utf8",
+      );
+    }
 
     // No OVERVIEW.md at creation — the first sweep writes it.
     return this.toDto(dir, yaml, false);
@@ -720,6 +834,9 @@ export class ProjectStore {
       // (`project.driveMode ?? cfg.keeperDriveMode`), NOT here, so the env-level
       // global can still take effect for projects that don't override it.
       ...(typeof p.driveMode === "string" ? { driveMode: p.driveMode } : {}),
+      // repo (issue #187): carried only when present — its presence is what marks
+      // the project repo-backed and drives the workingDir resolution in toDto.
+      ...(typeof p.repo === "string" && p.repo.trim() ? { repo: p.repo.trim() } : {}),
     };
   }
 
@@ -745,14 +862,28 @@ export class ProjectStore {
       maxTurns: yaml.maxTurns ?? KEEPER_DEFAULT_MAX_TURNS,
       docker: yaml.docker ?? KEEPER_DEFAULT_DOCKER,
       dir,
+      // Repo-backed (#187): the keeper's cwd is the nested checkout; a notebook's
+      // cwd is the metadata dir itself. `repoBacked` is the presence of `repo`.
+      workingDir: workingDirFor(dir, yaml.repo),
+      repoBacked: Boolean(yaml.repo),
       created: yaml.started,
       hasOverview,
     };
   }
 
   private stripDto(p: Project): ProjectYaml {
-    const { dir: _dir, created: _created, hasOverview: _hasOverview, group, ...rest } = p;
+    const {
+      dir: _dir,
+      workingDir: _workingDir,
+      repoBacked: _repoBacked,
+      created: _created,
+      hasOverview: _hasOverview,
+      group,
+      ...rest
+    } = p;
     void _dir;
+    void _workingDir;
+    void _repoBacked;
     void _created;
     void _hasOverview;
     // Keep an empty area off the yaml so it isn't persisted as `group: ""`.

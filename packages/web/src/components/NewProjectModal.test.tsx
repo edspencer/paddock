@@ -74,6 +74,28 @@ describe("NewProjectModal", () => {
     expect(payload.domain).toEqual([]);
   });
 
+  it("includes the git repo URL in the payload when provided (issue #187)", async () => {
+    render(<NewProjectModal open onClose={() => {}} onCreated={() => {}} />);
+    await userEvent.type(screen.getByPlaceholderText(/Garage Water Heater/i), "Repo Proj");
+    await userEvent.type(
+      screen.getByPlaceholderText(/github\.com\/owner\/repo/i),
+      "  https://github.com/owner/repo.git  ",
+    );
+    fireEvent.click(screen.getByRole("button", { name: /create project/i }));
+    await waitFor(() => expect(createProject).toHaveBeenCalled());
+    const payload = createProject.mock.calls[0][0] as Record<string, unknown>;
+    expect(payload.repo).toBe("https://github.com/owner/repo.git");
+  });
+
+  it("omits repo when the URL field is left blank (notebook project)", async () => {
+    render(<NewProjectModal open onClose={() => {}} onCreated={() => {}} />);
+    await userEvent.type(screen.getByPlaceholderText(/Garage Water Heater/i), "Notebook");
+    fireEvent.click(screen.getByRole("button", { name: /create project/i }));
+    await waitFor(() => expect(createProject).toHaveBeenCalled());
+    const payload = createProject.mock.calls[0][0] as Record<string, unknown>;
+    expect(payload.repo).toBeUndefined();
+  });
+
   it("surfaces an API error and stays open", async () => {
     const { ApiError } = await vi.importActual<typeof import("../lib/api")>("../lib/api");
     createProject.mockRejectedValueOnce(new ApiError("Project already exists: bare", 409));

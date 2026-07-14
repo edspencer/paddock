@@ -17,6 +17,32 @@ import { promisify } from "node:util";
 
 const run = promisify(execFile);
 
+/**
+ * Clone an external git repo into `dest` — the checkout that becomes a
+ * repo-backed project's working directory (issue #187). Shells out to the `git`
+ * binary via execFile (arg array, no shell → no injection surface), the same
+ * discipline as {@link GitService}.
+ *
+ * `--depth 1` keeps the initial clone fast and small; the keeper can always
+ * `git fetch --unshallow` later if it needs full history. Credentials are the
+ * ambient git environment's job (a public URL needs none; a private repo needs a
+ * box-level credential helper / token — per-project scoped credentials are a
+ * documented #187 follow-up). Throws with git's stderr on failure so the caller
+ * can surface a clean error and roll back the half-created project.
+ */
+export async function cloneRepo(url: string, dest: string): Promise<void> {
+  try {
+    await run("git", ["clone", "--depth", "1", "--", url, dest], {
+      maxBuffer: MAX_BUFFER,
+      // Never let git prompt for credentials on a private URL — fail fast so the
+      // create request returns an error instead of hanging the server.
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    });
+  } catch (err) {
+    throw new Error(`git clone failed: ${errText(err)}`);
+  }
+}
+
 /** A single changed path within a project (porcelain v1 semantics). */
 export interface GitFileChange {
   /** Path relative to the project directory. */
