@@ -23,8 +23,9 @@ const run = promisify(execFile);
  * binary via execFile (arg array, no shell → no injection surface), the same
  * discipline as {@link GitService}.
  *
- * `--depth 1` keeps the initial clone fast and small; the keeper can always
- * `git fetch --unshallow` later if it needs full history. Credentials are the
+ * A FULL clone (not `--depth 1`): a repo-backed project is where you *do
+ * engineering*, so the keeper wants real history — `git log`, blame, bisect, and
+ * a non-shallow base for branches/PRs — from the start. Credentials are the
  * ambient git environment's job (a public URL needs none; a private repo needs a
  * box-level credential helper / token — per-project scoped credentials are a
  * documented #187 follow-up). Throws with git's stderr on failure so the caller
@@ -32,7 +33,7 @@ const run = promisify(execFile);
  */
 export async function cloneRepo(url: string, dest: string): Promise<void> {
   try {
-    await run("git", ["clone", "--depth", "1", "--", url, dest], {
+    await run("git", ["clone", "--", url, dest], {
       maxBuffer: MAX_BUFFER,
       // Never let git prompt for credentials on a private URL — fail fast so the
       // create request returns an error instead of hanging the server.
