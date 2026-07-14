@@ -257,6 +257,11 @@ export function ChatPane({
   // Session id is kept in a ref (the WS sub needs the latest without re-subscribing).
   const sessionRef = useRef<string | null>(initialSessionId ?? null);
   const jobRef = useRef<string | null>(null);
+  // Set true when the user hits Stop during the "pre-arm" window — the turn is
+  // already streaming (Stop is showing) but the server hasn't round-tripped the
+  // jobId yet, so there's nothing to cancel. `armJob` fires this deferred cancel
+  // the instant the jobId arrives, so Stop isn't a silent no-op there (#196).
+  const pendingCancelRef = useRef(false);
 
   // Lazy-loader for sub-agent nested steps (issue #37). Bound to this chat's slug
   // + current session; the sessionRef read defers to click time so it's correct
@@ -548,16 +553,26 @@ export function ChatPane({
         onSessionStarted?.(id);
       }
     };
+    // Record the turn's now-known jobId. If the user already hit Stop during the
+    // pre-arm window (`pendingCancelRef`), fire the deferred cancel right now —
+    // otherwise that earlier click would have been a silent no-op (#196).
+    const armJob = (id: string) => {
+      jobRef.current = id;
+      if (pendingCancelRef.current) {
+        pendingCancelRef.current = false;
+        chatClient.cancel(id);
+      }
+    };
     const sub = chatClient.subscribe(projectSlug, sessionRef.current, {
       onResponse: (chunk, meta) => {
         if (!framesBelong(meta)) return;
-        if (meta.jobId) jobRef.current = meta.jobId;
+        if (meta.jobId) armJob(meta.jobId);
         if (meta.sessionId) adoptSession(meta.sessionId);
         appendAssistantText(setTurns, chunk);
       },
       onToolCall: (tc, meta) => {
         if (!framesBelong(meta)) return;
-        if (meta.jobId) jobRef.current = meta.jobId;
+        if (meta.jobId) armJob(meta.jobId);
         if (meta.sessionId) adoptSession(meta.sessionId);
         // Seal the streaming text bubble before appending the row, so its caret
         // clears the instant the tool call begins. Otherwise the bubble is no
@@ -572,14 +587,14 @@ export function ChatPane({
       },
       onMessageBoundary: (meta) => {
         if (!framesBelong(meta)) return;
-        if (meta.jobId) jobRef.current = meta.jobId;
+        if (meta.jobId) armJob(meta.jobId);
         // Seal the current streaming bubble so the next assistant message
         // renders as a separate turn.
         setTurns((prev) => sealStreaming(prev));
       },
       onComplete: (meta) => {
         if (!framesBelong(meta)) return;
-        if (meta.jobId) jobRef.current = meta.jobId;
+        if (meta.jobId) armJob(meta.jobId);
         streamingRef.current = false;
         setStreaming(false);
         setTurns((prev) => sealStreaming(prev));
@@ -662,7 +677,7 @@ export function ChatPane({
         // navigated back to a still-streaming chat this restores the Stop button
         // and the job id needed to cancel — state a remount would otherwise lose.
         if (running) {
-          if (jobId) jobRef.current = jobId;
+          if (jobId) armJob(jobId);
           streamingRef.current = true;
           setStreaming(true);
         } else {
@@ -672,6 +687,7 @@ export function ChatPane({
           jobRef.current = null;
           setTurns((prev) => sealStreaming(prev));
           cancelledRef.current = false;
+          pendingCancelRef.current = false;
         }
       },
     });
@@ -698,6 +714,13 @@ export function ChatPane({
       if (composerRef.current) composerRef.current.style.height = "auto";
       setStreaming(true);
       streamingRef.current = true;
+      // Each turn starts with an unknown jobId. Null it (and any stale deferred
+      // cancel) so a Stop in the pre-arm window is detected as "no job yet" and
+      // takes the deferred-cancel path — rather than firing chat:cancel against
+      // the PREVIOUS turn's already-finished jobId, which the server no-ops,
+      // leaving the new turn running (#196).
+      jobRef.current = null;
+      pendingCancelRef.current = false;
       // A brand-new chat won't know its session id until the first frame arrives;
       // flag that we're awaiting it so those frames are accepted as ours.
       if (sessionRef.current === null) awaitingSessionRef.current = true;
@@ -793,7 +816,16 @@ export function ChatPane({
     // as cancelled so its completion does NOT flush the queue (#91: hold rather
     // than fire a follow-up into a stopped turn).
     cancelledRef.current = true;
-    if (jobRef.current) chatClient.cancel(jobRef.current);
+    if (jobRef.current) {
+      chatClient.cancel(jobRef.current);
+    } else {
+      // Pre-arm window (#196): the turn is streaming (Stop is showing) but the
+      // server hasn't round-tripped the jobId yet, so there's nothing to cancel
+      // *yet*. Defer it — armJob() fires the cancel the moment the jobId arrives,
+      // so Stop isn't a silent no-op during the (sometimes multi-second) window
+      // before the first frame / chat:active carries the id.
+      pendingCancelRef.current = true;
+    }
   }, []);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {

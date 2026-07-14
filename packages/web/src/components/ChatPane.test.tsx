@@ -314,6 +314,39 @@ describe("ChatPane: cancel + errors", () => {
     expect(cancels).toEqual(["job-42"]);
   });
 
+  it("Stop in the pre-arm window defers the cancel, then fires it when the jobId arrives (#196)", async () => {
+    render(<ChatPane projectSlug="proj" />);
+    await screen.findByRole("button", { name: /^Send$/ });
+    await userEvent.type(screen.getByPlaceholderText(/Message the keeper agent/i), "go");
+    fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
+    // Pre-arm window: the turn is streaming (Stop shows) but no frame has carried
+    // a jobId yet. Clicking Stop must NOT silently no-op...
+    fireEvent.click(screen.getByRole("button", { name: /Stop/ }));
+    expect(cancels).toEqual([]);
+    // ...it defers, and fires the instant the jobId lands (here via chat:active).
+    act(() => sub().handlers.onActive?.({ running: true, jobId: "job-late" }));
+    expect(cancels).toEqual(["job-late"]);
+  });
+
+  it("Stop in a 2nd turn's pre-arm window cancels the new job, not the previous turn's stale id (#196)", async () => {
+    render(<ChatPane projectSlug="proj" />);
+    await screen.findByRole("button", { name: /^Send$/ });
+    // Turn 1: send, arm job-1, complete.
+    await userEvent.type(screen.getByPlaceholderText(/Message the keeper agent/i), "one");
+    fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
+    act(() => sub().handlers.onResponse?.("…", { sessionId: "s", jobId: "job-1" }));
+    act(() => sub().handlers.onComplete?.({ sessionId: "s", jobId: "job-1", success: true }));
+    await screen.findByRole("button", { name: /^Send$/ });
+    // Turn 2: send, then Stop before any frame carries the new jobId. The stale
+    // job-1 must NOT be cancelled; the deferred cancel resolves to job-2.
+    await userEvent.type(screen.getByPlaceholderText(/Message the keeper agent/i), "two");
+    fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Stop/ }));
+    expect(cancels).toEqual([]);
+    act(() => sub().handlers.onResponse?.("…", { sessionId: "s", jobId: "job-2" }));
+    expect(cancels).toEqual(["job-2"]);
+  });
+
   it("renders a streamed error and re-enables Send", async () => {
     render(<ChatPane projectSlug="proj" />);
     await screen.findByRole("button", { name: /^Send$/ });
