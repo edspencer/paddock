@@ -1,25 +1,170 @@
-# Paddock
+<h1 align="center">🐎 Paddock</h1>
 
-A **project-first launchpad** built on [herdctl](https://github.com/edspencer/herdctl).
-Projects are first-class; one-off chats are secondary. Server-hosted, persistent
-Claude Code sessions organized by project — a web replacement for laptop Zellij tabs.
+<p align="center">
+  <strong>Your Claude Code agents, hosted and organized by project.</strong><br/>
+  Persistent, resumable Claude Code sessions with a web UI — from your desk or your phone.
+</p>
 
-A **project** is just a directory containing a `project.yaml` (name, slug, status,
-domain tags, visibility, summary), a `CHANGELOG.md`, and freeform files. Each
-project gets a herdctl **keeper agent** whose working directory is the project
-dir; the chats you see in the UI are that agent's Claude Code sessions, persisted
-and resumable. One-off chats use a shared scratch agent and can be promoted into
-a project (keeping their history).
+<p align="center">
+  <a href="https://github.com/edspencer/paddock/actions/workflows/ci.yml"><img src="https://github.com/edspencer/paddock/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/edspencer/paddock/releases"><img src="https://img.shields.io/github/v/release/edspencer/paddock?sort=semver" alt="Latest release"></a>
+  <a href="https://github.com/edspencer/paddock/pkgs/container/paddock"><img src="https://img.shields.io/badge/ghcr.io-edspencer%2Fpaddock-2496ED?logo=docker&logoColor=white" alt="Docker image"></a>
+  <a href="https://github.com/edspencer/herdctl"><img src="https://img.shields.io/badge/built%20on-herdctl-c2603c" alt="Built on herdctl"></a>
+</p>
 
-The web UI is responsive — the same launchpad works from a phone.
+<p align="center">
+  <a href="#quickstart">Quickstart</a> •
+  <a href="#configuration">Configuration</a> •
+  <a href="#how-it-works">How it works</a> •
+  <a href="https://github.com/edspencer/herdctl">herdctl</a> •
+  <a href="https://github.com/edspencer/paddock/issues">Issues</a>
+</p>
 
-## Layout
+---
 
-- `packages/server` — Fastify + WebSocket backend; wraps `@herdctl/core` FleetManager + a Project layer (`ProjectStore`). Serves the built SPA in production.
+<p align="center">
+  <img src="docs/demo/paddock-demo.gif" width="760" alt="Paddock — the real dev stack, a project's chats, and a keeper streaming live tool calls">
+</p>
+
+## Why Paddock
+
+**Paddock** is a project-first launchpad for [herdctl](https://github.com/edspencer/herdctl).
+It turns Claude Code into something you run on a server and reach from a browser:
+long-lived agents, one per project, whose chats persist and resume — instead of a
+laptop full of terminal tabs you can't get back to from your phone.
+
+A **project** is just a directory. Each one gets a herdctl **keeper agent** whose
+working directory *is* that project, and the chats you see in the UI are that
+agent's Claude Code sessions — persisted on disk and resumable across reloads,
+reconnects, and devices. There are two kinds:
+
+- **Notebook** — a directory in your data repo for planning, notes, and light work.
+- **Repo-backed** — an external git repo cloned as the keeper's working directory,
+  so the repo's own `CLAUDE.md`, branches, and PR flow apply. The natural unit for
+  doing real engineering.
+
+One-off "scratch" chats work too, and can be promoted into a project (keeping their
+history). The whole UI is responsive — the same launchpad works from a phone.
+
+## Highlights
+
+- 🗂️ **Project-first** — every project has its own keeper agent, files, and changelog
+- 💬 **Persistent, resumable chats** — server-hosted sessions survive reloads, reconnects, and devices
+- 🔧 **Real tool use, streamed live** — file writes, commands, and subagents render as they run
+- 📁 **Files & Changes** — browse rendered project files and review the agent's work as git diffs
+- 🧩 **Two project types** — notebook (data-repo subdir) or repo-backed (clone an external repo as cwd)
+- 📱 **Works from your phone** — the same launchpad, fully responsive
+- 🔀 **Chat ergonomics** — fork, queue-while-streaming, stop, search, and archive
+- 🎛️ **Per-project settings** — model (Fable 5 / Opus 4.8 / Sonnet 5 / Haiku 4.5), permission mode, and more
+- 📈 **Token & cost tracking** — per-chat context meter and estimated API cost, live
+- 🎙️ **Voice dictation & slash commands** — mic-to-text in the composer, `/`-autocomplete for skills
+- 🔌 **Built on herdctl** — anything the fleet engine can do, Paddock can wire in
+
+## Quickstart
+
+Run the published image, point it at a data volume, and give it a Claude token:
+
+```bash
+docker run -d --name paddock -p 4000:4000 \
+  -e CLAUDE_CODE_OAUTH_TOKEN=…       `# Max plan (CLI runtime)` \
+  -e PADDOCK_DATA_DIR=/data \
+  -v paddock-data:/data \
+  ghcr.io/edspencer/paddock:latest
+```
+
+Then open **http://localhost:4000** and click **New Project**.
+
+<details>
+<summary>docker-compose</summary>
+
+```yaml
+services:
+  paddock:
+    image: ghcr.io/edspencer/paddock:latest
+    ports:
+      - "4000:4000"
+    environment:
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN} # or ANTHROPIC_API_KEY for the SDK runtime
+      PADDOCK_DATA_DIR: /data
+    volumes:
+      - paddock-data:/data
+volumes:
+  paddock-data:
+```
+</details>
+
+> Paddock has **no login of its own** — run it behind a reverse proxy / auth layer
+> you trust (see [AUTH.md](AUTH.md)). It reads credentials from the environment and
+> from files the host provides; it never stores secrets itself.
+
+## A tour
+
+_These are real screenshots — Paddock is dogfooded on its own dev stack: **Paddock**, **herdctl** (the engine underneath it), and **Warren** (an agentic PR reviewer) all live here as projects that build one another._
+
+**Every project gets a keeper agent, organized on one page.**
+
+<p align="center"><img src="docs/demo/grid.png" width="720" alt="Projects grid — Paddock, herdctl, Warren, and more, each a project with its own keeper agent"></p>
+
+**Each project keeps dozens of persistent, resumable chats — searchable, forkable, archivable.**
+
+<p align="center"><img src="docs/demo/chat-list.png" width="720" alt="A project's chat list with dozens of real, resumable chats"></p>
+
+**Chat with the keeper — real tool calls and subagents stream in, with a live context + cost meter.**
+
+<p align="center"><img src="docs/demo/chat-tools.png" width="720" alt="A keeper chat with Read and Grep tool blocks and a context/cost meter"></p>
+
+**Built for real, long-running work** — persistent sessions track their own context window and estimated cost as they grow (this one's 42% of a 1M-token window):
+
+<p align="center"><img src="docs/demo/chat-scale.png" width="720" alt="A long keeper session showing a 42% context-window fill and running API cost"></p>
+
+<table>
+<tr>
+<td width="50%"><b>Repo-backed projects</b><br/>Clone an external repo as the keeper's working directory — its own <code>CLAUDE.md</code>, branches, and PR flow apply.<br/><br/><img src="docs/demo/repo-backed.png" alt="New Project modal with a Git repository URL field"></td>
+<td width="50%"><b>Rendered project files</b><br/>Markdown, Mermaid, code, images, PDF and video render inline; pin files as tabs.<br/><br/><img src="docs/demo/files.png" alt="A markdown file rendered in the Files tab"></td>
+</tr>
+<tr>
+<td width="50%"><b>Slash-command autocomplete</b><br/>Type <code>/</code> to discover and run the agent's skills.<br/><br/><img src="docs/demo/slash-commands.png" alt="Slash-command autocomplete menu"></td>
+<td width="50%"><b>Per-project settings</b><br/>Identity, model, permission mode, links, and keeper config — deep-linkable.<br/><br/><img src="docs/demo/settings.png" alt="The per-project Settings tab"></td>
+</tr>
+</table>
+
+<p align="center"><i>…and it all works from your phone.</i></p>
+<p align="center"><img src="docs/demo/mobile.png" width="300" alt="Paddock running on a phone-sized screen"></p>
+
+## Configuration
+
+Configuration is environment-only — no config files.
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `PORT` | `4000` | HTTP/WS port |
+| `HOST` | `0.0.0.0` | Bind address |
+| `PADDOCK_DATA_DIR` | `./data` | Data root — holds `projects/`, `scratch/`, `.herdctl/` state, the generated `herdctl.yaml`. Setting this cascades all derived paths. |
+| `CLAUDE_CODE_OAUTH_TOKEN` | — | Claude auth for the **CLI** runtime (Max plan). |
+| `ANTHROPIC_API_KEY` | — | Claude auth for the **SDK** runtime (API pricing). |
+
+Authentication modes (`none` / `trusted-header` / `jwt`) and secret handling
+(GitHub tokens, SSH keys, per-platform mapping) are documented in **[AUTH.md](AUTH.md)**.
+
+### Multiple instances
+
+Paddock is one process per data root + port. To run several (e.g. one per area —
+open-source / house / homelab), start one process each with its own
+`PADDOCK_DATA_DIR` and `PORT`, and front them with a reverse proxy that maps a
+hostname to each port. Nothing is shared between instances except the host.
+
+## How it works
+
+Paddock is a thin project layer over the public `@herdctl/core` FleetManager. It
+wires **projects**, **chats**, and a **git backing store** on top; anything the
+herdctl CLI/dashboard can do, the library can too.
+
+- `packages/server` — Fastify + WebSocket backend; wraps the FleetManager + a
+  Project layer (`ProjectStore`). Serves the built SPA in production.
 - `packages/web` — React + Vite + Tailwind project-first SPA.
-- `docs/INTEGRATION.md` — the public `@herdctl/core` API contract paddock depends on.
+- `docs/INTEGRATION.md` — the exact public `@herdctl/core` API contract Paddock depends on.
 
-## Develop
+## Development
 
 ```bash
 npm install                 # install all workspaces
@@ -30,87 +175,14 @@ npm run test:e2e            # Playwright journeys (incl. mobile) against the rea
 
 # Run locally (two terminals):
 npm run dev                 # server on :4000 (API + WS)
-npm run dev:web             # Vite dev server on :5173, proxies /api + /ws to :4000
+npm run dev:web             # Vite dev server, proxies /api + /ws to :4000
 ```
 
-The e2e suite drives the **real** server, FleetManager, and CLI runtime; only the
-LLM is swapped for a fake `claude` binary on PATH (zero Anthropic calls). Opt into
-a real-Claude run with `npm run test:e2e:live` (`PADDOCK_TEST_LIVE=1`).
+The E2E suite drives the **real** server, FleetManager, and CLI runtime; only the
+LLM is swapped for a fake `claude` on PATH (zero Anthropic calls). Opt into a
+real-Claude run with `npm run test:e2e:live` (`PADDOCK_TEST_LIVE=1`). More detail
+in **[DEV.md](DEV.md)** and **[docs/TESTING.md](docs/TESTING.md)**.
 
-## Run it
+## License
 
-In production, `npm run build` then `npm run start` serves the API, the WS chat
-transport, and the built SPA from one process. Configuration is environment-only:
-
-| Var | Default | Purpose |
-|-----|---------|---------|
-| `PORT` | `4000` | HTTP/WS port |
-| `HOST` | `0.0.0.0` | Bind address |
-| `PADDOCK_DATA_DIR` | `./data` | Data root — holds `projects/`, `scratch/`, `.herdctl/` state, the generated `herdctl.yaml`. Setting this cascades all derived paths. |
-| `CLAUDE_CODE_OAUTH_TOKEN` | — | Claude auth for the **CLI** runtime (Max plan). |
-| `ANTHROPIC_API_KEY` | — | Claude auth for the **SDK** runtime (API pricing). |
-
-### Multiple instances
-
-Paddock is one process per data root + port. To run several (e.g. one per area —
-open-source / house / homelab), start one process each with its own
-`PADDOCK_DATA_DIR` and `PORT`, and front them with a reverse proxy that maps a
-hostname to each port. Nothing is shared between instances except the host.
-
-## Credentials & secrets
-
-**Paddock does not implement a secret store. It reads credentials from the
-environment and from files the host has placed for it** — so bring whatever you
-already use (env vars, Docker secrets, Kubernetes Secrets, a mounted SSH key) and
-point Paddock at it. Nothing below is Paddock-specific machinery; it's the
-platform's existing mechanism.
-
-**Claude auth** — `CLAUDE_CODE_OAUTH_TOKEN` (Max) or `ANTHROPIC_API_KEY` (API),
-supplied as an environment variable. Never commit it.
-
-**GitHub — backing a project's data (recommended).** A Paddock data dir's
-`projects/` folder can be a git repo that auto-commits and pushes (a durable,
-versioned backup). Authenticate that push with a **per-repo SSH deploy key** —
-narrowest possible scope, write to exactly one repo:
-
-```bash
-git -C "$PADDOCK_DATA_DIR/projects" config \
-  core.sshCommand 'ssh -i /run/secrets/deploy_key -o IdentitiesOnly=yes'
-```
-
-**GitHub — broader push/pull (other repos).** Put a **fine-grained Personal
-Access Token** in `GITHUB_TOKEN`; both `git` (via credential helper) and `gh`
-pick it up. Scope it to the instance's needs — and to allow *everything except
-deleting repos*, grant `Contents` + `Pull requests` (+ `Issues`/`Workflows`) and
-**omit `Administration`** (the permission that controls repo deletion). Use a
-tighter, repo-scoped token for less-trusted instances.
-
-Paddock also ships an in-app **"Connect GitHub" device flow** (the Changes tab,
-enabled by `PADDOCK_GITHUB_CLIENT_ID`) for an interactive, account-scoped OAuth
-token when you don't want to mint a PAT.
-
-**SSH keys (agents that SSH out to other machines).** If a keeper agent needs to
-reach other hosts (a homelab agent administering servers, say), give it a key the
-ordinary way — a file in the agent process's `~/.ssh` — and **isolate by deployment
-boundary, not by Paddock**. One privileged key should live only where that one
-instance runs.
-
-### How that maps onto each deployment
-
-| Platform | Env (token/auth) | Files (SSH key, deploy key) |
-|----------|------------------|------------------------------|
-| **systemd** | `EnvironmentFile=/etc/paddock-<name>.env` (mode 600); a second `EnvironmentFile` can layer per-instance overrides | Key in the service user's `~/.ssh/` (or a dedicated per-instance `$HOME`), mode 600 |
-| **Docker** | `--env-file` / `-e GITHUB_TOKEN=…`, or **Docker secrets** (`/run/secrets/…`) | **Volume-mount read-only**: `-v $HOME/.ssh/id_ed25519:/home/app/.ssh/id_ed25519:ro` |
-| **Kubernetes** | `Secret` → `envFrom`/`valueFrom.secretKeyRef` | `Secret` mounted as a file (`volumeMounts` → `~/.ssh/...`) |
-
-The throughline: **one trust boundary per privileged credential.** Co-locating
-instances that need different privilege levels in the same container/host/user
-shares their secrets — split them across containers, hosts, or LXCs/VMs when the
-isolation needs to be real.
-
-## On herdctl
-
-Paddock is a thin project layer over the public `@herdctl/core` FleetManager —
-see `docs/INTEGRATION.md` for the exact API contract it depends on. Anything the
-CLI/dashboard can do, the library can too; Paddock just wires projects, chats,
-and a git backing store on top.
+See the repository for license details.
