@@ -53,4 +53,14 @@ describe("PWA manifest", () => {
   it("ships an opaque apple-touch-icon for iOS home-screen", () => {
     expect(pngSize(readPublic("icons/apple-touch-icon.png"))).toEqual({ width: 180, height: 180 });
   });
+
+  it("ships browser-tab favicons (16/32 PNG + a .ico for the bare request)", () => {
+    expect(pngSize(readPublic("icons/favicon-32.png"))).toEqual({ width: 32, height: 32 });
+    expect(pngSize(readPublic("icons/favicon-16.png"))).toEqual({ width: 16, height: 16 });
+    const ico = readPublic("favicon.ico");
+    // ICONDIR header: reserved=0, type=1 (icon), count>=1.
+    expect(ico.readUInt16LE(0)).toBe(0);
+    expect(ico.readUInt16LE(2)).toBe(1);
+    expect(ico.readUInt16LE(4)).toBeGreaterThanOrEqual(1);
+  });
 });
