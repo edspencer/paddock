@@ -57,6 +57,29 @@
     overflow: hidden;
     overscroll-behavior: none;
   }
+  /*
+   * Mobile Safari auto-zooms the page whenever a focused form control has a
+   * computed font-size < 16px — which then breaks our fixed 100dvh shell. Our
+   * inputs/textareas are visually 14px (text-sm), so bump them to 16px on
+   * small/coarse screens only, leaving the desktop density untouched. This is
+   * the accessible fix for focus-zoom (vs. disabling user-scalable).
+   */
+  @media (max-width: 640px) {
+    input,
+    textarea,
+    select {
+      font-size: 16px;
+    }
+  }
+  /* Kill the grey flash box iOS/Android paint over tapped controls. */
+  a,
+  button,
+  [role="button"],
+  input,
+  textarea,
+  select {
+    -webkit-tap-highlight-color: transparent;
+  }
   body {
     @apply bg-canvas text-ink antialiased;
     font-feature-settings: "cv05", "ss01";
@@ -127,6 +150,18 @@
   }
   .field-label {
     @apply mb-1 block text-xs font-semibold uppercase tracking-wide text-paddock-500;
+  }
+  /*
+   * Safe-area padding for edge chrome under viewport-fit=cover. `max(…, 0px)`
+   * keeps the existing padding on non-notched devices where the inset is 0.
+   * pt-safe: mobile top bar (under the status bar / notch).
+   * pb-safe: composer (above the home indicator).
+   */
+  .pt-safe {
+    padding-top: max(env(safe-area-inset-top), 0.5rem);
+  }
+  .pb-safe {
+    padding-bottom: max(env(safe-area-inset-bottom), 0.75rem);
   }
   .section-label {
     @apply px-3 text-[11px] font-semibold uppercase tracking-wider text-paddock-500;

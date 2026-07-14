@@ -151,7 +151,7 @@ export function AppShell() {
   return (
     <div className="flex h-[100dvh] flex-col overflow-hidden bg-canvas dark:bg-canvas-dark lg:flex-row">
       {/* Mobile top bar — hidden on lg+, where the sidebar is always present. */}
-      <header className="flex items-center gap-2 border-b border-paddock-200 px-3 py-2 dark:border-paddock-800 lg:hidden">
+      <header className="pt-safe flex items-center gap-2 border-b border-paddock-200 px-3 pb-2 dark:border-paddock-800 lg:hidden">
         <button
           type="button"
           onClick={() => setNavOpen(true)}

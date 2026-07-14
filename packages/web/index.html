@@ -16,7 +16,12 @@
         }
       })();
     </script>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover lets the layout extend under the notch / home
+         indicator; the app pads its edge chrome back with env(safe-area-inset-*).
+         We deliberately DO NOT set maximum-scale/user-scalable=no — the
+         focus-zoom is prevented by 16px form controls (see index.css), which
+         keeps pinch-to-zoom working for accessibility. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#141210" />
     <title>Paddock</title>
     <meta
