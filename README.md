@@ -23,7 +23,7 @@
 ---
 
 <p align="center">
-  <img src="docs/demo/paddock-demo.gif" width="760" alt="Paddock — open a project, chat with its keeper agent, watch it work, and see the files it produced">
+  <img src="docs/demo/paddock-demo.gif" width="760" alt="Paddock — the real dev stack, a project's chats, and a keeper streaming live tool calls">
 </p>
 
 ## Why Paddock
@@ -99,22 +99,28 @@ volumes:
 
 ## A tour
 
+_These are real screenshots — Paddock is dogfooded on its own dev stack: **Paddock**, **herdctl** (the engine underneath it), and **Warren** (an agentic PR reviewer) all live here as projects that build one another._
+
 **Every project gets a keeper agent, organized on one page.**
 
-<p align="center"><img src="docs/demo/projects-grid.png" width="720" alt="Projects grid — each card is a project with status, tags, and chat count"></p>
+<p align="center"><img src="docs/demo/grid.png" width="720" alt="Projects grid — Paddock, herdctl, Warren, and more, each a project with its own keeper agent"></p>
 
-**Chat with the keeper — real tool calls stream in, with a live context + cost meter.**
+**Each project keeps dozens of persistent, resumable chats — searchable, forkable, archivable.**
 
-<p align="center"><img src="docs/demo/chat-streaming.png" width="720" alt="A keeper chat with Read/Write tool blocks and a context/cost meter"></p>
+<p align="center"><img src="docs/demo/chat-list.png" width="720" alt="A project's chat list with dozens of real, resumable chats"></p>
 
-**Review what it did as a real git diff, then commit or push.**
+**Chat with the keeper — real tool calls and subagents stream in, with a live context + cost meter.**
 
-<p align="center"><img src="docs/demo/changes-diff.png" width="720" alt="The Changes tab showing a new file as a git diff, with commit and push"></p>
+<p align="center"><img src="docs/demo/chat-tools.png" width="720" alt="A keeper chat with Read and Grep tool blocks and a context/cost meter"></p>
+
+**Built for real, long-running work** — persistent sessions track their own context window and estimated cost as they grow (this one's 42% of a 1M-token window):
+
+<p align="center"><img src="docs/demo/chat-scale.png" width="720" alt="A long keeper session showing a 42% context-window fill and running API cost"></p>
 
 <table>
 <tr>
 <td width="50%"><b>Repo-backed projects</b><br/>Clone an external repo as the keeper's working directory — its own <code>CLAUDE.md</code>, branches, and PR flow apply.<br/><br/><img src="docs/demo/repo-backed.png" alt="New Project modal with a Git repository URL field"></td>
-<td width="50%"><b>Rendered project files</b><br/>Markdown, Mermaid, code, images, PDF and video render inline; pin files as tabs.<br/><br/><img src="docs/demo/files-markdown.png" alt="A markdown file rendered in the Files tab"></td>
+<td width="50%"><b>Rendered project files</b><br/>Markdown, Mermaid, code, images, PDF and video render inline; pin files as tabs.<br/><br/><img src="docs/demo/files.png" alt="A markdown file rendered in the Files tab"></td>
 </tr>
 <tr>
 <td width="50%"><b>Slash-command autocomplete</b><br/>Type <code>/</code> to discover and run the agent's skills.<br/><br/><img src="docs/demo/slash-commands.png" alt="Slash-command autocomplete menu"></td>
