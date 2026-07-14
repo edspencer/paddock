@@ -19,6 +19,7 @@ let subs: FakeSub[] = [];
 const sends: Array<{ slug: string; message: string; sessionId: string | null; opts?: unknown }> = [];
 const commands: Array<{ slug: string; message: string; sessionId: string | null }> = [];
 const cancels: string[] = [];
+const queuedSets: Array<{ slug: string; sessionId: string; text: string | null }> = [];
 let stateCb: ((s: string) => void) | null = null;
 
 vi.mock("../lib/ws", () => ({
@@ -48,6 +49,8 @@ vi.mock("../lib/ws", () => ({
     sendCommand: (slug: string, message: string, sessionId: string | null) =>
       commands.push({ slug, message, sessionId }),
     cancel: (jobId: string) => cancels.push(jobId),
+    setQueued: (slug: string, sessionId: string, text: string | null) =>
+      queuedSets.push({ slug, sessionId, text }),
   },
 }));
 
@@ -98,6 +101,7 @@ beforeEach(() => {
   sends.length = 0;
   commands.length = 0;
   cancels.length = 0;
+  queuedSets.length = 0;
   stateCb = null;
   getModels.mockReset().mockResolvedValue(MODELS);
   chatContext.mockReset().mockResolvedValue(null);
