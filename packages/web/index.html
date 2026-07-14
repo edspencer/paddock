@@ -23,6 +23,22 @@
       name="description"
       content="Project-first launchpad for server-hosted, persistent Claude Code sessions."
     />
+    <!-- PWA (issue #199): installable web app. The manifest + service worker
+         (registered in src/lib/pwa.ts) enable Add-to-Home-Screen + standalone
+         launch. iOS honors the apple-* tags below (it ignores the manifest's
+         display/icons), so they're duplicated here for a chrome-less launch and
+         the home-screen icon. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <!-- Favicons (browser tab). /favicon.ico covers the browser's implicit
+         bare request; the PNGs are the crisp 16/32 tab icons. -->
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Paddock" />
     <!-- Fonts are self-hosted via @font-face in src/index.css (offline-safe,
          no runtime Google Fonts request). Preload the primary UI font. -->
     <link rel="preload" href="/fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin />

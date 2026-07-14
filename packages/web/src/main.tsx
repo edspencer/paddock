@@ -4,6 +4,7 @@ import { createBrowserRouter, RouterProvider, useParams } from "react-router-dom
 import "./index.css";
 import { AppShell } from "./components/AppShell";
 import { ProjectsProvider } from "./lib/projects-context";
+import { registerServiceWorker } from "./lib/pwa";
 
 // Route components are code-split (issue #11): each becomes its own async chunk
 // so the heavy chat/file/markdown code isn't in the entry bundle. AppShell wraps
@@ -60,3 +61,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     </ProjectsProvider>
   </React.StrictMode>,
 );
+
+// Install the service worker (production only; see lib/pwa.ts) so the installed
+// PWA launches offline. Registered after render so it never blocks first paint.
+registerServiceWorker();
