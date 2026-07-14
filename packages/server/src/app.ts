@@ -29,6 +29,7 @@ import { makeChatHandler } from "./ws.js";
 import { SweepService } from "./sweep.js";
 import { ArchiveStore } from "./archive.js";
 import { ReadStateStore } from "./read-state.js";
+import { QueuedMessageStore } from "./queued-message.js";
 
 export interface BuiltApp {
   app: FastifyInstance;
@@ -40,6 +41,7 @@ export interface BuiltApp {
   sweep: SweepService;
   archive: ArchiveStore;
   readState: ReadStateStore;
+  queuedMessage: QueuedMessageStore;
   transcriber: Transcriber;
   /** Tear down the fleet + close the server (no process.exit, for tests). */
   close: () => Promise<void>;
@@ -81,6 +83,8 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   const archive = new ArchiveStore(cfg.dataDir);
   // Per-user (or shared, in `none` mode) chat read-state sidecar (#189).
   const readState = new ReadStateStore(cfg.dataDir);
+  // Per-chat queued message sidecar (#197) for server-side auto-send.
+  const queuedMessage = new QueuedMessageStore(cfg.dataDir);
   // Store for files shared via mcp__paddock__send_file (issue #112). Copies live
   // outside any project working dir so they never show up as untracked repo files.
   const attachments = new AttachmentStore(path.join(cfg.dataDir, "attachments"));
@@ -117,7 +121,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   });
   await registerRoutes(app, { projects, herdctl, git, githubAuth, transcriber, archive, readState, attachments, cfg });
 
-  const chatHandler = makeChatHandler({ herdctl, projects, sweep, attachments, cfg });
+  const chatHandler = makeChatHandler({ herdctl, projects, sweep, attachments, queuedMessage, cfg });
   await app.register(async (scoped) => {
     scoped.get("/ws", { websocket: true }, (socket) => {
       void chatHandler(socket);
@@ -168,5 +172,5 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
     await app.close().catch(() => undefined);
   };
 
-  return { app, cfg, projects, herdctl, git, githubAuth, sweep, archive, readState, transcriber, close };
+  return { app, cfg, projects, herdctl, git, githubAuth, sweep, archive, readState, queuedMessage, transcriber, close };
 }

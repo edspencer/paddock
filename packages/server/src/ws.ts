@@ -71,6 +71,7 @@ import { SessionHub, type TurnHandle, type ActiveInfo } from "./session-hub.js";
 import { wrapPreload, composePreloadContext } from "./preload.js";
 import { sendFileServerDef, SEND_FILE_SERVER_KEY } from "./send-file-mcp.js";
 import type { AttachmentStore } from "./attachments.js";
+import type { QueuedMessageStore } from "./queued-message.js";
 
 /**
  * Per-turn token usage as observed on the SDK stream, normalized to camelCase.
@@ -258,6 +259,23 @@ export interface ChatSubscribeMessage {
   };
 }
 
+/**
+ * Store a queued message to be auto-sent when the current turn completes (#197).
+ * The client sends this to persist the queue server-side so it survives browser
+ * close; the server stores it, checks after turn completion, and auto-sends if
+ * present. The web client also keeps a localStorage copy for live editing UX.
+ */
+export interface ChatSetQueueMessage {
+  type: "chat:set_queue";
+  payload: {
+    projectSlug?: string;
+    target?: string;
+    sessionId?: string | null;
+    /** The queued message text, or null/empty to clear. */
+    text?: string | null;
+  };
+}
+
 export interface PingMessage {
   type: "ping";
 }
@@ -267,6 +285,7 @@ export type ClientMessage =
   | ChatCommandMessage
   | ChatCancelMessage
   | ChatSubscribeMessage
+  | ChatSetQueueMessage
   | PingMessage;
 
 // --- server -> client --------------------------------------------------------
@@ -365,6 +384,21 @@ export interface ChatActiveMessage {
   };
 }
 
+/**
+ * Notify the client that the queued message was auto-sent by the server (#197).
+ * The client clears its localStorage copy of the queued message when it receives
+ * this frame, so queued messages don't duplicate if the browser closes before
+ * the turn completes.
+ */
+export interface ChatQueuedFlushedMessage {
+  type: "chat:queued_flushed";
+  payload: {
+    projectSlug: string;
+    target: string;
+    sessionId: string;
+  };
+}
+
 export interface PongMessage {
   type: "pong";
 }
@@ -377,6 +411,7 @@ export type ServerMessage =
   | ChatErrorMessage
   | ChatResyncMessage
   | ChatActiveMessage
+  | ChatQueuedFlushedMessage
   | PongMessage;
 
 function readSlug(p: ChatSendMessage["payload"]): string | undefined {
@@ -435,6 +470,8 @@ export function makeChatHandler(deps: {
   cfg: PaddockConfig;
   /** Optional: post-turn overview/changelog curation engine (issues #2/#6). */
   sweep?: SweepService;
+  /** Per-chat queued message persistence (#197). */
+  queuedMessage?: QueuedMessageStore;
 }) {
   // ONE hub shared across every socket this handler serves: it tracks each
   // session's in-flight turn and fans its frames out to whichever socket(s) are
@@ -594,6 +631,10 @@ export function makeChatHandler(deps: {
         onSubscribe(parsed);
         return;
       }
+      if (parsed.type === "chat:set_queue") {
+        void onSetQueue(parsed);
+        return;
+      }
       if (parsed.type === "chat:command") {
         void onChatCommand(parsed);
         return;
@@ -619,6 +660,26 @@ export function makeChatHandler(deps: {
       // (issues #52/#53).
       const active = hub.activeInfo(sessionId);
       if (active) send(activeFrame(active));
+    };
+
+    const onSetQueue = async (msg: ChatSetQueueMessage): Promise<void> => {
+      if (!deps.queuedMessage) return; // feature disabled
+      const slug = (msg.payload.projectSlug ?? msg.payload.target) as string | undefined;
+      if (!slug) return;
+      const sessionId = msg.payload.sessionId ?? null;
+      const text = msg.payload.text ?? null;
+      // Determine the agent name for this chat (keeper for project, scratch for one-off)
+      const agent = slug === SCRATCH_SLUG ? SCRATCH_AGENT : keeperAgentName(slug);
+      if (!sessionId) {
+        // New chat: queue isn't stored until the session id exists. No-op for now.
+        return;
+      }
+      // Store or clear the queued message.
+      if (text && text.trim().length > 0) {
+        await deps.queuedMessage.set(agent, sessionId, { text, createdAtMs: Date.now() }).catch(() => undefined);
+      } else {
+        await deps.queuedMessage.set(agent, sessionId, null).catch(() => undefined);
+      }
     };
 
     const onChatSend = async (msg: ChatSendMessage): Promise<void> => {
@@ -857,6 +918,34 @@ export function makeChatHandler(deps: {
           },
         });
         turn.end();
+
+        // After a successful turn, check if there's a queued message (#197).
+        // Auto-send it and notify the client, so they can clear their localStorage.
+        if (result.success && finalSession && deps.queuedMessage) {
+          const agent = slug === SCRATCH_SLUG ? SCRATCH_AGENT : keeperAgentName(slug);
+          const queued = await deps.queuedMessage.get(agent, finalSession).catch(() => null);
+          if (queued?.text) {
+            // Auto-send the queued message by recursively calling onChatSend.
+            // This drives the exact same flow as a human message: turn start,
+            // streaming, completion, and a potential next queue.
+            void onChatSend({
+              type: "chat:send",
+              payload: {
+                projectSlug: slug,
+                target: slug,
+                sessionId: finalSession,
+                message: queued.text,
+                // Don't re-preload context (it already happened on the initial message).
+              },
+            });
+            // Clear the server-side queue and notify the client.
+            await deps.queuedMessage.set(agent, finalSession, null).catch(() => undefined);
+            send({
+              type: "chat:queued_flushed",
+              payload: { projectSlug: slug, target: slug, sessionId: finalSession },
+            });
+          }
+        }
       } catch (err) {
         const error = err instanceof Error ? err.message : String(err);
         // The origin socket always gets the plain chat:error (its shape predates

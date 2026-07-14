@@ -493,6 +493,14 @@ export function ChatPane({
     writeQueued(initialSessionId, projectSlug, queued);
   }, [queued, initialSessionId, projectSlug]);
 
+  // Also send the queued message to the server (#197) so it persists server-side
+  // and can auto-send even if the browser is closed. Only after the session id
+  // is established (a new chat can't queue until it resolves).
+  useEffect(() => {
+    if (!initialSessionId) return; // new chat, no session yet
+    chatClient.setQueued(projectSlug, initialSessionId, queued);
+  }, [queued, initialSessionId, projectSlug, chatClient]);
+
   // Auto-focus the composer on mount for a fresh chat so the user can type right
   // away: right after forking (autoFocus), and when starting a New Chat — which
   // remounts this pane with no initialSessionId. A normal open of an existing
