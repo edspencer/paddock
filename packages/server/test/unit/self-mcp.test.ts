@@ -13,6 +13,7 @@ import {
   SELF_MCP_TOOL_NAMES,
   SELF_MCP_WRITE_TOOL_NAMES,
   FORK_BATCH_MAX,
+  coercePrompts,
   clampLimit,
   truncateText,
   READ_CHAT_DEFAULT_LIMIT,
@@ -147,6 +148,29 @@ describe("self-management MCP (Phase 1, read-only)", () => {
     const { result } = await call(boom, "list_projects");
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("disk gone");
+  });
+
+  it("coercePrompts accepts arrays, JSON strings, and newline lists (CLI array-arg workaround)", () => {
+    expect(coercePrompts(["a", " b "])).toEqual(["a", "b"]);
+    expect(coercePrompts('["x","y"]')).toEqual(["x", "y"]);
+    expect(coercePrompts("one\n two \n\nthree")).toEqual(["one", "two", "three"]);
+    expect(coercePrompts("only one")).toEqual(["only one"]);
+    expect(coercePrompts("")).toEqual([]);
+    expect(coercePrompts(undefined)).toEqual([]);
+    expect(coercePrompts(42)).toEqual([]);
+    // array with a non-string entry keeps a "" slot so the handler can reject it
+    expect(coercePrompts(["ok", 5])).toEqual(["ok", ""]);
+  });
+
+  it("fork_chat_batch works when prompts arrives as a newline STRING (transport workaround)", async () => {
+    const w = fakeWrite();
+    const { json } = await callWrite(w, "fork_chat_batch", {
+      prompts: "item one\nitem two\nitem three",
+      name_prefix: "Item",
+    });
+    expect(json.count).toBe(3);
+    expect(w.calls.forkChat.map((c) => c.prompt)).toEqual(["item one", "item two", "item three"]);
+    expect(w.calls.forkChat.map((c) => c.name)).toEqual(["Item 1", "Item 2", "Item 3"]);
   });
 
   it("clampLimit and truncateText behave at the boundaries", () => {

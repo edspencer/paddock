@@ -227,7 +227,8 @@ const FORK_CHAT_BATCH_DESC =
   "FAN-OUT primitive: fork ONE source chat into many child chats at once — one child " +
   "per entry in `prompts`, each kicked off with its own prompt. Classic use: you " +
   "found N items (e.g. 10 changes) and want to fork this chat N times, one worker per " +
-  "item. Defaults the source to the CURRENT chat; pass `session_id` to fork a different " +
+  "item. Pass `prompts` as one directive PER LINE. " +
+  "Defaults the source to the CURRENT chat; pass `session_id` to fork a different " +
   "one, and `project` to target another project. With `name_prefix`, each fork is named " +
   `"<name_prefix> <i>" (1-based). Up to ${FORK_BATCH_MAX} forks per call; they run ` +
   "concurrently. Returns the source and every new child's sessionId.";
@@ -289,20 +290,61 @@ function sendMessageHandler(write: SelfMcpWriteContext) {
   };
 }
 
+/**
+ * Normalize the `prompts` argument to a string array. The CLI-runtime MCP path
+ * has proven unreliable at carrying an ARRAY-typed argument to the tool handler
+ * (string args work; the array arrives dropped) — so we ALSO accept the list as a
+ * string: a JSON array (`["a","b"]`) or newline-separated directives. Returns []
+ * when nothing usable is present (handler then reports the required-arg error).
+ */
+export function coercePrompts(raw: unknown): string[] {
+  if (Array.isArray(raw)) {
+    return raw.map((p) => (typeof p === "string" ? p : "")).map((p) => p.trim());
+  }
+  if (typeof raw === "string") {
+    const s = raw.trim();
+    if (s.length === 0) return [];
+    if (s.startsWith("[")) {
+      try {
+        const parsed = JSON.parse(s);
+        if (Array.isArray(parsed)) {
+          return parsed.map((p) => (typeof p === "string" ? p : "")).map((p) => p.trim());
+        }
+      } catch {
+        /* fall through to newline split */
+      }
+    }
+    return s
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+  }
+  return [];
+}
+
 function forkChatBatchHandler(write: SelfMcpWriteContext) {
   return async (args: Record<string, unknown>): Promise<McpToolCallResult> => {
     try {
-      const prompts = args.prompts;
-      if (!Array.isArray(prompts) || prompts.length === 0) {
-        return fail("Error: `prompts` is required (a non-empty array of prompt strings).");
+      // Diagnostic (issue #214): confirm what the CLI-runtime MCP transport
+      // actually delivers for the list arg (array vs string vs dropped).
+      const rawPrompts = args.prompts;
+      console.error(
+        `[self-mcp] fork_chat_batch prompts arg: type=${Array.isArray(rawPrompts) ? "array" : typeof rawPrompts} preview=${JSON.stringify(rawPrompts)?.slice(0, 200)}`,
+      );
+      const prompts = coercePrompts(rawPrompts);
+      if (prompts.length === 0) {
+        return fail(
+          "Error: `prompts` is required — a non-empty list of directive strings " +
+            "(a JSON array, or one directive per line).",
+        );
       }
       if (prompts.length > FORK_BATCH_MAX) {
         return fail(`Error: too many prompts (${prompts.length}); max ${FORK_BATCH_MAX} forks per call.`);
       }
-      const clean = prompts.map((p) => (typeof p === "string" ? p.trim() : ""));
-      if (clean.some((p) => p.length === 0)) {
+      if (prompts.some((p) => p.length === 0)) {
         return fail("Error: every entry in `prompts` must be a non-empty string.");
       }
+      const clean = prompts;
       const projectArg = typeof args.project === "string" ? args.project.trim() : "";
       const project = projectArg.length > 0 ? projectArg : write.currentProjectSlug;
       const explicit = typeof args.session_id === "string" ? args.session_id.trim() : "";
@@ -446,10 +488,13 @@ export function selfMcpServerDef(
         inputSchema: {
           type: "object",
           properties: {
+            // Declared as a STRING (not array): the CLI-runtime MCP transport
+            // reliably carries string args but has dropped array-typed args in
+            // practice. The handler accepts a JSON array too (coercePrompts), but
+            // telling the model to emit one directive per line is what works.
             prompts: {
-              type: "array",
-              items: { type: "string" },
-              description: `One prompt per fork (1..${FORK_BATCH_MAX} non-empty strings).`,
+              type: "string",
+              description: `The fork directives — ONE per line (1..${FORK_BATCH_MAX} lines), each a non-empty instruction for that fork. A JSON array of strings is also accepted.`,
             },
             project: {
               type: "string",
