@@ -325,13 +325,7 @@ export function coercePrompts(raw: unknown): string[] {
 function forkChatBatchHandler(write: SelfMcpWriteContext) {
   return async (args: Record<string, unknown>): Promise<McpToolCallResult> => {
     try {
-      // Diagnostic (issue #214): confirm what the CLI-runtime MCP transport
-      // actually delivers for the list arg (array vs string vs dropped).
-      const rawPrompts = args.prompts;
-      console.error(
-        `[self-mcp] fork_chat_batch prompts arg: type=${Array.isArray(rawPrompts) ? "array" : typeof rawPrompts} preview=${JSON.stringify(rawPrompts)?.slice(0, 200)}`,
-      );
-      const prompts = coercePrompts(rawPrompts);
+      const prompts = coercePrompts(args.prompts);
       if (prompts.length === 0) {
         return fail(
           "Error: `prompts` is required — a non-empty list of directive strings " +

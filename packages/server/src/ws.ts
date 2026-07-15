@@ -1106,6 +1106,9 @@ export function makeChatHandler(deps: {
               },
               forkChat: async ({ projectSlug, sourceSessionId, prompt: kickoff, name }) => {
                 const p = await deps.projects.get(projectSlug);
+                if (!(await deps.herdctl.sessionExists(p, sourceSessionId))) {
+                  throw new Error(`chat not found: ${sourceSessionId} in project ${projectSlug}`);
+                }
                 const newId = await deps.herdctl.forkSession(p, sourceSessionId, name);
                 if (kickoff && kickoff.trim().length > 0) {
                   await startAgentTurn({
@@ -1129,6 +1132,9 @@ export function makeChatHandler(deps: {
               },
               sendMessage: async (projectSlug, targetSessionId, kickoff) => {
                 const p = await deps.projects.get(projectSlug);
+                if (!(await deps.herdctl.sessionExists(p, targetSessionId))) {
+                  throw new Error(`chat not found: ${targetSessionId} in project ${projectSlug}`);
+                }
                 await startAgentTurn({
                   projectSlug,
                   agentName: keeperAgentName(projectSlug),

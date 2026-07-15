@@ -786,6 +786,23 @@ export class HerdctlService {
    * file's id, and a mismatch is version-fragile), and the source file is kept.
    * `cwd` is unchanged (the fork stays in the same project). Returns the new id.
    */
+  /**
+   * Whether a chat transcript exists for `sessionId` in `project`. Used by the
+   * self-management MCP write tools (#214) to validate a caller-supplied target
+   * before forking / messaging it, so a bad id yields a clean "not found" instead
+   * of a raw ENOENT (fork) or a false-positive success (send_message). Rejects a
+   * malformed id (path-traversal guard) as non-existent.
+   */
+  async sessionExists(project: Project, sessionId: string): Promise<boolean> {
+    if (!/^[A-Za-z0-9._-]+$/.test(sessionId)) return false;
+    try {
+      await fs.access(path.join(projectChatsDir(project.dir), `${sessionId}.jsonl`));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async forkSession(project: Project, sourceSessionId: string, name?: string): Promise<string> {
     if (!/^[A-Za-z0-9._-]+$/.test(sourceSessionId)) {
       throw new Error(`Invalid session id: ${sourceSessionId}`);
