@@ -140,9 +140,19 @@ export interface PaddockConfig {
    * (issue #214 Phase 1) — the `mcp__paddock_manage__*` tools that let a keeper
    * enumerate projects/chats and read another chat's transcript. Driven by
    * `PADDOCK_SELF_MCP`; default OFF (opt-in per instance). Never injected on
-   * scratch turns. The write tools (create/fork/message) are a later phase.
+   * scratch turns. The write tools (create/fork/message) are gated separately by
+   * {@link selfMcpWriteEnabled}.
    */
   selfMcpEnabled: boolean;
+  /**
+   * Whether keepers additionally get the self-management MCP **write** tools
+   * (issue #214 Phase 2) — `create_chat`, `fork_chat`, `send_message`,
+   * `fork_chat_batch` (fan-out). Driven by `PADDOCK_SELF_MCP_WRITE`; default OFF
+   * and only honored when {@link selfMcpEnabled} is also on (write implies read).
+   * Gated behind its own flag because these START real keeper turns — an instance
+   * can offer read-only introspection without the write blast radius.
+   */
+  selfMcpWriteEnabled: boolean;
 }
 
 /**
@@ -336,7 +346,19 @@ export function loadPaddockConfig(): PaddockConfig {
     keeperDriveMode: loadKeeperDriveMode(),
     nativeSystemPrompt: loadNativeSystemPrompt(),
     selfMcpEnabled: loadSelfMcpEnabled(),
+    selfMcpWriteEnabled: loadSelfMcpEnabled() && loadSelfMcpWriteEnabled(),
   });
+}
+
+/**
+ * Resolve whether keepers additionally get the self-management MCP WRITE tools
+ * (issue #214 Phase 2). Defaults OFF; only takes effect when `PADDOCK_SELF_MCP`
+ * is also on (write implies read — enforced at the call site above). Accepts
+ * 1/true/yes.
+ */
+function loadSelfMcpWriteEnabled(): boolean {
+  const raw = envOr("PADDOCK_SELF_MCP_WRITE", "false").toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes";
 }
 
 /**
