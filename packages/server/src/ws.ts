@@ -473,6 +473,26 @@ export function isClientMessage(data: unknown): data is ClientMessage {
 // See issue #46.
 const SERVER_PING_INTERVAL_MS = 30_000;
 
+/**
+ * Frame an agent-initiated FORK kickoff (issue #214 Phase 2). A fork inherits the
+ * parent's transcript as context — and when the parent is the *live* chat doing
+ * the forking, that snapshot is taken mid-turn, so the child would otherwise
+ * inherit the parent's "I am still mid-task" identity and reject the seeded
+ * instruction (observed in QA). This preamble tells the child the history above
+ * is inherited background and that its job now is the given directive — which is
+ * exactly the fan-out contract ("fork this chat N times, one work-item each").
+ */
+export function forkKickoffPrompt(directive: string): string {
+  return (
+    "[Paddock fan-out] You are a NEW chat forked from the conversation above. " +
+    "That history is INHERITED CONTEXT — you are NOT in the middle of the prior " +
+    "turn, and its final exchange may be truncated at the fork point; do not try " +
+    "to continue it. Use it as background, then carry out this instruction as your " +
+    "task now:\n\n" +
+    directive
+  );
+}
+
 export function makeChatHandler(deps: {
   herdctl: HerdctlService;
   projects: ProjectStore;
@@ -1093,7 +1113,14 @@ export function makeChatHandler(deps: {
                     agentName: keeperAgentName(projectSlug),
                     workingDir: p.workingDir,
                     resume: newId,
-                    prompt: kickoff,
+                    // Frame the kickoff so the child treats the inherited
+                    // transcript as CONTEXT and runs its new directive. Without
+                    // this, forking the *live* chat snapshots it mid-turn, so the
+                    // child inherits the parent's "I'm mid-task" identity and may
+                    // refuse the seed prompt (QA #214). This is what makes the
+                    // fan-out use case ("fork this chat N times, one item each")
+                    // actually work.
+                    prompt: forkKickoffPrompt(kickoff),
                     driveMode: driveModeFor(p),
                     fallbackModel: p.model,
                   });
