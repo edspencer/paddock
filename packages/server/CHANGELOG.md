@@ -1,5 +1,25 @@
 # @paddock/server
 
+## 0.23.0
+
+### Minor Changes
+
+- [#215](https://github.com/edspencer/paddock/pull/215) [`509c445`](https://github.com/edspencer/paddock/commit/509c4450738eb6af74c3cfb7642c2199df59e8b6) Thanks [@edspencer](https://github.com/edspencer)! - Add the read-only Paddock self-management MCP (issue #214, Phase 1). When `PADDOCK_SELF_MCP` is set, keeper turns are handed a `paddock_manage` MCP server exposing three read-only tools — `list_projects`, `list_chats` (cross-project), and `read_chat` (a trimmed, length-capped transcript tail) — so a keeper can inspect Paddock itself. Injected via herdctl's `injectedMcpServers` (same mechanism as `send_file`); keeper-only (never scratch) and off by default. Write tools (create/fork/message) and the external bridge are later phases.
+
+- [#218](https://github.com/edspencer/paddock/pull/218) [`050c3d3`](https://github.com/edspencer/paddock/commit/050c3d3903ec7c2b022b1872cd8fd707a4bd5bb9) Thanks [@edspencer](https://github.com/edspencer)! - Add the Paddock self-management MCP **write tools** (issue #214, Phase 2). Behind the new `PADDOCK_SELF_MCP_WRITE` flag (on top of `PADDOCK_SELF_MCP`), keeper turns additionally get `create_chat`, `fork_chat`, `send_message`, and `fork_chat_batch` (fan-out) on the `paddock_manage` MCP server.
+
+  Each starts a real keeper turn routed through the shared SessionHub, so a spawned chat appears in the sidebar, flips the running indicator, streams live, and is re-attachable — full parity with a human-started turn. `fork_chat_batch` (cap 20) is the fan-out primitive: fork the current chat N times, one kickoff directive per line, run concurrently. Keeper-only; off by default; gated separately from the read tools because these start real work.
+
+  Containment: spawned turns get `send_file` only, not the self-MCP, so an automated fan-out cannot recurse into a fork bomb (a spawned chat regains the tools only when a human later drives it). No explicit recursion guard is built this phase (per #214); the injection path stays guard-ready.
+
+  Fork kickoffs are framed so a forked child treats the inherited (possibly mid-turn) transcript as context and runs its directive instead of inheriting the parent's identity. `fork_chat_batch` takes its list as newline/JSON text (the CLI-runtime MCP transport drops array-typed args). `fork_chat`/`send_message` validate the target session and return a clean "chat not found" instead of a raw ENOENT / false success.
+
+### Patch Changes
+
+- [#217](https://github.com/edspencer/paddock/pull/217) [`6e4b26d`](https://github.com/edspencer/paddock/commit/6e4b26d5124b03cf36c7e52a450e01b390579c91) Thanks [@edspencer](https://github.com/edspencer)! - chore(deps): bump @herdctl/core ^5.20.0 → ^5.20.1
+
+  Picks up the session-reaper fix from [herdctl#368](https://github.com/edspencer/herdctl/issues/368) / [herdctl#369](https://github.com/edspencer/herdctl/pull/369): an asynchronous background task's completion no longer reaps the managed session out from under the SDK's re-invocation turn. This fixes keepers "stopping" the instant a `run_in_background` task (a CI-watch loop, a background Explore/research agent, a long build) finishes — the re-invocation that delivers the task's result now survives, so autonomous cross-turn work in session drive-mode completes instead of silently stalling.
+
 ## 0.22.0
 
 ### Minor Changes
