@@ -79,6 +79,7 @@ import {
   selfMcpServerDef,
   SELF_MCP_SERVER_KEY,
   type SelfMcpContext,
+  type SelfMcpWriteContext,
 } from "./self-mcp.js";
 import type { AttachmentStore } from "./attachments.js";
 import type { QueuedMessageStore } from "./queued-message.js";
@@ -472,6 +473,26 @@ export function isClientMessage(data: unknown): data is ClientMessage {
 // See issue #46.
 const SERVER_PING_INTERVAL_MS = 30_000;
 
+/**
+ * Frame an agent-initiated FORK kickoff (issue #214 Phase 2). A fork inherits the
+ * parent's transcript as context — and when the parent is the *live* chat doing
+ * the forking, that snapshot is taken mid-turn, so the child would otherwise
+ * inherit the parent's "I am still mid-task" identity and reject the seeded
+ * instruction (observed in QA). This preamble tells the child the history above
+ * is inherited background and that its job now is the given directive — which is
+ * exactly the fan-out contract ("fork this chat N times, one work-item each").
+ */
+export function forkKickoffPrompt(directive: string): string {
+  return (
+    "[Paddock fan-out] You are a NEW chat forked from the conversation above. " +
+    "That history is INHERITED CONTEXT — you are NOT in the middle of the prior " +
+    "turn, and its final exchange may be truncated at the fork point; do not try " +
+    "to continue it. Use it as background, then carry out this instruction as your " +
+    "task now:\n\n" +
+    directive
+  );
+}
+
 export function makeChatHandler(deps: {
   herdctl: HerdctlService;
   projects: ProjectStore;
@@ -577,6 +598,185 @@ export function makeChatHandler(deps: {
     // Post-wake curation sweep, same as a human turn (never for scratch).
     if (slug !== SCRATCH_SLUG && deps.sweep) deps.sweep.enqueue(slug);
   });
+
+  /**
+   * Kick off a keeper turn that is NOT driven by a socket — used by the
+   * self-management MCP write tools (issue #214 Phase 2: create_chat / fork_chat /
+   * send_message / fork_chat_batch fan-out). Routes the turn through the SAME
+   * shared {@link hub} as socket-driven turns, so a spawned chat streams live to
+   * any client viewing it, flips the sidebar running indicator (hub.onActive
+   * broadcast), and is re-attachable — full parity with a human-started turn,
+   * just with no originating socket (origin `null`).
+   *
+   * Returns a promise that resolves with the chat's sessionId AS SOON AS it is
+   * known (immediately for a resumed/forked id; on the first streamed session_id
+   * for a brand-new chat), while the turn itself runs to completion in the
+   * BACKGROUND (detached). So a fan-out can fire N of these and collect N ids
+   * without waiting for any child turn to finish; herdctl's own max-concurrency
+   * throttles how many actually run at once. Rejects if the turn errors (or a
+   * timeout elapses) before an id is known.
+   *
+   * The spawned turn is injected with `send_file` ONLY — NOT the self-management
+   * MCP. So an AUTONOMOUS fan-out cannot recurse into a fork bomb: a child's
+   * kickoff turn (and, in session drive-mode, its scheduler wakes — the reaper
+   * resumes the session as it was opened, never re-injecting) carry no
+   * self-management tools, so a spawned chat cannot itself create/fork/message on
+   * its own. This is NOT a recursion *guard* (none is built this phase, per #214)
+   * — recursion is simply not wired into the automated path. Note a spawned chat
+   * is still a normal keeper chat: if a human later opens it and sends a message,
+   * that socket-driven turn goes through the regular path and gets the full tools
+   * again (by design — any keeper chat may use them); that's deliberate human
+   * interaction, not a runaway. A later phase can inject the self-MCP into
+   * automated children too, behind a real depth/origin guard.
+   */
+  async function startAgentTurn(opts: {
+    projectSlug: string;
+    agentName: string;
+    workingDir: string;
+    resume: string | null;
+    prompt: string;
+    driveMode: DriveMode;
+    fallbackModel: string;
+  }): Promise<string> {
+    const { projectSlug, agentName, workingDir, resume, prompt, driveMode, fallbackModel } = opts;
+    let resolvedSession: string | null = resume ?? null;
+    let jobId: string | null = null;
+    let attributed = false;
+    const isNewChat = resume === null;
+    const turn: TurnHandle = hub.startTurn(projectSlug, null, resume ?? null);
+    const seen: { usage: TurnUsage | null; model: string | null } = { usage: null, model: null };
+
+    const routing = (): Routing => ({
+      projectSlug,
+      target: projectSlug,
+      sessionId: resolvedSession,
+      jobId,
+    });
+    const translate = createSDKMessageHandler({
+      onText: (chunk) => {
+        if (chunk) turn.emit({ type: "chat:response", payload: { ...routing(), chunk } });
+      },
+      onBoundary: () => {
+        turn.emit({ type: "chat:message_boundary", payload: routing() });
+      },
+      onToolCall: (call) => {
+        turn.emit({
+          type: "chat:tool_call",
+          payload: {
+            ...routing(),
+            toolName: call.toolName,
+            inputSummary: call.inputSummary,
+            output: call.output,
+            isError: call.isError,
+            durationMs: call.durationMs,
+          },
+        });
+      },
+    });
+
+    // Spawned turns get send_file (parity) but NOT the self-MCP (see doc above).
+    const sendFile = sendFileServerDef({
+      workingDirectory: workingDir,
+      saveAttachment: (bytes, name) => deps.attachments.save(bytes, name),
+    });
+
+    const drive =
+      driveMode === "session"
+        ? deps.herdctl.chatSession.bind(deps.herdctl)
+        : deps.herdctl.chat.bind(deps.herdctl);
+
+    // Resolve the sessionId early; the caller returns it while the turn continues.
+    let resolveId!: (id: string) => void;
+    let rejectId!: (err: Error) => void;
+    const idKnown = new Promise<string>((res, rej) => {
+      resolveId = res;
+      rejectId = rej;
+    });
+    if (resume) resolveId(resume);
+
+    const drivePromise = drive(agentName, {
+      prompt,
+      resume,
+      triggerType: "agent",
+      injectedMcpServers: { [SEND_FILE_SERVER_KEY]: sendFile },
+      onJobCreated: (id) => {
+        jobId = id;
+        turn.setJobId(id);
+      },
+      onMessage: async (m: SDKMessage) => {
+        if (m.session_id) {
+          resolvedSession = m.session_id;
+          if (isNewChat && !attributed) {
+            attributed = true;
+            await deps.herdctl.attributeRunningSession(m.session_id, agentName).catch(() => undefined);
+          }
+          turn.setSession(m.session_id);
+          resolveId(m.session_id);
+        }
+        const ex = extractUsage(m);
+        if (ex.usage) seen.usage = pickTurnUsage(seen.usage, ex.usage);
+        if (ex.model) seen.model = ex.model;
+        await translate(m as unknown as ChatSDKMessage);
+      },
+    });
+
+    // Detached completion: emit the terminal frame + end the hub turn no matter
+    // what. Never throws to the event loop (guards the fan-out from one bad turn).
+    void drivePromise
+      .then((result) => {
+        const finalSession =
+          (result.success ? (result.sessionId ?? resolvedSession) : resolvedSession) ?? null;
+        if (finalSession) turn.setSession(finalSession);
+        const completeModel = seen.model ?? fallbackModel;
+        const u = seen.usage;
+        const completeUsage: ChatCompleteUsage | undefined = u
+          ? {
+              inputTokens: u.inputTokens,
+              outputTokens: u.outputTokens,
+              cacheReadTokens: u.cacheReadTokens,
+              cacheCreationTokens: u.cacheCreationTokens,
+              contextTokens: u.inputTokens + u.cacheReadTokens + u.cacheCreationTokens,
+              contextLimit: getContextLimit(completeModel),
+            }
+          : undefined;
+        turn.emit({
+          type: "chat:complete",
+          payload: {
+            ...routing(),
+            sessionId: finalSession,
+            jobId: result.jobId ?? jobId,
+            success: result.success,
+            error: result.error?.message,
+            ...(completeUsage ? { model: completeModel, usage: completeUsage } : {}),
+          },
+        });
+        turn.end();
+        try {
+          deps.herdctl.invalidateSessions(agentName);
+        } catch {
+          /* non-fatal */
+        }
+        if (result.success && deps.sweep) deps.sweep.enqueue(projectSlug);
+        if (!resolvedSession) {
+          rejectId(new Error(result.error?.message ?? "turn ended with no session id"));
+        }
+      })
+      .catch((err: unknown) => {
+        const error = err instanceof Error ? err.message : String(err);
+        turn.emit({
+          type: "chat:complete",
+          payload: { ...routing(), sessionId: resolvedSession, jobId, success: false, error },
+        });
+        turn.end();
+        rejectId(err instanceof Error ? err : new Error(error));
+      });
+
+    // Never hang the calling tool forever if the child never streams an id.
+    const timeout = new Promise<never>((_, rej) =>
+      setTimeout(() => rej(new Error("timed out waiting for spawned chat to start")), 60_000),
+    );
+    return Promise.race([idKnown, timeout]);
+  }
 
   return async function handle(socket: WebSocket): Promise<void> {
     const send = (m: ServerMessage) => {
@@ -875,7 +1075,87 @@ export function makeChatHandler(deps: {
               }));
             },
           };
-          injectedMcpServers[SELF_MCP_SERVER_KEY] = selfMcpServerDef(selfMcpContext);
+
+          // Write tools (issue #214 Phase 2) are gated behind their own flag on
+          // top of the read flag. Each callback resolves the target project
+          // (validating it exists), then starts a real keeper turn via
+          // startAgentTurn — which streams through the shared hub, so a spawned
+          // chat appears + streams live exactly like a human-started one.
+          let writeCtx: SelfMcpWriteContext | undefined;
+          if (deps.cfg.selfMcpWriteEnabled) {
+            const driveModeFor = (p: Awaited<ReturnType<typeof deps.projects.get>>): DriveMode =>
+              p.driveMode && isKnownDriveMode(p.driveMode) ? p.driveMode : deps.cfg.keeperDriveMode;
+            writeCtx = {
+              currentProjectSlug: slug,
+              currentSessionId: () => resolvedSession ?? sessionId ?? null,
+              createChat: async (projectSlug, kickoff, o) => {
+                const p = await deps.projects.get(projectSlug);
+                // Honor the same OVERVIEW+CHANGELOG preload the human New-Chat path
+                // offers, when asked and available (issues #1/#188).
+                let composed = kickoff;
+                if (o?.preloadContext) {
+                  const overview = await deps.projects.readOverview(projectSlug).catch(() => "");
+                  if (overview.trim().length > 0) {
+                    const changelog = await deps.projects.readChangelog(projectSlug).catch(() => "");
+                    composed = wrapPreload(composePreloadContext(overview, changelog), kickoff);
+                  }
+                }
+                const newId = await startAgentTurn({
+                  projectSlug,
+                  agentName: keeperAgentName(projectSlug),
+                  workingDir: p.workingDir,
+                  resume: null,
+                  prompt: composed,
+                  driveMode: driveModeFor(p),
+                  fallbackModel: p.model,
+                });
+                return { sessionId: newId };
+              },
+              forkChat: async ({ projectSlug, sourceSessionId, prompt: kickoff, name }) => {
+                const p = await deps.projects.get(projectSlug);
+                if (!(await deps.herdctl.sessionExists(p, sourceSessionId))) {
+                  throw new Error(`chat not found: ${sourceSessionId} in project ${projectSlug}`);
+                }
+                const newId = await deps.herdctl.forkSession(p, sourceSessionId, name);
+                if (kickoff && kickoff.trim().length > 0) {
+                  await startAgentTurn({
+                    projectSlug,
+                    agentName: keeperAgentName(projectSlug),
+                    workingDir: p.workingDir,
+                    resume: newId,
+                    // Frame the kickoff so the child treats the inherited
+                    // transcript as CONTEXT and runs its new directive. Without
+                    // this, forking the *live* chat snapshots it mid-turn, so the
+                    // child inherits the parent's "I'm mid-task" identity and may
+                    // refuse the seed prompt (QA #214). This is what makes the
+                    // fan-out use case ("fork this chat N times, one item each")
+                    // actually work.
+                    prompt: forkKickoffPrompt(kickoff),
+                    driveMode: driveModeFor(p),
+                    fallbackModel: p.model,
+                  });
+                }
+                return { sessionId: newId };
+              },
+              sendMessage: async (projectSlug, targetSessionId, kickoff) => {
+                const p = await deps.projects.get(projectSlug);
+                if (!(await deps.herdctl.sessionExists(p, targetSessionId))) {
+                  throw new Error(`chat not found: ${targetSessionId} in project ${projectSlug}`);
+                }
+                await startAgentTurn({
+                  projectSlug,
+                  agentName: keeperAgentName(projectSlug),
+                  workingDir: p.workingDir,
+                  resume: targetSessionId,
+                  prompt: kickoff,
+                  driveMode: driveModeFor(p),
+                  fallbackModel: p.model,
+                });
+              },
+            };
+          }
+
+          injectedMcpServers[SELF_MCP_SERVER_KEY] = selfMcpServerDef(selfMcpContext, writeCtx);
         }
 
         // Session mode drives a persistent, herdctl-managed openChatSession so
