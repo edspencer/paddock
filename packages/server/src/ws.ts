@@ -617,10 +617,17 @@ export function makeChatHandler(deps: {
    * timeout elapses) before an id is known.
    *
    * The spawned turn is injected with `send_file` ONLY — NOT the self-management
-   * MCP. So a spawned chat can render files but cannot itself fan out: v1 fan-out
-   * is deliberately one level deep. This is not a recursion *guard* (none is built
-   * this phase, per #214) — it's simply that recursion isn't wired; a later phase
-   * can inject the self-MCP into children behind a real depth/origin guard.
+   * MCP. So an AUTONOMOUS fan-out cannot recurse into a fork bomb: a child's
+   * kickoff turn (and, in session drive-mode, its scheduler wakes — the reaper
+   * resumes the session as it was opened, never re-injecting) carry no
+   * self-management tools, so a spawned chat cannot itself create/fork/message on
+   * its own. This is NOT a recursion *guard* (none is built this phase, per #214)
+   * — recursion is simply not wired into the automated path. Note a spawned chat
+   * is still a normal keeper chat: if a human later opens it and sends a message,
+   * that socket-driven turn goes through the regular path and gets the full tools
+   * again (by design — any keeper chat may use them); that's deliberate human
+   * interaction, not a runaway. A later phase can inject the self-MCP into
+   * automated children too, behind a real depth/origin guard.
    */
   async function startAgentTurn(opts: {
     projectSlug: string;
