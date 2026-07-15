@@ -48,7 +48,12 @@
  * `target` alias so existing/early frontends keep working.
  */
 import type { WebSocket } from "@fastify/websocket";
-import type { SDKMessage, RuntimeSession, SessionWakeEntry } from "@herdctl/core";
+import type {
+  SDKMessage,
+  RuntimeSession,
+  SessionWakeEntry,
+  InjectedMcpServerDef,
+} from "@herdctl/core";
 import { createSDKMessageHandler, type SDKMessage as ChatSDKMessage } from "@herdctl/chat";
 import type { HerdctlService } from "./herdctl.js";
 import {
@@ -70,6 +75,11 @@ import {
 import { SessionHub, type TurnHandle, type ActiveInfo } from "./session-hub.js";
 import { wrapPreload, composePreloadContext } from "./preload.js";
 import { sendFileServerDef, SEND_FILE_SERVER_KEY } from "./send-file-mcp.js";
+import {
+  selfMcpServerDef,
+  SELF_MCP_SERVER_KEY,
+  type SelfMcpContext,
+} from "./self-mcp.js";
 import type { AttachmentStore } from "./attachments.js";
 import type { QueuedMessageStore } from "./queued-message.js";
 
@@ -812,6 +822,61 @@ export function makeChatHandler(deps: {
           workingDirectory: sendFileWorkingDir,
           saveAttachment: (bytes, name) => deps.attachments.save(bytes, name),
         });
+        const injectedMcpServers: Record<string, InjectedMcpServerDef> = {
+          [SEND_FILE_SERVER_KEY]: sendFile,
+        };
+
+        // Read-only self-management MCP (issue #214 Phase 1): only on keeper turns
+        // (never scratch) and only when the instance opts in via PADDOCK_SELF_MCP.
+        // Lets a keeper enumerate projects/chats (cross-project) and read another
+        // chat's transcript tail. Handlers close over this turn's live services;
+        // `running` reads the in-process SessionHub so it's cheap (no transcript
+        // parse just to list). Write tools (create/fork/message) are a later phase.
+        if (slug !== SCRATCH_SLUG && deps.cfg.selfMcpEnabled) {
+          const selfMcpContext: SelfMcpContext = {
+            listProjects: async () => {
+              const projects = await deps.projects.list();
+              return projects.map((p) => ({
+                slug: p.slug,
+                name: p.name,
+                area: p.group && p.group.length > 0 ? p.group : undefined,
+                status: p.status,
+              }));
+            },
+            listChats: async (projectSlug) => {
+              const targets = projectSlug
+                ? [await deps.projects.get(projectSlug)]
+                : await deps.projects.list();
+              const chats = [];
+              for (const p of targets) {
+                const sessions = await deps.herdctl.listSessions(p);
+                for (const s of sessions) {
+                  chats.push({
+                    project: p.slug,
+                    sessionId: s.sessionId,
+                    name: s.customName ?? s.autoName ?? s.sessionId.slice(0, 8),
+                    updatedAt: s.mtime,
+                    running: hub.isRunning(s.sessionId),
+                  });
+                }
+              }
+              return chats;
+            },
+            readChat: async (projectSlug, chatSessionId) => {
+              const project = await deps.projects.get(projectSlug);
+              const messages = await deps.herdctl.sessionMessages(
+                keeperAgentName(project.slug),
+                chatSessionId,
+              );
+              return messages.map((m) => ({
+                role: m.role,
+                text: m.content,
+                timestamp: m.timestamp,
+              }));
+            },
+          };
+          injectedMcpServers[SELF_MCP_SERVER_KEY] = selfMcpServerDef(selfMcpContext);
+        }
 
         // Session mode drives a persistent, herdctl-managed openChatSession so
         // cross-turn autonomy (ScheduleWakeup / `/loop`) survives the turn
@@ -826,7 +891,7 @@ export function makeChatHandler(deps: {
           // omit -> agent-level fallback; explicit null -> new chat; id -> resume.
           resume: sessionId ?? null,
           triggerType: "web",
-          injectedMcpServers: { [SEND_FILE_SERVER_KEY]: sendFile },
+          injectedMcpServers,
           onJobCreated: (id) => {
             jobId = id;
             turn.setJobId(id);

@@ -135,6 +135,14 @@ export interface PaddockConfig {
    * back to the terse replace prompt (e.g. an instance with no CLAUDE.md files).
    */
   nativeSystemPrompt: boolean;
+  /**
+   * Whether keeper turns are handed the read-only self-management MCP server
+   * (issue #214 Phase 1) — the `mcp__paddock_manage__*` tools that let a keeper
+   * enumerate projects/chats and read another chat's transcript. Driven by
+   * `PADDOCK_SELF_MCP`; default OFF (opt-in per instance). Never injected on
+   * scratch turns. The write tools (create/fork/message) are a later phase.
+   */
+  selfMcpEnabled: boolean;
 }
 
 /**
@@ -327,7 +335,18 @@ export function loadPaddockConfig(): PaddockConfig {
     brand: loadBrandConfig(),
     keeperDriveMode: loadKeeperDriveMode(),
     nativeSystemPrompt: loadNativeSystemPrompt(),
+    selfMcpEnabled: loadSelfMcpEnabled(),
   });
+}
+
+/**
+ * Resolve whether keepers get the read-only self-management MCP (issue #214).
+ * Defaults to OFF so a plain instance never advertises it; opt in per instance
+ * with `PADDOCK_SELF_MCP=1`. Accepts 1/true/yes.
+ */
+function loadSelfMcpEnabled(): boolean {
+  const raw = envOr("PADDOCK_SELF_MCP", "false").toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes";
 }
 
 /**
