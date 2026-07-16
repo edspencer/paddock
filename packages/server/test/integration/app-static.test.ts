@@ -119,6 +119,55 @@ describe("integration: app.ts static-SPA serving", () => {
     expect(apiMiss.json().error).toBe("not found");
   });
 
+  it("404s a missing static asset instead of serving index.html (issue #220)", async () => {
+    h = await boot({ withDist: true });
+    const app = h.built.app;
+
+    // A stale/missing hashed asset (has a file extension) must be a real 404 — NOT
+    // index.html — so the browser fails loudly on "module script" load instead of
+    // parsing HTML as JS, and the service worker can't cache HTML under the URL.
+    for (const url of [
+      "/assets/index-DEADBEEF.js",
+      "/assets/ChatPane-OLDHASH.css",
+      "/favicon-nope.png",
+      "/sw-missing.js",
+    ]) {
+      const res = await app.inject({
+        method: "GET",
+        url,
+        headers: { accept: "*/*", "sec-fetch-mode": "cors" },
+      });
+      expect(res.statusCode, url).toBe(404);
+      expect(res.headers["content-type"] ?? "").not.toContain("text/html");
+      expect(res.body).not.toContain("paddock SPA");
+    }
+
+    // But a real navigation to a *dotted* client route (e.g. a file deep-link
+    // carrying Accept: text/html) still resolves to the SPA shell.
+    const dotted = await app.inject({
+      method: "GET",
+      url: "/projects/x/files/README.md",
+      headers: { accept: "text/html" },
+    });
+    expect(dotted.statusCode).toBe(200);
+    expect(dotted.body).toContain("paddock SPA");
+
+    // A navigation Sec-Fetch-Mode also wins even for a dotted path.
+    const navMode = await app.inject({
+      method: "GET",
+      url: "/projects/x/files/notes.txt",
+      headers: { accept: "*/*", "sec-fetch-mode": "navigate" },
+    });
+    expect(navMode.statusCode).toBe(200);
+    expect(navMode.body).toContain("paddock SPA");
+
+    // An extension-less client route still resolves even without any Accept hint
+    // (e.g. programmatic clients / the existing inject-based tests).
+    const bare = await app.inject({ method: "GET", url: "/projects/anything/home" });
+    expect(bare.statusCode).toBe(200);
+    expect(bare.body).toContain("paddock SPA");
+  });
+
   it("injects per-instance branding into the served index.html (issue #34)", async () => {
     h = await boot({
       withDist: true,
