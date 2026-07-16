@@ -20,9 +20,12 @@ import { readQueued, writeQueued } from "../lib/queued";
 import {
   AlertIcon,
   BranchIcon,
+  CheckIcon,
   ChevronRightIcon,
   ClockIcon,
+  FileIcon,
   PencilIcon,
+  SearchIcon,
   SendIcon,
   SparkIcon,
   StopIcon,
@@ -30,14 +33,18 @@ import {
   XIcon,
 } from "./icons";
 import type {
+  BashDetails,
   ChatCompleteUsage,
   ChatUsage,
   EditDiff,
   HistoryMessage,
   ModelInfo,
+  ReadInfo,
+  SearchInfo,
   SentFile,
   SentFileEnvelope,
   SlashCommand,
+  TaskCreateInfo,
 } from "../lib/types";
 import {
   formatSessionUsage,
@@ -1535,20 +1542,37 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
   // distinct from a sub-agent, with a "background" badge + status chip (issue #230).
   const isBg = !isSubagent && isBackgroundTool(tool);
   const events = tool.monitorEvents ?? [];
-  // An Edit/MultiEdit/Write tool call with a recovered inline diff (issue #232).
+  // Per-tool detail recovered from the raw `{input, toolUseResult}` sidecar (#237);
+  // each is history-hydrated only and gates a richer treatment, else generic block.
   const diff = tool.editDiff;
   const isEdit = Boolean(diff);
+  const readInfo = tool.toolName === "Read" ? tool.readInfo : undefined;
+  const bash = tool.toolName === "Bash" ? tool.bashDetails : undefined;
+  const search = tool.searchInfo;
+  const taskUpdate = tool.toolName === "TaskUpdate" ? tool.taskUpdate : undefined;
+  const taskCreate = tool.toolName === "TaskCreate" ? tool.taskCreate : undefined;
+  // Bash renders a split body only when there's a stderr to peel off; otherwise the
+  // generic output pre still handles it (we don't duplicate every clean call).
+  const bashSplit = Boolean(bash && bash.stderr);
+  const searchCount = search ? searchCountLabel(search) : null;
+  const readRange = readInfo ? readRangeLabel(readInfo) : null;
   // Expandable-into-steps only when the sub-agent's transcript is on disk — never
   // while pending (the transcript doesn't exist until it produces output, #175).
   const expandable = Boolean(!pending && isSubagent && tool.hasSubagent && tool.toolUseId);
-  // Sub-agent header reads as "<type> — <description>"; an edit shows its
-  // filename; other tools keep the classic "<toolName> <inputSummary>".
+  // Sub-agent header reads as "<type> — <description>"; the detail-bearing tools show
+  // a friendlier subtitle; others keep the classic "<toolName> <inputSummary>".
   const label = isSubagent ? (tool.subagentType ?? tool.toolName) : tool.toolName;
   const subtitle = isSubagent
     ? tool.description
     : isEdit
       ? (diff!.filePath?.split("/").pop() ?? diff!.filePath)
-      : tool.inputSummary;
+      : readInfo
+        ? (readInfo.basename ?? readInfo.filePath ?? tool.inputSummary)
+        : taskCreate
+          ? taskCreate.subject
+          : tool.inputSummary;
+  // Full path/text on hover — fixes the long-path header cutoff for Read (#237).
+  const subtitleTitle = readInfo?.filePath ?? taskCreate?.description ?? subtitle ?? undefined;
   return (
     <div className="flex justify-start">
       <div
@@ -1590,6 +1614,24 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
               height={13}
               className={`shrink-0 ${tool.isError ? "text-rose-500" : "text-paddock-500"}`}
             />
+          ) : readInfo ? (
+            <FileIcon
+              width={13}
+              height={13}
+              className={`shrink-0 ${tool.isError ? "text-rose-500" : "text-paddock-500"}`}
+            />
+          ) : search ? (
+            <SearchIcon
+              width={13}
+              height={13}
+              className={`shrink-0 ${tool.isError ? "text-rose-500" : "text-paddock-500"}`}
+            />
+          ) : taskUpdate || taskCreate ? (
+            <CheckIcon
+              width={13}
+              height={13}
+              className={`shrink-0 ${tool.isError ? "text-rose-500" : "text-paddock-500"}`}
+            />
           ) : (
             <WrenchIcon
               width={13}
@@ -1610,10 +1652,31 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
               background
             </span>
           )}
-          {subtitle && (
-            <span className="min-w-0 truncate font-mono text-paddock-500 dark:text-paddock-400">
-              {subtitle}
+          {taskUpdate ? (
+            // A TaskUpdate status transition: colored from → to pills (#237).
+            <span className="flex min-w-0 items-center gap-1.5 truncate font-mono text-paddock-500 dark:text-paddock-400">
+              {taskUpdate.taskId && <span className="shrink-0">Task #{taskUpdate.taskId}</span>}
+              {taskUpdate.from && taskUpdate.to ? (
+                <span className="flex shrink-0 items-center gap-1">
+                  <TaskStatusPill status={taskUpdate.from} />
+                  <span className="text-paddock-400">→</span>
+                  <TaskStatusPill status={taskUpdate.to} />
+                </span>
+              ) : (
+                taskUpdate.updatedFields && (
+                  <span className="shrink-0 truncate">{taskUpdate.updatedFields.join(", ")}</span>
+                )
+              )}
             </span>
+          ) : (
+            subtitle && (
+              <span
+                className="min-w-0 truncate font-mono text-paddock-500 dark:text-paddock-400"
+                title={subtitleTitle}
+              >
+                {subtitle}
+              </span>
+            )
           )}
           <span className="ml-auto flex shrink-0 items-center gap-2">
             {tool.isError && (
@@ -1658,6 +1721,31 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
                     )}
                   </span>
                 )}
+                {readRange && (
+                  <span className="whitespace-nowrap font-mono text-[10px] text-paddock-400 tabular-nums">
+                    {readRange}
+                  </span>
+                )}
+                {searchCount && (
+                  <span className="whitespace-nowrap font-mono text-[10px] font-medium text-paddock-500 tabular-nums dark:text-paddock-400">
+                    {searchCount}
+                  </span>
+                )}
+                {bash?.gitHint && (
+                  <span className="whitespace-nowrap rounded bg-paddock-200/70 px-1.5 py-0.5 font-mono text-[10px] text-paddock-600 dark:bg-paddock-800 dark:text-paddock-300">
+                    {bash.gitHint}
+                  </span>
+                )}
+                {bash?.interrupted && (
+                  <span className="whitespace-nowrap rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-950/60 dark:text-amber-300">
+                    interrupted
+                  </span>
+                )}
+                {bash?.returnCodeInterpretation && (
+                  <span className="max-w-[12rem] truncate whitespace-nowrap text-[10px] italic text-paddock-400">
+                    {bash.returnCodeInterpretation}
+                  </span>
+                )}
                 {dur && <span className="text-paddock-400">{dur}</span>}
                 {cost && <span className="text-paddock-400">{cost}</span>}
               </>
@@ -1682,6 +1770,10 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
             </div>
           ) : isEdit ? (
             <DiffBody diff={diff!} />
+          ) : bashSplit ? (
+            <BashBody bash={bash!} />
+          ) : taskCreate && taskCreate.description ? (
+            <TaskCreateBody info={taskCreate} />
           ) : (
             <div className="border-t border-paddock-200/70 dark:border-paddock-800">
               {isBg && tool.taskResultSummary && (
@@ -1706,10 +1798,16 @@ function diffLineClass(t: "+" | "-" | " "): string {
   return "text-paddock-600 dark:text-paddock-400";
 }
 
+/** Right-align a line number into the fixed-width gutter cell (blank when absent). */
+function gutter(n?: number): string {
+  return n === undefined ? "" : String(n);
+}
+
 /**
- * The inline diff for an Edit/MultiEdit/Write tool call (issue #232): each hunk's
- * lines rendered with +/- gutter + green/red tint, height-capped + scrollable.
- * A MultiEdit's hunks are labelled; a truncated diff notes the cut.
+ * The inline diff for an Edit/MultiEdit/Write tool call (issue #232 → #237): each
+ * hunk rendered with a real `@@ -old +new @@` header, an old/new line-number gutter
+ * (from `toolUseResult.structuredPatch`), and the +/- green/red tint. Height-capped
+ * + scrollable; a truncated diff notes the cut.
  */
 function DiffBody({ diff }: { diff: EditDiff }) {
   return (
@@ -1719,14 +1817,18 @@ function DiffBody({ diff }: { diff: EditDiff }) {
           key={hi}
           className={hi > 0 ? "border-t border-paddock-200/60 dark:border-paddock-800/60" : ""}
         >
-          {diff.hunks.length > 1 && (
-            <div className="bg-paddock-100/70 px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-paddock-400 dark:bg-paddock-900/50">
-              edit {hi + 1} of {diff.hunks.length}
-            </div>
-          )}
+          <div className="bg-paddock-100/70 px-3 py-1 font-mono text-[10px] font-semibold text-sky-700/80 dark:bg-paddock-900/50 dark:text-sky-400/80">
+            @@ -{h.oldStart},{h.oldLines} +{h.newStart},{h.newLines} @@
+          </div>
           {h.lines.map((l, li) => (
             <div key={li} className={`flex ${diffLineClass(l.t)}`}>
-              <span className="w-4 shrink-0 select-none pl-2 opacity-50">
+              <span className="w-8 shrink-0 select-none pr-1 text-right tabular-nums opacity-40">
+                {gutter(l.oldLine)}
+              </span>
+              <span className="w-8 shrink-0 select-none pr-1 text-right tabular-nums opacity-40">
+                {gutter(l.newLine)}
+              </span>
+              <span className="w-3 shrink-0 select-none text-center opacity-60">
                 {l.t === " " ? "" : l.t}
               </span>
               <span className="whitespace-pre-wrap break-words pr-3">{l.text || " "}</span>
@@ -1737,6 +1839,97 @@ function DiffBody({ diff }: { diff: EditDiff }) {
       {diff.truncated && (
         <div className="px-3 py-1.5 text-[11px] italic text-paddock-400">
           … diff truncated (see the file for the full change)
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Tailwind classes for a task-status pill, by state (issue #237). */
+function taskStatusPillClass(status: string): string {
+  switch (status) {
+    case "completed":
+    case "done":
+      return "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300";
+    case "in_progress":
+      return "bg-sky-100 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300";
+    case "blocked":
+    case "failed":
+    case "cancelled":
+      return "bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300";
+    default: // pending & anything else
+      return "bg-paddock-200/70 text-paddock-600 dark:bg-paddock-800 dark:text-paddock-300";
+  }
+}
+
+/** A small colored pill for one task status value (e.g. `pending`, `in_progress`). */
+function TaskStatusPill({ status }: { status: string }) {
+  return (
+    <span
+      className={`whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] font-semibold ${taskStatusPillClass(
+        status,
+      )}`}
+    >
+      {status}
+    </span>
+  );
+}
+
+/** The count chip text for a Grep/Glob search result (issue #237). */
+function searchCountLabel(s: SearchInfo): string | null {
+  const parts: string[] = [];
+  if (s.kind === "grep") {
+    if (s.numLines !== undefined) parts.push(`${s.numLines} line${s.numLines === 1 ? "" : "s"}`);
+    if (s.numFiles !== undefined) parts.push(`${s.numFiles} file${s.numFiles === 1 ? "" : "s"}`);
+  } else {
+    const n = s.totalMatches ?? s.numFiles;
+    if (n !== undefined) parts.push(`${n} match${n === 1 ? "" : "es"}`);
+  }
+  if (!parts.length) return null;
+  return (s.truncated ? "≥" : "") + parts.join(" · ");
+}
+
+/** The `lines a–b of N` range chip text for a Read (issue #237). */
+function readRangeLabel(r: ReadInfo): string | null {
+  if (r.startLine === undefined || r.numLines === undefined) return null;
+  const end = r.startLine + Math.max(0, r.numLines - 1);
+  const of = r.totalLines !== undefined ? ` of ${r.totalLines}` : "";
+  return `lines ${r.startLine}–${end}${of}`;
+}
+
+/**
+ * A Bash body that splits stdout (plain) from stderr (red), instead of the merged
+ * output herdctl produces (issue #237). Only used when there IS a stderr to peel.
+ */
+function BashBody({ bash }: { bash: BashDetails }) {
+  return (
+    <div className="max-h-72 overflow-auto border-t border-paddock-200/70 dark:border-paddock-800">
+      {bash.stdout && (
+        <pre className="whitespace-pre-wrap break-words bg-paddock-50/80 px-3 py-2 font-mono text-[11.5px] leading-relaxed text-paddock-700 dark:bg-paddock-950/60 dark:text-paddock-300">
+          {bash.stdout}
+        </pre>
+      )}
+      {bash.stderr && (
+        <pre className="whitespace-pre-wrap break-words border-t border-rose-200/50 bg-rose-50/50 px-3 py-2 font-mono text-[11.5px] leading-relaxed text-rose-700 first:border-t-0 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300">
+          {bash.stderr}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+/** A TaskCreate body: the task subject + description text (issue #237). */
+function TaskCreateBody({ info }: { info: TaskCreateInfo }) {
+  return (
+    <div className="border-t border-paddock-200/70 bg-paddock-50/80 px-3 py-2 dark:border-paddock-800 dark:bg-paddock-950/60">
+      {info.subject && (
+        <div className="text-[12px] font-semibold text-paddock-700 dark:text-paddock-200">
+          {info.subject}
+        </div>
+      )}
+      {info.description && (
+        <div className="mt-1 whitespace-pre-wrap break-words text-[11.5px] leading-relaxed text-paddock-600 dark:text-paddock-400">
+          {info.description}
         </div>
       )}
     </div>

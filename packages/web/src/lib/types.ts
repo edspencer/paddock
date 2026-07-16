@@ -242,27 +242,98 @@ export interface ChatToolCall {
   /** For `Monitor`: the streamed `<event>` lines, in order. */
   monitorEvents?: string[];
 
-  /** Inline diff for an `Edit`/`MultiEdit`/`Write` tool call, computed server-side
-   *  from the raw tool input (issue #232). Present only on history-hydrated edit
-   *  tool calls; undefined otherwise (incl. the live path before reload). */
+  // Per-tool detail enrichment (issue #237), added server-side from the raw
+  // transcript's `{input, toolUseResult}` sidecar. History-hydrated only;
+  // undefined on the live path before reload (renderer degrades to generic).
+  /** Inline diff for an `Edit`/`MultiEdit`/`Write`, sourced from
+   *  `toolUseResult.structuredPatch` (real file line numbers; issue #232 → #237). */
   editDiff?: EditDiff;
+  /** File + line-range for a `Read` — drives the `basename · lines a–b of N` header. */
+  readInfo?: ReadInfo;
+  /** Split stdout/stderr + status affordances for a `Bash`. */
+  bashDetails?: BashDetails;
+  /** Match/file counts for a `Grep`/`Glob`. */
+  searchInfo?: SearchInfo;
+  /** Status transition for a `TaskUpdate`. */
+  taskUpdate?: TaskUpdateInfo;
+  /** Subject/description for a `TaskCreate`. */
+  taskCreate?: TaskCreateInfo;
 }
 
-/** One line of a rendered diff: added (`+`), removed (`-`), or unchanged context. */
+/**
+ * One line of a rendered diff: added (`+`), removed (`-`), or unchanged context,
+ * with the real source line numbers recovered from the transcript's git hunks
+ * (issue #237). `oldLine` on context + deletions, `newLine` on context + additions.
+ */
 export interface DiffLine {
   t: "+" | "-" | " ";
   text: string;
+  oldLine?: number;
+  newLine?: number;
 }
 
-/** A structured diff for an edit tool call (issue #232). */
+/** One git-style hunk with real file offsets (`@@ -oldStart,oldLines +newStart,newLines @@`). */
+export interface DiffHunk {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: DiffLine[];
+}
+
+/** A structured diff for an edit tool call (issue #232 → #237). */
 export interface EditDiff {
   filePath?: string;
   kind: "edit" | "multiedit" | "write";
   additions: number;
   deletions: number;
-  hunks: { lines: DiffLine[] }[];
+  hunks: DiffHunk[];
   /** True when a hunk was truncated for size; the stats still reflect the full edit. */
   truncated?: boolean;
+  /** True when the file changed between the read and the edit. */
+  userModified?: boolean;
+}
+
+/** File + line-range recovered for a `Read` (issue #237). */
+export interface ReadInfo {
+  filePath?: string;
+  basename?: string;
+  startLine?: number;
+  numLines?: number;
+  totalLines?: number;
+}
+
+/** Split output + status affordances recovered for a `Bash` (issue #237). */
+export interface BashDetails {
+  stdout?: string;
+  stderr?: string;
+  interrupted?: boolean;
+  returnCodeInterpretation?: string;
+  gitHint?: string;
+}
+
+/** Match/file counts recovered for a `Grep`/`Glob` (issue #237). */
+export interface SearchInfo {
+  kind: "grep" | "glob";
+  numFiles?: number;
+  numLines?: number;
+  totalMatches?: number;
+  truncated?: boolean;
+}
+
+/** Status transition recovered for a `TaskUpdate` (issue #237). */
+export interface TaskUpdateInfo {
+  taskId?: string;
+  updatedFields?: string[];
+  from?: string;
+  to?: string;
+}
+
+/** Subject/description recovered for a `TaskCreate` (issue #237). */
+export interface TaskCreateInfo {
+  taskId?: string;
+  subject?: string;
+  description?: string;
 }
 
 export interface HistoryMessage {

@@ -34,9 +34,8 @@ import type { ReadStateStore } from "./read-state.js";
 import type { PaddockConfig } from "./config.js";
 import { type Transcriber, TranscriptionError } from "./transcribe.js";
 import { readFirstUserText } from "./transcripts.js";
-import { enrichWithSubagents, readSubagentMessages } from "./subagents.js";
-import { enrichWithBackground } from "./background.js";
-import { enrichWithEdits } from "./editdiff.js";
+import { readSubagentMessages } from "./subagents.js";
+import { enrichWithToolDetails } from "./tooldetails.js";
 
 /**
  * The subset of @fastify/multipart's decorated request we use. The plugin
@@ -662,13 +661,7 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
           .sessionMessages(agent, req.params.sessionId)
           .catch(() => []);
         return {
-          messages: enrichWithBackground(
-            await enrichWithEdits(
-              projectDir,
-              req.params.sessionId,
-              await enrichWithSubagents(projectDir, req.params.sessionId, messages),
-            ),
-          ),
+          messages: await enrichWithToolDetails(projectDir, req.params.sessionId, messages),
         };
       } catch (err) {
         return sendProjectError(reply, err);
@@ -841,12 +834,10 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
         .sessionMessages(SCRATCH_AGENT, req.params.sessionId)
         .catch(() => []);
       return {
-        messages: enrichWithBackground(
-          await enrichWithEdits(
-            herdctl.scratchDir,
-            req.params.sessionId,
-            await enrichWithSubagents(herdctl.scratchDir, req.params.sessionId, messages),
-          ),
+        messages: await enrichWithToolDetails(
+          herdctl.scratchDir,
+          req.params.sessionId,
+          messages,
         ),
       };
     },
