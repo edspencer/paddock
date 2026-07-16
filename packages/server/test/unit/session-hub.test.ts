@@ -256,4 +256,43 @@ describe("SessionHub", () => {
     expect(hub.activeInfo("s1")).toBeNull();
     expect(hub.runningSessions()).toEqual([]);
   });
+
+  it("broadcast() sends a one-off frame to origin + subscribers, skipping dead (#245)", () => {
+    const hub = new SessionHub();
+    const origin = new FakeSocket();
+    const reconnected = new FakeSocket();
+    const dead = new FakeSocket();
+    hub.startTurn("p", origin, "s1"); // registers origin under s1
+    hub.subscribe("s1", reconnected);
+    hub.subscribe("s1", dead);
+    dead.kill();
+
+    hub.broadcast("s1", {
+      type: "chat:queued_flushed",
+      payload: { projectSlug: "p", sessionId: "s1", text: "hi" },
+    });
+
+    expect(origin.types()).toEqual(["chat:queued_flushed"]);
+    expect(reconnected.types()).toEqual(["chat:queued_flushed"]);
+    expect(reconnected.sent[0].payload.text).toBe("hi");
+    expect(dead.sent).toHaveLength(0);
+  });
+
+  it("broadcast() reaches a socket that reconnected after the origin died (#245)", () => {
+    // The reported bug's shape: the origin socket is gone; a new socket attached.
+    const hub = new SessionHub();
+    const origin = new FakeSocket();
+    hub.startTurn("p", origin, "s1");
+    origin.kill();
+    const reconnected = new FakeSocket();
+    hub.subscribe("s1", reconnected);
+
+    hub.broadcast("s1", {
+      type: "chat:queued_flushed",
+      payload: { projectSlug: "p", sessionId: "s1" },
+    });
+
+    expect(origin.sent).toHaveLength(0); // dead
+    expect(reconnected.types()).toEqual(["chat:queued_flushed"]); // still reached
+  });
 });

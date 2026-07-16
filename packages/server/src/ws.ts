@@ -284,6 +284,13 @@ export interface ChatSetQueueMessage {
     sessionId?: string | null;
     /** The queued message text, or null/empty to clear. */
     text?: string | null;
+    /**
+     * Client-stamped identity of this queued message (#245): the ms timestamp of
+     * when it was first enqueued, stable across reloads. The server records the ts
+     * of the message it last drained per session so it can skip re-sending a stale
+     * copy a reloaded client re-asserts. Absent → the server stamps `Date.now()`.
+     */
+    ts?: number | null;
   };
 }
 
@@ -430,6 +437,13 @@ export interface ChatQueuedFlushedMessage {
     projectSlug: string;
     target: string;
     sessionId: string;
+    /**
+     * The queued text the server is now auto-sending as a turn (#245). Present
+     * when the server actually drained+sent it — the client renders it as the
+     * user bubble in-transcript (the drained turn streams only the reply). Absent
+     * when the frame is just telling the client to clear a stale/already-sent copy.
+     */
+    text?: string;
   };
 }
 
@@ -533,6 +547,14 @@ export function makeChatHandler(deps: {
   // currently attached, so a turn survives the death of the socket that started
   // it (issue #54). See session-hub.ts.
   const hub = new SessionHub();
+
+  // Per-session marker of the last queued message the server has already drained
+  // (#245), keyed `agent \0 sessionId` and stamped with that message's client
+  // timestamp. Lets an idle-drain skip a message it already sent — e.g. a stale
+  // localStorage copy a reloaded client re-asserts — instead of double-sending.
+  // In-memory (shared across this handler's sockets); a rare double-send only
+  // survives a server restart, when the persisted store is already empty anyway.
+  const lastFlushedTs = new Map<string, number>();
 
   // Every currently-connected socket, so a turn's start/stop transition can be
   // broadcast to all clients — powering the per-chat sidebar streaming dots that
@@ -922,6 +944,51 @@ export function makeChatHandler(deps: {
       if (active) send(activeFrame(active));
     };
 
+    // Server-authoritative queue drain (#245): auto-send a persisted queued
+    // message as the next turn, exactly once. Called (a) when a turn completes
+    // successfully and (b) when a queue is set while the session is idle — a queue
+    // that arrived (e.g. via the reconnect outbox) after the turn it was meant to
+    // follow already ended. `take` makes the read+clear atomic so the two callers
+    // can never both send it; the `lastFlushedTs` marker skips a message already
+    // drained (a stale client re-assert on reload) so it isn't sent twice.
+    const drainQueue = async (slug: string, sessionId: string): Promise<void> => {
+      if (!deps.queuedMessage) return;
+      const agent = slug === SCRATCH_SLUG ? SCRATCH_AGENT : keeperAgentName(slug);
+      const queued = await deps.queuedMessage.take(agent, sessionId).catch(() => null);
+      if (!queued?.text) return;
+      const markerKey = `${agent} ${sessionId}`;
+      const already = (lastFlushedTs.get(markerKey) ?? 0) >= queued.createdAtMs;
+      // Tell every attached client (origin + reconnected sockets) to clear its copy
+      // of this message. When we're really sending it, carry the text so the client
+      // renders the sent bubble in-transcript; on a stale re-assert we only clear.
+      hub.broadcast(sessionId, {
+        type: "chat:queued_flushed",
+        payload: {
+          projectSlug: slug,
+          target: slug,
+          sessionId,
+          ...(already ? {} : { text: queued.text }),
+        },
+      });
+      if (already) return;
+      lastFlushedTs.set(markerKey, queued.createdAtMs);
+      // Broadcast the flush frame BEFORE kicking the turn so the user bubble renders
+      // above the reply. Run it detached, like a human send. A leading-slash queued
+      // message is a slash command (e.g. "/compact"): route it through the command
+      // path so the CLI dispatches it — matching how the composer sends one live.
+      if (queued.text.startsWith("/")) {
+        void onChatCommand({
+          type: "chat:command",
+          payload: { projectSlug: slug, target: slug, command: queued.text, sessionId },
+        });
+      } else {
+        void onChatSend({
+          type: "chat:send",
+          payload: { projectSlug: slug, target: slug, sessionId, message: queued.text },
+        });
+      }
+    };
+
     const onSetQueue = async (msg: ChatSetQueueMessage): Promise<void> => {
       if (!deps.queuedMessage) return; // feature disabled
       const slug = (msg.payload.projectSlug ?? msg.payload.target) as string | undefined;
@@ -931,12 +998,19 @@ export function makeChatHandler(deps: {
       // Determine the agent name for this chat (keeper for project, scratch for one-off)
       const agent = slug === SCRATCH_SLUG ? SCRATCH_AGENT : keeperAgentName(slug);
       if (!sessionId) {
-        // New chat: queue isn't stored until the session id exists. No-op for now.
+        // New chat: queue isn't stored until the session id exists. The client
+        // re-asserts it (with the same ts) once the id resolves, so it persists then.
         return;
       }
       // Store or clear the queued message.
       if (text && text.trim().length > 0) {
-        await deps.queuedMessage.set(agent, sessionId, { text, createdAtMs: Date.now() }).catch(() => undefined);
+        await deps.queuedMessage
+          .set(agent, sessionId, { text, createdAtMs: msg.payload.ts ?? Date.now() })
+          .catch(() => undefined);
+        // If no turn is running, this queue arrived after the turn it was meant to
+        // follow already ended — drain it now rather than wait for a completion
+        // that won't come (the reported stranding bug, #245).
+        if (!hub.isRunning(sessionId)) await drainQueue(slug, sessionId);
       } else {
         await deps.queuedMessage.set(agent, sessionId, null).catch(() => undefined);
       }
@@ -1327,32 +1401,11 @@ export function makeChatHandler(deps: {
         });
         turn.end();
 
-        // After a successful turn, check if there's a queued message (#197).
-        // Auto-send it and notify the client, so they can clear their localStorage.
-        if (result.success && finalSession && deps.queuedMessage) {
-          const agent = slug === SCRATCH_SLUG ? SCRATCH_AGENT : keeperAgentName(slug);
-          const queued = await deps.queuedMessage.get(agent, finalSession).catch(() => null);
-          if (queued?.text) {
-            // Auto-send the queued message by recursively calling onChatSend.
-            // This drives the exact same flow as a human message: turn start,
-            // streaming, completion, and a potential next queue.
-            void onChatSend({
-              type: "chat:send",
-              payload: {
-                projectSlug: slug,
-                target: slug,
-                sessionId: finalSession,
-                message: queued.text,
-                // Don't re-preload context (it already happened on the initial message).
-              },
-            });
-            // Clear the server-side queue and notify the client.
-            await deps.queuedMessage.set(agent, finalSession, null).catch(() => undefined);
-            send({
-              type: "chat:queued_flushed",
-              payload: { projectSlug: slug, target: slug, sessionId: finalSession },
-            });
-          }
+        // After a SUCCESSFUL turn, auto-send any queued follow-up (#197/#245). A
+        // Stop/failed turn holds the queue for the user (no drain). drainQueue owns
+        // the take + client notify + next-turn kickoff, shared with the idle path.
+        if (result.success && finalSession) {
+          await drainQueue(slug, finalSession);
         }
       } catch (err) {
         const error = err instanceof Error ? err.message : String(err);

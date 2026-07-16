@@ -56,3 +56,40 @@ export function writeQueued(
     /* ignore (private mode / quota) */
   }
 }
+
+const TS_PREFIX = "paddock:queuedts:";
+
+/** The localStorage key for a queued message's stable enqueue timestamp (#245). */
+function queuedTsKey(sessionId: string | null | undefined, slug: string): string {
+  return TS_PREFIX + (sessionId ?? `new:${slug}`);
+}
+
+/**
+ * Read the stable enqueue timestamp of a chat's queued message (#245), or null.
+ * The server uses it to dedup a drained message from a stale localStorage copy a
+ * reloaded client re-asserts, so it must survive reloads alongside the text.
+ */
+export function readQueuedTs(sessionId: string | null | undefined, slug: string): number | null {
+  try {
+    const v = localStorage.getItem(queuedTsKey(sessionId, slug));
+    const n = v ? Number(v) : NaN;
+    return Number.isFinite(n) ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Persist (or forget, when `ts` is null) a queued message's enqueue timestamp. */
+export function writeQueuedTs(
+  sessionId: string | null | undefined,
+  slug: string,
+  ts: number | null,
+): void {
+  try {
+    const key = queuedTsKey(sessionId, slug);
+    if (ts != null) localStorage.setItem(key, String(ts));
+    else localStorage.removeItem(key);
+  } catch {
+    /* ignore (private mode / quota) */
+  }
+}
