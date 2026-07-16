@@ -79,8 +79,27 @@ function normalizePath(url: string): string {
   return p;
 }
 
+// Immutable front-end static assets (issue #223). These are the compiled web
+// bundle — content-hashed JS/CSS/fonts under /assets, the /icons and /fonts sets,
+// the service worker, and the PWA manifest. They carry no secrets and no per-user
+// data. Serving them WITHOUT the JWT gate means a transient auth lapse (e.g. an
+// Authentik session-refresh window, or the outpost briefly not injecting the
+// header) no longer turns a chunk/asset fetch into a 401 → "Load failed" /
+// "module script failed". The app shell (index.html / client routes) and every
+// data route (/api, /ws) stay authenticated, so this exposes only the compiled,
+// non-sensitive front-end — nothing an authenticated user's browser doesn't
+// already download.
+const STATIC_ASSET_PREFIXES = ["/assets/", "/icons/", "/fonts/"];
+const STATIC_ASSET_FILES = new Set(["/sw.js", "/manifest.webmanifest", "/favicon.ico"]);
+
+function isStaticAsset(pathname: string): boolean {
+  if (STATIC_ASSET_FILES.has(pathname)) return true;
+  return STATIC_ASSET_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+}
+
 function isExempt(url: string): boolean {
-  return HEALTH_PATHS.has(normalizePath(url));
+  const p = normalizePath(url);
+  return HEALTH_PATHS.has(p) || isStaticAsset(p);
 }
 
 const ANONYMOUS: AuthUser = Object.freeze({ username: "anonymous", anonymous: true });

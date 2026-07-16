@@ -55,6 +55,17 @@ export interface BuildAppOptions {
 }
 
 /**
+ * True when the (query-stripped) path's last segment carries a file extension —
+ * e.g. `/assets/index-ABC.js`, `/favicon.ico`, `/sw.js`. Used by the SPA
+ * not-found handler (issue #220) to distinguish a missing static asset (→ 404)
+ * from a client-side route (→ index.html shell).
+ */
+function hasFileExtension(pathname: string): boolean {
+  const last = pathname.slice(pathname.lastIndexOf("/") + 1);
+  return /\.[^./]+$/.test(last);
+}
+
+/**
  * Construct and fully register the paddock app. Does NOT listen on a port and
  * installs NO signal handlers — the caller (index.ts in prod, tests in CI)
  * owns the lifecycle. The herdctl fleet is initialized + started; a failure
@@ -156,7 +167,25 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
       await app.register(fastifyStatic, { root: cfg.webDist, wildcard: false });
       app.setNotFoundHandler((req, reply) => {
         if (req.method === "GET" && !req.url.startsWith("/api") && !req.url.startsWith("/ws")) {
-          return sendIndex(reply);
+          // Serve the SPA shell for client-side routes — but NEVER for a request
+          // that is clearly a missing *static asset* (a stale hashed chunk after a
+          // deploy, or any missing file). Those must 404 (issue #220): otherwise the
+          // browser receives index.html (text/html) for a JS/CSS module and throws
+          // "Failed to load module script…" ("Unexpected application error: a module
+          // script failed"), and the service worker would cache that HTML under the
+          // asset URL and serve it indefinitely.
+          //
+          // A request is treated as a client-side route (→ shell) when it is a real
+          // browser navigation (Accept: text/html, or Sec-Fetch-Mode: navigate) OR
+          // its path has no file extension. Everything else with a file extension
+          // (e.g. /assets/index-DEADBEEF.js, /favicon.ico) 404s. Dotted client routes
+          // such as /projects/x/files/README.md still resolve to the shell because a
+          // reload/deep-link of them is a navigation carrying Accept: text/html.
+          const p = req.url.split("?")[0];
+          const accept = String(req.headers["accept"] ?? "");
+          const isNavigation =
+            req.headers["sec-fetch-mode"] === "navigate" || accept.includes("text/html");
+          if (isNavigation || !hasFileExtension(p)) return sendIndex(reply);
         }
         return reply.code(404).send({ error: "not found" });
       });

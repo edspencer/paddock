@@ -1,5 +1,32 @@
 # @paddock/server
 
+## 0.25.0
+
+## 0.24.0
+
+### Patch Changes
+
+- [#224](https://github.com/edspencer/paddock/pull/224) [`42e4212`](https://github.com/edspencer/paddock/commit/42e421214e83f78bbc1f1dd86f7b69d1e6e655e0) Thanks [@edspencer](https://github.com/edspencer)! - fix(server): return 404 for missing static assets instead of the SPA shell (#220)
+
+  The SPA not-found handler served `index.html` (HTTP 200, `text/html`) for _any_
+  non-`/api`/`/ws` GET, including missing hashed assets. After a deploy, a client or
+  service worker still referencing an old chunk hash received HTML for a JS/CSS
+  module → "Failed to load module script" ("Unexpected application error: a module
+  script failed"), which the service worker then cached under the asset URL. Missing
+  static assets (paths with a file extension that aren't real navigations) now 404;
+  client-side routes — including dotted file deep-links carrying `Accept: text/html`
+  or `Sec-Fetch-Mode: navigate` — still resolve to the shell.
+
+- [#225](https://github.com/edspencer/paddock/pull/225) [`55152e4`](https://github.com/edspencer/paddock/commit/55152e490aca3a6df2dd20808459dd49833b0abf) Thanks [@edspencer](https://github.com/edspencer)! - fix(server/auth): exempt immutable static assets from the JWT gate (#223)
+
+  In `jwt`/`trusted-header` mode the auth `onRequest` hook required a valid token for
+  _every_ request, including the content-hashed front-end bundle (`/assets/**`,
+  `/icons/**`, `/fonts/**`, `/sw.js`, `/manifest.webmanifest`, `/favicon.ico`). During
+  an identity-proxy session-refresh window those asset/module fetches would 401 →
+  "Load failed" / "module script failed". Those immutable, non-sensitive static
+  assets are now served without the token; the app shell (index.html / client routes)
+  and every data route (`/api`, `/ws`) stay authenticated.
+
 ## 0.23.0
 
 ### Minor Changes

@@ -108,7 +108,7 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto max-w-6xl px-8 py-10">
+      <div className="mx-auto max-w-6xl px-3 py-5 sm:px-8 sm:py-10">
         <header className="mb-8 flex flex-wrap items-end justify-between gap-4">
           <div>
             <h1 className="text-[28px] font-semibold tracking-tight">

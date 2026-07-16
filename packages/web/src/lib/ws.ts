@@ -18,7 +18,7 @@
 //   chat:complete         { ..., success, error?, model?, usage? }
 //   chat:error            { projectSlug, error }
 //   pong
-import type { ChatCompleteUsage, ServerWsMessage } from "./types";
+import type { ChatCompleteUsage, EditDiff, ServerWsMessage } from "./types";
 
 export interface ToolCall {
   toolName: string;
@@ -42,6 +42,16 @@ export interface ToolCall {
   subagentDurationMs?: number;
   /** The sub-agent's estimated API-rate cost (USD), priced per-model (issue #166). */
   subagentCostUsd?: number | null;
+  // Background-job / Monitor enrichment (issue #230). History-hydrated tool calls
+  // carry these directly; live frames fall back to output-sniffing (see
+  // `isBackgroundTool`/`classifyBackground` in ChatPane).
+  background?: boolean;
+  taskId?: string;
+  taskStatus?: string;
+  taskResultSummary?: string;
+  monitorEvents?: string[];
+  /** Inline diff for an edit tool call (issue #232); history-hydrated only. */
+  editDiff?: EditDiff;
 }
 
 /** Events delivered to a subscribed chat. */

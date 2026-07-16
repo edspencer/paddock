@@ -32,6 +32,7 @@ import {
 import type {
   ChatCompleteUsage,
   ChatUsage,
+  EditDiff,
   HistoryMessage,
   ModelInfo,
   SentFile,
@@ -74,6 +75,39 @@ const SUBAGENT_TOOLS = new Set(["Task", "Agent"]);
 
 /** The send_file MCP tool; its payload renders as a rich `file` turn (issue #112). */
 const SEND_FILE_TOOL_NAME = "mcp__paddock__send_file";
+
+/** Background-task *ops* (badge only) — they operate on an already-detached task. */
+const BACKGROUND_OP_TOOLS = new Set(["BashOutput", "TaskOutput", "TaskStop", "KillShell"]);
+/** A `run_in_background` launch echoes this in its output ("…with ID: <id>"). */
+const BG_LAUNCH_RE = /running in (?:the )?background with ID: [A-Za-z0-9]+/i;
+
+/**
+ * True when a tool call ran detached: a `Monitor`, a background-task op, or a
+ * `run_in_background` launch (issue #230). Prefers the server-enriched `background`
+ * flag (history), and falls back to sniffing the tool name/output so the live path
+ * — whose WS frame carries no enrichment — still gets the badge.
+ */
+function isBackgroundTool(tool: ToolCall): boolean {
+  if (tool.background) return true;
+  if (tool.toolName === "Monitor" || BACKGROUND_OP_TOOLS.has(tool.toolName)) return true;
+  return BG_LAUNCH_RE.test(tool.output ?? "");
+}
+
+/** Tailwind classes for a background task's status chip, by terminal state. */
+function statusChipClass(status: string): string {
+  switch (status) {
+    case "completed":
+      return "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300";
+    case "killed":
+    case "timed out":
+      return "bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300";
+    case "running":
+    case "persistent":
+      return "bg-sky-100 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300";
+    default:
+      return "bg-paddock-200/70 text-paddock-600 dark:bg-paddock-800 dark:text-paddock-300";
+  }
+}
 
 /**
  * Resolve a `mcp__paddock__send_file` tool call into a renderable SentFile by
@@ -1495,13 +1529,24 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
   // #166). Rendered next to the duration; null when its model has no pricing.
   const cost = tool.subagentCostUsd != null ? `~${formatUsd(tool.subagentCostUsd)}` : null;
   const isSubagent = SUBAGENT_TOOLS.has(tool.toolName);
+  // A detached tool (Monitor / bg Bash / background-task op) — a first-class class
+  // distinct from a sub-agent, with a "background" badge + status chip (issue #230).
+  const isBg = !isSubagent && isBackgroundTool(tool);
+  const events = tool.monitorEvents ?? [];
+  // An Edit/MultiEdit/Write tool call with a recovered inline diff (issue #232).
+  const diff = tool.editDiff;
+  const isEdit = Boolean(diff);
   // Expandable-into-steps only when the sub-agent's transcript is on disk — never
-  // while pending (the transcript doesn't exist until it produces output).
+  // while pending (the transcript doesn't exist until it produces output, #175).
   const expandable = Boolean(!pending && isSubagent && tool.hasSubagent && tool.toolUseId);
-  // Sub-agent header reads as "<type> — <description>"; other tools keep the
-  // classic "<toolName> <inputSummary>".
+  // Sub-agent header reads as "<type> — <description>"; an edit shows its
+  // filename; other tools keep the classic "<toolName> <inputSummary>".
   const label = isSubagent ? (tool.subagentType ?? tool.toolName) : tool.toolName;
-  const subtitle = isSubagent ? tool.description : tool.inputSummary;
+  const subtitle = isSubagent
+    ? tool.description
+    : isEdit
+      ? (diff!.filePath?.split("/").pop() ?? diff!.filePath)
+      : tool.inputSummary;
   return (
     <div className="flex justify-start">
       <div
@@ -1510,7 +1555,9 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
             ? "border-rose-300/70 bg-rose-50/60 dark:border-rose-900/60 dark:bg-rose-950/30"
             : isSubagent
               ? "border-accent/40 bg-accent/[0.06] dark:border-accent/40 dark:bg-accent/10"
-              : "border-paddock-200 bg-paddock-100/50 dark:border-paddock-800 dark:bg-paddock-900/40"
+              : isBg
+                ? "border-sky-300/50 bg-sky-50/40 dark:border-sky-900/50 dark:bg-sky-950/20"
+                : "border-paddock-200 bg-paddock-100/50 dark:border-paddock-800 dark:bg-paddock-900/40"
         }`}
       >
         <button
@@ -1529,6 +1576,18 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
               height={13}
               className={`shrink-0 ${tool.isError ? "text-rose-500" : "text-accent"}`}
             />
+          ) : isBg ? (
+            <ClockIcon
+              width={13}
+              height={13}
+              className={`shrink-0 ${tool.isError ? "text-rose-500" : "text-sky-600 dark:text-sky-400"}`}
+            />
+          ) : isEdit ? (
+            <PencilIcon
+              width={13}
+              height={13}
+              className={`shrink-0 ${tool.isError ? "text-rose-500" : "text-paddock-500"}`}
+            />
           ) : (
             <WrenchIcon
               width={13}
@@ -1544,6 +1603,11 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
               sub-agent
             </span>
           )}
+          {isBg && (
+            <span className="shrink-0 whitespace-nowrap rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-700 dark:text-sky-300">
+              background
+            </span>
+          )}
           {subtitle && (
             <span className="min-w-0 truncate font-mono text-paddock-500 dark:text-paddock-400">
               {subtitle}
@@ -1556,6 +1620,8 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
               </span>
             )}
             {pending ? (
+              // In-flight tool (#175): a spinner + "running" instead of the
+              // completion metadata (events/status/diff/duration) it lacks yet.
               <span className="flex items-center gap-1.5 text-accent" title="Tool is running">
                 <span
                   className="h-3 w-3 animate-spin rounded-full border-2 border-accent/30 border-t-accent"
@@ -1565,6 +1631,31 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
               </span>
             ) : (
               <>
+                {isBg && events.length > 0 && (
+                  <span className="whitespace-nowrap text-[10px] text-sky-600 dark:text-sky-400">
+                    {events.length} event{events.length === 1 ? "" : "s"}
+                  </span>
+                )}
+                {isBg && tool.taskStatus && (
+                  <span
+                    className={`whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] font-semibold ${statusChipClass(
+                      tool.taskStatus,
+                    )}`}
+                  >
+                    {tool.taskStatus}
+                  </span>
+                )}
+                {isEdit && (diff!.additions > 0 || diff!.deletions > 0) && (
+                  <span className="whitespace-nowrap font-mono text-[10px] font-semibold tabular-nums">
+                    {diff!.additions > 0 && (
+                      <span className="text-emerald-600 dark:text-emerald-400">+{diff!.additions}</span>
+                    )}
+                    {diff!.additions > 0 && diff!.deletions > 0 && " "}
+                    {diff!.deletions > 0 && (
+                      <span className="text-rose-600 dark:text-rose-400">−{diff!.deletions}</span>
+                    )}
+                  </span>
+                )}
                 {dur && <span className="text-paddock-400">{dur}</span>}
                 {cost && <span className="text-paddock-400">{cost}</span>}
               </>
@@ -1574,12 +1665,78 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
         {open &&
           (expandable ? (
             <NestedSteps toolUseId={tool.toolUseId!} />
+          ) : isBg && events.length > 0 ? (
+            // Monitor: the streamed events, grouped under the launching call
+            // instead of scattered as separate pills (issue #230).
+            <div className="max-h-72 overflow-auto border-t border-sky-200/60 bg-sky-50/40 dark:border-sky-900/50 dark:bg-sky-950/20">
+              {events.map((e, i) => (
+                <div
+                  key={i}
+                  className="whitespace-pre-wrap break-words border-b border-sky-200/40 px-3 py-1.5 font-mono text-[11.5px] leading-relaxed text-paddock-700 last:border-b-0 dark:border-sky-900/40 dark:text-paddock-300"
+                >
+                  {e}
+                </div>
+              ))}
+            </div>
+          ) : isEdit ? (
+            <DiffBody diff={diff!} />
           ) : (
-            <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words border-t border-paddock-200/70 bg-paddock-50/80 px-3 py-2 font-mono text-[11.5px] leading-relaxed text-paddock-700 dark:border-paddock-800 dark:bg-paddock-950/60 dark:text-paddock-300">
-              {pending ? "Running…" : tool.output || "(no output)"}
-            </pre>
+            <div className="border-t border-paddock-200/70 dark:border-paddock-800">
+              {isBg && tool.taskResultSummary && (
+                <div className="border-b border-paddock-200/70 bg-sky-50/50 px-3 py-2 text-[11.5px] font-medium text-paddock-700 dark:border-paddock-800 dark:bg-sky-950/20 dark:text-paddock-200">
+                  {tool.taskResultSummary}
+                </div>
+              )}
+              <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words bg-paddock-50/80 px-3 py-2 font-mono text-[11.5px] leading-relaxed text-paddock-700 dark:bg-paddock-950/60 dark:text-paddock-300">
+                {pending ? "Running…" : tool.output || "(no output)"}
+              </pre>
+            </div>
           ))}
       </div>
+    </div>
+  );
+}
+
+/** Line coloring for a diff line by its kind (`+` add, `-` del, ` ` context). */
+function diffLineClass(t: "+" | "-" | " "): string {
+  if (t === "+") return "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300";
+  if (t === "-") return "bg-rose-50 text-rose-800 dark:bg-rose-950/30 dark:text-rose-300";
+  return "text-paddock-600 dark:text-paddock-400";
+}
+
+/**
+ * The inline diff for an Edit/MultiEdit/Write tool call (issue #232): each hunk's
+ * lines rendered with +/- gutter + green/red tint, height-capped + scrollable.
+ * A MultiEdit's hunks are labelled; a truncated diff notes the cut.
+ */
+function DiffBody({ diff }: { diff: EditDiff }) {
+  return (
+    <div className="max-h-96 overflow-auto border-t border-paddock-200/70 bg-paddock-50/80 font-mono text-[11.5px] leading-relaxed dark:border-paddock-800 dark:bg-paddock-950/60">
+      {diff.hunks.map((h, hi) => (
+        <div
+          key={hi}
+          className={hi > 0 ? "border-t border-paddock-200/60 dark:border-paddock-800/60" : ""}
+        >
+          {diff.hunks.length > 1 && (
+            <div className="bg-paddock-100/70 px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-paddock-400 dark:bg-paddock-900/50">
+              edit {hi + 1} of {diff.hunks.length}
+            </div>
+          )}
+          {h.lines.map((l, li) => (
+            <div key={li} className={`flex ${diffLineClass(l.t)}`}>
+              <span className="w-4 shrink-0 select-none pl-2 opacity-50">
+                {l.t === " " ? "" : l.t}
+              </span>
+              <span className="whitespace-pre-wrap break-words pr-3">{l.text || " "}</span>
+            </div>
+          ))}
+        </div>
+      ))}
+      {diff.truncated && (
+        <div className="px-3 py-1.5 text-[11px] italic text-paddock-400">
+          … diff truncated (see the file for the full change)
+        </div>
+      )}
     </div>
   );
 }
@@ -1716,7 +1873,11 @@ function historyToTurn(m: HistoryMessage, id: string): Turn {
  */
 export function historyToTurns(msgs: HistoryMessage[]): Turn[] {
   const seen = new Map<string, number>();
-  return msgs.map((m) => {
+  return msgs
+    // A `<task-notification>` folded into its launching background tool block
+    // (issue #230) is no longer drawn as a standalone status pill.
+    .filter((m) => !m.bgConsumed)
+    .map((m) => {
     let id: string;
     if (m.uuid) {
       const n = seen.get(m.uuid) ?? 0;

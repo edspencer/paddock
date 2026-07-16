@@ -1,5 +1,64 @@
 # @paddock/web
 
+## 0.25.0
+
+### Minor Changes
+
+- [#233](https://github.com/edspencer/paddock/pull/233) [`02cd64e`](https://github.com/edspencer/paddock/commit/02cd64efb1c6da3a76e0bf7eaaf151c3dc0f4a44) Thanks [@edspencer](https://github.com/edspencer)! - Render `Edit`/`MultiEdit`/`Write` tool calls as an inline diff (issue #232).
+  Edit tool calls previously showed only the file path + a generic success line; you
+  couldn't see what changed. The before/after is now recovered server-side from the
+  raw `tool_use.input` (which herdctl's parser drops), turned into a compact
+  line-level diff, and rendered in the tool block with `+`/`−` green/red coloring —
+  a filename + `+A −D` stat in the header, the colored diff on expand. `MultiEdit`
+  shows one labelled hunk per sub-edit; `Write` renders as all-additions. Enrichment
+  mirrors the sub-agent/background reader (raw-input recovery + positional join); no
+  herdctl change and no diff dependency. History-hydrated only (like #230), so live
+  edits get the diff on reload.
+
+## 0.24.0
+
+### Minor Changes
+
+- [#231](https://github.com/edspencer/paddock/pull/231) [`b8ac5a1`](https://github.com/edspencer/paddock/commit/b8ac5a182df5fd8a99d0fa65eed7eea675dcc1e5) Thanks [@edspencer](https://github.com/edspencer)! - Render background jobs & Monitor as a first-class tool class (issue #230).
+  Background `Bash` (`run_in_background`), `Monitor`, and the background-task ops
+  (`BashOutput`/`TaskOutput`/`TaskStop`) now render with a "background" badge, a
+  clock icon, and a status chip (running / completed / killed / persistent). The
+  launching call is linked to its result by task id: a background `Bash` shows its
+  final status + completion summary inline, and a `Monitor`'s streamed events are
+  grouped under its block instead of scattered as separate notification pills.
+  Enrichment is server-side (`background.ts`, mirroring the sub-agent path); the
+  live path falls back to output-sniffing so the badge still shows before reload.
+
+### Patch Changes
+
+- [#226](https://github.com/edspencer/paddock/pull/226) [`b40ea43`](https://github.com/edspencer/paddock/commit/b40ea43b32b47a82976e53d225256bb22b2ad977) Thanks [@edspencer](https://github.com/edspencer)! - fix(web/PWA): version the service-worker cache per build and stop it masking auth / poisoning asset URLs (#221)
+
+  The hand-rolled service worker never invalidated across deploys (`CACHE_VERSION`
+  was a hardcoded constant) and served its cached app shell on _any_ non-OK
+  navigation — masking SSO login redirects and wedging the app on a stale shell
+  after an auth lapse. It could also cache an HTML document (a mis-served
+  `index.html`) under an asset URL. Now: `CACHE_VERSION` is stamped at build time
+  (pkg version + bundle hash) so every deploy activates a fresh cache and purges the
+  old one; navigations pass 401s/redirects through (cached shell only when truly
+  offline); HTML is never cached under, nor served for, an asset URL; and a newly
+  activated build reloads the tab once (`controllerchange`, guarded against loops).
+
+- [#228](https://github.com/edspencer/paddock/pull/228) [`f140b31`](https://github.com/edspencer/paddock/commit/f140b31a0e567bf5bbfae50090b79f75191932ba) Thanks [@edspencer](https://github.com/edspencer)! - fix(web): recover from a failed lazy-route import instead of dead-ending (#222)
+
+  The code-split routes are loaded via `React.lazy(() => import(...))`, but the
+  router had no `errorElement`, so a rejected chunk import (a stale hash after a
+  deploy, or a transient auth/network blip) dead-ended at React Router's default
+  "Unexpected application error" screen. A root `errorElement` now detects
+  chunk-load / module-script failures and reloads once onto the current build
+  (guarded via sessionStorage against reload loops); genuine errors — or a chunk
+  error that already survived a reload — get a friendly error card with a manual
+  reload.
+
+- [#227](https://github.com/edspencer/paddock/pull/227) [`1b01df7`](https://github.com/edspencer/paddock/commit/1b01df7cf3b704b80d7239b13a1c951587954bde) Thanks [@edspencer](https://github.com/edspencer)! - Shrink the Projects dashboard padding on mobile. The landing grid wrapped in
+  `px-8 py-10` at every width, spending 64px (16% of a 390px phone) on side
+  gutters. It's now responsive — `px-3 py-5` on XS, restoring `px-8 py-10` at the
+  `sm` breakpoint and up.
+
 ## 0.23.0
 
 ### Minor Changes

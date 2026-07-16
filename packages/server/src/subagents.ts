@@ -34,7 +34,7 @@ import { estimateCostUsdByModel } from "./models.js";
 const SUBAGENT_TOOL_NAMES = new Set(["Task", "Agent"]);
 
 /** Both sessionId and toolUseId are path segments — keep them inside `.chats/`. */
-const SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/;
+export const SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/;
 
 // ---------------------------------------------------------------------------
 // mtime-keyed memo (issue #147)
@@ -49,16 +49,16 @@ const SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/;
 // ---------------------------------------------------------------------------
 
 /** Max files retained per mtime cache (small structures; bound to cap memory). */
-const MTIME_CACHE_MAX = 64;
+export const MTIME_CACHE_MAX = 64;
 
-type MtimeCache<T> = Map<string, { mtimeMs: number; value: T }>;
+export type MtimeCache<T> = Map<string, { mtimeMs: number; value: T }>;
 
 const taskUsesCache: MtimeCache<TaskToolUse[]> = new Map();
 const durationCache: MtimeCache<number | undefined> = new Map();
 const costCache: MtimeCache<number | null> = new Map();
 
 /** The file's mtime in epoch ms, or undefined if it can't be stat'd. */
-async function statMtimeMs(file: string): Promise<number | undefined> {
+export async function statMtimeMs(file: string): Promise<number | undefined> {
   try {
     return (await fs.stat(file)).mtimeMs;
   } catch {
@@ -67,7 +67,7 @@ async function statMtimeMs(file: string): Promise<number | undefined> {
 }
 
 /** Return the cached value if the recorded mtime still matches (LRU-touch on hit). */
-function mtimeCacheGet<T>(
+export function mtimeCacheGet<T>(
   cache: MtimeCache<T>,
   file: string,
   mtimeMs: number,
@@ -82,7 +82,7 @@ function mtimeCacheGet<T>(
 }
 
 /** Store a value against the file's mtime, evicting the least-recently-used past the cap. */
-function mtimeCacheSet<T>(cache: MtimeCache<T>, file: string, mtimeMs: number, value: T): void {
+export function mtimeCacheSet<T>(cache: MtimeCache<T>, file: string, mtimeMs: number, value: T): void {
   cache.set(file, { mtimeMs, value });
   while (cache.size > MTIME_CACHE_MAX) {
     const oldest = cache.keys().next().value;
@@ -136,9 +136,57 @@ export type EnrichedToolCall = ChatToolCall & {
    * sub-agent is priced from only its own transcript (see {@link subagentCosts}).
    */
   subagentCostUsd?: number | null;
+
+  // Background-job / Monitor enrichment (issue #230), attached by `background.ts`.
+  // All additive/optional; only present on background-class tool calls read from
+  // history. See {@link enrichWithBackground}.
+  /** True when this tool ran detached: a `run_in_background` launch, `Monitor`,
+   *  or a background-task op (`BashOutput`/`TaskOutput`/`TaskStop`/`KillShell`). */
+  background?: boolean;
+  /** The background task id, parsed from the launch output (bg `Bash` / `Monitor`). */
+  taskId?: string;
+  /** Terminal state of the linked task: "completed" | "killed" | "timed out" |
+   *  "persistent" | "running". Derived from the matching `<task-notification>`. */
+  taskStatus?: string;
+  /** The completion `<summary>` folded in from the matching task-notification
+   *  (e.g. `Background command "…" completed (exit code 0)`). */
+  taskResultSummary?: string;
+  /** For `Monitor`: the streamed `<event>` lines, in order, grouped by task id. */
+  monitorEvents?: string[];
+
+  /** Edit-diff enrichment (issue #232), attached by `editdiff.ts`. Present only on
+   *  `Edit`/`MultiEdit`/`Write` tool calls read from history. */
+  editDiff?: EditDiff;
 };
 
-export type EnrichedMessage = Omit<ChatMessage, "toolCall"> & { toolCall?: EnrichedToolCall };
+/** One line of a rendered diff: added (`+`), removed (`-`), or unchanged context. */
+export interface DiffLine {
+  t: "+" | "-" | " ";
+  text: string;
+}
+
+/**
+ * A structured diff for an edit tool call (issue #232), computed server-side from
+ * the raw `tool_use.input` (which herdctl's parser drops). `Edit` yields one hunk,
+ * `MultiEdit` yields one per sub-edit, `Write` yields a single all-additions hunk
+ * (whole-file create/overwrite — the transcript records no prior content).
+ */
+export interface EditDiff {
+  filePath?: string;
+  kind: "edit" | "multiedit" | "write";
+  additions: number;
+  deletions: number;
+  hunks: { lines: DiffLine[] }[];
+  /** True when a hunk was truncated for size; the stats still reflect the full edit. */
+  truncated?: boolean;
+}
+
+export type EnrichedMessage = Omit<ChatMessage, "toolCall"> & {
+  toolCall?: EnrichedToolCall;
+  /** True when this `<task-notification>` was folded into a background tool block
+   *  (issue #230), so the web suppresses the standalone status pill. */
+  bgConsumed?: boolean;
+};
 
 /**
  * Stream the main session transcript and recover, in file order, every
