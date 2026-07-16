@@ -260,6 +260,24 @@ describe("tooldetails (issue #237)", () => {
     expect(out[2].toolCall!.searchInfo!.numFiles).toBe(3);
   });
 
+  it("isolates a family when herdctl drops a paired tool from its parsed stream", async () => {
+    // All three are paired in the raw transcript, but herdctl emits NO tool message
+    // for the (interrupted, empty-output) Bash — so the parsed stream is Read, Grep.
+    // A global positional join would misalign Grep onto Bash's slot; the per-name
+    // bucketing keeps Grep correct.
+    await writeMain("s1", [
+      toolUse("Read", "tu_1", { file_path: "/x/a.ts" }),
+      toolResult("tu_1", { file: { filePath: "/x/a.ts", numLines: 1, startLine: 1, totalLines: 1 } }),
+      toolUse("Bash", "tu_2", { command: "grep zzz ." }),
+      toolResult("tu_2", { stdout: "", stderr: "boom", interrupted: true }),
+      toolUse("Grep", "tu_3", { pattern: "q" }),
+      toolResult("tu_3", { mode: "files_with_matches", numFiles: 5 }),
+    ]);
+    const out = await attachToolDetails(projectDir, "s1", [toolMsg("Read"), toolMsg("Grep")]);
+    expect(out[0].toolCall!.readInfo!.basename).toBe("a.ts");
+    expect(out[1].toolCall!.searchInfo!.numFiles).toBe(5);
+  });
+
   it("skips an unpaired tool_use (no tool_result) and keeps alignment", async () => {
     await writeMain("s1", [
       toolUse("Read", "tu_1", { file_path: "/x/unpaired.ts" }),

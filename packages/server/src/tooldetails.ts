@@ -403,12 +403,15 @@ function hasDetailTool(messages: EnrichedMessage[]): boolean {
 }
 
 /**
- * Attach recovered per-tool detail to each detail-bearing tool message, joining
- * against `readToolDetails` by file order. Only detail-tool uses occupy a slot on
- * both sides (both file-ordered, paired-only), so the positional join stays
- * aligned; a defensive `toolName` check skips any misaligned entry. Sub-agent
- * fields already attached by `enrichWithSubagents` are preserved (Task/Agent tools
- * aren't in `DETAIL_TOOL_NAMES`). Detail-free sessions pass through unchanged.
+ * Attach recovered per-tool detail to each detail-bearing tool message. The
+ * recovered details and the parsed messages are joined **per tool name, in file
+ * order** — the same paired-only/file-ordered invariant `enrichWithEdits`/
+ * `attachSubagentFields` rely on (which filter both sides to their tool set),
+ * bucketed by name so the defensive `toolName` match is intrinsic AND a tool herdctl
+ * happens to drop from its parsed stream (e.g. an interrupted, empty-output Bash)
+ * only misaligns its own family, never the whole tail. Sub-agent fields already
+ * attached by `enrichWithSubagents` are preserved (Task/Agent aren't in
+ * `DETAIL_TOOL_NAMES`). Detail-free sessions pass through unchanged.
  */
 export async function attachToolDetails(
   projectDir: string,
@@ -417,11 +420,21 @@ export async function attachToolDetails(
 ): Promise<EnrichedMessage[]> {
   if (!hasDetailTool(messages)) return messages;
   const details = await readToolDetails(projectDir, sessionId);
-  let i = 0;
+  // Bucket the recovered details by tool name, preserving file order within each.
+  const byName = new Map<string, ToolDetail[]>();
+  for (const d of details) {
+    const arr = byName.get(d.toolName);
+    if (arr) arr.push(d);
+    else byName.set(d.toolName, [d]);
+  }
+  const cursor = new Map<string, number>();
   return messages.map((m) => {
-    if (!m.toolCall || !DETAIL_TOOL_NAMES.has(m.toolCall.toolName)) return m;
-    const detail = details[i++];
-    if (!detail || detail.toolName !== m.toolCall.toolName) return m;
+    const name = m.toolCall?.toolName;
+    if (!name || !DETAIL_TOOL_NAMES.has(name)) return m;
+    const i = cursor.get(name) ?? 0;
+    cursor.set(name, i + 1);
+    const detail = byName.get(name)?.[i];
+    if (!detail) return m;
     const extra = extraFields(detail);
     if (!extra) return m;
     return { ...m, toolCall: { ...m.toolCall, ...extra } };
