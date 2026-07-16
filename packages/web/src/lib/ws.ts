@@ -36,6 +36,14 @@ export interface ToolCall {
   subagentDurationMs?: number;
   /** The sub-agent's estimated API-rate cost (USD), priced per-model (issue #166). */
   subagentCostUsd?: number | null;
+  // Background-job / Monitor enrichment (issue #230). History-hydrated tool calls
+  // carry these directly; live frames fall back to output-sniffing (see
+  // `isBackgroundTool`/`classifyBackground` in ChatPane).
+  background?: boolean;
+  taskId?: string;
+  taskStatus?: string;
+  taskResultSummary?: string;
+  monitorEvents?: string[];
 }
 
 /** Events delivered to a subscribed chat. */

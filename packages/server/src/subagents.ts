@@ -136,9 +136,31 @@ export type EnrichedToolCall = ChatToolCall & {
    * sub-agent is priced from only its own transcript (see {@link subagentCosts}).
    */
   subagentCostUsd?: number | null;
+
+  // Background-job / Monitor enrichment (issue #230), attached by `background.ts`.
+  // All additive/optional; only present on background-class tool calls read from
+  // history. See {@link enrichWithBackground}.
+  /** True when this tool ran detached: a `run_in_background` launch, `Monitor`,
+   *  or a background-task op (`BashOutput`/`TaskOutput`/`TaskStop`/`KillShell`). */
+  background?: boolean;
+  /** The background task id, parsed from the launch output (bg `Bash` / `Monitor`). */
+  taskId?: string;
+  /** Terminal state of the linked task: "completed" | "killed" | "timed out" |
+   *  "persistent" | "running". Derived from the matching `<task-notification>`. */
+  taskStatus?: string;
+  /** The completion `<summary>` folded in from the matching task-notification
+   *  (e.g. `Background command "…" completed (exit code 0)`). */
+  taskResultSummary?: string;
+  /** For `Monitor`: the streamed `<event>` lines, in order, grouped by task id. */
+  monitorEvents?: string[];
 };
 
-export type EnrichedMessage = Omit<ChatMessage, "toolCall"> & { toolCall?: EnrichedToolCall };
+export type EnrichedMessage = Omit<ChatMessage, "toolCall"> & {
+  toolCall?: EnrichedToolCall;
+  /** True when this `<task-notification>` was folded into a background tool block
+   *  (issue #230), so the web suppresses the standalone status pill. */
+  bgConsumed?: boolean;
+};
 
 /**
  * Stream the main session transcript and recover, in file order, every

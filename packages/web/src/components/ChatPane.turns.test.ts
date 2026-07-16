@@ -97,4 +97,27 @@ describe("historyToTurns (issue #135: stable per-message id)", () => {
     expect(turns[0].kind).toBe("file");
     expect(turns[0].id).toBe("f-1");
   });
+
+  it("drops a background-consumed task-notification, keeps an un-consumed one (issue #230)", () => {
+    const notif = (inner: string) =>
+      `<task-notification>\n${inner}\n</task-notification>`;
+    const turns = historyToTurns([
+      msg({ role: "tool", uuid: "b-1", toolCall: toolCall("Bash", "Command running in background with ID: bxyz") }),
+      // folded into the Bash block above → filtered out
+      msg({
+        role: "user",
+        uuid: "n-1",
+        bgConsumed: true,
+        content: notif("<task-id>bxyz</task-id>\n<status>completed</status>\n<summary>done</summary>"),
+      }),
+      // an unrelated notification with no launch → still a subtle pill
+      msg({
+        role: "user",
+        uuid: "n-2",
+        content: notif("<task-id>orphan</task-id>\n<status>completed</status>\n<summary>Agent finished</summary>"),
+      }),
+    ]);
+    expect(turns.map((t) => t.kind)).toEqual(["tool", "notification"]);
+    expect(turns.map((t) => t.id)).toEqual(["b-1", "n-2"]);
+  });
 });

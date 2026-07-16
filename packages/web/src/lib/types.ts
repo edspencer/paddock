@@ -226,6 +226,21 @@ export interface ChatToolCall {
    * transcript (issue #166). `null` when its model has no known pricing.
    */
   subagentCostUsd?: number | null;
+
+  // Background-job / Monitor enrichment, added server-side (issue #230). Only
+  // present on background-class tool calls read from history; undefined otherwise.
+  /** True when this tool ran detached (a `run_in_background` launch, `Monitor`,
+   *  or a background-task op like `BashOutput`/`TaskOutput`/`TaskStop`). */
+  background?: boolean;
+  /** The background task id, parsed from the launch output. */
+  taskId?: string;
+  /** Terminal state of the linked task: "completed" | "killed" | "timed out" |
+   *  "persistent" | "running". */
+  taskStatus?: string;
+  /** Completion `<summary>` folded in from the matching task-notification. */
+  taskResultSummary?: string;
+  /** For `Monitor`: the streamed `<event>` lines, in order. */
+  monitorEvents?: string[];
 }
 
 export interface HistoryMessage {
@@ -233,6 +248,9 @@ export interface HistoryMessage {
   content: string;
   timestamp: string;
   toolCall?: ChatToolCall;
+  /** True when this `<task-notification>` was folded into a background tool block
+   *  (issue #230) — the web suppresses the standalone status pill. */
+  bgConsumed?: boolean;
   /**
    * Stable id from the source transcript entry — the Claude Code JSONL `uuid`,
    * surfaced by `@herdctl/core`'s `ChatMessage` (herdctl#312) and passed through
