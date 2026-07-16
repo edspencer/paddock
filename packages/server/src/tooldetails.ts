@@ -429,15 +429,15 @@ export async function attachToolDetails(
   }
   const cursor = new Map<string, number>();
   return messages.map((m) => {
-    const name = m.toolCall?.toolName;
-    if (!name || !DETAIL_TOOL_NAMES.has(name)) return m;
-    const i = cursor.get(name) ?? 0;
-    cursor.set(name, i + 1);
-    const detail = byName.get(name)?.[i];
+    const tc = m.toolCall;
+    if (!tc || !DETAIL_TOOL_NAMES.has(tc.toolName)) return m;
+    const i = cursor.get(tc.toolName) ?? 0;
+    cursor.set(tc.toolName, i + 1);
+    const detail = byName.get(tc.toolName)?.[i];
     if (!detail) return m;
     const extra = extraFields(detail);
     if (!extra) return m;
-    return { ...m, toolCall: { ...m.toolCall, ...extra } };
+    return { ...m, toolCall: { ...tc, ...extra } };
   });
 }
 
