@@ -7,6 +7,7 @@
  *   - jwt            — verifies a signed JWT against a JWKS, maps claims, 401 on
  *                      missing/invalid/expired/wrong-issuer/wrong-audience
  *   - health paths   — always exempt
+ *   - static assets  — /assets, /icons, /fonts, /sw.js, manifest, favicon exempt (#223)
  *
  * For jwt mode we generate a real RSA keypair with `jose` and serve its public
  * JWK from a stubbed `createRemoteJWKSet` (no network). Tokens are signed with
@@ -277,6 +278,37 @@ describe("auth: mode=jwt", () => {
       const res = await app.inject({ method: "GET", url });
       expect(res.statusCode, url).toBe(200);
     }
+  });
+
+  it("exempts immutable static assets without a token, but not the shell/API (issue #223)", async () => {
+    app = buildApp(authConfig({ mode: "jwt", jwtHeader: "X-authentik-jwt", jwksUrl: "https://idp/jwks" }));
+    // Probe routes at representative static paths so an exempt request resolves to
+    // 200 (a bare 404 could also mean "passed auth but no route").
+    const staticPaths = [
+      "/assets/index-ABC.js",
+      "/icons/icon-192.png",
+      "/fonts/inter-latin.woff2",
+      "/sw.js",
+      "/manifest.webmanifest",
+      "/favicon.ico",
+    ];
+    for (const p of staticPaths) app.get(p, async () => ({ ok: true }));
+
+    for (const url of [...staticPaths, "/assets/index-ABC.js?v=cachebust"]) {
+      const res = await app.inject({ method: "GET", url });
+      expect(res.statusCode, url).toBe(200); // no token, still served
+    }
+
+    // The app shell and every data route still require a valid token.
+    for (const url of ["/api/whoami", "/api/anything"]) {
+      const res = await app.inject({ method: "GET", url });
+      expect(res.statusCode, url).toBe(401);
+      expect(res.json().code).toBe("auth_required");
+    }
+    // A path that only *contains* an asset-looking segment (but is under /api) is
+    // NOT exempt — the prefix must be at the path root.
+    const nested = await app.inject({ method: "GET", url: "/api/assets/thing.js" });
+    expect(nested.statusCode).toBe(401);
   });
 
   it("throws at registration when jwt mode lacks a JWKS URL", () => {
