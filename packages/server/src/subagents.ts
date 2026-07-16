@@ -154,31 +154,116 @@ export type EnrichedToolCall = ChatToolCall & {
   /** For `Monitor`: the streamed `<event>` lines, in order, grouped by task id. */
   monitorEvents?: string[];
 
-  /** Edit-diff enrichment (issue #232), attached by `editdiff.ts`. Present only on
-   *  `Edit`/`MultiEdit`/`Write` tool calls read from history. */
+  // Per-tool detail enrichment (issue #237), attached by `tooldetails.ts` from the
+  // raw transcript's `{input, toolUseResult}` sidecar (both dropped by herdctl).
+  // All additive/optional; present only on history-hydrated tool calls of the
+  // matching type, undefined otherwise (incl. the live path before reload).
+
+  /** Inline diff for an `Edit`/`MultiEdit`/`Write` (issue #232 → #237), now sourced
+   *  from `toolUseResult.structuredPatch` (real file line numbers). */
   editDiff?: EditDiff;
+  /** File + line-range for a `Read` — drives the `basename · lines a–b of N` header. */
+  readInfo?: ReadInfo;
+  /** Split stdout/stderr + status affordances for a `Bash` (issue #237). */
+  bashDetails?: BashDetails;
+  /** Match/file counts for a `Grep`/`Glob` (issue #237). */
+  searchInfo?: SearchInfo;
+  /** Status transition for a `TaskUpdate` (issue #237). */
+  taskUpdate?: TaskUpdateInfo;
+  /** Subject/description for a `TaskCreate` (issue #237). */
+  taskCreate?: TaskCreateInfo;
 };
 
-/** One line of a rendered diff: added (`+`), removed (`-`), or unchanged context. */
+/**
+ * One line of a rendered diff: added (`+`), removed (`-`), or unchanged context,
+ * with the real source line numbers recovered from the transcript's git-style
+ * hunks (issue #237). `oldLine` is set on context + deletions, `newLine` on
+ * context + additions.
+ */
 export interface DiffLine {
   t: "+" | "-" | " ";
   text: string;
+  oldLine?: number;
+  newLine?: number;
+}
+
+/** One git-style hunk with real file offsets (`@@ -oldStart,oldLines +newStart,newLines @@`). */
+export interface DiffHunk {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: DiffLine[];
 }
 
 /**
- * A structured diff for an edit tool call (issue #232), computed server-side from
- * the raw `tool_use.input` (which herdctl's parser drops). `Edit` yields one hunk,
- * `MultiEdit` yields one per sub-edit, `Write` yields a single all-additions hunk
- * (whole-file create/overwrite — the transcript records no prior content).
+ * A structured diff for an edit tool call (issue #232 → generalized #237). Sourced
+ * from `toolUseResult.structuredPatch` — the git-style hunks Claude Code already
+ * computed, with **real file line numbers** — so the hand-rolled LCS diff is gone.
+ * `Edit`/`MultiEdit` carry one hunk per changed region; `Write` carries the
+ * whole-file create as additions.
  */
 export interface EditDiff {
   filePath?: string;
   kind: "edit" | "multiedit" | "write";
   additions: number;
   deletions: number;
-  hunks: { lines: DiffLine[] }[];
+  hunks: DiffHunk[];
   /** True when a hunk was truncated for size; the stats still reflect the full edit. */
   truncated?: boolean;
+  /** True when the file changed between the read and the edit (`toolUseResult.userModified`). */
+  userModified?: boolean;
+}
+
+/** File + line-range recovered for a `Read` (issue #237). */
+export interface ReadInfo {
+  filePath?: string;
+  basename?: string;
+  /** 1-based first line returned. */
+  startLine?: number;
+  /** Number of lines returned. */
+  numLines?: number;
+  /** Total lines in the file. */
+  totalLines?: number;
+}
+
+/** Split output + status affordances recovered for a `Bash` (issue #237). */
+export interface BashDetails {
+  /** Present (with `stderr`) only when there IS stderr to split out; else undefined
+   *  and the generic merged `output` renders. */
+  stdout?: string;
+  stderr?: string;
+  interrupted?: boolean;
+  /** Human-readable exit hint, e.g. "No matches found". */
+  returnCodeInterpretation?: string;
+  /** Short git affordance from `gitOperation`, e.g. "push → main". */
+  gitHint?: string;
+}
+
+/** Match/file counts recovered for a `Grep`/`Glob` (issue #237). */
+export interface SearchInfo {
+  kind: "grep" | "glob";
+  numFiles?: number;
+  /** Grep content-mode: number of matching lines. */
+  numLines?: number;
+  /** Glob: total matches found (may exceed the returned/`truncated` set). */
+  totalMatches?: number;
+  truncated?: boolean;
+}
+
+/** Status transition recovered for a `TaskUpdate` (issue #237). */
+export interface TaskUpdateInfo {
+  taskId?: string;
+  updatedFields?: string[];
+  from?: string;
+  to?: string;
+}
+
+/** Subject/description recovered for a `TaskCreate` (issue #237). */
+export interface TaskCreateInfo {
+  taskId?: string;
+  subject?: string;
+  description?: string;
 }
 
 export type EnrichedMessage = Omit<ChatMessage, "toolCall"> & {
