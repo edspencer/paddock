@@ -34,7 +34,7 @@ import type { ReadStateStore } from "./read-state.js";
 import type { PaddockConfig } from "./config.js";
 import { type Transcriber, TranscriptionError } from "./transcribe.js";
 import { readFirstUserText } from "./transcripts.js";
-import { readSubagentMessages } from "./subagents.js";
+import { readSubagentMessages, readSessionTokenUsageWithSubagents } from "./subagents.js";
 import { enrichWithToolDetails } from "./tooldetails.js";
 
 /**
@@ -65,7 +65,7 @@ import {
   isKnownDriveMode,
   MAX_TURNS_LIMIT,
 } from "./models.js";
-import { readSessionTokenUsage, type SessionTokenUsage } from "./usage.js";
+import { type SessionTokenUsage } from "./usage.js";
 
 export interface RouteDeps {
   projects: ProjectStore;
@@ -704,7 +704,9 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
           const p = await projects.get(req.params.slug).catch(() => null);
           if (p?.model) model = p.model;
         }
-        const u = await readSessionTokenUsage(projectDir, req.params.sessionId).catch(() => null);
+        const u = await readSessionTokenUsageWithSubagents(projectDir, req.params.sessionId).catch(
+          () => null,
+        );
         return { usage: u ? toChatUsage(u, model) : null };
       } catch (err) {
         return sendProjectError(reply, err);
@@ -858,9 +860,10 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
 
   // Context-window usage for a one-off (scratch) chat (see the project variant).
   app.get<{ Params: { sessionId: string } }>("/api/chats/:sessionId/context", async (req) => {
-    const u = await readSessionTokenUsage(herdctl.scratchDir, req.params.sessionId).catch(
-      () => null,
-    );
+    const u = await readSessionTokenUsageWithSubagents(
+      herdctl.scratchDir,
+      req.params.sessionId,
+    ).catch(() => null);
     return { usage: u ? toChatUsage(u, KEEPER_DEFAULT_MODEL) : null };
   });
 
@@ -967,17 +970,20 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
 
   /**
    * A per-session usage lookup for building a chat list's usage rings (issue
-   * #77) + cumulative token/cost figures (issue #152): reads each session's
-   * transcript (memoized on its mtime, in usage.ts) and pairs the parsed totals
-   * with the model. Returns null for a session with no usage data yet — the ring
-   * simply hides. Keyed on `projectDir` (not the agent name) because paddock
-   * resolves transcripts directly under `<projectDir>/.chats/`.
+   * #77) + cumulative token/cost figures (issue #152, incl. sub-agents #242):
+   * reads each session's transcript plus its sub-agent transcripts (both memoized
+   * on mtime) and pairs the parsed totals with the model. Returns null for a
+   * session with no usage data yet — the ring simply hides. Keyed on `projectDir`
+   * (not the agent name) because paddock resolves transcripts directly under
+   * `<projectDir>/.chats/`.
    */
   function chatUsageResolver(projectDir: string, model: string) {
     return async (
       s: import("@herdctl/core").DiscoveredSession,
     ): Promise<ChatUsage | null> => {
-      const u = await readSessionTokenUsage(projectDir, s.sessionId).catch(() => null);
+      const u = await readSessionTokenUsageWithSubagents(projectDir, s.sessionId).catch(
+        () => null,
+      );
       return u ? toChatUsage(u, model) : null;
     };
   }
@@ -1013,7 +1019,9 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
 /**
  * A chat's usage for the UI: the last-turn context fill (issue #77) plus the
  * chat's cumulative lifetime token totals and a ballpark dollar estimate at API
- * rates (issue #152). `costUsd` is null for a model with no known pricing.
+ * rates (issue #152). The cumulative totals and `costUsd` include every sub-agent
+ * the chat spawned (issue #242); `contextTokens` stays main-only (last-turn
+ * window fill). `costUsd` is null for a model with no known pricing.
  */
 type ChatUsage = {
   contextTokens: number;
