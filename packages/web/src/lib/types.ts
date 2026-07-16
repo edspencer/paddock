@@ -467,6 +467,18 @@ export type ServerWsMessage =
         output: string;
         isError: boolean;
         durationMs?: number;
+        /** Reconcile key for the pending row created on `chat:tool_start` (#175). */
+        toolUseId?: string;
+      };
+    }
+  | {
+      /** In-flight tool_use, surfaced before the tool completes (#175). */
+      type: "chat:tool_start";
+      payload: Routing & {
+        toolName: string;
+        inputSummary?: string;
+        toolUseId?: string;
+        parentToolUseId: string | null;
       };
     }
   | { type: "chat:message_boundary"; payload: Routing }

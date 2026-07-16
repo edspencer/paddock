@@ -111,10 +111,13 @@ function resetChatClient() {
   c.knownSessions.clear();
 }
 
-function handlers(): Required<Pick<ChatHandlers, "onResponse" | "onToolCall" | "onMessageBoundary" | "onComplete" | "onError">> {
+function handlers(): Required<
+  Pick<ChatHandlers, "onResponse" | "onToolCall" | "onToolStart" | "onMessageBoundary" | "onComplete" | "onError">
+> {
   return {
     onResponse: vi.fn(),
     onToolCall: vi.fn(),
+    onToolStart: vi.fn(),
     onMessageBoundary: vi.fn(),
     onComplete: vi.fn(),
     onError: vi.fn(),
@@ -182,6 +185,57 @@ describe("ws: dispatch + routing", () => {
     expect(h.onToolCall).toHaveBeenCalledWith(expect.objectContaining({ toolName: "Read" }), { sessionId: "s1", jobId: "j1" });
     expect(h.onMessageBoundary).toHaveBeenCalledWith({ sessionId: "s1", jobId: "j1" });
     expect(h.onComplete).toHaveBeenCalledWith(expect.objectContaining({ success: true, sessionId: "s1" }));
+    sub.unsubscribe();
+  });
+
+  it("delivers a chat:tool_start frame to onToolStart as a pending ToolCall (#175)", () => {
+    const h = handlers();
+    const sub = chatClient.subscribe("tstart", null, h);
+    last().open();
+    last().emit({
+      type: "chat:tool_start",
+      payload: {
+        projectSlug: "tstart",
+        sessionId: "s1",
+        jobId: "j1",
+        toolName: "Bash",
+        inputSummary: "ls -la",
+        toolUseId: "t1",
+        parentToolUseId: null,
+      },
+    });
+    // The client synthesizes a pending ToolCall (no output/duration yet) so the
+    // pane can render a "running…" row immediately.
+    expect(h.onToolStart).toHaveBeenCalledWith(
+      { toolName: "Bash", inputSummary: "ls -la", toolUseId: "t1", output: "", isError: false, pending: true },
+      { sessionId: "s1", jobId: "j1" },
+    );
+    // A start frame is not a completion.
+    expect(h.onToolCall).not.toHaveBeenCalled();
+    sub.unsubscribe();
+  });
+
+  it("passes toolUseId through on a chat:tool_call so the pane can reconcile the pending row (#175)", () => {
+    const h = handlers();
+    const sub = chatClient.subscribe("tcall", null, h);
+    last().open();
+    last().emit({
+      type: "chat:tool_call",
+      payload: {
+        projectSlug: "tcall",
+        sessionId: "s1",
+        jobId: "j1",
+        toolName: "Read",
+        output: "x",
+        isError: false,
+        durationMs: 12,
+        toolUseId: "t7",
+      },
+    });
+    expect(h.onToolCall).toHaveBeenCalledWith(
+      expect.objectContaining({ toolName: "Read", toolUseId: "t7", durationMs: 12, output: "x", isError: false }),
+      { sessionId: "s1", jobId: "j1" },
+    );
     sub.unsubscribe();
   });
 

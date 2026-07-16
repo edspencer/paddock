@@ -26,6 +26,12 @@ export interface ToolCall {
   output: string;
   isError: boolean;
   durationMs?: number;
+  /**
+   * True while the tool is in flight — created from a `chat:tool_start` frame
+   * before the tool completes (#175). Reconciled to a finished call (pending
+   * cleared) when the matching `chat:tool_call` arrives, keyed by `toolUseId`.
+   */
+  pending?: boolean;
   // Sub-agent (Task/Agent) enrichment (issue #37). Populated only on tool calls
   // hydrated from history — the live WS frame does not carry these.
   toolUseId?: string;
@@ -52,6 +58,12 @@ export interface ToolCall {
 export interface ChatHandlers {
   onResponse?: (chunk: string, meta: { sessionId: string | null; jobId: string | null }) => void;
   onToolCall?: (tc: ToolCall, meta: { sessionId: string | null; jobId: string | null }) => void;
+  /**
+   * An in-flight tool started (#175). Carries a `pending: true` ToolCall so the
+   * client can render a "running…" row immediately, reconciled by `toolUseId`
+   * when the matching `onToolCall` completion lands.
+   */
+  onToolStart?: (tc: ToolCall, meta: { sessionId: string | null; jobId: string | null }) => void;
   onMessageBoundary?: (meta: { sessionId: string | null; jobId: string | null }) => void;
   onComplete?: (meta: {
     sessionId: string | null;
@@ -585,6 +597,20 @@ class ChatClient {
             output: msg.payload.output,
             isError: msg.payload.isError,
             durationMs: msg.payload.durationMs,
+            toolUseId: msg.payload.toolUseId,
+          },
+          meta,
+        );
+        break;
+      case "chat:tool_start":
+        sub.handlers.onToolStart?.(
+          {
+            toolName: msg.payload.toolName,
+            inputSummary: msg.payload.inputSummary,
+            toolUseId: msg.payload.toolUseId,
+            output: "",
+            isError: false,
+            pending: true,
           },
           meta,
         );

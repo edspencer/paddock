@@ -604,20 +604,57 @@ export function ChatPane({
         if (meta.sessionId) adoptSession(meta.sessionId);
         appendAssistantText(setTurns, chunk);
       },
+      onToolStart: (tc, meta) => {
+        if (!framesBelong(meta)) return;
+        if (meta.jobId) armJob(meta.jobId);
+        if (meta.sessionId) adoptSession(meta.sessionId);
+        // A slow tool (esp. a subagent) starts: show a pending "running…" row
+        // right away instead of nothing until it finishes (#175). Reconciled by
+        // toolUseId when its chat:tool_call completion arrives.
+        setTurns((prev) => {
+          // A replayed start frame (reconnect gap replay) must not double-add.
+          if (
+            tc.toolUseId &&
+            prev.some((t) => t.kind === "tool" && t.tool.toolUseId === tc.toolUseId)
+          ) {
+            return prev;
+          }
+          // Seal the streaming text bubble first so its caret clears the instant
+          // the tool begins (same reasoning as the completion path below).
+          return [...sealStreaming(prev), { kind: "tool", id: nextId(), tool: tc }];
+        });
+      },
       onToolCall: (tc, meta) => {
         if (!framesBelong(meta)) return;
         if (meta.jobId) armJob(meta.jobId);
         if (meta.sessionId) adoptSession(meta.sessionId);
-        // Seal the streaming text bubble before appending the row, so its caret
-        // clears the instant the tool call begins. Otherwise the bubble is no
-        // longer the trailing turn and nothing can ever clear its caret.
         // A send_file call renders as a rich `file` turn (parsed from its output
         // envelope); everything else is the generic tool widget.
         const file = sentFileFromToolCall(tc);
-        const turn: Turn = file
-          ? { kind: "file", id: nextId(), file }
-          : { kind: "tool", id: nextId(), tool: tc };
-        setTurns((prev) => [...sealStreaming(prev), turn]);
+        setTurns((prev) => {
+          // Reconcile the pending row created on chat:tool_start (#175): replace
+          // it in place — keeping its Turn id for a stable React key — with the
+          // finished call (or the rich file turn for send_file).
+          if (tc.toolUseId) {
+            const idx = prev.findIndex(
+              (t) => t.kind === "tool" && t.tool.toolUseId === tc.toolUseId,
+            );
+            if (idx !== -1) {
+              const kept = prev[idx].id;
+              const next = prev.slice();
+              next[idx] = file
+                ? { kind: "file", id: kept, file }
+                : { kind: "tool", id: kept, tool: tc };
+              return next;
+            }
+          }
+          // No pending row (start frame lost/aged out of the replay buffer, or a
+          // tool with no id): seal the streaming bubble and append, as before.
+          const turn: Turn = file
+            ? { kind: "file", id: nextId(), file }
+            : { kind: "tool", id: nextId(), tool: tc };
+          return [...sealStreaming(prev), turn];
+        });
       },
       onMessageBoundary: (meta) => {
         if (!framesBelong(meta)) return;
@@ -631,7 +668,9 @@ export function ChatPane({
         if (meta.jobId) armJob(meta.jobId);
         streamingRef.current = false;
         setStreaming(false);
-        setTurns((prev) => sealStreaming(prev));
+        // Seal the streaming bubble and settle any in-flight tool row whose
+        // completion never arrived (#175 backstop) so no spinner survives the turn.
+        setTurns((prev) => settlePending(sealStreaming(prev)));
         // Stale-by-one-turn context meter: store the last completed turn's
         // usage for this chat (omitted by the server when none was observed).
         if (meta.usage) setUsage(meta.usage);
@@ -688,7 +727,7 @@ export function ChatPane({
         streamingRef.current = false;
         setStreaming(false);
         jobRef.current = null;
-        setTurns((prev) => sealStreaming(prev));
+        setTurns((prev) => settlePending(sealStreaming(prev)));
         setError(err);
         // Hold the queue on error (#91) but clear the cancel flag so it can't
         // suppress a later turn's flush.
@@ -1482,6 +1521,9 @@ function Dot({ delay }: { delay?: string }) {
 
 function ToolBlock({ tool }: { tool: ToolCall }) {
   const [open, setOpen] = useState(false);
+  // In-flight tool (#175): rendered before it completes — no output/duration
+  // yet, just a "running…" affordance so a slow tool/subagent is visibly alive.
+  const pending = Boolean(tool.pending);
   // For a sub-agent, show its actual run time (from its transcript) rather than
   // the near-instant launch time the Task/Agent tool_call itself records.
   const dur = formatDuration(tool.subagentDurationMs ?? tool.durationMs);
@@ -1496,8 +1538,9 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
   // An Edit/MultiEdit/Write tool call with a recovered inline diff (issue #232).
   const diff = tool.editDiff;
   const isEdit = Boolean(diff);
-  // Expandable-into-steps only when the sub-agent's transcript is on disk.
-  const expandable = Boolean(isSubagent && tool.hasSubagent && tool.toolUseId);
+  // Expandable-into-steps only when the sub-agent's transcript is on disk — never
+  // while pending (the transcript doesn't exist until it produces output, #175).
+  const expandable = Boolean(!pending && isSubagent && tool.hasSubagent && tool.toolUseId);
   // Sub-agent header reads as "<type> — <description>"; an edit shows its
   // filename; other tools keep the classic "<toolName> <inputSummary>".
   const label = isSubagent ? (tool.subagentType ?? tool.toolName) : tool.toolName;
@@ -1578,33 +1621,47 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
                 error
               </span>
             )}
-            {isBg && events.length > 0 && (
-              <span className="whitespace-nowrap text-[10px] text-sky-600 dark:text-sky-400">
-                {events.length} event{events.length === 1 ? "" : "s"}
+            {pending ? (
+              // In-flight tool (#175): a spinner + "running" instead of the
+              // completion metadata (events/status/diff/duration) it lacks yet.
+              <span className="flex items-center gap-1.5 text-accent" title="Tool is running">
+                <span
+                  className="h-3 w-3 animate-spin rounded-full border-2 border-accent/30 border-t-accent"
+                  aria-hidden="true"
+                />
+                <span className="text-[10px] font-semibold uppercase tracking-wide">running</span>
               </span>
-            )}
-            {isBg && tool.taskStatus && (
-              <span
-                className={`whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] font-semibold ${statusChipClass(
-                  tool.taskStatus,
-                )}`}
-              >
-                {tool.taskStatus}
-              </span>
-            )}
-            {isEdit && (diff!.additions > 0 || diff!.deletions > 0) && (
-              <span className="whitespace-nowrap font-mono text-[10px] font-semibold tabular-nums">
-                {diff!.additions > 0 && (
-                  <span className="text-emerald-600 dark:text-emerald-400">+{diff!.additions}</span>
+            ) : (
+              <>
+                {isBg && events.length > 0 && (
+                  <span className="whitespace-nowrap text-[10px] text-sky-600 dark:text-sky-400">
+                    {events.length} event{events.length === 1 ? "" : "s"}
+                  </span>
                 )}
-                {diff!.additions > 0 && diff!.deletions > 0 && " "}
-                {diff!.deletions > 0 && (
-                  <span className="text-rose-600 dark:text-rose-400">−{diff!.deletions}</span>
+                {isBg && tool.taskStatus && (
+                  <span
+                    className={`whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] font-semibold ${statusChipClass(
+                      tool.taskStatus,
+                    )}`}
+                  >
+                    {tool.taskStatus}
+                  </span>
                 )}
-              </span>
+                {isEdit && (diff!.additions > 0 || diff!.deletions > 0) && (
+                  <span className="whitespace-nowrap font-mono text-[10px] font-semibold tabular-nums">
+                    {diff!.additions > 0 && (
+                      <span className="text-emerald-600 dark:text-emerald-400">+{diff!.additions}</span>
+                    )}
+                    {diff!.additions > 0 && diff!.deletions > 0 && " "}
+                    {diff!.deletions > 0 && (
+                      <span className="text-rose-600 dark:text-rose-400">−{diff!.deletions}</span>
+                    )}
+                  </span>
+                )}
+                {dur && <span className="text-paddock-400">{dur}</span>}
+                {cost && <span className="text-paddock-400">{cost}</span>}
+              </>
             )}
-            {dur && <span className="text-paddock-400">{dur}</span>}
-            {cost && <span className="text-paddock-400">{cost}</span>}
           </span>
         </button>
         {open &&
@@ -1633,7 +1690,7 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
                 </div>
               )}
               <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words bg-paddock-50/80 px-3 py-2 font-mono text-[11.5px] leading-relaxed text-paddock-700 dark:bg-paddock-950/60 dark:text-paddock-300">
-                {tool.output || "(no output)"}
+                {pending ? "Running…" : tool.output || "(no output)"}
               </pre>
             </div>
           ))}
@@ -1766,6 +1823,22 @@ function sealStreaming(prev: Turn[]): Turn[] {
   if (!prev.some((t) => t.kind === "assistant" && t.streaming)) return prev;
   return prev.map((t) =>
     t.kind === "assistant" && t.streaming ? { ...t, streaming: false } : t,
+  );
+}
+
+/**
+ * Clear the `pending` flag on any in-flight tool rows (#175) that never received
+ * a reconciling `chat:tool_call`. Called when a turn ends (complete/error/stop):
+ * by then every legitimate completion has already reconciled its row, so any row
+ * still pending is orphaned — a lost completion (killed turn) or a tool whose
+ * result never reaches the main stream (e.g. a subagent's nested step, which
+ * herdctl streams via a separate sidechain session). Settling it stops the
+ * spinner from spinning forever; the row renders as a plain finished tool.
+ */
+function settlePending(prev: Turn[]): Turn[] {
+  if (!prev.some((t) => t.kind === "tool" && t.tool.pending)) return prev;
+  return prev.map((t) =>
+    t.kind === "tool" && t.tool.pending ? { ...t, tool: { ...t.tool, pending: false } } : t,
   );
 }
 

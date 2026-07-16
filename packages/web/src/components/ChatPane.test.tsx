@@ -889,6 +889,110 @@ describe("ChatPane: message boundaries", () => {
   });
 });
 
+// Issue #175: an in-flight tool renders a pending "running" row the moment it
+// starts (chat:tool_start), reconciled in place to the finished call when its
+// chat:tool_call completion lands — never duplicated.
+describe("ChatPane: in-flight tool calls (#175)", () => {
+  const box = () => screen.getByPlaceholderText(/Message the keeper agent/i);
+
+  // Send a first message so the pane is streaming and adopts our frames.
+  async function startTurn() {
+    await screen.findByRole("button", { name: /^Send$/ });
+    await userEvent.type(box(), "go");
+    fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
+  }
+
+  it("renders a pending 'running' row on onToolStart, then reconciles it in place on onToolCall", async () => {
+    render(<ChatPane projectSlug="proj" />);
+    await startTurn();
+    const meta = { sessionId: "sess-1", jobId: "job-1" };
+
+    // The tool starts: a single pending row shows "running" and no output yet.
+    act(() =>
+      sub().handlers.onToolStart?.(
+        { toolName: "Bash", inputSummary: "ls", toolUseId: "t1", output: "", isError: false, pending: true },
+        meta,
+      ),
+    );
+    expect(screen.getAllByText("Bash")).toHaveLength(1);
+    expect(screen.getByText("running")).toBeInTheDocument();
+
+    // The completion lands with the same toolUseId → the pending row is replaced
+    // IN PLACE, not appended: still exactly one tool row, "running" gone.
+    act(() =>
+      sub().handlers.onToolCall?.(
+        { toolName: "Bash", output: "hi", isError: false, toolUseId: "t1" },
+        meta,
+      ),
+    );
+    expect(screen.getAllByText("Bash")).toHaveLength(1);
+    expect(screen.queryByText("running")).not.toBeInTheDocument();
+
+    // The finished output is visible once the row is expanded.
+    fireEvent.click(screen.getByRole("button", { name: /Bash/ }));
+    expect(screen.getByText("hi")).toBeInTheDocument();
+  });
+
+  it("dedups two onToolStart frames with the same toolUseId into a single pending row", async () => {
+    render(<ChatPane projectSlug="proj" />);
+    await startTurn();
+    const meta = { sessionId: "sess-1", jobId: "job-1" };
+
+    // A replayed start frame (e.g. reconnect gap replay) must NOT double-add.
+    act(() => {
+      sub().handlers.onToolStart?.(
+        { toolName: "Bash", toolUseId: "t1", output: "", isError: false, pending: true },
+        meta,
+      );
+      sub().handlers.onToolStart?.(
+        { toolName: "Bash", toolUseId: "t1", output: "", isError: false, pending: true },
+        meta,
+      );
+    });
+    expect(screen.getAllByText("Bash")).toHaveLength(1);
+    expect(screen.getByText("running")).toBeInTheDocument();
+  });
+
+  it("settles a pending row whose completion never arrives when the turn ends (#175 backstop)", async () => {
+    render(<ChatPane projectSlug="proj" />);
+    await startTurn();
+    const meta = { sessionId: "sess-1", jobId: "job-1" };
+
+    // A tool starts but its completion never lands on the main stream (a killed
+    // turn, or a subagent's nested step herdctl streams via a sidechain session).
+    act(() =>
+      sub().handlers.onToolStart?.(
+        { toolName: "Task", toolUseId: "orphan", output: "", isError: false, pending: true },
+        meta,
+      ),
+    );
+    expect(screen.getByText("running")).toBeInTheDocument();
+
+    // Turn ends with no reconciling onToolCall → the spinner must not spin forever;
+    // the row settles to a plain finished tool (still one row, no "running").
+    act(() => sub().handlers.onComplete?.({ ...meta, success: true }));
+    expect(screen.queryByText("running")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Task")).toHaveLength(1);
+  });
+
+  it("settles a pending row on turn error too (#175 backstop)", async () => {
+    render(<ChatPane projectSlug="proj" />);
+    await startTurn();
+    const meta = { sessionId: "sess-1", jobId: "job-1" };
+
+    act(() =>
+      sub().handlers.onToolStart?.(
+        { toolName: "Task", toolUseId: "orphan", output: "", isError: false, pending: true },
+        meta,
+      ),
+    );
+    expect(screen.getByText("running")).toBeInTheDocument();
+
+    act(() => sub().handlers.onError?.("stream blew up"));
+    expect(screen.queryByText("running")).not.toBeInTheDocument();
+  });
+});
+
 // Issue #91: a single message can be queued mid-turn and auto-sends when the
 // current turn completes. Mirrors Claude Code's one-slot, append-on-resubmit
 // model.
