@@ -1,5 +1,44 @@
 # @paddock/server
 
+## 0.27.0
+
+### Minor Changes
+
+- [#241](https://github.com/edspencer/paddock/pull/241) [`ecde9bd`](https://github.com/edspencer/paddock/commit/ecde9bd36c1536428d89007594fa1cfc74513855) Thanks [@edspencer](https://github.com/edspencer)! - feat(#239): render image `Read` results inline in the expanded tool block
+
+  Expanding a `Read` of an image (`.png`/`.jpg`/…) previously showed `(no output)` — Claude Code returns an image content block, which herdctl renders as empty text. Building on #237's `Read` enrichment, the server now flags an image read (`readInfo.isImage`) and, when the file resolves **inside the project dir**, exposes a project-relative path (`readInfo.projectRelPath`); the web renders the image inline via the existing raw file endpoint (`/api/projects/:slug/files/:name?raw=1`, the same one the Files tab uses), height-capped and click-to-open at full size.
+
+  History-hydrated only, no herdctl change. An image outside the project dir, or a scratch chat (no servable file endpoint), degrades to the generic block. Path resolution is guarded twice — a `..`/absolute relative path is rejected in the enrichment, and the raw endpoint re-guards traversal against the project dir.
+
+  The inline image treatment is now a shared `InlineImage` component used by BOTH an image `Read` and an agent-sent image (`send_file`): a hover action bar (download / open-in-new-tab / maximize) and a full-screen lightbox, with the image itself click-to-maximize (zoom cursor) so you don't have to hunt for the maximize icon.
+
+- [#238](https://github.com/edspencer/paddock/pull/238) [`702d95f`](https://github.com/edspencer/paddock/commit/702d95f075e8721e5cd07cbe5d2d0be92358ec3e) Thanks [@edspencer](https://github.com/edspencer)! - feat(#237): generalize tool-call enrichment + richer per-tool rendering from the discarded `toolUseResult` sidecar
+
+  herdctl's parsed `ChatToolCall` drops two rich sources present on ~100% of tool
+  calls: the tool's full `input` and a structured `toolUseResult` sidecar. We'd
+  recovered raw transcript data three times in one-off modules (`subagents.ts` #37,
+  `background.ts` #230, `editdiff.ts` #232). This generalizes that into one shared
+  server-side pass — `enrichWithToolDetails` — that recovers `{input, toolUseResult}`
+  for every paired tool_use (mtime-cached raw-JSONL stream, paired-only + file-ordered,
+  positional-join with the defensive `toolName` check) and derives per-tool structured
+  fields. `editdiff.ts`'s hand-rolled LCS diff is retired: the diff now comes from
+  `toolUseResult.structuredPatch` (real file line numbers). The two history routes call
+  the one orchestrator.
+
+  Richer `ToolBlock` treatments, gated on the new fields (degrading to the generic
+  block otherwise):
+
+  - **Edit/Write** — real `@@ -old +new @@` hunk headers + an old/new line-number gutter.
+  - **Read** — `basename · lines 33–40 of 210` header (full path on hover), fixing the
+    long-path cutoff.
+  - **Bash** — split stderr (red), `interrupted` badge, exit-code interpretation, and a
+    git affordance from `gitOperation`.
+  - **Grep/Glob** — match/file count chips.
+  - **TaskUpdate** — `pending → in_progress` status pills; **TaskCreate** — the task
+    subject + description.
+
+  History-hydrated only (the live WS frame carries none of this); no herdctl change.
+
 ## 0.26.0
 
 ### Minor Changes
