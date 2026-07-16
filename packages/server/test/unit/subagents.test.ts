@@ -8,6 +8,7 @@ import {
   listSubagents,
   readSubagentMessages,
   enrichWithSubagents,
+  readSessionTokenUsageWithSubagents,
 } from "../../src/subagents.js";
 import { estimateCostUsdByModel, type TokenTotals } from "../../src/models.js";
 import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
@@ -407,6 +408,142 @@ describe("subagents (issue #37)", () => {
       const enriched = await enrichWithSubagents(projectDir, "s-uuid", withAgent);
       expect(enriched[0].uuid).toBe("u-agent");
       expect(enriched[0].toolCall).toMatchObject({ toolUseId: "toolu_A" });
+    });
+  });
+
+  describe("readSessionTokenUsageWithSubagents (issue #242)", () => {
+    /** An assistant usage-bearing turn for a transcript (main or sub-agent). */
+    const usageTurn = (id: string, model: string, u: Record<string, number>) => ({
+      type: "assistant",
+      message: { id, model, content: [{ type: "text", text: "x" }], usage: u },
+    });
+
+    it("returns the main usage unchanged when the chat spawned no sub-agents", async () => {
+      await writeMain("s-plain", [
+        usageTurn("m1", "claude-opus-4-8", {
+          input_tokens: 100,
+          output_tokens: 200,
+          cache_read_input_tokens: 3000,
+          cache_creation_input_tokens: 50,
+        }),
+      ]);
+      const u = await readSessionTokenUsageWithSubagents(projectDir, "s-plain");
+      expect(u.inputTotal).toBe(100);
+      expect(u.outputTotal).toBe(200);
+      expect(u.cacheReadTotal).toBe(3000);
+      expect(u.cacheCreationTotal).toBe(50);
+      // Context fill = the (only) main turn's input + cache read + cache write.
+      expect(u.contextTokens).toBe(100 + 3000 + 50);
+      expect(u.byModel["claude-opus-4-8"]).toEqual({
+        inputTokens: 100,
+        outputTokens: 200,
+        cacheReadTokens: 3000,
+        cacheCreationTokens: 50,
+      });
+    });
+
+    it("folds sub-agent token totals + per-model cost into the chat total", async () => {
+      // Main: one Opus turn. Two sub-agents: one Opus, one on a pricier model
+      // (Fable), so the merge must keep per-model pricing rather than blend.
+      await writeMain("s-sum", [
+        usageTurn("main1", "claude-opus-4-8", {
+          input_tokens: 100,
+          output_tokens: 200,
+          cache_read_input_tokens: 3000,
+          cache_creation_input_tokens: 50,
+        }),
+      ]);
+      await writeSubagent(
+        "s-sum",
+        "aaa",
+        { agentType: "Explore", toolUseId: "toolu_A" },
+        [
+          usageTurn("sub-a1", "claude-opus-4-8", {
+            input_tokens: 10,
+            output_tokens: 20,
+            cache_read_input_tokens: 500,
+            cache_creation_input_tokens: 5,
+          }),
+        ],
+      );
+      await writeSubagent(
+        "s-sum",
+        "bbb",
+        { agentType: "general", toolUseId: "toolu_B" },
+        [
+          usageTurn("sub-b1", "claude-fable-5", {
+            input_tokens: 1,
+            output_tokens: 2,
+            cache_read_input_tokens: 40,
+            cache_creation_input_tokens: 3,
+          }),
+        ],
+      );
+
+      const u = await readSessionTokenUsageWithSubagents(projectDir, "s-sum");
+      // Token totals = main + both sub-agents.
+      expect(u.inputTotal).toBe(100 + 10 + 1);
+      expect(u.outputTotal).toBe(200 + 20 + 2);
+      expect(u.cacheReadTotal).toBe(3000 + 500 + 40);
+      expect(u.cacheCreationTotal).toBe(50 + 5 + 3);
+      // contextTokens stays main-only (the parent's last-turn window fill).
+      expect(u.contextTokens).toBe(100 + 3000 + 50);
+      // Per-model buckets: Opus merges main + sub-a; Fable holds only sub-b.
+      expect(u.byModel["claude-opus-4-8"]).toEqual({
+        inputTokens: 110,
+        outputTokens: 220,
+        cacheReadTokens: 3500,
+        cacheCreationTokens: 55,
+      });
+      expect(u.byModel["claude-fable-5"]).toEqual({
+        inputTokens: 1,
+        outputTokens: 2,
+        cacheReadTokens: 40,
+        cacheCreationTokens: 3,
+      });
+
+      // Cost equals main + every sub-agent priced per-model — never a blend, and
+      // strictly greater than pricing the main transcript alone (the #242 bug).
+      const combined = estimateCostUsdByModel(u.byModel);
+      const mainOnly = estimateCostUsdByModel({
+        "claude-opus-4-8": {
+          inputTokens: 100,
+          outputTokens: 200,
+          cacheReadTokens: 3000,
+          cacheCreationTokens: 50,
+        },
+      });
+      expect(combined).not.toBeNull();
+      expect(mainOnly).not.toBeNull();
+      expect(combined!).toBeGreaterThan(mainOnly!);
+    });
+
+    it("includes nested sub-agents (flat in the same subagents/ dir)", async () => {
+      // A parent sub-agent (depth 1) and its child (depth 2) both land flat in
+      // subagents/, so the roll-up must count both.
+      await writeMain("s-nested", [
+        usageTurn("main1", "claude-opus-4-8", { input_tokens: 100, output_tokens: 0 }),
+      ]);
+      await writeSubagent(
+        "s-nested",
+        "parent",
+        { agentType: "Explore", toolUseId: "toolu_P", spawnDepth: 1 },
+        [usageTurn("p1", "claude-opus-4-8", { input_tokens: 10, output_tokens: 0 })],
+      );
+      await writeSubagent(
+        "s-nested",
+        "child",
+        { agentType: "Explore", toolUseId: "toolu_C", spawnDepth: 2 },
+        [usageTurn("c1", "claude-opus-4-8", { input_tokens: 7, output_tokens: 0 })],
+      );
+      const u = await readSessionTokenUsageWithSubagents(projectDir, "s-nested");
+      expect(u.inputTotal).toBe(100 + 10 + 7);
+    });
+
+    it("rejects an unsafe session id without touching disk", async () => {
+      const u = await readSessionTokenUsageWithSubagents(projectDir, "../escape");
+      expect(u.hasData).toBe(false);
+      expect(u.inputTotal).toBe(0);
     });
   });
 });

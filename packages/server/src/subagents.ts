@@ -27,8 +27,12 @@ import { createInterface } from "node:readline";
 import path from "node:path";
 import { parseSessionMessages, type ChatMessage, type ChatToolCall } from "@herdctl/core";
 import { projectChatsDir } from "./transcripts.js";
-import { readSessionTokenUsageFile } from "./usage.js";
-import { estimateCostUsdByModel } from "./models.js";
+import {
+  readSessionTokenUsage,
+  readSessionTokenUsageFile,
+  type SessionTokenUsage,
+} from "./usage.js";
+import { estimateCostUsdByModel, type TokenTotals } from "./models.js";
 
 /** Tool names that launch a sub-agent. `Task` = classic Claude Code, `Agent` = Agent SDK. */
 const SUBAGENT_TOOL_NAMES = new Set(["Task", "Agent"]);
@@ -55,7 +59,7 @@ export type MtimeCache<T> = Map<string, { mtimeMs: number; value: T }>;
 
 const taskUsesCache: MtimeCache<TaskToolUse[]> = new Map();
 const durationCache: MtimeCache<number | undefined> = new Map();
-const costCache: MtimeCache<number | null> = new Map();
+const usageCache: MtimeCache<SessionTokenUsage> = new Map();
 
 /** The file's mtime in epoch ms, or undefined if it can't be stat'd. */
 export async function statMtimeMs(file: string): Promise<number | undefined> {
@@ -529,17 +533,114 @@ async function subagentCosts(
   return out;
 }
 
-/** The estimated cost of a sub-agent transcript, memoized on its mtime. */
-async function readSubagentCostUsd(file: string): Promise<number | null> {
+/**
+ * Cumulative token usage of a single sub-agent transcript, memoized on its mtime.
+ * The shared primitive behind both the per-block cost ({@link readSubagentCostUsd})
+ * and the chat-total roll-up ({@link readSessionTokenUsageWithSubagents}), so a
+ * chat open parses each sub-agent file at most once.
+ */
+async function readSubagentUsageFile(file: string): Promise<SessionTokenUsage> {
   const mtimeMs = await statMtimeMs(file);
   if (mtimeMs !== undefined) {
-    const cached = mtimeCacheGet(costCache, file, mtimeMs);
+    const cached = mtimeCacheGet(usageCache, file, mtimeMs);
     if (cached.hit) return cached.value;
   }
   const usage = await readSessionTokenUsageFile(file);
-  const value = estimateCostUsdByModel(usage.byModel);
-  if (mtimeMs !== undefined) mtimeCacheSet(costCache, file, mtimeMs, value);
-  return value;
+  if (mtimeMs !== undefined) mtimeCacheSet(usageCache, file, mtimeMs, usage);
+  return usage;
+}
+
+/** The estimated cost of a sub-agent transcript, priced per-model from its usage. */
+async function readSubagentCostUsd(file: string): Promise<number | null> {
+  const usage = await readSubagentUsageFile(file);
+  return estimateCostUsdByModel(usage.byModel);
+}
+
+/**
+ * A chat's cumulative token usage *including every sub-agent it spawned* (issue
+ * #242).
+ *
+ * The per-chat cost/token headline (issue #152) originally priced only the main
+ * transcript, but a chat's `Task`/`Agent` sub-agents run in their own sibling
+ * transcripts (`.chats/<sessionId>/subagents/agent-*.jsonl`) — so a chat that
+ * fanned work out to sub-agents under-reported its true spend, sometimes by ~90%.
+ * This folds those transcripts back in: the four token totals and the per-model
+ * buckets gain every sub-agent's usage, so both the token figure and the
+ * per-model-priced dollar estimate reflect the whole chat.
+ *
+ * `contextTokens` and `turnCount` stay main-only: those describe the parent's
+ * last-turn context-window fill (what the ContextMeter shows), a distinct concept
+ * from lifetime spend — each sub-agent has its own, separate context window.
+ *
+ * No double-counting: herdctl writes sub-agent (`isSidechain`) turns to the
+ * sibling files, never into the main transcript, so `main + sub-agents` is a
+ * clean sum. Nested sub-agents (spawnDepth > 1) sit flat in the same `subagents/`
+ * dir, so their usage is included too. Returns the main usage unchanged when the
+ * chat spawned no sub-agents (the common case — a cheap early return).
+ */
+export async function readSessionTokenUsageWithSubagents(
+  projectDir: string,
+  sessionId: string,
+): Promise<SessionTokenUsage> {
+  const main = await readSessionTokenUsage(projectDir, sessionId);
+  if (!SAFE_SEGMENT.test(sessionId)) return main;
+  const dir = path.join(projectChatsDir(projectDir), sessionId, "subagents");
+  const entries = await fs.readdir(dir).catch(() => [] as string[]);
+  const files = entries.filter((e) => e.endsWith(".jsonl"));
+  if (files.length === 0) return main;
+  const subUsages = await Promise.all(
+    files.map((f) => readSubagentUsageFile(path.join(dir, f))),
+  );
+  return mergeSubagentUsage(main, subUsages);
+}
+
+/**
+ * Fold sub-agent usages into a *copy* of the main usage. Builds fresh token
+ * buckets rather than mutating `main.byModel` / the sub-agents' cached objects —
+ * both come straight out of mtime caches and must stay pristine. Pricing stays
+ * per-model (buckets keyed by `message.model`), so a sub-agent that ran on a
+ * different, pricier model than the parent is costed at its own rate.
+ */
+function mergeSubagentUsage(
+  main: SessionTokenUsage,
+  subs: SessionTokenUsage[],
+): SessionTokenUsage {
+  const byModel: Record<string, TokenTotals> = {};
+  const add = (model: string, t: TokenTotals) => {
+    const b = (byModel[model] ??= {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+    });
+    b.inputTokens += t.inputTokens;
+    b.outputTokens += t.outputTokens;
+    b.cacheReadTokens += t.cacheReadTokens;
+    b.cacheCreationTokens += t.cacheCreationTokens;
+  };
+  for (const [model, t] of Object.entries(main.byModel)) add(model, t);
+
+  let { hasData, inputTotal, outputTotal, cacheReadTotal, cacheCreationTotal } = main;
+  for (const s of subs) {
+    if (!s.hasData) continue;
+    hasData = true;
+    inputTotal += s.inputTotal;
+    outputTotal += s.outputTotal;
+    cacheReadTotal += s.cacheReadTotal;
+    cacheCreationTotal += s.cacheCreationTotal;
+    for (const [model, t] of Object.entries(s.byModel)) add(model, t);
+  }
+
+  return {
+    hasData,
+    turnCount: main.turnCount,
+    contextTokens: main.contextTokens,
+    inputTotal,
+    outputTotal,
+    cacheReadTotal,
+    cacheCreationTotal,
+    byModel,
+  };
 }
 
 /** True when any message is a Task/Agent tool call worth enriching. */
