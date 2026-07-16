@@ -952,6 +952,45 @@ describe("ChatPane: in-flight tool calls (#175)", () => {
     expect(screen.getAllByText("Bash")).toHaveLength(1);
     expect(screen.getByText("running")).toBeInTheDocument();
   });
+
+  it("settles a pending row whose completion never arrives when the turn ends (#175 backstop)", async () => {
+    render(<ChatPane projectSlug="proj" />);
+    await startTurn();
+    const meta = { sessionId: "sess-1", jobId: "job-1" };
+
+    // A tool starts but its completion never lands on the main stream (a killed
+    // turn, or a subagent's nested step herdctl streams via a sidechain session).
+    act(() =>
+      sub().handlers.onToolStart?.(
+        { toolName: "Task", toolUseId: "orphan", output: "", isError: false, pending: true },
+        meta,
+      ),
+    );
+    expect(screen.getByText("running")).toBeInTheDocument();
+
+    // Turn ends with no reconciling onToolCall → the spinner must not spin forever;
+    // the row settles to a plain finished tool (still one row, no "running").
+    act(() => sub().handlers.onComplete?.({ ...meta, success: true }));
+    expect(screen.queryByText("running")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Task")).toHaveLength(1);
+  });
+
+  it("settles a pending row on turn error too (#175 backstop)", async () => {
+    render(<ChatPane projectSlug="proj" />);
+    await startTurn();
+    const meta = { sessionId: "sess-1", jobId: "job-1" };
+
+    act(() =>
+      sub().handlers.onToolStart?.(
+        { toolName: "Task", toolUseId: "orphan", output: "", isError: false, pending: true },
+        meta,
+      ),
+    );
+    expect(screen.getByText("running")).toBeInTheDocument();
+
+    act(() => sub().handlers.onError?.("stream blew up"));
+    expect(screen.queryByText("running")).not.toBeInTheDocument();
+  });
 });
 
 // Issue #91: a single message can be queued mid-turn and auto-sends when the

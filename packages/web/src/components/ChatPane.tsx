@@ -668,7 +668,9 @@ export function ChatPane({
         if (meta.jobId) armJob(meta.jobId);
         streamingRef.current = false;
         setStreaming(false);
-        setTurns((prev) => sealStreaming(prev));
+        // Seal the streaming bubble and settle any in-flight tool row whose
+        // completion never arrived (#175 backstop) so no spinner survives the turn.
+        setTurns((prev) => settlePending(sealStreaming(prev)));
         // Stale-by-one-turn context meter: store the last completed turn's
         // usage for this chat (omitted by the server when none was observed).
         if (meta.usage) setUsage(meta.usage);
@@ -725,7 +727,7 @@ export function ChatPane({
         streamingRef.current = false;
         setStreaming(false);
         jobRef.current = null;
-        setTurns((prev) => sealStreaming(prev));
+        setTurns((prev) => settlePending(sealStreaming(prev)));
         setError(err);
         // Hold the queue on error (#91) but clear the cancel flag so it can't
         // suppress a later turn's flush.
@@ -1821,6 +1823,22 @@ function sealStreaming(prev: Turn[]): Turn[] {
   if (!prev.some((t) => t.kind === "assistant" && t.streaming)) return prev;
   return prev.map((t) =>
     t.kind === "assistant" && t.streaming ? { ...t, streaming: false } : t,
+  );
+}
+
+/**
+ * Clear the `pending` flag on any in-flight tool rows (#175) that never received
+ * a reconciling `chat:tool_call`. Called when a turn ends (complete/error/stop):
+ * by then every legitimate completion has already reconciled its row, so any row
+ * still pending is orphaned — a lost completion (killed turn) or a tool whose
+ * result never reaches the main stream (e.g. a subagent's nested step, which
+ * herdctl streams via a separate sidechain session). Settling it stops the
+ * spinner from spinning forever; the row renders as a plain finished tool.
+ */
+function settlePending(prev: Turn[]): Turn[] {
+  if (!prev.some((t) => t.kind === "tool" && t.tool.pending)) return prev;
+  return prev.map((t) =>
+    t.kind === "tool" && t.tool.pending ? { ...t, tool: { ...t.tool, pending: false } } : t,
   );
 }
 
