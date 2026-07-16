@@ -35,6 +35,14 @@ const EDIT_TOOL_NAMES = new Set(["Edit", "MultiEdit", "Write"]);
 /** Cap rendered diff lines per tool call (stats stay exact; `truncated` flags it). */
 const MAX_DIFF_LINES = 400;
 
+/**
+ * Guard the O(n·m) LCS matrix allocation. Above this cell count (a pathological
+ * multi-thousand-line edit), skip the DP entirely and fall back to a naive
+ * all-del/all-add hunk — the render cap (`MAX_DIFF_LINES`) protects render size,
+ * not compute/memory. ~2M cells ≈ 16 MB, generous for any real edit snippet.
+ */
+const MAX_LCS_CELLS = 2_000_000;
+
 /** The recovered diff for one paired edit tool_use, in file order. */
 interface EditToolUse {
   toolUseId: string;
@@ -64,6 +72,15 @@ function splitLines(s: string): string[] {
 function lineDiff(a: string[], b: string[]): DiffLine[] {
   const n = a.length;
   const m = b.length;
+  // An oversized edit would allocate an enormous DP matrix before the render cap
+  // ever applies — fall back to a naive all-del/all-add hunk (still complete; the
+  // render cap + `truncated` flag handle its size downstream).
+  if (n * m > MAX_LCS_CELLS) {
+    return [
+      ...a.map((text) => ({ t: "-" as const, text })),
+      ...b.map((text) => ({ t: "+" as const, text })),
+    ];
+  }
   const dp: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
   for (let i = n - 1; i >= 0; i--) {
     for (let j = m - 1; j >= 0; j--) {

@@ -130,6 +130,25 @@ describe("editdiff (issue #232)", () => {
     expect(out[0].toolCall!.editDiff!.filePath).toBe("/x/paired");
   });
 
+  it("handles an oversized edit without building a giant LCS matrix (naive fallback)", async () => {
+    // 2000 x 2000 distinct lines → 4M cells, over MAX_LCS_CELLS → naive all-del/all-add.
+    const oldStr = Array.from({ length: 2000 }, (_, i) => `old-${i}`).join("\n");
+    const newStr = Array.from({ length: 2000 }, (_, i) => `new-${i}`).join("\n");
+    await writeMain("s1", [
+      toolUse("Edit", "tu_1", { file_path: "/x/huge.ts", old_string: oldStr, new_string: newStr }),
+      toolResult("tu_1"),
+    ]);
+    const out = await enrichWithEdits(projectDir, "s1", [toolMsg("Edit")]);
+    const d = out[0].toolCall!.editDiff!;
+    // Stats stay exact (computed before the render cap); rendered lines are capped.
+    expect(d.additions).toBe(2000);
+    expect(d.deletions).toBe(2000);
+    expect(d.truncated).toBe(true);
+    expect(d.hunks[0].lines.length).toBeLessThanOrEqual(400);
+    // Naive fallback emits deletions first.
+    expect(d.hunks[0].lines[0].t).toBe("-");
+  });
+
   it("passes an edit-free transcript through unchanged (early return identity)", async () => {
     const msgs = [toolMsg("Read"), toolMsg("Grep")];
     const out = await enrichWithEdits(projectDir, "s1", msgs);
