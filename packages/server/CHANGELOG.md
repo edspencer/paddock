@@ -1,5 +1,19 @@
 # @paddock/server
 
+## 0.27.1
+
+### Patch Changes
+
+- [#243](https://github.com/edspencer/paddock/pull/243) [`b042054`](https://github.com/edspencer/paddock/commit/b042054ee6ed09d5b1fcc8d3434f3cd1d0d6bcc1) Thanks [@edspencer](https://github.com/edspencer)! - Per-chat cost/token estimate now includes sub-agent spend (#242)
+
+  The cumulative token totals and the ~$ estimate shown for a chat previously
+  priced only the main transcript, ignoring every `Task`/`Agent` sub-agent (which
+  run in their own sibling transcripts). Fan-out chats under-reported their true
+  cost — sometimes by ~90%. `readSessionTokenUsageWithSubagents` now rolls each
+  sub-agent transcript's per-model usage into the chat total (nested sub-agents
+  included), so the headline dollar figure and token count reflect the whole chat.
+  `contextTokens` (the last-turn context-window fill) stays main-only.
+
 ## 0.27.0
 
 ### Minor Changes
