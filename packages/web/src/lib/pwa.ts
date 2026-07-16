@@ -16,7 +16,21 @@ export function registerServiceWorker(): void {
   if (import.meta.env.DEV) return;
 
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js").catch(() => {
+    const sw = navigator.serviceWorker;
+    // Whether a SW already controls this page at load. A later `controllerchange`
+    // only means "a NEW build activated" (skipWaiting + clients.claim) when a
+    // controller was already in place — the first-ever install also fires
+    // controllerchange but needs no reload (issue #221).
+    const hadController = !!sw.controller;
+    let reloading = false;
+    sw.addEventListener("controllerchange", () => {
+      if (reloading || !hadController) return;
+      reloading = true;
+      // A fresh build took control — reload once so this tab runs the new assets
+      // instead of a stale mix (prevents post-deploy "module script failed").
+      window.location.reload();
+    });
+    sw.register("/sw.js").catch(() => {
       // Non-fatal: no offline support this session.
     });
   });
