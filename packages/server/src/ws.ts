@@ -329,6 +329,29 @@ export interface ChatToolCallMessage {
     output: string;
     isError: boolean;
     durationMs?: number;
+    /**
+     * The originating tool_use id. Lets a client reconcile this completion with
+     * the pending row it created on the earlier `chat:tool_start` frame (#175).
+     */
+    toolUseId?: string;
+  };
+}
+
+/**
+ * An in-flight tool_use, emitted the moment the tool STARTS — before it runs or
+ * produces a result (#175). Lets a client render a pending "running…" row for
+ * slow tools (especially subagents that run for minutes), keyed by `toolUseId`,
+ * then reconcile it when the matching `chat:tool_call` completion arrives.
+ * Sourced from `@herdctl/chat`'s `onToolStart` (v0.6.0+).
+ */
+export interface ChatToolStartMessage {
+  type: "chat:tool_start";
+  payload: Routing & {
+    toolName: string;
+    inputSummary?: string;
+    toolUseId?: string;
+    /** Subagent attribution: null = main agent, else the spawning Task tool_use id. */
+    parentToolUseId: string | null;
   };
 }
 
@@ -417,6 +440,7 @@ export interface PongMessage {
 export type ServerMessage =
   | ChatResponseMessage
   | ChatToolCallMessage
+  | ChatToolStartMessage
   | ChatMessageBoundaryMessage
   | ChatCompleteMessage
   | ChatErrorMessage
@@ -562,6 +586,18 @@ export function makeChatHandler(deps: {
       onBoundary: () => {
         turn.emit({ type: "chat:message_boundary", payload: routing() });
       },
+      onToolStart: (start) => {
+        turn.emit({
+          type: "chat:tool_start",
+          payload: {
+            ...routing(),
+            toolName: start.toolName,
+            inputSummary: start.inputSummary,
+            toolUseId: start.toolUseId,
+            parentToolUseId: start.parentToolUseId,
+          },
+        });
+      },
       onToolCall: (call) => {
         turn.emit({
           type: "chat:tool_call",
@@ -572,6 +608,7 @@ export function makeChatHandler(deps: {
             output: call.output,
             isError: call.isError,
             durationMs: call.durationMs,
+            toolUseId: call.toolUseId,
           },
         });
       },
@@ -659,6 +696,18 @@ export function makeChatHandler(deps: {
       onBoundary: () => {
         turn.emit({ type: "chat:message_boundary", payload: routing() });
       },
+      onToolStart: (start) => {
+        turn.emit({
+          type: "chat:tool_start",
+          payload: {
+            ...routing(),
+            toolName: start.toolName,
+            inputSummary: start.inputSummary,
+            toolUseId: start.toolUseId,
+            parentToolUseId: start.parentToolUseId,
+          },
+        });
+      },
       onToolCall: (call) => {
         turn.emit({
           type: "chat:tool_call",
@@ -669,6 +718,7 @@ export function makeChatHandler(deps: {
             output: call.output,
             isError: call.isError,
             durationMs: call.durationMs,
+            toolUseId: call.toolUseId,
           },
         });
       },
@@ -943,6 +993,18 @@ export function makeChatHandler(deps: {
         onBoundary: () => {
           turn.emit({ type: "chat:message_boundary", payload: routing() });
         },
+        onToolStart: (start) => {
+          turn.emit({
+            type: "chat:tool_start",
+            payload: {
+              ...routing(),
+              toolName: start.toolName,
+              inputSummary: start.inputSummary,
+              toolUseId: start.toolUseId,
+              parentToolUseId: start.parentToolUseId,
+            },
+          });
+        },
         onToolCall: (call) => {
           turn.emit({
             type: "chat:tool_call",
@@ -953,6 +1015,7 @@ export function makeChatHandler(deps: {
               output: call.output,
               isError: call.isError,
               durationMs: call.durationMs,
+              toolUseId: call.toolUseId,
             },
           });
         },
@@ -1339,6 +1402,18 @@ export function makeChatHandler(deps: {
         onBoundary: () => {
           turn.emit({ type: "chat:message_boundary", payload: routing() });
         },
+        onToolStart: (start) => {
+          turn.emit({
+            type: "chat:tool_start",
+            payload: {
+              ...routing(),
+              toolName: start.toolName,
+              inputSummary: start.inputSummary,
+              toolUseId: start.toolUseId,
+              parentToolUseId: start.parentToolUseId,
+            },
+          });
+        },
         onToolCall: (call) => {
           turn.emit({
             type: "chat:tool_call",
@@ -1349,6 +1424,7 @@ export function makeChatHandler(deps: {
               output: call.output,
               isError: call.isError,
               durationMs: call.durationMs,
+              toolUseId: call.toolUseId,
             },
           });
         },

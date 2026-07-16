@@ -570,20 +570,57 @@ export function ChatPane({
         if (meta.sessionId) adoptSession(meta.sessionId);
         appendAssistantText(setTurns, chunk);
       },
+      onToolStart: (tc, meta) => {
+        if (!framesBelong(meta)) return;
+        if (meta.jobId) armJob(meta.jobId);
+        if (meta.sessionId) adoptSession(meta.sessionId);
+        // A slow tool (esp. a subagent) starts: show a pending "running…" row
+        // right away instead of nothing until it finishes (#175). Reconciled by
+        // toolUseId when its chat:tool_call completion arrives.
+        setTurns((prev) => {
+          // A replayed start frame (reconnect gap replay) must not double-add.
+          if (
+            tc.toolUseId &&
+            prev.some((t) => t.kind === "tool" && t.tool.toolUseId === tc.toolUseId)
+          ) {
+            return prev;
+          }
+          // Seal the streaming text bubble first so its caret clears the instant
+          // the tool begins (same reasoning as the completion path below).
+          return [...sealStreaming(prev), { kind: "tool", id: nextId(), tool: tc }];
+        });
+      },
       onToolCall: (tc, meta) => {
         if (!framesBelong(meta)) return;
         if (meta.jobId) armJob(meta.jobId);
         if (meta.sessionId) adoptSession(meta.sessionId);
-        // Seal the streaming text bubble before appending the row, so its caret
-        // clears the instant the tool call begins. Otherwise the bubble is no
-        // longer the trailing turn and nothing can ever clear its caret.
         // A send_file call renders as a rich `file` turn (parsed from its output
         // envelope); everything else is the generic tool widget.
         const file = sentFileFromToolCall(tc);
-        const turn: Turn = file
-          ? { kind: "file", id: nextId(), file }
-          : { kind: "tool", id: nextId(), tool: tc };
-        setTurns((prev) => [...sealStreaming(prev), turn]);
+        setTurns((prev) => {
+          // Reconcile the pending row created on chat:tool_start (#175): replace
+          // it in place — keeping its Turn id for a stable React key — with the
+          // finished call (or the rich file turn for send_file).
+          if (tc.toolUseId) {
+            const idx = prev.findIndex(
+              (t) => t.kind === "tool" && t.tool.toolUseId === tc.toolUseId,
+            );
+            if (idx !== -1) {
+              const kept = prev[idx].id;
+              const next = prev.slice();
+              next[idx] = file
+                ? { kind: "file", id: kept, file }
+                : { kind: "tool", id: kept, tool: tc };
+              return next;
+            }
+          }
+          // No pending row (start frame lost/aged out of the replay buffer, or a
+          // tool with no id): seal the streaming bubble and append, as before.
+          const turn: Turn = file
+            ? { kind: "file", id: nextId(), file }
+            : { kind: "tool", id: nextId(), tool: tc };
+          return [...sealStreaming(prev), turn];
+        });
       },
       onMessageBoundary: (meta) => {
         if (!framesBelong(meta)) return;
@@ -1448,6 +1485,9 @@ function Dot({ delay }: { delay?: string }) {
 
 function ToolBlock({ tool }: { tool: ToolCall }) {
   const [open, setOpen] = useState(false);
+  // In-flight tool (#175): rendered before it completes — no output/duration
+  // yet, just a "running…" affordance so a slow tool/subagent is visibly alive.
+  const pending = Boolean(tool.pending);
   // For a sub-agent, show its actual run time (from its transcript) rather than
   // the near-instant launch time the Task/Agent tool_call itself records.
   const dur = formatDuration(tool.subagentDurationMs ?? tool.durationMs);
@@ -1455,8 +1495,9 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
   // #166). Rendered next to the duration; null when its model has no pricing.
   const cost = tool.subagentCostUsd != null ? `~${formatUsd(tool.subagentCostUsd)}` : null;
   const isSubagent = SUBAGENT_TOOLS.has(tool.toolName);
-  // Expandable-into-steps only when the sub-agent's transcript is on disk.
-  const expandable = Boolean(isSubagent && tool.hasSubagent && tool.toolUseId);
+  // Expandable-into-steps only when the sub-agent's transcript is on disk — never
+  // while pending (the transcript doesn't exist until it produces output).
+  const expandable = Boolean(!pending && isSubagent && tool.hasSubagent && tool.toolUseId);
   // Sub-agent header reads as "<type> — <description>"; other tools keep the
   // classic "<toolName> <inputSummary>".
   const label = isSubagent ? (tool.subagentType ?? tool.toolName) : tool.toolName;
@@ -1514,8 +1555,20 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
                 error
               </span>
             )}
-            {dur && <span className="text-paddock-400">{dur}</span>}
-            {cost && <span className="text-paddock-400">{cost}</span>}
+            {pending ? (
+              <span className="flex items-center gap-1.5 text-accent" title="Tool is running">
+                <span
+                  className="h-3 w-3 animate-spin rounded-full border-2 border-accent/30 border-t-accent"
+                  aria-hidden="true"
+                />
+                <span className="text-[10px] font-semibold uppercase tracking-wide">running</span>
+              </span>
+            ) : (
+              <>
+                {dur && <span className="text-paddock-400">{dur}</span>}
+                {cost && <span className="text-paddock-400">{cost}</span>}
+              </>
+            )}
           </span>
         </button>
         {open &&
@@ -1523,7 +1576,7 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
             <NestedSteps toolUseId={tool.toolUseId!} />
           ) : (
             <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words border-t border-paddock-200/70 bg-paddock-50/80 px-3 py-2 font-mono text-[11.5px] leading-relaxed text-paddock-700 dark:border-paddock-800 dark:bg-paddock-950/60 dark:text-paddock-300">
-              {tool.output || "(no output)"}
+              {pending ? "Running…" : tool.output || "(no output)"}
             </pre>
           ))}
       </div>

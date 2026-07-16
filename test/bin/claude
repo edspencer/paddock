@@ -59,6 +59,13 @@
  *   • [[HANG]]      → stream the assistant text, then block WITHOUT writing the
  *                     result line, leaving the turn "running" until the process
  *                     is killed. Lets a test exercise cancel/interrupt (Stop).
+ *   • [[SLOWTOOL]]  → emit a Task-shaped tool_use, hold it IN FLIGHT for an
+ *                     observable window (PADDOCK_FAKE_SLOWTOOL_MS, default 5000ms),
+ *                     then write the paired result. Exercises the #175 in-flight
+ *                     tool ("running…") row + its reconciliation on completion.
+ *   • [[HANGTOOL]]  → emit a Task-shaped tool_use and then block WITHOUT ever
+ *                     writing the result — the pending row persists until the
+ *                     turn is killed (the in-flight-tool analogue of [[HANG]]).
  * Sweeper coverage: when the prompt looks like the paddock sweeper's curation
  * prompt (contains the literal "<<<OVERVIEW>>>" marker request), the fake emits a
  * marker-shaped reply (<<<OVERVIEW>>> … <<<CHANGELOG>>> … <<<END>>>) so
@@ -380,6 +387,68 @@ function main() {
         role: "user",
         content: [
           { type: "tool_result", tool_use_id: toolUseId, content: "file contents here", is_error: false },
+        ],
+      },
+      uuid: crypto.randomUUID(),
+      timestamp: nowIso(),
+      cwd,
+      sessionId,
+    });
+    sleep(30);
+  }
+
+  // [[SLOWTOOL]] / [[HANGTOOL]] (test-only, #175): emit a Task-shaped tool_use
+  // and hold it IN FLIGHT for an observable window, so the pending "running…"
+  // tool row surfaced by chat:tool_start (onToolStart) can be seen and then
+  // reconciled when the paired tool_result lands. [[HANGTOOL]] writes the
+  // tool_use and then NEVER writes the result — the pending row persists until
+  // the turn is killed (the in-flight-tool analogue of [[HANG]]).
+  const wantsSlowTool = (prompt || "").includes("[[SLOWTOOL]]");
+  const wantsHangTool = (prompt || "").includes("[[HANGTOOL]]");
+  if (wantsSlowTool || wantsHangTool) {
+    const toolUseId = `toolu_${crypto.randomBytes(8).toString("hex")}`;
+    // Task-shaped so the web ToolBlock renders it as a sub-agent (spark icon +
+    // "sub-agent" badge) — the worst-case slow tool #175 targets.
+    append({
+      parentUuid: null,
+      isSidechain: false,
+      type: "assistant",
+      message: {
+        id: `msg_${crypto.randomBytes(8).toString("hex")}`,
+        role: "assistant",
+        model,
+        content: [
+          {
+            type: "tool_use",
+            id: toolUseId,
+            name: "Task",
+            input: { description: "slow research task", prompt: "do slow work" },
+          },
+        ],
+        usage,
+      },
+      uuid: crypto.randomUUID(),
+      timestamp: nowIso(),
+      cwd,
+      sessionId,
+    });
+    if (wantsHangTool) {
+      // Never write the result — the pending row stays until the process is
+      // killed. Keep the loop alive so a SIGTERM (Stop/cancel) lands promptly.
+      setInterval(() => {}, 1 << 30);
+      return;
+    }
+    // Hold the tool in flight for an observable window (busy-spin so the watcher
+    // reads the tool_use line well before the result), then complete it.
+    sleep(Number(process.env.PADDOCK_FAKE_SLOWTOOL_MS || "5000"));
+    append({
+      parentUuid: null,
+      isSidechain: false,
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: toolUseId, content: "slow task done", is_error: false },
         ],
       },
       uuid: crypto.randomUUID(),
