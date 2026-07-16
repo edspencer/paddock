@@ -18,7 +18,16 @@
 //   chat:complete         { ..., success, error?, model?, usage? }
 //   chat:error            { projectSlug, error }
 //   pong
-import type { ChatCompleteUsage, EditDiff, ServerWsMessage } from "./types";
+import type {
+  ChatCompleteUsage,
+  EditDiff,
+  ReadInfo,
+  BashDetails,
+  SearchInfo,
+  TaskUpdateInfo,
+  TaskCreateInfo,
+  ServerWsMessage,
+} from "./types";
 
 export interface ToolCall {
   toolName: string;
@@ -50,8 +59,15 @@ export interface ToolCall {
   taskStatus?: string;
   taskResultSummary?: string;
   monitorEvents?: string[];
-  /** Inline diff for an edit tool call (issue #232); history-hydrated only. */
+  // Per-tool detail enrichment (issue #237); history-hydrated only (live frames
+  // carry none of this, so the renderer degrades to the generic block).
+  /** Inline diff for an edit tool call (issue #232 → #237). */
   editDiff?: EditDiff;
+  readInfo?: ReadInfo;
+  bashDetails?: BashDetails;
+  searchInfo?: SearchInfo;
+  taskUpdate?: TaskUpdateInfo;
+  taskCreate?: TaskCreateInfo;
 }
 
 /** Events delivered to a subscribed chat. */
