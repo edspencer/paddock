@@ -498,6 +498,21 @@ export function isClientMessage(data: unknown): data is ClientMessage {
     if (p.lastSeq !== undefined && typeof p.lastSeq !== "number") return false;
     return true;
   }
+  if (m.type === "chat:set_queue") {
+    // NOTE: this case was missing until #245 — every chat:set_queue was rejected
+    // as "Unknown message", so the server-side queue (#197) never persisted a
+    // thing. That's the deeper reason a queued message could strand: the backstop
+    // was never armed. Validate leniently (all payload fields optional bar slug).
+    const p = m.payload as Record<string, unknown> | undefined;
+    if (!p) return false;
+    const slug = p.projectSlug ?? p.target;
+    if (typeof slug !== "string") return false;
+    if (p.sessionId !== undefined && p.sessionId !== null && typeof p.sessionId !== "string")
+      return false;
+    if (p.text !== undefined && p.text !== null && typeof p.text !== "string") return false;
+    if (p.ts !== undefined && p.ts !== null && typeof p.ts !== "number") return false;
+    return true;
+  }
   return false;
 }
 
