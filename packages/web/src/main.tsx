@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { createBrowserRouter, RouterProvider, useParams } from "react-router-dom";
 import "./index.css";
 import { AppShell } from "./components/AppShell";
+import { RouteError } from "./components/RouteError";
 import { ProjectsProvider } from "./lib/projects-context";
 import { registerServiceWorker } from "./lib/pwa";
 
@@ -32,6 +33,10 @@ const router = createBrowserRouter([
   {
     path: "/",
     element: <AppShell />,
+    // Catch render errors — notably a rejected lazy-route import() (stale chunk
+    // after a deploy, or a transient auth/network blip) — and reload onto the
+    // current build instead of dead-ending at the default error screen (#222).
+    errorElement: <RouteError />,
     children: [
       { index: true, element: <ProjectsGrid /> },
       // The projects grid, filtered to a single domain tag (click a tag pill).
