@@ -32,6 +32,7 @@ import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
 import path from "node:path";
 import { projectChatsDir } from "./transcripts.js";
+import { fileKind } from "./projects.js";
 import { enrichWithSubagents } from "./subagents.js";
 import { enrichWithBackground } from "./background.js";
 import {
@@ -200,7 +201,24 @@ function readInfoFromResult(input: Rec, result: Rec | undefined): ReadInfo | und
     startLine: numOpt(file?.startLine),
     numLines: numOpt(file?.numLines),
     totalLines: numOpt(file?.totalLines),
+    // Image detection is extension-based, so it's transcript-only (cache-safe).
+    // The servable `projectRelPath` depends on the project dir and is filled in at
+    // join time (see `attachToolDetails`).
+    isImage: filePath && fileKind(filePath) === "image" ? true : undefined,
   };
+}
+
+/**
+ * The read target's path relative to `baseDir` (the project dir), or undefined if
+ * it isn't an absolute path inside it. Used to point the web's inline `<img>` at
+ * the raw file endpoint, which resolves names against the same project dir — with
+ * its own traversal guard as a second line of defence (issue #239).
+ */
+function servableRelPath(baseDir: string, absPath: string | undefined): string | undefined {
+  if (!absPath || !path.isAbsolute(absPath)) return undefined;
+  const rel = path.relative(baseDir, absPath);
+  if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) return undefined;
+  return rel;
 }
 
 /** Turn `gitOperation` (e.g. `{push:{branch:"main"}}`) into a short hint "push → main". */
@@ -435,8 +453,16 @@ export async function attachToolDetails(
     cursor.set(tc.toolName, i + 1);
     const detail = byName.get(tc.toolName)?.[i];
     if (!detail) return m;
-    const extra = extraFields(detail);
+    let extra = extraFields(detail);
     if (!extra) return m;
+    // For an image Read inside the project dir, add the servable relative path so
+    // the web can render it inline (issue #239). Clone rather than mutate the
+    // cached `detail.readInfo`. Scratch chats pass their scratchDir as projectDir;
+    // the web still gates on a real project slug before rendering.
+    if (extra.readInfo?.isImage) {
+      const rel = servableRelPath(projectDir, extra.readInfo.filePath);
+      if (rel) extra = { ...extra, readInfo: { ...extra.readInfo, projectRelPath: rel } };
+    }
     return { ...m, toolCall: { ...tc, ...extra } };
   });
 }

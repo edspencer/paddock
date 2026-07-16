@@ -301,6 +301,11 @@ export interface ReadInfo {
   startLine?: number;
   numLines?: number;
   totalLines?: number;
+  /** True when the read target is an image file (issue #239). */
+  isImage?: boolean;
+  /** Project-relative path of an image read inside the project dir, for the inline
+   *  `<img>` via the raw file endpoint (issue #239). Absent when not servable. */
+  projectRelPath?: string;
 }
 
 /** Split output + status affordances recovered for a `Bash` (issue #237). */

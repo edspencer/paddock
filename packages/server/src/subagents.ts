@@ -225,6 +225,15 @@ export interface ReadInfo {
   numLines?: number;
   /** Total lines in the file. */
   totalLines?: number;
+  /** True when the read target is an image file (by extension) — issue #239. */
+  isImage?: boolean;
+  /**
+   * The read target's path relative to the project dir, set only when it's an
+   * image that resolves INSIDE the project dir so the web can render it inline via
+   * the raw file endpoint (issue #239). Absent for a non-image read, an image
+   * outside the project dir, or a scratch chat (no servable file endpoint).
+   */
+  projectRelPath?: string;
 }
 
 /** Split output + status affordances recovered for a `Bash` (issue #237). */

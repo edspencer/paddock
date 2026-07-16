@@ -46,6 +46,7 @@ import type {
   SlashCommand,
   TaskCreateInfo,
 } from "../lib/types";
+import { SCRATCH_SLUG } from "../lib/types";
 import {
   formatSessionUsage,
   formatTokens,
@@ -56,6 +57,7 @@ import {
   taskNotificationSummary,
 } from "../lib/format";
 import { SentFileBlock } from "./SentFileBlock";
+import { InlineImage } from "./MediaImage";
 
 /** One rendered item in the transcript. Assistant boundaries split bubbles. */
 type Turn =
@@ -157,6 +159,13 @@ function sentFileFromToolCall(tc: ToolCall): SentFile | null {
 const SubagentFetchContext = createContext<
   ((toolUseId: string) => Promise<HistoryMessage[]>) | null
 >(null);
+
+/**
+ * Builds a raw-file URL for an image `Read` rendered inline (issue #239). Bound to
+ * the project slug; null for a scratch chat (no servable project-file endpoint), so
+ * ToolBlock falls back to the generic block there.
+ */
+const ToolImageUrlContext = createContext<((relPath: string) => string) | null>(null);
 
 export interface ChatPaneProps {
   /** Project slug, or "scratch" for one-off chats. */
@@ -312,6 +321,15 @@ export function ChatPane({
       sessionRef.current
         ? api.subagentMessages(projectSlug, sessionRef.current, toolUseId)
         : Promise.resolve([]),
+    [projectSlug],
+  );
+  // Raw-file URL builder for inline image reads (issue #239). Only for real
+  // project chats — scratch has no servable project-file endpoint.
+  const toolImageUrl = useMemo(
+    () =>
+      projectSlug && projectSlug !== SCRATCH_SLUG
+        ? (relPath: string) => api.projectFileRawUrl(projectSlug, relPath)
+        : null,
     [projectSlug],
   );
   const isNewSessionRef = useRef<boolean>(!initialSessionId);
@@ -995,11 +1013,13 @@ export function ChatPane({
           )}
 
           <SubagentFetchContext.Provider value={fetchSubagent}>
-            <div className="space-y-4">
-              {turns.map((t) => (
-                <TurnView key={t.id} turn={t} />
-              ))}
-            </div>
+            <ToolImageUrlContext.Provider value={toolImageUrl}>
+              <div className="space-y-4">
+                {turns.map((t) => (
+                  <TurnView key={t.id} turn={t} />
+                ))}
+              </div>
+            </ToolImageUrlContext.Provider>
           </SubagentFetchContext.Provider>
         </div>
       </div>
@@ -1528,6 +1548,7 @@ function Dot({ delay }: { delay?: string }) {
 
 function ToolBlock({ tool }: { tool: ToolCall }) {
   const [open, setOpen] = useState(false);
+  const toolImageUrl = useContext(ToolImageUrlContext);
   // In-flight tool (#175): rendered before it completes — no output/duration
   // yet, just a "running…" affordance so a slow tool/subagent is visibly alive.
   const pending = Boolean(tool.pending);
@@ -1547,6 +1568,11 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
   const diff = tool.editDiff;
   const isEdit = Boolean(diff);
   const readInfo = tool.toolName === "Read" ? tool.readInfo : undefined;
+  // An image Read that resolves inside the project dir → render it inline (#239).
+  const imageUrl =
+    readInfo?.isImage && readInfo.projectRelPath && toolImageUrl
+      ? toolImageUrl(readInfo.projectRelPath)
+      : null;
   const bash = tool.toolName === "Bash" ? tool.bashDetails : undefined;
   const search = tool.searchInfo;
   const taskUpdate = tool.toolName === "TaskUpdate" ? tool.taskUpdate : undefined;
@@ -1770,6 +1796,10 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
             </div>
           ) : isEdit ? (
             <DiffBody diff={diff!} />
+          ) : imageUrl ? (
+            <div className="border-t border-paddock-200/70 dark:border-paddock-800">
+              <InlineImage src={imageUrl} filename={readInfo?.basename ?? "image"} />
+            </div>
           ) : bashSplit ? (
             <BashBody bash={bash!} />
           ) : taskCreate && taskCreate.description ? (
