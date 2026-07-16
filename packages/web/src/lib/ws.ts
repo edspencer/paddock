@@ -18,7 +18,7 @@
 //   chat:complete         { ..., success, error?, model?, usage? }
 //   chat:error            { projectSlug, error }
 //   pong
-import type { ChatCompleteUsage, ServerWsMessage } from "./types";
+import type { ChatCompleteUsage, EditDiff, ServerWsMessage } from "./types";
 
 export interface ToolCall {
   toolName: string;
@@ -44,6 +44,8 @@ export interface ToolCall {
   taskStatus?: string;
   taskResultSummary?: string;
   monitorEvents?: string[];
+  /** Inline diff for an edit tool call (issue #232); history-hydrated only. */
+  editDiff?: EditDiff;
 }
 
 /** Events delivered to a subscribed chat. */

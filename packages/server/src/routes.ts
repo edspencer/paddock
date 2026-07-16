@@ -36,6 +36,7 @@ import { type Transcriber, TranscriptionError } from "./transcribe.js";
 import { readFirstUserText } from "./transcripts.js";
 import { enrichWithSubagents, readSubagentMessages } from "./subagents.js";
 import { enrichWithBackground } from "./background.js";
+import { enrichWithEdits } from "./editdiff.js";
 
 /**
  * The subset of @fastify/multipart's decorated request we use. The plugin
@@ -662,7 +663,11 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
           .catch(() => []);
         return {
           messages: enrichWithBackground(
-            await enrichWithSubagents(projectDir, req.params.sessionId, messages),
+            await enrichWithEdits(
+              projectDir,
+              req.params.sessionId,
+              await enrichWithSubagents(projectDir, req.params.sessionId, messages),
+            ),
           ),
         };
       } catch (err) {
@@ -837,7 +842,11 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
         .catch(() => []);
       return {
         messages: enrichWithBackground(
-          await enrichWithSubagents(herdctl.scratchDir, req.params.sessionId, messages),
+          await enrichWithEdits(
+            herdctl.scratchDir,
+            req.params.sessionId,
+            await enrichWithSubagents(herdctl.scratchDir, req.params.sessionId, messages),
+          ),
         ),
       };
     },
