@@ -46,6 +46,7 @@ import type {
   SlashCommand,
   TaskCreateInfo,
 } from "../lib/types";
+import { SCRATCH_SLUG } from "../lib/types";
 import {
   formatSessionUsage,
   formatTokens,
@@ -157,6 +158,13 @@ function sentFileFromToolCall(tc: ToolCall): SentFile | null {
 const SubagentFetchContext = createContext<
   ((toolUseId: string) => Promise<HistoryMessage[]>) | null
 >(null);
+
+/**
+ * Builds a raw-file URL for an image `Read` rendered inline (issue #239). Bound to
+ * the project slug; null for a scratch chat (no servable project-file endpoint), so
+ * ToolBlock falls back to the generic block there.
+ */
+const ToolImageUrlContext = createContext<((relPath: string) => string) | null>(null);
 
 export interface ChatPaneProps {
   /** Project slug, or "scratch" for one-off chats. */
@@ -312,6 +320,15 @@ export function ChatPane({
       sessionRef.current
         ? api.subagentMessages(projectSlug, sessionRef.current, toolUseId)
         : Promise.resolve([]),
+    [projectSlug],
+  );
+  // Raw-file URL builder for inline image reads (issue #239). Only for real
+  // project chats — scratch has no servable project-file endpoint.
+  const toolImageUrl = useMemo(
+    () =>
+      projectSlug && projectSlug !== SCRATCH_SLUG
+        ? (relPath: string) => api.projectFileRawUrl(projectSlug, relPath)
+        : null,
     [projectSlug],
   );
   const isNewSessionRef = useRef<boolean>(!initialSessionId);
@@ -995,11 +1012,13 @@ export function ChatPane({
           )}
 
           <SubagentFetchContext.Provider value={fetchSubagent}>
-            <div className="space-y-4">
-              {turns.map((t) => (
-                <TurnView key={t.id} turn={t} />
-              ))}
-            </div>
+            <ToolImageUrlContext.Provider value={toolImageUrl}>
+              <div className="space-y-4">
+                {turns.map((t) => (
+                  <TurnView key={t.id} turn={t} />
+                ))}
+              </div>
+            </ToolImageUrlContext.Provider>
           </SubagentFetchContext.Provider>
         </div>
       </div>
@@ -1528,6 +1547,7 @@ function Dot({ delay }: { delay?: string }) {
 
 function ToolBlock({ tool }: { tool: ToolCall }) {
   const [open, setOpen] = useState(false);
+  const toolImageUrl = useContext(ToolImageUrlContext);
   // In-flight tool (#175): rendered before it completes — no output/duration
   // yet, just a "running…" affordance so a slow tool/subagent is visibly alive.
   const pending = Boolean(tool.pending);
@@ -1547,6 +1567,11 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
   const diff = tool.editDiff;
   const isEdit = Boolean(diff);
   const readInfo = tool.toolName === "Read" ? tool.readInfo : undefined;
+  // An image Read that resolves inside the project dir → render it inline (#239).
+  const imageUrl =
+    readInfo?.isImage && readInfo.projectRelPath && toolImageUrl
+      ? toolImageUrl(readInfo.projectRelPath)
+      : null;
   const bash = tool.toolName === "Bash" ? tool.bashDetails : undefined;
   const search = tool.searchInfo;
   const taskUpdate = tool.toolName === "TaskUpdate" ? tool.taskUpdate : undefined;
@@ -1770,6 +1795,8 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
             </div>
           ) : isEdit ? (
             <DiffBody diff={diff!} />
+          ) : imageUrl ? (
+            <ImageBody url={imageUrl} alt={readInfo?.basename ?? "image"} />
           ) : bashSplit ? (
             <BashBody bash={bash!} />
           ) : taskCreate && taskCreate.description ? (
@@ -1913,6 +1940,34 @@ function BashBody({ bash }: { bash: BashDetails }) {
         <pre className="whitespace-pre-wrap break-words border-t border-rose-200/50 bg-rose-50/50 px-3 py-2 font-mono text-[11.5px] leading-relaxed text-rose-700 first:border-t-0 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300">
           {bash.stderr}
         </pre>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The inline preview for an image `Read` (issue #239): the image itself, loaded
+ * from the raw project-file endpoint, height-capped and click-to-open at full size
+ * in a new tab. Falls back to a subtle "couldn't load" line if the bytes 404.
+ */
+function ImageBody({ url, alt }: { url: string; alt: string }) {
+  const [failed, setFailed] = useState(false);
+  return (
+    <div className="border-t border-paddock-200/70 bg-paddock-50/80 p-3 dark:border-paddock-800 dark:bg-paddock-950/60">
+      {failed ? (
+        <div className="text-[11.5px] italic text-paddock-400">
+          Couldn’t load image preview — open <span className="font-mono">{alt}</span> from the Files tab.
+        </div>
+      ) : (
+        <a href={url} target="_blank" rel="noreferrer" title="Open full size">
+          <img
+            src={url}
+            alt={alt}
+            loading="lazy"
+            onError={() => setFailed(true)}
+            className="max-h-96 max-w-full rounded border border-paddock-200/70 object-contain dark:border-paddock-800"
+          />
+        </a>
       )}
     </div>
   );

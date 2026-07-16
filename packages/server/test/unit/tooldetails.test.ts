@@ -156,6 +156,41 @@ describe("tooldetails (issue #237)", () => {
     expect(r.startLine).toBeUndefined();
   });
 
+  it("flags an image Read inside the project dir with a servable relative path", async () => {
+    const abs = path.join(projectDir, "docs", "diagram.png");
+    await writeMain("s1", [
+      toolUse("Read", "tu_1", { file_path: abs }),
+      toolResult("tu_1", { type: "image", file: { filePath: abs } }),
+    ]);
+    const out = await attachToolDetails(projectDir, "s1", [toolMsg("Read")]);
+    const r = out[0].toolCall!.readInfo!;
+    expect(r.isImage).toBe(true);
+    expect(r.projectRelPath).toBe(path.join("docs", "diagram.png"));
+  });
+
+  it("flags an image Read outside the project dir WITHOUT a servable path", async () => {
+    await writeMain("s1", [
+      toolUse("Read", "tu_1", { file_path: "/etc/secret/photo.png" }),
+      toolResult("tu_1", { type: "image", file: { filePath: "/etc/secret/photo.png" } }),
+    ]);
+    const out = await attachToolDetails(projectDir, "s1", [toolMsg("Read")]);
+    const r = out[0].toolCall!.readInfo!;
+    expect(r.isImage).toBe(true);
+    expect(r.projectRelPath).toBeUndefined();
+  });
+
+  it("does not flag a non-image Read as an image", async () => {
+    const abs = path.join(projectDir, "src", "index.ts");
+    await writeMain("s1", [
+      toolUse("Read", "tu_1", { file_path: abs }),
+      toolResult("tu_1", { file: { filePath: abs, numLines: 1, startLine: 1, totalLines: 1 } }),
+    ]);
+    const out = await attachToolDetails(projectDir, "s1", [toolMsg("Read")]);
+    const r = out[0].toolCall!.readInfo!;
+    expect(r.isImage).toBeUndefined();
+    expect(r.projectRelPath).toBeUndefined();
+  });
+
   it("splits Bash stderr + surfaces interrupted / exit hint / git", async () => {
     await writeMain("s1", [
       toolUse("Bash", "tu_1", { command: "make" }),
