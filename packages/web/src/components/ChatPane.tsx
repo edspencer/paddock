@@ -57,6 +57,7 @@ import {
   taskNotificationSummary,
 } from "../lib/format";
 import { SentFileBlock } from "./SentFileBlock";
+import { InlineImage } from "./MediaImage";
 
 /** One rendered item in the transcript. Assistant boundaries split bubbles. */
 type Turn =
@@ -1796,7 +1797,9 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
           ) : isEdit ? (
             <DiffBody diff={diff!} />
           ) : imageUrl ? (
-            <ImageBody url={imageUrl} alt={readInfo?.basename ?? "image"} />
+            <div className="border-t border-paddock-200/70 dark:border-paddock-800">
+              <InlineImage src={imageUrl} filename={readInfo?.basename ?? "image"} />
+            </div>
           ) : bashSplit ? (
             <BashBody bash={bash!} />
           ) : taskCreate && taskCreate.description ? (
@@ -1940,34 +1943,6 @@ function BashBody({ bash }: { bash: BashDetails }) {
         <pre className="whitespace-pre-wrap break-words border-t border-rose-200/50 bg-rose-50/50 px-3 py-2 font-mono text-[11.5px] leading-relaxed text-rose-700 first:border-t-0 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300">
           {bash.stderr}
         </pre>
-      )}
-    </div>
-  );
-}
-
-/**
- * The inline preview for an image `Read` (issue #239): the image itself, loaded
- * from the raw project-file endpoint, height-capped and click-to-open at full size
- * in a new tab. Falls back to a subtle "couldn't load" line if the bytes 404.
- */
-function ImageBody({ url, alt }: { url: string; alt: string }) {
-  const [failed, setFailed] = useState(false);
-  return (
-    <div className="border-t border-paddock-200/70 bg-paddock-50/80 p-3 dark:border-paddock-800 dark:bg-paddock-950/60">
-      {failed ? (
-        <div className="text-[11.5px] italic text-paddock-400">
-          Couldn’t load image preview — open <span className="font-mono">{alt}</span> from the Files tab.
-        </div>
-      ) : (
-        <a href={url} target="_blank" rel="noreferrer" title="Open full size">
-          <img
-            src={url}
-            alt={alt}
-            loading="lazy"
-            onError={() => setFailed(true)}
-            className="max-h-96 max-w-full rounded border border-paddock-200/70 object-contain dark:border-paddock-800"
-          />
-        </a>
       )}
     </div>
   );
