@@ -1658,9 +1658,9 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
               {taskUpdate.taskId && <span className="shrink-0">Task #{taskUpdate.taskId}</span>}
               {taskUpdate.from && taskUpdate.to ? (
                 <span className="flex shrink-0 items-center gap-1">
-                  <StatusPill status={taskUpdate.from} />
+                  <TaskStatusPill status={taskUpdate.from} />
                   <span className="text-paddock-400">→</span>
-                  <StatusPill status={taskUpdate.to} />
+                  <TaskStatusPill status={taskUpdate.to} />
                 </span>
               ) : (
                 taskUpdate.updatedFields && (
@@ -1863,7 +1863,7 @@ function taskStatusPillClass(status: string): string {
 }
 
 /** A small colored pill for one task status value (e.g. `pending`, `in_progress`). */
-function StatusPill({ status }: { status: string }) {
+function TaskStatusPill({ status }: { status: string }) {
   return (
     <span
       className={`whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] font-semibold ${taskStatusPillClass(
