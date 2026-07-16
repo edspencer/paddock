@@ -131,9 +131,12 @@ export function enrichWithBackground(messages: EnrichedMessage[]): EnrichedMessa
       const next: EnrichedToolCall = { ...tc, background: true, taskId: launch.taskId };
       if (launch.kind === "monitor") {
         if (agg?.events.length) next.monitorEvents = agg.events;
+        // A Monitor rarely gets an explicit <status>; it ends with a timeout
+        // *event* ("[Monitor timed out …]") or runs until TaskStop / session end.
+        const timedOut = agg?.events.some((e) => /monitor timed out/i.test(e));
         next.taskStatus =
           agg?.status ??
-          (/persistent/.test(tc.output ?? "") ? "persistent" : "running");
+          (timedOut ? "timed out" : /persistent/.test(tc.output ?? "") ? "persistent" : "running");
       } else {
         next.taskStatus = agg?.status ?? "running";
         if (agg?.completionSummary) next.taskResultSummary = agg.completionSummary;

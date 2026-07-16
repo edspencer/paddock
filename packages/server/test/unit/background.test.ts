@@ -56,6 +56,8 @@ describe("enrichWithBackground (issue #230)", () => {
     expect(tc.background).toBe(true);
     expect(tc.taskId).toBe("by2uf7pij");
     expect(tc.monitorEvents).toEqual(["whisper-cli BUILT", "[Monitor timed out — re-arm if needed.]"]);
+    // Inferred from the timeout event (Monitors rarely carry an explicit <status>).
+    expect(tc.taskStatus).toBe("timed out");
     expect(out[1].bgConsumed).toBe(true);
     expect(out[2].bgConsumed).toBe(true);
   });
