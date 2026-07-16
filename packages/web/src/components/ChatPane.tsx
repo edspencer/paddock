@@ -32,6 +32,7 @@ import {
 import type {
   ChatCompleteUsage,
   ChatUsage,
+  EditDiff,
   HistoryMessage,
   ModelInfo,
   SentFile,
@@ -1492,12 +1493,19 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
   // distinct from a sub-agent, with a "background" badge + status chip (issue #230).
   const isBg = !isSubagent && isBackgroundTool(tool);
   const events = tool.monitorEvents ?? [];
+  // An Edit/MultiEdit/Write tool call with a recovered inline diff (issue #232).
+  const diff = tool.editDiff;
+  const isEdit = Boolean(diff);
   // Expandable-into-steps only when the sub-agent's transcript is on disk.
   const expandable = Boolean(isSubagent && tool.hasSubagent && tool.toolUseId);
-  // Sub-agent header reads as "<type> — <description>"; other tools keep the
-  // classic "<toolName> <inputSummary>".
+  // Sub-agent header reads as "<type> — <description>"; an edit shows its
+  // filename; other tools keep the classic "<toolName> <inputSummary>".
   const label = isSubagent ? (tool.subagentType ?? tool.toolName) : tool.toolName;
-  const subtitle = isSubagent ? tool.description : tool.inputSummary;
+  const subtitle = isSubagent
+    ? tool.description
+    : isEdit
+      ? (diff!.filePath?.split("/").pop() ?? diff!.filePath)
+      : tool.inputSummary;
   return (
     <div className="flex justify-start">
       <div
@@ -1532,6 +1540,12 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
               width={13}
               height={13}
               className={`shrink-0 ${tool.isError ? "text-rose-500" : "text-sky-600 dark:text-sky-400"}`}
+            />
+          ) : isEdit ? (
+            <PencilIcon
+              width={13}
+              height={13}
+              className={`shrink-0 ${tool.isError ? "text-rose-500" : "text-paddock-500"}`}
             />
           ) : (
             <WrenchIcon
@@ -1578,6 +1592,17 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
                 {tool.taskStatus}
               </span>
             )}
+            {isEdit && (diff!.additions > 0 || diff!.deletions > 0) && (
+              <span className="whitespace-nowrap font-mono text-[10px] font-semibold tabular-nums">
+                {diff!.additions > 0 && (
+                  <span className="text-emerald-600 dark:text-emerald-400">+{diff!.additions}</span>
+                )}
+                {diff!.additions > 0 && diff!.deletions > 0 && " "}
+                {diff!.deletions > 0 && (
+                  <span className="text-rose-600 dark:text-rose-400">−{diff!.deletions}</span>
+                )}
+              </span>
+            )}
             {dur && <span className="text-paddock-400">{dur}</span>}
             {cost && <span className="text-paddock-400">{cost}</span>}
           </span>
@@ -1598,6 +1623,8 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
                 </div>
               ))}
             </div>
+          ) : isEdit ? (
+            <DiffBody diff={diff!} />
           ) : (
             <div className="border-t border-paddock-200/70 dark:border-paddock-800">
               {isBg && tool.taskResultSummary && (
@@ -1611,6 +1638,50 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
             </div>
           ))}
       </div>
+    </div>
+  );
+}
+
+/** Line coloring for a diff line by its kind (`+` add, `-` del, ` ` context). */
+function diffLineClass(t: "+" | "-" | " "): string {
+  if (t === "+") return "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300";
+  if (t === "-") return "bg-rose-50 text-rose-800 dark:bg-rose-950/30 dark:text-rose-300";
+  return "text-paddock-600 dark:text-paddock-400";
+}
+
+/**
+ * The inline diff for an Edit/MultiEdit/Write tool call (issue #232): each hunk's
+ * lines rendered with +/- gutter + green/red tint, height-capped + scrollable.
+ * A MultiEdit's hunks are labelled; a truncated diff notes the cut.
+ */
+function DiffBody({ diff }: { diff: EditDiff }) {
+  return (
+    <div className="max-h-96 overflow-auto border-t border-paddock-200/70 bg-paddock-50/80 font-mono text-[11.5px] leading-relaxed dark:border-paddock-800 dark:bg-paddock-950/60">
+      {diff.hunks.map((h, hi) => (
+        <div
+          key={hi}
+          className={hi > 0 ? "border-t border-paddock-200/60 dark:border-paddock-800/60" : ""}
+        >
+          {diff.hunks.length > 1 && (
+            <div className="bg-paddock-100/70 px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-paddock-400 dark:bg-paddock-900/50">
+              edit {hi + 1} of {diff.hunks.length}
+            </div>
+          )}
+          {h.lines.map((l, li) => (
+            <div key={li} className={`flex ${diffLineClass(l.t)}`}>
+              <span className="w-4 shrink-0 select-none pl-2 opacity-50">
+                {l.t === " " ? "" : l.t}
+              </span>
+              <span className="whitespace-pre-wrap break-words pr-3">{l.text || " "}</span>
+            </div>
+          ))}
+        </div>
+      ))}
+      {diff.truncated && (
+        <div className="px-3 py-1.5 text-[11px] italic text-paddock-400">
+          … diff truncated (see the file for the full change)
+        </div>
+      )}
     </div>
   );
 }

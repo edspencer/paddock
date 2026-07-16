@@ -241,6 +241,28 @@ export interface ChatToolCall {
   taskResultSummary?: string;
   /** For `Monitor`: the streamed `<event>` lines, in order. */
   monitorEvents?: string[];
+
+  /** Inline diff for an `Edit`/`MultiEdit`/`Write` tool call, computed server-side
+   *  from the raw tool input (issue #232). Present only on history-hydrated edit
+   *  tool calls; undefined otherwise (incl. the live path before reload). */
+  editDiff?: EditDiff;
+}
+
+/** One line of a rendered diff: added (`+`), removed (`-`), or unchanged context. */
+export interface DiffLine {
+  t: "+" | "-" | " ";
+  text: string;
+}
+
+/** A structured diff for an edit tool call (issue #232). */
+export interface EditDiff {
+  filePath?: string;
+  kind: "edit" | "multiedit" | "write";
+  additions: number;
+  deletions: number;
+  hunks: { lines: DiffLine[] }[];
+  /** True when a hunk was truncated for size; the stats still reflect the full edit. */
+  truncated?: boolean;
 }
 
 export interface HistoryMessage {
