@@ -36,14 +36,15 @@ Paddock has two kinds of chat, and the difference is *where the agent works*:
 - A **keeper chat** belongs to a project. It runs under that project's **keeper
   agent**, whose working directory is the project directory (or, for a
   repo-backed project, the checkout inside it). Everything the keeper does —
-  notes, edits, commits — happens in that project. Keeper chats also get
-  Paddock's project tooling: the self-management MCP tools, and a post-turn
-  [sweep](/concepts/sweeper/) that keeps `OVERVIEW.md` and `CHANGELOG.md`
-  curated.
+  notes, edits, commits — happens in that project. After a successful keeper
+  turn, a [sweep](/concepts/sweeper/) keeps the project's `OVERVIEW.md` and
+  `CHANGELOG.md` curated — and on instances where the operator has enabled it,
+  the keeper is also given Paddock's self-management tools.
 - A **one-off (scratch) chat** is deliberately *not* tied to a project — a quick
   place to think out loud. It runs under a single global **scratch agent** whose
   working directory is a separate scratch folder, not any project. Scratch chats
-  skip the project-only extras: no self-management tools and no curation sweep.
+  skip those project-only extras — no curation sweep runs after them, and the
+  self-management tools are never injected.
 
 Both kinds are ordinary Claude Code sessions with the same default model and the
 same resumability — the split is scope, not power.
