@@ -1,0 +1,144 @@
+# Configuration reference
+
+Paddock is configured **entirely from the environment** — there are no config
+files. Every setting is read once at startup (`packages/server/src/config.ts`),
+normalised, and frozen. This page is the canonical list of every variable the
+server reads, its default (taken from the code, not guessed), and what it does.
+
+For a runnable starting point, copy [`.env.example`](../.env.example) to `.env`
+and adjust. Authentication is summarised below but documented in full in
+[AUTH.md](../AUTH.md).
+
+## How values are parsed
+
+Two helpers do almost every read:
+
+- **`envOr(name, fallback)`** — the trimmed value if non-blank, else the literal
+  fallback.
+- **`envOpt(name)`** — the trimmed value, or unset (`undefined`) when blank.
+
+Consequences worth knowing:
+
+- **Blank is unset.** A whitespace-only value (`PADDOCK_X=""`) yields the default,
+  not an empty string.
+- **Booleans** accept `1` / `true` / `yes` (case-insensitive) as true — *except*
+  `PADDOCK_KEEPER_NATIVE_PROMPT`, which is on by default and only `0` / `false` /
+  `no` turns it off.
+- **Unknown enum values fall back to the default** rather than failing startup
+  (e.g. an unrecognised `PADDOCK_AUTH_MODE` becomes `none`).
+- **Paths** are resolved to absolute and canonicalised (symlinks resolved) so
+  Claude Code session discovery can find transcripts.
+
+---
+
+## Core / paths
+
+| Variable | Default | Required | Purpose |
+|----------|---------|----------|---------|
+| `PADDOCK_DATA_DIR` | `./data` | no | Data root. **All paths below default to subdirectories of this** — set it and everything cascades. Holds projects, scratch, generated herdctl config, and state. |
+| `PADDOCK_PROJECTS_DIR` | `<data>/projects` | no | Root that contains per-project directories (each is a keeper's working dir). |
+| `PADDOCK_SCRATCH_DIR` | `<data>/scratch` | no | Working directory for one-off / scratch chats. |
+| `PADDOCK_STATE_DIR` | `<data>/.herdctl` | no | herdctl state directory. |
+| `PADDOCK_HERDCTL_CONFIG` | `<data>/herdctl.yaml` | no | Path to the generated `herdctl.yaml` the FleetManager loads (Paddock owns/regenerates it). |
+| `PADDOCK_WEB_DIST` | `packages/web/dist` | no | Built SPA served in production (resolved relative to the server module). |
+| `PORT` | `4000` | no | HTTP/WS listen port. |
+| `HOST` | `0.0.0.0` | no | Bind host. |
+| `CLAUDE_HOME` | `~/.claude` | no | Claude home used for session/transcript discovery. |
+
+> **`PADDOCK_CONFIG__*` is not implemented.** There is no generic
+> `PADDOCK_CONFIG__foo__bar` → nested-herdctl-key override mechanism in this tree.
+> (The similarly-named `window.__PADDOCK_CONFIG__` is a browser global the server
+> injects into `index.html` to carry branding to the SPA — not an env var.)
+
+## Authentication
+
+Provider-agnostic; the default (`none`) is fully open. See **[AUTH.md](../AUTH.md)**
+for modes, provider examples, and secret handling — this table is only the knobs.
+
+| Variable | Default | Required | Purpose |
+|----------|---------|----------|---------|
+| `PADDOCK_AUTH_MODE` | `none` | no | `none` \| `trusted-header` \| `jwt`. Unknown → `none`. |
+| `PADDOCK_AUTH_USER_HEADER` | `X-Forwarded-User` | no | *(trusted-header)* Header carrying the username. |
+| `PADDOCK_AUTH_EMAIL_HEADER` | — | no | *(trusted-header)* Header carrying the email. |
+| `PADDOCK_AUTH_GROUPS_HEADER` | — | no | Header carrying group membership (comma/space-split in trusted-header mode). |
+| `PADDOCK_AUTH_JWT_HEADER` | `Authorization` | no | *(jwt)* Header carrying the token. `Authorization` strips a leading `Bearer `. |
+| `PADDOCK_AUTH_JWKS_URL` | — | **jwt** | *(jwt)* IdP JWKS endpoint used to verify the signature. **Required when `PADDOCK_AUTH_MODE=jwt`** — startup fails without it. |
+| `PADDOCK_AUTH_JWT_ISSUER` | — | no | *(jwt)* Expected `iss` claim (validated when set). |
+| `PADDOCK_AUTH_JWT_AUDIENCE` | — | no | *(jwt)* Expected `aud` claim (validated when set). |
+| `PADDOCK_AUTH_USERNAME_CLAIM` | *(auto)* | no | *(jwt)* Claim to read the username from. Default tries `preferred_username` → `email` → `sub`. |
+| `PADDOCK_AUTH_GROUPS_CLAIM` | `groups` | no | *(jwt)* Claim to read groups from. |
+
+## Branding (per-instance)
+
+Defaults preserve today's look; set these to tell several instances apart.
+
+| Variable | Default | Required | Purpose |
+|----------|---------|----------|---------|
+| `PADDOCK_BRAND_NAME` | `Paddock` | no | Wordmark + browser tab title. |
+| `PADDOCK_BRAND_LOGO` | `🐎` | no | An emoji/glyph, or a URL/path to an image (rendered as `<img>`). |
+| `PADDOCK_BRAND_ACCENT` | `#c2603c` | no | Accent color (hex) for primary buttons + the logo chip. |
+
+## Voice dictation (Whisper)
+
+Off unless configured; then a mic button appears in the composer. Mirrors
+HushPod's whisper config so both can share a backend. See [DEV.md](../DEV.md#voice-dictation).
+
+| Variable | Default | Required | Purpose |
+|----------|---------|----------|---------|
+| `PADDOCK_WHISPER_MODE` | `off` (or `remote` if an endpoint is set) | no | `off` \| `remote` \| `local`. Unknown → `off`. |
+| `PADDOCK_WHISPER_ENDPOINT` | — | *(remote)* | OpenAI-compatible base URL, e.g. `http://192.168.1.200:8385/v1` (`/audio/transcriptions` is appended). Its presence flips the default mode to `remote`. |
+| `PADDOCK_WHISPER_API_KEY` | — | no | *(remote)* Optional bearer token for the endpoint. |
+| `PADDOCK_WHISPER_MODEL` | `base` | no | Whisper model (`tiny`/`base`/`small`/…; `.en` variants for English-only). |
+| `PADDOCK_WHISPER_LANGUAGE` | — | no | Optional spoken-language hint (e.g. `en`); unset ⇒ auto-detect. |
+| `PADDOCK_WHISPER_MAX_UPLOAD_BYTES` | `26214400` (25 MiB) | no | Max accepted dictation upload size. |
+
+## Keeper / agents
+
+| Variable | Default | Required | Purpose |
+|----------|---------|----------|---------|
+| `PADDOCK_KEEPER_DRIVE_MODE` | `batch` | no | Box-wide default for how keeper turns are driven; `session` enables cross-turn autonomy (`ScheduleWakeup` / `/loop`). A per-project `driveMode` overrides this at dispatch. Unknown → default. |
+| `PADDOCK_KEEPER_NATIVE_PROMPT` | `true` | no | Keeper **and** scratch agents use the native Claude Code system prompt + `CLAUDE.md` hierarchy. Set `0`/`false`/`no` for the terse Paddock "replace" prompt (e.g. an instance with no `CLAUDE.md`). |
+| `PADDOCK_SELF_MCP` | `false` | no | Give keepers the read-only self-management MCP (`mcp__paddock_manage__*`: enumerate projects/chats, read another chat's transcript). Never injected on scratch turns. |
+| `PADDOCK_SELF_MCP_WRITE` | `false` | no | Additionally give keepers the self-management **write** tools (`create_chat`, `fork_chat`, `send_message`, `fork_chat_batch`). Only honored when `PADDOCK_SELF_MCP` is also on (write implies read). |
+| `PADDOCK_BROWSER_MCP` | *(off)* | no | When `=1`, inject a headless-Chromium Playwright MCP into keepers (browse/screenshot). |
+
+## Dev servers / git / GitHub
+
+| Variable | Default | Required | Purpose |
+|----------|---------|----------|---------|
+| `PADDOCK_DEV_SERVERS_ENABLED` | `false` | no | Advertise the on-box `pm` dev-server capability to keepers (per-instance opt-in). Accepts `1`/`true`/`yes`. |
+| `PADDOCK_DEV_SERVERS_DOMAIN` | `projects.valfenda.net` | no | Base domain shown in dev-server URLs (must match the `pm` wrapper's public host). |
+| `PADDOCK_GIT_AUTHOR_NAME` | `Paddock` | no | Author name for commits the server makes on the backing store. |
+| `PADDOCK_GIT_AUTHOR_EMAIL` | `paddock@localhost` | no | Author email for those commits. |
+| `PADDOCK_GITHUB_CLIENT_ID` | — | *(for GitHub auth)* | GitHub OAuth **client id** enabling the device-flow connect. Without it the GitHub-auth feature reports "not configured"; invoking a flow throws. |
+
+## Sweep / spike (advanced)
+
+| Variable | Default | Required | Purpose |
+|----------|---------|----------|---------|
+| `PADDOCK_SWEEP_MIN_INTERVAL_MS` | *(no throttle)* | no | Minimum interval between post-turn sweeps. Must parse to a finite number ≥ 0, else ignored. |
+| `PADDOCK_SPIKE_TRIGGER` | *(off)* | no | Dev harness only (`spike.ts`): when `=1`, fire a real keeper trigger instead of a dry run. Not used by the running server. |
+
+## Non-`PADDOCK_` runtime variables
+
+| Variable | Default | Required | Purpose |
+|----------|---------|----------|---------|
+| `CLAUDE_CODE_OAUTH_TOKEN` | — | conditional | Claude **Max** auth for the CLI runtime (the default). Read from the server's environment and passed through to the spawned `claude` CLI; never written to config. Provide this **or** `ANTHROPIC_API_KEY`. |
+| `ANTHROPIC_API_KEY` | — | conditional | Claude auth for the **SDK** runtime (API pricing). Alternative to `CLAUDE_CODE_OAUTH_TOKEN`. |
+| `LOG_LEVEL` | `info` | no | Fastify/pino log level (`fatal`…`trace`). |
+
+> Claude credentials are consumed by the runtime (the `claude` CLI subprocess or
+> the SDK), not read directly by Paddock server code — but the server process must
+> have one in its environment for keeper turns to run.
+
+## Web build / dev-proxy variables
+
+Read by the Vite build/dev server (`packages/web`), not the backend:
+
+| Variable | Default | Required | Purpose |
+|----------|---------|----------|---------|
+| `PADDOCK_DEV_PORT` | `5173` | no | Vite dev-server port (hot-reload mode). |
+| `PADDOCK_PROXY_TARGET` | `http://localhost:4000` | no | Backend origin the Vite dev server proxies `/api` + `/ws` to (WS target derived by swapping `http`→`ws`). |
+| `VITE_API_BASE` | *(same-origin)* | no | Build-time: point the SPA at a non-default API origin. |
+| `VITE_WS_BASE` | *(same-origin)* | no | Build-time: point the SPA at a non-default WebSocket origin. |
+</content>

@@ -1,5 +1,9 @@
 # Paddock — build journal & shared brain
 
+> _Historical internal build journal (formerly `JOURNAL.md` at the repo root;
+> moved here in the Tier 1 docs cleanup). Kept for provenance — not current
+> documentation. For live docs see the [README](../README.md) and `docs/`._
+
 > **Paddock** = a project-first launchpad built on **herdctl**. Projects are the
 > first-class citizen (like claude.ai but projects-first; one-off chats are
 > secondary). Deployed to **https://projects.valfenda.net** in the homelab.
