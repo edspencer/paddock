@@ -1,4 +1,7 @@
-# The sweeper
+---
+title: "The sweeper"
+description: "The post-turn, tool-less agent that curates each project OVERVIEW and CHANGELOG."
+---
 
 The **sweeper** keeps a project's notes current without you having to. After each
 of your chat turns in a project, a per-project, **tool-less** curation agent reads
@@ -70,6 +73,6 @@ that keeps `OVERVIEW.md` a reliable "reload context at the start of a session"
 document and `CHANGELOG.md` an honest history — the two files this very project
 directory keeps.
 
-See [`../ARCHITECTURE.md#6-the-sweeper`](../ARCHITECTURE.md#6-the-sweeper) for the
-code path and [`../archive/CONTRACT-v3.md`](../archive/CONTRACT-v3.md) for the original marker
+See [`../ARCHITECTURE.md#6-the-sweeper`](/architecture/overview#6-the-sweeper) for the
+code path and [`../CONTRACT-v3.md`](https://github.com/edspencer/paddock/blob/main/docs/archive/CONTRACT-v3.md) for the original marker
 contract.

@@ -1,11 +1,14 @@
-# Paddock architecture
+---
+title: "Architecture overview"
+description: "Monorepo shape, the three storage classes, WebSocket/session flow, MCP injection, auth boundary, sweeper, and drive modes."
+---
 
 > Canonical architecture overview for Paddock — the project layer over
 > [`@herdctl/core`](https://github.com/edspencer/herdctl) that turns Claude Code
 > into hosted, per-project, resumable chat. This document is the "how it fits
 > together" map; the exact public `@herdctl/core` API contract Paddock depends on
-> lives in [`INTEGRATION.md`](./INTEGRATION.md), and the feature-level wire
-> contracts in [`CONTRACT-v2.md`](./archive/CONTRACT-v2.md) / [`CONTRACT-v3.md`](./archive/CONTRACT-v3.md).
+> lives in [`INTEGRATION.md`](/architecture/herdctl-integration), and the feature-level wire
+> contracts in [`CONTRACT-v2.md`](https://github.com/edspencer/paddock/blob/main/docs/archive/CONTRACT-v2.md) / [`CONTRACT-v3.md`](https://github.com/edspencer/paddock/blob/main/docs/archive/CONTRACT-v3.md).
 > For the conceptual model (what a project, keeper, chat, or sweeper *is*), see
 > [`concepts/`](./concepts/).
 
@@ -63,7 +66,7 @@ project's `OVERVIEW.md`/`CHANGELOG.md`.**
 
 ## 2. Monorepo shape
 
-Two packages, versioned and released together (see [`RELEASING.md`](../RELEASING.md)):
+Two packages, versioned and released together (see [`RELEASING.md`](https://github.com/edspencer/paddock/blob/main/RELEASING.md)):
 
 | Package | Stack | Role |
 |---|---|---|
@@ -488,8 +491,8 @@ Each keeper turn runs in one of two modes (`PADDOCK_KEEPER_DRIVE_MODE`, default
   cross-turn keeper autonomy. `cancel()` maps to `session.interrupt()` in session
   mode and `manager.cancelJob()` in batch mode.
 
-See [`concepts/keeper-and-scratch.md`](./concepts/keeper-and-scratch.md) for the
-agent model and [`INTEGRATION.md`](./INTEGRATION.md) for the underlying herdctl
+See [`concepts/keeper-and-scratch.md`](/concepts/keeper-and-scratch) for the
+agent model and [`INTEGRATION.md`](/architecture/herdctl-integration) for the underlying herdctl
 trigger API.
 
 ---
@@ -497,7 +500,7 @@ trigger API.
 ## 10. Git backing store
 
 The data root is designed to be a git repo (see
-[`DESIGN-backing-store.md`](./DESIGN-backing-store.md)). Generated/derived files
+[`DESIGN-backing-store.md`](https://github.com/edspencer/paddock/blob/main/docs/DESIGN-backing-store.md)). Generated/derived files
 (`OVERVIEW.md`, `CHANGELOG.md`, `.chats/**`) are meant to be auto-committed for
 durability, while **authored** changes surface in a per-project **Changes** view
 (git status + diff) with a one-click Commit + Push. `GitService` (`git.ts`) backs

@@ -1,0 +1,13 @@
+/* Paddock docs — light theme tweaks. Keep minimal; Starlight defaults are good. */
+
+:root {
+	/* Accent tuned toward Paddock/herdctl warm terracotta so the two sites feel related. */
+	--sl-color-accent-low: #3a1a12;
+	--sl-color-accent: #c2603c;
+	--sl-color-accent-high: #f0b7a4;
+}
+
+/* Slightly wider content column for reference tables (env vars, API). */
+:root {
+	--sl-content-width: 50rem;
+}
