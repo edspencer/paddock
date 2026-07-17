@@ -120,27 +120,30 @@ The fields:
 | `repo` | Present only for repo-backed projects; **immutable**. |
 | `model`, `permissionMode`, `driveMode`, `maxTurns`, `docker` | Per-project keeper overrides — see below. Absent means *inherit the box default*. |
 
-Paddock only writes fields you've actually set: unset keeper overrides are simply
-absent from the file, and resolve to the box-wide defaults at run time.
+Paddock writes only the fields it needs: on a freshly created project, keeper
+overrides you didn't set are absent from the file and resolve to the box-wide
+defaults at run time. (Saving the [Settings tab](#tune-the-keeper-the-settings-tab)
+changes this for some of them — see the caveat there.)
 
 ## Organize projects into areas
 
 As your collection grows, the projects home page keeps it legible by clustering
-cards under their **area** — the `group` field. Each area is a collapsible
-section with its own heading, a count, and a short blurb:
+cards under their **area** — the project's `group`. An area is simply a
+**free-form label**: the server stores whatever string you give it, so you can
+have as many areas as you like and name them anything. To make the common cases
+one click, the **Area** dropdown (in the New Project dialog and in Settings)
+comes pre-filled with three ready-made suggestions — **Homelab**, **House**, and
+**Side Projects** — plus **Unsorted**. You are in no way limited to those.
 
 ![The projects grid grouped into Homelab, House, and Side Projects areas](../../../assets/using/projects-grid-areas.png)
 
-Paddock ships three canonical areas, shown in this order:
-
-- **Homelab** — servers, networking, self-hosted services.
-- **House** — physical home systems: water, climate, power, garden.
-- **Side Projects** — apps and ideas of your own.
-
-You're not limited to those — the area is a free-form label, so a custom one
-(say, `work`) gets its own section, sorted after the canonical three. Anything
-without an area falls into **Unsorted** at the bottom. Set the area at creation
-from the **Area** dropdown, or change it any time from Settings.
+On the home page an area only becomes a section **once at least one project uses
+it** — a fresh Paddock with no projects shows no area sections at all. When
+sections do appear they're ordered predictably: the three built-in areas first
+(in the order above), then any custom areas alphabetically, then **Unsorted**
+last. Each section is collapsible, with a heading and a project count. Set a
+project's area at creation from the **Area** dropdown, or change it any time from
+Settings.
 
 :::tip[Areas vs. tags — one home, many labels]
 A project lives in **exactly one area** (its shelf), but can carry **many domain
@@ -178,19 +181,27 @@ and Links, all editable here. (Slug, Started, and Created are shown read-only.)
 - **Docker sandbox** — run the keeper inside a Docker container (needs a working
   Docker daemon on the box).
 
-Any keeper setting left at its inherited value stays *absent* from `project.yaml`,
-so it follows the box default as you change it globally. See
-[Environment variables](/configuration/environment/) for the defaults each of
-these inherits.
+:::note[What "inherit" really means once you Save]
+Only **drive mode** genuinely keeps tracking the global default: left on **Global
+default** it stays *absent* from `project.yaml`, so the project follows the
+box-wide `PADDOCK_KEEPER_DRIVE_MODE` as you change it. The other keeper settings
+(model, permission mode, max turns, docker) are written with **concrete values**
+the first time you **Save** on this tab — so saving *freezes* them at their
+current values rather than leaving them to track the box default afterwards.
+:::
+
+See [Environment variables](/configuration/environment/) for the defaults a fresh
+project starts from.
 
 ### Preload project context (in the composer, not Settings)
 
 One keeper-related toggle lives on the **chat composer**, not the Settings tab:
 **Preload project context**. On the **first turn of a new project chat**, it
 injects the project's curated `OVERVIEW.md` + `CHANGELOG.md` so the keeper starts
-already knowing the project's current state and history. It's on by default and
-only appears once the [sweeper](/concepts/sweeper/) has produced an overview — a
-brand-new project has nothing to preload yet.
+already knowing the project's current state and history. It's on by default. On a
+brand-new project the toggle still appears but is **disabled** (labelled "no
+overview yet") until the [sweeper](/concepts/sweeper/) has written an
+`OVERVIEW.md` — there's nothing to preload until then.
 
 ## Promote a scratch chat into a project
 
