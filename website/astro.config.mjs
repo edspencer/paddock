@@ -51,6 +51,13 @@ export default defineConfig({
 				{ label: 'Welcome', link: '/' },
 				{ label: 'Getting Started', slug: 'getting-started' },
 				{
+					label: 'Using Paddock',
+					collapsed: false,
+					items: [
+						{ label: 'Creating & organizing projects', slug: 'using/creating-and-organizing-projects' },
+					],
+				},
+				{
 					label: 'Guides',
 					collapsed: false,
 					items: [
