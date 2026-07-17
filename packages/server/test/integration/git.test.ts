@@ -102,6 +102,78 @@ describe("integration: git status/diff/commit (real git repo)", () => {
   });
 });
 
+describe("integration: selective commit + line stat + dirty rollup (#258)", () => {
+  let t: TestApp;
+  let dir: string;
+
+  beforeAll(async () => {
+    t = await startTestApp({ gitRepo: true });
+    await t.app.inject({ method: "POST", url: "/api/projects", payload: { name: "Sel Proj" } });
+    await t.app.inject({
+      method: "POST",
+      url: "/api/projects/sel-proj/git/commit",
+      payload: { message: "init" },
+    });
+    dir = (await t.app.inject({ method: "GET", url: "/api/projects/sel-proj" })).json().project.dir;
+    // A brand-new (untracked) file with 3 lines + a modification to a tracked one.
+    await fs.writeFile(path.join(dir, "added.md"), "l1\nl2\nl3\n", "utf8");
+    await fs.appendFile(path.join(dir, "CHANGELOG.md"), "\n- one\n- two\n", "utf8");
+  });
+  afterAll(async () => {
+    await t.teardown();
+  });
+
+  it("reports +/- line stats for tracked and untracked changes", async () => {
+    const status = (
+      await t.app.inject({ method: "GET", url: "/api/projects/sel-proj/git/status" })
+    ).json();
+    const byPath = Object.fromEntries(
+      status.files.map((f: { path: string }) => [f.path, f]),
+    );
+    // Untracked file counts as all-added.
+    expect(byPath["added.md"].added).toBe(3);
+    expect(byPath["added.md"].removed).toBe(0);
+    // Tracked modification has a positive added count.
+    expect(byPath["CHANGELOG.md"].added).toBeGreaterThan(0);
+  });
+
+  it("commits ONLY the selected file, leaving the rest uncommitted", async () => {
+    const commit = (
+      await t.app.inject({
+        method: "POST",
+        url: "/api/projects/sel-proj/git/commit",
+        payload: { message: "just the changelog", files: ["CHANGELOG.md"] },
+      })
+    ).json();
+    expect(commit.committed).toBe(true);
+
+    const status = (
+      await t.app.inject({ method: "GET", url: "/api/projects/sel-proj/git/status" })
+    ).json();
+    const paths = status.files.map((f: { path: string }) => f.path);
+    expect(paths).toContain("added.md"); // deselected → still uncommitted
+    expect(paths).not.toContain("CHANGELOG.md"); // committed
+  });
+
+  it("rejects a selection that escapes the subtree (no commit)", async () => {
+    const res = (
+      await t.app.inject({
+        method: "POST",
+        url: "/api/projects/sel-proj/git/commit",
+        payload: { message: "escape", files: ["../evil"] },
+      })
+    ).json();
+    expect(res.committed).toBe(false);
+  });
+
+  it("the projects list carries a per-project uncommitted (dirty) count", async () => {
+    const projects = (await t.app.inject({ method: "GET", url: "/api/projects" })).json().projects;
+    const p = projects.find((x: { slug: string }) => x.slug === "sel-proj");
+    // added.md is still uncommitted from the selective commit above.
+    expect(p.dirty).toBeGreaterThan(0);
+  });
+});
+
 describe("integration: git features hidden when the store is not a repo", () => {
   let t: TestApp;
   beforeAll(async () => {

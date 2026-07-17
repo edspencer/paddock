@@ -410,11 +410,15 @@ export const api = {
     return reqText(`/api/projects/${encodeURIComponent(slug)}/git/diff${qs}`);
   },
 
-  /** Commit a project's changes. `committed:false` ⇒ nothing to commit. */
-  async gitCommit(slug: string, message: string): Promise<GitCommitResult> {
+  /**
+   * Commit a project's changes. `committed:false` ⇒ nothing to commit. Pass
+   * `files` (project-relative paths) to commit ONLY those changes; omit it to
+   * commit the whole subtree (#258).
+   */
+  async gitCommit(slug: string, message: string, files?: string[]): Promise<GitCommitResult> {
     return req<GitCommitResult>(`/api/projects/${encodeURIComponent(slug)}/git/commit`, {
       method: "POST",
-      body: JSON.stringify({ message }),
+      body: JSON.stringify(files ? { message, files } : { message }),
     });
   },
 

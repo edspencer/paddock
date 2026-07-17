@@ -83,6 +83,18 @@ describe("ProjectsGrid: area sectioning", () => {
     expect(within(houseBtn).getByText("1")).toBeInTheDocument();
   });
 
+  it("flags a project with uncommitted changes and leaves a clean one unflagged (#258)", () => {
+    mockProjects = [
+      makeProject({ slug: "d", name: "Dirty One", group: "homelab", dirty: 4 }),
+      makeProject({ slug: "c", name: "Clean One", group: "homelab", dirty: 0 }),
+    ];
+    renderGrid();
+    const chip = screen.getByTitle(/4 uncommitted changes/i);
+    expect(chip).toHaveTextContent("4");
+    // The clean project has no dirty chip.
+    expect(screen.queryByTitle(/uncommitted change/i)).toBe(chip);
+  });
+
   it("collapses a section and hides its cards (persisting to localStorage)", async () => {
     localStorage.clear();
     mockProjects = [makeProject({ slug: "vis", name: "Visible One", group: "homelab" })];

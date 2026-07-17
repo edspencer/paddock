@@ -90,9 +90,31 @@ export function ChangesPane({
   const [pushing, setPushing] = useState(false);
   const [busyErr, setBusyErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  // Selection for a partial commit (#258). We track the DEselected paths so a
+  // brand-new changed file defaults to selected (staged) — the common case is
+  // "commit everything", with the option to deselect (e.g. throwaway
+  // screenshots). Derived selected paths drive the "Commit N" action.
+  const [deselected, setDeselected] = useState<Set<string>>(new Set());
 
   const files = status.files;
   const uncommitted = files.length;
+  const selectedPaths = files.filter((f) => !deselected.has(f.path)).map((f) => f.path);
+  const selectedCount = selectedPaths.length;
+  const allSelected = selectedCount === files.length && files.length > 0;
+
+  const toggleSelect = useCallback((path: string) => {
+    setDeselected((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }, []);
+  const selectAll = useCallback(() => setDeselected(new Set()), []);
+  const selectNone = useCallback(
+    () => setDeselected(new Set(files.map((f) => f.path))),
+    [files],
+  );
 
   // Fleet-wide git info drives push (ahead/behind, remote) + the GitHub flow.
   const loadInfo = useCallback(async () => {
@@ -120,14 +142,19 @@ export function ChangesPane({
 
   const onCommit = useCallback(async () => {
     const msg = message.trim();
-    if (!msg || committing) return;
+    if (!msg || committing || selectedPaths.length === 0) return;
     setCommitting(true);
     setBusyErr(null);
     setNote(null);
     try {
-      const res = await api.gitCommit(slug, msg);
+      // Commit only the selected files unless every file is selected, in which
+      // case omit `files` to use the whole-subtree path (#258).
+      const res = allSelected
+        ? await api.gitCommit(slug, msg)
+        : await api.gitCommit(slug, msg, selectedPaths);
       if (res.committed) {
         setMessage("");
+        setDeselected(new Set());
         setNote(res.hash ? `Committed ${res.hash.slice(0, 7)}` : "Committed");
         await refreshStatus();
         await loadInfo(); // ahead count moves after a commit
@@ -139,7 +166,7 @@ export function ChangesPane({
     } finally {
       setCommitting(false);
     }
-  }, [message, committing, slug, refreshStatus, loadInfo]);
+  }, [message, committing, selectedPaths, allSelected, slug, refreshStatus, loadInfo]);
 
   const ahead = info?.ahead ?? 0;
   const hasRemote = info?.configured ?? false;
@@ -227,8 +254,23 @@ export function ChangesPane({
             phone — the list is height-capped so the diff still gets real estate;
             on lg+ it's the familiar fixed-width left column. */}
         <div className="flex w-full shrink-0 flex-col border-b border-paddock-200 dark:border-paddock-800 lg:w-72 lg:border-b-0 lg:border-r">
-          <div className="mb-1 mt-3 px-3">
+          <div className="mb-1 mt-3 flex items-center justify-between gap-2 px-3">
             <span className="section-label px-0">Changed files</span>
+            {files.length > 0 && (
+              <span className="flex items-center gap-1.5 text-[11px] text-paddock-400">
+                <span>
+                  {selectedCount}/{files.length} selected
+                </span>
+                <button
+                  type="button"
+                  onClick={allSelected ? selectNone : selectAll}
+                  className="rounded px-1 py-0.5 font-medium text-accent hover:bg-accent/10"
+                  title={allSelected ? "Deselect all files" : "Select all files"}
+                >
+                  {allSelected ? "None" : "All"}
+                </button>
+              </span>
+            )}
           </div>
           <div className="max-h-[35vh] overflow-y-auto px-2 pb-2 lg:max-h-none lg:flex-1">
             {files.length === 0 ? (
@@ -236,7 +278,16 @@ export function ChangesPane({
                 No uncommitted changes. Files you author surface here for a checkpoint.
               </p>
             ) : (
-              files.map((f) => <FileRow key={f.path} file={f} active={activePath === f.path} onSelect={() => selectFile(f.path)} />)
+              files.map((f) => (
+                <FileRow
+                  key={f.path}
+                  file={f}
+                  active={activePath === f.path}
+                  selected={!deselected.has(f.path)}
+                  onSelect={() => selectFile(f.path)}
+                  onToggleSelect={() => toggleSelect(f.path)}
+                />
+              ))
             )}
           </div>
 
@@ -252,12 +303,24 @@ export function ChangesPane({
             <button
               type="button"
               onClick={() => void onCommit()}
-              disabled={!message.trim() || committing || files.length === 0}
+              disabled={!message.trim() || committing || selectedCount === 0}
               className="btn-primary mt-2 w-full py-1.5 text-xs"
-              title={files.length === 0 ? "Nothing to commit" : "Commit the staged + tracked changes"}
+              title={
+                files.length === 0
+                  ? "Nothing to commit"
+                  : selectedCount === 0
+                    ? "Select at least one file to commit"
+                    : allSelected
+                      ? "Commit all changed files"
+                      : `Commit ${selectedCount} selected file${selectedCount === 1 ? "" : "s"}`
+              }
             >
               <CheckIcon width={13} height={13} />
-              {committing ? "Committing…" : "Commit"}
+              {committing
+                ? "Committing…"
+                : selectedCount > 0 && !allSelected
+                  ? `Commit ${selectedCount} selected`
+                  : "Commit"}
             </button>
           </div>
         </div>
@@ -272,41 +335,82 @@ export function ChangesPane({
   );
 }
 
-/** One changed-file row: status badge + path + a staged/untracked hint. */
+/**
+ * A compact `+A −R` line-stat for a changed file (#258). Binary changes show a
+ * "binary" chip; a stat we couldn't compute renders nothing.
+ */
+function StatBadge({ file }: { file: GitFileChange }) {
+  if (file.binary) return <span className="text-paddock-400">binary</span>;
+  const { added, removed } = file;
+  if (added == null && removed == null) return null;
+  if (!added && !removed) return <span className="text-paddock-400">0</span>;
+  return (
+    <span className="inline-flex items-center gap-1 font-mono">
+      {added ? <span className="text-emerald-600 dark:text-emerald-400">+{added}</span> : null}
+      {removed ? <span className="text-rose-600 dark:text-rose-400">−{removed}</span> : null}
+    </span>
+  );
+}
+
+/**
+ * One changed-file row: a stage checkbox (#258) + status badge + path + a
+ * staged/untracked hint and +/- stat. The checkbox toggles whether the file is
+ * included in the next commit; clicking the row body selects it for the diff
+ * view (the two are independent).
+ */
 function FileRow({
   file,
   active,
+  selected,
   onSelect,
+  onToggleSelect,
 }: {
   file: GitFileChange;
   active: boolean;
+  selected: boolean;
   onSelect: () => void;
+  onToggleSelect: () => void;
 }) {
   const badge = statusBadge(file);
   const hint = file.untracked ? "untracked" : file.staged ? "staged" : "unstaged";
   return (
-    <button
-      type="button"
-      onClick={onSelect}
-      title={file.path}
-      className={`mb-0.5 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm transition-colors ${
+    <div
+      className={`mb-0.5 flex items-center gap-2 rounded-lg pl-2 pr-2.5 transition-colors ${
         active
           ? "bg-paddock-200/80 dark:bg-paddock-800"
           : "hover:bg-paddock-200/50 dark:hover:bg-paddock-800/50"
       }`}
     >
-      <span
-        className={`inline-flex h-5 w-6 shrink-0 items-center justify-center rounded font-mono text-[10px] font-semibold ${badge.cls}`}
+      <input
+        type="checkbox"
+        checked={selected}
+        onChange={onToggleSelect}
+        aria-label={`Stage ${file.path}`}
+        title={selected ? "Included in commit — click to exclude" : "Excluded — click to include"}
+        className="h-3.5 w-3.5 shrink-0 cursor-pointer accent-accent"
+      />
+      <button
+        type="button"
+        onClick={onSelect}
+        title={file.path}
+        className="flex min-w-0 flex-1 items-center gap-2 py-2 text-left text-sm"
       >
-        {badge.label}
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block truncate font-mono text-[12.5px] text-paddock-700 dark:text-paddock-200">
-          {file.path}
+        <span
+          className={`inline-flex h-5 w-6 shrink-0 items-center justify-center rounded font-mono text-[10px] font-semibold ${badge.cls}`}
+        >
+          {badge.label}
         </span>
-        <span className="text-[10px] text-paddock-400">{hint}</span>
-      </span>
-    </button>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate font-mono text-[12.5px] text-paddock-700 dark:text-paddock-200">
+            {file.path}
+          </span>
+          <span className="flex items-center gap-2 text-[10px] text-paddock-400">
+            <span>{hint}</span>
+            <StatBadge file={file} />
+          </span>
+        </span>
+      </button>
+    </div>
   );
 }
 
@@ -361,7 +465,7 @@ function DiffView({ slug, file }: { slug: string; file: GitFileChange | null }) 
   // Untracked: show the file's content (images as images, everything else as
   // text) rather than a "no diff" dead end (issue #107).
   if (untracked) {
-    return <UntrackedFileView slug={slug} name={file.path} />;
+    return <UntrackedFileView slug={slug} file={file} />;
   }
   if (loading) {
     return (
@@ -394,14 +498,29 @@ function DiffView({ slug, file }: { slug: string; file: GitFileChange | null }) 
 
   const lines = diff.split("\n");
   return (
-    <div className="h-full overflow-auto bg-paddock-50/60 dark:bg-paddock-950/60">
-      <pre className="min-w-full whitespace-pre px-4 py-3 font-mono text-[12px] leading-relaxed">
-        {lines.map((line, i) => (
-          <div key={i} className={diffLineClass(line)}>
-            {line || " "}
-          </div>
-        ))}
-      </pre>
+    <div className="flex h-full min-h-0 flex-col">
+      <DiffStatHeader file={file} />
+      <div className="min-h-0 flex-1 overflow-auto bg-paddock-50/60 dark:bg-paddock-950/60">
+        <pre className="min-w-full whitespace-pre px-4 py-3 font-mono text-[12px] leading-relaxed">
+          {lines.map((line, i) => (
+            <div key={i} className={diffLineClass(line)}>
+              {line || " "}
+            </div>
+          ))}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
+/** File path + `+A −R` stat bar shown above a file's diff (#258). */
+function DiffStatHeader({ file }: { file: GitFileChange }) {
+  return (
+    <div className="flex items-center gap-2 border-b border-paddock-200 bg-paddock-50/60 px-4 py-2 text-[11px] text-paddock-500 dark:border-paddock-800 dark:bg-paddock-900/40">
+      <span className="min-w-0 flex-1 truncate font-mono text-paddock-600 dark:text-paddock-300">
+        {file.path}
+      </span>
+      <StatBadge file={file} />
     </div>
   );
 }
@@ -426,7 +545,8 @@ function diffLineClass(line: string): string {
  * the raw-bytes endpoint, everything else renders as plain text. The whole file
  * is new, so a green gutter echoes an all-added diff.
  */
-function UntrackedFileView({ slug, name }: { slug: string; name: string }) {
+function UntrackedFileView({ slug, file: change }: { slug: string; file: GitFileChange }) {
+  const name = change.path;
   const [file, setFile] = useState<ProjectFile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -454,7 +574,10 @@ function UntrackedFileView({ slug, name }: { slug: string; name: string }) {
 
   const header = (
     <div className="flex items-center gap-2 border-b border-paddock-200 bg-paddock-50/60 px-4 py-2 text-[11px] text-paddock-500 dark:border-paddock-800 dark:bg-paddock-900/40">
-      <span className="font-mono text-paddock-600 dark:text-paddock-300">{name}</span>
+      <span className="min-w-0 flex-1 truncate font-mono text-paddock-600 dark:text-paddock-300">
+        {name}
+      </span>
+      <StatBadge file={change} />
       <span className="rounded bg-emerald-100 px-1.5 py-0.5 font-medium text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400">
         new file · untracked
       </span>

@@ -200,6 +200,54 @@ describe("ChangesPane: commit", () => {
   });
 });
 
+describe("ChangesPane: selective commit + stat (#258)", () => {
+  it("shows a +/- line stat per changed file (and 'binary' for binary)", async () => {
+    renderPane(
+      makeStatus({
+        files: [
+          { path: "a.md", status: "M", staged: false, untracked: false, added: 5, removed: 2 },
+          { path: "b.png", status: "??", staged: false, untracked: true, binary: true },
+        ],
+      }),
+    );
+    // The stat shows in the row and (for the auto-selected file) the diff header.
+    expect((await screen.findAllByText("+5")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("−2").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("binary").length).toBeGreaterThan(0);
+  });
+
+  it("defaults to all files selected and commits everything (no files arg)", async () => {
+    apiMock.gitStatus.mockResolvedValue(makeStatus({ clean: true, files: [] }));
+    renderPane();
+    expect(screen.getByText("2/2 selected")).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText(/Commit message/i), { target: { value: "all" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Commit$/ }));
+    await waitFor(() => expect(apiMock.gitCommit).toHaveBeenCalledWith("proj", "all"));
+  });
+
+  it("commits ONLY the checked files when one is deselected", async () => {
+    apiMock.gitStatus.mockResolvedValue(makeStatus({ clean: true, files: [] }));
+    renderPane(); // notes.md + new.txt, both selected by default
+    fireEvent.click(screen.getByLabelText("Stage new.txt")); // deselect the untracked file
+    expect(screen.getByText("1/2 selected")).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText(/Commit message/i), { target: { value: "partial" } });
+    fireEvent.click(screen.getByRole("button", { name: /Commit 1 selected/ }));
+    await waitFor(() =>
+      expect(apiMock.gitCommit).toHaveBeenCalledWith("proj", "partial", ["notes.md"]),
+    );
+  });
+
+  it("None deselects all (Commit disabled), All reselects", async () => {
+    renderPane();
+    fireEvent.click(screen.getByRole("button", { name: "None" }));
+    expect(screen.getByText("0/2 selected")).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText(/Commit message/i), { target: { value: "x" } });
+    expect(screen.getByRole("button", { name: /^Commit$/ })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "All" }));
+    expect(screen.getByText("2/2 selected")).toBeInTheDocument();
+  });
+});
+
 describe("ChangesPane: push", () => {
   it("disables Push when there's no remote", async () => {
     apiMock.gitInfo.mockResolvedValue(makeInfo({ configured: false, ahead: 0 }));
