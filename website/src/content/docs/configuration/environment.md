@@ -1,4 +1,7 @@
-# Configuration reference
+---
+title: "Environment variables"
+description: "Every PADDOCK_* environment variable, with its default and purpose."
+---
 
 Paddock is configured **entirely from the environment** — there are no config
 files. Every setting is read once at startup (`packages/server/src/config.ts`),
@@ -7,7 +10,7 @@ server reads, its default (taken from the code, not guessed), and what it does.
 
 For a runnable starting point, copy [`.env.example`](../.env.example) to `.env`
 and adjust. Authentication is summarised below but documented in full in
-[AUTH.md](../AUTH.md).
+[AUTH.md](/configuration/authentication).
 
 ## How values are parsed
 
@@ -53,7 +56,7 @@ Consequences worth knowing:
 
 ## Authentication
 
-Provider-agnostic; the default (`none`) is fully open. See **[AUTH.md](../AUTH.md)**
+Provider-agnostic; the default (`none`) is fully open. See **[AUTH.md](/configuration/authentication)**
 for modes, provider examples, and secret handling — this table is only the knobs.
 
 | Variable | Default | Required | Purpose |
@@ -82,7 +85,7 @@ Defaults preserve today's look; set these to tell several instances apart.
 ## Voice dictation (Whisper)
 
 Off unless configured; then a mic button appears in the composer. Mirrors
-HushPod's whisper config so both can share a backend. See [DEV.md](../DEV.md#voice-dictation).
+HushPod's whisper config so both can share a backend. See [DEV.md](https://github.com/edspencer/paddock/blob/main/DEV.md#voice-dictation).
 
 | Variable | Default | Required | Purpose |
 |----------|---------|----------|---------|

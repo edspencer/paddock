@@ -1,4 +1,7 @@
-# API reference
+---
+title: "REST & WebSocket API"
+description: "Paddock server REST endpoints and WebSocket frame reference."
+---
 
 Paddock exposes a **REST API** under `/api` (`packages/server/src/routes.ts`) and a
 single **WebSocket** endpoint at `/ws` for live chat (`packages/server/src/ws.ts`,
@@ -8,8 +11,8 @@ back-and-forth of a chat turn happens over the WebSocket.
 ## Authentication
 
 Every request passes through the auth layer (`packages/server/src/auth.ts`) chosen
-by `PADDOCK_AUTH_MODE` (see [CONFIGURATION.md](CONFIGURATION.md) and
-[AUTH.md](../AUTH.md)):
+by `PADDOCK_AUTH_MODE` (see [CONFIGURATION.md](/configuration/environment) and
+[AUTH.md](/configuration/authentication)):
 
 - In **`none`** mode (default) every request is the frozen anonymous principal —
   the API is fully open.

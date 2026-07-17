@@ -1,0 +1,7 @@
+/* Starlight + Tailwind CSS v4 compatibility layer */
+/* Establishes the cascade layer order so Starlight and Tailwind coexist */
+@layer base, starlight, theme, components, utilities;
+
+@import '@astrojs/starlight-tailwind';
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities);

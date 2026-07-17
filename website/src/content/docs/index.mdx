@@ -1,0 +1,61 @@
+---
+title: Paddock
+description: Your Claude Code agents, hosted and organized by project. Persistent, resumable Claude Code sessions with a web UI, built on herdctl.
+template: splash
+hero:
+  tagline: Your Claude Code agents, hosted and organized by project — persistent, resumable sessions with a web UI, from your desk or your phone.
+  image:
+    file: ../../assets/paddock-logo.svg
+  actions:
+    - text: Get started
+      link: /getting-started/
+      icon: right-arrow
+      variant: primary
+    - text: View on GitHub
+      link: https://github.com/edspencer/paddock
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+## What is Paddock?
+
+**Paddock** is a project-first launchpad for [herdctl](https://github.com/edspencer/herdctl).
+It turns Claude Code into something you run on a server and reach from a browser:
+long-lived agents, one per project, whose chats persist and resume — instead of a
+laptop full of terminal tabs you can't get back to from your phone.
+
+A **project** is just a directory. Each one gets a herdctl **keeper agent** whose
+working directory *is* that project, and the chats you see in the UI are that
+agent's Claude Code sessions — persisted on disk and resumable across reloads,
+reconnects, and devices.
+
+<CardGrid>
+	<Card title="Project-first" icon="open-book">
+		Every project has its own keeper agent, files, and changelog. Notebook
+		projects live in your data repo; repo-backed projects clone an external git
+		repo as the agent's working directory.
+	</Card>
+	<Card title="Persistent, resumable chats" icon="random">
+		Server-hosted sessions survive reloads, reconnects, and devices. Fork,
+		queue-while-streaming, stop, search, and archive are built in.
+	</Card>
+	<Card title="Real tool use, streamed live" icon="rocket">
+		File writes, commands, and subagents render as they run, with a live
+		context/cost meter per chat.
+	</Card>
+	<Card title="Built on herdctl" icon="puzzle">
+		A thin project layer over the herdctl FleetManager. Anything the fleet
+		engine does, Paddock can wire in.
+	</Card>
+</CardGrid>
+
+## Start here
+
+<CardGrid>
+	<LinkCard title="Getting started" href="/getting-started/" description="Run Paddock with Docker or from source." />
+	<LinkCard title="Concepts" href="/concepts/" description="Projects, keeper vs scratch agents, chats-as-sessions, the sweeper." />
+	<LinkCard title="Configuration" href="/configuration/environment/" description="Every PADDOCK_* environment variable, with defaults." />
+	<LinkCard title="Architecture" href="/architecture/overview/" description="Storage model, WebSocket flow, MCP injection, auth." />
+</CardGrid>
