@@ -112,7 +112,11 @@ export function seedProject(input: SeedProjectInput, opts: { git?: boolean } = {
     writeFileSync(path.join(dir, "OVERVIEW.md"), `# ${input.name}\n\nSeeded overview.\n`, "utf8");
   }
   for (const [name, content] of Object.entries(input.files ?? {})) {
-    writeFileSync(path.join(dir, name), content, "utf8");
+    const file = path.join(dir, name);
+    // Support nested seed paths (e.g. "design/plan.md") for the Files-subdir
+    // browsing journey (#259) by creating any parent directories first.
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, content, "utf8");
   }
   return slug;
 }
