@@ -92,15 +92,46 @@ export type PaddockManage =
       returned: number;
       messages: PmMessage[];
     }
-  | { tool: "create_chat"; project: string; sessionId: string }
-  | { tool: "fork_chat"; project: string; sessionId: string; from?: string }
-  | { tool: "send_message"; project: string; sessionId: string }
+  | { tool: "create_chat"; project: string; sessionId: string; name?: string; prompt?: string }
+  | {
+      tool: "fork_chat";
+      project: string;
+      sessionId: string;
+      from?: string;
+      name?: string;
+      prompt?: string;
+    }
+  | { tool: "send_message"; project: string; sessionId: string; prompt?: string }
   | { tool: "fork_chat_batch"; count: number; source: string; forks: PmFork[] };
 
 const PM_PREFIX = "mcp__paddock_manage__";
 
 const num = (v: unknown, fallback: number): number =>
   typeof v === "number" && Number.isFinite(v) ? v : fallback;
+
+/** A non-empty trimmed string, or undefined (drops empty/missing fields). */
+const str = (v: unknown): string | undefined => {
+  if (typeof v !== "string") return undefined;
+  const t = v.trim();
+  return t.length > 0 ? t : undefined;
+};
+
+/** First non-blank line of a prompt, truncated — used for compact titles. */
+export function firstLine(s: string, max = 80): string {
+  const line = s.split("\n").find((l) => l.trim().length > 0)?.trim() ?? s.trim();
+  return line.length > max ? `${line.slice(0, max).trimEnd()}…` : line;
+}
+
+/**
+ * The human-readable chat title: the explicit `name` if given, else derived from
+ * the kickoff `prompt` (matching Paddock's own sidebar auto-naming), else a
+ * generic fallback.
+ */
+export function chatTitle(name?: string, prompt?: string): string {
+  if (name) return name;
+  if (prompt) return firstLine(prompt);
+  return "untitled chat";
+}
 
 /**
  * Parse a `mcp__paddock_manage__*` tool call's JSON `output` into a typed shape,
@@ -149,10 +180,24 @@ export function parsePaddockManage(
         messages,
       };
     }
-    case "create_chat":
+    case "create_chat": {
+      if (!data.sessionId) return null;
+      return {
+        tool,
+        project: String(data.project ?? ""),
+        sessionId: String(data.sessionId),
+        name: str(data.name),
+        prompt: str(data.prompt),
+      };
+    }
     case "send_message": {
       if (!data.sessionId) return null;
-      return { tool, project: String(data.project ?? ""), sessionId: String(data.sessionId) };
+      return {
+        tool,
+        project: String(data.project ?? ""),
+        sessionId: String(data.sessionId),
+        prompt: str(data.prompt),
+      };
     }
     case "fork_chat": {
       if (!data.sessionId) return null;
@@ -160,7 +205,9 @@ export function parsePaddockManage(
         tool,
         project: String(data.project ?? ""),
         sessionId: String(data.sessionId),
-        from: data.from ? String(data.from) : undefined,
+        from: str(data.from),
+        name: str(data.name),
+        prompt: str(data.prompt),
       };
     }
     case "fork_chat_batch": {
@@ -186,11 +233,12 @@ export function paddockManageSummary(pm: PaddockManage): string {
     case "read_chat":
       return `${pm.project} · ${pm.returned}/${pm.total} messages`;
     case "create_chat":
-      return `new chat in ${pm.project}`;
     case "fork_chat":
-      return `forked into ${pm.project}`;
+      // The chat's real name (or a title derived from its kickoff prompt).
+      return chatTitle(pm.name, pm.prompt);
     case "send_message":
-      return `message to ${pm.project}`;
+      // A preview of the actual message that was sent.
+      return pm.prompt ? firstLine(pm.prompt) : `message to ${pm.project}`;
     case "fork_chat_batch":
       return `fanned out ${pm.count} ${pm.count === 1 ? "chat" : "chats"}`;
   }

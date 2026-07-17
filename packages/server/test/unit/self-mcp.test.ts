@@ -265,7 +265,14 @@ describe("self-management MCP (Phase 2, write tools)", () => {
       name: "Worker",
       preload_context: true,
     });
-    expect(json).toEqual({ created: true, project: "paddock", sessionId: "new-1" });
+    // Echoes the name + kickoff prompt so the chat renders with its real title (#253).
+    expect(json).toEqual({
+      created: true,
+      project: "paddock",
+      sessionId: "new-1",
+      name: "Worker",
+      prompt: "do the thing",
+    });
     expect(write.calls.createChat).toEqual([
       { projectSlug: "paddock", prompt: "do the thing", opts: { name: "Worker", preloadContext: true } },
     ]);
@@ -287,7 +294,13 @@ describe("self-management MCP (Phase 2, write tools)", () => {
   it("fork_chat defaults the source to currentSessionId()", async () => {
     const write = fakeWrite();
     const { json } = await callWrite(write, "fork_chat", { prompt: "explore option A" });
-    expect(json).toEqual({ forked: true, project: "paddock", sessionId: "fork-1", from: "current-sid" });
+    expect(json).toEqual({
+      forked: true,
+      project: "paddock",
+      sessionId: "fork-1",
+      from: "current-sid",
+      prompt: "explore option A",
+    });
     expect(write.calls.forkChat).toEqual([
       { projectSlug: "paddock", sourceSessionId: "current-sid", prompt: "explore option A", name: undefined },
     ]);
@@ -320,7 +333,7 @@ describe("self-management MCP (Phase 2, write tools)", () => {
   it("send_message passes through and defaults project to current", async () => {
     const write = fakeWrite();
     const { json } = await callWrite(write, "send_message", { session_id: "bbb", prompt: "ping" });
-    expect(json).toEqual({ sent: true, project: "paddock", sessionId: "bbb" });
+    expect(json).toEqual({ sent: true, project: "paddock", sessionId: "bbb", prompt: "ping" });
     expect(write.calls.sendMessage).toEqual([{ projectSlug: "paddock", sessionId: "bbb", prompt: "ping" }]);
   });
 

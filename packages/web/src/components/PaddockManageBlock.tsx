@@ -6,7 +6,7 @@
 
 import { createContext, useContext } from "react";
 import { Link } from "react-router-dom";
-import type { PaddockManage, PmChat } from "../lib/mcpTools";
+import { chatTitle, type PaddockManage, type PmChat } from "../lib/mcpTools";
 import { LinkIcon } from "./icons";
 
 /**
@@ -52,6 +52,20 @@ function Chip({ children }: { children: React.ReactNode }) {
     <span className="rounded bg-paddock-200/70 px-1.5 py-0.5 text-[10px] font-medium text-paddock-600 dark:bg-paddock-800 dark:text-paddock-300">
       {children}
     </span>
+  );
+}
+
+/** A labelled block of prompt/message text (kickoff prompt, or a sent message). */
+function PromptBlock({ label, text }: { label: string; text: string }) {
+  return (
+    <div className="mt-2">
+      <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-paddock-400">
+        {label}
+      </div>
+      <div className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-paddock-100/70 px-2.5 py-1.5 text-[11.5px] leading-relaxed text-paddock-700 dark:bg-paddock-900/60 dark:text-paddock-300">
+        {text}
+      </div>
+    </div>
   );
 }
 
@@ -139,25 +153,39 @@ export function PaddockManageBody({ data }: { data: PaddockManage }) {
       );
 
     case "create_chat":
-    case "fork_chat":
-    case "send_message": {
-      const verb =
-        data.tool === "create_chat"
-          ? "Created a new chat"
-          : data.tool === "fork_chat"
-            ? "Forked a new chat"
-            : "Sent a message to a chat";
+    case "fork_chat": {
+      const verb = data.tool === "create_chat" ? "Created chat" : "Forked chat";
+      const title = chatTitle(data.name, data.prompt);
       return (
-        <div className={`${wrap} flex flex-wrap items-center gap-2 text-[11.5px]`}>
-          <span className="text-paddock-700 dark:text-paddock-200">{verb}</span>
-          <span className={rowKey}>in {data.project}</span>
-          {data.tool === "fork_chat" && data.from && (
-            <span className={`font-mono ${rowKey}`}>from {shortId(data.from)}</span>
-          )}
-          <ChatLink project={data.project} sessionId={data.sessionId} label="open chat" />
+        <div className={wrap}>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px]">
+            <span className={rowKey}>{verb}</span>
+            <span className="font-medium text-paddock-800 dark:text-paddock-100">{title}</span>
+            <span className={rowKey}>in {data.project}</span>
+            {data.tool === "fork_chat" && data.from && (
+              <span className={`font-mono ${rowKey}`}>from {shortId(data.from)}</span>
+            )}
+            <ChatLink project={data.project} sessionId={data.sessionId} label="open chat" />
+          </div>
+          {/* The kickoff prompt, when it isn't already the title (i.e. a name was set). */}
+          {data.prompt && data.name && <PromptBlock label="Kickoff" text={data.prompt} />}
         </div>
       );
     }
+
+    case "send_message":
+      return (
+        <div className={wrap}>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px]">
+            <span className={rowKey}>Sent to</span>
+            <span className="font-medium text-paddock-800 dark:text-paddock-100">
+              {data.project}
+            </span>
+            <ChatLink project={data.project} sessionId={data.sessionId} label="open chat" />
+          </div>
+          {data.prompt && <PromptBlock label="Message" text={data.prompt} />}
+        </div>
+      );
 
     case "fork_chat_batch":
       return (

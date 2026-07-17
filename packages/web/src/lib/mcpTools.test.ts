@@ -3,6 +3,8 @@ import {
   mcpToolInfo,
   parsePaddockManage,
   paddockManageSummary,
+  chatTitle,
+  firstLine,
   type PaddockManage,
 } from "./mcpTools";
 
@@ -101,27 +103,45 @@ describe("parsePaddockManage", () => {
     expect(pm.messages).toHaveLength(2);
   });
 
-  it("parses the write acks (create/fork/send)", () => {
+  it("parses the write acks (create/fork/send) incl. echoed name/prompt", () => {
     expect(
       parsePaddockManage(
         "mcp__paddock_manage__create_chat",
-        JSON.stringify({ created: true, project: "paddock", sessionId: "new-1" }),
+        JSON.stringify({
+          created: true,
+          project: "paddock",
+          sessionId: "new-1",
+          name: "Worker",
+          prompt: "do the thing",
+        }),
       ),
-    ).toEqual({ tool: "create_chat", project: "paddock", sessionId: "new-1" });
+    ).toEqual({
+      tool: "create_chat",
+      project: "paddock",
+      sessionId: "new-1",
+      name: "Worker",
+      prompt: "do the thing",
+    });
 
     expect(
       parsePaddockManage(
         "mcp__paddock_manage__fork_chat",
-        JSON.stringify({ forked: true, project: "paddock", sessionId: "child-1", from: "src-9" }),
+        JSON.stringify({
+          forked: true,
+          project: "paddock",
+          sessionId: "child-1",
+          from: "src-9",
+          prompt: "focus on the CLI path",
+        }),
       ),
-    ).toEqual({ tool: "fork_chat", project: "paddock", sessionId: "child-1", from: "src-9" });
+    ).toMatchObject({ tool: "fork_chat", from: "src-9", prompt: "focus on the CLI path" });
 
     expect(
       parsePaddockManage(
         "mcp__paddock_manage__send_message",
-        JSON.stringify({ sent: true, project: "paddock", sessionId: "s2" }),
+        JSON.stringify({ sent: true, project: "paddock", sessionId: "s2", prompt: "ping" }),
       ),
-    ).toEqual({ tool: "send_message", project: "paddock", sessionId: "s2" });
+    ).toEqual({ tool: "send_message", project: "paddock", sessionId: "s2", prompt: "ping" });
   });
 
   it("parses fork_chat_batch with per-fork prompts", () => {
@@ -144,7 +164,53 @@ describe("parsePaddockManage", () => {
   });
 });
 
+describe("chatTitle / firstLine", () => {
+  it("prefers an explicit name", () => {
+    expect(chatTitle("My Chat", "some long prompt")).toBe("My Chat");
+  });
+  it("derives a title from the prompt's first non-blank line when no name", () => {
+    expect(chatTitle(undefined, "\n  Investigate the reaper\nmore detail")).toBe(
+      "Investigate the reaper",
+    );
+  });
+  it("falls back when neither is present", () => {
+    expect(chatTitle()).toBe("untitled chat");
+  });
+  it("truncates a long line", () => {
+    expect(firstLine("x".repeat(200), 20)).toBe(`${"x".repeat(20)}…`);
+  });
+});
+
 describe("paddockManageSummary", () => {
+  it("uses the chat name/derived title for create + fork", () => {
+    expect(
+      paddockManageSummary({
+        tool: "create_chat",
+        project: "herdctl",
+        sessionId: "s",
+        name: "Reaper hunt",
+      } as PaddockManage),
+    ).toBe("Reaper hunt");
+    expect(
+      paddockManageSummary({
+        tool: "fork_chat",
+        project: "paddock",
+        sessionId: "s",
+        prompt: "focus on the CLI path\nand the SDK",
+      } as PaddockManage),
+    ).toBe("focus on the CLI path");
+  });
+  it("previews the sent message for send_message", () => {
+    expect(
+      paddockManageSummary({
+        tool: "send_message",
+        project: "paddock",
+        sessionId: "s",
+        prompt: "rerun the review please",
+      } as PaddockManage),
+    ).toBe("rerun the review please");
+  });
+
   it("summarizes each tool for the header", () => {
     expect(
       paddockManageSummary({ tool: "list_projects", count: 3, projects: [] } as PaddockManage),

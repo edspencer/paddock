@@ -244,7 +244,11 @@ function createChatHandler(write: SelfMcpWriteContext) {
       const preloadContext = typeof args.preload_context === "boolean" ? args.preload_context : undefined;
 
       const { sessionId } = await write.createChat(project, prompt, { name, preloadContext });
-      return ok({ created: true, project, sessionId });
+      // Echo the human-readable name + kickoff prompt so the chat renders with its
+      // real title (not just a link) both live and on reload (#253). When no name
+      // was given the web derives a title from the prompt (matching the sidebar's
+      // auto-name). Prompt is capped to bound the tool-result payload.
+      return ok({ created: true, project, sessionId, name, prompt: truncateText(prompt) });
     } catch (error) {
       return fail(`Error creating chat: ${errText(error)}`);
     }
@@ -265,7 +269,14 @@ function forkChatHandler(write: SelfMcpWriteContext) {
       const name = typeof args.name === "string" && args.name.trim().length > 0 ? args.name.trim() : undefined;
 
       const { sessionId } = await write.forkChat({ projectSlug: project, sourceSessionId, prompt, name });
-      return ok({ forked: true, project, sessionId, from: sourceSessionId });
+      return ok({
+        forked: true,
+        project,
+        sessionId,
+        from: sourceSessionId,
+        name,
+        prompt: prompt ? truncateText(prompt) : undefined,
+      });
     } catch (error) {
       return fail(`Error forking chat: ${errText(error)}`);
     }
@@ -283,7 +294,8 @@ function sendMessageHandler(write: SelfMcpWriteContext) {
       const project = projectArg.length > 0 ? projectArg : write.currentProjectSlug;
 
       await write.sendMessage(project, sessionId, prompt);
-      return ok({ sent: true, project, sessionId });
+      // Echo the sent message so the tool renders the actual message text (#253).
+      return ok({ sent: true, project, sessionId, prompt: truncateText(prompt) });
     } catch (error) {
       return fail(`Error sending message: ${errText(error)}`);
     }

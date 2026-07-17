@@ -15,11 +15,36 @@ function renderBody(data: PaddockManage, project = "paddock") {
 }
 
 describe("PaddockManageBody", () => {
-  it("links a create_chat result to the new chat", () => {
-    renderBody({ tool: "create_chat", project: "herdctl", sessionId: "new-9" });
+  it("links a create_chat result to the new chat and shows its name", () => {
+    renderBody({
+      tool: "create_chat",
+      project: "herdctl",
+      sessionId: "new-9",
+      name: "Investigate reaper teardown",
+      prompt: "Look into the session reaper and why bg tasks die",
+    });
     const link = screen.getByRole("link", { name: /open chat/i });
     expect(link).toHaveAttribute("href", "/projects/herdctl/chat/new-9");
+    expect(screen.getByText("Investigate reaper teardown")).toBeInTheDocument();
     expect(screen.getByText(/in herdctl/)).toBeInTheDocument();
+    // With a name set, the kickoff prompt is shown as its own block.
+    expect(screen.getByText(/Look into the session reaper/)).toBeInTheDocument();
+  });
+
+  it("shows the actual sent message for send_message", () => {
+    renderBody({
+      tool: "send_message",
+      project: "coderabbit",
+      sessionId: "s-7",
+      prompt: "Can you rerun the review with the latest diff?",
+    });
+    expect(
+      screen.getByText("Can you rerun the review with the latest diff?"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /open chat/i })).toHaveAttribute(
+      "href",
+      "/projects/coderabbit/chat/s-7",
+    );
   });
 
   it("shows a fan-out list of linked forks, each with its prompt", () => {
