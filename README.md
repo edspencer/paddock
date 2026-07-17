@@ -162,7 +162,19 @@ herdctl CLI/dashboard can do, the library can too.
 - `packages/server` — Fastify + WebSocket backend; wraps the FleetManager + a
   Project layer (`ProjectStore`). Serves the built SPA in production.
 - `packages/web` — React + Vite + Tailwind project-first SPA.
-- `docs/INTEGRATION.md` — the exact public `@herdctl/core` API contract Paddock depends on.
+
+For the full picture, see the docs:
+
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — the canonical architecture
+  overview (monorepo shape, the three storage classes, WebSocket/session flow,
+  MCP injection, auth boundary, the sweeper, drive modes).
+- **[docs/concepts/](docs/concepts/)** — short explanations of the core ideas:
+  [projects](docs/concepts/projects.md) (notebook vs. repo-backed),
+  [keeper vs. scratch agents](docs/concepts/keeper-and-scratch.md),
+  [chats are Claude Code sessions](docs/concepts/chats.md), and
+  [the sweeper](docs/concepts/sweeper.md).
+- **[docs/INTEGRATION.md](docs/INTEGRATION.md)** — the exact public
+  `@herdctl/core` API contract Paddock depends on.
 
 ## Development
 

@@ -38,7 +38,7 @@ flowchart LR
   end
 
   subgraph Herdctl["@herdctl/core FleetManager"]
-    Agents["keeper-<slug> · sweeper-<slug> · scratch"]
+    Agents["keeper-{slug} · sweeper-{slug} · scratch"]
   end
 
   Claude["Claude Code CLI / SDK session"]
@@ -117,7 +117,7 @@ internalize about the backend.
 ```mermaid
 flowchart TB
   subgraph C1["1 · Transcript JSONL — read-render"]
-    T["~/.claude/projects/<enc-cwd>/*.jsonl\n(symlinked → <project>/.chats/)"]
+    T["~/.claude/projects/{enc-cwd}/*.jsonl\n(symlinked → {project}/.chats/)"]
   end
   subgraph C2["2 · Browser localStorage — client prefs"]
     L["drafts · chat model · row heights · unread · queued · theme"]

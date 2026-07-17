@@ -75,11 +75,11 @@ repo-backed project.
 ```mermaid
 flowchart TB
   subgraph Notebook["Notebook project"]
-    N["<slug>/  ← keeper cwd\n project.yaml · OVERVIEW · CHANGELOG · CLAUDE · .chats/"]
+    N["{slug}/  ← keeper cwd\n project.yaml · OVERVIEW · CHANGELOG · CLAUDE · .chats/"]
   end
   subgraph Repo["Repo-backed project"]
-    D["<slug>/  (metadata dir)\n project.yaml · OVERVIEW · CHANGELOG · .chats/ · .gitignore"]
-    Ck["<slug>/<repo-name>/  ← keeper cwd\n the external repo checkout (own .git, own CLAUDE.md)"]
+    D["{slug}/  (metadata dir)\n project.yaml · OVERVIEW · CHANGELOG · .chats/ · .gitignore"]
+    Ck["{slug}/{repo-name}/  ← keeper cwd\n the external repo checkout (own .git, own CLAUDE.md)"]
     D --> Ck
   end
 ```
