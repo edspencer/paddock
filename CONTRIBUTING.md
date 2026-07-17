@@ -99,5 +99,3 @@ No changeset is needed for pure-internal changes (tests, CI, refactors with no
 observable effect, or **docs-only** changes to root/`docs/` files that don't ship
 in a package). The full release flow — how the "chore: version packages" PR cuts a
 Docker image + tarball — is in [RELEASING.md](RELEASING.md).
-</content>
-</invoke>

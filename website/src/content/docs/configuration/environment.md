@@ -145,4 +145,3 @@ Read by the Vite build/dev server (`packages/web`), not the backend:
 | `PADDOCK_PROXY_TARGET` | `http://localhost:4000` | no | Backend origin the Vite dev server proxies `/api` + `/ws` to (WS target derived by swapping `http`→`ws`). |
 | `VITE_API_BASE` | *(same-origin)* | no | Build-time: point the SPA at a non-default API origin. |
 | `VITE_WS_BASE` | *(same-origin)* | no | Build-time: point the SPA at a non-default WebSocket origin. |
-</content>

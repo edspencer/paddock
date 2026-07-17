@@ -179,4 +179,3 @@ design.
 > `chat:active` doubles as the on-connect snapshot, and reconnect/replay flows
 > through `chat:subscribe` → (replay | `chat:resync`). A `/compact` compaction is
 > folded into a `chat:response` chunk + `chat:message_boundary`, not its own kind.
-</content>

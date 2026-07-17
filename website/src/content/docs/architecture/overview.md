@@ -10,7 +10,7 @@ description: "Monorepo shape, the three storage classes, WebSocket/session flow,
 > lives in [`INTEGRATION.md`](/architecture/herdctl-integration), and the feature-level wire
 > contracts in [`CONTRACT-v2.md`](https://github.com/edspencer/paddock/blob/main/docs/archive/CONTRACT-v2.md) / [`CONTRACT-v3.md`](https://github.com/edspencer/paddock/blob/main/docs/archive/CONTRACT-v3.md).
 > For the conceptual model (what a project, keeper, chat, or sweeper *is*), see
-> [`concepts/`](./concepts/).
+> [`concepts/`](/concepts/).
 
 Everything here is grounded in the code under `packages/server/src` — file and
 symbol names are cited so you can jump straight to the source.
@@ -529,4 +529,4 @@ Projects concept page).
 | MCP injection | `send-file-mcp.ts`, `self-mcp.ts` |
 | Git backing store | `git.ts`, `github-auth.ts` |
 
-For the conceptual model, continue to [`concepts/`](./concepts/).
+For the conceptual model, continue to [`concepts/`](/concepts/).
