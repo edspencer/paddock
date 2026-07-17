@@ -19,6 +19,10 @@ hero:
 
 import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
+<p align="center">
+  <img src="/demo/paddock-demo.gif" alt="Paddock — the real dev stack, a project's chats, and a keeper streaming live tool calls" style="width:100%;max-width:900px;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,0.28);" />
+</p>
+
 ## What is Paddock?
 
 **Paddock** is a project-first launchpad for [herdctl](https://github.com/edspencer/herdctl).
@@ -30,6 +34,13 @@ A **project** is just a directory. Each one gets a herdctl **keeper agent** whos
 working directory *is* that project, and the chats you see in the UI are that
 agent's Claude Code sessions — persisted on disk and resumable across reloads,
 reconnects, and devices.
+
+**Paddock isn't just for software engineers.** A project can be a codebase, but it
+can just as easily be a research notebook, a writing desk, or a home-ops runbook —
+anything you'd want a capable, always-available agent to work on. It shines when you
+run it on an always-on machine and give its agents the tools they need (a scoped
+GitHub token, `ffmpeg`, whatever your work calls for). See
+[Who Paddock is for](/guides/who-its-for/).
 
 <CardGrid>
 	<Card title="Project-first" icon="open-book">
@@ -55,6 +66,8 @@ reconnects, and devices.
 
 <CardGrid>
 	<LinkCard title="Getting started" href="/getting-started/" description="Run Paddock with Docker or from source." />
+	<LinkCard title="Deploying Paddock" href="/guides/deploying/" description="The recommended always-on, low-power setup." />
+	<LinkCard title="Securing Paddock" href="/guides/securing/" description="Put authentication in front — read before exposing it." />
 	<LinkCard title="Concepts" href="/concepts/" description="Projects, keeper vs scratch agents, chats-as-sessions, the sweeper." />
 	<LinkCard title="Configuration" href="/configuration/environment/" description="Every PADDOCK_* environment variable, with defaults." />
 	<LinkCard title="Architecture" href="/architecture/overview/" description="Storage model, WebSocket flow, MCP injection, auth." />
