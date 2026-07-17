@@ -13,8 +13,9 @@ and adjust. Authentication is summarised below but documented in full in
 
 Two helpers do almost every read:
 
-- **`envOr(name, fallback)`** — the trimmed value if non-blank, else the literal
-  fallback.
+- **`envOr(name, fallback)`** — the raw (untrimmed) value if non-blank, else the
+  literal fallback. Only the blank *check* is trimmed; the returned value keeps any
+  surrounding whitespace.
 - **`envOpt(name)`** — the trimmed value, or unset (`undefined`) when blank.
 
 Consequences worth knowing:
@@ -116,7 +117,7 @@ HushPod's whisper config so both can share a backend. See [DEV.md](../DEV.md#voi
 
 | Variable | Default | Required | Purpose |
 |----------|---------|----------|---------|
-| `PADDOCK_SWEEP_MIN_INTERVAL_MS` | *(no throttle)* | no | Minimum interval between post-turn sweeps. Must parse to a finite number ≥ 0, else ignored. |
+| `PADDOCK_SWEEP_MIN_INTERVAL_MS` | `300000` (5 min) | no | Minimum interval between post-turn per-project sweeps. Must parse to a finite number ≥ 0, else ignored (falls back to the 5-min default). |
 | `PADDOCK_SPIKE_TRIGGER` | *(off)* | no | Dev harness only (`spike.ts`): when `=1`, fire a real keeper trigger instead of a dry run. Not used by the running server. |
 
 ## Non-`PADDOCK_` runtime variables
