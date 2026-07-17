@@ -1024,20 +1024,28 @@ describe("ChatPane: message queue (issue #91)", () => {
     expect((box() as HTMLTextAreaElement).value).toBe("");
   });
 
-  it("auto-sends the queued message when the turn completes", async () => {
-    render(<ChatPane projectSlug="proj" />);
+  it("does NOT self-send on completion — the server owns auto-send (#245)", async () => {
+    render(
+      <ChatPane projectSlug="proj" initialSessionId="s" loadHistory={vi.fn().mockResolvedValue([])} />,
+    );
     await startTurn();
     await userEvent.type(box(), "the queued one");
     fireEvent.keyDown(box(), { key: "Enter" });
+    // The queue was persisted to the server (which now owns auto-send).
+    expect(queuedSets.at(-1)).toMatchObject({ sessionId: "s", text: "the queued one" });
 
+    // Turn completes. The client must NOT send the queue itself (no double-send):
+    // still just the one turn it started.
     act(() => sub().handlers.onComplete?.({ sessionId: "s", jobId: "job-1", success: true }));
+    expect(sends).toHaveLength(1);
 
-    // The queued message went out as the next turn and the toolbar cleared.
-    await waitFor(() => expect(sends).toHaveLength(2));
-    expect(sends[1].message).toBe("the queued one");
-    expect(screen.queryByText("queued")).not.toBeInTheDocument();
-    // And we're streaming again for that follow-up turn.
-    expect(screen.getByRole("button", { name: /Stop/ })).toBeInTheDocument();
+    // The server drains + streams the follow-up, then signals the flush with the
+    // text: the client renders it as the user bubble and clears the toolbar.
+    act(() => sub().handlers.onQueuedFlushed?.({ text: "the queued one" }));
+    await waitFor(() => expect(screen.queryByText("queued")).not.toBeInTheDocument());
+    expect(screen.getByText("the queued one")).toBeInTheDocument();
+    // Still no client-originated send for the queued message.
+    expect(sends).toHaveLength(1);
   });
 
   it("persists the queued message across a remount and hydrates it back (#197)", async () => {
@@ -1077,13 +1085,18 @@ describe("ChatPane: message queue (issue #91)", () => {
     await userEvent.type(box(), "flush me");
     fireEvent.keyDown(box(), { key: "Enter" });
     expect(localStorage.getItem("paddock:queued:s1")).toBe("flush me");
-    // Turn completes → queue auto-flushes → the persisted slot is forgotten.
-    act(() => sub().handlers.onComplete?.({ sessionId: "s1", jobId: "job-1", success: true }));
+    // The server auto-sent it and signals the flush → the persisted slot (text +
+    // its #245 timestamp) is forgotten.
+    expect(localStorage.getItem("paddock:queuedts:s1")).not.toBeNull();
+    act(() => sub().handlers.onQueuedFlushed?.({ text: "flush me" }));
     await waitFor(() => expect(localStorage.getItem("paddock:queued:s1")).toBeNull());
+    expect(localStorage.getItem("paddock:queuedts:s1")).toBeNull();
   });
 
-  it("appends to the queued message on re-submit (single slot)", async () => {
-    render(<ChatPane projectSlug="proj" />);
+  it("appends to the queued message on re-submit (single slot) and persists it (#245)", async () => {
+    render(
+      <ChatPane projectSlug="proj" initialSessionId="s" loadHistory={vi.fn().mockResolvedValue([])} />,
+    );
     await startTurn();
     await userEvent.type(box(), "line A");
     fireEvent.keyDown(box(), { key: "Enter" });
@@ -1092,10 +1105,9 @@ describe("ChatPane: message queue (issue #91)", () => {
 
     // Still one queued message; toolbar shows the first line only.
     expect(screen.getByText("line A")).toBeInTheDocument();
-
-    act(() => sub().handlers.onComplete?.({ sessionId: "s", jobId: "job-1", success: true }));
-    await waitFor(() => expect(sends).toHaveLength(2));
-    expect(sends[1].message).toBe("line A\nline B");
+    // The single slot was appended and pushed to the server as one message for it
+    // to auto-send (with a single stable identity — the two enqueues share a ts).
+    expect(queuedSets.at(-1)).toMatchObject({ sessionId: "s", text: "line A\nline B" });
   });
 
   it("shows a '+N characters' hint only when the queued message spans more than one line", async () => {
@@ -1172,14 +1184,18 @@ describe("ChatPane: message queue (issue #91)", () => {
     expect(sends).toHaveLength(1);
   });
 
-  it("a queued slash command flushes via the command path", async () => {
+  it("persists a queued slash command to the server for it to route (#245)", async () => {
     render(<ChatPane projectSlug="proj" initialSessionId="s" loadHistory={vi.fn().mockResolvedValue([])} />);
     await startTurn();
     await userEvent.type(box(), "/compact");
     fireEvent.keyDown(box(), { key: "Enter" });
 
+    // The client just persists the queued command; the SERVER drains it and routes
+    // a leading-slash message through the command path (covered server-side). The
+    // client never self-sends it on completion.
+    expect(queuedSets.at(-1)).toMatchObject({ sessionId: "s", text: "/compact" });
     act(() => sub().handlers.onComplete?.({ sessionId: "s", jobId: "job-1", success: true }));
-    await waitFor(() => expect(commands).toHaveLength(1));
-    expect(commands[0].message).toBe("/compact");
+    expect(commands).toHaveLength(0);
+    expect(sends).toHaveLength(1);
   });
 });

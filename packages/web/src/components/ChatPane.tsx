@@ -16,7 +16,7 @@ import { formatDuration } from "../lib/format";
 import { api } from "../lib/api";
 import { readChatModel, writeChatModel } from "../lib/chatModel";
 import { readDraft, writeDraft } from "../lib/draft";
-import { readQueued, writeQueued } from "../lib/queued";
+import { readQueued, writeQueued, readQueuedTs, writeQueuedTs } from "../lib/queued";
 import {
   AlertIcon,
   BranchIcon,
@@ -247,17 +247,22 @@ export function ChatPane({
   const [conn, setConn] = useState<ConnectionState>(chatClient.state);
 
   // Issue #91: a single message queued to auto-send when the current turn
-  // finishes. `queued` drives the toolbar above the composer; `queuedRef` is the
-  // same value read by the flush that fires inside the (stably-subscribed) socket
-  // handlers, which can't see the latest `queued` state. `null` = nothing queued.
+  // finishes. `queued` drives the toolbar above the composer; `queuedRef` mirrors
+  // it for the (stably-subscribed) socket handlers, which can't see the latest
+  // `queued` state. `null` = nothing queued.
   // Issue #197: hydrate any message persisted for this chat so it survives a chat
   // switch / reload instead of being silently dropped (mirrors the composer draft
-  // above; see lib/queued.ts). queuedRef is seeded to match so a restored queue
-  // still auto-flushes on the next completed turn.
+  // above; see lib/queued.ts).
+  // Issue #245: the SERVER now owns auto-send — this pane persists the queue to the
+  // server and renders/clears it when the server says it flushed (onQueuedFlushed);
+  // it no longer sends the queued message itself. `queuedTsRef` is the message's
+  // stable enqueue timestamp, persisted alongside the text so the server can dedup
+  // a stale copy this pane re-asserts on reload from one it already sent.
   const [queued, setQueued] = useState<string | null>(() =>
     readQueued(initialSessionId, projectSlug),
   );
   const queuedRef = useRef<string | null>(queued);
+  const queuedTsRef = useRef<number | null>(readQueuedTs(initialSessionId, projectSlug));
   // Set when the user hits Stop, so the completion it triggers does NOT flush the
   // queue (we hold rather than fire a follow-up into a cancelled turn). Cleared
   // on the next completion.
@@ -551,18 +556,22 @@ export function ChatPane({
 
   // Issue #197: persist the queued message so it survives a chat switch / reload
   // too — otherwise navigating away and back silently drops it. Every queue
-  // mutation (enqueue / flush / edit / clear) flows through setQueued, so keying
-  // off `queued` covers them all; writing null/"" forgets the key.
+  // mutation (enqueue / edit / clear) flows through setQueued, so keying off
+  // `queued` covers them all; writing null/"" forgets the key. Its stable enqueue
+  // timestamp (#245) is persisted in lockstep so a reloaded pane re-asserts the
+  // same identity and the server can dedup an already-sent copy.
   useEffect(() => {
     writeQueued(initialSessionId, projectSlug, queued);
+    writeQueuedTs(initialSessionId, projectSlug, queued ? queuedTsRef.current : null);
   }, [queued, initialSessionId, projectSlug]);
 
-  // Also send the queued message to the server (#197) so it persists server-side
-  // and can auto-send even if the browser is closed. Only after the session id
-  // is established (a new chat can't queue until it resolves).
+  // Push the queued message to the server (#197/#245) — the server is authoritative
+  // for auto-send, so this pane just keeps the server's copy in sync. Carries the
+  // stable ts so a re-assert on reload is deduped. Only once the session id exists;
+  // a new chat re-asserts (same ts) when its id resolves and initialSessionId updates.
   useEffect(() => {
     if (!initialSessionId) return; // new chat, no session yet
-    chatClient.setQueued(projectSlug, initialSessionId, queued);
+    chatClient.setQueued(projectSlug, initialSessionId, queued, queued ? queuedTsRef.current : null);
   }, [queued, initialSessionId, projectSlug, chatClient]);
 
   // Auto-focus the composer on mount for a fresh chat so the user can type right
@@ -737,12 +746,13 @@ export function ChatPane({
           const sid = meta.sessionId ?? sessionRef.current;
           onTurnComplete?.(sid && meta.usage ? { sessionId: sid, usage: meta.usage } : undefined);
         }
-        // Issue #91: the turn is free — auto-send any queued message as the next
-        // turn. Hold (don't flush) if this completion was a user Stop or a failed
-        // turn; leave the message queued for the user to send/edit instead.
-        const cancelled = cancelledRef.current;
+        // Issue #245: the SERVER auto-sends any queued follow-up (it drains its own
+        // persisted copy on a successful turn and streams the next turn back here,
+        // then a chat:queued_flushed clears our copy). The client no longer flushes
+        // the queue itself — that removed a stranding path (a completion arriving
+        // while the socket was down never fired the client flush) and a double-send
+        // (client + server both sending). Just clear the Stop-hold marker.
         cancelledRef.current = false;
-        if (meta.success && !cancelled) flushRef.current();
       },
       onError: (err) => {
         // chat:error carries no session id, so it can't be session-routed.
@@ -787,6 +797,11 @@ export function ChatPane({
           cancelledRef.current = false;
           pendingCancelRef.current = false;
         }
+      },
+      onQueuedFlushed: ({ text }) => {
+        // The server auto-sent (or cleared a stale copy of) our queued message
+        // (#245). Reflect it: render the sent bubble + clear the queue toolbar.
+        onQueuedFlushedRef.current(text);
       },
     });
     return () => {
@@ -858,6 +873,9 @@ export function ChatPane({
       setQueued((prev) => {
         const next = prev ? `${prev}\n${text}` : text;
         queuedRef.current = next;
+        // Stamp a stable enqueue time on a fresh queue; keep it when appending to
+        // an existing one (same pending message) so its identity is stable (#245).
+        if (prev == null) queuedTsRef.current = Date.now();
         return next;
       });
       setDraft("");
@@ -868,28 +886,33 @@ export function ChatPane({
     sendText(text);
   }, [draft, streaming, sendText]);
 
-  // Auto-send the queued message as the next turn once the current one is free.
-  // Reads/clears queuedRef (not `queued` state) so the socket handlers — which
-  // close over a stale render — flush the latest queued text. No-op if empty.
-  const flushQueued = useCallback(() => {
-    const text = queuedRef.current;
-    if (!text) return;
+  // Render the server's auto-sent queued message as the user bubble, then clear
+  // this pane's queued state (#245). Fires on chat:queued_flushed: `text` present
+  // means the server drained+sent it (the drained turn streams the reply right
+  // after), so we append the user turn to keep the transcript in order; either way
+  // the queue toolbar + local/persisted copy are cleared (the socket layer already
+  // cleared localStorage). The server owns the send — we only reflect it.
+  const onQueuedFlushed = useCallback((text?: string) => {
+    if (text) {
+      pinnedRef.current = true;
+      setTurns((prev) => [...sealStreaming(prev), { kind: "user", id: nextId(), content: text }]);
+    }
     queuedRef.current = null;
+    queuedTsRef.current = null;
     setQueued(null);
-    sendText(text);
-  }, [sendText]);
-  // Keep a ref to the latest flush so the stably-subscribed socket handlers can
-  // call it without being torn down/re-subscribed when `sendText` changes.
-  const flushRef = useRef(flushQueued);
-  flushRef.current = flushQueued;
+  }, []);
+  // Stable ref so the (stably-subscribed) socket handlers call the latest version.
+  const onQueuedFlushedRef = useRef(onQueuedFlushed);
+  onQueuedFlushedRef.current = onQueuedFlushed;
 
   // Pop the queued message back into the composer for editing. This CANCELS the
-  // pending auto-send (queuedRef → null): if the turn finishes mid-edit it must
-  // not fire in the background — it's a draft again until re-submitted (#91).
+  // pending auto-send (queuedRef → null): the server clears its copy via the
+  // setQueued(null) effect — it's a draft again until re-submitted (#91).
   const editQueued = useCallback(() => {
     const text = queuedRef.current;
     if (text == null) return;
     queuedRef.current = null;
+    queuedTsRef.current = null;
     setQueued(null);
     setDraft((prev) => (prev.trim() ? `${text}\n${prev}` : text));
     requestAnimationFrame(() => {
@@ -902,9 +925,11 @@ export function ChatPane({
     });
   }, []);
 
-  // Discard the queued message entirely.
+  // Discard the queued message entirely (the setQueued(null) effect clears the
+  // server + persisted copies too).
   const clearQueued = useCallback(() => {
     queuedRef.current = null;
+    queuedTsRef.current = null;
     setQueued(null);
   }, []);
 

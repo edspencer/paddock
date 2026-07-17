@@ -203,6 +203,22 @@ export class SessionHub {
     return this.bySession.get(sessionId)?.running === true;
   }
 
+  /**
+   * Send a one-off control frame to every socket attached to a session — its
+   * (recently-)tracked turn's origin plus every subscribed socket (#245). Unlike
+   * {@link emit} this is not seq-stamped or buffered; it's for out-of-band signals
+   * like `chat:queued_flushed` that must reach a client that reconnected on a new
+   * socket after the origin died.
+   */
+  broadcast(sessionId: string, msg: HubMessage): void {
+    const set = new Set<HubSocket>();
+    const turn = this.bySession.get(sessionId);
+    if (turn?.origin) set.add(turn.origin);
+    const subs = this.subscribers.get(sessionId);
+    if (subs) for (const s of subs) set.add(s);
+    for (const s of set) SessionHub.write(s, msg);
+  }
+
   // --- internals, driven by TurnHandle -------------------------------------
 
   /** Whether a session currently has a RUNNING turn plus its job id, or null. */

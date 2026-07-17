@@ -105,6 +105,14 @@ export interface ChatHandlers {
    * turn, so a pane the user navigated back to restores state immediately.
    */
   onActive?: (meta: { running: boolean; jobId: string | null }) => void;
+  /**
+   * The server auto-sent this chat's queued message (#245). `text` is present when
+   * it actually drained+sent it (render it as the user bubble, then clear the
+   * queued state); absent when the server is only telling the client to clear a
+   * stale/already-sent copy. The server is authoritative — the client never sends
+   * the queued message itself.
+   */
+  onQueuedFlushed?: (meta: { text?: string }) => void;
 }
 
 export type ConnectionState = "connecting" | "open" | "closed";
@@ -318,8 +326,13 @@ class ChatClient {
    * and auto-sends when the current turn completes (#197). The message is also
    * persisted to localStorage for live editing UX.
    */
-  setQueued(projectSlug: string, sessionId: string, text: string | null): void {
-    const payload: Record<string, unknown> = { projectSlug, sessionId, text };
+  setQueued(
+    projectSlug: string,
+    sessionId: string,
+    text: string | null,
+    ts?: number | null,
+  ): void {
+    const payload: Record<string, unknown> = { projectSlug, sessionId, text, ts };
     this.transmit(JSON.stringify({ type: "chat:set_queue", payload }));
   }
 
@@ -578,14 +591,21 @@ class ChatClient {
     }
 
     if (msg.type === "chat:queued_flushed") {
-      // The server auto-sent the queued message, so clear the localStorage
-      // for this chat (#197).
-      const { sessionId } = msg.payload;
+      // The server auto-sent (or is clearing a stale copy of) the queued message.
+      // Clear this chat's localStorage copy (#197/#245), and hand any mounted pane
+      // the text so it renders the sent bubble + clears its in-memory queued state.
+      const { sessionId, text } = msg.payload as { sessionId?: string; text?: string };
       if (sessionId) {
-        // Import writeQueued inline to avoid a circular dependency.
-        void import("./queued.js").then(({ writeQueued }) => {
+        // Import inline to avoid a circular dependency.
+        void import("./queued.js").then(({ writeQueued, writeQueuedTs }) => {
           writeQueued(sessionId, slug, null);
+          writeQueuedTs(sessionId, slug, null);
         });
+        for (const sub of this.subs.values()) {
+          if (sub.projectSlug === slug && sub.sessionId === sessionId) {
+            sub.handlers.onQueuedFlushed?.({ text });
+          }
+        }
       }
       return;
     }
