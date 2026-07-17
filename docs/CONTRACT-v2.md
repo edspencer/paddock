@@ -1,7 +1,7 @@
 # Paddock backend contract — v2 (overview + sweep, preload, files, pins)
 
 > The frontend integration delta for GitHub issues **#1, #2, #3, #4, #6**.
-> Layers on top of the v1 WS/REST contract in the JOURNAL status log and
+> Layers on top of the v1 WS/REST contract in the [HISTORY.md](HISTORY.md) status log and
 > `packages/web/README.md`. Backend-only changes; everything here is live and
 > validated against a real keeper turn + sweeper run (Max OAuth, haiku sweeper).
 

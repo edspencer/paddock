@@ -143,6 +143,10 @@ Configuration is environment-only — no config files.
 | `CLAUDE_CODE_OAUTH_TOKEN` | — | Claude auth for the **CLI** runtime (Max plan). |
 | `ANTHROPIC_API_KEY` | — | Claude auth for the **SDK** runtime (API pricing). |
 
+The **complete `PADDOCK_*` reference** — every variable, its default, and purpose
+— is in **[docs/CONFIGURATION.md](docs/CONFIGURATION.md)**;
+[`.env.example`](.env.example) is a runnable starting point.
+
 Authentication modes (`none` / `trusted-header` / `jwt`) and secret handling
 (GitHub tokens, SSH keys, per-platform mapping) are documented in **[AUTH.md](AUTH.md)**.
 
@@ -173,6 +177,7 @@ For the full picture, see the docs:
   [keeper vs. scratch agents](docs/concepts/keeper-and-scratch.md),
   [chats are Claude Code sessions](docs/concepts/chats.md), and
   [the sweeper](docs/concepts/sweeper.md).
+- **[docs/API.md](docs/API.md)** — Paddock's own REST + WebSocket API reference.
 - **[docs/INTEGRATION.md](docs/INTEGRATION.md)** — the exact public
   `@herdctl/core` API contract Paddock depends on.
 
@@ -194,6 +199,9 @@ The E2E suite drives the **real** server, FleetManager, and CLI runtime; only th
 LLM is swapped for a fake `claude` on PATH (zero Anthropic calls). Opt into a
 real-Claude run with `npm run test:e2e:live` (`PADDOCK_TEST_LIVE=1`). More detail
 in **[DEV.md](DEV.md)** and **[docs/TESTING.md](docs/TESTING.md)**.
+
+New contributor? Start with **[CONTRIBUTING.md](CONTRIBUTING.md)** — conventions,
+env gotchas, and the changesets flow.
 
 ## License
 
