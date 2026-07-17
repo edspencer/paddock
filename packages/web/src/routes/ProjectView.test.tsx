@@ -3,7 +3,7 @@ import { render, screen, fireEvent, waitFor, within, act } from "@testing-librar
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { ProjectView } from "./ProjectView";
 import { makeProject, makeChat } from "../test/factories";
-import type { Project, GitProjectStatus, ProjectDetail } from "../lib/types";
+import type { FileEntry, Project, GitProjectStatus, ProjectDetail } from "../lib/types";
 import type { ChatPaneProps } from "../components/ChatPane";
 
 // ChatPane is exercised on its own; here we stub it so ProjectView's tab/list/
@@ -27,6 +27,7 @@ vi.mock("../components/FileView", () => ({
 const apiFns = {
   getProjectDetail: vi.fn(),
   listProjectFiles: vi.fn(),
+  listProjectDir: vi.fn(),
   gitStatus: vi.fn(),
   pinFile: vi.fn(),
   unpinFile: vi.fn(),
@@ -48,6 +49,7 @@ vi.mock("../lib/api", async () => {
     api: {
       getProjectDetail: (...a: unknown[]) => apiFns.getProjectDetail(...a),
       listProjectFiles: (...a: unknown[]) => apiFns.listProjectFiles(...a),
+      listProjectDir: (...a: unknown[]) => apiFns.listProjectDir(...a),
       gitStatus: (...a: unknown[]) => apiFns.gitStatus(...a),
       pinFile: (...a: unknown[]) => apiFns.pinFile(...a),
       unpinFile: (...a: unknown[]) => apiFns.unpinFile(...a),
@@ -99,7 +101,7 @@ function renderAt(path: string) {
         <Route path="/projects/:slug/chat" element={<ProjectView />} />
         <Route path="/projects/:slug/chat/:sessionId" element={<ProjectView />} />
         <Route path="/projects/:slug/files" element={<ProjectView />} />
-        <Route path="/projects/:slug/files/:name" element={<ProjectView />} />
+        <Route path="/projects/:slug/files/*" element={<ProjectView />} />
         <Route path="/projects/:slug/changes" element={<ProjectView />} />
         <Route path="/projects/:slug/changes/:file" element={<ProjectView />} />
         <Route path="/projects/:slug/settings" element={<ProjectView />} />
@@ -114,6 +116,9 @@ beforeEach(() => {
   activeCb = null;
   Object.values(apiFns).forEach((m) => m.mockReset());
   apiFns.listProjectFiles.mockResolvedValue([]);
+  // The Files tab (#259) reads one directory level via listProjectDir; default
+  // to an empty root. `setDir` below drives specific listings per test.
+  apiFns.listProjectDir.mockResolvedValue({ path: "", entries: [] });
   apiFns.gitStatus.mockResolvedValue({ repo: false, files: [], clean: true } as GitProjectStatus);
   apiFns.listProjectChats.mockResolvedValue([]);
   apiFns.markChatSeen.mockResolvedValue(undefined);
@@ -132,6 +137,20 @@ beforeEach(() => {
   remove.mockReset();
   localStorage.clear();
 });
+
+/**
+ * Drive the Files tab (#259): `dirs` maps a directory subpath ("" = root) to its
+ * entries. `listProjectDir` returns those as `kind: "dir"`; any subpath NOT in
+ * the map is treated as a file (`kind: "file"`), exactly like the server, so the
+ * browser drops into the file viewer for that path.
+ */
+function setDir(dirs: Record<string, FileEntry[]>) {
+  apiFns.listProjectDir.mockImplementation((_slug: string, subpath = "") =>
+    subpath in dirs
+      ? Promise.resolve({ path: subpath, kind: "dir", entries: dirs[subpath] })
+      : Promise.resolve({ path: subpath, kind: "file", entries: [] }),
+  );
+}
 
 describe("ProjectView: header + load", () => {
   it("renders the project header with status, tags, and overview badge", async () => {
@@ -178,7 +197,12 @@ describe("ProjectView: tabs", () => {
     apiFns.getProjectDetail.mockResolvedValue(
       detail(makeProject({ slug: "p" }), { changelog: "# Changes\n- did a thing" }),
     );
-    apiFns.listProjectFiles.mockResolvedValue(["OVERVIEW.md", "page.html"]);
+    setDir({
+      "": [
+        { name: "OVERVIEW.md", kind: "file" },
+        { name: "page.html", kind: "file" },
+      ],
+    });
     renderAt("/projects/p/chat");
     expect(await screen.findByTestId("chat-pane")).toBeInTheDocument();
 
@@ -292,15 +316,45 @@ describe("ProjectView: tabs", () => {
 describe("ProjectView: files + pin-as-tab", () => {
   it("opening a file routes to the file reader", async () => {
     apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
-    apiFns.listProjectFiles.mockResolvedValue(["doc.md"]);
+    setDir({ "": [{ name: "doc.md", kind: "file" }] });
     renderAt("/projects/p/files");
     fireEvent.click(await screen.findByText("doc.md"));
     expect(await screen.findByTestId("file-view")).toHaveTextContent("file: doc.md");
   });
 
+  it("clicking a directory descends into it with a nested URL (#259)", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
+    setDir({
+      "": [
+        { name: "design", kind: "dir" },
+        { name: "top.md", kind: "file" },
+      ],
+      design: [{ name: "plan.md", kind: "file" }],
+    });
+    renderAt("/projects/p/files");
+    fireEvent.click(await screen.findByText("design"));
+    // The subdirectory's contents render...
+    expect(await screen.findByText("plan.md")).toBeInTheDocument();
+    // ...alongside a ".." row to go back up.
+    expect(screen.getByText("..")).toBeInTheDocument();
+    // Going up returns to the root listing.
+    fireEvent.click(screen.getByText(".."));
+    expect(await screen.findByText("top.md")).toBeInTheDocument();
+  });
+
+  it("deep-linking a nested file renders the viewer with a breadcrumb (#259)", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
+    setDir({ "": [{ name: "design", kind: "dir" }], design: [{ name: "plan.md", kind: "file" }] });
+    renderAt("/projects/p/files/design/plan.md");
+    expect(await screen.findByTestId("file-view")).toHaveTextContent("file: design/plan.md");
+    // The breadcrumb exposes the parent folder as a link back up.
+    const crumb = screen.getByRole("navigation", { name: /File path/i });
+    expect(within(crumb).getByRole("button", { name: "design" })).toBeInTheDocument();
+  });
+
   it("pinning a file calls the API and renders a pinned sibling tab", async () => {
     apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p", pinned: [] })));
-    apiFns.listProjectFiles.mockResolvedValue(["page.html"]);
+    setDir({ "": [{ name: "page.html", kind: "file" }] });
     apiFns.pinFile.mockResolvedValue(makeProject({ slug: "p", pinned: ["page.html"] }));
     renderAt("/projects/p/files");
     await screen.findByText("page.html");
@@ -312,7 +366,7 @@ describe("ProjectView: files + pin-as-tab", () => {
 
   it("a pinned file shows as a tab on load and the file reader renders it", async () => {
     apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p", pinned: ["page.html"] })));
-    apiFns.listProjectFiles.mockResolvedValue(["page.html"]);
+    setDir({ "": [{ name: "page.html", kind: "file" }] });
     renderAt("/projects/p/files/page.html");
     expect(await screen.findByTestId("file-view")).toHaveTextContent("file: page.html");
     expect(screen.getByRole("tab", { name: /Open page.html tab/i })).toBeInTheDocument();
@@ -320,7 +374,7 @@ describe("ProjectView: files + pin-as-tab", () => {
 
   it("unpinning a viewed pinned tab calls unpin and falls back to the files list", async () => {
     apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p", pinned: ["page.html"] })));
-    apiFns.listProjectFiles.mockResolvedValue(["page.html"]);
+    setDir({ "": [{ name: "page.html", kind: "file" }] });
     apiFns.unpinFile.mockResolvedValue(makeProject({ slug: "p", pinned: [] }));
     renderAt("/projects/p/files/page.html");
     await screen.findByTestId("file-view");

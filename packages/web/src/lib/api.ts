@@ -8,6 +8,7 @@ import {
   type ChatUsage,
   type CreateProjectInput,
   type DeviceFlowStart,
+  type DirListing,
   type GitCommitResult,
   type GitInfo,
   type GitProjectStatus,
@@ -256,12 +257,25 @@ export const api = {
     return newId;
   },
 
-  /** List the freeform files in a project's directory. */
+  /**
+   * Resolve a Files-tab path (issue #259). `subpath` descends into a
+   * subdirectory ("" = the project root). Returns a discriminated union: a
+   * directory (`kind: "dir"`) carries its `entries` (each a file|dir); a file
+   * (`kind: "file"`) carries no entries and the caller renders the viewer.
+   */
+  async listProjectDir(slug: string, subpath = ""): Promise<DirListing> {
+    const qs = subpath ? `?path=${encodeURIComponent(subpath)}` : "";
+    return req<DirListing>(`/api/projects/${encodeURIComponent(slug)}/files${qs}`);
+  },
+
+  /**
+   * The project's top-level file NAMES (issue #259 keeps this convenience for the
+   * Home tab's recent-files list, the pinned-tab validation, and the sticky-tab
+   * redirect). Subdirectories are omitted; use `listProjectDir` to browse them.
+   */
   async listProjectFiles(slug: string): Promise<string[]> {
-    const { files } = await req<{ files: string[] }>(
-      `/api/projects/${encodeURIComponent(slug)}/files`,
-    );
-    return files;
+    const { entries } = await this.listProjectDir(slug);
+    return entries.filter((e) => e.kind === "file").map((e) => e.name);
   },
 
   /** Fetch one project file + a render-kind hint (markdown | html | text | image). */

@@ -20,6 +20,11 @@ describe("lastTab read/write/clear", () => {
     expect(readLastTab("p")).toBe("files/my-page.html");
   });
 
+  it("round-trips a nested files sub-path (#259)", () => {
+    writeLastTab("p", "files/design/plan.md");
+    expect(readLastTab("p")).toBe("files/design/plan.md");
+  });
+
   it("refuses to persist an invalid shape", () => {
     writeLastTab("p", "../etc/passwd");
     expect(readLastTab("p")).toBeNull();
@@ -67,9 +72,13 @@ describe("toSubPath", () => {
     expect(toSubPath({ view: "chat", sessionId: "a/b" })).toBe("chat/a%2Fb");
   });
 
-  it("encodes a files tab with/without a name", () => {
+  it("encodes a files tab with/without a path", () => {
     expect(toSubPath({ view: "files" })).toBe("files");
-    expect(toSubPath({ view: "files", name: "my page.html" })).toBe("files/my%20page.html");
+    expect(toSubPath({ view: "files", path: "my page.html" })).toBe("files/my%20page.html");
+    // A nested subpath keeps its "/" separators, encoding each segment (#259).
+    expect(toSubPath({ view: "files", path: "design/my plan.md" })).toBe(
+      "files/design/my%20plan.md",
+    );
   });
 
   it("encodes a changes tab with/without a file (issue #107)", () => {
@@ -95,6 +104,19 @@ describe("validateSubPath", () => {
   it("decodes the stored name before matching", () => {
     expect(validateSubPath("files/my%20page.html", { pinned: [], files: ["my page.html"] })).toBe(
       "files/my%20page.html",
+    );
+  });
+
+  it("passes a NESTED files subpath through without top-level validation (#259)", () => {
+    // A file (or folder) inside a subdirectory can't be checked against the
+    // top-level list, so it must survive so the restore lands on it — the Files
+    // browser handles a stale one inline. (A single top-level segment is still
+    // validated, so a bare top-level dir falls back to the root list.)
+    expect(validateSubPath("files/design/plan.md", { pinned: [], files: [] })).toBe(
+      "files/design/plan.md",
+    );
+    expect(validateSubPath("files/design/sub", { pinned: [], files: [] })).toBe(
+      "files/design/sub",
     );
   });
 });

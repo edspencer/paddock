@@ -367,14 +367,35 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     }
   });
 
-  app.get<{ Params: { slug: string } }>("/api/projects/:slug/files", async (req, reply) => {
-    try {
-      await projects.get(req.params.slug);
-      return { files: await projects.listFiles(req.params.slug) };
-    } catch (err) {
-      return sendProjectError(reply, err);
-    }
-  });
+  // One level of a project's file tree (issue #259). `?path=<subpath>` descends
+  // into a subdirectory ("" / omitted = the project root). The response is a
+  // discriminated union on `kind`: a directory returns its `entries` (each with
+  // its own file|dir kind, dirs sorted first) so the Files tab can navigate into
+  // folders; a path that names a FILE returns `{ kind: "file", entries: [] }`
+  // (200, not an error — so the client can drop straight into the viewer without
+  // a noisy 409). Path-traversal guarded by ProjectStore.resolveInProject.
+  app.get<{ Params: { slug: string }; Querystring: { path?: string } }>(
+    "/api/projects/:slug/files",
+    async (req, reply) => {
+      try {
+        await projects.get(req.params.slug);
+        const subpath = req.query.path ?? "";
+        try {
+          const entries = await projects.listFiles(req.params.slug, subpath);
+          return { path: subpath, kind: "dir", entries };
+        } catch (err) {
+          // `subpath` is a file, not a directory — a valid target, just rendered
+          // by the single-file viewer rather than listed.
+          if (err instanceof ProjectError && err.code === "not_directory") {
+            return { path: subpath, kind: "file", entries: [] };
+          }
+          throw err;
+        }
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
 
   // --- git (backing-store capability, phase 1: read surface) -------------
   // Uncommitted changes confined to this project's subtree. Returns
@@ -1192,7 +1213,12 @@ export function parseRangeHeader(
 
 function sendProjectError(reply: import("fastify").FastifyReply, err: unknown) {
   if (err instanceof ProjectError) {
-    const code = err.code === "not_found" ? 404 : err.code === "exists" ? 409 : 400;
+    const code =
+      err.code === "not_found"
+        ? 404
+        : err.code === "exists" || err.code === "not_directory"
+          ? 409
+          : 400;
     return reply.code(code).send({ error: err.message, code: err.code });
   }
   reply.log.error({ err }, "route error");

@@ -40,6 +40,16 @@ export type ProjectVisibility = "public" | "private";
 export type FileKind = "markdown" | "html" | "text" | "image";
 
 /**
+ * One entry in a project directory listing (issue #259): a name plus whether
+ * it's a file or a subdirectory, so the Files tab can distinguish the two and
+ * let the user descend into folders. Listed one level at a time.
+ */
+export interface FileEntry {
+  name: string;
+  kind: "file" | "dir";
+}
+
+/**
  * Image extensions → their MIME type, for the render kind + the raw byte
  * endpoint's Content-Type (issue #61). SVG is included but is served with a
  * locked-down CSP by the byte route (it can carry scripts).
@@ -308,7 +318,7 @@ const GITIGNORE_FILE = ".gitignore";
 export class ProjectError extends Error {
   constructor(
     message: string,
-    readonly code: "not_found" | "exists" | "invalid",
+    readonly code: "not_found" | "exists" | "invalid" | "not_directory",
   ) {
     super(message);
     this.name = "ProjectError";
@@ -692,24 +702,46 @@ export class ProjectStore {
     await fs.writeFile(file, body, "utf8");
   }
 
-  /** List freeform files (non-dotfiles) inside a project directory. */
-  async listFiles(slug: string): Promise<string[]> {
-    const dir = this.dirFor(slug);
-    const entries = await fs.readdir(dir, { withFileTypes: true });
+  /**
+   * List one level of a project directory (issue #259). `subpath` is a
+   * project-relative directory ("" = the project root); the returned entries
+   * carry a `kind` so the UI can distinguish (and descend into) subdirectories.
+   * Dotfiles are hidden as before; entries sort directories-first, then by name.
+   *
+   * Traversal is guarded by the shared `resolveInProject`, so `subpath` can't
+   * escape the project dir. Throws `ProjectError("not_found")` when the directory
+   * doesn't exist and `ProjectError("not_directory")` when `subpath` is a file —
+   * the latter lets the caller fall back to rendering that file.
+   */
+  async listFiles(slug: string, subpath = ""): Promise<FileEntry[]> {
+    const target = this.resolveInProject(slug, subpath);
+    let entries: import("node:fs").Dirent[];
+    try {
+      entries = await fs.readdir(target, { withFileTypes: true });
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") throw new ProjectError(`Directory not found: ${subpath}`, "not_found");
+      if (code === "ENOTDIR") throw new ProjectError(`Not a directory: ${subpath}`, "not_directory");
+      throw err;
+    }
     return entries
-      .filter((e) => e.isFile() && !e.name.startsWith("."))
-      .map((e) => e.name)
-      .sort();
+      .filter((e) => !e.name.startsWith("."))
+      .map((e): FileEntry => ({ name: e.name, kind: e.isDirectory() ? "dir" : "file" }))
+      .sort((a, b) =>
+        a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === "dir" ? -1 : 1,
+      );
   }
 
   /**
    * Resolve a freeform file name to an absolute path inside the project dir,
-   * rejecting path traversal. The single guard shared by every file read.
+   * rejecting path traversal. The single guard shared by every file read (and by
+   * the directory listing, issue #259). The project root itself (`name === ""`)
+   * resolves to the project dir and is allowed, so a root listing passes through.
    */
   private resolveInProject(slug: string, name: string): string {
     const dir = this.dirFor(slug);
     const resolved = path.resolve(dir, name);
-    if (!resolved.startsWith(dir + path.sep)) {
+    if (resolved !== dir && !resolved.startsWith(dir + path.sep)) {
       throw new ProjectError("Invalid file path", "invalid");
     }
     return resolved;

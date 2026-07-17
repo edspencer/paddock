@@ -16,9 +16,16 @@ const PREFIX = "paddock:lastTab:";
 export type SubPath =
   | { view: "home" }
   | { view: "chat"; sessionId?: string }
-  | { view: "files"; name?: string }
+  // `path` is the project-relative files subpath (a directory or a file),
+  // undefined at the root. Nested, e.g. "design/foo.md" (issue #259).
+  | { view: "files"; path?: string }
   | { view: "changes"; file?: string }
   | { view: "settings" };
+
+/** Encode a "/"-separated files subpath one segment at a time (keeps the "/"). */
+function encodeFilesPath(subpath: string): string {
+  return subpath.split("/").map(encodeURIComponent).join("/");
+}
 
 /** Read the stored sub-path for a project, or null if none/invalid. */
 export function readLastTab(slug: string): string | null {
@@ -73,7 +80,9 @@ export function toSubPath(sub: SubPath): string {
   if (sub.view === "changes") {
     return sub.file ? `changes/${encodeURIComponent(sub.file)}` : "changes";
   }
-  return sub.name ? `files/${encodeURIComponent(sub.name)}` : "files";
+  // Files nest, so encode per-segment and keep the "/" separators — the stored
+  // value mirrors the real nested URL (e.g. "files/design/foo.md"), issue #259.
+  return sub.path ? `files/${encodeFilesPath(sub.path)}` : "files";
 }
 
 /**
@@ -89,8 +98,17 @@ export function validateSubPath(
   opts: { pinned: string[]; files: string[] },
 ): string {
   if (stored.startsWith("files/")) {
-    const name = decodeURIComponent(stored.slice("files/".length));
-    const known = opts.pinned.includes(name) || opts.files.includes(name);
+    const sub = stored
+      .slice("files/".length)
+      .split("/")
+      .map(decodeURIComponent)
+      .join("/");
+    // A nested subpath (a folder, or a file inside one) can't be cheaply checked
+    // against the top-level list — pass it through; the Files browser renders an
+    // inline error if it's gone (issue #259). Only a bare top-level file name is
+    // validated against the pinned/files lists.
+    if (sub.includes("/")) return stored;
+    const known = opts.pinned.includes(sub) || opts.files.includes(sub);
     return known ? stored : "files";
   }
   return stored;

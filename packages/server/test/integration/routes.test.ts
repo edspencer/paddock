@@ -222,6 +222,64 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
     expect(res.statusCode).toBe(404);
   });
 
+  it("GET /files lists entries with kinds (dirs first) and descends via ?path (#259)", async () => {
+    const project = (
+      await t.app.inject({ method: "GET", url: "/api/projects/routes-proj" })
+    ).json().project;
+    await fs.mkdir(path.join(project.dir, "design"), { recursive: true });
+    await fs.writeFile(path.join(project.dir, "design", "plan.md"), "# plan", "utf8");
+    await fs.writeFile(path.join(project.dir, "top.md"), "top", "utf8");
+
+    // Root listing: entries carry a kind, directories sort ahead of files.
+    const root = (
+      await t.app.inject({ method: "GET", url: "/api/projects/routes-proj/files" })
+    ).json();
+    expect(root.path).toBe("");
+    expect(root.kind).toBe("dir");
+    const design = root.entries.find((e: { name: string }) => e.name === "design");
+    expect(design.kind).toBe("dir");
+    expect(root.entries.find((e: { name: string }) => e.name === "top.md").kind).toBe("file");
+    const firstFileIdx = root.entries.findIndex((e: { kind: string }) => e.kind === "file");
+    const lastDirIdx = root.entries.map((e: { kind: string }) => e.kind).lastIndexOf("dir");
+    expect(lastDirIdx).toBeLessThan(firstFileIdx);
+
+    // Descending into the subdirectory returns its one level.
+    const sub = (
+      await t.app.inject({ method: "GET", url: "/api/projects/routes-proj/files?path=design" })
+    ).json();
+    expect(sub.path).toBe("design");
+    expect(sub.kind).toBe("dir");
+    expect(sub.entries).toEqual([{ name: "plan.md", kind: "file" }]);
+
+    // A ?path that names a FILE resolves to kind:"file" (200) so the client
+    // drops into the viewer without a noisy error (#259).
+    const asFile = await t.app.inject({
+      method: "GET",
+      url: "/api/projects/routes-proj/files?path=design%2Fplan.md",
+    });
+    expect(asFile.statusCode).toBe(200);
+    expect(asFile.json().kind).toBe("file");
+    expect(asFile.json().entries).toEqual([]);
+
+    // A ?path that escapes the project dir is rejected (traversal guard).
+    const escape = await t.app.inject({
+      method: "GET",
+      url: "/api/projects/routes-proj/files?path=..%2F..",
+    });
+    expect(escape.statusCode).toBe(400);
+
+    // The single-file endpoint reads a NESTED name (design/plan.md) — the
+    // traversal-guarded read path already supports subdirectories (#259).
+    const nested = (
+      await t.app.inject({
+        method: "GET",
+        url: "/api/projects/routes-proj/files/design%2Fplan.md",
+      })
+    ).json();
+    expect(nested.kind).toBe("markdown");
+    expect(nested.content).toContain("# plan");
+  });
+
   it("GET /api/chat-files/:id serves a .pdf as application/pdf WITHOUT the sandbox CSP (issue #128)", async () => {
     // Drop a PDF straight into the attachment store the app reads from.
     const store = new AttachmentStore(path.join(t.cfg.dataDir, "attachments"));

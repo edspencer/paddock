@@ -466,17 +466,48 @@ describe("ProjectStore", () => {
     });
   });
 
-  it("listFiles returns freeform files (no dotfiles) sorted", async () => {
+  it("listFiles returns entries (no dotfiles), directories first (#259)", async () => {
     const p = await store.create({ name: "LF" });
     await fs.writeFile(path.join(p.dir, "b.md"), "", "utf8");
     await fs.writeFile(path.join(p.dir, "a.md"), "", "utf8");
     await fs.writeFile(path.join(p.dir, ".secret"), "", "utf8");
-    const files = await store.listFiles("lf");
-    // project.yaml + CHANGELOG.md are also files; assert ordering + dotfile skip.
-    expect(files).toContain("a.md");
-    expect(files).toContain("b.md");
-    expect(files).not.toContain(".secret");
-    expect([...files]).toEqual([...files].sort());
+    await fs.mkdir(path.join(p.dir, "design"), { recursive: true });
+    const entries = await store.listFiles("lf");
+    const names = entries.map((e) => e.name);
+    // project.yaml + CHANGELOG.md are also files; assert kind + dotfile skip.
+    expect(names).toContain("a.md");
+    expect(names).toContain("b.md");
+    expect(names).not.toContain(".secret");
+    expect(entries.find((e) => e.name === "design")?.kind).toBe("dir");
+    expect(entries.find((e) => e.name === "a.md")?.kind).toBe("file");
+    // Directories sort ahead of files, and each group is alphabetical
+    // (case-insensitive localeCompare, so "a.md" sorts near "CHANGELOG.md").
+    const byName = (a: string, b: string) => a.localeCompare(b);
+    const dirs = entries.filter((e) => e.kind === "dir").map((e) => e.name);
+    const files = entries.filter((e) => e.kind === "file").map((e) => e.name);
+    expect(names).toEqual([...dirs, ...files]);
+    expect(dirs).toEqual([...dirs].sort(byName));
+    expect(files).toEqual([...files].sort(byName));
+  });
+
+  it("listFiles descends into a subdirectory and guards traversal (#259)", async () => {
+    const p = await store.create({ name: "SUB" });
+    await fs.mkdir(path.join(p.dir, "design"), { recursive: true });
+    await fs.writeFile(path.join(p.dir, "design", "plan.md"), "hi", "utf8");
+    const nested = await store.listFiles("sub", "design");
+    expect(nested.map((e) => e.name)).toEqual(["plan.md"]);
+    // A file (not a directory) reports not_directory so the UI can view it.
+    await expect(store.listFiles("sub", "design/plan.md")).rejects.toMatchObject({
+      code: "not_directory",
+    });
+    // A missing directory is not_found.
+    await expect(store.listFiles("sub", "nope")).rejects.toMatchObject({
+      code: "not_found",
+    });
+    // Path traversal outside the project dir is rejected.
+    await expect(store.listFiles("sub", "../..")).rejects.toMatchObject({
+      code: "invalid",
+    });
   });
 
   it("overview read/write/exists", async () => {
