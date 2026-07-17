@@ -20,11 +20,14 @@ import { readQueued, writeQueued, readQueuedTs, writeQueuedTs } from "../lib/que
 import {
   AlertIcon,
   BranchIcon,
+  ChatIcon,
   CheckIcon,
   ChevronRightIcon,
   ClockIcon,
   FileIcon,
+  FolderIcon,
   PencilIcon,
+  PlusIcon,
   SearchIcon,
   SendIcon,
   SparkIcon,
@@ -58,6 +61,8 @@ import {
 } from "../lib/format";
 import { SentFileBlock } from "./SentFileBlock";
 import { InlineImage } from "./MediaImage";
+import { PaddockManageBody, PaddockManageProjectContext } from "./PaddockManageBlock";
+import { mcpToolInfo, parsePaddockManage, paddockManageSummary } from "../lib/mcpTools";
 
 /** One rendered item in the transcript. Assistant boundaries split bubbles. */
 type Turn =
@@ -115,6 +120,24 @@ function statusChipClass(status: string): string {
       return "bg-sky-100 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300";
     default:
       return "bg-paddock-200/70 text-paddock-600 dark:bg-paddock-800 dark:text-paddock-300";
+  }
+}
+
+/** Per-tool icon for a Paddock `paddock_manage` tool segment (issue #253). */
+function paddockMcpIcon(tool: string) {
+  switch (tool) {
+    case "list_projects":
+      return FolderIcon;
+    case "create_chat":
+      return PlusIcon;
+    case "fork_chat":
+    case "fork_chat_batch":
+      return BranchIcon;
+    case "send_message":
+      return SendIcon;
+    default:
+      // list_chats, read_chat, and any future paddock tool.
+      return ChatIcon;
   }
 }
 
@@ -1039,11 +1062,13 @@ export function ChatPane({
 
           <SubagentFetchContext.Provider value={fetchSubagent}>
             <ToolImageUrlContext.Provider value={toolImageUrl}>
-              <div className="space-y-4">
-                {turns.map((t) => (
-                  <TurnView key={t.id} turn={t} />
-                ))}
-              </div>
+              <PaddockManageProjectContext.Provider value={projectSlug}>
+                <div className="space-y-4">
+                  {turns.map((t) => (
+                    <TurnView key={t.id} turn={t} />
+                  ))}
+                </div>
+              </PaddockManageProjectContext.Provider>
             </ToolImageUrlContext.Provider>
           </SubagentFetchContext.Provider>
         </div>
@@ -1572,7 +1597,22 @@ function Dot({ delay }: { delay?: string }) {
 }
 
 function ToolBlock({ tool }: { tool: ToolCall }) {
-  const [open, setOpen] = useState(false);
+  // Paddock's own MCP tools (issue #253): a prettified name + brand badge for any
+  // `mcp__…` tool (Phase 0), and a structured body parsed from the tool's JSON
+  // output for the `paddock_manage` server (Phase 1). send_file is diverted to
+  // SentFileBlock before this, so it never reaches here.
+  const mcp = mcpToolInfo(tool.toolName);
+  const paddockManage = parsePaddockManage(tool.toolName, tool.output);
+  const PaddockIcon = mcp.isPaddock ? paddockMcpIcon(mcp.tool) : null;
+  // The write actions (create/fork/send/batch) lead with a chat link worth seeing
+  // without a click; the potentially long read results (list/read) start collapsed.
+  const pmActionDefaultOpen =
+    paddockManage != null &&
+    (paddockManage.tool === "create_chat" ||
+      paddockManage.tool === "fork_chat" ||
+      paddockManage.tool === "send_message" ||
+      paddockManage.tool === "fork_chat_batch");
+  const [open, setOpen] = useState(pmActionDefaultOpen);
   const toolImageUrl = useContext(ToolImageUrlContext);
   // In-flight tool (#175): rendered before it completes — no output/duration
   // yet, just a "running…" affordance so a slow tool/subagent is visibly alive.
@@ -1612,16 +1652,22 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
   const expandable = Boolean(!pending && isSubagent && tool.hasSubagent && tool.toolUseId);
   // Sub-agent header reads as "<type> — <description>"; the detail-bearing tools show
   // a friendlier subtitle; others keep the classic "<toolName> <inputSummary>".
-  const label = isSubagent ? (tool.subagentType ?? tool.toolName) : tool.toolName;
+  const label = isSubagent
+    ? (tool.subagentType ?? tool.toolName)
+    : mcp.isMcp
+      ? mcp.display
+      : tool.toolName;
   const subtitle = isSubagent
     ? tool.description
-    : isEdit
-      ? (diff!.filePath?.split("/").pop() ?? diff!.filePath)
-      : readInfo
-        ? (readInfo.basename ?? readInfo.filePath ?? tool.inputSummary)
-        : taskCreate
-          ? taskCreate.subject
-          : tool.inputSummary;
+    : paddockManage
+      ? paddockManageSummary(paddockManage)
+      : isEdit
+        ? (diff!.filePath?.split("/").pop() ?? diff!.filePath)
+        : readInfo
+          ? (readInfo.basename ?? readInfo.filePath ?? tool.inputSummary)
+          : taskCreate
+            ? taskCreate.subject
+            : tool.inputSummary;
   // Full path/text on hover — fixes the long-path header cutoff for Read (#237).
   const subtitleTitle = readInfo?.filePath ?? taskCreate?.description ?? subtitle ?? undefined;
   return (
@@ -1658,6 +1704,12 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
               width={13}
               height={13}
               className={`shrink-0 ${tool.isError ? "text-rose-500" : "text-sky-600 dark:text-sky-400"}`}
+            />
+          ) : PaddockIcon ? (
+            <PaddockIcon
+              width={13}
+              height={13}
+              className={`shrink-0 ${tool.isError ? "text-rose-500" : "text-accent"}`}
             />
           ) : isEdit ? (
             <PencilIcon
@@ -1701,6 +1753,18 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
           {isBg && (
             <span className="shrink-0 whitespace-nowrap rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-700 dark:text-sky-300">
               background
+            </span>
+          )}
+          {mcp.isPaddock && (
+            // Paddock's own injected MCP tool — a brand badge so it reads as a
+            // first-class Paddock action, not a random tool (issue #253).
+            <span className="shrink-0 whitespace-nowrap rounded bg-accent/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent">
+              Paddock
+            </span>
+          )}
+          {mcp.isMcp && !mcp.isPaddock && (
+            <span className="shrink-0 whitespace-nowrap rounded bg-paddock-200/70 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-paddock-600 dark:bg-paddock-800 dark:text-paddock-300">
+              MCP
             </span>
           )}
           {taskUpdate ? (
@@ -1819,6 +1883,8 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
                 </div>
               ))}
             </div>
+          ) : paddockManage ? (
+            <PaddockManageBody data={paddockManage} />
           ) : isEdit ? (
             <DiffBody diff={diff!} />
           ) : imageUrl ? (
