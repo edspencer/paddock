@@ -51,6 +51,16 @@ export default defineConfig({
 				{ label: 'Welcome', link: '/' },
 				{ label: 'Getting Started', slug: 'getting-started' },
 				{
+					label: 'Guides',
+					collapsed: false,
+					items: [
+						{ label: 'Who Paddock is for', slug: 'guides/who-its-for' },
+						{ label: 'Deploying Paddock', slug: 'guides/deploying' },
+						{ label: 'Securing Paddock', slug: 'guides/securing' },
+						{ label: 'A home-lab setup', slug: 'guides/home-lab' },
+					],
+				},
+				{
 					label: 'Concepts',
 					collapsed: false,
 					items: [
