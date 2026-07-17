@@ -10,6 +10,7 @@ import { NewProjectModal } from "../components/NewProjectModal";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ProjectMenu } from "../components/ProjectMenu";
 import {
+  BranchIcon,
   ChatIcon,
   ChevronRightIcon,
   ClockIcon,
@@ -409,6 +410,15 @@ function ProjectCard({
       <div className="flex items-start justify-between gap-2">
         <h2 className="min-w-0 line-clamp-2 font-semibold leading-snug">{project.name}</h2>
         <div className="flex shrink-0 items-center gap-1">
+          {project.dirty ? (
+            <span
+              title={`${project.dirty} uncommitted change${project.dirty === 1 ? "" : "s"} — open the Changes tab`}
+              className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-950/50 dark:text-amber-400"
+            >
+              <BranchIcon width={10} height={10} />
+              {project.dirty}
+            </span>
+          ) : null}
           <StatusPill status={project.status} />
           <ProjectMenu
             onEdit={onEdit}

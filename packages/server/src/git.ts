@@ -13,9 +13,14 @@
  * rather than throwing, so the rest of paddock is unaffected.
  */
 import { execFile } from "node:child_process";
+import { promises as fs } from "node:fs";
+import path from "node:path";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
+
+/** Cap for reading an untracked file to count its added lines (bigger ⇒ skip). */
+const UNTRACKED_STAT_CAP = 2 * 1024 * 1024;
 
 /**
  * Clone an external git repo into `dest` — the checkout that becomes a
@@ -54,6 +59,12 @@ export interface GitFileChange {
   staged: boolean;
   /** True for an untracked ("??") path. */
   untracked: boolean;
+  /** Lines added (undefined for a binary change). Untracked text files count as all-added. */
+  added?: number;
+  /** Lines removed (undefined for a binary change / an untracked file). */
+  removed?: number;
+  /** True when the change is binary (no line-level stat). */
+  binary?: boolean;
 }
 
 /** A project's git status (or `repo: false` when the store isn't a repo). */
@@ -151,7 +162,47 @@ export class GitService {
       /* treat an unreadable status as clean rather than erroring the request */
     }
 
+    // Attach per-file line stats (+/-) for the Changes tab. Tracked changes come
+    // from `git diff --numstat`; untracked (new) files count as all-added by
+    // reading them (bounded, binary-detected). Best-effort — a stat failure just
+    // leaves the counts undefined and the UI degrades to no badge.
+    if (files.length) {
+      const numstat = await this.trackedNumstat(projectDir);
+      for (const f of files) {
+        if (f.untracked) {
+          Object.assign(f, await untrackedStat(projectDir, f.path));
+        } else {
+          const s = numstat.get(f.path);
+          if (s) Object.assign(f, s);
+        }
+      }
+    }
+
     return { repo: true, branch, files, clean: files.length === 0 };
+  }
+
+  /**
+   * `git diff --numstat` for a project's tracked working-tree changes, keyed by
+   * PROJECT-relative path (`--relative` makes git emit paths relative to the
+   * project dir, matching the porcelain paths). Binary changes report `-\t-` and
+   * are flagged `binary`. Returns an empty map on any failure.
+   */
+  private async trackedNumstat(
+    projectDir: string,
+  ): Promise<Map<string, { added?: number; removed?: number; binary?: boolean }>> {
+    const args = ["diff", "HEAD", "--numstat", "-z", "--relative", "--", "."];
+    let out = "";
+    try {
+      out = await this.git(projectDir, args);
+    } catch {
+      // No HEAD yet (unborn branch) → plain working-tree numstat.
+      try {
+        out = await this.git(projectDir, ["diff", "--numstat", "-z", "--relative", "--", "."]);
+      } catch {
+        return new Map();
+      }
+    }
+    return parseNumstatZ(out);
   }
 
   /**
@@ -231,17 +282,32 @@ export class GitService {
    * Stage + commit a single project's changes (tracked mods, deletions, and
    * untracked files within its subtree). `committed: false` when nothing was
    * pending. Explicit identity so the LXC needs no global git config.
+   *
+   * When `paths` (project-relative) is given, commit ONLY those files — the
+   * pathspec scopes both the staging and the commit, so unselected changes stay
+   * uncommitted (issue #258). Paths are validated to stay inside the subtree; an
+   * all-invalid selection is an error rather than a silent commit-everything.
+   * Omitting `paths` keeps the legacy commit-the-whole-subtree behavior.
    */
   async commitProject(
     projectDir: string,
     message: string,
+    paths?: string[],
   ): Promise<{ committed: boolean; hash?: string; error?: string }> {
     if (!(await this.isRepo())) return { committed: false, error: "not a repo" };
     const msg = message.trim() || "Update project";
+    let pathspec: string[];
+    if (paths && paths.length) {
+      const safe = paths.filter(isSafeRelPath);
+      if (!safe.length) return { committed: false, error: "no valid files selected" };
+      pathspec = safe;
+    } else {
+      pathspec = ["."];
+    }
     try {
-      await this.git(projectDir, ["add", "-A", "--", "."]);
+      await this.git(projectDir, ["add", "-A", "--", ...pathspec]);
       const staged = (
-        await this.git(projectDir, ["diff", "--cached", "--name-only", "--", "."])
+        await this.git(projectDir, ["diff", "--cached", "--name-only", "--", ...pathspec])
       ).trim();
       if (!staged) return { committed: false };
       const { name, email } = this.identity();
@@ -254,12 +320,39 @@ export class GitService {
         "-m",
         msg,
         "--",
-        ".",
+        ...pathspec,
       ]);
       const hash = (await this.git(projectDir, ["rev-parse", "HEAD"])).trim();
       return { committed: true, hash };
     } catch (err) {
       return { committed: false, error: errText(err) };
+    }
+  }
+
+  /**
+   * Uncommitted-file counts per top-level project subtree, in ONE `git status`
+   * over the whole store (cheap — no per-project fan-out) so the projects grid
+   * can flag "N uncommitted" without opening each project (issue #258). Keyed by
+   * the first path segment (= project slug); only dirty projects appear. `{}`
+   * when the store isn't a repo.
+   */
+  async dirtyCounts(): Promise<Record<string, number>> {
+    if (!(await this.isRepo())) return {};
+    try {
+      const out = await this.git(this.projectsRoot, [
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=all",
+      ]);
+      const counts: Record<string, number> = {};
+      for (const f of parsePorcelainZ(out)) {
+        const slug = f.path.split("/")[0];
+        if (slug) counts[slug] = (counts[slug] ?? 0) + 1;
+      }
+      return counts;
+    } catch {
+      return {};
     }
   }
 
@@ -275,6 +368,77 @@ export class GitService {
     } catch (err) {
       return { pushed: false, error: errText(err) };
     }
+  }
+}
+
+/**
+ * A project-relative path is safe to hand to `git add`/`commit` as a pathspec
+ * iff it stays inside the subtree: not absolute, no `..` segment, no NUL. Guards
+ * the selective-commit `paths` param against escaping the project (issue #258).
+ */
+function isSafeRelPath(p: string): boolean {
+  if (!p || p.startsWith("/") || p.includes("\0")) return false;
+  return !p.split("/").includes("..");
+}
+
+/**
+ * Parse `git diff --numstat -z` output into a path→stat map. Each record is
+ * `added\tremoved\t<path>`; a rename emits `added\tremoved\t` followed by two
+ * extra NUL-separated tokens (old, new) — we key on the new path. `-` for
+ * added/removed marks a binary change (no line stat).
+ */
+function parseNumstatZ(
+  out: string,
+): Map<string, { added?: number; removed?: number; binary?: boolean }> {
+  const map = new Map<string, { added?: number; removed?: number; binary?: boolean }>();
+  const parts = out.split("\0");
+  for (let i = 0; i < parts.length; i++) {
+    const entry = parts[i];
+    if (!entry) continue;
+    const firstTab = entry.indexOf("\t");
+    const secondTab = entry.indexOf("\t", firstTab + 1);
+    if (firstTab < 0 || secondTab < 0) continue;
+    const a = entry.slice(0, firstTab);
+    const r = entry.slice(firstTab + 1, secondTab);
+    let filePath = entry.slice(secondTab + 1);
+    if (filePath === "") {
+      // Rename/copy: the next two tokens are the old then new path.
+      i++; // old
+      filePath = parts[++i] ?? "";
+    }
+    if (!filePath) continue;
+    const binary = a === "-" || r === "-";
+    map.set(
+      filePath,
+      binary ? { binary: true } : { added: Number(a) || 0, removed: Number(r) || 0 },
+    );
+  }
+  return map;
+}
+
+/**
+ * All-added line stat for an UNTRACKED file (it has no diff): read it (bounded)
+ * and count lines, flagging binary on a NUL byte or when it's too large to read.
+ * Best-effort — returns `{}` when the file can't be read.
+ */
+async function untrackedStat(
+  projectDir: string,
+  relPath: string,
+): Promise<{ added?: number; removed?: number; binary?: boolean }> {
+  const abs = path.join(projectDir, relPath);
+  try {
+    const st = await fs.stat(abs);
+    if (!st.isFile()) return {};
+    if (st.size > UNTRACKED_STAT_CAP) return { binary: true };
+    const buf = await fs.readFile(abs);
+    if (buf.includes(0)) return { binary: true };
+    if (buf.length === 0) return { added: 0, removed: 0 };
+    let added = 0;
+    for (const byte of buf) if (byte === 10) added++;
+    if (buf[buf.length - 1] !== 10) added++; // last line without a trailing newline
+    return { added, removed: 0 };
+  } catch {
+    return {};
   }
 }
 

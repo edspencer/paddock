@@ -67,6 +67,12 @@ export interface Project {
    * when the chat has never been seen on this instance.
    */
   chatTurns?: { sessionId: string; lastTurnCompletedAt: string; lastSeen?: number }[];
+  /**
+   * Count of uncommitted files in this project's subtree (#258) — drives the
+   * projects-grid "N uncommitted" chip so pending work is visible before you
+   * open the project. 0 / absent when clean or the store isn't a git repo.
+   */
+  dirty?: number;
 }
 
 /** A selectable model (GET /api/models). `contextLimit` drives the context meter. */
@@ -408,6 +414,12 @@ export interface GitFileChange {
   staged: boolean;
   /** Whether the file is untracked (won't appear in the diff). */
   untracked: boolean;
+  /** Lines added (undefined for a binary change). Untracked text files count as all-added. */
+  added?: number;
+  /** Lines removed (undefined for a binary change / an untracked file). */
+  removed?: number;
+  /** True when the change is binary (no line-level stat). */
+  binary?: boolean;
 }
 
 /** Per-project git status (GET /api/projects/:slug/git/status). */

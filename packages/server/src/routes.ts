@@ -224,9 +224,12 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     // from the SAME cheap job-record scan as the per-chat unread signal, grouped
     // by keeper agent; `lastSeen` is the server-side read-state (in-memory after
     // first load). No `listSessions` fan-out, no transcript parse.
-    const [list, turnsByProject] = await Promise.all([
+    const [list, turnsByProject, dirty] = await Promise.all([
       projects.list(),
       herdctl.lastTurnCompletedAtByProject().catch(() => new Map<string, Map<string, string>>()),
+      // Uncommitted-file count per project subtree — one cheap `git status` over
+      // the whole store, drives the projects-grid "N uncommitted" chip (#258).
+      git.dirtyCounts().catch(() => ({}) as Record<string, number>),
     ]);
     const user = readStateUser(req);
     const projectsOut = await Promise.all(
@@ -243,7 +246,7 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
               }),
             )
           : [];
-        return { ...p, chatTurns };
+        return { ...p, chatTurns, dirty: dirty[p.slug] ?? 0 };
       }),
     );
     return { projects: projectsOut };
@@ -407,13 +410,16 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
 
   // Commit this project's pending changes (phase 2). `committed: false` when
   // there was nothing to commit. Push is a separate explicit action (/api/git/push).
-  app.post<{ Params: { slug: string }; Body: { message?: string } }>(
+  app.post<{ Params: { slug: string }; Body: { message?: string; files?: string[] } }>(
     "/api/projects/:slug/git/commit",
     async (req, reply) => {
       try {
         const project = await projects.get(req.params.slug);
         const message = req.body?.message?.trim() || `Update ${project.name}`;
-        return await git.commitProject(project.dir, message);
+        // Optional `files` (project-relative) commits only those changes (#258);
+        // omitted ⇒ commit the whole subtree (legacy behavior).
+        const files = Array.isArray(req.body?.files) ? req.body?.files : undefined;
+        return await git.commitProject(project.dir, message, files);
       } catch (err) {
         return sendProjectError(reply, err);
       }
