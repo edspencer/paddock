@@ -179,6 +179,20 @@ export interface PaddockConfig {
    */
   scheduleMutationEnabled: boolean;
   /**
+   * Instance default for the hook-management MCP (Epic G / G5, GG-4) — the
+   * `mcp__paddock_manage__{list,set,remove}_hook` tools that let a project agent
+   * declare/edit/delete its own event hooks. A sibling of {@link selfMcpWriteEnabled}:
+   * OFF by default (opt-in), and only surfaces when the self-MCP write tools are also
+   * present (the hook tools live on the same injected server, appended in the write
+   * block). Driven by `PADDOCK_HOOKS_MCP`; accepts 1/true/yes. A per-project
+   * `hooksMcpEnabled` override wins at dispatch (resolved via
+   * {@link import("./hook-config.js").resolveHooksMcpEnabled}), the same
+   * inherit/override discipline as `maxSpawnDepth`. The gate is BINARY access to the
+   * MCP — an agent that has it can create hooks at any capability (GG-4: no
+   * per-capability gating).
+   */
+  hooksMcpEnabled: boolean;
+  /**
    * Log level for the server's structured logger (Fastify/pino). Driven by
    * `LOG_LEVEL`; default `info`.
    */
@@ -260,6 +274,7 @@ export interface PaddockConfigFile {
   selfMcpWriteEnabled?: boolean | string;
   maxSpawnDepth?: number | string;
   scheduleMutationEnabled?: boolean | string;
+  hooksMcpEnabled?: boolean | string;
   logLevel?: string;
   browserMcp?: boolean | string;
   sweepMinIntervalMs?: number | string;
@@ -570,6 +585,7 @@ export function loadPaddockConfig(): PaddockConfig {
       loadSelfMcpEnabled(file.selfMcpEnabled) && loadSelfMcpWriteEnabled(file.selfMcpWriteEnabled),
     maxSpawnDepth: loadMaxSpawnDepth(file.maxSpawnDepth),
     scheduleMutationEnabled: loadScheduleMutationEnabled(file.scheduleMutationEnabled),
+    hooksMcpEnabled: loadHooksMcpEnabled(file.hooksMcpEnabled),
     logLevel: envOr("LOG_LEVEL", fileOr(file.logLevel, "info")),
     browserMcp: loadBrowserMcp(file.browserMcp),
     sweepMinIntervalMs: loadSweepMinIntervalMs(file.sweepMinIntervalMs),
@@ -631,6 +647,18 @@ function loadScheduleMutationEnabled(
   file?: PaddockConfigFile["scheduleMutationEnabled"],
 ): boolean {
   const raw = envOr("PADDOCK_SCHEDULE_MUTATION", fileOr(file, "false")).toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes";
+}
+
+/**
+ * Resolve the instance-default hook-management MCP gate (Epic G / G5, GG-4).
+ * Defaults OFF so a plain instance never advertises the hook tools; opt in with
+ * `PADDOCK_HOOKS_MCP=1` (or the config file), and a per-project `hooksMcpEnabled`
+ * override still wins at dispatch. Accepts 1/true/yes. Only meaningful when the
+ * self-MCP write tools are also enabled (the hook tools live on that server).
+ */
+function loadHooksMcpEnabled(file?: PaddockConfigFile["hooksMcpEnabled"]): boolean {
+  const raw = envOr("PADDOCK_HOOKS_MCP", fileOr(file, "false")).toLowerCase();
   return raw === "1" || raw === "true" || raw === "yes";
 }
 

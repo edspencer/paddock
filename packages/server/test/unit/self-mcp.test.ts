@@ -12,8 +12,10 @@ import {
   SELF_MCP_SERVER_KEY,
   SELF_MCP_TOOL_NAMES,
   SELF_MCP_WRITE_TOOL_NAMES,
+  SELF_MCP_HOOK_TOOL_NAMES,
   FORK_BATCH_MAX,
   coercePrompts,
+  coerceToolList,
   clampLimit,
   truncateText,
   READ_CHAT_DEFAULT_LIMIT,
@@ -194,6 +196,9 @@ interface RecordingWrite extends SelfMcpWriteContext {
     setSchedule: Array<{ projectSlug: string; name: string; schedule: Record<string, unknown> }>;
     removeSchedule: Array<{ projectSlug: string; name: string }>;
     listSchedules: Array<{ projectSlug: string }>;
+    setHook: Array<{ projectSlug: string; name: string; hook: Record<string, unknown> }>;
+    removeHook: Array<{ projectSlug: string; name: string }>;
+    listHooks: Array<{ projectSlug: string }>;
   };
 }
 
@@ -206,6 +211,9 @@ function fakeWrite(over: Partial<SelfMcpWriteContext> = {}): RecordingWrite {
     setSchedule: [],
     removeSchedule: [],
     listSchedules: [],
+    setHook: [],
+    removeHook: [],
+    listHooks: [],
   };
   let n = 0;
   const base: SelfMcpWriteContext = {
@@ -250,6 +258,36 @@ function fakeWrite(over: Partial<SelfMcpWriteContext> = {}): RecordingWrite {
     listSchedules: async (projectSlug) => {
       calls.listSchedules.push({ projectSlug });
       return [];
+    },
+    // G5 hook management: default OFF (per-project opt-in) so the base 12-tool
+    // shape is unchanged; a test opts in via `fakeWrite({ hooksMcpEnabled: true })`.
+    hooksMcpEnabled: false,
+    listHooks: async (projectSlug) => {
+      calls.listHooks.push({ projectSlug });
+      return [];
+    },
+    setHook: async (projectSlug, name, hook) => {
+      calls.setHook.push({ projectSlug, name, hook });
+      return {
+        name,
+        agentName: `hook-${projectSlug}-${name}`,
+        event: (hook.event as string) ?? "onArchive",
+        enabled: hook.enabled === true,
+        prompt: (hook.prompt as string) ?? null,
+        promptFile: (hook.promptFile as string) ?? null,
+        allowedTools:
+          ((hook.capabilities as Record<string, unknown> | undefined)?.allowedTools as string[]) ?? [],
+        deniedTools:
+          ((hook.capabilities as Record<string, unknown> | undefined)?.deniedTools as string[]) ?? [],
+        permissionMode:
+          ((hook.capabilities as Record<string, unknown> | undefined)?.permissionMode as string) ?? null,
+        model: ((hook.capabilities as Record<string, unknown> | undefined)?.model as string) ?? null,
+        maxTurns: ((hook.capabilities as Record<string, unknown> | undefined)?.maxTurns as number) ?? null,
+      };
+    },
+    removeHook: async (projectSlug, name) => {
+      calls.removeHook.push({ projectSlug, name });
+      return true;
     },
     ...over,
   };
@@ -674,5 +712,185 @@ describe("self-management MCP (schedule tools)", () => {
     });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("Invalid schedule definition");
+  });
+});
+
+// ── coerceToolList (Epic G / G5) ────────────────────────────────────────────
+
+describe("coerceToolList", () => {
+  it("accepts a real array, dropping non-strings + blanks", () => {
+    expect(coerceToolList(["Bash", " Read ", "", 3, "Write"])).toEqual(["Bash", "Read", "Write"]);
+  });
+  it("parses a JSON array string (CLI transport dropped the array type)", () => {
+    expect(coerceToolList('["Bash", "Read"]')).toEqual(["Bash", "Read"]);
+  });
+  it("splits a comma/newline-separated string", () => {
+    expect(coerceToolList("Bash, Read\nWrite")).toEqual(["Bash", "Read", "Write"]);
+  });
+  it("returns [] for blank/absent/non-string input (a tool-less hook)", () => {
+    expect(coerceToolList("")).toEqual([]);
+    expect(coerceToolList("   ")).toEqual([]);
+    expect(coerceToolList(undefined)).toEqual([]);
+    expect(coerceToolList(42)).toEqual([]);
+  });
+});
+
+// ── Hook-management tools (Epic G / G5, GG-4) ────────────────────────────────
+
+describe("self-management MCP (hook tools + per-project gate)", () => {
+  it("hook tools are ABSENT when hooksMcpEnabled is off (the default write ctx)", () => {
+    const def = selfMcpServerDef(fakeContext(), fakeWrite());
+    const names = def.tools.map((t) => t.name);
+    expect(names).not.toContain("list_hooks");
+    expect(names).not.toContain("set_hook");
+    expect(names).not.toContain("remove_hook");
+  });
+
+  it("appends exactly the 3 hook tools (15 total) when hooksMcpEnabled is on", () => {
+    const def = selfMcpServerDef(fakeContext(), fakeWrite({ hooksMcpEnabled: true }));
+    expect(def.tools).toHaveLength(15);
+    expect(def.tools.map((t) => t.name).sort()).toEqual([
+      "archive_chat",
+      "create_chat",
+      "fork_chat",
+      "fork_chat_batch",
+      "list_chats",
+      "list_hooks",
+      "list_projects",
+      "list_schedules",
+      "read_chat",
+      "remove_hook",
+      "remove_schedule",
+      "send_message",
+      "set_hook",
+      "set_schedule",
+      "unarchive_chat",
+    ]);
+  });
+
+  it("hook tools are absent WITHOUT a write ctx even though hooks are a write-block feature", () => {
+    const def = selfMcpServerDef(fakeContext());
+    expect(def.tools.map((t) => t.name)).not.toContain("set_hook");
+  });
+
+  it("names the hook tools as mcp__paddock_manage__*", () => {
+    expect(SELF_MCP_HOOK_TOOL_NAMES.listHooks).toBe("mcp__paddock_manage__list_hooks");
+    expect(SELF_MCP_HOOK_TOOL_NAMES.setHook).toBe("mcp__paddock_manage__set_hook");
+    expect(SELF_MCP_HOOK_TOOL_NAMES.removeHook).toBe("mcp__paddock_manage__remove_hook");
+  });
+
+  it("set_hook builds a record with capabilities, defaults project to current, echoes the DTO", async () => {
+    const write = fakeWrite({ hooksMcpEnabled: true });
+    const { json } = await callWrite(write, "set_hook", {
+      name: "cleanup",
+      event: "onArchive",
+      prompt: "spin down my pm servers",
+      allowed_tools: "Bash, Read",
+      permission_mode: "acceptEdits",
+      max_turns: 12,
+      enabled: true,
+    });
+    expect(write.calls.setHook).toHaveLength(1);
+    expect(write.calls.setHook[0]).toEqual({
+      projectSlug: "paddock",
+      name: "cleanup",
+      hook: {
+        event: "onArchive",
+        prompt: "spin down my pm servers",
+        enabled: true,
+        capabilities: {
+          allowedTools: ["Bash", "Read"],
+          permissionMode: "acceptEdits",
+          maxTurns: 12,
+        },
+      },
+    });
+    expect(json.set).toBe(true);
+    expect(json.project).toBe("paddock");
+    expect(json.hook.agentName).toBe("hook-paddock-cleanup");
+    expect(json.hook.allowedTools).toEqual(["Bash", "Read"]);
+    expect(json.hook.enabled).toBe(true);
+  });
+
+  it("set_hook supports prompt_file (promptFile sugar) and a target project", async () => {
+    const write = fakeWrite({ hooksMcpEnabled: true });
+    await callWrite(write, "set_hook", {
+      name: "cleanup",
+      event: "onArchive",
+      prompt_file: "cleanup.md",
+      project: "herdctl",
+    });
+    expect(write.calls.setHook[0].projectSlug).toBe("herdctl");
+    expect(write.calls.setHook[0].hook).toEqual({ event: "onArchive", promptFile: "cleanup.md" });
+  });
+
+  it("set_hook omits enabled + capabilities when not supplied (a tool-less create)", async () => {
+    const write = fakeWrite({ hooksMcpEnabled: true });
+    await callWrite(write, "set_hook", { name: "h", event: "onArchive", prompt: "think" });
+    expect(write.calls.setHook[0].hook).toEqual({ event: "onArchive", prompt: "think" });
+  });
+
+  it("set_hook rejects a missing name / missing event / no prompt or prompt_file", async () => {
+    const write = fakeWrite({ hooksMcpEnabled: true });
+    const noName = await callWrite(write, "set_hook", { event: "onArchive", prompt: "x" });
+    expect(noName.result.isError).toBe(true);
+    expect(noName.result.content[0].text).toContain("`name` is required");
+
+    const noEvent = await callWrite(write, "set_hook", { name: "h", prompt: "x" });
+    expect(noEvent.result.isError).toBe(true);
+    expect(noEvent.result.content[0].text).toContain("`event` is required");
+
+    const noPrompt = await callWrite(write, "set_hook", { name: "h", event: "onArchive" });
+    expect(noPrompt.result.isError).toBe(true);
+    expect(noPrompt.result.content[0].text).toContain("prompt");
+    expect(write.calls.setHook).toHaveLength(0);
+  });
+
+  it("list_hooks defaults project to current and returns the hooks", async () => {
+    const hooks = [
+      {
+        name: "cleanup",
+        agentName: "hook-paddock-cleanup",
+        event: "onArchive",
+        enabled: false,
+        prompt: "x",
+        promptFile: null,
+        allowedTools: ["Bash"],
+        deniedTools: [],
+        permissionMode: null,
+        model: null,
+        maxTurns: null,
+      },
+    ];
+    const write = fakeWrite({ hooksMcpEnabled: true, listHooks: async () => hooks });
+    const { json } = await callWrite(write, "list_hooks", {});
+    expect(json).toEqual({ project: "paddock", count: 1, hooks });
+  });
+
+  it("remove_hook defaults project to current, echoes removed, and requires a name", async () => {
+    const write = fakeWrite({ hooksMcpEnabled: true });
+    const { json } = await callWrite(write, "remove_hook", { name: "cleanup" });
+    expect(json).toEqual({ removed: true, project: "paddock", name: "cleanup" });
+    expect(write.calls.removeHook[0]).toEqual({ projectSlug: "paddock", name: "cleanup" });
+
+    const { result } = await callWrite(write, "remove_hook", {});
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("`name` is required");
+  });
+
+  it("surfaces a setHook-callback throw as an isError result rather than throwing", async () => {
+    const write = fakeWrite({
+      hooksMcpEnabled: true,
+      setHook: async () => {
+        throw new Error("Invalid hook definition");
+      },
+    });
+    const { result } = await callWrite(write, "set_hook", {
+      name: "h",
+      event: "onArchive",
+      prompt: "x",
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Invalid hook definition");
   });
 });

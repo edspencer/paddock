@@ -422,6 +422,17 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
             code: "invalid",
           });
         }
+        // `null` clears the per-project hook-MCP override (inherit the instance
+        // default, G5). Only a non-null, non-boolean value is a 400.
+        if (
+          body.hooksMcpEnabled !== undefined &&
+          body.hooksMcpEnabled !== null &&
+          typeof body.hooksMcpEnabled !== "boolean"
+        ) {
+          return reply
+            .code(400)
+            .send({ error: "hooks_mcp_enabled must be a boolean", code: "invalid" });
+        }
         const project = await projects.update(req.params.slug, body);
         // Re-register the keeper so the new model takes effect (the keeper is a
         // long-lived in-memory agent; addAgent replace:true updates its config).

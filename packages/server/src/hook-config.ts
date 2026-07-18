@@ -126,6 +126,61 @@ export const HOOK_PROMPT_DIR = path.join(".paddock", "hooks");
 export const HOOK_DEFAULT_MAX_TURNS = 30;
 
 /**
+ * Resolve whether a project's turns get the hook-management MCP (Epic G / G5,
+ * GG-4): a per-project override wins; otherwise inherit the instance default.
+ * Mirrors {@link import("./spawn-capability.js").resolveMaxSpawnDepth} — a boolean
+ * override is carried on disk only when set, so an absent value transparently
+ * inherits the instance (env / YAML) default. A non-boolean override is ignored
+ * (defensive: a hand-edited `project.yaml` can't wedge dispatch).
+ */
+export function resolveHooksMcpEnabled(
+  override: boolean | undefined,
+  instanceDefault: boolean,
+): boolean {
+  return typeof override === "boolean" ? override : instanceDefault === true;
+}
+
+/**
+ * Merge a partial `set_hook` update (Epic G / G5) over the existing hook so an edit
+ * that OMITS a field preserves it. `ProjectStore.setHook` full-REPLACES the named
+ * record, so without this a caller that changes only the prompt would silently wipe
+ * the hook's capability grant (and vice versa). `incoming` carries ONLY the fields
+ * the caller supplied (the MCP handler builds it that way), so a shallow overlay is
+ * exactly "patch the provided fields": a supplied `capabilities` replaces the whole
+ * set (the caller gave a new one — intended), while an omitted one is inherited. A
+ * brand-new hook (`existing` null) starts from `{}` and defaults `enabled: false`
+ * (GG-3, safe-create). Returns an untrusted record for {@link sanitizeHook} to
+ * validate (so it stays `Record<string, unknown>`, never a typed `PaddockHook`).
+ *
+ * `prompt` and `promptFile` are MUTUALLY EXCLUSIVE (the file wins at fire time), so
+ * supplying one clears the inherited counterpart — otherwise switching a file-backed
+ * hook to an inline prompt would leave the stale `promptFile` winning and silently
+ * discard the edit. Supplying neither (a capability/enabled-only edit) leaves the
+ * existing prompt source untouched.
+ */
+export function mergeHookUpdate(
+  existing: PaddockHook | null | undefined,
+  incoming: Record<string, unknown>,
+): Record<string, unknown> {
+  const base: Record<string, unknown> = existing
+    ? {
+        event: existing.event,
+        ...(existing.capabilities ? { capabilities: existing.capabilities } : {}),
+        ...(existing.prompt !== undefined ? { prompt: existing.prompt } : {}),
+        ...(existing.promptFile !== undefined ? { promptFile: existing.promptFile } : {}),
+        enabled: existing.enabled === true,
+      }
+    : {};
+  const record = { ...base, ...incoming };
+  // Switching prompt source: one supplied side clears the inherited other, so the
+  // record never ends up with both (which would let the stale file win at fire time).
+  if (incoming.prompt !== undefined && incoming.promptFile === undefined) delete record.promptFile;
+  if (incoming.promptFile !== undefined && incoming.prompt === undefined) delete record.prompt;
+  if (record.enabled === undefined) record.enabled = false;
+  return record;
+}
+
+/**
  * One tool a hook may be granted, for the capability picker (G4). `name` is the
  * literal `allowed_tools` pattern the hook agent is registered with; `group`
  * clusters them in the UI; `description` says precisely what granting it lets the

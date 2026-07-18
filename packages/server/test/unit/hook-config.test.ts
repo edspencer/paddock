@@ -16,6 +16,8 @@ import {
   hookToAgentToolConfig,
   hookPromptFileAbsPath,
   isValidHookName,
+  resolveHooksMcpEnabled,
+  mergeHookUpdate,
   HOOK_PROMPT_DIR,
   HOOK_DEFAULT_MAX_TURNS,
 } from "../../src/hook-config.js";
@@ -130,6 +132,110 @@ describe("isValidHookName", () => {
     expect(isValidHookName("../evil")).toBe(false);
     expect(isValidHookName("x".repeat(65))).toBe(false);
     expect(isValidHookName("")).toBe(false);
+  });
+});
+
+describe("resolveHooksMcpEnabled (G5)", () => {
+  it("a boolean override wins over the instance default", () => {
+    expect(resolveHooksMcpEnabled(true, false)).toBe(true);
+    expect(resolveHooksMcpEnabled(false, true)).toBe(false);
+  });
+  it("an absent override inherits the instance default", () => {
+    expect(resolveHooksMcpEnabled(undefined, true)).toBe(true);
+    expect(resolveHooksMcpEnabled(undefined, false)).toBe(false);
+  });
+});
+
+describe("mergeHookUpdate (G5 partial set_hook)", () => {
+  const existing = {
+    event: "onArchive" as const,
+    capabilities: { allowedTools: ["Bash"], maxTurns: 12 },
+    prompt: "spin down servers",
+    enabled: true,
+  };
+
+  it("a brand-new hook (no existing) uses the incoming record + defaults enabled:false", () => {
+    expect(mergeHookUpdate(null, { event: "onArchive", prompt: "x" })).toEqual({
+      event: "onArchive",
+      prompt: "x",
+      enabled: false,
+    });
+  });
+
+  it("honors an explicit enabled on a brand-new hook", () => {
+    expect(mergeHookUpdate(undefined, { event: "onArchive", prompt: "x", enabled: true })).toEqual({
+      event: "onArchive",
+      prompt: "x",
+      enabled: true,
+    });
+  });
+
+  it("preserves capabilities + enabled when an update changes only the prompt (Warren's bug)", () => {
+    // The reported failure: edit only the prompt → capabilities must NOT be wiped.
+    expect(mergeHookUpdate(existing, { event: "onArchive", prompt: "new prompt" })).toEqual({
+      event: "onArchive",
+      capabilities: { allowedTools: ["Bash"], maxTurns: 12 },
+      prompt: "new prompt",
+      enabled: true,
+    });
+  });
+
+  it("a supplied capabilities set REPLACES the existing one (caller gave a new grant)", () => {
+    expect(
+      mergeHookUpdate(existing, { event: "onArchive", capabilities: { allowedTools: ["Read"] } }),
+    ).toEqual({
+      event: "onArchive",
+      capabilities: { allowedTools: ["Read"] },
+      prompt: "spin down servers",
+      enabled: true,
+    });
+  });
+
+  it("an omitted enabled preserves the existing armed state (doesn't silently disarm)", () => {
+    const out = mergeHookUpdate(existing, { event: "onArchive", prompt: "p" });
+    expect(out.enabled).toBe(true);
+    const out2 = mergeHookUpdate({ ...existing, enabled: false }, { event: "onArchive", prompt: "p" });
+    expect(out2.enabled).toBe(false);
+  });
+
+  it("carries promptFile through when the existing hook uses one", () => {
+    const withFile = { event: "onArchive" as const, promptFile: "cleanup.md", enabled: false };
+    expect(mergeHookUpdate(withFile, { event: "onArchive", enabled: true })).toEqual({
+      event: "onArchive",
+      promptFile: "cleanup.md",
+      enabled: true,
+    });
+  });
+
+  it("switching a file-backed hook to an inline prompt CLEARS the stale promptFile", () => {
+    // Warren #2: prompt & promptFile are mutually exclusive (file wins). An inline
+    // edit that omits prompt_file must not leave the old file winning.
+    const fileHook = { event: "onArchive" as const, promptFile: "cleanup.md", enabled: true };
+    const out = mergeHookUpdate(fileHook, { event: "onArchive", prompt: "do it inline" });
+    expect(out).toEqual({ event: "onArchive", prompt: "do it inline", enabled: true });
+    expect(out.promptFile).toBeUndefined();
+  });
+
+  it("switching an inline hook to a promptFile CLEARS the stale inline prompt", () => {
+    const inlineHook = { event: "onArchive" as const, prompt: "old inline", enabled: false };
+    const out = mergeHookUpdate(inlineHook, { event: "onArchive", promptFile: "cleanup.md" });
+    expect(out).toEqual({ event: "onArchive", promptFile: "cleanup.md", enabled: false });
+    expect(out.prompt).toBeUndefined();
+  });
+
+  it("a capability/enabled-only edit (neither prompt supplied) leaves the prompt source intact", () => {
+    const fileHook = { event: "onArchive" as const, promptFile: "cleanup.md", enabled: false };
+    const out = mergeHookUpdate(fileHook, {
+      event: "onArchive",
+      capabilities: { allowedTools: ["Bash"] },
+      enabled: true,
+    });
+    expect(out).toEqual({
+      event: "onArchive",
+      promptFile: "cleanup.md",
+      capabilities: { allowedTools: ["Bash"] },
+      enabled: true,
+    });
   });
 });
 
