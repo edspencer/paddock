@@ -1,5 +1,55 @@
 # @paddock/server
 
+## 0.30.0
+
+### Minor Changes
+
+- [#273](https://github.com/edspencer/paddock/pull/273) [`9803635`](https://github.com/edspencer/paddock/commit/9803635a69308ccafb132f2b6637813009666f5c) Thanks [@edspencer](https://github.com/edspencer)! - Changes tab: selective per-file commit, diff stat, and a projects-grid dirty nudge (#258)
+
+  - The Changes tab now has a checkbox per changed file (with select-all/none) and a "Commit N selected" action, so you can commit a subset instead of the previous all-or-nothing commit. `GitService.commitProject` gains an optional project-relative `paths` list (validated to stay inside the subtree); the commit endpoint accepts `files[]`.
+  - Each changed file shows a `+A −R` line stat (from `git diff --numstat` for tracked changes, all-added line counts for untracked text files, "binary" for binary), echoed in a diff stat header.
+  - The projects grid now flags each project's uncommitted-file count, fed by a single cheap `git status` rollup on `/api/projects` — so pending work is visible before opening a project.
+
+- [#272](https://github.com/edspencer/paddock/pull/272) [`968a449`](https://github.com/edspencer/paddock/commit/968a4495f67633ca3c6264534d9db1ea67c9e019) Thanks [@edspencer](https://github.com/edspencer)! - Files tab: browse subdirectories with nested, deep-linkable URLs (#259)
+
+  The Files tab previously listed only top-level files, so anything a project filed
+  under a subdirectory (e.g. `design/`, `aar/`, `docs/`) was invisible. The listing
+  now returns one directory level at a time with a per-entry kind (file vs dir), and
+  the Files tab lets you click into folders. The current directory or file is
+  carried in a nested `/projects/:slug/files/<path>` URL (deep-linkable and
+  refresh-safe), with a `..` entry to go up and a path breadcrumb. Directories are
+  visually distinguished and sort ahead of files. The traversal guard stays central
+  in `resolveInProject`, and the single-file read path already supported nested
+  names.
+
+- [#276](https://github.com/edspencer/paddock/pull/276) [`e299666`](https://github.com/edspencer/paddock/commit/e2996660be089f0f7a312ced50252a964b725c47) Thanks [@edspencer](https://github.com/edspencer)! - self-MCP: add `archive_chat` / `unarchive_chat` write tools (#263)
+
+  The self-management MCP now lets a keeper archive (and unarchive) a chat — most usefully **itself**, which powers the self-reporting convention "do the work, then archive myself on success; leave un-archived on failure so it's flagged when a human logs in."
+
+  - Two new write tools, gated by the same `PADDOCK_SELF_MCP_WRITE` flag as `create_chat`/`fork_chat`/`send_message`.
+  - `session_id` is **optional** and defaults to the **current** chat (mirroring how `send_message` defaults `project`), so an agent can archive/unarchive itself without knowing its own id; `project` likewise defaults to the current one.
+  - Wired through a new `SelfMcpWriteContext.setArchived` callback that delegates straight to the existing `ArchiveStore` (presentational metadata only — no keeper turn is started), keyed by the target project's keeper agent, matching the existing POST archive endpoints.
+
+- [#275](https://github.com/edspencer/paddock/pull/275) [`d1c830a`](https://github.com/edspencer/paddock/commit/d1c830a9d3f9ef58615607b29bfc01b865d6e588) Thanks [@edspencer](https://github.com/edspencer)! - Thread an origin + spawn-depth provenance marker through non-human turn injection (#261).
+
+  This is the foundation (ticket A1) for the Events / Schedules / Config initiative.
+  Server-initiated turns — `startAgentTurn` (the self-MCP write tools' spawn path) and
+  the `onSessionWake` handler — now carry an `origin` (`human` / `scheduled` / `spawned`)
+  plus a spawn `depth`, and each chat's marker is persisted to a new per-chat sidecar
+  (`run-provenance.json`, following the ArchiveStore / ReadStateStore pattern):
+
+  - a human-started chat → `origin: human, depth: 0` (the root of any spawn tree);
+  - a chat spawned by a self-MCP write tool (`create_chat` / `fork_chat` / …) →
+    `origin: spawned, depth: parent.depth + 1`;
+  - a scheduler-fired wake → `origin: scheduled, depth: 0` (stamped only if the chat
+    has no marker yet, so a resume/wake never clobbers an existing chat's provenance).
+
+  Provenance is recorded once, at chat creation, and is never overwritten by a later
+  turn on that chat. This carries and persists the marker only — **no behaviour changes
+  yet**: spawned children are still injected with `send_file` only (no self-MCP), exactly
+  as before. Depth-gated spawn capability (#262) and provenance badges (#267) build on
+  this marker.
+
 ## 0.29.0
 
 ### Minor Changes
