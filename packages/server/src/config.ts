@@ -1,5 +1,7 @@
 /**
- * Paddock server configuration, sourced from environment with sane defaults.
+ * Paddock server configuration, sourced from an optional YAML instance-config
+ * file with environment overrides on top (precedence: file < env), and sane
+ * defaults beneath both.
  *
  * Everything is resolved once at startup so the rest of the app can import a
  * frozen object. Paths are normalised to absolute.
@@ -7,6 +9,7 @@
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
+import YAML from "yaml";
 import { type DriveMode, KEEPER_DEFAULT_DRIVE_MODE, isKnownDriveMode } from "./models.js";
 import { DEFAULT_MAX_SPAWN_DEPTH, isValidMaxSpawnDepth } from "./spawn-capability.js";
 
@@ -201,6 +204,60 @@ export interface PaddockConfig {
 }
 
 /**
+ * On-disk shape of the optional YAML instance-config file (issue #270 / DD-5).
+ *
+ * This is the BASE layer for {@link PaddockConfig}: every field is optional and
+ * a matching `PADDOCK_*` env var still overrides it (precedence file < env), so
+ * an env-only deployment is unaffected when no file is present. Values mirror
+ * the resolved config's structure; scalars accept their natural YAML type (and
+ * also a string, since each value is coerced through the same env-parsing path).
+ * Unknown keys are ignored — later epics (schedules, hooks) will add their own
+ * top-level record sections here.
+ */
+export interface PaddockConfigFile {
+  port?: number | string;
+  host?: string;
+  dataDir?: string;
+  projectsRoot?: string;
+  stateDir?: string;
+  herdctlConfigPath?: string;
+  webDist?: string;
+  scratchDir?: string;
+  auth?: {
+    mode?: string;
+    userHeader?: string;
+    emailHeader?: string;
+    groupsHeader?: string;
+    jwtHeader?: string;
+    jwksUrl?: string;
+    jwtIssuer?: string;
+    jwtAudience?: string;
+    usernameClaim?: string;
+    groupsClaim?: string;
+  };
+  devServers?: { enabled?: boolean | string; domain?: string };
+  transcription?: {
+    mode?: string;
+    model?: string;
+    endpoint?: string;
+    apiKey?: string;
+    language?: string;
+    maxUploadBytes?: number | string;
+  };
+  brand?: { name?: string; logo?: string; accent?: string };
+  keeperDriveMode?: string;
+  nativeSystemPrompt?: boolean | string;
+  selfMcpEnabled?: boolean | string;
+  selfMcpWriteEnabled?: boolean | string;
+  maxSpawnDepth?: number | string;
+  logLevel?: string;
+  browserMcp?: boolean | string;
+  sweepMinIntervalMs?: number | string;
+  gitAuthor?: { name?: string; email?: string };
+  githubClientId?: string;
+}
+
+/**
  * Voice-dictation (Whisper) capability. Mirrors HushPod's whisper config so the
  * two can share a transcription backend (e.g. Ed's laptop whisper server). Driven
  * entirely by `PADDOCK_WHISPER_*` env so it is scoped PER INSTANCE and defaults
@@ -278,28 +335,118 @@ function envOpt(name: string): string | undefined {
 }
 
 /**
+ * Fold a config-file value in as the fallback beneath a hardcoded default. The
+ * file value is stringified — so the exact same parsing/coercion an env value
+ * would get applies — and used when present and non-blank; otherwise the
+ * hardcoded default. Env still wins because callers pass the result as the
+ * `envOr` fallback (which is only consulted when the env var is unset).
+ */
+function fileOr(fileVal: unknown, fallback: string): string {
+  if (fileVal === undefined || fileVal === null) return fallback;
+  const s = String(fileVal);
+  return s.trim().length > 0 ? s : fallback;
+}
+
+/** A config-file value as a trimmed string, or undefined when absent/blank. */
+function fileOpt(fileVal: unknown): string | undefined {
+  if (fileVal === undefined || fileVal === null) return undefined;
+  const s = String(fileVal).trim();
+  return s.length > 0 ? s : undefined;
+}
+
+/** Default filename for the instance-config file, resolved under the data dir. */
+const DEFAULT_CONFIG_FILENAME = "paddock.config.yaml";
+
+/**
+ * Load the optional YAML instance-config file that provides the BASE layer for
+ * {@link PaddockConfig} (issue #270 / DD-5). Env vars still override every value
+ * (precedence file < env).
+ *
+ * Path resolution: an explicit `PADDOCK_CONFIG` env var wins; otherwise
+ * `<dataDir>/paddock.config.yaml`. When no file exists at the default location
+ * the result is an empty object, so an env-only deployment behaves exactly as
+ * before — this is a no-op for existing installs. An explicit `PADDOCK_CONFIG`
+ * that points at a missing file is treated as a misconfiguration (a clear error)
+ * rather than silently ignored.
+ *
+ * A present-but-malformed file (unparseable YAML, or a top-level scalar/list
+ * instead of a mapping) throws a clear Error rather than starting up with a
+ * half-empty config.
+ */
+export function loadConfigFile(dataDir: string): PaddockConfigFile {
+  const explicit = envOpt("PADDOCK_CONFIG");
+  const configPath = explicit ? abs(explicit) : path.join(dataDir, DEFAULT_CONFIG_FILENAME);
+
+  let raw: string;
+  try {
+    raw = fs.readFileSync(configPath, "utf8");
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") {
+      // Missing default file → env-only, unchanged behaviour. A missing file
+      // that was EXPLICITLY requested is an operator error worth surfacing.
+      if (explicit) {
+        throw new Error(`PADDOCK_CONFIG points at a config file that does not exist: ${configPath}`);
+      }
+      return {};
+    }
+    throw new Error(`Failed to read Paddock config file ${configPath}: ${(err as Error).message}`);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = YAML.parse(raw);
+  } catch (err) {
+    throw new Error(
+      `Failed to parse Paddock config file ${configPath} as YAML: ${(err as Error).message}`,
+    );
+  }
+
+  // An empty (or comments-only) file parses to null → treat as "no overrides".
+  if (parsed === null || parsed === undefined) return {};
+  if (typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(
+      `Paddock config file ${configPath} must contain a YAML mapping (got ${
+        Array.isArray(parsed) ? "a list" : typeof parsed
+      }).`,
+    );
+  }
+
+  // A valueless key (`brand:` / `auth:` with nothing after it) parses to `null`.
+  // Treat such an empty section (or scalar) as ABSENT — drop it so it falls back
+  // to env/defaults — rather than passing `null` through to a loader that expects
+  // an object (which would crash with an unclear TypeError). Deeper `null`s and
+  // wrong-typed sections already degrade to defaults via fileOr/fileOpt.
+  const obj = parsed as Record<string, unknown>;
+  for (const key of Object.keys(obj)) {
+    if (obj[key] === null) delete obj[key];
+  }
+  return obj as PaddockConfigFile;
+}
+
+/**
  * Resolve the provider-agnostic auth config from `PADDOCK_AUTH_*` env vars.
  * Everything is optional; the default is `none` (fully open). Validation of
  * mode-specific requirements (e.g. a JWKS URL in jwt mode) happens in the auth
  * plugin so a misconfig surfaces as a clear startup error rather than a
  * silently-open server.
  */
-function loadAuthConfig(): AuthConfig {
-  const rawMode = envOr("PADDOCK_AUTH_MODE", "none").toLowerCase();
+function loadAuthConfig(file: PaddockConfigFile["auth"] = {}): AuthConfig {
+  const rawMode = envOr("PADDOCK_AUTH_MODE", fileOr(file.mode, "none")).toLowerCase();
   const mode: AuthMode =
     rawMode === "trusted-header" || rawMode === "jwt" ? rawMode : "none";
 
   return {
     mode,
-    userHeader: envOr("PADDOCK_AUTH_USER_HEADER", "X-Forwarded-User"),
-    emailHeader: envOpt("PADDOCK_AUTH_EMAIL_HEADER"),
-    groupsHeader: envOpt("PADDOCK_AUTH_GROUPS_HEADER"),
-    jwtHeader: envOr("PADDOCK_AUTH_JWT_HEADER", "Authorization"),
-    jwksUrl: envOpt("PADDOCK_AUTH_JWKS_URL"),
-    jwtIssuer: envOpt("PADDOCK_AUTH_JWT_ISSUER"),
-    jwtAudience: envOpt("PADDOCK_AUTH_JWT_AUDIENCE"),
-    usernameClaim: envOpt("PADDOCK_AUTH_USERNAME_CLAIM"),
-    groupsClaim: envOr("PADDOCK_AUTH_GROUPS_CLAIM", "groups"),
+    userHeader: envOr("PADDOCK_AUTH_USER_HEADER", fileOr(file.userHeader, "X-Forwarded-User")),
+    emailHeader: envOpt("PADDOCK_AUTH_EMAIL_HEADER") ?? fileOpt(file.emailHeader),
+    groupsHeader: envOpt("PADDOCK_AUTH_GROUPS_HEADER") ?? fileOpt(file.groupsHeader),
+    jwtHeader: envOr("PADDOCK_AUTH_JWT_HEADER", fileOr(file.jwtHeader, "Authorization")),
+    jwksUrl: envOpt("PADDOCK_AUTH_JWKS_URL") ?? fileOpt(file.jwksUrl),
+    jwtIssuer: envOpt("PADDOCK_AUTH_JWT_ISSUER") ?? fileOpt(file.jwtIssuer),
+    jwtAudience: envOpt("PADDOCK_AUTH_JWT_AUDIENCE") ?? fileOpt(file.jwtAudience),
+    usernameClaim: envOpt("PADDOCK_AUTH_USERNAME_CLAIM") ?? fileOpt(file.usernameClaim),
+    groupsClaim: envOr("PADDOCK_AUTH_GROUPS_CLAIM", fileOr(file.groupsClaim, "groups")),
   };
 }
 
@@ -308,12 +455,12 @@ function loadAuthConfig(): AuthConfig {
  * plain instance never advertises `pm`; the projects instance opts in by setting
  * `PADDOCK_DEV_SERVERS_ENABLED=true` in its own env file. Accepts 1/true/yes.
  */
-function loadDevServersConfig(): DevServersConfig {
-  const raw = envOr("PADDOCK_DEV_SERVERS_ENABLED", "false").toLowerCase();
+function loadDevServersConfig(file: PaddockConfigFile["devServers"] = {}): DevServersConfig {
+  const raw = envOr("PADDOCK_DEV_SERVERS_ENABLED", fileOr(file.enabled, "false")).toLowerCase();
   const enabled = raw === "1" || raw === "true" || raw === "yes";
   return {
     enabled,
-    domain: envOr("PADDOCK_DEV_SERVERS_DOMAIN", "projects.valfenda.net"),
+    domain: envOr("PADDOCK_DEV_SERVERS_DOMAIN", fileOr(file.domain, "projects.valfenda.net")),
   };
 }
 
@@ -323,17 +470,22 @@ function loadDevServersConfig(): DevServersConfig {
  * when an endpoint is configured (the common case — point it at a shared whisper
  * server), and can be forced with `PADDOCK_WHISPER_MODE`. Accepts local/remote/off.
  */
-function loadTranscriptionConfig(): TranscriptionConfig {
-  const endpoint = envOpt("PADDOCK_WHISPER_ENDPOINT");
-  const rawMode = envOr("PADDOCK_WHISPER_MODE", endpoint ? "remote" : "off").toLowerCase();
+function loadTranscriptionConfig(file: PaddockConfigFile["transcription"] = {}): TranscriptionConfig {
+  const endpoint = envOpt("PADDOCK_WHISPER_ENDPOINT") ?? fileOpt(file.endpoint);
+  const rawMode = envOr(
+    "PADDOCK_WHISPER_MODE",
+    fileOr(file.mode, endpoint ? "remote" : "off"),
+  ).toLowerCase();
   const mode: WhisperMode = rawMode === "local" || rawMode === "remote" ? rawMode : "off";
   return {
     mode,
-    model: envOr("PADDOCK_WHISPER_MODEL", "base"),
+    model: envOr("PADDOCK_WHISPER_MODEL", fileOr(file.model, "base")),
     endpoint,
-    apiKey: envOpt("PADDOCK_WHISPER_API_KEY"),
-    language: envOpt("PADDOCK_WHISPER_LANGUAGE"),
-    maxUploadBytes: Number(envOr("PADDOCK_WHISPER_MAX_UPLOAD_BYTES", String(25 * 1024 * 1024))),
+    apiKey: envOpt("PADDOCK_WHISPER_API_KEY") ?? fileOpt(file.apiKey),
+    language: envOpt("PADDOCK_WHISPER_LANGUAGE") ?? fileOpt(file.language),
+    maxUploadBytes: Number(
+      envOr("PADDOCK_WHISPER_MAX_UPLOAD_BYTES", fileOr(file.maxUploadBytes, String(25 * 1024 * 1024))),
+    ),
   };
 }
 
@@ -342,18 +494,25 @@ function loadTranscriptionConfig(): TranscriptionConfig {
  * plain instance is unchanged; an operator running several instances from one
  * image sets `PADDOCK_BRAND_*` in each instance's env to tell them apart.
  */
-function loadBrandConfig(): BrandConfig {
+function loadBrandConfig(file: PaddockConfigFile["brand"] = {}): BrandConfig {
   return {
-    name: envOr("PADDOCK_BRAND_NAME", "Paddock"),
-    logo: envOr("PADDOCK_BRAND_LOGO", "🐎"),
-    accent: envOr("PADDOCK_BRAND_ACCENT", "#c2603c"),
+    name: envOr("PADDOCK_BRAND_NAME", fileOr(file.name, "Paddock")),
+    logo: envOr("PADDOCK_BRAND_LOGO", fileOr(file.logo, "🐎")),
+    accent: envOr("PADDOCK_BRAND_ACCENT", fileOr(file.accent, "#c2603c")),
   };
 }
 
 export function loadPaddockConfig(): PaddockConfig {
+  // The optional YAML instance-config file provides the BASE layer; env vars
+  // override it (precedence file < env). The file is located under the data dir,
+  // so resolve a BOOTSTRAP data dir from env/default first to find it — the file
+  // may then re-base the data dir for the resolved config below.
+  const bootstrapDataDir = abs(envOr("PADDOCK_DATA_DIR", "./data"));
+  const file = loadConfigFile(bootstrapDataDir);
+
   // Ensure the data root exists first so symlinks (e.g. /tmp -> /private/tmp on
   // macOS) resolve consistently for every derived path below.
-  const dataRoot = abs(envOr("PADDOCK_DATA_DIR", "./data"));
+  const dataRoot = abs(envOr("PADDOCK_DATA_DIR", fileOr(file.dataDir, "./data")));
   try {
     fs.mkdirSync(dataRoot, { recursive: true });
   } catch {
@@ -362,12 +521,18 @@ export function loadPaddockConfig(): PaddockConfig {
   // working_directory of keeper/scratch agents MUST be canonical so session
   // discovery (which encodes the real path) can find Claude transcripts.
   const dataDir = canonical(dataRoot);
-  const projectsRoot = canonical(envOr("PADDOCK_PROJECTS_DIR", path.join(dataRoot, "projects")));
-  const stateDir = canonical(envOr("PADDOCK_STATE_DIR", path.join(dataRoot, ".herdctl")));
-  const herdctlConfigPath = canonical(
-    envOr("PADDOCK_HERDCTL_CONFIG", path.join(dataRoot, "herdctl.yaml")),
+  const projectsRoot = canonical(
+    envOr("PADDOCK_PROJECTS_DIR", fileOr(file.projectsRoot, path.join(dataRoot, "projects"))),
   );
-  const scratchDir = canonical(envOr("PADDOCK_SCRATCH_DIR", path.join(dataRoot, "scratch")));
+  const stateDir = canonical(
+    envOr("PADDOCK_STATE_DIR", fileOr(file.stateDir, path.join(dataRoot, ".herdctl"))),
+  );
+  const herdctlConfigPath = canonical(
+    envOr("PADDOCK_HERDCTL_CONFIG", fileOr(file.herdctlConfigPath, path.join(dataRoot, "herdctl.yaml"))),
+  );
+  const scratchDir = canonical(
+    envOr("PADDOCK_SCRATCH_DIR", fileOr(file.scratchDir, path.join(dataRoot, "scratch"))),
+  );
 
   // packages/server/src/config.ts -> packages/web/dist
   const defaultWebDist = path.resolve(
@@ -376,31 +541,32 @@ export function loadPaddockConfig(): PaddockConfig {
   );
 
   return Object.freeze({
-    port: Number(envOr("PORT", "4000")),
-    host: envOr("HOST", "0.0.0.0"),
+    port: Number(envOr("PORT", fileOr(file.port, "4000"))),
+    host: envOr("HOST", fileOr(file.host, "0.0.0.0")),
     dataDir,
     projectsRoot,
     stateDir,
     herdctlConfigPath,
-    webDist: abs(envOr("PADDOCK_WEB_DIST", defaultWebDist)),
+    webDist: abs(envOr("PADDOCK_WEB_DIST", fileOr(file.webDist, defaultWebDist))),
     scratchDir,
-    auth: loadAuthConfig(),
-    devServers: loadDevServersConfig(),
-    transcription: loadTranscriptionConfig(),
-    brand: loadBrandConfig(),
-    keeperDriveMode: loadKeeperDriveMode(),
-    nativeSystemPrompt: loadNativeSystemPrompt(),
-    selfMcpEnabled: loadSelfMcpEnabled(),
-    selfMcpWriteEnabled: loadSelfMcpEnabled() && loadSelfMcpWriteEnabled(),
-    maxSpawnDepth: loadMaxSpawnDepth(),
-    logLevel: envOr("LOG_LEVEL", "info"),
-    browserMcp: process.env.PADDOCK_BROWSER_MCP === "1",
-    sweepMinIntervalMs: loadSweepMinIntervalMs(),
+    auth: loadAuthConfig(file.auth),
+    devServers: loadDevServersConfig(file.devServers),
+    transcription: loadTranscriptionConfig(file.transcription),
+    brand: loadBrandConfig(file.brand),
+    keeperDriveMode: loadKeeperDriveMode(file.keeperDriveMode),
+    nativeSystemPrompt: loadNativeSystemPrompt(file.nativeSystemPrompt),
+    selfMcpEnabled: loadSelfMcpEnabled(file.selfMcpEnabled),
+    selfMcpWriteEnabled:
+      loadSelfMcpEnabled(file.selfMcpEnabled) && loadSelfMcpWriteEnabled(file.selfMcpWriteEnabled),
+    maxSpawnDepth: loadMaxSpawnDepth(file.maxSpawnDepth),
+    logLevel: envOr("LOG_LEVEL", fileOr(file.logLevel, "info")),
+    browserMcp: loadBrowserMcp(file.browserMcp),
+    sweepMinIntervalMs: loadSweepMinIntervalMs(file.sweepMinIntervalMs),
     gitAuthor: {
-      name: envOr("PADDOCK_GIT_AUTHOR_NAME", "Paddock"),
-      email: envOr("PADDOCK_GIT_AUTHOR_EMAIL", "paddock@localhost"),
+      name: envOr("PADDOCK_GIT_AUTHOR_NAME", fileOr(file.gitAuthor?.name, "Paddock")),
+      email: envOr("PADDOCK_GIT_AUTHOR_EMAIL", fileOr(file.gitAuthor?.email, "paddock@localhost")),
     },
-    githubClientId: envOpt("PADDOCK_GITHUB_CLIENT_ID"),
+    githubClientId: envOpt("PADDOCK_GITHUB_CLIENT_ID") ?? fileOpt(file.githubClientId),
   });
 }
 
@@ -410,11 +576,25 @@ export function loadPaddockConfig(): PaddockConfig {
  * unset or invalid (non-finite / negative) so the SweepService default (5 min)
  * applies — preserving the pre-fold `envIntervalMs()` semantics exactly.
  */
-function loadSweepMinIntervalMs(): number | undefined {
-  const raw = envOpt("PADDOCK_SWEEP_MIN_INTERVAL_MS");
+function loadSweepMinIntervalMs(file?: PaddockConfigFile["sweepMinIntervalMs"]): number | undefined {
+  const raw = envOpt("PADDOCK_SWEEP_MIN_INTERVAL_MS") ?? fileOpt(file);
   if (raw === undefined) return undefined;
   const n = Number(raw);
   return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
+/**
+ * Resolve whether keeper + scratch agents receive the Playwright browser MCP
+ * (issue #269 fold). The env var keeps its exact literal-'1' semantics (any
+ * other set value — including `true` — disables it, matching pre-loader
+ * behaviour); only when the env var is UNSET does the config file provide the
+ * base, using the 1/true/yes convention shared by the other boolean knobs.
+ */
+function loadBrowserMcp(file?: PaddockConfigFile["browserMcp"]): boolean {
+  const env = process.env.PADDOCK_BROWSER_MCP;
+  if (env !== undefined) return env === "1";
+  const raw = fileOpt(file)?.toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes";
 }
 
 /**
@@ -423,8 +603,8 @@ function loadSweepMinIntervalMs(): number | undefined {
  * missing/blank/out-of-range value falls back to the default rather than failing
  * startup. A per-project override still wins at dispatch.
  */
-function loadMaxSpawnDepth(): number {
-  const raw = envOpt("PADDOCK_MAX_SPAWN_DEPTH");
+function loadMaxSpawnDepth(file?: PaddockConfigFile["maxSpawnDepth"]): number {
+  const raw = envOpt("PADDOCK_MAX_SPAWN_DEPTH") ?? fileOpt(file);
   if (raw === undefined) return DEFAULT_MAX_SPAWN_DEPTH;
   const n = Number(raw);
   return isValidMaxSpawnDepth(n) ? n : DEFAULT_MAX_SPAWN_DEPTH;
@@ -436,8 +616,8 @@ function loadMaxSpawnDepth(): number {
  * is also on (write implies read — enforced at the call site above). Accepts
  * 1/true/yes.
  */
-function loadSelfMcpWriteEnabled(): boolean {
-  const raw = envOr("PADDOCK_SELF_MCP_WRITE", "false").toLowerCase();
+function loadSelfMcpWriteEnabled(file?: PaddockConfigFile["selfMcpWriteEnabled"]): boolean {
+  const raw = envOr("PADDOCK_SELF_MCP_WRITE", fileOr(file, "false")).toLowerCase();
   return raw === "1" || raw === "true" || raw === "yes";
 }
 
@@ -446,8 +626,8 @@ function loadSelfMcpWriteEnabled(): boolean {
  * Defaults to OFF so a plain instance never advertises it; opt in per instance
  * with `PADDOCK_SELF_MCP=1`. Accepts 1/true/yes.
  */
-function loadSelfMcpEnabled(): boolean {
-  const raw = envOr("PADDOCK_SELF_MCP", "false").toLowerCase();
+function loadSelfMcpEnabled(file?: PaddockConfigFile["selfMcpEnabled"]): boolean {
+  const raw = envOr("PADDOCK_SELF_MCP", fileOr(file, "false")).toLowerCase();
   return raw === "1" || raw === "true" || raw === "yes";
 }
 
@@ -458,8 +638,8 @@ function loadSelfMcpEnabled(): boolean {
  * `PADDOCK_KEEPER_NATIVE_PROMPT` to 0/false/no to fall back to the terse replace
  * prompt. Intentionally independent of `PADDOCK_DEV_SERVERS_ENABLED`.
  */
-function loadNativeSystemPrompt(): boolean {
-  const raw = envOr("PADDOCK_KEEPER_NATIVE_PROMPT", "true").toLowerCase();
+function loadNativeSystemPrompt(file?: PaddockConfigFile["nativeSystemPrompt"]): boolean {
+  const raw = envOr("PADDOCK_KEEPER_NATIVE_PROMPT", fileOr(file, "true")).toLowerCase();
   return !(raw === "0" || raw === "false" || raw === "no");
 }
 
@@ -469,8 +649,8 @@ function loadNativeSystemPrompt(): boolean {
  * default rather than failing startup. A per-project `driveMode` still overrides
  * this at dispatch.
  */
-function loadKeeperDriveMode(): DriveMode {
-  const raw = envOpt("PADDOCK_KEEPER_DRIVE_MODE")?.toLowerCase();
+function loadKeeperDriveMode(file?: PaddockConfigFile["keeperDriveMode"]): DriveMode {
+  const raw = (envOpt("PADDOCK_KEEPER_DRIVE_MODE") ?? fileOpt(file))?.toLowerCase();
   return raw && isKnownDriveMode(raw) ? raw : KEEPER_DEFAULT_DRIVE_MODE;
 }
 

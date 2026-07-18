@@ -5,6 +5,8 @@
  * points PADDOCK_DATA_DIR at a throwaway tmp dir (loadPaddockConfig mkdirs it).
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
 import { loadPaddockConfig } from "../../src/config.js";
 import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
 
@@ -185,5 +187,200 @@ describe("loadPaddockConfig: folded env knobs (#269)", () => {
     expect(loadPaddockConfig().githubClientId).toBe("Iv1.abc");
     process.env.PADDOCK_GITHUB_CLIENT_ID = "   ";
     expect(loadPaddockConfig().githubClientId).toBeUndefined();
+  });
+});
+
+/**
+ * YAML instance-config file loader (issue #270 / DD-5) — precedence file < env.
+ * Each case points PADDOCK_DATA_DIR at a throwaway tmp dir and writes the
+ * optional `paddock.config.yaml` under it; the surrounding env vars that could
+ * shadow file values are cleared so the file layer is observed in isolation.
+ */
+describe("loadPaddockConfig: YAML instance-config file (#270)", () => {
+  // Every env var the file layer can be overridden by, plus the file-path knob.
+  const FILE_ENV_KEYS = [
+    "PADDOCK_DATA_DIR",
+    "PADDOCK_CONFIG",
+    "PORT",
+    "HOST",
+    "PADDOCK_AUTH_MODE",
+    "PADDOCK_AUTH_JWKS_URL",
+    "PADDOCK_BRAND_NAME",
+    "PADDOCK_KEEPER_DRIVE_MODE",
+    "PADDOCK_MAX_SPAWN_DEPTH",
+    "PADDOCK_DEV_SERVERS_ENABLED",
+    "PADDOCK_SELF_MCP",
+    "PADDOCK_SELF_MCP_WRITE",
+    "PADDOCK_BROWSER_MCP",
+    "PADDOCK_SWEEP_MIN_INTERVAL_MS",
+    "PADDOCK_GIT_AUTHOR_NAME",
+    "LOG_LEVEL",
+  ];
+
+  let dataDir: string;
+  let saved: Record<string, string | undefined>;
+
+  const writeConfig = (body: string, dir = dataDir): string => {
+    const p = path.join(dir, "paddock.config.yaml");
+    fs.writeFileSync(p, body, "utf8");
+    return p;
+  };
+
+  beforeEach(async () => {
+    dataDir = await makeTmpDir("paddock-config-file-");
+    saved = {};
+    for (const k of FILE_ENV_KEYS) {
+      saved[k] = process.env[k];
+      delete process.env[k];
+    }
+    process.env.PADDOCK_DATA_DIR = dataDir;
+  });
+  afterEach(async () => {
+    for (const k of FILE_ENV_KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+    await rmTmpDir(dataDir);
+  });
+
+  it("no file present → env-only behaviour is unchanged (a no-op)", () => {
+    const cfg = loadPaddockConfig();
+    expect(cfg.port).toBe(4000);
+    expect(cfg.host).toBe("0.0.0.0");
+    expect(cfg.auth.mode).toBe("none");
+    expect(cfg.brand.name).toBe("Paddock");
+    expect(cfg.keeperDriveMode).toBe("batch");
+    expect(cfg.maxSpawnDepth).toBe(1);
+    expect(cfg.devServers.enabled).toBe(false);
+    expect(cfg.gitAuthor).toEqual({ name: "Paddock", email: "paddock@localhost" });
+  });
+
+  it("an empty (comments-only) file is also a no-op", () => {
+    writeConfig("# nothing to see here\n");
+    expect(loadPaddockConfig().brand.name).toBe("Paddock");
+  });
+
+  it("populates config from file values across scalar + nested sections", () => {
+    writeConfig(
+      [
+        "port: 5123",
+        "host: 127.0.0.1",
+        "logLevel: debug",
+        "keeperDriveMode: session",
+        "maxSpawnDepth: 2",
+        "browserMcp: true",
+        "sweepMinIntervalMs: 250",
+        "auth:",
+        "  mode: jwt",
+        "  jwksUrl: https://idp.example/jwks",
+        "brand:",
+        "  name: Homelab",
+        "  accent: '#123456'",
+        "devServers:",
+        "  enabled: true",
+        "selfMcpEnabled: true",
+        "selfMcpWriteEnabled: true",
+        "gitAuthor:",
+        "  name: Ed",
+        "  email: ed@example.com",
+      ].join("\n") + "\n",
+    );
+    const cfg = loadPaddockConfig();
+    expect(cfg.port).toBe(5123);
+    expect(cfg.host).toBe("127.0.0.1");
+    expect(cfg.logLevel).toBe("debug");
+    expect(cfg.keeperDriveMode).toBe("session");
+    expect(cfg.maxSpawnDepth).toBe(2);
+    expect(cfg.browserMcp).toBe(true);
+    expect(cfg.sweepMinIntervalMs).toBe(250);
+    expect(cfg.auth.mode).toBe("jwt");
+    expect(cfg.auth.jwksUrl).toBe("https://idp.example/jwks");
+    expect(cfg.brand).toMatchObject({ name: "Homelab", accent: "#123456" });
+    expect(cfg.devServers.enabled).toBe(true);
+    expect(cfg.selfMcpEnabled).toBe(true);
+    expect(cfg.selfMcpWriteEnabled).toBe(true);
+    expect(cfg.gitAuthor).toEqual({ name: "Ed", email: "ed@example.com" });
+  });
+
+  it("env overrides a file value (precedence file < env), file base still applies elsewhere", () => {
+    writeConfig(["brand:", "  name: FromFile", "auth:", "  mode: jwt"].join("\n") + "\n");
+    process.env.PADDOCK_BRAND_NAME = "FromEnv";
+    const cfg = loadPaddockConfig();
+    // Env wins for the shadowed key…
+    expect(cfg.brand.name).toBe("FromEnv");
+    // …while an un-shadowed file value is still honoured.
+    expect(cfg.auth.mode).toBe("jwt");
+  });
+
+  it("env overrides a file boolean too (dev servers off via env beats file `true`)", () => {
+    writeConfig(["devServers:", "  enabled: true"].join("\n") + "\n");
+    process.env.PADDOCK_DEV_SERVERS_ENABLED = "false";
+    expect(loadPaddockConfig().devServers.enabled).toBe(false);
+  });
+
+  it("PADDOCK_BROWSER_MCP keeps literal-'1' env semantics over any file value", () => {
+    writeConfig("browserMcp: true\n");
+    // File alone enables it…
+    expect(loadPaddockConfig().browserMcp).toBe(true);
+    // …but a non-'1' env value explicitly disables it (unchanged env semantics).
+    process.env.PADDOCK_BROWSER_MCP = "true";
+    expect(loadPaddockConfig().browserMcp).toBe(false);
+    process.env.PADDOCK_BROWSER_MCP = "1";
+    expect(loadPaddockConfig().browserMcp).toBe(true);
+  });
+
+  it("honours an explicit PADDOCK_CONFIG path outside the data dir", async () => {
+    const other = await makeTmpDir("paddock-config-explicit-");
+    try {
+      const p = writeConfig("brand:\n  name: Explicit\n", other);
+      process.env.PADDOCK_CONFIG = p;
+      expect(loadPaddockConfig().brand.name).toBe("Explicit");
+    } finally {
+      await rmTmpDir(other);
+    }
+  });
+
+  it("throws a clear error when PADDOCK_CONFIG points at a missing file", () => {
+    process.env.PADDOCK_CONFIG = path.join(dataDir, "does-not-exist.yaml");
+    expect(() => loadPaddockConfig()).toThrow(/does not exist/);
+  });
+
+  it("throws a clear error on malformed YAML (not a silent crash)", () => {
+    writeConfig("port: 5000\n  bad: : indentation:\n:::\n");
+    expect(() => loadPaddockConfig()).toThrow(/parse .*config file/i);
+  });
+
+  it("throws a clear error when the file is a YAML list instead of a mapping", () => {
+    writeConfig("- one\n- two\n");
+    expect(() => loadPaddockConfig()).toThrow(/must contain a YAML mapping/);
+  });
+
+  it("treats an empty nested section (valueless key → null) as absent, not a crash", () => {
+    // `brand:` / `auth:` with nothing after them parse to null; must NOT throw.
+    writeConfig(["port: 4000", "brand:", "auth:", "devServers:"].join("\n") + "\n");
+    let cfg!: ReturnType<typeof loadPaddockConfig>;
+    expect(() => (cfg = loadPaddockConfig())).not.toThrow();
+    expect(cfg.port).toBe(4000);
+    expect(cfg.brand.name).toBe("Paddock");
+    expect(cfg.auth.mode).toBe("none");
+    expect(cfg.devServers.enabled).toBe(false);
+  });
+
+  it("treats a null scalar (valueless key) as absent, falling back to the default", () => {
+    writeConfig(["port:", "logLevel:", "maxSpawnDepth:"].join("\n") + "\n");
+    const cfg = loadPaddockConfig();
+    expect(cfg.port).toBe(4000);
+    expect(cfg.logLevel).toBe("info");
+    expect(cfg.maxSpawnDepth).toBe(1);
+  });
+
+  it("an empty section next to a populated one still honours the populated one", () => {
+    writeConfig(
+      ["brand:", "auth:", "  mode: jwt", "  jwksUrl: https://idp.example/jwks"].join("\n") + "\n",
+    );
+    const cfg = loadPaddockConfig();
+    expect(cfg.brand.name).toBe("Paddock"); // empty section → default
+    expect(cfg.auth.mode).toBe("jwt"); // sibling section still applies
+    expect(cfg.auth.jwksUrl).toBe("https://idp.example/jwks");
   });
 });

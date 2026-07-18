@@ -1,13 +1,56 @@
 # Configuration reference
 
-Paddock is configured **entirely from the environment** — there are no config
-files. Every setting is read once at startup (`packages/server/src/config.ts`),
-normalised, and frozen. This page is the canonical list of every variable the
-server reads, its default (taken from the code, not guessed), and what it does.
+Paddock is configured from the **environment**, optionally layered over a
+**YAML instance-config file** — precedence **file < env** (the file provides the
+base, environment variables override it). Every setting is resolved once at
+startup (`packages/server/src/config.ts`), normalised, and frozen. This page is
+the canonical list of every variable the server reads, its default (taken from
+the code, not guessed), and what it does.
 
-For a runnable starting point, copy [`.env.example`](../.env.example) to `.env`
-and adjust. Authentication is summarised below but documented in full in
-[AUTH.md](../AUTH.md).
+Environment-only remains fully supported and is the default: with no file
+present, behaviour is exactly as it was before the loader existed. For a runnable
+starting point, copy [`.env.example`](../.env.example) to `.env` and adjust.
+Authentication is summarised below but documented in full in [AUTH.md](../AUTH.md).
+
+## Instance-config file (YAML)
+
+An optional YAML file provides the **base layer** for every setting below; any
+`PADDOCK_*` (or plain, e.g. `PORT`) environment variable still wins over the
+file value it shadows. This is the same file the schedule and (later) hook
+declarations will live in, and it matches the repo's YAML house style
+(`project.yaml`, the generated `herdctl.yaml`).
+
+- **Location.** `PADDOCK_CONFIG` (an explicit path) if set, otherwise
+  `<PADDOCK_DATA_DIR>/paddock.config.yaml`.
+- **Absent file → no-op.** If the default file doesn't exist, Paddock is
+  env-only exactly as before. (An explicit `PADDOCK_CONFIG` that points at a
+  *missing* file is a misconfiguration and fails startup with a clear error, as
+  does a present-but-malformed file — a parse error, or a top-level list/scalar
+  instead of a mapping.)
+- **Shape.** Keys mirror the resolved config: top-level scalars (`port`, `host`,
+  `logLevel`, `keeperDriveMode`, `maxSpawnDepth`, `browserMcp`,
+  `sweepMinIntervalMs`, `selfMcpEnabled`, …) plus nested sections `auth`,
+  `brand`, `devServers`, `transcription`, and `gitAuthor`. Unknown keys are
+  ignored. Each value is coerced through the same parsing an env value would get,
+  so the same default/validation rules (below) apply.
+
+```yaml
+# <data>/paddock.config.yaml — every value here is overridable by its env var
+port: 4000
+logLevel: info
+keeperDriveMode: session
+auth:
+  mode: jwt
+  jwksUrl: https://idp.example/jwks
+brand:
+  name: Homelab
+  accent: "#3c6ec2"
+devServers:
+  enabled: true
+gitAuthor:
+  name: Paddock
+  email: paddock@localhost
+```
 
 ## How values are parsed
 
@@ -36,6 +79,7 @@ Consequences worth knowing:
 
 | Variable | Default | Required | Purpose |
 |----------|---------|----------|---------|
+| `PADDOCK_CONFIG` | `<data>/paddock.config.yaml` | no | Path to the optional [YAML instance-config file](#instance-config-file-yaml) (base layer; env overrides it). When set explicitly, a missing file fails startup; unset, an absent default file is a no-op. |
 | `PADDOCK_DATA_DIR` | `./data` | no | Data root. **All paths below default to subdirectories of this** — set it and everything cascades. Holds projects, scratch, generated herdctl config, and state. |
 | `PADDOCK_PROJECTS_DIR` | `<data>/projects` | no | Root that contains per-project directories (each is a keeper's working dir). |
 | `PADDOCK_SCRATCH_DIR` | `<data>/scratch` | no | Working directory for one-off / scratch chats. |
@@ -48,8 +92,10 @@ Consequences worth knowing:
 
 > **`PADDOCK_CONFIG__*` is not implemented.** There is no generic
 > `PADDOCK_CONFIG__foo__bar` → nested-herdctl-key override mechanism in this tree.
-> (The similarly-named `window.__PADDOCK_CONFIG__` is a browser global the server
-> injects into `index.html` to carry branding to the SPA — not an env var.)
+> (Not to be confused with `PADDOCK_CONFIG`, above — the single-underscore var is
+> the path to the YAML instance-config file. The similarly-named
+> `window.__PADDOCK_CONFIG__` is a browser global the server injects into
+> `index.html` to carry branding to the SPA — not an env var.)
 
 ## Authentication
 
