@@ -141,6 +141,36 @@ export function resolveHooksMcpEnabled(
 }
 
 /**
+ * Merge a partial `set_hook` update (Epic G / G5) over the existing hook so an edit
+ * that OMITS a field preserves it. `ProjectStore.setHook` full-REPLACES the named
+ * record, so without this a caller that changes only the prompt would silently wipe
+ * the hook's capability grant (and vice versa). `incoming` carries ONLY the fields
+ * the caller supplied (the MCP handler builds it that way), so a shallow overlay is
+ * exactly "patch the provided fields": a supplied `capabilities` replaces the whole
+ * set (the caller gave a new one — intended), while an omitted one is inherited. A
+ * brand-new hook (`existing` null) starts from `{}` and defaults `enabled: false`
+ * (GG-3, safe-create). Returns an untrusted record for {@link sanitizeHook} to
+ * validate (so it stays `Record<string, unknown>`, never a typed `PaddockHook`).
+ */
+export function mergeHookUpdate(
+  existing: PaddockHook | null | undefined,
+  incoming: Record<string, unknown>,
+): Record<string, unknown> {
+  const base: Record<string, unknown> = existing
+    ? {
+        event: existing.event,
+        ...(existing.capabilities ? { capabilities: existing.capabilities } : {}),
+        ...(existing.prompt !== undefined ? { prompt: existing.prompt } : {}),
+        ...(existing.promptFile !== undefined ? { promptFile: existing.promptFile } : {}),
+        enabled: existing.enabled === true,
+      }
+    : {};
+  const record = { ...base, ...incoming };
+  if (record.enabled === undefined) record.enabled = false;
+  return record;
+}
+
+/**
  * One tool a hook may be granted, for the capability picker (G4). `name` is the
  * literal `allowed_tools` pattern the hook agent is registered with; `group`
  * clusters them in the UI; `description` says precisely what granting it lets the

@@ -17,6 +17,7 @@ import {
   hookPromptFileAbsPath,
   isValidHookName,
   resolveHooksMcpEnabled,
+  mergeHookUpdate,
   HOOK_PROMPT_DIR,
   HOOK_DEFAULT_MAX_TURNS,
 } from "../../src/hook-config.js";
@@ -142,6 +143,68 @@ describe("resolveHooksMcpEnabled (G5)", () => {
   it("an absent override inherits the instance default", () => {
     expect(resolveHooksMcpEnabled(undefined, true)).toBe(true);
     expect(resolveHooksMcpEnabled(undefined, false)).toBe(false);
+  });
+});
+
+describe("mergeHookUpdate (G5 partial set_hook)", () => {
+  const existing = {
+    event: "onArchive" as const,
+    capabilities: { allowedTools: ["Bash"], maxTurns: 12 },
+    prompt: "spin down servers",
+    enabled: true,
+  };
+
+  it("a brand-new hook (no existing) uses the incoming record + defaults enabled:false", () => {
+    expect(mergeHookUpdate(null, { event: "onArchive", prompt: "x" })).toEqual({
+      event: "onArchive",
+      prompt: "x",
+      enabled: false,
+    });
+  });
+
+  it("honors an explicit enabled on a brand-new hook", () => {
+    expect(mergeHookUpdate(undefined, { event: "onArchive", prompt: "x", enabled: true })).toEqual({
+      event: "onArchive",
+      prompt: "x",
+      enabled: true,
+    });
+  });
+
+  it("preserves capabilities + enabled when an update changes only the prompt (Warren's bug)", () => {
+    // The reported failure: edit only the prompt → capabilities must NOT be wiped.
+    expect(mergeHookUpdate(existing, { event: "onArchive", prompt: "new prompt" })).toEqual({
+      event: "onArchive",
+      capabilities: { allowedTools: ["Bash"], maxTurns: 12 },
+      prompt: "new prompt",
+      enabled: true,
+    });
+  });
+
+  it("a supplied capabilities set REPLACES the existing one (caller gave a new grant)", () => {
+    expect(
+      mergeHookUpdate(existing, { event: "onArchive", capabilities: { allowedTools: ["Read"] } }),
+    ).toEqual({
+      event: "onArchive",
+      capabilities: { allowedTools: ["Read"] },
+      prompt: "spin down servers",
+      enabled: true,
+    });
+  });
+
+  it("an omitted enabled preserves the existing armed state (doesn't silently disarm)", () => {
+    const out = mergeHookUpdate(existing, { event: "onArchive", prompt: "p" });
+    expect(out.enabled).toBe(true);
+    const out2 = mergeHookUpdate({ ...existing, enabled: false }, { event: "onArchive", prompt: "p" });
+    expect(out2.enabled).toBe(false);
+  });
+
+  it("carries promptFile through when the existing hook uses one", () => {
+    const withFile = { event: "onArchive" as const, promptFile: "cleanup.md", enabled: false };
+    expect(mergeHookUpdate(withFile, { event: "onArchive", enabled: true })).toEqual({
+      event: "onArchive",
+      promptFile: "cleanup.md",
+      enabled: true,
+    });
   });
 });
 

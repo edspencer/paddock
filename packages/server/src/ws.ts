@@ -117,6 +117,7 @@ import type { HookService } from "./hooks.js";
 import {
   hookPromptFileAbsPath,
   resolveHooksMcpEnabled,
+  mergeHookUpdate,
   type HookDto,
   type HookEvent,
 } from "./hook-config.js";
@@ -1367,14 +1368,13 @@ export function makeChatHandler(deps: {
         },
         setHook: async (projectSlug, name, hook) => {
           if (!deps.hooks) throw new Error("hook management is unavailable");
-          // Safe-create default (GG-3): a brand-new hook is disabled unless the caller
-          // said otherwise; an update with no `enabled` preserves the existing value so
-          // editing a hook's prompt doesn't silently disarm it.
-          const record = { ...hook };
-          if (record.enabled === undefined) {
-            const existing = await deps.hooks.get(projectSlug, name).catch(() => null);
-            record.enabled = existing?.enabled === true;
-          }
+          // `set_hook` is a PARTIAL update, but `ProjectStore.setHook` full-REPLACES
+          // the named record — so an edit that omits a field would silently wipe it
+          // (e.g. changing only the prompt drops the hook's tool grant). mergeHookUpdate
+          // overlays the caller-supplied fields on the existing hook (preserving omitted
+          // capabilities/prompt/promptFile/enabled) and safe-creates a new hook disabled.
+          const existing = await deps.hooks.get(projectSlug, name).catch(() => null);
+          const record = mergeHookUpdate(existing, hook);
           const dto = await deps.hooks.set(projectSlug, name, record);
           return toSelfMcpHook(dto);
         },

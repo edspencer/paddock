@@ -749,7 +749,9 @@ function setHookHandler(write: SelfMcpWriteContext) {
       }
 
       // Assemble the PaddockHook record (camelCase, as sanitizeHook expects). Only
-      // set fields the caller supplied so an update doesn't clobber unspecified ones.
+      // set fields the caller actually supplied — the write.setHook callback merges
+      // this partial over the existing hook, so an update that omits a field
+      // preserves it rather than wiping it (create-or-update patch semantics).
       const hook: Record<string, unknown> = { event };
       if (prompt) hook.prompt = prompt;
       if (promptFile) hook.promptFile = promptFile;
