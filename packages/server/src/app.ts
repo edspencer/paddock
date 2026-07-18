@@ -31,6 +31,7 @@ import { ArchiveStore } from "./archive.js";
 import { ReadStateStore } from "./read-state.js";
 import { QueuedMessageStore } from "./queued-message.js";
 import { RunProvenanceStore } from "./run-provenance.js";
+import { ScheduleSessionStore } from "./schedule-session.js";
 
 export interface BuiltApp {
   app: FastifyInstance;
@@ -101,6 +102,9 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   // (origin human/scheduled/spawned + spawn depth) so #262 can depth-gate
   // spawning and #267 can badge provenance. A1 only carries/persists the marker.
   const runProvenance = new RunProvenanceStore(cfg.dataDir);
+  // Owned-session sidecar for accreting schedules (issue #265 / DD-2): maps a
+  // `resume_session: true` schedule to the one chat it accretes into across fires.
+  const scheduleSessions = new ScheduleSessionStore(cfg.dataDir);
   // Store for files shared via mcp__paddock__send_file (issue #112). Copies live
   // outside any project working dir so they never show up as untracked repo files.
   const attachments = new AttachmentStore(path.join(cfg.dataDir, "attachments"));
@@ -138,7 +142,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   });
   await registerRoutes(app, { projects, herdctl, git, githubAuth, transcriber, archive, readState, runProvenance, attachments, cfg });
 
-  const chatHandler = makeChatHandler({ herdctl, projects, sweep, attachments, queuedMessage, runProvenance, archive, cfg });
+  const chatHandler = makeChatHandler({ herdctl, projects, sweep, attachments, queuedMessage, runProvenance, archive, scheduleSessions, cfg });
   await app.register(async (scoped) => {
     scoped.get("/ws", { websocket: true }, (socket) => {
       void chatHandler(socket);

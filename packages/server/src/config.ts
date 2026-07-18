@@ -170,6 +170,15 @@ export interface PaddockConfig {
    */
   maxSpawnDepth: number;
   /**
+   * Per-deployment gate for programmatic schedule mutation (issue #265 / DD-7).
+   * When ON, the FleetManager is constructed with `allowScheduleMutation: true`,
+   * so the runtime add/remove APIs (`setAgentSchedule`/`removeAgentSchedule`, the
+   * seam the D4 schedules UI calls) are permitted; OFF (default) makes them throw.
+   * Declaring schedules statically in `project.yaml` is unaffected either way.
+   * Driven by `PADDOCK_SCHEDULE_MUTATION`; accepts 1/true/yes.
+   */
+  scheduleMutationEnabled: boolean;
+  /**
    * Log level for the server's structured logger (Fastify/pino). Driven by
    * `LOG_LEVEL`; default `info`.
    */
@@ -250,6 +259,7 @@ export interface PaddockConfigFile {
   selfMcpEnabled?: boolean | string;
   selfMcpWriteEnabled?: boolean | string;
   maxSpawnDepth?: number | string;
+  scheduleMutationEnabled?: boolean | string;
   logLevel?: string;
   browserMcp?: boolean | string;
   sweepMinIntervalMs?: number | string;
@@ -559,6 +569,7 @@ export function loadPaddockConfig(): PaddockConfig {
     selfMcpWriteEnabled:
       loadSelfMcpEnabled(file.selfMcpEnabled) && loadSelfMcpWriteEnabled(file.selfMcpWriteEnabled),
     maxSpawnDepth: loadMaxSpawnDepth(file.maxSpawnDepth),
+    scheduleMutationEnabled: loadScheduleMutationEnabled(file.scheduleMutationEnabled),
     logLevel: envOr("LOG_LEVEL", fileOr(file.logLevel, "info")),
     browserMcp: loadBrowserMcp(file.browserMcp),
     sweepMinIntervalMs: loadSweepMinIntervalMs(file.sweepMinIntervalMs),
@@ -608,6 +619,19 @@ function loadMaxSpawnDepth(file?: PaddockConfigFile["maxSpawnDepth"]): number {
   if (raw === undefined) return DEFAULT_MAX_SPAWN_DEPTH;
   const n = Number(raw);
   return isValidMaxSpawnDepth(n) ? n : DEFAULT_MAX_SPAWN_DEPTH;
+}
+
+/**
+ * Resolve the per-deployment schedule-mutation gate (issue #265 / DD-7). Defaults
+ * OFF so a plain instance can't have its schedules mutated programmatically; an
+ * operator opts in with `PADDOCK_SCHEDULE_MUTATION=1` (or the config file). Accepts
+ * 1/true/yes. Static `project.yaml` schedules are armed regardless of this flag.
+ */
+function loadScheduleMutationEnabled(
+  file?: PaddockConfigFile["scheduleMutationEnabled"],
+): boolean {
+  const raw = envOr("PADDOCK_SCHEDULE_MUTATION", fileOr(file, "false")).toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes";
 }
 
 /**
