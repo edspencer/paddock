@@ -732,19 +732,19 @@ export function makeChatHandler(deps: {
    * schedule's `promptFile` (Paddock-only, `.paddock/schedules/*.md`, git-tracked +
    * keeper-editable) is read FRESH here at fire time — so a keeper's edit takes
    * effect on the very next fire with no agent re-register — and forwarded as a
-   * plain prompt string. Falls back to the inline prompt (herdctl's armed copy,
+   * plain prompt string. Falls back to the inline prompt (the caller's armed copy,
    * else the live project record's) when there is no file or it can't be read.
-   * `herdctlSchedule` is what herdctl armed (no `promptFile`); the live project
-   * record still carries `promptFile`, so we read it off `project.schedules`.
+   * `armed.prompt` is what herdctl armed (no `promptFile`); the live project record
+   * still carries `promptFile`, so we read it off `project.schedules`.
    */
   async function resolveSchedulePrompt(
     project: Awaited<ReturnType<typeof deps.projects.get>>,
     scheduleName: string,
-    herdctlSchedule: TriggerInfo["schedule"],
+    armed: { prompt?: string },
   ): Promise<string> {
     const rec = project.schedules?.[scheduleName];
     const inline =
-      (typeof herdctlSchedule.prompt === "string" ? herdctlSchedule.prompt : rec?.prompt) ?? "";
+      (typeof armed.prompt === "string" ? armed.prompt : rec?.prompt) ?? "";
     if (rec?.promptFile) {
       const abs = schedulePromptFileAbsPath(project.workingDir, rec.promptFile);
       if (abs) {
@@ -755,35 +755,40 @@ export function makeChatHandler(deps: {
     return inline;
   }
 
-  // Drive scheduler-fired chats onto the hub (issue #265 / DD-1, DD-2). herdctl's
-  // cron engine fires a project keeper's declared schedule and routes it HERE
-  // (setScheduleTriggerHandler) instead of running it headless — so a "cron chat"
-  // is a first-class Paddock chat: it streams live, drives the sidebar dot, is
-  // re-attachable, and (crucially) is NEVER `isSidechain`-hidden, because we run it
-  // via our OWN startAgentTurn/hub rather than herdctl's internal `--resume` path.
-  //
-  // `resume_session` drives new-vs-accrete (DD-2): `false` → a FRESH chat every fire
-  // (`resume: null`); `true` → resume the schedule's ONE owned session (created on
-  // the first fire, remembered in the ScheduleSessionStore, reused thereafter) so a
-  // "manager" accretes a single transcript. origin `scheduled`, depth 0 — a cron is
-  // a root trigger exactly like a human (A1/#261), so a NEW chat is stamped
-  // `scheduled` (badgeable by #267) while a resumed accreting chat keeps its marker.
-  deps.herdctl.onScheduleTrigger(async (info: TriggerInfo) => {
-    const agentName = info.agent.name;
-    const slug = keeperSlugFromAgent(agentName);
-    // Only keeper agents carry Paddock schedules; a non-keeper trigger (there are
-    // none today) has nowhere sensible to route, so ignore it rather than guess.
-    if (!slug) return;
-    const project = await deps.projects.get(slug).catch(() => null);
-    if (!project) return;
-
-    const scheduleName = info.scheduleName;
-    const prompt = await resolveSchedulePrompt(project, scheduleName, info.schedule);
+  /**
+   * Run one scheduled fire of `scheduleName` on `project` as a first-class chat on
+   * the hub — shared (issue #266 / D4) by BOTH herdctl's cron-fired path (the
+   * `onScheduleTrigger` handler below) and the UI's "trigger now" action (the
+   * `POST …/schedules/:name/trigger` route calls the exposed {@link fireSchedule}).
+   *
+   * We run the turn via our OWN {@link startAgentTurn}/hub rather than herdctl's
+   * internal `--resume` path, so the run is a first-class Paddock chat: it streams
+   * live, drives the sidebar dot, is re-attachable, and is NEVER `isSidechain`-hidden.
+   *
+   * `resumeSession` drives new-vs-accrete (DD-2): `false` → a FRESH chat every fire
+   * (`resume: null`); `true` → resume the schedule's ONE owned session (created on
+   * the first fire, remembered in the ScheduleSessionStore, reused thereafter) so a
+   * "manager" accretes a single transcript. `armedPrompt` is the inline prompt from
+   * herdctl's armed copy when a cron fire supplies one (else the live project record
+   * / a `promptFile` is read fresh). origin `scheduled`, depth 0 — a cron (or a
+   * manual trigger) is a root trigger exactly like a human (A1/#261), so a NEW chat
+   * is stamped `scheduled` (badgeable by #267) while a resumed accreting chat keeps
+   * its marker. Resolves the created/resumed session id, or `null` if the turn never
+   * produced one (its own failure frame is already emitted).
+   */
+  async function fireScheduleForProject(
+    project: Awaited<ReturnType<typeof deps.projects.get>>,
+    scheduleName: string,
+    resumeSession: boolean,
+    armedPrompt?: string,
+  ): Promise<string | null> {
+    const slug = project.slug;
+    const agentName = keeperAgentName(slug);
+    const prompt = await resolveSchedulePrompt(project, scheduleName, { prompt: armedPrompt });
 
     // resume_session: true accretes into an owned session; false starts fresh.
-    const accrete = info.schedule.resume_session === true;
     let resume: string | null = null;
-    if (accrete && deps.scheduleSessions) {
+    if (resumeSession && deps.scheduleSessions) {
       const owned = await deps.scheduleSessions.get(slug, scheduleName).catch(() => undefined);
       if (owned && (await deps.herdctl.sessionExists(project, owned).catch(() => false))) {
         resume = owned;
@@ -809,15 +814,53 @@ export function makeChatHandler(deps: {
       });
       // First fire of an accreting schedule: remember the chat it created so the
       // next fire resumes THIS transcript (a resume already had an id).
-      if (accrete && !resume && deps.scheduleSessions) {
+      if (resumeSession && !resume && deps.scheduleSessions) {
         await deps.scheduleSessions.set(slug, scheduleName, sessionId).catch(() => undefined);
       }
+      return sessionId;
     } catch {
       // startAgentTurn rejects only if the turn never produced a session id; its
       // own failure frame is already emitted. Swallow so the scheduler records the
       // fire complete and computes the next run — a transient failure shouldn't
       // wedge the schedule.
+      return null;
     }
+  }
+
+  /**
+   * Manually fire a project's schedule NOW (issue #266 / D4), reused by the
+   * `POST …/schedules/:name/trigger` route. Resolves the live project + its schedule
+   * record (so `resume_session` / `prompt` / `promptFile` come straight from
+   * project.yaml, exactly as a cron fire would see them) and runs it via the shared
+   * {@link fireScheduleForProject}. Returns the started chat's session id, or `null`
+   * if the project/schedule is gone or the turn never produced a session.
+   */
+  async function fireSchedule(slug: string, scheduleName: string): Promise<string | null> {
+    const project = await deps.projects.get(slug).catch(() => null);
+    if (!project) return null;
+    const rec = project.schedules?.[scheduleName];
+    if (!rec) return null;
+    return fireScheduleForProject(project, scheduleName, rec.resume_session === true, rec.prompt);
+  }
+
+  // Drive scheduler-fired chats onto the hub (issue #265 / DD-1, DD-2). herdctl's
+  // cron engine fires a project keeper's declared schedule and routes it HERE
+  // (setScheduleTriggerHandler) instead of running it headless.
+  deps.herdctl.onScheduleTrigger(async (info: TriggerInfo) => {
+    const slug = keeperSlugFromAgent(info.agent.name);
+    // Only keeper agents carry Paddock schedules; a non-keeper trigger (there are
+    // none today) has nowhere sensible to route, so ignore it rather than guess.
+    if (!slug) return;
+    const project = await deps.projects.get(slug).catch(() => null);
+    if (!project) return;
+    const armed =
+      typeof info.schedule.prompt === "string" ? info.schedule.prompt : undefined;
+    await fireScheduleForProject(
+      project,
+      info.scheduleName,
+      info.schedule.resume_session === true,
+      armed,
+    );
   });
 
   /**
@@ -1283,7 +1326,7 @@ export function makeChatHandler(deps: {
     return Promise.race([idKnown, timeout]);
   }
 
-  return async function handle(socket: WebSocket): Promise<void> {
+  const handle = async function handle(socket: WebSocket): Promise<void> {
     const send = (m: ServerMessage) => {
       if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(m));
     };
@@ -1877,4 +1920,10 @@ export function makeChatHandler(deps: {
       }
     };
   };
+
+  // The socket handler PLUS the manual schedule-fire entrypoint (issue #266 / D4):
+  // the `POST …/schedules/:name/trigger` route calls `fireSchedule` to run a
+  // schedule on demand through the exact same hub path a cron fire uses, so a
+  // "trigger now" chat is indistinguishable from a scheduled one.
+  return { handle, fireSchedule };
 }
