@@ -1,5 +1,34 @@
 # @paddock/web
 
+## 0.33.0
+
+### Minor Changes
+
+- [#292](https://github.com/edspencer/paddock/pull/292) [`0c43326`](https://github.com/edspencer/paddock/commit/0c4332637a16e53b143b231ebc676193e1aba267) Thanks [@edspencer](https://github.com/edspencer)! - Per-message sender provenance: attribute machine-injected turns in chat history (#290)
+
+  Chats now record WHO injected each machine-added turn — `send_message` from another
+  chat, a schedule fire, or a spawn kickoff — and surface it per-message in the
+  transcript. Human-typed messages stay unlabelled (the default); a machine-injected
+  turn gets a subtle attribution above its bubble ("↩ sent by _⟨chat⟩_", linking to the
+  sending chat, or "⏰ scheduled by _⟨name⟩_"). This is the per-message analog of the
+  per-chat provenance badge (#261/#267), backed by a new `MessageProvenanceStore` sidecar
+  joined into the message DTO by injected-content order.
+
+  Also fixes the related live-streaming bug: an injected message now streams into an
+  already-open recipient chat immediately (a new `chat:injected` WebSocket frame),
+  instead of only showing the assistant's reply and requiring a manual refresh.
+
+### Patch Changes
+
+- [#294](https://github.com/edspencer/paddock/pull/294) [`2ed201c`](https://github.com/edspencer/paddock/commit/2ed201c77f9eb02b4430e8ddd214378847525d48) Thanks [@edspencer](https://github.com/edspencer)! - Cut the CPU cost of a streaming chat. While a turn streams, the only continuous
+  work is a handful of 60fps CSS animations (two spinners + a ping) — measured with
+  0 JS long-tasks and ~1 DOM mutation/sec — which on a large/Retina display can pin
+  the OS compositor near 50% for the whole turn. The "working" spinners now use a
+  stepped, layer-isolated `spin-eco` (~10fps instead of 60) rather than a smooth
+  `animate-spin`; the streaming caret hard-blinks instead of a smooth opacity pulse;
+  the redundant `animate-ping` dot is dropped; and all of these honor
+  `prefers-reduced-motion` and pause while the tab is backgrounded.
+
 ## 0.32.0
 
 ### Minor Changes
