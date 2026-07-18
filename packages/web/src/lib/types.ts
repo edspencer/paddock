@@ -211,6 +211,23 @@ export interface Chat {
   cacheCreationTokens?: number;
   totalTokens?: number;
   costUsd?: number | null;
+  /**
+   * How this chat was created (issue #267): A1's provenance marker (#261). Drives
+   * the chat-list badge that makes unattended runs legible — `scheduled` (a cron
+   * fired it) and `spawned` (another chat created it) stand out; `human` (the
+   * default) shows no badge. Absent for chats created before A1 recorded a marker.
+   */
+  provenance?: ChatProvenance;
+}
+
+/** How a chat came to exist (issue #261) — the dimension the list badges (#267). */
+export type ChatOrigin = "human" | "scheduled" | "spawned";
+
+/** A chat's provenance marker (issue #261): origin + spawn depth. */
+export interface ChatProvenance {
+  origin: ChatOrigin;
+  /** Spawn hops from the human/scheduled root (0 = root itself). */
+  depth: number;
 }
 
 /**

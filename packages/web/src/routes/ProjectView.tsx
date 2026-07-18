@@ -8,6 +8,7 @@ import { StatusPill } from "../components/StatusPill";
 import { TagPill } from "../components/TagPill";
 import { ChatPane } from "../components/ChatPane";
 import { ContextRing } from "../components/ContextRing";
+import { ProvenanceBadge } from "../components/ProvenanceBadge";
 import { ChangesPane } from "../components/ChangesPane";
 import { Markdown } from "../components/Markdown";
 import { FilesPane } from "../components/FilesPane";
@@ -674,6 +675,10 @@ export function ProjectView() {
           >
             {c.name}
           </span>
+          {/* Provenance badge (#267): flags the "ran without me" chats —
+              scheduled (a cron fired it) or spawned (another chat created it).
+              Human-origin chats show nothing, so the list stays quiet. */}
+          <ProvenanceBadge provenance={c.provenance} />
           {/* Ring data is fetched lazily (issue #116) so the list renders before
               the per-chat transcript parse; `working` spins it while streaming
               (issue #115). */}

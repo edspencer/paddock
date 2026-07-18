@@ -31,6 +31,7 @@ import type { GitService } from "./git.js";
 import type { GithubAuth } from "./github-auth.js";
 import type { ArchiveStore } from "./archive.js";
 import type { ReadStateStore } from "./read-state.js";
+import type { RunProvenance, RunProvenanceStore } from "./run-provenance.js";
 import type { PaddockConfig } from "./config.js";
 import { type Transcriber, TranscriptionError } from "./transcribe.js";
 import { readFirstUserText } from "./transcripts.js";
@@ -75,13 +76,24 @@ export interface RouteDeps {
   transcriber: Transcriber;
   archive: ArchiveStore;
   readState: ReadStateStore;
+  runProvenance: RunProvenanceStore;
   attachments: AttachmentStore;
   cfg: PaddockConfig;
 }
 
 export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Promise<void> {
-  const { projects, herdctl, git, githubAuth, transcriber, archive, readState, attachments, cfg } =
-    deps;
+  const {
+    projects,
+    herdctl,
+    git,
+    githubAuth,
+    transcriber,
+    archive,
+    readState,
+    runProvenance,
+    attachments,
+    cfg,
+  } = deps;
 
   // Resolve the read-state key's user segment from the authenticated principal:
   // a REAL identity (trusted-header / jwt) keys read-state by username; an
@@ -282,6 +294,11 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
       const user = readStateUser(req);
       const lastSeenOf = (s: import("@herdctl/core").DiscoveredSession) =>
         readState.getLastSeen(user, keeper, s.sessionId);
+      // Provenance badge (#267): how each chat was created — human / scheduled /
+      // spawned (A1's #261 marker). A cheap in-memory map read, so unlike the
+      // usage ring (#116) it's fine to resolve inline for the initial payload.
+      const provenanceOf = (s: import("@herdctl/core").DiscoveredSession) =>
+        runProvenance.get(s.sessionId);
       // Deliberately NO usage resolver here (issue #116): the per-chat context
       // ring requires streaming+parsing each session's full transcript, which is
       // O(chats × transcript size) and blocked the whole ProjectView from
@@ -298,6 +315,7 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
           archivedOf,
           lastTurnAt,
           lastSeenOf,
+          provenanceOf,
         ),
       };
     } catch (err) {
@@ -613,6 +631,8 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
       const user = readStateUser(req);
       const lastSeenOf = (s: import("@herdctl/core").DiscoveredSession) =>
         readState.getLastSeen(user, keeper, s.sessionId);
+      const provenanceOf = (s: import("@herdctl/core").DiscoveredSession) =>
+        runProvenance.get(s.sessionId);
       // No usage resolver — see the GET /api/projects/:slug route (issue #116).
       // Usage rings are fetched separately so a list refresh stays cheap.
       return {
@@ -623,6 +643,7 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
           archivedOf,
           lastTurnAt,
           lastSeenOf,
+          provenanceOf,
         ),
       };
     } catch (err) {
@@ -849,6 +870,7 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
             await archive.isArchived(SCRATCH_AGENT, s.sessionId).catch(() => false),
             undefined,
             await readState.getLastSeen(user, SCRATCH_AGENT, s.sessionId).catch(() => 0),
+            await runProvenance.get(s.sessionId).catch(() => null),
           ),
         ),
       ),
@@ -1096,6 +1118,7 @@ function toChatDto(
   archived = false,
   lastTurnCompletedAt?: string,
   lastSeen?: number,
+  provenance?: RunProvenance | null,
 ) {
   const preview = previewOverride ?? s.preview;
   return {
@@ -1121,6 +1144,11 @@ function toChatDto(
     // estimate (issue #152), so the list can render both without opening the
     // chat. Only present when the transcript has usage data.
     ...(usage ?? {}),
+    // How this chat was created (#267): A1's provenance marker (#261) — origin
+    // (human / scheduled / spawned) + spawn depth — so the list can badge the
+    // "ran without me" cases. Absent when no marker was recorded (older chats,
+    // or ones created before A1). Human origin renders no badge (the default).
+    ...(provenance ? { provenance } : {}),
   };
 }
 
@@ -1148,25 +1176,30 @@ async function buildProjectChats(
   lastSeenOf?: (
     s: import("@herdctl/core").DiscoveredSession,
   ) => Promise<number>,
+  provenanceOf?: (
+    s: import("@herdctl/core").DiscoveredSession,
+  ) => Promise<RunProvenance | undefined>,
 ) {
   return Promise.all(
     sessions.map(async (s) => {
-      // Resolve the usage ring, archived flag, read-state, and (cleaned) name.
+      // Resolve the usage ring, archived flag, read-state, provenance, and name.
       const usage = usageOf ? await usageOf(s).catch(() => null) : null;
       const archived = archivedOf ? await archivedOf(s).catch(() => false) : false;
       const turnAt = lastTurnAt?.get(s.sessionId);
       const lastSeen = lastSeenOf ? await lastSeenOf(s).catch(() => 0) : 0;
+      const provenance = provenanceOf ? await provenanceOf(s).catch(() => null) : null;
       const pollutedPreview =
         !s.customName && !s.autoName && s.preview?.startsWith(PRELOAD_CONTEXT_OPEN);
-      if (!pollutedPreview) return toChatDto(s, undefined, usage, archived, turnAt, lastSeen);
+      if (!pollutedPreview)
+        return toChatDto(s, undefined, usage, archived, turnAt, lastSeen, provenance);
 
       const full = await readFirstUserText(projectDir, s.sessionId).catch(() => undefined);
       const cleaned = stripPreloadWrapper(full ?? s.preview ?? "").trim();
       // couldn't recover
-      if (!cleaned) return toChatDto(s, undefined, usage, archived, turnAt, lastSeen);
+      if (!cleaned) return toChatDto(s, undefined, usage, archived, turnAt, lastSeen, provenance);
       const preview =
         cleaned.length > PREVIEW_MAX ? `${cleaned.slice(0, PREVIEW_MAX)}...` : cleaned;
-      return toChatDto(s, preview, usage, archived, turnAt, lastSeen);
+      return toChatDto(s, preview, usage, archived, turnAt, lastSeen, provenance);
     }),
   );
 }
