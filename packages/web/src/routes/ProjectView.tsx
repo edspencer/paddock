@@ -10,7 +10,7 @@ import { ChatPane } from "../components/ChatPane";
 import { ContextRing } from "../components/ContextRing";
 import { ChangesPane } from "../components/ChangesPane";
 import { Markdown } from "../components/Markdown";
-import { FileView } from "../components/FileView";
+import { FilesPane } from "../components/FilesPane";
 import { ProjectMenu } from "../components/ProjectMenu";
 import { SettingsPane } from "../components/SettingsPane";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -70,7 +70,11 @@ export function ProjectView() {
             ? "home"
             : "chat";
   const routeSessionId = view === "chat" ? params.sessionId : undefined;
-  const routeFileName = view === "files" && params.name ? decodeURIComponent(params.name) : undefined;
+  // The Files tab nests: the directory or file being viewed is whatever follows
+  // `/projects/:slug/files/` in the URL (issue #259). We read it straight from
+  // the pathname (not a router param) and decode each segment, so real "/"
+  // separators survive intact. "" = the project root's file list.
+  const filesSubpath = view === "files" ? decodeFilesSubpath(location.pathname, slug) : "";
   // The specific changed file deep-linked via /changes/:file (or undefined for
   // the Changes tab with no file selected — the pane defaults to the first one).
   const routeChangeFile =
@@ -253,9 +257,9 @@ export function ProjectView() {
             ? toSubPath({ view: "chat", sessionId: routeSessionId })
             : view === "changes"
               ? toSubPath({ view: "changes", file: routeChangeFile })
-              : toSubPath({ view: "files", name: routeFileName });
+              : toSubPath({ view: "files", path: filesSubpath || undefined });
     writeLastTab(slug, sub);
-  }, [slug, view, routeSessionId, routeFileName, routeChangeFile]);
+  }, [slug, view, routeSessionId, filesSubpath, routeChangeFile]);
 
   // Refresh just the chat list (e.g. after a new session is established).
   const refreshChats = useCallback(async () => {
@@ -289,7 +293,7 @@ export function ProjectView() {
   // Any tab/chat/file navigation closes the mobile session drawer.
   useEffect(() => {
     setSessionsOpen(false);
-  }, [view, routeSessionId, routeFileName, routeChangeFile]);
+  }, [view, routeSessionId, filesSubpath, routeChangeFile]);
 
   // --- URL-driven navigation (all tab/chat/file clicks change the route) -----
   const goHome = useCallback(() => navigate(`/projects/${slug}/home`), [navigate, slug]);
@@ -350,8 +354,17 @@ export function ProjectView() {
   // True right after forking (router state), so the pane auto-focuses its
   // composer to continue the new fork.
   const justForked = (location.state as { justForked?: boolean } | null)?.justForked === true;
-  const openFile = useCallback(
-    (name: string) => navigate(`/projects/${slug}/files/${encodeURIComponent(name)}`),
+  // Navigate the Files tab to a subpath — a folder, a file, or "" for the root
+  // (issue #259). Each segment is encoded individually so the real "/" separators
+  // stay in the URL (deep-linkable nested path) while odd filename characters are
+  // still escaped.
+  const goToFilesPath = useCallback(
+    (subpath: string) =>
+      navigate(
+        subpath
+          ? `/projects/${slug}/files/${subpath.split("/").map(encodeURIComponent).join("/")}`
+          : `/projects/${slug}/files`,
+      ),
     [navigate, slug],
   );
 
@@ -449,9 +462,9 @@ export function ProjectView() {
       setProject(updated);
       upsert(updated);
       // If the unpinned tab is the one being viewed, fall back to the Files list.
-      if (routeFileName === file) navigate(`/projects/${slug}/files`, { replace: true });
+      if (filesSubpath === file) navigate(`/projects/${slug}/files`, { replace: true });
     },
-    [slug, upsert, routeFileName, navigate],
+    [slug, upsert, filesSubpath, navigate],
   );
 
   const confirmDeleteChat = useCallback(async () => {
@@ -754,8 +767,11 @@ export function ProjectView() {
   //    in the reader). Pinning a file you're viewing therefore just shifts the
   //    highlight to its new sibling tab — the SAME reader keeps rendering it (no
   //    component swap), so the view doesn't jump.
-  const viewingFile = view === "files" ? (routeFileName ?? null) : null;
-  const activePinnedFile = viewingFile && pinned.includes(viewingFile) ? viewingFile : null;
+  // A pinned sibling tab is highlighted when the current files subpath is exactly
+  // that pinned (top-level) file; otherwise the Files tab itself is active — for
+  // the root list, a subdirectory, or an unpinned file open in the reader.
+  const activePinnedFile =
+    view === "files" && filesSubpath && pinned.includes(filesSubpath) ? filesSubpath : null;
   const filesTabActive = view === "files" && !activePinnedFile;
 
   return (
@@ -1055,7 +1071,7 @@ export function ProjectView() {
                 key={f}
                 file={f}
                 active={activePinnedFile === f}
-                onSelect={() => openFile(f)}
+                onSelect={() => goToFilesPath(f)}
                 onUnpin={() => void unpinTab(f)}
               />
             ))}
@@ -1092,7 +1108,7 @@ export function ProjectView() {
               runningSessions={runningSessions}
               onOpenChat={openChat}
               onNewChat={newChat}
-              onOpenFile={openFile}
+              onOpenFile={goToFilesPath}
               onOpenFiles={goFiles}
               onEditDetails={goSettings}
             />
@@ -1117,24 +1133,17 @@ export function ProjectView() {
               isProjectChat
             />
           )}
-          {/* Files tab with no file selected -> the files list. */}
-          {view === "files" && !viewingFile && (
-            <FilesList
+          {/* Files tab (issue #259): one browser that lists the current directory
+              (root or a subdirectory) OR renders a file — the same nested
+              `/files/<path>` URL addresses both, so folders and files are
+              deep-linkable. Navigating (into a folder, up via `..`, a breadcrumb,
+              or opening a file) just changes the URL via goToFilesPath. */}
+          {view === "files" && (
+            <FilesPane
+              key={filesSubpath}
               project={project}
-              files={files}
-              onOpenFile={openFile}
-              onTogglePin={togglePin}
-            />
-          )}
-          {/* Any /files/:name (pinned or not) -> the single file reader. The
-              same component renders regardless of pinned state, so pinning the
-              file you're viewing only changes which tab is highlighted. */}
-          {view === "files" && viewingFile && (
-            <FileReader
-              key={viewingFile}
-              project={project}
-              name={viewingFile}
-              onBack={goFiles}
+              path={filesSubpath}
+              onNavigate={goToFilesPath}
               onTogglePin={togglePin}
             />
           )}
@@ -1218,126 +1227,6 @@ function PinnedTab({
       >
         <XIcon width={12} height={12} />
       </button>
-    </div>
-  );
-}
-
-/**
- * The single file reader for /files/:name (used for both an unpinned file
- * opened from the list AND a pinned sibling tab). A back link returns to the
- * files list; the pin toggle pins/unpins the file (which only moves the tab
- * highlight, since this same reader keeps rendering the file).
- */
-function FileReader({
-  project,
-  name,
-  onBack,
-  onTogglePin,
-}: {
-  project: Project;
-  name: string;
-  onBack: () => void;
-  onTogglePin: (file: string) => void;
-}) {
-  const isPinned = project.pinned.includes(name);
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center gap-2 border-b border-paddock-200 px-4 py-2 dark:border-paddock-800">
-        <button onClick={onBack} className="btn-subtle -ml-2 py-1.5 text-xs">
-          ← Files
-        </button>
-        <span className="font-mono text-sm text-paddock-700 dark:text-paddock-300">{name}</span>
-        <button
-          onClick={() => onTogglePin(name)}
-          className={`ml-auto inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
-            isPinned
-              ? "bg-accent/10 text-accent"
-              : "text-paddock-500 hover:bg-paddock-200/60 dark:hover:bg-paddock-800/60"
-          }`}
-          title={isPinned ? "Unpin (remove tab)" : "Pin as a tab"}
-        >
-          <PinIcon width={13} height={13} />
-          {isPinned ? "Pinned" : "Pin as tab"}
-        </button>
-      </div>
-      <div className="flex-1 overflow-y-auto">
-        <FileView slug={project.slug} name={name} />
-      </div>
-    </div>
-  );
-}
-
-/** The Files tab: the project's file index (summary + CHANGELOG live on Home). */
-function FilesList({
-  project,
-  files,
-  onOpenFile,
-  onTogglePin,
-}: {
-  project: Project;
-  files: string[];
-  onOpenFile: (name: string) => void;
-  onTogglePin: (file: string) => void;
-}) {
-  return (
-    <div className="flex-1 overflow-y-auto overscroll-contain">
-      <div className="mx-auto max-w-3xl px-6 py-6">
-        <section>
-          <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-paddock-500">
-            Files
-          </h3>
-          {files.length === 0 ? (
-            <div className="card">
-              <p className="text-sm italic text-paddock-400">
-                No files yet. Files the keeper agent writes (and sweep-curated
-                OVERVIEW.md) will appear here.
-              </p>
-            </div>
-          ) : (
-            <div className="overflow-hidden rounded-2xl border border-paddock-200 dark:border-paddock-800">
-              {files.map((f, i) => {
-                const isPinned = project.pinned.includes(f);
-                return (
-                  <div
-                    key={f}
-                    className={`group/file flex items-center gap-2 px-3 py-2.5 transition-colors hover:bg-paddock-100/70 dark:hover:bg-paddock-900/40 ${
-                      i > 0 ? "border-t border-paddock-200 dark:border-paddock-800" : ""
-                    }`}
-                  >
-                    <button
-                      onClick={() => onOpenFile(f)}
-                      className="flex min-w-0 flex-1 items-center gap-2 text-left"
-                    >
-                      <FileIcon
-                        width={15}
-                        height={15}
-                        className="shrink-0 text-paddock-400"
-                      />
-                      <span className="truncate font-mono text-sm text-paddock-700 dark:text-paddock-200">
-                        {f}
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      aria-label={isPinned ? `Unpin ${f}` : `Pin ${f}`}
-                      title={isPinned ? "Unpin (remove tab)" : "Pin as a sibling tab"}
-                      onClick={() => onTogglePin(f)}
-                      className={`flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition ${
-                        isPinned
-                          ? "bg-accent/10 text-accent"
-                          : "text-paddock-400 opacity-0 hover:bg-paddock-200/70 hover:text-paddock-700 focus:opacity-100 group-hover/file:opacity-100 dark:hover:bg-paddock-800"
-                      }`}
-                    >
-                      <PinIcon width={12} height={12} />
-                      {isPinned ? "Pinned" : "Pin"}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </section>
-      </div>
     </div>
   );
 }
@@ -1547,6 +1436,30 @@ function HomePane({
  * https/http URL passes through; anything unrecognized (a local path) falls back
  * to `#` so the badge is inert rather than broken.
  */
+/**
+ * Extract the Files-tab subpath from the pathname (issue #259): whatever follows
+ * `/projects/:slug/files/`, decoded one segment at a time so real "/" separators
+ * survive intact (a raw `decodeURIComponent` of the whole thing is fine here too,
+ * but per-segment mirrors exactly how goToFilesPath encodes it). "" = the root.
+ */
+function decodeFilesSubpath(pathname: string, slug: string): string {
+  const prefix = `/projects/${slug}/files`;
+  if (!pathname.startsWith(prefix)) return "";
+  const rest = pathname.slice(prefix.length).replace(/^\//, "");
+  if (!rest) return "";
+  return rest
+    .split("/")
+    .filter(Boolean)
+    .map((seg) => {
+      try {
+        return decodeURIComponent(seg);
+      } catch {
+        return seg;
+      }
+    })
+    .join("/");
+}
+
 function repoHref(repo?: string): string {
   if (!repo) return "#";
   const trimmed = repo.trim().replace(/\.git$/i, "");

@@ -107,6 +107,29 @@ export interface ProjectFile {
   content: string;
 }
 
+/**
+ * One entry in a project directory listing (issue #259): a name plus whether
+ * it's a file or a subdirectory. Drives the Files tab's folder navigation.
+ */
+export interface FileEntry {
+  name: string;
+  kind: "file" | "dir";
+}
+
+/**
+ * The result of resolving a Files-tab path (issue #259) via
+ * `GET /api/projects/:slug/files[?path=<subpath>]`. A discriminated union on
+ * `kind`: for a directory (`kind: "dir"`) `entries` are its immediate children
+ * (dotfiles hidden, directories sorted first); for a file (`kind: "file"`)
+ * `entries` is empty and the caller renders the single-file viewer. `path` is
+ * the project-relative subpath ("" = the project root).
+ */
+export interface DirListing {
+  path: string;
+  kind: "dir" | "file";
+  entries: FileEntry[];
+}
+
 export interface CreateProjectInput {
   name: string;
   slug?: string;

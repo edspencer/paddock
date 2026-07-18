@@ -59,14 +59,37 @@ describe("api: reads", () => {
     expect(call()[0]).toBe("/api/projects/a%2Fb");
   });
 
-  it("listProjectFiles + getProjectFile unwrap their payloads", async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ files: ["a.md", "b.html"] }));
+  it("listProjectFiles keeps only top-level FILE names from the listing (#259)", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        path: "",
+        kind: "dir",
+        entries: [
+          { name: "design", kind: "dir" },
+          { name: "a.md", kind: "file" },
+          { name: "b.html", kind: "file" },
+        ],
+      }),
+    );
     expect(await api.listProjectFiles("p")).toEqual(["a.md", "b.html"]);
+    expect(call()[0]).toBe("/api/projects/p/files");
+  });
+
+  it("listProjectDir passes ?path for a subdirectory (#259)", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ path: "design", kind: "dir", entries: [{ name: "plan.md", kind: "file" }] }),
+    );
+    const listing = await api.listProjectDir("p", "design");
+    expect(call()[0]).toBe("/api/projects/p/files?path=design");
+    expect(listing.entries).toEqual([{ name: "plan.md", kind: "file" }]);
+  });
+
+  it("getProjectFile unwraps the file payload", async () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({ name: "a.md", kind: "markdown", content: "# hi" }),
     );
     const f = await api.getProjectFile("p", "a.md");
-    expect(call(1)[0]).toBe("/api/projects/p/files/a.md");
+    expect(call()[0]).toBe("/api/projects/p/files/a.md");
     expect(f.kind).toBe("markdown");
   });
 

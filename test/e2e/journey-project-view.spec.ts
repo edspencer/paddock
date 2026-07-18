@@ -7,7 +7,7 @@ import { seedProject, uniq } from "./helpers";
  * The active tab is derived from the URL (deep-linkable + reload-safe):
  *   /projects/:slug/home                -> Home tab (project overview)
  *   /projects/:slug/chat[/:sessionId]   -> Chat tab
- *   /projects/:slug/files[/:name]       -> Files tab / a file
+ *   /projects/:slug/files[/<path>]      -> Files tab / a subdirectory or file (#259)
  * The bare /projects/:slug redirects to the STICKY last tab (localStorage),
  * defaulting to home. The Changes tab only appears on a git repo (covered in the
  * journey-git-* suite); here we assert it's ABSENT on a non-repo server.
@@ -39,7 +39,7 @@ test("Chat and Files tabs switch via the URL; deep-links highlight the right tab
   await expect(page.getByRole("button", { name: /^Changes/ })).toHaveCount(0);
 });
 
-test("opening a file deep-links to /files/:name and renders it; back returns to the list", async ({
+test("opening a file deep-links to /files/<path> and renders it; breadcrumb returns to the list", async ({
   page,
 }) => {
   const name = uniq("PV File");
@@ -51,10 +51,47 @@ test("opening a file deep-links to /files/:name and renders it; back returns to 
   // Markdown renders (the bold text becomes a <strong>).
   await expect(page.locator("strong", { hasText: "markdown" })).toBeVisible();
 
-  // The back link returns to the files list.
-  await page.getByRole("button", { name: /← Files/ }).click();
+  // The breadcrumb's "Files" root crumb returns to the files list (#259).
+  const crumb = page.getByRole("navigation", { name: /File path/i });
+  await crumb.getByRole("button", { name: "Files" }).click();
   await expect(page).toHaveURL(new RegExp(`/projects/${slug}/files$`));
   await expect(page.getByText("readme.md")).toBeVisible();
+});
+
+test("browses into a subdirectory with a nested URL, and '..' goes back up (#259)", async ({
+  page,
+}) => {
+  const name = uniq("PV Subdir");
+  const slug = seedProject({
+    name,
+    files: {
+      "top.md": "# Top",
+      "design/plan.md": "# Plan\n\nInside a **subfolder**.",
+    },
+  });
+
+  await page.goto(`/projects/${slug}/files`);
+  // The subdirectory is listed at the root and the file inside it is NOT.
+  await expect(page.getByText("design")).toBeVisible();
+  await expect(page.getByText("plan.md")).toHaveCount(0);
+
+  // Click into the folder → the URL nests and its contents show.
+  await page.getByText("design").click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${slug}/files/design$`));
+  await expect(page.getByText("plan.md")).toBeVisible();
+
+  // Open the nested file → deep, nested file URL, rendered content.
+  await page.getByText("plan.md").click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${slug}/files/design/plan.md`));
+  await expect(page.locator("strong", { hasText: "subfolder" })).toBeVisible();
+
+  // The ".." row (from the folder listing) goes back up to the root list.
+  const crumb = page.getByRole("navigation", { name: /File path/i });
+  await crumb.getByRole("button", { name: "design" }).click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${slug}/files/design$`));
+  await page.getByRole("button", { name: /^\.\.$/ }).click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${slug}/files$`));
+  await expect(page.getByText("top.md")).toBeVisible();
 });
 
 test("sticky last tab: bare /projects/:slug restores the last viewed sub-route across reload", async ({

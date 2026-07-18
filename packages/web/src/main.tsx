@@ -49,7 +49,10 @@ const router = createBrowserRouter([
       { path: "projects/:slug/chat", element: <ProjectView /> },
       { path: "projects/:slug/chat/:sessionId", element: <ProjectView /> },
       { path: "projects/:slug/files", element: <ProjectView /> },
-      { path: "projects/:slug/files/:name", element: <ProjectView /> },
+      // A splat so the current directory / file path nests in the URL, e.g.
+      // /projects/:slug/files/design/foo.md (issue #259). Deep-linkable and
+      // refresh-safe; ProjectView derives the subpath from the pathname.
+      { path: "projects/:slug/files/*", element: <ProjectView /> },
       { path: "projects/:slug/changes", element: <ProjectView /> },
       { path: "projects/:slug/changes/:file", element: <ProjectView /> },
       { path: "projects/:slug/settings", element: <ProjectView /> },
