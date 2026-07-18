@@ -1,0 +1,242 @@
+/**
+ * Event-hook config helpers (Epic G, ticket G1 — hook foundation).
+ *
+ * A hook is an **event-triggered agent turn** (design doc §5, GG-1..GG-4). Each
+ * hook is registered as its OWN herdctl agent `hook-<slug>-<name>` — exactly how
+ * keeper/sweeper/scratch agents are registered via `fleet.addAgent` — whose tool
+ * config (`allowed_tools`/`denied_tools`/`permission_mode`/`model`/`max_turns`) IS
+ * its capability set. There is NO hook "kind"/profile and NO "curator" concept: a
+ * hook with no tools is simply a hook granted no tools; a hook that must write files
+ * is granted `Write` and does the I/O itself.
+ *
+ * This module is the small, pure surface around that model — the exact shape of the
+ * shipped `schedule-config.ts` so the two features stay symmetric:
+ *
+ *  - {@link sanitizeHooks} — validate/normalise a hand-edited `project.yaml` `hooks`
+ *    map, DROPPING malformed entries so one bad edit can't brick the project's agent
+ *    registration (an invalid agent config would throw in `addAgent`).
+ *  - {@link hookToAgentToolConfig} — project a hook's {@link HookCapabilities} onto
+ *    the exact herdctl agent tool-config fields, so the hook agent enforces the
+ *    capability by construction (the capability banner in G6 is therefore truthful).
+ *  - {@link hookPromptFileAbsPath} — resolve a `promptFile` to an absolute path under
+ *    the project's `.paddock/hooks/` dir, rejecting traversal / non-`.md`.
+ *
+ * Keeping this off `projects.ts`/`herdctl.ts` makes each piece unit-testable in
+ * isolation and gives G3/G4/G5 (visibility, Hooks tab, hook MCP) ONE frozen shape to
+ * build against.
+ */
+import path from "node:path";
+
+/**
+ * The lifecycle events a hook can trigger on. v1 wires **`onArchive`** (fired after
+ * a chat-archive commits — Ed's motivating cleanup example). The enum is the
+ * extension point for the cheap after-commit siblings the design lists
+ * (onChatCreate, onFork, onUnarchive, onProjectCreate); `onProjectDelete` needs
+ * before/blocking semantics and is deliberately deferred.
+ */
+export type HookEvent = "onArchive";
+
+/** The events v1 knows about — the guard {@link sanitizeHook} validates against. */
+export const HOOK_EVENTS: ReadonlySet<HookEvent> = new Set<HookEvent>(["onArchive"]);
+
+/** Claude Code permission mode a hook agent's turns run under. */
+export type HookPermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "plan";
+
+const PERMISSION_MODES: ReadonlySet<string> = new Set([
+  "default",
+  "acceptEdits",
+  "bypassPermissions",
+  "plan",
+]);
+
+/**
+ * A hook's capability set (GG-1) — projected verbatim onto the hook's OWN herdctl
+ * agent's tool config, so the registered agent enforces exactly these tools. An
+ * absent/empty {@link HookCapabilities.allowedTools} is a **tool-less** hook (it can
+ * only think + return text); granting `Bash` lets it spin down servers / delete
+ * clones itself. This is intentionally the whole capability model — there is no
+ * higher-level profile.
+ */
+export interface HookCapabilities {
+  /**
+   * The tools the hook agent may use (herdctl `allowed_tools`). Omit or `[]` for a
+   * tool-less hook. The CLI runtime auto-denies any tool NOT on this list, so this
+   * is the effective grant.
+   */
+  allowedTools?: string[];
+  /** Tools explicitly denied even if otherwise allowed (herdctl `denied_tools`). */
+  deniedTools?: string[];
+  /** The permission mode the hook agent's turns run under (herdctl `permission_mode`). */
+  permissionMode?: HookPermissionMode;
+  /** Model override for the hook agent; defaults to the keeper default when absent. */
+  model?: string;
+  /** Max agent turns — bounds a runaway hook. Defaults to {@link HOOK_DEFAULT_MAX_TURNS}. */
+  maxTurns?: number;
+}
+
+/**
+ * A hook declaration — persisted per project (`project.yaml` `hooks` map, keyed by
+ * name) with prompt bodies in `.paddock/hooks/*.md` (git-tracked + keeper-editable),
+ * mirroring the shipped `.paddock/schedules/*.md` pattern.
+ *
+ * **New hooks default `enabled: false`** (GG-3) — a safe-create default so nothing
+ * fires the instant a hook is written; enabling is just editing it to `true`.
+ */
+export interface PaddockHook {
+  /** The lifecycle event this hook fires on. */
+  event: HookEvent;
+  /** The capability set granted to the hook's agent (GG-1). Absent = tool-less. */
+  capabilities?: HookCapabilities;
+  /**
+   * The inline prompt the hook turn runs. A hook may instead point at a
+   * {@link promptFile}, which Paddock reads fresh at fire time. When both are set the
+   * file wins.
+   */
+  prompt?: string;
+  /**
+   * PADDOCK-ONLY convenience: a git-tracked, keeper-editable prompt file under the
+   * project's `.paddock/hooks/` dir (e.g. `"cleanup.md"`), relative to that dir. Read
+   * at fire time and used as the hook's prompt. Traversal outside `.paddock/hooks/`
+   * and non-`.md` names are rejected.
+   */
+  promptFile?: string;
+  /**
+   * Whether the hook is armed. **Defaults `false`** for a newly-created hook (GG-3);
+   * a disabled hook is registered as an agent but never fired by the dispatcher.
+   */
+  enabled?: boolean;
+}
+
+/**
+ * The CRUD/DTO shape returned by the hook service ({@link import("./hooks.js").HookService}) —
+ * a {@link PaddockHook} plus its map key `name` and the herdctl agent it registers
+ * as. This is the frozen contract G4 (Hooks tab) and G5 (hook MCP) build against.
+ */
+export interface HookDto extends PaddockHook {
+  /** The hook's name — the `project.yaml` map key + the `<name>` in its agent name. */
+  name: string;
+  /** The herdctl agent this hook is registered as (`hook-<slug>-<name>`). */
+  agentName: string;
+}
+
+/** The dir (relative to a project's working dir) holding keeper-editable prompts. */
+export const HOOK_PROMPT_DIR = path.join(".paddock", "hooks");
+
+/** Default max agent turns for a hook when its capabilities don't set one. */
+export const HOOK_DEFAULT_MAX_TURNS = 30;
+
+/** A hook name we're willing to key on (also a safe herdctl agent-name segment). */
+export function isValidHookName(name: string): boolean {
+  return typeof name === "string" && /^[A-Za-z0-9._-]+$/.test(name) && name.length <= 64;
+}
+
+/** Normalise an untrusted string[] of tool patterns, dropping non-strings/blanks. */
+function sanitizeToolList(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: string[] = [];
+  for (const v of raw) {
+    if (typeof v === "string" && v.trim() !== "") out.push(v.trim());
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+/**
+ * Validate + normalise one untrusted capability record. Never returns null (a hook
+ * with no valid capabilities is simply tool-less); unknown fields are dropped.
+ */
+export function sanitizeCapabilities(raw: unknown): HookCapabilities | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const o = raw as Record<string, unknown>;
+  const out: HookCapabilities = {};
+  const allowed = sanitizeToolList(o.allowedTools);
+  if (allowed) out.allowedTools = allowed;
+  const denied = sanitizeToolList(o.deniedTools);
+  if (denied) out.deniedTools = denied;
+  if (typeof o.permissionMode === "string" && PERMISSION_MODES.has(o.permissionMode)) {
+    out.permissionMode = o.permissionMode as HookPermissionMode;
+  }
+  if (typeof o.model === "string" && o.model.trim() !== "") out.model = o.model.trim();
+  if (typeof o.maxTurns === "number" && Number.isFinite(o.maxTurns) && o.maxTurns > 0) {
+    out.maxTurns = Math.floor(o.maxTurns);
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * Validate + normalise one untrusted hook record into a {@link PaddockHook}, or
+ * `null` if it's malformed (unknown/absent event). A record with neither `prompt`
+ * nor `promptFile` is still valid — it runs an empty prompt (the caller's business),
+ * we don't drop it — but an unknown `event` is dropped so a typo can't silently
+ * arm nothing OR (worse) take down the whole project's agent registration.
+ */
+export function sanitizeHook(raw: unknown): PaddockHook | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+  if (typeof o.event !== "string" || !HOOK_EVENTS.has(o.event as HookEvent)) return null;
+  const out: PaddockHook = { event: o.event as HookEvent };
+  const caps = sanitizeCapabilities(o.capabilities);
+  if (caps) out.capabilities = caps;
+  if (typeof o.prompt === "string") out.prompt = o.prompt;
+  if (typeof o.promptFile === "string" && o.promptFile.trim() !== "") {
+    out.promptFile = o.promptFile.trim();
+  }
+  if (typeof o.enabled === "boolean") out.enabled = o.enabled;
+  return out;
+}
+
+/**
+ * Sanitise a whole `hooks` map, dropping malformed entries and entries with an
+ * unsafe name. Returns `undefined` when nothing survives (so it stays absent on
+ * disk / off the project record), exactly like {@link sanitizeHooks}' schedule twin.
+ */
+export function sanitizeHooks(raw: unknown): Record<string, PaddockHook> | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const out: Record<string, PaddockHook> = {};
+  for (const [name, val] of Object.entries(raw as Record<string, unknown>)) {
+    if (!isValidHookName(name)) continue;
+    const h = sanitizeHook(val);
+    if (h) out[name] = h;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * Project a hook's {@link HookCapabilities} onto the exact herdctl agent tool-config
+ * fields (snake_case), so the registered `hook-<slug>-<name>` agent enforces the
+ * capability BY CONSTRUCTION. A tool-less hook yields `allowed_tools: []` (the CLI
+ * runtime then denies every tool). Always sets `allowed_tools` + `max_turns` so a
+ * hook agent never silently inherits the keeper's broad default toolset; the other
+ * fields are set only when the capability specifies them (else the fleet defaults
+ * apply). This is the ONE place capability→config translation lives.
+ */
+export function hookToAgentToolConfig(caps: HookCapabilities | undefined): Record<string, unknown> {
+  const out: Record<string, unknown> = {
+    // A hook's grant is exactly its allowedTools — default to NONE (tool-less), never
+    // the keeper's broad inherited allowlist. An empty list = the CLI runtime denies
+    // all tools, which is the correct "no capability" semantics.
+    allowed_tools: caps?.allowedTools ?? [],
+    max_turns: caps?.maxTurns ?? HOOK_DEFAULT_MAX_TURNS,
+  };
+  if (caps?.deniedTools) out.denied_tools = caps.deniedTools;
+  if (caps?.permissionMode) out.permission_mode = caps.permissionMode;
+  if (caps?.model) out.model = caps.model;
+  return out;
+}
+
+/**
+ * Resolve a `promptFile` to an absolute path under the project's `.paddock/hooks/`
+ * dir, or `null` if it escapes that dir, is absolute, or isn't a `.md` file. The
+ * name is treated as relative to the hooks dir (so a bare `"cleanup.md"` resolves to
+ * `<workingDir>/.paddock/hooks/cleanup.md`). Byte-for-byte the schedule twin's guard.
+ */
+export function hookPromptFileAbsPath(workingDir: string, promptFile: string): string | null {
+  if (typeof promptFile !== "string" || promptFile.trim() === "") return null;
+  const rel = promptFile.trim();
+  if (path.isAbsolute(rel)) return null;
+  const base = path.resolve(workingDir, HOOK_PROMPT_DIR);
+  const target = path.resolve(base, rel);
+  const within = target === base || target.startsWith(base + path.sep);
+  if (!within) return null;
+  if (!target.toLowerCase().endsWith(".md")) return null;
+  return target;
+}

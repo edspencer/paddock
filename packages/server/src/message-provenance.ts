@@ -49,11 +49,14 @@ const MAX_CONTENT = 8192;
  *                 the sending chat's project + sessionId (for a deep link) + the
  *                 display name it had at injection time.
  *  - `schedule` — a schedule fire injected it; carries the schedule's name.
+ *  - `hook`     — an event hook fired it (Epic G / G1); carries the hook's name (and
+ *                 project) so a hook chat's kickoff turn is attributable.
  *  - `agent`    — a machine turn with no more specific identity (fallback).
  */
 export type MessageSender =
   | { kind: "chat"; project: string; sessionId: string; name?: string }
   | { kind: "schedule"; name: string; project?: string }
+  | { kind: "hook"; name: string; project?: string }
   | { kind: "agent" };
 
 /** One recorded injection: its sender + the (possibly truncated) injected content. */
@@ -70,7 +73,7 @@ function isSafeId(sessionId: string): boolean {
   return typeof sessionId === "string" && /^[A-Za-z0-9._-]+$/.test(sessionId);
 }
 
-const SENDER_KINDS = new Set(["chat", "schedule", "agent"]);
+const SENDER_KINDS = new Set(["chat", "schedule", "hook", "agent"]);
 
 /** Validate + normalise an untrusted value into a MessageSender, or null. */
 function coerceSender(value: unknown): MessageSender | null {
@@ -90,6 +93,14 @@ function coerceSender(value: unknown): MessageSender | null {
     if (typeof o.name !== "string") return null;
     return {
       kind: "schedule",
+      name: o.name,
+      ...(typeof o.project === "string" ? { project: o.project } : {}),
+    };
+  }
+  if (o.kind === "hook") {
+    if (typeof o.name !== "string") return null;
+    return {
+      kind: "hook",
       name: o.name,
       ...(typeof o.project === "string" ? { project: o.project } : {}),
     };

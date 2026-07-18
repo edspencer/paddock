@@ -71,14 +71,20 @@ export class ArchiveStore {
     return set.has(keyOf(agent, sessionId));
   }
 
-  /** Set (or clear) a chat's archived flag, persisting the change. Idempotent. */
-  async setArchived(agent: string, sessionId: string, archived: boolean): Promise<void> {
+  /**
+   * Set (or clear) a chat's archived flag, persisting the change. Idempotent.
+   * Returns whether the flag actually CHANGED — so a caller can fire an "archived"
+   * lifecycle event (Epic G / G1) exactly once per real transition, not on a
+   * redundant re-archive of an already-archived chat.
+   */
+  async setArchived(agent: string, sessionId: string, archived: boolean): Promise<boolean> {
     const set = await this.ensureLoaded();
     const key = keyOf(agent, sessionId);
-    if (archived === set.has(key)) return; // no-op — avoid a needless write
+    if (archived === set.has(key)) return false; // no-op — avoid a needless write
     if (archived) set.add(key);
     else set.delete(key);
     await this.persist(set);
+    return true;
   }
 
   /** Write-through, serialised so overlapping toggles can't corrupt the file. */
