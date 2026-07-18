@@ -1,5 +1,27 @@
 # @paddock/web
 
+## 0.30.0
+
+### Minor Changes
+
+- [#273](https://github.com/edspencer/paddock/pull/273) [`9803635`](https://github.com/edspencer/paddock/commit/9803635a69308ccafb132f2b6637813009666f5c) Thanks [@edspencer](https://github.com/edspencer)! - Changes tab: selective per-file commit, diff stat, and a projects-grid dirty nudge (#258)
+
+  - The Changes tab now has a checkbox per changed file (with select-all/none) and a "Commit N selected" action, so you can commit a subset instead of the previous all-or-nothing commit. `GitService.commitProject` gains an optional project-relative `paths` list (validated to stay inside the subtree); the commit endpoint accepts `files[]`.
+  - Each changed file shows a `+A −R` line stat (from `git diff --numstat` for tracked changes, all-added line counts for untracked text files, "binary" for binary), echoed in a diff stat header.
+  - The projects grid now flags each project's uncommitted-file count, fed by a single cheap `git status` rollup on `/api/projects` — so pending work is visible before opening a project.
+
+- [#272](https://github.com/edspencer/paddock/pull/272) [`968a449`](https://github.com/edspencer/paddock/commit/968a4495f67633ca3c6264534d9db1ea67c9e019) Thanks [@edspencer](https://github.com/edspencer)! - Files tab: browse subdirectories with nested, deep-linkable URLs (#259)
+
+  The Files tab previously listed only top-level files, so anything a project filed
+  under a subdirectory (e.g. `design/`, `aar/`, `docs/`) was invisible. The listing
+  now returns one directory level at a time with a per-entry kind (file vs dir), and
+  the Files tab lets you click into folders. The current directory or file is
+  carried in a nested `/projects/:slug/files/<path>` URL (deep-linkable and
+  refresh-safe), with a `..` entry to go up and a path breadcrumb. Directories are
+  visually distinguished and sort ahead of files. The traversal guard stays central
+  in `resolveInProject`, and the single-file read path already supported nested
+  names.
+
 ## 0.29.0
 
 ### Minor Changes
