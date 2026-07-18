@@ -83,8 +83,9 @@ export class SweepService {
     this.herdctl = opts.herdctl;
     this.projects = opts.projects;
     this.stateFile = path.join(opts.dataDir, STATE_FILE);
-    this.minIntervalMs =
-      opts.minIntervalMs ?? envIntervalMs() ?? DEFAULT_MIN_INTERVAL_MS;
+    // `PADDOCK_SWEEP_MIN_INTERVAL_MS` is now folded into PaddockConfig (issue
+    // #269) and passed in as `minIntervalMs`; the default applies when unset.
+    this.minIntervalMs = opts.minIntervalMs ?? DEFAULT_MIN_INTERVAL_MS;
     this.log = opts.logger ?? consoleLogger();
   }
 
@@ -519,13 +520,6 @@ export function stripBoxConventions(overview: string): string {
 /** Headings that denote box-level "how to run a dev server here" content. */
 const BOX_OPS_HEADING =
   /\b(local[-\s]dev(elopment)?|dev(elopment)?\s+server|preview\s+server|running\s+locally|run\s+locally|running\s+the\s+app|serving\s+the\s+app|how\s+to\s+run|local\s+setup|dev\s+environment)\b/i;
-
-function envIntervalMs(): number | undefined {
-  const v = process.env.PADDOCK_SWEEP_MIN_INTERVAL_MS;
-  if (!v) return undefined;
-  const n = Number(v);
-  return Number.isFinite(n) && n >= 0 ? n : undefined;
-}
 
 function consoleLogger(): SweepLogger {
   /* eslint-disable no-console */

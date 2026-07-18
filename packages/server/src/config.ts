@@ -166,6 +166,38 @@ export interface PaddockConfig {
    * {@link selfMcpWriteEnabled} is on — spawning needs the write tools.
    */
   maxSpawnDepth: number;
+  /**
+   * Log level for the server's structured logger (Fastify/pino). Driven by
+   * `LOG_LEVEL`; default `info`.
+   */
+  logLevel: string;
+  /**
+   * Whether keeper + scratch agents receive the Playwright browser MCP server
+   * (headless Chromium) so Claude Code can drive a browser (navigate / click /
+   * snapshot / screenshot). Driven by `PADDOCK_BROWSER_MCP` (`1` enables);
+   * default false. Scoped PER INSTANCE — a box without the browser stack leaves
+   * it off so there are no failed spawns, and enabling it is a per-box env flip.
+   */
+  browserMcp: boolean;
+  /**
+   * Minimum ms between post-turn curation sweeps for a single project, or
+   * `undefined` to use the SweepService default (5 min). Driven by
+   * `PADDOCK_SWEEP_MIN_INTERVAL_MS`; a non-finite or negative value is ignored
+   * (falls back to the default).
+   */
+  sweepMinIntervalMs?: number;
+  /**
+   * Git commit identity used when Paddock commits on a project's behalf, so no
+   * global git config is needed. Driven by `PADDOCK_GIT_AUTHOR_NAME` /
+   * `PADDOCK_GIT_AUTHOR_EMAIL`; defaults `Paddock` / `paddock@localhost`.
+   */
+  gitAuthor: { name: string; email: string };
+  /**
+   * The GitHub OAuth/App client id for the git-backing-store device flow
+   * (github-auth.ts). Driven by `PADDOCK_GITHUB_CLIENT_ID`; `undefined` when
+   * unset, in which case the GitHub connect feature reports "not configured".
+   */
+  githubClientId?: string;
 }
 
 /**
@@ -361,7 +393,28 @@ export function loadPaddockConfig(): PaddockConfig {
     selfMcpEnabled: loadSelfMcpEnabled(),
     selfMcpWriteEnabled: loadSelfMcpEnabled() && loadSelfMcpWriteEnabled(),
     maxSpawnDepth: loadMaxSpawnDepth(),
+    logLevel: envOr("LOG_LEVEL", "info"),
+    browserMcp: process.env.PADDOCK_BROWSER_MCP === "1",
+    sweepMinIntervalMs: loadSweepMinIntervalMs(),
+    gitAuthor: {
+      name: envOr("PADDOCK_GIT_AUTHOR_NAME", "Paddock"),
+      email: envOr("PADDOCK_GIT_AUTHOR_EMAIL", "paddock@localhost"),
+    },
+    githubClientId: envOpt("PADDOCK_GITHUB_CLIENT_ID"),
   });
+}
+
+/**
+ * Resolve the post-turn sweep's minimum interval from
+ * `PADDOCK_SWEEP_MIN_INTERVAL_MS` (issue #269 fold). Returns `undefined` when
+ * unset or invalid (non-finite / negative) so the SweepService default (5 min)
+ * applies — preserving the pre-fold `envIntervalMs()` semantics exactly.
+ */
+function loadSweepMinIntervalMs(): number | undefined {
+  const raw = envOpt("PADDOCK_SWEEP_MIN_INTERVAL_MS");
+  if (raw === undefined) return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
 }
 
 /**
