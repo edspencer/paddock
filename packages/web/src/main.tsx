@@ -55,6 +55,7 @@ const router = createBrowserRouter([
       { path: "projects/:slug/files/*", element: <ProjectView /> },
       { path: "projects/:slug/changes", element: <ProjectView /> },
       { path: "projects/:slug/changes/:file", element: <ProjectView /> },
+      { path: "projects/:slug/history", element: <ProjectView /> },
       { path: "projects/:slug/settings", element: <ProjectView /> },
       { path: "chat", element: <OneOffChat /> },
       { path: "chat/:sessionId", element: <OneOffChat /> },

@@ -10,6 +10,8 @@ import { ChatPane } from "../components/ChatPane";
 import { ContextRing } from "../components/ContextRing";
 import { ProvenanceBadge } from "../components/ProvenanceBadge";
 import { ChangesPane } from "../components/ChangesPane";
+import { HistoryPane } from "../components/HistoryPane";
+import { useProjectRuns } from "../lib/useProjectRuns";
 import { Markdown } from "../components/Markdown";
 import { FilesPane } from "../components/FilesPane";
 import { ProjectMenu } from "../components/ProjectMenu";
@@ -61,16 +63,18 @@ export function ProjectView() {
   // Which sub-route are we on? Derived from the URL pathname so it updates on
   // client-side navigation (the `/home`, `/files`, and `/changes` segments
   // distinguish those tabs; anything else is the chat tab).
-  const view: "home" | "chat" | "files" | "changes" | "settings" =
+  const view: "home" | "chat" | "files" | "changes" | "settings" | "history" =
     location.pathname.startsWith(`/projects/${slug}/files`)
       ? "files"
       : location.pathname.startsWith(`/projects/${slug}/changes`)
         ? "changes"
-        : location.pathname.startsWith(`/projects/${slug}/settings`)
-          ? "settings"
-          : location.pathname.startsWith(`/projects/${slug}/home`)
-            ? "home"
-            : "chat";
+        : location.pathname.startsWith(`/projects/${slug}/history`)
+          ? "history"
+          : location.pathname.startsWith(`/projects/${slug}/settings`)
+            ? "settings"
+            : location.pathname.startsWith(`/projects/${slug}/home`)
+              ? "home"
+              : "chat";
   const routeSessionId = view === "chat" ? params.sessionId : undefined;
   // The Files tab nests: the directory or file being viewed is whatever follows
   // `/projects/:slug/files/` in the URL (issue #259). We read it straight from
@@ -176,6 +180,11 @@ export function ProjectView() {
   // hidden. The "Changes" tab is a real route (/changes[/:file]) like the other
   // three, so it's deep-linkable and survives a reload (issue #107).
   const [gitStatus, setGitStatus] = useState<GitProjectStatus | null>(null);
+  // Run history (#268): fetched at the project level so the History tab can badge
+  // the count of new unattended runs without the tab being open. The HistoryPane
+  // shares this state and clears the badge (advances the watermark) on open.
+  const runsState = useProjectRuns(slug);
+  const newRunCount = runsState.data?.newUnattended ?? 0;
   // Mobile: the session list is an off-canvas drawer (static column on lg+).
   const [sessionsOpen, setSessionsOpen] = useState(false);
 
@@ -258,11 +267,13 @@ export function ProjectView() {
         ? toSubPath({ view: "home" })
         : view === "settings"
           ? toSubPath({ view: "settings" })
-          : view === "chat"
-            ? toSubPath({ view: "chat", sessionId: routeSessionId })
-            : view === "changes"
-              ? toSubPath({ view: "changes", file: routeChangeFile })
-              : toSubPath({ view: "files", path: filesSubpath || undefined });
+          : view === "history"
+            ? toSubPath({ view: "history" })
+            : view === "chat"
+              ? toSubPath({ view: "chat", sessionId: routeSessionId })
+              : view === "changes"
+                ? toSubPath({ view: "changes", file: routeChangeFile })
+                : toSubPath({ view: "files", path: filesSubpath || undefined });
     writeLastTab(slug, sub);
   }, [slug, view, routeSessionId, filesSubpath, routeChangeFile]);
 
@@ -305,6 +316,7 @@ export function ProjectView() {
   const goChat = useCallback(() => navigate(`/projects/${slug}/chat`), [navigate, slug]);
   const goFiles = useCallback(() => navigate(`/projects/${slug}/files`), [navigate, slug]);
   const goChanges = useCallback(() => navigate(`/projects/${slug}/changes`), [navigate, slug]);
+  const goHistory = useCallback(() => navigate(`/projects/${slug}/history`), [navigate, slug]);
   const goSettings = useCallback(() => navigate(`/projects/${slug}/settings`), [navigate, slug]);
   // Select a specific changed file in the Changes tab, reflecting it in the URL
   // so a specific diff/file is deep-linkable (issue #107). null clears to the
@@ -1068,6 +1080,23 @@ export function ProjectView() {
                 </span>
               </TabButton>
             )}
+            {/* The History tab — the "while you were away" run view (#268). Its
+                badge counts unattended (scheduled + spawned) runs that finished
+                since the user last opened it, so unattended work is visible
+                without opening the tab. */}
+            <TabButton active={view === "history"} onClick={goHistory}>
+              <span className="inline-flex items-center gap-1.5">
+                History
+                {newRunCount > 0 && (
+                  <span
+                    title={`${newRunCount} new unattended run${newRunCount === 1 ? "" : "s"} since your last visit`}
+                    className="inline-flex min-w-[1.1rem] items-center justify-center rounded-full bg-accent/15 px-1 text-[10px] font-semibold text-accent-700 dark:text-accent"
+                  >
+                    {newRunCount}
+                  </span>
+                )}
+              </span>
+            </TabButton>
             <TabButton active={view === "settings"} onClick={goSettings}>
               <span className="inline-flex items-center gap-1.5">
                 <WrenchIcon width={13} height={13} />
@@ -1098,6 +1127,17 @@ export function ProjectView() {
               onStatusChange={(s) => setGitStatus(s.repo ? s : null)}
               selectedFile={routeChangeFile ?? null}
               onSelectFile={openChangeFile}
+            />
+          )}
+          {/* The History tab (#268): a project-level run-history view. Fetch is
+              owned above (runsState) so the tab badge works without opening it;
+              the pane clears the since-last-visit watermark on mount. */}
+          {view === "history" && (
+            <HistoryPane
+              slug={project.slug}
+              state={runsState}
+              chats={chats}
+              onOpenChat={openChat}
             />
           )}
           {view === "settings" && (
