@@ -60,14 +60,6 @@ export function childOf(parent: RunProvenance): RunProvenance {
   return { origin: "spawned", depth: parent.depth + 1 };
 }
 
-/**
- * An event-hook-fired chat: origin `hook`, depth 0 (Epic G / G1). A lifecycle event
- * (e.g. `onArchive`) is a root trigger exactly like a human or a cron — so its fired
- * turn starts a fresh root-depth chat, distinct from `scheduled` (cron) and `spawned`
- * (fan-out) so the chat list (G3) can badge hook chats on their own.
- */
-export const HOOK_ROOT: RunProvenance = { origin: "hook", depth: 0 };
-
 const ORIGINS: readonly TurnOrigin[] = ["human", "scheduled", "spawned", "hook"];
 
 function isOrigin(v: unknown): v is TurnOrigin {
