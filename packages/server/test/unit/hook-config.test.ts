@@ -206,6 +206,37 @@ describe("mergeHookUpdate (G5 partial set_hook)", () => {
       enabled: true,
     });
   });
+
+  it("switching a file-backed hook to an inline prompt CLEARS the stale promptFile", () => {
+    // Warren #2: prompt & promptFile are mutually exclusive (file wins). An inline
+    // edit that omits prompt_file must not leave the old file winning.
+    const fileHook = { event: "onArchive" as const, promptFile: "cleanup.md", enabled: true };
+    const out = mergeHookUpdate(fileHook, { event: "onArchive", prompt: "do it inline" });
+    expect(out).toEqual({ event: "onArchive", prompt: "do it inline", enabled: true });
+    expect(out.promptFile).toBeUndefined();
+  });
+
+  it("switching an inline hook to a promptFile CLEARS the stale inline prompt", () => {
+    const inlineHook = { event: "onArchive" as const, prompt: "old inline", enabled: false };
+    const out = mergeHookUpdate(inlineHook, { event: "onArchive", promptFile: "cleanup.md" });
+    expect(out).toEqual({ event: "onArchive", promptFile: "cleanup.md", enabled: false });
+    expect(out.prompt).toBeUndefined();
+  });
+
+  it("a capability/enabled-only edit (neither prompt supplied) leaves the prompt source intact", () => {
+    const fileHook = { event: "onArchive" as const, promptFile: "cleanup.md", enabled: false };
+    const out = mergeHookUpdate(fileHook, {
+      event: "onArchive",
+      capabilities: { allowedTools: ["Bash"] },
+      enabled: true,
+    });
+    expect(out).toEqual({
+      event: "onArchive",
+      promptFile: "cleanup.md",
+      capabilities: { allowedTools: ["Bash"] },
+      enabled: true,
+    });
+  });
 });
 
 describe("hookToAgentToolConfig", () => {

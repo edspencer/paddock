@@ -151,6 +151,12 @@ export function resolveHooksMcpEnabled(
  * brand-new hook (`existing` null) starts from `{}` and defaults `enabled: false`
  * (GG-3, safe-create). Returns an untrusted record for {@link sanitizeHook} to
  * validate (so it stays `Record<string, unknown>`, never a typed `PaddockHook`).
+ *
+ * `prompt` and `promptFile` are MUTUALLY EXCLUSIVE (the file wins at fire time), so
+ * supplying one clears the inherited counterpart — otherwise switching a file-backed
+ * hook to an inline prompt would leave the stale `promptFile` winning and silently
+ * discard the edit. Supplying neither (a capability/enabled-only edit) leaves the
+ * existing prompt source untouched.
  */
 export function mergeHookUpdate(
   existing: PaddockHook | null | undefined,
@@ -166,6 +172,10 @@ export function mergeHookUpdate(
       }
     : {};
   const record = { ...base, ...incoming };
+  // Switching prompt source: one supplied side clears the inherited other, so the
+  // record never ends up with both (which would let the stale file win at fire time).
+  if (incoming.prompt !== undefined && incoming.promptFile === undefined) delete record.promptFile;
+  if (incoming.promptFile !== undefined && incoming.prompt === undefined) delete record.prompt;
   if (record.enabled === undefined) record.enabled = false;
   return record;
 }
