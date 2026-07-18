@@ -33,6 +33,11 @@ interface StubOverrides {
   claudeMd?: string;
   /** Make appendClaudeMd reject to exercise the non-fatal path. */
   claudeAppendThrows?: boolean;
+  /**
+   * Content of the optional per-project `.paddock/hooks/sweep.md` (issue #G2).
+   * `undefined` → the file is absent (readFile rejects, as on disk).
+   */
+  sweepInstructions?: string;
 }
 
 describe("SweepService", () => {
@@ -80,7 +85,15 @@ describe("SweepService", () => {
         return project;
       }),
       readOverview: vi.fn(async () => ""),
-      readFile: vi.fn(async () => "# Changelog\n"),
+      readFile: vi.fn(async (_slug: string, name: string) => {
+        if (name === ".paddock/hooks/sweep.md") {
+          // Absent file → reject (mirrors fs.readFile ENOENT), which the service
+          // catches into "" (no extra instructions).
+          if (o.sweepInstructions === undefined) throw new Error("ENOENT");
+          return o.sweepInstructions;
+        }
+        return "# Changelog\n";
+      }),
       readClaudeMd: vi.fn(async () => o.claudeMd ?? ""),
       writeOverview: vi.fn(async (_slug: string, content: string) => {
         overviewWrites.push(content);
@@ -174,6 +187,54 @@ describe("SweepService", () => {
     // The append threw but was swallowed → the watermark still advanced.
     const state = JSON.parse(await fs.readFile(path.join(dataDir, "sweep-state.json"), "utf8"));
     expect(state.demo.lastSweptSessionMtime).toBe("2026-06-20T00:00:00.000Z");
+    svc.stop();
+  });
+
+  it("appends `.paddock/hooks/sweep.md` instructions to the sweeper prompt when present (#G2)", async () => {
+    const marker = "ALWAYS keep a Glossary section in the overview.";
+    const { svc, runSweeper } = makeService({ sweepInstructions: `# Curator notes\n${marker}\n` });
+    svc.enqueue("demo");
+    await vi.waitFor(() => expect(runSweeper).toHaveBeenCalled(), { timeout: 2000 });
+    const prompt = runSweeper.mock.calls[0][1] as string;
+    expect(prompt).toContain("=== EXTRA PROJECT-SPECIFIC CURATOR INSTRUCTIONS ===");
+    expect(prompt).toContain(marker);
+    // Curation still happens as normal.
+    expect(overviewWrites[0]).toContain("# Overview");
+    svc.stop();
+  });
+
+  it("does NOT add the extra-instructions section when `.paddock/hooks/sweep.md` is absent (#G2)", async () => {
+    const { svc, runSweeper } = makeService(); // sweepInstructions undefined → file absent
+    svc.enqueue("demo");
+    await vi.waitFor(() => expect(runSweeper).toHaveBeenCalled(), { timeout: 2000 });
+    const prompt = runSweeper.mock.calls[0][1] as string;
+    expect(prompt).not.toContain("EXTRA PROJECT-SPECIFIC CURATOR INSTRUCTIONS");
+    svc.stop();
+  });
+
+  it("treats a blank/whitespace-only `.paddock/hooks/sweep.md` as absent (#G2)", async () => {
+    const { svc, runSweeper } = makeService({ sweepInstructions: "   \n\t\n" });
+    svc.enqueue("demo");
+    await vi.waitFor(() => expect(runSweeper).toHaveBeenCalled(), { timeout: 2000 });
+    const prompt = runSweeper.mock.calls[0][1] as string;
+    expect(prompt).not.toContain("EXTRA PROJECT-SPECIFIC CURATOR INSTRUCTIONS");
+    svc.stop();
+  });
+
+  it("caps an oversized `.paddock/hooks/sweep.md` before appending it to the prompt (#G2)", async () => {
+    // A pathologically large file must not bloat the prompt unbounded — it's
+    // capped (~8000 chars) like every sibling field, with a truncation marker.
+    const huge = "X".repeat(20_000);
+    const { svc, runSweeper } = makeService({ sweepInstructions: huge });
+    svc.enqueue("demo");
+    await vi.waitFor(() => expect(runSweeper).toHaveBeenCalled(), { timeout: 2000 });
+    const prompt = runSweeper.mock.calls[0][1] as string;
+    expect(prompt).toContain("=== EXTRA PROJECT-SPECIFIC CURATOR INSTRUCTIONS ===");
+    expect(prompt).toContain("…[truncated]");
+    // The appended run of X's is bounded well below the original 20k.
+    const longestRun = (prompt.match(/X+/g) ?? []).reduce((m, s) => Math.max(m, s.length), 0);
+    expect(longestRun).toBeLessThanOrEqual(8000);
+    expect(longestRun).toBeGreaterThan(0);
     svc.stop();
   });
 
