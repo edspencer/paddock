@@ -46,7 +46,14 @@ function makeState(runs: RunSummary[], over: Partial<ProjectRuns> = {}): {
   };
   return {
     markSeen,
-    state: { data, loading: false, error: null, refresh: vi.fn(), markSeen },
+    state: {
+      data,
+      loading: false,
+      error: null,
+      newUnattended: data.newUnattended,
+      refresh: vi.fn(),
+      markSeen,
+    },
   };
 }
 

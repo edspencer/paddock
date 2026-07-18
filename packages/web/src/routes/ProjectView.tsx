@@ -184,7 +184,7 @@ export function ProjectView() {
   // the count of new unattended runs without the tab being open. The HistoryPane
   // shares this state and clears the badge (advances the watermark) on open.
   const runsState = useProjectRuns(slug);
-  const newRunCount = runsState.data?.newUnattended ?? 0;
+  const newRunCount = runsState.newUnattended;
   // Mobile: the session list is an off-canvas drawer (static column on lg+).
   const [sessionsOpen, setSessionsOpen] = useState(false);
 
