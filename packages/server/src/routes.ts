@@ -24,6 +24,12 @@
  */
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { ProjectError, type ProjectStore, type CreateProjectInput, type UpdateProjectInput } from "./projects.js";
+import {
+  sanitizeSchedule,
+  isValidScheduleName,
+  scheduleToHerdctl,
+  type PaddockSchedule,
+} from "./schedule-config.js";
 import { AttachmentStore, collectAttachmentIds } from "./attachments.js";
 import type { HerdctlService } from "./herdctl.js";
 import { SCRATCH_SLUG, SCRATCH_AGENT, keeperAgentName } from "./herdctl.js";
@@ -79,6 +85,14 @@ export interface RouteDeps {
   readState: ReadStateStore;
   runProvenance: RunProvenanceStore;
   attachments: AttachmentStore;
+  /**
+   * Manually fire a project's schedule NOW (issue #266 / D4), backing the
+   * `POST …/schedules/:name/trigger` route. Supplied by the chat handler
+   * (`makeChatHandler(...).fireSchedule`) so a "trigger now" runs the schedule
+   * through the SAME hub path a cron fire uses — a first-class, discoverable chat.
+   * Resolves the started chat's session id, or `null` if nothing started.
+   */
+  fireSchedule: (slug: string, scheduleName: string) => Promise<string | null>;
   cfg: PaddockConfig;
 }
 
@@ -93,6 +107,7 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     readState,
     runProvenance,
     attachments,
+    fireSchedule,
     cfg,
   } = deps;
 
@@ -404,6 +419,171 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
       return sendProjectError(reply, err);
     }
   });
+
+  // --- schedules (issue #266 / D4) ---------------------------------------
+  // The per-project scheduled-chat management surface the Settings pane drives.
+  // The schedule DEFINITION is declared in project.yaml (herdctl's `ScheduleSchema`
+  // shape, D3) — its persistence half is `ProjectStore.set/removeSchedule`; the
+  // RUNTIME arming half is `HerdctlService.set/removeAgentSchedule` (herdctl#376),
+  // behind the per-deployment `scheduleMutationEnabled` gate. Each mutating route
+  // persists to project.yaml FIRST (the source of truth — it re-arms on restart),
+  // then arms herdctl, warning-but-not-failing if the runtime arm hiccups.
+
+  /**
+   * Merge a project.yaml schedule declaration with herdctl's live runtime state
+   * (status / last / next run) into the DTO the Settings pane renders. `info` is
+   * absent for a just-declared schedule herdctl hasn't armed yet (or when the
+   * keeper isn't running) — then status falls back to the declared `enabled`.
+   */
+  const toScheduleDto = (
+    name: string,
+    rec: PaddockSchedule,
+    info?: ScheduleRuntimeInfo,
+  ) => ({
+    name,
+    type: rec.type,
+    cron: rec.cron ?? null,
+    interval: rec.interval ?? null,
+    prompt: rec.prompt ?? null,
+    promptFile: rec.promptFile ?? null,
+    resumeSession: rec.resume_session === true,
+    enabled: rec.enabled !== false,
+    status: info?.status ?? (rec.enabled === false ? "disabled" : "idle"),
+    lastRunAt: info?.lastRunAt ?? null,
+    nextRunAt: info?.nextRunAt ?? null,
+    lastError: info?.lastError ?? null,
+  });
+
+  // List a project's schedules (declaration + live runtime state), plus the
+  // per-deployment mutation gate so the pane can render read-only with a hint.
+  app.get<{ Params: { slug: string } }>(
+    "/api/projects/:slug/schedules",
+    async (req, reply) => {
+      try {
+        const project = await projects.get(req.params.slug); // throws not_found
+        const declared = project.schedules ?? {};
+        const runtime = await herdctl.listAgentSchedules(project).catch(() => []);
+        const byName = new Map(runtime.map((s) => [s.name, s]));
+        const schedules = Object.entries(declared).map(([name, rec]) =>
+          toScheduleDto(name, rec, byName.get(name)),
+        );
+        return { schedules, mutationEnabled: cfg.scheduleMutationEnabled };
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  // Create or replace one schedule (keyed by name). Persists to project.yaml, then
+  // arms herdctl at runtime via the granular setAgentSchedule (no stale-leaving
+  // whole-agent replace). 403 when the deployment hasn't opted into mutation.
+  app.put<{ Params: { slug: string; name: string }; Body: unknown }>(
+    "/api/projects/:slug/schedules/:name",
+    async (req, reply) => {
+      if (!cfg.scheduleMutationEnabled) return sendMutationDisabled(reply);
+      const { slug, name } = req.params;
+      if (!isValidScheduleName(name)) {
+        return reply.code(400).send({ error: `Invalid schedule name: ${name}`, code: "invalid" });
+      }
+      const clean = sanitizeSchedule(req.body);
+      if (!clean) {
+        return reply.code(400).send({ error: "Invalid schedule definition", code: "invalid" });
+      }
+      try {
+        const project = await projects.setSchedule(slug, name, clean); // throws not_found/invalid
+        try {
+          await herdctl.setAgentSchedule(project, name, scheduleToHerdctl(clean));
+        } catch (err) {
+          req.log.warn({ err }, "runtime setAgentSchedule failed — armed on next restart");
+        }
+        return { schedule: toScheduleDto(name, clean), mutationEnabled: true };
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  // Delete one schedule. Removes it from project.yaml AND prunes herdctl's armed
+  // copy + persisted state (so a re-added name doesn't inherit stale last-run).
+  app.delete<{ Params: { slug: string; name: string } }>(
+    "/api/projects/:slug/schedules/:name",
+    async (req, reply) => {
+      if (!cfg.scheduleMutationEnabled) return sendMutationDisabled(reply);
+      const { slug, name } = req.params;
+      try {
+        const project = await projects.removeSchedule(slug, name); // throws not_found
+        try {
+          await herdctl.removeAgentSchedule(project, name);
+        } catch (err) {
+          req.log.warn({ err }, "runtime removeAgentSchedule failed");
+        }
+        return reply.code(200).send({ ok: true, name });
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  // Enable/disable one schedule. Flips herdctl's persisted enable-state (which is
+  // read, not config, so it wins over the armed copy) AND persists `enabled` back
+  // to project.yaml for restart parity. `:action` is `enable` | `disable`.
+  app.post<{ Params: { slug: string; name: string; action: string } }>(
+    "/api/projects/:slug/schedules/:name/:action(enable|disable)",
+    async (req, reply) => {
+      if (!cfg.scheduleMutationEnabled) return sendMutationDisabled(reply);
+      const { slug, name, action } = req.params;
+      const enable = action === "enable";
+      try {
+        const project = await projects.get(slug); // throws not_found
+        const rec = project.schedules?.[name];
+        if (!rec) {
+          return reply.code(404).send({ error: `No such schedule: ${name}`, code: "not_found" });
+        }
+        // Persist the flag to project.yaml (round-trips on restart) …
+        const updated = await projects.setSchedule(slug, name, { ...rec, enabled: enable });
+        // … and flip herdctl's persisted runtime state so it takes effect now.
+        let info: ScheduleRuntimeInfo | undefined;
+        try {
+          info = enable
+            ? await herdctl.enableSchedule(project, name)
+            : await herdctl.disableSchedule(project, name);
+        } catch (err) {
+          req.log.warn({ err }, `runtime ${action}Schedule failed — applied on next restart`);
+        }
+        const nextRec = updated.schedules?.[name] ?? { ...rec, enabled: enable };
+        return { schedule: toScheduleDto(name, nextRec, info), mutationEnabled: true };
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  // Trigger a schedule NOW — runs it through the same hub path a cron fire uses,
+  // so the resulting chat is a first-class, discoverable, `scheduled`-badged run
+  // (E1/#267). Allowed regardless of the mutation gate: it runs an already-declared
+  // schedule, it doesn't change the schedule set. `enabled: false` still fires (a
+  // manual trigger is deliberate — DD-1). Responds 202 with the started session id.
+  app.post<{ Params: { slug: string; name: string } }>(
+    "/api/projects/:slug/schedules/:name/trigger",
+    async (req, reply) => {
+      const { slug, name } = req.params;
+      try {
+        const project = await projects.get(slug); // throws not_found
+        if (!project.schedules?.[name]) {
+          return reply.code(404).send({ error: `No such schedule: ${name}`, code: "not_found" });
+        }
+        const sessionId = await fireSchedule(slug, name);
+        if (!sessionId) {
+          return reply
+            .code(502)
+            .send({ error: "Schedule fire did not start a chat", code: "trigger_failed" });
+        }
+        return reply.code(202).send({ ok: true, name, sessionId });
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
 
   // One level of a project's file tree (issue #259). `?path=<subpath>` descends
   // into a subdirectory ("" / omitted = the project root). The response is a
@@ -1265,6 +1445,30 @@ export function parseRangeHeader(
   }
   if (start > end || start >= total) return "unsatisfiable";
   return { start, end };
+}
+
+/**
+ * The slice of herdctl's `ScheduleInfo` the schedules DTO surfaces (issue #266 /
+ * D4): live runtime state herdctl tracks for an armed schedule. Kept as a local
+ * structural type so routes don't depend on `@herdctl/core`'s import surface.
+ */
+interface ScheduleRuntimeInfo {
+  status: "idle" | "running" | "disabled";
+  lastRunAt: string | null;
+  nextRunAt: string | null;
+  lastError: string | null;
+}
+
+/**
+ * 403 for a schedule-mutation route when the deployment hasn't opted into
+ * programmatic schedule mutation (`PADDOCK_SCHEDULE_MUTATION` off, DD-7). The pane
+ * renders read-only in this case; this guards the API directly too.
+ */
+function sendMutationDisabled(reply: import("fastify").FastifyReply) {
+  return reply.code(403).send({
+    error: "Schedule mutation is disabled on this deployment",
+    code: "schedule_mutation_disabled",
+  });
 }
 
 function sendProjectError(reply: import("fastify").FastifyReply, err: unknown) {

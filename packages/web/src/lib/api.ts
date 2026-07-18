@@ -19,6 +19,8 @@ import {
   type Project,
   type ProjectDetail,
   type ProjectFile,
+  type Schedule,
+  type ScheduleInput,
   SCRATCH_SLUG,
   type SlashCommand,
   type UpdateProjectInput,
@@ -402,6 +404,61 @@ export const api = {
         : `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}/context`;
     const { usage } = await req<{ usage: ChatUsage | null }>(path);
     return usage;
+  },
+
+  // --- Schedules (issue #266 / D4) -----------------------------------------
+
+  /**
+   * A project's schedules (declaration + live runtime state) plus the
+   * per-deployment mutation gate. When `mutationEnabled` is false the Settings
+   * pane renders the list read-only (create/edit/delete/toggle are 403 server-side).
+   */
+  async listSchedules(slug: string): Promise<{ schedules: Schedule[]; mutationEnabled: boolean }> {
+    return req<{ schedules: Schedule[]; mutationEnabled: boolean }>(
+      `/api/projects/${encodeURIComponent(slug)}/schedules`,
+    );
+  },
+
+  /** Create or replace one schedule (keyed by name). Persists + arms it at runtime. */
+  async putSchedule(slug: string, name: string, input: ScheduleInput): Promise<Schedule> {
+    const { schedule } = await req<{ schedule: Schedule }>(
+      `/api/projects/${encodeURIComponent(slug)}/schedules/${encodeURIComponent(name)}`,
+      { method: "PUT", body: JSON.stringify(input) },
+    );
+    return schedule;
+  },
+
+  /** Delete one schedule (removes it from project.yaml + prunes herdctl's copy). */
+  async deleteSchedule(slug: string, name: string): Promise<void> {
+    await req<{ ok: boolean }>(
+      `/api/projects/${encodeURIComponent(slug)}/schedules/${encodeURIComponent(name)}`,
+      { method: "DELETE" },
+    );
+  },
+
+  /** Enable or disable one schedule (persisted; takes effect immediately). */
+  async setScheduleEnabled(slug: string, name: string, enabled: boolean): Promise<Schedule> {
+    const action = enabled ? "enable" : "disable";
+    // These carry no payload, but `req` sets a JSON content-type — send an empty
+    // object so Fastify's JSON parser doesn't reject an empty body (400).
+    const { schedule } = await req<{ schedule: Schedule }>(
+      `/api/projects/${encodeURIComponent(slug)}/schedules/${encodeURIComponent(name)}/${action}`,
+      { method: "POST", body: "{}" },
+    );
+    return schedule;
+  },
+
+  /**
+   * Fire a schedule NOW — runs it through the same hub path a cron fire uses, so
+   * the resulting chat is a first-class, `scheduled`-badged run. Resolves the
+   * started chat's session id.
+   */
+  async triggerSchedule(slug: string, name: string): Promise<string> {
+    const { sessionId } = await req<{ ok: boolean; sessionId: string }>(
+      `/api/projects/${encodeURIComponent(slug)}/schedules/${encodeURIComponent(name)}/trigger`,
+      { method: "POST", body: "{}" },
+    );
+    return sessionId;
   },
 
   // --- Git backing store ----------------------------------------------------

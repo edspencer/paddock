@@ -243,6 +243,56 @@ export interface ChatProvenance {
   depth: number;
 }
 
+/** A scheduled chat's timer kind (issue #266 / D4). */
+export type ScheduleType = "cron" | "interval";
+
+/**
+ * A project's scheduled chat (issue #266 / D4) — the project.yaml declaration
+ * (herdctl's `ScheduleSchema` shape + Paddock's `promptFile`) MERGED with
+ * herdctl's live runtime state. Drives the Schedules section of the Settings
+ * pane. `status` / `lastRunAt` / `nextRunAt` / `lastError` reflect the running
+ * keeper (a just-declared schedule not yet armed reports `idle`/nulls).
+ */
+export interface Schedule {
+  name: string;
+  type: ScheduleType;
+  /** Cron expression (5-field / `@daily`) — present for `type: "cron"`. */
+  cron: string | null;
+  /** Interval string (e.g. `"30m"`, `"1h"`) — present for `type: "interval"`. */
+  interval: string | null;
+  /** The inline prompt the fire runs (null when a `promptFile` supplies it). */
+  prompt: string | null;
+  /** A `.paddock/schedules/*.md` prompt file, read fresh at fire time (Paddock sugar). */
+  promptFile: string | null;
+  /** `true` → one accreting owned session; `false` → a fresh chat each fire (DD-2). */
+  resumeSession: boolean;
+  /** Whether the schedule is armed. */
+  enabled: boolean;
+  /** Live runtime status from herdctl (or derived from `enabled` when unarmed). */
+  status: "idle" | "running" | "disabled";
+  /** ISO timestamp of the last fire, or null if it hasn't run. */
+  lastRunAt: string | null;
+  /** ISO timestamp of the next scheduled fire, or null (e.g. disabled). */
+  nextRunAt: string | null;
+  /** Last error message from a fire, if any. */
+  lastError: string | null;
+}
+
+/**
+ * The write shape for creating/replacing a schedule (issue #266 / D4). Mirrors
+ * herdctl's `ScheduleSchema` field names (`resume_session`, `prompt`) plus the
+ * Paddock-only `promptFile`; the server sanitises it before persisting.
+ */
+export interface ScheduleInput {
+  type: ScheduleType;
+  cron?: string;
+  interval?: string;
+  prompt?: string;
+  promptFile?: string;
+  resume_session?: boolean;
+  enabled?: boolean;
+}
+
 /**
  * A chat's usage as computed server-side from its transcript (issue #152): the
  * last-turn context fill (`contextTokens` / `contextLimit`, issue #77) plus the
