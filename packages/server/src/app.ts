@@ -76,7 +76,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   const cfg = opts.config ?? loadPaddockConfig();
 
   const app = Fastify({
-    logger: { level: process.env.LOG_LEVEL ?? "info" },
+    logger: { level: cfg.logLevel },
   });
 
   // --- auth (provider-agnostic) -----------------------------------------
@@ -90,8 +90,8 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   await projects.init();
 
   const herdctl = new HerdctlService(cfg);
-  const git = new GitService(cfg.projectsRoot);
-  const githubAuth = new GithubAuth(path.join(cfg.dataDir, "github-auth.json"));
+  const git = new GitService(cfg.projectsRoot, cfg.gitAuthor);
+  const githubAuth = new GithubAuth(path.join(cfg.dataDir, "github-auth.json"), cfg.githubClientId);
   const archive = new ArchiveStore(cfg.dataDir);
   // Per-user (or shared, in `none` mode) chat read-state sidecar (#189).
   const readState = new ReadStateStore(cfg.dataDir);
@@ -124,6 +124,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
     herdctl,
     projects,
     dataDir: cfg.dataDir,
+    minIntervalMs: cfg.sweepMinIntervalMs,
     logger: app.log,
   });
 

@@ -60,13 +60,25 @@ function numField(obj: unknown, key: string): number | undefined {
 
 export class GithubAuth {
   private cached: StoredToken | null | undefined;
+  /** Trimmed client id, or undefined when unset/blank. */
+  private readonly _clientId: string | undefined;
 
-  constructor(private readonly tokenFile: string) {}
+  /**
+   * @param tokenFile Path to the on-disk stored-token file (0600, under the data dir).
+   * @param clientId The OAuth/App client id, folded into PaddockConfig from
+   *   `PADDOCK_GITHUB_CLIENT_ID` (issue #269). Trimmed here; a blank value is
+   *   treated as unset so the feature reports "not configured".
+   */
+  constructor(
+    private readonly tokenFile: string,
+    clientId?: string,
+  ) {
+    this._clientId = clientId && clientId.trim() ? clientId.trim() : undefined;
+  }
 
   /** The configured OAuth/App client id, or undefined when unset. */
   clientId(): string | undefined {
-    const id = process.env.PADDOCK_GITHUB_CLIENT_ID;
-    return id && id.trim() ? id.trim() : undefined;
+    return this._clientId;
   }
 
   async status(): Promise<GithubStatus> {

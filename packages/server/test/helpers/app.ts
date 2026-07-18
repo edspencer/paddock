@@ -43,6 +43,12 @@ interface StartOptions {
    * drive the curation path deterministically. Sets PADDOCK_SWEEP_MIN_INTERVAL_MS.
    */
   sweepIntervalMs?: number;
+  /**
+   * Configure the GitHub device-flow client id (folded into PaddockConfig, issue
+   * #269). Sets `PADDOCK_GITHUB_CLIENT_ID` before build so it lands in `cfg`; a
+   * bare app (no value) reports the GitHub feature as "not configured".
+   */
+  githubClientId?: string;
 }
 
 /**
@@ -76,6 +82,7 @@ export async function startTestApp(opts: StartOptions = {}): Promise<TestApp> {
     PADDOCK_FAKE_SWEEP: process.env.PADDOCK_FAKE_SWEEP,
     PADDOCK_SWEEP_MIN_INTERVAL_MS: process.env.PADDOCK_SWEEP_MIN_INTERVAL_MS,
     PADDOCK_KEEPER_DRIVE_MODE: process.env.PADDOCK_KEEPER_DRIVE_MODE,
+    PADDOCK_GITHUB_CLIENT_ID: process.env.PADDOCK_GITHUB_CLIENT_ID,
     LOG_LEVEL: process.env.LOG_LEVEL,
   };
 
@@ -108,6 +115,12 @@ export async function startTestApp(opts: StartOptions = {}): Promise<TestApp> {
     process.env.PADDOCK_SWEEP_MIN_INTERVAL_MS = String(opts.sweepIntervalMs);
   } else {
     delete process.env.PADDOCK_SWEEP_MIN_INTERVAL_MS;
+  }
+
+  if (opts.githubClientId !== undefined) {
+    process.env.PADDOCK_GITHUB_CLIENT_ID = opts.githubClientId;
+  } else {
+    delete process.env.PADDOCK_GITHUB_CLIENT_ID;
   }
 
   if (opts.gitRepo) {

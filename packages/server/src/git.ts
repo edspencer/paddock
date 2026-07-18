@@ -85,7 +85,19 @@ export class GitService {
   /** Cached repo-detection result for `projectsRoot` (null = not yet checked). */
   private repoFlag: boolean | null = null;
 
-  constructor(private readonly projectsRoot: string) {}
+  /**
+   * @param projectsRoot Absolute path to the projects root the service operates on.
+   * @param author Commit identity used when Paddock commits on a project's behalf.
+   *   Folded into PaddockConfig from `PADDOCK_GIT_AUTHOR_*` (issue #269); defaults
+   *   preserve the pre-fold values so a bare `new GitService(root)` is unchanged.
+   */
+  constructor(
+    private readonly projectsRoot: string,
+    private readonly author: { name: string; email: string } = {
+      name: "Paddock",
+      email: "paddock@localhost",
+    },
+  ) {}
 
   /** Run git in a directory, returning stdout. Throws on non-zero exit. */
   private async git(cwd: string, args: string[]): Promise<string> {
@@ -227,12 +239,9 @@ export class GitService {
 
   // --- phase 2: write surface (commit / push / remote) -------------------
 
-  /** Commit identity, from env with sensible defaults (no global git config needed). */
+  /** Commit identity (from config, no global git config needed). */
   private identity(): { name: string; email: string } {
-    return {
-      name: process.env.PADDOCK_GIT_AUTHOR_NAME ?? "Paddock",
-      email: process.env.PADDOCK_GIT_AUTHOR_EMAIL ?? "paddock@localhost",
-    };
+    return this.author;
   }
 
   /** Origin remote info + ahead/behind vs upstream (best-effort). */

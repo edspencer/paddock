@@ -648,29 +648,31 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
   // --- GitHub device-flow endpoints (mocked fetch) ---------------------------
 
   describe("GitHub device-flow endpoints", () => {
-    const savedClientId = process.env.PADDOCK_GITHUB_CLIENT_ID;
+    // The client id is folded into PaddockConfig (issue #269), resolved once at
+    // build. So the "configured" cases run against a dedicated app built WITH a
+    // client id, and the "not configured" case uses the outer `t` app (built
+    // without one) — no runtime env toggling.
     const realFetch = globalThis.fetch;
     let fetchMock: ReturnType<typeof vi.fn>;
+    let gh: TestApp;
 
-    beforeAll(() => {
+    beforeAll(async () => {
+      gh = await startTestApp({ githubClientId: "Iv1.routes" });
       fetchMock = vi.fn();
       globalThis.fetch = fetchMock as unknown as typeof fetch;
     });
-    afterAll(() => {
+    afterAll(async () => {
       globalThis.fetch = realFetch;
-      if (savedClientId === undefined) delete process.env.PADDOCK_GITHUB_CLIENT_ID;
-      else process.env.PADDOCK_GITHUB_CLIENT_ID = savedClientId;
+      await gh.teardown();
     });
 
     it("POST /connect 400s when no client id is configured", async () => {
-      delete process.env.PADDOCK_GITHUB_CLIENT_ID;
       const res = await t.app.inject({ method: "POST", url: "/api/git/github/connect" });
       expect(res.statusCode).toBe(400);
       expect(res.json().error).toMatch(/not configured/i);
     });
 
     it("POST /connect returns the device code when configured", async () => {
-      process.env.PADDOCK_GITHUB_CLIENT_ID = "Iv1.routes";
       fetchMock.mockResolvedValueOnce(
         jsonResponse({
           device_code: "DC-1",
@@ -680,7 +682,7 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
           expires_in: 900,
         }),
       );
-      const res = await t.app.inject({ method: "POST", url: "/api/git/github/connect" });
+      const res = await gh.app.inject({ method: "POST", url: "/api/git/github/connect" });
       expect(res.statusCode).toBe(200);
       const body = res.json();
       expect(body.userCode).toBe("AAAA-BBBB");
@@ -698,9 +700,8 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
     });
 
     it("POST /poll surfaces pending", async () => {
-      process.env.PADDOCK_GITHUB_CLIENT_ID = "Iv1.routes";
       fetchMock.mockResolvedValueOnce(jsonResponse({ error: "authorization_pending" }));
-      const res = await t.app.inject({
+      const res = await gh.app.inject({
         method: "POST",
         url: "/api/git/github/poll",
         payload: { deviceCode: "DC-1" },
@@ -710,11 +711,10 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
     });
 
     it("POST /poll authorizes, /api/git reports connected, /disconnect clears it", async () => {
-      process.env.PADDOCK_GITHUB_CLIENT_ID = "Iv1.routes";
       fetchMock
         .mockResolvedValueOnce(jsonResponse({ access_token: "gho_routes", scope: "repo" }))
         .mockResolvedValueOnce(jsonResponse({ login: "octocat" }));
-      const poll = await t.app.inject({
+      const poll = await gh.app.inject({
         method: "POST",
         url: "/api/git/github/poll",
         payload: { deviceCode: "DC-1" },
@@ -722,20 +722,20 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
       expect(poll.json().status).toBe("authorized");
 
       // The token file lives under the data dir at 0600.
-      const tokenFile = path.join(t.cfg.dataDir, "github-auth.json");
+      const tokenFile = path.join(gh.cfg.dataDir, "github-auth.json");
       const st = await fs.stat(tokenFile);
       expect(st.mode & 0o777).toBe(0o600);
 
       // /api/git reflects the connection.
-      const git = (await t.app.inject({ method: "GET", url: "/api/git" })).json();
+      const git = (await gh.app.inject({ method: "GET", url: "/api/git" })).json();
       expect(git.github.connected).toBe(true);
       expect(git.github.login).toBe("octocat");
 
       // Disconnect clears it.
-      const disc = await t.app.inject({ method: "POST", url: "/api/git/github/disconnect" });
+      const disc = await gh.app.inject({ method: "POST", url: "/api/git/github/disconnect" });
       expect(disc.statusCode).toBe(200);
       expect(disc.json().ok).toBe(true);
-      const after = (await t.app.inject({ method: "GET", url: "/api/git" })).json();
+      const after = (await gh.app.inject({ method: "GET", url: "/api/git" })).json();
       expect(after.github.connected).toBe(false);
     });
   });

@@ -137,9 +137,10 @@ export const BROWSER_MCP_TOOL = "mcp__playwright__*";
 /**
  * The Playwright browser MCP server given to the keeper + scratch agents so
  * Claude Code can drive a headless Chromium (navigate / click / fill / snapshot
- * / screenshot). Returns `undefined` unless `PADDOCK_BROWSER_MCP=1` is set in
- * the instance env, so a box WITHOUT the browser stack simply omits the server
- * (no failed spawns) and enabling it is a per-box env flip — no code change.
+ * / screenshot). Returns `undefined` when `enabled` is false (sourced from
+ * `cfg.browserMcp`, i.e. `PADDOCK_BROWSER_MCP=1` — issue #269), so a box WITHOUT
+ * the browser stack simply omits the server (no failed spawns) and enabling it
+ * is a per-box env flip — no code change.
  *
  * The browser is installed box-side by the homelab `paddock` Ansible role
  * (`npm i -g @playwright/mcp` + `playwright install chromium`, exposing the
@@ -152,8 +153,8 @@ export const BROWSER_MCP_TOOL = "mcp__playwright__*";
  * The role installs the open-source `chromium` engine, so we select it here.
  * The tool-less sweeper deliberately never receives this server.
  */
-export function browserMcpServers(): Record<string, unknown> | undefined {
-  if (process.env.PADDOCK_BROWSER_MCP !== "1") return undefined;
+export function browserMcpServers(enabled: boolean): Record<string, unknown> | undefined {
+  if (!enabled) return undefined;
   return {
     playwright: {
       command: "playwright-mcp",
@@ -1020,7 +1021,7 @@ export class HerdctlService {
     }
     // Browser MCP (headless Chromium) when enabled for this box; `mcp__playwright__*`
     // is already on the inherited defaults.allowed_tools.
-    const browser = browserMcpServers();
+    const browser = browserMcpServers(this.cfg.browserMcp);
     if (browser) config.mcp_servers = browser;
     return config;
   }
@@ -1091,7 +1092,7 @@ export class HerdctlService {
     }
     // Browser MCP (headless Chromium) when enabled for this box; `mcp__playwright__*`
     // is already on the inherited defaults.allowed_tools.
-    const browser = browserMcpServers();
+    const browser = browserMcpServers(this.cfg.browserMcp);
     if (browser) config.mcp_servers = browser;
     return config;
   }

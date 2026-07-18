@@ -3,7 +3,7 @@
  *
  * Security-sensitive: this is the credential path for the git backing store, so
  * we exercise it thoroughly with a MOCKED global `fetch` (zero network):
- *   - clientId() reads PADDOCK_GITHUB_CLIENT_ID (trim + empty handling)
+ *   - clientId() surfaces the injected client id (trim + empty handling)
  *   - status() reports configured/connected/login
  *   - startDeviceFlow() POSTs the device-code endpoint (happy + error + malformed)
  *   - pollDeviceFlow() POSTs the token endpoint (pending/slow_down/authorized/error)
@@ -36,38 +36,32 @@ describe("GithubAuth", () => {
   let tokenFile: string;
   let auth: GithubAuth;
   let fetchMock: ReturnType<typeof vi.fn>;
-  const savedClientId = process.env.PADDOCK_GITHUB_CLIENT_ID;
   const realFetch = globalThis.fetch;
 
   beforeEach(async () => {
     tmp = await makeTmpDir("paddock-gh-");
     tokenFile = path.join(tmp, "github-auth.json");
-    auth = new GithubAuth(tokenFile);
+    // The client id is now injected (folded into PaddockConfig, issue #269).
+    auth = new GithubAuth(tokenFile, "Iv1.testclientid");
     fetchMock = vi.fn();
     globalThis.fetch = fetchMock as unknown as typeof fetch;
-    process.env.PADDOCK_GITHUB_CLIENT_ID = "Iv1.testclientid";
   });
   afterEach(async () => {
     globalThis.fetch = realFetch;
-    if (savedClientId === undefined) delete process.env.PADDOCK_GITHUB_CLIENT_ID;
-    else process.env.PADDOCK_GITHUB_CLIENT_ID = savedClientId;
     await rmTmpDir(tmp);
   });
 
   // --- clientId() -------------------------------------------------------------
 
   describe("clientId", () => {
-    it("returns the trimmed PADDOCK_GITHUB_CLIENT_ID", () => {
-      process.env.PADDOCK_GITHUB_CLIENT_ID = "  Iv1.abc  ";
-      expect(auth.clientId()).toBe("Iv1.abc");
+    it("returns the trimmed injected client id", () => {
+      expect(new GithubAuth(tokenFile, "  Iv1.abc  ").clientId()).toBe("Iv1.abc");
     });
     it("returns undefined when unset", () => {
-      delete process.env.PADDOCK_GITHUB_CLIENT_ID;
-      expect(auth.clientId()).toBeUndefined();
+      expect(new GithubAuth(tokenFile).clientId()).toBeUndefined();
     });
     it("returns undefined for a whitespace-only value", () => {
-      process.env.PADDOCK_GITHUB_CLIENT_ID = "   ";
-      expect(auth.clientId()).toBeUndefined();
+      expect(new GithubAuth(tokenFile, "   ").clientId()).toBeUndefined();
     });
   });
 
@@ -81,8 +75,8 @@ describe("GithubAuth", () => {
     });
 
     it("reports configured:false when no client id is set", async () => {
-      delete process.env.PADDOCK_GITHUB_CLIENT_ID;
-      const s = await auth.status();
+      const bare = new GithubAuth(tokenFile);
+      const s = await bare.status();
       expect(s.configured).toBe(false);
       expect(s.connected).toBe(false);
     });
@@ -148,8 +142,8 @@ describe("GithubAuth", () => {
     });
 
     it("throws when no client id is configured (and never calls fetch)", async () => {
-      delete process.env.PADDOCK_GITHUB_CLIENT_ID;
-      await expect(auth.startDeviceFlow()).rejects.toThrow(/not configured/i);
+      const bare = new GithubAuth(tokenFile);
+      await expect(bare.startDeviceFlow()).rejects.toThrow(/not configured/i);
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
@@ -259,8 +253,8 @@ describe("GithubAuth", () => {
     });
 
     it("returns error 'not configured' (without calling fetch) when no client id", async () => {
-      delete process.env.PADDOCK_GITHUB_CLIENT_ID;
-      expect(await auth.pollDeviceFlow("dev")).toEqual({ status: "error", error: "not configured" });
+      const bare = new GithubAuth(tokenFile);
+      expect(await bare.pollDeviceFlow("dev")).toEqual({ status: "error", error: "not configured" });
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
