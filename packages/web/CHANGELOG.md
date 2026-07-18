@@ -1,5 +1,65 @@
 # @paddock/web
 
+## 0.31.0
+
+### Minor Changes
+
+- [#281](https://github.com/edspencer/paddock/pull/281) [`dee88b6`](https://github.com/edspencer/paddock/commit/dee88b623d3abc0578cc936f05dd2d306ba29cf6) Thanks [@edspencer](https://github.com/edspencer)! - Fork chat: name the fork before creating it (#279)
+
+  The fork button used to fork eagerly on click, always titling the copy
+  "Fork of <parent>". It now opens a small naming dialog first — a single text
+  input prefilled with that default, auto-focused and fully selected so the user
+  can hit Enter to accept it or start typing to replace it.
+
+  - New `ForkChatModal` follows the existing modal convention (centered card,
+    backdrop, Escape-to-close). Enter submits, Cancel/Escape closes without
+    forking. A whitespace-only name falls back to the default.
+  - `ProjectView` opens the dialog instead of forking immediately; the actual
+    fork still records lineage (`writeForkParent`) and navigates with
+    `justForked` so the composer auto-focuses to continue the new chat.
+
+- [#277](https://github.com/edspencer/paddock/pull/277) [`d7dd860`](https://github.com/edspencer/paddock/commit/d7dd860b5838f9c25ff73c585b58405d3b04b7a5) Thanks [@edspencer](https://github.com/edspencer)! - Chat list: provenance badges for scheduled / spawned chats (#267)
+
+  Surfaces A1's provenance marker (#261) on the per-project chat list so the "ran
+  without me" cases are legible at a glance.
+
+  - The chat DTO now carries `provenance` (`origin` + spawn `depth`), read from the
+    `RunProvenanceStore` sidecar in both the project-detail and chat-list payloads
+    (and scratch chats), mirroring how the archived flag is threaded.
+  - The chat-list row renders a small, subtle icon badge for `scheduled` (a schedule
+    fired it) and `spawned` (another chat created it) origins, following DD-6's reuse
+    of herdctl's trigger-type icons. `human`-origin chats — the default — render no
+    badge, so only the unattended runs stand out.
+
+- [#278](https://github.com/edspencer/paddock/pull/278) [`6e54523`](https://github.com/edspencer/paddock/commit/6e54523ba2983280d170d6e01e65b6a6a29ff1e1) Thanks [@edspencer](https://github.com/edspencer)! - Depth-gated self-MCP injection for spawned chats — a spawned child can now report back to its parent (#262).
+
+  Ticket B1 of the Events / Schedules / Config initiative, building on the origin+depth
+  provenance marker from #261. Previously a spawned chat was injected with `send_file`
+  ONLY, so it had no `send_message` tool and could never report back to the chat that
+  spawned it (recursion was prevented by omission, not by a real bound). Now the
+  self-management MCP — **including its write tools** — is injected into a spawned turn
+  based on the chat's stamped spawn `depth`:
+
+  - A spawned/scheduled turn running in a chat at depth `d` receives the self-MCP iff
+    `d <= maxSpawnDepth`. When a tool-equipped child itself spawns, its children are
+    stamped one hop deeper, so the bound descends and the tree can't run away.
+  - New config `maxSpawnDepth` — an instance default (`PADDOCK_MAX_SPAWN_DEPTH`) with a
+    per-project override in Settings (the `driveMode` inherit/override pattern). **Default
+    `1`**: a manager's direct children get the write tools (report-back + spawn), but
+    depth-2 grandchildren do not. `maxSpawnDepth = 0` restores exactly today's behaviour
+    (no spawned child gets the self-MCP — `send_file` only).
+
+  The human/scheduled root (depth 0) is unchanged — it keeps today's instance-flag gating
+  (`selfMcpEnabled` / `selfMcpWriteEnabled`). Internally the inline self-MCP builder is
+  extracted into one helper shared by the human and spawned paths, and the exact gate is a
+  small pure module (`spawn-capability.ts`) with full unit coverage.
+
+  Also fixes a latent break this ticket surfaced: the server-initiated spawn path passed
+  `triggerType: "agent"`, which is not a member of herdctl's `TriggerTypeSchema` enum, so
+  every `create_chat` / `fork_chat` / `send_message` job failed validation and no child was
+  ever created. It now passes the valid `"manual"` value (provenance is carried separately
+  by the origin+depth marker).
+
 ## 0.30.0
 
 ### Minor Changes
