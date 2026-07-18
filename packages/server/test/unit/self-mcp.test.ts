@@ -190,11 +190,12 @@ interface RecordingWrite extends SelfMcpWriteContext {
     createChat: Array<{ projectSlug: string; prompt: string; opts?: { name?: string; preloadContext?: boolean } }>;
     forkChat: Array<{ projectSlug: string; sourceSessionId: string; prompt?: string; name?: string }>;
     sendMessage: Array<{ projectSlug: string; sessionId: string; prompt: string }>;
+    setArchived: Array<{ projectSlug: string; sessionId: string; archived: boolean }>;
   };
 }
 
 function fakeWrite(over: Partial<SelfMcpWriteContext> = {}): RecordingWrite {
-  const calls: RecordingWrite["calls"] = { createChat: [], forkChat: [], sendMessage: [] };
+  const calls: RecordingWrite["calls"] = { createChat: [], forkChat: [], sendMessage: [], setArchived: [] };
   let n = 0;
   const base: SelfMcpWriteContext = {
     currentProjectSlug: "paddock",
@@ -209,6 +210,9 @@ function fakeWrite(over: Partial<SelfMcpWriteContext> = {}): RecordingWrite {
     },
     sendMessage: async (projectSlug, sessionId, prompt) => {
       calls.sendMessage.push({ projectSlug, sessionId, prompt });
+    },
+    setArchived: async (projectSlug, sessionId, archived) => {
+      calls.setArchived.push({ projectSlug, sessionId, archived });
     },
     ...over,
   };
@@ -234,13 +238,14 @@ async function callWrite(
 }
 
 describe("self-management MCP (Phase 2, write tools)", () => {
-  it("exposes only the 3 read tools WITHOUT a write ctx, and 7 tools WITH one", () => {
+  it("exposes only the 3 read tools WITHOUT a write ctx, and 9 tools WITH one", () => {
     const readOnly = selfMcpServerDef(fakeContext());
     expect(readOnly.tools.map((t) => t.name).sort()).toEqual(["list_chats", "list_projects", "read_chat"]);
 
     const withWrite = selfMcpServerDef(fakeContext(), fakeWrite());
-    expect(withWrite.tools).toHaveLength(7);
+    expect(withWrite.tools).toHaveLength(9);
     expect(withWrite.tools.map((t) => t.name).sort()).toEqual([
+      "archive_chat",
       "create_chat",
       "fork_chat",
       "fork_chat_batch",
@@ -248,6 +253,7 @@ describe("self-management MCP (Phase 2, write tools)", () => {
       "list_projects",
       "read_chat",
       "send_message",
+      "unarchive_chat",
     ]);
   });
 
@@ -255,6 +261,8 @@ describe("self-management MCP (Phase 2, write tools)", () => {
     expect(SELF_MCP_WRITE_TOOL_NAMES.createChat).toBe("mcp__paddock_manage__create_chat");
     expect(SELF_MCP_WRITE_TOOL_NAMES.forkChat).toBe("mcp__paddock_manage__fork_chat");
     expect(SELF_MCP_WRITE_TOOL_NAMES.sendMessage).toBe("mcp__paddock_manage__send_message");
+    expect(SELF_MCP_WRITE_TOOL_NAMES.archiveChat).toBe("mcp__paddock_manage__archive_chat");
+    expect(SELF_MCP_WRITE_TOOL_NAMES.unarchiveChat).toBe("mcp__paddock_manage__unarchive_chat");
     expect(SELF_MCP_WRITE_TOOL_NAMES.forkChatBatch).toBe("mcp__paddock_manage__fork_chat_batch");
   });
 
@@ -390,6 +398,54 @@ describe("self-management MCP (Phase 2, write tools)", () => {
     const { result } = await callWrite(write, "fork_chat_batch", { prompts: ["a"] });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("no chat to fork");
+  });
+
+  it("archive_chat defaults the target to the CURRENT chat (archive yourself)", async () => {
+    const write = fakeWrite();
+    const { json } = await callWrite(write, "archive_chat", {});
+    expect(json).toEqual({ archived: true, project: "paddock", sessionId: "current-sid" });
+    expect(write.calls.setArchived).toEqual([
+      { projectSlug: "paddock", sessionId: "current-sid", archived: true },
+    ]);
+  });
+
+  it("archive_chat uses an explicit session_id + project when given", async () => {
+    const write = fakeWrite();
+    const { json } = await callWrite(write, "archive_chat", { session_id: "other-sid", project: "herdctl" });
+    expect(json).toEqual({ archived: true, project: "herdctl", sessionId: "other-sid" });
+    expect(write.calls.setArchived).toEqual([
+      { projectSlug: "herdctl", sessionId: "other-sid", archived: true },
+    ]);
+  });
+
+  it("unarchive_chat sets archived=false and round-trips the current chat", async () => {
+    const write = fakeWrite();
+    await callWrite(write, "archive_chat", {});
+    const { json } = await callWrite(write, "unarchive_chat", {});
+    expect(json).toEqual({ archived: false, project: "paddock", sessionId: "current-sid" });
+    expect(write.calls.setArchived).toEqual([
+      { projectSlug: "paddock", sessionId: "current-sid", archived: true },
+      { projectSlug: "paddock", sessionId: "current-sid", archived: false },
+    ]);
+  });
+
+  it("archive_chat errors when no current session and no session_id arg", async () => {
+    const write = fakeWrite({ currentSessionId: () => null });
+    const { result } = await callWrite(write, "archive_chat", {});
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("no chat to archive");
+    expect(write.calls.setArchived).toHaveLength(0);
+  });
+
+  it("surfaces an archive-callback throw as an isError result rather than throwing", async () => {
+    const write = fakeWrite({
+      setArchived: async () => {
+        throw new Error("disk gone");
+      },
+    });
+    const { result } = await callWrite(write, "archive_chat", { session_id: "aaa" });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("disk gone");
   });
 
   it("surfaces a write-callback throw as an isError result rather than throwing", async () => {

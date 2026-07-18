@@ -137,7 +137,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   });
   await registerRoutes(app, { projects, herdctl, git, githubAuth, transcriber, archive, readState, attachments, cfg });
 
-  const chatHandler = makeChatHandler({ herdctl, projects, sweep, attachments, queuedMessage, runProvenance, cfg });
+  const chatHandler = makeChatHandler({ herdctl, projects, sweep, attachments, queuedMessage, runProvenance, archive, cfg });
   await app.register(async (scoped) => {
     scoped.get("/ws", { websocket: true }, (socket) => {
       void chatHandler(socket);

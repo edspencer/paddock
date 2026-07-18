@@ -91,6 +91,8 @@ export interface SelfMcpWriteContext {
   forkChat: (args: { projectSlug: string; sourceSessionId: string; prompt?: string; name?: string }) => Promise<{ sessionId: string }>;
   /** Send `prompt` as a new turn to an existing chat. */
   sendMessage: (projectSlug: string, sessionId: string, prompt: string) => Promise<void>;
+  /** Set (or clear) a chat's archived flag (presentational metadata only). */
+  setArchived: (projectSlug: string, sessionId: string, archived: boolean) => Promise<void>;
 }
 
 const SERVER_NAME = "paddock_manage";
@@ -223,6 +225,21 @@ const SEND_MESSAGE_DESC =
   "list_chats). Defaults to the current project; pass `project` to target a chat in " +
   "another project. Use this to hand work or context to a chat that already exists.";
 
+const ARCHIVE_CHAT_DESC =
+  "Archive a chat — file it away into the collapsible \"Archived\" section without " +
+  "touching its transcript (it stays fully openable/resumable/forkable). " +
+  "Defaults to the CURRENT chat (the one you're in) — omit `session_id` to archive " +
+  "YOURSELF, or pass a `session_id` (from list_chats) to archive another. Defaults " +
+  "to the current project; pass `project` to target a chat elsewhere. This powers " +
+  "the self-reporting convention: do the work, then archive yourself on success so " +
+  "an un-archived chat is the signal that something needs a human's attention.";
+
+const UNARCHIVE_CHAT_DESC =
+  "Unarchive a chat — bring it back out of the \"Archived\" section into the active " +
+  "list. Defaults to the CURRENT chat — omit `session_id` to unarchive yourself, or " +
+  "pass a `session_id` (from list_chats) to unarchive another. Defaults to the " +
+  "current project; pass `project` to target a chat elsewhere.";
+
 const FORK_CHAT_BATCH_DESC =
   "FAN-OUT primitive: fork ONE source chat into many child chats at once — one child " +
   "per entry in `prompts`, each kicked off with its own prompt. Classic use: you " +
@@ -298,6 +315,31 @@ function sendMessageHandler(write: SelfMcpWriteContext) {
       return ok({ sent: true, project, sessionId, prompt: truncateText(prompt) });
     } catch (error) {
       return fail(`Error sending message: ${errText(error)}`);
+    }
+  };
+}
+
+/**
+ * Handler factory for archive_chat / unarchive_chat. Both resolve the target the
+ * same way — `session_id` OPTIONAL, defaulting to the CURRENT chat so an agent can
+ * archive ITSELF without knowing its own id (mirrors fork_chat's self-default) —
+ * and differ only in the boolean they set. `archived` selects which tool this is.
+ */
+function archiveChatHandler(write: SelfMcpWriteContext, archived: boolean) {
+  const verb = archived ? "archiving" : "unarchiving";
+  return async (args: Record<string, unknown>): Promise<McpToolCallResult> => {
+    try {
+      const projectArg = typeof args.project === "string" ? args.project.trim() : "";
+      const project = projectArg.length > 0 ? projectArg : write.currentProjectSlug;
+      const explicit = typeof args.session_id === "string" ? args.session_id.trim() : "";
+      const sessionId = explicit.length > 0 ? explicit : write.currentSessionId();
+      if (!sessionId) {
+        return fail("no chat to archive (current chat id not yet known — pass session_id)");
+      }
+      await write.setArchived(project, sessionId, archived);
+      return ok({ archived, project, sessionId });
+    } catch (error) {
+      return fail(`Error ${verb} chat: ${errText(error)}`);
     }
   };
 }
@@ -380,8 +422,9 @@ function forkChatBatchHandler(write: SelfMcpWriteContext) {
  * Build the injected MCP server definition for the self-management tools, bound to
  * a per-turn context. The READ tools (list_projects/list_chats/read_chat) are
  * ALWAYS included. When a {@link SelfMcpWriteContext} is provided (the stricter
- * write flag is on), the four WRITE tools (create_chat/fork_chat/send_message/
- * fork_chat_batch) are appended too; omit it for unchanged read-only behavior.
+ * write flag is on), the WRITE tools (create_chat/fork_chat/send_message/
+ * archive_chat/unarchive_chat/fork_chat_batch) are appended too; omit it for
+ * unchanged read-only behavior.
  * Inject under {@link SELF_MCP_SERVER_KEY}.
  */
 export function selfMcpServerDef(
@@ -489,6 +532,42 @@ export function selfMcpServerDef(
         handler: sendMessageHandler(write),
       },
       {
+        name: "archive_chat",
+        description: ARCHIVE_CHAT_DESC,
+        inputSchema: {
+          type: "object",
+          properties: {
+            session_id: {
+              type: "string",
+              description: "Chat's sessionId (from list_chats). Omit to archive the CURRENT chat (yourself).",
+            },
+            project: {
+              type: "string",
+              description: "Project slug that owns the chat. Omit to use the current project.",
+            },
+          },
+        },
+        handler: archiveChatHandler(write, true),
+      },
+      {
+        name: "unarchive_chat",
+        description: UNARCHIVE_CHAT_DESC,
+        inputSchema: {
+          type: "object",
+          properties: {
+            session_id: {
+              type: "string",
+              description: "Chat's sessionId (from list_chats). Omit to unarchive the CURRENT chat (yourself).",
+            },
+            project: {
+              type: "string",
+              description: "Project slug that owns the chat. Omit to use the current project.",
+            },
+          },
+        },
+        handler: archiveChatHandler(write, false),
+      },
+      {
         name: "fork_chat_batch",
         description: FORK_CHAT_BATCH_DESC,
         inputSchema: {
@@ -538,5 +617,7 @@ export const SELF_MCP_WRITE_TOOL_NAMES = {
   createChat: `mcp__${SERVER_NAME}__create_chat`,
   forkChat: `mcp__${SERVER_NAME}__fork_chat`,
   sendMessage: `mcp__${SERVER_NAME}__send_message`,
+  archiveChat: `mcp__${SERVER_NAME}__archive_chat`,
+  unarchiveChat: `mcp__${SERVER_NAME}__unarchive_chat`,
   forkChatBatch: `mcp__${SERVER_NAME}__fork_chat_batch`,
 } as const;
