@@ -191,11 +191,22 @@ interface RecordingWrite extends SelfMcpWriteContext {
     forkChat: Array<{ projectSlug: string; sourceSessionId: string; prompt?: string; name?: string }>;
     sendMessage: Array<{ projectSlug: string; sessionId: string; prompt: string }>;
     setArchived: Array<{ projectSlug: string; sessionId: string; archived: boolean }>;
+    setSchedule: Array<{ projectSlug: string; name: string; schedule: Record<string, unknown> }>;
+    removeSchedule: Array<{ projectSlug: string; name: string }>;
+    listSchedules: Array<{ projectSlug: string }>;
   };
 }
 
 function fakeWrite(over: Partial<SelfMcpWriteContext> = {}): RecordingWrite {
-  const calls: RecordingWrite["calls"] = { createChat: [], forkChat: [], sendMessage: [], setArchived: [] };
+  const calls: RecordingWrite["calls"] = {
+    createChat: [],
+    forkChat: [],
+    sendMessage: [],
+    setArchived: [],
+    setSchedule: [],
+    removeSchedule: [],
+    listSchedules: [],
+  };
   let n = 0;
   const base: SelfMcpWriteContext = {
     currentProjectSlug: "paddock",
@@ -213,6 +224,32 @@ function fakeWrite(over: Partial<SelfMcpWriteContext> = {}): RecordingWrite {
     },
     setArchived: async (projectSlug, sessionId, archived) => {
       calls.setArchived.push({ projectSlug, sessionId, archived });
+    },
+    scheduleMutationEnabled: true,
+    setSchedule: async (projectSlug, name, schedule) => {
+      calls.setSchedule.push({ projectSlug, name, schedule });
+      return {
+        name,
+        type: (schedule.type as "cron" | "interval") ?? "interval",
+        cron: (schedule.cron as string) ?? null,
+        interval: (schedule.interval as string) ?? null,
+        prompt: (schedule.prompt as string) ?? null,
+        promptFile: (schedule.promptFile as string) ?? null,
+        resumeSession: schedule.resume_session === true,
+        enabled: schedule.enabled !== false,
+        status: "idle",
+        lastRunAt: null,
+        nextRunAt: null,
+        lastError: null,
+      };
+    },
+    removeSchedule: async (projectSlug, name) => {
+      calls.removeSchedule.push({ projectSlug, name });
+      return true;
+    },
+    listSchedules: async (projectSlug) => {
+      calls.listSchedules.push({ projectSlug });
+      return [];
     },
     ...over,
   };
@@ -238,12 +275,12 @@ async function callWrite(
 }
 
 describe("self-management MCP (Phase 2, write tools)", () => {
-  it("exposes only the 3 read tools WITHOUT a write ctx, and 9 tools WITH one", () => {
+  it("exposes only the 3 read tools WITHOUT a write ctx, and 12 tools WITH one", () => {
     const readOnly = selfMcpServerDef(fakeContext());
     expect(readOnly.tools.map((t) => t.name).sort()).toEqual(["list_chats", "list_projects", "read_chat"]);
 
     const withWrite = selfMcpServerDef(fakeContext(), fakeWrite());
-    expect(withWrite.tools).toHaveLength(9);
+    expect(withWrite.tools).toHaveLength(12);
     expect(withWrite.tools.map((t) => t.name).sort()).toEqual([
       "archive_chat",
       "create_chat",
@@ -251,8 +288,11 @@ describe("self-management MCP (Phase 2, write tools)", () => {
       "fork_chat_batch",
       "list_chats",
       "list_projects",
+      "list_schedules",
       "read_chat",
+      "remove_schedule",
       "send_message",
+      "set_schedule",
       "unarchive_chat",
     ]);
   });
@@ -264,6 +304,9 @@ describe("self-management MCP (Phase 2, write tools)", () => {
     expect(SELF_MCP_WRITE_TOOL_NAMES.archiveChat).toBe("mcp__paddock_manage__archive_chat");
     expect(SELF_MCP_WRITE_TOOL_NAMES.unarchiveChat).toBe("mcp__paddock_manage__unarchive_chat");
     expect(SELF_MCP_WRITE_TOOL_NAMES.forkChatBatch).toBe("mcp__paddock_manage__fork_chat_batch");
+    expect(SELF_MCP_WRITE_TOOL_NAMES.setSchedule).toBe("mcp__paddock_manage__set_schedule");
+    expect(SELF_MCP_WRITE_TOOL_NAMES.removeSchedule).toBe("mcp__paddock_manage__remove_schedule");
+    expect(SELF_MCP_WRITE_TOOL_NAMES.listSchedules).toBe("mcp__paddock_manage__list_schedules");
   });
 
   it("create_chat defaults project to current and passes name/preload through", async () => {
@@ -475,5 +518,161 @@ describe("self-management MCP (Phase 2, write tools)", () => {
     const { result } = await callWrite(write, "create_chat", { prompt: "go" });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("fleet exploded");
+  });
+});
+
+// ── Schedule tools (issue #289) ─────────────────────────────────────────────
+
+describe("self-management MCP (schedule tools)", () => {
+  it("set_schedule builds a cron record, defaults project to current, echoes the saved DTO", async () => {
+    const write = fakeWrite();
+    const { json } = await callWrite(write, "set_schedule", {
+      name: "daily-triage",
+      type: "cron",
+      cron: "0 9 * * *",
+      prompt: "Triage new issues",
+      resume_session: true,
+    });
+    expect(write.calls.setSchedule).toEqual([
+      {
+        projectSlug: "paddock",
+        name: "daily-triage",
+        schedule: { type: "cron", cron: "0 9 * * *", prompt: "Triage new issues", resume_session: true },
+      },
+    ]);
+    expect(json.set).toBe(true);
+    expect(json.project).toBe("paddock");
+    expect(json.schedule).toMatchObject({
+      name: "daily-triage",
+      type: "cron",
+      cron: "0 9 * * *",
+      prompt: "Triage new issues",
+      resumeSession: true,
+      enabled: true,
+    });
+  });
+
+  it("set_schedule builds an interval record with a prompt_file (promptFile sugar)", async () => {
+    const write = fakeWrite();
+    await callWrite(write, "set_schedule", {
+      name: "hourly",
+      type: "interval",
+      interval: "1h",
+      prompt_file: "hourly.md",
+      project: "other",
+    });
+    expect(write.calls.setSchedule).toEqual([
+      { projectSlug: "other", name: "hourly", schedule: { type: "interval", interval: "1h", promptFile: "hourly.md" } },
+    ]);
+  });
+
+  it("set_schedule rejects a missing name / bad type / missing cron / missing prompt", async () => {
+    const write = fakeWrite();
+    const noName = await callWrite(write, "set_schedule", { type: "cron", cron: "* * * * *", prompt: "x" });
+    expect(noName.result.isError).toBe(true);
+    expect(noName.result.content[0].text).toContain("`name` is required");
+
+    const badType = await callWrite(write, "set_schedule", { name: "s", type: "weekly", prompt: "x" });
+    expect(badType.result.isError).toBe(true);
+    expect(badType.result.content[0].text).toContain('`type` must be "cron" or "interval"');
+
+    const noCron = await callWrite(write, "set_schedule", { name: "s", type: "cron", prompt: "x" });
+    expect(noCron.result.isError).toBe(true);
+    expect(noCron.result.content[0].text).toContain("`cron` is required");
+
+    const noPrompt = await callWrite(write, "set_schedule", { name: "s", type: "interval", interval: "5m" });
+    expect(noPrompt.result.isError).toBe(true);
+    expect(noPrompt.result.content[0].text).toContain("`prompt`");
+
+    // None of the invalid calls should have reached the callback.
+    expect(write.calls.setSchedule).toHaveLength(0);
+  });
+
+  it("set_schedule and remove_schedule refuse when the mutation gate is off", async () => {
+    const write = fakeWrite({ scheduleMutationEnabled: false });
+    const set = await callWrite(write, "set_schedule", { name: "s", type: "interval", interval: "5m", prompt: "x" });
+    expect(set.result.isError).toBe(true);
+    expect(set.result.content[0].text).toContain("Schedule mutation is disabled");
+
+    const rm = await callWrite(write, "remove_schedule", { name: "s" });
+    expect(rm.result.isError).toBe(true);
+    expect(rm.result.content[0].text).toContain("Schedule mutation is disabled");
+
+    expect(write.calls.setSchedule).toHaveLength(0);
+    expect(write.calls.removeSchedule).toHaveLength(0);
+  });
+
+  it("list_schedules works even with the mutation gate off (read-only)", async () => {
+    const write = fakeWrite({
+      scheduleMutationEnabled: false,
+      listSchedules: async () => [
+        {
+          name: "daily",
+          type: "cron",
+          cron: "0 9 * * *",
+          interval: null,
+          prompt: "go",
+          promptFile: null,
+          resumeSession: false,
+          enabled: true,
+          status: "idle",
+          lastRunAt: null,
+          nextRunAt: "2026-07-19T09:00:00Z",
+          lastError: null,
+        },
+      ],
+    });
+    const { json } = await callWrite(write, "list_schedules", {});
+    expect(json).toEqual({
+      project: "paddock",
+      count: 1,
+      schedules: [
+        {
+          name: "daily",
+          type: "cron",
+          cron: "0 9 * * *",
+          interval: null,
+          prompt: "go",
+          promptFile: null,
+          resumeSession: false,
+          enabled: true,
+          status: "idle",
+          lastRunAt: null,
+          nextRunAt: "2026-07-19T09:00:00Z",
+          lastError: null,
+        },
+      ],
+    });
+  });
+
+  it("remove_schedule defaults project to current and echoes removed", async () => {
+    const write = fakeWrite();
+    const { json } = await callWrite(write, "remove_schedule", { name: "daily" });
+    expect(write.calls.removeSchedule).toEqual([{ projectSlug: "paddock", name: "daily" }]);
+    expect(json).toEqual({ removed: true, project: "paddock", name: "daily" });
+  });
+
+  it("remove_schedule requires a name", async () => {
+    const write = fakeWrite();
+    const { result } = await callWrite(write, "remove_schedule", {});
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("`name` is required");
+    expect(write.calls.removeSchedule).toHaveLength(0);
+  });
+
+  it("surfaces a setSchedule-callback throw as an isError result rather than throwing", async () => {
+    const write = fakeWrite({
+      setSchedule: async () => {
+        throw new Error("Invalid schedule definition");
+      },
+    });
+    const { result } = await callWrite(write, "set_schedule", {
+      name: "s",
+      type: "interval",
+      interval: "5m",
+      prompt: "x",
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Invalid schedule definition");
   });
 });

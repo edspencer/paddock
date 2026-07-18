@@ -82,12 +82,17 @@ import {
   SELF_MCP_SERVER_KEY,
   type SelfMcpContext,
   type SelfMcpWriteContext,
+  type SelfMcpSchedule,
 } from "./self-mcp.js";
 import type { AttachmentStore } from "./attachments.js";
 import type { QueuedMessageStore } from "./queued-message.js";
 import type { ArchiveStore } from "./archive.js";
 import type { ScheduleSessionStore } from "./schedule-session.js";
-import { schedulePromptFileAbsPath } from "./schedule-config.js";
+import {
+  schedulePromptFileAbsPath,
+  scheduleToHerdctl,
+  type PaddockSchedule,
+} from "./schedule-config.js";
 import {
   type RunProvenanceStore,
   type RunProvenance,
@@ -558,6 +563,46 @@ export function forkKickoffPrompt(directive: string): string {
     "task now:\n\n" +
     directive
   );
+}
+
+/**
+ * The slice of herdctl's `ScheduleInfo` the self-MCP schedule DTO surfaces (issue
+ * #289) — live runtime state herdctl tracks for an armed schedule. Kept as a local
+ * structural type (mirrors routes.ts's `ScheduleRuntimeInfo`) so this module stays
+ * off `@herdctl/core`'s import surface.
+ */
+interface ScheduleRuntimeInfo {
+  status?: "idle" | "running" | "disabled";
+  lastRunAt?: string | null;
+  nextRunAt?: string | null;
+  lastError?: string | null;
+}
+
+/**
+ * Project a `project.yaml` schedule declaration (+ optional herdctl runtime state)
+ * onto the {@link SelfMcpSchedule} shape the schedule tools return (issue #289).
+ * Mirrors routes.ts's `toScheduleDto` so the self-MCP and Settings-pane surfaces
+ * stay in step; `info` is absent for a just-declared schedule herdctl hasn't armed.
+ */
+function toSelfMcpSchedule(
+  name: string,
+  rec: PaddockSchedule,
+  info?: ScheduleRuntimeInfo,
+): SelfMcpSchedule {
+  return {
+    name,
+    type: rec.type,
+    cron: rec.cron ?? null,
+    interval: rec.interval ?? null,
+    prompt: rec.prompt ?? null,
+    promptFile: rec.promptFile ?? null,
+    resumeSession: rec.resume_session === true,
+    enabled: rec.enabled !== false,
+    status: info?.status ?? (rec.enabled === false ? "disabled" : "idle"),
+    lastRunAt: info?.lastRunAt ?? null,
+    nextRunAt: info?.nextRunAt ?? null,
+    lastError: info?.lastError ?? null,
+  };
 }
 
 export function makeChatHandler(deps: {
@@ -1065,6 +1110,43 @@ export function makeChatHandler(deps: {
         setArchived: async (projectSlug, targetSessionId, archived) => {
           await deps.projects.get(projectSlug);
           await deps.archive.setArchived(keeperAgentName(projectSlug), targetSessionId, archived);
+        },
+        // Schedule management (issue #289). Exposes the existing D3/D4 CRUD:
+        // ProjectStore is the source of truth (re-armed on restart), herdctl is the
+        // live-arming half — the exact two-step the REST routes use (persist first,
+        // then arm; warn-not-fail if the runtime arm hiccups). set/remove honor
+        // DD-7's per-deployment mutation gate (checked in the tool handlers via
+        // `scheduleMutationEnabled` below); list is read-only.
+        scheduleMutationEnabled: deps.cfg.scheduleMutationEnabled,
+        listSchedules: async (projectSlug) => {
+          const p = await deps.projects.get(projectSlug);
+          const declared = p.schedules ?? {};
+          const runtime = await deps.herdctl.listAgentSchedules(p).catch(() => []);
+          const byName = new Map(runtime.map((s) => [s.name, s]));
+          return Object.entries(declared).map(([name, rec]) =>
+            toSelfMcpSchedule(name, rec, byName.get(name)),
+          );
+        },
+        setSchedule: async (projectSlug, name, schedule) => {
+          // Persist to project.yaml FIRST (validates name + sanitises the record,
+          // throwing ProjectError on a malformed schedule) — the source of truth …
+          const p = await deps.projects.setSchedule(projectSlug, name, schedule);
+          const rec = p.schedules?.[name];
+          if (!rec) throw new Error(`schedule not persisted: ${name}`);
+          // … then arm herdctl at runtime (best-effort — re-arms on next restart if
+          // the live arm fails, matching the REST PUT route which warns-but-persists).
+          const info = await deps.herdctl
+            .setAgentSchedule(p, name, scheduleToHerdctl(rec))
+            .catch(() => undefined);
+          return toSelfMcpSchedule(name, rec, info);
+        },
+        removeSchedule: async (projectSlug, name) => {
+          // Report whether one actually existed (so the tool can echo removed:false).
+          const before = await deps.projects.get(projectSlug);
+          const existed = Boolean(before.schedules?.[name]);
+          const p = await deps.projects.removeSchedule(projectSlug, name);
+          await deps.herdctl.removeAgentSchedule(p, name).catch(() => undefined);
+          return existed;
         },
       };
     }
