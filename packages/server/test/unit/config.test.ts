@@ -354,4 +354,33 @@ describe("loadPaddockConfig: YAML instance-config file (#270)", () => {
     writeConfig("- one\n- two\n");
     expect(() => loadPaddockConfig()).toThrow(/must contain a YAML mapping/);
   });
+
+  it("treats an empty nested section (valueless key → null) as absent, not a crash", () => {
+    // `brand:` / `auth:` with nothing after them parse to null; must NOT throw.
+    writeConfig(["port: 4000", "brand:", "auth:", "devServers:"].join("\n") + "\n");
+    let cfg!: ReturnType<typeof loadPaddockConfig>;
+    expect(() => (cfg = loadPaddockConfig())).not.toThrow();
+    expect(cfg.port).toBe(4000);
+    expect(cfg.brand.name).toBe("Paddock");
+    expect(cfg.auth.mode).toBe("none");
+    expect(cfg.devServers.enabled).toBe(false);
+  });
+
+  it("treats a null scalar (valueless key) as absent, falling back to the default", () => {
+    writeConfig(["port:", "logLevel:", "maxSpawnDepth:"].join("\n") + "\n");
+    const cfg = loadPaddockConfig();
+    expect(cfg.port).toBe(4000);
+    expect(cfg.logLevel).toBe("info");
+    expect(cfg.maxSpawnDepth).toBe(1);
+  });
+
+  it("an empty section next to a populated one still honours the populated one", () => {
+    writeConfig(
+      ["brand:", "auth:", "  mode: jwt", "  jwksUrl: https://idp.example/jwks"].join("\n") + "\n",
+    );
+    const cfg = loadPaddockConfig();
+    expect(cfg.brand.name).toBe("Paddock"); // empty section → default
+    expect(cfg.auth.mode).toBe("jwt"); // sibling section still applies
+    expect(cfg.auth.jwksUrl).toBe("https://idp.example/jwks");
+  });
 });

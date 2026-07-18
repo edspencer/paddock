@@ -23,6 +23,10 @@ the env-only behaviour it was before.
   explicit `PADDOCK_CONFIG` pointing at a *missing* file, or a present-but-
   malformed file (unparseable YAML, or a top-level list/scalar instead of a
   mapping), fails startup with a **clear error** instead of a half-empty config.
+- **Empty sections are absent, not a crash.** A valueless key (`brand:` /
+  `auth:` with nothing after it) parses to `null`; such an empty section (or
+  scalar) is treated as absent and falls back to env/defaults rather than
+  crashing a loader that expects an object.
 - Uses the same `yaml` library the repo already uses for `project.yaml`;
   `PaddockConfig` stays a plain serializable object. This is the container the
   schedule (and later hook) declarations will live in.

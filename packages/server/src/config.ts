@@ -411,7 +411,17 @@ export function loadConfigFile(dataDir: string): PaddockConfigFile {
       }).`,
     );
   }
-  return parsed as PaddockConfigFile;
+
+  // A valueless key (`brand:` / `auth:` with nothing after it) parses to `null`.
+  // Treat such an empty section (or scalar) as ABSENT — drop it so it falls back
+  // to env/defaults — rather than passing `null` through to a loader that expects
+  // an object (which would crash with an unclear TypeError). Deeper `null`s and
+  // wrong-typed sections already degrade to defaults via fileOr/fileOpt.
+  const obj = parsed as Record<string, unknown>;
+  for (const key of Object.keys(obj)) {
+    if (obj[key] === null) delete obj[key];
+  }
+  return obj as PaddockConfigFile;
 }
 
 /**
