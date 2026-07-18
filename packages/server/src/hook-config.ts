@@ -125,6 +125,21 @@ export const HOOK_PROMPT_DIR = path.join(".paddock", "hooks");
 /** Default max agent turns for a hook when its capabilities don't set one. */
 export const HOOK_DEFAULT_MAX_TURNS = 30;
 
+/**
+ * Resolve whether a project's turns get the hook-management MCP (Epic G / G5,
+ * GG-4): a per-project override wins; otherwise inherit the instance default.
+ * Mirrors {@link import("./spawn-capability.js").resolveMaxSpawnDepth} — a boolean
+ * override is carried on disk only when set, so an absent value transparently
+ * inherits the instance (env / YAML) default. A non-boolean override is ignored
+ * (defensive: a hand-edited `project.yaml` can't wedge dispatch).
+ */
+export function resolveHooksMcpEnabled(
+  override: boolean | undefined,
+  instanceDefault: boolean,
+): boolean {
+  return typeof override === "boolean" ? override : instanceDefault === true;
+}
+
 /** A hook name we're willing to key on (also a safe herdctl agent-name segment). */
 export function isValidHookName(name: string): boolean {
   return typeof name === "string" && /^[A-Za-z0-9._-]+$/.test(name) && name.length <= 64;

@@ -16,6 +16,7 @@ import {
   hookToAgentToolConfig,
   hookPromptFileAbsPath,
   isValidHookName,
+  resolveHooksMcpEnabled,
   HOOK_PROMPT_DIR,
   HOOK_DEFAULT_MAX_TURNS,
 } from "../../src/hook-config.js";
@@ -130,6 +131,17 @@ describe("isValidHookName", () => {
     expect(isValidHookName("../evil")).toBe(false);
     expect(isValidHookName("x".repeat(65))).toBe(false);
     expect(isValidHookName("")).toBe(false);
+  });
+});
+
+describe("resolveHooksMcpEnabled (G5)", () => {
+  it("a boolean override wins over the instance default", () => {
+    expect(resolveHooksMcpEnabled(true, false)).toBe(true);
+    expect(resolveHooksMcpEnabled(false, true)).toBe(false);
+  });
+  it("an absent override inherits the instance default", () => {
+    expect(resolveHooksMcpEnabled(undefined, true)).toBe(true);
+    expect(resolveHooksMcpEnabled(undefined, false)).toBe(false);
   });
 });
 

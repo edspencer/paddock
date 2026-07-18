@@ -91,6 +91,7 @@ import {
   type SelfMcpContext,
   type SelfMcpWriteContext,
   type SelfMcpSchedule,
+  type SelfMcpHook,
 } from "./self-mcp.js";
 import type { AttachmentStore } from "./attachments.js";
 import type { QueuedMessageStore } from "./queued-message.js";
@@ -113,7 +114,12 @@ import type { MessageProvenanceStore, MessageSender } from "./message-provenance
 import { resolveMaxSpawnDepth, spawnedSelfMcpDecision } from "./spawn-capability.js";
 import type { PaddockEventBus } from "./event-bus.js";
 import type { HookService } from "./hooks.js";
-import { hookPromptFileAbsPath, type HookDto, type HookEvent } from "./hook-config.js";
+import {
+  hookPromptFileAbsPath,
+  resolveHooksMcpEnabled,
+  type HookDto,
+  type HookEvent,
+} from "./hook-config.js";
 
 /**
  * Per-turn token usage as observed on the SDK stream, normalized to camelCase.
@@ -618,6 +624,29 @@ function toSelfMcpSchedule(
 }
 
 /**
+ * Project a persisted {@link HookDto} onto the {@link SelfMcpHook} shape the hook
+ * tools return (Epic G / G5) — flatten the nested capability set + null-normalise
+ * (mirrors {@link toSelfMcpSchedule}) so the agent reads a flat record. A tool-less
+ * hook surfaces `allowedTools: []`.
+ */
+function toSelfMcpHook(dto: HookDto): SelfMcpHook {
+  const caps = dto.capabilities ?? {};
+  return {
+    name: dto.name,
+    agentName: dto.agentName,
+    event: dto.event,
+    enabled: dto.enabled === true,
+    prompt: dto.prompt ?? null,
+    promptFile: dto.promptFile ?? null,
+    allowedTools: caps.allowedTools ?? [],
+    deniedTools: caps.deniedTools ?? [],
+    permissionMode: caps.permissionMode ?? null,
+    model: caps.model ?? null,
+    maxTurns: caps.maxTurns ?? null,
+  };
+}
+
+/**
  * The context a fired lifecycle event carries into the hook prompt (Epic G / G1).
  * v1 (`onArchive`) supplies the archived chat's session id so the hook knows what to
  * act on; a future event would extend this.
@@ -1084,8 +1113,16 @@ export function makeChatHandler(deps: {
     currentSessionId: () => string | null;
     parentProvenance: RunProvenance;
     includeWrite: boolean;
+    /**
+     * Whether to additionally append the G5 hook-management tools (list/set/
+     * remove_hook). Resolved per-project by the caller from `hooksMcpEnabled`
+     * (override else instance default). Only meaningful when `includeWrite` is on —
+     * the hook tools live in the write block.
+     */
+    includeHooks: boolean;
   }): InjectedMcpServerDef {
-    const { currentProjectSlug, currentSessionId, parentProvenance, includeWrite } = params;
+    const { currentProjectSlug, currentSessionId, parentProvenance, includeWrite, includeHooks } =
+      params;
 
     const selfMcpContext: SelfMcpContext = {
       listProjects: async () => {
@@ -1318,6 +1355,33 @@ export function makeChatHandler(deps: {
           await deps.herdctl.removeAgentSchedule(p, name).catch(() => undefined);
           return existed;
         },
+        // Hook management (Epic G / G5, GG-4). Delegates to the shared G1 HookService
+        // (persist to project.yaml, then register the `hook-<slug>-<name>` agent) — the
+        // same two-step the future Hooks tab (G4) uses. The tools are only INJECTED
+        // when `includeHooks` (the project's `hooksMcpEnabled` opt-in) is on, so this
+        // flag reflects that resolved gate; the callbacks are wired unconditionally.
+        hooksMcpEnabled: includeHooks,
+        listHooks: async (projectSlug) => {
+          const dtos = deps.hooks ? await deps.hooks.list(projectSlug) : [];
+          return dtos.map(toSelfMcpHook);
+        },
+        setHook: async (projectSlug, name, hook) => {
+          if (!deps.hooks) throw new Error("hook management is unavailable");
+          // Safe-create default (GG-3): a brand-new hook is disabled unless the caller
+          // said otherwise; an update with no `enabled` preserves the existing value so
+          // editing a hook's prompt doesn't silently disarm it.
+          const record = { ...hook };
+          if (record.enabled === undefined) {
+            const existing = await deps.hooks.get(projectSlug, name).catch(() => null);
+            record.enabled = existing?.enabled === true;
+          }
+          const dto = await deps.hooks.set(projectSlug, name, record);
+          return toSelfMcpHook(dto);
+        },
+        removeHook: async (projectSlug, name) => {
+          if (!deps.hooks) return false;
+          return deps.hooks.remove(projectSlug, name);
+        },
       };
     }
 
@@ -1499,12 +1563,22 @@ export function makeChatHandler(deps: {
       maxSpawnDepth,
     });
     if (selfMcp.inject) {
+      // Hook-management tools (G5) follow the TARGET project's `hooksMcpEnabled`
+      // opt-in (override else instance default), only meaningful when the write
+      // tools are present. Resolve the project's override lazily — only when writes
+      // are on and the instance/override could enable it — to keep the hot path lean.
+      let includeHooks = false;
+      if (selfMcp.includeWrite) {
+        const tp = await deps.projects.get(projectSlug).catch(() => null);
+        includeHooks = resolveHooksMcpEnabled(tp?.hooksMcpEnabled, deps.cfg.hooksMcpEnabled);
+      }
       injectedMcpServers[SELF_MCP_SERVER_KEY] = buildSelfMcpServerDef({
         currentProjectSlug: projectSlug,
         currentSessionId: () => resolvedSession,
         // Children of THIS turn are one hop deeper than the chat it runs in.
         parentProvenance: { origin, depth: injectionDepth },
         includeWrite: selfMcp.includeWrite,
+        includeHooks,
       });
     }
 
@@ -1874,6 +1948,10 @@ export function makeChatHandler(deps: {
         let agentName: string;
         // Effective prompt — may be augmented with the project overview below.
         let prompt = message;
+        // Whether this project agent gets the G5 hook-management tools (resolved
+        // from the project's `hooksMcpEnabled` override else the instance default);
+        // stays false for scratch, which never gets the self-MCP.
+        let includeHooks = false;
         const requested = msg.payload.model;
         if (slug === SCRATCH_SLUG) {
           agentName = SCRATCH_AGENT;
@@ -1905,6 +1983,13 @@ export function makeChatHandler(deps: {
             project.driveMode && isKnownDriveMode(project.driveMode)
               ? project.driveMode
               : deps.cfg.keeperDriveMode;
+
+          // G5 hook-management gate: the per-project override wins, else the
+          // instance default. Only takes effect when the write tools are also on
+          // (the hook tools live in the write block).
+          includeHooks =
+            deps.cfg.selfMcpWriteEnabled &&
+            resolveHooksMcpEnabled(project.hooksMcpEnabled, deps.cfg.hooksMcpEnabled);
 
           // Context preload (issues #1/#188): only for a NEW chat, only when
           // asked. Shared with the self-MCP create_chat path (C2 / #264):
@@ -1941,6 +2026,7 @@ export function makeChatHandler(deps: {
             currentSessionId: () => resolvedSession ?? sessionId ?? null,
             parentProvenance: HUMAN_ROOT,
             includeWrite: deps.cfg.selfMcpWriteEnabled,
+            includeHooks,
           });
         }
 

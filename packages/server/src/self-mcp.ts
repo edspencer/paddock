@@ -93,6 +93,39 @@ export interface SelfMcpSchedule {
 }
 
 /**
+ * A project event hook as surfaced to the agent (Epic G / G5). Flattens the
+ * persisted {@link import("./hook-config.js").HookDto} — a lifecycle `event` + a
+ * capability set + a prompt (inline or `.paddock/hooks/*.md`) + `enabled` — plus the
+ * `hook-<slug>-<name>` agent it registers as. Field names mirror the Hooks-tab DTO
+ * (G4) so the two surfaces stay in step; nested capability fields are flattened +
+ * null-normalised (like {@link SelfMcpSchedule}) so the agent reads a flat record.
+ */
+export interface SelfMcpHook {
+  /** The hook's stable key (the `project.yaml` map key + the `<name>` in its agent). */
+  name: string;
+  /** The herdctl agent this hook registers as (`hook-<slug>-<name>`). */
+  agentName: string;
+  /** The lifecycle event this hook fires on (v1: `onArchive`). */
+  event: string;
+  /** Whether the hook is armed. New hooks default `false` (GG-3). */
+  enabled: boolean;
+  /** The inline prompt, or null when a `promptFile` drives it. */
+  prompt: string | null;
+  /** The `.paddock/hooks/` prompt-file name, or null. */
+  promptFile: string | null;
+  /** The tools the hook agent may use (its capability grant); `[]` = tool-less. */
+  allowedTools: string[];
+  /** Tools explicitly denied even if otherwise allowed. */
+  deniedTools: string[];
+  /** The permission mode the hook agent's turns run under, or null (fleet default). */
+  permissionMode: string | null;
+  /** Model override for the hook agent, or null (keeper default). */
+  model: string | null;
+  /** Max agent turns bounding a runaway hook, or null (hook default). */
+  maxTurns: number | null;
+}
+
+/**
  * Per-turn context: narrow async callbacks the caller wires to the real stores.
  * `readChat` returns the FULL ordered message list; this module applies the
  * tail/limit + per-message truncation so that logic stays testable here.
@@ -152,6 +185,35 @@ export interface SelfMcpWriteContext {
    * `true` when a schedule existed, `false` when it was already absent.
    */
   removeSchedule: (projectSlug: string, name: string) => Promise<boolean>;
+  /**
+   * Whether the hook-management MCP is enabled for THIS turn's project (Epic G /
+   * G5, GG-4) — the per-project `hooksMcpEnabled` opt-in resolved against the
+   * instance default. When false the hook tools (`list_hooks`/`set_hook`/
+   * `remove_hook`) are NOT injected at all (absent, not present-but-refusing) —
+   * distinct from the schedule tools' runtime-refuse gate. The caller resolves this
+   * per project (see {@link import("./hook-config.js").resolveHooksMcpEnabled}).
+   */
+  hooksMcpEnabled: boolean;
+  /**
+   * List a project's event hooks (Epic G / G5). Read-only; reads the live project
+   * record. Present regardless of {@link hooksMcpEnabled} on the context, but the
+   * tools are only injected when that flag is on.
+   */
+  listHooks: (projectSlug: string) => Promise<SelfMcpHook[]>;
+  /**
+   * Create or replace a hook (keyed by `name`) — persists to `project.yaml` and
+   * registers its `hook-<slug>-<name>` agent. `hook` is the {@link import(
+   * "./hook-config.js").PaddockHook} record (`event`, `capabilities`, `prompt`/
+   * `promptFile`, `enabled`); the caller validates + sanitises it (throwing on a
+   * malformed record) and defaults a brand-new hook to `enabled: false` (GG-3).
+   * Returns the saved hook.
+   */
+  setHook: (projectSlug: string, name: string, hook: Record<string, unknown>) => Promise<SelfMcpHook>;
+  /**
+   * Remove a hook by `name` — persisted removal + unregistering its agent. Returns
+   * `true` when a hook existed, `false` when it was already absent.
+   */
+  removeHook: (projectSlug: string, name: string) => Promise<boolean>;
 }
 
 const SERVER_NAME = "paddock_manage";
@@ -464,6 +526,33 @@ export function coercePrompts(raw: unknown): string[] {
   return [];
 }
 
+/**
+ * Normalize a tool-list argument (a hook's `allowed_tools`/`denied_tools`) to a
+ * string array. Like {@link coercePrompts}, tolerant of the CLI-runtime MCP
+ * transport dropping ARRAY-typed args: accepts a real array, a JSON array string,
+ * or a comma/newline-separated string (tool names never contain commas). Blanks
+ * are dropped; returns [] when nothing usable is present (a tool-less hook).
+ */
+export function coerceToolList(raw: unknown): string[] {
+  const clean = (arr: unknown[]): string[] =>
+    arr.map((t) => (typeof t === "string" ? t.trim() : "")).filter((t) => t.length > 0);
+  if (Array.isArray(raw)) return clean(raw);
+  if (typeof raw === "string") {
+    const s = raw.trim();
+    if (s.length === 0) return [];
+    if (s.startsWith("[")) {
+      try {
+        const parsed = JSON.parse(s);
+        if (Array.isArray(parsed)) return clean(parsed);
+      } catch {
+        /* fall through to delimiter split */
+      }
+    }
+    return clean(s.split(/[\n,]/));
+  }
+  return [];
+}
+
 function forkChatBatchHandler(write: SelfMcpWriteContext) {
   return async (args: Record<string, unknown>): Promise<McpToolCallResult> => {
     try {
@@ -594,6 +683,119 @@ function listSchedulesHandler(write: SelfMcpWriteContext) {
   };
 }
 
+// ── Hook-management tools (Epic G / G5, GG-4) ───────────────────────────────
+// Expose the G1 hook-CRUD service (HookService: persist to project.yaml + register
+// the `hook-<slug>-<name>` agent) so a project agent can declare/edit/delete its own
+// event hooks — the MCP twin of the Hooks tab (G4). Injected ONLY when the project
+// opted into `hooksMcpEnabled` (a coarse, binary gate — an agent that has these
+// tools can create hooks at any capability; there is no per-capability gating).
+
+const LIST_HOOKS_DESC =
+  "List a project's event hooks: each hook's name, the agent it registers as, its " +
+  "trigger `event`, `enabled` flag, prompt/promptFile, and granted capabilities " +
+  "(allowedTools, deniedTools, permissionMode, model, maxTurns). Read-only. " +
+  "Defaults to the current project; pass `project` (a slug) to target another.";
+
+const SET_HOOK_DESC =
+  "Create or update an event HOOK — an agent turn that fires when a project " +
+  "lifecycle event happens, keyed by `name`. A hook registers as its OWN agent " +
+  "`hook-<slug>-<name>` whose granted tools ARE its capability. `event` is the " +
+  "lifecycle trigger (v1: \"onArchive\" — fired after a chat is archived, e.g. to " +
+  "spin down servers / delete clones). Give the instruction as `prompt` (inline) " +
+  "OR `prompt_file` — a git-tracked `.md` under the project's `.paddock/hooks/` " +
+  "dir (e.g. \"cleanup.md\"), read at fire time. Capabilities (all optional; omit " +
+  "for a tool-less hook that can only think + return text): `allowed_tools` (the " +
+  "tools the hook may use — one per line or comma-separated, e.g. \"Bash, Read\"), " +
+  "`denied_tools`, `permission_mode` (\"default\"/\"acceptEdits\"/\"bypassPermissions\"" +
+  "/\"plan\"), `model`, `max_turns`. `enabled` (default FALSE on a NEW hook so " +
+  "nothing fires the instant it's written — set it true to arm; on an existing hook " +
+  "an omitted `enabled` is left unchanged). Defaults to the current project; pass " +
+  "`project` (a slug) to target another.";
+
+const REMOVE_HOOK_DESC =
+  "Delete an event hook by `name` (removes it from `project.yaml` and unregisters " +
+  "its `hook-<slug>-<name>` agent). Safe when absent — returns `removed: false` if " +
+  "no such hook. Defaults to the current project; pass `project` to target another.";
+
+function listHooksHandler(write: SelfMcpWriteContext) {
+  return async (args: Record<string, unknown>): Promise<McpToolCallResult> => {
+    try {
+      const projectArg = typeof args.project === "string" ? args.project.trim() : "";
+      const project = projectArg.length > 0 ? projectArg : write.currentProjectSlug;
+      const hooks = await write.listHooks(project);
+      return ok({ project, count: hooks.length, hooks });
+    } catch (error) {
+      return fail(`Error listing hooks: ${errText(error)}`);
+    }
+  };
+}
+
+function setHookHandler(write: SelfMcpWriteContext) {
+  return async (args: Record<string, unknown>): Promise<McpToolCallResult> => {
+    try {
+      const name = typeof args.name === "string" ? args.name.trim() : "";
+      if (!name) return fail("Error: `name` is required (the hook's key).");
+      const event = typeof args.event === "string" ? args.event.trim() : "";
+      if (!event) {
+        return fail('Error: `event` is required (the lifecycle trigger, e.g. "onArchive").');
+      }
+      const prompt = typeof args.prompt === "string" ? args.prompt.trim() : "";
+      const promptFile = typeof args.prompt_file === "string" ? args.prompt_file.trim() : "";
+      if (!prompt && !promptFile) {
+        return fail(
+          "Error: provide `prompt` (an inline instruction) or `prompt_file` (a `.md` under " +
+            "the project's `.paddock/hooks/` dir).",
+        );
+      }
+
+      // Assemble the PaddockHook record (camelCase, as sanitizeHook expects). Only
+      // set fields the caller supplied so an update doesn't clobber unspecified ones.
+      const hook: Record<string, unknown> = { event };
+      if (prompt) hook.prompt = prompt;
+      if (promptFile) hook.promptFile = promptFile;
+      if (typeof args.enabled === "boolean") hook.enabled = args.enabled;
+
+      const capabilities: Record<string, unknown> = {};
+      const allowed = coerceToolList(args.allowed_tools);
+      if (allowed.length > 0) capabilities.allowedTools = allowed;
+      const denied = coerceToolList(args.denied_tools);
+      if (denied.length > 0) capabilities.deniedTools = denied;
+      if (typeof args.permission_mode === "string" && args.permission_mode.trim() !== "") {
+        capabilities.permissionMode = args.permission_mode.trim();
+      }
+      if (typeof args.model === "string" && args.model.trim() !== "") {
+        capabilities.model = args.model.trim();
+      }
+      if (typeof args.max_turns === "number") capabilities.maxTurns = args.max_turns;
+      if (Object.keys(capabilities).length > 0) hook.capabilities = capabilities;
+
+      const projectArg = typeof args.project === "string" ? args.project.trim() : "";
+      const project = projectArg.length > 0 ? projectArg : write.currentProjectSlug;
+
+      const saved = await write.setHook(project, name, hook);
+      return ok({ set: true, project, hook: saved });
+    } catch (error) {
+      return fail(`Error setting hook: ${errText(error)}`);
+    }
+  };
+}
+
+function removeHookHandler(write: SelfMcpWriteContext) {
+  return async (args: Record<string, unknown>): Promise<McpToolCallResult> => {
+    try {
+      const name = typeof args.name === "string" ? args.name.trim() : "";
+      if (!name) return fail("Error: `name` is required (the hook to remove).");
+      const projectArg = typeof args.project === "string" ? args.project.trim() : "";
+      const project = projectArg.length > 0 ? projectArg : write.currentProjectSlug;
+
+      const removed = await write.removeHook(project, name);
+      return ok({ removed, project, name });
+    } catch (error) {
+      return fail(`Error removing hook: ${errText(error)}`);
+    }
+  };
+}
+
 /**
  * Build the injected MCP server definition for the self-management tools, bound to
  * a per-turn context. The READ tools (list_projects/list_chats/read_chat) are
@@ -601,7 +803,9 @@ function listSchedulesHandler(write: SelfMcpWriteContext) {
  * write flag is on), the WRITE tools (create_chat/fork_chat/send_message/
  * archive_chat/unarchive_chat/fork_chat_batch + the schedule tools
  * set_schedule/remove_schedule/list_schedules) are appended too; omit it for
- * unchanged read-only behavior.
+ * unchanged read-only behavior. When that write context additionally has
+ * {@link SelfMcpWriteContext.hooksMcpEnabled} on (the per-project G5 opt-in), the
+ * hook-management tools (list_hooks/set_hook/remove_hook) are appended as well.
  * Inject under {@link SELF_MCP_SERVER_KEY}.
  */
 export function selfMcpServerDef(
@@ -856,6 +1060,101 @@ export function selfMcpServerDef(
         handler: listSchedulesHandler(write),
       },
     );
+
+    // Hook-management tools (Epic G / G5, GG-4): a THIRD coarse capability, layered
+    // on the write tools and gated by the project's own `hooksMcpEnabled` opt-in.
+    // When off the tools are ABSENT (not present-but-refusing) — the design's binary
+    // "does this project agent get the hook MCP at all" gate.
+    if (write.hooksMcpEnabled) {
+      tools.push(
+        {
+          name: "list_hooks",
+          description: LIST_HOOKS_DESC,
+          inputSchema: {
+            type: "object",
+            properties: {
+              project: {
+                type: "string",
+                description: "Project slug to list. Omit to use the current project.",
+              },
+            },
+          },
+          handler: listHooksHandler(write),
+        },
+        {
+          name: "set_hook",
+          description: SET_HOOK_DESC,
+          inputSchema: {
+            type: "object",
+            properties: {
+              name: { type: "string", description: "The hook's stable key (create or update)." },
+              event: {
+                type: "string",
+                description: 'The lifecycle trigger (v1: "onArchive").',
+              },
+              prompt: {
+                type: "string",
+                description: "Inline instruction the hook turn runs. Provide this OR `prompt_file`.",
+              },
+              prompt_file: {
+                type: "string",
+                description:
+                  'A `.md` file under the project\'s `.paddock/hooks/` dir (e.g. "cleanup.md"), ' +
+                  "read at fire time. Alternative to `prompt`.",
+              },
+              allowed_tools: {
+                type: "string",
+                description:
+                  "The tools the hook agent may use — one per line or comma-separated (e.g. " +
+                  '"Bash, Read, Write"). Omit for a tool-less hook. A JSON array is also accepted.',
+              },
+              denied_tools: {
+                type: "string",
+                description: "Tools explicitly denied — same format as `allowed_tools`.",
+              },
+              permission_mode: {
+                type: "string",
+                enum: ["default", "acceptEdits", "bypassPermissions", "plan"],
+                description: "Permission mode the hook agent's turns run under.",
+              },
+              model: { type: "string", description: "Model override for the hook agent." },
+              max_turns: {
+                type: "number",
+                description: "Max agent turns bounding a runaway hook.",
+              },
+              enabled: {
+                type: "boolean",
+                description:
+                  "Whether the hook is armed. Default FALSE on a NEW hook; omitted on an " +
+                  "existing hook leaves it unchanged.",
+              },
+              project: {
+                type: "string",
+                description: "Project slug to target. Omit to use the current project.",
+              },
+            },
+            required: ["name", "event"],
+          },
+          handler: setHookHandler(write),
+        },
+        {
+          name: "remove_hook",
+          description: REMOVE_HOOK_DESC,
+          inputSchema: {
+            type: "object",
+            properties: {
+              name: { type: "string", description: "The hook to remove." },
+              project: {
+                type: "string",
+                description: "Project slug that owns the hook. Omit to use the current project.",
+              },
+            },
+            required: ["name"],
+          },
+          handler: removeHookHandler(write),
+        },
+      );
+    }
   }
 
   return { name: SERVER_NAME, version: "0.1.0", tools };
@@ -880,4 +1179,14 @@ export const SELF_MCP_WRITE_TOOL_NAMES = {
   setSchedule: `mcp__${SERVER_NAME}__set_schedule`,
   removeSchedule: `mcp__${SERVER_NAME}__remove_schedule`,
   listSchedules: `mcp__${SERVER_NAME}__list_schedules`,
+} as const;
+
+/**
+ * The fully-qualified names of the G5 hook-management tools (only present when a
+ * write context has {@link SelfMcpWriteContext.hooksMcpEnabled} on).
+ */
+export const SELF_MCP_HOOK_TOOL_NAMES = {
+  listHooks: `mcp__${SERVER_NAME}__list_hooks`,
+  setHook: `mcp__${SERVER_NAME}__set_hook`,
+  removeHook: `mcp__${SERVER_NAME}__remove_hook`,
 } as const;

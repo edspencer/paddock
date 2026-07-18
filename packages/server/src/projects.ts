@@ -195,6 +195,16 @@ export interface ProjectYaml {
    */
   maxSpawnDepth?: number;
   /**
+   * Per-project override for the hook-management MCP gate (Epic G / G5, GG-4) —
+   * whether this project's turns get the `mcp__paddock_manage__{list,set,remove}_hook`
+   * tools. Optional on disk: absent inherits the instance default
+   * (`PADDOCK_HOOKS_MCP`, else OFF), resolved at dispatch via
+   * {@link import("./hook-config.js").resolveHooksMcpEnabled} — the same
+   * inherit/override discipline as `driveMode`/`maxSpawnDepth`. `true` opts this
+   * project agent in; `false` opts it out even when the instance default is on.
+   */
+  hooksMcpEnabled?: boolean;
+  /**
    * External git repo URL that backs this project (issue #187). When present the
    * project is REPO-BACKED: Paddock clones the repo into a nested `.gitignore`d
    * checkout under the project dir and the keeper's working directory is that
@@ -313,6 +323,13 @@ export type UpdateProjectInput = Partial<
    * absent leaves the current value untouched. Same tri-state as `driveMode`.
    */
   maxSpawnDepth?: number | null;
+  /**
+   * Hook-management MCP override (Epic G / G5). A boolean sets a per-project
+   * override; `null` CLEARS it so the project inherits the instance default again;
+   * `undefined`/absent leaves the current value untouched. Same tri-state as
+   * `driveMode`/`maxSpawnDepth`.
+   */
+  hooksMcpEnabled?: boolean | null;
 };
 
 const PROJECT_FILE = "project.yaml";
@@ -580,7 +597,12 @@ export class ProjectStore {
     // applied explicitly below rather than via the blanket spread — a plain spread
     // can't express "delete this field", which is how an override is cleared back
     // to inherit.
-    const { driveMode: driveModePatch, maxSpawnDepth: maxSpawnDepthPatch, ...rest } = patch;
+    const {
+      driveMode: driveModePatch,
+      maxSpawnDepth: maxSpawnDepthPatch,
+      hooksMcpEnabled: hooksMcpPatch,
+      ...rest
+    } = patch;
     const next: ProjectYaml = {
       ...this.stripDto(current),
       ...rest,
@@ -599,6 +621,12 @@ export class ProjectStore {
       delete next.maxSpawnDepth;
     } else if (maxSpawnDepthPatch !== undefined) {
       next.maxSpawnDepth = maxSpawnDepthPatch;
+    }
+    if (hooksMcpPatch === null) {
+      // Clear the per-project override -> inherit the instance default (G5).
+      delete next.hooksMcpEnabled;
+    } else if (hooksMcpPatch !== undefined) {
+      next.hooksMcpEnabled = hooksMcpPatch;
     }
     await this.writeYaml(slug, next);
     return this.toDto(current.dir, next, await this.overviewExists(slug));
@@ -1009,6 +1037,11 @@ export class ProjectStore {
       // (`resolveMaxSpawnDepth(project.maxSpawnDepth, cfg.maxSpawnDepth)`), NOT
       // here, so the instance default still applies to non-overriding projects.
       ...(typeof p.maxSpawnDepth === "number" ? { maxSpawnDepth: p.maxSpawnDepth } : {}),
+      // hooksMcpEnabled (Epic G / G5): carried only when explicitly set — an absent
+      // value means "inherit the instance default" and is resolved at dispatch
+      // (`resolveHooksMcpEnabled(project.hooksMcpEnabled, cfg.hooksMcpEnabled)`), NOT
+      // here, so the instance default still applies to non-overriding projects.
+      ...(typeof p.hooksMcpEnabled === "boolean" ? { hooksMcpEnabled: p.hooksMcpEnabled } : {}),
       // repo (issue #187): carried only when present — its presence is what marks
       // the project repo-backed and drives the workingDir resolution in toDto.
       ...(typeof p.repo === "string" && p.repo.trim() ? { repo: p.repo.trim() } : {}),

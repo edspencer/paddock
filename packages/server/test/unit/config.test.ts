@@ -119,6 +119,41 @@ describe("loadPaddockConfig: maxSpawnDepth (#262)", () => {
   );
 });
 
+describe("loadPaddockConfig: hooksMcpEnabled (G5)", () => {
+  let dataDir: string;
+  let saved: Record<string, string | undefined>;
+  const KEYS = ["PADDOCK_DATA_DIR", "PADDOCK_HOOKS_MCP"];
+
+  beforeEach(async () => {
+    dataDir = await makeTmpDir("paddock-config-");
+    saved = {};
+    for (const k of KEYS) saved[k] = process.env[k];
+    process.env.PADDOCK_DATA_DIR = dataDir;
+    delete process.env.PADDOCK_HOOKS_MCP;
+  });
+  afterEach(async () => {
+    for (const k of KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+    await rmTmpDir(dataDir);
+  });
+
+  it("defaults OFF (opt-in per instance / project)", () => {
+    expect(loadPaddockConfig().hooksMcpEnabled).toBe(false);
+  });
+
+  it.each(["1", "true", "yes", "TRUE"])("PADDOCK_HOOKS_MCP=%s enables it", (raw) => {
+    process.env.PADDOCK_HOOKS_MCP = raw;
+    expect(loadPaddockConfig().hooksMcpEnabled).toBe(true);
+  });
+
+  it.each(["0", "false", "no", "nonsense", ""])("leaves it OFF for %s", (raw) => {
+    process.env.PADDOCK_HOOKS_MCP = raw;
+    expect(loadPaddockConfig().hooksMcpEnabled).toBe(false);
+  });
+});
+
 describe("loadPaddockConfig: folded env knobs (#269)", () => {
   let dataDir: string;
   let saved: Record<string, string | undefined>;
@@ -211,6 +246,7 @@ describe("loadPaddockConfig: YAML instance-config file (#270)", () => {
     "PADDOCK_DEV_SERVERS_ENABLED",
     "PADDOCK_SELF_MCP",
     "PADDOCK_SELF_MCP_WRITE",
+    "PADDOCK_HOOKS_MCP",
     "PADDOCK_BROWSER_MCP",
     "PADDOCK_SWEEP_MIN_INTERVAL_MS",
     "PADDOCK_GIT_AUTHOR_NAME",
@@ -280,6 +316,7 @@ describe("loadPaddockConfig: YAML instance-config file (#270)", () => {
         "  enabled: true",
         "selfMcpEnabled: true",
         "selfMcpWriteEnabled: true",
+        "hooksMcpEnabled: true",
         "gitAuthor:",
         "  name: Ed",
         "  email: ed@example.com",
@@ -299,6 +336,7 @@ describe("loadPaddockConfig: YAML instance-config file (#270)", () => {
     expect(cfg.devServers.enabled).toBe(true);
     expect(cfg.selfMcpEnabled).toBe(true);
     expect(cfg.selfMcpWriteEnabled).toBe(true);
+    expect(cfg.hooksMcpEnabled).toBe(true);
     expect(cfg.gitAuthor).toEqual({ name: "Ed", email: "ed@example.com" });
   });
 
