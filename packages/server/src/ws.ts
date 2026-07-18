@@ -83,6 +83,7 @@ import {
 } from "./self-mcp.js";
 import type { AttachmentStore } from "./attachments.js";
 import type { QueuedMessageStore } from "./queued-message.js";
+import type { ArchiveStore } from "./archive.js";
 import {
   type RunProvenanceStore,
   type RunProvenance,
@@ -572,6 +573,12 @@ export function makeChatHandler(deps: {
    * the marker — nothing gates on it yet.
    */
   runProvenance?: RunProvenanceStore;
+  /**
+   * Per-chat archived-flag sidecar (#95). Used by the self-MCP archive_chat /
+   * unarchive_chat write tools (#263) so a keeper can file a chat away — most
+   * usefully ITSELF, powering the "work → archive myself on success" convention.
+   */
+  archive: ArchiveStore;
 }) {
   // ONE hub shared across every socket this handler serves: it tracks each
   // session's in-flight turn and fans its frames out to whichever socket(s) are
@@ -871,6 +878,16 @@ export function makeChatHandler(deps: {
             depth: spawnedChild.depth,
             maxSpawnDepth: maxSpawnDepthFor(p),
           });
+        },
+        // C1 (#263). Archive/unarchive is presentational metadata only — no turn
+        // is started — so it delegates straight to the ArchiveStore, keyed by the
+        // target project's agent (mirrors the POST archive endpoints in
+        // routes.ts). Enables the "work → archive myself on success" self-reporting
+        // convention. `deps.projects.get` validates the slug (throws not_found),
+        // matching the other write callbacks.
+        setArchived: async (projectSlug, targetSessionId, archived) => {
+          await deps.projects.get(projectSlug);
+          await deps.archive.setArchived(keeperAgentName(projectSlug), targetSessionId, archived);
         },
       };
     }
