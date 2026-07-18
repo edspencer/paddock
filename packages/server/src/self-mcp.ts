@@ -59,6 +59,40 @@ export interface SelfMcpMessage {
 }
 
 /**
+ * A durable project schedule as surfaced to the agent (issue #289). Merges the
+ * `project.yaml` declaration (herdctl's `ScheduleSchema` shape) with herdctl's
+ * live runtime state (`status`/`lastRunAt`/`nextRunAt`/`lastError`), which is
+ * absent until the keeper has armed the schedule. Field names mirror the Settings
+ * pane DTO so the two surfaces stay in step.
+ */
+export interface SelfMcpSchedule {
+  /** The schedule's stable key. */
+  name: string;
+  /** `cron` (a 5-field expression) or `interval` (e.g. `"30m"`). */
+  type: "cron" | "interval";
+  /** The cron expression, or null for an interval schedule. */
+  cron: string | null;
+  /** The interval string, or null for a cron schedule. */
+  interval: string | null;
+  /** The inline prompt, or null when a `promptFile` drives it. */
+  prompt: string | null;
+  /** The `.paddock/schedules/` prompt-file name, or null. */
+  promptFile: string | null;
+  /** Whether the schedule accretes into its one owned session (else fresh each fire). */
+  resumeSession: boolean;
+  /** Whether the schedule is armed. */
+  enabled: boolean;
+  /** Live status when armed (`idle`/`running`/`disabled`), else null. */
+  status?: string | null;
+  /** ISO time of the last fire, or null. */
+  lastRunAt?: string | null;
+  /** ISO time of the next scheduled fire, or null. */
+  nextRunAt?: string | null;
+  /** The last fire's error message, or null. */
+  lastError?: string | null;
+}
+
+/**
  * Per-turn context: narrow async callbacks the caller wires to the real stores.
  * `readChat` returns the FULL ordered message list; this module applies the
  * tail/limit + per-message truncation so that logic stays testable here.
@@ -93,6 +127,31 @@ export interface SelfMcpWriteContext {
   sendMessage: (projectSlug: string, sessionId: string, prompt: string) => Promise<void>;
   /** Set (or clear) a chat's archived flag (presentational metadata only). */
   setArchived: (projectSlug: string, sessionId: string, archived: boolean) => Promise<void>;
+  /**
+   * Whether programmatic schedule mutation is enabled on this deployment (DD-7's
+   * per-deployment gate, `PADDOCK_SCHEDULE_MUTATION`). `set_schedule` /
+   * `remove_schedule` refuse with a clear error when this is false; `list_schedules`
+   * is read-only and unaffected — mirrors the REST routes (PUT/DELETE 403, GET open).
+   */
+  scheduleMutationEnabled: boolean;
+  /**
+   * List a project's schedules — the `project.yaml` declaration merged with
+   * herdctl's live runtime state. Read-only.
+   */
+  listSchedules: (projectSlug: string) => Promise<SelfMcpSchedule[]>;
+  /**
+   * Create or replace a schedule (keyed by `name`) — persists to `project.yaml`
+   * and arms herdctl. `schedule` is the herdctl `ScheduleSchema` record (`type`,
+   * `cron`/`interval`, `prompt`/`promptFile`, `resume_session`, `enabled`); the
+   * caller validates + sanitises it (throwing on a malformed record). Returns the
+   * saved schedule.
+   */
+  setSchedule: (projectSlug: string, name: string, schedule: Record<string, unknown>) => Promise<SelfMcpSchedule>;
+  /**
+   * Remove a schedule by `name` — persisted removal + unarming herdctl. Returns
+   * `true` when a schedule existed, `false` when it was already absent.
+   */
+  removeSchedule: (projectSlug: string, name: string) => Promise<boolean>;
 }
 
 const SERVER_NAME = "paddock_manage";
@@ -240,6 +299,34 @@ const UNARCHIVE_CHAT_DESC =
   "list. Defaults to the CURRENT chat — omit `session_id` to unarchive yourself, or " +
   "pass a `session_id` (from list_chats) to unarchive another. Defaults to the " +
   "current project; pass `project` to target a chat elsewhere.";
+
+const SET_SCHEDULE_DESC =
+  "Create or update a durable PROJECT schedule — a chat that a cron/interval " +
+  "triggers instead of a person, keyed by `name`. (Distinct from the ephemeral, " +
+  "session-scoped `ScheduleWakeup`: this persists in the project config, fires even " +
+  "when nobody is watching, and each fire appears as a new chat with a `scheduled` " +
+  "badge.) Shape (herdctl `ScheduleSchema`): `type` is \"cron\" with a 5-field `cron` " +
+  "expression (e.g. \"0 9 * * *\" = 9am daily, host-local time) OR \"interval\" with an " +
+  "`interval` string (e.g. \"30m\", \"1h\"). Give the instruction as `prompt` (inline) " +
+  "OR `prompt_file` — a git-tracked, keeper-editable `.md` under the project's " +
+  "`.paddock/schedules/` dir (e.g. \"daily-triage.md\"), read at fire time (handy for " +
+  "long multi-line prompts you want to version). `resume_session` (default false): " +
+  "false → a FRESH chat each fire; true → resume the schedule's ONE owned session so " +
+  "a 'manager' accretes a single transcript over time. `enabled` (default true). " +
+  "Defaults to the current project; pass `project` (a slug) to target another. " +
+  "Requires the deployment's schedule-mutation gate to be enabled.";
+
+const REMOVE_SCHEDULE_DESC =
+  "Delete a durable project schedule by `name` (removes it from `project.yaml` and " +
+  "unarms the cron). Safe when absent — returns `removed: false` if no such schedule. " +
+  "Defaults to the current project; pass `project` to target another. Requires the " +
+  "deployment's schedule-mutation gate.";
+
+const LIST_SCHEDULES_DESC =
+  "List a project's durable schedules: each schedule's name, type, cron/interval, " +
+  "prompt/promptFile, resumeSession, and enabled flag, plus live runtime state " +
+  "(status, lastRunAt, nextRunAt, lastError) once the keeper has armed it. Read-only. " +
+  "Defaults to the current project; pass `project` (a slug) to target another.";
 
 const FORK_CHAT_BATCH_DESC =
   "FAN-OUT primitive: fork ONE source chat into many child chats at once — one child " +
@@ -419,12 +506,101 @@ function forkChatBatchHandler(write: SelfMcpWriteContext) {
   };
 }
 
+// ── Schedule tools (issue #289) ─────────────────────────────────────────────
+// Expose the existing D3/D4 schedule CRUD (ProjectStore + herdctl runtime
+// mutation, behind the per-deployment mutation gate) so a keeper can define and
+// manage durable project schedules itself — not just a human via the Settings UI.
+
+/** Shared message when the deployment hasn't opted into schedule mutation. */
+const SCHEDULE_MUTATION_DISABLED =
+  "Schedule mutation is disabled on this deployment (the schedule-mutation gate is " +
+  "off). You can `list_schedules` but not add or remove one.";
+
+function setScheduleHandler(write: SelfMcpWriteContext) {
+  return async (args: Record<string, unknown>): Promise<McpToolCallResult> => {
+    try {
+      if (!write.scheduleMutationEnabled) return fail(SCHEDULE_MUTATION_DISABLED);
+      const name = typeof args.name === "string" ? args.name.trim() : "";
+      if (!name) return fail("Error: `name` is required (the schedule's key).");
+      const type = typeof args.type === "string" ? args.type.trim() : "";
+      if (type !== "cron" && type !== "interval") {
+        return fail('Error: `type` must be "cron" or "interval".');
+      }
+      const schedule: Record<string, unknown> = { type };
+      if (type === "cron") {
+        const cron = typeof args.cron === "string" ? args.cron.trim() : "";
+        if (!cron) {
+          return fail('Error: `cron` is required when type is "cron" (a 5-field cron expression, e.g. "0 9 * * *").');
+        }
+        schedule.cron = cron;
+      } else {
+        const interval = typeof args.interval === "string" ? args.interval.trim() : "";
+        if (!interval) {
+          return fail('Error: `interval` is required when type is "interval" (e.g. "30m", "1h").');
+        }
+        schedule.interval = interval;
+      }
+      const prompt = typeof args.prompt === "string" ? args.prompt.trim() : "";
+      const promptFile = typeof args.prompt_file === "string" ? args.prompt_file.trim() : "";
+      if (!prompt && !promptFile) {
+        return fail(
+          "Error: provide `prompt` (an inline instruction) or `prompt_file` (a `.md` under " +
+            "the project's `.paddock/schedules/` dir).",
+        );
+      }
+      if (prompt) schedule.prompt = prompt;
+      if (promptFile) schedule.promptFile = promptFile;
+      if (typeof args.resume_session === "boolean") schedule.resume_session = args.resume_session;
+      if (typeof args.enabled === "boolean") schedule.enabled = args.enabled;
+
+      const projectArg = typeof args.project === "string" ? args.project.trim() : "";
+      const project = projectArg.length > 0 ? projectArg : write.currentProjectSlug;
+
+      const saved = await write.setSchedule(project, name, schedule);
+      return ok({ set: true, project, schedule: saved });
+    } catch (error) {
+      return fail(`Error setting schedule: ${errText(error)}`);
+    }
+  };
+}
+
+function removeScheduleHandler(write: SelfMcpWriteContext) {
+  return async (args: Record<string, unknown>): Promise<McpToolCallResult> => {
+    try {
+      if (!write.scheduleMutationEnabled) return fail(SCHEDULE_MUTATION_DISABLED);
+      const name = typeof args.name === "string" ? args.name.trim() : "";
+      if (!name) return fail("Error: `name` is required (the schedule to remove).");
+      const projectArg = typeof args.project === "string" ? args.project.trim() : "";
+      const project = projectArg.length > 0 ? projectArg : write.currentProjectSlug;
+
+      const removed = await write.removeSchedule(project, name);
+      return ok({ removed, project, name });
+    } catch (error) {
+      return fail(`Error removing schedule: ${errText(error)}`);
+    }
+  };
+}
+
+function listSchedulesHandler(write: SelfMcpWriteContext) {
+  return async (args: Record<string, unknown>): Promise<McpToolCallResult> => {
+    try {
+      const projectArg = typeof args.project === "string" ? args.project.trim() : "";
+      const project = projectArg.length > 0 ? projectArg : write.currentProjectSlug;
+      const schedules = await write.listSchedules(project);
+      return ok({ project, count: schedules.length, schedules });
+    } catch (error) {
+      return fail(`Error listing schedules: ${errText(error)}`);
+    }
+  };
+}
+
 /**
  * Build the injected MCP server definition for the self-management tools, bound to
  * a per-turn context. The READ tools (list_projects/list_chats/read_chat) are
  * ALWAYS included. When a {@link SelfMcpWriteContext} is provided (the stricter
  * write flag is on), the WRITE tools (create_chat/fork_chat/send_message/
- * archive_chat/unarchive_chat/fork_chat_batch) are appended too; omit it for
+ * archive_chat/unarchive_chat/fork_chat_batch + the schedule tools
+ * set_schedule/remove_schedule/list_schedules) are appended too; omit it for
  * unchanged read-only behavior.
  * Inject under {@link SELF_MCP_SERVER_KEY}.
  */
@@ -604,6 +780,81 @@ export function selfMcpServerDef(
         },
         handler: forkChatBatchHandler(write),
       },
+      {
+        name: "set_schedule",
+        description: SET_SCHEDULE_DESC,
+        inputSchema: {
+          type: "object",
+          properties: {
+            name: { type: "string", description: "The schedule's stable key (create or update)." },
+            type: {
+              type: "string",
+              enum: ["cron", "interval"],
+              description: '"cron" (with a `cron` expression) or "interval" (with an `interval` string).',
+            },
+            cron: {
+              type: "string",
+              description: 'Required when type is "cron": a 5-field cron expression (e.g. "0 9 * * *"), host-local time.',
+            },
+            interval: {
+              type: "string",
+              description: 'Required when type is "interval": a duration string (e.g. "30m", "1h").',
+            },
+            prompt: {
+              type: "string",
+              description: "Inline instruction the scheduled turn runs. Provide this OR `prompt_file`.",
+            },
+            prompt_file: {
+              type: "string",
+              description:
+                'A `.md` file under the project\'s `.paddock/schedules/` dir (e.g. "daily-triage.md"), ' +
+                "read at fire time. Alternative to `prompt` for long, version-tracked prompts.",
+            },
+            resume_session: {
+              type: "boolean",
+              description:
+                "false (default) → a fresh chat each fire; true → accrete into the schedule's one owned session.",
+            },
+            enabled: { type: "boolean", description: "Whether the schedule is armed (default true)." },
+            project: {
+              type: "string",
+              description: "Project slug to target. Omit to use the current project.",
+            },
+          },
+          required: ["name", "type"],
+        },
+        handler: setScheduleHandler(write),
+      },
+      {
+        name: "remove_schedule",
+        description: REMOVE_SCHEDULE_DESC,
+        inputSchema: {
+          type: "object",
+          properties: {
+            name: { type: "string", description: "The schedule to remove." },
+            project: {
+              type: "string",
+              description: "Project slug that owns the schedule. Omit to use the current project.",
+            },
+          },
+          required: ["name"],
+        },
+        handler: removeScheduleHandler(write),
+      },
+      {
+        name: "list_schedules",
+        description: LIST_SCHEDULES_DESC,
+        inputSchema: {
+          type: "object",
+          properties: {
+            project: {
+              type: "string",
+              description: "Project slug to list. Omit to use the current project.",
+            },
+          },
+        },
+        handler: listSchedulesHandler(write),
+      },
     );
   }
 
@@ -626,4 +877,7 @@ export const SELF_MCP_WRITE_TOOL_NAMES = {
   archiveChat: `mcp__${SERVER_NAME}__archive_chat`,
   unarchiveChat: `mcp__${SERVER_NAME}__unarchive_chat`,
   forkChatBatch: `mcp__${SERVER_NAME}__fork_chat_batch`,
+  setSchedule: `mcp__${SERVER_NAME}__set_schedule`,
+  removeSchedule: `mcp__${SERVER_NAME}__remove_schedule`,
+  listSchedules: `mcp__${SERVER_NAME}__list_schedules`,
 } as const;
