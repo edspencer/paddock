@@ -31,6 +31,7 @@ import { ArchiveStore } from "./archive.js";
 import { ReadStateStore } from "./read-state.js";
 import { QueuedMessageStore } from "./queued-message.js";
 import { RunProvenanceStore } from "./run-provenance.js";
+import { MessageProvenanceStore } from "./message-provenance.js";
 import { ScheduleSessionStore } from "./schedule-session.js";
 
 export interface BuiltApp {
@@ -102,6 +103,10 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   // (origin human/scheduled/spawned + spawn depth) so #262 can depth-gate
   // spawning and #267 can badge provenance. A1 only carries/persists the marker.
   const runProvenance = new RunProvenanceStore(cfg.dataDir);
+  // Per-MESSAGE provenance sidecar (issue #290): records WHO injected each
+  // machine-added turn (send_message / schedule / spawn kickoff) so the chat
+  // history can attribute it. The per-message analog of runProvenance.
+  const messageProvenance = new MessageProvenanceStore(cfg.dataDir);
   // Owned-session sidecar for accreting schedules (issue #265 / DD-2): maps a
   // `resume_session: true` schedule to the one chat it accretes into across fires.
   const scheduleSessions = new ScheduleSessionStore(cfg.dataDir);
@@ -143,9 +148,9 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   // Build the chat handler BEFORE routes so its `fireSchedule` entrypoint (issue
   // #266 / D4) can back the `POST …/schedules/:name/trigger` route — a "trigger
   // now" runs the schedule through the same hub path a cron fire uses.
-  const chatHandler = makeChatHandler({ herdctl, projects, sweep, attachments, queuedMessage, runProvenance, archive, scheduleSessions, cfg });
+  const chatHandler = makeChatHandler({ herdctl, projects, sweep, attachments, queuedMessage, runProvenance, messageProvenance, archive, scheduleSessions, cfg });
 
-  await registerRoutes(app, { projects, herdctl, git, githubAuth, transcriber, archive, readState, runProvenance, attachments, fireSchedule: chatHandler.fireSchedule, cfg });
+  await registerRoutes(app, { projects, herdctl, git, githubAuth, transcriber, archive, readState, runProvenance, messageProvenance, attachments, fireSchedule: chatHandler.fireSchedule, cfg });
 
   await app.register(async (scoped) => {
     scoped.get("/ws", { websocket: true }, (socket) => {

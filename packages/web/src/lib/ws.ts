@@ -27,6 +27,7 @@ import type {
   TaskUpdateInfo,
   TaskCreateInfo,
   ServerWsMessage,
+  MessageSender,
 } from "./types";
 
 export interface ToolCall {
@@ -113,6 +114,15 @@ export interface ChatHandlers {
    * the queued message itself.
    */
   onQueuedFlushed?: (meta: { text?: string }) => void;
+  /**
+   * A machine-injected user turn arrived for this chat (#290): another chat
+   * `send_message`d / a schedule fired into it. Render the injected user bubble
+   * live (with its sender attribution) so it no longer takes a refresh to appear.
+   */
+  onInjected?: (
+    inj: { sender: MessageSender; content: string; timestamp: string },
+    meta: { sessionId: string | null; jobId: string | null },
+  ) => void;
 }
 
 export type ConnectionState = "connecting" | "open" | "closed";
@@ -653,6 +663,16 @@ class ChatClient {
         break;
       case "chat:message_boundary":
         sub.handlers.onMessageBoundary?.(meta);
+        break;
+      case "chat:injected":
+        sub.handlers.onInjected?.(
+          {
+            sender: msg.payload.sender,
+            content: msg.payload.content,
+            timestamp: msg.payload.timestamp,
+          },
+          meta,
+        );
         break;
       case "chat:complete":
         sub.handlers.onComplete?.({

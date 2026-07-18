@@ -79,6 +79,18 @@ describe("historyToTurns (issue #135: stable per-message id)", () => {
     expect(turns[0].kind).toBe("user");
   });
 
+  it("threads a machine-injected turn's sender onto its user turn (#290)", () => {
+    const sender = { kind: "chat" as const, project: "paddock", sessionId: "sess-b", name: "Report-back" };
+    const turns = historyToTurns([
+      msg({ role: "user", uuid: "h-1", content: "i typed this" }),
+      msg({ role: "user", uuid: "m-1", content: "please report back", sender }),
+    ]);
+    // Human turn: no sender. Injected turn: carries its attribution.
+    expect(turns[0].kind).toBe("user");
+    expect((turns[0] as { sender?: unknown }).sender).toBeUndefined();
+    expect(turns[1]).toMatchObject({ kind: "user", sender });
+  });
+
   it("rebuilds a send_file tool call as a `file` turn, keyed on its uuid", () => {
     const envelope = JSON.stringify({
       paddockSendFile: 1,

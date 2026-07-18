@@ -243,6 +243,23 @@ export interface ChatProvenance {
   depth: number;
 }
 
+/**
+ * WHO injected a machine-added message into a chat (issue #290) — the per-MESSAGE
+ * analog of {@link ChatProvenance}. A human-typed message carries NO sender
+ * (absence = human, the quiet default), so this only enumerates machine sources.
+ * Mirrors the server's `MessageSender` (packages/server/src/message-provenance.ts).
+ *
+ *  - `chat`     — another chat send_message'd / forked / created this turn; carries
+ *                 the sending chat's project + sessionId (a deep link) + its display
+ *                 name at injection time.
+ *  - `schedule` — a schedule fire injected it; carries the schedule's name.
+ *  - `agent`    — a machine turn with no more specific identity (fallback).
+ */
+export type MessageSender =
+  | { kind: "chat"; project: string; sessionId: string; name?: string }
+  | { kind: "schedule"; name: string; project?: string }
+  | { kind: "agent" };
+
 /** A scheduled chat's timer kind (issue #266 / D4). */
 export type ScheduleType = "cron" | "interval";
 
@@ -515,6 +532,13 @@ export interface HistoryMessage {
    * `historyToTurns` in ChatPane), so per-message UI state can persist (#136).
    */
   uuid?: string;
+  /**
+   * WHO injected this turn, when a machine did (issue #290). Absent for a
+   * human-typed message (the default — no attribution rendered). Populated by the
+   * server's per-message provenance join for `send_message` / schedule / spawn
+   * kickoff turns, so the history can show "↩ sent by …" / "⏰ scheduled by …".
+   */
+  sender?: MessageSender;
 }
 
 /** Enriched single-project response from GET /api/projects/:slug. */
@@ -754,5 +778,15 @@ export type ServerWsMessage =
       /** The server auto-sent the queued message, so clear localStorage (#197). */
       type: "chat:queued_flushed";
       payload: { projectSlug: string; target?: string; sessionId: string };
+    }
+  | {
+      /**
+       * A machine-injected user turn landed in this session (issue #290 Part 2):
+       * another chat `send_message`d / a schedule fired into it. Emitted so a
+       * client already viewing the recipient renders the injected user bubble live
+       * (with its sender attribution) instead of only seeing the assistant reply.
+       */
+      type: "chat:injected";
+      payload: Routing & { sender: MessageSender; content: string; timestamp: string };
     }
   | { type: "pong" };
