@@ -23,7 +23,7 @@
  *   POST /api/projects/:slug/chats     start-a-chat metadata (see TODO)
  */
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { ProjectError, type ProjectStore, type CreateProjectInput, type UpdateProjectInput } from "./projects.js";
+import { ProjectError, type ProjectStore, type Project, type CreateProjectInput, type UpdateProjectInput } from "./projects.js";
 import {
   sanitizeSchedule,
   isValidScheduleName,
@@ -32,7 +32,7 @@ import {
 } from "./schedule-config.js";
 import { AttachmentStore, collectAttachmentIds } from "./attachments.js";
 import type { HerdctlService } from "./herdctl.js";
-import { SCRATCH_SLUG, SCRATCH_AGENT, keeperAgentName } from "./herdctl.js";
+import { SCRATCH_SLUG, SCRATCH_AGENT, keeperAgentName, hookAgentName, HOOK_AGENT_PREFIX } from "./herdctl.js";
 import type { GitService } from "./git.js";
 import type { GithubAuth } from "./github-auth.js";
 import type { ArchiveStore } from "./archive.js";
@@ -77,12 +77,14 @@ import {
 import { type SessionTokenUsage } from "./usage.js";
 import { isValidMaxSpawnDepth, MAX_SPAWN_DEPTH_LIMIT } from "./spawn-capability.js";
 import type { PaddockEventBus } from "./event-bus.js";
-import type { HookService } from "./hooks.js";
+import { toHookDto, type HookService } from "./hooks.js";
 import {
   GRANTABLE_TOOLS,
   HOOK_EVENTS,
   isValidHookName,
   sanitizeHook,
+  toChatHookInfo,
+  type ChatHookInfo,
 } from "./hook-config.js";
 
 export interface RouteDeps {
@@ -352,6 +354,9 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
       // usage ring (#116) it's fine to resolve inline for the initial payload.
       const provenanceOf = (s: import("@herdctl/core").DiscoveredSession) =>
         runProvenance.get(s.sessionId);
+      // Hook capability descriptor for hook chats (G3 / GG-6) — truthful from the
+      // registered hook agent config. A no-op for the keeper chats that dominate.
+      const hookOf = makeHookResolver(project);
       // Deliberately NO usage resolver here (issue #116): the per-chat context
       // ring requires streaming+parsing each session's full transcript, which is
       // O(chats × transcript size) and blocked the whole ProjectView from
@@ -369,6 +374,7 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
           lastTurnAt,
           lastSeenOf,
           provenanceOf,
+          hookOf,
         ),
       };
     } catch (err) {
@@ -961,6 +967,7 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
         readState.getLastSeen(user, keeper, s.sessionId);
       const provenanceOf = (s: import("@herdctl/core").DiscoveredSession) =>
         runProvenance.get(s.sessionId);
+      const hookOf = makeHookResolver(project);
       // No usage resolver — see the GET /api/projects/:slug route (issue #116).
       // Usage rings are fetched separately so a list refresh stays cheap.
       return {
@@ -972,6 +979,7 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
           lastTurnAt,
           lastSeenOf,
           provenanceOf,
+          hookOf,
         ),
       };
     } catch (err) {
@@ -1517,6 +1525,7 @@ function toChatDto(
   lastTurnCompletedAt?: string,
   lastSeen?: number,
   provenance?: RunProvenance | null,
+  hook?: ChatHookInfo | null,
 ) {
   const preview = previewOverride ?? s.preview;
   return {
@@ -1543,10 +1552,15 @@ function toChatDto(
     // chat. Only present when the transcript has usage data.
     ...(usage ?? {}),
     // How this chat was created (#267): A1's provenance marker (#261) — origin
-    // (human / scheduled / spawned) + spawn depth — so the list can badge the
+    // (human / scheduled / spawned / hook) + spawn depth — so the list can badge the
     // "ran without me" cases. Absent when no marker was recorded (older chats,
     // or ones created before A1). Human origin renders no badge (the default).
     ...(provenance ? { provenance } : {}),
+    // For a HOOK chat (Epic G / G3, GG-6): the truthful-from-config capability
+    // descriptor — trigger event + granted tools — read from the same hook agent
+    // config herdctl enforces. Drives the floating capability banner atop the chat.
+    // Absent for non-hook chats.
+    ...(hook ? { hook } : {}),
   };
 }
 
@@ -1596,29 +1610,60 @@ async function buildProjectChats(
   provenanceOf?: (
     s: import("@herdctl/core").DiscoveredSession,
   ) => Promise<RunProvenance | undefined>,
+  hookOf?: (
+    s: import("@herdctl/core").DiscoveredSession,
+  ) => Promise<ChatHookInfo | undefined>,
 ) {
   return Promise.all(
     sessions.map(async (s) => {
-      // Resolve the usage ring, archived flag, read-state, provenance, and name.
+      // Resolve the usage ring, archived flag, read-state, provenance, hook, and name.
       const usage = usageOf ? await usageOf(s).catch(() => null) : null;
       const archived = archivedOf ? await archivedOf(s).catch(() => false) : false;
       const turnAt = lastTurnAt?.get(s.sessionId);
       const lastSeen = lastSeenOf ? await lastSeenOf(s).catch(() => 0) : 0;
       const provenance = provenanceOf ? await provenanceOf(s).catch(() => null) : null;
+      const hook = hookOf ? await hookOf(s).catch(() => undefined) : undefined;
       const pollutedPreview =
         !s.customName && !s.autoName && s.preview?.startsWith(PRELOAD_CONTEXT_OPEN);
       if (!pollutedPreview)
-        return toChatDto(s, undefined, usage, archived, turnAt, lastSeen, provenance);
+        return toChatDto(s, undefined, usage, archived, turnAt, lastSeen, provenance, hook);
 
       const full = await readFirstUserText(projectDir, s.sessionId).catch(() => undefined);
       const cleaned = stripPreloadWrapper(full ?? s.preview ?? "").trim();
       // couldn't recover
-      if (!cleaned) return toChatDto(s, undefined, usage, archived, turnAt, lastSeen, provenance);
+      if (!cleaned)
+        return toChatDto(s, undefined, usage, archived, turnAt, lastSeen, provenance, hook);
       const preview =
         cleaned.length > PREVIEW_MAX ? `${cleaned.slice(0, PREVIEW_MAX)}...` : cleaned;
-      return toChatDto(s, preview, usage, archived, turnAt, lastSeen, provenance);
+      return toChatDto(s, preview, usage, archived, turnAt, lastSeen, provenance, hook);
     }),
   );
+}
+
+/**
+ * Build the `hookOf` resolver for {@link buildProjectChats} (Epic G / G3, GG-6):
+ * for a chat whose attributed agent is a `hook-<slug>-<name>` agent, resolve its
+ * hook's truthful-from-config capability descriptor for the floating capability
+ * banner. Returns `undefined` for every non-hook chat (the common case).
+ *
+ * Built from the ALREADY-LOADED project record (the route has it in hand), so this
+ * adds no extra disk reads: the project's declared hooks are projected ONCE into an
+ * `agentName -> ChatHookInfo` map (via the same `toHookDto` → `toChatHookInfo`
+ * projection `HookService` uses, so the descriptor is truthful from config), and each
+ * hook chat is an O(1) map lookup. The `HOOK_AGENT_PREFIX` fast-path skips even the
+ * lookup for the keeper chats that dominate the list.
+ */
+function makeHookResolver(
+  project: Project,
+): (s: import("@herdctl/core").DiscoveredSession) => Promise<ChatHookInfo | undefined> {
+  const byAgentName = new Map<string, ChatHookInfo>();
+  for (const [name, hook] of Object.entries(project.hooks ?? {})) {
+    byAgentName.set(hookAgentName(project.slug, name), toChatHookInfo(toHookDto(project.slug, name, hook)));
+  }
+  return async (s) => {
+    if (!s.agentName || !s.agentName.startsWith(HOOK_AGENT_PREFIX)) return undefined;
+    return byAgentName.get(s.agentName);
+  };
 }
 
 /**

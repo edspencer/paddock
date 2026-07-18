@@ -119,6 +119,60 @@ export interface HookDto extends PaddockHook {
   agentName: string;
 }
 
+/**
+ * The compact, web-facing capability descriptor for a hook chat (Epic G / G3,
+ * GG-6). Rides on the chat DTO whenever a chat's provenance origin is `hook`, so
+ * the floating capability banner can state — TRUTHFULLY FROM CONFIG — what the hook
+ * agent is: its trigger {@link event}, its herdctl agent name, whether it's armed,
+ * and the exact tool grant herdctl enforces on its turns. Built by
+ * {@link toChatHookInfo} from the same {@link HookCapabilities} that
+ * {@link hookToAgentToolConfig} projects onto the registered agent, so the banner and
+ * the enforced capability can never disagree.
+ */
+export interface ChatHookInfo {
+  /** The hook's name (`project.yaml` map key + the `<name>` in its agent name). */
+  name: string;
+  /** The lifecycle event that fires this hook. */
+  event: HookEvent;
+  /** The herdctl agent enforcing the capability (`hook-<slug>-<name>`). */
+  agentName: string;
+  /** Whether the hook is armed (a disabled hook's past chats are still shown). */
+  enabled: boolean;
+  /** The exact tool grant (herdctl `allowed_tools`); `[]` = a tool-less hook. */
+  allowedTools: string[];
+  /** Tools explicitly denied even if otherwise allowed, when the hook sets any. */
+  deniedTools?: string[];
+  /** The permission mode the hook's turns run under, when the hook sets one. */
+  permissionMode?: HookPermissionMode;
+  /** The hook agent's model override, when set (else the keeper default applies). */
+  model?: string;
+  /** The hook's max agent turns (its runaway bound). */
+  maxTurns: number;
+}
+
+/**
+ * Project a persisted hook ({@link HookDto} fields) onto the web-facing
+ * {@link ChatHookInfo}, resolving the SAME capability defaults
+ * {@link hookToAgentToolConfig} uses so the banner mirrors the enforced grant
+ * exactly: an absent/empty allow-list surfaces as a tool-less `[]`, and an unset
+ * `maxTurns` surfaces the {@link HOOK_DEFAULT_MAX_TURNS} bound herdctl applies.
+ */
+export function toChatHookInfo(dto: HookDto): ChatHookInfo {
+  const caps = dto.capabilities;
+  const info: ChatHookInfo = {
+    name: dto.name,
+    event: dto.event,
+    agentName: dto.agentName,
+    enabled: dto.enabled === true,
+    allowedTools: caps?.allowedTools ?? [],
+    maxTurns: caps?.maxTurns ?? HOOK_DEFAULT_MAX_TURNS,
+  };
+  if (caps?.deniedTools) info.deniedTools = caps.deniedTools;
+  if (caps?.permissionMode) info.permissionMode = caps.permissionMode;
+  if (caps?.model) info.model = caps.model;
+  return info;
+}
+
 /** The dir (relative to a project's working dir) holding keeper-editable prompts. */
 export const HOOK_PROMPT_DIR = path.join(".paddock", "hooks");
 

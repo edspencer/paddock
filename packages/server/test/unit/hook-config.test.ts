@@ -18,6 +18,7 @@ import {
   isValidHookName,
   resolveHooksMcpEnabled,
   mergeHookUpdate,
+  toChatHookInfo,
   HOOK_PROMPT_DIR,
   HOOK_DEFAULT_MAX_TURNS,
 } from "../../src/hook-config.js";
@@ -270,6 +271,63 @@ describe("hookToAgentToolConfig", () => {
     expect(out.allowed_tools).toEqual([]);
     expect(out).not.toHaveProperty("model");
     expect(out).not.toHaveProperty("denied_tools");
+  });
+});
+
+describe("toChatHookInfo", () => {
+  it("projects a full hook DTO onto the web-facing capability descriptor", () => {
+    expect(
+      toChatHookInfo({
+        name: "cleanup",
+        agentName: "hook-my-proj-cleanup",
+        event: "onArchive",
+        enabled: true,
+        capabilities: {
+          allowedTools: ["Bash", "Read"],
+          deniedTools: ["WebFetch"],
+          permissionMode: "acceptEdits",
+          model: "claude-haiku-4-5-20251001",
+          maxTurns: 12,
+        },
+      }),
+    ).toEqual({
+      name: "cleanup",
+      agentName: "hook-my-proj-cleanup",
+      event: "onArchive",
+      enabled: true,
+      allowedTools: ["Bash", "Read"],
+      deniedTools: ["WebFetch"],
+      permissionMode: "acceptEdits",
+      model: "claude-haiku-4-5-20251001",
+      maxTurns: 12,
+    });
+  });
+
+  it("mirrors the enforced defaults: tool-less → [] and the default max_turns; enabled defaults false", () => {
+    expect(
+      toChatHookInfo({ name: "note", agentName: "hook-p-note", event: "onArchive" }),
+    ).toEqual({
+      name: "note",
+      agentName: "hook-p-note",
+      event: "onArchive",
+      enabled: false,
+      allowedTools: [],
+      maxTurns: HOOK_DEFAULT_MAX_TURNS,
+    });
+  });
+
+  it("omits optional fields the hook doesn't set (no denied/permission/model keys)", () => {
+    const info = toChatHookInfo({
+      name: "n",
+      agentName: "hook-p-n",
+      event: "onArchive",
+      enabled: false,
+      capabilities: { allowedTools: ["Read"] },
+    });
+    expect(info.allowedTools).toEqual(["Read"]);
+    expect(info).not.toHaveProperty("deniedTools");
+    expect(info).not.toHaveProperty("permissionMode");
+    expect(info).not.toHaveProperty("model");
   });
 });
 

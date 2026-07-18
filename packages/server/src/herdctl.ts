@@ -149,6 +149,30 @@ export function hookAgentName(slug: string, hookName: string): string {
 }
 
 /**
+ * The agents whose chats are VISIBLE in a project's chat list (Epic G / G3, GG-5):
+ * the keeper plus every event hook the project declares (`hook-<slug>-<name>`). This
+ * is the generalization of the old hard "keeper-only" listing — "all of a project's
+ * agents EXCEPT those marked hidden."
+ *
+ * The **sweeper** (`sweeper-<slug>`) is the one hidden agent: it is deliberately
+ * omitted here so its post-turn curation chats never surface (the `hideChats` case),
+ * exactly as before. Scratch is a separate, global one-off list and never a project
+ * agent. Disabled hooks are still included — a hook chat that already ran should stay
+ * visible regardless of whether the hook is currently armed.
+ *
+ * Kept pure + exported so the listing filter is unit-testable in isolation (the
+ * sweeper-stays-hidden regression lives here), and so future callers have ONE place
+ * that answers "which of a project's agents' chats do we show?".
+ */
+export function visibleProjectAgentNames(project: Project): string[] {
+  const names = [keeperAgentName(project.slug)];
+  for (const hookName of Object.keys(project.hooks ?? {})) {
+    names.push(hookAgentName(project.slug, hookName));
+  }
+  return names;
+}
+
+/**
  * The Claude Code tool pattern for the Playwright browser MCP. Must live on the
  * agent allowlist (the CLI runtime auto-denies any tool not on `--allowedTools`,
  * same reason `Skill` is listed) — so it is added to `defaults.allowed_tools`,
@@ -751,9 +775,47 @@ export class HerdctlService {
     return this.manager.getAgentSessions(keeperAgentName(project.slug), { limit });
   }
 
-  /** List a project's sessions (chats) via its keeper agent. */
+  /**
+   * List a project's chats across ALL of its VISIBLE agents (Epic G / G3, GG-5):
+   * the keeper PLUS every declared event-hook agent (`hook-<slug>-<name>`), so a
+   * hook's chats show up in the sidebar alongside the keeper's. The sweeper is
+   * deliberately excluded — it's the `hideChats` case (its curation chats stay
+   * hidden, unchanged) — and scratch is a separate global list. See
+   * {@link visibleProjectAgentNames}.
+   *
+   * Sessions are keyed by working directory in core's discovery, and every one of
+   * a project's agents shares the project cwd, so `getAgentSessions` attributes each
+   * session to the specific agent that owns it (keeper vs. a hook). We query each
+   * visible agent and merge — deduping by session id defensively (attribution is
+   * per-agent, so overlap shouldn't happen) — then re-sort mtime-descending to
+   * restore the interleaved recency order a single listing would have had. Each
+   * per-agent query is fault-isolated: a hook whose agent failed to register (or was
+   * just removed) yields `[]` instead of failing the whole list.
+   *
+   * A **hook-less project** (the overwhelmingly common case) has exactly one visible
+   * agent — its keeper — so we short-circuit to the single un-merged listing: same
+   * one directory scan (and no dedup/sort work) the pre-G3 keeper-only path did, i.e.
+   * zero added cost unless the project actually declares hooks. The extra per-hook
+   * scans only kick in for a project that has hook chats to show.
+   */
   async listSessions(project: Project): Promise<DiscoveredSession[]> {
-    return this.manager.getAgentSessions(keeperAgentName(project.slug));
+    const agentNames = visibleProjectAgentNames(project);
+    if (agentNames.length === 1) return this.manager.getAgentSessions(agentNames[0]);
+    const perAgent = await Promise.all(
+      agentNames.map((name) => this.manager.getAgentSessions(name).catch(() => [])),
+    );
+    const seen = new Set<string>();
+    const merged: DiscoveredSession[] = [];
+    for (const list of perAgent) {
+      for (const s of list) {
+        if (seen.has(s.sessionId)) continue;
+        seen.add(s.sessionId);
+        merged.push(s);
+      }
+    }
+    // ISO-8601 mtimes sort lexicographically in chronological order → descending.
+    merged.sort((a, b) => (a.mtime < b.mtime ? 1 : a.mtime > b.mtime ? -1 : 0));
+    return merged;
   }
 
   /** List one-off / scratch sessions. */
