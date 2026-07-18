@@ -74,6 +74,8 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
     // The box-wide keeper drive-mode default (issue #122): the Settings tab reads
     // it to show the effective inherited value. Defaults to batch.
     expect(["batch", "session"]).toContain(body.keeperDriveModeDefault);
+    // The instance-wide max spawn depth default (issue #262). Defaults to 1.
+    expect(body.maxSpawnDepthDefault).toBe(1);
   });
 
   // --- overview + changelog + files ------------------------------------------

@@ -352,6 +352,34 @@ describe("ProjectStore", () => {
     expect((await store.get("d")).driveMode).toBeUndefined();
   });
 
+  it("maxSpawnDepth override sets, persists, and clears back to inherit (issue #262)", async () => {
+    await store.create({ name: "MSD" });
+    // No override initially — absent from the DTO + yaml (inherits instance default).
+    const created = await store.get("msd");
+    expect(created.maxSpawnDepth).toBeUndefined();
+
+    // Setting an override persists to disk (0 is a real override, not 'absent').
+    const set = await store.update("msd", { maxSpawnDepth: 0 });
+    expect(set.maxSpawnDepth).toBe(0);
+    let parsed = YAML.parse(await fs.readFile(path.join(root, "msd", "project.yaml"), "utf8"));
+    expect(parsed.maxSpawnDepth).toBe(0);
+
+    // An unrelated update leaves the override untouched (undefined = no change).
+    const untouched = await store.update("msd", { summary: "hi" });
+    expect(untouched.maxSpawnDepth).toBe(0);
+
+    // A different override value replaces it.
+    const bumped = await store.update("msd", { maxSpawnDepth: 3 });
+    expect(bumped.maxSpawnDepth).toBe(3);
+
+    // `null` CLEARS the override -> inherit the instance default (field removed).
+    const cleared = await store.update("msd", { maxSpawnDepth: null });
+    expect(cleared.maxSpawnDepth).toBeUndefined();
+    parsed = YAML.parse(await fs.readFile(path.join(root, "msd", "project.yaml"), "utf8"));
+    expect("maxSpawnDepth" in parsed).toBe(false);
+    expect((await store.get("msd")).maxSpawnDepth).toBeUndefined();
+  });
+
   it("keeper settings are absent from a sparse yaml until set (round-trip discipline)", async () => {
     await fs.mkdir(path.join(root, "sparse2"));
     await fs.writeFile(

@@ -90,10 +90,16 @@ export function SettingsPane({
   const [docker, setDocker] = useState(project.docker);
   // "" = inherit the box-wide global default.
   const [driveMode, setDriveMode] = useState<string>(project.driveMode ?? "");
+  // "" = inherit the instance default max spawn depth (issue #262).
+  const [maxSpawnDepth, setMaxSpawnDepth] = useState<string>(
+    project.maxSpawnDepth != null ? String(project.maxSpawnDepth) : "",
+  );
 
   const [models, setModels] = useState<ModelInfo[]>([]);
   // The box-wide drive-mode default a project inherits when `driveMode` is unset.
   const [driveModeDefault, setDriveModeDefault] = useState<"batch" | "session">("batch");
+  // The instance-wide max-spawn-depth default inherited when `maxSpawnDepth` is unset.
+  const [maxSpawnDepthDefault, setMaxSpawnDepthDefault] = useState<number>(1);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState(0);
@@ -112,6 +118,7 @@ export function SettingsPane({
     setMaxTurns(String(project.maxTurns));
     setDocker(project.docker);
     setDriveMode(project.driveMode ?? "");
+    setMaxSpawnDepth(project.maxSpawnDepth != null ? String(project.maxSpawnDepth) : "");
     setError(null);
   }, [project]);
 
@@ -124,6 +131,7 @@ export function SettingsPane({
         if (cancelled) return;
         setModels(r.models);
         if (r.keeperDriveModeDefault) setDriveModeDefault(r.keeperDriveModeDefault);
+        if (typeof r.maxSpawnDepthDefault === "number") setMaxSpawnDepthDefault(r.maxSpawnDepthDefault);
       })
       .catch(() => {
         /* non-fatal: the current values are still selectable / shown */
@@ -169,6 +177,8 @@ export function SettingsPane({
       // `null` (not `undefined`) is required: JSON.stringify drops undefined, so
       // the server would never see the key and would preserve the old override.
       driveMode: driveMode === "" ? null : (driveMode as "batch" | "session"),
+      // Same tri-state as driveMode: "" -> null inherits the instance default (#262).
+      maxSpawnDepth: maxSpawnDepth === "" ? null : Number(maxSpawnDepth),
     }),
     [
       name,
@@ -183,6 +193,7 @@ export function SettingsPane({
       maxTurns,
       docker,
       driveMode,
+      maxSpawnDepth,
     ],
   );
 
@@ -202,6 +213,7 @@ export function SettingsPane({
       // Normalize an absent override to null so it compares equal to the
       // patch's "" -> null (clean when neither has an override).
       driveMode: project.driveMode ?? null,
+      maxSpawnDepth: project.maxSpawnDepth ?? null,
     };
     return JSON.stringify(patch) !== JSON.stringify(original);
   }, [patch, project]);
@@ -210,10 +222,15 @@ export function SettingsPane({
   const maxTurnsNum = Number(maxTurns);
   const maxTurnsInvalid =
     !Number.isInteger(maxTurnsNum) || maxTurnsNum < 1 || maxTurnsNum > 1000;
+  // "" is valid (inherit); otherwise a whole number 0–8 (MAX_SPAWN_DEPTH_LIMIT).
+  const maxSpawnDepthNum = Number(maxSpawnDepth);
+  const maxSpawnDepthInvalid =
+    maxSpawnDepth !== "" &&
+    (!Number.isInteger(maxSpawnDepthNum) || maxSpawnDepthNum < 0 || maxSpawnDepthNum > 8);
 
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (nameInvalid || maxTurnsInvalid) return;
+    if (nameInvalid || maxTurnsInvalid || maxSpawnDepthInvalid) return;
     setBusy(true);
     setError(null);
     try {
@@ -248,7 +265,7 @@ export function SettingsPane({
         <button
           type="submit"
           className="btn-primary ml-auto"
-          disabled={busy || !dirty || nameInvalid || maxTurnsInvalid}
+          disabled={busy || !dirty || nameInvalid || maxTurnsInvalid || maxSpawnDepthInvalid}
         >
           {busy ? "Saving…" : "Save changes"}
         </button>
@@ -525,6 +542,47 @@ export function SettingsPane({
                       className="font-medium text-accent hover:underline"
                     >
                       Reset to global default
+                    </button>
+                    .
+                  </Hint>
+                )}
+              </div>
+              <div className="col-span-2 block">
+                <label className="block">
+                  <span className="field-label">Max spawn depth</span>
+                  <select
+                    className="input"
+                    value={maxSpawnDepth}
+                    onChange={(e) => setMaxSpawnDepth(e.target.value)}
+                  >
+                    <option value="">Instance default ({maxSpawnDepthDefault})</option>
+                    <option value="0">0 — no spawned children get tools</option>
+                    <option value="1">1 — children can report back (grandchildren can't)</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                    <option value="4">4</option>
+                  </select>
+                </label>
+                {maxSpawnDepth === "" ? (
+                  <Hint>
+                    Inheriting the instance default:{" "}
+                    <span className="font-medium text-paddock-700 dark:text-paddock-200">
+                      {maxSpawnDepthDefault}
+                    </span>
+                    . A chat spawned via <code>create_chat</code>/<code>fork_chat</code> gets the
+                    self-management tools (so it can <code>send_message</code> back to its parent and
+                    spawn its own) only while its depth stays within this bound.{" "}
+                    <span className="font-medium">0</span> disables spawned tooling entirely.
+                  </Hint>
+                ) : (
+                  <Hint>
+                    Overriding the instance default.{" "}
+                    <button
+                      type="button"
+                      onClick={() => setMaxSpawnDepth("")}
+                      className="font-medium text-accent hover:underline"
+                    >
+                      Reset to instance default
                     </button>
                     .
                   </Hint>

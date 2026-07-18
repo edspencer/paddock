@@ -67,6 +67,7 @@ import {
   MAX_TURNS_LIMIT,
 } from "./models.js";
 import { type SessionTokenUsage } from "./usage.js";
+import { isValidMaxSpawnDepth, MAX_SPAWN_DEPTH_LIMIT } from "./spawn-capability.js";
 
 export interface RouteDeps {
   projects: ProjectStore;
@@ -204,6 +205,10 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
       keeperDefault: KEEPER_DEFAULT_MODEL,
       sweeperDefault: SWEEPER_DEFAULT_MODEL,
       keeperDriveModeDefault: cfg.keeperDriveMode,
+      // Box-wide max spawn depth (PADDOCK_MAX_SPAWN_DEPTH) a project inherits when
+      // its own `maxSpawnDepth` is unset; shown as the effective value in Settings
+      // and used to label "Instance default" (issue #262).
+      maxSpawnDepthDefault: cfg.maxSpawnDepth,
     };
   });
 
@@ -356,6 +361,18 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
           return reply
             .code(400)
             .send({ error: `Unknown drive mode: ${body.driveMode}`, code: "invalid" });
+        }
+        // `null` is valid — it clears the per-project override (inherit the
+        // instance default, #262). Only a non-null, out-of-range value is a 400.
+        if (
+          body.maxSpawnDepth !== undefined &&
+          body.maxSpawnDepth !== null &&
+          !isValidMaxSpawnDepth(body.maxSpawnDepth)
+        ) {
+          return reply.code(400).send({
+            error: `max_spawn_depth must be an integer 0–${MAX_SPAWN_DEPTH_LIMIT}`,
+            code: "invalid",
+          });
         }
         const project = await projects.update(req.params.slug, body);
         // Re-register the keeper so the new model takes effect (the keeper is a

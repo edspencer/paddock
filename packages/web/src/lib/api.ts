@@ -120,12 +120,17 @@ export const api = {
      *  project Settings tab (issue #122). Optional for back-compat with older
      *  servers / test mocks. */
     keeperDriveModeDefault?: "batch" | "session";
+    /** Box-wide default max spawn depth (PADDOCK_MAX_SPAWN_DEPTH) a project
+     *  inherits when its own `maxSpawnDepth` is unset; shown as the effective
+     *  value in Settings (issue #262). Optional for back-compat. */
+    maxSpawnDepthDefault?: number;
   }> {
     return req<{
       models: ModelInfo[];
       keeperDefault: string;
       sweeperDefault: string;
       keeperDriveModeDefault?: "batch" | "session";
+      maxSpawnDepthDefault?: number;
     }>("/api/models");
   },
 

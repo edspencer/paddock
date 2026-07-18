@@ -12,6 +12,7 @@ const ENV_KEYS = [
   "PADDOCK_DATA_DIR",
   "PADDOCK_KEEPER_NATIVE_PROMPT",
   "PADDOCK_DEV_SERVERS_ENABLED",
+  "PADDOCK_MAX_SPAWN_DEPTH",
 ];
 
 describe("loadPaddockConfig: nativeSystemPrompt (#176)", () => {
@@ -25,6 +26,7 @@ describe("loadPaddockConfig: nativeSystemPrompt (#176)", () => {
     process.env.PADDOCK_DATA_DIR = dataDir;
     delete process.env.PADDOCK_KEEPER_NATIVE_PROMPT;
     delete process.env.PADDOCK_DEV_SERVERS_ENABLED;
+    delete process.env.PADDOCK_MAX_SPAWN_DEPTH;
   });
   afterEach(async () => {
     for (const k of ENV_KEYS) {
@@ -59,6 +61,47 @@ describe("loadPaddockConfig: nativeSystemPrompt (#176)", () => {
     (val) => {
       process.env.PADDOCK_KEEPER_NATIVE_PROMPT = val;
       expect(loadPaddockConfig().nativeSystemPrompt).toBe(true);
+    },
+  );
+});
+
+describe("loadPaddockConfig: maxSpawnDepth (#262)", () => {
+  let dataDir: string;
+  let saved: Record<string, string | undefined>;
+
+  beforeEach(async () => {
+    dataDir = await makeTmpDir("paddock-config-");
+    saved = {};
+    for (const k of ENV_KEYS) saved[k] = process.env[k];
+    process.env.PADDOCK_DATA_DIR = dataDir;
+    delete process.env.PADDOCK_MAX_SPAWN_DEPTH;
+  });
+  afterEach(async () => {
+    for (const k of ENV_KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+    await rmTmpDir(dataDir);
+  });
+
+  it("defaults to 1 (manager → children → report-back works out of the box)", () => {
+    expect(loadPaddockConfig().maxSpawnDepth).toBe(1);
+  });
+
+  it.each([
+    ["0", 0],
+    ["2", 2],
+    ["8", 8],
+  ])("honors a valid PADDOCK_MAX_SPAWN_DEPTH=%s", (raw, expected) => {
+    process.env.PADDOCK_MAX_SPAWN_DEPTH = raw;
+    expect(loadPaddockConfig().maxSpawnDepth).toBe(expected);
+  });
+
+  it.each(["-1", "9", "1.5", "nonsense", ""])(
+    "falls back to the default 1 for the invalid value %s",
+    (raw) => {
+      process.env.PADDOCK_MAX_SPAWN_DEPTH = raw;
+      expect(loadPaddockConfig().maxSpawnDepth).toBe(1);
     },
   );
 });

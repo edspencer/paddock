@@ -128,6 +128,11 @@ describe("integration: project CRUD over REST (real fleet, fake claude)", () => 
       { maxTurns: 9999 },
       { maxTurns: 1.5 },
       { docker: "yes" },
+      // maxSpawnDepth out-of-range / non-integer (issue #262).
+      { maxSpawnDepth: -1 },
+      { maxSpawnDepth: 9 },
+      { maxSpawnDepth: 1.5 },
+      { maxSpawnDepth: "1" },
     ];
     for (const payload of bad) {
       const res = await t.app.inject({
@@ -137,6 +142,28 @@ describe("integration: project CRUD over REST (real fleet, fake claude)", () => 
       });
       expect(res.statusCode, JSON.stringify(payload)).toBe(400);
     }
+  });
+
+  it("PATCHes a maxSpawnDepth override and clears it back to inherit (issue #262)", async () => {
+    await t.app.inject({ method: "POST", url: "/api/projects", payload: { name: "Spawn Proj" } });
+    // Set a per-project override (0 is a valid override — disables spawned tools).
+    const set = (
+      await t.app.inject({
+        method: "PATCH",
+        url: "/api/projects/spawn-proj",
+        payload: { maxSpawnDepth: 2 },
+      })
+    ).json();
+    expect(set.project.maxSpawnDepth).toBe(2);
+    // `null` clears it — the DTO drops the field so it inherits the instance default.
+    const cleared = (
+      await t.app.inject({
+        method: "PATCH",
+        url: "/api/projects/spawn-proj",
+        payload: { maxSpawnDepth: null },
+      })
+    ).json();
+    expect(cleared.project.maxSpawnDepth).toBeUndefined();
   });
 
   it("pins and unpins a file", async () => {

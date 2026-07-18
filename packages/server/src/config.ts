@@ -8,6 +8,7 @@ import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
 import { type DriveMode, KEEPER_DEFAULT_DRIVE_MODE, isKnownDriveMode } from "./models.js";
+import { DEFAULT_MAX_SPAWN_DEPTH, isValidMaxSpawnDepth } from "./spawn-capability.js";
 
 /**
  * User-authentication strategy.
@@ -153,6 +154,18 @@ export interface PaddockConfig {
    * can offer read-only introspection without the write blast radius.
    */
   selfMcpWriteEnabled: boolean;
+  /**
+   * Instance default for how deep a spawn tree may grow before spawned children
+   * stop receiving the self-management MCP (issue #262 / DD-3). A spawned turn at
+   * depth `d` gets the self-MCP (incl. write tools, so `send_message` exists and a
+   * child can report back to its parent) iff `d <= maxSpawnDepth`. Driven by
+   * `PADDOCK_MAX_SPAWN_DEPTH`; default {@link DEFAULT_MAX_SPAWN_DEPTH} (`1` — a
+   * manager's direct children work, grandchildren are blocked). `0` restores
+   * today's behaviour (no spawned child gets it). A per-project `maxSpawnDepth`
+   * overrides this at dispatch (the `driveMode` pattern). Only meaningful when
+   * {@link selfMcpWriteEnabled} is on — spawning needs the write tools.
+   */
+  maxSpawnDepth: number;
 }
 
 /**
@@ -347,7 +360,21 @@ export function loadPaddockConfig(): PaddockConfig {
     nativeSystemPrompt: loadNativeSystemPrompt(),
     selfMcpEnabled: loadSelfMcpEnabled(),
     selfMcpWriteEnabled: loadSelfMcpEnabled() && loadSelfMcpWriteEnabled(),
+    maxSpawnDepth: loadMaxSpawnDepth(),
   });
+}
+
+/**
+ * Resolve the instance-default max spawn depth from `PADDOCK_MAX_SPAWN_DEPTH`
+ * (issue #262). Defaults to {@link DEFAULT_MAX_SPAWN_DEPTH} (`1`); a
+ * missing/blank/out-of-range value falls back to the default rather than failing
+ * startup. A per-project override still wins at dispatch.
+ */
+function loadMaxSpawnDepth(): number {
+  const raw = envOpt("PADDOCK_MAX_SPAWN_DEPTH");
+  if (raw === undefined) return DEFAULT_MAX_SPAWN_DEPTH;
+  const n = Number(raw);
+  return isValidMaxSpawnDepth(n) ? n : DEFAULT_MAX_SPAWN_DEPTH;
 }
 
 /**
