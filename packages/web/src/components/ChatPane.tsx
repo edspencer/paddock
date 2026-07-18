@@ -382,6 +382,13 @@ export function ChatPane({
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
+  // Timestamps of `chat:injected` frames already rendered live (#290), so a hub
+  // REPLAY of a buffered frame (reconnect/re-attach re-delivers it with the SAME
+  // server-stamped timestamp) is dropped, while a genuinely NEW injection — even
+  // one whose text is byte-identical to an earlier one — carries a fresh timestamp
+  // and still renders. Keying on content alone would have collapsed a real second
+  // identical injection into the first (Warren #292).
+  const seenInjectionsRef = useRef<Set<string>>(new Set());
 
   // --- scroll management: only auto-scroll when pinned to the bottom ---------
   const onScroll = useCallback(() => {
@@ -837,20 +844,18 @@ export function ChatPane({
         if (!framesBelong(meta)) return;
         if (meta.jobId) armJob(meta.jobId);
         if (meta.sessionId) adoptSession(meta.sessionId);
-        setTurns((prev) => {
-          // Dedup against a hub replay (a reconnect/re-attach re-delivers buffered
-          // frames): if the tail already holds this exact injected user turn, skip.
-          // A full transcript reload replaces `turns` wholesale, so there's no
-          // cross-reload duplication to guard beyond this.
-          const dup = prev.some(
-            (t) => t.kind === "user" && t.sender && t.content === inj.content,
-          );
-          if (dup) return prev;
-          return [
-            ...sealStreaming(prev),
-            { kind: "user", id: nextId(), content: inj.content, sender: inj.sender },
-          ];
-        });
+        // Dedup a hub REPLAY (which re-delivers the buffered frame verbatim,
+        // same server timestamp) while still rendering a genuinely new injection
+        // — even one with identical text — since that carries a fresh timestamp.
+        // `content` rides in the key too so a clock with only second-granularity
+        // can't merge two distinct same-second injections.
+        const key = `${inj.timestamp} ${inj.content}`;
+        if (seenInjectionsRef.current.has(key)) return;
+        seenInjectionsRef.current.add(key);
+        setTurns((prev) => [
+          ...sealStreaming(prev),
+          { kind: "user", id: nextId(), content: inj.content, sender: inj.sender },
+        ]);
       },
     });
     return () => {
