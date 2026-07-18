@@ -56,6 +56,24 @@ export class HookService {
   }
 
   /**
+   * The hook whose registered agent is `agentName` (`hook-<slug>-<name>`), or `null`
+   * — the G3 visibility reverse-map (GG-5/GG-6). Resolved by matching the project's
+   * DECLARED hooks rather than by PARSING the agent string: a slug may contain
+   * hyphens, so `hook-<slug>-<name>` isn't unambiguously splittable, and the design
+   * (GG-1) is explicit that the reverse mapping is done against declared hooks. Used
+   * to attach a hook chat's truthful-from-config capability descriptor to its chat
+   * DTO (the capability banner) and never throws (a missing project → `null`).
+   */
+  async getByAgentName(slug: string, agentName: string): Promise<HookDto | null> {
+    const project = await this.projects.get(slug).catch(() => null);
+    if (!project) return null;
+    for (const [name, hook] of Object.entries(project.hooks ?? {})) {
+      if (hookAgentName(slug, name) === agentName) return toHookDto(slug, name, hook);
+    }
+    return null;
+  }
+
+  /**
    * Create or update a hook: persist it to `project.yaml` (validates the name +
    * sanitises the record, throwing `ProjectError` on a malformed hook), then register
    * (replace) its `hook-<slug>-<name>` agent so it's immediately fireable. Returns the

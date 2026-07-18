@@ -1,5 +1,5 @@
 import type { ChatProvenance } from "../lib/types";
-import { BranchIcon, ClockIcon } from "./icons";
+import { BoltIcon, BranchIcon, ClockIcon } from "./icons";
 
 /**
  * A small, subtle badge marking HOW a chat was created (issue #267), reading
@@ -9,6 +9,9 @@ import { BranchIcon, ClockIcon } from "./icons";
  *  - `scheduled` — a schedule/cron fired it (clock icon).
  *  - `spawned`   — another chat created it, e.g. a manager fanning out
  *                  (branch icon); its spawn depth rides in the tooltip.
+ *  - `hook`      — an event hook fired it, e.g. an `onArchive` cleanup
+ *                  (lightning-bolt icon); the hook name rides in the tooltip
+ *                  when known (Epic G / G3, GG-5).
  *
  * `human` (the default — a chat you started yourself) renders nothing, so the
  * list stays quiet and only the unattended runs stand out. Following DD-6, the
@@ -20,13 +23,30 @@ import { BranchIcon, ClockIcon } from "./icons";
  */
 export function ProvenanceBadge({
   provenance,
+  hookName,
   className = "",
 }: {
   provenance?: ChatProvenance;
+  /** The owning hook's name, shown in the `hook` badge's tooltip when known. */
+  hookName?: string;
   className?: string;
 }) {
   const origin = provenance?.origin;
-  if (origin !== "scheduled" && origin !== "spawned") return null;
+  if (origin !== "scheduled" && origin !== "spawned" && origin !== "hook") return null;
+
+  if (origin === "hook") {
+    const label = hookName ? `Hook — the “${hookName}” event hook fired this chat` : "Hook — an event hook fired this chat";
+    return (
+      <span
+        data-provenance="hook"
+        aria-label="Hook chat"
+        title={label}
+        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded text-sky-600 dark:text-sky-400 ${className}`}
+      >
+        <BoltIcon width={12} height={12} />
+      </span>
+    );
+  }
 
   if (origin === "scheduled") {
     return (

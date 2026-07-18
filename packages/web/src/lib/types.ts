@@ -231,10 +231,46 @@ export interface Chat {
    * default) shows no badge. Absent for chats created before A1 recorded a marker.
    */
   provenance?: ChatProvenance;
+  /**
+   * For a HOOK chat (Epic G / G3, GG-6): the truthful-from-config capability
+   * descriptor of the event hook that owns it — its trigger event + granted tools,
+   * read from the same hook agent config herdctl enforces. Drives the floating
+   * capability banner atop the chat (see {@link ChatHookInfo}). Absent for every
+   * non-hook chat, so only hook chats carry a banner.
+   */
+  hook?: ChatHookInfo;
 }
 
 /** How a chat came to exist (issue #261) — the dimension the list badges (#267). */
 export type ChatOrigin = "human" | "scheduled" | "spawned" | "hook";
+
+/**
+ * The capability descriptor of the event hook that owns a hook chat (Epic G / G3,
+ * GG-6) — mirrors the server's `ChatHookInfo` (packages/server/src/hook-config.ts).
+ * Everything here is read from the registered `hook-<slug>-<name>` agent config, so
+ * the banner it drives is truthful by construction: it states exactly the tools the
+ * hook's turns are allowed to use.
+ */
+export interface ChatHookInfo {
+  /** The hook's name (`project.yaml` map key + the `<name>` in its agent name). */
+  name: string;
+  /** The lifecycle event that fires this hook (v1: `onArchive`). */
+  event: string;
+  /** The herdctl agent enforcing the capability (`hook-<slug>-<name>`). */
+  agentName: string;
+  /** Whether the hook is currently armed (a disabled hook's past chats still show). */
+  enabled: boolean;
+  /** The exact tool grant (herdctl `allowed_tools`); `[]` = a tool-less hook. */
+  allowedTools: string[];
+  /** Tools explicitly denied even if otherwise allowed, when the hook sets any. */
+  deniedTools?: string[];
+  /** The permission mode the hook's turns run under, when the hook sets one. */
+  permissionMode?: string;
+  /** The hook agent's model override, when set (else the keeper default applies). */
+  model?: string;
+  /** The hook's max agent turns (its runaway bound). */
+  maxTurns: number;
+}
 
 /** A chat's provenance marker (issue #261): origin + spawn depth. */
 export interface ChatProvenance {

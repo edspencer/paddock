@@ -700,9 +700,10 @@ export function ProjectView() {
             {c.name}
           </span>
           {/* Provenance badge (#267): flags the "ran without me" chats —
-              scheduled (a cron fired it) or spawned (another chat created it).
-              Human-origin chats show nothing, so the list stays quiet. */}
-          <ProvenanceBadge provenance={c.provenance} />
+              scheduled (a cron fired it), spawned (another chat created it), or
+              hook (an event hook fired it — Epic G / G3). Human-origin chats show
+              nothing, so the list stays quiet. */}
+          <ProvenanceBadge provenance={c.provenance} hookName={c.hook?.name} />
           {/* Ring data is fetched lazily (issue #116) so the list renders before
               the per-chat transcript parse; `working` spins it while streaming
               (issue #115). */}
@@ -1200,6 +1201,16 @@ export function ProjectView() {
               onOpenForkParent={openChat}
               autoFocus={justForked}
               isProjectChat
+              // For a hook chat (Epic G / G3, GG-6): pass the owning hook's
+              // truthful-from-config capability descriptor so ChatPane floats the
+              // read-only capability banner. Prefers the live list DTO, falling back
+              // to the last-seen DTO so the banner survives a transient list drop.
+              hook={
+                (chats.find((c) => c.sessionId === activeSession) ??
+                  (lastActiveChatRef.current?.sessionId === activeSession
+                    ? lastActiveChatRef.current
+                    : null))?.hook
+              }
             />
           )}
           {/* Files tab (issue #259): one browser that lists the current directory

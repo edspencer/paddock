@@ -39,6 +39,7 @@ import {
 import type {
   BashDetails,
   ChatCompleteUsage,
+  ChatHookInfo,
   ChatUsage,
   EditDiff,
   HistoryMessage,
@@ -61,6 +62,7 @@ import {
   slashCommandEcho,
   taskNotificationSummary,
 } from "../lib/format";
+import { HookCapabilityBanner } from "./HookCapabilityBanner";
 import { SentFileBlock } from "./SentFileBlock";
 import { InlineImage } from "./MediaImage";
 import { PaddockManageBody, PaddockManageProjectContext } from "./PaddockManageBlock";
@@ -243,6 +245,13 @@ export interface ChatPaneProps {
   autoFocus?: boolean;
   emptyHint?: string;
   placeholder?: string;
+  /**
+   * For a HOOK chat (Epic G / G3, GG-6): the owning event hook's truthful-from-config
+   * capability descriptor. When present, a read-only capability banner floats atop
+   * the message history stating that this is a hook agent, its trigger event, and its
+   * granted tools. Absent for every non-hook chat.
+   */
+  hook?: ChatHookInfo;
 }
 
 export function ChatPane({
@@ -260,6 +269,7 @@ export function ChatPane({
   autoFocus,
   emptyHint,
   placeholder,
+  hook,
 }: ChatPaneProps) {
   const [turns, setTurns] = useState<Turn[]>([]);
   // Seed the composer from any unsent draft persisted for this chat. The pane is
@@ -1072,6 +1082,10 @@ export function ChatPane({
         className="flex-1 overflow-y-auto overscroll-contain"
       >
         <div className="mx-auto w-full max-w-3xl px-4 py-6">
+          {/* Read-only capability banner atop a HOOK chat (Epic G / G3, GG-6):
+              truthful-from-config statement of what this hook agent is + may do. */}
+          {hook && <HookCapabilityBanner hook={hook} projectSlug={projectSlug} />}
+
           {hydrating && (
             <div className="space-y-3">
               <div className="h-4 w-2/3 animate-pulse rounded bg-paddock-200/70 dark:bg-paddock-800/70" />

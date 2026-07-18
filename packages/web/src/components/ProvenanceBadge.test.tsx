@@ -50,4 +50,23 @@ describe("ProvenanceBadge (#267)", () => {
     const badge = container.querySelector("[data-provenance='spawned']");
     expect(badge?.getAttribute("title")).toMatch(/3 levels deep/);
   });
+
+  it("badges a hook chat (Epic G / G3)", () => {
+    const { container } = render(
+      <ProvenanceBadge provenance={{ origin: "hook", depth: 0 }} />,
+    );
+    const badge = container.querySelector("[data-provenance='hook']");
+    expect(badge).not.toBeNull();
+    expect(badge?.getAttribute("aria-label")).toBe("Hook chat");
+    expect(badge?.getAttribute("title")).toMatch(/hook/i);
+    expect(badge?.querySelector("svg")).not.toBeNull();
+  });
+
+  it("names the hook in the tooltip when provided", () => {
+    const { container } = render(
+      <ProvenanceBadge provenance={{ origin: "hook", depth: 0 }} hookName="cleanup" />,
+    );
+    const badge = container.querySelector("[data-provenance='hook']");
+    expect(badge?.getAttribute("title")).toMatch(/cleanup/);
+  });
 });
