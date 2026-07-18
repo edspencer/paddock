@@ -68,6 +68,7 @@ import type { HerdctlService } from "./herdctl.js";
 import {
   keeperAgentName,
   keeperSlugFromAgent,
+  hookAgentName,
   SCRATCH_AGENT,
   SCRATCH_SLUG,
 } from "./herdctl.js";
@@ -110,6 +111,9 @@ import {
 } from "./run-provenance.js";
 import type { MessageProvenanceStore, MessageSender } from "./message-provenance.js";
 import { resolveMaxSpawnDepth, spawnedSelfMcpDecision } from "./spawn-capability.js";
+import type { PaddockEventBus } from "./event-bus.js";
+import type { HookService } from "./hooks.js";
+import { hookPromptFileAbsPath, type HookDto, type HookEvent } from "./hook-config.js";
 
 /**
  * Per-turn token usage as observed on the SDK stream, normalized to camelCase.
@@ -613,6 +617,16 @@ function toSelfMcpSchedule(
   };
 }
 
+/**
+ * The context a fired lifecycle event carries into the hook prompt (Epic G / G1).
+ * v1 (`onArchive`) supplies the archived chat's session id so the hook knows what to
+ * act on; a future event would extend this.
+ */
+interface HookEventContext {
+  /** The session id of the chat whose lifecycle event fired the hook. */
+  sessionId: string;
+}
+
 export function makeChatHandler(deps: {
   herdctl: HerdctlService;
   projects: ProjectStore;
@@ -652,6 +666,19 @@ export function makeChatHandler(deps: {
    * false`); wired in production, optional so existing tests need not supply it.
    */
   scheduleSessions?: ScheduleSessionStore;
+  /**
+   * In-process lifecycle event bus (Epic G / G1). When present (with {@link hooks}),
+   * this handler subscribes to lifecycle events (v1: `onArchive`) and fires each of
+   * the project's ENABLED matching hooks as its own `hook-<slug>-<name>` agent turn
+   * via {@link startAgentTurn}. Absent ⇒ no hook dispatch (existing behaviour), so
+   * tests that don't exercise hooks need not supply it.
+   */
+  events?: PaddockEventBus;
+  /**
+   * Hook CRUD service (Epic G / G1) — the dispatcher reads a project's enabled hooks
+   * for a fired event through it. Paired with {@link events}; absent ⇒ no dispatch.
+   */
+  hooks?: HookService;
 }) {
   // ONE hub shared across every socket this handler serves: it tracks each
   // session's in-flight turn and fans its frames out to whichever socket(s) are
@@ -926,6 +953,96 @@ export function makeChatHandler(deps: {
     );
   });
 
+  // --- event hooks (Epic G / G1) -----------------------------------------
+
+  /**
+   * Resolve the prompt an event-hook fire should run. A hook's `promptFile`
+   * (Paddock-only, `.paddock/hooks/*.md`, git-tracked + keeper-editable) is read
+   * FRESH here at fire time — so a keeper's edit takes effect on the very next fire
+   * with no agent re-register — and falls back to the inline `prompt` when there's no
+   * file or it can't be read. `event` context (which chat was archived) is prepended
+   * as a short machine preamble so the hook knows WHAT to act on (e.g. which pm server
+   * / clone the archived chat spun up). Mirrors {@link resolveSchedulePrompt}.
+   */
+  async function resolveHookPrompt(
+    project: Awaited<ReturnType<typeof deps.projects.get>>,
+    hook: HookDto,
+    ctx: HookEventContext,
+  ): Promise<string> {
+    let body = typeof hook.prompt === "string" ? hook.prompt : "";
+    if (hook.promptFile) {
+      const abs = hookPromptFileAbsPath(project.workingDir, hook.promptFile);
+      if (abs) {
+        const content = await fs.readFile(abs, "utf8").catch(() => null);
+        if (content !== null) body = content;
+      }
+    }
+    const preamble =
+      `A \`${hook.event}\` event hook fired for project \`${project.slug}\`: ` +
+      `chat \`${ctx.sessionId}\` was just archived.\n\n`;
+    return preamble + body;
+  }
+
+  /**
+   * Fire ONE event hook as a first-class chat on the hub — its OWN
+   * `hook-<slug>-<name>` agent turn (GG-1), so the run streams live, is re-attachable,
+   * and stamps `origin: hook` provenance (badgeable by G3). Always a FRESH chat
+   * (`resume: null`): a hook fire is a root trigger, not a continuation. FIRE-AND-
+   * FORGET and fully swallowed — a hook must NEVER fail or block the triggering
+   * action (GG-2). The hook's granted tools (its agent config) do the work.
+   */
+  async function fireHookForProject(
+    project: Awaited<ReturnType<typeof deps.projects.get>>,
+    hook: HookDto,
+    ctx: HookEventContext,
+  ): Promise<void> {
+    const prompt = await resolveHookPrompt(project, hook, ctx);
+    try {
+      await startAgentTurn({
+        projectSlug: project.slug,
+        agentName: hookAgentName(project.slug, hook.name),
+        workingDir: project.workingDir,
+        resume: null,
+        prompt,
+        driveMode: resolveDriveMode(project),
+        fallbackModel: hook.capabilities?.model ?? project.model,
+        origin: "hook",
+        depth: 0,
+        maxSpawnDepth: resolveMaxSpawnDepth(project.maxSpawnDepth, deps.cfg.maxSpawnDepth),
+        // Attribute the injected kickoff turn to the hook that fired it (#290).
+        sender: { kind: "hook", name: hook.name, project: project.slug },
+      });
+    } catch {
+      // startAgentTurn rejects only if the turn never produced a session id; its own
+      // failure frame is already emitted. Swallow — a hook is fire-and-forget and must
+      // not surface into the lifecycle action that triggered it.
+    }
+  }
+
+  /**
+   * Resolve a project's ENABLED hooks for `event` and fire each (GG-2: after-commit,
+   * non-blocking). Concurrent + independent — one hook's failure never affects
+   * another (each `fireHookForProject` swallows). No-op when the hook system isn't
+   * wired ({@link makeChatHandler} deps `hooks` absent) or the project has no matching
+   * enabled hook — so nothing fires unless a hook was explicitly created AND enabled.
+   */
+  async function dispatchHooks(slug: string, event: HookEvent, ctx: HookEventContext): Promise<void> {
+    if (!deps.hooks) return;
+    const project = await deps.projects.get(slug).catch(() => null);
+    if (!project) return;
+    const matching = await deps.hooks.enabledForEvent(slug, event).catch(() => []);
+    await Promise.all(matching.map((hook) => fireHookForProject(project, hook, ctx)));
+  }
+
+  // Subscribe the dispatcher to lifecycle events (Epic G / G1). The commit sites (the
+  // archive route + the self-MCP archive tool) `emit` AFTER the archive persists, so a
+  // hook only ever runs after the triggering action has committed. `emit` is
+  // fire-and-forget (never blocks/throws into the archiver), so the whole hook system
+  // is decoupled from the action that triggers it.
+  deps.events?.on("onArchive", (payload) => {
+    void dispatchHooks(payload.slug, "onArchive", { sessionId: payload.sessionId });
+  });
+
   /**
    * Compose the OVERVIEW.md + CHANGELOG.md preload block onto `baseMessage` for
    * a NEW chat (issues #1/#188), shared (C2 / #264) by the human New-Chat path
@@ -1150,7 +1267,19 @@ export function makeChatHandler(deps: {
         // matching the other write callbacks.
         setArchived: async (projectSlug, targetSessionId, archived) => {
           await deps.projects.get(projectSlug);
-          await deps.archive.setArchived(keeperAgentName(projectSlug), targetSessionId, archived);
+          const changed = await deps.archive.setArchived(
+            keeperAgentName(projectSlug),
+            targetSessionId,
+            archived,
+          );
+          // Epic G / G1: after the archive COMMITS, emit the `onArchive` lifecycle
+          // event (only on a real transition INTO archived) so the dispatcher fires
+          // the project's enabled onArchive hooks. This is THE motivating path — a
+          // keeper archiving ITSELF on success then triggers its cleanup hook. emit is
+          // fire-and-forget, so it never blocks/fails the self-MCP archive tool.
+          if (changed && archived) {
+            deps.events?.emit("onArchive", { slug: projectSlug, sessionId: targetSessionId });
+          }
         },
         // Schedule management (issue #289). Exposes the existing D3/D4 CRUD:
         // ProjectStore is the source of truth (re-armed on restart), herdctl is the

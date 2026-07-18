@@ -30,8 +30,15 @@ import {
   isValidScheduleName,
   type PaddockSchedule,
 } from "./schedule-config.js";
+import {
+  sanitizeHook,
+  sanitizeHooks,
+  isValidHookName,
+  type PaddockHook,
+} from "./hook-config.js";
 
 export type { PaddockSchedule };
+export type { PaddockHook };
 
 /** project.yaml status enum (matches the documented standard). */
 export type ProjectStatus =
@@ -205,6 +212,16 @@ export interface ProjectYaml {
    * the project has no schedules (unchanged behaviour).
    */
   schedules?: Record<string, PaddockSchedule>;
+  /**
+   * Event hooks for this project (Epic G / G1), keyed by a stable hook name. Each
+   * value is a {@link PaddockHook} — a lifecycle event + a capability set + a prompt
+   * (inline or `.paddock/hooks/*.md`) + `enabled`. Unlike schedules, a hook is NOT
+   * forwarded into the keeper agent's config: each hook is registered as its OWN
+   * herdctl agent `hook-<slug>-<name>` whose tool config IS its capability (GG-1).
+   * Absent/empty ⇒ the project has no hooks (unchanged behaviour). New hooks default
+   * `enabled: false` (GG-3).
+   */
+  hooks?: Record<string, PaddockHook>;
 }
 
 /** API-facing project DTO (adds derived fields). */
@@ -736,6 +753,43 @@ export class ProjectStore {
   }
 
   /**
+   * Add or replace one hook in `project.yaml`, keyed by name (Epic G / G1) — the
+   * persistence half of a hook mutation (the caller registers the hook agent
+   * separately via `HerdctlService.ensureHookAgent`). The record is sanitised into a
+   * {@link PaddockHook}; an invalid name or record throws `ProjectError("invalid")`.
+   * Returns the updated project DTO. Mirrors {@link setSchedule}.
+   */
+  async setHook(slug: string, name: string, hook: unknown): Promise<Project> {
+    const current = await this.get(slug);
+    if (!isValidHookName(name)) {
+      throw new ProjectError(`Invalid hook name: ${name}`, "invalid");
+    }
+    const clean = sanitizeHook(hook);
+    if (!clean) throw new ProjectError("Invalid hook definition", "invalid");
+    const hooks = { ...(current.hooks ?? {}), [name]: clean };
+    const next: ProjectYaml = { ...this.stripDto(current), hooks, updated: today() };
+    await this.writeYaml(slug, next);
+    return this.toDto(current.dir, next, await this.overviewExists(slug));
+  }
+
+  /**
+   * Remove a hook from `project.yaml` (no-op if absent). Returns the updated project
+   * DTO. The caller unregisters the hook's agent via
+   * `HerdctlService.removeHookAgent`. Mirrors {@link removeSchedule}.
+   */
+  async removeHook(slug: string, name: string): Promise<Project> {
+    const current = await this.get(slug);
+    const rest = { ...(current.hooks ?? {}) };
+    delete rest[name];
+    const stripped = this.stripDto(current);
+    if (Object.keys(rest).length > 0) stripped.hooks = rest;
+    else delete stripped.hooks;
+    const next: ProjectYaml = { ...stripped, updated: today() };
+    await this.writeYaml(slug, next);
+    return this.toDto(current.dir, next, await this.overviewExists(slug));
+  }
+
+  /**
    * Delete a project directory and everything in it (project.yaml, CHANGELOG.md,
    * and any files the keeper agent created). Throws ProjectError("not_found")
    * if the slug has no project.yaml, so callers can return a clean 404.
@@ -965,6 +1019,14 @@ export class ProjectStore {
       ...(() => {
         const s = sanitizeSchedules(p.schedules);
         return s && Object.keys(s).length > 0 ? { schedules: s } : {};
+      })(),
+      // hooks (Epic G / G1): same discipline as schedules — carried only when at
+      // least one well-formed entry survives sanitization, so hook-less files
+      // round-trip byte-identically and a malformed hand-edit is dropped (not thrown)
+      // rather than bricking the project's agent registration.
+      ...(() => {
+        const h = sanitizeHooks(p.hooks);
+        return h && Object.keys(h).length > 0 ? { hooks: h } : {};
       })(),
     };
   }

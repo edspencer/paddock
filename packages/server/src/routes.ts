@@ -76,6 +76,7 @@ import {
 } from "./models.js";
 import { type SessionTokenUsage } from "./usage.js";
 import { isValidMaxSpawnDepth, MAX_SPAWN_DEPTH_LIMIT } from "./spawn-capability.js";
+import type { PaddockEventBus } from "./event-bus.js";
 
 export interface RouteDeps {
   projects: ProjectStore;
@@ -101,6 +102,13 @@ export interface RouteDeps {
    * Resolves the started chat's session id, or `null` if nothing started.
    */
   fireSchedule: (slug: string, scheduleName: string) => Promise<string | null>;
+  /**
+   * In-process lifecycle event bus (Epic G / G1). The archive route emits `onArchive`
+   * on it AFTER the archive commits, so the hook dispatcher (wired in the chat
+   * handler) fires the project's enabled onArchive hooks. Optional so tests that don't
+   * exercise hooks can omit it.
+   */
+  events?: PaddockEventBus;
   cfg: PaddockConfig;
 }
 
@@ -117,6 +125,7 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     messageProvenance,
     attachments,
     fireSchedule,
+    events,
     cfg,
   } = deps;
 
@@ -419,7 +428,7 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     try {
       const project = await projects.remove(req.params.slug); // throws not_found
       try {
-        await herdctl.removeProjectAgent(project.slug);
+        await herdctl.removeProjectAgent(project.slug, Object.keys(project.hooks ?? {}));
       } catch (err) {
         req.log.warn({ err }, "keeper-agent unregister failed (project dir already removed)");
       }
@@ -1093,7 +1102,13 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
       try {
         const agent = await agentForSlug(req.params.slug);
         const archived = req.body?.archived !== false; // default true
-        await archive.setArchived(agent, req.params.sessionId, archived);
+        const changed = await archive.setArchived(agent, req.params.sessionId, archived);
+        // Epic G / G1: after the archive COMMITS, emit `onArchive` (only on a real
+        // transition into archived) so the hook dispatcher fires the project's enabled
+        // onArchive hooks. Fire-and-forget — never blocks/fails the archive response.
+        if (changed && archived) {
+          events?.emit("onArchive", { slug: req.params.slug, sessionId: req.params.sessionId });
+        }
         return reply.code(200).send({ ok: true, archived });
       } catch (err) {
         return sendProjectError(reply, err);

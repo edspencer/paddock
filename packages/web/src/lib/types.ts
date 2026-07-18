@@ -234,7 +234,7 @@ export interface Chat {
 }
 
 /** How a chat came to exist (issue #261) — the dimension the list badges (#267). */
-export type ChatOrigin = "human" | "scheduled" | "spawned";
+export type ChatOrigin = "human" | "scheduled" | "spawned" | "hook";
 
 /** A chat's provenance marker (issue #261): origin + spawn depth. */
 export interface ChatProvenance {
@@ -253,11 +253,13 @@ export interface ChatProvenance {
  *                 the sending chat's project + sessionId (a deep link) + its display
  *                 name at injection time.
  *  - `schedule` — a schedule fire injected it; carries the schedule's name.
+ *  - `hook`     — an event hook fired it (Epic G); carries the hook's name.
  *  - `agent`    — a machine turn with no more specific identity (fallback).
  */
 export type MessageSender =
   | { kind: "chat"; project: string; sessionId: string; name?: string }
   | { kind: "schedule"; name: string; project?: string }
+  | { kind: "hook"; name: string; project?: string }
   | { kind: "agent" };
 
 /** A scheduled chat's timer kind (issue #266 / D4). */

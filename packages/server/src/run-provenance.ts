@@ -31,7 +31,7 @@ import path from "node:path";
 const STATE_FILE = "run-provenance.json";
 
 /** How a turn/chat came to exist — the provenance dimension #267 badges on. */
-export type TurnOrigin = "human" | "scheduled" | "spawned";
+export type TurnOrigin = "human" | "scheduled" | "spawned" | "hook";
 
 /** A chat's provenance marker: how it was created + how deep in a spawn tree. */
 export interface RunProvenance {
@@ -60,7 +60,15 @@ export function childOf(parent: RunProvenance): RunProvenance {
   return { origin: "spawned", depth: parent.depth + 1 };
 }
 
-const ORIGINS: readonly TurnOrigin[] = ["human", "scheduled", "spawned"];
+/**
+ * An event-hook-fired chat: origin `hook`, depth 0 (Epic G / G1). A lifecycle event
+ * (e.g. `onArchive`) is a root trigger exactly like a human or a cron — so its fired
+ * turn starts a fresh root-depth chat, distinct from `scheduled` (cron) and `spawned`
+ * (fan-out) so the chat list (G3) can badge hook chats on their own.
+ */
+export const HOOK_ROOT: RunProvenance = { origin: "hook", depth: 0 };
+
+const ORIGINS: readonly TurnOrigin[] = ["human", "scheduled", "spawned", "hook"];
 
 function isOrigin(v: unknown): v is TurnOrigin {
   return typeof v === "string" && (ORIGINS as readonly string[]).includes(v);

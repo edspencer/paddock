@@ -75,6 +75,7 @@ import {
 } from "./models.js";
 import { ensureProjectChats, projectChatsDir } from "./transcripts.js";
 import { schedulesToHerdctl } from "./schedule-config.js";
+import { hookToAgentToolConfig, type PaddockHook } from "./hook-config.js";
 
 /** Options passed through to a streamed trigger. */
 export interface ChatTurnOptions {
@@ -127,6 +128,24 @@ export const SWEEPER_PREFIX = "sweeper-";
 /** Maps a project slug to its sweeper agent name. */
 export function sweeperAgentName(slug: string): string {
   return `${SWEEPER_PREFIX}${slug}`;
+}
+
+/**
+ * The agent-name prefix for event hooks (Epic G / G1). Each hook is its OWN herdctl
+ * agent `hook-<slug>-<name>` (GG-1) — registered alongside the keeper/sweeper — whose
+ * tool config IS the hook's capability set.
+ */
+export const HOOK_AGENT_PREFIX = "hook-";
+
+/**
+ * Maps a project slug + hook name to its agent name `hook-<slug>-<name>`. Kept
+ * deterministic so runtime registration and firing (`startAgentTurn`) always agree.
+ * (`slug` is a kebab id and `name` matches `[A-Za-z0-9._-]+`, so the composed name is
+ * a valid herdctl agent name; the reverse mapping for visibility (G3) is resolved
+ * from a project's declared hooks, not by parsing this string.)
+ */
+export function hookAgentName(slug: string, hookName: string): string {
+  return `${HOOK_AGENT_PREFIX}${slug}-${hookName}`;
 }
 
 /**
@@ -267,6 +286,10 @@ export class HerdctlService {
       await ensureProjectChats(project.workingDir, project.dir);
       await this.fleet.addAgent(this.keeperAgentConfig(project), { replace: true });
       await this.fleet.addAgent(this.sweeperAgentConfig(project), { replace: true });
+      // Register each event hook as its own agent `hook-<slug>-<name>` (Epic G / G1)
+      // so it's fireable the moment an event matches — armed at boot alongside the
+      // keeper/sweeper. Hook-less projects register zero extra agents (no-op).
+      await this.registerHookAgents(project);
       this.agentModels.set(keeperAgentName(project.slug), project.model ?? KEEPER_DEFAULT_MODEL);
     }
   }
@@ -312,10 +335,50 @@ export class HerdctlService {
     await ensureProjectChats(project.workingDir, project.dir);
     await this.fleet.addAgent(this.keeperAgentConfig(project), { replace: true });
     await this.fleet.addAgent(this.sweeperAgentConfig(project), { replace: true });
+    // Re-register the project's event-hook agents (Epic G / G1) from the live record,
+    // so a hook added/edited in project.yaml is armed after this call. Note this only
+    // ADDS/replaces the declared hooks — a hook REMOVED from the record is torn down
+    // via {@link removeHookAgent} (ensureProjectAgent never removes a stale agent).
+    await this.registerHookAgents(project);
     // Record the keeper's resolved model so per-chat overrides can detect a
     // no-op. ensureProjectAgent re-registers at project.model (the persisted
     // default), so a model change via PATCH takes effect here too.
     this.agentModels.set(keeperAgentName(project.slug), project.model ?? KEEPER_DEFAULT_MODEL);
+  }
+
+  /**
+   * Register (or replace) every event hook a project declares as its own agent
+   * `hook-<slug>-<name>` (Epic G / G1). Idempotent (`addAgent` replace:true). A
+   * hook-less project is a no-op. Called at boot ({@link init}) and on every
+   * {@link ensureProjectAgent}; a single-hook mutation uses {@link ensureHookAgent}.
+   */
+  async registerHookAgents(project: Project): Promise<void> {
+    if (!this.fleet) return;
+    for (const [name, hook] of Object.entries(project.hooks ?? {})) {
+      await this.fleet.addAgent(this.hookAgentConfig(project, name, hook), { replace: true });
+    }
+  }
+
+  /**
+   * Register (or replace) ONE event hook's agent at runtime (Epic G / G1) — the
+   * herdctl half of a hook mutation (the Paddock half persists it to project.yaml via
+   * `ProjectStore.setHook`). Idempotent; immediately fireable. Consumed by the hook
+   * CRUD service so a newly-created/edited hook is armed without a full project
+   * re-register.
+   */
+  async ensureHookAgent(project: Project, name: string, hook: PaddockHook): Promise<void> {
+    if (!this.fleet) return;
+    await this.fleet.addAgent(this.hookAgentConfig(project, name, hook), { replace: true });
+  }
+
+  /**
+   * Unregister one event hook's agent at runtime (Epic G / G1) — the inverse of
+   * {@link ensureHookAgent}, used when a hook is removed. Never throws if the agent is
+   * already gone.
+   */
+  async removeHookAgent(slug: string, name: string): Promise<void> {
+    if (!this.fleet) return;
+    await this.fleet.removeAgent(hookAgentName(slug, name)).catch(() => undefined);
   }
 
   /**
@@ -360,14 +423,19 @@ export class HerdctlService {
   }
 
   /**
-   * Unregister a project's keeper + sweeper agents at runtime. Uses
-   * `fleet.removeAgent`, the inverse of ensureProjectAgent. Running jobs are
-   * unaffected; the scheduler stops triggering the removed agents.
+   * Unregister a project's keeper + sweeper (+ any event-hook) agents at runtime.
+   * Uses `fleet.removeAgent`, the inverse of ensureProjectAgent. Running jobs are
+   * unaffected; the scheduler stops triggering the removed agents. `hookNames` are
+   * the project's declared hook names (from its DTO) so their `hook-<slug>-<name>`
+   * agents are torn down too — caller passes `Object.keys(project.hooks ?? {})`.
    */
-  async removeProjectAgent(slug: string): Promise<void> {
+  async removeProjectAgent(slug: string, hookNames: string[] = []): Promise<void> {
     if (!this.fleet) return;
     await this.fleet.removeAgent(keeperAgentName(slug)).catch(() => undefined);
     await this.fleet.removeAgent(sweeperAgentName(slug)).catch(() => undefined);
+    for (const name of hookNames) {
+      await this.fleet.removeAgent(hookAgentName(slug, name)).catch(() => undefined);
+    }
   }
 
   /**
@@ -1277,6 +1345,49 @@ export class HerdctlService {
         "no explanation, no tool use.",
       default_prompt: "Curate OVERVIEW.md and CHANGELOG.md from recent activity.",
     };
+  }
+
+  /**
+   * A hook's herdctl agent config (Epic G / G1). Each hook is registered as its OWN
+   * agent `hook-<slug>-<name>` — exactly like the keeper/sweeper — whose tool config
+   * (`allowed_tools`/`denied_tools`/`permission_mode`/`model`/`max_turns`, projected
+   * by {@link hookToAgentToolConfig}) IS the hook's capability set (GG-1). So the
+   * capability the UI picked is enforced by the runtime, and the G6 banner reading it
+   * back is truthful by construction.
+   *
+   * Runs in the project's WORKING dir (the repo checkout for a repo-backed project),
+   * so the hook's Bash/Write act on the same tree the keeper does — the onArchive
+   * cleanup example (spin down servers, delete clones) needs exactly that. A
+   * tool-less hook gets `allowed_tools: []` and can only return text.
+   */
+  private hookAgentConfig(
+    project: Project,
+    hookName: string,
+    hook: PaddockHook,
+  ): Record<string, unknown> & { name: string } {
+    const config: Record<string, unknown> & { name: string } = {
+      name: hookAgentName(project.slug, hookName),
+      description: `Event hook "${hookName}" (${hook.event}) for project ${project.name}.`,
+      working_directory: project.workingDir,
+      // Explicit CLI runtime (Max plan) — see the keeper/scratch note: the fleet
+      // `defaults.runtime` is dropped by the core config loader, so set it here.
+      runtime: "cli",
+      // The hook's model defaults to the keeper default unless its capabilities pin
+      // one; hookToAgentToolConfig sets `model` only when the capability specifies it,
+      // so provide the fallback here so a hook never boots without a concrete model.
+      model: hook.capabilities?.model ?? project.model ?? KEEPER_DEFAULT_MODEL,
+      // Capability set → tool config (allowed/denied tools, permission mode, model,
+      // max_turns). This is the whole capability model — no profile/kind.
+      ...hookToAgentToolConfig(hook.capabilities),
+    };
+    // Docker isolation follows the project's opt-in, like the keeper, so a hook that
+    // runs Bash is contained the same way the project's own turns are.
+    if (project.docker) config.docker = { enabled: true };
+    // Browser MCP (headless Chromium) when enabled for this box; `mcp__playwright__*`
+    // is only auto-allowed for a hook that lists it in its capabilities anyway.
+    const browser = browserMcpServers(this.cfg.browserMcp);
+    if (browser) config.mcp_servers = browser;
+    return config;
   }
 
   // --- config generation -------------------------------------------------

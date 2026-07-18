@@ -1573,6 +1573,16 @@ function SenderAttribution({ sender }: { sender: MessageSender }) {
       </div>
     );
   }
+  if (sender.kind === "hook") {
+    return (
+      <div className={base} data-sender="hook">
+        <span aria-hidden>⚡</span>
+        <span>
+          triggered by hook <span className="font-medium not-italic">{sender.name}</span>
+        </span>
+      </div>
+    );
+  }
   if (sender.kind === "agent") {
     return (
       <div className={base} data-sender="agent">
