@@ -1,5 +1,120 @@
 # @paddock/server
 
+## 0.32.0
+
+### Minor Changes
+
+- [#288](https://github.com/edspencer/paddock/pull/288) [`6f37264`](https://github.com/edspencer/paddock/commit/6f37264e20a8718123958b1447bde7a8610b67cc) Thanks [@edspencer](https://github.com/edspencer)! - Run-history "while you were away" view (#268).
+
+  Ticket E3 of the Events / Schedules / Config initiative — visibility for the runs
+  that happen when nobody is watching. A new project-level **History** tab lists
+  recent keeper runs with their **provenance** (human / scheduled / spawned), so the
+  unattended work (a cron-fired schedule, a chat spawned by another chat) is easy to
+  find, review, and open. Builds on the A1 provenance marker (#261 / DD-3), the E1
+  badges (#267), and D3 scheduled sessions (#265).
+
+  - **Data source.** `HerdctlService.listProjectRuns` reads herdctl job records via
+    `@herdctl/core`'s `listJobs`, filtered to the project's keeper agent (so
+    scratch/sweeper runs are excluded), newest-first. Each record carries timing
+    (`started_at`/`finished_at`/`duration_seconds`), `status`, `session_id`, and the
+    schedule/fork that triggered it.
+  - **Provenance join.** A new pure, unit-tested builder (`buildProjectRuns`) joins
+    each run with the `RunProvenanceStore` marker keyed by `session_id`, so
+    scheduled + spawned runs report their **true** origin and spawn depth.
+    Paddock-initiated turns still persist `trigger_type:"manual"` on the job record,
+    so origin lives in the provenance store, not the enum — the builder is the
+    authoritative join.
+  - **"Since last login" digest.** `GET /api/projects/:slug/runs` folds in a
+    per-user "runs last seen" watermark (reusing the `ReadStateStore` / #189
+    read-state plumbing under a reserved sentinel session id), flags each run
+    `isNew`, and counts new **unattended** runs. The History tab shows a count badge
+    and a "N new runs ran while you were away" banner; opening the tab advances the
+    watermark (`POST .../runs/seen`, monotonic).
+  - **UI.** `HistoryPane` matches Paddock's design system (provenance-colored origin
+    chips, status chips, relative time + duration, schedule/parent trigger note),
+    defaults to an "Unattended" filter with an "All" toggle, and links each run into
+    its chat.
+  - **Cost is deferred (P3).** herdctl does not yet persist per-run token accounting
+    (X1/#378 + X2/#271), so a documented cost seam (`RunSummary.cost`, always
+    `null`; an em-dash column) is left where per-run cost will slot in without a wire
+    change.
+
+  Note: session-mode turns (`openChatSession`) write no herdctl job record, so runs
+  driven that way don't appear here — only batch `trigger()` turns and the synthetic
+  adoption records do (a pre-existing, documented herdctl limitation, same as the
+  unread `lastTurnCompletedAt` signal).
+
+- [#285](https://github.com/edspencer/paddock/pull/285) [`faceecd`](https://github.com/edspencer/paddock/commit/faceecd17e3087bfebe0eee139862cb7041d183b) Thanks [@edspencer](https://github.com/edspencer)! - Scheduled chat sessions, server side (#265).
+
+  Ticket D3 of the Events / Schedules / Config initiative — the headline feature: a
+  chat triggered by cron instead of by a human. A scheduled agent is just a normal
+  Paddock chat that a schedule started, so a human can open it and continue the
+  conversation afterward. Built on the A1 provenance marker (#261) and
+  `@herdctl/core@5.21.0`'s new scheduling seam + runtime-mutation APIs (#375/#376).
+
+  - **`project.yaml` `schedules`.** A project declares schedules in herdctl's own
+    `ScheduleSchema` shape (`type: cron|interval`, `cron`, `interval`, `prompt`,
+    `enabled`, `resume_session`), forwarded **unmolested** into the keeper agent's
+    `schedules` block at `addAgent` time — herdctl's cron engine arms them directly,
+    no parallel Paddock schema, no translation. Malformed entries are dropped (not
+    thrown) so a bad hand-edit can't brick keeper registration.
+  - **Trigger seam → the hub.** Paddock registers a `scheduleTriggerHandler` via
+    `FleetManager.setScheduleTriggerHandler`, so a fired schedule runs on Paddock's
+    OWN hub through `startAgentTurn` with **`origin: scheduled`** (depth 0). The run
+    is a first-class chat: it streams live, drives the sidebar dot, is re-attachable,
+    and is NEVER `isSidechain`-hidden (we bypass herdctl's headless `--resume`).
+  - **`resume_session` new-vs-accrete.** `false` → a fresh chat each fire
+    (`resume: null`); `true` → resume the schedule's ONE **owned session**, created
+    on the first fire and reused thereafter — persisted in a `schedule →
+ownedSessionId` sidecar (`ScheduleSessionStore`, the `ArchiveStore` /
+    `RunProvenanceStore` pattern, including the in-flight-load-promise fix). A stale
+    owned id whose transcript vanished is dropped so the next fire re-creates one.
+  - **`promptFile` sugar.** A schedule may point at a git-tracked, keeper-editable
+    `.paddock/schedules/*.md` file; Paddock reads it FRESH at fire time and forwards
+    a plain `prompt` string, so an edit takes effect on the next fire with no
+    re-register. The file indirection is stripped before forwarding — the herdctl
+    config stays pure. Path traversal outside `.paddock/schedules/` and non-`.md`
+    names are rejected.
+  - **Runtime mutation plumbing.** `HerdctlService.setAgentSchedule` /
+    `removeAgentSchedule` (for the future D4 UI) and `ProjectStore.setSchedule` /
+    `removeSchedule` persistence, behind a per-deployment gate
+    (`PADDOCK_SCHEDULE_MUTATION`, default OFF → the FleetManager is constructed with
+    `allowScheduleMutation: false` and the mutation APIs throw). Declaring schedules
+    statically in `project.yaml` is unaffected by the gate.
+
+  Bumps `@herdctl/core` to `^5.21.0`.
+
+- [#287](https://github.com/edspencer/paddock/pull/287) [`aaec79b`](https://github.com/edspencer/paddock/commit/aaec79ba0e604a623017c5bb662348ced52f948f) Thanks [@edspencer](https://github.com/edspencer)! - Per-project schedules management UI (#266).
+
+  Ticket D4 of the Events / Schedules / Config initiative — the Settings-pane surface
+  that completes scheduled chats. A new **Schedules** section in each project's
+  Settings tab lists that project's scheduled chats (name, cron/interval expression,
+  new-vs-accrete session mode, enabled state, live status + last/next run merged from
+  herdctl's runtime) and lets an operator create, edit, delete, enable/disable, and
+  **trigger now** — all wired to the D3 server surface (`ProjectStore.set/removeSchedule`
+
+  - herdctl's `setAgentSchedule`/`removeAgentSchedule`/`enable/disableSchedule`).
+
+  * **New REST surface** under `/api/projects/:slug/schedules`: `GET` (declaration +
+    runtime state + the `mutationEnabled` gate), `PUT :name` (create/replace), `DELETE
+:name`, `POST :name/(enable|disable)`, and `POST :name/trigger`. Each mutating
+    route persists to `project.yaml` first (source of truth — re-arms on restart), then
+    arms herdctl at runtime via the granular D3 APIs.
+  * **Trigger-now** fires the schedule through the SAME `startAgentTurn` hub path a
+    cron fire uses (D3), so a manual run shows up as a first-class, discoverable,
+    `scheduled`-badged chat (E1/#267) — never `isSidechain`-hidden. `makeChatHandler`
+    now exposes its schedule-fire entrypoint so the route can reuse it; the cron and
+    manual paths share one implementation.
+  * **Respects the per-deployment mutation gate** (`PADDOCK_SCHEDULE_MUTATION`, DD-7):
+    when off, the mutating routes return 403 and the pane renders read-only with a
+    hint, while listing and trigger-now (which runs an already-declared schedule)
+    stay available.
+
+  Tests: integration against the real FleetManager + scheduler + CLI runtime (list /
+  create / edit / enable-disable / delete / trigger-now → a scheduled chat appears;
+  validation 400s; the gate-off 403 + read-only + still-triggerable case) plus web
+  component coverage of the Schedules section.
+
 ## 0.31.0
 
 ### Minor Changes
