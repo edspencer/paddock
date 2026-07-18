@@ -55,6 +55,7 @@ export default defineConfig({
 					collapsed: false,
 					items: [
 						{ label: 'Creating & organizing projects', slug: 'using/creating-and-organizing-projects' },
+						{ label: 'Working in chats', slug: 'using/working-in-chats' },
 					],
 				},
 				{
