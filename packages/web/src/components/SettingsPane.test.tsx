@@ -105,6 +105,8 @@ describe("SettingsPane", () => {
       maxTurns: 200,
       docker: false,
       driveMode: null,
+      // No per-project override set -> inherits the instance default (issue #262).
+      maxSpawnDepth: null,
     });
     await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
   });
@@ -162,6 +164,29 @@ describe("SettingsPane", () => {
     expect(updateProject).toHaveBeenCalledWith(
       "p1",
       expect.objectContaining({ driveMode: null }),
+    );
+  });
+
+  it("maxSpawnDepth: sets a per-project override and sends it in the patch (issue #262)", async () => {
+    const project = makeProject({ slug: "p1" });
+    render(<SettingsPane project={project} onSaved={vi.fn()} />);
+    await screen.findByRole("option", { name: "Sonnet 5" });
+
+    const depth = screen.getByLabelText("Max spawn depth") as HTMLSelectElement;
+    // No override initially -> inherits the instance default.
+    expect(depth.value).toBe("");
+    // Override to 0 (disables spawned tooling) -> the reset affordance appears.
+    fireEvent.change(depth, { target: { value: "0" } });
+    expect(depth.value).toBe("0");
+    expect(
+      screen.getByText(/Overriding the instance default/i),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    await waitFor(() => expect(updateProject).toHaveBeenCalledTimes(1));
+    expect(updateProject).toHaveBeenCalledWith(
+      "p1",
+      expect.objectContaining({ maxSpawnDepth: 0 }),
     );
   });
 

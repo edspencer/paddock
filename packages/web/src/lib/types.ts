@@ -58,6 +58,13 @@ export interface Project {
    */
   driveMode?: "batch" | "session";
   /**
+   * How deep a spawn tree may grow before spawned children stop getting the
+   * self-management MCP (issue #262). `undefined` = inherit the instance default
+   * (`PADDOCK_MAX_SPAWN_DEPTH`); a number is a per-project override. A depth-`d`
+   * spawned child gets the write tools (report-back + spawn) iff `d <= maxSpawnDepth`.
+   */
+  maxSpawnDepth?: number;
+  /**
    * Compact per-chat "last completed turn" timestamps for the sidebar UNREAD
    * badge (#161): one entry per project chat that has a completed keeper turn,
    * `lastTurnCompletedAt` being its most recent (from job records, not a
@@ -167,6 +174,12 @@ export interface UpdateProjectInput {
    * default again (issue #122's reset-to-inherit).
    */
   driveMode?: "batch" | "session" | null;
+  /**
+   * Max spawn depth (issue #262); server validates + re-registers on change.
+   * `null` clears the per-project override so it inherits the instance default
+   * again (same reset-to-inherit as `driveMode`).
+   */
+  maxSpawnDepth?: number | null;
 }
 
 /** A chat = one Claude Code session, surfaced by the server's session discovery. */

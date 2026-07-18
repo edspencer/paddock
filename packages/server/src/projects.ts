@@ -165,6 +165,15 @@ export interface ProjectYaml {
    */
   driveMode?: string;
   /**
+   * How deep a spawn tree rooted at this project's chats may grow before spawned
+   * children stop receiving the self-management MCP (issue #262 / DD-3). A spawned
+   * turn at depth `d` gets the self-MCP (incl. `send_message`, so a child can
+   * report back) iff `d <= maxSpawnDepth`. Optional on disk: absent inherits the
+   * instance default (`PADDOCK_MAX_SPAWN_DEPTH`, else DEFAULT_MAX_SPAWN_DEPTH = 1),
+   * resolved at dispatch — the same inherit/override discipline as `driveMode`.
+   */
+  maxSpawnDepth?: number;
+  /**
    * External git repo URL that backs this project (issue #187). When present the
    * project is REPO-BACKED: Paddock clones the repo into a nested `.gitignore`d
    * checkout under the project dir and the keeper's working directory is that
@@ -259,6 +268,12 @@ export type UpdateProjectInput = Partial<
    * current value untouched.
    */
   driveMode?: string | null;
+  /**
+   * Max spawn depth (issue #262). A number sets a per-project override; `null`
+   * CLEARS it so the project inherits the instance default again; `undefined`/
+   * absent leaves the current value untouched. Same tri-state as `driveMode`.
+   */
+  maxSpawnDepth?: number | null;
 };
 
 const PROJECT_FILE = "project.yaml";
@@ -522,10 +537,11 @@ export class ProjectStore {
   /** Update mutable metadata fields and bump `updated`. */
   async update(slug: string, patch: UpdateProjectInput): Promise<Project> {
     const current = await this.get(slug);
-    // driveMode is tri-state (set / clear / leave), so it's applied explicitly
-    // below rather than via the blanket spread — a plain spread can't express
-    // "delete this field", which is how an override is cleared back to inherit.
-    const { driveMode: driveModePatch, ...rest } = patch;
+    // driveMode + maxSpawnDepth are tri-state (set / clear / leave), so they're
+    // applied explicitly below rather than via the blanket spread — a plain spread
+    // can't express "delete this field", which is how an override is cleared back
+    // to inherit.
+    const { driveMode: driveModePatch, maxSpawnDepth: maxSpawnDepthPatch, ...rest } = patch;
     const next: ProjectYaml = {
       ...this.stripDto(current),
       ...rest,
@@ -538,6 +554,12 @@ export class ProjectStore {
       delete next.driveMode;
     } else if (driveModePatch !== undefined) {
       next.driveMode = driveModePatch;
+    }
+    if (maxSpawnDepthPatch === null) {
+      // Clear the per-project override -> inherit the instance default (#262).
+      delete next.maxSpawnDepth;
+    } else if (maxSpawnDepthPatch !== undefined) {
+      next.maxSpawnDepth = maxSpawnDepthPatch;
     }
     await this.writeYaml(slug, next);
     return this.toDto(current.dir, next, await this.overviewExists(slug));
@@ -866,6 +888,11 @@ export class ProjectStore {
       // (`project.driveMode ?? cfg.keeperDriveMode`), NOT here, so the env-level
       // global can still take effect for projects that don't override it.
       ...(typeof p.driveMode === "string" ? { driveMode: p.driveMode } : {}),
+      // maxSpawnDepth (issue #262): carried only when explicitly set — an absent
+      // value means "inherit the instance default" and is resolved at dispatch
+      // (`resolveMaxSpawnDepth(project.maxSpawnDepth, cfg.maxSpawnDepth)`), NOT
+      // here, so the instance default still applies to non-overriding projects.
+      ...(typeof p.maxSpawnDepth === "number" ? { maxSpawnDepth: p.maxSpawnDepth } : {}),
       // repo (issue #187): carried only when present — its presence is what marks
       // the project repo-backed and drives the workingDir resolution in toDto.
       ...(typeof p.repo === "string" && p.repo.trim() ? { repo: p.repo.trim() } : {}),

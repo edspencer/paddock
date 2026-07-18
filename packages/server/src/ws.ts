@@ -91,6 +91,7 @@ import {
   SCHEDULED_ROOT,
   childOf,
 } from "./run-provenance.js";
+import { resolveMaxSpawnDepth, spawnedSelfMcpDecision } from "./spawn-capability.js";
 
 /**
  * Per-turn token usage as observed on the SDK stream, normalized to camelCase.
@@ -701,6 +702,183 @@ export function makeChatHandler(deps: {
   });
 
   /**
+   * Build the self-management MCP server def (issue #214) bound to one turn's
+   * context, extracted (B1 / #262) so BOTH the human socket path AND the
+   * server-initiated {@link startAgentTurn} spawn path share ONE builder.
+   *
+   * The READ tools (list_projects/list_chats/read_chat) close over turn-independent
+   * services and are always present. When `includeWrite` is set, the four WRITE
+   * tools (create/fork/message/fork_batch) are appended; each starts a real keeper
+   * turn via {@link startAgentTurn}.
+   *
+   * `parentProvenance` is the provenance of the chat these tools run IN — so any
+   * child they spawn is `childOf(parentProvenance)` (origin `spawned`, depth+1).
+   * The human path passes {@link HUMAN_ROOT} (depth 0 → children depth 1); the
+   * spawned path passes the current turn's own `{ origin, depth }` (so a depth-1
+   * child's children are depth 2, and the `maxSpawnDepth` bound descends). The
+   * child's `maxSpawnDepth` is resolved from ITS target project (override else
+   * instance default), so the bound follows the project a child actually runs in.
+   */
+  function buildSelfMcpServerDef(params: {
+    currentProjectSlug: string;
+    currentSessionId: () => string | null;
+    parentProvenance: RunProvenance;
+    includeWrite: boolean;
+  }): InjectedMcpServerDef {
+    const { currentProjectSlug, currentSessionId, parentProvenance, includeWrite } = params;
+
+    const selfMcpContext: SelfMcpContext = {
+      listProjects: async () => {
+        const projects = await deps.projects.list();
+        return projects.map((p) => ({
+          slug: p.slug,
+          name: p.name,
+          area: p.group && p.group.length > 0 ? p.group : undefined,
+          status: p.status,
+        }));
+      },
+      listChats: async (projectSlug) => {
+        const targets = projectSlug
+          ? [await deps.projects.get(projectSlug)]
+          : await deps.projects.list();
+        const chats = [];
+        for (const p of targets) {
+          const sessions = await deps.herdctl.listSessions(p);
+          for (const s of sessions) {
+            chats.push({
+              project: p.slug,
+              sessionId: s.sessionId,
+              name: s.customName ?? s.autoName ?? s.sessionId.slice(0, 8),
+              updatedAt: s.mtime,
+              running: hub.isRunning(s.sessionId),
+            });
+          }
+        }
+        return chats;
+      },
+      readChat: async (projectSlug, chatSessionId) => {
+        const project = await deps.projects.get(projectSlug);
+        const messages = await deps.herdctl.sessionMessages(
+          keeperAgentName(project.slug),
+          chatSessionId,
+        );
+        return messages.map((m) => ({
+          role: m.role,
+          text: m.content,
+          timestamp: m.timestamp,
+        }));
+      },
+    };
+
+    // Write tools (issue #214 Phase 2) are gated by the caller (`includeWrite`).
+    // Each callback resolves the target project (validating it exists), then starts
+    // a real keeper turn via startAgentTurn — which streams through the shared hub,
+    // so a spawned chat appears + streams live exactly like a human-started one.
+    let writeCtx: SelfMcpWriteContext | undefined;
+    if (includeWrite) {
+      const driveModeFor = (p: Awaited<ReturnType<typeof deps.projects.get>>): DriveMode =>
+        p.driveMode && isKnownDriveMode(p.driveMode) ? p.driveMode : deps.cfg.keeperDriveMode;
+      // The child runs in its TARGET project, so its spawn bound comes from THAT
+      // project's override (else the instance default), not the parent's (#262).
+      const maxSpawnDepthFor = (p: Awaited<ReturnType<typeof deps.projects.get>>): number =>
+        resolveMaxSpawnDepth(p.maxSpawnDepth, deps.cfg.maxSpawnDepth);
+      // A child spawned from this chat is one hop deeper (origin spawned, depth+1);
+      // see the method doc for why `parentProvenance` (not always HUMAN_ROOT).
+      const spawnedChild: RunProvenance = childOf(parentProvenance);
+      writeCtx = {
+        currentProjectSlug,
+        currentSessionId,
+        createChat: async (projectSlug, kickoff, o) => {
+          const p = await deps.projects.get(projectSlug);
+          // Honor the same OVERVIEW+CHANGELOG preload the human New-Chat path
+          // offers, when asked and available (issues #1/#188).
+          let composed = kickoff;
+          if (o?.preloadContext) {
+            const overview = await deps.projects.readOverview(projectSlug).catch(() => "");
+            if (overview.trim().length > 0) {
+              const changelog = await deps.projects.readChangelog(projectSlug).catch(() => "");
+              composed = wrapPreload(composePreloadContext(overview, changelog), kickoff);
+            }
+          }
+          const newId = await startAgentTurn({
+            projectSlug,
+            agentName: keeperAgentName(projectSlug),
+            workingDir: p.workingDir,
+            resume: null,
+            prompt: composed,
+            driveMode: driveModeFor(p),
+            fallbackModel: p.model,
+            origin: spawnedChild.origin,
+            depth: spawnedChild.depth,
+            maxSpawnDepth: maxSpawnDepthFor(p),
+          });
+          return { sessionId: newId };
+        },
+        forkChat: async ({ projectSlug, sourceSessionId, prompt: kickoff, name }) => {
+          const p = await deps.projects.get(projectSlug);
+          if (!(await deps.herdctl.sessionExists(p, sourceSessionId))) {
+            throw new Error(`chat not found: ${sourceSessionId} in project ${projectSlug}`);
+          }
+          const newId = await deps.herdctl.forkSession(p, sourceSessionId, name);
+          // Stamp the forked CHILD's provenance here (not via startAgentTurn,
+          // which only stamps a brand-new `resume:null` chat): a fork with no
+          // kickoff never calls startAgentTurn, so this covers both cases.
+          await deps.runProvenance?.stamp(newId, spawnedChild).catch(() => undefined);
+          if (kickoff && kickoff.trim().length > 0) {
+            await startAgentTurn({
+              projectSlug,
+              agentName: keeperAgentName(projectSlug),
+              workingDir: p.workingDir,
+              resume: newId,
+              // Frame the kickoff so the child treats the inherited transcript as
+              // CONTEXT and runs its new directive. Without this, forking the
+              // *live* chat snapshots it mid-turn, so the child inherits the
+              // parent's "I'm mid-task" identity and may refuse the seed prompt
+              // (QA #214). This is what makes the fan-out use case ("fork this
+              // chat N times, one item each") actually work.
+              prompt: forkKickoffPrompt(kickoff),
+              driveMode: driveModeFor(p),
+              fallbackModel: p.model,
+              // Resume of the just-forked child: the child was already stamped
+              // above, so startAgentTurn won't re-stamp; this just describes the
+              // kickoff run honestly. Its self-MCP is gated on the child's own
+              // recorded depth (the stamp above), resolved in startAgentTurn.
+              origin: spawnedChild.origin,
+              depth: spawnedChild.depth,
+              maxSpawnDepth: maxSpawnDepthFor(p),
+            });
+          }
+          return { sessionId: newId };
+        },
+        sendMessage: async (projectSlug, targetSessionId, kickoff) => {
+          const p = await deps.projects.get(projectSlug);
+          if (!(await deps.herdctl.sessionExists(p, targetSessionId))) {
+            throw new Error(`chat not found: ${targetSessionId} in project ${projectSlug}`);
+          }
+          await startAgentTurn({
+            projectSlug,
+            agentName: keeperAgentName(projectSlug),
+            workingDir: p.workingDir,
+            resume: targetSessionId,
+            prompt: kickoff,
+            driveMode: driveModeFor(p),
+            fallbackModel: p.model,
+            // Resume of an EXISTING chat: startAgentTurn won't stamp (only new
+            // chats are stamped), so the target keeps its own creation provenance,
+            // and its self-MCP is gated on THAT recorded depth (resolved in
+            // startAgentTurn), not on these describe-the-run values.
+            origin: spawnedChild.origin,
+            depth: spawnedChild.depth,
+            maxSpawnDepth: maxSpawnDepthFor(p),
+          });
+        },
+      };
+    }
+
+    return selfMcpServerDef(selfMcpContext, writeCtx);
+  }
+
+  /**
    * Kick off a keeper turn that is NOT driven by a socket — used by the
    * self-management MCP write tools (issue #214 Phase 2: create_chat / fork_chat /
    * send_message / fork_chat_batch fan-out). Routes the turn through the SAME
@@ -717,18 +895,18 @@ export function makeChatHandler(deps: {
    * throttles how many actually run at once. Rejects if the turn errors (or a
    * timeout elapses) before an id is known.
    *
-   * The spawned turn is injected with `send_file` ONLY — NOT the self-management
-   * MCP. So an AUTONOMOUS fan-out cannot recurse into a fork bomb: a child's
-   * kickoff turn (and, in session drive-mode, its scheduler wakes — the reaper
-   * resumes the session as it was opened, never re-injecting) carry no
-   * self-management tools, so a spawned chat cannot itself create/fork/message on
-   * its own. This is NOT a recursion *guard* (none is built this phase, per #214)
-   * — recursion is simply not wired into the automated path. Note a spawned chat
-   * is still a normal keeper chat: if a human later opens it and sends a message,
-   * that socket-driven turn goes through the regular path and gets the full tools
-   * again (by design — any keeper chat may use them); that's deliberate human
-   * interaction, not a runaway. A later phase can inject the self-MCP into
-   * automated children too, behind a real depth/origin guard.
+   * The spawned turn always gets `send_file`, and — NEW in B1 (#262) — it ALSO
+   * gets the self-management MCP (including the WRITE tools, so `send_message`
+   * exists and a child can finally report back to its parent) when its depth is
+   * within `maxSpawnDepth`. The fork-bomb bound is now EXPLICIT: a turn running in
+   * a chat at depth `d` gets the tools iff `d <= maxSpawnDepth` (see
+   * spawn-capability.ts). `maxSpawnDepth = 0` reproduces the old behaviour exactly
+   * (send_file only). Every child spawned by a tool-equipped turn is stamped one
+   * hop deeper, so the bound descends and the tree can't run away. A resume runs
+   * in an EXISTING chat, so its capability is gated on THAT chat's own recorded
+   * depth (from {@link RunProvenanceStore}), not on the caller's describe-the-run
+   * `depth`. A human who later opens a spawned chat still gets the full tools via
+   * the regular socket path (any keeper chat may use them) — unchanged.
    */
   async function startAgentTurn(opts: {
     projectSlug: string;
@@ -741,13 +919,18 @@ export function makeChatHandler(deps: {
     /**
      * Provenance of this server-initiated turn (issue #261 / DD-3). The self-MCP
      * write tools pass `spawned` + the child's depth. Persisted for a NEW chat
-     * only (a resume/message keeps the target chat's existing marker). A1 only
-     * carries it — the injected tools are unchanged (still `send_file` only).
+     * only (a resume/message keeps the target chat's existing marker).
      */
     origin: TurnOrigin;
     depth: number;
+    /**
+     * The effective `maxSpawnDepth` for the chat this turn runs in (issue #262),
+     * already resolved by the caller from the TARGET project (per-project override
+     * else instance default). Gates whether this turn receives the self-MCP.
+     */
+    maxSpawnDepth: number;
   }): Promise<string> {
-    const { projectSlug, agentName, workingDir, resume, prompt, driveMode, fallbackModel, origin, depth } =
+    const { projectSlug, agentName, workingDir, resume, prompt, driveMode, fallbackModel, origin, depth, maxSpawnDepth } =
       opts;
     let resolvedSession: string | null = resume ?? null;
     let jobId: string | null = null;
@@ -797,11 +980,45 @@ export function makeChatHandler(deps: {
       },
     });
 
-    // Spawned turns get send_file (parity) but NOT the self-MCP (see doc above).
+    // Spawned turns always get send_file (parity with the human path).
     const sendFile = sendFileServerDef({
       workingDirectory: workingDir,
       saveAttachment: (bytes, name) => deps.attachments.save(bytes, name),
     });
+    const injectedMcpServers: Record<string, InjectedMcpServerDef> = {
+      [SEND_FILE_SERVER_KEY]: sendFile,
+    };
+
+    // B1 (#262 / DD-3): depth-gated self-MCP. The capability follows the depth of
+    // the CHAT this turn runs in: a NEW chat is at `depth` (the value we'll stamp);
+    // a RESUME runs in an existing chat whose OWN recorded depth governs it (a
+    // depth-1 child reporting back to its depth-0 root must gate the ROOT's turn on
+    // depth 0, not on the child's describe-the-run value). Fall back to `depth`
+    // when the target has no recorded marker. Still requires the instance opt-in
+    // (`selfMcpEnabled`) and is never injected on scratch turns; write tools follow
+    // the instance write opt-in — in practice always on when a spawn is reachable,
+    // since a spawn only happens when a parent already had the write tools.
+    let injectionDepth = depth;
+    if (resume !== null && deps.runProvenance) {
+      const rec = await deps.runProvenance.get(resume).catch(() => undefined);
+      if (rec) injectionDepth = rec.depth;
+    }
+    const selfMcp = spawnedSelfMcpDecision({
+      isScratch: projectSlug === SCRATCH_SLUG,
+      selfMcpEnabled: deps.cfg.selfMcpEnabled,
+      selfMcpWriteEnabled: deps.cfg.selfMcpWriteEnabled,
+      depth: injectionDepth,
+      maxSpawnDepth,
+    });
+    if (selfMcp.inject) {
+      injectedMcpServers[SELF_MCP_SERVER_KEY] = buildSelfMcpServerDef({
+        currentProjectSlug: projectSlug,
+        currentSessionId: () => resolvedSession,
+        // Children of THIS turn are one hop deeper than the chat it runs in.
+        parentProvenance: { origin, depth: injectionDepth },
+        includeWrite: selfMcp.includeWrite,
+      });
+    }
 
     const drive =
       driveMode === "session"
@@ -821,7 +1038,7 @@ export function makeChatHandler(deps: {
       prompt,
       resume,
       triggerType: "agent",
-      injectedMcpServers: { [SEND_FILE_SERVER_KEY]: sendFile },
+      injectedMcpServers,
       onJobCreated: (id) => {
         jobId = id;
         turn.setJobId(id);
@@ -1221,162 +1438,20 @@ export function makeChatHandler(deps: {
           [SEND_FILE_SERVER_KEY]: sendFile,
         };
 
-        // Read-only self-management MCP (issue #214 Phase 1): only on keeper turns
-        // (never scratch) and only when the instance opts in via PADDOCK_SELF_MCP.
-        // Lets a keeper enumerate projects/chats (cross-project) and read another
-        // chat's transcript tail. Handlers close over this turn's live services;
-        // `running` reads the in-process SessionHub so it's cheap (no transcript
-        // parse just to list). Write tools (create/fork/message) are a later phase.
+        // Self-management MCP (issue #214): only on keeper turns (never scratch)
+        // and only when the instance opts in via PADDOCK_SELF_MCP. A HUMAN turn is
+        // the ROOT of any spawn tree (origin human, depth 0), so its children are
+        // depth 1 — the same builder the spawned path uses, just seeded with
+        // HUMAN_ROOT. Write tools follow the instance write opt-in (B1 #262: the
+        // shared builder is extracted so both paths agree). Depth-0 human gating is
+        // unchanged from before B1 — the depth bound governs the spawned path only.
         if (slug !== SCRATCH_SLUG && deps.cfg.selfMcpEnabled) {
-          const selfMcpContext: SelfMcpContext = {
-            listProjects: async () => {
-              const projects = await deps.projects.list();
-              return projects.map((p) => ({
-                slug: p.slug,
-                name: p.name,
-                area: p.group && p.group.length > 0 ? p.group : undefined,
-                status: p.status,
-              }));
-            },
-            listChats: async (projectSlug) => {
-              const targets = projectSlug
-                ? [await deps.projects.get(projectSlug)]
-                : await deps.projects.list();
-              const chats = [];
-              for (const p of targets) {
-                const sessions = await deps.herdctl.listSessions(p);
-                for (const s of sessions) {
-                  chats.push({
-                    project: p.slug,
-                    sessionId: s.sessionId,
-                    name: s.customName ?? s.autoName ?? s.sessionId.slice(0, 8),
-                    updatedAt: s.mtime,
-                    running: hub.isRunning(s.sessionId),
-                  });
-                }
-              }
-              return chats;
-            },
-            readChat: async (projectSlug, chatSessionId) => {
-              const project = await deps.projects.get(projectSlug);
-              const messages = await deps.herdctl.sessionMessages(
-                keeperAgentName(project.slug),
-                chatSessionId,
-              );
-              return messages.map((m) => ({
-                role: m.role,
-                text: m.content,
-                timestamp: m.timestamp,
-              }));
-            },
-          };
-
-          // Write tools (issue #214 Phase 2) are gated behind their own flag on
-          // top of the read flag. Each callback resolves the target project
-          // (validating it exists), then starts a real keeper turn via
-          // startAgentTurn — which streams through the shared hub, so a spawned
-          // chat appears + streams live exactly like a human-started one.
-          let writeCtx: SelfMcpWriteContext | undefined;
-          if (deps.cfg.selfMcpWriteEnabled) {
-            const driveModeFor = (p: Awaited<ReturnType<typeof deps.projects.get>>): DriveMode =>
-              p.driveMode && isKnownDriveMode(p.driveMode) ? p.driveMode : deps.cfg.keeperDriveMode;
-            // A1 (#261 / DD-3). The HUMAN turn driving these write tools is the
-            // ROOT of any spawn tree (origin human, depth 0), so a chat it spawns
-            // is one hop deeper: origin spawned, depth 1. A1 wires only the human
-            // path — when #262 injects the self-MCP into spawned turns, it will
-            // pass that turn's OWN provenance in place of HUMAN_ROOT so a
-            // grandchild becomes depth 2, and so on. NOTE: this does NOT change
-            // spawn behaviour — the marker is carried/persisted only; the child is
-            // still injected with send_file only (no self-MCP) until #262.
-            const parentProvenance: RunProvenance = HUMAN_ROOT;
-            const spawnedChild: RunProvenance = childOf(parentProvenance);
-            writeCtx = {
-              currentProjectSlug: slug,
-              currentSessionId: () => resolvedSession ?? sessionId ?? null,
-              createChat: async (projectSlug, kickoff, o) => {
-                const p = await deps.projects.get(projectSlug);
-                // Honor the same OVERVIEW+CHANGELOG preload the human New-Chat path
-                // offers, when asked and available (issues #1/#188).
-                let composed = kickoff;
-                if (o?.preloadContext) {
-                  const overview = await deps.projects.readOverview(projectSlug).catch(() => "");
-                  if (overview.trim().length > 0) {
-                    const changelog = await deps.projects.readChangelog(projectSlug).catch(() => "");
-                    composed = wrapPreload(composePreloadContext(overview, changelog), kickoff);
-                  }
-                }
-                const newId = await startAgentTurn({
-                  projectSlug,
-                  agentName: keeperAgentName(projectSlug),
-                  workingDir: p.workingDir,
-                  resume: null,
-                  prompt: composed,
-                  driveMode: driveModeFor(p),
-                  fallbackModel: p.model,
-                  origin: spawnedChild.origin,
-                  depth: spawnedChild.depth,
-                });
-                return { sessionId: newId };
-              },
-              forkChat: async ({ projectSlug, sourceSessionId, prompt: kickoff, name }) => {
-                const p = await deps.projects.get(projectSlug);
-                if (!(await deps.herdctl.sessionExists(p, sourceSessionId))) {
-                  throw new Error(`chat not found: ${sourceSessionId} in project ${projectSlug}`);
-                }
-                const newId = await deps.herdctl.forkSession(p, sourceSessionId, name);
-                // Stamp the forked CHILD's provenance here (not via startAgentTurn,
-                // which only stamps a brand-new `resume:null` chat): a fork with no
-                // kickoff never calls startAgentTurn, so this covers both cases.
-                await deps.runProvenance?.stamp(newId, spawnedChild).catch(() => undefined);
-                if (kickoff && kickoff.trim().length > 0) {
-                  await startAgentTurn({
-                    projectSlug,
-                    agentName: keeperAgentName(projectSlug),
-                    workingDir: p.workingDir,
-                    resume: newId,
-                    // Frame the kickoff so the child treats the inherited
-                    // transcript as CONTEXT and runs its new directive. Without
-                    // this, forking the *live* chat snapshots it mid-turn, so the
-                    // child inherits the parent's "I'm mid-task" identity and may
-                    // refuse the seed prompt (QA #214). This is what makes the
-                    // fan-out use case ("fork this chat N times, one item each")
-                    // actually work.
-                    prompt: forkKickoffPrompt(kickoff),
-                    driveMode: driveModeFor(p),
-                    fallbackModel: p.model,
-                    // Resume of the just-forked child: the child was already
-                    // stamped above, so startAgentTurn won't re-stamp; this just
-                    // describes the kickoff run honestly.
-                    origin: spawnedChild.origin,
-                    depth: spawnedChild.depth,
-                  });
-                }
-                return { sessionId: newId };
-              },
-              sendMessage: async (projectSlug, targetSessionId, kickoff) => {
-                const p = await deps.projects.get(projectSlug);
-                if (!(await deps.herdctl.sessionExists(p, targetSessionId))) {
-                  throw new Error(`chat not found: ${targetSessionId} in project ${projectSlug}`);
-                }
-                await startAgentTurn({
-                  projectSlug,
-                  agentName: keeperAgentName(projectSlug),
-                  workingDir: p.workingDir,
-                  resume: targetSessionId,
-                  prompt: kickoff,
-                  driveMode: driveModeFor(p),
-                  fallbackModel: p.model,
-                  // Resume of an EXISTING chat: startAgentTurn won't stamp (only
-                  // new chats are stamped), so the target keeps its own creation
-                  // provenance. These values just describe the send_message run.
-                  origin: spawnedChild.origin,
-                  depth: spawnedChild.depth,
-                });
-              },
-            };
-          }
-
-          injectedMcpServers[SELF_MCP_SERVER_KEY] = selfMcpServerDef(selfMcpContext, writeCtx);
+          injectedMcpServers[SELF_MCP_SERVER_KEY] = buildSelfMcpServerDef({
+            currentProjectSlug: slug,
+            currentSessionId: () => resolvedSession ?? sessionId ?? null,
+            parentProvenance: HUMAN_ROOT,
+            includeWrite: deps.cfg.selfMcpWriteEnabled,
+          });
         }
 
         // Session mode drives a persistent, herdctl-managed openChatSession so
