@@ -72,6 +72,18 @@ const DEFAULT_MIN_INTERVAL_MS = 5 * 60 * 1000;
  */
 const SWEEP_INSTRUCTIONS_FILE = ".paddock/hooks/sweep.md";
 
+/**
+ * Generous size cap (chars) for the appended sweep-instruction file. Every other
+ * project-controlled field folded into the curation prompt is bounded
+ * (changelog/claudeMd via `trim(_, 2000)`, digest via `slice(-40)`/`trim(_, 600)`)
+ * so prompt/token cost stays predictable; this keeps a pathologically large
+ * `.paddock/hooks/sweep.md` from bloating every sweep. The cap is large enough
+ * that any realistic instruction file passes through untouched — and unlike the
+ * `trim(...)` helper (which flattens all whitespace to single spaces), it
+ * preserves the file's markdown line structure and only truncates the overflow.
+ */
+const SWEEP_INSTRUCTIONS_MAX = 8000;
+
 export class SweepService {
   private readonly herdctl: HerdctlService;
   private readonly projects: ProjectStore;
@@ -327,7 +339,18 @@ export class SweepService {
     const raw = await this.projects
       .readFile(slug, SWEEP_INSTRUCTIONS_FILE)
       .catch(() => "");
-    return raw.trim();
+    const text = raw.trim();
+    // Bound the size like every sibling prompt field so a huge file can't bloat
+    // every sweep's token cost. Realistic instruction files are well under the
+    // cap; only pathological ones truncate (with a warning so it's not silent).
+    if (text.length > SWEEP_INSTRUCTIONS_MAX) {
+      this.log.warn(
+        { slug, length: text.length, cap: SWEEP_INSTRUCTIONS_MAX },
+        "sweep: .paddock/hooks/sweep.md exceeds cap — truncating for the prompt",
+      );
+      return text.slice(0, SWEEP_INSTRUCTIONS_MAX) + "\n…[truncated]";
+    }
+    return text;
   }
 
   /** The curation prompt handed to the sweeper agent. */

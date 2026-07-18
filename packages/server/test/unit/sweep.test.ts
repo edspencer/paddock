@@ -221,6 +221,23 @@ describe("SweepService", () => {
     svc.stop();
   });
 
+  it("caps an oversized `.paddock/hooks/sweep.md` before appending it to the prompt (#G2)", async () => {
+    // A pathologically large file must not bloat the prompt unbounded — it's
+    // capped (~8000 chars) like every sibling field, with a truncation marker.
+    const huge = "X".repeat(20_000);
+    const { svc, runSweeper } = makeService({ sweepInstructions: huge });
+    svc.enqueue("demo");
+    await vi.waitFor(() => expect(runSweeper).toHaveBeenCalled(), { timeout: 2000 });
+    const prompt = runSweeper.mock.calls[0][1] as string;
+    expect(prompt).toContain("=== EXTRA PROJECT-SPECIFIC CURATOR INSTRUCTIONS ===");
+    expect(prompt).toContain("…[truncated]");
+    // The appended run of X's is bounded well below the original 20k.
+    const longestRun = (prompt.match(/X+/g) ?? []).reduce((m, s) => Math.max(m, s.length), 0);
+    expect(longestRun).toBeLessThanOrEqual(8000);
+    expect(longestRun).toBeGreaterThan(0);
+    svc.stop();
+  });
+
   it("persists a watermark and SKIPS a follow-up sweep with no new activity", async () => {
     const { svc, runSweeper } = makeService();
     svc.enqueue("demo");
