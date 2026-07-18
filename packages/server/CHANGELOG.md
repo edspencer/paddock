@@ -1,5 +1,105 @@
 # @paddock/server
 
+## 0.34.0
+
+### Minor Changes
+
+- [#296](https://github.com/edspencer/paddock/pull/296) [`1958f7d`](https://github.com/edspencer/paddock/commit/1958f7d6203c5447ac359caec0604ca461b2688b) Thanks [@edspencer](https://github.com/edspencer)! - Event hooks foundation: run an agent turn when a lifecycle event fires (Epic G / G1)
+
+  A **hook** is an event-triggered agent turn. Each hook is registered as its own
+  herdctl agent `hook-<slug>-<name>` — exactly how keeper/sweeper agents are registered —
+  whose tool config (`allowed_tools`/`denied_tools`/`permission_mode`/`model`/`max_turns`)
+  **is** its capability set. There is no hook "kind"/profile and no "curator" concept: a
+  hook granted no tools is tool-less; a hook that must clean up is granted `Bash` and does
+  the work itself.
+
+  This ticket lands the blocking foundation the rest of Epic G builds on:
+
+  - **Data model + persistence** — a per-project `hooks` map in `project.yaml`
+    (`{ event, capabilities, prompt/promptFile, enabled }`), with keeper-editable prompt
+    bodies in `.paddock/hooks/*.md` (git-tracked), mirroring the shipped
+    `.paddock/schedules/*.md` pattern. New hooks default `enabled: false`.
+  - **Hook CRUD service** (`HookService`: list/get/set/remove) — the shared surface the
+    Hooks tab and hook-management MCP will consume — plus the pure `hook-config.ts`
+    helpers (sanitize + capability→agent-config projection + prompt-file resolution).
+  - **In-process event bus** — lifecycle events fire inside Paddock's own server
+    (fire-and-forget, after-commit; a hook can never block or fail the triggering action).
+  - **`onArchive` wired** as the first event: after a chat-archive commits (REST route or
+    the self-MCP `archive_chat` tool), the dispatcher fires each of the project's enabled
+    `onArchive` hooks via `startAgentTurn`, stamped `origin: hook`.
+
+  Provenance is extended additively: a new `hook` chat origin and a `{ kind: "hook" }`
+  message sender, so a hook run is attributable. No herdctl changes.
+
+- [#300](https://github.com/edspencer/paddock/pull/300) [`c737f8a`](https://github.com/edspencer/paddock/commit/c737f8a018fdf39b9b72cf1ca977c2703f65dd25) Thanks [@edspencer](https://github.com/edspencer)! - Hook-management MCP: `list_hooks` / `set_hook` / `remove_hook` self-MCP tools (Epic G / G5).
+
+  A project agent can now declare, edit, and delete its own event hooks through the
+  `mcp__paddock_manage__*` self-management server — the MCP twin of the (future) Hooks
+  tab. The three tools consume the G1 `HookService` (persist to `project.yaml`, then
+  register the `hook-<slug>-<name>` agent), mirroring the shipped schedule-management
+  tools. `set_hook` is create-or-update — `enabled` is just a field on the record (there
+  are no separate enable/disable verbs), and a brand-new hook defaults to `enabled: false`
+  (GG-3) so nothing fires the instant it is written; editing an existing hook without
+  `enabled` leaves its armed state unchanged. Capabilities (`allowed_tools`,
+  `denied_tools`, `permission_mode`, `model`, `max_turns`) are passed as flat args and
+  tolerate the CLI-runtime MCP transport dropping array types (accepted as a JSON array
+  or a comma/newline-separated string).
+
+  The tools are gated by a **per-project `hooksMcpEnabled` opt-in** (a sibling of
+  `selfMcpWriteEnabled`), **off by default**: an instance default (`PADDOCK_HOOKS_MCP`,
+  also settable via the YAML instance config) with a per-project `project.yaml` override,
+  resolved the same way as `maxSpawnDepth`. The gate is **binary access to the MCP** — an
+  agent that has the tools can create hooks at any capability (GG-4: no per-capability
+  gating, no curator/kind split). When the gate is off the tools are **absent** from the
+  injected server, not present-but-refusing.
+
+- [#299](https://github.com/edspencer/paddock/pull/299) [`ab0af75`](https://github.com/edspencer/paddock/commit/ab0af7579480558e4d44b84358bfddb2cd4501cb) Thanks [@edspencer](https://github.com/edspencer)! - Hook chat visibility: chat-list filter + hook badge + capability banner (Epic G / G3)
+
+  Now that a hook (Epic G / G1) fires as its own `hook-<slug>-<name>` agent, its chats
+  need to be visible and legible. G3 surfaces them:
+
+  - **Generalized chat-list filter (GG-5)** — the old hard keeper-only listing becomes
+    "every one of a project's agents EXCEPT the hidden ones": the keeper **and** every
+    declared hook agent are listed, so hook chats appear in the sidebar alongside keeper
+    chats. The **sweeper stays hidden** (its curation chats never surface — the
+    `hideChats` case) and scratch is unchanged. `listSessions` merges the visible agents'
+    sessions (deduped, mtime-sorted, fault-isolated per agent) via the new pure,
+    unit-tested `visibleProjectAgentNames` helper.
+  - **Hook badge (GG-5)** — a hook chat (`origin: hook`) gets a small lightning-bolt
+    badge in the chat list, reusing the shipped provenance-badge surface (like the
+    scheduled/spawned badges); the owning hook's name rides in the tooltip.
+  - **Read-only capability banner (GG-6)** — opening a hook chat floats a sticky banner
+    atop the message history stating it's a hook agent, its trigger event, and its
+    **granted capabilities** (allowed/denied tools, permission mode, model, max turns,
+    agent name), clickable for the exact tool list, with an affordance toward editing the
+    hook. Because the descriptor is projected from the SAME registered agent config
+    herdctl enforces (`ChatHookInfo`, rides on the chat DTO for hook chats only), the
+    banner is **truthful by construction**. It is strictly read-only — no live permission
+    escalation (deferred G7).
+
+  No herdctl changes. The Hooks tab CRUD UI (G4) and hook MCP (G5) are separate tickets;
+  the banner's edit link points at Settings as a placeholder until the Hooks tab lands.
+
+- [#295](https://github.com/edspencer/paddock/pull/295) [`2cc1c1b`](https://github.com/edspencer/paddock/commit/2cc1c1b08e6a15045eab347aff005d89dd70ec66) Thanks [@edspencer](https://github.com/edspencer)! - Sweeper-prompt extension: optional per-project `.paddock/hooks/sweep.md` (G2).
+
+  A project can now commit extra curator instructions that are appended to the
+  sweeper's prompt at sweep time, letting each project steer how its `OVERVIEW.md`
+  / `CHANGELOG.md` are curated (e.g. "always keep a Glossary section", "note API
+  changes prominently"). The file is git-tracked and keeper-editable, and lives
+  alongside `project.yaml`/`OVERVIEW.md`/`CHANGELOG.md` in the project directory —
+  the same directory the sweeper runs in.
+
+  When the file is present and non-blank, its content is appended verbatim under an
+  `=== EXTRA PROJECT-SPECIFIC CURATOR INSTRUCTIONS ===` heading (which refines _how_
+  to curate but never overrides the output-marker format or the box-conventions
+  rule); when it is absent or whitespace-only, sweep behaviour is exactly unchanged.
+  Reads are non-fatal — a missing or unreadable file simply yields no extra
+  instructions, so curation is never broken by a bad file.
+
+  This is a sweeper-local convenience: it only shapes the tool-less curator's prompt
+  and grants no new capability. It is deliberately not routed through the generic
+  hook framework (there is no hook "kind" or "curator" concept).
+
 ## 0.33.0
 
 ### Minor Changes
