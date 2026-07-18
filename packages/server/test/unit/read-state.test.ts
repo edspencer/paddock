@@ -79,6 +79,28 @@ describe("ReadStateStore", () => {
     expect(await store.getLastSeen(null, "scratch", "same")).toBe(0);
   });
 
+  it("does not lose an entry when concurrent marks race before the first load resolves", async () => {
+    // Pre-seed the file so ensureLoaded performs a real async read — the window
+    // in which the old (resolved-value-only) cache let each racing mark build its
+    // own map and clobber the others on assignment. keyOf builds the NUL-
+    // separated key, so the source stays plain ASCII.
+    await fs.writeFile(
+      stateFile(),
+      JSON.stringify({ [keyOf(null, "keeper-a", "pre")]: 100 }),
+      "utf8",
+    );
+    const store = new ReadStateStore(dir);
+    // Two marks on DIFFERENT keys, both begun before any load resolves.
+    await Promise.all([
+      store.setLastSeen(null, "keeper-a", "a", 111),
+      store.setLastSeen(null, "keeper-a", "b", 222),
+    ]);
+    const reopened = new ReadStateStore(dir);
+    expect(await reopened.getLastSeen(null, "keeper-a", "pre")).toBe(100);
+    expect(await reopened.getLastSeen(null, "keeper-a", "a")).toBe(111);
+    expect(await reopened.getLastSeen(null, "keeper-a", "b")).toBe(222);
+  });
+
   it("survives a reload (a fresh store reads the persisted map)", async () => {
     await new ReadStateStore(dir).setLastSeen("alice", "keeper-a", "s1", 4242);
     const reopened = new ReadStateStore(dir);

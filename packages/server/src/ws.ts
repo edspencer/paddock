@@ -83,6 +83,14 @@ import {
 } from "./self-mcp.js";
 import type { AttachmentStore } from "./attachments.js";
 import type { QueuedMessageStore } from "./queued-message.js";
+import {
+  type RunProvenanceStore,
+  type RunProvenance,
+  type TurnOrigin,
+  HUMAN_ROOT,
+  SCHEDULED_ROOT,
+  childOf,
+} from "./run-provenance.js";
 
 /**
  * Per-turn token usage as observed on the SDK stream, normalized to camelCase.
@@ -556,6 +564,13 @@ export function makeChatHandler(deps: {
   sweep?: SweepService;
   /** Per-chat queued message persistence (#197). */
   queuedMessage?: QueuedMessageStore;
+  /**
+   * Per-chat provenance sidecar (issue #261 / DD-3, DD-6): records how each chat
+   * was created (origin human/scheduled/spawned + spawn depth) so #262 can
+   * depth-gate spawning and #267 can badge provenance. A1 only carries/persists
+   * the marker — nothing gates on it yet.
+   */
+  runProvenance?: RunProvenanceStore;
 }) {
   // ONE hub shared across every socket this handler serves: it tracks each
   // session's in-flight turn and fans its frames out to whichever socket(s) are
@@ -610,6 +625,17 @@ export function makeChatHandler(deps: {
     const slug = keeperSlugFromAgent(entry.agent) ?? SCRATCH_SLUG;
     let resolvedSession: string | null = entry.sessionId ?? null;
     const turn: TurnHandle = hub.startTurn(slug, null, entry.sessionId);
+    // A1 (#261): a scheduler-fired session wake is a non-human ("scheduled")
+    // turn. Stamp its provenance ONLY if the chat carries none yet — a wake
+    // resumes an EXISTING chat (a human's, or a spawn's, that self-scheduled a
+    // ScheduleWakeup/`/loop`), so `stampIfAbsent` preserves that creation
+    // provenance instead of relabelling it. depth 0: a schedule is a root
+    // trigger, like a human. (No cron scheduler is wired yet — Epic D — this
+    // just makes the path carry the marker.)
+    const stampScheduled = (id: string | null): void => {
+      if (id) void deps.runProvenance?.stampIfAbsent(id, SCHEDULED_ROOT).catch(() => undefined);
+    };
+    stampScheduled(resolvedSession);
     const routing = (): Routing => ({
       projectSlug: slug,
       target: slug,
@@ -655,6 +681,7 @@ export function makeChatHandler(deps: {
         if (m.session_id) {
           resolvedSession = m.session_id;
           turn.setSession(m.session_id);
+          stampScheduled(m.session_id);
         }
         await translate(m as unknown as ChatSDKMessage);
         if (m.type === "result") break;
@@ -711,8 +738,17 @@ export function makeChatHandler(deps: {
     prompt: string;
     driveMode: DriveMode;
     fallbackModel: string;
+    /**
+     * Provenance of this server-initiated turn (issue #261 / DD-3). The self-MCP
+     * write tools pass `spawned` + the child's depth. Persisted for a NEW chat
+     * only (a resume/message keeps the target chat's existing marker). A1 only
+     * carries it — the injected tools are unchanged (still `send_file` only).
+     */
+    origin: TurnOrigin;
+    depth: number;
   }): Promise<string> {
-    const { projectSlug, agentName, workingDir, resume, prompt, driveMode, fallbackModel } = opts;
+    const { projectSlug, agentName, workingDir, resume, prompt, driveMode, fallbackModel, origin, depth } =
+      opts;
     let resolvedSession: string | null = resume ?? null;
     let jobId: string | null = null;
     let attributed = false;
@@ -796,6 +832,13 @@ export function makeChatHandler(deps: {
           if (isNewChat && !attributed) {
             attributed = true;
             await deps.herdctl.attributeRunningSession(m.session_id, agentName).catch(() => undefined);
+            // A1 (#261): stamp the NEW chat's provenance (e.g. create_chat →
+            // spawned, depth = parent+1) so #262 can depth-gate and #267 can
+            // badge it. Only a new chat is stamped here; a resume/message target
+            // (fork kickoff, send_message) keeps its own creation provenance.
+            await deps.runProvenance
+              ?.stamp(m.session_id, { origin, depth })
+              .catch(() => undefined);
           }
           turn.setSession(m.session_id);
           resolveId(m.session_id);
@@ -1237,6 +1280,16 @@ export function makeChatHandler(deps: {
           if (deps.cfg.selfMcpWriteEnabled) {
             const driveModeFor = (p: Awaited<ReturnType<typeof deps.projects.get>>): DriveMode =>
               p.driveMode && isKnownDriveMode(p.driveMode) ? p.driveMode : deps.cfg.keeperDriveMode;
+            // A1 (#261 / DD-3). The HUMAN turn driving these write tools is the
+            // ROOT of any spawn tree (origin human, depth 0), so a chat it spawns
+            // is one hop deeper: origin spawned, depth 1. A1 wires only the human
+            // path — when #262 injects the self-MCP into spawned turns, it will
+            // pass that turn's OWN provenance in place of HUMAN_ROOT so a
+            // grandchild becomes depth 2, and so on. NOTE: this does NOT change
+            // spawn behaviour — the marker is carried/persisted only; the child is
+            // still injected with send_file only (no self-MCP) until #262.
+            const parentProvenance: RunProvenance = HUMAN_ROOT;
+            const spawnedChild: RunProvenance = childOf(parentProvenance);
             writeCtx = {
               currentProjectSlug: slug,
               currentSessionId: () => resolvedSession ?? sessionId ?? null,
@@ -1260,6 +1313,8 @@ export function makeChatHandler(deps: {
                   prompt: composed,
                   driveMode: driveModeFor(p),
                   fallbackModel: p.model,
+                  origin: spawnedChild.origin,
+                  depth: spawnedChild.depth,
                 });
                 return { sessionId: newId };
               },
@@ -1269,6 +1324,10 @@ export function makeChatHandler(deps: {
                   throw new Error(`chat not found: ${sourceSessionId} in project ${projectSlug}`);
                 }
                 const newId = await deps.herdctl.forkSession(p, sourceSessionId, name);
+                // Stamp the forked CHILD's provenance here (not via startAgentTurn,
+                // which only stamps a brand-new `resume:null` chat): a fork with no
+                // kickoff never calls startAgentTurn, so this covers both cases.
+                await deps.runProvenance?.stamp(newId, spawnedChild).catch(() => undefined);
                 if (kickoff && kickoff.trim().length > 0) {
                   await startAgentTurn({
                     projectSlug,
@@ -1285,6 +1344,11 @@ export function makeChatHandler(deps: {
                     prompt: forkKickoffPrompt(kickoff),
                     driveMode: driveModeFor(p),
                     fallbackModel: p.model,
+                    // Resume of the just-forked child: the child was already
+                    // stamped above, so startAgentTurn won't re-stamp; this just
+                    // describes the kickoff run honestly.
+                    origin: spawnedChild.origin,
+                    depth: spawnedChild.depth,
                   });
                 }
                 return { sessionId: newId };
@@ -1302,6 +1366,11 @@ export function makeChatHandler(deps: {
                   prompt: kickoff,
                   driveMode: driveModeFor(p),
                   fallbackModel: p.model,
+                  // Resume of an EXISTING chat: startAgentTurn won't stamp (only
+                  // new chats are stamped), so the target keeps its own creation
+                  // provenance. These values just describe the send_message run.
+                  origin: spawnedChild.origin,
+                  depth: spawnedChild.depth,
                 });
               },
             };
@@ -1347,6 +1416,10 @@ export function makeChatHandler(deps: {
                 await deps.herdctl
                   .attributeRunningSession(m.session_id, agentName)
                   .catch(() => undefined);
+                // A1 (#261): a human-started chat is the ROOT of any spawn tree —
+                // origin human, depth 0. Stamped once at creation; later turns on
+                // this chat never change its recorded provenance.
+                await deps.runProvenance?.stamp(m.session_id, HUMAN_ROOT).catch(() => undefined);
               }
               turn.setSession(m.session_id);
             }

@@ -30,6 +30,7 @@ import { SweepService } from "./sweep.js";
 import { ArchiveStore } from "./archive.js";
 import { ReadStateStore } from "./read-state.js";
 import { QueuedMessageStore } from "./queued-message.js";
+import { RunProvenanceStore } from "./run-provenance.js";
 
 export interface BuiltApp {
   app: FastifyInstance;
@@ -96,6 +97,10 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   const readState = new ReadStateStore(cfg.dataDir);
   // Per-chat queued message sidecar (#197) for server-side auto-send.
   const queuedMessage = new QueuedMessageStore(cfg.dataDir);
+  // Per-chat provenance sidecar (issue #261): records how each chat was created
+  // (origin human/scheduled/spawned + spawn depth) so #262 can depth-gate
+  // spawning and #267 can badge provenance. A1 only carries/persists the marker.
+  const runProvenance = new RunProvenanceStore(cfg.dataDir);
   // Store for files shared via mcp__paddock__send_file (issue #112). Copies live
   // outside any project working dir so they never show up as untracked repo files.
   const attachments = new AttachmentStore(path.join(cfg.dataDir, "attachments"));
@@ -132,7 +137,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   });
   await registerRoutes(app, { projects, herdctl, git, githubAuth, transcriber, archive, readState, attachments, cfg });
 
-  const chatHandler = makeChatHandler({ herdctl, projects, sweep, attachments, queuedMessage, cfg });
+  const chatHandler = makeChatHandler({ herdctl, projects, sweep, attachments, queuedMessage, runProvenance, cfg });
   await app.register(async (scoped) => {
     scoped.get("/ws", { websocket: true }, (socket) => {
       void chatHandler(socket);

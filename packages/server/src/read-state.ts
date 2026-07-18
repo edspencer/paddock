@@ -46,6 +46,14 @@ export class ReadStateStore {
   private readonly stateFile: string;
   /** In-memory map of key -> lastSeenMs (loaded once, written through on change). */
   private state: Map<string, number> | null = null;
+  /**
+   * The in-flight load, cached so concurrent first-callers share ONE read.
+   * Caching only the resolved `state` would let several marks that begin before
+   * the first `fs.readFile` resolves each build their own map and race on the
+   * assignment — a lost update (last writer's map wins, dropping the others'
+   * keys).
+   */
+  private loadPromise: Promise<Map<string, number>> | null = null;
   /** Serialises concurrent writes so the file never interleaves. */
   private writing: Promise<void> = Promise.resolve();
 
@@ -53,24 +61,29 @@ export class ReadStateStore {
     this.stateFile = path.join(dataDir, STATE_FILE);
   }
 
-  /** Load the persisted map (lazily; tolerant of a missing/corrupt file). */
-  private async ensureLoaded(): Promise<Map<string, number>> {
-    if (this.state) return this.state;
-    const map = new Map<string, number>();
-    try {
-      const raw = await fs.readFile(this.stateFile, "utf8");
-      const parsed = JSON.parse(raw) as unknown;
-      // A plain JSON object `{ [key]: number }` — NOT an array (unlike Archive).
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
-          if (typeof v === "number" && Number.isFinite(v)) map.set(k, v);
+  /** Load the persisted map (lazily, deduped; tolerant of a missing/corrupt file). */
+  private ensureLoaded(): Promise<Map<string, number>> {
+    if (this.state) return Promise.resolve(this.state);
+    if (!this.loadPromise) {
+      this.loadPromise = (async () => {
+        const map = new Map<string, number>();
+        try {
+          const raw = await fs.readFile(this.stateFile, "utf8");
+          const parsed = JSON.parse(raw) as unknown;
+          // A plain JSON object `{ [key]: number }` — NOT an array (unlike Archive).
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+              if (typeof v === "number" && Number.isFinite(v)) map.set(k, v);
+            }
+          }
+        } catch {
+          /* missing or unreadable — start empty */
         }
-      }
-    } catch {
-      /* missing or unreadable — start empty */
+        this.state = map;
+        return map;
+      })();
     }
-    this.state = map;
-    return this.state;
+    return this.loadPromise;
   }
 
   /**
