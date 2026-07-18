@@ -25,3 +25,9 @@ The human/scheduled root (depth 0) is unchanged — it keeps today's instance-fl
 (`selfMcpEnabled` / `selfMcpWriteEnabled`). Internally the inline self-MCP builder is
 extracted into one helper shared by the human and spawned paths, and the exact gate is a
 small pure module (`spawn-capability.ts`) with full unit coverage.
+
+Also fixes a latent break this ticket surfaced: the server-initiated spawn path passed
+`triggerType: "agent"`, which is not a member of herdctl's `TriggerTypeSchema` enum, so
+every `create_chat` / `fork_chat` / `send_message` job failed validation and no child was
+ever created. It now passes the valid `"manual"` value (provenance is carried separately
+by the origin+depth marker).

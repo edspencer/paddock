@@ -1036,8 +1036,15 @@ export function makeChatHandler(deps: {
 
     const drivePromise = drive(agentName, {
       prompt,
+      // herdctl's TriggerTypeSchema is a strict enum (manual|schedule|webhook|
+      // chat|discord|slack|web|fork); "agent" is NOT a member, so it fails job
+      // validation and the whole spawn errors out — which is why a spawned child
+      // could never be created against this core version. Use "manual" (the
+      // documented API/CLI-initiated value) until herdctl adds a first-class
+      // `spawned` trigger type (DD-6 / herdctl#377); provenance is carried by
+      // RunProvenanceStore (origin/depth), not by this field.
+      triggerType: "manual",
       resume,
-      triggerType: "agent",
       injectedMcpServers,
       onJobCreated: (id) => {
         jobId = id;
