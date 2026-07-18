@@ -535,6 +535,43 @@ export class HerdctlService {
   }
 
   /**
+   * The runtime state of a project keeper's schedules (issue #266 / D4) — the
+   * live `ScheduleInfo` herdctl tracks (status, `lastRunAt`/`nextRunAt`,
+   * `lastError`) for the schedules Paddock forwarded into the keeper agent. The
+   * D4 UI merges this with the project.yaml declaration (which carries the
+   * Paddock-only `prompt`/`promptFile`/`resume_session`) for the list view. A
+   * schedule-less keeper (or one herdctl hasn't finished arming) yields `[]`;
+   * errors are swallowed to `[]` so the settings pane degrades to the declared
+   * definitions rather than failing to render.
+   */
+  async listAgentSchedules(project: Project): Promise<ScheduleInfo[]> {
+    const agent = keeperAgentName(project.slug);
+    const all = await this.manager.getSchedules().catch(() => [] as ScheduleInfo[]);
+    return all.filter((s) => s.agentName === agent);
+  }
+
+  /**
+   * Enable a previously-disabled schedule at runtime (issue #266 / D4). Flips
+   * herdctl's persisted enable/disable state — which is read, not config, so it
+   * wins over the armed copy — so the schedule fires again immediately and the
+   * change survives a restart. The Paddock half persists `enabled: true` back to
+   * project.yaml (via `ProjectStore.setSchedule`) for round-trip parity. Gated
+   * behind `allowScheduleMutation`.
+   */
+  async enableSchedule(project: Project, name: string): Promise<ScheduleInfo> {
+    return this.manager.enableSchedule(keeperAgentName(project.slug), name);
+  }
+
+  /**
+   * Disable a schedule at runtime (issue #266 / D4) — the inverse of
+   * {@link enableSchedule}. Persisted, so it survives a restart and wins over the
+   * armed config. Gated behind `allowScheduleMutation`.
+   */
+  async disableSchedule(project: Project, name: string): Promise<ScheduleInfo> {
+    return this.manager.disableSchedule(keeperAgentName(project.slug), name);
+  }
+
+  /**
    * Run a slash command (e.g. `/compact`) against an agent's chat session.
    *
    * Unlike {@link chat}, which sends the text as a one-shot prompt via

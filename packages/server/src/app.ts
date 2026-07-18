@@ -140,12 +140,16 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   await app.register(fastifyMultipart, {
     limits: { fileSize: cfg.transcription.maxUploadBytes, files: 1 },
   });
-  await registerRoutes(app, { projects, herdctl, git, githubAuth, transcriber, archive, readState, runProvenance, attachments, cfg });
-
+  // Build the chat handler BEFORE routes so its `fireSchedule` entrypoint (issue
+  // #266 / D4) can back the `POST …/schedules/:name/trigger` route — a "trigger
+  // now" runs the schedule through the same hub path a cron fire uses.
   const chatHandler = makeChatHandler({ herdctl, projects, sweep, attachments, queuedMessage, runProvenance, archive, scheduleSessions, cfg });
+
+  await registerRoutes(app, { projects, herdctl, git, githubAuth, transcriber, archive, readState, runProvenance, attachments, fireSchedule: chatHandler.fireSchedule, cfg });
+
   await app.register(async (scoped) => {
     scoped.get("/ws", { websocket: true }, (socket) => {
-      void chatHandler(socket);
+      void chatHandler.handle(socket);
     });
   });
 
