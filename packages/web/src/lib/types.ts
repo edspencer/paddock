@@ -294,6 +294,55 @@ export interface ScheduleInput {
 }
 
 /**
+ * Per-run cost (P3 seam, DD-4 / X1#378 + X2#271): always `null` today — herdctl
+ * doesn't yet persist per-run token accounting. Shape reserved so the cost column
+ * slots in without a wire change.
+ */
+export interface RunCost {
+  usd: number;
+  estimated: boolean;
+}
+
+/**
+ * One run in the "while you were away" history view (#268 / E3): a herdctl job
+ * record joined with its provenance marker so scheduled + spawned runs report
+ * their true origin (paddock persists `trigger_type:"manual"`, so origin lives in
+ * the provenance store, not the enum).
+ */
+export interface RunSummary {
+  jobId: string;
+  sessionId: string | null;
+  origin: ChatOrigin;
+  depth: number;
+  /** herdctl's persisted trigger type — a secondary signal. */
+  triggerType: string;
+  /** Schedule name that fired the run, when scheduled. */
+  schedule: string | null;
+  /** Parent job id, when forked. */
+  forkedFrom: string | null;
+  status: "completed" | "failed" | "cancelled" | "running" | "pending" | string;
+  exitReason: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+  durationSeconds: number | null;
+  prompt: string | null;
+  summary: string | null;
+  /** True when the run completed after the viewer's last visit (since-last-visit). */
+  isNew: boolean;
+  /** P3 seam — always null today. */
+  cost: RunCost | null;
+}
+
+/** The run-history payload: recent runs + the viewer's since-last-visit state. */
+export interface ProjectRuns {
+  runs: RunSummary[];
+  /** Epoch-ms the viewer last visited the run-history view (0 = never). */
+  lastSeen: number;
+  /** Count of unattended (scheduled + spawned) runs newer than `lastSeen`. */
+  newUnattended: number;
+}
+
+/**
  * A chat's usage as computed server-side from its transcript (issue #152): the
  * last-turn context fill (`contextTokens` / `contextLimit`, issue #77) plus the
  * chat's cumulative lifetime token totals and a ballpark dollar estimate at

@@ -38,6 +38,7 @@ import type { GithubAuth } from "./github-auth.js";
 import type { ArchiveStore } from "./archive.js";
 import type { ReadStateStore } from "./read-state.js";
 import type { RunProvenance, RunProvenanceStore } from "./run-provenance.js";
+import { buildProjectRuns } from "./runs.js";
 import type { PaddockConfig } from "./config.js";
 import { type Transcriber, TranscriptionError } from "./transcribe.js";
 import { readFirstUserText } from "./transcripts.js";
@@ -848,6 +849,67 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     }
   });
 
+  // --- run history: "while you were away" (E3 / #268 / DD-6) ------------------
+  // A project-level view of what ran unattended (scheduled + spawned) plus human
+  // runs, sourced from herdctl job records (listProjectRuns) joined with the A1
+  // provenance marker (#261) for true origin/depth. Cost is a P3 seam (null).
+  //
+  // The since-last-visit digest reuses the read-state watermark (#189): a per-
+  // user "runs last seen" epoch keyed under the keeper agent with the reserved
+  // sentinel session id below (a plain UUID can't contain "__", so it can never
+  // alias a real chat's read-state).
+  app.get<{ Params: { slug: string }; Querystring: { limit?: string } }>(
+    "/api/projects/:slug/runs",
+    async (req, reply) => {
+      try {
+        const project = await projects.get(req.params.slug);
+        const keeper = keeperAgentName(project.slug);
+        const limit = clampRunsLimit(req.query.limit);
+        const [jobs, lastSeen] = await Promise.all([
+          herdctl.listProjectRuns(project, limit).catch(() => []),
+          readState
+            .getLastSeen(readStateUser(req), keeper, RUNS_SEEN_SESSION)
+            .catch(() => 0),
+        ]);
+        // Resolve provenance for each DISTINCT session referenced by a run — a
+        // cheap in-memory map read per id (RunProvenanceStore is lazy-loaded once).
+        const sessionIds = [
+          ...new Set(jobs.map((j) => j.session_id).filter((s): s is string => !!s)),
+        ];
+        const provBySession = new Map<string, RunProvenance>();
+        await Promise.all(
+          sessionIds.map(async (sid) => {
+            const p = await runProvenance.get(sid).catch(() => undefined);
+            if (p) provBySession.set(sid, p);
+          }),
+        );
+        return buildProjectRuns(jobs, provBySession, lastSeen);
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  // Advance the per-user "runs last seen" watermark (clears the since-last-visit
+  // digest). Mirrors the chat-seen endpoint: optional `{ when }`, defaults to now,
+  // monotonic in the store (an older `when` is a no-op).
+  app.post<{ Params: { slug: string }; Body: { when?: number } }>(
+    "/api/projects/:slug/runs/seen",
+    async (req, reply) => {
+      try {
+        const keeper = await agentForSlug(req.params.slug);
+        const when =
+          typeof req.body?.when === "number" && Number.isFinite(req.body.when)
+            ? req.body.when
+            : Date.now();
+        await readState.setLastSeen(readStateUser(req), keeper, RUNS_SEEN_SESSION, when);
+        return reply.code(200).send({ ok: true, lastSeen: when });
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
   // Bulk context-window usage for ALL of a project's chats, keyed by session id
   // (issue #116). This is the expensive part the chat list needs for its per-chat
   // usage rings (issue #77) — each session's fill is read by streaming its
@@ -1351,6 +1413,25 @@ function toChatDto(
 
 /** Claude Code's own preview cap (mirrors extractFirstMessagePreview). */
 const PREVIEW_MAX = 100;
+
+/**
+ * Reserved read-state session id for the per-project, per-user "runs last seen"
+ * watermark (the since-last-visit digest, #268). A real Claude Code session id is
+ * a UUID (`/^[0-9a-f-]+$/`), so the double-underscore sentinel can never collide
+ * with one — the watermark keys cleanly alongside per-chat read-state.
+ */
+const RUNS_SEEN_SESSION = "__runs__";
+
+/** Default + cap for the run-history page size. */
+const RUNS_LIMIT_DEFAULT = 100;
+const RUNS_LIMIT_MAX = 500;
+
+/** Parse + clamp the `?limit=` query for the run-history endpoint. */
+function clampRunsLimit(raw: string | undefined): number {
+  const n = raw === undefined ? RUNS_LIMIT_DEFAULT : Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n <= 0) return RUNS_LIMIT_DEFAULT;
+  return Math.min(n, RUNS_LIMIT_MAX);
+}
 
 /**
  * Build the chat DTOs for a PROJECT's sessions, cleaning names polluted by the

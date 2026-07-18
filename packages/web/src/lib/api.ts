@@ -19,6 +19,7 @@ import {
   type Project,
   type ProjectDetail,
   type ProjectFile,
+  type ProjectRuns,
   type Schedule,
   type ScheduleInput,
   SCRATCH_SLUG,
@@ -110,6 +111,32 @@ export const api = {
       method: "POST",
       body: JSON.stringify(when !== undefined ? { when } : {}),
     });
+  },
+
+  /**
+   * Run history for a project (#268 / E3): recent herdctl runs joined with their
+   * provenance (human / scheduled / spawned) plus the viewer's since-last-visit
+   * watermark + a count of new unattended runs. Powers the "while you were away"
+   * tab. `limit` caps the page (server default 100).
+   */
+  async projectRuns(slug: string, limit?: number): Promise<ProjectRuns> {
+    const q = limit !== undefined ? `?limit=${encodeURIComponent(limit)}` : "";
+    return req<ProjectRuns>(`/api/projects/${encodeURIComponent(slug)}/runs${q}`);
+  },
+
+  /**
+   * Advance the "runs last seen" watermark for a project (#268): clears the
+   * since-last-visit digest. Fire-and-forget; `when` defaults to the server's now
+   * and the store is monotonic (an older value is a no-op).
+   */
+  async markRunsSeen(slug: string, when?: number): Promise<void> {
+    await req<{ ok: boolean; lastSeen: number }>(
+      `/api/projects/${encodeURIComponent(slug)}/runs/seen`,
+      {
+        method: "POST",
+        body: JSON.stringify(when !== undefined ? { when } : {}),
+      },
+    );
   },
 
   /** Selectable models + the keeper/sweeper defaults (drives the model picker). */

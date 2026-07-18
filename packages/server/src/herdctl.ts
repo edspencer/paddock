@@ -57,6 +57,8 @@ import {
   type SessionWakeHandler,
   type ScheduleTriggerHandler,
   type ScheduleInfo,
+  listJobs,
+  type JobMetadata,
 } from "@herdctl/core";
 import { createSDKMessageHandler, type SDKMessage as ChatSDKMessage } from "@herdctl/chat";
 import { promises as fs } from "node:fs";
@@ -794,6 +796,33 @@ export class HerdctlService {
       }),
     );
     return out;
+  }
+
+  /**
+   * The raw herdctl job records for one project's keeper agent, most-recent
+   * first — the data source for the "while you were away" run-history view (E3 /
+   * #268 / DD-6). Each `trigger()` (batch drive mode) turn writes one
+   * `job-*.yaml` carrying `trigger_type`, `status`, `started_at`/`finished_at`,
+   * `duration_seconds`, `session_id`, `schedule` and `forked_from`; this reads
+   * them via core's `listJobs` (importable from `@herdctl/core`, sorted by
+   * `started_at` descending) filtered to `keeper-<slug>`, so scratch/sweeper
+   * records are excluded.
+   *
+   * The true human/scheduled/spawned provenance is carried by Paddock's
+   * {@link RunProvenanceStore} (origin/depth keyed by `session_id`), NOT by
+   * `trigger_type` — paddock-initiated turns still write `trigger_type:"manual"`
+   * (see ws.ts). The caller joins the two.
+   *
+   * Caveat (documented at {@link lastTurnCompletedAt}): session-mode turns
+   * (`openChatSession`) write NO job record, so runs driven that way don't
+   * appear here — only batch `trigger()` turns and paddock's synthetic adoption
+   * records do. Cost columns (DD-4) are P3 and not yet on the record.
+   */
+  async listProjectRuns(project: Project, limit = 100): Promise<JobMetadata[]> {
+    const jobsDir = path.join(this.cfg.stateDir, "jobs");
+    const agent = keeperAgentName(project.slug);
+    const { jobs } = await listJobs(jobsDir, { agent }).catch(() => ({ jobs: [], errors: 0 }));
+    return limit > 0 ? jobs.slice(0, limit) : jobs;
   }
 
   /** The working directory used by one-off / scratch chats. */
