@@ -312,6 +312,78 @@ export interface ScheduleInput {
   enabled?: boolean;
 }
 
+// --- Event hooks (Epic G / G4) ---------------------------------------------
+
+/** The lifecycle event a hook fires on. v1 wires `onArchive` (mirrors the server). */
+export type HookEvent = "onArchive";
+
+/** The Claude Code permission mode a hook agent's turns run under. */
+export type HookPermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "plan";
+
+/**
+ * A hook's capability set (GG-1) — projected verbatim onto the hook's own herdctl
+ * agent tool config, so the registered agent enforces exactly these tools. Absent /
+ * empty `allowedTools` = a tool-less hook (it can only think + return text).
+ */
+export interface HookCapabilities {
+  /** The tools the hook agent may use. Omit / `[]` = tool-less. */
+  allowedTools?: string[];
+  /** Tools explicitly denied even if otherwise allowed. */
+  deniedTools?: string[];
+  /** The permission mode the hook agent's turns run under. */
+  permissionMode?: HookPermissionMode;
+  /** Model override for the hook agent (defaults to the keeper default when absent). */
+  model?: string;
+  /** Max agent turns — bounds a runaway hook (server default 30). */
+  maxTurns?: number;
+}
+
+/**
+ * A project's event hook (Epic G / G4) — the project.yaml declaration (event +
+ * capability set + prompt) plus the herdctl agent it registers as. Drives the
+ * Hooks tab. Enabling/disabling is just editing `enabled` (GG-3); new hooks default
+ * `enabled: false` so nothing fires the instant one is created.
+ */
+export interface Hook {
+  /** The hook's name — the project.yaml map key + the `<name>` in its agent name. */
+  name: string;
+  /** The herdctl agent this hook registers as (`hook-<slug>-<name>`). */
+  agentName: string;
+  /** The lifecycle event this hook fires on. */
+  event: HookEvent;
+  /** The capability set granted to the hook's agent. Absent = tool-less. */
+  capabilities?: HookCapabilities;
+  /** The inline prompt the hook turn runs (a `promptFile` wins over this). */
+  prompt?: string;
+  /** A `.paddock/hooks/*.md` prompt file, read fresh at fire time. */
+  promptFile?: string;
+  /** Whether the hook is armed. */
+  enabled?: boolean;
+}
+
+/** The write shape for creating/replacing a hook (the server sanitises it). */
+export interface HookInput {
+  event: HookEvent;
+  capabilities?: HookCapabilities;
+  prompt?: string;
+  promptFile?: string;
+  enabled?: boolean;
+}
+
+/** One tool a hook may be granted, for the capability picker (server catalog). */
+export interface GrantableTool {
+  name: string;
+  group: "read" | "write" | "web" | "orchestration" | "browser";
+  description: string;
+}
+
+/** The Hooks tab's list payload: the hooks + the picker's catalog (tools + events). */
+export interface HooksResponse {
+  hooks: Hook[];
+  grantableTools: GrantableTool[];
+  events: HookEvent[];
+}
+
 /**
  * Per-run cost (P3 seam, DD-4 / X1#378 + X2#271): always `null` today — herdctl
  * doesn't yet persist per-run token accounting. Shape reserved so the cost column
