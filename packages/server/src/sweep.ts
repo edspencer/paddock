@@ -64,6 +64,14 @@ interface Watermark {
 const STATE_FILE = "sweep-state.json";
 const DEFAULT_MIN_INTERVAL_MS = 5 * 60 * 1000;
 
+/**
+ * Optional per-project sweeper-instruction file (issue #G2). Project-relative
+ * (resolved inside the project's metadata dir, the sweeper's cwd); git-tracked
+ * and keeper-editable. When present, its content is appended to the sweeper's
+ * curation prompt; when absent, sweep behaviour is unchanged.
+ */
+const SWEEP_INSTRUCTIONS_FILE = ".paddock/hooks/sweep.md";
+
 export class SweepService {
   private readonly herdctl: HerdctlService;
   private readonly projects: ProjectStore;
@@ -194,11 +202,12 @@ export class SweepService {
     project: Project,
     sessions: Awaited<ReturnType<HerdctlService["recentSessions"]>>,
   ): Promise<void> {
-    const [overview, changelog, claudeMd, digest] = await Promise.all([
+    const [overview, changelog, claudeMd, digest, extraInstructions] = await Promise.all([
       this.projects.readOverview(project.slug),
       this.projects.readFile(project.slug, "CHANGELOG.md").catch(() => ""),
       this.projects.readClaudeMd(project.slug).catch(() => ""),
       this.buildDigest(project, sessions),
+      this.readSweepInstructions(project.slug),
     ]);
 
     const prompt = this.curationPrompt({
@@ -207,6 +216,7 @@ export class SweepService {
       changelog,
       claudeMd,
       digest,
+      extraInstructions,
     });
 
     const { result, text } = await this.herdctl.runSweeper(project.slug, prompt);
@@ -297,6 +307,29 @@ export class SweepService {
     return parts.length > 0 ? parts.join("\n\n") : "(no readable recent transcripts)";
   }
 
+  /**
+   * Read the OPTIONAL per-project sweeper-instruction file
+   * (`.paddock/hooks/sweep.md`, issue #G2) — extra curator guidance a
+   * user/keeper commits to shape THIS project's OVERVIEW/CHANGELOG curation.
+   *
+   * The file is git-tracked and keeper-editable, and lives alongside the
+   * project's `project.yaml`/OVERVIEW.md/CHANGELOG.md in the metadata dir — the
+   * same directory the sweeper agent runs in (its cwd) and that `readFile`
+   * resolves against (traversal-guarded). When absent or blank the sweep behaves
+   * exactly as before (no append). Never throws: a read error is treated as "no
+   * extra instructions" so curation is never broken by a bad/removed file.
+   *
+   * This is a sweeper-LOCAL convenience: it only appends text to the tool-less
+   * curator's prompt (shaping its output), granting no new capability. It is
+   * deliberately NOT routed through the generic hook framework.
+   */
+  private async readSweepInstructions(slug: string): Promise<string> {
+    const raw = await this.projects
+      .readFile(slug, SWEEP_INSTRUCTIONS_FILE)
+      .catch(() => "");
+    return raw.trim();
+  }
+
   /** The curation prompt handed to the sweeper agent. */
   private curationPrompt(args: {
     project: Project;
@@ -304,8 +337,10 @@ export class SweepService {
     changelog: string;
     claudeMd: string;
     digest: string;
+    /** Optional per-project curator instructions (`.paddock/hooks/sweep.md`). */
+    extraInstructions: string;
   }): string {
-    const { project, overview, changelog, claudeMd, digest } = args;
+    const { project, overview, changelog, claudeMd, digest, extraInstructions } = args;
     const today = new Date().toISOString().slice(0, 10);
     return [
       `Project: ${project.name} (slug: ${project.slug})`,
@@ -362,6 +397,19 @@ export class SweepService {
         "re-described, pinned, or contradicted here — a past chat mentioning a " +
         "specific port or a localhost URL is NOT a project fact to record. Capture " +
         "what the project IS plus its decisions, open questions, and next steps.",
+      "",
+      // Optional per-project curator instructions (`.paddock/hooks/sweep.md`,
+      // issue #G2): appended verbatim so a project can steer its own curation
+      // (e.g. "always keep a Glossary section", "note API changes prominently").
+      // These refine HOW to curate; they do NOT override the literal output
+      // markers or the box-conventions rule above.
+      extraInstructions
+        ? "=== EXTRA PROJECT-SPECIFIC CURATOR INSTRUCTIONS ===\n" +
+          "The following instructions were provided by this project to guide its " +
+          "curation. Honor them while still obeying the output format and rules " +
+          "above.\n\n" +
+          extraInstructions
+        : "",
       "",
       "Be factual and terse; do not invent details not supported by the activity.",
     ]
