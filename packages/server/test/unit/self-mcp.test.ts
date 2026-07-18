@@ -299,6 +299,24 @@ describe("self-management MCP (Phase 2, write tools)", () => {
     expect(write.calls.createChat).toHaveLength(0);
   });
 
+  it("create_chat description guides a concise 3–5 word title and names both preload files (C2 / #264)", () => {
+    const def = selfMcpServerDef(fakeContext(), fakeWrite());
+    const createChat = def.tools.find((t) => t.name === "create_chat");
+    expect(createChat).toBeDefined();
+
+    // (2) short-title guidance in the tool description + the `name` schema.
+    expect(createChat!.description).toMatch(/3[–-]5 word/);
+    const props = createChat!.inputSchema.properties as Record<string, { description?: string }>;
+    expect(props.name.description).toMatch(/3[–-]5 word/);
+
+    // (3) preload description parity: names OVERVIEW.md AND CHANGELOG.md (the
+    // behaviour already injects both — the wording was stale).
+    expect(createChat!.description).toContain("OVERVIEW.md");
+    expect(createChat!.description).toContain("CHANGELOG.md");
+    expect(props.preload_context.description).toContain("OVERVIEW.md");
+    expect(props.preload_context.description).toContain("CHANGELOG.md");
+  });
+
   it("fork_chat defaults the source to currentSessionId()", async () => {
     const write = fakeWrite();
     const { json } = await callWrite(write, "fork_chat", { prompt: "explore option A" });
