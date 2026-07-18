@@ -225,6 +225,23 @@ describe("integration: schedules management API (issue #266)", () => {
     expect(chats.map((c) => c.sessionId)).toContain(sessionId);
     expect(chats[0]!.provenance).toEqual({ origin: "scheduled", depth: 0 });
 
+    // Per-MESSAGE provenance (#290): the schedule-injected kickoff turn carries a
+    // `schedule` sender in the message DTO — proving the record→join→DTO path (the
+    // per-message analog of the `scheduled` chat badge above).
+    type DtoMsg = { role: string; content: string; sender?: { kind: string; name?: string } };
+    const msgs = await poll(
+      async () => {
+        const r = await t.app.inject({
+          method: "GET",
+          url: `/api/projects/${project.slug}/chats/${sessionId}/messages`,
+        });
+        return (r.json() as { messages: DtoMsg[] }).messages;
+      },
+      (ms) => ms.some((m) => m.role === "user" && m.content.includes("run me now")),
+    );
+    const injected = msgs.find((m) => m.role === "user" && m.content.includes("run me now"));
+    expect(injected?.sender).toEqual({ kind: "schedule", name: "manual", project: project.slug });
+
     // A trigger for a schedule that doesn't exist is a 404.
     const missing = await t.app.inject({
       method: "POST",

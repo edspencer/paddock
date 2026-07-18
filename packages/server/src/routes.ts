@@ -38,6 +38,7 @@ import type { GithubAuth } from "./github-auth.js";
 import type { ArchiveStore } from "./archive.js";
 import type { ReadStateStore } from "./read-state.js";
 import type { RunProvenance, RunProvenanceStore } from "./run-provenance.js";
+import { applyMessageProvenance, type MessageProvenanceStore } from "./message-provenance.js";
 import { buildProjectRuns } from "./runs.js";
 import type { PaddockConfig } from "./config.js";
 import { type Transcriber, TranscriptionError } from "./transcribe.js";
@@ -85,6 +86,12 @@ export interface RouteDeps {
   archive: ArchiveStore;
   readState: ReadStateStore;
   runProvenance: RunProvenanceStore;
+  /**
+   * Per-MESSAGE provenance sidecar (issue #290): who injected each machine-added
+   * turn. Joined into a chat's message DTO so the history can attribute injected
+   * turns ("↩ sent by …" / "⏰ scheduled by …"). Absence ⇒ human (the default).
+   */
+  messageProvenance: MessageProvenanceStore;
   attachments: AttachmentStore;
   /**
    * Manually fire a project's schedule NOW (issue #266 / D4), backing the
@@ -107,6 +114,7 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     archive,
     readState,
     runProvenance,
+    messageProvenance,
     attachments,
     fireSchedule,
     cfg,
@@ -967,9 +975,12 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
         const messages = await herdctl
           .sessionMessages(agent, req.params.sessionId)
           .catch(() => []);
-        return {
-          messages: await enrichWithToolDetails(projectDir, req.params.sessionId, messages),
-        };
+        const enriched = await enrichWithToolDetails(projectDir, req.params.sessionId, messages);
+        // Per-message provenance (issue #290): attribute machine-injected turns to
+        // their sender (chat / schedule) by joining the ordered injection markers.
+        // Human-typed turns match no marker and stay unlabelled (the default).
+        const markers = await messageProvenance.list(req.params.sessionId).catch(() => []);
+        return { messages: applyMessageProvenance(enriched, markers) };
       } catch (err) {
         return sendProjectError(reply, err);
       }

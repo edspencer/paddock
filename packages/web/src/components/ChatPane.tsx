@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { Link } from "react-router-dom";
 import { chatClient, type ConnectionState, type ToolCall } from "../lib/ws";
 import { Markdown } from "./Markdown";
 import { DictationButton } from "./DictationButton";
@@ -41,6 +42,7 @@ import type {
   ChatUsage,
   EditDiff,
   HistoryMessage,
+  MessageSender,
   ModelInfo,
   ReadInfo,
   SearchInfo,
@@ -66,7 +68,9 @@ import { mcpToolInfo, parsePaddockManage, paddockManageSummary } from "../lib/mc
 
 /** One rendered item in the transcript. Assistant boundaries split bubbles. */
 type Turn =
-  | { kind: "user"; id: string; content: string }
+  // `sender` present ⇒ a machine injected this turn (#290); it renders a subtle
+  // attribution above the bubble. Absent ⇒ human-typed (no attribution).
+  | { kind: "user"; id: string; content: string; sender?: MessageSender }
   | { kind: "assistant"; id: string; content: string; streaming: boolean }
   | { kind: "tool"; id: string; tool: ToolCall }
   | { kind: "file"; id: string; file: SentFile }
@@ -378,6 +382,13 @@ export function ChatPane({
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
+  // Timestamps of `chat:injected` frames already rendered live (#290), so a hub
+  // REPLAY of a buffered frame (reconnect/re-attach re-delivers it with the SAME
+  // server-stamped timestamp) is dropped, while a genuinely NEW injection — even
+  // one whose text is byte-identical to an earlier one — carries a fresh timestamp
+  // and still renders. Keying on content alone would have collapsed a real second
+  // identical injection into the first (Warren #292).
+  const seenInjectionsRef = useRef<Set<string>>(new Set());
 
   // --- scroll management: only auto-scroll when pinned to the bottom ---------
   const onScroll = useCallback(() => {
@@ -825,6 +836,26 @@ export function ChatPane({
         // The server auto-sent (or cleared a stale copy of) our queued message
         // (#245). Reflect it: render the sent bubble + clear the queue toolbar.
         onQueuedFlushedRef.current(text);
+      },
+      onInjected: (inj, meta) => {
+        // A machine injected a user turn into THIS open chat (#290 Part 2):
+        // another chat send_message'd / a schedule fired. Render its bubble live
+        // (with the sender attribution) so it no longer takes a refresh to appear.
+        if (!framesBelong(meta)) return;
+        if (meta.jobId) armJob(meta.jobId);
+        if (meta.sessionId) adoptSession(meta.sessionId);
+        // Dedup a hub REPLAY (which re-delivers the buffered frame verbatim,
+        // same server timestamp) while still rendering a genuinely new injection
+        // — even one with identical text — since that carries a fresh timestamp.
+        // `content` rides in the key too so a clock with only second-granularity
+        // can't merge two distinct same-second injections.
+        const key = `${inj.timestamp} ${inj.content}`;
+        if (seenInjectionsRef.current.has(key)) return;
+        seenInjectionsRef.current.add(key);
+        setTurns((prev) => [
+          ...sealStreaming(prev),
+          { kind: "user", id: nextId(), content: inj.content, sender: inj.sender },
+        ]);
       },
     });
     return () => {
@@ -1518,6 +1549,59 @@ function CompactBoundary({ summary }: { summary: string }) {
   );
 }
 
+/**
+ * A subtle per-message attribution shown above a machine-injected user bubble
+ * (issue #290) — the per-MESSAGE analog of the chat-list ProvenanceBadge (#267).
+ * A human-typed turn renders none of this (its `sender` is absent), so the
+ * transcript stays quiet and only the "who added this?" cases stand out:
+ *
+ *  - `chat`     — "↩ sent by <name>", linking to the sending chat so you can jump
+ *                 to whoever injected it (a manager's report-back, a peer send).
+ *  - `schedule` — "⏰ scheduled by <name>" (a schedule fired this turn).
+ *  - `agent`    — "↩ sent by an agent" (a machine turn with no richer identity).
+ */
+function SenderAttribution({ sender }: { sender: MessageSender }) {
+  const base =
+    "mb-1 flex items-center gap-1 text-[11px] italic text-ink-subtle/80 dark:text-ink-dark/60";
+  if (sender.kind === "schedule") {
+    return (
+      <div className={base} data-sender="schedule">
+        <span aria-hidden>⏰</span>
+        <span>
+          scheduled by <span className="font-medium not-italic">{sender.name}</span>
+        </span>
+      </div>
+    );
+  }
+  if (sender.kind === "agent") {
+    return (
+      <div className={base} data-sender="agent">
+        <span aria-hidden>↩</span>
+        <span>sent by an agent</span>
+      </div>
+    );
+  }
+  // chat — link to the sending chat so "who sent this?" is one click away.
+  const label = sender.name?.trim() || sender.sessionId.slice(0, 8);
+  return (
+    <div className={base} data-sender="chat">
+      <span aria-hidden>↩</span>
+      <span>
+        sent by{" "}
+        <Link
+          to={`/projects/${encodeURIComponent(sender.project)}/chat/${encodeURIComponent(
+            sender.sessionId,
+          )}`}
+          className="font-medium not-italic text-accent hover:underline"
+          title={`Open ${label} in ${sender.project}`}
+        >
+          {label}
+        </Link>
+      </span>
+    </div>
+  );
+}
+
 // Memoized so unchanged turns bail out of reconciliation when ChatPane state that
 // is independent of the transcript churns — composer `draft` (every keystroke),
 // streaming appends, the slash menu, connection/model state. `turns` are rebuilt
@@ -1527,7 +1611,8 @@ function CompactBoundary({ summary }: { summary: string }) {
 const TurnView = memo(function TurnView({ turn }: { turn: Turn }) {
   if (turn.kind === "user") {
     return (
-      <div className="flex animate-fade-in justify-end">
+      <div className="flex animate-fade-in flex-col items-end">
+        {turn.sender ? <SenderAttribution sender={turn.sender} /> : null}
         <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-accent px-4 py-2.5 text-sm text-white shadow-sm">
           {turn.content}
         </div>
@@ -2186,7 +2271,9 @@ function historyToTurn(m: HistoryMessage, id: string): Turn {
   if (isTaskNotification(m.content)) {
     return { kind: "notification", id, summary: taskNotificationSummary(m.content) };
   }
-  return { kind: "user", id, content: m.content };
+  // A machine-injected user turn (#290) carries a `sender`; a human message does
+  // not. Thread it through so the bubble renders "↩ sent by …" / "⏰ scheduled by …".
+  return { kind: "user", id, content: m.content, ...(m.sender ? { sender: m.sender } : {}) };
 }
 
 /**

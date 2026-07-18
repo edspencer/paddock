@@ -27,6 +27,7 @@ import { createInterface } from "node:readline";
 import path from "node:path";
 import { parseSessionMessages, type ChatMessage, type ChatToolCall } from "@herdctl/core";
 import { projectChatsDir } from "./transcripts.js";
+import type { MessageSender } from "./message-provenance.js";
 import {
   readSessionTokenUsage,
   readSessionTokenUsageFile,
@@ -284,6 +285,8 @@ export type EnrichedMessage = Omit<ChatMessage, "toolCall"> & {
   /** True when this `<task-notification>` was folded into a background tool block
    *  (issue #230), so the web suppresses the standalone status pill. */
   bgConsumed?: boolean;
+  /** Who injected this machine-added turn (issue #290); absent ⇒ human-typed. */
+  sender?: MessageSender;
 };
 
 /**

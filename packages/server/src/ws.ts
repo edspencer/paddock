@@ -29,6 +29,13 @@
  *         //          contextTokens = input + cacheRead + cacheCreation;
  *         //          contextLimit  = getContextLimit(model). Stale-by-one-turn
  *         //          by design (it reflects the just-completed turn's input).
+ *     { type: "chat:injected",         payload: { projectSlug, sessionId, jobId,
+ *                                                  sender, content, timestamp } }
+ *         // A machine-injected user turn (issue #290 Part 2): another chat
+ *         // send_message'd / a schedule fired into this session. Emitted so a
+ *         // client already viewing the recipient chat renders the injected user
+ *         // bubble LIVE (with its sender attribution) instead of only seeing the
+ *         // assistant reply and needing a refresh. `sender` is the MessageSender.
  *     { type: "chat:error",            payload: { projectSlug, error } }
  *     { type: "pong" }
  *
@@ -96,6 +103,7 @@ import {
   SCHEDULED_ROOT,
   childOf,
 } from "./run-provenance.js";
+import type { MessageProvenanceStore, MessageSender } from "./message-provenance.js";
 import { resolveMaxSpawnDepth, spawnedSelfMcpDecision } from "./spawn-capability.js";
 
 /**
@@ -578,6 +586,14 @@ export function makeChatHandler(deps: {
    */
   runProvenance?: RunProvenanceStore;
   /**
+   * Per-MESSAGE provenance sidecar (issue #290): records WHO injected each
+   * machine-added turn (send_message / schedule / spawn kickoff) keyed by the
+   * TARGET session, so the chat history can attribute injected turns. Optional so
+   * existing tests need not supply it; absent ⇒ injected turns just render as
+   * unlabelled user bubbles (today's behaviour).
+   */
+  messageProvenance?: MessageProvenanceStore;
+  /**
    * Per-chat archived-flag sidecar (#95). Used by the self-MCP archive_chat /
    * unarchive_chat write tools (#263) so a keeper can file a chat away — most
    * usefully ITSELF, powering the "work → archive myself on success" convention.
@@ -811,6 +827,8 @@ export function makeChatHandler(deps: {
         origin: "scheduled",
         depth: 0,
         maxSpawnDepth: resolveMaxSpawnDepth(project.maxSpawnDepth, deps.cfg.maxSpawnDepth),
+        // #290: attribute the injected turn to the schedule that fired it.
+        sender: { kind: "schedule", name: scheduleName, project: slug },
       });
       // First fire of an accreting schedule: remember the chat it created so the
       // next fire resumes THIS transcript (a resume already had an id).
@@ -965,6 +983,23 @@ export function makeChatHandler(deps: {
       // A child spawned from this chat is one hop deeper (origin spawned, depth+1);
       // see the method doc for why `parentProvenance` (not always HUMAN_ROOT).
       const spawnedChild: RunProvenance = childOf(parentProvenance);
+      // #290: the SENDER of any message these tools inject is THIS chat (the one
+      // calling the tool). Resolve its display name at injection time (best effort)
+      // so the recipient's history can say "↩ sent by <name>" and deep-link back.
+      const senderForCurrentChat = async (): Promise<MessageSender> => {
+        const sid = currentSessionId();
+        if (!sid) return { kind: "agent" };
+        let name: string | undefined;
+        try {
+          const cur = await deps.projects.get(currentProjectSlug);
+          const sessions = await deps.herdctl.listSessions(cur);
+          const found = sessions.find((s) => s.sessionId === sid);
+          name = found?.customName ?? found?.autoName ?? undefined;
+        } catch {
+          /* name is best-effort — the link still resolves without it */
+        }
+        return { kind: "chat", project: currentProjectSlug, sessionId: sid, name };
+      };
       writeCtx = {
         currentProjectSlug,
         currentSessionId,
@@ -986,6 +1021,7 @@ export function makeChatHandler(deps: {
             origin: spawnedChild.origin,
             depth: spawnedChild.depth,
             maxSpawnDepth: maxSpawnDepthFor(p),
+            sender: await senderForCurrentChat(),
           });
           // Apply the caller-supplied display name (C2 / #264). Without this the
           // `name` param was silently dropped and the title fell back to
@@ -1030,6 +1066,7 @@ export function makeChatHandler(deps: {
               origin: spawnedChild.origin,
               depth: spawnedChild.depth,
               maxSpawnDepth: maxSpawnDepthFor(p),
+              sender: await senderForCurrentChat(),
             });
           }
           return { sessionId: newId };
@@ -1054,6 +1091,10 @@ export function makeChatHandler(deps: {
             origin: spawnedChild.origin,
             depth: spawnedChild.depth,
             maxSpawnDepth: maxSpawnDepthFor(p),
+            // #290: this injects into an EXISTING chat, so startAgentTurn also
+            // emits a live `chat:injected` frame — the recipient (if open) sees
+            // the "↩ sent by <this chat>" user bubble without a refresh (Part 2).
+            sender: await senderForCurrentChat(),
           });
         },
         // C1 (#263). Archive/unarchive is presentational metadata only — no turn
@@ -1123,8 +1164,18 @@ export function makeChatHandler(deps: {
      * else instance default). Gates whether this turn receives the self-MCP.
      */
     maxSpawnDepth: number;
+    /**
+     * WHO caused this injected turn (issue #290). Present for a machine injection
+     * (another chat `send_message` / a schedule fire / a spawn kickoff); absent for
+     * a turn with no attributable non-human sender. When set, the injected prompt is
+     * recorded in the per-message provenance store (so the chat history can label
+     * it) and — for an injection into an EXISTING chat (`resume`) — a `chat:injected`
+     * frame is emitted so a client already viewing the recipient sees the user turn
+     * live, not just the assistant reply (Part 2).
+     */
+    sender?: MessageSender;
   }): Promise<string> {
-    const { projectSlug, agentName, workingDir, resume, prompt, driveMode, fallbackModel, origin, depth, maxSpawnDepth } =
+    const { projectSlug, agentName, workingDir, resume, prompt, driveMode, fallbackModel, origin, depth, maxSpawnDepth, sender } =
       opts;
     let resolvedSession: string | null = resume ?? null;
     let jobId: string | null = null;
@@ -1139,6 +1190,38 @@ export function makeChatHandler(deps: {
       sessionId: resolvedSession,
       jobId,
     });
+
+    // Per-message provenance (issue #290). Once the TARGET session id is known,
+    // record the injected prompt + its sender so a later transcript load can
+    // attribute the machine-added user turn (see message-provenance.ts). For an
+    // injection into an EXISTING chat we ALSO emit a `chat:injected` frame so a
+    // client currently viewing the recipient renders the injected user bubble live
+    // (Part 2) — a fresh/new chat has no established viewer, and opening it later
+    // hydrates the labelled turn from history, so we skip the live emit there to
+    // avoid a replay double-add. Fires at most once per turn.
+    let injectionHandled = false;
+    const handleInjection = (id: string): void => {
+      if (injectionHandled || !sender) return;
+      injectionHandled = true;
+      void deps.messageProvenance?.record(id, sender, prompt).catch(() => undefined);
+      if (resume !== null) {
+        turn.emit({
+          type: "chat:injected",
+          payload: {
+            projectSlug,
+            target: projectSlug,
+            sessionId: id,
+            jobId,
+            sender,
+            content: prompt,
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+    };
+    // A resume already knows its target session id — stamp/emit up front so the
+    // injected bubble precedes the assistant's streamed reply.
+    if (resume !== null) handleInjection(resume);
     const translate = createSDKMessageHandler({
       onText: (chunk) => {
         if (chunk) turn.emit({ type: "chat:response", payload: { ...routing(), chunk } });
@@ -1257,6 +1340,10 @@ export function makeChatHandler(deps: {
             await deps.runProvenance
               ?.stamp(m.session_id, { origin, depth })
               .catch(() => undefined);
+            // #290: record the kickoff's sender for the NEW chat now that its id
+            // is known (no live emit — see handleInjection; the labelled turn
+            // hydrates from history when the chat is opened).
+            handleInjection(m.session_id);
           }
           turn.setSession(m.session_id);
           resolveId(m.session_id);
