@@ -357,10 +357,62 @@
   @apply text-emerald-700 dark:text-emerald-400;
 }
 
-/* The blinking caret shown while assistant text is streaming in. */
+/* Continuous "working" affordances (the streaming caret, the context-ring and
+   in-flight spinners) run for the ENTIRE duration of a turn. A smooth 60fps
+   animation makes the tab hand a fresh frame to the OS compositor every ~16ms;
+   on a large/Retina display that alone pins macOS WindowServer at ~50% for the
+   whole turn, even though no JS or DOM work is happening (measured: 0 long-tasks,
+   ~1 DOM mutation/sec while streaming — the animations are the only continuous
+   work). The rules below keep the same affordances but slash the frames handed
+   to the compositor:
+     - `spin-eco` steps the rotation to ~10 discrete frames/sec (still reads as a
+       spinner) and `will-change` isolates it on its own cheap compositor layer.
+     - the caret hard-blinks (step-end, ~1/sec) instead of a smooth opacity pulse.
+   `prefers-reduced-motion` drops them; a backgrounded tab pauses them. */
+@keyframes spin-eco {
+  to {
+    transform: rotate(1turn);
+  }
+}
+@keyframes caret-blink {
+  0%,
+  49.9% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
 @layer utilities {
+  .spin-eco {
+    animation: spin-eco 1.2s steps(12, end) infinite;
+    will-change: transform;
+  }
   .streaming-caret::after {
     content: "▍";
-    @apply ml-0.5 inline-block animate-pulse text-accent;
+    @apply ml-0.5 inline-block text-accent;
+    animation: caret-blink 1s step-end infinite;
   }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin-eco,
+  .streaming-caret::after,
+  .animate-spin,
+  .animate-ping,
+  .animate-pulse,
+  .animate-bounce {
+    animation: none !important;
+  }
+  .streaming-caret::after {
+    opacity: 1;
+  }
+}
+
+/* A chat left streaming in an unfocused tab shouldn't keep ticking these; hidden
+   tabs aren't composited, but this also frees the renderer while you're away. */
+[data-tab-hidden="true"] .spin-eco,
+[data-tab-hidden="true"] .streaming-caret::after {
+  animation-play-state: paused;
 }

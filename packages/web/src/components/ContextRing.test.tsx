@@ -45,7 +45,7 @@ describe("ContextRing", () => {
     const svg = container.querySelector("svg")!;
     // Still renders (unlike the idle no-usage case) and spins.
     expect(svg).not.toBeNull();
-    expect(svg.getAttribute("class")).toContain("animate-spin");
+    expect(svg.getAttribute("class")).toContain("spin-eco");
     // A fixed quarter-arc stands in for the missing fill level.
     const arc = container.querySelectorAll("circle")[1];
     expect(arc.getAttribute("stroke-dasharray")).toBe(`${0.25 * C} ${C}`);
@@ -57,7 +57,7 @@ describe("ContextRing", () => {
       <ContextRing tokens={250_000} limit={1_000_000} working />,
     );
     const svg = container.querySelector("svg")!;
-    expect(svg.getAttribute("class")).toContain("animate-spin");
+    expect(svg.getAttribute("class")).toContain("spin-eco");
     // Fill arc still reflects the real 25% usage.
     const arc = container.querySelectorAll("circle")[1];
     expect(arc.getAttribute("stroke-dasharray")).toBe(`${(25 / 100) * C} ${C}`);
@@ -68,6 +68,6 @@ describe("ContextRing", () => {
   it("does not spin when idle", () => {
     const { container } = render(<ContextRing tokens={250_000} limit={1_000_000} />);
     const svg = container.querySelector("svg")!;
-    expect(svg.getAttribute("class")).not.toContain("animate-spin");
+    expect(svg.getAttribute("class")).not.toContain("spin-eco");
   });
 });

@@ -23,6 +23,15 @@ const OneOffChat = lazy(() =>
   import("./routes/OneOffChat").then((m) => ({ default: m.OneOffChat })),
 );
 
+// Reflect tab visibility onto <html data-tab-hidden> so CSS can pause the
+// continuous streaming animations (spinners, caret) while the tab is
+// backgrounded — see index.css. Hidden tabs aren't composited to screen, but
+// this also stops the renderer from ticking the animation while you're away.
+const syncTabHidden = () =>
+  document.documentElement.setAttribute("data-tab-hidden", document.hidden ? "true" : "false");
+document.addEventListener("visibilitychange", syncTabHidden);
+syncTabHidden();
+
 /** /tags/:tag — the projects grid filtered to one domain tag (param decoded). */
 function TaggedProjects() {
   const { tag } = useParams();
