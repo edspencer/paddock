@@ -16,10 +16,12 @@ import { Markdown } from "../components/Markdown";
 import { FilesPane } from "../components/FilesPane";
 import { ProjectMenu } from "../components/ProjectMenu";
 import { SettingsPane } from "../components/SettingsPane";
+import { HooksPane } from "../components/HooksPane";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ForkChatModal } from "../components/ForkChatModal";
 import {
   ArchiveIcon,
+  BoltIcon,
   BranchIcon,
   ChatIcon,
   CheckIcon,
@@ -63,7 +65,7 @@ export function ProjectView() {
   // Which sub-route are we on? Derived from the URL pathname so it updates on
   // client-side navigation (the `/home`, `/files`, and `/changes` segments
   // distinguish those tabs; anything else is the chat tab).
-  const view: "home" | "chat" | "files" | "changes" | "settings" | "history" =
+  const view: "home" | "chat" | "files" | "changes" | "settings" | "history" | "hooks" =
     location.pathname.startsWith(`/projects/${slug}/files`)
       ? "files"
       : location.pathname.startsWith(`/projects/${slug}/changes`)
@@ -72,9 +74,11 @@ export function ProjectView() {
           ? "history"
           : location.pathname.startsWith(`/projects/${slug}/settings`)
             ? "settings"
-            : location.pathname.startsWith(`/projects/${slug}/home`)
-              ? "home"
-              : "chat";
+            : location.pathname.startsWith(`/projects/${slug}/hooks`)
+              ? "hooks"
+              : location.pathname.startsWith(`/projects/${slug}/home`)
+                ? "home"
+                : "chat";
   const routeSessionId = view === "chat" ? params.sessionId : undefined;
   // The Files tab nests: the directory or file being viewed is whatever follows
   // `/projects/:slug/files/` in the URL (issue #259). We read it straight from
@@ -269,7 +273,9 @@ export function ProjectView() {
           ? toSubPath({ view: "settings" })
           : view === "history"
             ? toSubPath({ view: "history" })
-            : view === "chat"
+            : view === "hooks"
+              ? toSubPath({ view: "hooks" })
+              : view === "chat"
               ? toSubPath({ view: "chat", sessionId: routeSessionId })
               : view === "changes"
                 ? toSubPath({ view: "changes", file: routeChangeFile })
@@ -318,6 +324,7 @@ export function ProjectView() {
   const goChanges = useCallback(() => navigate(`/projects/${slug}/changes`), [navigate, slug]);
   const goHistory = useCallback(() => navigate(`/projects/${slug}/history`), [navigate, slug]);
   const goSettings = useCallback(() => navigate(`/projects/${slug}/settings`), [navigate, slug]);
+  const goHooks = useCallback(() => navigate(`/projects/${slug}/hooks`), [navigate, slug]);
   // Select a specific changed file in the Changes tab, reflecting it in the URL
   // so a specific diff/file is deep-linkable (issue #107). null clears to the
   // bare /changes route.
@@ -1103,6 +1110,14 @@ export function ProjectView() {
                 Settings
               </span>
             </TabButton>
+            {/* The Hooks tab (Epic G / G4): per-project event hooks — an agent turn
+                that fires on a lifecycle event, with a precise capability picker. */}
+            <TabButton active={view === "hooks"} onClick={goHooks}>
+              <span className="inline-flex items-center gap-1.5">
+                <BoltIcon width={13} height={13} />
+                Hooks
+              </span>
+            </TabButton>
             {/* Pinned file tabs (sibling tabs), order preserved by the server.
                 Each links to /files/:name so the tab is deep-linkable. */}
             {pinned.map((f) => (
@@ -1149,6 +1164,10 @@ export function ProjectView() {
               }}
             />
           )}
+          {/* The Hooks tab (Epic G / G4): a self-contained CRUD surface for this
+              project's event hooks. Its create/edit/delete/enable run through their
+              own endpoints, so it manages its own state (like Schedules). */}
+          {view === "hooks" && <HooksPane project={project} />}
           {view === "home" && (
             <HomePane
               project={project}

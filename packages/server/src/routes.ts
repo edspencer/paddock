@@ -77,6 +77,13 @@ import {
 import { type SessionTokenUsage } from "./usage.js";
 import { isValidMaxSpawnDepth, MAX_SPAWN_DEPTH_LIMIT } from "./spawn-capability.js";
 import type { PaddockEventBus } from "./event-bus.js";
+import type { HookService } from "./hooks.js";
+import {
+  GRANTABLE_TOOLS,
+  HOOK_EVENTS,
+  isValidHookName,
+  sanitizeHook,
+} from "./hook-config.js";
 
 export interface RouteDeps {
   projects: ProjectStore;
@@ -109,6 +116,13 @@ export interface RouteDeps {
    * exercise hooks can omit it.
    */
   events?: PaddockEventBus;
+  /**
+   * Hook CRUD service (Epic G / G4). Backs the per-project Hooks tab's
+   * list/create/edit/delete + enable-disable (enable/disable is just `set` with
+   * the `enabled` field flipped — not a separate verb). Delegates persistence +
+   * `hook-<slug>-<name>` agent (re)registration to {@link HookService}.
+   */
+  hooks: HookService;
   cfg: PaddockConfig;
 }
 
@@ -126,6 +140,7 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     attachments,
     fireSchedule,
     events,
+    hooks,
     cfg,
   } = deps;
 
@@ -608,6 +623,93 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
             .send({ error: "Schedule fire did not start a chat", code: "trigger_failed" });
         }
         return reply.code(202).send({ ok: true, name, sessionId });
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  // --- hooks (Epic G / G4) -----------------------------------------------
+  // The per-project event-hook management surface the Hooks tab drives. A hook is
+  // an event-triggered agent `hook-<slug>-<name>` whose tool config IS its
+  // capability (GG-1); its DEFINITION lives in project.yaml (+ `.paddock/hooks/*.md`
+  // prompt files). Each route delegates to HookService, which persists to
+  // project.yaml FIRST (the source of truth — re-armed on restart) then registers
+  // the hook agent, warning-but-not-failing if the runtime arm hiccups.
+  //
+  // Unlike schedules there is NO per-deployment mutation gate on the tab: the
+  // coarse opt-in gate is only on the hook-management MCP (G5, `hooksMcpEnabled`),
+  // not on an operator using the UI. Enable/disable is NOT a separate verb — it's
+  // `set` (PUT) with the `enabled` field flipped (GG-3); new hooks default disabled.
+
+  // List a project's hooks (DTOs) + the picker's catalog: the grantable tools and
+  // the events a hook can fire on, so the Hooks tab renders a precise capability
+  // picker without hard-coding the tool list client-side.
+  app.get<{ Params: { slug: string } }>(
+    "/api/projects/:slug/hooks",
+    async (req, reply) => {
+      try {
+        const list = await hooks.list(req.params.slug); // throws not_found
+        return {
+          hooks: list,
+          grantableTools: GRANTABLE_TOOLS,
+          events: [...HOOK_EVENTS],
+        };
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  // Get one hook by name (404 when the project declares no such hook).
+  app.get<{ Params: { slug: string; name: string } }>(
+    "/api/projects/:slug/hooks/:name",
+    async (req, reply) => {
+      const { slug, name } = req.params;
+      try {
+        const hook = await hooks.get(slug, name); // throws not_found (project)
+        if (!hook) {
+          return reply.code(404).send({ error: `No such hook: ${name}`, code: "not_found" });
+        }
+        return { hook };
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  // Create or replace one hook (keyed by name). Persists to project.yaml, then
+  // registers (replaces) its `hook-<slug>-<name>` agent so it's immediately
+  // fireable. Enabling/disabling is the same route with `enabled` flipped.
+  app.put<{ Params: { slug: string; name: string }; Body: unknown }>(
+    "/api/projects/:slug/hooks/:name",
+    async (req, reply) => {
+      const { slug, name } = req.params;
+      if (!isValidHookName(name)) {
+        return reply.code(400).send({ error: `Invalid hook name: ${name}`, code: "invalid" });
+      }
+      // Reject a malformed record early (unknown/absent event) so the client gets a
+      // 400 instead of the store's generic error; HookService.set re-sanitises.
+      if (!sanitizeHook(req.body)) {
+        return reply.code(400).send({ error: "Invalid hook definition", code: "invalid" });
+      }
+      try {
+        const hook = await hooks.set(slug, name, req.body); // throws not_found/invalid
+        return { hook };
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  // Delete one hook. Removes it from project.yaml AND unregisters its agent.
+  app.delete<{ Params: { slug: string; name: string } }>(
+    "/api/projects/:slug/hooks/:name",
+    async (req, reply) => {
+      const { slug, name } = req.params;
+      try {
+        const removed = await hooks.remove(slug, name); // throws not_found (project)
+        return reply.code(200).send({ ok: true, name, removed });
       } catch (err) {
         return sendProjectError(reply, err);
       }
