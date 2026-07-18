@@ -47,12 +47,14 @@
  * we accept both. Server events always carry both `projectSlug` and the legacy
  * `target` alias so existing/early frontends keep working.
  */
+import { promises as fs } from "node:fs";
 import type { WebSocket } from "@fastify/websocket";
 import type {
   SDKMessage,
   RuntimeSession,
   SessionWakeEntry,
   InjectedMcpServerDef,
+  TriggerInfo,
 } from "@herdctl/core";
 import { createSDKMessageHandler, type SDKMessage as ChatSDKMessage } from "@herdctl/chat";
 import type { HerdctlService } from "./herdctl.js";
@@ -84,6 +86,8 @@ import {
 import type { AttachmentStore } from "./attachments.js";
 import type { QueuedMessageStore } from "./queued-message.js";
 import type { ArchiveStore } from "./archive.js";
+import type { ScheduleSessionStore } from "./schedule-session.js";
+import { schedulePromptFileAbsPath } from "./schedule-config.js";
 import {
   type RunProvenanceStore,
   type RunProvenance,
@@ -579,6 +583,14 @@ export function makeChatHandler(deps: {
    * usefully ITSELF, powering the "work → archive myself on success" convention.
    */
   archive: ArchiveStore;
+  /**
+   * Owned-session sidecar for accreting schedules (issue #265 / DD-2): maps a
+   * `resume_session: true` schedule to the one chat it owns, created on its first
+   * fire and reused thereafter. Absent ⇒ scheduled chats still work but every
+   * accreting schedule would start fresh each fire (degrades to `resume_session:
+   * false`); wired in production, optional so existing tests need not supply it.
+   */
+  scheduleSessions?: ScheduleSessionStore;
 }) {
   // ONE hub shared across every socket this handler serves: it tracks each
   // session's in-flight turn and fans its frames out to whichever socket(s) are
@@ -706,6 +718,106 @@ export function makeChatHandler(deps: {
     }
     // Post-wake curation sweep, same as a human turn (never for scratch).
     if (slug !== SCRATCH_SLUG && deps.sweep) deps.sweep.enqueue(slug);
+  });
+
+  /** Resolve a project's effective keeper drive mode (override else instance default). */
+  function resolveDriveMode(project: Awaited<ReturnType<typeof deps.projects.get>>): DriveMode {
+    return project.driveMode && isKnownDriveMode(project.driveMode)
+      ? project.driveMode
+      : deps.cfg.keeperDriveMode;
+  }
+
+  /**
+   * Resolve the prompt a scheduled fire should run (issue #265 / DD-2). A
+   * schedule's `promptFile` (Paddock-only, `.paddock/schedules/*.md`, git-tracked +
+   * keeper-editable) is read FRESH here at fire time — so a keeper's edit takes
+   * effect on the very next fire with no agent re-register — and forwarded as a
+   * plain prompt string. Falls back to the inline prompt (herdctl's armed copy,
+   * else the live project record's) when there is no file or it can't be read.
+   * `herdctlSchedule` is what herdctl armed (no `promptFile`); the live project
+   * record still carries `promptFile`, so we read it off `project.schedules`.
+   */
+  async function resolveSchedulePrompt(
+    project: Awaited<ReturnType<typeof deps.projects.get>>,
+    scheduleName: string,
+    herdctlSchedule: TriggerInfo["schedule"],
+  ): Promise<string> {
+    const rec = project.schedules?.[scheduleName];
+    const inline =
+      (typeof herdctlSchedule.prompt === "string" ? herdctlSchedule.prompt : rec?.prompt) ?? "";
+    if (rec?.promptFile) {
+      const abs = schedulePromptFileAbsPath(project.workingDir, rec.promptFile);
+      if (abs) {
+        const content = await fs.readFile(abs, "utf8").catch(() => null);
+        if (content !== null) return content;
+      }
+    }
+    return inline;
+  }
+
+  // Drive scheduler-fired chats onto the hub (issue #265 / DD-1, DD-2). herdctl's
+  // cron engine fires a project keeper's declared schedule and routes it HERE
+  // (setScheduleTriggerHandler) instead of running it headless — so a "cron chat"
+  // is a first-class Paddock chat: it streams live, drives the sidebar dot, is
+  // re-attachable, and (crucially) is NEVER `isSidechain`-hidden, because we run it
+  // via our OWN startAgentTurn/hub rather than herdctl's internal `--resume` path.
+  //
+  // `resume_session` drives new-vs-accrete (DD-2): `false` → a FRESH chat every fire
+  // (`resume: null`); `true` → resume the schedule's ONE owned session (created on
+  // the first fire, remembered in the ScheduleSessionStore, reused thereafter) so a
+  // "manager" accretes a single transcript. origin `scheduled`, depth 0 — a cron is
+  // a root trigger exactly like a human (A1/#261), so a NEW chat is stamped
+  // `scheduled` (badgeable by #267) while a resumed accreting chat keeps its marker.
+  deps.herdctl.onScheduleTrigger(async (info: TriggerInfo) => {
+    const agentName = info.agent.name;
+    const slug = keeperSlugFromAgent(agentName);
+    // Only keeper agents carry Paddock schedules; a non-keeper trigger (there are
+    // none today) has nowhere sensible to route, so ignore it rather than guess.
+    if (!slug) return;
+    const project = await deps.projects.get(slug).catch(() => null);
+    if (!project) return;
+
+    const scheduleName = info.scheduleName;
+    const prompt = await resolveSchedulePrompt(project, scheduleName, info.schedule);
+
+    // resume_session: true accretes into an owned session; false starts fresh.
+    const accrete = info.schedule.resume_session === true;
+    let resume: string | null = null;
+    if (accrete && deps.scheduleSessions) {
+      const owned = await deps.scheduleSessions.get(slug, scheduleName).catch(() => undefined);
+      if (owned && (await deps.herdctl.sessionExists(project, owned).catch(() => false))) {
+        resume = owned;
+      } else if (owned) {
+        // A stale owned id whose transcript no longer exists (a human deleted the
+        // chat): forget it so this fire re-creates one instead of failing to resume.
+        await deps.scheduleSessions.clear(slug, scheduleName).catch(() => undefined);
+      }
+    }
+
+    try {
+      const sessionId = await startAgentTurn({
+        projectSlug: slug,
+        agentName,
+        workingDir: project.workingDir,
+        resume,
+        prompt,
+        driveMode: resolveDriveMode(project),
+        fallbackModel: project.model,
+        origin: "scheduled",
+        depth: 0,
+        maxSpawnDepth: resolveMaxSpawnDepth(project.maxSpawnDepth, deps.cfg.maxSpawnDepth),
+      });
+      // First fire of an accreting schedule: remember the chat it created so the
+      // next fire resumes THIS transcript (a resume already had an id).
+      if (accrete && !resume && deps.scheduleSessions) {
+        await deps.scheduleSessions.set(slug, scheduleName, sessionId).catch(() => undefined);
+      }
+    } catch {
+      // startAgentTurn rejects only if the turn never produced a session id; its
+      // own failure frame is already emitted. Swallow so the scheduler records the
+      // fire complete and computes the next run — a transient failure shouldn't
+      // wedge the schedule.
+    }
   });
 
   /**

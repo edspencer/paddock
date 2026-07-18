@@ -24,6 +24,14 @@ import {
   KEEPER_DEFAULT_DOCKER,
 } from "./models.js";
 import { cloneRepo } from "./git.js";
+import {
+  sanitizeSchedule,
+  sanitizeSchedules,
+  isValidScheduleName,
+  type PaddockSchedule,
+} from "./schedule-config.js";
+
+export type { PaddockSchedule };
 
 /** project.yaml status enum (matches the documented standard). */
 export type ProjectStatus =
@@ -113,6 +121,12 @@ export interface ProjectLink {
   url: string;
 }
 
+// Scheduled-chat declaration (issue #265 / DD-2). The `PaddockSchedule` type +
+// its sanitiser / herdctl-mapping / prompt-file helpers live in
+// schedule-config.ts (a small, unit-testable surface); the type is re-exported
+// from this module (see the top-of-file import) so existing `projects.js`
+// importers keep finding it in one place.
+
 /**
  * The on-disk project.yaml shape.
  *
@@ -183,6 +197,14 @@ export interface ProjectYaml {
    * (like `slug`/`started`).
    */
   repo?: string;
+  /**
+   * Scheduled chat sessions for this project (issue #265 / DD-2), keyed by a
+   * stable schedule name. Each value is herdctl's `ScheduleSchema` shape (plus the
+   * Paddock-only `promptFile`), forwarded unmolested into the keeper agent's
+   * `schedules` block so herdctl arms the cron/interval directly. Absent/empty ⇒
+   * the project has no schedules (unchanged behaviour).
+   */
+  schedules?: Record<string, PaddockSchedule>;
 }
 
 /** API-facing project DTO (adds derived fields). */
@@ -673,6 +695,46 @@ export class ProjectStore {
     return this.toDto(current.dir, next, await this.overviewExists(slug));
   }
 
+  // --- schedules (issue #265 / DD-2) -------------------------------------
+
+  /**
+   * Add or replace one schedule in `project.yaml`, keyed by name — the persistence
+   * half of a runtime schedule mutation (the D4 UI edits schedules; the caller
+   * arms herdctl separately via `HerdctlService.setAgentSchedule`). The record is
+   * sanitised into the herdctl `ScheduleSchema` shape (+ optional `promptFile`);
+   * an invalid name or record throws `ProjectError("invalid")`. Returns the
+   * updated project DTO.
+   */
+  async setSchedule(slug: string, name: string, schedule: unknown): Promise<Project> {
+    const current = await this.get(slug);
+    if (!isValidScheduleName(name)) {
+      throw new ProjectError(`Invalid schedule name: ${name}`, "invalid");
+    }
+    const clean = sanitizeSchedule(schedule);
+    if (!clean) throw new ProjectError("Invalid schedule definition", "invalid");
+    const schedules = { ...(current.schedules ?? {}), [name]: clean };
+    const next: ProjectYaml = { ...this.stripDto(current), schedules, updated: today() };
+    await this.writeYaml(slug, next);
+    return this.toDto(current.dir, next, await this.overviewExists(slug));
+  }
+
+  /**
+   * Remove a schedule from `project.yaml` (no-op if absent). Returns the updated
+   * project DTO. The caller prunes herdctl's armed copy + persisted state via
+   * `HerdctlService.removeAgentSchedule`.
+   */
+  async removeSchedule(slug: string, name: string): Promise<Project> {
+    const current = await this.get(slug);
+    const rest = { ...(current.schedules ?? {}) };
+    delete rest[name];
+    const stripped = this.stripDto(current);
+    if (Object.keys(rest).length > 0) stripped.schedules = rest;
+    else delete stripped.schedules;
+    const next: ProjectYaml = { ...stripped, updated: today() };
+    await this.writeYaml(slug, next);
+    return this.toDto(current.dir, next, await this.overviewExists(slug));
+  }
+
   /**
    * Delete a project directory and everything in it (project.yaml, CHANGELOG.md,
    * and any files the keeper agent created). Throws ProjectError("not_found")
@@ -896,6 +958,14 @@ export class ProjectStore {
       // repo (issue #187): carried only when present — its presence is what marks
       // the project repo-backed and drives the workingDir resolution in toDto.
       ...(typeof p.repo === "string" && p.repo.trim() ? { repo: p.repo.trim() } : {}),
+      // schedules (issue #265): carried only when at least one well-formed entry
+      // survives sanitization — an absent/empty map stays absent on disk, so files
+      // without schedules round-trip unchanged. A malformed entry is dropped (not
+      // thrown) so a bad hand-edit can't brick the project's keeper registration.
+      ...(() => {
+        const s = sanitizeSchedules(p.schedules);
+        return s && Object.keys(s).length > 0 ? { schedules: s } : {};
+      })(),
     };
   }
 

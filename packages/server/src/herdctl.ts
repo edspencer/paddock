@@ -55,6 +55,8 @@ import {
   type InjectedMcpServerDef,
   type RuntimeSession,
   type SessionWakeHandler,
+  type ScheduleTriggerHandler,
+  type ScheduleInfo,
 } from "@herdctl/core";
 import { createSDKMessageHandler, type SDKMessage as ChatSDKMessage } from "@herdctl/chat";
 import { promises as fs } from "node:fs";
@@ -70,6 +72,7 @@ import {
   KEEPER_DEFAULT_MAX_TURNS,
 } from "./models.js";
 import { ensureProjectChats, projectChatsDir } from "./transcripts.js";
+import { schedulesToHerdctl } from "./schedule-config.js";
 
 /** Options passed through to a streamed trigger. */
 export interface ChatTurnOptions {
@@ -236,6 +239,11 @@ export class HerdctlService {
     this.fleet = new FleetManager({
       configPath: this.cfg.herdctlConfigPath,
       stateDir: this.cfg.stateDir,
+      // Per-deployment gate for programmatic schedule mutation (issue #265 / DD-7,
+      // herdctl#376). OFF by default: an instance opts in (PADDOCK_SCHEDULE_MUTATION)
+      // before the D4 UI / setAgentSchedule/removeAgentSchedule can add or remove a
+      // schedule at runtime. Declaring schedules in project.yaml is unaffected.
+      allowScheduleMutation: this.cfg.scheduleMutationEnabled,
     });
     await this.fleet.initialize();
 
@@ -483,6 +491,45 @@ export class HerdctlService {
    */
   onSessionWake(handler: SessionWakeHandler | undefined): void {
     this.manager.setSessionWakeHandler(handler);
+  }
+
+  /**
+   * Register the consumer that OWNS execution of a fired schedule (issue #265 /
+   * DD-1, herdctl#375). When set, herdctl routes every scheduler-fired trigger
+   * (interval / cron / forced "trigger now") here instead of running it headless
+   * via its built-in ScheduleExecutor — so Paddock runs the turn on its OWN hub /
+   * resume path (`startAgentTurn`), keeping the scheduled chat visible + re-attachable
+   * (and never `isSidechain`-hidden). A no-op fallback to headless applies if no
+   * handler is registered. Thin passthrough, mirroring {@link onSessionWake}.
+   */
+  onScheduleTrigger(handler: ScheduleTriggerHandler | undefined): void {
+    this.manager.setScheduleTriggerHandler(handler);
+  }
+
+  /**
+   * Add or replace a single schedule on a project's keeper agent at runtime
+   * (issue #265 / DD-7, herdctl#376) — the herdctl half of a schedule mutation
+   * (the Paddock half persists it to project.yaml via
+   * `ProjectStore.setSchedule`). Validated against herdctl's `ScheduleSchema` and
+   * armed immediately (no stale-state-leaving `addAgent(replace)`). Gated behind
+   * the `allowScheduleMutation` deployment option (throws otherwise).
+   */
+  async setAgentSchedule(
+    project: Project,
+    name: string,
+    schedule: Record<string, unknown>,
+  ): Promise<ScheduleInfo> {
+    return this.manager.setAgentSchedule(keeperAgentName(project.slug), name, schedule);
+  }
+
+  /**
+   * Remove a single schedule from a project's keeper agent at runtime (issue #265
+   * / DD-7). Prunes herdctl's armed copy AND its persisted state (so a re-added
+   * name doesn't inherit stale `last_run_at` / `disabled`). Returns `true` if one
+   * was removed. Gated behind `allowScheduleMutation`.
+   */
+  async removeAgentSchedule(project: Project, name: string): Promise<boolean> {
+    return this.manager.removeAgentSchedule(keeperAgentName(project.slug), name);
   }
 
   /**
@@ -1090,6 +1137,15 @@ export class HerdctlService {
         "Honor any CLAUDE.md present. Keep CHANGELOG.md current. " +
         "Create branches for significant changes; never force-push.";
     }
+    // Scheduled chats (issue #265 / DD-2): forward the project's schedules into
+    // the keeper agent's `schedules` block in herdctl's OWN `ScheduleSchema` shape,
+    // UNMOLESTED — herdctl's cron engine reads `agent.schedules` live every tick,
+    // so declaring them here arms them with no translation. The Paddock-only
+    // `promptFile` is stripped (the schedule-trigger handler resolves it at fire
+    // time), keeping the forwarded config pure. Only set the key when non-empty so
+    // schedule-less projects are byte-identical to before.
+    const schedules = schedulesToHerdctl(project.schedules);
+    if (schedules) config.schedules = schedules;
     // Browser MCP (headless Chromium) when enabled for this box; `mcp__playwright__*`
     // is already on the inherited defaults.allowed_tools.
     const browser = browserMcpServers(this.cfg.browserMcp);
