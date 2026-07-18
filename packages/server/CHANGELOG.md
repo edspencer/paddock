@@ -1,5 +1,123 @@
 # @paddock/server
 
+## 0.31.0
+
+### Minor Changes
+
+- [#277](https://github.com/edspencer/paddock/pull/277) [`d7dd860`](https://github.com/edspencer/paddock/commit/d7dd860b5838f9c25ff73c585b58405d3b04b7a5) Thanks [@edspencer](https://github.com/edspencer)! - Chat list: provenance badges for scheduled / spawned chats (#267)
+
+  Surfaces A1's provenance marker (#261) on the per-project chat list so the "ran
+  without me" cases are legible at a glance.
+
+  - The chat DTO now carries `provenance` (`origin` + spawn `depth`), read from the
+    `RunProvenanceStore` sidecar in both the project-detail and chat-list payloads
+    (and scratch chats), mirroring how the archived flag is threaded.
+  - The chat-list row renders a small, subtle icon badge for `scheduled` (a schedule
+    fired it) and `spawned` (another chat created it) origins, following DD-6's reuse
+    of herdctl's trigger-type icons. `human`-origin chats — the default — render no
+    badge, so only the unattended runs stand out.
+
+- [#278](https://github.com/edspencer/paddock/pull/278) [`6e54523`](https://github.com/edspencer/paddock/commit/6e54523ba2983280d170d6e01e65b6a6a29ff1e1) Thanks [@edspencer](https://github.com/edspencer)! - Depth-gated self-MCP injection for spawned chats — a spawned child can now report back to its parent (#262).
+
+  Ticket B1 of the Events / Schedules / Config initiative, building on the origin+depth
+  provenance marker from #261. Previously a spawned chat was injected with `send_file`
+  ONLY, so it had no `send_message` tool and could never report back to the chat that
+  spawned it (recursion was prevented by omission, not by a real bound). Now the
+  self-management MCP — **including its write tools** — is injected into a spawned turn
+  based on the chat's stamped spawn `depth`:
+
+  - A spawned/scheduled turn running in a chat at depth `d` receives the self-MCP iff
+    `d <= maxSpawnDepth`. When a tool-equipped child itself spawns, its children are
+    stamped one hop deeper, so the bound descends and the tree can't run away.
+  - New config `maxSpawnDepth` — an instance default (`PADDOCK_MAX_SPAWN_DEPTH`) with a
+    per-project override in Settings (the `driveMode` inherit/override pattern). **Default
+    `1`**: a manager's direct children get the write tools (report-back + spawn), but
+    depth-2 grandchildren do not. `maxSpawnDepth = 0` restores exactly today's behaviour
+    (no spawned child gets the self-MCP — `send_file` only).
+
+  The human/scheduled root (depth 0) is unchanged — it keeps today's instance-flag gating
+  (`selfMcpEnabled` / `selfMcpWriteEnabled`). Internally the inline self-MCP builder is
+  extracted into one helper shared by the human and spawned paths, and the exact gate is a
+  small pure module (`spawn-capability.ts`) with full unit coverage.
+
+  Also fixes a latent break this ticket surfaced: the server-initiated spawn path passed
+  `triggerType: "agent"`, which is not a member of herdctl's `TriggerTypeSchema` enum, so
+  every `create_chat` / `fork_chat` / `send_message` job failed validation and no child was
+  ever created. It now passes the valid `"manual"` value (provenance is carried separately
+  by the origin+depth marker).
+
+- [#284](https://github.com/edspencer/paddock/pull/284) [`fa730f3`](https://github.com/edspencer/paddock/commit/fa730f3f2a549846c54424a0eb22f64bbed642fb) Thanks [@edspencer](https://github.com/edspencer)! - Config: YAML instance-config file loader, precedence file < env (#270).
+
+  Ticket F2 of the Events / Schedules / Config initiative, building on F1 (#269).
+  `PaddockConfig` is already a single serializable object; it can now be populated
+  from an optional **YAML instance-config file** with **environment variables
+  overriding** file values (precedence **file < env**). Existing `PADDOCK_*`
+  deployments are unaffected — with no file present, resolution is byte-for-byte
+  the env-only behaviour it was before.
+
+  - **Location.** `PADDOCK_CONFIG` (an explicit path) if set, otherwise
+    `<PADDOCK_DATA_DIR>/paddock.config.yaml`.
+  - **Precedence.** Every file value is threaded in as the _fallback_ beneath the
+    matching env read (via the existing `envOr`/`envOpt` helpers), so an env var
+    always wins over the file, and the hardcoded default still applies when neither
+    provides a value. Booleans/enums/paths keep their exact parsing and
+    fall-back-to-default semantics. `PADDOCK_BROWSER_MCP` keeps its literal-`1`
+    env semantics; the file layer uses the shared `1`/`true`/`yes` convention.
+  - **No-op when absent.** A missing default file yields env-only behaviour. An
+    explicit `PADDOCK_CONFIG` pointing at a _missing_ file, or a present-but-
+    malformed file (unparseable YAML, or a top-level list/scalar instead of a
+    mapping), fails startup with a **clear error** instead of a half-empty config.
+  - **Empty sections are absent, not a crash.** A valueless key (`brand:` /
+    `auth:` with nothing after it) parses to `null`; such an empty section (or
+    scalar) is treated as absent and falls back to env/defaults rather than
+    crashing a loader that expects an object.
+  - Uses the same `yaml` library the repo already uses for `project.yaml`;
+    `PaddockConfig` stays a plain serializable object. This is the container the
+    schedule (and later hook) declarations will live in.
+
+  Documented in `docs/CONFIGURATION.md`.
+
+### Patch Changes
+
+- [#282](https://github.com/edspencer/paddock/pull/282) [`c8695e9`](https://github.com/edspencer/paddock/commit/c8695e9854d290ec893c8cf594168967ce908e47) Thanks [@edspencer](https://github.com/edspencer)! - Self-MCP `create_chat`: honor the `name` param + clearer guidance (#264)
+
+  The `create_chat` tool accepted a `name` argument but silently dropped it, so a
+  manager fanning out children got chats titled by Claude's ~15-word auto-summary
+  of the first turn instead of the concise title it asked for.
+
+  - **Wire the `name` param.** After the chat is created, the callback applies the
+    name via `renameSession` (mirroring how `fork_chat` names a fork), so the
+    caller-supplied title wins over the auto-derived first-message name.
+  - **Short-title guidance.** `CREATE_CHAT_DESC` and the `name` schema now instruct
+    the caller to pass a concise **3–5 word** title.
+  - **Preload description parity.** The `preload_context` wording now names both
+    **OVERVIEW.md** and **CHANGELOG.md** (the behaviour already injected both —
+    only the description was stale), matching the UI checkbox.
+  - Deduped the two identical OVERVIEW+CHANGELOG preload blocks (human New-Chat
+    path + `create_chat` spawn path) into one shared `composePreloadedPrompt`
+    helper.
+
+- [#283](https://github.com/edspencer/paddock/pull/283) [`b31c930`](https://github.com/edspencer/paddock/commit/b31c930176c3f7f969f54c6e573d5f7857557bcb) Thanks [@edspencer](https://github.com/edspencer)! - Config: fold scattered env reads into `PaddockConfig` (#269).
+
+  Ticket F1 of the Events / Schedules / Config initiative — a pure refactor with no
+  behaviour change, and the prerequisite for the YAML instance-config loader (F2).
+
+  Previously ~7 environment knobs were read ad-hoc, scattered across modules, so no
+  single object represented the whole instance. They are now resolved once (via the
+  existing `envOr`/`envOpt` helpers) into `PaddockConfig` and threaded through where
+  they're used:
+
+  - `LOG_LEVEL` → `cfg.logLevel` (Fastify logger).
+  - `PADDOCK_BROWSER_MCP` → `cfg.browserMcp` (`browserMcpServers(enabled)` in herdctl.ts).
+  - `PADDOCK_SWEEP_MIN_INTERVAL_MS` → `cfg.sweepMinIntervalMs` (passed to `SweepService`).
+  - `PADDOCK_GIT_AUTHOR_NAME` / `PADDOCK_GIT_AUTHOR_EMAIL` → `cfg.gitAuthor` (`GitService`).
+  - `PADDOCK_GITHUB_CLIENT_ID` → `cfg.githubClientId` (`GithubAuth`).
+
+  Defaults and parsing semantics are preserved exactly (e.g. an invalid sweep interval
+  still falls back to the 5-minute default; a blank GitHub client id is still treated as
+  "not configured"). `PaddockConfig` stays a plain, fully serializable object, which F2
+  depends on.
+
 ## 0.30.0
 
 ### Minor Changes
