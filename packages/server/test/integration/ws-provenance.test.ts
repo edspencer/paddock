@@ -80,6 +80,47 @@ describe("integration: turn provenance (issue #261, human path)", () => {
     }
   });
 
+  it("surfaces the provenance marker on the chat DTO (#267)", async () => {
+    const slug = await freshProject();
+    const ws = await connectWs(port);
+    try {
+      const mark = ws.mark();
+      ws.send({
+        type: "chat:send",
+        payload: { projectSlug: slug, sessionId: null, message: "badge me" },
+      });
+      const complete = await ws.waitFor(
+        (e: WsEvent) =>
+          e.type === "chat:complete" &&
+          e.payload?.projectSlug === slug &&
+          typeof e.payload?.sessionId === "string",
+        { from: mark, timeoutMs: 20_000 },
+      );
+      const sid = complete.payload!.sessionId as string;
+
+      type DtoChat = { sessionId: string; provenance?: { origin: string; depth: number } };
+      const dtoFrom = async (url: string) => {
+        const chats = (await t.app.inject({ method: "GET", url })).json().chats as DtoChat[];
+        return chats.find((c) => c.sessionId === sid);
+      };
+
+      // Both the /chats list AND the project-detail payload (initial page load)
+      // must carry the marker, so the badge survives a fresh load — mirroring the
+      // archived-flag guarantee. Human origin → the badge renders nothing, but the
+      // data must still be present and honest.
+      expect((await dtoFrom(`/api/projects/${slug}/chats`))?.provenance).toEqual({
+        origin: "human",
+        depth: 0,
+      });
+      expect((await dtoFrom(`/api/projects/${slug}`))?.provenance).toEqual({
+        origin: "human",
+        depth: 0,
+      });
+    } finally {
+      ws.close();
+    }
+  });
+
   it("does NOT change a chat's provenance when a human resumes it", async () => {
     const slug = await freshProject();
     const ws = await connectWs(port);
