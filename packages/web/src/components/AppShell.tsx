@@ -374,7 +374,7 @@ function ProjectBadges({ badge }: { badge?: ProjectBadge }) {
         >
           <span
             aria-hidden="true"
-            className="h-2.5 w-2.5 animate-spin rounded-full border-[1.5px] border-paddock-400 border-t-transparent dark:border-paddock-500 dark:border-t-transparent"
+            className="h-2.5 w-2.5 spin-eco rounded-full border-[1.5px] border-paddock-400 border-t-transparent dark:border-paddock-500 dark:border-t-transparent"
           />
           {inflight}
         </span>

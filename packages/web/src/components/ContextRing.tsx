@@ -78,8 +78,10 @@ export function ContextRing({
         height={size}
         viewBox="0 0 20 20"
         // Spin while working; otherwise render the static gauge with its arc
-        // starting at 12 o'clock (-90°).
-        className={working ? "animate-spin" : "-rotate-90"}
+        // starting at 12 o'clock (-90°). `spin-eco` (index.css) is a stepped,
+        // layer-isolated rotate — far cheaper to composite for a whole turn than
+        // a smooth 60fps `animate-spin`.
+        className={working ? "spin-eco" : "-rotate-90"}
         role="img"
         aria-hidden="true"
       >

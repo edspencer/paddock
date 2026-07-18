@@ -1432,10 +1432,10 @@ function WorkingIndicator() {
   return (
     <div className="mx-auto mb-2 w-full max-w-3xl px-4">
       <div className="inline-flex items-center gap-2 rounded-full border border-paddock-200 bg-paddock-100/70 px-3 py-1 text-xs text-paddock-500 dark:border-paddock-800 dark:bg-paddock-900/50 dark:text-paddock-400">
-        <span className="relative flex h-1.5 w-1.5">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-60" />
-          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-accent" />
-        </span>
+        {/* A static dot — the cycling phrase + the ring spinner already signal
+            "alive"; the old `animate-ping` was a third perpetual 60fps animation
+            (a continuous scale) running for the whole turn, dropped for cost. */}
+        <span className="inline-flex h-1.5 w-1.5 rounded-full bg-accent" aria-hidden="true" />
         <span>{WORKING_PHRASES[i]}…</span>
       </div>
     </div>
