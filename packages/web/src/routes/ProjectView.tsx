@@ -15,6 +15,7 @@ import { FilesPane } from "../components/FilesPane";
 import { ProjectMenu } from "../components/ProjectMenu";
 import { SettingsPane } from "../components/SettingsPane";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { ForkChatModal } from "../components/ForkChatModal";
 import {
   ArchiveIcon,
   BranchIcon,
@@ -180,6 +181,9 @@ export function ProjectView() {
 
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deletingChat, setDeletingChat] = useState<Chat | null>(null);
+  // The chat awaiting a fork-name in the naming dialog (issue #279); null when
+  // the dialog is closed.
+  const [forkingChat, setForkingChat] = useState<Chat | null>(null);
   // Whether the collapsible "Archived" section is expanded (#95). Collapsed by
   // default; auto-expands (once per session) when the open chat is archived.
   const [archivedOpen, setArchivedOpen] = useState(false);
@@ -327,16 +331,17 @@ export function ProjectView() {
       navigate(`/projects/${slug}/chat/${encodeURIComponent(sessionId)}`),
     [navigate, slug],
   );
-  // Fork a chat: eagerly duplicate it server-side into a NEW session in the same
-  // project, then jump straight to it. The fork exists immediately — a real,
-  // resumable chat with the parent's full history visible — titled
-  // "Fork of <parent>". We record the lineage locally for the composer back-link
-  // and pass `justForked` so the pane focuses the composer to continue.
+  // Fork a chat with a chosen name: duplicate it server-side into a NEW session
+  // in the same project, then jump straight to it. The fork exists immediately —
+  // a real, resumable chat with the parent's full history visible. The name is
+  // collected up front by the ForkChatModal (issue #279); we record the lineage
+  // locally for the composer back-link and pass `justForked` so the pane focuses
+  // the composer to continue.
   const forkChat = useCallback(
-    async (chat: Chat) => {
+    async (chat: Chat, name: string) => {
       let newId: string;
       try {
-        newId = await api.forkChat(slug, chat.sessionId, `Fork of ${chat.name}`);
+        newId = await api.forkChat(slug, chat.sessionId, name);
       } catch (e) {
         setLoadErr(e instanceof Error ? e.message : "Failed to fork chat");
         return;
@@ -700,7 +705,7 @@ export function ProjectView() {
           title="Fork chat — branch a new chat from this one's context"
           onClick={(e) => {
             e.stopPropagation();
-            void forkChat(c);
+            setForkingChat(c);
           }}
           className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-paddock-200 hover:text-accent focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-paddock-700 dark:hover:text-accent"
         >
@@ -1181,6 +1186,18 @@ export function ProjectView() {
         onConfirm={confirmDeleteChat}
         onClose={() => setDeletingChat(null)}
       />
+      {forkingChat && (
+        <ForkChatModal
+          open
+          chatName={forkingChat.name}
+          onClose={() => setForkingChat(null)}
+          onFork={(name) => {
+            const chat = forkingChat;
+            setForkingChat(null);
+            void forkChat(chat, name);
+          }}
+        />
+      )}
     </div>
   );
 }
