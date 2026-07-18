@@ -709,6 +709,24 @@ export function makeChatHandler(deps: {
   });
 
   /**
+   * Compose the OVERVIEW.md + CHANGELOG.md preload block onto `baseMessage` for
+   * a NEW chat (issues #1/#188), shared (C2 / #264) by the human New-Chat path
+   * and the self-MCP `create_chat` spawn path so both inject the SAME context.
+   * Injects only when the project has an OVERVIEW.md (the signal that a sweep
+   * has curated real state); when it fires it prepends BOTH the overview
+   * (current state) AND the CHANGELOG.md (cross-session history), matching the
+   * UI checkbox. Returns `baseMessage` unchanged when there's no overview yet.
+   */
+  async function composePreloadedPrompt(projectSlug: string, baseMessage: string): Promise<string> {
+    const overview = await deps.projects.readOverview(projectSlug).catch(() => "");
+    if (overview.trim().length === 0) return baseMessage;
+    const changelog = await deps.projects.readChangelog(projectSlug).catch(() => "");
+    // Single-sourced wrapper (see preload.ts) so the chat-list can strip it back
+    // off for display (issue #62).
+    return wrapPreload(composePreloadContext(overview, changelog), baseMessage);
+  }
+
+  /**
    * Build the self-management MCP server def (issue #214) bound to one turn's
    * context, extracted (B1 / #262) so BOTH the human socket path AND the
    * server-initiated {@link startAgentTurn} spawn path share ONE builder.
@@ -799,14 +817,9 @@ export function makeChatHandler(deps: {
           const p = await deps.projects.get(projectSlug);
           // Honor the same OVERVIEW+CHANGELOG preload the human New-Chat path
           // offers, when asked and available (issues #1/#188).
-          let composed = kickoff;
-          if (o?.preloadContext) {
-            const overview = await deps.projects.readOverview(projectSlug).catch(() => "");
-            if (overview.trim().length > 0) {
-              const changelog = await deps.projects.readChangelog(projectSlug).catch(() => "");
-              composed = wrapPreload(composePreloadContext(overview, changelog), kickoff);
-            }
-          }
+          const composed = o?.preloadContext
+            ? await composePreloadedPrompt(projectSlug, kickoff)
+            : kickoff;
           const newId = await startAgentTurn({
             projectSlug,
             agentName: keeperAgentName(projectSlug),
@@ -819,6 +832,15 @@ export function makeChatHandler(deps: {
             depth: spawnedChild.depth,
             maxSpawnDepth: maxSpawnDepthFor(p),
           });
+          // Apply the caller-supplied display name (C2 / #264). Without this the
+          // `name` param was silently dropped and the title fell back to
+          // Claude's ~15-word auto-summary. Mirrors forkSession's rename: best
+          // effort, keyed by the target project's keeper agent.
+          if (o?.name) {
+            await deps.herdctl
+              .renameSession(keeperAgentName(projectSlug), newId, o.name)
+              .catch(() => undefined);
+          }
           return { sessionId: newId };
         },
         forkChat: async ({ projectSlug, sourceSessionId, prompt: kickoff, name }) => {
@@ -1432,20 +1454,11 @@ export function makeChatHandler(deps: {
               : deps.cfg.keeperDriveMode;
 
           // Context preload (issues #1/#188): only for a NEW chat, only when
-          // asked, and only when the project actually has an OVERVIEW.md (the
-          // signal that a sweep has curated real state). When it fires, inject
-          // BOTH the overview (current state) AND the CHANGELOG.md (cross-session
-          // history) so the narrative reaches the chat instead of being
-          // write-only — the checkbox opts into both. Prepend as a clearly
-          // delimited block so the keeper starts primed.
+          // asked. Shared with the self-MCP create_chat path (C2 / #264):
+          // injects BOTH OVERVIEW.md and CHANGELOG.md when the project has
+          // curated state, else leaves the prompt untouched.
           if (isNewChat && preloadContext) {
-            const overview = await deps.projects.readOverview(slug).catch(() => "");
-            if (overview.trim().length > 0) {
-              const changelog = await deps.projects.readChangelog(slug).catch(() => "");
-              // Single-sourced wrapper (see preload.ts) so the chat-list can strip
-              // it back off for display (issue #62).
-              prompt = wrapPreload(composePreloadContext(overview, changelog), message);
-            }
+            prompt = await composePreloadedPrompt(slug, message);
           }
         }
 

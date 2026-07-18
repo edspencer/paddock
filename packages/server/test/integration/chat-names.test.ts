@@ -14,6 +14,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { startTestApp, type TestApp } from "../helpers/app.js";
 import { listen, connectWs, type WsClient, type WsEvent } from "../helpers/ws.js";
+import { keeperAgentName } from "../../src/herdctl.js";
 
 const isComplete = (slug: string) => (e: WsEvent) =>
   e.type === "chat:complete" &&
@@ -101,5 +102,39 @@ describe("integration: chat display names strip the preload wrapper (issue #62)"
 
     const chat = (await chatsOf(slug)).find((c: { sessionId: string }) => c.sessionId === sessionId);
     expect(chat.name).toBe("plain chat no preload");
+  });
+
+  // C2 (#264): the self-MCP `create_chat` callback applies its `name` param by
+  // calling `renameSession` right after the chat is created (mirroring
+  // `fork_chat`/`forkSession`). Driving that callback end-to-end needs a REAL
+  // `claude` to invoke the MCP tool (the fake writes transcripts and can't call
+  // MCP) — so it's verified with real claude in QA. Here we prove the exact
+  // primitive that callback relies on: `renameSession` overrides the auto-derived
+  // first-message name in the chats list. A concise title survives; the long
+  // first-turn text no longer wins.
+  it("renameSession overrides the first-message auto-name in the chats list (C2 / #264)", async () => {
+    const slug = await freshProject();
+    const mark = ws.mark();
+    ws.send({
+      type: "chat:send",
+      payload: {
+        projectSlug: slug,
+        sessionId: null,
+        message:
+          "please investigate the intermittent login redirect loop that only reproduces on staging",
+      },
+    });
+    const complete = await ws.waitFor(isComplete(slug), { from: mark });
+    const sessionId = complete.payload!.sessionId as string;
+
+    // Before rename the list falls back to the long first-message text.
+    const before = (await chatsOf(slug)).find((c: { sessionId: string }) => c.sessionId === sessionId);
+    expect(before.name).toContain("login redirect loop");
+
+    // What the create_chat callback does with its `name` param.
+    await t.herdctl.renameSession(keeperAgentName(slug), sessionId, "Fix login redirect loop");
+
+    const after = (await chatsOf(slug)).find((c: { sessionId: string }) => c.sessionId === sessionId);
+    expect(after.name).toBe("Fix login redirect loop");
   });
 });

@@ -207,9 +207,10 @@ function errText(error: unknown): string {
 const CREATE_CHAT_DESC =
   "Start a BRAND-NEW chat and kick it off with `prompt` (a full first turn to the " +
   "new keeper). Defaults to the current project; pass `project` (a slug) to create " +
-  "it elsewhere. Optionally set `name` (the chat's display name) and " +
-  "`preload_context` (seed the new chat with the project's OVERVIEW/context). " +
-  "Returns the new chat's sessionId.";
+  "it elsewhere. Set `name` to a concise 3–5 word title for the chat (STRONGLY " +
+  "recommended — without it the title falls back to a long auto-summary of the " +
+  "first turn). Optionally set `preload_context` to seed the new chat with the " +
+  "project's OVERVIEW.md + CHANGELOG.md. Returns the new chat's sessionId.";
 
 const FORK_CHAT_DESC =
   "Fork an existing chat into a NEW child chat that inherits its history, then " +
@@ -484,10 +485,15 @@ export function selfMcpServerDef(
               type: "string",
               description: "Project slug to create the chat in. Omit to use the current project.",
             },
-            name: { type: "string", description: "Optional display name for the new chat." },
+            name: {
+              type: "string",
+              description:
+                "Concise 3–5 word display name for the new chat (e.g. \"Fix login redirect bug\"). " +
+                "Strongly recommended: without it the title falls back to a long auto-summary.",
+            },
             preload_context: {
               type: "boolean",
-              description: "Seed the new chat with the project's OVERVIEW/context.",
+              description: "Seed the new chat with the project's OVERVIEW.md + CHANGELOG.md.",
             },
           },
           required: ["prompt"],
