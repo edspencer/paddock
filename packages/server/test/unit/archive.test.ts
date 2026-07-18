@@ -41,6 +41,26 @@ describe("ArchiveStore", () => {
     expect(JSON.parse(await fs.readFile(stateFile(), "utf8"))).toEqual([]);
   });
 
+  it("does not lose an entry when concurrent toggles race before the first load resolves", async () => {
+    // Pre-seed the file so ensureLoaded performs a real async read — the window
+    // in which the old (resolved-value-only) cache let each racing toggle build
+    // its own set and clobber the others on assignment. Keys are NUL-separated
+    // (`<agent>\0<sessionId>`); build the separator from a char code, not a
+    // literal, so this source file stays plain ASCII.
+    const preKey = ["keeper-a", "pre"].join(String.fromCharCode(0)); // keyOf("keeper-a","pre")
+    await fs.writeFile(stateFile(), JSON.stringify([preKey]), "utf8");
+    const store = new ArchiveStore(dir);
+    // Two archives on DIFFERENT keys, both begun before any load resolves.
+    await Promise.all([
+      store.setArchived("keeper-a", "a", true),
+      store.setArchived("keeper-a", "b", true),
+    ]);
+    const reopened = new ArchiveStore(dir);
+    expect(await reopened.isArchived("keeper-a", "pre")).toBe(true);
+    expect(await reopened.isArchived("keeper-a", "a")).toBe(true);
+    expect(await reopened.isArchived("keeper-a", "b")).toBe(true);
+  });
+
   it("survives a restart (a fresh store reads the persisted flag)", async () => {
     await new ArchiveStore(dir).setArchived("keeper-a", "s1", true);
     const reopened = new ArchiveStore(dir);

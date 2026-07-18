@@ -30,6 +30,14 @@ export class ArchiveStore {
   private readonly stateFile: string;
   /** In-memory set of archived keys (loaded once, written through on change). */
   private archived: Set<string> | null = null;
+  /**
+   * The in-flight load, cached so concurrent first-callers share ONE read.
+   * Caching only the resolved `archived` set would let several toggles that
+   * begin before the first `fs.readFile` resolves each build their own set and
+   * race on the assignment — a lost update (last writer wins, dropping the
+   * others' keys).
+   */
+  private loadPromise: Promise<Set<string>> | null = null;
   /** Serialises concurrent writes so the file never interleaves. */
   private writing: Promise<void> = Promise.resolve();
 
@@ -37,19 +45,24 @@ export class ArchiveStore {
     this.stateFile = path.join(dataDir, STATE_FILE);
   }
 
-  /** Load the persisted set (lazily; tolerant of a missing/corrupt file). */
-  private async ensureLoaded(): Promise<Set<string>> {
-    if (this.archived) return this.archived;
-    let keys: string[] = [];
-    try {
-      const raw = await fs.readFile(this.stateFile, "utf8");
-      const parsed = JSON.parse(raw) as unknown;
-      if (Array.isArray(parsed)) keys = parsed.filter((k): k is string => typeof k === "string");
-    } catch {
-      /* missing or unreadable — start empty */
+  /** Load the persisted set (lazily, deduped; tolerant of a missing/corrupt file). */
+  private ensureLoaded(): Promise<Set<string>> {
+    if (this.archived) return Promise.resolve(this.archived);
+    if (!this.loadPromise) {
+      this.loadPromise = (async () => {
+        let keys: string[] = [];
+        try {
+          const raw = await fs.readFile(this.stateFile, "utf8");
+          const parsed = JSON.parse(raw) as unknown;
+          if (Array.isArray(parsed)) keys = parsed.filter((k): k is string => typeof k === "string");
+        } catch {
+          /* missing or unreadable — start empty */
+        }
+        this.archived = new Set(keys);
+        return this.archived;
+      })();
     }
-    this.archived = new Set(keys);
-    return this.archived;
+    return this.loadPromise;
   }
 
   /** Whether a chat is archived. Non-throwing: any load error reads as false. */

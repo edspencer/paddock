@@ -100,6 +100,28 @@ describe("RunProvenanceStore", () => {
     expect(await store.get("unknown")).toBeUndefined();
   });
 
+  it("does not lose an entry when concurrent stamps race before the first load resolves", async () => {
+    // Pre-seed a persisted file so ensureLoaded performs a real async read — this
+    // is the window in which the old (resolved-value-only) cache let each racing
+    // stamp build its own map and clobber the others on assignment.
+    await fs.writeFile(
+      stateFile(),
+      JSON.stringify({ pre: { origin: "human", depth: 0 } }),
+      "utf8",
+    );
+    const store = new RunProvenanceStore(dir);
+    // Two stamps on DIFFERENT keys, both begun before any load resolves.
+    await Promise.all([
+      store.stamp("a", { origin: "spawned", depth: 1 }),
+      store.stamp("b", { origin: "spawned", depth: 2 }),
+    ]);
+    // A fresh instance reads the file straight from disk: all three keys survive.
+    const reopened = new RunProvenanceStore(dir);
+    expect(await reopened.get("pre")).toEqual({ origin: "human", depth: 0 });
+    expect(await reopened.get("a")).toEqual({ origin: "spawned", depth: 1 });
+    expect(await reopened.get("b")).toEqual({ origin: "spawned", depth: 2 });
+  });
+
   it("survives a reload (a fresh store reads the persisted map)", async () => {
     await new RunProvenanceStore(dir).stamp("s1", childOf(HUMAN_ROOT));
     const reopened = new RunProvenanceStore(dir);
