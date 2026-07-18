@@ -94,6 +94,13 @@ export const XIcon = (p: IconProps) => (
   </svg>
 );
 
+/** A lightning bolt — event hooks (something fires when a lifecycle event happens). */
+export const BoltIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12z" />
+  </svg>
+);
+
 export const MenuIcon = (p: IconProps) => (
   <svg {...base(p)}>
     <path d="M3 6h18M3 12h18M3 18h18" />

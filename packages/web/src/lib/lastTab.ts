@@ -21,7 +21,8 @@ export type SubPath =
   | { view: "files"; path?: string }
   | { view: "changes"; file?: string }
   | { view: "history" }
-  | { view: "settings" };
+  | { view: "settings" }
+  | { view: "hooks" };
 
 /** Encode a "/"-separated files subpath one segment at a time (keeps the "/"). */
 function encodeFilesPath(subpath: string): string {
@@ -62,6 +63,7 @@ function isValidShape(v: string): boolean {
     v === "home" ||
     v === "settings" ||
     v === "history" ||
+    v === "hooks" ||
     /^chat(\/[^/].*)?$/.test(v) ||
     /^files(\/[^/].*)?$/.test(v) ||
     /^changes(\/[^/].*)?$/.test(v)
@@ -77,6 +79,7 @@ export function toSubPath(sub: SubPath): string {
   if (sub.view === "home") return "home";
   if (sub.view === "settings") return "settings";
   if (sub.view === "history") return "history";
+  if (sub.view === "hooks") return "hooks";
   if (sub.view === "chat") {
     return sub.sessionId ? `chat/${encodeURIComponent(sub.sessionId)}` : "chat";
   }

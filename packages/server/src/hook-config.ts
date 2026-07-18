@@ -125,6 +125,51 @@ export const HOOK_PROMPT_DIR = path.join(".paddock", "hooks");
 /** Default max agent turns for a hook when its capabilities don't set one. */
 export const HOOK_DEFAULT_MAX_TURNS = 30;
 
+/**
+ * One tool a hook may be granted, for the capability picker (G4). `name` is the
+ * literal `allowed_tools` pattern the hook agent is registered with; `group`
+ * clusters them in the UI; `description` says precisely what granting it lets the
+ * hook do. This is the same set of tools the keeper defaults grant (herdctl.ts
+ * `defaults.allowed_tools`), so the picker never offers a tool the CLI runtime
+ * would auto-deny — the capability the UI shows is the capability enforced.
+ */
+export interface GrantableTool {
+  name: string;
+  group: "read" | "write" | "web" | "orchestration" | "browser";
+  description: string;
+}
+
+/**
+ * The tools a hook can be granted, mirroring the keeper's default allowlist
+ * (herdctl `defaults.allowed_tools`) so the picker is truthful. Grouped + described
+ * for the G4 capability picker. `ToolSearch` is included because several of the
+ * autonomy tools surface as deferred tools reached through it; the browser MCP is a
+ * no-op unless the box enables Playwright (documented on {@link BROWSER_MCP_TOOL}).
+ * The `mcp__playwright__*` pattern is offered verbatim so a hook that lists it gets
+ * the browser tools auto-allowed exactly as the keeper does.
+ */
+export const GRANTABLE_TOOLS: readonly GrantableTool[] = [
+  { name: "Read", group: "read", description: "Read a file from the project working dir." },
+  { name: "Glob", group: "read", description: "Find files by glob pattern." },
+  { name: "Grep", group: "read", description: "Search file contents (ripgrep)." },
+  { name: "Edit", group: "write", description: "Edit an existing file in place." },
+  { name: "Write", group: "write", description: "Create or overwrite a file — needed to author OVERVIEW/CHANGELOG etc." },
+  { name: "NotebookEdit", group: "write", description: "Edit Jupyter notebook cells." },
+  { name: "Bash", group: "write", description: "Run shell commands — spin down pm servers, delete clones, git, etc. The broadest grant." },
+  { name: "WebFetch", group: "web", description: "Fetch and read a URL." },
+  { name: "WebSearch", group: "web", description: "Search the web." },
+  { name: "Task", group: "orchestration", description: "Spawn a sub-agent to do a scoped task." },
+  { name: "TodoWrite", group: "orchestration", description: "Track a multi-step plan as a checklist." },
+  { name: "Skill", group: "orchestration", description: "Invoke a packaged skill (code-review, deep-research, …)." },
+  { name: "ToolSearch", group: "orchestration", description: "Load deferred tool schemas on demand." },
+  { name: "ScheduleWakeup", group: "orchestration", description: "Schedule a follow-up wake (session drive-mode only)." },
+  { name: "Monitor", group: "orchestration", description: "Watch a condition/background task and be re-invoked." },
+  { name: "CronCreate", group: "orchestration", description: "Create a cron schedule (session drive-mode only)." },
+  { name: "CronList", group: "orchestration", description: "List cron schedules." },
+  { name: "CronDelete", group: "orchestration", description: "Delete a cron schedule." },
+  { name: "mcp__playwright__*", group: "browser", description: "Drive a headless browser (navigate / click / snapshot). No-op unless the box enables Playwright." },
+];
+
 /** A hook name we're willing to key on (also a safe herdctl agent-name segment). */
 export function isValidHookName(name: string): boolean {
   return typeof name === "string" && /^[A-Za-z0-9._-]+$/.test(name) && name.length <= 64;

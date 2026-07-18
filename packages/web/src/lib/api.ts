@@ -14,6 +14,9 @@ import {
   type GitProjectStatus,
   type GitPushResult,
   type HistoryMessage,
+  type Hook,
+  type HookInput,
+  type HooksResponse,
   type ModelInfo,
   type PollResult,
   type Project,
@@ -486,6 +489,38 @@ export const api = {
       { method: "POST", body: "{}" },
     );
     return sessionId;
+  },
+
+  // --- Hooks (Epic G / G4) -------------------------------------------------
+
+  /**
+   * A project's event hooks + the capability picker's catalog: the grantable tools
+   * and the events a hook can fire on (so the Hooks tab renders a precise picker
+   * without hard-coding the tool list client-side).
+   */
+  async listHooks(slug: string): Promise<HooksResponse> {
+    return req<HooksResponse>(`/api/projects/${encodeURIComponent(slug)}/hooks`);
+  },
+
+  /**
+   * Create or replace one hook (keyed by name). Persists to project.yaml + registers
+   * its `hook-<slug>-<name>` agent. Enabling/disabling is the SAME call with the
+   * `enabled` field flipped — there is no separate enable/disable verb (GG-3).
+   */
+  async putHook(slug: string, name: string, input: HookInput): Promise<Hook> {
+    const { hook } = await req<{ hook: Hook }>(
+      `/api/projects/${encodeURIComponent(slug)}/hooks/${encodeURIComponent(name)}`,
+      { method: "PUT", body: JSON.stringify(input) },
+    );
+    return hook;
+  },
+
+  /** Delete one hook (removes it from project.yaml + unregisters its agent). */
+  async deleteHook(slug: string, name: string): Promise<void> {
+    await req<{ ok: boolean }>(
+      `/api/projects/${encodeURIComponent(slug)}/hooks/${encodeURIComponent(name)}`,
+      { method: "DELETE" },
+    );
   },
 
   // --- Git backing store ----------------------------------------------------

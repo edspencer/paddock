@@ -41,6 +41,7 @@ const apiFns = {
   projectChatMessages: vi.fn(),
   getModels: vi.fn(),
   updateProject: vi.fn(),
+  listHooks: vi.fn(),
 };
 vi.mock("../lib/api", async () => {
   const actual = await vi.importActual<typeof import("../lib/api")>("../lib/api");
@@ -63,6 +64,7 @@ vi.mock("../lib/api", async () => {
       projectChatMessages: (...a: unknown[]) => apiFns.projectChatMessages(...a),
       getModels: (...a: unknown[]) => apiFns.getModels(...a),
       updateProject: (...a: unknown[]) => apiFns.updateProject(...a),
+      listHooks: (...a: unknown[]) => apiFns.listHooks(...a),
     },
   };
 });
@@ -105,6 +107,7 @@ function renderAt(path: string) {
         <Route path="/projects/:slug/changes" element={<ProjectView />} />
         <Route path="/projects/:slug/changes/:file" element={<ProjectView />} />
         <Route path="/projects/:slug/settings" element={<ProjectView />} />
+        <Route path="/projects/:slug/hooks" element={<ProjectView />} />
         <Route path="/" element={<div>HOME</div>} />
       </Routes>
     </MemoryRouter>,
@@ -133,6 +136,7 @@ beforeEach(() => {
   apiFns.updateProject.mockImplementation((_slug: string, patch: Partial<Project>) =>
     Promise.resolve(makeProject({ slug: "p", ...patch })),
   );
+  apiFns.listHooks.mockResolvedValue({ hooks: [], grantableTools: [], events: ["onArchive"] });
   upsert.mockReset();
   remove.mockReset();
   localStorage.clear();
@@ -261,6 +265,24 @@ describe("ProjectView: tabs", () => {
     expect(await screen.findByRole("button", { name: /save changes/i })).toBeInTheDocument();
     // The "Edit" affordances route here rather than opening a modal.
     expect(screen.getByText(/Identity & metadata/i)).toBeInTheDocument();
+  });
+
+  it("opens the Hooks tab and deep-links directly via /hooks (Epic G / G4)", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
+    // From the chat tab, clicking the Hooks tab mounts the pane (which fetches).
+    renderAt("/projects/p/chat");
+    await screen.findByTestId("chat-pane");
+    fireEvent.click(screen.getByRole("button", { name: /^Hooks$/ }));
+    expect(await screen.findByTestId("hooks-pane")).toBeInTheDocument();
+    await waitFor(() => expect(apiFns.listHooks).toHaveBeenCalledWith("p"));
+    expect(await screen.findByText(/No hooks yet/i)).toBeInTheDocument();
+  });
+
+  it("Hooks deep-links directly via /hooks", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
+    renderAt("/projects/p/hooks");
+    expect(await screen.findByTestId("hooks-pane")).toBeInTheDocument();
+    await waitFor(() => expect(apiFns.listHooks).toHaveBeenCalledWith("p"));
   });
 
   it("the Changes tab is hidden when the projects dir is not a git repo", async () => {
