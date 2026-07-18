@@ -439,9 +439,11 @@ export const api = {
   /** Enable or disable one schedule (persisted; takes effect immediately). */
   async setScheduleEnabled(slug: string, name: string, enabled: boolean): Promise<Schedule> {
     const action = enabled ? "enable" : "disable";
+    // These carry no payload, but `req` sets a JSON content-type — send an empty
+    // object so Fastify's JSON parser doesn't reject an empty body (400).
     const { schedule } = await req<{ schedule: Schedule }>(
       `/api/projects/${encodeURIComponent(slug)}/schedules/${encodeURIComponent(name)}/${action}`,
-      { method: "POST" },
+      { method: "POST", body: "{}" },
     );
     return schedule;
   },
@@ -454,7 +456,7 @@ export const api = {
   async triggerSchedule(slug: string, name: string): Promise<string> {
     const { sessionId } = await req<{ ok: boolean; sessionId: string }>(
       `/api/projects/${encodeURIComponent(slug)}/schedules/${encodeURIComponent(name)}/trigger`,
-      { method: "POST" },
+      { method: "POST", body: "{}" },
     );
     return sessionId;
   },
