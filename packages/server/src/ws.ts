@@ -69,6 +69,7 @@ import {
   keeperAgentName,
   keeperSlugFromAgent,
   hookAgentName,
+  triggerAgentName,
   SCRATCH_AGENT,
   SCRATCH_SLUG,
 } from "./herdctl.js";
@@ -123,6 +124,13 @@ import {
   type HookDto,
   type HookEvent,
 } from "./hook-config.js";
+import type { TriggerService } from "./triggers.js";
+import type { TriggerSessionStore } from "./trigger-session.js";
+import {
+  triggerPromptFileAbsPath,
+  type TriggerDto,
+  type TriggerEvent,
+} from "./trigger-config.js";
 
 /**
  * Per-turn token usage as observed on the SDK stream, normalized to camelCase.
@@ -701,6 +709,16 @@ interface HookEventContext {
   sessionId: string;
 }
 
+/**
+ * The context a fired lifecycle event carries into an EVENT trigger's prompt (Epic T /
+ * T1) — the unified successor to {@link HookEventContext}. v1 (`onArchive`) supplies
+ * the archived chat's session id so the trigger knows what to act on.
+ */
+interface TriggerEventContext {
+  /** The session id of the chat whose lifecycle event fired the trigger. */
+  sessionId: string;
+}
+
 export function makeChatHandler(deps: {
   herdctl: HerdctlService;
   projects: ProjectStore;
@@ -753,6 +771,23 @@ export function makeChatHandler(deps: {
    * for a fired event through it. Paired with {@link events}; absent ⇒ no dispatch.
    */
   hooks?: HookService;
+  /**
+   * Unified trigger registry (Epic T / T1). When present, this handler fires the
+   * project's enabled EVENT triggers (via the {@link events} bus) and its SCHEDULE
+   * triggers (via herdctl's `setScheduleTriggerHandler`) through the SAME
+   * {@link startAgentTurn} core the hooks/schedules paths use — the unification. Absent
+   * ⇒ no trigger dispatch (existing hooks/schedules behaviour unchanged), so tests that
+   * don't exercise triggers need not supply it.
+   */
+  triggers?: TriggerService;
+  /**
+   * Owned-session sidecar for accreting triggers (`run.session: "resume"`, Epic T /
+   * T1) — maps a resume-type trigger to the one chat it accretes into across fires,
+   * created on its first fire and rebound off this store after a restart. Absent ⇒
+   * resume-type triggers degrade to a fresh chat each fire; wired in production,
+   * optional so existing tests need not supply it.
+   */
+  triggerSessions?: TriggerSessionStore;
 }) {
   // ONE hub shared across every socket this handler serves: it tracks each
   // session's in-flight turn and fans its frames out to whichever socket(s) are
@@ -1017,6 +1052,20 @@ export function makeChatHandler(deps: {
     if (!slug) return;
     const project = await deps.projects.get(slug).catch(() => null);
     if (!project) return;
+    // Unified triggers (Epic T / T1): a fired keeper schedule may belong to a
+    // SCHEDULE-type trigger (forwarded into the same keeper `schedules` block under
+    // its trigger name). Resolve that FIRST — the unified model is authoritative — and
+    // fire it via the single trigger fire path; otherwise fall back to the legacy
+    // schedule path (which T3/T5 eventually retire).
+    const trig = project.triggers?.[info.scheduleName];
+    if (trig && trig.trigger.type === "schedule" && trig.enabled === true) {
+      await fireTriggerForProject(project, {
+        name: info.scheduleName,
+        agentName: triggerAgentName(slug, info.scheduleName),
+        ...trig,
+      });
+      return;
+    }
     const armed =
       typeof info.schedule.prompt === "string" ? info.schedule.prompt : undefined;
     await fireScheduleForProject(
@@ -1116,6 +1165,151 @@ export function makeChatHandler(deps: {
   deps.events?.on("onArchive", (payload) => {
     void dispatchHooks(payload.slug, "onArchive", { sessionId: payload.sessionId });
   });
+
+  // --- unified triggers (Epic T / T1) ------------------------------------
+
+  /**
+   * Resolve the prompt a fired trigger should run. A trigger's `promptFile`
+   * (Paddock-only, `.paddock/triggers/*.md`, git-tracked + keeper-editable) is read
+   * FRESH here at fire time — so an edit takes effect on the very next fire with no
+   * agent re-register — and falls back to the inline `run.prompt` when there's no file
+   * or it can't be read. For an EVENT trigger, a short machine preamble naming the
+   * event + archived chat is prepended (so the trigger knows WHAT to act on); a
+   * schedule trigger gets no preamble. Mirrors {@link resolveSchedulePrompt} /
+   * {@link resolveHookPrompt}.
+   */
+  async function resolveTriggerPrompt(
+    project: Awaited<ReturnType<typeof deps.projects.get>>,
+    trigger: TriggerDto,
+    ctx?: TriggerEventContext,
+  ): Promise<string> {
+    let body = typeof trigger.run.prompt === "string" ? trigger.run.prompt : "";
+    if (trigger.run.promptFile) {
+      const abs = triggerPromptFileAbsPath(project.workingDir, trigger.run.promptFile);
+      if (abs) {
+        const content = await fs.readFile(abs, "utf8").catch(() => null);
+        if (content !== null) body = content;
+      }
+    }
+    if (trigger.trigger.type === "event" && ctx) {
+      const preamble =
+        `A \`${trigger.trigger.on}\` event trigger fired for project \`${project.slug}\`: ` +
+        `chat \`${ctx.sessionId}\` was just archived.\n\n`;
+      return preamble + body;
+    }
+    return body;
+  }
+
+  /**
+   * Run one fire of a trigger as a first-class chat on the hub — the ONE fire path for
+   * every trigger type (Epic T / T1), replacing the separate schedule + hook fire
+   * paths with a single `startAgentTurn` call. Runs on the keeper for a SCHEDULE
+   * trigger (T1 — per-trigger schedule tool-scoping is T2) and on the trigger's own
+   * `trigger-<slug>-<name>` agent for an EVENT trigger (tool config = `run.tools`).
+   *
+   * `run.session` drives new-vs-accrete: `"new"` → a FRESH chat every fire
+   * (`resume: null`); `"resume"` → resume the trigger's ONE owned session (recorded on
+   * first fire in the {@link TriggerSessionStore}, rebound after a restart) so a
+   * "manager" accretes a single transcript. A stale owned id (its transcript deleted)
+   * is forgotten so the next fire re-creates one. FIRE-AND-FORGET: a rejection (the
+   * turn never produced a session id — its own failure frame already emitted) is
+   * swallowed so a transient failure never wedges the trigger. Resolves the
+   * created/resumed session id, or `null`.
+   */
+  async function fireTriggerForProject(
+    project: Awaited<ReturnType<typeof deps.projects.get>>,
+    trigger: TriggerDto,
+    ctx?: TriggerEventContext,
+  ): Promise<string | null> {
+    const slug = project.slug;
+    const isSchedule = trigger.trigger.type === "schedule";
+    const agentName = isSchedule ? keeperAgentName(slug) : triggerAgentName(slug, trigger.name);
+    const prompt = await resolveTriggerPrompt(project, trigger, ctx);
+
+    // run.session: "resume" accretes into an owned session; "new" starts fresh.
+    let resume: string | null = null;
+    if (trigger.run.session === "resume" && deps.triggerSessions) {
+      const owned = await deps.triggerSessions.get(slug, trigger.name).catch(() => undefined);
+      if (owned && (await deps.herdctl.sessionExists(project, owned).catch(() => false))) {
+        resume = owned;
+      } else if (owned) {
+        await deps.triggerSessions.clear(slug, trigger.name).catch(() => undefined);
+      }
+    }
+
+    try {
+      const sessionId = await startAgentTurn({
+        projectSlug: slug,
+        agentName,
+        workingDir: project.workingDir,
+        resume,
+        prompt,
+        driveMode: resolveDriveMode(project),
+        fallbackModel: trigger.run.model ?? project.model,
+        // Provenance (A1/#261): a schedule fire is a root `scheduled` trigger; an event
+        // trigger reuses the `hook` origin (its E1 badge surface) — both depth 0.
+        origin: isSchedule ? "scheduled" : "hook",
+        depth: 0,
+        maxSpawnDepth: resolveMaxSpawnDepth(project.maxSpawnDepth, deps.cfg.maxSpawnDepth),
+        // Attribute the injected kickoff turn to the trigger that fired it (#290).
+        sender: {
+          kind: isSchedule ? "schedule" : "hook",
+          name: trigger.name,
+          project: slug,
+        },
+      });
+      // First fire of an accreting trigger: remember the chat it created so the next
+      // fire resumes THIS transcript (a resume already had an id).
+      if (trigger.run.session === "resume" && !resume && deps.triggerSessions) {
+        await deps.triggerSessions.set(slug, trigger.name, sessionId).catch(() => undefined);
+      }
+      return sessionId;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Resolve a project's ENABLED event triggers for `event` and fire each (after-commit,
+   * non-blocking — the trigger analogue of {@link dispatchHooks}). Concurrent +
+   * independent; one trigger's failure never affects another. No-op when the trigger
+   * system isn't wired ({@link makeChatHandler} dep `triggers` absent) or the project
+   * has no matching enabled event trigger.
+   */
+  async function dispatchEventTriggers(
+    slug: string,
+    event: TriggerEvent,
+    ctx: TriggerEventContext,
+  ): Promise<void> {
+    if (!deps.triggers) return;
+    const project = await deps.projects.get(slug).catch(() => null);
+    if (!project) return;
+    const matching = await deps.triggers.enabledForEvent(slug, event).catch(() => []);
+    await Promise.all(matching.map((trigger) => fireTriggerForProject(project, trigger, ctx)));
+  }
+
+  // Dispatch enabled EVENT triggers on the SAME lifecycle events hooks fire on — the
+  // event-bus supports multiple listeners, so this rides alongside the hook dispatcher
+  // (they read disjoint config blocks). onArchive is the wired event; afterTurn is
+  // reserved for the sweeper fold-in (T5) and not emitted yet.
+  deps.events?.on("onArchive", (payload) => {
+    void dispatchEventTriggers(payload.slug, "onArchive", { sessionId: payload.sessionId });
+  });
+
+  /**
+   * Fire a schedule-type TRIGGER now (Epic T / T1), reused by the "trigger now" REST
+   * route (T3/T4) and shared with the cron path below. Resolves the live project + its
+   * trigger record and fires via {@link fireTriggerForProject}. Returns the started
+   * chat's session id, or `null` if the project/trigger is gone or not a schedule
+   * trigger, or the turn never produced a session.
+   */
+  async function fireTrigger(slug: string, triggerName: string): Promise<string | null> {
+    const project = await deps.projects.get(slug).catch(() => null);
+    if (!project) return null;
+    const rec = project.triggers?.[triggerName];
+    if (!rec || rec.trigger.type !== "schedule") return null;
+    return fireTriggerForProject(project, { name: triggerName, agentName: triggerAgentName(slug, triggerName), ...rec });
+  }
 
   /**
    * Compose the OVERVIEW.md + CHANGELOG.md preload block onto `baseMessage` for
@@ -2467,5 +2661,5 @@ export function makeChatHandler(deps: {
   // the `POST …/schedules/:name/trigger` route calls `fireSchedule` to run a
   // schedule on demand through the exact same hub path a cron fire uses, so a
   // "trigger now" chat is indistinguishable from a scheduled one.
-  return { handle, fireSchedule };
+  return { handle, fireSchedule, fireTrigger };
 }

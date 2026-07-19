@@ -465,7 +465,11 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     try {
       const project = await projects.remove(req.params.slug); // throws not_found
       try {
-        await herdctl.removeProjectAgent(project.slug, Object.keys(project.hooks ?? {}));
+        await herdctl.removeProjectAgent(
+          project.slug,
+          Object.keys(project.hooks ?? {}),
+          Object.keys(project.triggers ?? {}),
+        );
       } catch (err) {
         req.log.warn({ err }, "keeper-agent unregister failed (project dir already removed)");
       }

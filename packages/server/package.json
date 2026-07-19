@@ -25,7 +25,8 @@
     "@herdctl/core": "^5.21.0",
     "fastify": "4.28.1",
     "jose": "^6.2.3",
-    "yaml": "2.5.1"
+    "yaml": "2.5.1",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "22.5.4",

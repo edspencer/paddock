@@ -36,10 +36,17 @@ import {
   isValidHookName,
   type PaddockHook,
 } from "./hook-config.js";
+import {
+  sanitizeTrigger,
+  sanitizeTriggers,
+  isValidTriggerName,
+  type PaddockTrigger,
+} from "./trigger-config.js";
 import { sanitizeRecoveryOverride, type RecoveryOverride } from "./recovery-config.js";
 
 export type { PaddockSchedule };
 export type { PaddockHook };
+export type { PaddockTrigger };
 export type { RecoveryOverride };
 
 /** project.yaml status enum (matches the documented standard). */
@@ -244,6 +251,17 @@ export interface ProjectYaml {
    * `enabled: false` (GG-3).
    */
   hooks?: Record<string, PaddockHook>;
+  /**
+   * Unified triggers for this project (Epic T "Unify Triggers" / T1), keyed by a
+   * stable trigger name. Each value is a {@link PaddockTrigger} — a discriminated
+   * `trigger` (schedule / event / webhook) + a shared `run` (prompt, session, tools,
+   * …) + `enabled`. The declarative successor collapsing the separate `schedules` +
+   * `hooks` blocks (which T3/T5 retire): a SCHEDULE trigger is forwarded into the
+   * keeper agent's `schedules` block; an EVENT trigger is registered as its own
+   * `trigger-<slug>-<name>` agent (like a hook); a WEBHOOK trigger is shape-reserved.
+   * Absent/empty ⇒ the project has no triggers. New triggers default `enabled: false`.
+   */
+  triggers?: Record<string, PaddockTrigger>;
 }
 
 /** API-facing project DTO (adds derived fields). */
@@ -848,6 +866,44 @@ export class ProjectStore {
   }
 
   /**
+   * Add or replace one unified trigger in `project.yaml`, keyed by name (Epic T /
+   * T1) — the persistence half of a trigger mutation (the caller arms it against
+   * herdctl separately via `TriggerService`/`HerdctlService`). The record is validated
+   * + normalised by the Zod schema ({@link sanitizeTrigger}); an invalid name or record
+   * throws `ProjectError("invalid")`. Returns the updated project DTO. Mirrors
+   * {@link setHook}/{@link setSchedule}.
+   */
+  async setTrigger(slug: string, name: string, trigger: unknown): Promise<Project> {
+    const current = await this.get(slug);
+    if (!isValidTriggerName(name)) {
+      throw new ProjectError(`Invalid trigger name: ${name}`, "invalid");
+    }
+    const clean = sanitizeTrigger(trigger);
+    if (!clean) throw new ProjectError("Invalid trigger definition", "invalid");
+    const triggers = { ...(current.triggers ?? {}), [name]: clean };
+    const next: ProjectYaml = { ...this.stripDto(current), triggers, updated: today() };
+    await this.writeYaml(slug, next);
+    return this.toDto(current.dir, next, await this.overviewExists(slug));
+  }
+
+  /**
+   * Remove a trigger from `project.yaml` (no-op if absent). Returns the updated
+   * project DTO. The caller disarms the trigger's agent / schedule via `TriggerService`.
+   * Mirrors {@link removeHook}/{@link removeSchedule}.
+   */
+  async removeTrigger(slug: string, name: string): Promise<Project> {
+    const current = await this.get(slug);
+    const rest = { ...(current.triggers ?? {}) };
+    delete rest[name];
+    const stripped = this.stripDto(current);
+    if (Object.keys(rest).length > 0) stripped.triggers = rest;
+    else delete stripped.triggers;
+    const next: ProjectYaml = { ...stripped, updated: today() };
+    await this.writeYaml(slug, next);
+    return this.toDto(current.dir, next, await this.overviewExists(slug));
+  }
+
+  /**
    * Delete a project directory and everything in it (project.yaml, CHANGELOG.md,
    * and any files the keeper agent created). Throws ProjectError("not_found")
    * if the slug has no project.yaml, so callers can return a clean 404.
@@ -1098,6 +1154,14 @@ export class ProjectStore {
       ...(() => {
         const h = sanitizeHooks(p.hooks);
         return h && Object.keys(h).length > 0 ? { hooks: h } : {};
+      })(),
+      // triggers (Epic T / T1): same discipline as schedules/hooks — carried only
+      // when at least one well-formed entry survives Zod validation, so trigger-less
+      // files round-trip byte-identically and a malformed hand-edit is dropped (not
+      // thrown) rather than bricking the project's agent registration.
+      ...(() => {
+        const t = sanitizeTriggers(p.triggers);
+        return t && Object.keys(t).length > 0 ? { triggers: t } : {};
       })(),
     };
   }
