@@ -151,6 +151,13 @@ export interface RecoveryEngineDeps {
   clearTimer?: (h: TimerHandle) => void;
   /** Read the transcript bytes appended since `offset`. Default reads `<dir>/.chats/<id>.jsonl`. */
   readTail?: (file: string, offset: number) => Promise<TranscriptTail>;
+  /**
+   * Cheap current size (bytes) of the transcript, for the arm-time baseline — a
+   * `stat`, NOT a full read. Called once per armed watch on EVERY session-mode
+   * keeper turn, so it must not slurp the (multi-MB) transcript. A missing file
+   * (turn wrote none yet) → 0. Default `fsp.stat(file).size`.
+   */
+  fileSize?: (file: string) => Promise<number>;
   /** Poll cadence (ms) while watching. Default {@link DEFAULT_POLL_MS}. */
   pollMs?: number;
   /** Extra window (ms) beyond `debounceMs` to allow the kill to land. Default {@link DEFAULT_KILL_GRACE_MS}. */
@@ -180,6 +187,19 @@ interface SessionGuard {
 interface Watch {
   timer: TimerHandle | null;
   cancelled: boolean;
+}
+
+/**
+ * Cheap current size (bytes) of the transcript via `stat` — the arm-time baseline,
+ * so we never slurp a multi-MB transcript just to learn where its EOF is. A missing
+ * file (the turn wrote no transcript yet) → 0, so the watch starts from the top.
+ */
+async function defaultFileSize(file: string): Promise<number> {
+  try {
+    return (await fsp.stat(file)).size;
+  } catch {
+    return 0;
+  }
 }
 
 /**
@@ -216,6 +236,7 @@ export class RecoveryEngine {
   private readonly setTimer: (fn: () => void, ms: number) => TimerHandle;
   private readonly clearTimer: (h: TimerHandle) => void;
   private readonly readTail: (file: string, offset: number) => Promise<TranscriptTail>;
+  private readonly fileSize: (file: string) => Promise<number>;
   private readonly pollMs: number;
   private readonly killGraceMs: number;
   private readonly log: (msg: string, meta?: Record<string, unknown>) => void;
@@ -231,6 +252,7 @@ export class RecoveryEngine {
     this.setTimer = deps.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
     this.clearTimer = deps.clearTimer ?? ((h) => clearTimeout(h));
     this.readTail = deps.readTail ?? defaultReadTail;
+    this.fileSize = deps.fileSize ?? defaultFileSize;
     this.pollMs = deps.pollMs ?? DEFAULT_POLL_MS;
     this.killGraceMs = deps.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
     this.log = deps.log ?? (() => undefined);
@@ -279,10 +301,11 @@ export class RecoveryEngine {
     this.cancelWatch(sessionId);
 
     const file = path.join(projectChatsDir(project.dir), `${sessionId}.jsonl`);
-    const baseline = await this.readTail(file, 0);
-    // Start reading from the current EOF so we only see entries appended AFTER this
-    // turn (the kill's notification), never a stale notification from earlier.
-    let offset = baseline.size;
+    // Baseline = the transcript's current EOF via a cheap `stat` (NOT a full read):
+    // this runs on EVERY session-mode turn once autoReDrive is on, and transcripts
+    // here are multi-MB. Start the tail from EOF so we only ever see entries appended
+    // AFTER this turn (the kill's notification), never a stale one from earlier.
+    let offset = await this.fileSize(file);
     let carry = "";
     let pending = false;
     let notifiedAt: number | null = null;

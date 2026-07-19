@@ -144,13 +144,23 @@ async function drain(): Promise<void> {
 /** A mutable in-memory transcript the test grows to simulate the runtime appending. */
 class FakeTranscript {
   content = "";
+  /** Records every offset readTail was asked to read from — a `0` means a full read. */
+  readOffsets: number[] = [];
+  /** How many times the cheap size baseline was taken. */
+  sizeReads = 0;
   append(...lines: string[]): void {
     this.content += lines.map((l) => l + "\n").join("");
   }
   readTail = async (_file: string, offset: number): Promise<TranscriptTail> => {
+    this.readOffsets.push(offset);
     const buf = Buffer.from(this.content, "utf8");
     const size = buf.length;
     return { text: offset >= size ? "" : buf.subarray(offset).toString("utf8"), size };
+  };
+  /** Cheap size (the arm-time baseline) — must NOT go through readTail. */
+  fileSize = async (_file: string): Promise<number> => {
+    this.sizeReads++;
+    return Buffer.byteLength(this.content, "utf8");
   };
 }
 
@@ -197,6 +207,7 @@ function makeEngine(opts: {
     setTimer: sched.setTimer,
     clearTimer: sched.clearTimer,
     readTail: tx.readTail,
+    fileSize: tx.fileSize,
     pollMs: 10,
     killGraceMs: 200,
   });
@@ -228,6 +239,18 @@ describe("RecoveryEngine.armWatch (#301)", () => {
     expect(h.reDrive).toHaveBeenCalledWith(expect.objectContaining({ slug: "rec" }), "s1");
     expect(h.engine.retryCountFor("s1")).toBe(1);
     expect(h.engine.isWatching("s1")).toBe(false);
+  });
+
+  it("takes the arm-time baseline via fileSize (stat), never a full read from offset 0", async () => {
+    // A large pre-existing transcript: arming must not slurp it to find EOF.
+    const big = assistantLine("x".repeat(50_000));
+    h.tx.append(userLine("go"), big, big, big);
+    h.engine.armWatch({ slug: "rec", sessionId: "s1" });
+    await drain();
+    // Baseline came from the cheap stat…
+    expect(h.tx.sizeReads).toBe(1);
+    // …and every tail read starts from the current EOF, never a full read (offset 0).
+    expect(h.tx.readOffsets).not.toContain(0);
   });
 
   it("does NOT poke a keeper that wakes itself inside the debounce window", async () => {
