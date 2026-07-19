@@ -28,6 +28,9 @@ import {
   type ScheduleInput,
   SCRATCH_SLUG,
   type SlashCommand,
+  type Trigger,
+  type TriggerInput,
+  type TriggersResponse,
   type UpdateProjectInput,
 } from "./types";
 
@@ -525,6 +528,39 @@ export const api = {
   async deleteHook(slug: string, name: string): Promise<void> {
     await req<{ ok: boolean }>(
       `/api/projects/${encodeURIComponent(slug)}/hooks/${encodeURIComponent(name)}`,
+      { method: "DELETE" },
+    );
+  },
+
+  // --- Triggers (Epic T / T3–T4) -------------------------------------------
+
+  /**
+   * A project's unified triggers + the picker's catalog: the grantable tools, the
+   * events an event-trigger can fire on, and the trigger types — so the Triggers tab
+   * renders precise type/event/capability pickers without hard-coding them. The
+   * successor to `listHooks` + `listSchedules` (Epic T folds both into one surface).
+   */
+  async listTriggers(slug: string): Promise<TriggersResponse> {
+    return req<TriggersResponse>(`/api/projects/${encodeURIComponent(slug)}/triggers`);
+  },
+
+  /**
+   * Create or replace one trigger (keyed by name). Persists to project.yaml's single
+   * `triggers` block + arms it. Enabling/disabling is the SAME call with the `enabled`
+   * field flipped — there is no separate enable/disable verb (GG-3).
+   */
+  async putTrigger(slug: string, name: string, input: TriggerInput): Promise<Trigger> {
+    const { trigger } = await req<{ trigger: Trigger }>(
+      `/api/projects/${encodeURIComponent(slug)}/triggers/${encodeURIComponent(name)}`,
+      { method: "PUT", body: JSON.stringify(input) },
+    );
+    return trigger;
+  },
+
+  /** Delete one trigger (removes it from project.yaml + disarms its agent/schedule). */
+  async deleteTrigger(slug: string, name: string): Promise<void> {
+    await req<{ ok: boolean }>(
+      `/api/projects/${encodeURIComponent(slug)}/triggers/${encodeURIComponent(name)}`,
       { method: "DELETE" },
     );
   },

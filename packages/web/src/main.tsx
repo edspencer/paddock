@@ -66,6 +66,9 @@ const router = createBrowserRouter([
       { path: "projects/:slug/changes/:file", element: <ProjectView /> },
       { path: "projects/:slug/history", element: <ProjectView /> },
       { path: "projects/:slug/settings", element: <ProjectView /> },
+      { path: "projects/:slug/triggers", element: <ProjectView /> },
+      // Legacy Hooks route — the tab was renamed + folded into Triggers (Epic T / T4);
+      // ProjectView redirects this to /triggers so old links/bookmarks don't 404.
       { path: "projects/:slug/hooks", element: <ProjectView /> },
       { path: "chat", element: <OneOffChat /> },
       { path: "chat/:sessionId", element: <OneOffChat /> },

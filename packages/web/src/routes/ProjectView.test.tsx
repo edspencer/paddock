@@ -41,7 +41,7 @@ const apiFns = {
   projectChatMessages: vi.fn(),
   getModels: vi.fn(),
   updateProject: vi.fn(),
-  listHooks: vi.fn(),
+  listTriggers: vi.fn(),
 };
 vi.mock("../lib/api", async () => {
   const actual = await vi.importActual<typeof import("../lib/api")>("../lib/api");
@@ -64,7 +64,7 @@ vi.mock("../lib/api", async () => {
       projectChatMessages: (...a: unknown[]) => apiFns.projectChatMessages(...a),
       getModels: (...a: unknown[]) => apiFns.getModels(...a),
       updateProject: (...a: unknown[]) => apiFns.updateProject(...a),
-      listHooks: (...a: unknown[]) => apiFns.listHooks(...a),
+      listTriggers: (...a: unknown[]) => apiFns.listTriggers(...a),
     },
   };
 });
@@ -107,6 +107,7 @@ function renderAt(path: string) {
         <Route path="/projects/:slug/changes" element={<ProjectView />} />
         <Route path="/projects/:slug/changes/:file" element={<ProjectView />} />
         <Route path="/projects/:slug/settings" element={<ProjectView />} />
+        <Route path="/projects/:slug/triggers" element={<ProjectView />} />
         <Route path="/projects/:slug/hooks" element={<ProjectView />} />
         <Route path="/" element={<div>HOME</div>} />
       </Routes>
@@ -136,7 +137,12 @@ beforeEach(() => {
   apiFns.updateProject.mockImplementation((_slug: string, patch: Partial<Project>) =>
     Promise.resolve(makeProject({ slug: "p", ...patch })),
   );
-  apiFns.listHooks.mockResolvedValue({ hooks: [], grantableTools: [], events: ["onArchive"] });
+  apiFns.listTriggers.mockResolvedValue({
+    triggers: [],
+    grantableTools: [],
+    events: ["onArchive", "afterTurn"],
+    triggerTypes: ["schedule", "event", "webhook"],
+  });
   upsert.mockReset();
   remove.mockReset();
   localStorage.clear();
@@ -267,22 +273,30 @@ describe("ProjectView: tabs", () => {
     expect(screen.getByText(/Identity & metadata/i)).toBeInTheDocument();
   });
 
-  it("opens the Hooks tab and deep-links directly via /hooks (Epic G / G4)", async () => {
+  it("opens the Triggers tab and mounts the pane (Epic T / T4)", async () => {
     apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
-    // From the chat tab, clicking the Hooks tab mounts the pane (which fetches).
+    // From the chat tab, clicking the Triggers tab mounts the pane (which fetches).
     renderAt("/projects/p/chat");
     await screen.findByTestId("chat-pane");
-    fireEvent.click(screen.getByRole("button", { name: /^Hooks$/ }));
-    expect(await screen.findByTestId("hooks-pane")).toBeInTheDocument();
-    await waitFor(() => expect(apiFns.listHooks).toHaveBeenCalledWith("p"));
-    expect(await screen.findByText(/No hooks yet/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^Triggers$/ }));
+    expect(await screen.findByTestId("triggers-pane")).toBeInTheDocument();
+    await waitFor(() => expect(apiFns.listTriggers).toHaveBeenCalledWith("p"));
+    expect(await screen.findByText(/No triggers yet/i)).toBeInTheDocument();
   });
 
-  it("Hooks deep-links directly via /hooks", async () => {
+  it("Triggers deep-links directly via /triggers", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
+    renderAt("/projects/p/triggers");
+    expect(await screen.findByTestId("triggers-pane")).toBeInTheDocument();
+    await waitFor(() => expect(apiFns.listTriggers).toHaveBeenCalledWith("p"));
+  });
+
+  it("redirects the legacy /hooks route to the Triggers tab", async () => {
     apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
     renderAt("/projects/p/hooks");
-    expect(await screen.findByTestId("hooks-pane")).toBeInTheDocument();
-    await waitFor(() => expect(apiFns.listHooks).toHaveBeenCalledWith("p"));
+    // The legacy route folds into the Triggers tab (redirect, Epic T / T4).
+    expect(await screen.findByTestId("triggers-pane")).toBeInTheDocument();
+    await waitFor(() => expect(apiFns.listTriggers).toHaveBeenCalledWith("p"));
   });
 
   it("the Changes tab is hidden when the projects dir is not a git repo", async () => {

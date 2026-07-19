@@ -21,8 +21,10 @@ import {
   curatorTriggerOf,
   CURATE_TRIGGER_NAME,
   mergeTriggerUpdate,
+  toChatTriggerInfo,
   TRIGGER_DEFAULT_MAX_TURNS,
   type PaddockTrigger,
+  type TriggerDto,
 } from "../../src/trigger-config.js";
 
 const run = (extra: Record<string, unknown> = {}) => ({ prompt: "do the thing", ...extra });
@@ -387,5 +389,74 @@ describe("trigger-config: mergeTriggerUpdate (partial patch semantics)", () => {
     expect(clean.enabled).toBe(false);
     expect(clean.trigger).toEqual({ type: "event", on: "onArchive" });
     expect(clean.run.prompt).toBe("hi");
+  });
+});
+
+// toChatTriggerInfo — the web-facing capability descriptor that drives the floating
+// trigger-chat banner (Epic T / T4). Truthful-from-config: it projects the SAME run
+// the agent enforces, and surfaces the discriminated WHEN (event / cron / interval).
+describe("trigger-config: toChatTriggerInfo (banner descriptor)", () => {
+  const dto = (t: PaddockTrigger, name = "n"): TriggerDto => ({
+    name,
+    agentName: `trigger-p-${name}`,
+    ...t,
+  });
+
+  it("projects an EVENT trigger with its `on` + granted tools + resolved maxTurns", () => {
+    const t = sanitizeTrigger({
+      trigger: { type: "event", on: "onArchive" },
+      run: { prompt: "x", tools: ["Bash", "Read"], permissionMode: "acceptEdits", model: "claude-opus-4-8" },
+      enabled: true,
+    })!;
+    const info = toChatTriggerInfo(dto(t, "cleanup"));
+    expect(info).toMatchObject({
+      name: "cleanup",
+      type: "event",
+      event: "onArchive",
+      agentName: "trigger-p-cleanup",
+      enabled: true,
+      allowedTools: ["Bash", "Read"],
+      permissionMode: "acceptEdits",
+      model: "claude-opus-4-8",
+      maxTurns: TRIGGER_DEFAULT_MAX_TURNS,
+    });
+    // No timer/path fields on an event trigger.
+    expect(info.cron).toBeUndefined();
+    expect(info.interval).toBeUndefined();
+    expect(info.path).toBeUndefined();
+  });
+
+  it("projects a cron SCHEDULE trigger's expression (and a tool-less run as [])", () => {
+    const t = sanitizeTrigger({
+      trigger: { type: "schedule", cron: "0 3 * * *" },
+      run: { prompt: "dream", session: "resume" },
+      enabled: false,
+    })!;
+    const info = toChatTriggerInfo(dto(t, "nightly"));
+    expect(info.type).toBe("schedule");
+    expect(info.cron).toBe("0 3 * * *");
+    expect(info.interval).toBeUndefined();
+    expect(info.allowedTools).toEqual([]);
+    expect(info.enabled).toBe(false);
+  });
+
+  it("projects an interval SCHEDULE trigger's interval", () => {
+    const t = sanitizeTrigger({
+      trigger: { type: "schedule", interval: "30m" },
+      run: { prompt: "poll" },
+    })!;
+    const info = toChatTriggerInfo(dto(t));
+    expect(info.interval).toBe("30m");
+    expect(info.cron).toBeUndefined();
+  });
+
+  it("projects a WEBHOOK trigger's reserved path", () => {
+    const t = sanitizeTrigger({
+      trigger: { type: "webhook", path: "/gh/issues" },
+      run: { prompt: "triage" },
+    })!;
+    const info = toChatTriggerInfo(dto(t));
+    expect(info.type).toBe("webhook");
+    expect(info.path).toBe("/gh/issues");
   });
 });
