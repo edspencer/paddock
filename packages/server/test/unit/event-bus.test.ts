@@ -71,6 +71,37 @@ describe("PaddockEventBus", () => {
     expect(ran).toBe(true); // and no unhandled rejection blew up the test
   });
 
+  it("delivers an afterTurn event to its subscriber (T5 sweeper fold-in)", async () => {
+    const bus = new PaddockEventBus();
+    const seen: { slug: string; sessionId: string | null }[] = [];
+    bus.on("afterTurn", (p) => {
+      seen.push(p);
+    });
+    bus.emit("afterTurn", { slug: "proj", sessionId: "abc" });
+    bus.emit("afterTurn", { slug: "proj2", sessionId: null });
+    await tick();
+    expect(seen).toEqual([
+      { slug: "proj", sessionId: "abc" },
+      { slug: "proj2", sessionId: null },
+    ]);
+  });
+
+  it("keeps onArchive and afterTurn listeners independent", async () => {
+    const bus = new PaddockEventBus();
+    let archives = 0;
+    let turns = 0;
+    bus.on("onArchive", () => {
+      archives++;
+    });
+    bus.on("afterTurn", () => {
+      turns++;
+    });
+    bus.emit("afterTurn", { slug: "p", sessionId: "s" });
+    await tick();
+    // The afterTurn emit must NOT trigger the onArchive listener (no double-dispatch).
+    expect([archives, turns]).toEqual([0, 1]);
+  });
+
   it("unsubscribe stops further delivery", async () => {
     const bus = new PaddockEventBus();
     let n = 0;

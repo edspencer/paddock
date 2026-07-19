@@ -68,6 +68,16 @@ export const TRIGGER_PROMPT_DIR = path.join(".paddock", "triggers");
 /** Default max agent turns for a trigger when its run doesn't set one. */
 export const TRIGGER_DEFAULT_MAX_TURNS = 30;
 
+/**
+ * The canonical name of the built-in post-turn CURATOR trigger — the sweeper folded
+ * in as the default `event`/`afterTurn` trigger (T5, design §2.1 #4). A project need
+ * NOT declare it: absent, the curator runs with default behaviour (exactly the shipped
+ * sweeper). Declaring a `curate-overview` trigger only CUSTOMISES that default (extend
+ * its prompt, override its model, or `enabled: false` to switch curation off). Resolved
+ * by NAME as a convenience, but recognised structurally by {@link isCuratorTrigger}.
+ */
+export const CURATE_TRIGGER_NAME = "curate-overview";
+
 // --- Zod schema (the frozen discriminated union) -------------------------------
 
 /**
@@ -303,6 +313,40 @@ export function triggerRunsOnOwnAgent(trigger: PaddockTrigger): boolean {
   if (trigger.trigger.type === "event") return true;
   if (trigger.trigger.type === "schedule") return (trigger.run.tools?.length ?? 0) > 0;
   return false; // webhook: shape reserved, nothing fires it.
+}
+
+/**
+ * Whether a trigger is the post-turn CURATOR (the folded-in sweeper, T5): an
+ * `event`/`afterTurn` trigger. The curator is SPECIAL — it does NOT run as a generic
+ * `trigger-<slug>-<name>` agent turn. It is tool-less by nature (returns marked text,
+ * Paddock's `SweepService` parses it and writes OVERVIEW.md/CHANGELOG.md), so it is
+ * executed by the SweepService via the project's `sweeper-<slug>` agent, NOT by the
+ * event dispatcher and NOT by its own herdctl agent. Its `run` therefore only tunes the
+ * sweep (prompt extension, model, `enabled`), which is why (unlike every OTHER event
+ * trigger — see {@link triggerRunsOnOwnAgent}) a curator trigger registers NO scoped
+ * agent and is skipped by the generic fire path. This keeps the sweeper's single
+ * dispatch (no double-curation): the `afterTurn` event → SweepService, once.
+ */
+export function isCuratorTrigger(trigger: PaddockTrigger): boolean {
+  return trigger.trigger.type === "event" && trigger.trigger.on === "afterTurn";
+}
+
+/**
+ * Resolve a project's post-turn CURATOR trigger from its `triggers` map (T5) — the
+ * canonical {@link CURATE_TRIGGER_NAME} if it IS a curator, else the first structural
+ * curator ({@link isCuratorTrigger}) declared. `null` when the project declares none
+ * (the IMPLICIT built-in default — an un-customised project sweeps exactly as the
+ * shipped sweeper). Pure, so both `SweepService` (enabled gate + prompt extension) and
+ * `HerdctlService` (sweeper model override) resolve the ONE curator the same way.
+ */
+export function curatorTriggerOf(
+  triggers: Record<string, PaddockTrigger> | undefined,
+): PaddockTrigger | null {
+  if (!triggers) return null;
+  const named = triggers[CURATE_TRIGGER_NAME];
+  if (named && isCuratorTrigger(named)) return named;
+  for (const t of Object.values(triggers)) if (isCuratorTrigger(t)) return t;
+  return null;
 }
 
 /**

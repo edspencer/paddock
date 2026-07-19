@@ -38,6 +38,13 @@ interface StubOverrides {
    * `undefined` → the file is absent (readFile rejects, as on disk).
    */
   sweepInstructions?: string;
+  /**
+   * A `project.yaml` `triggers` map to place on the stub project (T5). Used to
+   * exercise the folded-in `curate-overview` (event/afterTurn) curator trigger:
+   * its `enabled` gate, its `run.prompt`/`run.promptFile` extension.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  triggers?: Record<string, any>;
 }
 
 describe("SweepService", () => {
@@ -79,10 +86,17 @@ describe("SweepService", () => {
       ]),
       runSweeper,
     };
+    // T5: the stub project carries an optional `triggers` map + a `workingDir` (used to
+    // resolve a curator trigger's `run.promptFile` under `.paddock/triggers/`).
+    const stubProject = {
+      ...project,
+      workingDir: project.dir,
+      ...(o.triggers ? { triggers: o.triggers } : {}),
+    };
     const projects = {
       get: vi.fn(async (slug: string) => {
         if (slug !== project.slug) throw new Error("not found");
-        return project;
+        return stubProject;
       }),
       readOverview: vi.fn(async () => ""),
       readFile: vi.fn(async (_slug: string, name: string) => {
@@ -235,6 +249,97 @@ describe("SweepService", () => {
     const longestRun = (prompt.match(/X+/g) ?? []).reduce((m, s) => Math.max(m, s.length), 0);
     expect(longestRun).toBeLessThanOrEqual(8000);
     expect(longestRun).toBeGreaterThan(0);
+    svc.stop();
+  });
+
+  // --- T5: the folded-in `curate-overview` (event/afterTurn) curator trigger --------
+
+  /** A minimal `curate-overview` event/afterTurn trigger record for the stub project. */
+  const curateTrigger = (over: Record<string, unknown> = {}) => ({
+    trigger: { type: "event", on: "afterTurn" },
+    run: { session: "new", tools: [], ...over },
+    enabled: true,
+  });
+
+  it("SKIPS the sweep entirely when the curate-overview trigger is disabled (T5)", async () => {
+    const { svc, runSweeper } = makeService({
+      triggers: { "curate-overview": { ...curateTrigger(), enabled: false } },
+    });
+    svc.enqueue("demo");
+    await new Promise((r) => setTimeout(r, 150));
+    expect(runSweeper).not.toHaveBeenCalled();
+    expect(overviewWrites.length).toBe(0);
+    // A disabled curator must not even churn the watermark.
+    await expect(fs.readFile(path.join(dataDir, "sweep-state.json"), "utf8")).rejects.toThrow();
+    svc.stop();
+  });
+
+  it("still sweeps when the curate-overview trigger is enabled (T5)", async () => {
+    const { svc, runSweeper } = makeService({ triggers: { "curate-overview": curateTrigger() } });
+    svc.enqueue("demo");
+    await vi.waitFor(() => expect(runSweeper).toHaveBeenCalled(), { timeout: 2000 });
+    expect(overviewWrites[0]).toContain("# Overview");
+    svc.stop();
+  });
+
+  it("appends the curate-overview trigger's inline run.prompt to the curation prompt (T5)", async () => {
+    const marker = "Also maintain GLOSSARY.md of domain terms.";
+    const { svc, runSweeper } = makeService({
+      triggers: { "curate-overview": curateTrigger({ prompt: marker }) },
+    });
+    svc.enqueue("demo");
+    await vi.waitFor(() => expect(runSweeper).toHaveBeenCalled(), { timeout: 2000 });
+    const prompt = runSweeper.mock.calls[0][1] as string;
+    expect(prompt).toContain("=== EXTRA PROJECT-SPECIFIC CURATOR INSTRUCTIONS ===");
+    expect(prompt).toContain(marker);
+    expect(overviewWrites[0]).toContain("# Overview");
+    svc.stop();
+  });
+
+  it("folds BOTH the trigger prompt and .paddock/hooks/sweep.md under one heading (T5)", async () => {
+    const triggerMarker = "Trigger says: keep a GLOSSARY.";
+    const fileMarker = "File says: note API changes prominently.";
+    const { svc, runSweeper } = makeService({
+      triggers: { "curate-overview": curateTrigger({ prompt: triggerMarker }) },
+      sweepInstructions: fileMarker,
+    });
+    svc.enqueue("demo");
+    await vi.waitFor(() => expect(runSweeper).toHaveBeenCalled(), { timeout: 2000 });
+    const prompt = runSweeper.mock.calls[0][1] as string;
+    // Exactly one heading, both bodies present.
+    expect(prompt.match(/=== EXTRA PROJECT-SPECIFIC CURATOR INSTRUCTIONS ===/g)?.length).toBe(1);
+    expect(prompt).toContain(triggerMarker);
+    expect(prompt).toContain(fileMarker);
+    svc.stop();
+  });
+
+  it("reads the curate-overview trigger's run.promptFile from .paddock/triggers/ (T5)", async () => {
+    const marker = "PROMPT-FILE-EXTENSION-MARKER: always keep an Architecture section.";
+    const triggersDir = path.join(project.dir, ".paddock", "triggers");
+    await fs.mkdir(triggersDir, { recursive: true });
+    await fs.writeFile(path.join(triggersDir, "curate.md"), `# Curator\n${marker}\n`, "utf8");
+    const { svc, runSweeper } = makeService({
+      triggers: { "curate-overview": curateTrigger({ promptFile: "curate.md" }) },
+    });
+    svc.enqueue("demo");
+    await vi.waitFor(() => expect(runSweeper).toHaveBeenCalled(), { timeout: 2000 });
+    const prompt = runSweeper.mock.calls[0][1] as string;
+    expect(prompt).toContain("=== EXTRA PROJECT-SPECIFIC CURATOR INSTRUCTIONS ===");
+    expect(prompt).toContain(marker);
+    svc.stop();
+  });
+
+  it("caps an oversized curate-overview trigger prompt before appending it (T5)", async () => {
+    const huge = "Y".repeat(20_000);
+    const { svc, runSweeper } = makeService({
+      triggers: { "curate-overview": curateTrigger({ prompt: huge }) },
+    });
+    svc.enqueue("demo");
+    await vi.waitFor(() => expect(runSweeper).toHaveBeenCalled(), { timeout: 2000 });
+    const prompt = runSweeper.mock.calls[0][1] as string;
+    expect(prompt).toContain("…[truncated]");
+    const longestRun = (prompt.match(/Y+/g) ?? []).reduce((m, s) => Math.max(m, s.length), 0);
+    expect(longestRun).toBeLessThanOrEqual(8000);
     svc.stop();
   });
 

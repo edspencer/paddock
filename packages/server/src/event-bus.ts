@@ -14,16 +14,15 @@
  *     fire-and-forget; a listener that throws (sync or async) is swallowed so the
  *     triggering action (the archive) can NEVER fail or hang because of a hook. This
  *     is the whole point — a buggy hook must not break the thing that triggered it.
- *  2. **Events map 1:1 onto {@link import("./hook-config.js").HookEvent}.** The bus
- *     event name IS the hook's `event` field, so the dispatcher is a trivial
- *     `bus.on("onArchive", …)` that matches hooks with `event === "onArchive"`.
+ *  2. **The bus event name IS a hook/trigger `event` value.** So a dispatcher is a
+ *     trivial `bus.on("onArchive", …)` that matches hooks/triggers with that `event`.
+ *     v1 wired `onArchive` (hooks + event triggers); T5 adds `afterTurn`, which drives
+ *     the folded-in sweeper (the default post-turn curator trigger).
  *
  * Kept deliberately minimal (no Node `EventEmitter`: its `error`-event footgun and
  * default max-listener warnings are noise here) and dependency-free, matching the
  * hand-rolled sidecar style of the rest of the server.
  */
-import type { HookEvent } from "./hook-config.js";
-
 /**
  * Payload for the `onArchive` event: which chat, in which project, was archived.
  * The dispatcher passes `slug` to resolve the project's hooks and `sessionId` into
@@ -38,16 +37,34 @@ export interface ArchiveEvent {
 }
 
 /**
- * The typed event map — keyed by {@link HookEvent} so a hook's `event` field and the
- * bus event name are the SAME string. v1 carries only `onArchive`; adding a sibling
- * event is: a new `HookEvent` value + its payload here + an `emit` at the commit site.
+ * Payload for the `afterTurn` event (Epic T / T5): a turn just completed in `slug`.
+ * Emitted at every post-turn commit site (a human chat turn, a session-mode wake, and
+ * every server-initiated `startAgentTurn`) so the folded-in sweeper — the default
+ * `curate-overview` `event`/`afterTurn` trigger — dispatches EXACTLY ONCE per turn.
+ * `sessionId` is the chat whose turn completed (`null` when none was resolved), carried
+ * for parity with `onArchive`; the curator only needs the `slug` to sweep.
+ */
+export interface AfterTurnEvent {
+  /** The project slug whose chat turn just completed. */
+  slug: string;
+  /** The completed turn's session id, or `null` if none was resolved. */
+  sessionId: string | null;
+}
+
+/**
+ * The typed event map. The bus event name IS a trigger/hook `event` value, so
+ * `on`/`emit` line up with the dispatchers. `onArchive` fires the enabled onArchive
+ * hooks + event triggers (Epic G/T); `afterTurn` (T5) drives the post-turn curator
+ * (the sweeper). Adding a sibling event is: a new value here + its payload + an `emit`
+ * at the commit site.
  */
 export interface PaddockEventMap {
   onArchive: ArchiveEvent;
+  afterTurn: AfterTurnEvent;
 }
 
-/** A lifecycle event name — exactly the hook events, so `on`/`emit` line up with hooks. */
-export type PaddockEventName = HookEvent & keyof PaddockEventMap;
+/** A lifecycle event name — a key of {@link PaddockEventMap}, matching a trigger/hook event. */
+export type PaddockEventName = keyof PaddockEventMap;
 
 /** A listener for event `E`; may be async — its result is awaited-and-swallowed. */
 export type EventListener<E extends PaddockEventName> = (
