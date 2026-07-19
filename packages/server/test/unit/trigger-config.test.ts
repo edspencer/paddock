@@ -17,6 +17,7 @@ import {
   triggersToHerdctlSchedules,
   scheduleTriggerToHerdctl,
   triggerPromptFileAbsPath,
+  mergeTriggerUpdate,
   TRIGGER_DEFAULT_MAX_TURNS,
   type PaddockTrigger,
 } from "../../src/trigger-config.js";
@@ -277,5 +278,72 @@ describe("trigger-config: projection helpers", () => {
     expect(triggerPromptFileAbsPath(wd, "/abs/x.md")).toBeNull();
     expect(triggerPromptFileAbsPath(wd, "notes.txt")).toBeNull();
     expect(triggerPromptFileAbsPath(wd, "")).toBeNull();
+  });
+});
+
+// mergeTriggerUpdate — the partial-update overlay the T3 self-MCP `set_trigger` uses.
+describe("trigger-config: mergeTriggerUpdate (partial patch semantics)", () => {
+  const existing = (): PaddockTrigger =>
+    sanitizeTrigger({
+      trigger: { type: "schedule", cron: "0 9 * * *" },
+      run: { promptFile: "daily.md", session: "resume", tools: ["Bash", "Read"], model: "claude-opus-4-8" },
+      enabled: true,
+    })!;
+
+  it("an enabled-only patch inherits the whole trigger + run (GG-3 toggle)", () => {
+    const merged = mergeTriggerUpdate(existing(), { enabled: false });
+    // Re-sanitises cleanly (proving trigger + run were inherited intact) with only enabled flipped.
+    const clean = sanitizeTrigger(merged)!;
+    expect(clean.enabled).toBe(false);
+    expect(clean.trigger).toEqual({ type: "schedule", cron: "0 9 * * *" });
+    expect(clean.run.promptFile).toBe("daily.md");
+    expect(clean.run.tools).toEqual(["Bash", "Read"]);
+  });
+
+  it("a run-field patch overlays but preserves omitted run fields", () => {
+    const merged = mergeTriggerUpdate(existing(), { run: { tools: ["Read"] } });
+    const clean = sanitizeTrigger(merged)!;
+    expect(clean.run.tools).toEqual(["Read"]);
+    expect(clean.run.promptFile).toBe("daily.md"); // preserved
+    expect(clean.run.model).toBe("claude-opus-4-8"); // preserved
+  });
+
+  it("supplying a prompt clears the inherited promptFile (mode switch)", () => {
+    const merged = mergeTriggerUpdate(existing(), { run: { prompt: "inline now" } });
+    const clean = sanitizeTrigger(merged)!; // would be null if BOTH survived (xor)
+    expect(clean.run.prompt).toBe("inline now");
+    expect(clean.run.promptFile).toBeUndefined();
+  });
+
+  it("supplying a promptFile clears the inherited prompt (mode switch)", () => {
+    const inline = sanitizeTrigger({
+      trigger: { type: "event", on: "onArchive" },
+      run: { prompt: "think" },
+      enabled: false,
+    })!;
+    const merged = mergeTriggerUpdate(inline, { run: { promptFile: "cleanup.md" } });
+    const clean = sanitizeTrigger(merged)!;
+    expect(clean.run.promptFile).toBe("cleanup.md");
+    expect(clean.run.prompt).toBeUndefined();
+  });
+
+  it("supplying `trigger` replaces the discriminant wholesale (re-specify)", () => {
+    const merged = mergeTriggerUpdate(existing(), {
+      trigger: { type: "event", on: "onArchive" },
+    });
+    const clean = sanitizeTrigger(merged)!;
+    expect(clean.trigger).toEqual({ type: "event", on: "onArchive" });
+    expect(clean.run.promptFile).toBe("daily.md"); // run inherited
+  });
+
+  it("a brand-new trigger (null existing) takes the incoming verbatim + defaults enabled false", () => {
+    const merged = mergeTriggerUpdate(null, {
+      trigger: { type: "event", on: "onArchive" },
+      run: { prompt: "hi", tools: ["Bash"] },
+    });
+    const clean = sanitizeTrigger(merged)!;
+    expect(clean.enabled).toBe(false);
+    expect(clean.trigger).toEqual({ type: "event", on: "onArchive" });
+    expect(clean.run.prompt).toBe("hi");
   });
 });

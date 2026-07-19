@@ -171,7 +171,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   // now" runs the schedule through the same hub path a cron fire uses.
   const chatHandler = makeChatHandler({ herdctl, projects, sweep, attachments, queuedMessage, runProvenance, messageProvenance, archive, scheduleSessions, events, hooks, triggers, triggerSessions, cfg });
 
-  await registerRoutes(app, { projects, herdctl, git, githubAuth, transcriber, archive, readState, runProvenance, messageProvenance, attachments, fireSchedule: chatHandler.fireSchedule, events, hooks, cfg });
+  await registerRoutes(app, { projects, herdctl, git, githubAuth, transcriber, archive, readState, runProvenance, messageProvenance, attachments, fireSchedule: chatHandler.fireSchedule, events, hooks, triggers, cfg });
 
   await app.register(async (scoped) => {
     scoped.get("/ws", { websocket: true }, (socket) => {

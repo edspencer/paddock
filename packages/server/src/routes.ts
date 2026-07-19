@@ -86,6 +86,13 @@ import {
   toChatHookInfo,
   type ChatHookInfo,
 } from "./hook-config.js";
+import type { TriggerService } from "./triggers.js";
+import {
+  TRIGGER_EVENTS,
+  TRIGGER_TYPES,
+  isValidTriggerName,
+  sanitizeTrigger,
+} from "./trigger-config.js";
 
 export interface RouteDeps {
   projects: ProjectStore;
@@ -125,6 +132,15 @@ export interface RouteDeps {
    * `hook-<slug>-<name>` agent (re)registration to {@link HookService}.
    */
   hooks: HookService;
+  /**
+   * Unified trigger CRUD service (Epic T "Unify Triggers" / T3). Backs the
+   * `/api/projects/:slug/triggers[/:name]` REST surface the Triggers tab (T4) will
+   * drive — list (with the capability-picker catalog), create/replace, edit,
+   * enable/disable (just `set` with `enabled` flipped — GG-3), delete. Delegates
+   * persistence to `project.yaml`'s single `triggers` block + herdctl arming to
+   * {@link TriggerService}. Optional so tests that don't exercise triggers can omit it.
+   */
+  triggers?: TriggerService;
   cfg: PaddockConfig;
 }
 
@@ -143,6 +159,7 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     fireSchedule,
     events,
     hooks,
+    triggers,
     cfg,
   } = deps;
 
@@ -724,6 +741,112 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
       const { slug, name } = req.params;
       try {
         const removed = await hooks.remove(slug, name); // throws not_found (project)
+        return reply.code(200).send({ ok: true, name, removed });
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  // --- triggers (Epic T "Unify Triggers" / T3) ----------------------------
+  // The per-project UNIFIED trigger management surface the Triggers tab (T4) will
+  // drive — the successor that collapses the paired hooks + schedules REST/verbs
+  // onto ONE `TriggerService` over `project.yaml`'s single `triggers` block. A
+  // trigger is WHEN (`trigger`, a discriminated union `schedule|event|webhook`) +
+  // WHAT (`run`, the shared agent-run definition) + `enabled`. Each route delegates
+  // to TriggerService, which persists to project.yaml FIRST (the source of truth,
+  // re-armed on restart) THEN arms it (an event trigger's own `trigger-<slug>-<name>`
+  // agent, a schedule trigger's forwarded `schedules` entry), warning-but-not-failing
+  // if the runtime arm hiccups.
+  //
+  // Verb collapse (GG-3): enable/disable is NOT a separate route — it's `set` (PUT)
+  // with the `enabled` field flipped; new triggers default disabled. The `hooks:`
+  // + `schedules:` REST surfaces remain until the Triggers tab (T4) retires them;
+  // T3 lands the unified surface additively (see the PR notes).
+  const triggersGuard = (reply: import("fastify").FastifyReply): boolean => {
+    if (!triggers) {
+      reply.code(503).send({ error: "Trigger management is unavailable", code: "unavailable" });
+      return false;
+    }
+    return true;
+  };
+
+  // List a project's triggers (DTOs) + the picker catalog: the grantable tools, the
+  // events an event-trigger can fire on, and the trigger types — so the Triggers tab
+  // renders a precise capability + type picker without hard-coding them client-side
+  // (folds in the G4 `GRANTABLE_TOOLS` list).
+  app.get<{ Params: { slug: string } }>(
+    "/api/projects/:slug/triggers",
+    async (req, reply) => {
+      if (!triggersGuard(reply)) return reply;
+      try {
+        const list = await triggers!.list(req.params.slug); // throws not_found
+        return {
+          triggers: list,
+          grantableTools: GRANTABLE_TOOLS,
+          events: [...TRIGGER_EVENTS],
+          triggerTypes: [...TRIGGER_TYPES],
+        };
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  // Get one trigger by name (404 when the project declares no such trigger).
+  app.get<{ Params: { slug: string; name: string } }>(
+    "/api/projects/:slug/triggers/:name",
+    async (req, reply) => {
+      if (!triggersGuard(reply)) return reply;
+      const { slug, name } = req.params;
+      try {
+        const trigger = await triggers!.get(slug, name); // throws not_found (project)
+        if (!trigger) {
+          return reply.code(404).send({ error: `No such trigger: ${name}`, code: "not_found" });
+        }
+        return { trigger };
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  // Create or replace one trigger (keyed by name). Persists to project.yaml, then
+  // arms it so it's immediately fireable. Enabling/disabling is this same route with
+  // `enabled` flipped (GG-3). The body is the FULL record `{ trigger, run, enabled }`
+  // — a full replace (unlike the self-MCP set_trigger, which patches partial edits).
+  app.put<{ Params: { slug: string; name: string }; Body: unknown }>(
+    "/api/projects/:slug/triggers/:name",
+    async (req, reply) => {
+      if (!triggersGuard(reply)) return reply;
+      const { slug, name } = req.params;
+      if (!isValidTriggerName(name)) {
+        return reply.code(400).send({ error: `Invalid trigger name: ${name}`, code: "invalid" });
+      }
+      // Reject a malformed record early (bad discriminant, both/neither cron+interval,
+      // unknown event, both/neither prompt+promptFile) so the client gets a 400
+      // instead of the store's generic error; TriggerService.set re-validates.
+      if (!sanitizeTrigger(req.body)) {
+        return reply.code(400).send({ error: "Invalid trigger definition", code: "invalid" });
+      }
+      try {
+        const trigger = await triggers!.set(slug, name, req.body); // throws not_found/invalid
+        return { trigger };
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  // Delete one trigger. Removes it from project.yaml AND disarms it (an event
+  // trigger's agent is torn down; a schedule trigger's forwarded entry is dropped).
+  app.delete<{ Params: { slug: string; name: string } }>(
+    "/api/projects/:slug/triggers/:name",
+    async (req, reply) => {
+      if (!triggersGuard(reply)) return reply;
+      const { slug, name } = req.params;
+      try {
+        const removed = await triggers!.remove(slug, name); // throws not_found (project)
         return reply.code(200).send({ ok: true, name, removed });
       } catch (err) {
         return sendProjectError(reply, err);
