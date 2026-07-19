@@ -23,6 +23,7 @@ import {
   type ProjectDetail,
   type ProjectFile,
   type ProjectRuns,
+  type RecoveryConfig,
   type Schedule,
   type ScheduleInput,
   SCRATCH_SLUG,
@@ -156,6 +157,10 @@ export const api = {
      *  inherits when its own `maxSpawnDepth` is unset; shown as the effective
      *  value in Settings (issue #262). Optional for back-compat. */
     maxSpawnDepthDefault?: number;
+    /** Box-wide keeper-chat recovery defaults (PADDOCK_RECOVERY_*) a project
+     *  inherits when its own `recovery` fields are unset (issue #301). Optional
+     *  for back-compat with older servers / test mocks. */
+    recoveryDefault?: RecoveryConfig;
   }> {
     return req<{
       models: ModelInfo[];
@@ -163,6 +168,7 @@ export const api = {
       sweeperDefault: string;
       keeperDriveModeDefault?: "batch" | "session";
       maxSpawnDepthDefault?: number;
+      recoveryDefault?: RecoveryConfig;
     }>("/api/models");
   },
 

@@ -46,6 +46,8 @@ import type {
   MessageSender,
   ModelInfo,
   ReadInfo,
+  RecoveryConfig,
+  RecoveryOverride,
   SearchInfo,
   SentFile,
   SentFileEnvelope,
@@ -59,7 +61,9 @@ import {
   formatUsd,
   isCompactContinuation,
   isTaskNotification,
+  isTerminatedTaskStatus,
   slashCommandEcho,
+  taskNotificationStatus,
   taskNotificationSummary,
 } from "../lib/format";
 import { HookCapabilityBanner } from "./HookCapabilityBanner";
@@ -85,7 +89,11 @@ type Turn =
   | { kind: "compact"; id: string; summary: string }
   // An internal background-agent `<task-notification>` block, rendered as a
   // subtle system-status line rather than a raw-XML user bubble (issue #181).
-  | { kind: "notification"; id: string; summary: string };
+  // `status` carries the notification's `<status>` (e.g. completed/killed/
+  // stopped) so a KILLED/STOPPED task — the turn-boundary-kill case that leaves a
+  // keeper hung (#301) — renders a distinct "keeper is idle" + Continue affordance
+  // instead of the neutral pill.
+  | { kind: "notification"; id: string; summary: string; status: string | null };
 
 let idCounter = 0;
 const nextId = () => `t${++idCounter}`;
@@ -196,6 +204,22 @@ const SubagentFetchContext = createContext<
  */
 const ToolImageUrlContext = createContext<((relPath: string) => string) | null>(null);
 
+/**
+ * Keeper-chat recovery affordance wiring (issue #301, Layer 2), provided per-chat
+ * and consumed by the `notification` turn renderer so a KILLED/STOPPED background
+ * task can offer a one-click "Continue". `enabled` is the resolved
+ * `recovery.surfaceKilledTask` (project override else instance default); `onContinue`
+ * re-drives the hung keeper via the WS `chat:continue` action; `busy` disables the
+ * button while a turn is already streaming (or the session id isn't known yet).
+ * Null for a scratch chat (no keeper session to recover).
+ */
+interface RecoveryContextValue {
+  enabled: boolean;
+  busy: boolean;
+  onContinue: () => void;
+}
+const RecoveryContext = createContext<RecoveryContextValue | null>(null);
+
 export interface ChatPaneProps {
   /** Project slug, or "scratch" for one-off chats. */
   projectSlug: string;
@@ -252,6 +276,13 @@ export interface ChatPaneProps {
    * granted tools. Absent for every non-hook chat.
    */
   hook?: ChatHookInfo;
+  /**
+   * The project's per-project keeper-chat recovery override (issue #301), from the
+   * Project DTO. Combined with the instance default (GET /api/models
+   * `recoveryDefault`) to resolve whether the killed-task Continue affordance is
+   * shown. Undefined for scratch chats / when the project sets no override.
+   */
+  projectRecovery?: RecoveryOverride;
 }
 
 export function ChatPane({
@@ -270,6 +301,7 @@ export function ChatPane({
   emptyHint,
   placeholder,
   hook,
+  projectRecovery,
 }: ChatPaneProps) {
   const [turns, setTurns] = useState<Turn[]>([]);
   // Seed the composer from any unsent draft persisted for this chat. The pane is
@@ -321,6 +353,10 @@ export function ChatPane({
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [keeperDefault, setKeeperDefault] = useState<string | null>(null);
   const [model, setModel] = useState<string | null>(null);
+  // Instance-default recovery config (issue #301), fetched once with the models.
+  // Combined with the per-project `projectRecovery` override to gate the killed-
+  // task Continue affordance. Null until fetched (defaults apply until then).
+  const [recoveryDefault, setRecoveryDefault] = useState<RecoveryConfig | null>(null);
 
   // --- slash-command autocomplete (issue #103) -------------------------------
   // The commands available to this chat's agent, fetched once per chat (the
@@ -423,6 +459,7 @@ export function ChatPane({
         if (cancelled) return;
         setModels(res.models);
         setKeeperDefault(res.keeperDefault);
+        if (res.recoveryDefault) setRecoveryDefault(res.recoveryDefault);
       })
       .catch(() => {
         /* leave the picker empty; sends fall back to the server default */
@@ -1015,6 +1052,28 @@ export function ChatPane({
     }
   }, []);
 
+  // Manual keeper recovery (issue #301, Layer 2). Re-drive a hung keeper whose
+  // background task was killed at the turn boundary by injecting a recovery nudge
+  // into its still-alive session (server `chat:continue`). Only meaningful for a
+  // project chat with a known session id and no turn already running.
+  const continueChat = useCallback(() => {
+    const sid = sessionRef.current;
+    if (!sid || projectSlug === SCRATCH_SLUG) return;
+    if (streamingRef.current) return;
+    setStreaming(true);
+    chatClient.continueChat(projectSlug, sid);
+  }, [projectSlug]);
+
+  // Resolve the effective Layer 2 flag: the per-project override wins field-wise,
+  // else the instance default, else the built-in ON (issue #301). Memoised so the
+  // context value is stable across renders that don't change the inputs.
+  const recoveryCtx = useMemo<RecoveryContextValue | null>(() => {
+    if (projectSlug === SCRATCH_SLUG) return null;
+    const enabled =
+      projectRecovery?.surfaceKilledTask ?? recoveryDefault?.surfaceKilledTask ?? true;
+    return { enabled, busy: streaming, onContinue: continueChat };
+  }, [projectSlug, projectRecovery, recoveryDefault, streaming, continueChat]);
+
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // While the slash-command menu is open it owns Arrow/Tab/Enter/Escape, ahead
     // of the send logic below (issue #103).
@@ -1108,11 +1167,13 @@ export function ChatPane({
           <SubagentFetchContext.Provider value={fetchSubagent}>
             <ToolImageUrlContext.Provider value={toolImageUrl}>
               <PaddockManageProjectContext.Provider value={projectSlug}>
-                <div className="space-y-4">
-                  {turns.map((t) => (
-                    <TurnView key={t.id} turn={t} />
-                  ))}
-                </div>
+                <RecoveryContext.Provider value={recoveryCtx}>
+                  <div className="space-y-4">
+                    {turns.map((t) => (
+                      <TurnView key={t.id} turn={t} />
+                    ))}
+                  </div>
+                </RecoveryContext.Provider>
               </PaddockManageProjectContext.Provider>
             </ToolImageUrlContext.Provider>
           </SubagentFetchContext.Provider>
@@ -1672,6 +1733,13 @@ const TurnView = memo(function TurnView({ turn }: { turn: Turn }) {
     return <CompactBoundary summary={turn.summary} />;
   }
   if (turn.kind === "notification") {
+    // A KILLED/STOPPED background task (issue #301): the turn-boundary-kill case
+    // (herdctl#374) that leaves the keeper alive-but-idle. Render a distinct amber
+    // "keeper is idle" affordance with a one-click Continue instead of the neutral
+    // pill, so the silent hang is both visible and recoverable.
+    if (isTerminatedTaskStatus(turn.status)) {
+      return <KilledTaskNotice summary={turn.summary} />;
+    }
     // An internal background-agent `<task-notification>` (issue #181): a subtle,
     // centered system-status line carrying the human-readable summary, never a
     // raw-XML user bubble. Full text on hover for the longer "stopped" variants.
@@ -1710,6 +1778,52 @@ function Dot({ delay }: { delay?: string }) {
       className="h-1.5 w-1.5 animate-bounce rounded-full bg-paddock-400"
       style={{ animationDelay: delay }}
     />
+  );
+}
+
+/**
+ * The Layer 2 recovery affordance (issue #301) shown for a KILLED/STOPPED
+ * background-task notification: an amber panel stating the keeper was left idle
+ * when its background task was terminated at the turn boundary, plus a one-click
+ * "Continue" that re-drives it. The button is gated on the resolved
+ * `recovery.surfaceKilledTask` (via {@link RecoveryContext}) — when Layer 2 is off,
+ * or on a scratch chat (no keeper to recover), only the explanatory notice shows.
+ * `busy` disables the button while a turn is already streaming.
+ */
+function KilledTaskNotice({ summary }: { summary: string }) {
+  const recovery = useContext(RecoveryContext);
+  const canContinue = Boolean(recovery?.enabled);
+  const busy = Boolean(recovery?.busy);
+  return (
+    <div className="flex animate-fade-in justify-center" data-recovery="killed-task">
+      <div className="flex max-w-[90%] flex-col gap-1.5 rounded-lg border border-amber-300/70 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700/60 dark:bg-amber-950/50 dark:text-amber-200">
+        <div className="flex items-start gap-1.5">
+          <span aria-hidden className="leading-tight">
+            ⚠
+          </span>
+          <span className="leading-snug">
+            A background task was terminated at the turn boundary — the keeper is
+            idle and will not continue on its own.
+            <span className="mt-0.5 block text-[11px] text-amber-800/80 dark:text-amber-300/70">
+              {summary}
+            </span>
+          </span>
+        </div>
+        {canContinue && (
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={recovery?.onContinue}
+              disabled={busy}
+              data-recovery-action="continue"
+              className="rounded-md bg-amber-600 px-2.5 py-1 text-[11px] font-medium text-white shadow-sm transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-amber-700 dark:hover:bg-amber-600"
+            >
+              {busy ? "Continuing…" : "Continue"}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -2301,7 +2415,12 @@ function historyToTurn(m: HistoryMessage, id: string): Turn {
   // A background-agent `<task-notification>` block (harness metadata, not typed
   // by the human) — a subtle status line instead of a raw-XML bubble (issue #181).
   if (isTaskNotification(m.content)) {
-    return { kind: "notification", id, summary: taskNotificationSummary(m.content) };
+    return {
+      kind: "notification",
+      id,
+      summary: taskNotificationSummary(m.content),
+      status: taskNotificationStatus(m.content),
+    };
   }
   // A machine-injected user turn (#290) carries a `sender`; a human message does
   // not. Thread it through so the bubble renders "↩ sent by …" / "⏰ scheduled by …".

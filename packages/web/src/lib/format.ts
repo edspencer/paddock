@@ -185,3 +185,26 @@ export function taskNotificationSummary(content: string): string {
   const summary = m?.[1]?.trim();
   return summary && summary.length > 0 ? summary : "Background agent updated";
 }
+
+/**
+ * The `<status>` value of a `<task-notification>` block (e.g. `completed`,
+ * `killed`, `stopped`), lower-cased, or `null` when the tag is absent/empty. Used
+ * to distinguish a KILLED/STOPPED background task — the turn-boundary-kill case
+ * that leaves a keeper hung (issue #301 / edspencer/herdctl#374) — from a clean
+ * completion, so the renderer can surface a recovery affordance for the former.
+ */
+export function taskNotificationStatus(content: string): string | null {
+  const m = /<status>([\s\S]*?)<\/status>/.exec(content);
+  const status = m?.[1]?.trim().toLowerCase();
+  return status && status.length > 0 ? status : null;
+}
+
+/**
+ * True when a `<task-notification>` `<status>` denotes a TERMINATED task
+ * (killed/stopped) — the turn-boundary kill #301 recovers from — rather than a
+ * clean `completed` or a still-running Monitor. Mirrors the server-side
+ * `isTerminatedTaskStatus` (recovery-config.ts).
+ */
+export function isTerminatedTaskStatus(status: string | null | undefined): boolean {
+  return status === "killed" || status === "stopped";
+}

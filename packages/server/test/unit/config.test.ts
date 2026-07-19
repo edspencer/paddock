@@ -154,6 +154,72 @@ describe("loadPaddockConfig: hooksMcpEnabled (G5)", () => {
   });
 });
 
+describe("loadPaddockConfig: recovery (#301)", () => {
+  let dataDir: string;
+  let saved: Record<string, string | undefined>;
+  const KEYS = [
+    "PADDOCK_DATA_DIR",
+    "PADDOCK_RECOVERY_SURFACE",
+    "PADDOCK_RECOVERY_AUTODRIVE",
+    "PADDOCK_RECOVERY_DEBOUNCE_MS",
+    "PADDOCK_RECOVERY_MAX_RETRIES",
+    "PADDOCK_RECOVERY_LIMBO_MS",
+  ];
+
+  beforeEach(async () => {
+    dataDir = await makeTmpDir("paddock-config-");
+    saved = {};
+    for (const k of KEYS) {
+      saved[k] = process.env[k];
+      delete process.env[k];
+    }
+    process.env.PADDOCK_DATA_DIR = dataDir;
+  });
+  afterEach(async () => {
+    for (const k of KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+    await rmTmpDir(dataDir);
+  });
+
+  it("defaults: Layer 2 ON, Layer 3 OFF, guards at documented values", () => {
+    expect(loadPaddockConfig().recovery).toEqual({
+      surfaceKilledTask: true,
+      autoReDrive: false,
+      debounceMs: 5000,
+      maxRetries: 1,
+      limboTimeoutMs: 0,
+    });
+  });
+
+  it("PADDOCK_RECOVERY_SURFACE=0 turns Layer 2 off", () => {
+    process.env.PADDOCK_RECOVERY_SURFACE = "0";
+    expect(loadPaddockConfig().recovery.surfaceKilledTask).toBe(false);
+  });
+
+  it.each(["1", "true", "yes"])("PADDOCK_RECOVERY_AUTODRIVE=%s opts Layer 3 in", (raw) => {
+    process.env.PADDOCK_RECOVERY_AUTODRIVE = raw;
+    expect(loadPaddockConfig().recovery.autoReDrive).toBe(true);
+  });
+
+  it("parses the numeric knobs from env", () => {
+    process.env.PADDOCK_RECOVERY_DEBOUNCE_MS = "1500";
+    process.env.PADDOCK_RECOVERY_MAX_RETRIES = "3";
+    process.env.PADDOCK_RECOVERY_LIMBO_MS = "30000";
+    const r = loadPaddockConfig().recovery;
+    expect(r).toMatchObject({ debounceMs: 1500, maxRetries: 3, limboTimeoutMs: 30000 });
+  });
+
+  it.each(["-1", "1.5", "nonsense", ""])(
+    "falls back to the default for an invalid debounce value %j",
+    (raw) => {
+      process.env.PADDOCK_RECOVERY_DEBOUNCE_MS = raw;
+      expect(loadPaddockConfig().recovery.debounceMs).toBe(5000);
+    },
+  );
+});
+
 describe("loadPaddockConfig: folded env knobs (#269)", () => {
   let dataDir: string;
   let saved: Record<string, string | undefined>;
@@ -250,6 +316,8 @@ describe("loadPaddockConfig: YAML instance-config file (#270)", () => {
     "PADDOCK_BROWSER_MCP",
     "PADDOCK_SWEEP_MIN_INTERVAL_MS",
     "PADDOCK_GIT_AUTHOR_NAME",
+    "PADDOCK_RECOVERY_SURFACE",
+    "PADDOCK_RECOVERY_AUTODRIVE",
     "LOG_LEVEL",
   ];
 
@@ -317,6 +385,11 @@ describe("loadPaddockConfig: YAML instance-config file (#270)", () => {
         "selfMcpEnabled: true",
         "selfMcpWriteEnabled: true",
         "hooksMcpEnabled: true",
+        "recovery:",
+        "  surfaceKilledTask: false",
+        "  autoReDrive: true",
+        "  debounceMs: 2500",
+        "  limboTimeoutMs: 60000",
         "gitAuthor:",
         "  name: Ed",
         "  email: ed@example.com",
@@ -337,7 +410,22 @@ describe("loadPaddockConfig: YAML instance-config file (#270)", () => {
     expect(cfg.selfMcpEnabled).toBe(true);
     expect(cfg.selfMcpWriteEnabled).toBe(true);
     expect(cfg.hooksMcpEnabled).toBe(true);
+    // Recovery (#301): file values populate the group; the unset `maxRetries`
+    // still falls back to the built-in default (1).
+    expect(cfg.recovery).toEqual({
+      surfaceKilledTask: false,
+      autoReDrive: true,
+      debounceMs: 2500,
+      maxRetries: 1,
+      limboTimeoutMs: 60000,
+    });
     expect(cfg.gitAuthor).toEqual({ name: "Ed", email: "ed@example.com" });
+  });
+
+  it("env overrides a recovery file value (precedence file < env)", () => {
+    writeConfig(["recovery:", "  surfaceKilledTask: false"].join("\n") + "\n");
+    process.env.PADDOCK_RECOVERY_SURFACE = "1";
+    expect(loadPaddockConfig().recovery.surfaceKilledTask).toBe(true);
   });
 
   it("env overrides a file value (precedence file < env), file base still applies elsewhere", () => {

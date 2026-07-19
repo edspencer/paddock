@@ -259,6 +259,11 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
       // its own `maxSpawnDepth` is unset; shown as the effective value in Settings
       // and used to label "Instance default" (issue #262).
       maxSpawnDepthDefault: cfg.maxSpawnDepth,
+      // Box-wide keeper-chat recovery defaults (PADDOCK_RECOVERY_*) a project
+      // inherits when its own `recovery` override fields are unset (issue #301).
+      // The web resolves the effective value (project.recovery[field] ?? this) to
+      // gate the killed-task Continue affordance.
+      recoveryDefault: cfg.recovery,
     };
   });
 

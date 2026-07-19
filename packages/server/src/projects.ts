@@ -1072,6 +1072,14 @@ export class ProjectStore {
       // (`resolveHooksMcpEnabled(project.hooksMcpEnabled, cfg.hooksMcpEnabled)`), NOT
       // here, so the instance default still applies to non-overriding projects.
       ...(typeof p.hooksMcpEnabled === "boolean" ? { hooksMcpEnabled: p.hooksMcpEnabled } : {}),
+      // recovery (issue #301): carried only when at least one valid field survives
+      // sanitization — an absent/all-invalid override stays absent so files without
+      // it round-trip unchanged, and each field is resolved at dispatch
+      // (`resolveRecoveryConfig(project.recovery, cfg.recovery)`), NOT here.
+      ...(() => {
+        const r = sanitizeRecoveryOverride(p.recovery);
+        return r ? { recovery: r } : {};
+      })(),
       // repo (issue #187): carried only when present — its presence is what marks
       // the project repo-backed and drives the workingDir resolution in toDto.
       ...(typeof p.repo === "string" && p.repo.trim() ? { repo: p.repo.trim() } : {}),

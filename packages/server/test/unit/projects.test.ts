@@ -380,6 +380,44 @@ describe("ProjectStore", () => {
     expect((await store.get("msd")).maxSpawnDepth).toBeUndefined();
   });
 
+  it("recovery override sets, persists, sanitises, and clears back to inherit (#301)", async () => {
+    await store.create({ name: "REC" });
+    // No override initially — absent from the DTO + yaml (inherits every default).
+    const created = await store.get("rec");
+    expect(created.recovery).toBeUndefined();
+
+    // Setting a partial override persists only the valid fields to disk.
+    const set = await store.update("rec", {
+      recovery: { surfaceKilledTask: false, autoReDrive: true },
+    });
+    expect(set.recovery).toEqual({ surfaceKilledTask: false, autoReDrive: true });
+    let parsed = YAML.parse(await fs.readFile(path.join(root, "rec", "project.yaml"), "utf8"));
+    expect(parsed.recovery).toEqual({ surfaceKilledTask: false, autoReDrive: true });
+
+    // An unrelated update leaves the override untouched (undefined = no change).
+    const untouched = await store.update("rec", { summary: "hi" });
+    expect(untouched.recovery).toEqual({ surfaceKilledTask: false, autoReDrive: true });
+
+    // A new override object REPLACES it; invalid fields are dropped on write.
+    const replaced = await store.update("rec", {
+      recovery: { debounceMs: 1200, maxRetries: -5 } as never,
+    });
+    expect(replaced.recovery).toEqual({ debounceMs: 1200 });
+
+    // An all-invalid override clears it entirely (nothing valid to persist).
+    const wiped = await store.update("rec", { recovery: { maxRetries: -1 } as never });
+    expect(wiped.recovery).toBeUndefined();
+    parsed = YAML.parse(await fs.readFile(path.join(root, "rec", "project.yaml"), "utf8"));
+    expect("recovery" in parsed).toBe(false);
+
+    // `null` explicitly CLEARS the override -> inherit the instance default.
+    await store.update("rec", { recovery: { autoReDrive: true } });
+    const cleared = await store.update("rec", { recovery: null });
+    expect(cleared.recovery).toBeUndefined();
+    parsed = YAML.parse(await fs.readFile(path.join(root, "rec", "project.yaml"), "utf8"));
+    expect("recovery" in parsed).toBe(false);
+  });
+
   it("keeper settings are absent from a sparse yaml until set (round-trip discipline)", async () => {
     await fs.mkdir(path.join(root, "sparse2"));
     await fs.writeFile(

@@ -1197,6 +1197,9 @@ export function ProjectView() {
               onTurnComplete={onTurnComplete}
               preloadAvailable={project.hasOverview}
               projectModel={project.model}
+              // Per-project keeper-chat recovery override (issue #301); combined
+              // with the instance default to gate the killed-task Continue button.
+              projectRecovery={project.recovery}
               forkParent={forkParent ?? undefined}
               onOpenForkParent={openChat}
               autoFocus={justForked}
