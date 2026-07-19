@@ -26,6 +26,7 @@
  * `EnrichedMessage[]`. No herdctl change.
  */
 import type { EnrichedMessage, EnrichedToolCall } from "./subagents.js";
+import { isTerminatedTaskStatus } from "./recovery-config.js";
 
 /** Background-task *ops* — badge only (they operate on an already-detached task). */
 const BACKGROUND_OP_NAMES = new Set(["BashOutput", "TaskOutput", "TaskStop", "KillShell"]);
@@ -158,9 +159,18 @@ export function enrichWithBackground(messages: EnrichedMessage[]): EnrichedMessa
   if (consumed.size === 0) return attached;
 
   // Pass 3 — mark folded notifications so the web drops the standalone pill.
+  // EXCEPTION (issue #301, Layer 2): a KILLED/STOPPED notification is NEVER folded
+  // away, even when its task id matches a launch. That's the turn-boundary-kill
+  // case (edspencer/herdctl#374) — the keeper is left alive-but-idle — and it must
+  // surface as a prominent standalone affordance ("keeper is idle" + Continue),
+  // not be reduced to a small "killed" chip on a scrolled-away tool block. The
+  // chip STILL renders (Pass 2 folded the status onto the launch); this only keeps
+  // the standalone notification turn alive so the recovery UI has something to hang.
   return attached.map((m): EnrichedMessage => {
     if (!isTaskNotification(m)) return m;
     const taskId = tag(m.content, "task-id");
-    return taskId && consumed.has(taskId) ? { ...m, bgConsumed: true } : m;
+    if (!taskId || !consumed.has(taskId)) return m;
+    if (isTerminatedTaskStatus(tag(m.content, "status"))) return m;
+    return { ...m, bgConsumed: true };
   });
 }

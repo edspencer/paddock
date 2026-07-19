@@ -76,6 +76,16 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
     expect(["batch", "session"]).toContain(body.keeperDriveModeDefault);
     // The instance-wide max spawn depth default (issue #262). Defaults to 1.
     expect(body.maxSpawnDepthDefault).toBe(1);
+    // The instance-wide keeper-chat recovery defaults (issue #301): Layer 2 ON,
+    // Layer 3 OFF, guards at their documented values. The web resolves the
+    // effective per-project value against this to gate the Continue affordance.
+    expect(body.recoveryDefault).toEqual({
+      surfaceKilledTask: true,
+      autoReDrive: false,
+      debounceMs: 5000,
+      maxRetries: 1,
+      limboTimeoutMs: 0,
+    });
   });
 
   // --- overview + changelog + files ------------------------------------------

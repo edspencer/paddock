@@ -36,9 +36,11 @@ import {
   isValidHookName,
   type PaddockHook,
 } from "./hook-config.js";
+import { sanitizeRecoveryOverride, type RecoveryOverride } from "./recovery-config.js";
 
 export type { PaddockSchedule };
 export type { PaddockHook };
+export type { RecoveryOverride };
 
 /** project.yaml status enum (matches the documented standard). */
 export type ProjectStatus =
@@ -205,6 +207,16 @@ export interface ProjectYaml {
    */
   hooksMcpEnabled?: boolean;
   /**
+   * Per-project keeper-chat recovery override (issue #301). Every field optional;
+   * an absent field inherits the instance default (`cfg.recovery`, itself
+   * `PADDOCK_RECOVERY_*` env / YAML), resolved at dispatch via
+   * {@link import("./recovery-config.js").resolveRecoveryConfig} — the same
+   * inherit/override discipline as `driveMode`/`maxSpawnDepth`. Absent ⇒ this
+   * project inherits every recovery default. Persisted (and re-read) through
+   * {@link sanitizeRecoveryOverride} so a malformed hand-edit degrades cleanly.
+   */
+  recovery?: RecoveryOverride;
+  /**
    * External git repo URL that backs this project (issue #187). When present the
    * project is REPO-BACKED: Paddock clones the repo into a nested `.gitignore`d
    * checkout under the project dir and the keeper's working directory is that
@@ -330,6 +342,14 @@ export type UpdateProjectInput = Partial<
    * `driveMode`/`maxSpawnDepth`.
    */
   hooksMcpEnabled?: boolean | null;
+  /**
+   * Keeper-chat recovery override (issue #301). A {@link RecoveryOverride} object
+   * REPLACES the per-project override; `null` CLEARS it so the project inherits
+   * every instance default again; `undefined`/absent leaves the current value
+   * untouched. Same tri-state as `driveMode`/`maxSpawnDepth` (the whole override
+   * object is the unit — sanitised on write).
+   */
+  recovery?: RecoveryOverride | null;
 };
 
 const PROJECT_FILE = "project.yaml";
@@ -601,6 +621,7 @@ export class ProjectStore {
       driveMode: driveModePatch,
       maxSpawnDepth: maxSpawnDepthPatch,
       hooksMcpEnabled: hooksMcpPatch,
+      recovery: recoveryPatch,
       ...rest
     } = patch;
     const next: ProjectYaml = {
@@ -627,6 +648,15 @@ export class ProjectStore {
       delete next.hooksMcpEnabled;
     } else if (hooksMcpPatch !== undefined) {
       next.hooksMcpEnabled = hooksMcpPatch;
+    }
+    if (recoveryPatch === null) {
+      // Clear the per-project override -> inherit every instance default (#301).
+      delete next.recovery;
+    } else if (recoveryPatch !== undefined) {
+      // Sanitise the incoming override; an all-invalid object clears it (undefined).
+      const clean = sanitizeRecoveryOverride(recoveryPatch);
+      if (clean) next.recovery = clean;
+      else delete next.recovery;
     }
     await this.writeYaml(slug, next);
     return this.toDto(current.dir, next, await this.overviewExists(slug));
@@ -1042,6 +1072,14 @@ export class ProjectStore {
       // (`resolveHooksMcpEnabled(project.hooksMcpEnabled, cfg.hooksMcpEnabled)`), NOT
       // here, so the instance default still applies to non-overriding projects.
       ...(typeof p.hooksMcpEnabled === "boolean" ? { hooksMcpEnabled: p.hooksMcpEnabled } : {}),
+      // recovery (issue #301): carried only when at least one valid field survives
+      // sanitization — an absent/all-invalid override stays absent so files without
+      // it round-trip unchanged, and each field is resolved at dispatch
+      // (`resolveRecoveryConfig(project.recovery, cfg.recovery)`), NOT here.
+      ...(() => {
+        const r = sanitizeRecoveryOverride(p.recovery);
+        return r ? { recovery: r } : {};
+      })(),
       // repo (issue #187): carried only when present — its presence is what marks
       // the project repo-backed and drives the workingDir resolution in toDto.
       ...(typeof p.repo === "string" && p.repo.trim() ? { repo: p.repo.trim() } : {}),
@@ -1085,6 +1123,11 @@ export class ProjectStore {
       permissionMode: yaml.permissionMode ?? KEEPER_DEFAULT_PERMISSION_MODE,
       maxTurns: yaml.maxTurns ?? KEEPER_DEFAULT_MAX_TURNS,
       docker: yaml.docker ?? KEEPER_DEFAULT_DOCKER,
+      // Recovery override stays RAW (per-project only — resolved against the
+      // instance default at dispatch, never baked concrete here; the `driveMode`
+      // discipline), but re-sanitised so a corrupt hand-edit never reaches the
+      // web. Absent ⇒ omitted (undefined), so the project inherits every default.
+      recovery: sanitizeRecoveryOverride(yaml.recovery),
       dir,
       // Repo-backed (#187): the keeper's cwd is the nested checkout; a notebook's
       // cwd is the metadata dir itself. `repoBacked` is the presence of `repo`.

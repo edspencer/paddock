@@ -20,6 +20,7 @@ const sends: Array<{ slug: string; message: string; sessionId: string | null; op
 const commands: Array<{ slug: string; message: string; sessionId: string | null }> = [];
 const cancels: string[] = [];
 const queuedSets: Array<{ slug: string; sessionId: string; text: string | null }> = [];
+const continues: Array<{ slug: string; sessionId: string }> = [];
 let stateCb: ((s: string) => void) | null = null;
 
 vi.mock("../lib/ws", () => ({
@@ -51,6 +52,7 @@ vi.mock("../lib/ws", () => ({
     cancel: (jobId: string) => cancels.push(jobId),
     setQueued: (slug: string, sessionId: string, text: string | null) =>
       queuedSets.push({ slug, sessionId, text }),
+    continueChat: (slug: string, sessionId: string) => continues.push({ slug, sessionId }),
   },
 }));
 
@@ -102,6 +104,7 @@ beforeEach(() => {
   commands.length = 0;
   cancels.length = 0;
   queuedSets.length = 0;
+  continues.length = 0;
   stateCb = null;
   getModels.mockReset().mockResolvedValue(MODELS);
   chatContext.mockReset().mockResolvedValue(null);
@@ -1197,5 +1200,102 @@ describe("ChatPane: message queue (issue #91)", () => {
     act(() => sub().handlers.onComplete?.({ sessionId: "s", jobId: "job-1", success: true }));
     expect(commands).toHaveLength(0);
     expect(sends).toHaveLength(1);
+  });
+});
+
+// Issue #301, Layer 2 — a KILLED/STOPPED background-task notification renders a
+// distinct "keeper is idle" affordance with a one-click Continue that re-drives
+// the hung keeper (vs. the neutral pill a completed task shows).
+describe("ChatPane: killed background-task recovery (#301)", () => {
+  const killed = [
+    "<task-notification>",
+    "<task-id>bmkcnswna</task-id>",
+    "<status>killed</status>",
+    "<summary>Background command killed</summary>",
+    "</task-notification>",
+  ].join("\n");
+  const killedHistory: HistoryMessage[] = [
+    { role: "user", content: "run a long build in the background", timestamp: "2026-07-18T10:00:00Z" },
+    { role: "assistant", content: "on it", timestamp: "2026-07-18T10:00:01Z" },
+    { role: "user", content: killed, timestamp: "2026-07-18T10:00:05Z" },
+  ];
+
+  it("renders the amber affordance + a Continue button (surface ON)", async () => {
+    const loadHistory = vi.fn().mockResolvedValue(killedHistory);
+    render(
+      <ChatPane projectSlug="proj" initialSessionId="sess-k" loadHistory={loadHistory} isProjectChat />,
+    );
+    const notice = await screen.findByText(/background task was terminated at the turn boundary/i);
+    expect(notice).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /continue/i })).toBeInTheDocument();
+  });
+
+  it("clicking Continue injects a re-drive via chatClient.continueChat", async () => {
+    const loadHistory = vi.fn().mockResolvedValue(killedHistory);
+    render(
+      <ChatPane projectSlug="proj" initialSessionId="sess-k" loadHistory={loadHistory} isProjectChat />,
+    );
+    const btn = await screen.findByRole("button", { name: /^continue$/i });
+    await userEvent.click(btn);
+    expect(continues).toEqual([{ slug: "proj", sessionId: "sess-k" }]);
+  });
+
+  it("hides the Continue button when the per-project surface override is OFF", async () => {
+    const loadHistory = vi.fn().mockResolvedValue(killedHistory);
+    render(
+      <ChatPane
+        projectSlug="proj"
+        initialSessionId="sess-k"
+        loadHistory={loadHistory}
+        isProjectChat
+        projectRecovery={{ surfaceKilledTask: false }}
+      />,
+    );
+    // The explanatory notice still shows (visibility), but no re-drive button.
+    await screen.findByText(/background task was terminated at the turn boundary/i);
+    expect(screen.queryByRole("button", { name: /^continue$/i })).not.toBeInTheDocument();
+  });
+
+  it("respects the instance default from /api/models when no project override", async () => {
+    getModels.mockResolvedValue({
+      ...MODELS,
+      recoveryDefault: {
+        surfaceKilledTask: false,
+        autoReDrive: false,
+        debounceMs: 5000,
+        maxRetries: 1,
+        limboTimeoutMs: 0,
+      },
+    });
+    const loadHistory = vi.fn().mockResolvedValue(killedHistory);
+    render(
+      <ChatPane projectSlug="proj" initialSessionId="sess-k" loadHistory={loadHistory} isProjectChat />,
+    );
+    await screen.findByText(/background task was terminated at the turn boundary/i);
+    // Instance default OFF → no button (until a project override flips it back on).
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /^continue$/i })).not.toBeInTheDocument(),
+    );
+  });
+
+  it("a COMPLETED notification stays a neutral pill (no recovery affordance)", async () => {
+    const completed = [
+      "<task-notification>",
+      "<task-id>done1</task-id>",
+      "<status>completed</status>",
+      "<summary>Background command completed</summary>",
+      "</task-notification>",
+    ].join("\n");
+    const loadHistory = vi.fn().mockResolvedValue([
+      { role: "user", content: completed, timestamp: "2026-07-18T10:00:05Z" },
+    ] as HistoryMessage[]);
+    render(
+      <ChatPane projectSlug="proj" initialSessionId="sess-c" loadHistory={loadHistory} isProjectChat />,
+    );
+    await screen.findByText("Background command completed");
+    expect(
+      screen.queryByText(/background task was terminated at the turn boundary/i),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^continue$/i })).not.toBeInTheDocument();
   });
 });

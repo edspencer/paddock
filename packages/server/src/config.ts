@@ -12,6 +12,7 @@ import fs from "node:fs";
 import YAML from "yaml";
 import { type DriveMode, KEEPER_DEFAULT_DRIVE_MODE, isKnownDriveMode } from "./models.js";
 import { DEFAULT_MAX_SPAWN_DEPTH, isValidMaxSpawnDepth } from "./spawn-capability.js";
+import { type RecoveryConfig, DEFAULT_RECOVERY } from "./recovery-config.js";
 
 /**
  * User-authentication strategy.
@@ -193,6 +194,16 @@ export interface PaddockConfig {
    */
   hooksMcpEnabled: boolean;
   /**
+   * Keeper-chat recovery config (issue #301) — the two independently-toggleable
+   * layers that unstick a keeper whose background task is killed at the turn
+   * boundary (see recovery-config.ts / edspencer/herdctl#374). Instance defaults
+   * here (`PADDOCK_RECOVERY_*` env, YAML beneath); a per-project `recovery`
+   * override wins at dispatch via
+   * {@link import("./recovery-config.js").resolveRecoveryConfig}. Layer 2
+   * (`surfaceKilledTask`) defaults ON; Layer 3 (`autoReDrive`) defaults OFF.
+   */
+  recovery: RecoveryConfig;
+  /**
    * Log level for the server's structured logger (Fastify/pino). Driven by
    * `LOG_LEVEL`; default `info`.
    */
@@ -275,6 +286,17 @@ export interface PaddockConfigFile {
   maxSpawnDepth?: number | string;
   scheduleMutationEnabled?: boolean | string;
   hooksMcpEnabled?: boolean | string;
+  /**
+   * Keeper-chat recovery config (issue #301). Every field optional; a matching
+   * `PADDOCK_RECOVERY_*` env var still overrides it (precedence file < env).
+   */
+  recovery?: {
+    surfaceKilledTask?: boolean | string;
+    autoReDrive?: boolean | string;
+    debounceMs?: number | string;
+    maxRetries?: number | string;
+    limboTimeoutMs?: number | string;
+  };
   logLevel?: string;
   browserMcp?: boolean | string;
   sweepMinIntervalMs?: number | string;
@@ -586,6 +608,7 @@ export function loadPaddockConfig(): PaddockConfig {
     maxSpawnDepth: loadMaxSpawnDepth(file.maxSpawnDepth),
     scheduleMutationEnabled: loadScheduleMutationEnabled(file.scheduleMutationEnabled),
     hooksMcpEnabled: loadHooksMcpEnabled(file.hooksMcpEnabled),
+    recovery: loadRecoveryConfig(file.recovery),
     logLevel: envOr("LOG_LEVEL", fileOr(file.logLevel, "info")),
     browserMcp: loadBrowserMcp(file.browserMcp),
     sweepMinIntervalMs: loadSweepMinIntervalMs(file.sweepMinIntervalMs),
@@ -635,6 +658,66 @@ function loadMaxSpawnDepth(file?: PaddockConfigFile["maxSpawnDepth"]): number {
   if (raw === undefined) return DEFAULT_MAX_SPAWN_DEPTH;
   const n = Number(raw);
   return isValidMaxSpawnDepth(n) ? n : DEFAULT_MAX_SPAWN_DEPTH;
+}
+
+/**
+ * Resolve a boolean recovery knob (issue #301) with the shared 1/true/yes
+ * convention, env over file over the built-in default. Mirrors the other boolean
+ * loaders; factored so each recovery flag reads identically.
+ */
+function loadRecoveryBool(env: string, file: unknown, fallback: boolean): boolean {
+  const raw = envOr(env, fileOr(file, String(fallback))).toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes";
+}
+
+/**
+ * Resolve a non-negative-integer recovery knob (issue #301). A missing/blank/
+ * non-finite/negative value falls back to the default rather than failing
+ * startup — defensive, like {@link loadMaxSpawnDepth}.
+ */
+function loadRecoveryInt(env: string, file: unknown, fallback: number): number {
+  const raw = envOpt(env) ?? fileOpt(file);
+  if (raw === undefined) return fallback;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 0 ? n : fallback;
+}
+
+/**
+ * Resolve the instance-default keeper-chat recovery config (issue #301). Layer 2
+ * (`surfaceKilledTask`) defaults ON, Layer 3 (`autoReDrive`) defaults OFF; the
+ * guards default per {@link DEFAULT_RECOVERY}. Each field is env-over-file-over-
+ * default, and a per-project `recovery` override still wins at dispatch
+ * (resolveRecoveryConfig). Malformed values degrade to the default, never fatal.
+ */
+function loadRecoveryConfig(file?: PaddockConfigFile["recovery"]): RecoveryConfig {
+  const f = file ?? {};
+  return {
+    surfaceKilledTask: loadRecoveryBool(
+      "PADDOCK_RECOVERY_SURFACE",
+      f.surfaceKilledTask,
+      DEFAULT_RECOVERY.surfaceKilledTask,
+    ),
+    autoReDrive: loadRecoveryBool(
+      "PADDOCK_RECOVERY_AUTODRIVE",
+      f.autoReDrive,
+      DEFAULT_RECOVERY.autoReDrive,
+    ),
+    debounceMs: loadRecoveryInt(
+      "PADDOCK_RECOVERY_DEBOUNCE_MS",
+      f.debounceMs,
+      DEFAULT_RECOVERY.debounceMs,
+    ),
+    maxRetries: loadRecoveryInt(
+      "PADDOCK_RECOVERY_MAX_RETRIES",
+      f.maxRetries,
+      DEFAULT_RECOVERY.maxRetries,
+    ),
+    limboTimeoutMs: loadRecoveryInt(
+      "PADDOCK_RECOVERY_LIMBO_MS",
+      f.limboTimeoutMs,
+      DEFAULT_RECOVERY.limboTimeoutMs,
+    ),
+  };
 }
 
 /**

@@ -377,6 +377,21 @@ class ChatClient {
     this.transmit(JSON.stringify({ type: "chat:cancel", payload: { jobId } }));
   }
 
+  /**
+   * Manually re-drive a hung keeper whose background task was killed at the turn
+   * boundary (issue #301, Layer 2 "Continue"). The keeper's session stayed alive
+   * (herdctl#374) so it's still injectable; the server injects a recovery nudge
+   * into it via startAgentTurn, and the resulting turn streams back over the same
+   * response/tool/complete handlers as any other. Marks the turn as starting so a
+   * reconnect mid-turn re-attaches cleanly (mirrors sendCommand).
+   */
+  continueChat(projectSlug: string, sessionId: string): void {
+    this.markTurnStart(projectSlug, sessionId);
+    this.transmit(
+      JSON.stringify({ type: "chat:continue", payload: { projectSlug, sessionId } }),
+    );
+  }
+
   private transmit(raw: string): void {
     if (this.isLive()) {
       this.ws!.send(raw);

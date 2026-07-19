@@ -15,6 +15,28 @@ export interface ProjectLink {
   url: string;
 }
 
+/**
+ * Resolved keeper-chat recovery config (issue #301) — mirrors the server's
+ * `RecoveryConfig` (packages/server/src/recovery-config.ts). Instance defaults
+ * are served by GET /api/models (`recoveryDefault`); a per-project partial
+ * override lives on {@link Project.recovery}.
+ */
+export interface RecoveryConfig {
+  /** Layer 2 — surface a killed background task + a one-click Continue (default ON). */
+  surfaceKilledTask: boolean;
+  /** Layer 3 — auto re-drive a hung keeper (default OFF; engine is a follow-up). */
+  autoReDrive: boolean;
+  /** Layer 3 — quiet-ms debounce before auto re-drive fires. */
+  debounceMs: number;
+  /** Layer 3 — per-session auto re-drive retry cap. */
+  maxRetries: number;
+  /** Layer 2 backstop — surface a limbo session after N ms of silence (0 = off). */
+  limboTimeoutMs: number;
+}
+
+/** A per-project recovery override — every field optional (absent ⇒ inherit). */
+export type RecoveryOverride = Partial<RecoveryConfig>;
+
 export interface Project {
   name: string;
   slug: string;
@@ -64,6 +86,13 @@ export interface Project {
    * spawned child gets the write tools (report-back + spawn) iff `d <= maxSpawnDepth`.
    */
   maxSpawnDepth?: number;
+  /**
+   * Per-project keeper-chat recovery override (issue #301). `undefined` = inherit
+   * every instance default (`PADDOCK_RECOVERY_*`); a partial object overrides the
+   * fields it sets. Layer 2 (`surfaceKilledTask`) drives the "keeper is idle" +
+   * Continue affordance; the rest configure the (follow-up) Layer 3 auto re-drive.
+   */
+  recovery?: RecoveryOverride;
   /**
    * Compact per-chat "last completed turn" timestamps for the sidebar UNREAD
    * badge (#161): one entry per project chat that has a completed keeper turn,
@@ -296,6 +325,7 @@ export type MessageSender =
   | { kind: "chat"; project: string; sessionId: string; name?: string }
   | { kind: "schedule"; name: string; project?: string }
   | { kind: "hook"; name: string; project?: string }
+  | { kind: "recovery" }
   | { kind: "agent" };
 
 /** A scheduled chat's timer kind (issue #266 / D4). */
