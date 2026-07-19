@@ -353,7 +353,8 @@ describe("loadPaddockConfig: YAML instance-config file (#270)", () => {
     expect(cfg.host).toBe("0.0.0.0");
     expect(cfg.auth.mode).toBe("none");
     expect(cfg.brand.name).toBe("Paddock");
-    expect(cfg.keeperDriveMode).toBe("batch");
+    // Built-in default flipped to session (#316); env + file still override.
+    expect(cfg.keeperDriveMode).toBe("session");
     expect(cfg.maxSpawnDepth).toBe(1);
     expect(cfg.devServers.enabled).toBe(false);
     expect(cfg.gitAuthor).toEqual({ name: "Paddock", email: "paddock@localhost" });

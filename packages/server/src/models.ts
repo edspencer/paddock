@@ -117,11 +117,14 @@ export const DRIVE_MODES = ["batch", "session"] as const;
 export type DriveMode = (typeof DRIVE_MODES)[number];
 
 /**
- * Default keeper drive mode. `batch` for now (§Paddock#111): merging the session
- * path changes nothing until a box opts in via `PADDOCK_KEEPER_DRIVE_MODE` or a
- * per-project override. May flip to `session` in a future release.
+ * Default keeper drive mode. `session` (#316): a fresh/un-configured instance
+ * gets cross-turn autonomy (`ScheduleWakeup`, `/loop`, reaper-backed background
+ * work) and the SDK streaming runtime by default, instead of only when an
+ * operator sets `PADDOCK_KEEPER_DRIVE_MODE=session`. The env var and per-project
+ * `driveMode` override still take precedence; this only moves the built-in
+ * default off the legacy one-shot `batch` path.
  */
-export const KEEPER_DEFAULT_DRIVE_MODE: DriveMode = "batch";
+export const KEEPER_DEFAULT_DRIVE_MODE: DriveMode = "session";
 
 /** Whether `m` is one of the offered keeper permission modes. */
 export function isKnownPermissionMode(m: string): m is PermissionMode {

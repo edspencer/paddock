@@ -110,6 +110,13 @@ if (live) {
 } else {
   // Fake: prepend our stub `claude`.
   env.PATH = `${fakeBin}${path.delimiter}${process.env.PATH ?? ""}`;
+  // The fake `claude` is a CLI stub, so turns must run on the CLI (batch)
+  // runtime. The built-in default drive mode is now `session` (#316), which
+  // would route turns through openChatSession → the SDK runtime (needs a real
+  // login → no streamed reply → the chat E2E journeys time out). Pin `batch`
+  // explicitly (also overriding any leaked PADDOCK_KEEPER_DRIVE_MODE from the
+  // host env). Live mode (real claude) leaves the default in place.
+  env.PADDOCK_KEEPER_DRIVE_MODE = "batch";
 }
 
 const child = spawn("node", [serverEntry], { env, stdio: "inherit" });

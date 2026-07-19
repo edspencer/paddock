@@ -464,7 +464,7 @@ main knobs:
 | **Server** | `PORT` (4000), `HOST` (0.0.0.0), `LOG_LEVEL` (info) |
 | **Paths** | `PADDOCK_DATA_DIR` (./data), `PADDOCK_PROJECTS_DIR`, `PADDOCK_STATE_DIR` (`.herdctl`), `PADDOCK_HERDCTL_CONFIG`, `PADDOCK_SCRATCH_DIR`, `PADDOCK_WEB_DIST`, `CLAUDE_HOME` (~/.claude) |
 | **Auth** | `PADDOCK_AUTH_MODE` (none), `PADDOCK_AUTH_USER_HEADER` (X-Forwarded-User), `..._EMAIL_HEADER`, `..._GROUPS_HEADER`, `..._JWT_HEADER` (Authorization), `..._JWKS_URL`, `..._JWT_ISSUER`, `..._JWT_AUDIENCE`, `..._USERNAME_CLAIM`, `..._GROUPS_CLAIM` (groups) |
-| **Keeper** | `PADDOCK_KEEPER_DRIVE_MODE` (batch), `PADDOCK_KEEPER_NATIVE_PROMPT` (true), `PADDOCK_SELF_MCP` (false), `PADDOCK_SELF_MCP_WRITE` (false; implies read) |
+| **Keeper** | `PADDOCK_KEEPER_DRIVE_MODE` (session), `PADDOCK_KEEPER_NATIVE_PROMPT` (true), `PADDOCK_SELF_MCP` (false), `PADDOCK_SELF_MCP_WRITE` (false; implies read) |
 | **Sweeper** | `PADDOCK_SWEEP_MIN_INTERVAL_MS` (300000) |
 | **Whisper** | `PADDOCK_WHISPER_MODE` (off/local/remote), `PADDOCK_WHISPER_ENDPOINT`, `PADDOCK_WHISPER_MODEL` (base), `PADDOCK_WHISPER_API_KEY`, `PADDOCK_WHISPER_LANGUAGE`, `PADDOCK_WHISPER_MAX_UPLOAD_BYTES` (25 MB) |
 | **Dev servers** | `PADDOCK_DEV_SERVERS_ENABLED` (false), `PADDOCK_DEV_SERVERS_DOMAIN` |
@@ -475,8 +475,8 @@ main knobs:
 ## 9. Keeper drive mode — session vs. batch
 
 Each keeper turn runs in one of two modes (`PADDOCK_KEEPER_DRIVE_MODE`, default
-`batch`, overridable per project via `project.driveMode`, resolved at dispatch in
-`ws.ts`):
+`session` (#316), overridable per project via `project.driveMode`, resolved at
+dispatch in `ws.ts`):
 
 - **`batch`** — `HerdctlService.chat()` wraps `manager.trigger()`, a one-shot job
   that streams via `onMessage` and resolves when the turn ends. Simple and

@@ -51,9 +51,9 @@ describe("models", () => {
     expect(getModelInfo("nope")).toBeUndefined();
   });
 
-  it("driveMode: batch/session are known, default is batch (Paddock#111)", () => {
+  it("driveMode: batch/session are known, default is session (#316)", () => {
     expect(DRIVE_MODES).toEqual(["batch", "session"]);
-    expect(KEEPER_DEFAULT_DRIVE_MODE).toBe("batch");
+    expect(KEEPER_DEFAULT_DRIVE_MODE).toBe("session");
     expect(isKnownDriveMode("batch")).toBe(true);
     expect(isKnownDriveMode("session")).toBe(true);
     expect(isKnownDriveMode("turbo")).toBe(false);
