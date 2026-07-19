@@ -1,5 +1,63 @@
 # @paddock/server
 
+## 0.35.0
+
+### Minor Changes
+
+- [#303](https://github.com/edspencer/paddock/pull/303) [`89bf364`](https://github.com/edspencer/paddock/commit/89bf364da07982a86eb5c55b04961573093a10dd) Thanks [@edspencer](https://github.com/edspencer)! - Keeper-chat recovery — Layer 3 automatic re-drive (#301)
+
+  Builds on the Phase 0 config + Layer 2 manual Continue: a keeper whose background
+  task is killed at the turn boundary (edspencer/herdctl#374) now recovers **without a
+  human**, when `autoReDrive` is enabled (still default OFF).
+
+  A new post-turn detection engine (`packages/server/src/recovery.ts`) tails a
+  session-mode keeper's transcript after each turn. The hung signature — a terminated
+  (`killed`/`stopped`) `<task-notification>` with no keeper reply after it — triggers
+  the same recovery nudge the manual **Continue** button injects
+  (`startAgentTurn` + `RECOVERY_NUDGE` + `recovery` sender), so the keeper wakes on its
+  own and carries on.
+
+  Guards prevent misfires and loops: it only fires when the resolved `autoReDrive` is
+  on (per-project override else instance default); a `debounceMs` quiet window means a
+  keeper that wakes itself is never poked; a per-session `maxRetries` cap stops a
+  permanently-wedged keeper from being poked forever; and a human message resets the
+  session's guard so a genuinely-new later hang recovers fresh.
+
+  Enable instance-wide with `PADDOCK_RECOVERY_AUTODRIVE=1`, or per project via the
+  `recovery.autoReDrive` override in `project.yaml`. The `limboTimeoutMs` backstop timer
+  remains a follow-up.
+
+- [#302](https://github.com/edspencer/paddock/pull/302) [`4f83481`](https://github.com/edspencer/paddock/commit/4f834818da12e47954adf3a394755e497bcd1f1b) Thanks [@edspencer](https://github.com/edspencer)! - Configurable keeper-chat recovery — Phase 0 config + Layer 2 visibility/Continue (#301)
+
+  When a keeper starts a background task (background `Bash` or a background
+  `Task`/`Agent`) and ends its turn while it's still running, herdctl keeps the
+  session alive but the SDK/native binary kills the child at the turn boundary — the
+  `killed`/`stopped` `<task-notification>` emits no wake, so the keeper is left
+  alive-but-idle-forever (root cause: edspencer/herdctl#374). This adds an app-side
+  recovery mechanism.
+
+  **Phase 0 — config foundation.** A new `recovery` config group on `PaddockConfig`
+  (env `PADDOCK_RECOVERY_*`, YAML instance file, built-in defaults) plus an optional
+  per-project `recovery` override in `project.yaml` (tri-state update: object sets,
+  `null` clears, absent leaves untouched), resolved at dispatch (project ?? instance)
+  — the same discipline as `driveMode`/`maxSpawnDepth`:
+
+  - `surfaceKilledTask` — Layer 2, default **ON** (`PADDOCK_RECOVERY_SURFACE`)
+  - `autoReDrive` — Layer 3, default **OFF** (`PADDOCK_RECOVERY_AUTODRIVE`; the
+    detection/inject engine is a follow-up — this ships only the flag)
+  - `debounceMs` (5000), `maxRetries` (1), `limboTimeoutMs` (0 = off)
+
+  **Phase 1 — Layer 2 visibility + manual Continue (default ON).** A killed/stopped
+  background-task notification now surfaces as a distinct amber "⚠ background task
+  terminated at the turn boundary — the keeper is idle" affordance (no longer folded
+  away), with a one-click **Continue** that injects a recovery nudge into the still-
+  alive session via `startAgentTurn` (new `chat:continue` WS action). The nudge is
+  attributed to a new `recovery` message sender and tells the keeper its task was
+  KILLED AT THE TURN BOUNDARY (not "stopped by user", cf #216) so it re-runs in the
+  foreground or reports.
+
+  Layer 3 automatic recovery is a follow-up.
+
 ## 0.34.0
 
 ### Minor Changes
