@@ -137,6 +137,37 @@ export interface ProjectLink {
   url: string;
 }
 
+/**
+ * Coerce a raw parsed `links` value into well-formed {label,url} objects.
+ *
+ * A legacy / hand-edited `project.yaml` may declare `links` as a bare YAML
+ * string list (the natural shorthand — `- https://example.com`) rather than the
+ * {label,url} object form. Passing those through untouched yields a `string[]`
+ * DTO, which crashes the Settings pane (its `cleanedLinks` memo calls
+ * `l.url.trim()` / `l.label.trim()` on what is actually a string → TypeError
+ * during render). So normalize here at the read boundary: a bare string becomes
+ * `{label:"", url:<string>}`, an object entry is trimmed and kept, and any entry
+ * without a usable url (or of an unexpected type) is dropped. Because this runs
+ * in `normalize`, the next save round-trips the file into the object form — the
+ * project self-heals.
+ */
+export function normalizeLinks(raw: unknown): ProjectLink[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ProjectLink[] = [];
+  for (const item of raw) {
+    if (typeof item === "string") {
+      const url = item.trim();
+      if (url) out.push({ label: "", url });
+    } else if (item && typeof item === "object") {
+      const rec = item as Record<string, unknown>;
+      const url = typeof rec.url === "string" ? rec.url.trim() : "";
+      const label = typeof rec.label === "string" ? rec.label.trim() : "";
+      if (url) out.push({ label, url });
+    }
+  }
+  return out;
+}
+
 // Scheduled-chat declaration (issue #265 / DD-2). The `PaddockSchedule` type +
 // its sanitiser / herdctl-mapping / prompt-file helpers live in
 // schedule-config.ts (a small, unit-testable surface); the type is re-exported
@@ -1100,7 +1131,9 @@ export class ProjectStore {
       started,
       updated: p.updated ?? started,
       summary: p.summary ?? "",
-      links: Array.isArray(p.links) ? p.links : [],
+      // Coerce to well-formed {label,url} objects — a legacy/hand-edited file may
+      // carry a bare string list, which otherwise crashes the Settings pane.
+      links: normalizeLinks(p.links),
       pinned: Array.isArray(p.pinned)
         ? p.pinned.filter((f): f is string => typeof f === "string")
         : [],
