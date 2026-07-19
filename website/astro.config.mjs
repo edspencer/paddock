@@ -85,6 +85,7 @@ export default defineConfig({
 					items: [
 						{ label: 'Environment variables', slug: 'configuration/environment' },
 						{ label: 'Authentication', slug: 'configuration/authentication' },
+						{ label: 'Keeper-chat recovery', slug: 'configuration/keeper-recovery' },
 					],
 				},
 				{

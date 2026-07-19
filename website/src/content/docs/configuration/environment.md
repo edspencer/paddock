@@ -106,6 +106,20 @@ HushPod's whisper config so both can share a backend. See [DEV.md](https://githu
 | `PADDOCK_SELF_MCP_WRITE` | `false` | no | Additionally give keepers the self-management **write** tools (`create_chat`, `fork_chat`, `send_message`, `fork_chat_batch`). Only honored when `PADDOCK_SELF_MCP` is also on (write implies read). |
 | `PADDOCK_BROWSER_MCP` | *(off)* | no | When `=1`, inject a headless-Chromium Playwright MCP into keepers (browse/screenshot). |
 
+## Keeper-chat recovery
+
+Unstick a keeper that hangs when a background task is killed at the turn boundary.
+See [Keeper-chat recovery](/configuration/keeper-recovery) for the full story; each
+knob has a per-project `recovery` override in `project.yaml`.
+
+| Variable | Default | Required | Purpose |
+|----------|---------|----------|---------|
+| `PADDOCK_RECOVERY_SURFACE` | `true` (ON) | no | **Layer 2.** Surface a killed/stopped background-task notification as a "keeper is idle" affordance with a one-click **Continue** button. Accepts `1`/`true`/`yes`. |
+| `PADDOCK_RECOVERY_AUTODRIVE` | `false` (OFF) | no | **Layer 3.** Automatically re-drive a hung keeper. *(Config only for now — the detection/inject engine ships in a follow-up.)* |
+| `PADDOCK_RECOVERY_DEBOUNCE_MS` | `5000` | no | Layer 3: quiet window (ms) after a killed task before auto re-drive fires. Non-negative integer, else the default. |
+| `PADDOCK_RECOVERY_MAX_RETRIES` | `1` | no | Layer 3: per-session cap on auto re-drives (no poke-loops). Non-negative integer, else the default. |
+| `PADDOCK_RECOVERY_LIMBO_MS` | `0` (off) | no | Layer 2 backstop: surface a kept-alive session as stuck after this many ms of silence following a killed task. `0` disables it. |
+
 ## Dev servers / git / GitHub
 
 | Variable | Default | Required | Purpose |
