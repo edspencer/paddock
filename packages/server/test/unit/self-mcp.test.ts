@@ -12,7 +12,7 @@ import {
   SELF_MCP_SERVER_KEY,
   SELF_MCP_TOOL_NAMES,
   SELF_MCP_WRITE_TOOL_NAMES,
-  SELF_MCP_HOOK_TOOL_NAMES,
+  SELF_MCP_TRIGGER_TOOL_NAMES,
   FORK_BATCH_MAX,
   coercePrompts,
   coerceToolList,
@@ -193,12 +193,9 @@ interface RecordingWrite extends SelfMcpWriteContext {
     forkChat: Array<{ projectSlug: string; sourceSessionId: string; prompt?: string; name?: string }>;
     sendMessage: Array<{ projectSlug: string; sessionId: string; prompt: string }>;
     setArchived: Array<{ projectSlug: string; sessionId: string; archived: boolean }>;
-    setSchedule: Array<{ projectSlug: string; name: string; schedule: Record<string, unknown> }>;
-    removeSchedule: Array<{ projectSlug: string; name: string }>;
-    listSchedules: Array<{ projectSlug: string }>;
-    setHook: Array<{ projectSlug: string; name: string; hook: Record<string, unknown> }>;
-    removeHook: Array<{ projectSlug: string; name: string }>;
-    listHooks: Array<{ projectSlug: string }>;
+    setTrigger: Array<{ projectSlug: string; name: string; trigger: Record<string, unknown> }>;
+    removeTrigger: Array<{ projectSlug: string; name: string }>;
+    listTriggers: Array<{ projectSlug: string }>;
   };
 }
 
@@ -208,12 +205,9 @@ function fakeWrite(over: Partial<SelfMcpWriteContext> = {}): RecordingWrite {
     forkChat: [],
     sendMessage: [],
     setArchived: [],
-    setSchedule: [],
-    removeSchedule: [],
-    listSchedules: [],
-    setHook: [],
-    removeHook: [],
-    listHooks: [],
+    setTrigger: [],
+    removeTrigger: [],
+    listTriggers: [],
   };
   let n = 0;
   const base: SelfMcpWriteContext = {
@@ -233,61 +227,47 @@ function fakeWrite(over: Partial<SelfMcpWriteContext> = {}): RecordingWrite {
     setArchived: async (projectSlug, sessionId, archived) => {
       calls.setArchived.push({ projectSlug, sessionId, archived });
     },
-    scheduleMutationEnabled: true,
-    setSchedule: async (projectSlug, name, schedule) => {
-      calls.setSchedule.push({ projectSlug, name, schedule });
+    // T3 unified trigger management: default OFF (per-project opt-in) so the base
+    // 9-tool shape is unchanged; a test opts in via `fakeWrite({ triggersMcpEnabled: true })`.
+    triggersMcpEnabled: false,
+    setTrigger: async (projectSlug, name, trigger) => {
+      calls.setTrigger.push({ projectSlug, name, trigger });
+      // Echo the incoming partial `{ trigger?, run?, enabled? }` onto a flat
+      // SelfMcpTrigger (the real ws.ts callback merges over the existing record;
+      // this fake just projects what the handler supplied so tests can assert it).
+      const when = (trigger.trigger as Record<string, unknown> | undefined) ?? {};
+      const run = (trigger.run as Record<string, unknown> | undefined) ?? {};
+      const type = (when.type as "schedule" | "event" | "webhook") ?? "event";
       return {
         name,
-        type: (schedule.type as "cron" | "interval") ?? "interval",
-        cron: (schedule.cron as string) ?? null,
-        interval: (schedule.interval as string) ?? null,
-        prompt: (schedule.prompt as string) ?? null,
-        promptFile: (schedule.promptFile as string) ?? null,
-        resumeSession: schedule.resume_session === true,
-        enabled: schedule.enabled !== false,
-        status: "idle",
+        agentName: `trigger-${projectSlug}-${name}`,
+        type,
+        cron: (when.cron as string) ?? null,
+        interval: (when.interval as string) ?? null,
+        event: (when.on as string) ?? null,
+        path: (when.path as string) ?? null,
+        prompt: (run.prompt as string) ?? null,
+        promptFile: (run.promptFile as string) ?? null,
+        session: (run.session as "new" | "resume") ?? "new",
+        tools: (run.tools as string[]) ?? [],
+        maxSpawnDepth: (run.maxSpawnDepth as number) ?? null,
+        permissionMode: (run.permissionMode as string) ?? null,
+        model: (run.model as string) ?? null,
+        maxTurns: (run.maxTurns as number) ?? null,
+        enabled: trigger.enabled === true,
+        status: type === "schedule" ? "idle" : null,
         lastRunAt: null,
         nextRunAt: null,
         lastError: null,
       };
     },
-    removeSchedule: async (projectSlug, name) => {
-      calls.removeSchedule.push({ projectSlug, name });
+    removeTrigger: async (projectSlug, name) => {
+      calls.removeTrigger.push({ projectSlug, name });
       return true;
     },
-    listSchedules: async (projectSlug) => {
-      calls.listSchedules.push({ projectSlug });
+    listTriggers: async (projectSlug) => {
+      calls.listTriggers.push({ projectSlug });
       return [];
-    },
-    // G5 hook management: default OFF (per-project opt-in) so the base 12-tool
-    // shape is unchanged; a test opts in via `fakeWrite({ hooksMcpEnabled: true })`.
-    hooksMcpEnabled: false,
-    listHooks: async (projectSlug) => {
-      calls.listHooks.push({ projectSlug });
-      return [];
-    },
-    setHook: async (projectSlug, name, hook) => {
-      calls.setHook.push({ projectSlug, name, hook });
-      return {
-        name,
-        agentName: `hook-${projectSlug}-${name}`,
-        event: (hook.event as string) ?? "onArchive",
-        enabled: hook.enabled === true,
-        prompt: (hook.prompt as string) ?? null,
-        promptFile: (hook.promptFile as string) ?? null,
-        allowedTools:
-          ((hook.capabilities as Record<string, unknown> | undefined)?.allowedTools as string[]) ?? [],
-        deniedTools:
-          ((hook.capabilities as Record<string, unknown> | undefined)?.deniedTools as string[]) ?? [],
-        permissionMode:
-          ((hook.capabilities as Record<string, unknown> | undefined)?.permissionMode as string) ?? null,
-        model: ((hook.capabilities as Record<string, unknown> | undefined)?.model as string) ?? null,
-        maxTurns: ((hook.capabilities as Record<string, unknown> | undefined)?.maxTurns as number) ?? null,
-      };
-    },
-    removeHook: async (projectSlug, name) => {
-      calls.removeHook.push({ projectSlug, name });
-      return true;
     },
     ...over,
   };
@@ -313,12 +293,14 @@ async function callWrite(
 }
 
 describe("self-management MCP (Phase 2, write tools)", () => {
-  it("exposes only the 3 read tools WITHOUT a write ctx, and 12 tools WITH one", () => {
+  it("exposes only the 3 read tools WITHOUT a write ctx, and 9 tools WITH one (triggers gated OFF)", () => {
     const readOnly = selfMcpServerDef(fakeContext());
     expect(readOnly.tools.map((t) => t.name).sort()).toEqual(["list_chats", "list_projects", "read_chat"]);
 
+    // Trigger tools default OFF (per-project opt-in), so the base write shape is the
+    // 6 write tools + 3 read tools = 9 — no schedule/hook verbs (collapsed in T3).
     const withWrite = selfMcpServerDef(fakeContext(), fakeWrite());
-    expect(withWrite.tools).toHaveLength(12);
+    expect(withWrite.tools).toHaveLength(9);
     expect(withWrite.tools.map((t) => t.name).sort()).toEqual([
       "archive_chat",
       "create_chat",
@@ -326,11 +308,8 @@ describe("self-management MCP (Phase 2, write tools)", () => {
       "fork_chat_batch",
       "list_chats",
       "list_projects",
-      "list_schedules",
       "read_chat",
-      "remove_schedule",
       "send_message",
-      "set_schedule",
       "unarchive_chat",
     ]);
   });
@@ -342,9 +321,6 @@ describe("self-management MCP (Phase 2, write tools)", () => {
     expect(SELF_MCP_WRITE_TOOL_NAMES.archiveChat).toBe("mcp__paddock_manage__archive_chat");
     expect(SELF_MCP_WRITE_TOOL_NAMES.unarchiveChat).toBe("mcp__paddock_manage__unarchive_chat");
     expect(SELF_MCP_WRITE_TOOL_NAMES.forkChatBatch).toBe("mcp__paddock_manage__fork_chat_batch");
-    expect(SELF_MCP_WRITE_TOOL_NAMES.setSchedule).toBe("mcp__paddock_manage__set_schedule");
-    expect(SELF_MCP_WRITE_TOOL_NAMES.removeSchedule).toBe("mcp__paddock_manage__remove_schedule");
-    expect(SELF_MCP_WRITE_TOOL_NAMES.listSchedules).toBe("mcp__paddock_manage__list_schedules");
   });
 
   it("create_chat defaults project to current and passes name/preload through", async () => {
@@ -559,159 +535,175 @@ describe("self-management MCP (Phase 2, write tools)", () => {
   });
 });
 
-// ── Schedule tools (issue #289) ─────────────────────────────────────────────
+// ── Unified trigger tools (Epic T "Unify Triggers" / T3) ────────────────────
 
-describe("self-management MCP (schedule tools)", () => {
-  it("set_schedule builds a cron record, defaults project to current, echoes the saved DTO", async () => {
-    const write = fakeWrite();
-    const { json } = await callWrite(write, "set_schedule", {
+describe("self-management MCP (trigger tools)", () => {
+  it("set_trigger builds a SCHEDULE trigger, defaults project to current, echoes the DTO", async () => {
+    const write = fakeWrite({ triggersMcpEnabled: true });
+    const { json } = await callWrite(write, "set_trigger", {
       name: "daily-triage",
-      type: "cron",
+      type: "schedule",
       cron: "0 9 * * *",
       prompt: "Triage new issues",
-      resume_session: true,
+      session: "resume",
+      tools: "Bash, Read",
     });
-    expect(write.calls.setSchedule).toEqual([
+    // The handler assembled a structured `{ trigger, run }` partial for the callback.
+    expect(write.calls.setTrigger).toEqual([
       {
         projectSlug: "paddock",
         name: "daily-triage",
-        schedule: { type: "cron", cron: "0 9 * * *", prompt: "Triage new issues", resume_session: true },
+        trigger: {
+          trigger: { type: "schedule", cron: "0 9 * * *" },
+          run: { prompt: "Triage new issues", session: "resume", tools: ["Bash", "Read"] },
+        },
       },
     ]);
     expect(json.set).toBe(true);
     expect(json.project).toBe("paddock");
-    expect(json.schedule).toMatchObject({
+    expect(json.trigger).toMatchObject({
       name: "daily-triage",
-      type: "cron",
+      type: "schedule",
       cron: "0 9 * * *",
       prompt: "Triage new issues",
-      resumeSession: true,
+      session: "resume",
+      tools: ["Bash", "Read"],
+    });
+  });
+
+  it("set_trigger builds an EVENT trigger with a prompt_file + a target project", async () => {
+    const write = fakeWrite({ triggersMcpEnabled: true });
+    await callWrite(write, "set_trigger", {
+      name: "archive-cleanup",
+      type: "event",
+      event: "onArchive",
+      prompt_file: "cleanup.md",
+      tools: "Bash",
+      enabled: true,
+      project: "herdctl",
+    });
+    expect(write.calls.setTrigger[0].projectSlug).toBe("herdctl");
+    expect(write.calls.setTrigger[0].trigger).toEqual({
+      trigger: { type: "event", on: "onArchive" },
+      run: { promptFile: "cleanup.md", tools: ["Bash"] },
       enabled: true,
     });
   });
 
-  it("set_schedule builds an interval record with a prompt_file (promptFile sugar)", async () => {
-    const write = fakeWrite();
-    await callWrite(write, "set_schedule", {
-      name: "hourly",
-      type: "interval",
-      interval: "1h",
-      prompt_file: "hourly.md",
-      project: "other",
+  it("set_trigger builds an interval SCHEDULE + a WEBHOOK trigger", async () => {
+    const write = fakeWrite({ triggersMcpEnabled: true });
+    await callWrite(write, "set_trigger", { name: "hourly", type: "schedule", interval: "1h", prompt: "go" });
+    expect(write.calls.setTrigger[0].trigger).toEqual({
+      trigger: { type: "schedule", interval: "1h" },
+      run: { prompt: "go" },
     });
-    expect(write.calls.setSchedule).toEqual([
-      { projectSlug: "other", name: "hourly", schedule: { type: "interval", interval: "1h", promptFile: "hourly.md" } },
-    ]);
+
+    await callWrite(write, "set_trigger", { name: "gh", type: "webhook", path: "/gh/issues", prompt_file: "triage.md" });
+    expect(write.calls.setTrigger[1].trigger).toEqual({
+      trigger: { type: "webhook", path: "/gh/issues" },
+      run: { promptFile: "triage.md" },
+    });
   });
 
-  it("set_schedule rejects a missing name / bad type / missing cron / missing prompt", async () => {
-    const write = fakeWrite();
-    const noName = await callWrite(write, "set_schedule", { type: "cron", cron: "* * * * *", prompt: "x" });
+  it("set_trigger is a PARTIAL edit: an enabled-only call omits trigger/run (GG-3 toggle)", async () => {
+    const write = fakeWrite({ triggersMcpEnabled: true });
+    // No `type` supplied → inherit the existing WHEN; no run fields → inherit run.
+    await callWrite(write, "set_trigger", { name: "daily-triage", enabled: false });
+    expect(write.calls.setTrigger[0].trigger).toEqual({ enabled: false });
+  });
+
+  it("set_trigger passes tools:[] through as a tool-less curator when tools is empty", async () => {
+    const write = fakeWrite({ triggersMcpEnabled: true });
+    await callWrite(write, "set_trigger", { name: "t", type: "event", event: "onArchive", prompt: "think", tools: "" });
+    expect(write.calls.setTrigger[0].trigger).toEqual({
+      trigger: { type: "event", on: "onArchive" },
+      run: { prompt: "think", tools: [] },
+    });
+  });
+
+  it("set_trigger rejects a missing name / bad type / schedule w/o timer / event w/o event", async () => {
+    const write = fakeWrite({ triggersMcpEnabled: true });
+    const noName = await callWrite(write, "set_trigger", { type: "event", event: "onArchive", prompt: "x" });
     expect(noName.result.isError).toBe(true);
     expect(noName.result.content[0].text).toContain("`name` is required");
 
-    const badType = await callWrite(write, "set_schedule", { name: "s", type: "weekly", prompt: "x" });
+    const badType = await callWrite(write, "set_trigger", { name: "t", type: "weekly", prompt: "x" });
     expect(badType.result.isError).toBe(true);
-    expect(badType.result.content[0].text).toContain('`type` must be "cron" or "interval"');
+    expect(badType.result.content[0].text).toContain('`type` must be');
 
-    const noCron = await callWrite(write, "set_schedule", { name: "s", type: "cron", prompt: "x" });
-    expect(noCron.result.isError).toBe(true);
-    expect(noCron.result.content[0].text).toContain("`cron` is required");
+    const noTimer = await callWrite(write, "set_trigger", { name: "t", type: "schedule", prompt: "x" });
+    expect(noTimer.result.isError).toBe(true);
+    expect(noTimer.result.content[0].text).toContain("`cron`");
 
-    const noPrompt = await callWrite(write, "set_schedule", { name: "s", type: "interval", interval: "5m" });
-    expect(noPrompt.result.isError).toBe(true);
-    expect(noPrompt.result.content[0].text).toContain("`prompt`");
+    const bothTimers = await callWrite(write, "set_trigger", { name: "t", type: "schedule", cron: "* * * * *", interval: "5m", prompt: "x" });
+    expect(bothTimers.result.isError).toBe(true);
+    expect(bothTimers.result.content[0].text).toContain("exactly ONE");
+
+    const noEvent = await callWrite(write, "set_trigger", { name: "t", type: "event", prompt: "x" });
+    expect(noEvent.result.isError).toBe(true);
+    expect(noEvent.result.content[0].text).toContain("`event`");
 
     // None of the invalid calls should have reached the callback.
-    expect(write.calls.setSchedule).toHaveLength(0);
+    expect(write.calls.setTrigger).toHaveLength(0);
   });
 
-  it("set_schedule and remove_schedule refuse when the mutation gate is off", async () => {
-    const write = fakeWrite({ scheduleMutationEnabled: false });
-    const set = await callWrite(write, "set_schedule", { name: "s", type: "interval", interval: "5m", prompt: "x" });
-    expect(set.result.isError).toBe(true);
-    expect(set.result.content[0].text).toContain("Schedule mutation is disabled");
-
-    const rm = await callWrite(write, "remove_schedule", { name: "s" });
-    expect(rm.result.isError).toBe(true);
-    expect(rm.result.content[0].text).toContain("Schedule mutation is disabled");
-
-    expect(write.calls.setSchedule).toHaveLength(0);
-    expect(write.calls.removeSchedule).toHaveLength(0);
+  it("list_triggers defaults project to current and returns the triggers", async () => {
+    const triggers = [
+      {
+        name: "daily",
+        agentName: "trigger-paddock-daily",
+        type: "schedule" as const,
+        cron: "0 9 * * *",
+        interval: null,
+        event: null,
+        path: null,
+        prompt: "go",
+        promptFile: null,
+        session: "resume" as const,
+        tools: ["Bash"],
+        maxSpawnDepth: 1,
+        permissionMode: null,
+        model: null,
+        maxTurns: null,
+        enabled: true,
+        status: "idle",
+        lastRunAt: null,
+        nextRunAt: "2026-07-19T09:00:00Z",
+        lastError: null,
+      },
+    ];
+    const write = fakeWrite({ triggersMcpEnabled: true, listTriggers: async () => triggers });
+    const { json } = await callWrite(write, "list_triggers", {});
+    expect(json).toEqual({ project: "paddock", count: 1, triggers });
   });
 
-  it("list_schedules works even with the mutation gate off (read-only)", async () => {
-    const write = fakeWrite({
-      scheduleMutationEnabled: false,
-      listSchedules: async () => [
-        {
-          name: "daily",
-          type: "cron",
-          cron: "0 9 * * *",
-          interval: null,
-          prompt: "go",
-          promptFile: null,
-          resumeSession: false,
-          enabled: true,
-          status: "idle",
-          lastRunAt: null,
-          nextRunAt: "2026-07-19T09:00:00Z",
-          lastError: null,
-        },
-      ],
-    });
-    const { json } = await callWrite(write, "list_schedules", {});
-    expect(json).toEqual({
-      project: "paddock",
-      count: 1,
-      schedules: [
-        {
-          name: "daily",
-          type: "cron",
-          cron: "0 9 * * *",
-          interval: null,
-          prompt: "go",
-          promptFile: null,
-          resumeSession: false,
-          enabled: true,
-          status: "idle",
-          lastRunAt: null,
-          nextRunAt: "2026-07-19T09:00:00Z",
-          lastError: null,
-        },
-      ],
-    });
-  });
-
-  it("remove_schedule defaults project to current and echoes removed", async () => {
-    const write = fakeWrite();
-    const { json } = await callWrite(write, "remove_schedule", { name: "daily" });
-    expect(write.calls.removeSchedule).toEqual([{ projectSlug: "paddock", name: "daily" }]);
+  it("remove_trigger defaults project to current, echoes removed, and requires a name", async () => {
+    const write = fakeWrite({ triggersMcpEnabled: true });
+    const { json } = await callWrite(write, "remove_trigger", { name: "daily" });
+    expect(write.calls.removeTrigger).toEqual([{ projectSlug: "paddock", name: "daily" }]);
     expect(json).toEqual({ removed: true, project: "paddock", name: "daily" });
-  });
 
-  it("remove_schedule requires a name", async () => {
-    const write = fakeWrite();
-    const { result } = await callWrite(write, "remove_schedule", {});
+    const { result } = await callWrite(write, "remove_trigger", {});
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("`name` is required");
-    expect(write.calls.removeSchedule).toHaveLength(0);
+    expect(write.calls.removeTrigger).toHaveLength(1);
   });
 
-  it("surfaces a setSchedule-callback throw as an isError result rather than throwing", async () => {
+  it("surfaces a setTrigger-callback throw as an isError result rather than throwing", async () => {
     const write = fakeWrite({
-      setSchedule: async () => {
-        throw new Error("Invalid schedule definition");
+      triggersMcpEnabled: true,
+      setTrigger: async () => {
+        throw new Error("Invalid trigger definition");
       },
     });
-    const { result } = await callWrite(write, "set_schedule", {
-      name: "s",
-      type: "interval",
+    const { result } = await callWrite(write, "set_trigger", {
+      name: "t",
+      type: "schedule",
       interval: "5m",
       prompt: "x",
     });
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("Invalid schedule definition");
+    expect(result.content[0].text).toContain("Invalid trigger definition");
   });
 });
 
@@ -735,162 +727,47 @@ describe("coerceToolList", () => {
   });
 });
 
-// ── Hook-management tools (Epic G / G5, GG-4) ────────────────────────────────
+// ── Unified trigger tools: per-project gate (Epic T / T3) ───────────────────
 
-describe("self-management MCP (hook tools + per-project gate)", () => {
-  it("hook tools are ABSENT when hooksMcpEnabled is off (the default write ctx)", () => {
+describe("self-management MCP (trigger tools + per-project gate)", () => {
+  it("trigger tools are ABSENT when triggersMcpEnabled is off (the default write ctx)", () => {
     const def = selfMcpServerDef(fakeContext(), fakeWrite());
     const names = def.tools.map((t) => t.name);
-    expect(names).not.toContain("list_hooks");
+    expect(names).not.toContain("list_triggers");
+    expect(names).not.toContain("set_trigger");
+    expect(names).not.toContain("remove_trigger");
+    // The collapsed legacy verbs are gone entirely.
+    expect(names).not.toContain("set_schedule");
     expect(names).not.toContain("set_hook");
-    expect(names).not.toContain("remove_hook");
   });
 
-  it("appends exactly the 3 hook tools (15 total) when hooksMcpEnabled is on", () => {
-    const def = selfMcpServerDef(fakeContext(), fakeWrite({ hooksMcpEnabled: true }));
-    expect(def.tools).toHaveLength(15);
+  it("appends exactly the 3 trigger tools (12 total) when triggersMcpEnabled is on", () => {
+    const def = selfMcpServerDef(fakeContext(), fakeWrite({ triggersMcpEnabled: true }));
+    expect(def.tools).toHaveLength(12);
     expect(def.tools.map((t) => t.name).sort()).toEqual([
       "archive_chat",
       "create_chat",
       "fork_chat",
       "fork_chat_batch",
       "list_chats",
-      "list_hooks",
       "list_projects",
-      "list_schedules",
+      "list_triggers",
       "read_chat",
-      "remove_hook",
-      "remove_schedule",
+      "remove_trigger",
       "send_message",
-      "set_hook",
-      "set_schedule",
+      "set_trigger",
       "unarchive_chat",
     ]);
   });
 
-  it("hook tools are absent WITHOUT a write ctx even though hooks are a write-block feature", () => {
+  it("trigger tools are absent WITHOUT a write ctx even though they are a write-block feature", () => {
     const def = selfMcpServerDef(fakeContext());
-    expect(def.tools.map((t) => t.name)).not.toContain("set_hook");
+    expect(def.tools.map((t) => t.name)).not.toContain("set_trigger");
   });
 
-  it("names the hook tools as mcp__paddock_manage__*", () => {
-    expect(SELF_MCP_HOOK_TOOL_NAMES.listHooks).toBe("mcp__paddock_manage__list_hooks");
-    expect(SELF_MCP_HOOK_TOOL_NAMES.setHook).toBe("mcp__paddock_manage__set_hook");
-    expect(SELF_MCP_HOOK_TOOL_NAMES.removeHook).toBe("mcp__paddock_manage__remove_hook");
-  });
-
-  it("set_hook builds a record with capabilities, defaults project to current, echoes the DTO", async () => {
-    const write = fakeWrite({ hooksMcpEnabled: true });
-    const { json } = await callWrite(write, "set_hook", {
-      name: "cleanup",
-      event: "onArchive",
-      prompt: "spin down my pm servers",
-      allowed_tools: "Bash, Read",
-      permission_mode: "acceptEdits",
-      max_turns: 12,
-      enabled: true,
-    });
-    expect(write.calls.setHook).toHaveLength(1);
-    expect(write.calls.setHook[0]).toEqual({
-      projectSlug: "paddock",
-      name: "cleanup",
-      hook: {
-        event: "onArchive",
-        prompt: "spin down my pm servers",
-        enabled: true,
-        capabilities: {
-          allowedTools: ["Bash", "Read"],
-          permissionMode: "acceptEdits",
-          maxTurns: 12,
-        },
-      },
-    });
-    expect(json.set).toBe(true);
-    expect(json.project).toBe("paddock");
-    expect(json.hook.agentName).toBe("hook-paddock-cleanup");
-    expect(json.hook.allowedTools).toEqual(["Bash", "Read"]);
-    expect(json.hook.enabled).toBe(true);
-  });
-
-  it("set_hook supports prompt_file (promptFile sugar) and a target project", async () => {
-    const write = fakeWrite({ hooksMcpEnabled: true });
-    await callWrite(write, "set_hook", {
-      name: "cleanup",
-      event: "onArchive",
-      prompt_file: "cleanup.md",
-      project: "herdctl",
-    });
-    expect(write.calls.setHook[0].projectSlug).toBe("herdctl");
-    expect(write.calls.setHook[0].hook).toEqual({ event: "onArchive", promptFile: "cleanup.md" });
-  });
-
-  it("set_hook omits enabled + capabilities when not supplied (a tool-less create)", async () => {
-    const write = fakeWrite({ hooksMcpEnabled: true });
-    await callWrite(write, "set_hook", { name: "h", event: "onArchive", prompt: "think" });
-    expect(write.calls.setHook[0].hook).toEqual({ event: "onArchive", prompt: "think" });
-  });
-
-  it("set_hook rejects a missing name / missing event / no prompt or prompt_file", async () => {
-    const write = fakeWrite({ hooksMcpEnabled: true });
-    const noName = await callWrite(write, "set_hook", { event: "onArchive", prompt: "x" });
-    expect(noName.result.isError).toBe(true);
-    expect(noName.result.content[0].text).toContain("`name` is required");
-
-    const noEvent = await callWrite(write, "set_hook", { name: "h", prompt: "x" });
-    expect(noEvent.result.isError).toBe(true);
-    expect(noEvent.result.content[0].text).toContain("`event` is required");
-
-    const noPrompt = await callWrite(write, "set_hook", { name: "h", event: "onArchive" });
-    expect(noPrompt.result.isError).toBe(true);
-    expect(noPrompt.result.content[0].text).toContain("prompt");
-    expect(write.calls.setHook).toHaveLength(0);
-  });
-
-  it("list_hooks defaults project to current and returns the hooks", async () => {
-    const hooks = [
-      {
-        name: "cleanup",
-        agentName: "hook-paddock-cleanup",
-        event: "onArchive",
-        enabled: false,
-        prompt: "x",
-        promptFile: null,
-        allowedTools: ["Bash"],
-        deniedTools: [],
-        permissionMode: null,
-        model: null,
-        maxTurns: null,
-      },
-    ];
-    const write = fakeWrite({ hooksMcpEnabled: true, listHooks: async () => hooks });
-    const { json } = await callWrite(write, "list_hooks", {});
-    expect(json).toEqual({ project: "paddock", count: 1, hooks });
-  });
-
-  it("remove_hook defaults project to current, echoes removed, and requires a name", async () => {
-    const write = fakeWrite({ hooksMcpEnabled: true });
-    const { json } = await callWrite(write, "remove_hook", { name: "cleanup" });
-    expect(json).toEqual({ removed: true, project: "paddock", name: "cleanup" });
-    expect(write.calls.removeHook[0]).toEqual({ projectSlug: "paddock", name: "cleanup" });
-
-    const { result } = await callWrite(write, "remove_hook", {});
-    expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("`name` is required");
-  });
-
-  it("surfaces a setHook-callback throw as an isError result rather than throwing", async () => {
-    const write = fakeWrite({
-      hooksMcpEnabled: true,
-      setHook: async () => {
-        throw new Error("Invalid hook definition");
-      },
-    });
-    const { result } = await callWrite(write, "set_hook", {
-      name: "h",
-      event: "onArchive",
-      prompt: "x",
-    });
-    expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("Invalid hook definition");
+  it("names the trigger tools as mcp__paddock_manage__*", () => {
+    expect(SELF_MCP_TRIGGER_TOOL_NAMES.listTriggers).toBe("mcp__paddock_manage__list_triggers");
+    expect(SELF_MCP_TRIGGER_TOOL_NAMES.setTrigger).toBe("mcp__paddock_manage__set_trigger");
+    expect(SELF_MCP_TRIGGER_TOOL_NAMES.removeTrigger).toBe("mcp__paddock_manage__remove_trigger");
   });
 });

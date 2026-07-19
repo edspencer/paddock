@@ -59,70 +59,57 @@ export interface SelfMcpMessage {
 }
 
 /**
- * A durable project schedule as surfaced to the agent (issue #289). Merges the
- * `project.yaml` declaration (herdctl's `ScheduleSchema` shape) with herdctl's
- * live runtime state (`status`/`lastRunAt`/`nextRunAt`/`lastError`), which is
- * absent until the keeper has armed the schedule. Field names mirror the Settings
- * pane DTO so the two surfaces stay in step.
+ * A unified project TRIGGER as surfaced to the agent (Epic T "Unify Triggers" / T3
+ * — the successor that collapses `SelfMcpSchedule` + `SelfMcpHook`). Flattens the
+ * persisted {@link import("./trigger-config.js").TriggerDto} — the discriminated
+ * `trigger` (WHEN: `schedule|event|webhook`) + the shared `run` (WHAT) + `enabled`
+ * — plus the `trigger-<slug>-<name>` agent an event/webhook trigger registers as.
+ * Nested `trigger`/`run` fields are flattened + null-normalised so the agent reads
+ * ONE flat record regardless of type. For a `schedule` trigger, best-effort live
+ * runtime state (`status`/`lastRunAt`/`nextRunAt`/`lastError`) is merged in when the
+ * keeper has armed it (absent otherwise — and always absent for event/webhook).
  */
-export interface SelfMcpSchedule {
-  /** The schedule's stable key. */
+export interface SelfMcpTrigger {
+  /** The trigger's stable key (the `project.yaml` map key + `<name>` in its agent). */
   name: string;
-  /** `cron` (a 5-field expression) or `interval` (e.g. `"30m"`). */
-  type: "cron" | "interval";
-  /** The cron expression, or null for an interval schedule. */
-  cron: string | null;
-  /** The interval string, or null for a cron schedule. */
-  interval: string | null;
-  /** The inline prompt, or null when a `promptFile` drives it. */
-  prompt: string | null;
-  /** The `.paddock/schedules/` prompt-file name, or null. */
-  promptFile: string | null;
-  /** Whether the schedule accretes into its one owned session (else fresh each fire). */
-  resumeSession: boolean;
-  /** Whether the schedule is armed. */
-  enabled: boolean;
-  /** Live status when armed (`idle`/`running`/`disabled`), else null. */
-  status?: string | null;
-  /** ISO time of the last fire, or null. */
-  lastRunAt?: string | null;
-  /** ISO time of the next scheduled fire, or null. */
-  nextRunAt?: string | null;
-  /** The last fire's error message, or null. */
-  lastError?: string | null;
-}
-
-/**
- * A project event hook as surfaced to the agent (Epic G / G5). Flattens the
- * persisted {@link import("./hook-config.js").HookDto} — a lifecycle `event` + a
- * capability set + a prompt (inline or `.paddock/hooks/*.md`) + `enabled` — plus the
- * `hook-<slug>-<name>` agent it registers as. Field names mirror the Hooks-tab DTO
- * (G4) so the two surfaces stay in step; nested capability fields are flattened +
- * null-normalised (like {@link SelfMcpSchedule}) so the agent reads a flat record.
- */
-export interface SelfMcpHook {
-  /** The hook's stable key (the `project.yaml` map key + the `<name>` in its agent). */
-  name: string;
-  /** The herdctl agent this hook registers as (`hook-<slug>-<name>`). */
+  /** The herdctl agent an event/webhook trigger registers as (`trigger-<slug>-<name>`). */
   agentName: string;
-  /** The lifecycle event this hook fires on (v1: `onArchive`). */
-  event: string;
-  /** Whether the hook is armed. New hooks default `false` (GG-3). */
-  enabled: boolean;
-  /** The inline prompt, or null when a `promptFile` drives it. */
+  /** WHEN: the discriminant — `schedule` (cron/interval), `event` (on), or `webhook` (path). */
+  type: "schedule" | "event" | "webhook";
+  /** The cron expression (schedule), else null. */
+  cron: string | null;
+  /** The interval string (schedule), else null. */
+  interval: string | null;
+  /** The lifecycle event this fires on (event trigger, e.g. `onArchive`), else null. */
+  event: string | null;
+  /** The ingress path (webhook trigger — reserved, unbuilt), else null. */
+  path: string | null;
+  /** WHAT: the inline prompt, or null when a `promptFile` drives it. */
   prompt: string | null;
-  /** The `.paddock/hooks/` prompt-file name, or null. */
+  /** The `.paddock/triggers/` prompt-file name, or null. */
   promptFile: string | null;
-  /** The tools the hook agent may use (its capability grant); `[]` = tool-less. */
-  allowedTools: string[];
-  /** Tools explicitly denied even if otherwise allowed. */
-  deniedTools: string[];
-  /** The permission mode the hook agent's turns run under, or null (fleet default). */
+  /** `new` = a fresh chat each fire; `resume` = one owned accreting session. */
+  session: "new" | "resume";
+  /** The tools the fired agent may use (its capability grant); `[]` = tool-less. */
+  tools: string[];
+  /** Recursion bound for internal spawning (0 = may not spawn), or null (default). */
+  maxSpawnDepth: number | null;
+  /** The permission mode the fired agent's turns run under, or null (fleet default). */
   permissionMode: string | null;
-  /** Model override for the hook agent, or null (keeper default). */
+  /** Model override for the fired agent, or null (keeper default). */
   model: string | null;
-  /** Max agent turns bounding a runaway hook, or null (hook default). */
+  /** Max agent turns bounding a runaway trigger, or null (trigger default). */
   maxTurns: number | null;
+  /** Whether the trigger is armed. New triggers default `false` (GG-3). */
+  enabled: boolean;
+  /** Live status for an armed schedule trigger (`idle`/`running`/`disabled`), else null. */
+  status?: string | null;
+  /** ISO time of the last fire (schedule trigger), or null. */
+  lastRunAt?: string | null;
+  /** ISO time of the next scheduled fire (schedule trigger), or null. */
+  nextRunAt?: string | null;
+  /** The last fire's error message (schedule trigger), or null. */
+  lastError?: string | null;
 }
 
 /**
@@ -161,59 +148,38 @@ export interface SelfMcpWriteContext {
   /** Set (or clear) a chat's archived flag (presentational metadata only). */
   setArchived: (projectSlug: string, sessionId: string, archived: boolean) => Promise<void>;
   /**
-   * Whether programmatic schedule mutation is enabled on this deployment (DD-7's
-   * per-deployment gate, `PADDOCK_SCHEDULE_MUTATION`). `set_schedule` /
-   * `remove_schedule` refuse with a clear error when this is false; `list_schedules`
-   * is read-only and unaffected — mirrors the REST routes (PUT/DELETE 403, GET open).
+   * Whether the unified trigger-management MCP is enabled for THIS turn's project
+   * (Epic T / T3 — the successor to the G5 hook-MCP gate, resolved from the SAME
+   * per-project `hooksMcpEnabled` opt-in against the instance default; the gate is
+   * REUSED, not reinvented). When false the trigger tools (`list_triggers`/
+   * `set_trigger`/`remove_trigger`) are NOT injected at all (absent, not present-
+   * but-refusing) — the design's binary "does this project agent get the trigger
+   * MCP at all" gate. The caller resolves this per project (see
+   * {@link import("./hook-config.js").resolveHooksMcpEnabled}).
    */
-  scheduleMutationEnabled: boolean;
+  triggersMcpEnabled: boolean;
   /**
-   * List a project's schedules — the `project.yaml` declaration merged with
-   * herdctl's live runtime state. Read-only.
+   * List a project's unified triggers (Epic T / T3). Read-only; reads the live
+   * project record (merging best-effort schedule runtime state). Present regardless
+   * of {@link triggersMcpEnabled} on the context, but the tools are only injected
+   * when that flag is on.
    */
-  listSchedules: (projectSlug: string) => Promise<SelfMcpSchedule[]>;
+  listTriggers: (projectSlug: string) => Promise<SelfMcpTrigger[]>;
   /**
-   * Create or replace a schedule (keyed by `name`) — persists to `project.yaml`
-   * and arms herdctl. `schedule` is the herdctl `ScheduleSchema` record (`type`,
-   * `cron`/`interval`, `prompt`/`promptFile`, `resume_session`, `enabled`); the
-   * caller validates + sanitises it (throwing on a malformed record). Returns the
-   * saved schedule.
+   * Create or update a trigger (keyed by `name`) — persists to `project.yaml`'s
+   * single `triggers` block and arms it. `trigger` is a PARTIAL structured record
+   * (`{ trigger?, run?, enabled? }`, camelCase) the caller merges over the existing
+   * trigger (via `mergeTriggerUpdate`) then validates + sanitises (throwing on a
+   * malformed record), defaulting a brand-new trigger to `enabled: false` (GG-3).
+   * Enable/disable is just this call with `enabled` flipped (GG-3) — no separate
+   * verb. Returns the saved trigger.
    */
-  setSchedule: (projectSlug: string, name: string, schedule: Record<string, unknown>) => Promise<SelfMcpSchedule>;
+  setTrigger: (projectSlug: string, name: string, trigger: Record<string, unknown>) => Promise<SelfMcpTrigger>;
   /**
-   * Remove a schedule by `name` — persisted removal + unarming herdctl. Returns
-   * `true` when a schedule existed, `false` when it was already absent.
+   * Remove a trigger by `name` — persisted removal + disarming its agent/schedule.
+   * Returns `true` when a trigger existed, `false` when it was already absent.
    */
-  removeSchedule: (projectSlug: string, name: string) => Promise<boolean>;
-  /**
-   * Whether the hook-management MCP is enabled for THIS turn's project (Epic G /
-   * G5, GG-4) — the per-project `hooksMcpEnabled` opt-in resolved against the
-   * instance default. When false the hook tools (`list_hooks`/`set_hook`/
-   * `remove_hook`) are NOT injected at all (absent, not present-but-refusing) —
-   * distinct from the schedule tools' runtime-refuse gate. The caller resolves this
-   * per project (see {@link import("./hook-config.js").resolveHooksMcpEnabled}).
-   */
-  hooksMcpEnabled: boolean;
-  /**
-   * List a project's event hooks (Epic G / G5). Read-only; reads the live project
-   * record. Present regardless of {@link hooksMcpEnabled} on the context, but the
-   * tools are only injected when that flag is on.
-   */
-  listHooks: (projectSlug: string) => Promise<SelfMcpHook[]>;
-  /**
-   * Create or replace a hook (keyed by `name`) — persists to `project.yaml` and
-   * registers its `hook-<slug>-<name>` agent. `hook` is the {@link import(
-   * "./hook-config.js").PaddockHook} record (`event`, `capabilities`, `prompt`/
-   * `promptFile`, `enabled`); the caller validates + sanitises it (throwing on a
-   * malformed record) and defaults a brand-new hook to `enabled: false` (GG-3).
-   * Returns the saved hook.
-   */
-  setHook: (projectSlug: string, name: string, hook: Record<string, unknown>) => Promise<SelfMcpHook>;
-  /**
-   * Remove a hook by `name` — persisted removal + unregistering its agent. Returns
-   * `true` when a hook existed, `false` when it was already absent.
-   */
-  removeHook: (projectSlug: string, name: string) => Promise<boolean>;
+  removeTrigger: (projectSlug: string, name: string) => Promise<boolean>;
 }
 
 const SERVER_NAME = "paddock_manage";
@@ -362,33 +328,38 @@ const UNARCHIVE_CHAT_DESC =
   "pass a `session_id` (from list_chats) to unarchive another. Defaults to the " +
   "current project; pass `project` to target a chat elsewhere.";
 
-const SET_SCHEDULE_DESC =
-  "Create or update a durable PROJECT schedule — a chat that a cron/interval " +
-  "triggers instead of a person, keyed by `name`. (Distinct from the ephemeral, " +
-  "session-scoped `ScheduleWakeup`: this persists in the project config, fires even " +
-  "when nobody is watching, and each fire appears as a new chat with a `scheduled` " +
-  "badge.) Shape (herdctl `ScheduleSchema`): `type` is \"cron\" with a 5-field `cron` " +
-  "expression (e.g. \"0 9 * * *\" = 9am daily, host-local time) OR \"interval\" with an " +
-  "`interval` string (e.g. \"30m\", \"1h\"). Give the instruction as `prompt` (inline) " +
-  "OR `prompt_file` — a git-tracked, keeper-editable `.md` under the project's " +
-  "`.paddock/schedules/` dir (e.g. \"daily-triage.md\"), read at fire time (handy for " +
-  "long multi-line prompts you want to version). `resume_session` (default false): " +
-  "false → a FRESH chat each fire; true → resume the schedule's ONE owned session so " +
-  "a 'manager' accretes a single transcript over time. `enabled` (default true). " +
-  "Defaults to the current project; pass `project` (a slug) to target another. " +
-  "Requires the deployment's schedule-mutation gate to be enabled.";
+const SET_TRIGGER_DESC =
+  "Create or update a unified project TRIGGER — a standing rule that runs an agent " +
+  "turn when something happens, keyed by `name`. Enable/disable is just this call " +
+  "with `enabled` flipped (no separate verb); a NEW trigger defaults disabled. " +
+  "WHEN (`type`): \"schedule\" — a cron/interval fires it (give a 5-field `cron`, e.g. " +
+  "\"0 9 * * *\" = 9am daily host-local, OR an `interval` like \"30m\"/\"1h\"); \"event\" — a " +
+  "lifecycle `event` fires it (v1: \"onArchive\" — after a chat is archived; \"afterTurn\" " +
+  "reserved); \"webhook\" — reserved (give a `path`), not yet fired. WHAT (the run): the " +
+  "instruction as `prompt` (inline) OR `prompt_file` — a git-tracked `.md` under the " +
+  "project's `.paddock/triggers/` dir (e.g. \"daily.md\"), read at fire time; `session` " +
+  "\"new\" (a FRESH chat each fire, default) or \"resume\" (accrete the trigger's ONE owned " +
+  "session); `tools` = the deny-by-default capability allow-list (one per line or " +
+  "comma-separated, e.g. \"Bash, Read\"; omit / empty = a tool-less curator that only " +
+  "returns text; a JSON array is also accepted); `model`, `permission_mode` " +
+  "(\"default\"/\"acceptEdits\"/\"bypassPermissions\"/\"plan\"), `max_spawn_depth` (0 = may not " +
+  "spawn), `max_turns`. Editing preserves omitted fields (so an `enabled`-only call " +
+  "just flips the toggle); supplying `prompt` clears an inherited `prompt_file` and " +
+  "vice versa; supplying `type` re-specifies the whole trigger. Defaults to the " +
+  "current project; pass `project` (a slug) to target another.";
 
-const REMOVE_SCHEDULE_DESC =
-  "Delete a durable project schedule by `name` (removes it from `project.yaml` and " +
-  "unarms the cron). Safe when absent — returns `removed: false` if no such schedule. " +
-  "Defaults to the current project; pass `project` to target another. Requires the " +
-  "deployment's schedule-mutation gate.";
+const REMOVE_TRIGGER_DESC =
+  "Delete a unified project trigger by `name` (removes it from `project.yaml` and " +
+  "disarms its agent/schedule). Safe when absent — returns `removed: false` if no " +
+  "such trigger. Defaults to the current project; pass `project` to target another.";
 
-const LIST_SCHEDULES_DESC =
-  "List a project's durable schedules: each schedule's name, type, cron/interval, " +
-  "prompt/promptFile, resumeSession, and enabled flag, plus live runtime state " +
-  "(status, lastRunAt, nextRunAt, lastError) once the keeper has armed it. Read-only. " +
-  "Defaults to the current project; pass `project` (a slug) to target another.";
+const LIST_TRIGGERS_DESC =
+  "List a project's unified triggers: each trigger's name, agent, `type` " +
+  "(schedule/event/webhook), its WHEN fields (cron/interval, event, path), its run " +
+  "(prompt/promptFile, session, tools, model, permissionMode, maxSpawnDepth, " +
+  "maxTurns), and `enabled` — plus live runtime state (status, lastRunAt, nextRunAt, " +
+  "lastError) for an armed schedule trigger. Read-only. Defaults to the current " +
+  "project; pass `project` (a slug) to target another.";
 
 const FORK_CHAT_BATCH_DESC =
   "FAN-OUT primitive: fork ONE source chat into many child chats at once — one child " +
@@ -595,205 +566,124 @@ function forkChatBatchHandler(write: SelfMcpWriteContext) {
   };
 }
 
-// ── Schedule tools (issue #289) ─────────────────────────────────────────────
-// Expose the existing D3/D4 schedule CRUD (ProjectStore + herdctl runtime
-// mutation, behind the per-deployment mutation gate) so a keeper can define and
-// manage durable project schedules itself — not just a human via the Settings UI.
+// ── Unified trigger tools (Epic T "Unify Triggers" / T3) ────────────────────
+// Collapse the paired schedule (issue #289) + hook (Epic G / G5) verbs onto ONE
+// TriggerService over `project.yaml`'s single `triggers` block. A trigger is WHEN
+// (`type` schedule|event|webhook) + WHAT (the shared run) + `enabled`. Injected
+// ONLY when the project opted into the trigger-management MCP (`triggersMcpEnabled`,
+// resolved from the REUSED per-project hooks-MCP gate) — a coarse binary gate, no
+// per-capability gating. Enable/disable is `set_trigger` with `enabled` flipped
+// (GG-3), not a separate verb.
 
-/** Shared message when the deployment hasn't opted into schedule mutation. */
-const SCHEDULE_MUTATION_DISABLED =
-  "Schedule mutation is disabled on this deployment (the schedule-mutation gate is " +
-  "off). You can `list_schedules` but not add or remove one.";
+/**
+ * Assemble the PARTIAL structured `{ trigger?, run?, enabled? }` record the
+ * `set_trigger` handler passes to `write.setTrigger` (which merges it over the
+ * existing trigger via `mergeTriggerUpdate`, then validates). Only fields the
+ * caller actually supplied are set, so an edit that omits a field preserves it
+ * (create-or-update patch semantics) — the classic being an `enabled`-only flip.
+ * Flat MCP args are the robust transport (the CLI runtime drops nested/array args,
+ * so the discriminant is rebuilt here from scalar args). Returns a string error
+ * message instead of a partial when a supplied `type`'s required WHEN field is
+ * missing; `null` on none.
+ */
+function buildTriggerUpdate(args: Record<string, unknown>): Record<string, unknown> | string {
+  const incoming: Record<string, unknown> = {};
 
-function setScheduleHandler(write: SelfMcpWriteContext) {
-  return async (args: Record<string, unknown>): Promise<McpToolCallResult> => {
-    try {
-      if (!write.scheduleMutationEnabled) return fail(SCHEDULE_MUTATION_DISABLED);
-      const name = typeof args.name === "string" ? args.name.trim() : "";
-      if (!name) return fail("Error: `name` is required (the schedule's key).");
-      const type = typeof args.type === "string" ? args.type.trim() : "";
-      if (type !== "cron" && type !== "interval") {
-        return fail('Error: `type` must be "cron" or "interval".');
+  // WHEN: only when `type` is supplied does the caller (re)specify the discriminant;
+  // an omitted `type` inherits the existing trigger's WHEN unchanged (partial edit).
+  const type = typeof args.type === "string" ? args.type.trim() : "";
+  if (type) {
+    if (type === "schedule") {
+      const cron = typeof args.cron === "string" ? args.cron.trim() : "";
+      const interval = typeof args.interval === "string" ? args.interval.trim() : "";
+      if (!cron && !interval) {
+        return 'Error: a "schedule" trigger needs `cron` (a 5-field expression, e.g. "0 9 * * *") or `interval` (e.g. "30m").';
       }
-      const schedule: Record<string, unknown> = { type };
-      if (type === "cron") {
-        const cron = typeof args.cron === "string" ? args.cron.trim() : "";
-        if (!cron) {
-          return fail('Error: `cron` is required when type is "cron" (a 5-field cron expression, e.g. "0 9 * * *").');
-        }
-        schedule.cron = cron;
-      } else {
-        const interval = typeof args.interval === "string" ? args.interval.trim() : "";
-        if (!interval) {
-          return fail('Error: `interval` is required when type is "interval" (e.g. "30m", "1h").');
-        }
-        schedule.interval = interval;
+      if (cron && interval) {
+        return 'Error: a "schedule" trigger takes exactly ONE of `cron` or `interval`, not both.';
       }
-      const prompt = typeof args.prompt === "string" ? args.prompt.trim() : "";
-      const promptFile = typeof args.prompt_file === "string" ? args.prompt_file.trim() : "";
-      if (!prompt && !promptFile) {
-        return fail(
-          "Error: provide `prompt` (an inline instruction) or `prompt_file` (a `.md` under " +
-            "the project's `.paddock/schedules/` dir).",
-        );
-      }
-      if (prompt) schedule.prompt = prompt;
-      if (promptFile) schedule.promptFile = promptFile;
-      if (typeof args.resume_session === "boolean") schedule.resume_session = args.resume_session;
-      if (typeof args.enabled === "boolean") schedule.enabled = args.enabled;
-
-      const projectArg = typeof args.project === "string" ? args.project.trim() : "";
-      const project = projectArg.length > 0 ? projectArg : write.currentProjectSlug;
-
-      const saved = await write.setSchedule(project, name, schedule);
-      return ok({ set: true, project, schedule: saved });
-    } catch (error) {
-      return fail(`Error setting schedule: ${errText(error)}`);
-    }
-  };
-}
-
-function removeScheduleHandler(write: SelfMcpWriteContext) {
-  return async (args: Record<string, unknown>): Promise<McpToolCallResult> => {
-    try {
-      if (!write.scheduleMutationEnabled) return fail(SCHEDULE_MUTATION_DISABLED);
-      const name = typeof args.name === "string" ? args.name.trim() : "";
-      if (!name) return fail("Error: `name` is required (the schedule to remove).");
-      const projectArg = typeof args.project === "string" ? args.project.trim() : "";
-      const project = projectArg.length > 0 ? projectArg : write.currentProjectSlug;
-
-      const removed = await write.removeSchedule(project, name);
-      return ok({ removed, project, name });
-    } catch (error) {
-      return fail(`Error removing schedule: ${errText(error)}`);
-    }
-  };
-}
-
-function listSchedulesHandler(write: SelfMcpWriteContext) {
-  return async (args: Record<string, unknown>): Promise<McpToolCallResult> => {
-    try {
-      const projectArg = typeof args.project === "string" ? args.project.trim() : "";
-      const project = projectArg.length > 0 ? projectArg : write.currentProjectSlug;
-      const schedules = await write.listSchedules(project);
-      return ok({ project, count: schedules.length, schedules });
-    } catch (error) {
-      return fail(`Error listing schedules: ${errText(error)}`);
-    }
-  };
-}
-
-// ── Hook-management tools (Epic G / G5, GG-4) ───────────────────────────────
-// Expose the G1 hook-CRUD service (HookService: persist to project.yaml + register
-// the `hook-<slug>-<name>` agent) so a project agent can declare/edit/delete its own
-// event hooks — the MCP twin of the Hooks tab (G4). Injected ONLY when the project
-// opted into `hooksMcpEnabled` (a coarse, binary gate — an agent that has these
-// tools can create hooks at any capability; there is no per-capability gating).
-
-const LIST_HOOKS_DESC =
-  "List a project's event hooks: each hook's name, the agent it registers as, its " +
-  "trigger `event`, `enabled` flag, prompt/promptFile, and granted capabilities " +
-  "(allowedTools, deniedTools, permissionMode, model, maxTurns). Read-only. " +
-  "Defaults to the current project; pass `project` (a slug) to target another.";
-
-const SET_HOOK_DESC =
-  "Create or update an event HOOK — an agent turn that fires when a project " +
-  "lifecycle event happens, keyed by `name`. A hook registers as its OWN agent " +
-  "`hook-<slug>-<name>` whose granted tools ARE its capability. `event` is the " +
-  "lifecycle trigger (v1: \"onArchive\" — fired after a chat is archived, e.g. to " +
-  "spin down servers / delete clones). Give the instruction as `prompt` (inline) " +
-  "OR `prompt_file` — a git-tracked `.md` under the project's `.paddock/hooks/` " +
-  "dir (e.g. \"cleanup.md\"), read at fire time. Capabilities (all optional; omit " +
-  "for a tool-less hook that can only think + return text): `allowed_tools` (the " +
-  "tools the hook may use — one per line or comma-separated, e.g. \"Bash, Read\"), " +
-  "`denied_tools`, `permission_mode` (\"default\"/\"acceptEdits\"/\"bypassPermissions\"" +
-  "/\"plan\"), `model`, `max_turns`. `enabled` (default FALSE on a NEW hook so " +
-  "nothing fires the instant it's written — set it true to arm; on an existing hook " +
-  "an omitted `enabled` is left unchanged). Defaults to the current project; pass " +
-  "`project` (a slug) to target another.";
-
-const REMOVE_HOOK_DESC =
-  "Delete an event hook by `name` (removes it from `project.yaml` and unregisters " +
-  "its `hook-<slug>-<name>` agent). Safe when absent — returns `removed: false` if " +
-  "no such hook. Defaults to the current project; pass `project` to target another.";
-
-function listHooksHandler(write: SelfMcpWriteContext) {
-  return async (args: Record<string, unknown>): Promise<McpToolCallResult> => {
-    try {
-      const projectArg = typeof args.project === "string" ? args.project.trim() : "";
-      const project = projectArg.length > 0 ? projectArg : write.currentProjectSlug;
-      const hooks = await write.listHooks(project);
-      return ok({ project, count: hooks.length, hooks });
-    } catch (error) {
-      return fail(`Error listing hooks: ${errText(error)}`);
-    }
-  };
-}
-
-function setHookHandler(write: SelfMcpWriteContext) {
-  return async (args: Record<string, unknown>): Promise<McpToolCallResult> => {
-    try {
-      const name = typeof args.name === "string" ? args.name.trim() : "";
-      if (!name) return fail("Error: `name` is required (the hook's key).");
+      incoming.trigger = cron ? { type, cron } : { type, interval };
+    } else if (type === "event") {
       const event = typeof args.event === "string" ? args.event.trim() : "";
-      if (!event) {
-        return fail('Error: `event` is required (the lifecycle trigger, e.g. "onArchive").');
-      }
-      const prompt = typeof args.prompt === "string" ? args.prompt.trim() : "";
-      const promptFile = typeof args.prompt_file === "string" ? args.prompt_file.trim() : "";
-      if (!prompt && !promptFile) {
-        return fail(
-          "Error: provide `prompt` (an inline instruction) or `prompt_file` (a `.md` under " +
-            "the project's `.paddock/hooks/` dir).",
-        );
-      }
+      if (!event) return 'Error: an "event" trigger needs `event` (the lifecycle trigger, e.g. "onArchive").';
+      incoming.trigger = { type, on: event };
+    } else if (type === "webhook") {
+      const p = typeof args.path === "string" ? args.path.trim() : "";
+      if (!p) return 'Error: a "webhook" trigger needs `path` (the ingress path; reserved — not yet fired).';
+      incoming.trigger = { type, path: p };
+    } else {
+      return 'Error: `type` must be "schedule", "event", or "webhook".';
+    }
+  }
 
-      // Assemble the PaddockHook record (camelCase, as sanitizeHook expects). Only
-      // set fields the caller actually supplied — the write.setHook callback merges
-      // this partial over the existing hook, so an update that omits a field
-      // preserves it rather than wiping it (create-or-update patch semantics).
-      const hook: Record<string, unknown> = { event };
-      if (prompt) hook.prompt = prompt;
-      if (promptFile) hook.promptFile = promptFile;
-      if (typeof args.enabled === "boolean") hook.enabled = args.enabled;
+  // WHAT: assemble only the run fields the caller supplied.
+  const run: Record<string, unknown> = {};
+  const prompt = typeof args.prompt === "string" ? args.prompt.trim() : "";
+  const promptFile = typeof args.prompt_file === "string" ? args.prompt_file.trim() : "";
+  if (prompt) run.prompt = prompt;
+  if (promptFile) run.promptFile = promptFile;
+  if (typeof args.session === "string" && (args.session === "new" || args.session === "resume")) {
+    run.session = args.session;
+  }
+  if (typeof args.model === "string" && args.model.trim() !== "") run.model = args.model.trim();
+  // `tools` is present (even as "") → set it (an empty list = a tool-less curator);
+  // absent → leave the existing grant untouched on an edit.
+  if (args.tools !== undefined) run.tools = coerceToolList(args.tools);
+  if (typeof args.max_spawn_depth === "number") run.maxSpawnDepth = args.max_spawn_depth;
+  if (typeof args.permission_mode === "string" && args.permission_mode.trim() !== "") {
+    run.permissionMode = args.permission_mode.trim();
+  }
+  if (typeof args.max_turns === "number") run.maxTurns = args.max_turns;
+  if (Object.keys(run).length > 0) incoming.run = run;
 
-      const capabilities: Record<string, unknown> = {};
-      const allowed = coerceToolList(args.allowed_tools);
-      if (allowed.length > 0) capabilities.allowedTools = allowed;
-      const denied = coerceToolList(args.denied_tools);
-      if (denied.length > 0) capabilities.deniedTools = denied;
-      if (typeof args.permission_mode === "string" && args.permission_mode.trim() !== "") {
-        capabilities.permissionMode = args.permission_mode.trim();
-      }
-      if (typeof args.model === "string" && args.model.trim() !== "") {
-        capabilities.model = args.model.trim();
-      }
-      if (typeof args.max_turns === "number") capabilities.maxTurns = args.max_turns;
-      if (Object.keys(capabilities).length > 0) hook.capabilities = capabilities;
+  if (typeof args.enabled === "boolean") incoming.enabled = args.enabled;
+  return incoming;
+}
+
+function setTriggerHandler(write: SelfMcpWriteContext) {
+  return async (args: Record<string, unknown>): Promise<McpToolCallResult> => {
+    try {
+      const name = typeof args.name === "string" ? args.name.trim() : "";
+      if (!name) return fail("Error: `name` is required (the trigger's key).");
+      const incoming = buildTriggerUpdate(args);
+      if (typeof incoming === "string") return fail(incoming);
 
       const projectArg = typeof args.project === "string" ? args.project.trim() : "";
       const project = projectArg.length > 0 ? projectArg : write.currentProjectSlug;
 
-      const saved = await write.setHook(project, name, hook);
-      return ok({ set: true, project, hook: saved });
+      const saved = await write.setTrigger(project, name, incoming);
+      return ok({ set: true, project, trigger: saved });
     } catch (error) {
-      return fail(`Error setting hook: ${errText(error)}`);
+      return fail(`Error setting trigger: ${errText(error)}`);
     }
   };
 }
 
-function removeHookHandler(write: SelfMcpWriteContext) {
+function removeTriggerHandler(write: SelfMcpWriteContext) {
   return async (args: Record<string, unknown>): Promise<McpToolCallResult> => {
     try {
       const name = typeof args.name === "string" ? args.name.trim() : "";
-      if (!name) return fail("Error: `name` is required (the hook to remove).");
+      if (!name) return fail("Error: `name` is required (the trigger to remove).");
       const projectArg = typeof args.project === "string" ? args.project.trim() : "";
       const project = projectArg.length > 0 ? projectArg : write.currentProjectSlug;
 
-      const removed = await write.removeHook(project, name);
+      const removed = await write.removeTrigger(project, name);
       return ok({ removed, project, name });
     } catch (error) {
-      return fail(`Error removing hook: ${errText(error)}`);
+      return fail(`Error removing trigger: ${errText(error)}`);
+    }
+  };
+}
+
+function listTriggersHandler(write: SelfMcpWriteContext) {
+  return async (args: Record<string, unknown>): Promise<McpToolCallResult> => {
+    try {
+      const projectArg = typeof args.project === "string" ? args.project.trim() : "";
+      const project = projectArg.length > 0 ? projectArg : write.currentProjectSlug;
+      const triggers = await write.listTriggers(project);
+      return ok({ project, count: triggers.length, triggers });
+    } catch (error) {
+      return fail(`Error listing triggers: ${errText(error)}`);
     }
   };
 }
@@ -803,12 +693,12 @@ function removeHookHandler(write: SelfMcpWriteContext) {
  * a per-turn context. The READ tools (list_projects/list_chats/read_chat) are
  * ALWAYS included. When a {@link SelfMcpWriteContext} is provided (the stricter
  * write flag is on), the WRITE tools (create_chat/fork_chat/send_message/
- * archive_chat/unarchive_chat/fork_chat_batch + the schedule tools
- * set_schedule/remove_schedule/list_schedules) are appended too; omit it for
+ * archive_chat/unarchive_chat/fork_chat_batch) are appended too; omit it for
  * unchanged read-only behavior. When that write context additionally has
- * {@link SelfMcpWriteContext.hooksMcpEnabled} on (the per-project G5 opt-in), the
- * hook-management tools (list_hooks/set_hook/remove_hook) are appended as well.
- * Inject under {@link SELF_MCP_SERVER_KEY}.
+ * {@link SelfMcpWriteContext.triggersMcpEnabled} on (the per-project trigger-MCP
+ * opt-in, Epic T / T3), the unified trigger-management tools (list_triggers/
+ * set_trigger/remove_trigger) are appended as well. Inject under
+ * {@link SELF_MCP_SERVER_KEY}.
  */
 export function selfMcpServerDef(
   context: SelfMcpContext,
@@ -986,92 +876,19 @@ export function selfMcpServerDef(
         },
         handler: forkChatBatchHandler(write),
       },
-      {
-        name: "set_schedule",
-        description: SET_SCHEDULE_DESC,
-        inputSchema: {
-          type: "object",
-          properties: {
-            name: { type: "string", description: "The schedule's stable key (create or update)." },
-            type: {
-              type: "string",
-              enum: ["cron", "interval"],
-              description: '"cron" (with a `cron` expression) or "interval" (with an `interval` string).',
-            },
-            cron: {
-              type: "string",
-              description: 'Required when type is "cron": a 5-field cron expression (e.g. "0 9 * * *"), host-local time.',
-            },
-            interval: {
-              type: "string",
-              description: 'Required when type is "interval": a duration string (e.g. "30m", "1h").',
-            },
-            prompt: {
-              type: "string",
-              description: "Inline instruction the scheduled turn runs. Provide this OR `prompt_file`.",
-            },
-            prompt_file: {
-              type: "string",
-              description:
-                'A `.md` file under the project\'s `.paddock/schedules/` dir (e.g. "daily-triage.md"), ' +
-                "read at fire time. Alternative to `prompt` for long, version-tracked prompts.",
-            },
-            resume_session: {
-              type: "boolean",
-              description:
-                "false (default) → a fresh chat each fire; true → accrete into the schedule's one owned session.",
-            },
-            enabled: { type: "boolean", description: "Whether the schedule is armed (default true)." },
-            project: {
-              type: "string",
-              description: "Project slug to target. Omit to use the current project.",
-            },
-          },
-          required: ["name", "type"],
-        },
-        handler: setScheduleHandler(write),
-      },
-      {
-        name: "remove_schedule",
-        description: REMOVE_SCHEDULE_DESC,
-        inputSchema: {
-          type: "object",
-          properties: {
-            name: { type: "string", description: "The schedule to remove." },
-            project: {
-              type: "string",
-              description: "Project slug that owns the schedule. Omit to use the current project.",
-            },
-          },
-          required: ["name"],
-        },
-        handler: removeScheduleHandler(write),
-      },
-      {
-        name: "list_schedules",
-        description: LIST_SCHEDULES_DESC,
-        inputSchema: {
-          type: "object",
-          properties: {
-            project: {
-              type: "string",
-              description: "Project slug to list. Omit to use the current project.",
-            },
-          },
-        },
-        handler: listSchedulesHandler(write),
-      },
     );
 
-    // Hook-management tools (Epic G / G5, GG-4): a THIRD coarse capability, layered
-    // on the write tools and gated by the project's own `hooksMcpEnabled` opt-in.
-    // When off the tools are ABSENT (not present-but-refusing) — the design's binary
-    // "does this project agent get the hook MCP at all" gate.
-    if (write.hooksMcpEnabled) {
+    // Unified trigger-management tools (Epic T / T3): a coarse capability layered on
+    // the write tools and gated by the project's own trigger-MCP opt-in
+    // (`triggersMcpEnabled`, resolved from the REUSED hooks-MCP gate). When off the
+    // tools are ABSENT (not present-but-refusing) — the design's binary "does this
+    // project agent get the trigger MCP at all" gate. These COLLAPSE what were the
+    // separate schedule (set/remove/list_schedule) + hook (set/remove/list_hook) verbs.
+    if (write.triggersMcpEnabled) {
       tools.push(
         {
-          name: "list_hooks",
-          description: LIST_HOOKS_DESC,
+          name: "list_triggers",
+          description: LIST_TRIGGERS_DESC,
           inputSchema: {
             type: "object",
             properties: {
@@ -1081,79 +898,105 @@ export function selfMcpServerDef(
               },
             },
           },
-          handler: listHooksHandler(write),
+          handler: listTriggersHandler(write),
         },
         {
-          name: "set_hook",
-          description: SET_HOOK_DESC,
+          name: "set_trigger",
+          description: SET_TRIGGER_DESC,
           inputSchema: {
             type: "object",
             properties: {
-              name: { type: "string", description: "The hook's stable key (create or update)." },
+              name: { type: "string", description: "The trigger's stable key (create or update)." },
+              type: {
+                type: "string",
+                enum: ["schedule", "event", "webhook"],
+                description:
+                  "WHEN the trigger fires. Omit on an edit to keep the existing WHEN; supply it " +
+                  "(with its fields) to (re)specify the trigger. \"schedule\" needs `cron` or " +
+                  "`interval`; \"event\" needs `event`; \"webhook\" needs `path` (reserved).",
+              },
+              cron: {
+                type: "string",
+                description: 'For a "schedule" trigger: a 5-field cron expression (e.g. "0 9 * * *"), host-local time. Exactly one of `cron`/`interval`.',
+              },
+              interval: {
+                type: "string",
+                description: 'For a "schedule" trigger: a duration string (e.g. "30m", "1h"). Exactly one of `cron`/`interval`.',
+              },
               event: {
                 type: "string",
-                description: 'The lifecycle trigger (v1: "onArchive").',
+                description: 'For an "event" trigger: the lifecycle trigger (v1: "onArchive").',
+              },
+              path: {
+                type: "string",
+                description: 'For a "webhook" trigger: the ingress path (reserved — not yet fired).',
               },
               prompt: {
                 type: "string",
-                description: "Inline instruction the hook turn runs. Provide this OR `prompt_file`.",
+                description: "Inline instruction the fired turn runs. Provide this OR `prompt_file`.",
               },
               prompt_file: {
                 type: "string",
                 description:
-                  'A `.md` file under the project\'s `.paddock/hooks/` dir (e.g. "cleanup.md"), ' +
-                  "read at fire time. Alternative to `prompt`.",
+                  'A `.md` file under the project\'s `.paddock/triggers/` dir (e.g. "daily.md"), ' +
+                  "read at fire time. Alternative to `prompt` for long, version-tracked prompts.",
               },
-              allowed_tools: {
+              session: {
+                type: "string",
+                enum: ["new", "resume"],
+                description:
+                  '"new" (default) → a fresh chat each fire; "resume" → accrete into the trigger\'s one owned session.',
+              },
+              tools: {
                 type: "string",
                 description:
-                  "The tools the hook agent may use — one per line or comma-separated (e.g. " +
-                  '"Bash, Read, Write"). Omit for a tool-less hook. A JSON array is also accepted.',
+                  "The fired agent's capability = a deny-by-default allow-list — one per line or " +
+                  'comma-separated (e.g. "Bash, Read, Write"). Omit / empty = a tool-less curator. A JSON array is also accepted.',
               },
-              denied_tools: {
-                type: "string",
-                description: "Tools explicitly denied — same format as `allowed_tools`.",
-              },
+              model: { type: "string", description: "Model override for the fired agent." },
               permission_mode: {
                 type: "string",
                 enum: ["default", "acceptEdits", "bypassPermissions", "plan"],
-                description: "Permission mode the hook agent's turns run under.",
+                description: "Permission mode the fired agent's turns run under.",
               },
-              model: { type: "string", description: "Model override for the hook agent." },
+              max_spawn_depth: {
+                type: "number",
+                description: "Recursion bound for internal spawning (0 = may not spawn).",
+              },
               max_turns: {
                 type: "number",
-                description: "Max agent turns bounding a runaway hook.",
+                description: "Max agent turns bounding a runaway trigger.",
               },
               enabled: {
                 type: "boolean",
                 description:
-                  "Whether the hook is armed. Default FALSE on a NEW hook; omitted on an " +
-                  "existing hook leaves it unchanged.",
+                  "Whether the trigger is armed. Default FALSE on a NEW trigger; omitted on an " +
+                  "existing trigger leaves it unchanged (so an `enabled`-only call just flips it).",
               },
               project: {
                 type: "string",
                 description: "Project slug to target. Omit to use the current project.",
               },
             },
-            required: ["name", "event"],
+            required: ["name"],
           },
-          handler: setHookHandler(write),
+          handler: setTriggerHandler(write),
         },
         {
-          name: "remove_hook",
-          description: REMOVE_HOOK_DESC,
+          name: "remove_trigger",
+          description: REMOVE_TRIGGER_DESC,
           inputSchema: {
             type: "object",
             properties: {
-              name: { type: "string", description: "The hook to remove." },
+              name: { type: "string", description: "The trigger to remove." },
               project: {
                 type: "string",
-                description: "Project slug that owns the hook. Omit to use the current project.",
+                description: "Project slug that owns the trigger. Omit to use the current project.",
               },
             },
             required: ["name"],
           },
-          handler: removeHookHandler(write),
+          handler: removeTriggerHandler(write),
         },
       );
     }
@@ -1178,17 +1021,16 @@ export const SELF_MCP_WRITE_TOOL_NAMES = {
   archiveChat: `mcp__${SERVER_NAME}__archive_chat`,
   unarchiveChat: `mcp__${SERVER_NAME}__unarchive_chat`,
   forkChatBatch: `mcp__${SERVER_NAME}__fork_chat_batch`,
-  setSchedule: `mcp__${SERVER_NAME}__set_schedule`,
-  removeSchedule: `mcp__${SERVER_NAME}__remove_schedule`,
-  listSchedules: `mcp__${SERVER_NAME}__list_schedules`,
 } as const;
 
 /**
- * The fully-qualified names of the G5 hook-management tools (only present when a
- * write context has {@link SelfMcpWriteContext.hooksMcpEnabled} on).
+ * The fully-qualified names of the Epic T / T3 unified trigger-management tools
+ * (only present when a write context has {@link SelfMcpWriteContext.triggersMcpEnabled}
+ * on). These collapse the former schedule (set/remove/list_schedule) + hook
+ * (set/remove/list_hook) verbs.
  */
-export const SELF_MCP_HOOK_TOOL_NAMES = {
-  listHooks: `mcp__${SERVER_NAME}__list_hooks`,
-  setHook: `mcp__${SERVER_NAME}__set_hook`,
-  removeHook: `mcp__${SERVER_NAME}__remove_hook`,
+export const SELF_MCP_TRIGGER_TOOL_NAMES = {
+  listTriggers: `mcp__${SERVER_NAME}__list_triggers`,
+  setTrigger: `mcp__${SERVER_NAME}__set_trigger`,
+  removeTrigger: `mcp__${SERVER_NAME}__remove_trigger`,
 } as const;
