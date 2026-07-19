@@ -1,5 +1,44 @@
 # @paddock/web
 
+## 0.37.0
+
+### Minor Changes
+
+- [#318](https://github.com/edspencer/paddock/pull/318) [`9d0268e`](https://github.com/edspencer/paddock/commit/9d0268ecba36f5106231b29bd30b6bc348e33088) Thanks [@edspencer](https://github.com/edspencer)! - Per-trigger tool allow-list for **schedule** triggers (Epic T / T2, #307). A
+  schedule-type trigger that declares a non-empty `run.tools` allow-list now runs on
+  its OWN scoped `trigger-<slug>-<name>` agent — herdctl's `allowed_tools` /
+  `permission_mode` / `max_turns` enforce the capability by construction, exactly as an
+  event trigger already does. A schedule with no `tools` keeps running as the keeper with
+  the project-agent default toolset (pre-T2 behaviour, unchanged). The keeper's forwarded
+  `schedules` block remains the cron **timing** only; execution moves to the scoped agent.
+  `run.maxSpawnDepth` on a schedule now gates its fired turn's self-MCP spawn capability
+  (reuses B1). One shared `triggerRunsOnOwnAgent` predicate makes the arming and fire
+  paths agree on the keeper-vs-own-agent routing decision.
+
+- [#325](https://github.com/edspencer/paddock/pull/325) [`30b5f7d`](https://github.com/edspencer/paddock/commit/30b5f7d35a5a84073c88e5e8811ede840c99397c) Thanks [@edspencer](https://github.com/edspencer)! - T4 (Epic T "Unify Triggers"): the per-project **Hooks tab** is renamed and generalized
+  into a **Triggers tab**, and the **Settings → Schedules** section is folded into it. One
+  list now manages every trigger type — each row shows a `trigger.type` badge (schedule /
+  event / webhook), its firing condition, a capability summary, and an enabled toggle — all
+  over the unified `/api/projects/:slug/triggers` REST surface (T3). Creating/editing a
+  trigger uses a discriminated form (schedule → cron/interval, event → the served `on`
+  picker, webhook → shown but reserved). The in-chat capability banner is generalized to
+  trigger chats, stating the trigger type, its firing condition, granted tools, permission
+  mode, model, and max-turn limits (a new `trigger-<slug>-<name>` chat descriptor served on
+  the chat DTO). The legacy `/hooks` route redirects to `/triggers`.
+
+### Patch Changes
+
+- [#324](https://github.com/edspencer/paddock/pull/324) [`7c614f8`](https://github.com/edspencer/paddock/commit/7c614f883027d03eab8054614445f4c6f73bd47d) Thanks [@edspencer](https://github.com/edspencer)! - Fix the project **Settings** page crashing for any project whose `project.yaml`
+  declares `links` as a bare YAML string list (the natural shorthand,
+  `- https://example.com`) rather than the `{label, url}` object form. Such entries
+  reached the DTO as raw strings, and the Settings pane's `cleanedLinks` memo called
+  `l.url.trim()` on them, throwing a `TypeError` during render (which also prevented
+  the Schedules section from ever loading). `ProjectStore.normalize` now coerces
+  `links` at the read boundary via a new `normalizeLinks` helper — a bare string
+  becomes `{label: "", url: <string>}`, object links are trimmed and kept, and
+  url-less / malformed entries are dropped. Because normalization runs on read, the
+  next save round-trips the file into object form, so an affected project self-heals.
+
 ## 0.36.0
 
 ### Minor Changes
