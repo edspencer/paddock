@@ -13,6 +13,7 @@ import {
   repoCheckoutName,
   workingDirFor,
   isValidRepoUrl,
+  normalizeLinks,
 } from "../../src/projects.js";
 import { KEEPER_DEFAULT_MODEL } from "../../src/models.js";
 import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
@@ -125,6 +126,34 @@ describe("repo-backed helpers (issue #187)", () => {
     expect(isValidRepoUrl("")).toBe(false);
     expect(isValidRepoUrl("not a url")).toBe(false);
     expect(isValidRepoUrl("ftp://host/x")).toBe(false);
+  });
+});
+
+describe("normalizeLinks (legacy bare-string links)", () => {
+  it("coerces a bare YAML string list into {label,url} objects", () => {
+    // The shape that crashed the Settings pane: `links: [ - https://… ]`.
+    expect(normalizeLinks(["https://github.com/edspencer/hushpod", "https://podcasts.valfenda.net"])).toEqual([
+      { label: "", url: "https://github.com/edspencer/hushpod" },
+      { label: "", url: "https://podcasts.valfenda.net" },
+    ]);
+  });
+
+  it("keeps well-formed object links (trimmed) and tolerates a mixed list", () => {
+    expect(
+      normalizeLinks([
+        { label: " GitHub ", url: " https://x.test " },
+        "https://bare.test",
+      ]),
+    ).toEqual([
+      { label: "GitHub", url: "https://x.test" },
+      { label: "", url: "https://bare.test" },
+    ]);
+  });
+
+  it("drops url-less / malformed entries and non-array input", () => {
+    expect(normalizeLinks([" ", { label: "no url" }, 42, null])).toEqual([]);
+    expect(normalizeLinks(undefined)).toEqual([]);
+    expect(normalizeLinks("https://not-a-list.test")).toEqual([]);
   });
 });
 
@@ -450,6 +479,33 @@ describe("ProjectStore", () => {
     expect(p.domain).toEqual([]);
     expect(p.group).toBe("");
     expect(p.updated).toBe(p.started); // updated defaults to started
+  });
+
+  it("reads a legacy bare-string links list as {label,url} DTO and self-heals on save", async () => {
+    // Reproduces the hushpod crash: an old hand-authored project.yaml whose
+    // `links` are bare strings, not {label,url} objects.
+    await fs.mkdir(path.join(root, "legacy"));
+    await fs.writeFile(
+      path.join(root, "legacy", "project.yaml"),
+      "name: Legacy\nslug: legacy\nlinks:\n  - https://github.com/edspencer/hushpod\n  - https://podcasts.valfenda.net\n",
+      "utf8",
+    );
+
+    const dto = await store.get("legacy");
+    // DTO links are ALWAYS well-formed objects (SettingsPane's `l.url.trim()`
+    // would otherwise throw during render on a string entry).
+    expect(dto.links).toEqual([
+      { label: "", url: "https://github.com/edspencer/hushpod" },
+      { label: "", url: "https://podcasts.valfenda.net" },
+    ]);
+
+    // A save round-trips the file into the object form — the project self-heals.
+    await store.update("legacy", { summary: "touched" });
+    const parsed = YAML.parse(await fs.readFile(path.join(root, "legacy", "project.yaml"), "utf8"));
+    expect(parsed.links).toEqual([
+      { label: "", url: "https://github.com/edspencer/hushpod" },
+      { label: "", url: "https://podcasts.valfenda.net" },
+    ]);
   });
 
   it("pinFile validates existence, dedupes, and persists; unpinFile removes", async () => {
