@@ -91,18 +91,13 @@ import {
   SELF_MCP_SERVER_KEY,
   type SelfMcpContext,
   type SelfMcpWriteContext,
-  type SelfMcpSchedule,
-  type SelfMcpHook,
+  type SelfMcpTrigger,
 } from "./self-mcp.js";
 import type { AttachmentStore } from "./attachments.js";
 import type { QueuedMessageStore } from "./queued-message.js";
 import type { ArchiveStore } from "./archive.js";
 import type { ScheduleSessionStore } from "./schedule-session.js";
-import {
-  schedulePromptFileAbsPath,
-  scheduleToHerdctl,
-  type PaddockSchedule,
-} from "./schedule-config.js";
+import { schedulePromptFileAbsPath } from "./schedule-config.js";
 import {
   type RunProvenanceStore,
   type RunProvenance,
@@ -120,7 +115,6 @@ import type { HookService } from "./hooks.js";
 import {
   hookPromptFileAbsPath,
   resolveHooksMcpEnabled,
-  mergeHookUpdate,
   type HookDto,
   type HookEvent,
 } from "./hook-config.js";
@@ -129,6 +123,7 @@ import type { TriggerSessionStore } from "./trigger-session.js";
 import {
   triggerPromptFileAbsPath,
   triggerRunsOnOwnAgent,
+  mergeTriggerUpdate,
   type TriggerDto,
   type TriggerEvent,
 } from "./trigger-config.js";
@@ -651,52 +646,40 @@ interface ScheduleRuntimeInfo {
 }
 
 /**
- * Project a `project.yaml` schedule declaration (+ optional herdctl runtime state)
- * onto the {@link SelfMcpSchedule} shape the schedule tools return (issue #289).
- * Mirrors routes.ts's `toScheduleDto` so the self-MCP and Settings-pane surfaces
- * stay in step; `info` is absent for a just-declared schedule herdctl hasn't armed.
+ * Project a persisted {@link TriggerDto} (+ optional herdctl runtime state for a
+ * schedule trigger) onto the flat {@link SelfMcpTrigger} shape the unified trigger
+ * tools return (Epic T / T3). Flattens the discriminated `trigger` WHEN + the shared
+ * `run` WHAT + null-normalises so the agent reads ONE flat record regardless of type;
+ * `info` is only meaningful for an armed schedule trigger (absent for event/webhook).
  */
-function toSelfMcpSchedule(
-  name: string,
-  rec: PaddockSchedule,
-  info?: ScheduleRuntimeInfo,
-): SelfMcpSchedule {
-  return {
-    name,
-    type: rec.type,
-    cron: rec.cron ?? null,
-    interval: rec.interval ?? null,
-    prompt: rec.prompt ?? null,
-    promptFile: rec.promptFile ?? null,
-    resumeSession: rec.resume_session === true,
-    enabled: rec.enabled !== false,
-    status: info?.status ?? (rec.enabled === false ? "disabled" : "idle"),
-    lastRunAt: info?.lastRunAt ?? null,
-    nextRunAt: info?.nextRunAt ?? null,
-    lastError: info?.lastError ?? null,
-  };
-}
-
-/**
- * Project a persisted {@link HookDto} onto the {@link SelfMcpHook} shape the hook
- * tools return (Epic G / G5) — flatten the nested capability set + null-normalise
- * (mirrors {@link toSelfMcpSchedule}) so the agent reads a flat record. A tool-less
- * hook surfaces `allowedTools: []`.
- */
-function toSelfMcpHook(dto: HookDto): SelfMcpHook {
-  const caps = dto.capabilities ?? {};
+function toSelfMcpTrigger(dto: TriggerDto, info?: ScheduleRuntimeInfo): SelfMcpTrigger {
+  const when = dto.trigger;
+  const run = dto.run;
+  const isSchedule = when.type === "schedule";
   return {
     name: dto.name,
     agentName: dto.agentName,
-    event: dto.event,
+    type: when.type,
+    cron: when.type === "schedule" ? when.cron ?? null : null,
+    interval: when.type === "schedule" ? when.interval ?? null : null,
+    event: when.type === "event" ? when.on : null,
+    path: when.type === "webhook" ? when.path : null,
+    prompt: run.prompt ?? null,
+    promptFile: run.promptFile ?? null,
+    session: run.session,
+    tools: run.tools ?? [],
+    maxSpawnDepth: run.maxSpawnDepth ?? null,
+    permissionMode: run.permissionMode ?? null,
+    model: run.model ?? null,
+    maxTurns: run.maxTurns ?? null,
     enabled: dto.enabled === true,
-    prompt: dto.prompt ?? null,
-    promptFile: dto.promptFile ?? null,
-    allowedTools: caps.allowedTools ?? [],
-    deniedTools: caps.deniedTools ?? [],
-    permissionMode: caps.permissionMode ?? null,
-    model: caps.model ?? null,
-    maxTurns: caps.maxTurns ?? null,
+    // Live runtime state is only tracked for an armed SCHEDULE trigger.
+    status: isSchedule
+      ? info?.status ?? (dto.enabled === false ? "disabled" : "idle")
+      : null,
+    lastRunAt: isSchedule ? info?.lastRunAt ?? null : null,
+    nextRunAt: isSchedule ? info?.nextRunAt ?? null : null,
+    lastError: isSchedule ? info?.lastError ?? null : null,
   };
 }
 
@@ -1395,14 +1378,14 @@ export function makeChatHandler(deps: {
     parentProvenance: RunProvenance;
     includeWrite: boolean;
     /**
-     * Whether to additionally append the G5 hook-management tools (list/set/
-     * remove_hook). Resolved per-project by the caller from `hooksMcpEnabled`
-     * (override else instance default). Only meaningful when `includeWrite` is on —
-     * the hook tools live in the write block.
+     * Whether to additionally append the Epic T / T3 unified trigger-management
+     * tools (list/set/remove_trigger). Resolved per-project by the caller from the
+     * REUSED hooks-MCP gate (`hooksMcpEnabled` override else instance default). Only
+     * meaningful when `includeWrite` is on — the trigger tools live in the write block.
      */
-    includeHooks: boolean;
+    includeTriggers: boolean;
   }): InjectedMcpServerDef {
-    const { currentProjectSlug, currentSessionId, parentProvenance, includeWrite, includeHooks } =
+    const { currentProjectSlug, currentSessionId, parentProvenance, includeWrite, includeTriggers } =
       params;
 
     const selfMcpContext: SelfMcpContext = {
@@ -1599,68 +1582,45 @@ export function makeChatHandler(deps: {
             deps.events?.emit("onArchive", { slug: projectSlug, sessionId: targetSessionId });
           }
         },
-        // Schedule management (issue #289). Exposes the existing D3/D4 CRUD:
-        // ProjectStore is the source of truth (re-armed on restart), herdctl is the
-        // live-arming half — the exact two-step the REST routes use (persist first,
-        // then arm; warn-not-fail if the runtime arm hiccups). set/remove honor
-        // DD-7's per-deployment mutation gate (checked in the tool handlers via
-        // `scheduleMutationEnabled` below); list is read-only.
-        scheduleMutationEnabled: deps.cfg.scheduleMutationEnabled,
-        listSchedules: async (projectSlug) => {
-          const p = await deps.projects.get(projectSlug);
-          const declared = p.schedules ?? {};
-          const runtime = await deps.herdctl.listAgentSchedules(p).catch(() => []);
+        // Unified trigger management (Epic T / T3). Delegates to the shared T1
+        // TriggerService (persist to project.yaml's single `triggers` block, then
+        // arm — an event trigger's own `trigger-<slug>-<name>` agent, a schedule
+        // trigger's forwarded `schedules` entry) — the SAME two-step the REST routes
+        // + Triggers tab (T4) use. The tools are only INJECTED when `includeTriggers`
+        // (the project's REUSED hooks-MCP opt-in) is on, so this flag reflects that
+        // resolved gate; the callbacks are wired unconditionally. Collapses the former
+        // schedule (#289) + hook (G5) callbacks onto ONE service.
+        triggersMcpEnabled: includeTriggers,
+        listTriggers: async (projectSlug) => {
+          if (!deps.triggers) return [];
+          const dtos = await deps.triggers.list(projectSlug);
+          // Merge best-effort live runtime state for SCHEDULE triggers (keyed by
+          // trigger name — the same key the forwarded `schedules` block uses).
+          const p = await deps.projects.get(projectSlug).catch(() => null);
+          const runtime = p ? await deps.herdctl.listAgentSchedules(p).catch(() => []) : [];
           const byName = new Map(runtime.map((s) => [s.name, s]));
-          return Object.entries(declared).map(([name, rec]) =>
-            toSelfMcpSchedule(name, rec, byName.get(name)),
-          );
+          return dtos.map((dto) => toSelfMcpTrigger(dto, byName.get(dto.name)));
         },
-        setSchedule: async (projectSlug, name, schedule) => {
-          // Persist to project.yaml FIRST (validates name + sanitises the record,
-          // throwing ProjectError on a malformed schedule) — the source of truth …
-          const p = await deps.projects.setSchedule(projectSlug, name, schedule);
-          const rec = p.schedules?.[name];
-          if (!rec) throw new Error(`schedule not persisted: ${name}`);
-          // … then arm herdctl at runtime (best-effort — re-arms on next restart if
-          // the live arm fails, matching the REST PUT route which warns-but-persists).
-          const info = await deps.herdctl
-            .setAgentSchedule(p, name, scheduleToHerdctl(rec))
-            .catch(() => undefined);
-          return toSelfMcpSchedule(name, rec, info);
+        setTrigger: async (projectSlug, name, incoming) => {
+          if (!deps.triggers) throw new Error("trigger management is unavailable");
+          // `set_trigger` is a PARTIAL update, but persistence full-REPLACES the named
+          // record — so an edit that omits a field would silently wipe it (e.g. an
+          // enable-only flip dropping the run). mergeTriggerUpdate overlays the caller-
+          // supplied fields on the existing trigger (preserving omitted trigger/run/
+          // enabled, clearing the prompt/promptFile counterpart) and safe-creates a new
+          // trigger disabled — then TriggerService.set validates + arms.
+          const existing = await deps.triggers.get(projectSlug, name).catch(() => null);
+          const record = mergeTriggerUpdate(existing, incoming);
+          const dto = await deps.triggers.set(projectSlug, name, record);
+          // Best-effort runtime state for a schedule trigger it may have just armed.
+          const p = await deps.projects.get(projectSlug).catch(() => null);
+          const runtime = p ? await deps.herdctl.listAgentSchedules(p).catch(() => []) : [];
+          const info = runtime.find((s) => s.name === name);
+          return toSelfMcpTrigger(dto, info);
         },
-        removeSchedule: async (projectSlug, name) => {
-          // Report whether one actually existed (so the tool can echo removed:false).
-          const before = await deps.projects.get(projectSlug);
-          const existed = Boolean(before.schedules?.[name]);
-          const p = await deps.projects.removeSchedule(projectSlug, name);
-          await deps.herdctl.removeAgentSchedule(p, name).catch(() => undefined);
-          return existed;
-        },
-        // Hook management (Epic G / G5, GG-4). Delegates to the shared G1 HookService
-        // (persist to project.yaml, then register the `hook-<slug>-<name>` agent) — the
-        // same two-step the future Hooks tab (G4) uses. The tools are only INJECTED
-        // when `includeHooks` (the project's `hooksMcpEnabled` opt-in) is on, so this
-        // flag reflects that resolved gate; the callbacks are wired unconditionally.
-        hooksMcpEnabled: includeHooks,
-        listHooks: async (projectSlug) => {
-          const dtos = deps.hooks ? await deps.hooks.list(projectSlug) : [];
-          return dtos.map(toSelfMcpHook);
-        },
-        setHook: async (projectSlug, name, hook) => {
-          if (!deps.hooks) throw new Error("hook management is unavailable");
-          // `set_hook` is a PARTIAL update, but `ProjectStore.setHook` full-REPLACES
-          // the named record — so an edit that omits a field would silently wipe it
-          // (e.g. changing only the prompt drops the hook's tool grant). mergeHookUpdate
-          // overlays the caller-supplied fields on the existing hook (preserving omitted
-          // capabilities/prompt/promptFile/enabled) and safe-creates a new hook disabled.
-          const existing = await deps.hooks.get(projectSlug, name).catch(() => null);
-          const record = mergeHookUpdate(existing, hook);
-          const dto = await deps.hooks.set(projectSlug, name, record);
-          return toSelfMcpHook(dto);
-        },
-        removeHook: async (projectSlug, name) => {
-          if (!deps.hooks) return false;
-          return deps.hooks.remove(projectSlug, name);
+        removeTrigger: async (projectSlug, name) => {
+          if (!deps.triggers) return false;
+          return deps.triggers.remove(projectSlug, name);
         },
       };
     }
@@ -1843,14 +1803,15 @@ export function makeChatHandler(deps: {
       maxSpawnDepth,
     });
     if (selfMcp.inject) {
-      // Hook-management tools (G5) follow the TARGET project's `hooksMcpEnabled`
-      // opt-in (override else instance default), only meaningful when the write
-      // tools are present. Resolve the project's override lazily — only when writes
-      // are on and the instance/override could enable it — to keep the hot path lean.
-      let includeHooks = false;
+      // Trigger-management tools (T3) follow the TARGET project's REUSED hooks-MCP
+      // opt-in (`hooksMcpEnabled` override else instance default), only meaningful
+      // when the write tools are present. Resolve the project's override lazily —
+      // only when writes are on and the instance/override could enable it — to keep
+      // the hot path lean.
+      let includeTriggers = false;
       if (selfMcp.includeWrite) {
         const tp = await deps.projects.get(projectSlug).catch(() => null);
-        includeHooks = resolveHooksMcpEnabled(tp?.hooksMcpEnabled, deps.cfg.hooksMcpEnabled);
+        includeTriggers = resolveHooksMcpEnabled(tp?.hooksMcpEnabled, deps.cfg.hooksMcpEnabled);
       }
       injectedMcpServers[SELF_MCP_SERVER_KEY] = buildSelfMcpServerDef({
         currentProjectSlug: projectSlug,
@@ -1858,7 +1819,7 @@ export function makeChatHandler(deps: {
         // Children of THIS turn are one hop deeper than the chat it runs in.
         parentProvenance: { origin, depth: injectionDepth },
         includeWrite: selfMcp.includeWrite,
-        includeHooks,
+        includeTriggers,
       });
     }
 
@@ -2334,10 +2295,10 @@ export function makeChatHandler(deps: {
         let agentName: string;
         // Effective prompt — may be augmented with the project overview below.
         let prompt = message;
-        // Whether this project agent gets the G5 hook-management tools (resolved
-        // from the project's `hooksMcpEnabled` override else the instance default);
-        // stays false for scratch, which never gets the self-MCP.
-        let includeHooks = false;
+        // Whether this project agent gets the T3 unified trigger-management tools
+        // (resolved from the project's REUSED hooks-MCP `hooksMcpEnabled` override
+        // else the instance default); stays false for scratch (no self-MCP).
+        let includeTriggers = false;
         const requested = msg.payload.model;
         if (slug === SCRATCH_SLUG) {
           agentName = SCRATCH_AGENT;
@@ -2370,10 +2331,10 @@ export function makeChatHandler(deps: {
               ? project.driveMode
               : deps.cfg.keeperDriveMode;
 
-          // G5 hook-management gate: the per-project override wins, else the
-          // instance default. Only takes effect when the write tools are also on
-          // (the hook tools live in the write block).
-          includeHooks =
+          // T3 trigger-management gate (REUSES the hooks-MCP gate): the per-project
+          // override wins, else the instance default. Only takes effect when the
+          // write tools are also on (the trigger tools live in the write block).
+          includeTriggers =
             deps.cfg.selfMcpWriteEnabled &&
             resolveHooksMcpEnabled(project.hooksMcpEnabled, deps.cfg.hooksMcpEnabled);
 
@@ -2412,7 +2373,7 @@ export function makeChatHandler(deps: {
             currentSessionId: () => resolvedSession ?? sessionId ?? null,
             parentProvenance: HUMAN_ROOT,
             includeWrite: deps.cfg.selfMcpWriteEnabled,
-            includeHooks,
+            includeTriggers,
           });
         }
 

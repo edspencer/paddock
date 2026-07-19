@@ -41,7 +41,8 @@ import path from "node:path";
 import { z } from "zod";
 
 /** The trigger kinds. `webhook` is shape-reserved (no ingress in T1 — deferred T6). */
-export type TriggerType = "schedule" | "event" | "webhook";
+export const TRIGGER_TYPES = ["schedule", "event", "webhook"] as const;
+export type TriggerType = (typeof TRIGGER_TYPES)[number];
 
 /**
  * The lifecycle events an `event`-type trigger may fire on. `onArchive` is wired
@@ -237,6 +238,53 @@ export function sanitizeTriggers(raw: unknown): Record<string, PaddockTrigger> |
     if (t) out[name] = t;
   }
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * Overlay a PARTIAL trigger update onto an existing trigger, producing an untrusted
+ * record for {@link sanitizeTrigger} to validate — the unified successor to
+ * {@link import("./hook-config.js").mergeHookUpdate}, used by the self-MCP `set_trigger`
+ * tool so an edit that supplies only some fields (the classic being "enable/disable",
+ * an `enabled`-only set — GG-3) preserves everything else rather than wiping it.
+ *
+ * The three parts merge independently:
+ *  - `trigger` (the WHEN discriminant): supplied wholesale or inherited. Because the
+ *    variants carry different fields (`cron`/`interval` vs `on` vs `path`), a partial
+ *    trigger can't be merged field-by-field — so `incoming.trigger` is taken WHOLE
+ *    when the caller supplies one (i.e. re-specifies `type` + its fields), else the
+ *    existing `trigger` is inherited unchanged.
+ *  - `run` (the WHAT): merged field-by-field over the existing run, so an edit that
+ *    touches only `enabled`/`model`/`tools` keeps the rest. `prompt` and `promptFile`
+ *    are MUTUALLY EXCLUSIVE, so supplying one clears the inherited counterpart —
+ *    otherwise switching a file-backed trigger to an inline prompt would leave the
+ *    stale `promptFile` and the merged record would carry BOTH (rejected by the
+ *    schema's prompt-xor-promptFile refinement). Supplying neither leaves the prompt
+ *    source untouched.
+ *  - `enabled`: the supplied value, else the existing flag, else `false` (safe-create).
+ *
+ * A brand-new trigger (`existing` null) starts from the incoming record verbatim
+ * (its `trigger`/`run` must be complete — the schema rejects it otherwise).
+ */
+export function mergeTriggerUpdate(
+  existing: PaddockTrigger | null | undefined,
+  incoming: { trigger?: Record<string, unknown>; run?: Record<string, unknown>; enabled?: boolean },
+): Record<string, unknown> {
+  // WHEN: a supplied `trigger` (with a `type`) replaces the whole discriminant; else inherit.
+  const trigger =
+    incoming.trigger && typeof incoming.trigger.type === "string"
+      ? incoming.trigger
+      : existing?.trigger;
+
+  // WHAT: overlay the supplied run fields on the existing run (or {} for a new trigger).
+  const run: Record<string, unknown> = { ...(existing?.run ?? {}), ...(incoming.run ?? {}) };
+  const inRun = incoming.run ?? {};
+  // Switching prompt source: one supplied side clears the inherited other, so the
+  // merged run never carries both (which the prompt-xor-promptFile refinement rejects).
+  if (inRun.prompt !== undefined && inRun.promptFile === undefined) delete run.promptFile;
+  if (inRun.promptFile !== undefined && inRun.prompt === undefined) delete run.prompt;
+
+  const enabled = incoming.enabled ?? existing?.enabled ?? false;
+  return { trigger, run, enabled };
 }
 
 // --- projection helpers -------------------------------------------------------
