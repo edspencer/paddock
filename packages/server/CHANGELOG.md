@@ -1,5 +1,80 @@
 # @paddock/server
 
+## 0.37.0
+
+### Minor Changes
+
+- [#318](https://github.com/edspencer/paddock/pull/318) [`9d0268e`](https://github.com/edspencer/paddock/commit/9d0268ecba36f5106231b29bd30b6bc348e33088) Thanks [@edspencer](https://github.com/edspencer)! - Per-trigger tool allow-list for **schedule** triggers (Epic T / T2, #307). A
+  schedule-type trigger that declares a non-empty `run.tools` allow-list now runs on
+  its OWN scoped `trigger-<slug>-<name>` agent — herdctl's `allowed_tools` /
+  `permission_mode` / `max_turns` enforce the capability by construction, exactly as an
+  event trigger already does. A schedule with no `tools` keeps running as the keeper with
+  the project-agent default toolset (pre-T2 behaviour, unchanged). The keeper's forwarded
+  `schedules` block remains the cron **timing** only; execution moves to the scoped agent.
+  `run.maxSpawnDepth` on a schedule now gates its fired turn's self-MCP spawn capability
+  (reuses B1). One shared `triggerRunsOnOwnAgent` predicate makes the arming and fire
+  paths agree on the keeper-vs-own-agent routing decision.
+
+- [#317](https://github.com/edspencer/paddock/pull/317) [`058dde8`](https://github.com/edspencer/paddock/commit/058dde810b25918bb3fd6900be6f4bf9d0f02801) Thanks [@edspencer](https://github.com/edspencer)! - Collapse the paired hook + schedule verbs onto the unified **triggers** surface
+  (Epic T / T3), building on the T1 `TriggerService`:
+
+  - **REST**: `GET/PUT/DELETE /api/projects/:slug/triggers[/:name]`. The list `GET`
+    serves the capability-picker catalog (the `GRANTABLE_TOOLS` tool list, the known
+    event values, and the trigger types). `PUT` is a full-replace create/update;
+    enable/disable is just `set` with `enabled` flipped (no separate verb). All changes
+    persist to `project.yaml`'s single `triggers` block and arm herdctl (an event
+    trigger's own `trigger-<slug>-<name>` agent, a schedule trigger's forwarded
+    `schedules` entry).
+  - **Self-MCP**: the `set_hook`/`set_schedule` (+ `list_*`/`remove_*`) verbs are
+    replaced by unified `set_trigger` / `list_triggers` / `remove_trigger`, carrying the
+    discriminated `trigger` (`schedule | event | webhook`) + shared `run` + `enabled`.
+    `set_trigger` is a partial patch (an `enabled`-only call just flips the toggle;
+    supplying `prompt` clears an inherited `promptFile` and vice-versa). The tools are
+    gated by the reused per-project trigger-MCP opt-in (absent when off).
+
+  The legacy `hooks:`/`schedules:` REST + config blocks remain additively until the
+  Triggers tab (T4) migrates the UI off them.
+
+- [#325](https://github.com/edspencer/paddock/pull/325) [`30b5f7d`](https://github.com/edspencer/paddock/commit/30b5f7d35a5a84073c88e5e8811ede840c99397c) Thanks [@edspencer](https://github.com/edspencer)! - T4 (Epic T "Unify Triggers"): the per-project **Hooks tab** is renamed and generalized
+  into a **Triggers tab**, and the **Settings → Schedules** section is folded into it. One
+  list now manages every trigger type — each row shows a `trigger.type` badge (schedule /
+  event / webhook), its firing condition, a capability summary, and an enabled toggle — all
+  over the unified `/api/projects/:slug/triggers` REST surface (T3). Creating/editing a
+  trigger uses a discriminated form (schedule → cron/interval, event → the served `on`
+  picker, webhook → shown but reserved). The in-chat capability banner is generalized to
+  trigger chats, stating the trigger type, its firing condition, granted tools, permission
+  mode, model, and max-turn limits (a new `trigger-<slug>-<name>` chat descriptor served on
+  the chat DTO). The legacy `/hooks` route redirects to `/triggers`.
+
+- [#323](https://github.com/edspencer/paddock/pull/323) [`a3f63a1`](https://github.com/edspencer/paddock/commit/a3f63a149ed5aaffd962cda560509c8ef312501a) Thanks [@edspencer](https://github.com/edspencer)! - Fold the sweeper in as the default `afterTurn` trigger (Epic T / T5, #310). The
+  post-turn overview/changelog curator (the tool-less sweeper) is now the default
+  `curate-overview` `event`/`afterTurn` trigger. Every post-turn commit site (a human
+  chat turn, a session-mode wake, and each server-initiated agent turn) emits ONE
+  `afterTurn` lifecycle event, and its sole consumer enqueues the curation sweep — so the
+  sweeper dispatches exactly once per turn (no double-curation). The default is
+  **implicit**: a project that declares no `curate-overview` trigger sweeps exactly as
+  before. Declaring one only customizes the default — extend the curation prompt via
+  `run.prompt` / `run.promptFile` (folded under the same `=== EXTRA PROJECT-SPECIFIC
+CURATOR INSTRUCTIONS ===` heading as the existing `.paddock/hooks/sweep.md`), override
+  the sweeper model via `run.model`, or switch curation off with `enabled: false`. The
+  curator is executed by `SweepService` via the `sweeper-<slug>` agent (returns marked
+  text, Paddock writes OVERVIEW.md/CHANGELOG.md), so — unlike every other event trigger —
+  it registers no scoped `trigger-<slug>-<name>` agent and is not fanned out to the
+  generic event dispatcher.
+
+### Patch Changes
+
+- [#324](https://github.com/edspencer/paddock/pull/324) [`7c614f8`](https://github.com/edspencer/paddock/commit/7c614f883027d03eab8054614445f4c6f73bd47d) Thanks [@edspencer](https://github.com/edspencer)! - Fix the project **Settings** page crashing for any project whose `project.yaml`
+  declares `links` as a bare YAML string list (the natural shorthand,
+  `- https://example.com`) rather than the `{label, url}` object form. Such entries
+  reached the DTO as raw strings, and the Settings pane's `cleanedLinks` memo called
+  `l.url.trim()` on them, throwing a `TypeError` during render (which also prevented
+  the Schedules section from ever loading). `ProjectStore.normalize` now coerces
+  `links` at the read boundary via a new `normalizeLinks` helper — a bare string
+  becomes `{label: "", url: <string>}`, object links are trimmed and kept, and
+  url-less / malformed entries are dropped. Because normalization runs on read, the
+  next save round-trips the file into object form, so an affected project self-heals.
+
 ## 0.36.0
 
 ### Minor Changes
