@@ -10,9 +10,10 @@
  *   - **event** trigger → its OWN herdctl agent `trigger-<slug>-<name>` (tool config
  *     = capability), fired by the in-process event bus (`onArchive` today).
  *   - **schedule** trigger → forwarded into the keeper agent's `schedules` block (the
- *     herdctl cron engine arms it), fired via `setScheduleTriggerHandler`. In T1 it
- *     executes as the keeper (full tools); per-trigger tool-scoping for schedules is
- *     T2.
+ *     herdctl cron engine arms it — the cron TIMING), fired via
+ *     `setScheduleTriggerHandler`. It executes on its OWN scoped `trigger-<slug>-<name>`
+ *     agent (tool config = capability) when it declares a `run.tools` allow-list (T2 —
+ *     #307), else on the keeper with the project-agent default toolset.
  *   - **webhook** trigger → shape reserved; persisted + validated but NOT armed and
  *     never fired (the ingress is the deferred T6/#311).
  *
@@ -25,6 +26,7 @@
 import type { ProjectStore, Project } from "./projects.js";
 import type { HerdctlService } from "./herdctl.js";
 import { triggerAgentName } from "./herdctl.js";
+import { triggerRunsOnOwnAgent } from "./trigger-config.js";
 import type { PaddockTrigger, TriggerDto, TriggerEvent } from "./trigger-config.js";
 
 /** Project a persisted {@link PaddockTrigger} + its name/slug onto the {@link TriggerDto}. */
@@ -98,12 +100,19 @@ export class TriggerService {
     const existed = Boolean(before.triggers?.[name]);
     const rec = before.triggers?.[name];
     const project = await this.projects.removeTrigger(slug, name);
-    // Disarm: an event/webhook trigger's own agent is torn down; a schedule trigger's
-    // forwarded entry is dropped by re-registering the keeper from the updated record.
-    if (rec && rec.trigger.type !== "schedule") {
-      await this.herdctl.removeTriggerAgent(slug, name).catch(() => undefined);
-    } else if (rec) {
-      await this.herdctl.ensureProjectAgent(project).catch(() => undefined);
+    if (rec) {
+      // Tear down the trigger's OWN scoped agent only if it HAD one — every event
+      // trigger, or a scoped schedule trigger with a `run.tools` allow-list (T2). An
+      // unscoped, keeper-run schedule never registered an agent, so skip the fleet call.
+      if (triggerRunsOnOwnAgent(rec)) {
+        await this.herdctl.removeTriggerAgent(slug, name).catch(() => undefined);
+      }
+      // A schedule trigger ALSO rode the keeper's forwarded `schedules` block (the cron
+      // timing) — re-register the keeper from the updated record so that arming is
+      // dropped (and any remaining scoped trigger agents are re-affirmed).
+      if (rec.trigger.type === "schedule") {
+        await this.herdctl.ensureProjectAgent(project).catch(() => undefined);
+      }
     }
     return existed;
   }
@@ -124,7 +133,9 @@ export class TriggerService {
   /**
    * Arm a single trigger against herdctl (best-effort): an event trigger becomes its
    * own `trigger-<slug>-<name>` agent; a schedule trigger is (re-)forwarded into the
-   * keeper's `schedules` block via a keeper re-register; a webhook trigger is reserved
+   * keeper's `schedules` block via a keeper re-register — which ALSO registers its OWN
+   * scoped `trigger-<slug>-<name>` agent when it declares a `run.tools` allow-list (T2,
+   * via `ensureProjectAgent` → `registerTriggerAgents`); a webhook trigger is reserved
    * (nothing to arm — no ingress in T1).
    */
   private async arm(project: Project, name: string, trigger: PaddockTrigger): Promise<void> {
@@ -132,7 +143,9 @@ export class TriggerService {
       await this.herdctl.ensureTriggerAgent(project, name, trigger);
     } else if (trigger.trigger.type === "schedule") {
       // Re-register the keeper so its forwarded `schedules` block picks up the new /
-      // edited schedule trigger (un-gated, unlike setAgentSchedule). Idempotent.
+      // edited schedule trigger (un-gated, unlike setAgentSchedule). ensureProjectAgent
+      // also re-runs registerTriggerAgents, so a scoped schedule (T2) gets its own agent
+      // armed here too. Idempotent.
       await this.herdctl.ensureProjectAgent(project);
     }
     // webhook: shape reserved — nothing armed (deferred T6).

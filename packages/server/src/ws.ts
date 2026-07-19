@@ -128,6 +128,7 @@ import type { TriggerService } from "./triggers.js";
 import type { TriggerSessionStore } from "./trigger-session.js";
 import {
   triggerPromptFileAbsPath,
+  triggerRunsOnOwnAgent,
   type TriggerDto,
   type TriggerEvent,
 } from "./trigger-config.js";
@@ -1202,10 +1203,14 @@ export function makeChatHandler(deps: {
 
   /**
    * Run one fire of a trigger as a first-class chat on the hub — the ONE fire path for
-   * every trigger type (Epic T / T1), replacing the separate schedule + hook fire
-   * paths with a single `startAgentTurn` call. Runs on the keeper for a SCHEDULE
-   * trigger (T1 — per-trigger schedule tool-scoping is T2) and on the trigger's own
-   * `trigger-<slug>-<name>` agent for an EVENT trigger (tool config = `run.tools`).
+   * every trigger type (Epic T), replacing the separate schedule + hook fire paths with
+   * a single `startAgentTurn` call. Whether the fired turn runs on the trigger's OWN
+   * scoped `trigger-<slug>-<name>` agent (tool config = `run.tools`) or on the keeper is
+   * decided by {@link triggerRunsOnOwnAgent}: an EVENT trigger always runs scoped; a
+   * SCHEDULE trigger runs scoped ONLY when it declares a non-empty `run.tools` allow-list
+   * (T2 — #307), otherwise it runs as the keeper with the project-agent default toolset
+   * (pre-T2 behaviour, unchanged). `run.maxSpawnDepth` gates this fire's self-MCP spawn
+   * capability regardless of which agent runs it.
    *
    * `run.session` drives new-vs-accrete: `"new"` → a FRESH chat every fire
    * (`resume: null`); `"resume"` → resume the trigger's ONE owned session (recorded on
@@ -1223,7 +1228,11 @@ export function makeChatHandler(deps: {
   ): Promise<string | null> {
     const slug = project.slug;
     const isSchedule = trigger.trigger.type === "schedule";
-    const agentName = isSchedule ? keeperAgentName(slug) : triggerAgentName(slug, trigger.name);
+    // T2: a scoped trigger (every event; a schedule with a `run.tools` allow-list) runs
+    // on its OWN `trigger-<slug>-<name>` agent so herdctl enforces its capability; an
+    // unscoped schedule runs as the keeper (project-agent default toolset, unchanged).
+    const onOwnAgent = triggerRunsOnOwnAgent(trigger);
+    const agentName = onOwnAgent ? triggerAgentName(slug, trigger.name) : keeperAgentName(slug);
     const prompt = await resolveTriggerPrompt(project, trigger, ctx);
 
     // run.session: "resume" accretes into an owned session; "new" starts fresh.
@@ -1250,7 +1259,13 @@ export function makeChatHandler(deps: {
         // trigger reuses the `hook` origin (its E1 badge surface) — both depth 0.
         origin: isSchedule ? "scheduled" : "hook",
         depth: 0,
-        maxSpawnDepth: resolveMaxSpawnDepth(project.maxSpawnDepth, deps.cfg.maxSpawnDepth),
+        // A per-trigger `run.maxSpawnDepth` (design §2.3, T2) gates this fire's self-MCP
+        // spawn capability; it wins over the project override, which wins over the
+        // instance default (reuses B1's resolver).
+        maxSpawnDepth: resolveMaxSpawnDepth(
+          trigger.run.maxSpawnDepth ?? project.maxSpawnDepth,
+          deps.cfg.maxSpawnDepth,
+        ),
         // Attribute the injected kickoff turn to the trigger that fired it (#290).
         sender: {
           kind: isSchedule ? "schedule" : "hook",

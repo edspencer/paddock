@@ -21,7 +21,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { startTestApp, type TestApp } from "../helpers/app.js";
-import { triggerAgentName } from "../../src/herdctl.js";
+import { triggerAgentName, keeperAgentName } from "../../src/herdctl.js";
 import { TriggerSessionStore } from "../../src/trigger-session.js";
 import type { Project } from "../../src/projects.js";
 
@@ -85,6 +85,15 @@ describe("integration: unified triggers (Epic T / T1)", () => {
     }
   }
 
+  /** A trigger's scoped agent as the live fleet resolved it (undefined if unregistered). */
+  function armedTriggerAgent(slug: string, name: string) {
+    return t.herdctl.manager
+      .getAgents()
+      .find((a) => a.name === triggerAgentName(slug, name)) as
+      | { name: string; allowed_tools?: string[]; max_turns?: number; permission_mode?: string }
+      | undefined;
+  }
+
   async function archive(slug: string, sessionId: string): Promise<void> {
     await t.app.inject({
       method: "POST",
@@ -143,6 +152,86 @@ describe("integration: unified triggers (Epic T / T1)", () => {
 
     // Stop further fires interfering with later assertions.
     await t.triggers.remove(project.slug, "tick");
+  });
+
+  // --- T2 (#307): per-trigger tool allow-list for schedule triggers --------------
+
+  it("scopes a schedule trigger with `run.tools` to its OWN agent (allowed_tools == grant)", async () => {
+    const project = await freshProject();
+    const codeword = `scoped-sched-${project.slug}`;
+    // A scoped schedule: a `run.tools` allow-list (+ permissionMode/maxTurns) makes it
+    // run on its own `trigger-<slug>-<name>` agent, exactly like an event trigger.
+    await t.triggers.set(project.slug, "scoped", {
+      trigger: { type: "schedule", interval: "1h" },
+      run: {
+        prompt: `SCOPED SCHEDULE RAN: ${codeword}`,
+        tools: ["Read", "Grep", "Edit"],
+        permissionMode: "acceptEdits",
+        maxTurns: 7,
+      },
+      enabled: true,
+    });
+
+    // The trigger's OWN agent is armed and its tool config IS the capability (T2):
+    // allowed_tools == exactly the granted set (the G4/hook recipe applied to a schedule).
+    const agent = armedTriggerAgent(project.slug, "scoped");
+    expect(agent).toBeDefined();
+    expect(agent!.allowed_tools).toEqual(["Read", "Grep", "Edit"]);
+    expect(agent!.max_turns).toBe(7);
+    expect(agent!.permission_mode).toBe("acceptEdits");
+
+    // It still fires via herdctl's cron engine (origin scheduled, depth 0) — the
+    // scoping doesn't break the schedule path.
+    const found = await poll(() => scheduledChats(project.slug), (c) => c.length >= 1);
+    expect(found.length).toBeGreaterThanOrEqual(1);
+    expect(found[0]!.provenance).toEqual({ origin: "scheduled", depth: 0 });
+
+    // The fired turn RAN the trigger's prompt on the SCOPED agent — the transcript is
+    // discoverable under `trigger-<slug>-scoped` and echoes the codeword.
+    const msgs = await t.herdctl.sessionMessages(
+      triggerAgentName(project.slug, "scoped"),
+      found[0]!.sessionId,
+    );
+    const userText = msgs
+      .filter((m) => m.role === "user")
+      .map((m) => (typeof m.content === "string" ? m.content : JSON.stringify(m.content)))
+      .join("\n");
+    expect(userText).toContain(codeword);
+
+    await t.triggers.remove(project.slug, "scoped");
+    // Removing a scoped schedule tears its own agent down again.
+    expect(armedTriggerAgent(project.slug, "scoped")).toBeUndefined();
+  });
+
+  it("a schedule with NO `run.tools` inherits the keeper default (no scoped agent; runs as keeper)", async () => {
+    const project = await freshProject();
+    const codeword = `unscoped-sched-${project.slug}`;
+    // No `tools` allow-list → the pre-T2 behaviour: the schedule runs on the keeper
+    // with the project-agent default toolset, and registers NO scoped agent.
+    await t.triggers.set(project.slug, "plain", {
+      trigger: { type: "schedule", interval: "1h" },
+      run: { prompt: `UNSCOPED SCHEDULE RAN: ${codeword}` },
+      enabled: true,
+    });
+    expect(armedTriggerAgent(project.slug, "plain")).toBeUndefined();
+
+    // It fires (origin scheduled) exactly as before…
+    const found = await poll(() => scheduledChats(project.slug), (c) => c.length >= 1);
+    expect(found.length).toBeGreaterThanOrEqual(1);
+    expect(found[0]!.provenance).toEqual({ origin: "scheduled", depth: 0 });
+
+    // …running on the KEEPER agent (its transcript is discoverable under the keeper).
+    const msgs = await t.herdctl.sessionMessages(
+      keeperAgentName(project.slug),
+      found[0]!.sessionId,
+    );
+    const userText = msgs
+      .filter((m) => m.role === "user")
+      .map((m) => (typeof m.content === "string" ? m.content : JSON.stringify(m.content)))
+      .join("\n");
+    expect(userText).toContain(codeword);
+
+    await t.triggers.remove(project.slug, "plain");
   });
 
   it("does NOT fire a DISABLED trigger (event or schedule)", async () => {

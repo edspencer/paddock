@@ -130,12 +130,30 @@ describe("TriggerService (T1 surface consumed by T2–T5)", () => {
     expect(await triggers.remove(p.slug, "cleanup")).toBe(false);
   });
 
-  it("remove of a SCHEDULE trigger re-registers the keeper (drops the forwarded entry)", async () => {
+  it("remove of an UNSCOPED SCHEDULE re-registers the keeper only (no own agent to tear down)", async () => {
     const p = await store.create({ name: "RmSched Proj" });
     await triggers.set(p.slug, "daily", { trigger: { type: "schedule", interval: "1h" }, run: { prompt: "x" }, enabled: true });
     keeperReregisters = [];
     await triggers.remove(p.slug, "daily");
     expect(keeperReregisters).toEqual([p.slug]);
+    // An unscoped schedule never registered a `trigger-<slug>-<name>` agent (T2).
     expect(removedAgents).toEqual([]);
+  });
+
+  it("remove of a SCOPED SCHEDULE (T2) tears down its own agent AND re-registers the keeper", async () => {
+    const p = await store.create({ name: "RmScoped Proj" });
+    // A `run.tools` allow-list makes the schedule run on its own scoped agent (T2).
+    await triggers.set(p.slug, "reader", {
+      trigger: { type: "schedule", interval: "1h" },
+      run: { prompt: "x", tools: ["Read", "Grep"] },
+      enabled: true,
+    });
+    keeperReregisters = [];
+    removedAgents = [];
+    await triggers.remove(p.slug, "reader");
+    // Both: the scoped agent is torn down AND the keeper drops the forwarded cron entry.
+    expect(removedAgents).toEqual([{ slug: p.slug, name: "reader" }]);
+    expect(keeperReregisters).toEqual([p.slug]);
+    expect(await triggers.get(p.slug, "reader")).toBeNull();
   });
 });

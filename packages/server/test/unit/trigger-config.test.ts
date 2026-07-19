@@ -13,6 +13,7 @@ import {
   sanitizeTriggers,
   isValidTriggerName,
   triggerToAgentToolConfig,
+  triggerRunsOnOwnAgent,
   triggersToHerdctlSchedules,
   scheduleTriggerToHerdctl,
   triggerPromptFileAbsPath,
@@ -227,6 +228,46 @@ describe("trigger-config: projection helpers", () => {
     const forwarded = triggersToHerdctlSchedules(map);
     expect(Object.keys(forwarded ?? {})).toEqual(["sched"]);
     expect(forwarded?.sched?.type).toBe("cron");
+  });
+
+  // T2 (#307): which triggers run on their OWN scoped `trigger-<slug>-<name>` agent
+  // (tool config = capability) vs. as the keeper (project-agent default toolset).
+  it("triggerRunsOnOwnAgent: event ALWAYS; schedule iff a non-empty tools allow-list", () => {
+    const mk = (raw: unknown) => sanitizeTrigger(raw)!;
+    // Event triggers ALWAYS run on their own agent — even a tool-less curator ([]),
+    // whose empty allow-list is a deliberate deny-all (unchanged from Epic G).
+    expect(
+      triggerRunsOnOwnAgent(mk({ trigger: { type: "event", on: "onArchive" }, run: run() })),
+    ).toBe(true);
+    expect(
+      triggerRunsOnOwnAgent(
+        mk({ trigger: { type: "event", on: "onArchive" }, run: run({ tools: [] }) }),
+      ),
+    ).toBe(true);
+    // A SCHEDULE with a non-empty tools allow-list is scoped (T2)…
+    expect(
+      triggerRunsOnOwnAgent(
+        mk({ trigger: { type: "schedule", cron: "0 9 * * *" }, run: run({ tools: ["Read"] }) }),
+      ),
+    ).toBe(true);
+    // …but a schedule with NO tools (default []) runs as the keeper — behaviour
+    // unchanged from pre-T2, when schedules ran with the keeper's full tools.
+    expect(
+      triggerRunsOnOwnAgent(
+        mk({ trigger: { type: "schedule", interval: "1h" }, run: run() }),
+      ),
+    ).toBe(false);
+    expect(
+      triggerRunsOnOwnAgent(
+        mk({ trigger: { type: "schedule", interval: "1h" }, run: run({ tools: [] }) }),
+      ),
+    ).toBe(false);
+    // Webhook is reserved (never fired) → registers no agent.
+    expect(
+      triggerRunsOnOwnAgent(
+        mk({ trigger: { type: "webhook", path: "/x" }, run: run({ tools: ["Bash"] }) }),
+      ),
+    ).toBe(false);
   });
 
   it("triggerPromptFileAbsPath resolves under .paddock/triggers, rejects traversal/non-md", () => {
