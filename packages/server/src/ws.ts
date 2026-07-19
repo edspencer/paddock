@@ -914,8 +914,9 @@ export function makeChatHandler(deps: {
     } finally {
       turn.end();
     }
-    // Post-wake curation sweep, same as a human turn (never for scratch).
-    if (slug !== SCRATCH_SLUG && deps.sweep) deps.sweep.enqueue(slug);
+    // Post-wake curation sweep, same as a human turn (never for scratch). T5: routed
+    // through the `afterTurn` event so the folded-in curator dispatches once.
+    emitAfterTurn(slug, resolvedSession ?? null);
   });
 
   /** Resolve a project's effective keeper drive mode (override else instance default). */
@@ -1309,6 +1310,32 @@ export function makeChatHandler(deps: {
   // reserved for the sweeper fold-in (T5) and not emitted yet.
   deps.events?.on("onArchive", (payload) => {
     void dispatchEventTriggers(payload.slug, "onArchive", { sessionId: payload.sessionId });
+  });
+
+  /**
+   * Signal a completed turn's post-turn CURATION (Epic T / T5) — the sweeper, folded in
+   * as the default `curate-overview` (event/afterTurn) trigger. Emits the `afterTurn`
+   * lifecycle event so the curator dispatches EXACTLY ONCE per turn (its enabled gate +
+   * per-project prompt extension resolved inside SweepService). Scratch never curates.
+   * Falls back to a direct `sweep.enqueue` when the event bus isn't wired (older
+   * callers / tests), so behaviour is identical with or without the bus. Called from
+   * every post-turn commit site (a human chat turn, a session-mode wake, and every
+   * server-initiated `startAgentTurn`) — the ONE place the sweeper is now triggered.
+   */
+  function emitAfterTurn(slug: string, sessionId: string | null): void {
+    if (slug === SCRATCH_SLUG) return;
+    if (deps.events) deps.events.emit("afterTurn", { slug, sessionId });
+    else deps.sweep?.enqueue(slug);
+  }
+
+  // The folded-in sweeper (T5): `afterTurn` drives the default post-turn curator. Unlike
+  // `onArchive`, afterTurn is NOT fanned out to generic `trigger-<slug>-<name>` agents —
+  // the curator is tool-less and executed by SweepService (returns marked text, Paddock
+  // writes OVERVIEW.md/CHANGELOG.md). So this is the SOLE afterTurn consumer, which is
+  // what guarantees the sweeper runs exactly once per turn (no double-curation).
+  deps.events?.on("afterTurn", (payload) => {
+    if (payload.slug === SCRATCH_SLUG) return;
+    deps.sweep?.enqueue(payload.slug);
   });
 
   /**
@@ -1929,7 +1956,8 @@ export function makeChatHandler(deps: {
         } catch {
           /* non-fatal */
         }
-        if (result.success && deps.sweep) deps.sweep.enqueue(projectSlug);
+        // T5: post-turn curation via the `afterTurn` event (folded-in sweeper).
+        if (result.success) emitAfterTurn(projectSlug, finalSession);
         // Layer 3 (issue #301): arm a post-turn recovery watch for a session-mode
         // keeper turn that stayed alive — including a recovery re-drive itself, so a
         // re-drive that hangs again is caught (bounded by the per-session retry cap).
@@ -2451,9 +2479,9 @@ export function makeChatHandler(deps: {
         // project, enqueue a coalesced/debounced curation sweep. Out of band —
         // never blocks or breaks chat, and can't recurse (the sweep uses a
         // separate agent triggered off the user-chat path). Skipped for scratch.
-        if (result.success && slug !== SCRATCH_SLUG && deps.sweep) {
-          deps.sweep.enqueue(slug);
-        }
+        // T5: routed through the `afterTurn` event so the folded-in `curate-overview`
+        // trigger is the single dispatch (no double-curation).
+        if (result.success) emitAfterTurn(slug, result.sessionId ?? resolvedSession ?? null);
 
         // Force a session-list refresh so a brand-new chat surfaces immediately
         // (rather than waiting out the discovery cache). Non-fatal.

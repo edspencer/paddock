@@ -83,6 +83,25 @@ describe("integration: post-turn sweep curates OVERVIEW + CHANGELOG", () => {
     expect(claude).toContain("A durable convention discovered from recent activity.");
   });
 
+  it("fires the curate trigger EXACTLY ONCE per turn via afterTurn (no double-sweep) (T5)", async () => {
+    // The sweeper is now the default `curate-overview` (event/afterTurn) trigger: ws.ts
+    // emits ONE `afterTurn` event per completed turn and the sole afterTurn consumer
+    // enqueues the sweep. A single project turn must therefore enqueue exactly once —
+    // the regression guard against curating twice (legacy direct-enqueue + new trigger).
+    const enqueueSpy = vi.spyOn(t.sweep, "enqueue");
+    const mark = ws.mark();
+    ws.send({
+      type: "chat:send",
+      payload: { projectSlug: "sweep-proj", sessionId: null, message: "one turn, one sweep" },
+    });
+    await ws.waitFor(isComplete("sweep-proj"), { from: mark });
+    // Give the fire-and-forget afterTurn listener its macrotask to run.
+    await new Promise((r) => setTimeout(r, 50));
+    const calls = enqueueSpy.mock.calls.filter((c) => c[0] === "sweep-proj");
+    expect(calls.length).toBe(1);
+    enqueueSpy.mockRestore();
+  });
+
   it("does NOT sweep scratch chats", async () => {
     const enqueueSpy = vi.spyOn(t.sweep, "enqueue");
     const mark = ws.mark();

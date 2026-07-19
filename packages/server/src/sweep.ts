@@ -35,6 +35,11 @@ import path from "node:path";
 import type { HerdctlService } from "./herdctl.js";
 import { keeperAgentName } from "./herdctl.js";
 import type { ProjectStore, Project } from "./projects.js";
+import {
+  curatorTriggerOf,
+  triggerPromptFileAbsPath,
+  type PaddockTrigger,
+} from "./trigger-config.js";
 
 /** Minimal logger shape (Fastify's logger satisfies this). */
 export interface SweepLogger {
@@ -83,6 +88,20 @@ const SWEEP_INSTRUCTIONS_FILE = ".paddock/hooks/sweep.md";
  * preserves the file's markdown line structure and only truncates the overflow.
  */
 const SWEEP_INSTRUCTIONS_MAX = 8000;
+
+/**
+ * Whether post-turn curation is ON for a project. A project that has NOT overridden the
+ * default (no curator trigger) → ON (behaves exactly as today). A project that DECLARES
+ * a `curate-overview` trigger uses its `enabled` flag authoritatively — so curation can
+ * be switched OFF by declaring the trigger `enabled: false` (and, per the frozen T1
+ * default of `enabled: false`, a declared curator must set `enabled: true` to sweep).
+ */
+export function isCurationEnabled(project: {
+  triggers?: Record<string, PaddockTrigger>;
+}): boolean {
+  const t = curatorTriggerOf(project.triggers);
+  return t ? t.enabled === true : true;
+}
 
 export class SweepService {
   private readonly herdctl: HerdctlService;
@@ -166,6 +185,15 @@ export class SweepService {
       return; // project deleted between enqueue and run — drop silently.
     }
 
+    // T5: the sweeper is the default `curate-overview` (event/afterTurn) trigger. A
+    // project that declares it `enabled: false` has switched curation OFF — skip
+    // entirely (no sweep, no watermark churn). Absent trigger ⇒ implicit default ⇒ ON,
+    // so an un-customised project is unaffected.
+    if (!isCurationEnabled(project)) {
+      this.log.info({ slug }, "sweep: skipped (curate-overview trigger disabled)");
+      return;
+    }
+
     const sessions = await this.herdctl.recentSessions(project, 10).catch(() => []);
     const newestMtime = sessions.reduce<string | null>((max, s) => {
       return !max || s.mtime > max ? s.mtime : max;
@@ -214,13 +242,22 @@ export class SweepService {
     project: Project,
     sessions: Awaited<ReturnType<HerdctlService["recentSessions"]>>,
   ): Promise<void> {
-    const [overview, changelog, claudeMd, digest, extraInstructions] = await Promise.all([
-      this.projects.readOverview(project.slug),
-      this.projects.readFile(project.slug, "CHANGELOG.md").catch(() => ""),
-      this.projects.readClaudeMd(project.slug).catch(() => ""),
-      this.buildDigest(project, sessions),
-      this.readSweepInstructions(project.slug),
-    ]);
+    const [overview, changelog, claudeMd, digest, fileInstructions, triggerInstructions] =
+      await Promise.all([
+        this.projects.readOverview(project.slug),
+        this.projects.readFile(project.slug, "CHANGELOG.md").catch(() => ""),
+        this.projects.readClaudeMd(project.slug).catch(() => ""),
+        this.buildDigest(project, sessions),
+        this.readSweepInstructions(project.slug),
+        this.readTriggerInstructions(project),
+      ]);
+
+    // The curator trigger's own prompt extension (design §2.1 #4) and the git-tracked
+    // `.paddock/hooks/sweep.md` are two channels of the SAME per-project curator
+    // guidance — fold both under the one `=== EXTRA … ===` heading (trigger first).
+    const extraInstructions = [triggerInstructions, fileInstructions]
+      .filter((s) => s.length > 0)
+      .join("\n\n");
 
     const prompt = this.curationPrompt({
       project,
@@ -347,6 +384,39 @@ export class SweepService {
       this.log.warn(
         { slug, length: text.length, cap: SWEEP_INSTRUCTIONS_MAX },
         "sweep: .paddock/hooks/sweep.md exceeds cap — truncating for the prompt",
+      );
+      return text.slice(0, SWEEP_INSTRUCTIONS_MAX) + "\n…[truncated]";
+    }
+    return text;
+  }
+
+  /**
+   * Read the OPTIONAL curator-trigger prompt extension (T5) — the `run.prompt` /
+   * `run.promptFile` of the project's `curate-overview` (event/afterTurn) trigger,
+   * appended to the sweeper's curation prompt exactly like `.paddock/hooks/sweep.md`.
+   * This is how the design's #4 example (`"Also maintain GLOSSARY.md of domain terms."`)
+   * extends the built-in sweep. `run.promptFile` resolves under `.paddock/triggers/`
+   * (traversal-guarded, `.md`-only) and is read fresh at fire time, exactly as the
+   * generic trigger fire path does. Absent trigger / neither field / a read error ⇒ ""
+   * (no extra instructions), so curation is never broken by a bad/removed file. Capped
+   * like every sibling prompt field so it can't bloat the sweep's token cost.
+   */
+  private async readTriggerInstructions(project: Project): Promise<string> {
+    const trigger = curatorTriggerOf(project.triggers);
+    if (!trigger) return "";
+    let body = typeof trigger.run.prompt === "string" ? trigger.run.prompt : "";
+    if (trigger.run.promptFile) {
+      const abs = triggerPromptFileAbsPath(project.workingDir, trigger.run.promptFile);
+      if (abs) {
+        const content = await fs.readFile(abs, "utf8").catch(() => null);
+        if (content !== null) body = content;
+      }
+    }
+    const text = body.trim();
+    if (text.length > SWEEP_INSTRUCTIONS_MAX) {
+      this.log.warn(
+        { slug: project.slug, length: text.length, cap: SWEEP_INSTRUCTIONS_MAX },
+        "sweep: curate-overview trigger prompt exceeds cap — truncating",
       );
       return text.slice(0, SWEEP_INSTRUCTIONS_MAX) + "\n…[truncated]";
     }

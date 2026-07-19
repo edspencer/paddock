@@ -80,6 +80,8 @@ import {
   triggerToAgentToolConfig,
   triggersToHerdctlSchedules,
   triggerRunsOnOwnAgent,
+  isCuratorTrigger,
+  curatorTriggerOf,
   type PaddockTrigger,
 } from "./trigger-config.js";
 
@@ -462,7 +464,10 @@ export class HerdctlService {
   async registerTriggerAgents(project: Project): Promise<void> {
     if (!this.fleet) return;
     for (const [name, trigger] of Object.entries(project.triggers ?? {})) {
-      if (!triggerRunsOnOwnAgent(trigger)) continue;
+      // The post-turn CURATOR (event/afterTurn) trigger, T5, never runs as its own
+      // agent — SweepService executes it via the project's `sweeper-<slug>` agent.
+      // Registering a `trigger-<slug>-<name>` for it would be a dead, never-fired agent.
+      if (!triggerRunsOnOwnAgent(trigger) || isCuratorTrigger(trigger)) continue;
       await this.fleet.addAgent(this.triggerAgentConfig(project, name, trigger), { replace: true });
     }
   }
@@ -477,7 +482,9 @@ export class HerdctlService {
    */
   async ensureTriggerAgent(project: Project, name: string, trigger: PaddockTrigger): Promise<void> {
     if (!this.fleet) return;
-    if (!triggerRunsOnOwnAgent(trigger)) return;
+    // The curator (event/afterTurn) trigger, T5, is executed by SweepService (via the
+    // `sweeper-<slug>` agent), not as its own agent — so never register one for it.
+    if (!triggerRunsOnOwnAgent(trigger) || isCuratorTrigger(trigger)) return;
     await this.fleet.addAgent(this.triggerAgentConfig(project, name, trigger), { replace: true });
   }
 
@@ -1476,13 +1483,19 @@ export class HerdctlService {
    * denied_tools to reason about (all irrelevant with zero tools).
    */
   private sweeperAgentConfig(project: Project): Record<string, unknown> & { name: string } {
+    // T5: the sweeper IS the default `curate-overview` (event/afterTurn) trigger. When a
+    // project declares that trigger with a `run.model`, honor it as the sweeper agent's
+    // model (design §2.1 #4). herdctl's per-fire trigger API has no model override, so
+    // the per-project `sweeper-<slug>` agent carries it — applied at (re-)registration
+    // (boot / `ensureProjectAgent`). Absent ⇒ the cheap curation default, unchanged.
+    const curatorModel = curatorTriggerOf(project.triggers)?.run.model;
     return {
       name: sweeperAgentName(project.slug),
       description: `Overview/changelog curator (sweeper) for project ${project.name}.`,
       working_directory: project.dir,
       // Explicit CLI runtime (Max plan) — see the scratch agent note.
       runtime: "cli",
-      model: SWEEPER_DEFAULT_MODEL,
+      model: curatorModel ?? SWEEPER_DEFAULT_MODEL,
       // Tool-less: a handful of turns is plenty since there are no tool loops.
       max_turns: 4,
       // NO tools. The sweeper returns text only; SweepService does the writing.

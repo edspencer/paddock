@@ -17,6 +17,9 @@ import {
   triggersToHerdctlSchedules,
   scheduleTriggerToHerdctl,
   triggerPromptFileAbsPath,
+  isCuratorTrigger,
+  curatorTriggerOf,
+  CURATE_TRIGGER_NAME,
   TRIGGER_DEFAULT_MAX_TURNS,
   type PaddockTrigger,
 } from "../../src/trigger-config.js";
@@ -277,5 +280,44 @@ describe("trigger-config: projection helpers", () => {
     expect(triggerPromptFileAbsPath(wd, "/abs/x.md")).toBeNull();
     expect(triggerPromptFileAbsPath(wd, "notes.txt")).toBeNull();
     expect(triggerPromptFileAbsPath(wd, "")).toBeNull();
+  });
+});
+
+describe("trigger-config: curator (afterTurn) — the folded-in sweeper (T5)", () => {
+  const mk = (t: Partial<PaddockTrigger> & { trigger: PaddockTrigger["trigger"] }): PaddockTrigger =>
+    sanitizeTrigger({ enabled: true, run: run(), ...t }) as PaddockTrigger;
+
+  it("isCuratorTrigger is true ONLY for event/afterTurn triggers", () => {
+    expect(isCuratorTrigger(mk({ trigger: { type: "event", on: "afterTurn" } }))).toBe(true);
+    // Any other event, or any schedule/webhook, is NOT the curator.
+    expect(isCuratorTrigger(mk({ trigger: { type: "event", on: "onArchive" } }))).toBe(false);
+    expect(isCuratorTrigger(mk({ trigger: { type: "schedule", cron: "0 9 * * *" } }))).toBe(false);
+    expect(isCuratorTrigger(mk({ trigger: { type: "webhook", path: "/x" } }))).toBe(false);
+  });
+
+  it("curatorTriggerOf resolves the canonical curate-overview trigger", () => {
+    const curate = mk({ trigger: { type: "event", on: "afterTurn" } });
+    const other = mk({ trigger: { type: "event", on: "onArchive" } });
+    const map = { [CURATE_TRIGGER_NAME]: curate, "archive-cleanup": other };
+    expect(curatorTriggerOf(map)).toBe(curate);
+  });
+
+  it("curatorTriggerOf falls back to the first structural curator under a different name", () => {
+    const curate = mk({ trigger: { type: "event", on: "afterTurn" } });
+    expect(curatorTriggerOf({ "my-curator": curate })).toBe(curate);
+  });
+
+  it("curatorTriggerOf returns null when the project declares no curator (implicit default)", () => {
+    expect(curatorTriggerOf(undefined)).toBeNull();
+    expect(curatorTriggerOf({})).toBeNull();
+    expect(
+      curatorTriggerOf({ "archive-cleanup": mk({ trigger: { type: "event", on: "onArchive" } }) }),
+    ).toBeNull();
+  });
+
+  it("ignores a non-curator trigger that happens to be NAMED curate-overview", () => {
+    // A schedule named `curate-overview` is NOT the curator (structural check wins).
+    const sched = mk({ trigger: { type: "schedule", cron: "0 9 * * *" } });
+    expect(curatorTriggerOf({ [CURATE_TRIGGER_NAME]: sched })).toBeNull();
   });
 });
