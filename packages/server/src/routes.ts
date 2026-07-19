@@ -32,7 +32,7 @@ import {
 } from "./schedule-config.js";
 import { AttachmentStore, collectAttachmentIds } from "./attachments.js";
 import type { HerdctlService } from "./herdctl.js";
-import { SCRATCH_SLUG, SCRATCH_AGENT, keeperAgentName, hookAgentName, HOOK_AGENT_PREFIX } from "./herdctl.js";
+import { SCRATCH_SLUG, SCRATCH_AGENT, keeperAgentName, hookAgentName, HOOK_AGENT_PREFIX, TRIGGER_AGENT_PREFIX, triggerAgentName } from "./herdctl.js";
 import type { GitService } from "./git.js";
 import type { GithubAuth } from "./github-auth.js";
 import type { ArchiveStore } from "./archive.js";
@@ -86,12 +86,14 @@ import {
   toChatHookInfo,
   type ChatHookInfo,
 } from "./hook-config.js";
-import type { TriggerService } from "./triggers.js";
+import { toTriggerDto, type TriggerService } from "./triggers.js";
 import {
   TRIGGER_EVENTS,
   TRIGGER_TYPES,
   isValidTriggerName,
   sanitizeTrigger,
+  toChatTriggerInfo,
+  type ChatTriggerInfo,
 } from "./trigger-config.js";
 
 export interface RouteDeps {
@@ -379,6 +381,9 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
       // Hook capability descriptor for hook chats (G3 / GG-6) — truthful from the
       // registered hook agent config. A no-op for the keeper chats that dominate.
       const hookOf = makeHookResolver(project);
+      // Trigger capability descriptor for trigger chats (Epic T / T4) — truthful from
+      // the registered trigger agent config. A no-op for the keeper chats that dominate.
+      const triggerOf = makeTriggerResolver(project);
       // Deliberately NO usage resolver here (issue #116): the per-chat context
       // ring requires streaming+parsing each session's full transcript, which is
       // O(chats × transcript size) and blocked the whole ProjectView from
@@ -397,6 +402,7 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
           lastSeenOf,
           provenanceOf,
           hookOf,
+          triggerOf,
         ),
       };
     } catch (err) {
@@ -1100,6 +1106,7 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
       const provenanceOf = (s: import("@herdctl/core").DiscoveredSession) =>
         runProvenance.get(s.sessionId);
       const hookOf = makeHookResolver(project);
+      const triggerOf = makeTriggerResolver(project);
       // No usage resolver — see the GET /api/projects/:slug route (issue #116).
       // Usage rings are fetched separately so a list refresh stays cheap.
       return {
@@ -1112,6 +1119,7 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
           lastSeenOf,
           provenanceOf,
           hookOf,
+          triggerOf,
         ),
       };
     } catch (err) {
@@ -1658,6 +1666,7 @@ function toChatDto(
   lastSeen?: number,
   provenance?: RunProvenance | null,
   hook?: ChatHookInfo | null,
+  trigger?: ChatTriggerInfo | null,
 ) {
   const preview = previewOverride ?? s.preview;
   return {
@@ -1693,6 +1702,12 @@ function toChatDto(
     // config herdctl enforces. Drives the floating capability banner atop the chat.
     // Absent for non-hook chats.
     ...(hook ? { hook } : {}),
+    // For a TRIGGER chat (Epic T / T4): the truthful-from-config capability
+    // descriptor — trigger type (schedule/event/webhook) + WHEN it fires + granted
+    // tools — read from the same `trigger-<slug>-<name>` agent config herdctl
+    // enforces. Drives the floating capability banner atop the chat. Absent for
+    // non-trigger chats (the unified successor to `hook`).
+    ...(trigger ? { trigger } : {}),
   };
 }
 
@@ -1745,29 +1760,33 @@ async function buildProjectChats(
   hookOf?: (
     s: import("@herdctl/core").DiscoveredSession,
   ) => Promise<ChatHookInfo | undefined>,
+  triggerOf?: (
+    s: import("@herdctl/core").DiscoveredSession,
+  ) => Promise<ChatTriggerInfo | undefined>,
 ) {
   return Promise.all(
     sessions.map(async (s) => {
-      // Resolve the usage ring, archived flag, read-state, provenance, hook, and name.
+      // Resolve the usage ring, archived flag, read-state, provenance, hook/trigger, name.
       const usage = usageOf ? await usageOf(s).catch(() => null) : null;
       const archived = archivedOf ? await archivedOf(s).catch(() => false) : false;
       const turnAt = lastTurnAt?.get(s.sessionId);
       const lastSeen = lastSeenOf ? await lastSeenOf(s).catch(() => 0) : 0;
       const provenance = provenanceOf ? await provenanceOf(s).catch(() => null) : null;
       const hook = hookOf ? await hookOf(s).catch(() => undefined) : undefined;
+      const trigger = triggerOf ? await triggerOf(s).catch(() => undefined) : undefined;
       const pollutedPreview =
         !s.customName && !s.autoName && s.preview?.startsWith(PRELOAD_CONTEXT_OPEN);
       if (!pollutedPreview)
-        return toChatDto(s, undefined, usage, archived, turnAt, lastSeen, provenance, hook);
+        return toChatDto(s, undefined, usage, archived, turnAt, lastSeen, provenance, hook, trigger);
 
       const full = await readFirstUserText(projectDir, s.sessionId).catch(() => undefined);
       const cleaned = stripPreloadWrapper(full ?? s.preview ?? "").trim();
       // couldn't recover
       if (!cleaned)
-        return toChatDto(s, undefined, usage, archived, turnAt, lastSeen, provenance, hook);
+        return toChatDto(s, undefined, usage, archived, turnAt, lastSeen, provenance, hook, trigger);
       const preview =
         cleaned.length > PREVIEW_MAX ? `${cleaned.slice(0, PREVIEW_MAX)}...` : cleaned;
-      return toChatDto(s, preview, usage, archived, turnAt, lastSeen, provenance, hook);
+      return toChatDto(s, preview, usage, archived, turnAt, lastSeen, provenance, hook, trigger);
     }),
   );
 }
@@ -1794,6 +1813,36 @@ function makeHookResolver(
   }
   return async (s) => {
     if (!s.agentName || !s.agentName.startsWith(HOOK_AGENT_PREFIX)) return undefined;
+    return byAgentName.get(s.agentName);
+  };
+}
+
+/**
+ * Build the `triggerOf` resolver for {@link buildProjectChats} (Epic T / T4 — the
+ * unified successor to {@link makeHookResolver}): for a chat whose attributed agent
+ * is a `trigger-<slug>-<name>` agent, resolve its trigger's truthful-from-config
+ * capability descriptor for the floating capability banner. Returns `undefined` for
+ * every non-trigger chat (the common case).
+ *
+ * Built from the ALREADY-LOADED project record (no extra disk reads): the project's
+ * declared triggers are projected ONCE into an `agentName -> ChatTriggerInfo` map
+ * (via the same `toTriggerDto` → `toChatTriggerInfo` projection the trigger service
+ * uses, so the descriptor is truthful from config), and each trigger chat is an O(1)
+ * map lookup. The `TRIGGER_AGENT_PREFIX` fast-path skips even the lookup for the
+ * keeper chats that dominate the list.
+ */
+function makeTriggerResolver(
+  project: Project,
+): (s: import("@herdctl/core").DiscoveredSession) => Promise<ChatTriggerInfo | undefined> {
+  const byAgentName = new Map<string, ChatTriggerInfo>();
+  for (const [name, trigger] of Object.entries(project.triggers ?? {})) {
+    byAgentName.set(
+      triggerAgentName(project.slug, name),
+      toChatTriggerInfo(toTriggerDto(project.slug, name, trigger)),
+    );
+  }
+  return async (s) => {
+    if (!s.agentName || !s.agentName.startsWith(TRIGGER_AGENT_PREFIX)) return undefined;
     return byAgentName.get(s.agentName);
   };
 }

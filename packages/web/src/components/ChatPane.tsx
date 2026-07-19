@@ -40,6 +40,7 @@ import type {
   BashDetails,
   ChatCompleteUsage,
   ChatHookInfo,
+  ChatTriggerInfo,
   ChatUsage,
   EditDiff,
   HistoryMessage,
@@ -67,6 +68,7 @@ import {
   taskNotificationSummary,
 } from "../lib/format";
 import { HookCapabilityBanner } from "./HookCapabilityBanner";
+import { TriggerCapabilityBanner } from "./TriggerCapabilityBanner";
 import { SentFileBlock } from "./SentFileBlock";
 import { InlineImage } from "./MediaImage";
 import { PaddockManageBody, PaddockManageProjectContext } from "./PaddockManageBlock";
@@ -277,6 +279,14 @@ export interface ChatPaneProps {
    */
   hook?: ChatHookInfo;
   /**
+   * For a TRIGGER chat (Epic T / T4): the owning trigger's truthful-from-config
+   * capability descriptor. When present, a read-only capability banner floats atop the
+   * message history stating that this is a trigger agent, its type + firing condition,
+   * and its granted tools. Absent for every non-trigger chat (the unified successor to
+   * {@link hook}).
+   */
+  trigger?: ChatTriggerInfo;
+  /**
    * The project's per-project keeper-chat recovery override (issue #301), from the
    * Project DTO. Combined with the instance default (GET /api/models
    * `recoveryDefault`) to resolve whether the killed-task Continue affordance is
@@ -301,6 +311,7 @@ export function ChatPane({
   emptyHint,
   placeholder,
   hook,
+  trigger,
   projectRecovery,
 }: ChatPaneProps) {
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -1141,9 +1152,15 @@ export function ChatPane({
         className="flex-1 overflow-y-auto overscroll-contain"
       >
         <div className="mx-auto w-full max-w-3xl px-4 py-6">
-          {/* Read-only capability banner atop a HOOK chat (Epic G / G3, GG-6):
-              truthful-from-config statement of what this hook agent is + may do. */}
-          {hook && <HookCapabilityBanner hook={hook} projectSlug={projectSlug} />}
+          {/* Read-only capability banner atop a TRIGGER chat (Epic T / T4) or a
+              legacy HOOK chat (Epic G / G3, GG-6): a truthful-from-config statement of
+              what this agent is + may do. A trigger banner supersedes the hook banner
+              (they never co-occur — a chat's agent is one or the other). */}
+          {trigger ? (
+            <TriggerCapabilityBanner trigger={trigger} projectSlug={projectSlug} />
+          ) : (
+            hook && <HookCapabilityBanner hook={hook} projectSlug={projectSlug} />
+          )}
 
           {hydrating && (
             <div className="space-y-3">

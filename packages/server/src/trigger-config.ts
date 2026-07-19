@@ -415,6 +415,75 @@ export function triggersToHerdctlSchedules(
 }
 
 /**
+ * The compact, web-facing capability descriptor for a TRIGGER chat (Epic T / T4 —
+ * the unified successor to {@link import("./hook-config.js").ChatHookInfo}). Rides on
+ * the chat DTO whenever a chat's attributed agent is a `trigger-<slug>-<name>` agent,
+ * so the floating capability banner can state — TRUTHFULLY FROM CONFIG — what the
+ * trigger agent is: its trigger {@link type} (schedule / event / webhook) and WHEN it
+ * fires (an event `on`, a `cron`/`interval`, or a webhook `path`), its herdctl agent
+ * name, whether it's armed, and the exact tool grant herdctl enforces on its turns.
+ * Built by {@link toChatTriggerInfo} from the same {@link TriggerRun} that
+ * {@link triggerToAgentToolConfig} projects onto the registered agent, so the banner
+ * and the enforced capability can never disagree.
+ */
+export interface ChatTriggerInfo {
+  /** The trigger's name (`project.yaml` map key + the `<name>` in its agent name). */
+  name: string;
+  /** WHICH kind of trigger fires this chat (schedule / event / webhook). */
+  type: TriggerType;
+  /** For an `event` trigger: the lifecycle event that fires it (`onArchive`/`afterTurn`). */
+  event?: TriggerEvent;
+  /** For a `schedule` trigger: the cron expression, when timer-driven by cron. */
+  cron?: string;
+  /** For a `schedule` trigger: the interval string, when timer-driven by interval. */
+  interval?: string;
+  /** For a `webhook` trigger: the reserved ingress path. */
+  path?: string;
+  /** The herdctl agent enforcing the capability (`trigger-<slug>-<name>`). */
+  agentName: string;
+  /** Whether the trigger is armed (a disabled trigger's past chats are still shown). */
+  enabled: boolean;
+  /** The exact tool grant (herdctl `allowed_tools`); `[]` = a tool-less trigger. */
+  allowedTools: string[];
+  /** The permission mode the trigger's turns run under, when it sets one. */
+  permissionMode?: TriggerPermissionMode;
+  /** The trigger agent's model override, when set (else the keeper default applies). */
+  model?: string;
+  /** The trigger's max agent turns (its runaway bound). */
+  maxTurns: number;
+}
+
+/**
+ * Project a persisted trigger ({@link TriggerDto} fields) onto the web-facing
+ * {@link ChatTriggerInfo}, resolving the SAME capability defaults
+ * {@link triggerToAgentToolConfig} uses so the banner mirrors the enforced grant
+ * exactly: an absent/empty allow-list surfaces as a tool-less `[]`, and an unset
+ * `maxTurns` surfaces the {@link TRIGGER_DEFAULT_MAX_TURNS} bound herdctl applies.
+ * The WHEN fields are read off the discriminated `trigger` so the banner can state
+ * the trigger type and the exact firing condition.
+ */
+export function toChatTriggerInfo(dto: TriggerDto): ChatTriggerInfo {
+  const when = dto.trigger;
+  const run = dto.run;
+  const info: ChatTriggerInfo = {
+    name: dto.name,
+    type: when.type,
+    agentName: dto.agentName,
+    enabled: dto.enabled === true,
+    allowedTools: run.tools ?? [],
+    maxTurns: run.maxTurns ?? TRIGGER_DEFAULT_MAX_TURNS,
+  };
+  if (when.type === "event") info.event = when.on;
+  else if (when.type === "schedule") {
+    if (when.cron !== undefined) info.cron = when.cron;
+    if (when.interval !== undefined) info.interval = when.interval;
+  } else if (when.type === "webhook") info.path = when.path;
+  if (run.permissionMode) info.permissionMode = run.permissionMode;
+  if (run.model) info.model = run.model;
+  return info;
+}
+
+/**
  * Resolve a `promptFile` to an absolute path under the project's `.paddock/triggers/`
  * dir, or `null` if it escapes that dir, is absolute, or isn't a `.md` file. The name
  * is treated as relative to the triggers dir (so a bare `"daily.md"` resolves to

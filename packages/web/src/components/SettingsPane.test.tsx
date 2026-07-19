@@ -13,9 +13,8 @@ vi.mock("../lib/api", async () => {
     api: {
       updateProject: (...a: unknown[]) => updateProject(...a),
       getModels: (...a: unknown[]) => getModels(...a),
-      // SchedulesSection (issue #266) loads on mount; a no-schedules resolve keeps
-      // these metadata/keeper-agent tests focused (schedules have their own suite).
-      listSchedules: () => Promise.resolve({ schedules: [], mutationEnabled: false }),
+      // Schedules moved out of Settings into the Triggers tab (Epic T / T4), so
+      // SettingsPane no longer fetches them on mount.
     },
   };
 });

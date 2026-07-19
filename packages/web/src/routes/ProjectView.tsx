@@ -16,7 +16,7 @@ import { Markdown } from "../components/Markdown";
 import { FilesPane } from "../components/FilesPane";
 import { ProjectMenu } from "../components/ProjectMenu";
 import { SettingsPane } from "../components/SettingsPane";
-import { HooksPane } from "../components/HooksPane";
+import { TriggersPane } from "../components/TriggersPane";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ForkChatModal } from "../components/ForkChatModal";
 import {
@@ -65,7 +65,7 @@ export function ProjectView() {
   // Which sub-route are we on? Derived from the URL pathname so it updates on
   // client-side navigation (the `/home`, `/files`, and `/changes` segments
   // distinguish those tabs; anything else is the chat tab).
-  const view: "home" | "chat" | "files" | "changes" | "settings" | "history" | "hooks" =
+  const view: "home" | "chat" | "files" | "changes" | "settings" | "history" | "triggers" =
     location.pathname.startsWith(`/projects/${slug}/files`)
       ? "files"
       : location.pathname.startsWith(`/projects/${slug}/changes`)
@@ -74,8 +74,12 @@ export function ProjectView() {
           ? "history"
           : location.pathname.startsWith(`/projects/${slug}/settings`)
             ? "settings"
-            : location.pathname.startsWith(`/projects/${slug}/hooks`)
-              ? "hooks"
+            : // The Hooks tab was renamed to Triggers (Epic T / T4); both the new
+              // `/triggers` route and the legacy `/hooks` route resolve to it (the
+              // latter kept as a redirect so old links / bookmarks don't 404).
+              location.pathname.startsWith(`/projects/${slug}/triggers`) ||
+                location.pathname.startsWith(`/projects/${slug}/hooks`)
+              ? "triggers"
               : location.pathname.startsWith(`/projects/${slug}/home`)
                 ? "home"
                 : "chat";
@@ -273,8 +277,8 @@ export function ProjectView() {
           ? toSubPath({ view: "settings" })
           : view === "history"
             ? toSubPath({ view: "history" })
-            : view === "hooks"
-              ? toSubPath({ view: "hooks" })
+            : view === "triggers"
+              ? toSubPath({ view: "triggers" })
               : view === "chat"
               ? toSubPath({ view: "chat", sessionId: routeSessionId })
               : view === "changes"
@@ -324,7 +328,7 @@ export function ProjectView() {
   const goChanges = useCallback(() => navigate(`/projects/${slug}/changes`), [navigate, slug]);
   const goHistory = useCallback(() => navigate(`/projects/${slug}/history`), [navigate, slug]);
   const goSettings = useCallback(() => navigate(`/projects/${slug}/settings`), [navigate, slug]);
-  const goHooks = useCallback(() => navigate(`/projects/${slug}/hooks`), [navigate, slug]);
+  const goTriggers = useCallback(() => navigate(`/projects/${slug}/triggers`), [navigate, slug]);
   // Select a specific changed file in the Changes tab, reflecting it in the URL
   // so a specific diff/file is deep-linkable (issue #107). null clears to the
   // bare /changes route.
@@ -337,6 +341,13 @@ export function ProjectView() {
       ),
     [navigate, slug],
   );
+  // The Hooks tab was renamed + folded into Triggers (Epic T / T4). Redirect any old
+  // `/hooks` link/bookmark to the canonical `/triggers` route (replace so Back skips it).
+  useEffect(() => {
+    if (location.pathname.startsWith(`/projects/${slug}/hooks`)) {
+      navigate(`/projects/${slug}/triggers`, { replace: true });
+    }
+  }, [location.pathname, navigate, slug]);
   // Start a brand-new chat. Bump the pane nonce first so the ChatPane is force-
   // remounted into a clean, session-less composer even when the current pane is a
   // still-streaming new chat whose establish navigation hasn't landed yet (which
@@ -703,7 +714,7 @@ export function ProjectView() {
               scheduled (a cron fired it), spawned (another chat created it), or
               hook (an event hook fired it — Epic G / G3). Human-origin chats show
               nothing, so the list stays quiet. */}
-          <ProvenanceBadge provenance={c.provenance} hookName={c.hook?.name} />
+          <ProvenanceBadge provenance={c.provenance} hookName={c.hook?.name ?? c.trigger?.name} />
           {/* Ring data is fetched lazily (issue #116) so the list renders before
               the per-chat transcript parse; `working` spins it while streaming
               (issue #115). */}
@@ -1111,12 +1122,14 @@ export function ProjectView() {
                 Settings
               </span>
             </TabButton>
-            {/* The Hooks tab (Epic G / G4): per-project event hooks — an agent turn
-                that fires on a lifecycle event, with a precise capability picker. */}
-            <TabButton active={view === "hooks"} onClick={goHooks}>
+            {/* The Triggers tab (Epic T / T4): per-project triggers — an agent turn
+                that fires on a schedule, a lifecycle event, or a webhook (reserved),
+                with a precise type + capability picker. Folds in the former Hooks tab
+                and the Settings→Schedules section. */}
+            <TabButton active={view === "triggers"} onClick={goTriggers}>
               <span className="inline-flex items-center gap-1.5">
                 <BoltIcon width={13} height={13} />
-                Hooks
+                Triggers
               </span>
             </TabButton>
             {/* Pinned file tabs (sibling tabs), order preserved by the server.
@@ -1165,10 +1178,11 @@ export function ProjectView() {
               }}
             />
           )}
-          {/* The Hooks tab (Epic G / G4): a self-contained CRUD surface for this
-              project's event hooks. Its create/edit/delete/enable run through their
-              own endpoints, so it manages its own state (like Schedules). */}
-          {view === "hooks" && <HooksPane project={project} />}
+          {/* The Triggers tab (Epic T / T4): a self-contained CRUD surface for this
+              project's unified triggers (schedules + events + reserved webhooks). Its
+              create/edit/delete/enable run through the unified /triggers endpoints, so
+              it manages its own state. */}
+          {view === "triggers" && <TriggersPane project={project} />}
           {view === "home" && (
             <HomePane
               project={project}
@@ -1213,6 +1227,15 @@ export function ProjectView() {
                   (lastActiveChatRef.current?.sessionId === activeSession
                     ? lastActiveChatRef.current
                     : null))?.hook
+              }
+              // For a trigger chat (Epic T / T4): the owning trigger's truthful-from-
+              // config capability descriptor — the unified successor to `hook`, drives
+              // the same read-only banner. Same live-DTO/last-seen fallback.
+              trigger={
+                (chats.find((c) => c.sessionId === activeSession) ??
+                  (lastActiveChatRef.current?.sessionId === activeSession
+                    ? lastActiveChatRef.current
+                    : null))?.trigger
               }
             />
           )}

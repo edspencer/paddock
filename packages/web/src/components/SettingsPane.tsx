@@ -3,7 +3,6 @@ import { api, ApiError } from "../lib/api";
 import type { ModelInfo, Project, ProjectLink, ProjectStatus } from "../lib/types";
 import { AREAS } from "../lib/areas";
 import { AlertIcon, CheckIcon, PinIcon, PlusIcon, TrashIcon } from "./icons";
-import { SchedulesSection } from "./SchedulesSection";
 
 const STATUSES: ProjectStatus[] = ["idea", "active", "paused", "blocked", "done", "abandoned"];
 
@@ -592,10 +591,9 @@ export function SettingsPane({
             </div>
           </Section>
 
-          {/* Scheduled chats for this project (issue #266 / D4). Self-contained:
-              its create/edit/delete/enable/trigger run through their own
-              endpoints, so it's outside the Settings save bar's dirty/save flow. */}
-          <SchedulesSection project={project} />
+          {/* Schedules moved out of Settings (Epic T / T4): they're now rows in the
+              per-project Triggers tab (folded together with event hooks into the one
+              unified trigger model). */}
 
           <Section
             title="Derived"

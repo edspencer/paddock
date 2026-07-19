@@ -268,6 +268,15 @@ export interface Chat {
    * non-hook chat, so only hook chats carry a banner.
    */
   hook?: ChatHookInfo;
+  /**
+   * For a TRIGGER chat (Epic T / T4): the truthful-from-config capability descriptor
+   * of the trigger that owns it — its type (schedule/event/webhook), WHEN it fires,
+   * and granted tools, read from the same `trigger-<slug>-<name>` agent config
+   * herdctl enforces. Drives the floating capability banner atop the chat (see
+   * {@link ChatTriggerInfo}). The unified successor to {@link Chat.hook}; absent for
+   * every non-trigger chat.
+   */
+  trigger?: ChatTriggerInfo;
 }
 
 /** How a chat came to exist (issue #261) — the dimension the list badges (#267). */
@@ -298,6 +307,41 @@ export interface ChatHookInfo {
   /** The hook agent's model override, when set (else the keeper default applies). */
   model?: string;
   /** The hook's max agent turns (its runaway bound). */
+  maxTurns: number;
+}
+
+/**
+ * The capability descriptor of the TRIGGER that owns a trigger chat (Epic T / T4) —
+ * mirrors the server's `ChatTriggerInfo` (packages/server/src/trigger-config.ts). The
+ * unified successor to {@link ChatHookInfo}: it also carries the trigger `type` and
+ * WHEN it fires (an event `on`, a `cron`/`interval`, or a webhook `path`). Everything
+ * here is read from the registered `trigger-<slug>-<name>` agent config, so the banner
+ * it drives is truthful by construction.
+ */
+export interface ChatTriggerInfo {
+  /** The trigger's name (`project.yaml` map key + the `<name>` in its agent name). */
+  name: string;
+  /** WHICH kind of trigger fires this chat (schedule / event / webhook). */
+  type: TriggerType;
+  /** For an `event` trigger: the lifecycle event that fires it. */
+  event?: TriggerEvent;
+  /** For a `schedule` trigger: the cron expression, when cron-timed. */
+  cron?: string;
+  /** For a `schedule` trigger: the interval string, when interval-timed. */
+  interval?: string;
+  /** For a `webhook` trigger: the reserved ingress path. */
+  path?: string;
+  /** The herdctl agent enforcing the capability (`trigger-<slug>-<name>`). */
+  agentName: string;
+  /** Whether the trigger is currently armed (a disabled trigger's past chats still show). */
+  enabled: boolean;
+  /** The exact tool grant (herdctl `allowed_tools`); `[]` = a tool-less trigger. */
+  allowedTools: string[];
+  /** The permission mode the trigger's turns run under, when it sets one. */
+  permissionMode?: string;
+  /** The trigger agent's model override, when set (else the keeper default applies). */
+  model?: string;
+  /** The trigger's max agent turns (its runaway bound). */
   maxTurns: number;
 }
 
@@ -448,6 +492,78 @@ export interface HooksResponse {
   hooks: Hook[];
   grantableTools: GrantableTool[];
   events: HookEvent[];
+}
+
+// --- Unified triggers (Epic T / T4) ----------------------------------------
+// A trigger collapses event hooks + cron schedules into ONE declarative shape over
+// the `startAgentTurn` core: WHEN ({@link TriggerWhen}, a discriminated union) + WHAT
+// ({@link TriggerRun}) + `enabled`. Mirrors the server's `trigger-config.ts`; drives
+// the Triggers tab (the successor to the Hooks tab + the Settings→Schedules section).
+
+/** The trigger kinds. `webhook` is shape-reserved (no ingress yet — deferred T6). */
+export type TriggerType = "schedule" | "event" | "webhook";
+
+/** The lifecycle events an `event`-type trigger may fire on (mirrors the server). */
+export type TriggerEvent = "onArchive" | "afterTurn";
+
+/** New-vs-accrete for a fired trigger: a fresh chat each fire, or one owned session. */
+export type TriggerSession = "new" | "resume";
+
+/** The Claude Code permission mode a trigger agent's turns run under. */
+export type TriggerPermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "plan";
+
+/** WHEN a trigger fires — a discriminated union on `type`. */
+export type TriggerWhen =
+  | { type: "schedule"; cron?: string; interval?: string }
+  | { type: "event"; on: TriggerEvent }
+  | { type: "webhook"; path: string };
+
+/**
+ * WHAT a fired trigger does — the shared agent-run definition (identical across every
+ * trigger type). Exactly one of `prompt` / `promptFile`; `tools` is a deny-by-default
+ * allow-list (`[]` = a tool-less curator).
+ */
+export interface TriggerRun {
+  prompt?: string;
+  promptFile?: string;
+  session: TriggerSession;
+  model?: string;
+  tools: string[];
+  maxSpawnDepth?: number;
+  permissionMode?: TriggerPermissionMode;
+  maxTurns?: number;
+}
+
+/**
+ * A project's trigger (the project.yaml `triggers` record) plus its map key `name`
+ * and the herdctl agent it registers as (`trigger-<slug>-<name>`). The DTO the
+ * unified `/api/projects/:slug/triggers` surface returns (Epic T / T3).
+ */
+export interface Trigger {
+  name: string;
+  agentName: string;
+  trigger: TriggerWhen;
+  run: TriggerRun;
+  enabled: boolean;
+}
+
+/** The write shape for creating/replacing a trigger (the server sanitises it). */
+export interface TriggerInput {
+  trigger: TriggerWhen;
+  run: TriggerRun;
+  enabled: boolean;
+}
+
+/**
+ * The Triggers tab's list payload: the triggers + the picker's catalog — the
+ * grantable tools, the events an event-trigger can fire on, and the trigger types —
+ * so the tab renders precise type/event/capability pickers without hard-coding them.
+ */
+export interface TriggersResponse {
+  triggers: Trigger[];
+  grantableTools: GrantableTool[];
+  events: TriggerEvent[];
+  triggerTypes: TriggerType[];
 }
 
 /**
