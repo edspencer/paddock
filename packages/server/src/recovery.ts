@@ -258,13 +258,18 @@ export class RecoveryEngine {
     const recovery = resolveRecoveryConfig(project.recovery, this.deps.cfg.recovery);
     if (!recovery.autoReDrive) return; // Layer 3 opt-in only
 
-    const guard = this.guards.get(sessionId);
-    if (guard && guard.retryCount >= recovery.maxRetries) {
-      // Already re-driven up to the cap since the last human message — leave it be.
+    // The retry cap gates ARMING (a fresh session defaults to 0 re-drives so far).
+    // Because each armed watch fires at most once, gating arm on
+    // `retryCount >= maxRetries` bounds total auto re-drives to exactly maxRetries —
+    // and `maxRetries: 0` therefore disables auto-recovery entirely (never arms),
+    // even for a session with no prior guard.
+    const retryCount = this.guards.get(sessionId)?.retryCount ?? 0;
+    if (retryCount >= recovery.maxRetries) {
+      // Cap reached since the last human message (or maxRetries is 0) — leave it be.
       this.log("recovery: retry cap reached, not arming", {
         slug,
         sessionId,
-        retryCount: guard.retryCount,
+        retryCount,
         maxRetries: recovery.maxRetries,
       });
       return;

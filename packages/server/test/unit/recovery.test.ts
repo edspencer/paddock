@@ -304,6 +304,18 @@ describe("RecoveryEngine.armWatch (#301)", () => {
     expect(hh.engine.isWatching("s1")).toBe(false);
   });
 
+  it("maxRetries: 0 disables auto-recovery entirely (never arms, even for a fresh session)", async () => {
+    const capped = makeEngine({ instance: { maxRetries: 0 } });
+    capped.tx.append(assistantLine("started"));
+    capped.engine.armWatch({ slug: "rec", sessionId: "s1" });
+    await drain();
+    // The cap gates arming — a fresh session with a 0 cap is never watched.
+    expect(capped.engine.isWatching("s1")).toBe(false);
+    capped.tx.append(notifLine("killed"));
+    await capped.sched.advance(400);
+    expect(capped.reDrive).not.toHaveBeenCalled();
+  });
+
   it("does nothing when autoReDrive is OFF (Layer 3 opt-in)", async () => {
     const off = makeEngine({ instance: { autoReDrive: false } });
     off.tx.append(assistantLine("started"));
