@@ -72,7 +72,7 @@ import {
   SCRATCH_AGENT,
   SCRATCH_SLUG,
 } from "./herdctl.js";
-import type { ProjectStore } from "./projects.js";
+import type { Project, ProjectStore } from "./projects.js";
 import type { SweepService } from "./sweep.js";
 import type { PaddockConfig } from "./config.js";
 import {
@@ -113,6 +113,7 @@ import {
 import type { MessageProvenanceStore, MessageSender } from "./message-provenance.js";
 import { resolveMaxSpawnDepth, spawnedSelfMcpDecision } from "./spawn-capability.js";
 import { resolveRecoveryConfig } from "./recovery-config.js";
+import { RecoveryEngine } from "./recovery.js";
 import type { PaddockEventBus } from "./event-bus.js";
 import type { HookService } from "./hooks.js";
 import {
@@ -1720,6 +1721,12 @@ export function makeChatHandler(deps: {
           /* non-fatal */
         }
         if (result.success && deps.sweep) deps.sweep.enqueue(projectSlug);
+        // Layer 3 (issue #301): arm a post-turn recovery watch for a session-mode
+        // keeper turn that stayed alive — including a recovery re-drive itself, so a
+        // re-drive that hangs again is caught (bounded by the per-session retry cap).
+        if (result.success && finalSession && driveMode === "session" && projectSlug !== SCRATCH_SLUG) {
+          recoveryEngine.armWatch({ slug: projectSlug, sessionId: finalSession });
+        }
         if (!resolvedSession) {
           rejectId(new Error(result.error?.message ?? "turn ended with no session id"));
         }
@@ -1740,6 +1747,63 @@ export function makeChatHandler(deps: {
     );
     return Promise.race([idKnown, timeout]);
   }
+
+  /**
+   * Inject the keeper-chat recovery nudge into a still-alive session (issue #301) —
+   * the ONE shared path behind both the manual Layer 2 "Continue" (`chat:continue`)
+   * and the Layer 3 automatic re-drive ({@link RecoveryEngine}). Re-drives the
+   * hung keeper via {@link startAgentTurn} with the {@link RECOVERY_NUDGE} and a
+   * `recovery` sender, exactly the message a human sends by hand to unstick it.
+   * No-op for scratch (no keeper) or a session that no longer exists. The gate on
+   * WHICH layer may call this lives in each caller (surfaceKilledTask vs
+   * autoReDrive); this helper is layer-agnostic.
+   */
+  const injectRecoveryNudge = async (project: Project, sessionId: string): Promise<void> => {
+    const slug = project.slug;
+    if (!slug || slug === SCRATCH_SLUG) return;
+    // Only re-drive a real, existing session (a live kept-alive keeper chat).
+    if (!(await deps.herdctl.sessionExists(project, sessionId).catch(() => false))) return;
+    const driveMode =
+      project.driveMode && isKnownDriveMode(project.driveMode)
+        ? project.driveMode
+        : deps.cfg.keeperDriveMode;
+    await startAgentTurn({
+      projectSlug: slug,
+      agentName: keeperAgentName(slug),
+      workingDir: project.workingDir,
+      resume: sessionId,
+      prompt: RECOVERY_NUDGE,
+      driveMode,
+      fallbackModel: project.model,
+      // A resume never re-stamps provenance (only new chats are stamped), so these
+      // describe-the-run values aren't persisted — the target keeps its own marker
+      // and its self-MCP is gated on THAT recorded depth. Describe it as a
+      // human-rooted run (matches the Layer 2 manual Continue path).
+      origin: "human",
+      depth: 0,
+      maxSpawnDepth: resolveMaxSpawnDepth(project.maxSpawnDepth, deps.cfg.maxSpawnDepth),
+      // #290 / #301: attribute the injected nudge to Paddock recovery so the history
+      // renders "⚠ continued after a background task was terminated" and emits a live
+      // chat:injected frame to any attached viewer.
+      sender: { kind: "recovery" },
+    });
+  };
+
+  /**
+   * Layer 3 automatic-recovery engine (issue #301). After each session-mode keeper
+   * turn completes (armed at the completion sites below), it tails the transcript;
+   * if a background task was killed at the turn boundary and the keeper doesn't wake
+   * on its own, it auto-injects the recovery nudge — guarded by the resolved
+   * `recovery.autoReDrive` flag (default OFF), a debounce window, and a per-session
+   * retry cap. Re-drive reuses the exact {@link injectRecoveryNudge} path as the
+   * manual Continue; a human message ({@link RecoveryEngine.onHumanMessage}) resets
+   * a session's guard so a later genuine hang recovers fresh.
+   */
+  const recoveryEngine = new RecoveryEngine({
+    cfg: { recovery: deps.cfg.recovery },
+    getProject: (slug) => deps.projects.get(slug),
+    reDrive: (project, sessionId) => injectRecoveryNudge(project, sessionId),
+  });
 
   const handle = async function handle(socket: WebSocket): Promise<void> {
     const send = (m: ServerMessage) => {
@@ -1844,32 +1908,8 @@ export function makeChatHandler(deps: {
       // Gate on the resolved Layer 2 flag (per-project override else instance).
       const recovery = resolveRecoveryConfig(project.recovery, deps.cfg.recovery);
       if (!recovery.surfaceKilledTask) return;
-      // Only re-drive a real, existing session (a live kept-alive keeper chat).
-      if (!(await deps.herdctl.sessionExists(project, sessionId).catch(() => false))) return;
-      const driveMode =
-        project.driveMode && isKnownDriveMode(project.driveMode)
-          ? project.driveMode
-          : deps.cfg.keeperDriveMode;
-      await startAgentTurn({
-        projectSlug: slug,
-        agentName: keeperAgentName(slug),
-        workingDir: project.workingDir,
-        resume: sessionId,
-        prompt: RECOVERY_NUDGE,
-        driveMode,
-        fallbackModel: project.model,
-        // A resume never re-stamps provenance (only new chats are stamped), so
-        // these describe-the-run values aren't persisted — the target keeps its
-        // own marker and its self-MCP is gated on THAT recorded depth. A human
-        // clicked Continue, so describe it as a human-rooted run.
-        origin: "human",
-        depth: 0,
-        maxSpawnDepth: resolveMaxSpawnDepth(project.maxSpawnDepth, deps.cfg.maxSpawnDepth),
-        // #290 / #301: attribute the injected nudge to Paddock recovery so the
-        // history renders "⚠ continued after a background task was terminated"
-        // and emits a live chat:injected frame to any attached viewer.
-        sender: { kind: "recovery" },
-      }).catch((err) => {
+      // Re-drive via the shared recovery path (also used by Layer 3 auto-recovery).
+      await injectRecoveryNudge(project, sessionId).catch((err) => {
         send({
           type: "chat:error",
           payload: { projectSlug: slug, target: slug, error: `Recovery failed: ${String(err)}` },
@@ -1973,6 +2013,10 @@ export function makeChatHandler(deps: {
       const slug = readSlug(msg.payload) as string;
       const { message, sessionId, preloadContext } = msg.payload;
       const isNewChat = sessionId === undefined || sessionId === null;
+      // A genuine human message resets this session's Layer 3 recovery guard (issue
+      // #301) and cancels any in-flight watch, so the retry cap counts auto re-drives
+      // BETWEEN human messages and a later real hang is recovered fresh.
+      if (sessionId) recoveryEngine.onHumanMessage(sessionId);
       let jobId: string | null = null;
       let resolvedSession: string | null = sessionId ?? null;
       // One-shot guard: a brand-new chat is attributed to its agent the instant
@@ -2250,6 +2294,15 @@ export function makeChatHandler(deps: {
         // the take + client notify + next-turn kickoff, shared with the idle path.
         if (result.success && finalSession) {
           await drainQueue(slug, finalSession);
+        }
+
+        // Layer 3 (issue #301): arm a post-turn recovery watch for a session-mode
+        // keeper turn. If this turn launched a background task that the runtime kills
+        // at the turn boundary (herdctl#374) and the keeper doesn't wake on its own,
+        // the engine auto-injects the recovery nudge — gated on the resolved
+        // `recovery.autoReDrive` (default OFF), a debounce window, and a retry cap.
+        if (result.success && finalSession && driveMode === "session" && slug !== SCRATCH_SLUG) {
+          recoveryEngine.armWatch({ slug, sessionId: finalSession });
         }
       } catch (err) {
         const error = err instanceof Error ? err.message : String(err);
