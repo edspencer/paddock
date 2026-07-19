@@ -76,6 +76,11 @@ import {
 import { ensureProjectChats, projectChatsDir } from "./transcripts.js";
 import { schedulesToHerdctl } from "./schedule-config.js";
 import { hookToAgentToolConfig, type PaddockHook } from "./hook-config.js";
+import {
+  triggerToAgentToolConfig,
+  triggersToHerdctlSchedules,
+  type PaddockTrigger,
+} from "./trigger-config.js";
 
 /** Options passed through to a streamed trigger. */
 export interface ChatTurnOptions {
@@ -149,6 +154,25 @@ export function hookAgentName(slug: string, hookName: string): string {
 }
 
 /**
+ * The agent-name prefix for unified triggers (Epic T / T1). An EVENT trigger is its
+ * OWN herdctl agent `trigger-<slug>-<name>` (tool config = capability), registered
+ * alongside the keeper/sweeper — exactly like a hook agent. Schedule triggers run on
+ * the keeper (T1) and webhook triggers are reserved, but every trigger carries this
+ * deterministic name in its DTO so the mapping is stable across T2–T5.
+ */
+export const TRIGGER_AGENT_PREFIX = "trigger-";
+
+/**
+ * Maps a project slug + trigger name to its agent name `trigger-<slug>-<name>`. Kept
+ * deterministic so runtime registration and firing always agree. The reverse mapping
+ * (for visibility) is resolved from a project's declared triggers, not by parsing this
+ * string (a slug may contain hyphens). Mirrors {@link hookAgentName}.
+ */
+export function triggerAgentName(slug: string, triggerName: string): string {
+  return `${TRIGGER_AGENT_PREFIX}${slug}-${triggerName}`;
+}
+
+/**
  * The agents whose chats are VISIBLE in a project's chat list (Epic G / G3, GG-5):
  * the keeper plus every event hook the project declares (`hook-<slug>-<name>`). This
  * is the generalization of the old hard "keeper-only" listing — "all of a project's
@@ -168,6 +192,14 @@ export function visibleProjectAgentNames(project: Project): string[] {
   const names = [keeperAgentName(project.slug)];
   for (const hookName of Object.keys(project.hooks ?? {})) {
     names.push(hookAgentName(project.slug, hookName));
+  }
+  // Unified triggers (Epic T / T1): an EVENT trigger's own `trigger-<slug>-<name>`
+  // agent produces visible chats (like a hook). Schedule triggers run on the keeper
+  // (already listed) and webhook triggers never fire, so only event triggers add a
+  // distinct visible agent — but registering the deterministic name for every trigger
+  // is harmless (a name with no chats simply contributes nothing to the listing).
+  for (const triggerName of Object.keys(project.triggers ?? {})) {
+    names.push(triggerAgentName(project.slug, triggerName));
   }
   return names;
 }
@@ -314,6 +346,10 @@ export class HerdctlService {
       // so it's fireable the moment an event matches — armed at boot alongside the
       // keeper/sweeper. Hook-less projects register zero extra agents (no-op).
       await this.registerHookAgents(project);
+      // Register each EVENT trigger as its own agent `trigger-<slug>-<name>` (Epic T /
+      // T1) — the unified successor to hook agents. Schedule triggers ride the keeper's
+      // forwarded `schedules` block (above); webhook triggers are reserved.
+      await this.registerTriggerAgents(project);
       this.agentModels.set(keeperAgentName(project.slug), project.model ?? KEEPER_DEFAULT_MODEL);
     }
   }
@@ -364,6 +400,10 @@ export class HerdctlService {
     // ADDS/replaces the declared hooks — a hook REMOVED from the record is torn down
     // via {@link removeHookAgent} (ensureProjectAgent never removes a stale agent).
     await this.registerHookAgents(project);
+    // Re-register the project's EVENT-trigger agents (Epic T / T1) from the live
+    // record — the unified successor to hook agents (schedule triggers ride the
+    // keeper's forwarded `schedules` block above; webhook triggers are reserved).
+    await this.registerTriggerAgents(project);
     // Record the keeper's resolved model so per-chat overrides can detect a
     // no-op. ensureProjectAgent re-registers at project.model (the persisted
     // default), so a model change via PATCH takes effect here too.
@@ -403,6 +443,44 @@ export class HerdctlService {
   async removeHookAgent(slug: string, name: string): Promise<void> {
     if (!this.fleet) return;
     await this.fleet.removeAgent(hookAgentName(slug, name)).catch(() => undefined);
+  }
+
+  /**
+   * Register (or replace) every EVENT trigger a project declares as its own agent
+   * `trigger-<slug>-<name>` (Epic T / T1) — the unified successor to
+   * {@link registerHookAgents}. Idempotent (`addAgent` replace:true). Schedule
+   * triggers are NOT registered here (they ride the keeper's forwarded `schedules`
+   * block); webhook triggers are reserved (no ingress). A trigger-less project is a
+   * no-op. Called at boot ({@link init}) and on every {@link ensureProjectAgent}.
+   */
+  async registerTriggerAgents(project: Project): Promise<void> {
+    if (!this.fleet) return;
+    for (const [name, trigger] of Object.entries(project.triggers ?? {})) {
+      if (trigger.trigger.type !== "event") continue;
+      await this.fleet.addAgent(this.triggerAgentConfig(project, name, trigger), { replace: true });
+    }
+  }
+
+  /**
+   * Register (or replace) ONE event trigger's agent at runtime (Epic T / T1) — the
+   * herdctl half of a trigger mutation (the Paddock half persists it via
+   * `ProjectStore.setTrigger`). Idempotent; immediately fireable. Consumed by
+   * {@link import("./triggers.js").TriggerService}. Non-event triggers are a no-op
+   * (a schedule trigger arms via the keeper re-register; a webhook is reserved).
+   */
+  async ensureTriggerAgent(project: Project, name: string, trigger: PaddockTrigger): Promise<void> {
+    if (!this.fleet) return;
+    if (trigger.trigger.type !== "event") return;
+    await this.fleet.addAgent(this.triggerAgentConfig(project, name, trigger), { replace: true });
+  }
+
+  /**
+   * Unregister one event trigger's agent at runtime (Epic T / T1) — the inverse of
+   * {@link ensureTriggerAgent}. Never throws if the agent is already gone.
+   */
+  async removeTriggerAgent(slug: string, name: string): Promise<void> {
+    if (!this.fleet) return;
+    await this.fleet.removeAgent(triggerAgentName(slug, name)).catch(() => undefined);
   }
 
   /**
@@ -453,12 +531,22 @@ export class HerdctlService {
    * the project's declared hook names (from its DTO) so their `hook-<slug>-<name>`
    * agents are torn down too — caller passes `Object.keys(project.hooks ?? {})`.
    */
-  async removeProjectAgent(slug: string, hookNames: string[] = []): Promise<void> {
+  async removeProjectAgent(
+    slug: string,
+    hookNames: string[] = [],
+    triggerNames: string[] = [],
+  ): Promise<void> {
     if (!this.fleet) return;
     await this.fleet.removeAgent(keeperAgentName(slug)).catch(() => undefined);
     await this.fleet.removeAgent(sweeperAgentName(slug)).catch(() => undefined);
     for (const name of hookNames) {
       await this.fleet.removeAgent(hookAgentName(slug, name)).catch(() => undefined);
+    }
+    // Event triggers (Epic T / T1) register their own `trigger-<slug>-<name>` agent —
+    // tear those down too; schedule/webhook trigger names contribute no agent, so
+    // removeAgent is a harmless no-op for them.
+    for (const name of triggerNames) {
+      await this.fleet.removeAgent(triggerAgentName(slug, name)).catch(() => undefined);
     }
   }
 
@@ -1340,7 +1428,19 @@ export class HerdctlService {
     // `promptFile` is stripped (the schedule-trigger handler resolves it at fire
     // time), keeping the forwarded config pure. Only set the key when non-empty so
     // schedule-less projects are byte-identical to before.
-    const schedules = schedulesToHerdctl(project.schedules);
+    const legacySchedules = schedulesToHerdctl(project.schedules);
+    // Unified triggers (Epic T / T1): SCHEDULE-type triggers are forwarded into the
+    // SAME keeper `schedules` block, in herdctl's `ScheduleSchema` shape, so the cron
+    // engine arms them identically. Merged with the legacy `schedules` block (which
+    // T3/T5 will eventually retire); on a name collision the trigger wins (the unified
+    // model is authoritative). Event/webhook triggers are excluded by
+    // triggersToHerdctlSchedules. Only set the key when non-empty so a trigger-less
+    // and schedule-less project stays byte-identical to before.
+    const triggerSchedules = triggersToHerdctlSchedules(project.triggers);
+    const schedules =
+      legacySchedules || triggerSchedules
+        ? { ...(legacySchedules ?? {}), ...(triggerSchedules ?? {}) }
+        : undefined;
     if (schedules) config.schedules = schedules;
     // Browser MCP (headless Chromium) when enabled for this box; `mcp__playwright__*`
     // is already on the inherited defaults.allowed_tools.
@@ -1447,6 +1547,40 @@ export class HerdctlService {
     if (project.docker) config.docker = { enabled: true };
     // Browser MCP (headless Chromium) when enabled for this box; `mcp__playwright__*`
     // is only auto-allowed for a hook that lists it in its capabilities anyway.
+    const browser = browserMcpServers(this.cfg.browserMcp);
+    if (browser) config.mcp_servers = browser;
+    return config;
+  }
+
+  /**
+   * An EVENT trigger's herdctl agent config (Epic T / T1) — the unified successor to
+   * {@link hookAgentConfig}. Each event trigger is registered as its OWN agent
+   * `trigger-<slug>-<name>` whose tool config (`allowed_tools`/`permission_mode`/
+   * `model`/`max_turns`, projected by {@link triggerToAgentToolConfig} from the
+   * trigger's `run`) IS its capability set. Runs in the project's WORKING dir (so a
+   * trigger's Bash/Write act on the same tree the keeper does). A tool-less trigger
+   * gets `allowed_tools: []` and can only return text.
+   */
+  private triggerAgentConfig(
+    project: Project,
+    triggerName: string,
+    trigger: PaddockTrigger,
+  ): Record<string, unknown> & { name: string } {
+    const config: Record<string, unknown> & { name: string } = {
+      name: triggerAgentName(project.slug, triggerName),
+      description: `Trigger "${triggerName}" (event) for project ${project.name}.`,
+      working_directory: project.workingDir,
+      // Explicit CLI runtime (Max plan) — the fleet `defaults.runtime` is dropped by
+      // the core config loader, so set it here (as keeper/sweeper/hook agents do).
+      runtime: "cli",
+      // Model defaults to the keeper default unless the run pins one;
+      // triggerToAgentToolConfig sets `model` only when the run specifies it, so
+      // provide the fallback here so a trigger never boots without a concrete model.
+      model: trigger.run.model ?? project.model ?? KEEPER_DEFAULT_MODEL,
+      // run → tool config (allowed tools, permission mode, model, max_turns).
+      ...triggerToAgentToolConfig(trigger.run),
+    };
+    if (project.docker) config.docker = { enabled: true };
     const browser = browserMcpServers(this.cfg.browserMcp);
     if (browser) config.mcp_servers = browser;
     return config;

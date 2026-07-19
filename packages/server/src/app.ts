@@ -33,8 +33,10 @@ import { QueuedMessageStore } from "./queued-message.js";
 import { RunProvenanceStore } from "./run-provenance.js";
 import { MessageProvenanceStore } from "./message-provenance.js";
 import { ScheduleSessionStore } from "./schedule-session.js";
+import { TriggerSessionStore } from "./trigger-session.js";
 import { PaddockEventBus } from "./event-bus.js";
 import { HookService } from "./hooks.js";
+import { TriggerService } from "./triggers.js";
 
 export interface BuiltApp {
   app: FastifyInstance;
@@ -52,6 +54,8 @@ export interface BuiltApp {
   events: PaddockEventBus;
   /** Hook CRUD service (Epic G / G1) — shared surface for the Hooks tab + hook MCP. */
   hooks: HookService;
+  /** Unified trigger registry (Epic T / T1) — frozen CRUD surface for T2–T5. */
+  triggers: TriggerService;
   /** Tear down the fleet + close the server (no process.exit, for tests). */
   close: () => Promise<void>;
 }
@@ -122,6 +126,11 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   // HookService is the shared CRUD surface G4 (Hooks tab) + G5 (hook MCP) consume.
   const events = new PaddockEventBus();
   const hooks = new HookService(projects, herdctl);
+  // Unified trigger registry + owned-session sidecar (Epic T / T1). TriggerService is
+  // the single CRUD surface over both fire paths (event bus + schedule handler); the
+  // sidecar rebinds a `run.session: "resume"` trigger's owned chat after a restart.
+  const triggers = new TriggerService(projects, herdctl);
+  const triggerSessions = new TriggerSessionStore(cfg.dataDir);
   // Store for files shared via mcp__paddock__send_file (issue #112). Copies live
   // outside any project working dir so they never show up as untracked repo files.
   const attachments = new AttachmentStore(path.join(cfg.dataDir, "attachments"));
@@ -160,7 +169,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   // Build the chat handler BEFORE routes so its `fireSchedule` entrypoint (issue
   // #266 / D4) can back the `POST …/schedules/:name/trigger` route — a "trigger
   // now" runs the schedule through the same hub path a cron fire uses.
-  const chatHandler = makeChatHandler({ herdctl, projects, sweep, attachments, queuedMessage, runProvenance, messageProvenance, archive, scheduleSessions, events, hooks, cfg });
+  const chatHandler = makeChatHandler({ herdctl, projects, sweep, attachments, queuedMessage, runProvenance, messageProvenance, archive, scheduleSessions, events, hooks, triggers, triggerSessions, cfg });
 
   await registerRoutes(app, { projects, herdctl, git, githubAuth, transcriber, archive, readState, runProvenance, messageProvenance, attachments, fireSchedule: chatHandler.fireSchedule, events, hooks, cfg });
 
@@ -232,5 +241,5 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
     await app.close().catch(() => undefined);
   };
 
-  return { app, cfg, projects, herdctl, git, githubAuth, sweep, archive, readState, queuedMessage, transcriber, events, hooks, close };
+  return { app, cfg, projects, herdctl, git, githubAuth, sweep, archive, readState, queuedMessage, transcriber, events, hooks, triggers, close };
 }

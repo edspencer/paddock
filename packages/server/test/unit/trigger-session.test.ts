@@ -1,0 +1,92 @@
+/**
+ * TriggerSessionStore — owned-session sidecar for accreting triggers (`run.session:
+ * "resume"`, Epic T / T1). A resume-type trigger records the ONE chat it owns on its
+ * first fire and reuses it thereafter, so a "manager" accretes one transcript and the
+ * binding survives a restart (the resume rebinds off the reloaded sidecar).
+ *
+ * Mirrors the ScheduleSessionStore/RunProvenanceStore sidecar contract, INCLUDING the
+ * in-flight-load-promise fix: concurrent first-writers must share ONE load so an early
+ * set can't be dropped by a later load overwriting the map.
+ */
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { promises as fs } from "node:fs";
+import path from "node:path";
+import { TriggerSessionStore } from "../../src/trigger-session.js";
+import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
+
+describe("TriggerSessionStore", () => {
+  let dir: string;
+  const file = () => path.join(dir, "trigger-sessions.json");
+
+  beforeEach(async () => {
+    dir = await makeTmpDir("paddock-trig-sess-");
+  });
+  afterEach(async () => {
+    await rmTmpDir(dir);
+  });
+
+  it("records + rebinds an owned session across instances (restart persistence)", async () => {
+    const a = new TriggerSessionStore(dir);
+    expect(await a.get("proj", "daily-manager")).toBeUndefined();
+    await a.set("proj", "daily-manager", "sess-1");
+    expect(await a.get("proj", "daily-manager")).toBe("sess-1");
+
+    // A fresh instance (a server restart) rebinds off the persisted file.
+    const b = new TriggerSessionStore(dir);
+    expect(await b.get("proj", "daily-manager")).toBe("sess-1");
+  });
+
+  it("keys by project + trigger name independently", async () => {
+    const s = new TriggerSessionStore(dir);
+    await s.set("p1", "a", "s-a");
+    await s.set("p1", "b", "s-b");
+    await s.set("p2", "a", "s-a2");
+    expect(await s.get("p1", "a")).toBe("s-a");
+    expect(await s.get("p1", "b")).toBe("s-b");
+    expect(await s.get("p2", "a")).toBe("s-a2");
+  });
+
+  it("clears an owned session (so the next fire re-creates)", async () => {
+    const s = new TriggerSessionStore(dir);
+    await s.set("proj", "daily", "sess-1");
+    await s.clear("proj", "daily");
+    expect(await s.get("proj", "daily")).toBeUndefined();
+    const persisted = JSON.parse(await fs.readFile(file(), "utf8"));
+    expect(persisted).not.toHaveProperty(`proj${String.fromCharCode(0)}daily`);
+  });
+
+  it("ignores unsafe session ids", async () => {
+    const s = new TriggerSessionStore(dir);
+    await s.set("proj", "daily", "bad id with spaces");
+    expect(await s.get("proj", "daily")).toBeUndefined();
+  });
+
+  it("does not drop a set that races the first load (in-flight promise cache)", async () => {
+    // Seed a file so ensureLoaded has real work to do on first read. The key uses the
+    // store's NUL composite separator (`<slug>\0<triggerName>`).
+    const NUL = String.fromCharCode(0);
+    await fs.writeFile(file(), JSON.stringify({ [`proj${NUL}existing`]: "old" }), "utf8");
+    const s = new TriggerSessionStore(dir);
+    // Fire several sets concurrently, before any load has resolved — each awaits
+    // ensureLoaded, which must be the SAME in-flight promise, so none clobbers the
+    // others' entries (the concurrent-stamp regression the ticket calls out).
+    await Promise.all([
+      s.set("proj", "a", "sa"),
+      s.set("proj", "b", "sb"),
+      s.set("proj", "c", "sc"),
+    ]);
+    expect(await s.get("proj", "a")).toBe("sa");
+    expect(await s.get("proj", "b")).toBe("sb");
+    expect(await s.get("proj", "c")).toBe("sc");
+    // The pre-existing entry survived too.
+    expect(await s.get("proj", "existing")).toBe("old");
+  });
+
+  it("tolerates a missing/corrupt file (starts empty)", async () => {
+    await fs.writeFile(file(), "not json", "utf8");
+    const s = new TriggerSessionStore(dir);
+    expect(await s.get("proj", "daily")).toBeUndefined();
+    await s.set("proj", "daily", "sess-1");
+    expect(await s.get("proj", "daily")).toBe("sess-1");
+  });
+});
