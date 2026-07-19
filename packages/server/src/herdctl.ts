@@ -79,6 +79,7 @@ import { hookToAgentToolConfig, type PaddockHook } from "./hook-config.js";
 import {
   triggerToAgentToolConfig,
   triggersToHerdctlSchedules,
+  triggerRunsOnOwnAgent,
   type PaddockTrigger,
 } from "./trigger-config.js";
 
@@ -193,11 +194,12 @@ export function visibleProjectAgentNames(project: Project): string[] {
   for (const hookName of Object.keys(project.hooks ?? {})) {
     names.push(hookAgentName(project.slug, hookName));
   }
-  // Unified triggers (Epic T / T1): an EVENT trigger's own `trigger-<slug>-<name>`
-  // agent produces visible chats (like a hook). Schedule triggers run on the keeper
-  // (already listed) and webhook triggers never fire, so only event triggers add a
-  // distinct visible agent — but registering the deterministic name for every trigger
-  // is harmless (a name with no chats simply contributes nothing to the listing).
+  // Unified triggers (Epic T): a trigger that runs on its OWN `trigger-<slug>-<name>`
+  // agent produces visible chats (like a hook) — every event trigger, plus a scoped
+  // schedule trigger (T2: one with a `run.tools` allow-list). An unscoped schedule runs
+  // on the keeper (already listed) and a webhook never fires, so they add no distinct
+  // agent — but registering the deterministic name for every trigger is harmless (a name
+  // with no chats simply contributes nothing to the listing).
   for (const triggerName of Object.keys(project.triggers ?? {})) {
     names.push(triggerAgentName(project.slug, triggerName));
   }
@@ -446,31 +448,36 @@ export class HerdctlService {
   }
 
   /**
-   * Register (or replace) every EVENT trigger a project declares as its own agent
-   * `trigger-<slug>-<name>` (Epic T / T1) — the unified successor to
-   * {@link registerHookAgents}. Idempotent (`addAgent` replace:true). Schedule
-   * triggers are NOT registered here (they ride the keeper's forwarded `schedules`
-   * block); webhook triggers are reserved (no ingress). A trigger-less project is a
-   * no-op. Called at boot ({@link init}) and on every {@link ensureProjectAgent}.
+   * Register (or replace) every trigger a project declares that runs on its OWN scoped
+   * agent `trigger-<slug>-<name>` (Epic T) — the unified successor to
+   * {@link registerHookAgents}. Idempotent (`addAgent` replace:true). Which triggers
+   * get a scoped agent is decided by {@link triggerRunsOnOwnAgent}: EVENT triggers
+   * always; SCHEDULE triggers only when they declare a non-empty `run.tools` allow-list
+   * (T2 — an unscoped schedule still rides the keeper's forwarded `schedules` block and
+   * runs as the keeper); webhook triggers are reserved (no ingress). A scoped schedule
+   * ALSO keeps its keeper `schedules` entry — that is only the cron TIMING; the fired
+   * turn executes on this scoped agent. A trigger-less project is a no-op. Called at
+   * boot ({@link init}) and on every {@link ensureProjectAgent}.
    */
   async registerTriggerAgents(project: Project): Promise<void> {
     if (!this.fleet) return;
     for (const [name, trigger] of Object.entries(project.triggers ?? {})) {
-      if (trigger.trigger.type !== "event") continue;
+      if (!triggerRunsOnOwnAgent(trigger)) continue;
       await this.fleet.addAgent(this.triggerAgentConfig(project, name, trigger), { replace: true });
     }
   }
 
   /**
-   * Register (or replace) ONE event trigger's agent at runtime (Epic T / T1) — the
-   * herdctl half of a trigger mutation (the Paddock half persists it via
+   * Register (or replace) ONE trigger's scoped agent at runtime (Epic T) — the herdctl
+   * half of a trigger mutation (the Paddock half persists it via
    * `ProjectStore.setTrigger`). Idempotent; immediately fireable. Consumed by
-   * {@link import("./triggers.js").TriggerService}. Non-event triggers are a no-op
-   * (a schedule trigger arms via the keeper re-register; a webhook is reserved).
+   * {@link import("./triggers.js").TriggerService}. A no-op for a trigger that does NOT
+   * run on its own agent ({@link triggerRunsOnOwnAgent}) — an unscoped schedule arms via
+   * the keeper re-register; a webhook is reserved.
    */
   async ensureTriggerAgent(project: Project, name: string, trigger: PaddockTrigger): Promise<void> {
     if (!this.fleet) return;
-    if (trigger.trigger.type !== "event") return;
+    if (!triggerRunsOnOwnAgent(trigger)) return;
     await this.fleet.addAgent(this.triggerAgentConfig(project, name, trigger), { replace: true });
   }
 
@@ -1561,13 +1568,14 @@ export class HerdctlService {
   }
 
   /**
-   * An EVENT trigger's herdctl agent config (Epic T / T1) — the unified successor to
-   * {@link hookAgentConfig}. Each event trigger is registered as its OWN agent
-   * `trigger-<slug>-<name>` whose tool config (`allowed_tools`/`permission_mode`/
-   * `model`/`max_turns`, projected by {@link triggerToAgentToolConfig} from the
-   * trigger's `run`) IS its capability set. Runs in the project's WORKING dir (so a
-   * trigger's Bash/Write act on the same tree the keeper does). A tool-less trigger
-   * gets `allowed_tools: []` and can only return text.
+   * A trigger's scoped herdctl agent config (Epic T) — the unified successor to
+   * {@link hookAgentConfig}. A trigger that {@link triggerRunsOnOwnAgent} (every event
+   * trigger; a schedule trigger with a non-empty `run.tools` allow-list — T2) is
+   * registered as its OWN agent `trigger-<slug>-<name>` whose tool config
+   * (`allowed_tools`/`permission_mode`/`model`/`max_turns`, projected by
+   * {@link triggerToAgentToolConfig} from the trigger's `run`) IS its capability set.
+   * Runs in the project's WORKING dir (so a trigger's Bash/Write act on the same tree
+   * the keeper does). A tool-less trigger gets `allowed_tools: []` and can only return text.
    */
   private triggerAgentConfig(
     project: Project,
@@ -1576,7 +1584,7 @@ export class HerdctlService {
   ): Record<string, unknown> & { name: string } {
     const config: Record<string, unknown> & { name: string } = {
       name: triggerAgentName(project.slug, triggerName),
-      description: `Trigger "${triggerName}" (event) for project ${project.name}.`,
+      description: `Trigger "${triggerName}" (${trigger.trigger.type}) for project ${project.name}.`,
       working_directory: project.workingDir,
       // Explicit CLI runtime (Max plan) — the fleet `defaults.runtime` is dropped by
       // the core config loader, so set it here (as keeper/sweeper/hook agents do).

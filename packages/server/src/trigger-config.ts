@@ -232,6 +232,32 @@ export function sanitizeTriggers(raw: unknown): Record<string, PaddockTrigger> |
 // --- projection helpers -------------------------------------------------------
 
 /**
+ * Whether a trigger runs on its OWN scoped `trigger-<slug>-<name>` agent (so
+ * {@link triggerToAgentToolConfig} governs its capability) rather than as the keeper.
+ *
+ *  - **event** → ALWAYS its own agent (Epic G / T1). Its `tools` allow-list IS the
+ *    capability; an empty `[]` means a deliberately tool-less curator.
+ *  - **schedule** → its own scoped agent ONLY when it declares a NON-EMPTY `run.tools`
+ *    allow-list (T2 — the per-trigger tool-scoping this ticket adds). A schedule with NO
+ *    tools inherits the project agent's default toolset by running as the keeper,
+ *    preserving the pre-T2 behaviour (ticket #307: "a schedule with no tools inherits
+ *    the project-agent default"). This is the one asymmetry with events — a schedule's
+ *    empty `tools` reads as "unscoped, run as keeper", NOT "tool-less curator", because
+ *    schedules historically ran with the keeper's full tools and there are no users to
+ *    migrate off that default.
+ *  - **webhook** → reserved (never fired in T1), so it registers no agent.
+ *
+ * The ONE place the keeper-vs-own-agent routing decision lives, shared by the herdctl
+ * agent registration ({@link import("./herdctl.js").HerdctlService.registerTriggerAgents})
+ * and the fire path (`fireTriggerForProject` in `ws.ts`) so arming and firing always agree.
+ */
+export function triggerRunsOnOwnAgent(trigger: PaddockTrigger): boolean {
+  if (trigger.trigger.type === "event") return true;
+  if (trigger.trigger.type === "schedule") return (trigger.run.tools?.length ?? 0) > 0;
+  return false; // webhook: shape reserved, nothing fires it.
+}
+
+/**
  * Project a trigger's {@link TriggerRun} onto the exact herdctl agent tool-config
  * fields (snake_case), so an event/webhook trigger's OWN `trigger-<slug>-<name>`
  * agent enforces the capability BY CONSTRUCTION. Always sets `allowed_tools` +
