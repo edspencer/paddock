@@ -143,7 +143,7 @@ HushPod's whisper config so both can share a backend. See [DEV.md](../DEV.md#voi
 
 | Variable | Default | Required | Purpose |
 |----------|---------|----------|---------|
-| `PADDOCK_KEEPER_DRIVE_MODE` | `batch` | no | Box-wide default for how keeper turns are driven; `session` enables cross-turn autonomy (`ScheduleWakeup` / `/loop`). A per-project `driveMode` overrides this at dispatch. Unknown → default. |
+| `PADDOCK_KEEPER_DRIVE_MODE` | `session` | no | Box-wide default for how keeper turns are driven. `session` (the default, #316) runs the persistent `openChatSession` path, enabling cross-turn autonomy (`ScheduleWakeup` / `/loop`) and SDK streaming; set `batch` for the legacy one-shot `trigger()` path. A per-project `driveMode` overrides this at dispatch. Unknown → default. |
 | `PADDOCK_KEEPER_NATIVE_PROMPT` | `true` | no | Keeper **and** scratch agents use the native Claude Code system prompt + `CLAUDE.md` hierarchy. Set `0`/`false`/`no` for the terse Paddock "replace" prompt (e.g. an instance with no `CLAUDE.md`). |
 | `PADDOCK_SELF_MCP` | `false` | no | Give keepers the read-only self-management MCP (`mcp__paddock_manage__*`: enumerate projects/chats, read another chat's transcript). Never injected on scratch turns. |
 | `PADDOCK_SELF_MCP_WRITE` | `false` | no | Additionally give keepers the self-management **write** tools (`create_chat`, `fork_chat`, `send_message`, `fork_chat_batch`). Only honored when `PADDOCK_SELF_MCP` is also on (write implies read). |

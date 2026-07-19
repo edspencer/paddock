@@ -121,9 +121,10 @@ export interface PaddockConfig {
   brand: BrandConfig;
   /**
    * Global default for how keeper chat turns are driven (Paddock#111), used when
-   * a project doesn't override `driveMode`. `batch` (legacy one-shot trigger) by
-   * default; set `PADDOCK_KEEPER_DRIVE_MODE=session` to make cross-turn autonomy
-   * (ScheduleWakeup / `/loop`) the box-wide default.
+   * a project doesn't override `driveMode`. `session` by default (#316) — the
+   * persistent `openChatSession` path, so cross-turn autonomy (ScheduleWakeup /
+   * `/loop`) and SDK streaming work out of the box; set
+   * `PADDOCK_KEEPER_DRIVE_MODE=batch` for the legacy one-shot `trigger()` path.
    */
   keeperDriveMode: DriveMode;
   /**
@@ -780,9 +781,9 @@ function loadNativeSystemPrompt(file?: PaddockConfigFile["nativeSystemPrompt"]):
 
 /**
  * Resolve the global keeper drive mode from `PADDOCK_KEEPER_DRIVE_MODE`. Defaults
- * to `batch` (KEEPER_DEFAULT_DRIVE_MODE); an unrecognized value falls back to the
- * default rather than failing startup. A per-project `driveMode` still overrides
- * this at dispatch.
+ * to `session` (KEEPER_DEFAULT_DRIVE_MODE, #316); an unrecognized value falls back
+ * to the default rather than failing startup. A per-project `driveMode` still
+ * overrides this at dispatch.
  */
 function loadKeeperDriveMode(file?: PaddockConfigFile["keeperDriveMode"]): DriveMode {
   const raw = (envOpt("PADDOCK_KEEPER_DRIVE_MODE") ?? fileOpt(file))?.toLowerCase();
