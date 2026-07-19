@@ -98,7 +98,7 @@ Set these in the environment (or the YAML instance-config file under a top-level
 | `autoReDrive` | `PADDOCK_RECOVERY_AUTODRIVE` | `false` (OFF) | 3 | Automatically re-drive a hung keeper. *(Engine ships in a follow-up.)* |
 | `debounceMs` | `PADDOCK_RECOVERY_DEBOUNCE_MS` | `5000` | 3 | Quiet window (ms) after a killed task before auto re-drive fires, so a keeper that's genuinely finishing isn't poked. |
 | `maxRetries` | `PADDOCK_RECOVERY_MAX_RETRIES` | `1` | 3 | Per-session cap on auto re-drives, so a wedged keeper isn't poked in a loop. |
-| `limboTimeoutMs` | `PADDOCK_RECOVERY_LIMBO_MS` | `0` (off) | 2 | If set, surface a kept-alive session as stuck after this many ms of silence following a killed task. `0` disables it. |
+| `limboTimeoutMs` | `PADDOCK_RECOVERY_LIMBO_MS` | `0` (off) | 2 | If set, surface a kept-alive session as stuck after this many ms of silence following a killed task. `0` disables it. *(Backstop timer ships in a follow-up.)* |
 
 Booleans accept `1`/`true`/`yes` (case-insensitive) for on and anything else for
 off. The numeric knobs accept non-negative integers; an invalid value falls back to
