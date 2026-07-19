@@ -611,6 +611,10 @@ export class HerdctlService {
         prompt: opts.prompt,
         manageLifecycle: true,
         injectedMcpServers: opts.injectedMcpServers,
+        // Stream assistant text token-by-token: the SDK emits `stream_event` /
+        // `text_delta` chunks that the translator surfaces as incremental
+        // `chat:response` frames (edspencer/herdctl#382, paddock#315).
+        includePartialMessages: true,
       });
     } catch (err) {
       return {
@@ -770,7 +774,11 @@ export class HerdctlService {
       onMessage?: (msg: SDKMessage) => void | Promise<void>;
     },
   ): Promise<{ sessionId: string | null }> {
-    const session = await this.manager.openChatSession(agentName, { resume: opts.resume });
+    const session = await this.manager.openChatSession(agentName, {
+      resume: opts.resume,
+      // Stream the command's assistant text token-by-token (paddock#315).
+      includePartialMessages: true,
+    });
     let sessionId: string | null = typeof opts.resume === "string" ? opts.resume : null;
 
     // Consume the stream until the turn completes (a `result` message). Set up
