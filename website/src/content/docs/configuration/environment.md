@@ -115,7 +115,7 @@ knob has a per-project `recovery` override in `project.yaml`.
 | Variable | Default | Required | Purpose |
 |----------|---------|----------|---------|
 | `PADDOCK_RECOVERY_SURFACE` | `true` (ON) | no | **Layer 2.** Surface a killed/stopped background-task notification as a "keeper is idle" affordance with a one-click **Continue** button. Accepts `1`/`true`/`yes`. |
-| `PADDOCK_RECOVERY_AUTODRIVE` | `false` (OFF) | no | **Layer 3.** Automatically re-drive a hung keeper. *(Config only for now — the detection/inject engine ships in a follow-up.)* |
+| `PADDOCK_RECOVERY_AUTODRIVE` | `false` (OFF) | no | **Layer 3.** Automatically re-drive a hung keeper — Paddock detects the killed task and injects the nudge on its own (debounce + retry-cap guarded). Off by default (it acts unattended and costs a turn). |
 | `PADDOCK_RECOVERY_DEBOUNCE_MS` | `5000` | no | Layer 3: quiet window (ms) after a killed task before auto re-drive fires. Non-negative integer, else the default. |
 | `PADDOCK_RECOVERY_MAX_RETRIES` | `1` | no | Layer 3: per-session cap on auto re-drives (no poke-loops). Non-negative integer, else the default. |
 | `PADDOCK_RECOVERY_LIMBO_MS` | `0` (off) | no | Layer 2 backstop: surface a kept-alive session as stuck after this many ms of silence following a killed task. `0` disables it. *(Backstop timer ships in a follow-up — config only for now.)* |

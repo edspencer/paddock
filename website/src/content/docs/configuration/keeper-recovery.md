@@ -53,8 +53,8 @@ Recovery is delivered in two independently-toggleable layers:
 - **Layer 3 — automatic recovery (default OFF).** Paddock detects the killed task
   and injects the re-drive nudge on its own, so the keeper wakes without anyone
   watching. Because it acts automatically and costs a turn (and tokens), it's
-  opt-in. **Layer 3 is coming in a follow-up** — today the setting exists and is
-  documented below, but the detection/inject engine is not yet wired.
+  opt-in. This is now **live** — see [Layer 3 — automatic recovery](#layer-3--automatic-recovery-now-live)
+  below.
 
 Both layers are configured the same way — an instance-wide default with an optional
 per-project override, exactly like [`driveMode` and
@@ -81,6 +81,71 @@ Turning Layer 2 **off** keeps the explanatory notice (so the hang is still visib
 but removes the Continue button, and the server refuses a recovery re-drive for that
 project.
 
+## Layer 3 — automatic recovery (now live)
+
+With Layer 3 enabled, no one has to be watching the chat. Paddock notices the hung
+keeper and sends the same nudge the Continue button does — on its own.
+
+### How it detects a hang
+
+Layer 3 rides on the one fact we can rely on: the session stays alive and its
+transcript is the source of truth. After **every session-mode keeper turn**, Paddock
+arms a short **post-turn watch** on that chat's transcript:
+
+1. A background task that **completes** wakes the keeper — new assistant activity
+   appends to the transcript. A task that is **killed** writes a terminated
+   `<task-notification>` that wakes nothing, and no assistant activity follows.
+2. So the hung signature is simple: the transcript ends with a **terminated
+   task-notification and no keeper reply after it**. If instead the keeper wakes on
+   its own inside the watch window, the watch sees that reply and stands down.
+3. The kill lands a couple of seconds *after* the turn ends, so the watch keeps
+   polling for a short grace period, and only acts once the notification has sat
+   un-answered for the full **debounce** window.
+
+When that signature holds and Layer 3 is on, Paddock injects the recovery nudge into
+the still-alive session — the identical re-drive the manual **Continue** button
+performs (attributed to Paddock recovery, streamed live, recorded in the transcript).
+The keeper wakes, sees its task was killed at the turn boundary, and carries on.
+
+### The guards (so it can't misfire or loop)
+
+Auto-recovery is deliberately cautious:
+
+- **Opt-in.** It only ever fires when `autoReDrive` is on for the project (per-project
+  override, else the instance default). With Layer 3 off, the watch is never even
+  armed.
+- **Debounce.** It never fires until the killed notification has been quiet for
+  `debounceMs` (default 5s). A keeper that's genuinely finishing — or that wakes
+  itself — inside that window is left alone.
+- **Retry cap.** Each session may be auto re-driven at most `maxRetries` times
+  (default 1). A permanently-wedged keeper (one that hangs again the same way after a
+  re-drive) is nudged up to the cap and then left alone — no poke-loop.
+- **Human reset.** When a human next sends a message to the chat, the retry
+  bookkeeping resets, so a genuinely-new hang later on is recovered fresh. (The cap
+  counts auto re-drives *between* human messages.)
+
+### Enabling it
+
+Turn it on instance-wide, or just for the projects that want it:
+
+```bash
+# instance-wide
+PADDOCK_RECOVERY_AUTODRIVE=1
+```
+
+```yaml
+# project.yaml — opt one project in (leaving the instance default OFF)
+recovery:
+  autoReDrive: true
+  # optional: tune the guards for this project
+  debounceMs: 5000
+  maxRetries: 1
+```
+
+Because it spends a turn and tokens without a human in the loop, it stays **off by
+default** — Layer 2 (see it, click to fix it) is the safe default, and Layer 3 is the
+hands-off upgrade for chats you want to keep moving unattended.
+
 ## How to enable and configure it
 
 Every knob is an instance default with a per-project override. Precedence is, from
@@ -95,7 +160,7 @@ Set these in the environment (or the YAML instance-config file under a top-level
 | Setting | Env var | Default | Layer | What it does |
 | --- | --- | --- | --- | --- |
 | `surfaceKilledTask` | `PADDOCK_RECOVERY_SURFACE` | `true` (ON) | 2 | Surface the killed-task notice + the manual **Continue** button. |
-| `autoReDrive` | `PADDOCK_RECOVERY_AUTODRIVE` | `false` (OFF) | 3 | Automatically re-drive a hung keeper. *(Engine ships in a follow-up.)* |
+| `autoReDrive` | `PADDOCK_RECOVERY_AUTODRIVE` | `false` (OFF) | 3 | Automatically re-drive a hung keeper (detect the killed task + inject the nudge on its own). |
 | `debounceMs` | `PADDOCK_RECOVERY_DEBOUNCE_MS` | `5000` | 3 | Quiet window (ms) after a killed task before auto re-drive fires, so a keeper that's genuinely finishing isn't poked. |
 | `maxRetries` | `PADDOCK_RECOVERY_MAX_RETRIES` | `1` | 3 | Per-session cap on auto re-drives, so a wedged keeper isn't poked in a loop. |
 | `limboTimeoutMs` | `PADDOCK_RECOVERY_LIMBO_MS` | `0` (off) | 2 | If set, surface a kept-alive session as stuck after this many ms of silence following a killed task. `0` disables it. *(Backstop timer ships in a follow-up.)* |
