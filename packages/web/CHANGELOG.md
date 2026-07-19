@@ -1,5 +1,50 @@
 # @paddock/web
 
+## 0.36.0
+
+### Minor Changes
+
+- [#321](https://github.com/edspencer/paddock/pull/321) [`8e3f5a8`](https://github.com/edspencer/paddock/commit/8e3f5a8a6abf11eeea6d021d6a8cc055e4d0a7ee) Thanks [@edspencer](https://github.com/edspencer)! - Switch the built-in default keeper drive mode from `batch` to `session` (#316).
+
+  A fresh/un-configured instance now drives keeper turns through the persistent
+  `openChatSession` (SDK runtime) by default, so cross-turn autonomy
+  (`ScheduleWakeup`, `/loop`, reaper-backed background work) and SDK streaming work
+  out of the box — instead of only when an operator sets
+  `PADDOCK_KEEPER_DRIVE_MODE=session`. The env var and per-project `driveMode`
+  override still take precedence; set `PADDOCK_KEEPER_DRIVE_MODE=batch` for the
+  legacy one-shot `trigger()` path.
+
+  Test hermeticity: the integration harness (fake `claude` on PATH, CLI-runtime
+  only) now explicitly pins `PADDOCK_KEEPER_DRIVE_MODE=batch` rather than relying on
+  the built-in default, so flipping the default doesn't route token-less test turns
+  through the SDK runtime ("Not logged in"). Config docs updated.
+
+- [#320](https://github.com/edspencer/paddock/pull/320) [`930a8aa`](https://github.com/edspencer/paddock/commit/930a8aa6d61d83b425c6ac31403ceca211b4bf5c) Thanks [@edspencer](https://github.com/edspencer)! - Stream keeper replies token-by-token in the web UI (#315).
+
+  Session-mode turns now opt into partial (streaming) assistant messages from
+  herdctl (`@herdctl/core`/`@herdctl/chat` ≥ the herdctl#382 release): both
+  `HerdctlService.chatSession` and `runCommand` pass `includePartialMessages: true`
+  to `openChatSession`. The SDK then emits `stream_event` / `text_delta` chunks that
+  `@herdctl/chat`'s translator surfaces as incremental `onText` calls, which the WS
+  layer already forwards as `chat:response` `{ chunk }` frames — so a keeper reply
+  now accretes into the live bubble token-by-token instead of landing in one drop.
+
+  The transport was already delta-shaped (per-turn hub buffer, replay, and
+  `ChatPane` chunk-append are delta-agnostic), so re-attach/replay is unchanged and
+  no coalescing was needed. Only session-mode (SDK-runtime) instances benefit;
+  batch-mode keeps whole-message rendering.
+
+- [#313](https://github.com/edspencer/paddock/pull/313) [`92dc8c9`](https://github.com/edspencer/paddock/commit/92dc8c9c94af822926ec4b54e2e85aa8f7d97229) Thanks [@edspencer](https://github.com/edspencer)! - Add the unified **trigger** foundation (Epic T / T1): one discriminated `triggers`
+  config block — `schedule | event | webhook` (the **when**) + a shared `run` (the
+  **what**) + `enabled` — over the existing `startAgentTurn` execution core, collapsing
+  what were separate hook and schedule declarations into one model. Adds `TriggerService`
+  (the frozen CRUD registry T2–T5 build on) wiring **both** existing fire paths — the
+  lifecycle event bus (`onArchive`) and herdctl's schedule trigger handler — through a
+  single trigger fire path, plus a `TriggerSessionStore` sidecar that rebinds a
+  `run.session: "resume"` trigger's owned chat after a restart. New triggers default
+  `enabled: false`. No UI/REST/self-MCP surface yet (those are T3/T4); the webhook variant
+  is shape-reserved only (no ingress — T6).
+
 ## 0.35.0
 
 ### Minor Changes
