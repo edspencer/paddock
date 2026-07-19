@@ -296,6 +296,7 @@ export type MessageSender =
   | { kind: "chat"; project: string; sessionId: string; name?: string }
   | { kind: "schedule"; name: string; project?: string }
   | { kind: "hook"; name: string; project?: string }
+  | { kind: "recovery" }
   | { kind: "agent" };
 
 /** A scheduled chat's timer kind (issue #266 / D4). */

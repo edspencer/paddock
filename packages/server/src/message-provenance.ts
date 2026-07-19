@@ -51,12 +51,16 @@ const MAX_CONTENT = 8192;
  *  - `schedule` — a schedule fire injected it; carries the schedule's name.
  *  - `hook`     — an event hook fired it (Epic G / G1); carries the hook's name (and
  *                 project) so a hook chat's kickoff turn is attributable.
+ *  - `recovery` — Paddock's keeper-chat recovery nudged this turn (issue #301):
+ *                 a human clicked "Continue" on a killed-background-task
+ *                 affordance (Layer 2), or Layer 3 auto re-drove the hung keeper.
  *  - `agent`    — a machine turn with no more specific identity (fallback).
  */
 export type MessageSender =
   | { kind: "chat"; project: string; sessionId: string; name?: string }
   | { kind: "schedule"; name: string; project?: string }
   | { kind: "hook"; name: string; project?: string }
+  | { kind: "recovery" }
   | { kind: "agent" };
 
 /** One recorded injection: its sender + the (possibly truncated) injected content. */
@@ -73,7 +77,7 @@ function isSafeId(sessionId: string): boolean {
   return typeof sessionId === "string" && /^[A-Za-z0-9._-]+$/.test(sessionId);
 }
 
-const SENDER_KINDS = new Set(["chat", "schedule", "hook", "agent"]);
+const SENDER_KINDS = new Set(["chat", "schedule", "hook", "recovery", "agent"]);
 
 /** Validate + normalise an untrusted value into a MessageSender, or null. */
 function coerceSender(value: unknown): MessageSender | null {
@@ -105,6 +109,7 @@ function coerceSender(value: unknown): MessageSender | null {
       ...(typeof o.project === "string" ? { project: o.project } : {}),
     };
   }
+  if (o.kind === "recovery") return { kind: "recovery" };
   return { kind: "agent" };
 }
 

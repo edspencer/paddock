@@ -114,7 +114,36 @@ describe("enrichWithBackground (issue #230)", () => {
     };
     const msgs = [tool("Bash", "Command running in background with ID: bmkcnswna. Output …"), raw];
     const out = enrichWithBackground(msgs);
+    // The status STILL folds onto the launching tool block (the "killed" chip)…
     expect(out[0].toolCall!.taskStatus).toBe("killed");
+    // …but a KILLED notification is NOT folded away (issue #301, Layer 2): it must
+    // surface as a standalone affordance so the recovery UI can hang off it.
+    expect(out[1].bgConsumed).toBeUndefined();
+  });
+
+  it("still folds a COMPLETED notification away (only killed/stopped surface)", () => {
+    const raw: EnrichedMessage = {
+      role: "user",
+      content:
+        "<task-notification>\n<task-id>done1</task-id>\n<status>completed</status>\n<summary>done</summary>\n</task-notification>",
+      timestamp: "2026-07-16T00:00:01Z",
+    };
+    const msgs = [tool("Bash", "Command running in background with ID: done1. Output …"), raw];
+    const out = enrichWithBackground(msgs);
+    expect(out[0].toolCall!.taskStatus).toBe("completed");
     expect(out[1].bgConsumed).toBe(true);
+  });
+
+  it("keeps a STOPPED notification visible too (turn-boundary teardown)", () => {
+    const raw: EnrichedMessage = {
+      role: "user",
+      content:
+        "<task-notification>\n<task-id>stp1</task-id>\n<status>stopped</status>\n<summary>Background command was stopped by the user</summary>\n</task-notification>",
+      timestamp: "2026-07-16T00:00:01Z",
+    };
+    const msgs = [tool("Bash", "Command running in background with ID: stp1. Output …"), raw];
+    const out = enrichWithBackground(msgs);
+    expect(out[0].toolCall!.taskStatus).toBe("stopped");
+    expect(out[1].bgConsumed).toBeUndefined();
   });
 });

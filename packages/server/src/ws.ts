@@ -112,6 +112,7 @@ import {
 } from "./run-provenance.js";
 import type { MessageProvenanceStore, MessageSender } from "./message-provenance.js";
 import { resolveMaxSpawnDepth, spawnedSelfMcpDecision } from "./spawn-capability.js";
+import { resolveRecoveryConfig } from "./recovery-config.js";
 import type { PaddockEventBus } from "./event-bus.js";
 import type { HookService } from "./hooks.js";
 import {
@@ -332,6 +333,26 @@ export interface ChatSetQueueMessage {
   };
 }
 
+/**
+ * Manually re-drive a keeper that hung because its background task was killed at
+ * the turn boundary (issue #301, Layer 2). The keeper's session stayed ALIVE (see
+ * edspencer/herdctl#374) so it's still injectable — this action injects a recovery
+ * nudge into it via {@link startAgentTurn}, exactly the message a human sends by
+ * hand today to unstick it, but one click and correctly attributed
+ * (`sender: { kind: "recovery" }`). Gated server-side on the resolved
+ * `recovery.surfaceKilledTask` (per-project override else instance default), so a
+ * client can't re-drive when the operator turned Layer 2 off.
+ */
+export interface ChatContinueMessage {
+  type: "chat:continue";
+  payload: {
+    projectSlug?: string;
+    target?: string;
+    /** The hung keeper session to re-drive. Required (recovery needs a chat). */
+    sessionId: string;
+  };
+}
+
 export interface PingMessage {
   type: "ping";
 }
@@ -342,7 +363,23 @@ export type ClientMessage =
   | ChatCancelMessage
   | ChatSubscribeMessage
   | ChatSetQueueMessage
+  | ChatContinueMessage
   | PingMessage;
+
+/**
+ * The recovery nudge injected by a manual Continue (issue #301, Layer 2) — and,
+ * later, by Layer 3 auto re-drive. It tells the keeper the truth (its background
+ * task was KILLED AT THE TURN BOUNDARY, not "stopped by the user" — cf #216) so it
+ * reacts sensibly: re-run the work in the FOREGROUND this turn, or report what
+ * happened. Kept terse; the killed `<task-notification>` is already in its context.
+ */
+export const RECOVERY_NUDGE =
+  "[Paddock recovery] Your previous turn ended while a background task was still " +
+  "running, and that task was then KILLED at the turn boundary by the runtime — " +
+  "this is a known limitation (see herdctl#374), NOT a user cancellation. Nothing " +
+  "is running now. Please pick up where you left off: if you still need that work, " +
+  "re-run it in the FOREGROUND this turn (do not background it), otherwise summarise " +
+  "what happened and continue.";
 
 // --- server -> client --------------------------------------------------------
 
@@ -535,6 +572,12 @@ export function isClientMessage(data: unknown): data is ClientMessage {
     if (p.wantReplay !== undefined && typeof p.wantReplay !== "boolean") return false;
     if (p.lastSeq !== undefined && typeof p.lastSeq !== "number") return false;
     return true;
+  }
+  if (m.type === "chat:continue") {
+    const p = m.payload as Record<string, unknown> | undefined;
+    if (!p || typeof p.sessionId !== "string" || p.sessionId.length === 0) return false;
+    const slug = p.projectSlug ?? p.target;
+    return typeof slug === "string";
   }
   if (m.type === "chat:set_queue") {
     // NOTE: this case was missing until #245 — every chat:set_queue was rejected
@@ -1769,8 +1812,70 @@ export function makeChatHandler(deps: {
         void onChatCommand(parsed);
         return;
       }
+      if (parsed.type === "chat:continue") {
+        void onChatContinue(parsed);
+        return;
+      }
       void onChatSend(parsed);
     });
+
+    /**
+     * Manual keeper recovery (issue #301, Layer 2). Re-drive a hung keeper whose
+     * background task was killed at the turn boundary by injecting the recovery
+     * nudge into its still-alive session via {@link startAgentTurn} — the same
+     * workhorse the self-MCP `send_message` / schedule fires use, so the injected
+     * turn streams live, lists in the sidebar, and is attributable
+     * (`sender: recovery`). Server-authoritative gate: no-op unless the resolved
+     * `recovery.surfaceKilledTask` is on for this project, so a stale/rogue client
+     * can't re-drive when the operator disabled Layer 2. Scratch chats have no
+     * keeper session to recover, so they're ignored.
+     */
+    const onChatContinue = async (msg: ChatContinueMessage): Promise<void> => {
+      const slug = msg.payload.projectSlug ?? msg.payload.target;
+      if (!slug || slug === SCRATCH_SLUG) return;
+      const sessionId = msg.payload.sessionId;
+      if (!sessionId) return;
+      let project: Awaited<ReturnType<typeof deps.projects.get>>;
+      try {
+        project = await deps.projects.get(slug);
+      } catch {
+        return; // unknown project — nothing to recover
+      }
+      // Gate on the resolved Layer 2 flag (per-project override else instance).
+      const recovery = resolveRecoveryConfig(project.recovery, deps.cfg.recovery);
+      if (!recovery.surfaceKilledTask) return;
+      // Only re-drive a real, existing session (a live kept-alive keeper chat).
+      if (!(await deps.herdctl.sessionExists(project, sessionId).catch(() => false))) return;
+      const driveMode =
+        project.driveMode && isKnownDriveMode(project.driveMode)
+          ? project.driveMode
+          : deps.cfg.keeperDriveMode;
+      await startAgentTurn({
+        projectSlug: slug,
+        agentName: keeperAgentName(slug),
+        workingDir: project.workingDir,
+        resume: sessionId,
+        prompt: RECOVERY_NUDGE,
+        driveMode,
+        fallbackModel: project.model,
+        // A resume never re-stamps provenance (only new chats are stamped), so
+        // these describe-the-run values aren't persisted — the target keeps its
+        // own marker and its self-MCP is gated on THAT recorded depth. A human
+        // clicked Continue, so describe it as a human-rooted run.
+        origin: "human",
+        depth: 0,
+        maxSpawnDepth: resolveMaxSpawnDepth(project.maxSpawnDepth, deps.cfg.maxSpawnDepth),
+        // #290 / #301: attribute the injected nudge to Paddock recovery so the
+        // history renders "⚠ continued after a background task was terminated"
+        // and emits a live chat:injected frame to any attached viewer.
+        sender: { kind: "recovery" },
+      }).catch((err) => {
+        send({
+          type: "chat:error",
+          payload: { projectSlug: slug, target: slug, error: `Recovery failed: ${String(err)}` },
+        });
+      });
+    };
 
     const onSubscribe = (msg: ChatSubscribeMessage): void => {
       const { sessionId, wantReplay, lastSeq } = msg.payload;

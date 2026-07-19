@@ -1597,6 +1597,14 @@ function SenderAttribution({ sender }: { sender: MessageSender }) {
       </div>
     );
   }
+  if (sender.kind === "recovery") {
+    return (
+      <div className={base} data-sender="recovery">
+        <span aria-hidden>⚠</span>
+        <span>continued after a background task was terminated</span>
+      </div>
+    );
+  }
   if (sender.kind === "agent") {
     return (
       <div className={base} data-sender="agent">
