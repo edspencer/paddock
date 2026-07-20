@@ -4,8 +4,9 @@ description: "The event-triggered agent turn — run an agent when a lifecycle e
 ---
 
 An **event hook** runs one agent turn **when something happens** in Paddock. When
-a lifecycle event fires — today that event is `onArchive`, raised when you archive
-a chat — Paddock starts an agent turn to react to it. A hook is the
+a lifecycle event fires — the event that fires a general-purpose hook today is
+`onArchive`, raised when you archive a chat — Paddock starts an agent turn to
+react to it. A hook is the
 *event-driven* sibling of a **schedule** (which is *time-driven*); in Paddock both
 are kinds of **[trigger](/using/automating-with-hooks/)**.
 
