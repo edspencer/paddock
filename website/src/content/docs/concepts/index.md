@@ -15,6 +15,8 @@ Short, canonical explanations of Paddock's core ideas. Read these to understand
   resumable across reloads, reconnects, and devices.
 - **[The sweeper](/concepts/sweeper)** — the per-project, post-turn, tool-less agent
   that curates `OVERVIEW.md` and `CHANGELOG.md`.
+- **[Event hooks](/concepts/hooks)** — run an agent turn when a lifecycle event fires
+  (e.g. `onArchive`); its granted tools are its whole capability.
 
 The one-sentence version: **a _project_ is a directory; its _keeper_ is one
 Claude Code agent whose working directory is that directory; a _chat_ is one

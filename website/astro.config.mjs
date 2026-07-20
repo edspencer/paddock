@@ -56,6 +56,7 @@ export default defineConfig({
 					items: [
 						{ label: 'Creating & organizing projects', slug: 'using/creating-and-organizing-projects' },
 						{ label: 'Working in chats', slug: 'using/working-in-chats' },
+						{ label: 'Automating with hooks', slug: 'using/automating-with-hooks' },
 					],
 				},
 				{
@@ -77,6 +78,7 @@ export default defineConfig({
 						{ label: 'Keeper & scratch agents', slug: 'concepts/keeper-and-scratch' },
 						{ label: 'Chats are sessions', slug: 'concepts/chats' },
 						{ label: 'The sweeper', slug: 'concepts/sweeper' },
+						{ label: 'Event hooks', slug: 'concepts/hooks' },
 					],
 				},
 				{
@@ -101,6 +103,7 @@ export default defineConfig({
 					collapsed: true,
 					items: [
 						{ label: 'REST & WebSocket API', slug: 'reference/api' },
+						{ label: 'Hooks', slug: 'reference/hooks' },
 					],
 				},
 				{
