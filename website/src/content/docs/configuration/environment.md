@@ -10,8 +10,10 @@ code, not guessed), and what it does.
 
 :::tip[Prefer a file?]
 You can also keep an instance's settings in a single YAML file instead of a long
-list of `PADDOCK_*` variables — environment variables still override it. Every row
-below has a matching key; see **[Config file (YAML)](/configuration/config-file/)**.
+list of `PADDOCK_*` variables — environment variables still override it. Nearly
+every setting below has a matching key (the runtime credentials and Vite
+web-build variables are the exceptions); see
+**[Config file (YAML)](/configuration/config-file/)**.
 :::
 
 For a runnable starting point, copy [`.env.example`](../.env.example) to `.env`

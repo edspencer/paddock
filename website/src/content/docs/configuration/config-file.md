@@ -97,7 +97,7 @@ brand:
   logo: "🏠"
   accent: "#3c6ec2"
 
-# --- Capabilities & safety gates (all default OFF; see below) ---
+# --- Capabilities & safety gates (default OFF; maxSpawnDepth defaults to 1) ---
 selfMcpEnabled: true          # read-only self-management MCP for keepers
 selfMcpWriteEnabled: true     # + the write tools (create/fork/send/schedule)
 maxSpawnDepth: 1              # how deep spawned children may themselves spawn
@@ -137,8 +137,10 @@ several also take a per-project override that wins at dispatch time.
 
 For the full list of settings — auth headers, Whisper models, recovery knobs,
 dev-server advertising, and more — see the
-**[Environment variables reference](/configuration/environment/)**; every row
-there has a matching YAML key.
+**[Environment variables reference](/configuration/environment/)**; every
+`PADDOCK_*` server setting there has a matching YAML key. (The runtime
+credentials — `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY` — and the Vite
+web-build variables are read straight from the environment and have no file key.)
 
 ## Per-project overrides layer on top
 

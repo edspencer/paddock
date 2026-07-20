@@ -9,6 +9,12 @@ detail see the changelogs on GitHub
 ([server](https://github.com/edspencer/paddock/blob/main/packages/server/CHANGELOG.md),
 [web](https://github.com/edspencer/paddock/blob/main/packages/web/CHANGELOG.md)).
 
+:::note[Reading older entries]
+Each entry describes a release as it shipped. Some things were refined later — for
+example the separate `set_schedule` and `set_hook` self-management tools below were
+unified into a single `set_trigger` family in a subsequent release.
+:::
+
 A theme runs through this stretch: Paddock grew from a place to *chat with*
 agents into a place where agents **run on their own** — fired by events and
 schedules, spawning and reporting back to each other — with the UI making all
