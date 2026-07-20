@@ -57,6 +57,7 @@ export default defineConfig({
 					items: [
 						{ label: 'Creating & organizing projects', slug: 'using/creating-and-organizing-projects' },
 						{ label: 'Working in chats', slug: 'using/working-in-chats' },
+						{ label: 'Automating with hooks', slug: 'using/automating-with-hooks' },
 						{ label: 'Sending files & images', slug: 'using/sending-files-and-images' },
 						{ label: 'Scheduling recurring work', slug: 'using/scheduling-recurring-work' },
 						{ label: "Reading a keeper's work", slug: 'using/reading-a-keepers-work' },
@@ -83,6 +84,7 @@ export default defineConfig({
 						{ label: 'Schedules', slug: 'concepts/schedules' },
 						{ label: 'Provenance: who did what', slug: 'concepts/provenance' },
 						{ label: 'The sweeper', slug: 'concepts/sweeper' },
+						{ label: 'Event hooks', slug: 'concepts/hooks' },
 					],
 				},
 				{
@@ -109,6 +111,7 @@ export default defineConfig({
 					collapsed: true,
 					items: [
 						{ label: 'REST & WebSocket API', slug: 'reference/api' },
+						{ label: 'Hooks', slug: 'reference/hooks' },
 						{ label: 'Schedules', slug: 'reference/schedules' },
 					],
 				},
