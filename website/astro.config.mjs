@@ -57,6 +57,7 @@ export default defineConfig({
 					items: [
 						{ label: 'Creating & organizing projects', slug: 'using/creating-and-organizing-projects' },
 						{ label: 'Working in chats', slug: 'using/working-in-chats' },
+						{ label: 'Sending files & images', slug: 'using/sending-files-and-images' },
 						{ label: 'Scheduling recurring work', slug: 'using/scheduling-recurring-work' },
 						{ label: "Reading a keeper's work", slug: 'using/reading-a-keepers-work' },
 					],

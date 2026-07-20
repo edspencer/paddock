@@ -104,6 +104,13 @@ maxSpawnDepth: 1              # how deep spawned children may themselves spawn
 scheduleMutationEnabled: false
 hooksMcpEnabled: false
 
+# --- Inbound composer attachments (file/image upload; all optional) ---
+attachments:
+  enabled: true                 # master switch (default on)
+  maxFileSizeMb: 25             # per-file cap
+  maxFilesPerMessage: 10        # per-message cap
+  allowedTypes: ["*"]           # a real array here (env is comma-separated)
+
 # --- Voice dictation (Whisper), git author, GitHub OAuth ---
 transcription:
   mode: remote
@@ -147,8 +154,10 @@ web-build variables are read straight from the environment and have no file key.
 The YAML file sets **instance-wide** defaults. A handful of settings can then be
 overridden **per project** from that project's **Settings** tab (persisted in its
 `project.yaml`), which wins at dispatch time — for example `driveMode`,
-`maxSpawnDepth`, `hooksMcpEnabled`, and the keeper-chat `recovery` knobs. So the
-layering is: built-in default → instance YAML/env → per-project override.
+`maxSpawnDepth`, `hooksMcpEnabled`, the keeper-chat `recovery` knobs, and the
+`attachments` group (a project can raise/lower its upload caps or disable uploads
+entirely). So the layering is: built-in default → instance YAML/env → per-project
+override.
 
 ![A project's Settings tab, where keeper behaviour set instance-wide in the config file can be overridden for this one project](../../../assets/config/project-settings.png)
 
