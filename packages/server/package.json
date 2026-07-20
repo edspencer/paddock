@@ -1,6 +1,6 @@
 {
   "name": "@paddock/server",
-  "version": "0.38.0",
+  "version": "0.38.1",
   "private": true,
   "description": "Paddock backend: Fastify + WebSocket wrapping @herdctl/core FleetManager and a project layer.",
   "type": "module",
@@ -22,7 +22,7 @@
     "@fastify/static": "7.0.4",
     "@fastify/websocket": "10.0.1",
     "@herdctl/chat": "^0.7.0",
-    "@herdctl/core": "^5.22.0",
+    "@herdctl/core": "^5.22.1",
     "fastify": "4.28.1",
     "jose": "^6.2.3",
     "yaml": "2.5.1",

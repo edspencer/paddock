@@ -95,6 +95,9 @@ The composer is the box at the bottom of every chat. A few things worth knowing:
   persisted **per chat** in your browser's local storage. Switch chats, reload
   the tab, or come back tomorrow and your unsent draft is still there; sending
   clears it. Each chat keeps its own draft — including a not-yet-started new chat.
+- **Attach files and images.** The paperclip button (project chats only) lets you
+  send files and images to the keeper — pick, drag-drop, or paste them in. See
+  [Sending files & images](/using/sending-files-and-images/).
 
 :::note[Draft persistence is per-browser]
 Drafts are stored locally in the browser you typed them in — they're a

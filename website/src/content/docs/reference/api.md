@@ -101,6 +101,7 @@ return `{ error, code }` with `404` (not found), `409` (exists), or `400`
 | GET | `/api/projects/:slug/chats/:sessionId/subagents/:toolUseId/messages` | Transcript of a sub-agent launched from a Task/Agent tool block. | gated |
 | PATCH | `/api/projects/:slug/chats/:sessionId` | Rename (or clear name) — body `{ name? }`. | gated |
 | DELETE | `/api/projects/:slug/chats/:sessionId` | Delete a chat (removes its transcript + attachments). | gated |
+| POST | `/api/projects/:slug/chats/:sessionId/upload` | Upload composer attachments (`multipart/form-data`, one or more file parts) → `{ files: [{ id, filename, size, kind }] }`. Server-authoritative: `403` if attachments disabled, `413` oversize / too many, `415` disallowed type, `400` if no files. `:sessionId` may name a not-yet-created chat. Uploaded bytes are served back via `/api/chat-files/:id`. | gated |
 | POST | `/api/projects/:slug/chats/:sessionId/fork` | Fork a chat into a new resumable session — body `{ name? }` → `201 { sessionId }`. | gated |
 | POST | `/api/projects/:slug/chats/:sessionId/archive` | Archive/unarchive (non-destructive) — body `{ archived? }`. | gated |
 | POST | `/api/projects/:slug/chats/:sessionId/seen` | Mark seen (server-side read-state) — body `{ when? }`. | gated |

@@ -3,10 +3,18 @@ title: "Environment variables"
 description: "Every PADDOCK_* environment variable, with its default and purpose."
 ---
 
-Paddock is configured **entirely from the environment** — there are no config
-files. Every setting is read once at startup (`packages/server/src/config.ts`),
-normalised, and frozen. This page is the canonical list of every variable the
-server reads, its default (taken from the code, not guessed), and what it does.
+Paddock is configured from the environment: every setting is read once at startup
+(`packages/server/src/config.ts`), normalised, and frozen. This page is the
+canonical list of every variable the server reads, its default (taken from the
+code, not guessed), and what it does.
+
+:::tip[Prefer a file?]
+You can also keep an instance's settings in a single YAML file instead of a long
+list of `PADDOCK_*` variables — environment variables still override it. Nearly
+every setting below has a matching key (the runtime credentials and Vite
+web-build variables are the exceptions); see
+**[Config file (YAML)](/configuration/config-file/)**.
+:::
 
 For a runnable starting point, copy [`.env.example`](../.env.example) to `.env`
 and adjust. Authentication is summarised below but documented in full in
@@ -100,7 +108,7 @@ HushPod's whisper config so both can share a backend. See [DEV.md](https://githu
 
 | Variable | Default | Required | Purpose |
 |----------|---------|----------|---------|
-| `PADDOCK_KEEPER_DRIVE_MODE` | `batch` | no | Box-wide default for how keeper turns are driven; `session` enables cross-turn autonomy (`ScheduleWakeup` / `/loop`). A per-project `driveMode` overrides this at dispatch. Unknown → default. |
+| `PADDOCK_KEEPER_DRIVE_MODE` | `session` | no | Box-wide default for how keeper turns are driven. `session` (the built-in default since v0.36) enables cross-turn autonomy (`ScheduleWakeup` / `/loop`) and token-by-token streaming; `batch` is one-shot per turn. A per-project `driveMode` overrides this at dispatch. Unknown → default. |
 | `PADDOCK_KEEPER_NATIVE_PROMPT` | `true` | no | Keeper **and** scratch agents use the native Claude Code system prompt + `CLAUDE.md` hierarchy. Set `0`/`false`/`no` for the terse Paddock "replace" prompt (e.g. an instance with no `CLAUDE.md`). |
 | `PADDOCK_SELF_MCP` | `false` | no | Give keepers the read-only self-management MCP (`mcp__paddock_manage__*`: enumerate projects/chats, read another chat's transcript). Never injected on scratch turns. |
 | `PADDOCK_SELF_MCP_WRITE` | `false` | no | Additionally give keepers the self-management **write** tools (`create_chat`, `fork_chat`, `send_message`, `fork_chat_batch`). Only honored when `PADDOCK_SELF_MCP` is also on (write implies read). |
@@ -120,6 +128,20 @@ knob has a per-project `recovery` override in `project.yaml`.
 | `PADDOCK_RECOVERY_DEBOUNCE_MS` | `5000` | no | Layer 3: quiet window (ms) after a killed task before auto re-drive fires. Non-negative integer, else the default. |
 | `PADDOCK_RECOVERY_MAX_RETRIES` | `1` | no | Layer 3: per-session cap on auto re-drives (no poke-loops). Non-negative integer, else the default. |
 | `PADDOCK_RECOVERY_LIMBO_MS` | `0` (off) | no | Layer 2 backstop: surface a kept-alive session as stuck after this many ms of silence following a killed task. `0` disables it. *(Backstop timer ships in a follow-up — config only for now.)* |
+
+## Attachments (inbound uploads)
+
+Gate the composer's file/image upload (v0.38). All four knobs also take a
+per-project `attachments` override in `project.yaml` (each field inherits the
+instance default when unset), resolved at request time. See
+[Sending files & images](/using/sending-files-and-images/) for the feature.
+
+| Variable | Default | Required | Purpose |
+|----------|---------|----------|---------|
+| `PADDOCK_ATTACHMENTS_ENABLED` | `true` (ON) | no | Master switch for inbound composer uploads. When off, the upload endpoint `403`s and the composer hides its picker / drop / paste affordances. Accepts `1`/`true`/`yes`. |
+| `PADDOCK_ATTACHMENTS_MAX_FILE_SIZE_MB` | `25` | no | Per-file size cap in MB (1 MB = 1024×1024 bytes). A larger file is rejected before it's written. Must be a positive integer, else the default. |
+| `PADDOCK_ATTACHMENTS_MAX_FILES_PER_MESSAGE` | `10` | no | How many files a single message may carry. Enforced client-side (tray cap) **and** server-side (per upload request + at send). Positive integer, else the default. |
+| `PADDOCK_ATTACHMENTS_ALLOWED_TYPES` | `*` (allow all) | no | Comma-separated allow-list of MIME patterns (`image/*`, `application/pdf`) and/or extensions (`.csv`, `.pdf`). A file passes if its MIME matches any pattern **or** its extension matches any extension entry; the sentinel `*` allows everything. A hygiene/UX guardrail, **not** a security boundary (client-provided types, no magic-byte sniffing). |
 
 ## Dev servers / git / GitHub
 

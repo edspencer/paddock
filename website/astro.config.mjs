@@ -49,6 +49,7 @@ export default defineConfig({
 			},
 			sidebar: [
 				{ label: 'Welcome', link: '/' },
+				{ label: "What's New", slug: 'whats-new' },
 				{ label: 'Getting Started', slug: 'getting-started' },
 				{
 					label: 'Using Paddock',
@@ -57,6 +58,9 @@ export default defineConfig({
 						{ label: 'Creating & organizing projects', slug: 'using/creating-and-organizing-projects' },
 						{ label: 'Working in chats', slug: 'using/working-in-chats' },
 						{ label: 'Automating with hooks', slug: 'using/automating-with-hooks' },
+						{ label: 'Sending files & images', slug: 'using/sending-files-and-images' },
+						{ label: 'Scheduling recurring work', slug: 'using/scheduling-recurring-work' },
+						{ label: "Reading a keeper's work", slug: 'using/reading-a-keepers-work' },
 					],
 				},
 				{
@@ -77,6 +81,8 @@ export default defineConfig({
 						{ label: 'Projects', slug: 'concepts/projects' },
 						{ label: 'Keeper & scratch agents', slug: 'concepts/keeper-and-scratch' },
 						{ label: 'Chats are sessions', slug: 'concepts/chats' },
+						{ label: 'Schedules', slug: 'concepts/schedules' },
+						{ label: 'Provenance: who did what', slug: 'concepts/provenance' },
 						{ label: 'The sweeper', slug: 'concepts/sweeper' },
 						{ label: 'Event hooks', slug: 'concepts/hooks' },
 					],
@@ -86,8 +92,10 @@ export default defineConfig({
 					collapsed: true,
 					items: [
 						{ label: 'Environment variables', slug: 'configuration/environment' },
+						{ label: 'Config file (YAML)', slug: 'configuration/config-file' },
 						{ label: 'Authentication', slug: 'configuration/authentication' },
 						{ label: 'Keeper-chat recovery', slug: 'configuration/keeper-recovery' },
+						{ label: 'Scheduling & the schedule gates', slug: 'configuration/schedules' },
 					],
 				},
 				{
@@ -104,6 +112,7 @@ export default defineConfig({
 					items: [
 						{ label: 'REST & WebSocket API', slug: 'reference/api' },
 						{ label: 'Hooks', slug: 'reference/hooks' },
+						{ label: 'Schedules', slug: 'reference/schedules' },
 					],
 				},
 				{
