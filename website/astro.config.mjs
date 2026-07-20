@@ -56,6 +56,7 @@ export default defineConfig({
 					items: [
 						{ label: 'Creating & organizing projects', slug: 'using/creating-and-organizing-projects' },
 						{ label: 'Working in chats', slug: 'using/working-in-chats' },
+						{ label: "Reading a keeper's work", slug: 'using/reading-a-keepers-work' },
 					],
 				},
 				{
@@ -76,6 +77,7 @@ export default defineConfig({
 						{ label: 'Projects', slug: 'concepts/projects' },
 						{ label: 'Keeper & scratch agents', slug: 'concepts/keeper-and-scratch' },
 						{ label: 'Chats are sessions', slug: 'concepts/chats' },
+						{ label: 'Provenance: who did what', slug: 'concepts/provenance' },
 						{ label: 'The sweeper', slug: 'concepts/sweeper' },
 					],
 				},
