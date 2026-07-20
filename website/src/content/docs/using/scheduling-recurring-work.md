@@ -78,8 +78,10 @@ parameters.
 
 :::caution[Self-scheduling is opt-in per deployment]
 The schedule-management MCP tools are only injected when the operator has enabled
-them for the project. If your keeper says it can't schedule things, that gate is
-off — see [Scheduling configuration](/configuration/schedules/#self-scheduling-from-a-chat).
+them — they ride on Paddock's self-MCP **write** layer, so it takes
+`PADDOCK_SELF_MCP` + `PADDOCK_SELF_MCP_WRITE` **and** `PADDOCK_HOOKS_MCP`. If your
+keeper says it can't schedule things, one of those is off — see
+[Scheduling configuration](/configuration/schedules/#self-scheduling-from-a-chat).
 :::
 
 ## Catch up with the History view
@@ -101,9 +103,13 @@ It lists recent runs, each with its origin — **Scheduled** (⏰), **Spawned**,
 - **Click a run** to jump straight into its chat and read what the keeper did.
 
 :::note[What shows up here]
-The History view is built from the keeper's run records, so it reflects runs that
-went through Paddock's batch execution path. It's the fastest way to answer "what
-fired overnight?" at a glance, then drill into any chat that needs your attention.
+The History view is built from the keeper's **batch run records** — one is written
+per turn that runs through Paddock's batch execution path. A turn that runs under a
+**session-mode** keeper doesn't write a run record, so on a session-mode deployment
+some (or all) scheduled runs won't appear in this list even though they fired; the
+scheduled chats themselves still show up in the chat list with their ⏰ badge.
+Where run records exist, History is the fastest way to answer "what fired
+overnight?" at a glance, then drill into any chat that needs your attention.
 :::
 
 ## Next steps

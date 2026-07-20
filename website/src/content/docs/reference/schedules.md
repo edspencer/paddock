@@ -87,8 +87,9 @@ read and write), but existing `schedules` blocks keep working.
 ## Self-MCP tools
 
 When the [trigger-management MCP is enabled](/configuration/schedules/#self-scheduling-from-a-chat)
-(`PADDOCK_HOOKS_MCP`, or a per-project `hooksMcpEnabled`), the keeper is given
-three tools. They manage every trigger type; for a schedule, use `type: "schedule"`.
+— the self-MCP write layer (`PADDOCK_SELF_MCP` + `PADDOCK_SELF_MCP_WRITE`) **plus**
+`PADDOCK_HOOKS_MCP` (or a per-project `hooksMcpEnabled`) — the keeper is given three
+tools. They manage every trigger type; for a schedule, use `type: "schedule"`.
 
 ### `set_trigger`
 

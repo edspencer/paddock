@@ -53,25 +53,30 @@ the per-project Triggers tab keeps working, regardless.
 For a keeper to **schedule itself** from a conversation (the
 [manager-agent pattern](/using/scheduling-recurring-work/#schedule-from-a-chat-the-manager-agent-pattern)),
 it needs the schedule-management MCP tools — `set_trigger`, `list_triggers`,
-`remove_trigger`. Those are injected only when the trigger-management MCP is
-enabled, again **off by default**:
+`remove_trigger`. These ride on Paddock's self-management MCP layer, so they only
+appear when **all** of the following are on — and each is **off by default**:
 
 | Setting | Env var | Default | What it does |
 | --- | --- | --- | --- |
-| `hooksMcpEnabled` | `PADDOCK_HOOKS_MCP` | `false` (OFF) | Inject the `set_trigger` / `list_triggers` / `remove_trigger` self-MCP tools into the project's keeper, letting it manage its own triggers (schedules and event hooks alike). |
+| `selfMcpEnabled` | `PADDOCK_SELF_MCP` | `false` (OFF) | Hand keepers the self-management MCP (read tools). The base layer everything else rides on. |
+| `selfMcpWriteEnabled` | `PADDOCK_SELF_MCP_WRITE` | `false` (OFF) | Add the **write** tools (create/fork/message — the ones that start real turns). Only honored when `PADDOCK_SELF_MCP` is also on. |
+| `hooksMcpEnabled` | `PADDOCK_HOOKS_MCP` | `false` (OFF) | On top of the write layer, include the trigger-management tools (`set_trigger` / `list_triggers` / `remove_trigger`), which manage schedules **and** event hooks. A per-project `hooksMcpEnabled` override wins over the instance default. |
 
-It accepts `1` / `true` / `yes`, and a per-project `hooksMcpEnabled` override in
-`project.yaml` wins over the instance default. When it's off, the tools are simply
-**absent** from the keeper — not present-but-refusing — so a keeper on a plain
-deployment can't self-schedule at all.
+All three accept `1` / `true` / `yes`. Because the trigger tools live on the
+self-MCP **write** server, `PADDOCK_HOOKS_MCP` on its own does nothing unless the
+self-MCP write layer is also enabled. When any prerequisite is off, the tools are
+simply **absent** from the keeper — not present-but-refusing — so a keeper on a
+plain deployment can't self-schedule at all.
 
 ```bash
-# instance-wide
+# instance-wide: the self-MCP write layer + the trigger tools on top of it
+PADDOCK_SELF_MCP=1
+PADDOCK_SELF_MCP_WRITE=1
 PADDOCK_HOOKS_MCP=1
 ```
 
 ```yaml
-# project.yaml — opt one project in
+# project.yaml — scope trigger management to one project (write layer still required)
 hooksMcpEnabled: true
 ```
 
