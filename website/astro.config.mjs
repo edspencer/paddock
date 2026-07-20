@@ -49,6 +49,7 @@ export default defineConfig({
 			},
 			sidebar: [
 				{ label: 'Welcome', link: '/' },
+				{ label: "What's New", slug: 'whats-new' },
 				{ label: 'Getting Started', slug: 'getting-started' },
 				{
 					label: 'Using Paddock',
@@ -84,6 +85,7 @@ export default defineConfig({
 					collapsed: true,
 					items: [
 						{ label: 'Environment variables', slug: 'configuration/environment' },
+						{ label: 'Config file (YAML)', slug: 'configuration/config-file' },
 						{ label: 'Authentication', slug: 'configuration/authentication' },
 						{ label: 'Keeper-chat recovery', slug: 'configuration/keeper-recovery' },
 					],
