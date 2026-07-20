@@ -25,8 +25,8 @@ project. A one-off (scratch) chat has no paperclip button. See
 Every project chat's composer has a **paperclip** button. There are three ways to
 add files, and they all feed the same tray:
 
-- **Pick.** Click the **paperclip** (📎, *"Attach files"*) to open your OS file
-  chooser. You can select more than one file at once.
+- **Pick.** Click the **paperclip** button (*"Attach files"*) to open your OS
+  file chooser. You can select more than one file at once.
 - **Drag & drop.** Drag files from your desktop onto the composer — a *"Drop files
   to attach"* overlay highlights the drop zone — and release.
 - **Paste.** Copy an image or file and press **⌘V / Ctrl+V** with the composer
@@ -52,9 +52,9 @@ still applies; attachments simply travel with the turn.
 
 ## What the keeper does with them
 
-When your message sends, Paddock copies each file into the project's attachment
-store and points the keeper's **`Read`** tool at the stored copies. What the
-keeper sees depends on the file:
+When your message sends, Paddock copies each file into its attachment store and
+points the keeper's **`Read`** tool at the stored copies. What the keeper sees
+depends on the file:
 
 - **Images** (`.png`, `.jpg`, `.gif`, `.webp`, …) — read with **native vision**.
   The keeper genuinely *sees* the picture: a UI screenshot, a diagram, a photo.
