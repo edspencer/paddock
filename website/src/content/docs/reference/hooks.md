@@ -47,8 +47,8 @@ Field notes:
 | `enabled` | A disabled hook is stored but never fired. New hooks default **disabled**. |
 
 A hook fires as its own agent, `trigger-<slug>-<name>` — so the tools above are
-enforced by the runtime, and the chat's [capability banner](/concepts/hooks/#a-hook-run-is-a-chat-you-can-read--and-continue)
-is projected from that same config.
+enforced by the runtime, and the chat's [capability banner](/concepts/hooks/) is
+projected from that same config.
 
 :::note[Legacy `hooks:` block]
 Event hooks first shipped under a separate per-project `hooks:` map (with

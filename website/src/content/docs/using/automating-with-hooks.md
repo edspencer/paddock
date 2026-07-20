@@ -34,6 +34,8 @@ Click **Add trigger** to open the editor, then:
    `.md` file under `.paddock/triggers/` that Paddock reads fresh on each fire
    (handy for a longer runbook the keeper can edit over time).
 
+![The Triggers tab editor for an event hook: Type set to Event, Event set to On archive, and an inline prompt](../../../assets/using/event-trigger-definition.png)
+
 ## Grant it a capability — the tool picker
 
 A hook's granted tools **are** its whole capability, so the editor's **Tools**
