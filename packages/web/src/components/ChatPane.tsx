@@ -27,6 +27,7 @@ import {
   ClockIcon,
   FileIcon,
   FolderIcon,
+  PaperclipIcon,
   PencilIcon,
   PlusIcon,
   SearchIcon,
@@ -37,6 +38,9 @@ import {
   XIcon,
 } from "./icons";
 import type {
+  AttachmentRef,
+  AttachmentsConfig,
+  AttachmentsOverride,
   BashDetails,
   ChatCompleteUsage,
   ChatHookInfo,
@@ -55,6 +59,12 @@ import type {
   SlashCommand,
   TaskCreateInfo,
 } from "../lib/types";
+import {
+  parseAttachments,
+  isTypeAllowed as isAttachmentTypeAllowed,
+  acceptAttribute,
+} from "../lib/attachments";
+import { MessageAttachments, AttachmentTrayItem } from "./MessageAttachments";
 import { SCRATCH_SLUG } from "../lib/types";
 import {
   formatSessionUsage,
@@ -78,7 +88,15 @@ import { mcpToolInfo, parsePaddockManage, paddockManageSummary } from "../lib/mc
 type Turn =
   // `sender` present ⇒ a machine injected this turn (#290); it renders a subtle
   // attribution above the bubble. Absent ⇒ human-typed (no attribution).
-  | { kind: "user"; id: string; content: string; sender?: MessageSender }
+  // `attachments` present ⇒ the user attached files (issue #328); they render as
+  // thumbnails/chips above the bubble text.
+  | {
+      kind: "user";
+      id: string;
+      content: string;
+      sender?: MessageSender;
+      attachments?: AttachmentRef[];
+    }
   | { kind: "assistant"; id: string; content: string; streaming: boolean }
   | { kind: "tool"; id: string; tool: ToolCall }
   | { kind: "file"; id: string; file: SentFile }
@@ -293,6 +311,13 @@ export interface ChatPaneProps {
    * shown. Undefined for scratch chats / when the project sets no override.
    */
   projectRecovery?: RecoveryOverride;
+  /**
+   * The project's per-project inbound-attachment override (issue #328), from the
+   * Project DTO. Combined with the instance default (GET /api/models
+   * `attachmentsDefault`) to resolve the composer's effective attachment config
+   * (enabled + size/count/type caps). Undefined for scratch / when unset.
+   */
+  projectAttachments?: AttachmentsOverride;
 }
 
 export function ChatPane({
@@ -313,6 +338,7 @@ export function ChatPane({
   hook,
   trigger,
   projectRecovery,
+  projectAttachments,
 }: ChatPaneProps) {
   const [turns, setTurns] = useState<Turn[]>([]);
   // Seed the composer from any unsent draft persisted for this chat. The pane is
@@ -368,6 +394,20 @@ export function ChatPane({
   // Combined with the per-project `projectRecovery` override to gate the killed-
   // task Continue affordance. Null until fetched (defaults apply until then).
   const [recoveryDefault, setRecoveryDefault] = useState<RecoveryConfig | null>(null);
+  // Instance-default inbound-attachment config (issue #328), fetched with models.
+  // Combined with the per-project `projectAttachments` override to resolve the
+  // composer's effective config. Null until fetched (allow-all defaults apply).
+  const [attachmentsDefault, setAttachmentsDefault] = useState<AttachmentsConfig | null>(null);
+
+  // --- composer attachments (issue #328) -------------------------------------
+  // Files the user has picked/dropped/pasted and uploaded to the store, held
+  // until send. `attachRef` mirrors it for the send callback (like `queuedRef`).
+  const [attachments, setAttachments] = useState<AttachmentRef[]>([]);
+  const attachRef = useRef<AttachmentRef[]>([]);
+  attachRef.current = attachments;
+  const [uploading, setUploading] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // --- slash-command autocomplete (issue #103) -------------------------------
   // The commands available to this chat's agent, fetched once per chat (the
@@ -471,6 +511,7 @@ export function ChatPane({
         setModels(res.models);
         setKeeperDefault(res.keeperDefault);
         if (res.recoveryDefault) setRecoveryDefault(res.recoveryDefault);
+        if (res.attachmentsDefault) setAttachmentsDefault(res.attachmentsDefault);
       })
       .catch(() => {
         /* leave the picker empty; sends fall back to the server default */
@@ -929,10 +970,22 @@ export function ChatPane({
     (text: string) => {
       setError(null);
       pinnedRef.current = true;
+      // Consume any composer attachments (#328): they ride WITH this turn and the
+      // tray clears. Only for a plain (non-slash-command) project-chat send.
+      const atts = text.startsWith("/") || !isProjectChat ? [] : attachRef.current;
       setTurns((prev) => [
         ...sealStreaming(prev),
-        { kind: "user", id: nextId(), content: text },
+        {
+          kind: "user",
+          id: nextId(),
+          content: text,
+          ...(atts.length > 0 ? { attachments: atts } : {}),
+        },
       ]);
+      if (atts.length > 0) {
+        setAttachments([]);
+        attachRef.current = [];
+      }
       // Clearing the value doesn't undo the inline height the autosize handler
       // grew the textarea to, so a multi-line message would leave the composer
       // tall until the next keystroke. Reset it back to one row here.
@@ -969,6 +1022,9 @@ export function ChatPane({
         // Send the selected model so the server runs this turn on it. Omitted when
         // unresolved (models not yet loaded) → the server uses the project default.
         model: modelRef.current ?? undefined,
+        // Composer attachments (#328): refs to already-uploaded files; the server
+        // prepends the Read-tool hint block. Empty ⇒ omitted on the wire.
+        attachments: atts.map((a) => ({ id: a.id, filename: a.filename, kind: a.kind })),
       });
     },
     [projectSlug, isProjectChat, preloadContext],
@@ -976,7 +1032,9 @@ export function ChatPane({
 
   const send = useCallback(() => {
     const text = draft.trim();
-    if (!text) return;
+    // A send needs SOMETHING: text, or (project chat) at least one attachment
+    // (#328 — an image-only message is valid, ChatGPT-style).
+    if (!text && !(isProjectChat && attachRef.current.length > 0)) return;
     // While a turn is in flight we can't send in parallel — queue the message
     // instead of no-opping (issue #91). Append to any already-queued message so
     // the slot stays single (Claude Code's model). The composer clears either
@@ -996,7 +1054,128 @@ export function ChatPane({
     }
     setDraft("");
     sendText(text);
-  }, [draft, streaming, sendText]);
+  }, [draft, streaming, sendText, isProjectChat]);
+
+  // --- composer attachments (#328): effective config + upload handlers --------
+  // The composer's effective attachment config: the per-project override wins
+  // field-wise over the instance default (from /api/models). Allow-all defaults
+  // apply until the fetch lands. Mirrors the server's resolveAttachmentsConfig.
+  const attachConfig = useMemo<AttachmentsConfig>(() => {
+    const d = attachmentsDefault ?? {
+      enabled: true,
+      maxFileSizeMb: 25,
+      maxFilesPerMessage: 10,
+      allowedTypes: ["*"],
+    };
+    const o = projectAttachments ?? {};
+    return {
+      enabled: o.enabled ?? d.enabled,
+      maxFileSizeMb: o.maxFileSizeMb ?? d.maxFileSizeMb,
+      maxFilesPerMessage: o.maxFilesPerMessage ?? d.maxFilesPerMessage,
+      allowedTypes: o.allowedTypes ?? d.allowedTypes,
+    };
+  }, [attachmentsDefault, projectAttachments]);
+  // Attachments are project-chat-only (the upload endpoint is project-scoped) and
+  // gated by the effective `enabled` knob.
+  const attachEnabled = isProjectChat && attachConfig.enabled;
+
+  // Client-side validate (UX guardrail; the server re-validates authoritatively),
+  // then upload accepted files and append their refs to the tray.
+  const addFiles = useCallback(
+    async (incoming: File[]) => {
+      if (!attachEnabled || incoming.length === 0) return;
+      const maxBytes = attachConfig.maxFileSizeMb * 1024 * 1024;
+      const room = attachConfig.maxFilesPerMessage - attachRef.current.length;
+      if (room <= 0) {
+        setError(`You can attach at most ${attachConfig.maxFilesPerMessage} files per message.`);
+        return;
+      }
+      const accepted: File[] = [];
+      for (const f of incoming.slice(0, room)) {
+        if (!isAttachmentTypeAllowed(attachConfig.allowedTypes, f.type, f.name)) {
+          setError(`File type not allowed: ${f.name}`);
+          continue;
+        }
+        if (f.size > maxBytes) {
+          setError(`File too large (max ${attachConfig.maxFileSizeMb} MB): ${f.name}`);
+          continue;
+        }
+        accepted.push(f);
+      }
+      if (incoming.length > room) {
+        setError(`You can attach at most ${attachConfig.maxFilesPerMessage} files per message.`);
+      }
+      if (accepted.length === 0) return;
+      setUploading(true);
+      try {
+        const { files } = await api.uploadAttachments(
+          projectSlug,
+          sessionRef.current ?? "new",
+          accepted,
+        );
+        setAttachments((prev) => [...prev, ...files]);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Upload failed.");
+      } finally {
+        setUploading(false);
+      }
+    },
+    [attachEnabled, attachConfig, projectSlug],
+  );
+
+  const removeAttachment = useCallback((id: string) => {
+    setAttachments((prev) => prev.filter((a) => a.id !== id));
+  }, []);
+
+  // Cmd/Ctrl+V of a screenshot (or any file) into the composer (#328).
+  const onComposerPaste = useCallback(
+    (e: React.ClipboardEvent) => {
+      if (!attachEnabled) return;
+      const files = Array.from(e.clipboardData?.files ?? []);
+      if (files.length > 0) {
+        e.preventDefault();
+        void addFiles(files);
+      }
+    },
+    [attachEnabled, addFiles],
+  );
+
+  // Drag-and-drop onto the composer (#328). `dragOver` highlights the drop zone.
+  const onComposerDragOver = useCallback(
+    (e: React.DragEvent) => {
+      if (!attachEnabled) return;
+      if (Array.from(e.dataTransfer?.types ?? []).includes("Files")) {
+        e.preventDefault();
+        setDragOver(true);
+      }
+    },
+    [attachEnabled],
+  );
+  const onComposerDragLeave = useCallback((e: React.DragEvent) => {
+    // Only clear when the pointer actually leaves the drop zone (not a child).
+    if (e.currentTarget === e.target) setDragOver(false);
+  }, []);
+  const onComposerDrop = useCallback(
+    (e: React.DragEvent) => {
+      if (!attachEnabled) return;
+      const files = Array.from(e.dataTransfer?.files ?? []);
+      if (files.length > 0) {
+        e.preventDefault();
+        setDragOver(false);
+        void addFiles(files);
+      }
+    },
+    [attachEnabled, addFiles],
+  );
+  const onPickFiles = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(e.target.files ?? []);
+      if (files.length > 0) void addFiles(files);
+      // Reset so re-picking the same file fires onChange again.
+      e.target.value = "";
+    },
+    [addFiles],
+  );
 
   // Render the server's auto-sent queued message as the user bubble, then clear
   // this pane's queued state (#245). Fires on chat:queued_flushed: `text` present
@@ -1237,7 +1416,37 @@ export function ChatPane({
             forkParent={forkParent}
             onOpenForkParent={onOpenForkParent}
           />
-          <div className="relative flex items-end gap-2 rounded-2xl border border-paddock-300 bg-white p-2 shadow-sm focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/20 dark:border-paddock-700 dark:bg-paddock-900">
+          {/* Attachment tray (#328): thumbnails/chips of files staged for the
+              next message, each removable before send. Shows an uploading hint. */}
+          {attachEnabled && (attachments.length > 0 || uploading) && (
+            <div className="mb-2 flex flex-wrap gap-2" data-testid="attachment-tray">
+              {attachments.map((a) => (
+                <AttachmentTrayItem key={a.id} attachment={a} onRemove={removeAttachment} />
+              ))}
+              {uploading && (
+                <span className="flex items-center gap-1.5 rounded-xl bg-paddock-50 px-3 py-2 text-xs text-paddock-500 ring-1 ring-paddock-200/70 dark:bg-paddock-950 dark:ring-paddock-800">
+                  <span className="h-3 w-3 animate-spin rounded-full border-2 border-paddock-300 border-t-accent" />
+                  Uploading…
+                </span>
+              )}
+            </div>
+          )}
+          <div
+            className={`relative flex items-end gap-2 rounded-2xl border bg-white p-2 shadow-sm focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/20 dark:bg-paddock-900 ${
+              dragOver
+                ? "border-accent ring-2 ring-accent/30"
+                : "border-paddock-300 dark:border-paddock-700"
+            }`}
+            onDragOver={attachEnabled ? onComposerDragOver : undefined}
+            onDragLeave={attachEnabled ? onComposerDragLeave : undefined}
+            onDrop={attachEnabled ? onComposerDrop : undefined}
+          >
+            {/* Drop-zone overlay while dragging files over the composer (#328). */}
+            {dragOver && (
+              <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-accent/10 text-sm font-medium text-accent">
+                Drop files to attach
+              </div>
+            )}
             {/* Slash-command autocomplete (issue #103). Pops above the composer
                 when the draft is a bare leading-slash command; keyboard nav lives
                 in onKeyDown, mouse selection in onMouseDown (preventDefault keeps
@@ -1293,7 +1502,35 @@ export function ChatPane({
                 el.style.height = `${Math.min(el.scrollHeight, 192)}px`;
               }}
               onKeyDown={onKeyDown}
+              onPaste={attachEnabled ? onComposerPaste : undefined}
             />
+            {/* File picker (#328): hidden input + paperclip trigger. Project chats
+                only, and only when attachments are enabled. `multiple` + an accept
+                hint derived from the effective allowedTypes (a UX hint only — the
+                server is authoritative). */}
+            {attachEnabled && (
+              <>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  accept={acceptAttribute(attachConfig.allowedTypes) || undefined}
+                  className="hidden"
+                  data-testid="attachment-input"
+                  onChange={onPickFiles}
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  title="Attach files"
+                  aria-label="Attach files"
+                  data-testid="attachment-button"
+                  className="btn bg-transparent text-paddock-500 hover:bg-paddock-100 hover:text-paddock-700 dark:text-paddock-400 dark:hover:bg-paddock-800"
+                >
+                  <PaperclipIcon width={16} height={16} />
+                </button>
+              </>
+            )}
             {/* Voice dictation (#voice): renders nothing unless the instance has
                 a whisper backend configured. Disabled while a turn streams. */}
             <DictationButton onText={insertDictation} disabled={streaming} />
@@ -1311,7 +1548,7 @@ export function ChatPane({
               <button
                 type="button"
                 onClick={send}
-                disabled={!draft.trim()}
+                disabled={(!draft.trim() && attachments.length === 0) || uploading}
                 className="btn-primary"
                 title="Send (Enter)"
               >
@@ -1723,9 +1960,14 @@ const TurnView = memo(function TurnView({ turn }: { turn: Turn }) {
     return (
       <div className="flex animate-fade-in flex-col items-end">
         {turn.sender ? <SenderAttribution sender={turn.sender} /> : null}
-        <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-accent px-4 py-2.5 text-sm text-white shadow-sm">
-          {turn.content}
-        </div>
+        {turn.attachments && turn.attachments.length > 0 ? (
+          <MessageAttachments attachments={turn.attachments} />
+        ) : null}
+        {turn.content ? (
+          <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-accent px-4 py-2.5 text-sm text-white shadow-sm">
+            {turn.content}
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -2439,9 +2681,20 @@ function historyToTurn(m: HistoryMessage, id: string): Turn {
       status: taskNotificationStatus(m.content),
     };
   }
+  // A user turn may carry uploaded attachments in a `<paddock-attachments>`
+  // wrapper (#328). Strip the block from the visible text and re-render the files
+  // as thumbnails/chips (bytes served from the store). Nested inside any preload
+  // wrapper, which is intentionally left intact (existing behavior).
+  const { attachments, text } = parseAttachments(m.content);
   // A machine-injected user turn (#290) carries a `sender`; a human message does
   // not. Thread it through so the bubble renders "↩ sent by …" / "⏰ scheduled by …".
-  return { kind: "user", id, content: m.content, ...(m.sender ? { sender: m.sender } : {}) };
+  return {
+    kind: "user",
+    id,
+    content: text,
+    ...(m.sender ? { sender: m.sender } : {}),
+    ...(attachments.length > 0 ? { attachments } : {}),
+  };
 }
 
 /**

@@ -85,6 +85,8 @@ import {
 } from "./models.js";
 import { SessionHub, type TurnHandle, type ActiveInfo } from "./session-hub.js";
 import { wrapPreload, composePreloadContext } from "./preload.js";
+import { resolveAttachmentsConfig } from "./attachments-config.js";
+import { wrapAttachments, inferAttachmentKind, type PromptAttachment } from "./attachments-hint.js";
 import { sendFileServerDef, SEND_FILE_SERVER_KEY } from "./send-file-mcp.js";
 import {
   selfMcpServerDef,
@@ -261,6 +263,14 @@ export interface ChatSendMessage {
      * scratch agent is re-registered at this model before triggering. (§7.)
      */
     model?: string;
+    /**
+     * Files the user attached in the composer (issue #328). Each references an
+     * attachment already uploaded via `POST …/chats/:id/upload` (bytes in the
+     * store). The server validates them against the project's effective attachment
+     * config, then prepends a `<paddock-attachments>` hint block to the prompt
+     * pointing the keeper's `Read` tool at the absolute paths. Project chats only.
+     */
+    attachments?: Array<{ id: string; filename: string; kind?: string }>;
   };
 }
 
@@ -562,6 +572,15 @@ export function isClientMessage(data: unknown): data is ClientMessage {
     if (typeof slug !== "string") return false;
     if (p.preloadContext !== undefined && typeof p.preloadContext !== "boolean") return false;
     if (p.model !== undefined && typeof p.model !== "string") return false;
+    if (p.attachments !== undefined) {
+      if (!Array.isArray(p.attachments)) return false;
+      for (const a of p.attachments) {
+        if (!a || typeof a !== "object") return false;
+        const ao = a as Record<string, unknown>;
+        if (typeof ao.id !== "string" || typeof ao.filename !== "string") return false;
+        if (ao.kind !== undefined && typeof ao.kind !== "string") return false;
+      }
+    }
     return p.sessionId === undefined || p.sessionId === null || typeof p.sessionId === "string";
   }
   if (m.type === "chat:command") {
@@ -2209,7 +2228,7 @@ export function makeChatHandler(deps: {
 
     const onChatSend = async (msg: ChatSendMessage): Promise<void> => {
       const slug = readSlug(msg.payload) as string;
-      const { message, sessionId, preloadContext } = msg.payload;
+      const { message, sessionId, preloadContext, attachments: sentAttachments } = msg.payload;
       const isNewChat = sessionId === undefined || sessionId === null;
       // A genuine human message resets this session's Layer 3 recovery guard (issue
       // #301) and cancels any in-flight watch, so the retry cap counts auto re-drives
@@ -2338,12 +2357,37 @@ export function makeChatHandler(deps: {
             deps.cfg.selfMcpWriteEnabled &&
             resolveHooksMcpEnabled(project.hooksMcpEnabled, deps.cfg.hooksMcpEnabled);
 
+          // Composer attachments (issue #328): validate the uploaded files against
+          // this project's effective attachment config, then prepend a
+          // `<paddock-attachments>` hint block pointing the keeper's Read tool at
+          // the stored files' absolute paths. Wrapped BEFORE preload so the whole
+          // thing nests inside the preload block. Invalid/missing/over-count
+          // attachments are dropped (defensive — the endpoint already gated them).
+          if (sentAttachments && sentAttachments.length > 0) {
+            const acfg = resolveAttachmentsConfig(project.attachments, deps.cfg.attachments);
+            if (acfg.enabled) {
+              const promptAtts: PromptAttachment[] = [];
+              for (const a of sentAttachments.slice(0, acfg.maxFilesPerMessage)) {
+                const abs = deps.attachments.absolutePath(a.id);
+                if (!abs || !(await deps.attachments.exists(a.id))) continue;
+                promptAtts.push({
+                  id: a.id,
+                  filename: a.filename,
+                  kind: inferAttachmentKind(a.filename),
+                  path: abs,
+                });
+              }
+              prompt = wrapAttachments(promptAtts, prompt);
+            }
+          }
+
           // Context preload (issues #1/#188): only for a NEW chat, only when
           // asked. Shared with the self-MCP create_chat path (C2 / #264):
           // injects BOTH OVERVIEW.md and CHANGELOG.md when the project has
-          // curated state, else leaves the prompt untouched.
+          // curated state, else leaves the prompt untouched. Wraps the (possibly
+          // attachment-wrapped) `prompt`, not the bare `message`.
           if (isNewChat && preloadContext) {
-            prompt = await composePreloadedPrompt(slug, message);
+            prompt = await composePreloadedPrompt(slug, prompt);
           }
         }
 

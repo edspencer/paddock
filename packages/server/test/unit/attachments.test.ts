@@ -9,6 +9,7 @@ import path from "node:path";
 import type { ChatMessage } from "@herdctl/core";
 import { AttachmentStore, collectAttachmentIds } from "../../src/attachments.js";
 import { SEND_FILE_TOOL_NAME } from "../../src/send-file-mcp.js";
+import { wrapAttachments } from "../../src/attachments-hint.js";
 import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
 
 describe("AttachmentStore", () => {
@@ -60,6 +61,20 @@ describe("AttachmentStore", () => {
     // The bogus id must not have caused anything outside the store to be touched.
     await expect(fs.readdir(root)).resolves.toEqual([]);
   });
+
+  it("absolutePath returns the on-disk path for a valid id, null for a bad one (#328)", async () => {
+    const id = await store.save(Buffer.from("x"), "a.png");
+    expect(store.absolutePath(id)).toBe(path.join(root, id));
+    expect(store.absolutePath("../evil")).toBeNull();
+    expect(store.absolutePath("not-a-uuid")).toBeNull();
+  });
+
+  it("exists reflects on-disk presence and rejects malformed ids (#328)", async () => {
+    const id = await store.save(Buffer.from("x"), "a.png");
+    expect(await store.exists(id)).toBe(true);
+    expect(await store.exists("11111111-2222-3333-4444-555555555555.png")).toBe(false);
+    expect(await store.exists("../evil")).toBe(false);
+  });
 });
 
 describe("collectAttachmentIds", () => {
@@ -84,5 +99,22 @@ describe("collectAttachmentIds", () => {
 
   it("ignores non-JSON / non-envelope outputs", () => {
     expect(collectAttachmentIds([toolMsg("not json")])).toEqual([]);
+  });
+
+  it("also collects ids from a user-message attachment wrapper (#328 cleanup)", () => {
+    const wrapped = wrapAttachments(
+      [
+        { id: "u1.png", filename: "shot.png", kind: "image", path: "/x/u1.png" },
+        { id: "u2.csv", filename: "data.csv", kind: "text", path: "/x/u2.csv" },
+      ],
+      "please review",
+    );
+    const messages: ChatMessage[] = [
+      { role: "user", content: wrapped, timestamp: "t" },
+      toolMsg(JSON.stringify({ paddockSendFile: 1, source: "file", attachmentId: "id-a", filename: "a.png", kind: "image" })),
+    ];
+    // Both the user-uploaded ids and the send_file id are collected (in message
+    // order) for removal.
+    expect(collectAttachmentIds(messages)).toEqual(["u1.png", "u2.csv", "id-a"]);
   });
 });

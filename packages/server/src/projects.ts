@@ -43,11 +43,13 @@ import {
   type PaddockTrigger,
 } from "./trigger-config.js";
 import { sanitizeRecoveryOverride, type RecoveryOverride } from "./recovery-config.js";
+import { sanitizeAttachmentsOverride, type AttachmentsOverride } from "./attachments-config.js";
 
 export type { PaddockSchedule };
 export type { PaddockHook };
 export type { PaddockTrigger };
 export type { RecoveryOverride };
+export type { AttachmentsOverride };
 
 /** project.yaml status enum (matches the documented standard). */
 export type ProjectStatus =
@@ -255,6 +257,18 @@ export interface ProjectYaml {
    */
   recovery?: RecoveryOverride;
   /**
+   * Per-project inbound-attachment override (issue #328). Every field optional;
+   * an absent field inherits the instance default (`cfg.attachments`, itself
+   * `PADDOCK_ATTACHMENTS_*` env / YAML), resolved at request time via
+   * {@link import("./attachments-config.js").resolveAttachmentsConfig} — the same
+   * inherit/override discipline as `recovery`. Absent ⇒ this project inherits
+   * every attachment default. Persisted (and re-read) through
+   * {@link sanitizeAttachmentsOverride} so a malformed hand-edit degrades cleanly.
+   * (Surfacing this in the Settings tab is deferred to Phase 2; the resolve/
+   * override plumbing exists now.)
+   */
+  attachments?: AttachmentsOverride;
+  /**
    * External git repo URL that backs this project (issue #187). When present the
    * project is REPO-BACKED: Paddock clones the repo into a nested `.gitignore`d
    * checkout under the project dir and the keeper's working directory is that
@@ -399,6 +413,14 @@ export type UpdateProjectInput = Partial<
    * object is the unit — sanitised on write).
    */
   recovery?: RecoveryOverride | null;
+  /**
+   * Inbound-attachment override (issue #328). An {@link AttachmentsOverride}
+   * object REPLACES the per-project override; `null` CLEARS it so the project
+   * inherits every instance default again; `undefined`/absent leaves it
+   * untouched. Same tri-state as `recovery` (the whole override object is the
+   * unit — sanitised on write). Wired now for the Phase 2 Settings surface.
+   */
+  attachments?: AttachmentsOverride | null;
 };
 
 const PROJECT_FILE = "project.yaml";
@@ -671,6 +693,7 @@ export class ProjectStore {
       maxSpawnDepth: maxSpawnDepthPatch,
       hooksMcpEnabled: hooksMcpPatch,
       recovery: recoveryPatch,
+      attachments: attachmentsPatch,
       ...rest
     } = patch;
     const next: ProjectYaml = {
@@ -706,6 +729,14 @@ export class ProjectStore {
       const clean = sanitizeRecoveryOverride(recoveryPatch);
       if (clean) next.recovery = clean;
       else delete next.recovery;
+    }
+    if (attachmentsPatch === null) {
+      // Clear the per-project override -> inherit every instance default (#328).
+      delete next.attachments;
+    } else if (attachmentsPatch !== undefined) {
+      const clean = sanitizeAttachmentsOverride(attachmentsPatch);
+      if (clean) next.attachments = clean;
+      else delete next.attachments;
     }
     await this.writeYaml(slug, next);
     return this.toDto(current.dir, next, await this.overviewExists(slug));
@@ -1225,6 +1256,10 @@ export class ProjectStore {
       // discipline), but re-sanitised so a corrupt hand-edit never reaches the
       // web. Absent ⇒ omitted (undefined), so the project inherits every default.
       recovery: sanitizeRecoveryOverride(yaml.recovery),
+      // Attachment override stays RAW (per-project only — resolved against the
+      // instance default at request time, never baked concrete here), re-sanitised
+      // so a corrupt hand-edit never reaches the web. Absent ⇒ omitted (#328).
+      attachments: sanitizeAttachmentsOverride(yaml.attachments),
       dir,
       // Repo-backed (#187): the keeper's cwd is the nested checkout; a notebook's
       // cwd is the metadata dir itself. `repoBacked` is the presence of `repo`.
