@@ -57,6 +57,7 @@ export default defineConfig({
 					items: [
 						{ label: 'Creating & organizing projects', slug: 'using/creating-and-organizing-projects' },
 						{ label: 'Working in chats', slug: 'using/working-in-chats' },
+						{ label: 'Scheduling recurring work', slug: 'using/scheduling-recurring-work' },
 						{ label: "Reading a keeper's work", slug: 'using/reading-a-keepers-work' },
 					],
 				},
@@ -78,6 +79,7 @@ export default defineConfig({
 						{ label: 'Projects', slug: 'concepts/projects' },
 						{ label: 'Keeper & scratch agents', slug: 'concepts/keeper-and-scratch' },
 						{ label: 'Chats are sessions', slug: 'concepts/chats' },
+						{ label: 'Schedules', slug: 'concepts/schedules' },
 						{ label: 'Provenance: who did what', slug: 'concepts/provenance' },
 						{ label: 'The sweeper', slug: 'concepts/sweeper' },
 					],
@@ -90,6 +92,7 @@ export default defineConfig({
 						{ label: 'Config file (YAML)', slug: 'configuration/config-file' },
 						{ label: 'Authentication', slug: 'configuration/authentication' },
 						{ label: 'Keeper-chat recovery', slug: 'configuration/keeper-recovery' },
+						{ label: 'Scheduling & the schedule gates', slug: 'configuration/schedules' },
 					],
 				},
 				{
@@ -105,6 +108,7 @@ export default defineConfig({
 					collapsed: true,
 					items: [
 						{ label: 'REST & WebSocket API', slug: 'reference/api' },
+						{ label: 'Schedules', slug: 'reference/schedules' },
 					],
 				},
 				{
