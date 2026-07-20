@@ -30,6 +30,9 @@ git add .changeset && git commit -m "add changeset"
 No changeset is needed for pure-internal changes (tests, CI, refactors with no
 observable effect).
 
+For a user-facing change, also add a short highlight to the **What's New** docs
+page (`website/src/content/docs/whats-new.md`) so the docs site stays current.
+
 ## Cutting a release (automated)
 
 1. Merge feature PRs (each carrying its changeset) into `main`.

@@ -3,10 +3,18 @@ title: "Environment variables"
 description: "Every PADDOCK_* environment variable, with its default and purpose."
 ---
 
-Paddock is configured **entirely from the environment** — there are no config
-files. Every setting is read once at startup (`packages/server/src/config.ts`),
-normalised, and frozen. This page is the canonical list of every variable the
-server reads, its default (taken from the code, not guessed), and what it does.
+Paddock is configured from the environment: every setting is read once at startup
+(`packages/server/src/config.ts`), normalised, and frozen. This page is the
+canonical list of every variable the server reads, its default (taken from the
+code, not guessed), and what it does.
+
+:::tip[Prefer a file?]
+You can also keep an instance's settings in a single YAML file instead of a long
+list of `PADDOCK_*` variables — environment variables still override it. Nearly
+every setting below has a matching key (the runtime credentials and Vite
+web-build variables are the exceptions); see
+**[Config file (YAML)](/configuration/config-file/)**.
+:::
 
 For a runnable starting point, copy [`.env.example`](../.env.example) to `.env`
 and adjust. Authentication is summarised below but documented in full in
