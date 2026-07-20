@@ -317,7 +317,11 @@ class ChatClient {
     projectSlug: string,
     message: string,
     sessionId: string | null,
-    opts?: { preloadContext?: boolean; model?: string },
+    opts?: {
+      preloadContext?: boolean;
+      model?: string;
+      attachments?: Array<{ id: string; filename: string; kind?: string }>;
+    },
   ): void {
     const payload: Record<string, unknown> = { projectSlug, sessionId, message };
     // Only meaningful on the first turn of a NEW chat; the server ignores it
@@ -327,6 +331,9 @@ class ChatClient {
     // re-registers the agent with it (last-write-wins per project). Omit when
     // unset so the server falls back to the project/keeper default.
     if (opts?.model) payload.model = opts.model;
+    // Composer attachments (issue #328): refs to already-uploaded files. The
+    // server prepends a Read-tool hint block to the prompt. Omit when none.
+    if (opts?.attachments && opts.attachments.length > 0) payload.attachments = opts.attachments;
     this.markTurnStart(projectSlug, sessionId);
     this.transmit(JSON.stringify({ type: "chat:send", payload }));
   }

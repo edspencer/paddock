@@ -19,6 +19,7 @@ import path from "node:path";
 import type { ChatMessage } from "@herdctl/core";
 import { contentTypeFor } from "./projects.js";
 import { SEND_FILE_TOOL_NAME, type SentFileEnvelope } from "./send-file-mcp.js";
+import { ATTACHMENTS_OPEN, parseAttachmentIds } from "./attachments-hint.js";
 
 /** `<uuid>` optionally followed by a short `.ext` — the only shape we serve. */
 const ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\.[A-Za-z0-9]{1,8})?$/;
@@ -37,6 +38,28 @@ export class AttachmentStore {
     await fs.mkdir(this.root, { recursive: true });
     await fs.writeFile(path.join(this.root, id), bytes);
     return id;
+  }
+
+  /**
+   * The absolute on-disk path for a (validated) attachment id, or `null` if the
+   * id is malformed. Used to point the keeper's `Read` tool at an uploaded file
+   * (issue #328) — the store file IS the on-disk copy the agent reads. Does not
+   * check existence; pair with {@link exists} when that matters.
+   */
+  absolutePath(id: string): string | null {
+    if (!ID_RE.test(id)) return null;
+    return path.join(this.root, id);
+  }
+
+  /** True when a (validated) attachment id currently has bytes on disk. */
+  async exists(id: string): Promise<boolean> {
+    if (!ID_RE.test(id)) return false;
+    try {
+      const info = await fs.stat(path.join(this.root, id));
+      return info.isFile();
+    } catch {
+      return false;
+    }
   }
 
   /** Read an attachment by id (validated), with a content-type for serving. */
@@ -66,21 +89,31 @@ export class AttachmentStore {
 }
 
 /**
- * Extract the attachment ids a chat's transcript references, by parsing the
- * `send_file` tool outputs. Used to clean up a chat's attachments when it's
- * deleted. Inline sends carry no id, so they're naturally skipped.
+ * Extract the attachment ids a chat's transcript references, used to clean up a
+ * chat's attachments when it's deleted. Two sources:
+ *   - agent `send_file` tool outputs (#112) — the JSON envelope's `attachmentId`;
+ *   - user upload wrappers (#328) — the `<paddock-attachments>` block a user turn
+ *     carries, parsed by {@link parseAttachmentIds}.
+ * Inline `send_file` sends carry no id, so they're naturally skipped.
  */
 export function collectAttachmentIds(messages: ChatMessage[]): string[] {
   const ids: string[] = [];
   for (const m of messages) {
-    if (m.toolCall?.toolName !== SEND_FILE_TOOL_NAME || !m.toolCall.output) continue;
-    try {
-      const env = JSON.parse(m.toolCall.output) as SentFileEnvelope;
-      if (env?.paddockSendFile === 1 && env.source === "file" && env.attachmentId) {
-        ids.push(env.attachmentId);
+    // Agent-sent files (send_file tool output envelope).
+    if (m.toolCall?.toolName === SEND_FILE_TOOL_NAME && m.toolCall.output) {
+      try {
+        const env = JSON.parse(m.toolCall.output) as SentFileEnvelope;
+        if (env?.paddockSendFile === 1 && env.source === "file" && env.attachmentId) {
+          ids.push(env.attachmentId);
+        }
+      } catch {
+        // Not our envelope / not JSON — skip.
       }
-    } catch {
-      // Not our envelope / not JSON — skip.
+    }
+    // User-uploaded files (composer attachment wrapper). A user turn's content is
+    // the raw prompt string, which may carry the `<paddock-attachments>` block.
+    if (typeof m.content === "string" && m.content.includes(ATTACHMENTS_OPEN)) {
+      ids.push(...parseAttachmentIds(m.content));
     }
   }
   return ids;

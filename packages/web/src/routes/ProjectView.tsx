@@ -1214,6 +1214,9 @@ export function ProjectView() {
               // Per-project keeper-chat recovery override (issue #301); combined
               // with the instance default to gate the killed-task Continue button.
               projectRecovery={project.recovery}
+              // Per-project inbound-attachment override (issue #328); combined
+              // with the instance default to resolve the composer's picker + caps.
+              projectAttachments={project.attachments}
               forkParent={forkParent ?? undefined}
               onOpenForkParent={openChat}
               autoFocus={justForked}

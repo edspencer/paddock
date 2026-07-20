@@ -31,6 +31,12 @@ import {
   type PaddockSchedule,
 } from "./schedule-config.js";
 import { AttachmentStore, collectAttachmentIds } from "./attachments.js";
+import {
+  resolveAttachmentsConfig,
+  maxFileBytes,
+  isTypeAllowed,
+} from "./attachments-config.js";
+import { inferAttachmentKind, stripAttachmentsWrapper, ATTACHMENTS_OPEN } from "./attachments-hint.js";
 import type { HerdctlService } from "./herdctl.js";
 import { SCRATCH_SLUG, SCRATCH_AGENT, keeperAgentName, hookAgentName, HOOK_AGENT_PREFIX, TRIGGER_AGENT_PREFIX, triggerAgentName } from "./herdctl.js";
 import type { GitService } from "./git.js";
@@ -58,8 +64,19 @@ interface UploadedFile {
   mimetype?: string;
   toBuffer(): Promise<Buffer>;
 }
+/** A streamed multipart part (issue #328 upload): a file or a form field. */
+interface MultipartPart {
+  type: "file" | "field";
+  filename?: string;
+  mimetype?: string;
+  toBuffer(): Promise<Buffer>;
+}
+interface MultipartLimits {
+  limits?: { fileSize?: number; files?: number };
+}
 type MultipartRequest = FastifyRequest & {
   file(): Promise<UploadedFile | undefined>;
+  parts(opts?: MultipartLimits): AsyncIterableIterator<MultipartPart>;
 };
 import { PRELOAD_CONTEXT_OPEN, stripPreloadWrapper } from "./preload.js";
 import {
@@ -283,6 +300,11 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
       // The web resolves the effective value (project.recovery[field] ?? this) to
       // gate the killed-task Continue affordance.
       recoveryDefault: cfg.recovery,
+      // Box-wide inbound-attachment defaults (PADDOCK_ATTACHMENTS_*) a project
+      // inherits when its own `attachments` override fields are unset (issue #328).
+      // The composer resolves the effective value (project.attachments[field] ??
+      // this) to gate the picker + build the client-side accept/size guards.
+      attachmentsDefault: cfg.attachments,
     };
   });
 
@@ -1059,6 +1081,91 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     return reply.send(bytes);
   });
 
+  // Inbound composer upload (issue #328 Phase 1). Copies each posted file's bytes
+  // into the attachment store (reusing the send_file store) and returns opaque
+  // ids the composer holds until send. The stored file DOUBLES as the on-disk copy
+  // the keeper's `Read` tool opens (via the absolute path threaded into the send
+  // prompt) AND the durable copy the transcript re-renders from (`/api/chat-files/:id`).
+  //
+  // Validation is SERVER-AUTHORITATIVE (the client mirrors it only for UX): the
+  // effective per-project config gates enabled/size/count/type. `:sessionId` is
+  // accepted for a not-yet-created chat too (a new chat has no id until its first
+  // frame) — storage is flat and doesn't need it; it only scopes the request.
+  app.post<{ Params: { slug: string; sessionId: string } }>(
+    "/api/projects/:slug/chats/:sessionId/upload",
+    async (req, reply) => {
+      let project;
+      try {
+        project = await projects.get(req.params.slug);
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+      const acfg = resolveAttachmentsConfig(project.attachments, cfg.attachments);
+      if (!acfg.enabled) {
+        return reply.code(403).send({ error: "attachments are disabled for this project" });
+      }
+      const maxBytes = maxFileBytes(acfg);
+      // Buffer + validate every part first; persist NOTHING until all pass, so a
+      // rejected file leaves the store untouched (atomic — the client's tray and
+      // the store never disagree). Memory is bounded by the size × count caps.
+      const collected: { filename: string; mimetype?: string; bytes: Buffer }[] = [];
+      try {
+        const parts = (req as MultipartRequest).parts({
+          limits: { fileSize: maxBytes, files: acfg.maxFilesPerMessage },
+        });
+        for await (const part of parts) {
+          if (part.type !== "file") continue;
+          const filename = part.filename || "upload";
+          if (!isTypeAllowed(acfg.allowedTypes, part.mimetype, filename)) {
+            // Drain the current part so the stream unwinds cleanly, then reject.
+            await part.toBuffer().catch(() => undefined);
+            return reply.code(415).send({
+              error: `file type not allowed: ${filename}${part.mimetype ? ` (${part.mimetype})` : ""}`,
+            });
+          }
+          let bytes: Buffer;
+          try {
+            bytes = await part.toBuffer();
+          } catch {
+            // @fastify/multipart truncates + throws when a part exceeds fileSize.
+            return reply
+              .code(413)
+              .send({ error: `file too large (max ${acfg.maxFileSizeMb} MB): ${filename}` });
+          }
+          if (bytes.length > maxBytes) {
+            return reply
+              .code(413)
+              .send({ error: `file too large (max ${acfg.maxFileSizeMb} MB): ${filename}` });
+          }
+          collected.push({ filename, mimetype: part.mimetype, bytes });
+        }
+      } catch (err) {
+        // Count-limit (too many parts) and other multipart failures land here.
+        const code = (err as { code?: string }).code;
+        if (code === "FST_FILES_LIMIT") {
+          return reply
+            .code(413)
+            .send({ error: `too many files (max ${acfg.maxFilesPerMessage} per message)` });
+        }
+        return reply.code(400).send({ error: (err as Error).message });
+      }
+      if (collected.length === 0) {
+        return reply.code(400).send({ error: "no files in request" });
+      }
+      const files = [];
+      for (const c of collected) {
+        const id = await attachments.save(c.bytes, c.filename);
+        files.push({
+          id,
+          filename: c.filename,
+          size: c.bytes.length,
+          kind: inferAttachmentKind(c.filename, c.mimetype),
+        });
+      }
+      return { files };
+    },
+  );
+
   // Pin a file as a sibling tab (issue #4). Validates the file exists + dedupes.
   app.put<{ Params: { slug: string }; Body: { file?: string } }>(
     "/api/projects/:slug/pins",
@@ -1774,13 +1881,20 @@ async function buildProjectChats(
       const provenance = provenanceOf ? await provenanceOf(s).catch(() => null) : null;
       const hook = hookOf ? await hookOf(s).catch(() => undefined) : undefined;
       const trigger = triggerOf ? await triggerOf(s).catch(() => undefined) : undefined;
+      // A preview polluted by a machine-prepended wrapper: the preload context
+      // block (#1) and/or the composer-attachment block (#328). Either makes the
+      // raw first message a poor display name, so recover the real request below.
       const pollutedPreview =
-        !s.customName && !s.autoName && s.preview?.startsWith(PRELOAD_CONTEXT_OPEN);
+        !s.customName &&
+        !s.autoName &&
+        (s.preview?.startsWith(PRELOAD_CONTEXT_OPEN) || s.preview?.startsWith(ATTACHMENTS_OPEN));
       if (!pollutedPreview)
         return toChatDto(s, undefined, usage, archived, turnAt, lastSeen, provenance, hook, trigger);
 
       const full = await readFirstUserText(projectDir, s.sessionId).catch(() => undefined);
-      const cleaned = stripPreloadWrapper(full ?? s.preview ?? "").trim();
+      // Strip preload FIRST (it wraps the whole thing), then the attachment block
+      // nested inside it, leaving just the user's typed request.
+      const cleaned = stripAttachmentsWrapper(stripPreloadWrapper(full ?? s.preview ?? "")).trim();
       // couldn't recover
       if (!cleaned)
         return toChatDto(s, undefined, usage, archived, turnAt, lastSeen, provenance, hook, trigger);

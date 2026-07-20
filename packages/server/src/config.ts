@@ -13,6 +13,11 @@ import YAML from "yaml";
 import { type DriveMode, KEEPER_DEFAULT_DRIVE_MODE, isKnownDriveMode } from "./models.js";
 import { DEFAULT_MAX_SPAWN_DEPTH, isValidMaxSpawnDepth } from "./spawn-capability.js";
 import { type RecoveryConfig, DEFAULT_RECOVERY } from "./recovery-config.js";
+import {
+  type AttachmentsConfig,
+  DEFAULT_ATTACHMENTS,
+  sanitizeAllowedTypes,
+} from "./attachments-config.js";
 
 /**
  * User-authentication strategy.
@@ -205,6 +210,15 @@ export interface PaddockConfig {
    */
   recovery: RecoveryConfig;
   /**
+   * Inbound composer-attachment config (issue #328) — whether users can upload
+   * files/images into the composer, and the size/count/type caps. Instance
+   * defaults here (`PADDOCK_ATTACHMENTS_*` env, YAML beneath); a per-project
+   * `attachments` override wins at request time via
+   * {@link import("./attachments-config.js").resolveAttachmentsConfig}. Enabled +
+   * allow-all by default.
+   */
+  attachments: AttachmentsConfig;
+  /**
    * Log level for the server's structured logger (Fastify/pino). Driven by
    * `LOG_LEVEL`; default `info`.
    */
@@ -297,6 +311,17 @@ export interface PaddockConfigFile {
     debounceMs?: number | string;
     maxRetries?: number | string;
     limboTimeoutMs?: number | string;
+  };
+  /**
+   * Inbound composer-attachment config (issue #328). Every field optional; a
+   * matching `PADDOCK_ATTACHMENTS_*` env var still overrides it (file < env).
+   * `allowedTypes` is a real array here (env is comma-separated).
+   */
+  attachments?: {
+    enabled?: boolean | string;
+    maxFileSizeMb?: number | string;
+    maxFilesPerMessage?: number | string;
+    allowedTypes?: string[] | string;
   };
   logLevel?: string;
   browserMcp?: boolean | string;
@@ -610,6 +635,7 @@ export function loadPaddockConfig(): PaddockConfig {
     scheduleMutationEnabled: loadScheduleMutationEnabled(file.scheduleMutationEnabled),
     hooksMcpEnabled: loadHooksMcpEnabled(file.hooksMcpEnabled),
     recovery: loadRecoveryConfig(file.recovery),
+    attachments: loadAttachmentsConfig(file.attachments),
     logLevel: envOr("LOG_LEVEL", fileOr(file.logLevel, "info")),
     browserMcp: loadBrowserMcp(file.browserMcp),
     sweepMinIntervalMs: loadSweepMinIntervalMs(file.sweepMinIntervalMs),
@@ -718,6 +744,59 @@ function loadRecoveryConfig(file?: PaddockConfigFile["recovery"]): RecoveryConfi
       f.limboTimeoutMs,
       DEFAULT_RECOVERY.limboTimeoutMs,
     ),
+  };
+}
+
+/**
+ * Resolve a positive-integer attachment knob (issue #328). A missing/blank/
+ * non-integer/< 1 value falls back to the default rather than failing startup —
+ * defensive, like {@link loadRecoveryInt} (but size/count must be ≥ 1).
+ */
+function loadAttachmentsInt(env: string, file: unknown, fallback: number): number {
+  const raw = envOpt(env) ?? fileOpt(file);
+  if (raw === undefined) return fallback;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 1 ? n : fallback;
+}
+
+/**
+ * Resolve the `allowedTypes` list (issue #328). The env var is comma-separated
+ * (`PADDOCK_ATTACHMENTS_ALLOWED_TYPES=image/*,.pdf`); the YAML file takes a real
+ * array (or a comma-separated string, coerced the same way). An empty/invalid
+ * value falls back to the default (allow-all) — never "deny all".
+ */
+function loadAllowedTypes(file: string[] | string | undefined, fallback: string[]): string[] {
+  const env = envOpt("PADDOCK_ATTACHMENTS_ALLOWED_TYPES");
+  const raw: unknown =
+    env !== undefined ? env.split(",") : Array.isArray(file) ? file : typeof file === "string" ? file.split(",") : undefined;
+  return sanitizeAllowedTypes(raw) ?? fallback;
+}
+
+/**
+ * Resolve the instance-default inbound-attachment config (issue #328). Enabled +
+ * allow-all by default; each field is env-over-file-over-default, and a
+ * per-project `attachments` override still wins at request time
+ * (resolveAttachmentsConfig). Malformed values degrade to the default, never fatal.
+ */
+function loadAttachmentsConfig(file?: PaddockConfigFile["attachments"]): AttachmentsConfig {
+  const f = file ?? {};
+  const enabledRaw = envOr(
+    "PADDOCK_ATTACHMENTS_ENABLED",
+    fileOr(f.enabled, String(DEFAULT_ATTACHMENTS.enabled)),
+  ).toLowerCase();
+  return {
+    enabled: enabledRaw === "1" || enabledRaw === "true" || enabledRaw === "yes",
+    maxFileSizeMb: loadAttachmentsInt(
+      "PADDOCK_ATTACHMENTS_MAX_FILE_SIZE_MB",
+      f.maxFileSizeMb,
+      DEFAULT_ATTACHMENTS.maxFileSizeMb,
+    ),
+    maxFilesPerMessage: loadAttachmentsInt(
+      "PADDOCK_ATTACHMENTS_MAX_FILES_PER_MESSAGE",
+      f.maxFilesPerMessage,
+      DEFAULT_ATTACHMENTS.maxFilesPerMessage,
+    ),
+    allowedTypes: loadAllowedTypes(f.allowedTypes, DEFAULT_ATTACHMENTS.allowedTypes),
   };
 }
 

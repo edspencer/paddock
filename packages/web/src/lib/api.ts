@@ -4,6 +4,8 @@
 // which is correct both behind the dev proxy and in production where the server
 // serves the built SPA).
 import {
+  type AttachmentRef,
+  type AttachmentsConfig,
   type Chat,
   type ChatUsage,
   type CreateProjectInput,
@@ -164,6 +166,10 @@ export const api = {
      *  inherits when its own `recovery` fields are unset (issue #301). Optional
      *  for back-compat with older servers / test mocks. */
     recoveryDefault?: RecoveryConfig;
+    /** Box-wide inbound-attachment defaults (PADDOCK_ATTACHMENTS_*) a project
+     *  inherits when its own `attachments` fields are unset (issue #328). Optional
+     *  for back-compat with older servers / test mocks. */
+    attachmentsDefault?: AttachmentsConfig;
   }> {
     return req<{
       models: ModelInfo[];
@@ -172,7 +178,40 @@ export const api = {
       keeperDriveModeDefault?: "batch" | "session";
       maxSpawnDepthDefault?: number;
       recoveryDefault?: RecoveryConfig;
+      attachmentsDefault?: AttachmentsConfig;
     }>("/api/models");
+  },
+
+  /**
+   * Upload composer attachments (issue #328) into a chat's attachment store,
+   * returning the saved refs (id + kind + size). `sessionId` may be a
+   * not-yet-created chat's placeholder (e.g. "new") — storage is flat and doesn't
+   * need it. Validation (enabled/size/count/type) is server-authoritative; a 4xx
+   * body carries a human `error` the composer surfaces as a toast.
+   */
+  async uploadAttachments(
+    slug: string,
+    sessionId: string,
+    files: File[],
+  ): Promise<{ files: AttachmentRef[] }> {
+    const form = new FormData();
+    for (const f of files) form.append("files", f, f.name);
+    // Must NOT set content-type here — the browser sets the multipart boundary.
+    const res = await fetch(
+      `${BASE}/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}/upload`,
+      { method: "POST", body: form },
+    );
+    if (!res.ok) {
+      let detail = res.statusText;
+      try {
+        const body = (await res.json()) as { error?: string };
+        if (body.error) detail = body.error;
+      } catch {
+        /* ignore */
+      }
+      throw new ApiError(detail, res.status);
+    }
+    return (await res.json()) as { files: AttachmentRef[] };
   },
 
   /**

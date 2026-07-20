@@ -37,6 +37,48 @@ export interface RecoveryConfig {
 /** A per-project recovery override — every field optional (absent ⇒ inherit). */
 export type RecoveryOverride = Partial<RecoveryConfig>;
 
+/** Inbound composer-attachment config (issue #328). Resolved effective values. */
+export interface AttachmentsConfig {
+  /** Whether users can upload files/images into the composer (default ON). */
+  enabled: boolean;
+  /** Per-file size cap in MB (default 25). */
+  maxFileSizeMb: number;
+  /** How many files a single message may carry (default 10). */
+  maxFilesPerMessage: number;
+  /** Allow-list of MIME patterns (`image/*`) / extensions (`.pdf`); `["*"]` = all. */
+  allowedTypes: string[];
+}
+
+/** A per-project attachment override — every field optional (absent ⇒ inherit). */
+export type AttachmentsOverride = Partial<AttachmentsConfig>;
+
+/**
+ * A file the user attached in the composer (issue #328), already uploaded to the
+ * attachment store. Rendered as a thumbnail (image) or chip (other) in the user
+ * bubble, and passed to the server on send so it prepends the Read-tool hint.
+ */
+export interface AttachmentRef {
+  /** Opaque attachment-store id — also the basename served at `/api/chat-files/:id`. */
+  id: string;
+  /** Original display filename. */
+  filename: string;
+  /** Renderer hint (image → thumbnail, else typed chip). */
+  kind: AttachmentKind;
+  /** Byte size (for the chip's size label); absent on a reload-parsed ref. */
+  size?: number;
+}
+
+/** Renderer hint for an attachment (a superset-ish of SentFileKind + generic `file`). */
+export type AttachmentKind =
+  | "image"
+  | "video"
+  | "pdf"
+  | "markdown"
+  | "code"
+  | "text"
+  | "html"
+  | "file";
+
 export interface Project {
   name: string;
   slug: string;
@@ -93,6 +135,14 @@ export interface Project {
    * Continue affordance; the rest configure the (follow-up) Layer 3 auto re-drive.
    */
   recovery?: RecoveryOverride;
+  /**
+   * Per-project inbound-attachment override (issue #328). `undefined` = inherit
+   * every instance default (`PADDOCK_ATTACHMENTS_*`); a partial object overrides
+   * the fields it sets. The composer resolves the effective config (this ??
+   * instance default) to gate its picker + client-side size/type guards.
+   * (Surfacing this in Settings is Phase 2; the field is wired now.)
+   */
+  attachments?: AttachmentsOverride;
   /**
    * Compact per-chat "last completed turn" timestamps for the sidebar UNREAD
    * badge (#161): one entry per project chat that has a completed keeper turn,
