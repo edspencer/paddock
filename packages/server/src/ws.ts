@@ -109,7 +109,13 @@ import {
   childOf,
 } from "./run-provenance.js";
 import type { MessageProvenanceStore, MessageSender } from "./message-provenance.js";
-import { resolveMaxSpawnDepth, spawnedSelfMcpDecision } from "./spawn-capability.js";
+import {
+  buildInjectedMcpServers,
+  createWakeInjectionCache,
+  type InjectedMcpBuildArgs,
+  type InjectedMcpBuildContext,
+} from "./wake-injection.js";
+import { resolveMaxSpawnDepth } from "./spawn-capability.js";
 import { resolveRecoveryConfig } from "./recovery-config.js";
 import { RecoveryEngine } from "./recovery.js";
 import type { PaddockEventBus } from "./event-bus.js";
@@ -1647,6 +1653,68 @@ export function makeChatHandler(deps: {
     return selfMcpServerDef(selfMcpContext, writeCtx);
   }
 
+  // ── Wake-time injected-MCP re-establishment (edspencer/herdctl#390) ──────────
+  // The single injection-policy context, shared by the live `startAgentTurn` path
+  // (below) AND the wake rebuild, so the two can never drift. See wake-injection.ts.
+  const injectionBuildCtx: InjectedMcpBuildContext = {
+    scratchSlug: SCRATCH_SLUG,
+    cfg: deps.cfg,
+    saveAttachment: (bytes, name) => deps.attachments.save(bytes, name),
+    // Optional, mirroring the optional `runProvenance` dep: absent ⇒ the caller's
+    // `depth` is used unchanged (identical to the pre-extraction inline behaviour).
+    getProvenance: deps.runProvenance ? (id) => deps.runProvenance!.get(id) : undefined,
+    getProjectHooksMcp: async (slug) => {
+      const tp = await deps.projects.get(slug).catch(() => null);
+      return tp?.hooksMcpEnabled;
+    },
+    buildSelfMcp: buildSelfMcpServerDef,
+  };
+
+  /** Build one turn's injected servers via the shared policy (see wake-injection.ts). */
+  function buildInjection(
+    args: InjectedMcpBuildArgs,
+  ): Promise<Record<string, InjectedMcpServerDef>> {
+    return buildInjectedMcpServers(args, injectionBuildCtx);
+  }
+
+  // Rebuild a woken session's injection from scratch (cold-cache warm after a server
+  // restart, when the live-turn cache is empty). Resolves the project (scratch/unknown
+  // ⇒ no injection) then delegates to the shared builder; the resume gates self-MCP on
+  // the chat's OWN recorded depth. Never throws (the cache also catches defensively).
+  const rebuildWakeInjection = async (
+    entry: SessionWakeEntry,
+  ): Promise<Record<string, InjectedMcpServerDef> | undefined> => {
+    const slug = keeperSlugFromAgent(entry.agent);
+    if (!slug || slug === SCRATCH_SLUG) return undefined;
+    let project: Awaited<ReturnType<typeof deps.projects.get>>;
+    try {
+      project = await deps.projects.get(slug);
+    } catch {
+      return undefined; // unknown/deleted project — nothing to inject
+    }
+    return buildInjection({
+      projectSlug: slug,
+      workingDir: project.workingDir,
+      resume: entry.sessionId,
+      // `origin` only feeds child provenance via `childOf` (which forces "spawned"),
+      // so its value is behaviourally irrelevant here; "scheduled" matches a wake root.
+      origin: "scheduled",
+      depth: 0,
+      maxSpawnDepth: resolveMaxSpawnDepth(project.maxSpawnDepth, deps.cfg.maxSpawnDepth),
+      currentSessionId: () => entry.sessionId,
+    });
+  };
+
+  // The cache/resolver. `wakeInjection.remember` is called on every live turn (the
+  // human socket path and `startAgentTurn`), so a session that self-schedules a wake
+  // is warm when it fires. herdctl calls `wakeInjection.resolve` synchronously on each
+  // wake fire — paired with `onSessionWake` above (which streams the woken turn), this
+  // re-establishes the injected MCP servers the woken subprocess would otherwise spawn
+  // WITHOUT, closing the "MCP flap". Registered here (rather than at the onSessionWake
+  // call site) so it sits beside the builder + cache it depends on.
+  const wakeInjection = createWakeInjectionCache({ rebuild: rebuildWakeInjection });
+  deps.herdctl.setResolveInjectedMcpServers((entry) => wakeInjection.resolve(entry));
+
   /**
    * Kick off a keeper turn that is NOT driven by a socket — used by the
    * self-management MCP write tools (issue #214 Phase 2: create_chat / fork_chat /
@@ -1791,56 +1859,20 @@ export function makeChatHandler(deps: {
       },
     });
 
-    // Spawned turns always get send_file (parity with the human path).
-    const sendFile = sendFileServerDef({
-      workingDirectory: workingDir,
-      saveAttachment: (bytes, name) => deps.attachments.save(bytes, name),
-    });
-    const injectedMcpServers: Record<string, InjectedMcpServerDef> = {
-      [SEND_FILE_SERVER_KEY]: sendFile,
-    };
-
-    // B1 (#262 / DD-3): depth-gated self-MCP. The capability follows the depth of
-    // the CHAT this turn runs in: a NEW chat is at `depth` (the value we'll stamp);
-    // a RESUME runs in an existing chat whose OWN recorded depth governs it (a
-    // depth-1 child reporting back to its depth-0 root must gate the ROOT's turn on
-    // depth 0, not on the child's describe-the-run value). Fall back to `depth`
-    // when the target has no recorded marker. Still requires the instance opt-in
-    // (`selfMcpEnabled`) and is never injected on scratch turns; write tools follow
-    // the instance write opt-in — in practice always on when a spawn is reachable,
-    // since a spawn only happens when a parent already had the write tools.
-    let injectionDepth = depth;
-    if (resume !== null && deps.runProvenance) {
-      const rec = await deps.runProvenance.get(resume).catch(() => undefined);
-      if (rec) injectionDepth = rec.depth;
-    }
-    const selfMcp = spawnedSelfMcpDecision({
-      isScratch: projectSlug === SCRATCH_SLUG,
-      selfMcpEnabled: deps.cfg.selfMcpEnabled,
-      selfMcpWriteEnabled: deps.cfg.selfMcpWriteEnabled,
-      depth: injectionDepth,
+    // Build this turn's injected MCP servers via the shared policy (send_file always;
+    // depth-gated self-MCP, #262/DD-3). Extracted so the wake resolver (#390) rebuilds
+    // the IDENTICAL set — see wake-injection.ts. A RESUME gates self-MCP on the chat's
+    // OWN recorded depth (resolved inside the builder); `currentSessionId` is late-bound
+    // to `resolvedSession` so the self-MCP write tools attribute against the live id.
+    const injectedMcpServers = await buildInjection({
+      projectSlug,
+      workingDir,
+      resume,
+      origin,
+      depth,
       maxSpawnDepth,
+      currentSessionId: () => resolvedSession,
     });
-    if (selfMcp.inject) {
-      // Trigger-management tools (T3) follow the TARGET project's REUSED hooks-MCP
-      // opt-in (`hooksMcpEnabled` override else instance default), only meaningful
-      // when the write tools are present. Resolve the project's override lazily —
-      // only when writes are on and the instance/override could enable it — to keep
-      // the hot path lean.
-      let includeTriggers = false;
-      if (selfMcp.includeWrite) {
-        const tp = await deps.projects.get(projectSlug).catch(() => null);
-        includeTriggers = resolveHooksMcpEnabled(tp?.hooksMcpEnabled, deps.cfg.hooksMcpEnabled);
-      }
-      injectedMcpServers[SELF_MCP_SERVER_KEY] = buildSelfMcpServerDef({
-        currentProjectSlug: projectSlug,
-        currentSessionId: () => resolvedSession,
-        // Children of THIS turn are one hop deeper than the chat it runs in.
-        parentProvenance: { origin, depth: injectionDepth },
-        includeWrite: selfMcp.includeWrite,
-        includeTriggers,
-      });
-    }
 
     const drive =
       driveMode === "session"
@@ -1875,6 +1907,9 @@ export function makeChatHandler(deps: {
       onMessage: async (m: SDKMessage) => {
         if (m.session_id) {
           resolvedSession = m.session_id;
+          // #390: remember this turn's injected servers so a later wake of this
+          // session replays them (closes the flap on the common self-schedule case).
+          wakeInjection.remember(m.session_id, injectedMcpServers);
           if (isNewChat && !attributed) {
             attributed = true;
             await deps.herdctl.attributeRunningSession(m.session_id, agentName).catch(() => undefined);
@@ -2445,6 +2480,9 @@ export function makeChatHandler(deps: {
             // Registering it with the hub makes the turn re-attachable by session.
             if (m.session_id) {
               resolvedSession = m.session_id;
+              // #390: remember this human turn's injected servers so a wake this
+              // chat self-schedules can replay them (the common flap scenario).
+              wakeInjection.remember(m.session_id, injectedMcpServers);
               // For a NEW chat, attribute the session to its agent BEFORE the
               // hub broadcasts `chat:active`, so any client refetching its chat
               // list in response is guaranteed to see the now-listed chat — it

@@ -55,6 +55,7 @@ import {
   type InjectedMcpServerDef,
   type RuntimeSession,
   type SessionWakeHandler,
+  type ResolveInjectedMcpServers,
   type ScheduleTriggerHandler,
   type ScheduleInfo,
   listJobs,
@@ -691,6 +692,24 @@ export class HerdctlService {
    */
   onSessionWake(handler: SessionWakeHandler | undefined): void {
     this.manager.setSessionWakeHandler(handler);
+  }
+
+  /**
+   * Register the resolver herdctl calls to RE-ESTABLISH this session's in-process
+   * injected MCP servers when a scheduler-fired wake resumes an idle/reaped session
+   * (edspencer/herdctl#390, wired in @herdctl/core 5.22.1). The wake path drives the
+   * turn inside herdctl (a `ScheduleWakeup` / `/loop` / `CronCreate` re-fire), so it
+   * bypasses Paddock's per-turn injection — without this the resumed `claude`
+   * subprocess re-spawns with the `mcp__paddock*__*` tools "allowed" but UNBACKED,
+   * so they vanish from the catalog for the whole autonomous stretch (the "MCP flap").
+   * The resolver is SYNCHRONOUS (herdctl threads its result into `openChatSession`
+   * before the subprocess spawns) and MUST NOT throw — herdctl catches + logs a throw
+   * and degrades to no-injection, but we return `undefined` (safe no-injection default)
+   * rather than rely on that. A no-op if the fleet has no lifecycle manager; safe to
+   * call before/after {@link init}. Thin passthrough, mirroring {@link onSessionWake}.
+   */
+  setResolveInjectedMcpServers(resolve: ResolveInjectedMcpServers | undefined): void {
+    this.manager.setResolveInjectedMcpServers(resolve);
   }
 
   /**
