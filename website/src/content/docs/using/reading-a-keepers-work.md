@@ -20,8 +20,9 @@ Every tool the keeper calls becomes a collapsible block in the transcript. The
 header always shows a per-tool icon, the tool name, a short subtitle (usually the
 target), and — on the right — a duration and any status chips. Click a block to
 expand its body. Blocks that carry a rich body (a diff, an image, split output)
-have that detail recovered from the transcript when you open the chat, so a
-reloaded conversation renders just as richly as a live one.
+have that detail reconstructed from the transcript when the chat loads, so
+reading a conversation back shows the full rich rendering. (A tool call whose
+transcript carries no such detail simply falls back to its plain output.)
 
 ![An expanded Edit tool block showing a git-style diff with real file line numbers and red/green +/− lines, above an expanded Bash block showing its command output](../../../assets/using/reading-tool-block-diff.png)
 
@@ -33,8 +34,7 @@ already computed, so each hunk carries its true `@@ -old,n +new,n @@` header, a
 left gutter of old line numbers, a right gutter of new ones, and red/green tinting
 for removed and added lines. The header carries a compact `+3 −2` stat (additions
 in green, deletions in red). Very large diffs are capped for rendering — the stat
-stays exact and a note flags that the diff was truncated. If you hand-edited the
-file mid-turn, the block notes that too.
+stays exact and a note flags that the diff was truncated.
 
 ### Read shows the range — and inlines images
 
@@ -88,8 +88,9 @@ badge, and a per-tool icon.
 
 The management tools also get **dedicated bodies** parsed from their result: a
 list-projects call shows project pills; a list-chats call shows a chat list with
-live running dots; a create/fork/send call shows the chat's real title, the
-kickoff prompt or message, and a **link straight into the chat it touched**.
+live running dots; a create or fork call shows the chat's real title and its
+kickoff prompt, and a send-message call shows the message — each with a **link
+straight into the chat it touched**.
 
 ![A 'Create chat' tool block rendered with a Paddock badge, showing 'Created chat Draft the API reference in lumen-cli', an 'open chat' link, and the kickoff prompt](../../../assets/using/reading-mcp-create-chat.png)
 
@@ -150,9 +151,10 @@ narrowed it down.
 ![The Changes tab with three changed files, one checkbox unticked so 2 of 3 are selected, per-file +/− stats, a README diff, and a 'Commit 2 selected' button](../../../assets/using/reading-changes-selective-commit.png)
 
 You don't have to open a project to notice it has pending work: the **projects
-grid flags each project's uncommitted-file count** with a small amber
-*"N uncommitted"* pill, fed by a single cheap `git status` over the whole store —
-so a checkpoint that's waiting to be made is visible before you even click in.
+grid flags each project's uncommitted-file count** with a small amber pill (a
+branch icon and the count), fed by a single cheap `git status` over the whole
+store — so a checkpoint that's waiting to be made is visible before you even
+click in.
 
 ## Name a fork before you branch it
 
