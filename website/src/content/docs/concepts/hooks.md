@@ -82,16 +82,19 @@ that's never a surprise.
 
 ## The events a hook can fire on
 
-Today a hook fires on one lifecycle event:
+The event picker lists two lifecycle events, but only one defines a
+general-purpose hook:
 
 | Event | Fires when | Payload |
 | --- | --- | --- |
 | `onArchive` | A chat is archived (from the sidebar action or the self-MCP `archive_chat` tool) | The archived chat's session id |
 
-`onArchive` is the first of a family of cheap *after-the-fact* events; the event
-list is the extension point for more. (A separate `afterTurn` event exists too,
-but it's what powers the [sweeper](/concepts/sweeper/)'s post-turn curation rather
-than something you'd normally hook yourself.)
+`onArchive` is the first of a family of cheap *after-the-fact* events, and the
+event list is the extension point for more. The picker's other option,
+`afterTurn` (a user turn completed), is a special case: choosing it defines or
+customizes the post-turn **curator** — the [sweeper](/concepts/sweeper/) — rather
+than a general hook agent. So for a hook that *reacts to something you did*,
+`onArchive` is the event to use.
 
 ## Where a hook lives
 

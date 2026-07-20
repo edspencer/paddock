@@ -36,9 +36,9 @@ Field notes:
 | Field | Notes |
 | --- | --- |
 | `trigger.type` | `event` for a hook. (`schedule` is a time-driven trigger; `webhook` is reserved and not yet fireable.) |
-| `trigger.on` | The lifecycle event. Today: **`onArchive`** (a chat is archived). |
-| `run.prompt` / `run.promptFile` | Mutually exclusive. `promptFile` is a `.md` path under `.paddock/triggers/`, read fresh at fire time (git-tracked, keeper-editable); if both are set, the file wins. |
-| `run.tools` | The hook agent's allow-list — its **whole capability**. Empty/omitted ⇒ a tool-less hook (reasoning only). The picker's tool names are the keeper's default allow-list (`Read`, `Glob`, `Grep`, `Edit`, `Write`, `NotebookEdit`, `Bash`, `WebFetch`, `WebSearch`, `Task`, …). |
+| `trigger.on` | The lifecycle event. **`onArchive`** (a chat is archived) is the event that fires a normal hook agent. The enum also accepts `afterTurn` (a user turn completed), but an `afterTurn` event trigger defines/customizes the post-turn **curator** (the [sweeper](/concepts/sweeper/)) rather than a general hook. |
+| `run.prompt` / `run.promptFile` | **Exactly one is required.** `promptFile` is a `.md` path under `.paddock/triggers/`, read fresh at fire time (git-tracked, keeper-editable). Declaring *both* is a validation error and the whole trigger entry is dropped; via `set_trigger`, supplying one side clears the other. |
+| `run.tools` | The hook agent's allow-list — its **whole capability**. Empty/omitted ⇒ a tool-less hook (reasoning only). The picker's tool names come from Paddock's grantable-tool catalog (`GRANTABLE_TOOLS`): `Read`, `Glob`, `Grep`, `Edit`, `Write`, `NotebookEdit`, `Bash`, `WebFetch`, `WebSearch`, `Task`, and more. |
 | `run.permissionMode` | Claude Code permission mode for the hook's turns. |
 | `run.model` | Model override; absent inherits the keeper default. |
 | `run.maxTurns` | Upper bound on agent turns in one fire. Default **30**. |

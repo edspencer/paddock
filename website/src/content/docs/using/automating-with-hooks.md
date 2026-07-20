@@ -28,7 +28,10 @@ Click **Add trigger** to open the editor, then:
 1. **Name** it — e.g. `tidy-up`. Letters, numbers, `.`, `_`, `-` (renaming means
    deleting and recreating, so the name is stable).
 2. Set **Type** to **Event — a lifecycle event fires it**.
-3. Set **Event** to **On archive — a chat is archived** (`onArchive`).
+3. Set **Event** to **On archive — a chat is archived** (`onArchive`). *(The
+   dropdown also offers **After turn**, but that one customizes the post-turn
+   [sweeper](/concepts/sweeper/) rather than a general hook — leave it on **On
+   archive** here.)*
 4. Write a **Prompt** — what the hook should do when it fires. Choose **Inline
    text** for a short instruction, or **Prompt file** to keep it in a git-tracked
    `.md` file under `.paddock/triggers/` that Paddock reads fresh on each fire
