@@ -37,7 +37,7 @@ The fields:
 
 | Field | Values | Notes |
 | --- | --- | --- |
-| `trigger.type` | `schedule` | The discriminant. (Triggers can also be `event` or `webhook`.) |
+| `trigger.type` | `schedule` | The discriminant. Triggers can also be `event` (an `onArchive` / `afterTurn` lifecycle event) or `webhook` — the latter is **shape-reserved but not yet fireable** (no inbound ingress yet). The `afterTurn` event is reserved for the built-in [sweeper/curator](/concepts/sweeper/#customise-or-disable-it). |
 | `trigger.cron` | 5-field string | e.g. `0 9 * * *`; `@daily` / `@hourly` accepted. Host-local time. |
 | `trigger.interval` | duration string | e.g. `30m`, `1h`, `15m`. |
 | `run.prompt` | string | The instruction the firing runs. |
@@ -99,7 +99,7 @@ toggle). Parameters (note the **snake_case** MCP argument names):
 | Parameter | Type | Notes |
 | --- | --- | --- |
 | `name` | string | The trigger's stable key. **Required.** |
-| `type` | `schedule` \| `event` \| `webhook` | Omit on an edit to keep the existing *when*. |
+| `type` | `schedule` \| `event` \| `webhook` | Omit on an edit to keep the existing *when*. `webhook` is reserved (not yet fireable); `afterTurn` events are reserved for the curator. |
 | `cron` | string | For a schedule: a 5-field expression (host-local). Exactly one of `cron` / `interval`. |
 | `interval` | string | For a schedule: a duration (`30m`, `1h`). |
 | `prompt` | string | Inline instruction. Provide this **or** `prompt_file`. |

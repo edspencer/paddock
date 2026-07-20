@@ -51,6 +51,24 @@ Resumption is robust to interruptions at several layers:
 - **Server restart** — the transcript and all sidecars are on disk, so chats
   survive; a resumed turn picks up from the persisted session.
 
+## Token-by-token streaming
+
+A keeper's reply can accrete into the live bubble **token-by-token** as the model
+produces it, rather than landing in one drop when the turn ends. This is a
+property of the **runtime**, not the transport:
+
+- **Session mode (SDK runtime)** opts into partial (streaming) assistant messages
+  — herdctl surfaces incremental `text_delta` chunks, which the WebSocket layer
+  forwards as `chat:response` frames that append to the bubble as they arrive.
+- **Batch mode (CLI runtime)** renders each assistant message **whole** when it
+  completes; there's no intra-message streaming.
+
+The drive mode is set by `PADDOCK_KEEPER_DRIVE_MODE` (with a per-project
+`driveMode` override) — see
+[Keeper / agents](/configuration/environment/#keeper--agents). Everything else
+about a chat is identical either way: the transport was already delta-shaped, so
+re-attach and replay behave the same whether or not tokens stream.
+
 ## Forking
 
 A chat can be **forked** into a parallel child: `forkSession` *copies* the

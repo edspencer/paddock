@@ -128,6 +128,20 @@ knob has a per-project `recovery` override in `project.yaml`.
 | `PADDOCK_RECOVERY_MAX_RETRIES` | `1` | no | Layer 3: per-session cap on auto re-drives (no poke-loops). Non-negative integer, else the default. |
 | `PADDOCK_RECOVERY_LIMBO_MS` | `0` (off) | no | Layer 2 backstop: surface a kept-alive session as stuck after this many ms of silence following a killed task. `0` disables it. *(Backstop timer ships in a follow-up — config only for now.)* |
 
+## Attachments (inbound uploads)
+
+Gate the composer's file/image upload (v0.38). All four knobs also take a
+per-project `attachments` override in `project.yaml` (each field inherits the
+instance default when unset), resolved at request time. See
+[Sending files & images](/using/sending-files-and-images/) for the feature.
+
+| Variable | Default | Required | Purpose |
+|----------|---------|----------|---------|
+| `PADDOCK_ATTACHMENTS_ENABLED` | `true` (ON) | no | Master switch for inbound composer uploads. When off, the upload endpoint `403`s and the composer hides its picker / drop / paste affordances. Accepts `1`/`true`/`yes`. |
+| `PADDOCK_ATTACHMENTS_MAX_FILE_SIZE_MB` | `25` | no | Per-file size cap in MB (1 MB = 1024×1024 bytes). A larger file is rejected before it's written. Must be a positive integer, else the default. |
+| `PADDOCK_ATTACHMENTS_MAX_FILES_PER_MESSAGE` | `10` | no | How many files a single message may carry. Enforced client-side (tray cap) **and** server-side (per upload request + at send). Positive integer, else the default. |
+| `PADDOCK_ATTACHMENTS_ALLOWED_TYPES` | `*` (allow all) | no | Comma-separated allow-list of MIME patterns (`image/*`, `application/pdf`) and/or extensions (`.csv`, `.pdf`). A file passes if its MIME matches any pattern **or** its extension matches any extension entry; the sentinel `*` allows everything. A hygiene/UX guardrail, **not** a security boundary (client-provided types, no magic-byte sniffing). |
+
 ## Dev servers / git / GitHub
 
 | Variable | Default | Required | Purpose |
