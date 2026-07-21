@@ -117,24 +117,44 @@ function errorMessageForSubtype(subtype: string | undefined): { kind: TurnNotice
 
 /**
  * Classify a terminal `type:"result"` SDK message. Returns an `error`/`max_turns`
- * {@link TurnNotice} when the result marks a failure (`is_error`, a `subtype`
- * starting `error`, or `success === false`), else `null` for a successful turn.
+ * {@link TurnNotice} when the result marks a genuine failure, else `null` for a
+ * successful turn.
+ *
+ * The authoritative failure signal is the **subtype** — the SDK's error results
+ * always carry an `error_*` subtype (`error_during_execution`, `error_max_turns`,
+ * …) — or an explicit `success === false`. This mirrors `@herdctl/core`'s own
+ * success computation (`chatSession`: `subtype.startsWith("error") || success ===
+ * false`), so Paddock's banner never disagrees with herdctl about whether a turn
+ * failed.
+ *
+ * We DELIBERATELY do NOT treat `is_error === true` as a failure on its own
+ * (issue #329 regression): `SDKResultSuccess` is typed `is_error: boolean`, and
+ * the runtime stamps `is_error:true` (with `api_error_status`) on a
+ * `subtype:"success"` result when the turn RECOVERED from a transient mid-turn
+ * API error (e.g. "Connection closed mid-response") and still produced a normal
+ * reply. Reading that as a turn failure rendered a false "turn failed" banner
+ * directly beneath a perfectly good reply on essentially every session-mode turn.
+ * A genuine error always carries an `error_*` subtype, so nothing is lost.
  */
 export function classifyResult(result: {
   subtype?: string;
   is_error?: boolean;
   success?: boolean;
 }): TurnNotice | null {
+  const subtype = typeof result.subtype === "string" ? result.subtype : undefined;
+  // A `subtype:"success"` result is a completed turn, full stop. `is_error` only
+  // counts as a failure when the runtime gave us NO subtype at all (defensive:
+  // some other runtime shape that reports is_error without one).
   const failed =
-    result.is_error === true ||
-    (typeof result.subtype === "string" && result.subtype.startsWith("error")) ||
-    result.success === false;
+    (subtype !== undefined && subtype.startsWith("error")) ||
+    result.success === false ||
+    (subtype === undefined && result.is_error === true);
   if (!failed) return null;
-  const { kind, message } = errorMessageForSubtype(result.subtype);
+  const { kind, message } = errorMessageForSubtype(subtype);
   return {
     kind,
     message,
-    ...(result.subtype ? { detail: result.subtype } : {}),
+    ...(subtype ? { detail: subtype } : {}),
     retryable: true,
   };
 }
