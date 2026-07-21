@@ -543,6 +543,27 @@ export interface ChatQueuedFlushedMessage {
   };
 }
 
+/**
+ * A background task was killed at the turn boundary and the keeper is idle
+ * (issue #347). Broadcast LIVE by the recovery engine the moment the kill is
+ * detected — the notification is otherwise trapped in the SDK input queue until
+ * a later turn flushes it, so without this the "keeper is idle / Continue"
+ * affordance only appeared after a manual refresh. The client renders it as the
+ * amber killed-task notice inline. Gated server-side on `recovery.surfaceKilledTask`.
+ */
+export interface ChatKilledTaskMessage {
+  type: "chat:killed_task";
+  payload: {
+    projectSlug: string;
+    target: string;
+    sessionId: string;
+    /** The killed `<task-notification>`'s `<summary>`, or a generic fallback. */
+    summary: string;
+    /** ISO timestamp of detection — used by the client to dedup replays. */
+    timestamp: string;
+  };
+}
+
 export interface PongMessage {
   type: "pong";
 }
@@ -557,6 +578,7 @@ export type ServerMessage =
   | ChatResyncMessage
   | ChatActiveMessage
   | ChatQueuedFlushedMessage
+  | ChatKilledTaskMessage
   | PongMessage;
 
 function readSlug(p: ChatSendMessage["payload"]): string | undefined {
@@ -2055,6 +2077,23 @@ export function makeChatHandler(deps: {
     cfg: { recovery: deps.cfg.recovery },
     getProject: (slug) => deps.projects.get(slug),
     reDrive: (project, sessionId) => injectRecoveryNudge(project, sessionId),
+    // #347: when a background task is killed at the turn boundary, its
+    // notification is trapped in the SDK input queue — the client would never
+    // render the "keeper is idle" affordance until a refresh flushed it. On
+    // detection, broadcast a live frame to any attached socket so the banner +
+    // Continue appear immediately. Out-of-band (no live turn), so hub.broadcast.
+    surface: (project, sessionId, summary) => {
+      hub.broadcast(sessionId, {
+        type: "chat:killed_task",
+        payload: {
+          projectSlug: project.slug,
+          target: project.slug,
+          sessionId,
+          summary: summary ?? "A background task was terminated at the turn boundary.",
+          timestamp: new Date().toISOString(),
+        },
+      });
+    },
   });
 
   const handle = async function handle(socket: WebSocket): Promise<void> {

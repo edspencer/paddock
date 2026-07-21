@@ -1095,4 +1095,13 @@ export type ServerWsMessage =
       type: "chat:injected";
       payload: Routing & { sender: MessageSender; content: string; timestamp: string };
     }
+  | {
+      /**
+       * A background task was killed at the turn boundary and the keeper is idle
+       * (issue #347). Broadcast live by the recovery engine on detection so the
+       * "keeper is idle / Continue" affordance appears without a refresh.
+       */
+      type: "chat:killed_task";
+      payload: Routing & { sessionId: string; summary: string; timestamp: string };
+    }
   | { type: "pong" };

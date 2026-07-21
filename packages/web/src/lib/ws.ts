@@ -123,6 +123,12 @@ export interface ChatHandlers {
     inj: { sender: MessageSender; content: string; timestamp: string },
     meta: { sessionId: string | null; jobId: string | null },
   ) => void;
+  /**
+   * A background task was killed at the turn boundary and the keeper is idle
+   * (#347). Render the amber "keeper is idle / Continue" affordance inline, live,
+   * so it no longer takes a refresh to appear. `timestamp` dedups a hub replay.
+   */
+  onKilledTask?: (info: { summary: string; timestamp: string }) => void;
 }
 
 export type ConnectionState = "connecting" | "open" | "closed";
@@ -636,6 +642,26 @@ class ChatClient {
         for (const sub of this.subs.values()) {
           if (sub.projectSlug === slug && sub.sessionId === sessionId) {
             sub.handlers.onQueuedFlushed?.({ text });
+          }
+        }
+      }
+      return;
+    }
+
+    if (msg.type === "chat:killed_task") {
+      // Out-of-band (no live turn): a background task was killed at the turn
+      // boundary and the keeper is idle (#347). Tell the matching mounted pane so
+      // it renders the "keeper is idle / Continue" affordance live — EXACT session
+      // match only (never a nascent new-chat pane).
+      const { sessionId, summary, timestamp } = msg.payload as {
+        sessionId?: string;
+        summary?: string;
+        timestamp?: string;
+      };
+      if (sessionId) {
+        for (const sub of this.subs.values()) {
+          if (sub.projectSlug === slug && sub.sessionId === sessionId) {
+            sub.handlers.onKilledTask?.({ summary: summary ?? "", timestamp: timestamp ?? "" });
           }
         }
       }
