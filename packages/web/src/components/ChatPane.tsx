@@ -1666,7 +1666,10 @@ function PreloadToggle({
         className="h-3.5 w-3.5 rounded border-paddock-300 accent-accent focus:ring-accent/30 disabled:opacity-50 dark:border-paddock-600"
       />
       <span className="font-medium">Preload project context</span>
-      <span className="text-paddock-400 transition-opacity">
+      {/* The inline hint is redundant with the label's own tooltip, so it's
+          hidden on mobile (< sm) to keep the label on one line and reclaim
+          vertical space (#372); it stays inline on desktop. */}
+      <span className="hidden text-paddock-400 transition-opacity sm:inline">
         {available ? "(injects OVERVIEW.md + CHANGELOG.md)" : "(no overview yet)"}
       </span>
     </label>

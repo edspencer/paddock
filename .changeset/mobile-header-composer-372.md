@@ -13,6 +13,9 @@ vertical space. The brand still lives in the nav drawer the hamburger opens.
 
 The composer typography is also normalized on mobile: the anti-iOS-zoom rule no
 longer force-bumps `<select>` to 16px (it opens a native picker, so it never
-triggered focus-zoom), so the small model dropdown matches its row again; and
-the Send/Stop buttons go icon-only below `sm` so the textarea keeps enough width
-for its placeholder to sit on one line. Desktop is unchanged.
+triggered focus-zoom), so the small model dropdown matches its row again; the
+Send/Stop buttons go icon-only below `sm` so the textarea keeps enough width for
+its placeholder to sit on one line; and the "Preload project context" hint
+(`(injects OVERVIEW.md + CHANGELOG.md)`) is hidden below `sm` — it's redundant
+with the label's own tooltip — so that line no longer wraps. Desktop is
+unchanged.
