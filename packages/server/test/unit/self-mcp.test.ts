@@ -197,6 +197,7 @@ interface RecordingWrite extends SelfMcpWriteContext {
     setTrigger: Array<{ projectSlug: string; name: string; trigger: Record<string, unknown> }>;
     removeTrigger: Array<{ projectSlug: string; name: string }>;
     listTriggers: Array<{ projectSlug: string }>;
+    runTrigger: Array<{ projectSlug: string; name: string }>;
   };
 }
 
@@ -209,6 +210,7 @@ function fakeWrite(over: Partial<SelfMcpWriteContext> = {}): RecordingWrite {
     setTrigger: [],
     removeTrigger: [],
     listTriggers: [],
+    runTrigger: [],
   };
   let n = 0;
   const base: SelfMcpWriteContext = {
@@ -269,6 +271,10 @@ function fakeWrite(over: Partial<SelfMcpWriteContext> = {}): RecordingWrite {
     listTriggers: async (projectSlug) => {
       calls.listTriggers.push({ projectSlug });
       return [];
+    },
+    runTrigger: async (projectSlug, name) => {
+      calls.runTrigger.push({ projectSlug, name });
+      return `ran-${++n}`;
     },
     ...over,
   };
@@ -817,9 +823,9 @@ describe("self-management MCP (trigger tools + per-project gate)", () => {
     expect(names).not.toContain("set_hook");
   });
 
-  it("appends exactly the 3 trigger tools (12 total) when triggersMcpEnabled is on", () => {
+  it("appends exactly the 4 trigger tools (13 total) when triggersMcpEnabled is on", () => {
     const def = selfMcpServerDef(fakeContext(), fakeWrite({ triggersMcpEnabled: true }));
-    expect(def.tools).toHaveLength(12);
+    expect(def.tools).toHaveLength(13);
     expect(def.tools.map((t) => t.name).sort()).toEqual([
       "archive_chat",
       "create_chat",
@@ -830,10 +836,47 @@ describe("self-management MCP (trigger tools + per-project gate)", () => {
       "list_triggers",
       "read_chat",
       "remove_trigger",
+      "run_trigger",
       "send_message",
       "set_trigger",
       "unarchive_chat",
     ]);
+  });
+
+  it("run_trigger fires by name, defaults project to current, and requires a name (#327)", async () => {
+    const write = fakeWrite({ triggersMcpEnabled: true });
+    const { json } = await callWrite(write, "run_trigger", { name: "daily" });
+    expect(write.calls.runTrigger).toEqual([{ projectSlug: "paddock", name: "daily" }]);
+    expect(json).toMatchObject({ ran: true, project: "paddock", name: "daily" });
+    expect(typeof json.sessionId).toBe("string");
+
+    // A target project is honored.
+    await callWrite(write, "run_trigger", { name: "nightly", project: "herdctl" });
+    expect(write.calls.runTrigger.at(-1)).toEqual({ projectSlug: "herdctl", name: "nightly" });
+
+    // Missing name → an error, no fire attempted.
+    const before = write.calls.runTrigger.length;
+    const { result } = await callWrite(write, "run_trigger", {});
+    expect(result.isError).toBe(true);
+    expect(write.calls.runTrigger).toHaveLength(before);
+  });
+
+  it("run_trigger surfaces an error when the fire starts no chat", async () => {
+    const write = fakeWrite({ triggersMcpEnabled: true, runTrigger: async () => null });
+    const { result } = await callWrite(write, "run_trigger", { name: "gone" });
+    expect(result.isError).toBe(true);
+  });
+
+  it("run_trigger propagates a thrown error (e.g. the non-runnable curator) as the message", async () => {
+    const write = fakeWrite({
+      triggersMcpEnabled: true,
+      runTrigger: async () => {
+        throw new Error("the post-turn curator trigger runs automatically after each turn and can't be run on demand");
+      },
+    });
+    const { result } = await callWrite(write, "run_trigger", { name: "curate-overview" });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("post-turn curator");
   });
 
   it("trigger tools are absent WITHOUT a write ctx even though they are a write-block feature", () => {
@@ -845,5 +888,6 @@ describe("self-management MCP (trigger tools + per-project gate)", () => {
     expect(SELF_MCP_TRIGGER_TOOL_NAMES.listTriggers).toBe("mcp__paddock_manage__list_triggers");
     expect(SELF_MCP_TRIGGER_TOOL_NAMES.setTrigger).toBe("mcp__paddock_manage__set_trigger");
     expect(SELF_MCP_TRIGGER_TOOL_NAMES.removeTrigger).toBe("mcp__paddock_manage__remove_trigger");
+    expect(SELF_MCP_TRIGGER_TOOL_NAMES.runTrigger).toBe("mcp__paddock_manage__run_trigger");
   });
 });

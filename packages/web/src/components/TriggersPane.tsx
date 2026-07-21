@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "../lib/api";
+import { relativeTime, untilTime } from "../lib/format";
 import type {
   GrantableTool,
   Project,
@@ -7,10 +8,20 @@ import type {
   TriggerEvent,
   TriggerInput,
   TriggerPermissionMode,
+  TriggerRuntime,
   TriggerType,
   TriggerWhen,
 } from "../lib/types";
-import { AlertIcon, BoltIcon, ClockIcon, PencilIcon, PlusIcon, TrashIcon, XIcon } from "./icons";
+import {
+  AlertIcon,
+  BoltIcon,
+  ClockIcon,
+  PencilIcon,
+  PlayIcon,
+  PlusIcon,
+  TrashIcon,
+  XIcon,
+} from "./icons";
 
 /** A valid trigger name / herdctl key segment (mirrors the server's `isValidTriggerName`). */
 const NAME_RE = /^[A-Za-z0-9._-]+$/;
@@ -166,6 +177,16 @@ function capabilitySummary(t: Trigger): string {
   return `${tools.length} tool${tools.length === 1 ? "" : "s"}`;
 }
 
+/**
+ * The post-turn CURATOR (the folded-in sweeper, T5): any `event`/`afterTurn` trigger.
+ * It runs via the sweeper on turn completion and has no scoped agent, so it can't be
+ * fired on demand — the Run-now action is disabled for it (mirrors the server, which
+ * 409s a curator run). Matches the server's `isCuratorTrigger`.
+ */
+function isCuratorTrigger(t: Trigger): boolean {
+  return t.trigger.type === "event" && t.trigger.on === "afterTurn";
+}
+
 /** The firing-condition cell: an event name, a cron/interval expression, or a webhook path. */
 function whenSummary(w: TriggerWhen): string {
   if (w.type === "event") return w.on;
@@ -199,6 +220,10 @@ export function TriggersPane({ project }: { project: Project }) {
   const [editing, setEditing] = useState<{ isNew: boolean; draft: Draft } | null>(null);
   // The trigger name a per-row action is in flight for (disables that row's buttons).
   const [busy, setBusy] = useState<string | null>(null);
+  // Live runtime state (last-run / next-run / running), keyed by trigger name (#327).
+  // Polled independently of the config list so status refreshes without re-fetching the
+  // picker catalog. Best-effort — a runtime fetch failure never blocks the config view.
+  const [runtime, setRuntime] = useState<Record<string, TriggerRuntime>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -216,9 +241,29 @@ export function TriggersPane({ project }: { project: Project }) {
     }
   }, [slug]);
 
+  const loadRuntime = useCallback(async () => {
+    try {
+      const r = await api.triggerRuntime(slug);
+      setRuntime(Object.fromEntries(r.runtime.map((rt) => [rt.name, rt])));
+    } catch {
+      // Best-effort: keep the last-known runtime rather than clearing the columns.
+    }
+  }, [slug]);
+
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Poll runtime state while the tab is mounted (last/next-run + running-state drift
+  // out of band with config). Refetch immediately on project change, then every 10s;
+  // skip the tick while a tab is hidden so a backgrounded tab does no work.
+  useEffect(() => {
+    void loadRuntime();
+    const id = setInterval(() => {
+      if (document.visibilityState === "visible") void loadRuntime();
+    }, 10_000);
+    return () => clearInterval(id);
+  }, [loadRuntime]);
 
   // Clear the transient "saved / deleted" notice a moment after it appears.
   useEffect(() => {
@@ -310,6 +355,23 @@ export function TriggersPane({ project }: { project: Project }) {
     }
   };
 
+  // Fire a trigger NOW (#327). Runs it through the same hub path a cron / event fire
+  // uses, so the resulting chat is a first-class, badged run. Works regardless of the
+  // trigger's enabled flag (a manual run is deliberate). Refreshes runtime so the row's
+  // last-run / running state reflects the fire straight away.
+  const runNow = async (t: Trigger) => {
+    setBusy(t.name);
+    try {
+      await api.runTrigger(slug, t.name);
+      setNotice(`Ran “${t.name}” — a new chat is starting.`);
+      await loadRuntime();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to run trigger");
+    } finally {
+      setBusy(null);
+    }
+  };
+
   return (
     <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain" data-testid="triggers-pane">
       <div className="mx-auto max-w-3xl px-6 py-6">
@@ -344,19 +406,23 @@ export function TriggersPane({ project }: { project: Project }) {
               <p className="py-4 text-center text-sm italic text-paddock-400">No triggers yet.</p>
             ) : (
               <div className="-mx-1 overflow-x-auto">
-                <table className="w-full min-w-[44rem] border-collapse text-sm">
+                <table className="w-full min-w-[54rem] border-collapse text-sm">
                   <thead>
                     <tr className="border-b border-paddock-200 text-left text-[11px] font-semibold uppercase tracking-wide text-paddock-400 dark:border-paddock-800">
                       <th className="px-2 py-2 font-semibold">Trigger</th>
                       <th className="px-2 py-2 font-semibold">Type</th>
                       <th className="px-2 py-2 font-semibold">When</th>
                       <th className="px-2 py-2 font-semibold">Capability</th>
+                      <th className="px-2 py-2 font-semibold">Last run</th>
+                      <th className="px-2 py-2 font-semibold">Next run</th>
                       <th className="px-2 py-2 font-semibold">Status</th>
                       <th className="px-2 py-2 text-right font-semibold">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {triggers.map((t) => (
+                    {triggers.map((t) => {
+                      const rt = runtime[t.name];
+                      return (
                       <tr
                         key={t.name}
                         data-trigger={t.name}
@@ -397,11 +463,32 @@ export function TriggersPane({ project }: { project: Project }) {
                             </span>
                           )}
                         </td>
+                        <td className="px-2 py-2.5 align-top" data-trigger-lastrun={t.name}>
+                          <LastRunCell rt={rt} />
+                        </td>
+                        <td className="px-2 py-2.5 align-top" data-trigger-nextrun={t.name}>
+                          <NextRunCell rt={rt} trigger={t} />
+                        </td>
                         <td className="px-2 py-2.5 align-top">
-                          <StatusChip enabled={t.enabled === true} />
+                          <StatusChip enabled={t.enabled === true} running={rt?.running === true} />
                         </td>
                         <td className="px-2 py-2.5 align-top">
                           <div className="flex items-center justify-end gap-1">
+                            <button
+                              type="button"
+                              onClick={() => runNow(t)}
+                              disabled={busy === t.name || isCuratorTrigger(t)}
+                              title={
+                                isCuratorTrigger(t)
+                                  ? "The post-turn curator runs automatically after each turn — it can’t be run on demand."
+                                  : "Run now"
+                              }
+                              aria-label={`Run ${t.name} now`}
+                              data-testid={`run-trigger-${t.name}`}
+                              className="flex h-7 w-7 items-center justify-center rounded-md text-accent transition hover:bg-accent/10 disabled:opacity-40"
+                            >
+                              <PlayIcon width={13} height={13} />
+                            </button>
                             <button
                               type="button"
                               onClick={() => toggle(t)}
@@ -434,7 +521,8 @@ export function TriggersPane({ project }: { project: Project }) {
                           </div>
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -853,8 +941,22 @@ function TypeBadge({ type }: { type: TriggerType }) {
   );
 }
 
-/** A small status chip: enabled (armed) vs disabled. */
-function StatusChip({ enabled }: { enabled: boolean }) {
+/**
+ * A small status chip. A live run wins the display (an amber pulsing "Running" chip),
+ * otherwise it reflects the armed state: enabled (green) vs disabled (grey).
+ */
+function StatusChip({ enabled, running }: { enabled: boolean; running?: boolean }) {
+  if (running) {
+    return (
+      <span
+        data-trigger-status="running"
+        className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
+      >
+        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
+        Running
+      </span>
+    );
+  }
   return (
     <span
       data-trigger-status={enabled ? "enabled" : "disabled"}
@@ -865,6 +967,63 @@ function StatusChip({ enabled }: { enabled: boolean }) {
       }`}
     >
       {enabled ? "Enabled" : "Disabled"}
+    </span>
+  );
+}
+
+/** Colour for a run status: green success, rose failure/cancel, amber running, grey else. */
+function runStatusClass(status: string): string {
+  if (status === "completed") return "bg-emerald-500";
+  if (status === "failed" || status === "cancelled") return "bg-rose-500";
+  if (status === "running" || status === "pending") return "bg-amber-500";
+  return "bg-paddock-400";
+}
+
+/**
+ * The "Last run" cell: a coloured status dot + a relative time, titled with the
+ * absolute time, terminal status, and the run's summary. "—" when a trigger has never
+ * fired (its runtime hasn't loaded, or it has no attributable run yet).
+ */
+function LastRunCell({ rt }: { rt?: TriggerRuntime }) {
+  const last = rt?.lastRun;
+  if (!last) return <span className="text-[12px] text-paddock-400">—</span>;
+  const when = last.startedAt;
+  const title = [
+    when ? new Date(when).toLocaleString() : null,
+    `status: ${last.status}${last.exitReason ? ` (${last.exitReason})` : ""}`,
+    last.summary ?? null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  return (
+    <span className="inline-flex items-center gap-1.5 text-[12px] text-paddock-600 dark:text-paddock-300" title={title}>
+      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${runStatusClass(last.status)}`} />
+      {last.status === "running" ? "Running…" : relativeTime(when)}
+    </span>
+  );
+}
+
+/**
+ * The "Next run" cell: for a SCHEDULE trigger, the relative time until its next cron
+ * fire (titled with the absolute time), or "—" when it's disabled/unarmed. Event and
+ * webhook triggers have no scheduled fire — they show a muted "on event" / "on webhook".
+ */
+function NextRunCell({ rt, trigger }: { rt?: TriggerRuntime; trigger: Trigger }) {
+  const type = trigger.trigger.type;
+  if (type === "event") {
+    return <span className="text-[12px] text-paddock-400">on event</span>;
+  }
+  if (type === "webhook") {
+    return <span className="text-[12px] text-paddock-400">on webhook</span>;
+  }
+  const next = rt?.nextRunAt;
+  if (!next) return <span className="text-[12px] text-paddock-400">—</span>;
+  return (
+    <span
+      className="text-[12px] text-paddock-600 dark:text-paddock-300"
+      title={new Date(next).toLocaleString()}
+    >
+      {untilTime(next)}
     </span>
   );
 }

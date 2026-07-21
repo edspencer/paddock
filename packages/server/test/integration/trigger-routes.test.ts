@@ -287,4 +287,113 @@ describe("integration: unified triggers management API (Epic T / T3)", () => {
     const r = await t.app.inject({ method: "GET", url: `/api/projects/does-not-exist/triggers` });
     expect(r.statusCode).toBe(404);
   });
+
+  // --- Run-now + runtime status (#327) ------------------------------------------
+
+  it("GET …/triggers/runtime returns a per-trigger runtime row (next-run for schedules)", async () => {
+    const project = await freshProject();
+    await t.app.inject({
+      method: "PUT",
+      url: `/api/projects/${project.slug}/triggers/daily`,
+      payload: { trigger: { type: "schedule", cron: "0 9 * * *" }, run: { prompt: "curate" }, enabled: true },
+    });
+    await t.app.inject({
+      method: "PUT",
+      url: `/api/projects/${project.slug}/triggers/cleanup`,
+      payload: { trigger: { type: "event", on: "onArchive" }, run: { prompt: "tidy" }, enabled: true },
+    });
+
+    const r = await t.app.inject({ method: "GET", url: `/api/projects/${project.slug}/triggers/runtime` });
+    expect(r.statusCode).toBe(200);
+    const runtime = r.json().runtime as {
+      name: string;
+      type: string;
+      running: boolean;
+      nextRunAt: string | null;
+      scheduleStatus: string | null;
+    }[];
+    const byName = Object.fromEntries(runtime.map((x) => [x.name, x]));
+    // The schedule trigger's next-fire is populated by herdctl's cron engine; an event
+    // trigger has no scheduled fire.
+    expect(byName.daily.type).toBe("schedule");
+    expect(byName.daily.scheduleStatus).not.toBeNull();
+    expect(byName.cleanup.type).toBe("event");
+    expect(byName.cleanup.nextRunAt).toBeNull();
+  });
+
+  it("the runtime route is matched before /:name (a trigger can't shadow it)", async () => {
+    const project = await freshProject();
+    // Even with a real trigger present, GET …/triggers/runtime hits the runtime route,
+    // not GET …/triggers/:name — so it returns the { runtime } payload, not a trigger.
+    await t.app.inject({
+      method: "PUT",
+      url: `/api/projects/${project.slug}/triggers/whatever`,
+      payload: { trigger: { type: "event", on: "onArchive" }, run: { prompt: "x" } },
+    });
+    const r = await t.app.inject({ method: "GET", url: `/api/projects/${project.slug}/triggers/runtime` });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toHaveProperty("runtime");
+    expect(r.json()).not.toHaveProperty("trigger");
+  });
+
+  it("POST …/triggers/:name/run fires an event trigger and returns 202 + a session id", async () => {
+    const project = await freshProject();
+    await t.app.inject({
+      method: "PUT",
+      url: `/api/projects/${project.slug}/triggers/run-me`,
+      // Disabled on purpose: a manual run is deliberate and fires regardless (DD-1).
+      payload: { trigger: { type: "event", on: "onArchive" }, run: { prompt: "manual run please" }, enabled: false },
+    });
+
+    const run = await t.app.inject({
+      method: "POST",
+      url: `/api/projects/${project.slug}/triggers/run-me/run`,
+      payload: {},
+    });
+    expect(run.statusCode).toBe(202);
+    const body = run.json() as { ok: boolean; name: string; sessionId: string };
+    expect(body).toMatchObject({ ok: true, name: "run-me" });
+    expect(typeof body.sessionId).toBe("string");
+    expect(body.sessionId.length).toBeGreaterThan(0);
+
+    // The fired turn ran on the trigger's own agent with the trigger's prompt.
+    const msgs = await t.herdctl.sessionMessages(
+      triggerAgentName(project.slug, "run-me"),
+      body.sessionId,
+    );
+    const userText = msgs
+      .filter((m) => m.role === "user")
+      .map((m) => (typeof m.content === "string" ? m.content : JSON.stringify(m.content)))
+      .join("\n");
+    expect(userText).toContain("manual run please");
+  });
+
+  it("POST …/triggers/:name/run 404s an unknown trigger", async () => {
+    const project = await freshProject();
+    const run = await t.app.inject({
+      method: "POST",
+      url: `/api/projects/${project.slug}/triggers/nope/run`,
+      payload: {},
+    });
+    expect(run.statusCode).toBe(404);
+  });
+
+  it("POST …/triggers/:name/run 409s the post-turn curator (afterTurn) — it has no scoped agent", async () => {
+    const project = await freshProject();
+    // A curator trigger = any event/afterTurn trigger (the folded-in sweeper, T5). It
+    // runs via SweepService, registers no `trigger-<slug>-<name>` agent, so the generic
+    // fire path can't run it — the route must reject it clearly rather than 502.
+    await t.app.inject({
+      method: "PUT",
+      url: `/api/projects/${project.slug}/triggers/curate-overview`,
+      payload: { trigger: { type: "event", on: "afterTurn" }, run: { prompt: "curate" }, enabled: true },
+    });
+    const run = await t.app.inject({
+      method: "POST",
+      url: `/api/projects/${project.slug}/triggers/curate-overview/run`,
+      payload: {},
+    });
+    expect(run.statusCode).toBe(409);
+    expect(run.json()).toMatchObject({ code: "not_runnable" });
+  });
 });

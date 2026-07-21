@@ -1,12 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { TriggersPane } from "./TriggersPane";
-import type { GrantableTool, Project, Trigger, TriggersResponse } from "../lib/types";
+import type {
+  GrantableTool,
+  Project,
+  Trigger,
+  TriggerRuntime,
+  TriggerRuntimeResponse,
+  TriggersResponse,
+} from "../lib/types";
 
 // --- api mock ---------------------------------------------------------------
 const listTriggers = vi.fn();
 const putTrigger = vi.fn();
 const deleteTrigger = vi.fn();
+const triggerRuntime = vi.fn();
+const runTrigger = vi.fn();
 vi.mock("../lib/api", async () => {
   const actual = await vi.importActual<typeof import("../lib/api")>("../lib/api");
   return {
@@ -15,6 +24,8 @@ vi.mock("../lib/api", async () => {
       listTriggers: (...a: unknown[]) => listTriggers(...a),
       putTrigger: (...a: unknown[]) => putTrigger(...a),
       deleteTrigger: (...a: unknown[]) => deleteTrigger(...a),
+      triggerRuntime: (...a: unknown[]) => triggerRuntime(...a),
+      runTrigger: (...a: unknown[]) => runTrigger(...a),
     },
   };
 });
@@ -51,15 +62,32 @@ const archiveCleanup: Trigger = {
   enabled: false,
 };
 
+// The post-turn curator (event/afterTurn) — runs via the sweeper, not fireable on demand.
+const curator: Trigger = {
+  name: "curate-overview",
+  agentName: "trigger-p-curate-overview",
+  trigger: { type: "event", on: "afterTurn" },
+  run: { session: "new", tools: [] },
+  enabled: true,
+};
+
+function runtime(rows: TriggerRuntime[]): TriggerRuntimeResponse {
+  return { runtime: rows };
+}
+
 beforeEach(() => {
   listTriggers.mockReset();
   putTrigger.mockReset();
   deleteTrigger.mockReset();
+  triggerRuntime.mockReset();
+  runTrigger.mockReset();
   listTriggers.mockResolvedValue(response([dailyManager, archiveCleanup]));
   putTrigger.mockImplementation((_slug, name, input) =>
     Promise.resolve({ name, agentName: `trigger-p-${name}`, ...input }),
   );
   deleteTrigger.mockResolvedValue(undefined);
+  triggerRuntime.mockResolvedValue(runtime([]));
+  runTrigger.mockResolvedValue("new-session");
 });
 
 describe("TriggersPane (Epic T / T4)", () => {
@@ -160,5 +188,91 @@ describe("TriggersPane (Epic T / T4)", () => {
     const sched = await screen.findByRole("row", { name: /daily-manager/ });
     fireEvent.click(within(sched).getByRole("button", { name: /delete daily-manager/i }));
     await waitFor(() => expect(deleteTrigger).toHaveBeenCalledWith("p", "daily-manager"));
+  });
+
+  // --- Run-now + runtime status (#327) ------------------------------------------
+
+  it("renders last-run / next-run / running status from the runtime endpoint", async () => {
+    triggerRuntime.mockResolvedValue(
+      runtime([
+        {
+          name: "daily-manager",
+          type: "schedule",
+          running: false,
+          nextRunAt: new Date(Date.now() + 3_600_000).toISOString(),
+          scheduleStatus: "idle",
+          lastError: null,
+          lastRun: {
+            jobId: "job-1",
+            sessionId: "s1",
+            status: "completed",
+            exitReason: "success",
+            startedAt: new Date(Date.now() - 120_000).toISOString(),
+            finishedAt: new Date(Date.now() - 60_000).toISOString(),
+            durationSeconds: 60,
+            summary: "curated",
+          },
+        },
+        {
+          name: "archive-cleanup",
+          type: "event",
+          running: true,
+          nextRunAt: null,
+          scheduleStatus: null,
+          lastError: null,
+          lastRun: null,
+        },
+      ]),
+    );
+    render(<TriggersPane project={project} />);
+    await screen.findByTestId("triggers-pane");
+
+    // The schedule row shows a relative last-run + a future next-run, and stays enabled.
+    const sched = await screen.findByRole("row", { name: /daily-manager/ });
+    await waitFor(() => expect(within(sched).getByText(/ago/)).toBeInTheDocument());
+    expect(within(sched).getByText(/^in /)).toBeInTheDocument();
+    expect(sched.querySelector('[data-trigger-status="enabled"]')).not.toBeNull();
+
+    // The event row is actively running → the running chip wins, and it has no next-run.
+    const evt = await screen.findByRole("row", { name: /archive-cleanup/ });
+    await waitFor(() =>
+      expect(evt.querySelector('[data-trigger-status="running"]')).not.toBeNull(),
+    );
+    expect(within(evt).getByText("on event")).toBeInTheDocument();
+  });
+
+  it("fires a trigger via Run now and refreshes runtime", async () => {
+    render(<TriggersPane project={project} />);
+    await screen.findByTestId("triggers-pane");
+    triggerRuntime.mockClear();
+
+    fireEvent.click(await screen.findByTestId("run-trigger-daily-manager"));
+    await waitFor(() => expect(runTrigger).toHaveBeenCalledWith("p", "daily-manager"));
+    // Runtime is refetched so the row's last-run reflects the new fire immediately.
+    await waitFor(() => expect(triggerRuntime).toHaveBeenCalled());
+    expect(await screen.findByText(/Ran “daily-manager”/)).toBeInTheDocument();
+  });
+
+  it("surfaces an error when Run now fails", async () => {
+    runTrigger.mockRejectedValueOnce(new Error("nope"));
+    render(<TriggersPane project={project} />);
+    await screen.findByTestId("triggers-pane");
+    fireEvent.click(await screen.findByTestId("run-trigger-archive-cleanup"));
+    expect(await screen.findByText(/nope|Failed to run trigger/)).toBeInTheDocument();
+  });
+
+  it("disables Run now for the post-turn curator (afterTurn) trigger", async () => {
+    listTriggers.mockResolvedValue(response([dailyManager, curator]));
+    render(<TriggersPane project={project} />);
+    await screen.findByTestId("triggers-pane");
+    // The curator's Run-now action is disabled (it runs via the sweeper, not on demand)…
+    const curatorRun = await screen.findByTestId("run-trigger-curate-overview");
+    expect(curatorRun).toBeDisabled();
+    // …while a normal trigger's Run-now stays enabled.
+    expect(await screen.findByTestId("run-trigger-daily-manager")).not.toBeDisabled();
+
+    // Clicking the disabled curator button does nothing.
+    fireEvent.click(curatorRun);
+    expect(runTrigger).not.toHaveBeenCalled();
   });
 });

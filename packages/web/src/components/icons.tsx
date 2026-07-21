@@ -107,6 +107,12 @@ export const BoltIcon = (p: IconProps) => (
   </svg>
 );
 
+export const PlayIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M6 4.5v15l13-7.5z" />
+  </svg>
+);
+
 export const MenuIcon = (p: IconProps) => (
   <svg {...base(p)}>
     <path d="M3 6h18M3 12h18M3 18h18" />

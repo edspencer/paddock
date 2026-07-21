@@ -47,6 +47,29 @@ export function relativeTime(iso?: string): string {
   return `${Math.round(days / 365)}y ago`;
 }
 
+/**
+ * Human "time until" a FUTURE ISO timestamp, e.g. "in 5m", "in 2h", "in 3d". A time
+ * already in the past (or within ~30s) renders "now" — used for a schedule's next-fire.
+ */
+export function untilTime(iso?: string): string {
+  if (!iso) return "";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return iso;
+  const secs = Math.round((then - Date.now()) / 1000);
+  if (secs <= 30) return "now";
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `in ${mins}m`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `in ${hrs}h`;
+  const days = Math.round(hrs / 24);
+  if (days < 7) return `in ${days}d`;
+  const weeks = Math.round(days / 7);
+  if (weeks < 5) return `in ${weeks}w`;
+  const months = Math.round(days / 30);
+  if (months < 12) return `in ${months}mo`;
+  return `in ${Math.round(days / 365)}y`;
+}
+
 /** Compact token count: 523 → "523", 340_000 → "340K", 1_250_000 → "1.25M". */
 export function formatTokens(n: number): string {
   if (!Number.isFinite(n) || n < 0) return "0";

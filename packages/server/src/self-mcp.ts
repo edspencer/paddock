@@ -196,6 +196,12 @@ export interface SelfMcpWriteContext {
    * Returns `true` when a trigger existed, `false` when it was already absent.
    */
   removeTrigger: (projectSlug: string, name: string) => Promise<boolean>;
+  /**
+   * Fire a trigger by `name` NOW (Epic T follow-up / #327) — through the same hub
+   * path a cron / event fire uses. Returns the started chat's sessionId, or `null` if
+   * the project/trigger is gone or the turn never produced a session.
+   */
+  runTrigger: (projectSlug: string, name: string) => Promise<string | null>;
 }
 
 const SERVER_NAME = "paddock_manage";
@@ -399,6 +405,14 @@ const REMOVE_TRIGGER_DESC =
   "Delete a unified project trigger by `name` (removes it from `project.yaml` and " +
   "disarms its agent/schedule). Safe when absent — returns `removed: false` if no " +
   "such trigger. Defaults to the current project; pass `project` to target another.";
+
+const RUN_TRIGGER_DESC =
+  "Fire a trigger NOW, on demand, by `name` — runs it through the SAME path a cron / " +
+  "event fire uses, so the resulting chat is a first-class, badged run. Works for any " +
+  "trigger type and regardless of its `enabled` flag (a manual run is deliberate). Use " +
+  "this to test a trigger you just wrote or to kick one off out of band. Returns the " +
+  "started chat's `sessionId`. Defaults to the current project; pass `project` to " +
+  "target another.";
 
 const LIST_TRIGGERS_DESC =
   "List a project's unified triggers: each trigger's name, agent, `type` " +
@@ -755,6 +769,27 @@ function listTriggersHandler(write: SelfMcpWriteContext) {
   };
 }
 
+function runTriggerHandler(write: SelfMcpWriteContext) {
+  return async (args: Record<string, unknown>): Promise<McpToolCallResult> => {
+    try {
+      const name = typeof args.name === "string" ? args.name.trim() : "";
+      if (!name) return fail("Error: `name` is required (the trigger to run).");
+      const projectArg = typeof args.project === "string" ? args.project.trim() : "";
+      const project = projectArg.length > 0 ? projectArg : write.currentProjectSlug;
+
+      const sessionId = await write.runTrigger(project, name);
+      if (!sessionId) {
+        return fail(
+          `Error running trigger “${name}”: no such trigger, or it did not start a chat.`,
+        );
+      }
+      return ok({ ran: true, project, name, sessionId });
+    } catch (error) {
+      return fail(`Error running trigger: ${errText(error)}`);
+    }
+  };
+}
+
 /**
  * Build the injected MCP server definition for the self-management tools, bound to
  * a per-turn context. The READ tools (list_projects/list_chats/read_chat) are
@@ -1074,6 +1109,22 @@ export function selfMcpServerDef(
           },
           handler: removeTriggerHandler(write),
         },
+        {
+          name: "run_trigger",
+          description: RUN_TRIGGER_DESC,
+          inputSchema: {
+            type: "object",
+            properties: {
+              name: { type: "string", description: "The trigger to fire now." },
+              project: {
+                type: "string",
+                description: "Project slug that owns the trigger. Omit to use the current project.",
+              },
+            },
+            required: ["name"],
+          },
+          handler: runTriggerHandler(write),
+        },
       );
     }
   }
@@ -1109,4 +1160,5 @@ export const SELF_MCP_TRIGGER_TOOL_NAMES = {
   listTriggers: `mcp__${SERVER_NAME}__list_triggers`,
   setTrigger: `mcp__${SERVER_NAME}__set_trigger`,
   removeTrigger: `mcp__${SERVER_NAME}__remove_trigger`,
+  runTrigger: `mcp__${SERVER_NAME}__run_trigger`,
 } as const;
