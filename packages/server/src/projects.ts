@@ -742,24 +742,34 @@ export class ProjectStore {
       );
     }
 
-    // From here on, roll the checkout back on ANY failure so a botched promote can
-    // never leave a half-repo-backed project (yaml unset but a checkout present).
+    // `writeYaml` is the atomic COMMIT point: until it succeeds the notebook is
+    // byte-identical to before (only the checkout dir exists), so a failure here
+    // rolls back by removing JUST the checkout — nothing else has been mutated.
+    // We deliberately DON'T touch the sidecar `.gitignore` or the notebook's
+    // CLAUDE.md until after the commit, so a rare `writeYaml` failure can't leave a
+    // botched promote's notebook altered (e.g. a `.gitignore` that now ignores
+    // `/.chats/`). (Warren #370.)
+    const next: ProjectYaml = {
+      ...this.stripDto(current),
+      repo,
+      updated: today(),
+    };
     try {
-      await this.ensureSidecarGitignore(dir, checkoutName);
-      const next: ProjectYaml = {
-        ...this.stripDto(current),
-        repo,
-        updated: today(),
-      };
       await this.writeYaml(slug, next);
-      // Defer to the repo's OWN CLAUDE.md — remove the notebook's sweeper-owned one
-      // (best-effort; absence is fine). It lives in the data-repo history if needed.
-      await fs.rm(path.join(dir, CLAUDE_FILE), { force: true }).catch(() => undefined);
-      return this.toDto(dir, next, await this.overviewExists(slug));
     } catch (err) {
       await fs.rm(checkoutDir, { recursive: true, force: true }).catch(() => undefined);
       throw err;
     }
+
+    // Post-commit finalization — the project is now validly repo-backed; these
+    // steps must NOT roll the promotion back (they only tidy up), so they're
+    // best-effort: keep the nested checkout + transcript store out of the data repo,
+    // and drop the notebook's sweeper-owned CLAUDE.md so the repo's OWN one applies
+    // (it survives in the data-repo history). A failure here leaves a valid
+    // repo-backed project, matching create()'s own non-transactional finalization.
+    await this.ensureSidecarGitignore(dir, checkoutName).catch(() => undefined);
+    await fs.rm(path.join(dir, CLAUDE_FILE), { force: true }).catch(() => undefined);
+    return this.toDto(dir, next, await this.overviewExists(slug));
   }
 
   /** Update mutable metadata fields and bump `updated`. */
