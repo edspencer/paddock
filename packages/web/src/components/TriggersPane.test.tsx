@@ -62,6 +62,15 @@ const archiveCleanup: Trigger = {
   enabled: false,
 };
 
+// The post-turn curator (event/afterTurn) — runs via the sweeper, not fireable on demand.
+const curator: Trigger = {
+  name: "curate-overview",
+  agentName: "trigger-p-curate-overview",
+  trigger: { type: "event", on: "afterTurn" },
+  run: { session: "new", tools: [] },
+  enabled: true,
+};
+
 function runtime(rows: TriggerRuntime[]): TriggerRuntimeResponse {
   return { runtime: rows };
 }
@@ -250,5 +259,20 @@ describe("TriggersPane (Epic T / T4)", () => {
     await screen.findByTestId("triggers-pane");
     fireEvent.click(await screen.findByTestId("run-trigger-archive-cleanup"));
     expect(await screen.findByText(/nope|Failed to run trigger/)).toBeInTheDocument();
+  });
+
+  it("disables Run now for the post-turn curator (afterTurn) trigger", async () => {
+    listTriggers.mockResolvedValue(response([dailyManager, curator]));
+    render(<TriggersPane project={project} />);
+    await screen.findByTestId("triggers-pane");
+    // The curator's Run-now action is disabled (it runs via the sweeper, not on demand)…
+    const curatorRun = await screen.findByTestId("run-trigger-curate-overview");
+    expect(curatorRun).toBeDisabled();
+    // …while a normal trigger's Run-now stays enabled.
+    expect(await screen.findByTestId("run-trigger-daily-manager")).not.toBeDisabled();
+
+    // Clicking the disabled curator button does nothing.
+    fireEvent.click(curatorRun);
+    expect(runTrigger).not.toHaveBeenCalled();
   });
 });

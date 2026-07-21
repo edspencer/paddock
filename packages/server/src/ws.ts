@@ -131,6 +131,7 @@ import type { TriggerSessionStore } from "./trigger-session.js";
 import {
   triggerPromptFileAbsPath,
   triggerRunsOnOwnAgent,
+  isCuratorTrigger,
   mergeTriggerUpdate,
   type TriggerDto,
   type TriggerEvent,
@@ -1384,6 +1385,12 @@ export function makeChatHandler(deps: {
     if (!project) return null;
     const rec = project.triggers?.[triggerName];
     if (!rec) return null;
+    // The post-turn CURATOR (any `event`/`afterTurn` trigger — the folded-in sweeper, T5)
+    // is NOT fireable on the generic path: it registers no scoped `trigger-<slug>-<name>`
+    // agent and runs via SweepService on `afterTurn`. Refuse rather than firing a turn on
+    // a non-existent agent (defence-in-depth — the REST route + run_trigger MCP reject it
+    // up front with a clear message; this guards any other caller).
+    if (isCuratorTrigger(rec)) return null;
     return fireTriggerForProject(project, { name: triggerName, agentName: triggerAgentName(slug, triggerName), ...rec });
   }
 
@@ -1675,6 +1682,16 @@ export function makeChatHandler(deps: {
         },
         runTrigger: async (projectSlug, name) => {
           if (!deps.triggers) return null;
+          // Reject the post-turn curator up front with a clear message (the generic
+          // fire path can't run it — it has no scoped agent; see fireTrigger). Without
+          // this the MCP verb would surface the opaque "did not start a chat" null.
+          const p = await deps.projects.get(projectSlug).catch(() => null);
+          const rec = p?.triggers?.[name];
+          if (rec && isCuratorTrigger(rec)) {
+            throw new Error(
+              "the post-turn curator trigger runs automatically after each turn and can't be run on demand",
+            );
+          }
           return fireTrigger(projectSlug, name);
         },
       };

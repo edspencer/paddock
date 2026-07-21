@@ -177,6 +177,16 @@ function capabilitySummary(t: Trigger): string {
   return `${tools.length} tool${tools.length === 1 ? "" : "s"}`;
 }
 
+/**
+ * The post-turn CURATOR (the folded-in sweeper, T5): any `event`/`afterTurn` trigger.
+ * It runs via the sweeper on turn completion and has no scoped agent, so it can't be
+ * fired on demand — the Run-now action is disabled for it (mirrors the server, which
+ * 409s a curator run). Matches the server's `isCuratorTrigger`.
+ */
+function isCuratorTrigger(t: Trigger): boolean {
+  return t.trigger.type === "event" && t.trigger.on === "afterTurn";
+}
+
 /** The firing-condition cell: an event name, a cron/interval expression, or a webhook path. */
 function whenSummary(w: TriggerWhen): string {
   if (w.type === "event") return w.on;
@@ -467,8 +477,12 @@ export function TriggersPane({ project }: { project: Project }) {
                             <button
                               type="button"
                               onClick={() => runNow(t)}
-                              disabled={busy === t.name}
-                              title="Run now"
+                              disabled={busy === t.name || isCuratorTrigger(t)}
+                              title={
+                                isCuratorTrigger(t)
+                                  ? "The post-turn curator runs automatically after each turn — it can’t be run on demand."
+                                  : "Run now"
+                              }
                               aria-label={`Run ${t.name} now`}
                               data-testid={`run-trigger-${t.name}`}
                               className="flex h-7 w-7 items-center justify-center rounded-md text-accent transition hover:bg-accent/10 disabled:opacity-40"

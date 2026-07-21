@@ -109,6 +109,7 @@ import {
   TRIGGER_EVENTS,
   TRIGGER_TYPES,
   isValidTriggerName,
+  isCuratorTrigger,
   sanitizeTrigger,
   toChatTriggerInfo,
   type ChatTriggerInfo,
@@ -940,8 +941,21 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
       }
       try {
         const project = await projects.get(slug); // throws not_found
-        if (!project.triggers?.[name]) {
+        const rec = project.triggers?.[name];
+        if (!rec) {
           return reply.code(404).send({ error: `No such trigger: ${name}`, code: "not_found" });
+        }
+        // The post-turn CURATOR (the folded-in sweeper — any `event`/`afterTurn` trigger,
+        // T5) is NOT a generic fireable trigger: it has no scoped `trigger-<slug>-<name>`
+        // agent (it runs via SweepService on the `afterTurn` event, needing a just-
+        // completed turn's context), so the generic fire path can't run it. Reject it with
+        // a clear 409 rather than letting the fire fail opaquely as a 502.
+        if (isCuratorTrigger(rec)) {
+          return reply.code(409).send({
+            error:
+              "The post-turn curator trigger runs automatically after each turn and can't be run on demand.",
+            code: "not_runnable",
+          });
         }
         const sessionId = await fireTrigger(slug, name);
         if (!sessionId) {

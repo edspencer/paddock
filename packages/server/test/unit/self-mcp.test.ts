@@ -791,6 +791,18 @@ describe("self-management MCP (trigger tools + per-project gate)", () => {
     expect(result.isError).toBe(true);
   });
 
+  it("run_trigger propagates a thrown error (e.g. the non-runnable curator) as the message", async () => {
+    const write = fakeWrite({
+      triggersMcpEnabled: true,
+      runTrigger: async () => {
+        throw new Error("the post-turn curator trigger runs automatically after each turn and can't be run on demand");
+      },
+    });
+    const { result } = await callWrite(write, "run_trigger", { name: "curate-overview" });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("post-turn curator");
+  });
+
   it("trigger tools are absent WITHOUT a write ctx even though they are a write-block feature", () => {
     const def = selfMcpServerDef(fakeContext());
     expect(def.tools.map((t) => t.name)).not.toContain("set_trigger");

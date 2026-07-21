@@ -377,4 +377,23 @@ describe("integration: unified triggers management API (Epic T / T3)", () => {
     });
     expect(run.statusCode).toBe(404);
   });
+
+  it("POST …/triggers/:name/run 409s the post-turn curator (afterTurn) — it has no scoped agent", async () => {
+    const project = await freshProject();
+    // A curator trigger = any event/afterTurn trigger (the folded-in sweeper, T5). It
+    // runs via SweepService, registers no `trigger-<slug>-<name>` agent, so the generic
+    // fire path can't run it — the route must reject it clearly rather than 502.
+    await t.app.inject({
+      method: "PUT",
+      url: `/api/projects/${project.slug}/triggers/curate-overview`,
+      payload: { trigger: { type: "event", on: "afterTurn" }, run: { prompt: "curate" }, enabled: true },
+    });
+    const run = await t.app.inject({
+      method: "POST",
+      url: `/api/projects/${project.slug}/triggers/curate-overview/run`,
+      payload: {},
+    });
+    expect(run.statusCode).toBe(409);
+    expect(run.json()).toMatchObject({ code: "not_runnable" });
+  });
 });
