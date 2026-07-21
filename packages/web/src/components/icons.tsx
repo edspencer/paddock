@@ -223,3 +223,11 @@ export const ArchiveIcon = (p: IconProps) => (
     <path d="M10 12h4" />
   </svg>
 );
+
+// Five-point star (#373). Stroke-based like the rest; pass `fill="currentColor"`
+// to render it solid (the gold "starred" state) — `base` lets props override fill.
+export const StarIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M12 2.5l2.9 5.88 6.49.94-4.7 4.58 1.11 6.46L12 17.8l-5.8 3.05 1.11-6.46-4.7-4.58 6.49-.94z" />
+  </svg>
+);

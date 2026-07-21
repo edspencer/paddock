@@ -35,6 +35,7 @@ const apiFns = {
   deleteProjectChat: vi.fn(),
   renameProjectChat: vi.fn(),
   archiveProjectChat: vi.fn(),
+  starProjectChat: vi.fn(),
   markChatSeen: vi.fn(),
   listProjectChats: vi.fn(),
   chatUsage: vi.fn(),
@@ -58,6 +59,7 @@ vi.mock("../lib/api", async () => {
       deleteProjectChat: (...a: unknown[]) => apiFns.deleteProjectChat(...a),
       renameProjectChat: (...a: unknown[]) => apiFns.renameProjectChat(...a),
       archiveProjectChat: (...a: unknown[]) => apiFns.archiveProjectChat(...a),
+      starProjectChat: (...a: unknown[]) => apiFns.starProjectChat(...a),
       markChatSeen: (...a: unknown[]) => apiFns.markChatSeen(...a),
       listProjectChats: (...a: unknown[]) => apiFns.listProjectChats(...a),
       chatUsage: (...a: unknown[]) => apiFns.chatUsage(...a),
@@ -656,6 +658,72 @@ describe("ProjectView: archive chats (#95)", () => {
     expect(
       await screen.findByRole("button", { name: /Unarchive chat Deep-linked archived/i }),
     ).toBeInTheDocument();
+  });
+});
+
+describe("ProjectView: star chats (#373)", () => {
+  // True when `first`'s title appears before `second`'s in document order.
+  const isBefore = (first: string, second: string) =>
+    !!(
+      screen.getByText(first).compareDocumentPosition(screen.getByText(second)) &
+      Node.DOCUMENT_POSITION_FOLLOWING
+    );
+
+  it("stars a chat: pins it to the top and the toggle flips to Unstar", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [
+          makeChat({ sessionId: "s1", name: "Alpha" }),
+          makeChat({ sessionId: "s2", name: "Bravo" }),
+        ],
+      }),
+    );
+    apiFns.starProjectChat.mockResolvedValue(undefined);
+    renderAt("/projects/p/chat");
+    await screen.findByText("Alpha");
+    // Server order: Alpha before Bravo.
+    expect(isBefore("Alpha", "Bravo")).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: /Star chat Bravo/i }));
+    await waitFor(() => expect(apiFns.starProjectChat).toHaveBeenCalledWith("p", "s2", true));
+
+    // Bravo is now starred → it floats to the top (before Alpha), and its toggle
+    // reads "Unstar".
+    await waitFor(() => expect(isBefore("Bravo", "Alpha")).toBe(true));
+    expect(screen.getByRole("button", { name: /Unstar chat Bravo/i })).toBeInTheDocument();
+  });
+
+  it("renders starred chats at the top of the active list (from the server flag)", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [
+          makeChat({ sessionId: "s1", name: "Alpha" }),
+          makeChat({ sessionId: "s2", name: "Bravo", starred: true }),
+          makeChat({ sessionId: "s3", name: "Charlie" }),
+        ],
+      }),
+    );
+    renderAt("/projects/p/chat");
+    await screen.findByText("Alpha");
+    // Bravo (starred) pinned to top; Alpha/Charlie keep their relative order.
+    expect(isBefore("Bravo", "Alpha")).toBe(true);
+    expect(isBefore("Alpha", "Charlie")).toBe(true);
+  });
+
+  it("floats starred chats to the top of the Archived section", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [
+          makeChat({ sessionId: "a1", name: "OldArchived", archived: true }),
+          makeChat({ sessionId: "a2", name: "PinnedArchived", archived: true, starred: true }),
+        ],
+      }),
+    );
+    renderAt("/projects/p/chat");
+    // Expand the Archived accordion, then assert the starred one is on top.
+    fireEvent.click(await screen.findByRole("button", { name: /^Archived/i }));
+    await screen.findByText("PinnedArchived");
+    expect(isBefore("PinnedArchived", "OldArchived")).toBe(true);
   });
 });
 
