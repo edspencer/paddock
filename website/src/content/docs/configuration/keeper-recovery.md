@@ -123,6 +123,12 @@ Auto-recovery is deliberately cautious:
 - **Human reset.** When a human next sends a message to the chat, the retry
   bookkeeping resets, so a genuinely-new hang later on is recovered fresh. (The cap
   counts auto re-drives *between* human messages.)
+- **No double-dispatch.** The nudge is only ever injected into a genuinely *idle*
+  session. If something else is already driving the chat by the time recovery would
+  act — a human message, a queued follow-up, or the manual **Continue** button —
+  recovery stands down and lets that turn proceed. (Resuming a session that already
+  has a live turn would interrupt it, so the first nudge could otherwise be
+  swallowed; this guard makes the re-drive land reliably.)
 
 ### Enabling it
 
