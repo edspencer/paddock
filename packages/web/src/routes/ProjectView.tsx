@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { chatClient } from "../lib/ws";
 import { useProjects } from "../lib/projects-context";
@@ -7,6 +7,7 @@ import type { Chat, ChatCompleteUsage, ChatUsage, Project } from "../lib/types";
 import { StatusPill } from "../components/StatusPill";
 import { TagPill } from "../components/TagPill";
 import { ChatPane } from "../components/ChatPane";
+import type { ShellOutletContext } from "../components/AppShell";
 import { ContextRing } from "../components/ContextRing";
 import { ProvenanceBadge } from "../components/ProvenanceBadge";
 import { ChangesPane } from "../components/ChangesPane";
@@ -29,6 +30,7 @@ import {
   ClockIcon,
   FileIcon,
   LinkIcon,
+  MenuIcon,
   PencilIcon,
   PinIcon,
   PlusIcon,
@@ -60,6 +62,12 @@ export function ProjectView() {
   const slug = params.slug ?? "";
   const location = useLocation();
   const navigate = useNavigate();
+  // Opens the global project-nav drawer (#372). On mobile this view hosts the
+  // hamburger inline in its own header, so the shell's brand row can be dropped.
+  // Tolerates a missing context (rendered outside the shell, e.g. in tests) by
+  // falling back to a no-op.
+  const shell = useOutletContext<ShellOutletContext | null>();
+  const openNav = shell?.openNav ?? (() => {});
   const { refresh: refreshProjects, upsert, remove } = useProjects();
 
   // Which sub-route are we on? Derived from the URL pathname so it updates on
@@ -817,16 +825,29 @@ export function ProjectView() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {/* Header. On mobile it's a compact single-row breadcrumb (the project name
-          links to Home; the tags / overview badge / "updated" time and the
-          summary live on the Home tab, so they're desktop-only here). On lg+ it
+      {/* Header. On mobile it's a compact single row that also HOSTS the global
+          nav hamburger (#372) — the shell drops its separate brand row on project
+          routes so these two collapse into one, reclaiming vertical space. The
+          project name links to Home; the tags / overview badge / "updated" time
+          and the summary live on the Home tab (desktop-only here). `pt-safe`
+          clears the status bar/notch now that the shell's bar is gone. On lg+ it
           wraps into the full rich header. */}
-      <header className="border-b border-paddock-200 px-3 py-2.5 dark:border-paddock-800 sm:px-6 lg:py-4">
+      <header className="pt-safe border-b border-paddock-200 px-3 pb-2.5 dark:border-paddock-800 sm:px-6 lg:py-4">
         <div className="flex items-center gap-2 lg:flex-wrap lg:gap-3">
+          {/* Global project-nav drawer — inline on mobile only (the shell's own
+              hamburger row is suppressed on project routes). */}
+          <button
+            type="button"
+            onClick={openNav}
+            className="btn-subtle -ml-1 shrink-0 px-2 py-1.5 lg:hidden"
+            aria-label="Open menu"
+          >
+            <MenuIcon width={20} height={20} />
+          </button>
           <button
             type="button"
             onClick={() => setSessionsOpen(true)}
-            className="btn-subtle -ml-1 shrink-0 gap-1.5 px-2 py-1.5 lg:-ml-2 lg:hidden"
+            className="btn-subtle shrink-0 gap-1.5 px-2 py-1.5 lg:-ml-2 lg:hidden"
             aria-label="Show chats"
           >
             <ChatIcon width={16} height={16} />
@@ -836,7 +857,7 @@ export function ProjectView() {
             )}
           </button>
           {/* The project name doubles as a breadcrumb up to the Home tab. */}
-          <h1 className="min-w-0 text-xl font-semibold tracking-tight">
+          <h1 className="min-w-0 text-lg font-semibold tracking-tight lg:text-xl">
             <button
               type="button"
               onClick={goHome}
