@@ -10,6 +10,8 @@ import { LAST_SEEN_EVENT, readLastSeen, setServerLastSeen } from "../lib/lastSee
 import { TagPill } from "./TagPill";
 import { NewProjectModal } from "./NewProjectModal";
 import { ChatIcon, FolderIcon, MenuIcon, MoonIcon, PlusIcon, SunIcon, XIcon } from "./icons";
+import { PaneResizer, usePaneWidth } from "./PaneResizer";
+import { SIDENAV_PANE } from "../lib/paneWidth";
 
 /** Per-project sidebar counts (#161): unread replies + in-flight turns. */
 interface ProjectBadge {
@@ -111,6 +113,8 @@ export function AppShell() {
   const navigate = useNavigate();
   const location = useLocation();
   const brand = getBrand();
+  // Desktop-only draggable width for the side-nav (#374), persisted per-browser.
+  const sidenav = usePaneWidth(SIDENAV_PANE);
 
   // The mobile nav is an off-canvas drawer; close it on any navigation so a
   // project/chat tap doesn't leave it covering the content.
@@ -177,10 +181,21 @@ export function AppShell() {
 
       {/* Sidebar — a static column on lg+, an off-canvas drawer on mobile. */}
       <aside
-        className={`fixed inset-y-0 left-0 z-40 flex w-72 max-w-[85%] shrink-0 flex-col border-r border-paddock-200 bg-canvas shadow-2xl transition-transform duration-200 ease-out dark:border-paddock-800 dark:bg-paddock-900 lg:static lg:z-auto lg:max-w-none lg:translate-x-0 lg:bg-white/50 lg:shadow-none dark:lg:bg-paddock-900/30 ${
+        style={sidenav.style}
+        className={`fixed inset-y-0 left-0 z-40 flex w-72 max-w-[85%] shrink-0 flex-col border-r border-paddock-200 bg-canvas shadow-2xl transition-transform duration-200 ease-out dark:border-paddock-800 dark:bg-paddock-900 lg:relative lg:z-auto lg:max-w-none lg:translate-x-0 lg:bg-white/50 lg:shadow-none dark:lg:bg-paddock-900/30 ${
           navOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
+        {sidenav.isDesktop && (
+          <PaneResizer
+            spec={sidenav.spec}
+            width={sidenav.width}
+            onPreview={sidenav.preview}
+            onCommit={sidenav.commit}
+            onReset={sidenav.reset}
+            label="Resize sidebar"
+          />
+        )}
         <div className="flex items-center gap-2 px-5 py-4">
           <NavLink to="/" className="group flex items-center gap-2">
             <BrandLogo brand={brand} className="h-8 w-8 text-base" />
