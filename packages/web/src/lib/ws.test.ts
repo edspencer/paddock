@@ -556,6 +556,41 @@ describe("ws: session re-attach (issue #54)", () => {
     expect(onKilledTask).not.toHaveBeenCalled();
     sub.unsubscribe();
   });
+
+  it("delivers chat:notice (usage limit) to the matching chat's onNotice (#329)", () => {
+    const onNotice = vi.fn();
+    const sub = chatClient.subscribe("p", "sess-1", { ...handlers(), onNotice });
+    last().open();
+    const notice = {
+      kind: "usage_limit",
+      message: "You've hit your session limit · resets 7:10pm",
+      resetTime: "7:10pm",
+      retryable: false,
+    };
+    last().emit({
+      type: "chat:notice",
+      payload: { projectSlug: "p", sessionId: "sess-1", jobId: "job-1", notice },
+    } as unknown as ServerWsMessage);
+    expect(onNotice).toHaveBeenCalledWith(notice, { sessionId: "sess-1", jobId: "job-1" });
+    sub.unsubscribe();
+  });
+
+  it("does NOT deliver chat:notice to a different chat's pane (#329)", () => {
+    const onNotice = vi.fn();
+    const sub = chatClient.subscribe("p", "sess-1", { ...handlers(), onNotice });
+    last().open();
+    last().emit({
+      type: "chat:notice",
+      payload: {
+        projectSlug: "p",
+        sessionId: "sess-other",
+        jobId: null,
+        notice: { kind: "error", message: "boom", retryable: true },
+      },
+    } as unknown as ServerWsMessage);
+    expect(onNotice).not.toHaveBeenCalled();
+    sub.unsubscribe();
+  });
 });
 
 describe("ws: active-turn signal (issues #52/#53)", () => {

@@ -22,6 +22,7 @@
  * THIN (chat sending happens over WS; these are convenience reads/echoes):
  *   POST /api/projects/:slug/chats     start-a-chat metadata (see TODO)
  */
+import path from "node:path";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { ProjectError, type ProjectStore, type Project, type CreateProjectInput, type UpdateProjectInput } from "./projects.js";
 import { AttachmentStore, collectAttachmentIds } from "./attachments.js";
@@ -42,9 +43,10 @@ import { applyMessageProvenance, type MessageProvenanceStore } from "./message-p
 import { buildProjectRuns } from "./runs.js";
 import type { PaddockConfig } from "./config.js";
 import { type Transcriber, TranscriptionError } from "./transcribe.js";
-import { readFirstUserText } from "./transcripts.js";
+import { readFirstUserText, projectChatsDir } from "./transcripts.js";
 import { readSubagentMessages, readSessionTokenUsageWithSubagents } from "./subagents.js";
 import { enrichWithToolDetails } from "./tooldetails.js";
+import { scanTranscriptNotice } from "./turn-notice.js";
 
 /**
  * The subset of @fastify/multipart's decorated request we use. The plugin
@@ -100,6 +102,9 @@ import {
   toChatTriggerInfo,
   type ChatTriggerInfo,
 } from "./trigger-config.js";
+
+/** A session id safe to interpolate into a transcript file path (issue #329). */
+const SAFE_SESSION_ID = /^[A-Za-z0-9._-]+$/;
 
 export interface RouteDeps {
   projects: ProjectStore;
@@ -1154,7 +1159,28 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
         // their sender (chat / schedule) by joining the ordered injection markers.
         // Human-typed turns match no marker and stay unlabelled (the default).
         const markers = await messageProvenance.list(req.params.sessionId).catch(() => []);
-        return { messages: applyMessageProvenance(enriched, markers) };
+        const withProvenance = applyMessageProvenance(enriched, markers);
+        // #329: `@herdctl/core` drops synthetic messages when it parses the
+        // transcript, so a turn that dead-ended at a subscription/usage limit
+        // leaves no visible trace on reload. Re-scan the raw JSONL for a TRAILING
+        // usage-limit dead-end and append it as a synthetic notice turn so the
+        // reason the chat stopped survives a refresh (a later real reply clears it).
+        const notice = SAFE_SESSION_ID.test(req.params.sessionId)
+          ? await scanTranscriptNotice(
+              path.join(projectChatsDir(projectDir), `${req.params.sessionId}.jsonl`),
+            )
+          : null;
+        if (notice) {
+          const last = withProvenance[withProvenance.length - 1];
+          withProvenance.push({
+            role: "assistant",
+            content: "",
+            timestamp: last?.timestamp ?? new Date().toISOString(),
+            uuid: `notice-${req.params.sessionId}`,
+            notice,
+          });
+        }
+        return { messages: withProvenance };
       } catch (err) {
         return sendProjectError(reply, err);
       }

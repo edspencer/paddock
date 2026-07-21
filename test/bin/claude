@@ -66,6 +66,14 @@
  *   • [[HANGTOOL]]  → emit a Task-shaped tool_use and then block WITHOUT ever
  *                     writing the result — the pending row persists until the
  *                     turn is killed (the in-flight-tool analogue of [[HANG]]).
+ *   • [[LIMIT]]     → write a synthetic "session limit · resets …" assistant line
+ *                     (model "<synthetic>") + a SUCCESS result, so the turn
+ *                     dead-ends silently the way the shared Max-plan quota does.
+ *                     Exercises the #329 usage-limit notice (live + on reload).
+ *   • [[MAXTURNS]]  → write an `error_max_turns` result (nothing renderable) — the
+ *                     #329 "reached turn limit" notice.
+ *   • [[APIERROR]]  → write an `error_during_execution` result — the #329 generic
+ *                     error notice + Retry affordance.
  * Sweeper coverage: when the prompt looks like the paddock sweeper's curation
  * prompt (contains the literal "<<<OVERVIEW>>>" marker request), the fake emits a
  * marker-shaped reply (<<<OVERVIEW>>> … <<<CHANGELOG>>> … <<<END>>>) so
@@ -350,6 +358,52 @@ function main() {
     cwd,
     sessionId,
   });
+
+  // [[LIMIT]] / [[MAXTURNS]] / [[APIERROR]] (test-only, #329): drive the three
+  // turn-dead-end shapes the UI must now surface. Each writes the MINIMAL
+  // transcript the real runtime produces for that ending, then exits — a prompt
+  // with none of these markers is unaffected.
+  const syntheticLine = (text) => ({
+    parentUuid: null,
+    isSidechain: false,
+    type: "assistant",
+    message: {
+      id: `msg_${crypto.randomBytes(8).toString("hex")}`,
+      role: "assistant",
+      // The CLI stamps its synthetic placeholder / quota replies with this model
+      // + a stop_sequence stop_reason (both dropped by the translator + parser).
+      model: "<synthetic>",
+      stop_reason: "stop_sequence",
+      stop_sequence: "",
+      content: [{ type: "text", text }],
+    },
+    uuid: crypto.randomUUID(),
+    timestamp: nowIso(),
+    cwd,
+    sessionId,
+  });
+  if ((prompt || "").includes("[[LIMIT]]")) {
+    // Shared Max-plan quota: a synthetic session-limit reply (invisible to the
+    // translator + core parser) followed by a SUCCESS result — the exact shape
+    // that used to leave the chat looking dead.
+    sleep(60);
+    append(syntheticLine("You've hit your session limit · resets 7:10pm (America/New_York)"));
+    sleep(40);
+    append({ type: "result", subtype: "success", is_error: false, session_id: sessionId, result: "", usage });
+    process.exit(0);
+  }
+  if ((prompt || "").includes("[[MAXTURNS]]")) {
+    // Hit the per-turn cap: nothing renderable, then an error_max_turns result.
+    sleep(40);
+    append({ type: "result", subtype: "error_max_turns", is_error: true, session_id: sessionId, usage });
+    process.exit(0);
+  }
+  if ((prompt || "").includes("[[APIERROR]]")) {
+    // A failed turn (e.g. an API/overload/auth error): an error result subtype.
+    sleep(40);
+    append({ type: "result", subtype: "error_during_execution", is_error: true, session_id: sessionId, usage });
+    process.exit(0);
+  }
 
   // Opt-in directives (see header): emit a tool_use/tool_result pair and/or a
   // second assistant text block (boundary). A prompt with neither marker is

@@ -28,6 +28,7 @@ import type {
   TaskCreateInfo,
   ServerWsMessage,
   MessageSender,
+  TurnNotice,
 } from "./types";
 
 export interface ToolCall {
@@ -129,6 +130,13 @@ export interface ChatHandlers {
    * so it no longer takes a refresh to appear. `timestamp` dedups a hub replay.
    */
   onKilledTask?: (info: { summary: string; timestamp: string }) => void;
+  /**
+   * A keeper turn dead-ended without a normal reply (issue #329): a
+   * subscription/usage-limit hit, the max-turns cap, or an error. Render a
+   * distinct inline notice turn (with the reset time / a Retry affordance) so the
+   * chat surfaces WHY it stopped instead of appearing to hang.
+   */
+  onNotice?: (notice: TurnNotice, meta: { sessionId: string | null; jobId: string | null }) => void;
 }
 
 export type ConnectionState = "connecting" | "open" | "closed";
@@ -721,6 +729,11 @@ class ChatClient {
           },
           meta,
         );
+        break;
+      case "chat:notice":
+        // #329: a dead-end (usage limit / max-turns / error) surfaced inline
+        // during the turn. Session-routed like the other turn frames.
+        sub.handlers.onNotice?.(msg.payload.notice, meta);
         break;
       case "chat:complete":
         sub.handlers.onComplete?.({

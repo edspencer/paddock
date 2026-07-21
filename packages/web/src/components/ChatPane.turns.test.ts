@@ -132,4 +132,24 @@ describe("historyToTurns (issue #135: stable per-message id)", () => {
     expect(turns.map((t) => t.kind)).toEqual(["tool", "notification"]);
     expect(turns.map((t) => t.id)).toEqual(["b-1", "n-2"]);
   });
+
+  it("renders a server-appended usage-limit notice as a notice turn, not a bubble (#329)", () => {
+    const notice = {
+      kind: "usage_limit" as const,
+      message: "You've hit your session limit · resets 7:10pm (America/New_York)",
+      resetTime: "7:10pm (America/New_York)",
+      retryable: false,
+    };
+    const turns = historyToTurns([
+      msg({ role: "user", content: "hi?", uuid: "u-1" }),
+      // The synthetic shell the server appends: role assistant, empty content, but
+      // a `notice` — it must never render as an (empty) assistant bubble.
+      msg({ role: "assistant", content: "", uuid: "notice-sess", notice }),
+    ]);
+    expect(turns.map((t) => t.kind)).toEqual(["user", "notice"]);
+    const noticeTurn = turns[1];
+    expect(noticeTurn.kind === "notice" && noticeTurn.notice.resetTime).toBe(
+      "7:10pm (America/New_York)",
+    );
+  });
 });

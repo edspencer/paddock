@@ -28,6 +28,7 @@ import path from "node:path";
 import { parseSessionMessages, type ChatMessage, type ChatToolCall } from "@herdctl/core";
 import { projectChatsDir } from "./transcripts.js";
 import type { MessageSender } from "./message-provenance.js";
+import type { TurnNotice } from "./turn-notice.js";
 import {
   readSessionTokenUsage,
   readSessionTokenUsageFile,
@@ -287,6 +288,11 @@ export type EnrichedMessage = Omit<ChatMessage, "toolCall"> & {
   bgConsumed?: boolean;
   /** Who injected this machine-added turn (issue #290); absent ⇒ human-typed. */
   sender?: MessageSender;
+  /** A surfaced turn-ending condition (issue #329): a subscription/usage-limit
+   *  hit recovered from the transcript on reload. Present only on the synthetic
+   *  notice message appended by the history endpoint; the web renders it as a
+   *  distinct notice turn instead of an assistant bubble. */
+  notice?: TurnNotice;
 };
 
 /**

@@ -723,11 +723,34 @@ export interface TaskCreateInfo {
   description?: string;
 }
 
+/**
+ * A surfaced turn-ending condition (issue #329). A keeper turn can dead-end
+ * without a normal reply — a subscription/usage-limit hit, the max-turns cap, or
+ * an error (network / API 5xx-overload / auth / crash). The server classifies the
+ * ending and the web renders it as a distinct notice turn instead of a silently
+ * dead chat. Mirrors the server's `TurnNotice`.
+ */
+export interface TurnNotice {
+  kind: "usage_limit" | "error" | "max_turns";
+  /** One-line human summary shown in the banner. */
+  message: string;
+  /** Usage-limit only: the parsed "resets …" clause, e.g. `"7:10pm (…)"`. */
+  resetTime?: string;
+  /** Optional secondary detail (the raw SDK error subtype / message). */
+  detail?: string;
+  /** Whether a Continue/Retry affordance is safe to offer (false for a limit). */
+  retryable: boolean;
+}
+
 export interface HistoryMessage {
   role: "user" | "assistant" | "tool";
   content: string;
   timestamp: string;
   toolCall?: ChatToolCall;
+  /** A surfaced turn-ending condition recovered from the transcript on reload
+   *  (issue #329) — present only on the synthetic notice message the server
+   *  appends. Rendered as a distinct notice turn, not an assistant bubble. */
+  notice?: TurnNotice;
   /** True when this `<task-notification>` was folded into a background tool block
    *  (issue #230) — the web suppresses the standalone status pill. */
   bgConsumed?: boolean;
@@ -1004,5 +1027,15 @@ export type ServerWsMessage =
        */
       type: "chat:killed_task";
       payload: Routing & { sessionId: string; summary: string; timestamp: string };
+    }
+  | {
+      /**
+       * A keeper turn dead-ended without a normal reply (issue #329): a
+       * subscription/usage-limit hit, the max-turns cap, or an error. Emitted
+       * inline during the turn so the chat surfaces WHY it stopped instead of
+       * looking dead. Rendered as a distinct notice turn.
+       */
+      type: "chat:notice";
+      payload: Routing & { notice: TurnNotice };
     }
   | { type: "pong" };

@@ -1370,3 +1370,78 @@ describe("ChatPane: killed background-task recovery (#301)", () => {
     expect(screen.queryByRole("button", { name: /^continue$/i })).not.toBeInTheDocument();
   });
 });
+
+// Issue #329 — a turn that dead-ends without a normal reply (usage-limit hit,
+// max-turns cap, or an error) surfaces a distinct inline notice instead of a
+// silently-dead chat.
+describe("ChatPane: turn-notice surfacing (#329)", () => {
+  it("renders a server-appended usage-limit notice on reload, with the reset time and NO retry", async () => {
+    const loadHistory = vi.fn().mockResolvedValue([
+      { role: "user", content: "hi?", timestamp: "2026-07-19T23:05:00Z" },
+      {
+        role: "assistant",
+        content: "",
+        timestamp: "2026-07-19T23:06:14Z",
+        uuid: "notice-sess-u",
+        notice: {
+          kind: "usage_limit",
+          message: "You've hit your session limit · resets 7:10pm (America/New_York)",
+          resetTime: "7:10pm (America/New_York)",
+          retryable: false,
+        },
+      },
+    ] as HistoryMessage[]);
+    render(
+      <ChatPane projectSlug="proj" initialSessionId="sess-u" loadHistory={loadHistory} isProjectChat />,
+    );
+    expect(await screen.findByText(/Session limit reached/i)).toBeInTheDocument();
+    expect(screen.getByText(/after the quota resets/i)).toBeInTheDocument();
+    // Not retryable — a usage limit only clears on reset.
+    expect(screen.queryByRole("button", { name: /retry|continue/i })).not.toBeInTheDocument();
+  });
+
+  it("surfaces a LIVE error notice with a Retry button (recovery enabled)", async () => {
+    const loadHistory = vi.fn().mockResolvedValue([] as HistoryMessage[]);
+    render(
+      <ChatPane projectSlug="proj" initialSessionId="sess-e" loadHistory={loadHistory} isProjectChat />,
+    );
+    await waitFor(() => expect(sub()).toBeTruthy());
+    act(() =>
+      sub().handlers.onNotice?.(
+        {
+          kind: "error",
+          message: "The keeper turn failed before producing a reply.",
+          detail: "error_during_execution",
+          retryable: true,
+        },
+        { sessionId: "sess-e", jobId: "job-e" },
+      ),
+    );
+    expect(await screen.findByText(/The turn failed/i)).toBeInTheDocument();
+    expect(screen.getByText("error_during_execution")).toBeInTheDocument();
+    const retry = screen.getByRole("button", { name: /^retry$/i });
+    await userEvent.click(retry);
+    expect(continues).toEqual([{ slug: "proj", sessionId: "sess-e" }]);
+  });
+
+  it("surfaces a LIVE max-turns notice with a Continue button", async () => {
+    const loadHistory = vi.fn().mockResolvedValue([] as HistoryMessage[]);
+    render(
+      <ChatPane projectSlug="proj" initialSessionId="sess-m" loadHistory={loadHistory} isProjectChat />,
+    );
+    await waitFor(() => expect(sub()).toBeTruthy());
+    act(() =>
+      sub().handlers.onNotice?.(
+        {
+          kind: "max_turns",
+          message: "The keeper reached its turn limit before finishing this turn.",
+          detail: "error_max_turns",
+          retryable: true,
+        },
+        { sessionId: "sess-m", jobId: "job-m" },
+      ),
+    );
+    expect(await screen.findByText(/Turn limit reached/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^continue$/i })).toBeInTheDocument();
+  });
+});
