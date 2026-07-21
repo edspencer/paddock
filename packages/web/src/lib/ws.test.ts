@@ -532,6 +532,30 @@ describe("ws: session re-attach (issue #54)", () => {
     expect(onResync).toHaveBeenCalledTimes(1);
     sub.unsubscribe();
   });
+
+  it("delivers chat:killed_task to the exactly-matching chat's onKilledTask (#347)", () => {
+    const onKilledTask = vi.fn();
+    const sub = chatClient.subscribe("p", "sess-1", { ...handlers(), onKilledTask });
+    last().open();
+    last().emit({
+      type: "chat:killed_task",
+      payload: { projectSlug: "p", sessionId: "sess-1", summary: "bg agent stopped", timestamp: "t0" },
+    } as unknown as ServerWsMessage);
+    expect(onKilledTask).toHaveBeenCalledWith({ summary: "bg agent stopped", timestamp: "t0" });
+    sub.unsubscribe();
+  });
+
+  it("does NOT deliver chat:killed_task to a nascent (new-chat) pane (#347)", () => {
+    const onKilledTask = vi.fn();
+    const sub = chatClient.subscribe("p", null, { ...handlers(), onKilledTask });
+    last().open();
+    last().emit({
+      type: "chat:killed_task",
+      payload: { projectSlug: "p", sessionId: "sess-other", summary: "x", timestamp: "t0" },
+    } as unknown as ServerWsMessage);
+    expect(onKilledTask).not.toHaveBeenCalled();
+    sub.unsubscribe();
+  });
 });
 
 describe("ws: active-turn signal (issues #52/#53)", () => {

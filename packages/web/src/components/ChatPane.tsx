@@ -973,6 +973,20 @@ export function ChatPane({
           { kind: "user", id: nextId(), content: inj.content, sender: inj.sender },
         ]);
       },
+      onKilledTask: ({ summary, timestamp }) => {
+        // A background task was killed at the turn boundary (#347) — surfaced LIVE
+        // by the recovery engine (its notification is otherwise trapped in the SDK
+        // input queue). Append the terminated-notification turn so the amber
+        // "keeper is idle / Continue" affordance renders inline without a refresh.
+        // Dedup on timestamp so a re-delivery can't stack duplicate notices.
+        const key = `killed ${timestamp}`;
+        if (seenInjectionsRef.current.has(key)) return;
+        seenInjectionsRef.current.add(key);
+        setTurns((prev) => [
+          ...sealStreaming(prev),
+          { kind: "notification", id: nextId(), summary, status: "killed" },
+        ]);
+      },
     });
     return () => {
       sub.unsubscribe();

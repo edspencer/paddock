@@ -57,6 +57,11 @@ export type TailEvent = "assistant" | "terminated-notification" | "other";
 interface TranscriptEntry {
   type?: string;
   message?: { role?: string; content?: unknown };
+  /** Present on a `type:"queue-operation"` entry (`enqueue`/`dequeue`). */
+  operation?: string;
+  /** The payload of a `queue-operation` enqueue — for a killed background task
+   *  this IS the `<task-notification>` (string, or an array of text blocks). #347 */
+  content?: unknown;
 }
 
 /** Flatten a transcript message `content` (string, or an array of blocks) to text. */
@@ -76,33 +81,76 @@ function notificationStatus(text: string): string | undefined {
   return /<status>([\s\S]*?)<\/status>/.exec(text)?.[1];
 }
 
+/** True when `text` is a `<task-notification>` carrying a terminated (killed/
+ *  stopped) status — the turn-boundary-kill signature this recovers from. */
+function isTerminatedNotificationText(text: string): boolean {
+  return text.includes("<task-notification>") && isTerminatedTaskStatus(notificationStatus(text));
+}
+
 /**
- * Classify one already-parsed transcript entry. A keeper reply is `assistant`; a
- * `user` entry whose content is a `<task-notification>` with a terminated
- * (killed/stopped) status is `terminated-notification`; everything else is
- * `other`. Note a COMPLETED/running notification is `other` — only a terminated
- * one denotes the turn-boundary kill this recovers from.
+ * Classify one already-parsed transcript entry as the hang detector sees it.
+ *
+ * A terminated `<task-notification>` reaches the transcript in TWO shapes, and we
+ * must catch both (issue #347):
+ *   - As a materialised `type:"user"` entry — but that only appears once a LATER
+ *     turn flushes the SDK's input queue, often tens of seconds after the kill.
+ *   - At the moment of the kill, as a `type:"queue-operation"` `enqueue` whose
+ *     `content` IS the notification. This is the one that lands inside the watch
+ *     window; missing it (the original bug) let every real hang go undetected.
+ *
+ * A keeper reply is `assistant`; a killed/stopped notification in either shape is
+ * `terminated-notification`; everything else (system lines, attachments, a
+ * `dequeue`, a completed/running notification, plain user text) is `other`.
  */
 export function classifyEntry(entry: TranscriptEntry): TailEvent {
   if (entry.type === "assistant") return "assistant";
-  if (entry.type === "user") {
-    const text = contentText(entry.message?.content);
-    if (text.includes("<task-notification>") && isTerminatedTaskStatus(notificationStatus(text))) {
-      return "terminated-notification";
-    }
+  if (entry.type === "user" && isTerminatedNotificationText(contentText(entry.message?.content))) {
+    return "terminated-notification";
+  }
+  // The kill's notification is delivered to the input queue as an `enqueue`
+  // whose `content` is the `<task-notification>`; a `dequeue` carries no payload.
+  if (entry.type === "queue-operation" && entry.operation === "enqueue") {
+    if (isTerminatedNotificationText(contentText(entry.content))) return "terminated-notification";
   }
   return "other";
 }
 
+/** Extract a `<task-notification>` `<summary>` value (trimmed), or undefined. */
+function notificationSummary(text: string): string | undefined {
+  return /<summary>([\s\S]*?)<\/summary>/.exec(text)?.[1]?.trim() || undefined;
+}
+
+/** The notification payload carried by an entry, whichever shape it took: a
+ *  `user` message's content, or a `queue-operation` enqueue's `content`. */
+function notificationText(entry: TranscriptEntry): string {
+  if (entry.type === "user") return contentText(entry.message?.content);
+  if (entry.type === "queue-operation") return contentText(entry.content);
+  return "";
+}
+
+/**
+ * Parse one raw JSONL line into its {@link TailEvent} plus, for a terminated
+ * notification, its human-readable `<summary>` (used by the live surface frame).
+ * Unparseable/blank → `other`.
+ */
+export function parseTailLine(line: string): { event: TailEvent; summary?: string } {
+  const trimmed = line.trim();
+  if (!trimmed) return { event: "other" };
+  let entry: TranscriptEntry;
+  try {
+    entry = JSON.parse(trimmed) as TranscriptEntry;
+  } catch {
+    return { event: "other" };
+  }
+  const event = classifyEntry(entry);
+  return event === "terminated-notification"
+    ? { event, summary: notificationSummary(notificationText(entry)) }
+    : { event };
+}
+
 /** Classify one raw JSONL line (unparseable/blank → `other`). */
 export function classifyLine(line: string): TailEvent {
-  const trimmed = line.trim();
-  if (!trimmed) return "other";
-  try {
-    return classifyEntry(JSON.parse(trimmed) as TranscriptEntry);
-  } catch {
-    return "other";
-  }
+  return parseTailLine(line).event;
 }
 
 /**
@@ -143,6 +191,12 @@ export interface RecoveryEngineDeps {
   /** Inject the recovery nudge into the still-alive session (Layer 2's exact path:
    *  `startAgentTurn({ resume, prompt: RECOVERY_NUDGE, sender: { kind: "recovery" } })`). */
   reDrive: (project: Project, sessionId: string) => Promise<void>;
+  /** Surface the detected kill to any attached client LIVE (Layer 2 `surfaceKilledTask`)
+   *  so the "keeper is idle / Continue" affordance appears WITHOUT a refresh — the
+   *  notification is otherwise trapped in the SDK input queue until the next turn
+   *  flushes it (issue #347). `summary` is the notification's `<summary>`, if any.
+   *  Default no-op (surfacing off). */
+  surface?: (project: Project, sessionId: string, summary: string | undefined) => void;
   /** Wall clock (ms). Default `Date.now`. */
   now?: () => number;
   /** Schedule a one-shot timer. Default `setTimeout`. */
@@ -240,6 +294,7 @@ export class RecoveryEngine {
   private readonly pollMs: number;
   private readonly killGraceMs: number;
   private readonly log: (msg: string, meta?: Record<string, unknown>) => void;
+  private readonly surface: (project: Project, sessionId: string, summary: string | undefined) => void;
 
   /** Per-session retry/debounce bookkeeping — cleared on a human message. */
   private readonly guards = new Map<string, SessionGuard>();
@@ -256,13 +311,16 @@ export class RecoveryEngine {
     this.pollMs = deps.pollMs ?? DEFAULT_POLL_MS;
     this.killGraceMs = deps.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
     this.log = deps.log ?? (() => undefined);
+    this.surface = deps.surface ?? (() => undefined);
   }
 
   /**
    * Arm (or re-arm) a post-turn watch for a just-completed SESSION-mode keeper turn.
-   * No-op unless Layer 3 (`autoReDrive`) is on for this project and the session still
-   * has retries left. Re-arming cancels any prior watch for the same session. Safe to
-   * call fire-and-forget; never throws (a lookup/IO failure just declines to watch).
+   * No-op unless SOMETHING wants it for this project: Layer 2 `surfaceKilledTask`
+   * (surface the kill live) or Layer 3 `autoReDrive` (auto re-drive, while the
+   * session has retries left). Re-arming cancels any prior watch for the same
+   * session. Safe to call fire-and-forget; never throws (a lookup/IO failure just
+   * declines to watch).
    */
   armWatch(input: { slug: string; sessionId: string }): void {
     void this.armWatchAsync(input).catch((err) => {
@@ -278,17 +336,19 @@ export class RecoveryEngine {
       return; // unknown/deleted project — nothing to recover
     }
     const recovery = resolveRecoveryConfig(project.recovery, this.deps.cfg.recovery);
-    if (!recovery.autoReDrive) return; // Layer 3 opt-in only
 
-    // The retry cap gates ARMING (a fresh session defaults to 0 re-drives so far).
-    // Because each armed watch fires at most once, gating arm on
-    // `retryCount >= maxRetries` bounds total auto re-drives to exactly maxRetries —
-    // and `maxRetries: 0` therefore disables auto-recovery entirely (never arms),
-    // even for a session with no prior guard.
+    // Two independent actions can want this watch: Layer 2 `surfaceKilledTask`
+    // (push the "keeper is idle" affordance live) and Layer 3 `autoReDrive`
+    // (re-drive automatically). Re-drive is additionally bounded by the retry cap
+    // — each armed watch fires at most once, so gating on `retryCount >= maxRetries`
+    // bounds total auto re-drives to exactly maxRetries (and `maxRetries: 0`
+    // disables it). Surfacing has no such cap: a re-drive that hangs again is a new
+    // event worth showing. If neither wants in, don't arm at all.
     const retryCount = this.guards.get(sessionId)?.retryCount ?? 0;
-    if (retryCount >= recovery.maxRetries) {
-      // Cap reached since the last human message (or maxRetries is 0) — leave it be.
-      this.log("recovery: retry cap reached, not arming", {
+    const wantSurface = recovery.surfaceKilledTask;
+    const wantReDrive = recovery.autoReDrive && retryCount < recovery.maxRetries;
+    if (!wantSurface && !wantReDrive) {
+      this.log("recovery: nothing to arm (surface off, re-drive off or capped)", {
         slug,
         sessionId,
         retryCount,
@@ -308,6 +368,7 @@ export class RecoveryEngine {
     let offset = await this.fileSize(file);
     let carry = "";
     let pending = false;
+    let pendingSummary: string | undefined;
     let notifiedAt: number | null = null;
     const deadline = this.now() + recovery.debounceMs + this.killGraceMs;
 
@@ -329,12 +390,14 @@ export class RecoveryEngine {
       // The last element is an incomplete (unterminated) line — hold it for next read.
       carry = lines.pop() ?? "";
       for (const line of lines) {
-        const ev = classifyLine(line);
-        if (ev === "assistant") {
+        const { event, summary } = parseTailLine(line);
+        if (event === "assistant") {
           pending = false;
+          pendingSummary = undefined;
           notifiedAt = null;
-        } else if (ev === "terminated-notification" && !pending) {
+        } else if (event === "terminated-notification" && !pending) {
           pending = true;
+          pendingSummary = summary;
           notifiedAt = this.now();
         }
       }
@@ -343,7 +406,7 @@ export class RecoveryEngine {
       if (pending && notifiedAt !== null && t - notifiedAt >= recovery.debounceMs) {
         // Hung: a terminated notification has sat un-answered for the full debounce.
         this.cancelWatch(sessionId);
-        await this.fireReDrive(project, sessionId, recovery);
+        await this.fire(project, sessionId, recovery, pendingSummary);
         return;
       }
       if (t >= deadline) {
@@ -358,11 +421,33 @@ export class RecoveryEngine {
   }
 
   /**
-   * Fire one automatic re-drive: bump the session's retry bookkeeping first (so a
-   * re-drive that itself hangs can't exceed the cap), then inject the recovery nudge
-   * via the shared Layer 2 path. A failed inject is logged, not thrown.
+   * Handle a detected turn-boundary kill. Two independent, resolved-config-gated
+   * actions, in order:
+   *   1. `surfaceKilledTask` — push the kill to attached clients LIVE so the
+   *      "keeper is idle / Continue" affordance appears without a refresh. Never
+   *      throws; a bad sink can't wedge the engine.
+   *   2. `autoReDrive` (under the retry cap) — bump the session's retry bookkeeping
+   *      FIRST (so a re-drive that itself hangs can't exceed the cap), then inject
+   *      the recovery nudge via the shared Layer 2 path. A failed inject is logged.
    */
-  private async fireReDrive(project: Project, sessionId: string, recovery: RecoveryConfig): Promise<void> {
+  private async fire(
+    project: Project,
+    sessionId: string,
+    recovery: RecoveryConfig,
+    summary: string | undefined,
+  ): Promise<void> {
+    if (recovery.surfaceKilledTask) {
+      try {
+        this.surface(project, sessionId, summary);
+        this.log("recovery: surfaced killed task", { slug: project.slug, sessionId });
+      } catch (err) {
+        this.log("recovery: surface failed", { sessionId, err: String(err) });
+      }
+    }
+
+    const retryCount = this.guards.get(sessionId)?.retryCount ?? 0;
+    if (!recovery.autoReDrive || retryCount >= recovery.maxRetries) return;
+
     const guard = this.guards.get(sessionId) ?? { lastNudgeAt: 0, retryCount: 0 };
     guard.retryCount += 1;
     guard.lastNudgeAt = this.now();

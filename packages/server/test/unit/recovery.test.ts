@@ -12,6 +12,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   classifyLine,
+  parseTailLine,
   detectHang,
   RecoveryEngine,
   type TranscriptTail,
@@ -35,6 +36,14 @@ const notifLine = (status: string) =>
 const userLine = (text = "hello") =>
   JSON.stringify({ type: "user", message: { role: "user", content: text } });
 const otherLine = () => JSON.stringify({ type: "system", subtype: "init" });
+// The #347 shape: at kill time the notification lands as a `queue-operation`
+// enqueue (SDK input queue), NOT a `type:"user"` transcript entry.
+const queueOpNotif = (status: string, operation = "enqueue") =>
+  JSON.stringify({
+    type: "queue-operation",
+    operation,
+    content: `<task-notification>\n<task-id>t1</task-id>\n<status>${status}</status>\n<summary>bg</summary>\n</task-notification>`,
+  });
 
 // ---------------------------------------------------------------------------
 // Pure primitives
@@ -74,6 +83,49 @@ describe("classifyLine (#301)", () => {
       },
     });
     expect(classifyLine(line)).toBe("terminated-notification");
+  });
+
+  // #347: at the moment of the kill the notification is delivered to the SDK
+  // INPUT QUEUE as a `queue-operation` enqueue — the ONLY shape present inside the
+  // watch window. The `type:"user"` form only materialises tens of seconds later.
+  it.each(["killed", "stopped", "KILLED"])(
+    "classifies a %s queue-operation enqueue notification as terminated (#347)",
+    (s) => {
+      expect(classifyLine(queueOpNotif(s))).toBe("terminated-notification");
+    },
+  );
+  it.each(["completed", "running"])(
+    "classifies a %s queue-operation enqueue as other (not terminated)",
+    (s) => {
+      expect(classifyLine(queueOpNotif(s))).toBe("other");
+    },
+  );
+  it("classifies a queue-operation DEQUEUE as other (only an enqueue carries the notification)", () => {
+    expect(classifyLine(queueOpNotif("killed", "dequeue"))).toBe("other");
+  });
+  it("classifies a queue-operation enqueue with array-block content as terminated", () => {
+    const line = JSON.stringify({
+      type: "queue-operation",
+      operation: "enqueue",
+      content: [{ type: "text", text: "<task-notification>\n<status>killed</status>\n</task-notification>" }],
+    });
+    expect(classifyLine(line)).toBe("terminated-notification");
+  });
+});
+
+describe("parseTailLine (#347)", () => {
+  it("returns the event plus the notification <summary> for a terminated user entry", () => {
+    expect(parseTailLine(notifLine("killed"))).toEqual({ event: "terminated-notification", summary: "bg" });
+  });
+  it("returns the summary for a terminated queue-operation enqueue", () => {
+    expect(parseTailLine(queueOpNotif("stopped"))).toEqual({
+      event: "terminated-notification",
+      summary: "bg",
+    });
+  });
+  it("carries no summary for a non-terminated event", () => {
+    expect(parseTailLine(assistantLine())).toEqual({ event: "assistant" });
+    expect(parseTailLine(otherLine())).toEqual({ event: "other" });
   });
 });
 
@@ -180,6 +232,7 @@ interface Harness {
   sched: FakeScheduler;
   tx: FakeTranscript;
   reDrive: ReturnType<typeof vi.fn>;
+  surface: ReturnType<typeof vi.fn>;
   getProject: ReturnType<typeof vi.fn>;
 }
 
@@ -198,11 +251,13 @@ function makeEngine(opts: {
     ...opts.instance,
   };
   const reDrive = vi.fn(async () => undefined);
+  const surface = vi.fn();
   const getProject = vi.fn(async () => makeProject(opts.override));
   const engine = new RecoveryEngine({
     cfg: { recovery: instance },
     getProject,
     reDrive,
+    surface,
     now: sched.now,
     setTimer: sched.setTimer,
     clearTimer: sched.clearTimer,
@@ -211,7 +266,7 @@ function makeEngine(opts: {
     pollMs: 10,
     killGraceMs: 200,
   });
-  return { engine, sched, tx, reDrive, getProject };
+  return { engine, sched, tx, reDrive, surface, getProject };
 }
 
 describe("RecoveryEngine.armWatch (#301)", () => {
@@ -286,27 +341,29 @@ describe("RecoveryEngine.armWatch (#301)", () => {
   });
 
   it("stops poking after the retry cap (a permanently-wedged keeper)", async () => {
+    // Surface off so the ONLY reason to arm is re-drive (isolates the cap).
+    const c = makeEngine({ instance: { surfaceKilledTask: false }, debounceMs: 100 });
     // First hang → one re-drive.
-    h.tx.append(assistantLine("started"));
-    h.engine.armWatch({ slug: "rec", sessionId: "s1" });
+    c.tx.append(assistantLine("started"));
+    c.engine.armWatch({ slug: "rec", sessionId: "s1" });
     await drain();
-    h.tx.append(notifLine("killed"));
-    await h.sched.advance(150);
-    expect(h.reDrive).toHaveBeenCalledTimes(1);
-    expect(h.engine.retryCountFor("s1")).toBe(1);
+    c.tx.append(notifLine("killed"));
+    await c.sched.advance(150);
+    expect(c.reDrive).toHaveBeenCalledTimes(1);
+    expect(c.engine.retryCountFor("s1")).toBe(1);
 
     // The re-drive turn also hangs; ws.ts re-arms on its completion. maxRetries=1 is
-    // already reached, so arming is a no-op and no second poke fires.
-    h.engine.armWatch({ slug: "rec", sessionId: "s1" });
+    // already reached and surface is off, so arming is a no-op and no second poke fires.
+    c.engine.armWatch({ slug: "rec", sessionId: "s1" });
     await drain();
-    expect(h.engine.isWatching("s1")).toBe(false);
-    h.tx.append(notifLine("killed"));
-    await h.sched.advance(400);
-    expect(h.reDrive).toHaveBeenCalledTimes(1); // still just the one
+    expect(c.engine.isWatching("s1")).toBe(false);
+    c.tx.append(notifLine("killed"));
+    await c.sched.advance(400);
+    expect(c.reDrive).toHaveBeenCalledTimes(1); // still just the one
   });
 
   it("honours a higher retry cap (fires up to maxRetries times)", async () => {
-    const hh = makeEngine({ instance: { maxRetries: 2 }, debounceMs: 100 });
+    const hh = makeEngine({ instance: { maxRetries: 2, surfaceKilledTask: false }, debounceMs: 100 });
     hh.tx.append(assistantLine("started"));
     hh.engine.armWatch({ slug: "rec", sessionId: "s1" });
     await drain();
@@ -328,7 +385,7 @@ describe("RecoveryEngine.armWatch (#301)", () => {
   });
 
   it("maxRetries: 0 disables auto-recovery entirely (never arms, even for a fresh session)", async () => {
-    const capped = makeEngine({ instance: { maxRetries: 0 } });
+    const capped = makeEngine({ instance: { maxRetries: 0, surfaceKilledTask: false } });
     capped.tx.append(assistantLine("started"));
     capped.engine.armWatch({ slug: "rec", sessionId: "s1" });
     await drain();
@@ -339,8 +396,8 @@ describe("RecoveryEngine.armWatch (#301)", () => {
     expect(capped.reDrive).not.toHaveBeenCalled();
   });
 
-  it("does nothing when autoReDrive is OFF (Layer 3 opt-in)", async () => {
-    const off = makeEngine({ instance: { autoReDrive: false } });
+  it("does nothing when BOTH surface and autoReDrive are OFF", async () => {
+    const off = makeEngine({ instance: { autoReDrive: false, surfaceKilledTask: false } });
     off.tx.append(assistantLine("started"));
     off.engine.armWatch({ slug: "rec", sessionId: "s1" });
     await drain();
@@ -348,6 +405,7 @@ describe("RecoveryEngine.armWatch (#301)", () => {
     off.tx.append(notifLine("killed"));
     await off.sched.advance(400);
     expect(off.reDrive).not.toHaveBeenCalled();
+    expect(off.surface).not.toHaveBeenCalled();
   });
 
   it("lets a per-project override turn autoReDrive ON over an OFF instance default", async () => {
@@ -425,5 +483,78 @@ describe("RecoveryEngine.armWatch (#301)", () => {
     h.engine.stopAll();
     expect(h.engine.isWatching("s1")).toBe(false);
     expect(h.engine.isWatching("s2")).toBe(false);
+  });
+});
+
+describe("RecoveryEngine surface — Layer 2 live killed-task (#347)", () => {
+  it("surfaces a killed task live even when autoReDrive is OFF (default surface on)", async () => {
+    const s = makeEngine({ instance: { autoReDrive: false, surfaceKilledTask: true }, debounceMs: 100 });
+    s.tx.append(assistantLine("started a bg task"));
+    s.engine.armWatch({ slug: "rec", sessionId: "s1" });
+    await drain();
+    // surfaceKilledTask alone is enough to arm — this is the default-config path.
+    expect(s.engine.isWatching("s1")).toBe(true);
+
+    s.tx.append(notifLine("killed"));
+    await s.sched.advance(150);
+    expect(s.surface).toHaveBeenCalledTimes(1);
+    expect(s.surface).toHaveBeenCalledWith(expect.objectContaining({ slug: "rec" }), "s1", "bg");
+    // Surface is NOT a re-drive: no nudge is injected when Layer 3 is off.
+    expect(s.reDrive).not.toHaveBeenCalled();
+  });
+
+  it("surfaces from a queue-operation kill — the shape trapped in the SDK input queue (#347)", async () => {
+    const s = makeEngine({ instance: { autoReDrive: false, surfaceKilledTask: true }, debounceMs: 100 });
+    s.tx.append(assistantLine("started"));
+    s.engine.armWatch({ slug: "rec", sessionId: "s1" });
+    await drain();
+    // The kill arrives ONLY as a queue-operation enqueue (no type:"user" entry) —
+    // the exact production shape that the old classifier missed entirely.
+    s.tx.append(queueOpNotif("killed"));
+    await s.sched.advance(150);
+    expect(s.surface).toHaveBeenCalledTimes(1);
+    expect(s.surface).toHaveBeenCalledWith(expect.objectContaining({ slug: "rec" }), "s1", "bg");
+  });
+
+  it("surfaces AND re-drives when both layers are on", async () => {
+    const s = makeEngine({ instance: { autoReDrive: true, surfaceKilledTask: true }, debounceMs: 100 });
+    s.tx.append(assistantLine("started"));
+    s.engine.armWatch({ slug: "rec", sessionId: "s1" });
+    await drain();
+    s.tx.append(notifLine("killed"));
+    await s.sched.advance(150);
+    expect(s.surface).toHaveBeenCalledTimes(1);
+    expect(s.reDrive).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps surfacing after the re-drive cap is hit (a new hang is still worth showing)", async () => {
+    const s = makeEngine({ instance: { autoReDrive: true, surfaceKilledTask: true, maxRetries: 1 }, debounceMs: 100 });
+    s.tx.append(assistantLine("started"));
+    s.engine.armWatch({ slug: "rec", sessionId: "s1" });
+    await drain();
+    s.tx.append(notifLine("killed"));
+    await s.sched.advance(150);
+    expect(s.surface).toHaveBeenCalledTimes(1);
+    expect(s.reDrive).toHaveBeenCalledTimes(1);
+
+    // The re-driven turn hangs again; ws.ts re-arms. Cap is reached, so no second
+    // re-drive — but surfacing still arms and fires (the keeper is stuck again).
+    s.engine.armWatch({ slug: "rec", sessionId: "s1" });
+    await drain();
+    expect(s.engine.isWatching("s1")).toBe(true);
+    s.tx.append(notifLine("killed"));
+    await s.sched.advance(150);
+    expect(s.surface).toHaveBeenCalledTimes(2);
+    expect(s.reDrive).toHaveBeenCalledTimes(1); // still capped
+  });
+
+  it("does not surface a completed background task", async () => {
+    const s = makeEngine({ instance: { autoReDrive: false, surfaceKilledTask: true } });
+    s.tx.append(assistantLine("started"));
+    s.engine.armWatch({ slug: "rec", sessionId: "s1" });
+    await drain();
+    s.tx.append(notifLine("completed"));
+    await s.sched.advance(400);
+    expect(s.surface).not.toHaveBeenCalled();
   });
 });
