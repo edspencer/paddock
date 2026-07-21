@@ -1,5 +1,11 @@
 # @paddock/server
 
+## 0.38.3
+
+### Patch Changes
+
+- [#350](https://github.com/edspencer/paddock/pull/350) [`04f3950`](https://github.com/edspencer/paddock/commit/04f3950402a7fa2a6faf7d6dde99a9a055b210df) Thanks [@edspencer](https://github.com/edspencer)! - Fix keeper-chat recovery (#301/#347): a background task killed at the turn boundary was undetectable because its `<task-notification>` is delivered to the SDK's input queue as a `queue-operation` entry, not a `type:"user"` transcript entry — the shape the recovery watch classified. The engine now recognises the queue-operation form (the only one present inside the watch window), so auto re-drive fires when enabled. The watch is also armed under `surfaceKilledTask` (default on) and, on detection, broadcasts a live `chat:killed_task` frame so the "keeper is idle / Continue" affordance appears without a manual refresh.
+
 ## 0.38.2
 
 ## 0.38.1
