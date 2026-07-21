@@ -28,6 +28,7 @@
  * for the AGENT to read (not a render envelope like send_file).
  */
 import type { InjectedMcpServerDef, McpToolCallResult } from "@herdctl/core";
+import { MODELS, isKnownModel } from "./models.js";
 
 /** A project as surfaced to the agent. */
 export interface SelfMcpProject {
@@ -139,10 +140,25 @@ export interface SelfMcpWriteContext {
   currentProjectSlug: string;
   /** Resolved sessionId of the CURRENT chat, or null if not yet known this turn. */
   currentSessionId: () => string | null;
-  /** Start a brand-new chat in `projectSlug` kicked off with `prompt`. Returns its new sessionId. */
-  createChat: (projectSlug: string, prompt: string, opts?: { name?: string; preloadContext?: boolean }) => Promise<{ sessionId: string }>;
-  /** Eager-fork `sourceSessionId` (in `projectSlug`) into a new chat, optionally kicked off with `prompt`. Returns the new sessionId. */
-  forkChat: (args: { projectSlug: string; sourceSessionId: string; prompt?: string; name?: string }) => Promise<{ sessionId: string }>;
+  /**
+   * Start a brand-new chat in `projectSlug` kicked off with `prompt`. Returns its
+   * new sessionId. `opts.model` (issue #336) is a per-chat model override for the
+   * spawned chat's kickoff turn ONLY — already validated against the picker
+   * allow-list by the handler; absent ⇒ inherit the project/box default.
+   */
+  createChat: (
+    projectSlug: string,
+    prompt: string,
+    opts?: { name?: string; preloadContext?: boolean; model?: string },
+  ) => Promise<{ sessionId: string }>;
+  /**
+   * Eager-fork `sourceSessionId` (in `projectSlug`) into a new chat, optionally
+   * kicked off with `prompt`. Returns the new sessionId. `model` (issue #336) is a
+   * per-chat override applied to the kickoff turn ONLY (a fork with no `prompt`
+   * runs no turn, so a `model` without a `prompt` has no effect); absent ⇒ inherit
+   * the project/box default.
+   */
+  forkChat: (args: { projectSlug: string; sourceSessionId: string; prompt?: string; name?: string; model?: string }) => Promise<{ sessionId: string }>;
   /** Send `prompt` as a new turn to an existing chat. */
   sendMessage: (projectSlug: string, sessionId: string, prompt: string) => Promise<void>;
   /** Set (or clear) a chat's archived flag (presentational metadata only). */
@@ -183,6 +199,15 @@ export interface SelfMcpWriteContext {
 }
 
 const SERVER_NAME = "paddock_manage";
+
+/**
+ * Shared schema description for the optional per-chat `model` override on the spawn
+ * tools (create_chat / fork_chat / fork_chat_batch, issue #336). Lists the valid
+ * ids from the SAME allow-list the web picker uses so the model stays in sync.
+ */
+const MODEL_ARG_DESC =
+  "Optional model for the spawned chat ONLY (not the project default). One of: " +
+  `${MODELS.map((m) => m.id).join(", ")}. Omit to inherit the project/box default.`;
 
 /** fork_chat_batch: hard cap on how many forks a single fan-out call may spawn. */
 export const FORK_BATCH_MAX = 20;
@@ -289,6 +314,25 @@ function errText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * Validate the optional `model` argument on the spawn tools (create_chat /
+ * fork_chat / fork_chat_batch, issue #336) against the SAME picker allow-list the
+ * web model-picker uses ({@link isKnownModel}). Returns `{}` when absent/blank (the
+ * spawned chat inherits the project/box default, the unchanged behaviour), `{ model }`
+ * for a recognised id, or an error STRING (listing the valid ids) for a non-blank
+ * unknown id — the handler turns that into an `isError` tool result so the agent
+ * gets an actionable message rather than a silently-ignored override.
+ */
+export function resolveModelArg(raw: unknown): { model?: string } | string {
+  if (typeof raw !== "string") return {};
+  const m = raw.trim();
+  if (m.length === 0) return {};
+  if (!isKnownModel(m)) {
+    return `Error: unknown model "${m}". Valid models: ${MODELS.map((x) => x.id).join(", ")}.`;
+  }
+  return { model: m };
+}
+
 // ── Write tools (Phase 2) ──────────────────────────────────────────────────
 
 const CREATE_CHAT_DESC =
@@ -297,14 +341,17 @@ const CREATE_CHAT_DESC =
   "it elsewhere. Set `name` to a concise 3–5 word title for the chat (STRONGLY " +
   "recommended — without it the title falls back to a long auto-summary of the " +
   "first turn). Optionally set `preload_context` to seed the new chat with the " +
-  "project's OVERVIEW.md + CHANGELOG.md. Returns the new chat's sessionId.";
+  "project's OVERVIEW.md + CHANGELOG.md. Optionally set `model` to run the spawned " +
+  "chat on a specific model (e.g. a cheaper/faster one) without changing the " +
+  "project default. Returns the new chat's sessionId.";
 
 const FORK_CHAT_DESC =
   "Fork an existing chat into a NEW child chat that inherits its history, then " +
   "optionally kick the child off with `prompt`. Defaults to forking the CURRENT " +
   "chat (the one you're in) — omit `session_id` to fork yourself, or pass a " +
   "`session_id` (from list_chats) to fork another. Defaults to the current project; " +
-  "pass `project` to fork one elsewhere. Optionally set `name`. Returns the new " +
+  "pass `project` to fork one elsewhere. Optionally set `name`, and `model` to run " +
+  "the child's kickoff turn on a specific model. Returns the new " +
   "chat's sessionId. For fanning one source out into many children, use " +
   "`fork_chat_batch` instead.";
 
@@ -368,7 +415,8 @@ const FORK_CHAT_BATCH_DESC =
   "item. Pass `prompts` as one directive PER LINE. " +
   "Defaults the source to the CURRENT chat; pass `session_id` to fork a different " +
   "one, and `project` to target another project. With `name_prefix`, each fork is named " +
-  `"<name_prefix> <i>" (1-based). Up to ${FORK_BATCH_MAX} forks per call; they run ` +
+  `"<name_prefix> <i>" (1-based). With \`model\`, every fork's kickoff turn runs on ` +
+  `that model. Up to ${FORK_BATCH_MAX} forks per call; they run ` +
   "concurrently. Returns the source and every new child's sessionId.";
 
 function createChatHandler(write: SelfMcpWriteContext) {
@@ -380,13 +428,21 @@ function createChatHandler(write: SelfMcpWriteContext) {
       const project = projectArg.length > 0 ? projectArg : write.currentProjectSlug;
       const name = typeof args.name === "string" && args.name.trim().length > 0 ? args.name.trim() : undefined;
       const preloadContext = typeof args.preload_context === "boolean" ? args.preload_context : undefined;
+      // Per-chat model override (#336): validated against the picker allow-list; a
+      // non-blank unknown id is rejected with an actionable error instead of being
+      // silently ignored.
+      const modelResult = resolveModelArg(args.model);
+      if (typeof modelResult === "string") return fail(modelResult);
+      const model = modelResult.model;
 
-      const { sessionId } = await write.createChat(project, prompt, { name, preloadContext });
+      const { sessionId } = await write.createChat(project, prompt, { name, preloadContext, model });
       // Echo the human-readable name + kickoff prompt so the chat renders with its
       // real title (not just a link) both live and on reload (#253). When no name
       // was given the web derives a title from the prompt (matching the sidebar's
-      // auto-name). Prompt is capped to bound the tool-result payload.
-      return ok({ created: true, project, sessionId, name, prompt: truncateText(prompt) });
+      // auto-name). Prompt is capped to bound the tool-result payload. `model` is
+      // echoed (when overridden) so the tool result records which model the spawned
+      // chat runs on (#336).
+      return ok({ created: true, project, sessionId, name, model, prompt: truncateText(prompt) });
     } catch (error) {
       return fail(`Error creating chat: ${errText(error)}`);
     }
@@ -405,14 +461,20 @@ function forkChatHandler(write: SelfMcpWriteContext) {
       }
       const prompt = typeof args.prompt === "string" && args.prompt.trim().length > 0 ? args.prompt.trim() : undefined;
       const name = typeof args.name === "string" && args.name.trim().length > 0 ? args.name.trim() : undefined;
+      // Per-chat model override (#336): validated against the picker allow-list.
+      // Only applies to a kickoff turn — a fork without `prompt` runs no turn.
+      const modelResult = resolveModelArg(args.model);
+      if (typeof modelResult === "string") return fail(modelResult);
+      const model = modelResult.model;
 
-      const { sessionId } = await write.forkChat({ projectSlug: project, sourceSessionId, prompt, name });
+      const { sessionId } = await write.forkChat({ projectSlug: project, sourceSessionId, prompt, name, model });
       return ok({
         forked: true,
         project,
         sessionId,
         from: sourceSessionId,
         name,
+        model,
         prompt: prompt ? truncateText(prompt) : undefined,
       });
     } catch (error) {
@@ -550,16 +612,21 @@ function forkChatBatchHandler(write: SelfMcpWriteContext) {
       }
       const namePrefix =
         typeof args.name_prefix === "string" && args.name_prefix.trim().length > 0 ? args.name_prefix.trim() : undefined;
+      // Per-chat model override (#336): one model for the WHOLE fan-out (each fork's
+      // kickoff turn runs on it), validated against the picker allow-list.
+      const modelResult = resolveModelArg(args.model);
+      if (typeof modelResult === "string") return fail(modelResult);
+      const model = modelResult.model;
 
       // Concurrent fan-out; herdctl enforces the real concurrency cap downstream.
       const forks = await Promise.all(
         clean.map(async (prompt, i) => {
           const name = namePrefix ? `${namePrefix} ${i + 1}` : undefined;
-          const { sessionId } = await write.forkChat({ projectSlug: project, sourceSessionId, prompt, name });
+          const { sessionId } = await write.forkChat({ projectSlug: project, sourceSessionId, prompt, name, model });
           return { sessionId, prompt };
         }),
       );
-      return ok({ count: forks.length, source: sourceSessionId, forks });
+      return ok({ count: forks.length, source: sourceSessionId, model, forks });
     } catch (error) {
       return fail(`Error forking chat batch: ${errText(error)}`);
     }
@@ -767,6 +834,7 @@ export function selfMcpServerDef(
               type: "boolean",
               description: "Seed the new chat with the project's OVERVIEW.md + CHANGELOG.md.",
             },
+            model: { type: "string", description: MODEL_ARG_DESC },
           },
           required: ["prompt"],
         },
@@ -788,6 +856,10 @@ export function selfMcpServerDef(
             },
             prompt: { type: "string", description: "Optional first turn to kick off the fork." },
             name: { type: "string", description: "Optional display name for the forked chat." },
+            model: {
+              type: "string",
+              description: `${MODEL_ARG_DESC} Applies to the kickoff turn only (a fork with no \`prompt\` runs no turn).`,
+            },
           },
         },
         handler: forkChatHandler(write),
@@ -870,6 +942,10 @@ export function selfMcpServerDef(
             name_prefix: {
               type: "string",
               description: 'Optional; each fork is named "<name_prefix> <i>" (1-based).',
+            },
+            model: {
+              type: "string",
+              description: `${MODEL_ARG_DESC} Applies to EVERY fork's kickoff turn in this fan-out.`,
             },
           },
           required: ["prompts"],
