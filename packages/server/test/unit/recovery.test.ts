@@ -558,3 +558,91 @@ describe("RecoveryEngine surface — Layer 2 live killed-task (#347)", () => {
     expect(s.surface).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Double-dispatch guard — the "first message swallowed" fix (#352)
+// ---------------------------------------------------------------------------
+
+/** Build an engine whose `isBusy` reports whatever `busy()` returns at fire time. */
+function makeBusyEngine(busy: () => boolean, instance?: Partial<RecoveryConfig>): Harness & {
+  isBusy: ReturnType<typeof vi.fn>;
+} {
+  const sched = new FakeScheduler();
+  const tx = new FakeTranscript();
+  const resolved: RecoveryConfig = {
+    ...DEFAULT_RECOVERY,
+    autoReDrive: true,
+    surfaceKilledTask: true,
+    debounceMs: 100,
+    maxRetries: 1,
+    ...instance,
+  };
+  const reDrive = vi.fn(async () => undefined);
+  const surface = vi.fn();
+  const getProject = vi.fn(async () => makeProject());
+  const isBusy = vi.fn((_sessionId: string) => busy());
+  const engine = new RecoveryEngine({
+    cfg: { recovery: resolved },
+    getProject,
+    reDrive,
+    surface,
+    isBusy,
+    now: sched.now,
+    setTimer: sched.setTimer,
+    clearTimer: sched.clearTimer,
+    readTail: tx.readTail,
+    fileSize: tx.fileSize,
+    pollMs: 10,
+    killGraceMs: 200,
+  });
+  return { engine, sched, tx, reDrive, surface, getProject, isBusy };
+}
+
+describe("RecoveryEngine double-dispatch guard (#352)", () => {
+  it("stands down entirely (no surface, no re-drive) when a live turn is already driving the session", async () => {
+    // A human message / queued drain / prior nudge began driving the session between
+    // detection and fire — resuming again would interrupt-swallow it. Stand down.
+    const h = makeBusyEngine(() => true);
+    h.tx.append(assistantLine("started"));
+    h.engine.armWatch({ slug: "rec", sessionId: "s1" });
+    await drain();
+    h.tx.append(notifLine("killed"));
+    await h.sched.advance(400);
+    expect(h.reDrive).not.toHaveBeenCalled();
+    expect(h.surface).not.toHaveBeenCalled();
+    // A retry is NOT consumed when we stand down — a genuine later hang still recovers.
+    expect(h.engine.retryCountFor("s1")).toBe(0);
+  });
+
+  it("fires normally when the session is idle at detection time (guard is a no-op)", async () => {
+    const h = makeBusyEngine(() => false);
+    h.tx.append(assistantLine("started"));
+    h.engine.armWatch({ slug: "rec", sessionId: "s1" });
+    await drain();
+    h.tx.append(notifLine("killed"));
+    await h.sched.advance(150);
+    expect(h.surface).toHaveBeenCalledTimes(1);
+    expect(h.reDrive).toHaveBeenCalledTimes(1);
+    expect(h.engine.retryCountFor("s1")).toBe(1);
+  });
+
+  it("standing down leaves the session recoverable: a later hang while idle re-drives fresh", async () => {
+    // Busy at the first fire, idle by the second (the racing live turn has completed).
+    let busy = true;
+    const h = makeBusyEngine(() => busy);
+    h.tx.append(assistantLine("started"));
+    h.engine.armWatch({ slug: "rec", sessionId: "s1" });
+    await drain();
+    h.tx.append(notifLine("killed"));
+    await h.sched.advance(400);
+    expect(h.reDrive).not.toHaveBeenCalled(); // stood down (busy)
+
+    // The live turn finishes; ws.ts re-arms; this time the session is idle and hangs.
+    busy = false;
+    h.engine.armWatch({ slug: "rec", sessionId: "s1" });
+    await drain();
+    h.tx.append(notifLine("killed"));
+    await h.sched.advance(150);
+    expect(h.reDrive).toHaveBeenCalledTimes(1);
+  });
+});

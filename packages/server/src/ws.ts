@@ -2023,6 +2023,16 @@ export function makeChatHandler(deps: {
   }
 
   /**
+   * Sessions with a recovery nudge dispatch in flight (issue #352 double-dispatch
+   * guard). A resume of a still-in-flight session-mode chat interrupts and swallows
+   * the prior resume, so we never let two recovery/Continue dispatches for the same
+   * session overlap. Set synchronously the moment a nudge is dispatched (before the
+   * `sessionExists` await), cleared once the turn has started; `hub.isRunning` then
+   * carries the guard for the turn's lifetime.
+   */
+  const injectingRecovery = new Set<string>();
+
+  /**
    * Inject the keeper-chat recovery nudge into a still-alive session (issue #301) —
    * the ONE shared path behind both the manual Layer 2 "Continue" (`chat:continue`)
    * and the Layer 3 automatic re-drive ({@link RecoveryEngine}). Re-drives the
@@ -2035,32 +2045,51 @@ export function makeChatHandler(deps: {
   const injectRecoveryNudge = async (project: Project, sessionId: string): Promise<void> => {
     const slug = project.slug;
     if (!slug || slug === SCRATCH_SLUG) return;
-    // Only re-drive a real, existing session (a live kept-alive keeper chat).
-    if (!(await deps.herdctl.sessionExists(project, sessionId).catch(() => false))) return;
-    const driveMode =
-      project.driveMode && isKnownDriveMode(project.driveMode)
-        ? project.driveMode
-        : deps.cfg.keeperDriveMode;
-    await startAgentTurn({
-      projectSlug: slug,
-      agentName: keeperAgentName(slug),
-      workingDir: project.workingDir,
-      resume: sessionId,
-      prompt: RECOVERY_NUDGE,
-      driveMode,
-      fallbackModel: project.model,
-      // A resume never re-stamps provenance (only new chats are stamped), so these
-      // describe-the-run values aren't persisted — the target keeps its own marker
-      // and its self-MCP is gated on THAT recorded depth. Describe it as a
-      // human-rooted run (matches the Layer 2 manual Continue path).
-      origin: "human",
-      depth: 0,
-      maxSpawnDepth: resolveMaxSpawnDepth(project.maxSpawnDepth, deps.cfg.maxSpawnDepth),
-      // #290 / #301: attribute the injected nudge to Paddock recovery so the history
-      // renders "⚠ continued after a background task was terminated" and emits a live
-      // chat:injected frame to any attached viewer.
-      sender: { kind: "recovery" },
-    });
+    // Single-flight double-dispatch guard (issue #352). Two dispatches resuming the
+    // SAME session at once is fatal under session-mode `chatSession(resume)`: the
+    // second resume interrupts the first, so one nudge is swallowed ("first message
+    // swallowed", #350/#347). A turn already running for this session (a human send,
+    // a queued-message drain, or a Continue click) means the keeper is not idle —
+    // yield to it. And `injectingRecovery` closes the async gap below (the
+    // `sessionExists` await) so two near-simultaneous recovery/Continue calls can't
+    // both get past this check before either registers its turn as running.
+    if (injectingRecovery.has(sessionId) || hub.isRunning(sessionId)) {
+      return;
+    }
+    injectingRecovery.add(sessionId);
+    try {
+      // Only re-drive a real, existing session (a live kept-alive keeper chat).
+      if (!(await deps.herdctl.sessionExists(project, sessionId).catch(() => false))) return;
+      const driveMode =
+        project.driveMode && isKnownDriveMode(project.driveMode)
+          ? project.driveMode
+          : deps.cfg.keeperDriveMode;
+      await startAgentTurn({
+        projectSlug: slug,
+        agentName: keeperAgentName(slug),
+        workingDir: project.workingDir,
+        resume: sessionId,
+        prompt: RECOVERY_NUDGE,
+        driveMode,
+        fallbackModel: project.model,
+        // A resume never re-stamps provenance (only new chats are stamped), so these
+        // describe-the-run values aren't persisted — the target keeps its own marker
+        // and its self-MCP is gated on THAT recorded depth. Describe it as a
+        // human-rooted run (matches the Layer 2 manual Continue path).
+        origin: "human",
+        depth: 0,
+        maxSpawnDepth: resolveMaxSpawnDepth(project.maxSpawnDepth, deps.cfg.maxSpawnDepth),
+        // #290 / #301: attribute the injected nudge to Paddock recovery so the history
+        // renders "⚠ continued after a background task was terminated" and emits a live
+        // chat:injected frame to any attached viewer.
+        sender: { kind: "recovery" },
+      });
+    } finally {
+      // Clear the single-flight mark once the turn has STARTED (startAgentTurn
+      // resolves as soon as the session id is known — for a resume, immediately —
+      // by which point `hub.isRunning(sessionId)` is true and takes over the guard).
+      injectingRecovery.delete(sessionId);
+    }
   };
 
   /**
@@ -2077,6 +2106,11 @@ export function makeChatHandler(deps: {
     cfg: { recovery: deps.cfg.recovery },
     getProject: (slug) => deps.projects.get(slug),
     reDrive: (project, sessionId) => injectRecoveryNudge(project, sessionId),
+    // #352: a live turn on this session means the keeper isn't idle — the watch
+    // stands down rather than surface a stale "idle" banner or fire a re-drive that
+    // would interrupt (and be swallowed by) the in-flight turn. `injectRecoveryNudge`
+    // holds the same guard for the recovery path's own dispatch window.
+    isBusy: (sessionId) => hub.isRunning(sessionId),
     // #347: when a background task is killed at the turn boundary, its
     // notification is trapped in the SDK input queue — the client would never
     // render the "keeper is idle" affordance until a refresh flushed it. On

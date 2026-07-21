@@ -197,6 +197,18 @@ export interface RecoveryEngineDeps {
    *  flushes it (issue #347). `summary` is the notification's `<summary>`, if any.
    *  Default no-op (surfacing off). */
   surface?: (project: Project, sessionId: string, summary: string | undefined) => void;
+  /**
+   * Is a live turn ALREADY driving this session? (issue #352 — double-dispatch
+   * guard.) When the watch decides a keeper is hung, something else may have begun
+   * driving the same session in the meantime — a human message, a queued-message
+   * drain, or a prior recovery nudge. Under session-mode `chatSession(resume)` a
+   * SECOND resume interrupts the first, so an auto re-drive fired into a live turn
+   * would be swallowed (the "first message swallowed" symptom, #350/#347). If this
+   * reports the session busy, the engine stands down entirely — the keeper is not
+   * idle, and a fresh watch arms when that live turn completes. Default: never busy
+   * (so the pure unit-tested engine behaviour is unchanged).
+   */
+  isBusy?: (sessionId: string) => boolean;
   /** Wall clock (ms). Default `Date.now`. */
   now?: () => number;
   /** Schedule a one-shot timer. Default `setTimeout`. */
@@ -295,6 +307,7 @@ export class RecoveryEngine {
   private readonly killGraceMs: number;
   private readonly log: (msg: string, meta?: Record<string, unknown>) => void;
   private readonly surface: (project: Project, sessionId: string, summary: string | undefined) => void;
+  private readonly isBusy: (sessionId: string) => boolean;
 
   /** Per-session retry/debounce bookkeeping — cleared on a human message. */
   private readonly guards = new Map<string, SessionGuard>();
@@ -312,6 +325,7 @@ export class RecoveryEngine {
     this.killGraceMs = deps.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
     this.log = deps.log ?? (() => undefined);
     this.surface = deps.surface ?? (() => undefined);
+    this.isBusy = deps.isBusy ?? (() => false);
   }
 
   /**
@@ -429,6 +443,14 @@ export class RecoveryEngine {
    *   2. `autoReDrive` (under the retry cap) — bump the session's retry bookkeeping
    *      FIRST (so a re-drive that itself hangs can't exceed the cap), then inject
    *      the recovery nudge via the shared Layer 2 path. A failed inject is logged.
+   *
+   * Double-dispatch guard (issue #352): if a live turn is ALREADY driving this
+   * session by now — a human message, a queued-message drain, or a prior recovery
+   * nudge — the keeper is not idle. Surfacing "keeper is idle" would be misleading,
+   * and a re-drive would resume an in-flight session, which under session-mode
+   * `chatSession(resume)` interrupts and swallows the live turn (the "first message
+   * swallowed" symptom). So stand down entirely; the completing live turn arms a
+   * fresh watch, and a genuine re-hang is caught then.
    */
   private async fire(
     project: Project,
@@ -436,6 +458,13 @@ export class RecoveryEngine {
     recovery: RecoveryConfig,
     summary: string | undefined,
   ): Promise<void> {
+    if (this.isBusy(sessionId)) {
+      this.log("recovery: session already has a live turn — standing down (no surface, no re-drive)", {
+        slug: project.slug,
+        sessionId,
+      });
+      return;
+    }
     if (recovery.surfaceKilledTask) {
       try {
         this.surface(project, sessionId, summary);
