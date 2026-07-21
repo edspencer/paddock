@@ -73,6 +73,7 @@ import {
   formatUsd,
   isCompactContinuation,
   isLocalCommandCaveat,
+  isLocalCommandStdout,
   isTaskNotification,
   isTerminatedTaskStatus,
   localCommandStdout,
@@ -2743,10 +2744,12 @@ function historyToTurn(m: HistoryMessage, id: string): Turn {
   // A client-local display command (`/context`, `/usage`, …) writes its rendered
   // output as a `<local-command-stdout>` block and a `<local-command-caveat>`
   // framing note (issue #158). Surface the stdout as a labeled output block and
-  // drop the caveat — both would otherwise render as raw-XML user bubbles.
-  const stdout = localCommandStdout(m.content);
-  if (stdout) {
-    return { kind: "commandOutput", id, content: stdout };
+  // drop the caveat — both would otherwise render as raw-XML user bubbles. Route
+  // ANY stdout wrapper here (even an empty one) so an empty block collapses to
+  // nothing rather than falling through to the raw-XML user-bubble fallback — the
+  // last line of defense regardless of which path injected it.
+  if (isLocalCommandStdout(m.content)) {
+    return { kind: "commandOutput", id, content: localCommandStdout(m.content) ?? "" };
   }
   if (isLocalCommandCaveat(m.content)) {
     // Harness scaffolding with no reader value — collapse to an empty command

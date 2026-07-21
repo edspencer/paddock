@@ -95,8 +95,17 @@ async function readFromFileUncached(file: string): Promise<LocalCommandOutput[]>
       // The output block. Recent CC nests it in a `<local-command-stdout>` wrapper;
       // keep the wrapper so the SAME web detector (`localCommandStdout`) that guards
       // a user-entry form handles the recovered form identically.
+      //
+      // Only recover a block with non-empty inner text: mirror the web detector
+      // (`localCommandStdout`) and the live path (`extractLocalCommandOutput`), both
+      // of which drop empty blocks — otherwise an empty `<local-command-stdout></…>`
+      // (a display-only command that produced nothing) would be re-injected only to
+      // fall through to a raw-XML user bubble on reload, the exact bug #158 fixes.
       const content = typeof parsed.content === "string" ? parsed.content : undefined;
-      if (!content || !content.includes("<local-command-stdout>")) continue;
+      const inner = content
+        ? /^\s*<local-command-stdout>([\s\S]*)<\/local-command-stdout>\s*$/.exec(content)?.[1]?.trim()
+        : undefined;
+      if (!content || !inner) continue;
       out.push({
         parentUuid: typeof parsed.parentUuid === "string" ? parsed.parentUuid : undefined,
         uuid: typeof parsed.uuid === "string" ? parsed.uuid : undefined,

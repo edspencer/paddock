@@ -110,4 +110,29 @@ describe("enrichWithLocalCommands (issue #158)", () => {
     const out = await enrichWithLocalCommands(projectDir, "s4", parsed);
     expect(out).toHaveLength(1);
   });
+
+  it("does NOT inject an empty-output block (would render as a raw-XML bubble — Warren #358)", async () => {
+    // A display-only command that produced nothing: an EMPTY stdout block. Injecting
+    // it would fall through the web detectors to the raw-XML user-bubble fallback,
+    // reintroducing the exact bug #158 fixes — so it must be dropped at recovery.
+    await writeMain("s5", [
+      {
+        type: "system",
+        subtype: "local_command",
+        parentUuid: "echo-5",
+        uuid: "out-5",
+        content: "<local-command-stdout></local-command-stdout>",
+      },
+      {
+        type: "system",
+        subtype: "local_command",
+        parentUuid: "echo-5",
+        uuid: "out-5b",
+        content: "<local-command-stdout>   \n  </local-command-stdout>",
+      },
+    ]);
+    const parsed: EnrichedMessage[] = [userMsg("<command-name>/foo</command-name>", "echo-5")];
+    const out = await enrichWithLocalCommands(projectDir, "s5", parsed);
+    expect(out).toHaveLength(1); // nothing injected; only the echo remains
+  });
 });

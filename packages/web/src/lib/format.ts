@@ -205,6 +205,18 @@ export function localCommandStdout(content: string): string | null {
   return inner.length > 0 ? inner : null;
 }
 
+/**
+ * True when a `role:"user"` message is a `<local-command-stdout>…</local-command-stdout>`
+ * block AT ALL — including an EMPTY one (a display-only command that produced nothing).
+ * The renderer routes any such block to a `commandOutput` turn (collapsing an empty one
+ * to nothing) so an empty block can never fall through to a raw-XML user bubble — the
+ * last line of defense for the #158 fix, regardless of which path injected it.
+ * {@link localCommandStdout} extracts the inner text (null when empty) for display.
+ */
+export function isLocalCommandStdout(content: string): boolean {
+  return /^\s*<local-command-stdout>[\s\S]*<\/local-command-stdout>\s*$/.test(content);
+}
+
 // ── Background-agent task notifications (issue #181) ─────────────────────────
 //
 // When a background agent (Task/Agent tool) stops or completes, the Claude Code

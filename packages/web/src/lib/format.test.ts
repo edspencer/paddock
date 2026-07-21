@@ -9,6 +9,7 @@ import {
   isCompactContinuation,
   slashCommandEcho,
   isLocalCommandCaveat,
+  isLocalCommandStdout,
   localCommandStdout,
   isTaskNotification,
   taskNotificationSummary,
@@ -212,6 +213,15 @@ describe("format: local-command artifacts (#158)", () => {
     expect(localCommandStdout("<local-command-stdout>   \n  </local-command-stdout>")).toBeNull();
     expect(localCommandStdout("just some text")).toBeNull();
     expect(localCommandStdout("<command-name>/context</command-name>")).toBeNull();
+  });
+
+  it("isLocalCommandStdout matches ANY stdout wrapper incl. empty (last line of defense)", () => {
+    // Even an EMPTY block is detected so it collapses rather than rendering raw XML.
+    expect(isLocalCommandStdout("<local-command-stdout></local-command-stdout>")).toBe(true);
+    expect(isLocalCommandStdout("<local-command-stdout>   </local-command-stdout>")).toBe(true);
+    expect(isLocalCommandStdout("  <local-command-stdout>hi</local-command-stdout>\n")).toBe(true);
+    expect(isLocalCommandStdout("just some text")).toBe(false);
+    expect(isLocalCommandStdout("<command-name>/context</command-name>")).toBe(false);
   });
 });
 
