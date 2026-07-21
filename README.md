@@ -50,7 +50,10 @@ history). The whole UI is responsive — the same launchpad works from a phone.
 
 - 🗂️ **Project-first** — every project has its own keeper agent, files, and changelog
 - 💬 **Persistent, resumable chats** — server-hosted sessions survive reloads, reconnects, and devices
-- 🔧 **Real tool use, streamed live** — file writes, commands, and subagents render as they run
+- ⌨️ **Token-by-token streaming** — replies, real tool calls, and subagents render live as they run, with rich tool cards (Edit diffs, Bash exit codes, Grep counts)
+- ⏰ **Triggers & automation** — run a keeper turn on a schedule, on a lifecycle event, or on demand; each trigger can carry its own scoped toolset
+- 🤖 **Self-driving keepers** — an opt-in, depth-gated in-process MCP lets a keeper spawn, fork, fan out, and schedule chats — and manage its own triggers
+- 📎 **Send files & images** — pick, drag-drop, or paste into the composer; Claude reads images and PDFs natively
 - 📁 **Files & Changes** — browse rendered project files and review the agent's work as git diffs
 - 🧩 **Two project types** — notebook (data-repo subdir) or repo-backed (clone an external repo as cwd)
 - 📱 **Works from your phone** — the same launchpad, fully responsive
@@ -66,7 +69,7 @@ Run the published image, point it at a data volume, and give it a Claude token:
 
 ```bash
 docker run -d --name paddock -p 4000:4000 \
-  -e CLAUDE_CODE_OAUTH_TOKEN=…       `# Max plan (CLI runtime)` \
+  -e CLAUDE_CODE_OAUTH_TOKEN=…       `# Claude Max/Pro plan (OAuth)` \
   -e PADDOCK_DATA_DIR=/data \
   -v paddock-data:/data \
   ghcr.io/edspencer/paddock:latest
@@ -84,7 +87,7 @@ services:
     ports:
       - "4000:4000"
     environment:
-      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN} # or ANTHROPIC_API_KEY for the SDK runtime
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN} # Claude Max/Pro (OAuth); or ANTHROPIC_API_KEY for API-key billing
       PADDOCK_DATA_DIR: /data
     volumes:
       - paddock-data:/data
@@ -133,15 +136,18 @@ _These are real screenshots — Paddock is dogfooded on its own dev stack: **Pad
 
 ## Configuration
 
-Configuration is environment-only — no config files.
+Configuration is environment-first, with an optional **YAML instance-config file**
+(precedence: file < env < built-in defaults) and per-project overrides in each
+project's `project.yaml`.
 
 | Var | Default | Purpose |
 |-----|---------|---------|
 | `PORT` | `4000` | HTTP/WS port |
 | `HOST` | `0.0.0.0` | Bind address |
 | `PADDOCK_DATA_DIR` | `./data` | Data root — holds `projects/`, `scratch/`, `.herdctl/` state, the generated `herdctl.yaml`. Setting this cascades all derived paths. |
-| `CLAUDE_CODE_OAUTH_TOKEN` | — | Claude auth for the **CLI** runtime (Max plan). |
-| `ANTHROPIC_API_KEY` | — | Claude auth for the **SDK** runtime (API pricing). |
+| `CLAUDE_CODE_OAUTH_TOKEN` | — | Claude auth — Max/Pro plan (OAuth). |
+| `ANTHROPIC_API_KEY` | — | Claude auth — API-key billing. |
+| `PADDOCK_KEEPER_DRIVE_MODE` | `session` | `session` (SDK runtime — token-by-token streaming + cross-turn autonomy) or `batch` (legacy one-shot CLI runtime). Per-project `driveMode` overrides it. |
 
 The **complete `PADDOCK_*` reference** — every variable, its default, and purpose
 — is in **[docs/CONFIGURATION.md](docs/CONFIGURATION.md)**;
@@ -162,6 +168,14 @@ hostname to each port. Nothing is shared between instances except the host.
 Paddock is a thin project layer over the public `@herdctl/core` FleetManager. It
 wires **projects**, **chats**, and a **git backing store** on top; anything the
 herdctl CLI/dashboard can do, the library can too.
+
+Keeper turns run through herdctl's **session runtime** (persistent
+`openChatSession`) by default — that's what lets chats resume across reloads,
+stream token-by-token, and carry autonomous work (`ScheduleWakeup`, `/loop`)
+across turn boundaries. **Triggers** (schedules, lifecycle events, and
+reserved webhooks) and the self-management MCP all drive the same
+`startAgentTurn` core as a human message does, so anything a person can start in
+a chat, an automation can start too.
 
 - `packages/server` — Fastify + WebSocket backend; wraps the FleetManager + a
   Project layer (`ProjectStore`). Serves the built SPA in production.
