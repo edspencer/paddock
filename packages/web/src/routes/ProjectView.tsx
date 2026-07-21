@@ -19,6 +19,8 @@ import { SettingsPane } from "../components/SettingsPane";
 import { TriggersPane } from "../components/TriggersPane";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ForkChatModal } from "../components/ForkChatModal";
+import { PaneResizer, usePaneWidth } from "../components/PaneResizer";
+import { CHATLIST_PANE } from "../lib/paneWidth";
 import {
   ArchiveIcon,
   StarIcon,
@@ -205,6 +207,8 @@ export function ProjectView() {
   // Whether the collapsible "Archived" section is expanded (#95). Collapsed by
   // default; auto-expands (once per session) when the open chat is archived.
   const [archivedOpen, setArchivedOpen] = useState(false);
+  // Desktop-only draggable width for the chat-list pane (#374), persisted per-browser.
+  const chatList = usePaneWidth(CHATLIST_PANE);
   const autoExpandedFor = useRef<string | null>(null);
 
   // The active chat session is the URL's sessionId (null = a fresh "new chat").
@@ -960,10 +964,21 @@ export function ProjectView() {
         )}
         {/* Session list — static column on lg+, off-canvas drawer on mobile. */}
         <div
-          className={`fixed inset-y-0 left-0 z-30 flex w-64 max-w-[80%] shrink-0 flex-col border-r border-paddock-200 bg-canvas shadow-2xl transition-transform duration-200 ease-out dark:border-paddock-800 dark:bg-paddock-900 lg:static lg:z-auto lg:max-w-none lg:translate-x-0 lg:bg-white/40 lg:shadow-none dark:lg:bg-paddock-900/20 ${
+          style={chatList.style}
+          className={`fixed inset-y-0 left-0 z-30 flex w-64 max-w-[80%] shrink-0 flex-col border-r border-paddock-200 bg-canvas shadow-2xl transition-transform duration-200 ease-out dark:border-paddock-800 dark:bg-paddock-900 lg:relative lg:z-auto lg:max-w-none lg:translate-x-0 lg:bg-white/40 lg:shadow-none dark:lg:bg-paddock-900/20 ${
             sessionsOpen ? "translate-x-0" : "-translate-x-full"
           }`}
         >
+          {chatList.isDesktop && (
+            <PaneResizer
+              spec={chatList.spec}
+              width={chatList.width}
+              onPreview={chatList.preview}
+              onCommit={chatList.commit}
+              onReset={chatList.reset}
+              label="Resize chat list"
+            />
+          )}
           <div className="flex items-center gap-2 p-3">
             <div className="relative min-w-0 flex-1">
               <SearchIcon
