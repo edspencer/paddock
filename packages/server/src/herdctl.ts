@@ -218,6 +218,71 @@ export function visibleProjectAgentNames(project: Project): string[] {
 export const BROWSER_MCP_TOOL = "mcp__playwright__*";
 
 /**
+ * The keeper's default `denied_tools` — a **best-effort, defence-in-depth**
+ * denylist, NOT a sandbox. Real isolation (per-agent filesystem confinement)
+ * is tracked in #7; these string patterns are trivially bypassable (a relative
+ * path, a `$VAR`, a `find -delete`) and are here only to make the obvious
+ * catastrophic footguns require deliberate rephrasing.
+ *
+ * Claude Code Bash patterns are prefix-with-`*` matches: `Bash(foo *)` denies
+ * any command starting with `foo `, and `Bash(foo)` denies EXACTLY `foo`.
+ *
+ * History (#179): this list used to carry `Bash(rm -rf /*)`, intended as "don't
+ * wipe root". But `/*` is a trailing wildcard, so it actually denied
+ * `rm -rf /<ANYTHING>` — i.e. every absolute-path delete, including the keeper
+ * cleaning up its OWN scratch/clone dirs (`rm -rf /tmp/foo`,
+ * `rm -rf /var/lib/.../clones/x`). That was both over-broad (blocked legitimate
+ * work, wasted turns, confusing "denied" cards) and false security (the agent
+ * just switched to a relative `rm -rf clones/x` and it went through).
+ *
+ * The honest replacement targets genuinely-catastrophic *bare* roots:
+ * - `rm -rf /` and `rm -rf / *` (root, incl. `--no-preserve-root` variants),
+ * - `rm -rf ~` / `rm -rf $HOME` (home, exact — a trailing wildcard would block
+ *   `rm -rf ~/.cache/foo`, which is legitimate),
+ * - bare top-level system dirs matched EXACTLY (`Bash(rm -rf /etc)`, …) so that
+ *   real subpath deletes under them (notably `/var/lib/paddock/...` and
+ *   `/tmp/...`) are NOT denied.
+ *
+ * Note the deliberate gaps: a literal `rm -rf /*` glob command and
+ * `rm -rf /usr/local/...` are NOT caught, because the only pattern that would
+ * catch them (`Bash(rm -rf /*)`, `Bash(rm -rf /usr*)`) also re-blocks the
+ * legitimate absolute-path deletes we exist to allow. Narrow-and-honest beats
+ * broad-and-leaky; the sandbox (#7) is the real fix.
+ */
+export const KEEPER_DENIED_TOOLS: readonly string[] = [
+  // Privilege / permission footguns (unchanged from the original list).
+  "Bash(sudo *)",
+  "Bash(chmod 777 *)",
+  // Root wipes: exact `rm -rf /`, plus `rm -rf / <args>` (the trailing space
+  // means this does NOT match `rm -rf /tmp...`, only `rm -rf / --no-preserve-root`
+  // and friends).
+  "Bash(rm -rf /)",
+  "Bash(rm -rf / *)",
+  // Home-directory wipes (exact — no trailing wildcard, see doc-comment).
+  "Bash(rm -rf ~)",
+  "Bash(rm -rf ~/)",
+  "Bash(rm -rf $HOME)",
+  "Bash(rm -rf $HOME/)",
+  // Bare top-level system directories, matched EXACTLY so legitimate subpath
+  // deletes (e.g. `/var/lib/paddock/...`, `/tmp/...`) still pass.
+  "Bash(rm -rf /bin)",
+  "Bash(rm -rf /boot)",
+  "Bash(rm -rf /dev)",
+  "Bash(rm -rf /etc)",
+  "Bash(rm -rf /home)",
+  "Bash(rm -rf /lib)",
+  "Bash(rm -rf /lib64)",
+  "Bash(rm -rf /opt)",
+  "Bash(rm -rf /proc)",
+  "Bash(rm -rf /root)",
+  "Bash(rm -rf /sbin)",
+  "Bash(rm -rf /srv)",
+  "Bash(rm -rf /sys)",
+  "Bash(rm -rf /usr)",
+  "Bash(rm -rf /var)",
+];
+
+/**
  * The Playwright browser MCP server given to the keeper + scratch agents so
  * Claude Code can drive a headless Chromium (navigate / click / fill / snapshot
  * / screenshot). Returns `undefined` when `enabled` is false (sourced from
@@ -1565,7 +1630,9 @@ export class HerdctlService {
         // only actually DO anything in session drive-mode (the reaper re-fires
         // them); in batch mode they're inert (documented in the box CLAUDE.md).
         allowed_tools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "WebFetch", "WebSearch", "Task", "TodoWrite", "Skill", "NotebookEdit", "ToolSearch", "ScheduleWakeup", "Monitor", "CronCreate", "CronList", "CronDelete", BROWSER_MCP_TOOL],
-        denied_tools: ["Bash(sudo *)", "Bash(rm -rf /)", "Bash(rm -rf /*)", "Bash(chmod 777 *)"],
+        // Best-effort denylist (#179): narrow, honest catastrophic-wipe patterns
+        // that do NOT block legitimate absolute-path cleanup. See KEEPER_DENIED_TOOLS.
+        denied_tools: [...KEEPER_DENIED_TOOLS],
       },
     };
 
