@@ -1,5 +1,41 @@
 # @paddock/web
 
+## 0.39.0
+
+### Minor Changes
+
+- [#357](https://github.com/edspencer/paddock/pull/357) [`9ce95af`](https://github.com/edspencer/paddock/commit/9ce95af7a0a0e2174a85ceb41732facd27bcd7f6) Thanks [@edspencer](https://github.com/edspencer)! - Restore "Run now" + live run-status to the Triggers tab (#327). When Epic T folded the Settings→Schedules section into the unified Triggers tab, two capabilities were lost because `TriggerDto` carries trigger config only, not herdctl runtime state.
+
+  - **Run now** — `POST /api/projects/:slug/triggers/:name/run` fires any trigger on demand through the existing `fireTrigger` hub path (a first-class, badged run, regardless of the `enabled` flag), surfaced as a per-row action in the Triggers tab and as a `run_trigger` self-MCP verb.
+  - **Live status columns** — `GET /api/projects/:slug/triggers/runtime` joins herdctl job records (last-run, per the #268 run-history pattern) with the cron scheduler's `ScheduleInfo` (next-fire + status) into a per-trigger runtime DTO. The tab polls it to show each trigger's last-run / next-run / running-state.
+
+### Patch Changes
+
+- [#358](https://github.com/edspencer/paddock/pull/358) [`7eef0ed`](https://github.com/edspencer/paddock/commit/7eef0eda4a275fc835ed5b7d1173560dbda4bb08) Thanks [@edspencer](https://github.com/edspencer)! - Render client-local slash commands (`/context`, `/usage`, …) correctly (#158). These commands render their output to a `type:"system"` / `local_command` transcript entry (live: a `model:"<synthetic>"` assistant placeholder) that @herdctl/core's parser and @herdctl/chat's translator both drop — so the command turn used to show nothing useful, leaving only the raw `<command-name>` / `<local-command-*>` scaffolding as empty/user bubbles. Paddock now surfaces the recovered output as a clean, labeled "command output" block in BOTH the live path (ws.ts, mirroring the existing `compact_boundary` note) and on history reload (a new `localcommand.ts` recovery pass re-injects the dropped `<local-command-stdout>`), and the web drops the `<local-command-caveat>` framing note instead of rendering it. `/context` renders its full usage table; `/usage` shows session cost (its plan/rate-limit portion needs an OAuth token with `user:profile` scope, which the keeper token lacks). Paddock's own context ring + cost meter remain the primary usage view.
+
+- [#360](https://github.com/edspencer/paddock/pull/360) [`865f3be`](https://github.com/edspencer/paddock/commit/865f3be55a61f07f2e179b2678d07722289c9fc5) Thanks [@edspencer](https://github.com/edspencer)! - Retire the legacy hook/schedule REST + web-client dead code left behind additively
+  during the Epic T triggers migration. The Triggers tab, `/api/projects/:slug/triggers`
+  REST, and the `set/list/remove_trigger` MCP tools are now the only surfaces for standing
+  agent rules.
+
+  Removed: the pre-T3 `/hooks` and `/schedules` REST routes, `HookService`, the legacy
+  hook/schedule runtime dispatch + arming paths, the unused web api-client methods
+  (`listHooks`/`putHook`/`listSchedules`/…) and their DTO types, and the
+  `HookCapabilityBanner` (superseded by `TriggerCapabilityBanner`). The `project.yaml`
+  `hooks:`/`schedules:` block parser is kept for back-compat, alongside the shared
+  foundation the trigger system reuses (the reused hooks-MCP gate, the `hook` chat origin,
+  and the `.paddock/hooks/sweep.md` sweeper extension).
+
+- [#361](https://github.com/edspencer/paddock/pull/361) [`9a471c7`](https://github.com/edspencer/paddock/commit/9a471c7bf7999e4b50566462a4860153c1b8dde0) Thanks [@edspencer](https://github.com/edspencer)! - Surface turn errors & subscription/usage-limit hits in the UI (#329). When a
+  keeper turn was short-circuited by a synthetic runtime message (most commonly
+  the shared Claude Max-plan session/usage limit) or failed (network, API
+  5xx/overload, auth, crash, or hitting the max-turns cap), the chat used to just
+  stop with nothing shown. The turn now classifies these dead-ends and renders a
+  distinct inline notice — the reset time for a usage limit, and a Retry/Continue
+  affordance where it's safe to re-drive. Both the live streaming path and the
+  history-hydration path surface them (the usage-limit case is recovered from the
+  raw transcript on reload, since the parser otherwise drops synthetic messages).
+
 ## 0.38.3
 
 ## 0.38.2
