@@ -2286,6 +2286,17 @@ export function makeChatHandler(deps: {
         jobId,
       });
 
+      // #329: surface a turn dead-end (usage limit / max-turns / error) inline, at
+      // most once per turn — a synthetic session-limit reply repeats several times,
+      // and a failed turn can carry both an error `result` and a `success:false`
+      // completion. Emit the first, suppress the rest.
+      let noticeEmitted = false;
+      const emitNotice = (notice: TurnNotice): void => {
+        if (noticeEmitted) return;
+        noticeEmitted = true;
+        turn.emit({ type: "chat:notice", payload: { ...routing(), notice } });
+      };
+
       // @herdctl/chat's shared translator turns the SDKMessage stream into the
       // three UI events we forward over the socket. Created fresh per turn (it
       // holds per-turn tool-pairing state).
@@ -2490,6 +2501,13 @@ export function makeChatHandler(deps: {
             const ex = extractUsage(m);
             if (ex.usage) seen.usage = pickTurnUsage(seen.usage, ex.usage);
             if (ex.model) seen.model = ex.model;
+            // #329: surface a dead-end BEFORE translating — a synthetic usage-limit
+            // message or a terminal error/`error_max_turns` result. The translator
+            // silently drops every synthetic message (which is exactly why these
+            // turns look dead); `noticeFromMessage` returns null for ordinary output
+            // and for suppressed "No response requested." placeholders.
+            const notice = noticeFromMessage(m as Parameters<typeof noticeFromMessage>[0]);
+            if (notice) emitNotice(notice);
             // @herdctl/core's SDKMessage types `message` as `unknown` (wider);
             // @herdctl/chat's translator declares a structurally narrower
             // SDKMessage. Same runtime object — cast across the package boundary.
@@ -2536,6 +2554,11 @@ export function makeChatHandler(deps: {
         // frame, so a client re-attaching right at the end gets the completion.
         const finalSession = result.success ? (result.sessionId ?? resolvedSession) : resolvedSession;
         if (finalSession) turn.setSession(finalSession);
+        // #329: a turn that failed WITHOUT a terminal error `result` reaching the
+        // stream (a thrown/rejected drive: network reset, process crash) never hit
+        // noticeFromMessage. Surface it inline so the failure is visible — before
+        // chat:complete flips streaming off (deduped against any notice already sent).
+        if (!result.success) emitNotice(errorNotice(result.error?.message));
         turn.emit({
           type: "chat:complete",
           payload: {
@@ -2573,6 +2596,10 @@ export function makeChatHandler(deps: {
         // "streaming" instead of hanging with no terminal frame.
         send({ type: "chat:error", payload: { projectSlug: slug, target: slug, error } });
         if (resolvedSession) {
+          // #329: also surface the failure as an inline notice on the hub so a
+          // re-attached client renders WHY the turn died (not just the origin
+          // socket's chat:error toast).
+          emitNotice(errorNotice(error));
           turn.emit({
             type: "chat:complete",
             payload: { ...routing(), success: false, error },
