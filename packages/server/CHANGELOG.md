@@ -1,5 +1,7 @@
 # @paddock/server
 
+## 0.38.2
+
 ## 0.38.1
 
 ### Patch Changes
