@@ -54,3 +54,29 @@ test("a turn error surfaces 'The turn failed' with a Retry affordance", async ({
   });
   await expect(page.getByRole("button", { name: /^retry$/i })).toBeVisible();
 });
+
+test("a plain successful turn shows NO turn-failed banner (#329 invariant)", async ({ page }) => {
+  await createProjectViaUI(page, { name: uniq("TN OK") });
+
+  // A perfectly ordinary turn — no directive. The reply renders; nothing else.
+  await sendChatTurn(page, "hello there", { expectReply: /Acknowledged:/i });
+
+  // No notice banner of ANY kind (usage_limit / max_turns / error) is present.
+  await expect(page.locator("[data-notice]")).toHaveCount(0);
+  await expect(page.getByText(/The turn failed/i)).toHaveCount(0);
+});
+
+test("a turn that RECOVERED from a mid-turn API error shows NO banner (#329 regression)", async ({
+  page,
+}) => {
+  await createProjectViaUI(page, { name: uniq("TN Recover") });
+
+  // [[APIRECOVER]]: a normal reply followed by a SUCCESS result stamped
+  // `is_error:true` — the exact shape a session-mode turn emits after recovering
+  // from a transient "Connection closed mid-response". The reply must render with
+  // NO false "turn failed" banner beneath it (the v0.39.0 regression).
+  await sendChatTurn(page, "keep going [[APIRECOVER]]", { expectReply: /Acknowledged:/i });
+
+  await expect(page.locator("[data-notice]")).toHaveCount(0);
+  await expect(page.getByText(/The turn failed/i)).toHaveCount(0);
+});

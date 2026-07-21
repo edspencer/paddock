@@ -74,6 +74,10 @@
  *                     #329 "reached turn limit" notice.
  *   • [[APIERROR]]  → write an `error_during_execution` result — the #329 generic
  *                     error notice + Retry affordance.
+ *   • [[APIRECOVER]]→ stream a NORMAL reply, then a SUCCESS result stamped
+ *                     `is_error:true` (a turn that recovered from a transient
+ *                     mid-turn API error). Must NOT surface a banner (#329
+ *                     regression: is_error on a success result is not a failure).
  * Sweeper coverage: when the prompt looks like the paddock sweeper's curation
  * prompt (contains the literal "<<<OVERVIEW>>>" marker request), the fake emits a
  * marker-shaped reply (<<<OVERVIEW>>> … <<<CHANGELOG>>> … <<<END>>>) so
@@ -541,11 +545,18 @@ function main() {
 
   sleep(40);
 
+  // [[APIRECOVER]] (test-only, #329 regression): the turn produced a normal reply
+  // (streamed above) but RECOVERED from a transient mid-turn API error, so the
+  // runtime stamps the terminal SUCCESS result `is_error:true` (SDKResultSuccess
+  // is typed `is_error: boolean`). This must NOT surface a "turn failed" banner —
+  // the subtype is the authoritative signal, and it says success.
+  const recoveredApiError = (prompt || "").includes("[[APIRECOVER]]");
+
   // 3) result line — ends the watcher loop and marks the turn successful.
   append({
     type: "result",
     subtype: "success",
-    is_error: false,
+    is_error: recoveredApiError,
     session_id: sessionId,
     result: reply,
     usage: {

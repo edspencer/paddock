@@ -78,19 +78,30 @@ describe("classifyResult (#329)", () => {
     });
   });
 
-  it("classifies is_error as a retryable error notice", () => {
-    expect(classifyResult({ subtype: "success", is_error: true })).toMatchObject({
-      kind: "error",
-      retryable: true,
-    });
+  // #329 REGRESSION: a `subtype:"success"` result with `is_error:true` is a
+  // turn that RECOVERED from a transient mid-turn API error and still produced a
+  // normal reply — NOT a failure. (`SDKResultSuccess` is typed `is_error: boolean`
+  // and the runtime stamps it true on a recovered success; herdctl's own success
+  // computation keys off the subtype, so ours must too.) It must NOT flag, or a
+  // false "turn failed" banner renders beneath a perfectly good reply.
+  it("returns null for a success result flagged is_error:true (recovered mid-turn API error, #329 regression)", () => {
+    expect(classifyResult({ subtype: "success", is_error: true })).toBeNull();
   });
 
   it("classifies any error_* subtype as a generic error notice", () => {
     expect(classifyResult({ subtype: "error_during_execution" })).toMatchObject({ kind: "error" });
+    // A real error result always ALSO carries is_error:true — still classified.
+    expect(classifyResult({ subtype: "error_during_execution", is_error: true })).toMatchObject({
+      kind: "error",
+    });
   });
 
   it("classifies success === false as an error notice", () => {
     expect(classifyResult({ success: false })).toMatchObject({ kind: "error" });
+  });
+
+  it("treats a bare is_error:true (no subtype) as an error — defensive fallback", () => {
+    expect(classifyResult({ is_error: true })).toMatchObject({ kind: "error" });
   });
 
   it("returns null for a successful result", () => {
@@ -119,6 +130,14 @@ describe("noticeFromMessage (#329)", () => {
       kind: "max_turns",
     });
     expect(noticeFromMessage({ type: "result", subtype: "success" })).toBeNull();
+  });
+
+  it("returns null for a recovered-success result (subtype success + is_error:true, #329 regression)", () => {
+    // The exact terminal shape a session-mode turn emits after recovering from a
+    // mid-turn "Connection closed mid-response" API hiccup and finishing normally.
+    expect(
+      noticeFromMessage({ type: "result", subtype: "success", is_error: true } as never),
+    ).toBeNull();
   });
 
   it("ignores unrelated message types", () => {
