@@ -75,8 +75,6 @@ import {
   KEEPER_DEFAULT_MAX_TURNS,
 } from "./models.js";
 import { ensureProjectChats, projectChatsDir } from "./transcripts.js";
-import { schedulesToHerdctl } from "./schedule-config.js";
-import { hookToAgentToolConfig, type PaddockHook } from "./hook-config.js";
 import {
   triggerToAgentToolConfig,
   triggersToHerdctlSchedules,
@@ -323,7 +321,7 @@ export class HerdctlService {
       stateDir: this.cfg.stateDir,
       // Per-deployment gate for programmatic schedule mutation (issue #265 / DD-7,
       // herdctl#376). OFF by default: an instance opts in (PADDOCK_SCHEDULE_MUTATION)
-      // before the D4 UI / setAgentSchedule/removeAgentSchedule can add or remove a
+      // before herdctl's runtime schedule-mutation APIs can add or remove a
       // schedule at runtime. Declaring schedules in project.yaml is unaffected.
       allowScheduleMutation: this.cfg.scheduleMutationEnabled,
     });
@@ -347,13 +345,9 @@ export class HerdctlService {
       await ensureProjectChats(project.workingDir, project.dir);
       await this.fleet.addAgent(this.keeperAgentConfig(project), { replace: true });
       await this.fleet.addAgent(this.sweeperAgentConfig(project), { replace: true });
-      // Register each event hook as its own agent `hook-<slug>-<name>` (Epic G / G1)
-      // so it's fireable the moment an event matches — armed at boot alongside the
-      // keeper/sweeper. Hook-less projects register zero extra agents (no-op).
-      await this.registerHookAgents(project);
       // Register each EVENT trigger as its own agent `trigger-<slug>-<name>` (Epic T /
-      // T1) — the unified successor to hook agents. Schedule triggers ride the keeper's
-      // forwarded `schedules` block (above); webhook triggers are reserved.
+      // T1). Schedule triggers ride the keeper's forwarded `schedules` block (above);
+      // webhook triggers are reserved.
       await this.registerTriggerAgents(project);
       this.agentModels.set(keeperAgentName(project.slug), project.model ?? KEEPER_DEFAULT_MODEL);
     }
@@ -400,14 +394,9 @@ export class HerdctlService {
     await ensureProjectChats(project.workingDir, project.dir);
     await this.fleet.addAgent(this.keeperAgentConfig(project), { replace: true });
     await this.fleet.addAgent(this.sweeperAgentConfig(project), { replace: true });
-    // Re-register the project's event-hook agents (Epic G / G1) from the live record,
-    // so a hook added/edited in project.yaml is armed after this call. Note this only
-    // ADDS/replaces the declared hooks — a hook REMOVED from the record is torn down
-    // via {@link removeHookAgent} (ensureProjectAgent never removes a stale agent).
-    await this.registerHookAgents(project);
     // Re-register the project's EVENT-trigger agents (Epic T / T1) from the live
-    // record — the unified successor to hook agents (schedule triggers ride the
-    // keeper's forwarded `schedules` block above; webhook triggers are reserved).
+    // record (schedule triggers ride the keeper's forwarded `schedules` block above;
+    // webhook triggers are reserved).
     await this.registerTriggerAgents(project);
     // Record the keeper's resolved model so per-chat overrides can detect a
     // no-op. ensureProjectAgent re-registers at project.model (the persisted
@@ -416,44 +405,8 @@ export class HerdctlService {
   }
 
   /**
-   * Register (or replace) every event hook a project declares as its own agent
-   * `hook-<slug>-<name>` (Epic G / G1). Idempotent (`addAgent` replace:true). A
-   * hook-less project is a no-op. Called at boot ({@link init}) and on every
-   * {@link ensureProjectAgent}; a single-hook mutation uses {@link ensureHookAgent}.
-   */
-  async registerHookAgents(project: Project): Promise<void> {
-    if (!this.fleet) return;
-    for (const [name, hook] of Object.entries(project.hooks ?? {})) {
-      await this.fleet.addAgent(this.hookAgentConfig(project, name, hook), { replace: true });
-    }
-  }
-
-  /**
-   * Register (or replace) ONE event hook's agent at runtime (Epic G / G1) — the
-   * herdctl half of a hook mutation (the Paddock half persists it to project.yaml via
-   * `ProjectStore.setHook`). Idempotent; immediately fireable. Consumed by the hook
-   * CRUD service so a newly-created/edited hook is armed without a full project
-   * re-register.
-   */
-  async ensureHookAgent(project: Project, name: string, hook: PaddockHook): Promise<void> {
-    if (!this.fleet) return;
-    await this.fleet.addAgent(this.hookAgentConfig(project, name, hook), { replace: true });
-  }
-
-  /**
-   * Unregister one event hook's agent at runtime (Epic G / G1) — the inverse of
-   * {@link ensureHookAgent}, used when a hook is removed. Never throws if the agent is
-   * already gone.
-   */
-  async removeHookAgent(slug: string, name: string): Promise<void> {
-    if (!this.fleet) return;
-    await this.fleet.removeAgent(hookAgentName(slug, name)).catch(() => undefined);
-  }
-
-  /**
    * Register (or replace) every trigger a project declares that runs on its OWN scoped
-   * agent `trigger-<slug>-<name>` (Epic T) — the unified successor to
-   * {@link registerHookAgents}. Idempotent (`addAgent` replace:true). Which triggers
+   * agent `trigger-<slug>-<name>` (Epic T). Idempotent (`addAgent` replace:true). Which triggers
    * get a scoped agent is decided by {@link triggerRunsOnOwnAgent}: EVENT triggers
    * always; SCHEDULE triggers only when they declare a non-empty `run.tools` allow-list
    * (T2 — an unscoped schedule still rides the keeper's forwarded `schedules` block and
@@ -726,32 +679,6 @@ export class HerdctlService {
   }
 
   /**
-   * Add or replace a single schedule on a project's keeper agent at runtime
-   * (issue #265 / DD-7, herdctl#376) — the herdctl half of a schedule mutation
-   * (the Paddock half persists it to project.yaml via
-   * `ProjectStore.setSchedule`). Validated against herdctl's `ScheduleSchema` and
-   * armed immediately (no stale-state-leaving `addAgent(replace)`). Gated behind
-   * the `allowScheduleMutation` deployment option (throws otherwise).
-   */
-  async setAgentSchedule(
-    project: Project,
-    name: string,
-    schedule: Record<string, unknown>,
-  ): Promise<ScheduleInfo> {
-    return this.manager.setAgentSchedule(keeperAgentName(project.slug), name, schedule);
-  }
-
-  /**
-   * Remove a single schedule from a project's keeper agent at runtime (issue #265
-   * / DD-7). Prunes herdctl's armed copy AND its persisted state (so a re-added
-   * name doesn't inherit stale `last_run_at` / `disabled`). Returns `true` if one
-   * was removed. Gated behind `allowScheduleMutation`.
-   */
-  async removeAgentSchedule(project: Project, name: string): Promise<boolean> {
-    return this.manager.removeAgentSchedule(keeperAgentName(project.slug), name);
-  }
-
-  /**
    * The runtime state of a project keeper's schedules (issue #266 / D4) — the
    * live `ScheduleInfo` herdctl tracks (status, `lastRunAt`/`nextRunAt`,
    * `lastError`) for the schedules Paddock forwarded into the keeper agent. The
@@ -765,27 +692,6 @@ export class HerdctlService {
     const agent = keeperAgentName(project.slug);
     const all = await this.manager.getSchedules().catch(() => [] as ScheduleInfo[]);
     return all.filter((s) => s.agentName === agent);
-  }
-
-  /**
-   * Enable a previously-disabled schedule at runtime (issue #266 / D4). Flips
-   * herdctl's persisted enable/disable state — which is read, not config, so it
-   * wins over the armed copy — so the schedule fires again immediately and the
-   * change survives a restart. The Paddock half persists `enabled: true` back to
-   * project.yaml (via `ProjectStore.setSchedule`) for round-trip parity. Gated
-   * behind `allowScheduleMutation`.
-   */
-  async enableSchedule(project: Project, name: string): Promise<ScheduleInfo> {
-    return this.manager.enableSchedule(keeperAgentName(project.slug), name);
-  }
-
-  /**
-   * Disable a schedule at runtime (issue #266 / D4) — the inverse of
-   * {@link enableSchedule}. Persisted, so it survives a restart and wins over the
-   * armed config. Gated behind `allowScheduleMutation`.
-   */
-  async disableSchedule(project: Project, name: string): Promise<ScheduleInfo> {
-    return this.manager.disableSchedule(keeperAgentName(project.slug), name);
   }
 
   /**
@@ -1481,26 +1387,14 @@ export class HerdctlService {
         "Honor any CLAUDE.md present. Keep CHANGELOG.md current. " +
         "Create branches for significant changes; never force-push.";
     }
-    // Scheduled chats (issue #265 / DD-2): forward the project's schedules into
-    // the keeper agent's `schedules` block in herdctl's OWN `ScheduleSchema` shape,
-    // UNMOLESTED — herdctl's cron engine reads `agent.schedules` live every tick,
-    // so declaring them here arms them with no translation. The Paddock-only
-    // `promptFile` is stripped (the schedule-trigger handler resolves it at fire
-    // time), keeping the forwarded config pure. Only set the key when non-empty so
-    // schedule-less projects are byte-identical to before.
-    const legacySchedules = schedulesToHerdctl(project.schedules);
     // Unified triggers (Epic T / T1): SCHEDULE-type triggers are forwarded into the
-    // SAME keeper `schedules` block, in herdctl's `ScheduleSchema` shape, so the cron
-    // engine arms them identically. Merged with the legacy `schedules` block (which
-    // T3/T5 will eventually retire); on a name collision the trigger wins (the unified
-    // model is authoritative). Event/webhook triggers are excluded by
-    // triggersToHerdctlSchedules. Only set the key when non-empty so a trigger-less
-    // and schedule-less project stays byte-identical to before.
-    const triggerSchedules = triggersToHerdctlSchedules(project.triggers);
-    const schedules =
-      legacySchedules || triggerSchedules
-        ? { ...(legacySchedules ?? {}), ...(triggerSchedules ?? {}) }
-        : undefined;
+    // keeper agent's `schedules` block, in herdctl's OWN `ScheduleSchema` shape,
+    // UNMOLESTED — herdctl's cron engine reads `agent.schedules` live every tick, so
+    // declaring them here arms them with no translation. The Paddock-only `promptFile`
+    // is stripped (the schedule-trigger handler resolves it at fire time). Event/webhook
+    // triggers are excluded by triggersToHerdctlSchedules. Only set the key when
+    // non-empty so a trigger-less project stays byte-identical to before.
+    const schedules = triggersToHerdctlSchedules(project.triggers);
     if (schedules) config.schedules = schedules;
     // Browser MCP (headless Chromium) when enabled for this box; `mcp__playwright__*`
     // is already on the inherited defaults.allowed_tools.
@@ -1573,49 +1467,6 @@ export class HerdctlService {
         "no explanation, no tool use.",
       default_prompt: "Curate OVERVIEW.md and CHANGELOG.md from recent activity.",
     };
-  }
-
-  /**
-   * A hook's herdctl agent config (Epic G / G1). Each hook is registered as its OWN
-   * agent `hook-<slug>-<name>` — exactly like the keeper/sweeper — whose tool config
-   * (`allowed_tools`/`denied_tools`/`permission_mode`/`model`/`max_turns`, projected
-   * by {@link hookToAgentToolConfig}) IS the hook's capability set (GG-1). So the
-   * capability the UI picked is enforced by the runtime, and the G6 banner reading it
-   * back is truthful by construction.
-   *
-   * Runs in the project's WORKING dir (the repo checkout for a repo-backed project),
-   * so the hook's Bash/Write act on the same tree the keeper does — the onArchive
-   * cleanup example (spin down servers, delete clones) needs exactly that. A
-   * tool-less hook gets `allowed_tools: []` and can only return text.
-   */
-  private hookAgentConfig(
-    project: Project,
-    hookName: string,
-    hook: PaddockHook,
-  ): Record<string, unknown> & { name: string } {
-    const config: Record<string, unknown> & { name: string } = {
-      name: hookAgentName(project.slug, hookName),
-      description: `Event hook "${hookName}" (${hook.event}) for project ${project.name}.`,
-      working_directory: project.workingDir,
-      // Explicit CLI runtime (Max plan) — see the keeper/scratch note: the fleet
-      // `defaults.runtime` is dropped by the core config loader, so set it here.
-      runtime: "cli",
-      // The hook's model defaults to the keeper default unless its capabilities pin
-      // one; hookToAgentToolConfig sets `model` only when the capability specifies it,
-      // so provide the fallback here so a hook never boots without a concrete model.
-      model: hook.capabilities?.model ?? project.model ?? KEEPER_DEFAULT_MODEL,
-      // Capability set → tool config (allowed/denied tools, permission mode, model,
-      // max_turns). This is the whole capability model — no profile/kind.
-      ...hookToAgentToolConfig(hook.capabilities),
-    };
-    // Docker isolation follows the project's opt-in, like the keeper, so a hook that
-    // runs Bash is contained the same way the project's own turns are.
-    if (project.docker) config.docker = { enabled: true };
-    // Browser MCP (headless Chromium) when enabled for this box; `mcp__playwright__*`
-    // is only auto-allowed for a hook that lists it in its capabilities anyway.
-    const browser = browserMcpServers(this.cfg.browserMcp);
-    if (browser) config.mcp_servers = browser;
-    return config;
   }
 
   /**

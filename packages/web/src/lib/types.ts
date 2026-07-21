@@ -311,59 +311,26 @@ export interface Chat {
    */
   provenance?: ChatProvenance;
   /**
-   * For a HOOK chat (Epic G / G3, GG-6): the truthful-from-config capability
-   * descriptor of the event hook that owns it — its trigger event + granted tools,
-   * read from the same hook agent config herdctl enforces. Drives the floating
-   * capability banner atop the chat (see {@link ChatHookInfo}). Absent for every
-   * non-hook chat, so only hook chats carry a banner.
-   */
-  hook?: ChatHookInfo;
-  /**
    * For a TRIGGER chat (Epic T / T4): the truthful-from-config capability descriptor
    * of the trigger that owns it — its type (schedule/event/webhook), WHEN it fires,
    * and granted tools, read from the same `trigger-<slug>-<name>` agent config
    * herdctl enforces. Drives the floating capability banner atop the chat (see
-   * {@link ChatTriggerInfo}). The unified successor to {@link Chat.hook}; absent for
-   * every non-trigger chat.
+   * {@link ChatTriggerInfo}). Absent for every non-trigger chat.
    */
   trigger?: ChatTriggerInfo;
 }
 
-/** How a chat came to exist (issue #261) — the dimension the list badges (#267). */
-export type ChatOrigin = "human" | "scheduled" | "spawned" | "hook";
-
 /**
- * The capability descriptor of the event hook that owns a hook chat (Epic G / G3,
- * GG-6) — mirrors the server's `ChatHookInfo` (packages/server/src/hook-config.ts).
- * Everything here is read from the registered `hook-<slug>-<name>` agent config, so
- * the banner it drives is truthful by construction: it states exactly the tools the
- * hook's turns are allowed to use.
+ * How a chat came to exist (issue #261) — the dimension the list badges (#267). The
+ * `hook` origin is reused by event/webhook triggers (Epic T), which share the same
+ * badge surface.
  */
-export interface ChatHookInfo {
-  /** The hook's name (`project.yaml` map key + the `<name>` in its agent name). */
-  name: string;
-  /** The lifecycle event that fires this hook (v1: `onArchive`). */
-  event: string;
-  /** The herdctl agent enforcing the capability (`hook-<slug>-<name>`). */
-  agentName: string;
-  /** Whether the hook is currently armed (a disabled hook's past chats still show). */
-  enabled: boolean;
-  /** The exact tool grant (herdctl `allowed_tools`); `[]` = a tool-less hook. */
-  allowedTools: string[];
-  /** Tools explicitly denied even if otherwise allowed, when the hook sets any. */
-  deniedTools?: string[];
-  /** The permission mode the hook's turns run under, when the hook sets one. */
-  permissionMode?: string;
-  /** The hook agent's model override, when set (else the keeper default applies). */
-  model?: string;
-  /** The hook's max agent turns (its runaway bound). */
-  maxTurns: number;
-}
+export type ChatOrigin = "human" | "scheduled" | "spawned" | "hook";
 
 /**
  * The capability descriptor of the TRIGGER that owns a trigger chat (Epic T / T4) —
  * mirrors the server's `ChatTriggerInfo` (packages/server/src/trigger-config.ts). The
- * unified successor to {@link ChatHookInfo}: it also carries the trigger `type` and
+ * successor to the retired Epic G hook banner: it also carries the trigger `type` and
  * WHEN it fires (an event `on`, a `cron`/`interval`, or a webhook `path`). Everything
  * here is read from the registered `trigger-<slug>-<name>` agent config, so the banner
  * it drives is truthful by construction.
@@ -422,126 +389,11 @@ export type MessageSender =
   | { kind: "recovery" }
   | { kind: "agent" };
 
-/** A scheduled chat's timer kind (issue #266 / D4). */
-export type ScheduleType = "cron" | "interval";
-
-/**
- * A project's scheduled chat (issue #266 / D4) — the project.yaml declaration
- * (herdctl's `ScheduleSchema` shape + Paddock's `promptFile`) MERGED with
- * herdctl's live runtime state. Drives the Schedules section of the Settings
- * pane. `status` / `lastRunAt` / `nextRunAt` / `lastError` reflect the running
- * keeper (a just-declared schedule not yet armed reports `idle`/nulls).
- */
-export interface Schedule {
-  name: string;
-  type: ScheduleType;
-  /** Cron expression (5-field / `@daily`) — present for `type: "cron"`. */
-  cron: string | null;
-  /** Interval string (e.g. `"30m"`, `"1h"`) — present for `type: "interval"`. */
-  interval: string | null;
-  /** The inline prompt the fire runs (null when a `promptFile` supplies it). */
-  prompt: string | null;
-  /** A `.paddock/schedules/*.md` prompt file, read fresh at fire time (Paddock sugar). */
-  promptFile: string | null;
-  /** `true` → one accreting owned session; `false` → a fresh chat each fire (DD-2). */
-  resumeSession: boolean;
-  /** Whether the schedule is armed. */
-  enabled: boolean;
-  /** Live runtime status from herdctl (or derived from `enabled` when unarmed). */
-  status: "idle" | "running" | "disabled";
-  /** ISO timestamp of the last fire, or null if it hasn't run. */
-  lastRunAt: string | null;
-  /** ISO timestamp of the next scheduled fire, or null (e.g. disabled). */
-  nextRunAt: string | null;
-  /** Last error message from a fire, if any. */
-  lastError: string | null;
-}
-
-/**
- * The write shape for creating/replacing a schedule (issue #266 / D4). Mirrors
- * herdctl's `ScheduleSchema` field names (`resume_session`, `prompt`) plus the
- * Paddock-only `promptFile`; the server sanitises it before persisting.
- */
-export interface ScheduleInput {
-  type: ScheduleType;
-  cron?: string;
-  interval?: string;
-  prompt?: string;
-  promptFile?: string;
-  resume_session?: boolean;
-  enabled?: boolean;
-}
-
-// --- Event hooks (Epic G / G4) ---------------------------------------------
-
-/** The lifecycle event a hook fires on. v1 wires `onArchive` (mirrors the server). */
-export type HookEvent = "onArchive";
-
-/** The Claude Code permission mode a hook agent's turns run under. */
-export type HookPermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "plan";
-
-/**
- * A hook's capability set (GG-1) — projected verbatim onto the hook's own herdctl
- * agent tool config, so the registered agent enforces exactly these tools. Absent /
- * empty `allowedTools` = a tool-less hook (it can only think + return text).
- */
-export interface HookCapabilities {
-  /** The tools the hook agent may use. Omit / `[]` = tool-less. */
-  allowedTools?: string[];
-  /** Tools explicitly denied even if otherwise allowed. */
-  deniedTools?: string[];
-  /** The permission mode the hook agent's turns run under. */
-  permissionMode?: HookPermissionMode;
-  /** Model override for the hook agent (defaults to the keeper default when absent). */
-  model?: string;
-  /** Max agent turns — bounds a runaway hook (server default 30). */
-  maxTurns?: number;
-}
-
-/**
- * A project's event hook (Epic G / G4) — the project.yaml declaration (event +
- * capability set + prompt) plus the herdctl agent it registers as. Drives the
- * Hooks tab. Enabling/disabling is just editing `enabled` (GG-3); new hooks default
- * `enabled: false` so nothing fires the instant one is created.
- */
-export interface Hook {
-  /** The hook's name — the project.yaml map key + the `<name>` in its agent name. */
-  name: string;
-  /** The herdctl agent this hook registers as (`hook-<slug>-<name>`). */
-  agentName: string;
-  /** The lifecycle event this hook fires on. */
-  event: HookEvent;
-  /** The capability set granted to the hook's agent. Absent = tool-less. */
-  capabilities?: HookCapabilities;
-  /** The inline prompt the hook turn runs (a `promptFile` wins over this). */
-  prompt?: string;
-  /** A `.paddock/hooks/*.md` prompt file, read fresh at fire time. */
-  promptFile?: string;
-  /** Whether the hook is armed. */
-  enabled?: boolean;
-}
-
-/** The write shape for creating/replacing a hook (the server sanitises it). */
-export interface HookInput {
-  event: HookEvent;
-  capabilities?: HookCapabilities;
-  prompt?: string;
-  promptFile?: string;
-  enabled?: boolean;
-}
-
-/** One tool a hook may be granted, for the capability picker (server catalog). */
+/** One tool a trigger may be granted, for the capability picker (server catalog). */
 export interface GrantableTool {
   name: string;
   group: "read" | "write" | "web" | "orchestration" | "browser";
   description: string;
-}
-
-/** The Hooks tab's list payload: the hooks + the picker's catalog (tools + events). */
-export interface HooksResponse {
-  hooks: Hook[];
-  grantableTools: GrantableTool[];
-  events: HookEvent[];
 }
 
 // --- Unified triggers (Epic T / T4) ----------------------------------------

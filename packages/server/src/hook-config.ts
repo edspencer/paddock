@@ -18,14 +18,11 @@
  *  - {@link hookToAgentToolConfig} — project a hook's {@link HookCapabilities} onto
  *    the exact herdctl agent tool-config fields, so the hook agent enforces the
  *    capability by construction (the capability banner in G6 is therefore truthful).
- *  - {@link hookPromptFileAbsPath} — resolve a `promptFile` to an absolute path under
- *    the project's `.paddock/hooks/` dir, rejecting traversal / non-`.md`.
  *
  * Keeping this off `projects.ts`/`herdctl.ts` makes each piece unit-testable in
  * isolation and gives G3/G4/G5 (visibility, Hooks tab, hook MCP) ONE frozen shape to
  * build against.
  */
-import path from "node:path";
 
 /**
  * The lifecycle events a hook can trigger on. v1 wires **`onArchive`** (fired after
@@ -108,9 +105,9 @@ export interface PaddockHook {
 }
 
 /**
- * The CRUD/DTO shape returned by the hook service ({@link import("./hooks.js").HookService}) —
- * a {@link PaddockHook} plus its map key `name` and the herdctl agent it registers
- * as. This is the frozen contract G4 (Hooks tab) and G5 (hook MCP) build against.
+ * A hook's CRUD/DTO shape — a {@link PaddockHook} plus its map key `name` and the
+ * herdctl agent it registers as. Retained as a shared building block the unified
+ * trigger DTO (trigger-config.ts) is projected from.
  */
 export interface HookDto extends PaddockHook {
   /** The hook's name — the `project.yaml` map key + the `<name>` in its agent name. */
@@ -124,10 +121,9 @@ export interface HookDto extends PaddockHook {
  * GG-6). Rides on the chat DTO whenever a chat's provenance origin is `hook`, so
  * the floating capability banner can state — TRUTHFULLY FROM CONFIG — what the hook
  * agent is: its trigger {@link event}, its herdctl agent name, whether it's armed,
- * and the exact tool grant herdctl enforces on its turns. Built by
- * {@link toChatHookInfo} from the same {@link HookCapabilities} that
- * {@link hookToAgentToolConfig} projects onto the registered agent, so the banner and
- * the enforced capability can never disagree.
+ * and the exact tool grant herdctl enforces on its turns, resolving the same
+ * {@link HookCapabilities} defaults {@link hookToAgentToolConfig} projects onto the
+ * registered agent, so the descriptor and the enforced capability can never disagree.
  */
 export interface ChatHookInfo {
   /** The hook's name (`project.yaml` map key + the `<name>` in its agent name). */
@@ -150,32 +146,6 @@ export interface ChatHookInfo {
   maxTurns: number;
 }
 
-/**
- * Project a persisted hook ({@link HookDto} fields) onto the web-facing
- * {@link ChatHookInfo}, resolving the SAME capability defaults
- * {@link hookToAgentToolConfig} uses so the banner mirrors the enforced grant
- * exactly: an absent/empty allow-list surfaces as a tool-less `[]`, and an unset
- * `maxTurns` surfaces the {@link HOOK_DEFAULT_MAX_TURNS} bound herdctl applies.
- */
-export function toChatHookInfo(dto: HookDto): ChatHookInfo {
-  const caps = dto.capabilities;
-  const info: ChatHookInfo = {
-    name: dto.name,
-    event: dto.event,
-    agentName: dto.agentName,
-    enabled: dto.enabled === true,
-    allowedTools: caps?.allowedTools ?? [],
-    maxTurns: caps?.maxTurns ?? HOOK_DEFAULT_MAX_TURNS,
-  };
-  if (caps?.deniedTools) info.deniedTools = caps.deniedTools;
-  if (caps?.permissionMode) info.permissionMode = caps.permissionMode;
-  if (caps?.model) info.model = caps.model;
-  return info;
-}
-
-/** The dir (relative to a project's working dir) holding keeper-editable prompts. */
-export const HOOK_PROMPT_DIR = path.join(".paddock", "hooks");
-
 /** Default max agent turns for a hook when its capabilities don't set one. */
 export const HOOK_DEFAULT_MAX_TURNS = 30;
 
@@ -195,9 +165,9 @@ export function resolveHooksMcpEnabled(
 }
 
 /**
- * Merge a partial `set_hook` update (Epic G / G5) over the existing hook so an edit
- * that OMITS a field preserves it. `ProjectStore.setHook` full-REPLACES the named
- * record, so without this a caller that changes only the prompt would silently wipe
+ * Merge a partial hook update over the existing hook so an edit that OMITS a field
+ * preserves it (reused by the unified trigger merge). A full-REPLACE persist would
+ * otherwise let a caller that changes only the prompt silently wipe
  * the hook's capability grant (and vice versa). `incoming` carries ONLY the fields
  * the caller supplied (the MCP handler builds it that way), so a shallow overlay is
  * exactly "patch the provided fields": a supplied `capabilities` replaces the whole
@@ -375,22 +345,4 @@ export function hookToAgentToolConfig(caps: HookCapabilities | undefined): Recor
   if (caps?.permissionMode) out.permission_mode = caps.permissionMode;
   if (caps?.model) out.model = caps.model;
   return out;
-}
-
-/**
- * Resolve a `promptFile` to an absolute path under the project's `.paddock/hooks/`
- * dir, or `null` if it escapes that dir, is absolute, or isn't a `.md` file. The
- * name is treated as relative to the hooks dir (so a bare `"cleanup.md"` resolves to
- * `<workingDir>/.paddock/hooks/cleanup.md`). Byte-for-byte the schedule twin's guard.
- */
-export function hookPromptFileAbsPath(workingDir: string, promptFile: string): string | null {
-  if (typeof promptFile !== "string" || promptFile.trim() === "") return null;
-  const rel = promptFile.trim();
-  if (path.isAbsolute(rel)) return null;
-  const base = path.resolve(workingDir, HOOK_PROMPT_DIR);
-  const target = path.resolve(base, rel);
-  const within = target === base || target.startsWith(base + path.sep);
-  if (!within) return null;
-  if (!target.toLowerCase().endsWith(".md")) return null;
-  return target;
 }

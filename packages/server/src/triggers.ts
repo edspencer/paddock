@@ -143,7 +143,7 @@ export class TriggerService {
       await this.herdctl.ensureTriggerAgent(project, name, trigger);
     } else if (trigger.trigger.type === "schedule") {
       // Re-register the keeper so its forwarded `schedules` block picks up the new /
-      // edited schedule trigger (un-gated, unlike setAgentSchedule). ensureProjectAgent
+      // edited schedule trigger (un-gated). ensureProjectAgent
       // also re-runs registerTriggerAgents, so a scoped schedule (T2) gets its own agent
       // armed here too. Idempotent.
       await this.herdctl.ensureProjectAgent(project);

@@ -25,15 +25,11 @@ import {
 } from "./models.js";
 import { cloneRepo } from "./git.js";
 import {
-  sanitizeSchedule,
   sanitizeSchedules,
-  isValidScheduleName,
   type PaddockSchedule,
 } from "./schedule-config.js";
 import {
-  sanitizeHook,
   sanitizeHooks,
-  isValidHookName,
   type PaddockHook,
 } from "./hook-config.js";
 import {
@@ -850,90 +846,12 @@ export class ProjectStore {
     return this.toDto(current.dir, next, await this.overviewExists(slug));
   }
 
-  // --- schedules (issue #265 / DD-2) -------------------------------------
-
-  /**
-   * Add or replace one schedule in `project.yaml`, keyed by name — the persistence
-   * half of a runtime schedule mutation (the D4 UI edits schedules; the caller
-   * arms herdctl separately via `HerdctlService.setAgentSchedule`). The record is
-   * sanitised into the herdctl `ScheduleSchema` shape (+ optional `promptFile`);
-   * an invalid name or record throws `ProjectError("invalid")`. Returns the
-   * updated project DTO.
-   */
-  async setSchedule(slug: string, name: string, schedule: unknown): Promise<Project> {
-    const current = await this.get(slug);
-    if (!isValidScheduleName(name)) {
-      throw new ProjectError(`Invalid schedule name: ${name}`, "invalid");
-    }
-    const clean = sanitizeSchedule(schedule);
-    if (!clean) throw new ProjectError("Invalid schedule definition", "invalid");
-    const schedules = { ...(current.schedules ?? {}), [name]: clean };
-    const next: ProjectYaml = { ...this.stripDto(current), schedules, updated: today() };
-    await this.writeYaml(slug, next);
-    return this.toDto(current.dir, next, await this.overviewExists(slug));
-  }
-
-  /**
-   * Remove a schedule from `project.yaml` (no-op if absent). Returns the updated
-   * project DTO. The caller prunes herdctl's armed copy + persisted state via
-   * `HerdctlService.removeAgentSchedule`.
-   */
-  async removeSchedule(slug: string, name: string): Promise<Project> {
-    const current = await this.get(slug);
-    const rest = { ...(current.schedules ?? {}) };
-    delete rest[name];
-    const stripped = this.stripDto(current);
-    if (Object.keys(rest).length > 0) stripped.schedules = rest;
-    else delete stripped.schedules;
-    const next: ProjectYaml = { ...stripped, updated: today() };
-    await this.writeYaml(slug, next);
-    return this.toDto(current.dir, next, await this.overviewExists(slug));
-  }
-
-  /**
-   * Add or replace one hook in `project.yaml`, keyed by name (Epic G / G1) — the
-   * persistence half of a hook mutation (the caller registers the hook agent
-   * separately via `HerdctlService.ensureHookAgent`). The record is sanitised into a
-   * {@link PaddockHook}; an invalid name or record throws `ProjectError("invalid")`.
-   * Returns the updated project DTO. Mirrors {@link setSchedule}.
-   */
-  async setHook(slug: string, name: string, hook: unknown): Promise<Project> {
-    const current = await this.get(slug);
-    if (!isValidHookName(name)) {
-      throw new ProjectError(`Invalid hook name: ${name}`, "invalid");
-    }
-    const clean = sanitizeHook(hook);
-    if (!clean) throw new ProjectError("Invalid hook definition", "invalid");
-    const hooks = { ...(current.hooks ?? {}), [name]: clean };
-    const next: ProjectYaml = { ...this.stripDto(current), hooks, updated: today() };
-    await this.writeYaml(slug, next);
-    return this.toDto(current.dir, next, await this.overviewExists(slug));
-  }
-
-  /**
-   * Remove a hook from `project.yaml` (no-op if absent). Returns the updated project
-   * DTO. The caller unregisters the hook's agent via
-   * `HerdctlService.removeHookAgent`. Mirrors {@link removeSchedule}.
-   */
-  async removeHook(slug: string, name: string): Promise<Project> {
-    const current = await this.get(slug);
-    const rest = { ...(current.hooks ?? {}) };
-    delete rest[name];
-    const stripped = this.stripDto(current);
-    if (Object.keys(rest).length > 0) stripped.hooks = rest;
-    else delete stripped.hooks;
-    const next: ProjectYaml = { ...stripped, updated: today() };
-    await this.writeYaml(slug, next);
-    return this.toDto(current.dir, next, await this.overviewExists(slug));
-  }
-
   /**
    * Add or replace one unified trigger in `project.yaml`, keyed by name (Epic T /
    * T1) — the persistence half of a trigger mutation (the caller arms it against
    * herdctl separately via `TriggerService`/`HerdctlService`). The record is validated
    * + normalised by the Zod schema ({@link sanitizeTrigger}); an invalid name or record
-   * throws `ProjectError("invalid")`. Returns the updated project DTO. Mirrors
-   * {@link setHook}/{@link setSchedule}.
+   * throws `ProjectError("invalid")`. Returns the updated project DTO.
    */
   async setTrigger(slug: string, name: string, trigger: unknown): Promise<Project> {
     const current = await this.get(slug);
@@ -951,7 +869,7 @@ export class ProjectStore {
   /**
    * Remove a trigger from `project.yaml` (no-op if absent). Returns the updated
    * project DTO. The caller disarms the trigger's agent / schedule via `TriggerService`.
-   * Mirrors {@link removeHook}/{@link removeSchedule}.
+   *
    */
   async removeTrigger(slug: string, name: string): Promise<Project> {
     const current = await this.get(slug);

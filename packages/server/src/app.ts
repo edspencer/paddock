@@ -35,7 +35,6 @@ import { MessageProvenanceStore } from "./message-provenance.js";
 import { ScheduleSessionStore } from "./schedule-session.js";
 import { TriggerSessionStore } from "./trigger-session.js";
 import { PaddockEventBus } from "./event-bus.js";
-import { HookService } from "./hooks.js";
 import { TriggerService } from "./triggers.js";
 
 export interface BuiltApp {
@@ -50,11 +49,9 @@ export interface BuiltApp {
   readState: ReadStateStore;
   queuedMessage: QueuedMessageStore;
   transcriber: Transcriber;
-  /** In-process lifecycle event bus (Epic G / G1) — commit sites emit lifecycle events. */
+  /** In-process lifecycle event bus (Epic T) — commit sites emit lifecycle events. */
   events: PaddockEventBus;
-  /** Hook CRUD service (Epic G / G1) — shared surface for the Hooks tab + hook MCP. */
-  hooks: HookService;
-  /** Unified trigger registry (Epic T / T1) — frozen CRUD surface for T2–T5. */
+  /** Unified trigger registry (Epic T / T1) — the sole trigger CRUD surface. */
   triggers: TriggerService;
   /** Tear down the fleet + close the server (no process.exit, for tests). */
   close: () => Promise<void>;
@@ -120,12 +117,10 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   // Owned-session sidecar for accreting schedules (issue #265 / DD-2): maps a
   // `resume_session: true` schedule to the one chat it accretes into across fires.
   const scheduleSessions = new ScheduleSessionStore(cfg.dataDir);
-  // In-process lifecycle event bus + hook CRUD service (Epic G / G1). The archive
-  // commit sites (REST route + self-MCP archive tool) `emit` onto the bus; the chat
-  // handler subscribes and fires the project's enabled hooks via startAgentTurn. The
-  // HookService is the shared CRUD surface G4 (Hooks tab) + G5 (hook MCP) consume.
+  // In-process lifecycle event bus (Epic T). The archive commit sites (REST route +
+  // self-MCP archive tool) `emit` onto the bus; the chat handler subscribes and fires
+  // the project's enabled event triggers via startAgentTurn.
   const events = new PaddockEventBus();
-  const hooks = new HookService(projects, herdctl);
   // Unified trigger registry + owned-session sidecar (Epic T / T1). TriggerService is
   // the single CRUD surface over both fire paths (event bus + schedule handler); the
   // sidecar rebinds a `run.session: "resume"` trigger's owned chat after a restart.
@@ -166,12 +161,9 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   await app.register(fastifyMultipart, {
     limits: { fileSize: cfg.transcription.maxUploadBytes, files: 1 },
   });
-  // Build the chat handler BEFORE routes so its `fireSchedule` entrypoint (issue
-  // #266 / D4) can back the `POST …/schedules/:name/trigger` route — a "trigger
-  // now" runs the schedule through the same hub path a cron fire uses.
-  const chatHandler = makeChatHandler({ herdctl, projects, sweep, attachments, queuedMessage, runProvenance, messageProvenance, archive, scheduleSessions, events, hooks, triggers, triggerSessions, cfg });
+  const chatHandler = makeChatHandler({ herdctl, projects, sweep, attachments, queuedMessage, runProvenance, messageProvenance, archive, scheduleSessions, events, triggers, triggerSessions, cfg });
 
-  await registerRoutes(app, { projects, herdctl, git, githubAuth, transcriber, archive, readState, runProvenance, messageProvenance, attachments, fireSchedule: chatHandler.fireSchedule, fireTrigger: chatHandler.fireTrigger, events, hooks, triggers, cfg });
+  await registerRoutes(app, { projects, herdctl, git, githubAuth, transcriber, archive, readState, runProvenance, messageProvenance, attachments, fireTrigger: chatHandler.fireTrigger, events, triggers, cfg });
 
   await app.register(async (scoped) => {
     scoped.get("/ws", { websocket: true }, (socket) => {
@@ -241,5 +233,5 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
     await app.close().catch(() => undefined);
   };
 
-  return { app, cfg, projects, herdctl, git, githubAuth, sweep, archive, readState, queuedMessage, transcriber, events, hooks, triggers, close };
+  return { app, cfg, projects, herdctl, git, githubAuth, sweep, archive, readState, queuedMessage, transcriber, events, triggers, close };
 }

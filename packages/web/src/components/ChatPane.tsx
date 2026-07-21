@@ -44,7 +44,6 @@ import type {
   AttachmentsOverride,
   BashDetails,
   ChatCompleteUsage,
-  ChatHookInfo,
   ChatTriggerInfo,
   ChatUsage,
   EditDiff,
@@ -81,7 +80,6 @@ import {
   taskNotificationStatus,
   taskNotificationSummary,
 } from "../lib/format";
-import { HookCapabilityBanner } from "./HookCapabilityBanner";
 import { TriggerCapabilityBanner } from "./TriggerCapabilityBanner";
 import { SentFileBlock } from "./SentFileBlock";
 import { InlineImage } from "./MediaImage";
@@ -299,18 +297,10 @@ export interface ChatPaneProps {
   emptyHint?: string;
   placeholder?: string;
   /**
-   * For a HOOK chat (Epic G / G3, GG-6): the owning event hook's truthful-from-config
-   * capability descriptor. When present, a read-only capability banner floats atop
-   * the message history stating that this is a hook agent, its trigger event, and its
-   * granted tools. Absent for every non-hook chat.
-   */
-  hook?: ChatHookInfo;
-  /**
    * For a TRIGGER chat (Epic T / T4): the owning trigger's truthful-from-config
    * capability descriptor. When present, a read-only capability banner floats atop the
    * message history stating that this is a trigger agent, its type + firing condition,
-   * and its granted tools. Absent for every non-trigger chat (the unified successor to
-   * {@link hook}).
+   * and its granted tools. Absent for every non-trigger chat.
    */
   trigger?: ChatTriggerInfo;
   /**
@@ -344,7 +334,6 @@ export function ChatPane({
   autoFocus,
   emptyHint,
   placeholder,
-  hook,
   trigger,
   projectRecovery,
   projectAttachments,
@@ -1370,14 +1359,10 @@ export function ChatPane({
         className="flex-1 overflow-y-auto overscroll-contain"
       >
         <div className="mx-auto w-full max-w-3xl px-4 py-6">
-          {/* Read-only capability banner atop a TRIGGER chat (Epic T / T4) or a
-              legacy HOOK chat (Epic G / G3, GG-6): a truthful-from-config statement of
-              what this agent is + may do. A trigger banner supersedes the hook banner
-              (they never co-occur — a chat's agent is one or the other). */}
-          {trigger ? (
+          {/* Read-only capability banner atop a TRIGGER chat (Epic T / T4): a
+              truthful-from-config statement of what this agent is + may do. */}
+          {trigger && (
             <TriggerCapabilityBanner trigger={trigger} projectSlug={projectSlug} />
-          ) : (
-            hook && <HookCapabilityBanner hook={hook} projectSlug={projectSlug} />
           )}
 
           {hydrating && (

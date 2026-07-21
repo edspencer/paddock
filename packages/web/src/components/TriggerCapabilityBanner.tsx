@@ -12,7 +12,7 @@ function whenLine(trigger: ChatTriggerInfo): string {
 
 /**
  * A read-only capability banner that floats at the top of a TRIGGER chat's message
- * history (Epic T / T4 — the unified successor to the Epic G `HookCapabilityBanner`).
+ * history (Epic T / T4 — the unified banner for every trigger-created chat).
  * It makes three things legible the instant you open a chat a trigger created:
  *
  *  1. **This is a trigger agent** — not a normal keeper chat — and WHAT fires it: a

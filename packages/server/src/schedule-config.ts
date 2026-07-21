@@ -9,16 +9,12 @@
  *  - {@link sanitizeSchedules} — validate/normalise a hand-edited `project.yaml`
  *    `schedules` map, DROPPING malformed entries so one bad edit can't brick the
  *    keeper's `addAgent` registration (which would throw on an invalid schedule).
- *  - {@link schedulesToHerdctl} — project the Paddock records onto the exact fields
- *    herdctl accepts, STRIPPING the Paddock-only `promptFile` so the forwarded
- *    config stays pure (herdctl only ever sees a plain `prompt`).
- *  - {@link schedulePromptFileAbsPath} — resolve a `promptFile` to an absolute path
- *    under the project's `.paddock/schedules/` dir, rejecting traversal / non-`.md`.
  *
- * Keeping this off `projects.ts`/`herdctl.ts` makes each piece unit-testable in
- * isolation and keeps the pass-through contract in one obvious place.
+ * The `schedules` block itself is now declared only via unified TRIGGERS
+ * (trigger-config.ts forwards SCHEDULE-type triggers into the keeper agent); this
+ * module retains only the back-compat parser for any legacy `schedules:` block still
+ * present in a hand-edited `project.yaml`.
  */
-import path from "node:path";
 
 /**
  * A scheduled chat declaration — herdctl's `ScheduleSchema` shape (same field
@@ -56,9 +52,6 @@ export interface PaddockSchedule {
    */
   promptFile?: string;
 }
-
-/** The dir (relative to a project's working dir) holding keeper-editable prompts. */
-export const SCHEDULE_PROMPT_DIR = path.join(".paddock", "schedules");
 
 const SCHEDULE_TYPES: ReadonlySet<string> = new Set(["cron", "interval"]);
 
@@ -111,55 +104,4 @@ export function sanitizeSchedules(raw: unknown): Record<string, PaddockSchedule>
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
-/**
- * Project one {@link PaddockSchedule} onto the exact fields herdctl's
- * `ScheduleSchema` accepts, STRIPPING the Paddock-only `promptFile` (resolved at
- * fire time by the host handler, so herdctl only ever sees a plain `prompt`).
- */
-export function scheduleToHerdctl(s: PaddockSchedule): Record<string, unknown> {
-  const out: Record<string, unknown> = { type: s.type };
-  if (s.type === "cron" && s.cron) out.cron = s.cron;
-  if (s.type === "interval" && s.interval) out.interval = s.interval;
-  // Forward the inline prompt verbatim when present; when a promptFile drives the
-  // schedule we omit prompt entirely — the host handler supplies the resolved text,
-  // and leaving it out keeps the forwarded herdctl config pure.
-  if (typeof s.prompt === "string") out.prompt = s.prompt;
-  if (typeof s.enabled === "boolean") out.enabled = s.enabled;
-  if (typeof s.resume_session === "boolean") out.resume_session = s.resume_session;
-  return out;
-}
 
-/**
- * Build the `schedules` block to forward into the keeper agent config, or
- * `undefined` when the project declares none. Each entry is the pure herdctl shape
- * (see {@link scheduleToHerdctl}).
- */
-export function schedulesToHerdctl(
-  map: Record<string, PaddockSchedule> | undefined,
-): Record<string, Record<string, unknown>> | undefined {
-  if (!map) return undefined;
-  const out: Record<string, Record<string, unknown>> = {};
-  for (const [name, s] of Object.entries(map)) out[name] = scheduleToHerdctl(s);
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-/**
- * Resolve a `promptFile` to an absolute path under the project's
- * `.paddock/schedules/` dir, or `null` if it escapes that dir, is absolute, or
- * isn't a `.md` file. The name is treated as relative to the schedules dir (so a
- * bare `"daily.md"` resolves to `<workingDir>/.paddock/schedules/daily.md`).
- */
-export function schedulePromptFileAbsPath(
-  workingDir: string,
-  promptFile: string,
-): string | null {
-  if (typeof promptFile !== "string" || promptFile.trim() === "") return null;
-  const rel = promptFile.trim();
-  if (path.isAbsolute(rel)) return null;
-  const base = path.resolve(workingDir, SCHEDULE_PROMPT_DIR);
-  const target = path.resolve(base, rel);
-  const within = target === base || target.startsWith(base + path.sep);
-  if (!within) return null;
-  if (!target.toLowerCase().endsWith(".md")) return null;
-  return target;
-}

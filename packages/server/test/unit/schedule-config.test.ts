@@ -3,20 +3,14 @@
  *
  * These pure functions are the seam between Paddock's `project.yaml` schedules and
  * herdctl's `ScheduleSchema`: sanitise a hand-edited map (dropping malformed
- * entries so one bad edit can't brick `addAgent`), project onto the exact fields
- * herdctl accepts (STRIPPING the Paddock-only `promptFile`), and resolve a
- * `promptFile` to a safe absolute path under `.paddock/schedules/`.
+ * entries so one bad edit can't brick `addAgent`). Back-compat parser only — the
+ * `schedules` block is now declared via unified triggers.
  */
 import { describe, it, expect } from "vitest";
-import path from "node:path";
 import {
   sanitizeSchedule,
   sanitizeSchedules,
-  scheduleToHerdctl,
-  schedulesToHerdctl,
-  schedulePromptFileAbsPath,
   isValidScheduleName,
-  SCHEDULE_PROMPT_DIR,
 } from "../../src/schedule-config.js";
 
 describe("sanitizeSchedule", () => {
@@ -101,56 +95,5 @@ describe("isValidScheduleName", () => {
     expect(isValidScheduleName("../evil")).toBe(false);
     expect(isValidScheduleName("x".repeat(65))).toBe(false);
     expect(isValidScheduleName("")).toBe(false);
-  });
-});
-
-describe("scheduleToHerdctl / schedulesToHerdctl", () => {
-  it("projects onto herdctl fields and STRIPS promptFile", () => {
-    const out = scheduleToHerdctl({
-      type: "cron",
-      cron: "0 9 * * *",
-      prompt: "inline",
-      enabled: true,
-      resume_session: true,
-      promptFile: "daily.md",
-    });
-    expect(out).toEqual({
-      type: "cron",
-      cron: "0 9 * * *",
-      prompt: "inline",
-      enabled: true,
-      resume_session: true,
-    });
-    expect(out).not.toHaveProperty("promptFile");
-  });
-
-  it("omits prompt entirely when only a promptFile drives the schedule (keeps config pure)", () => {
-    const out = scheduleToHerdctl({ type: "interval", interval: "1h", promptFile: "x.md" });
-    expect(out).toEqual({ type: "interval", interval: "1h" });
-  });
-
-  it("maps a whole block, undefined when empty", () => {
-    expect(
-      schedulesToHerdctl({ a: { type: "cron", cron: "@daily", promptFile: "a.md" } }),
-    ).toEqual({ a: { type: "cron", cron: "@daily" } });
-    expect(schedulesToHerdctl(undefined)).toBeUndefined();
-  });
-});
-
-describe("schedulePromptFileAbsPath", () => {
-  const wd = "/tmp/proj";
-  const base = path.join(wd, SCHEDULE_PROMPT_DIR);
-
-  it("resolves a bare .md name under .paddock/schedules/", () => {
-    expect(schedulePromptFileAbsPath(wd, "daily.md")).toBe(path.join(base, "daily.md"));
-    expect(schedulePromptFileAbsPath(wd, "sub/deep.md")).toBe(path.join(base, "sub/deep.md"));
-  });
-
-  it("rejects traversal, absolute paths, and non-.md files", () => {
-    expect(schedulePromptFileAbsPath(wd, "../../etc/passwd")).toBeNull();
-    expect(schedulePromptFileAbsPath(wd, "../secret.md")).toBeNull();
-    expect(schedulePromptFileAbsPath(wd, "/etc/passwd.md")).toBeNull();
-    expect(schedulePromptFileAbsPath(wd, "daily.txt")).toBeNull();
-    expect(schedulePromptFileAbsPath(wd, "")).toBeNull();
   });
 });
