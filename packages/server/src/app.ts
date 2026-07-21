@@ -28,6 +28,7 @@ import { renderIndexHtml } from "./brand.js";
 import { makeChatHandler } from "./ws.js";
 import { SweepService } from "./sweep.js";
 import { ArchiveStore } from "./archive.js";
+import { StarStore } from "./star.js";
 import { ReadStateStore } from "./read-state.js";
 import { QueuedMessageStore } from "./queued-message.js";
 import { RunProvenanceStore } from "./run-provenance.js";
@@ -46,6 +47,7 @@ export interface BuiltApp {
   githubAuth: GithubAuth;
   sweep: SweepService;
   archive: ArchiveStore;
+  star: StarStore;
   readState: ReadStateStore;
   queuedMessage: QueuedMessageStore;
   transcriber: Transcriber;
@@ -102,6 +104,9 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   const git = new GitService(cfg.projectsRoot, cfg.gitAuthor);
   const githubAuth = new GithubAuth(path.join(cfg.dataDir, "github-auth.json"), cfg.githubClientId);
   const archive = new ArchiveStore(cfg.dataDir);
+  // Per-chat starred/pinned-flag sidecar (#373). Orthogonal to `archive`; the
+  // client floats starred chats to the top of both the active and Archived lists.
+  const star = new StarStore(cfg.dataDir);
   // Per-user (or shared, in `none` mode) chat read-state sidecar (#189).
   const readState = new ReadStateStore(cfg.dataDir);
   // Per-chat queued message sidecar (#197) for server-side auto-send.
@@ -163,7 +168,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   });
   const chatHandler = makeChatHandler({ herdctl, projects, sweep, attachments, queuedMessage, runProvenance, messageProvenance, archive, scheduleSessions, events, triggers, triggerSessions, cfg });
 
-  await registerRoutes(app, { projects, herdctl, git, githubAuth, transcriber, archive, readState, runProvenance, messageProvenance, attachments, fireTrigger: chatHandler.fireTrigger, events, triggers, cfg });
+  await registerRoutes(app, { projects, herdctl, git, githubAuth, transcriber, archive, star, readState, runProvenance, messageProvenance, attachments, fireTrigger: chatHandler.fireTrigger, events, triggers, cfg });
 
   await app.register(async (scoped) => {
     scoped.get("/ws", { websocket: true }, (socket) => {
@@ -233,5 +238,5 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
     await app.close().catch(() => undefined);
   };
 
-  return { app, cfg, projects, herdctl, git, githubAuth, sweep, archive, readState, queuedMessage, transcriber, events, triggers, close };
+  return { app, cfg, projects, herdctl, git, githubAuth, sweep, archive, star, readState, queuedMessage, transcriber, events, triggers, close };
 }

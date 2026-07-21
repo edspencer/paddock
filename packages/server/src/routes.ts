@@ -37,6 +37,7 @@ import { SCRATCH_SLUG, SCRATCH_AGENT, keeperAgentName, TRIGGER_AGENT_PREFIX, tri
 import type { GitService } from "./git.js";
 import type { GithubAuth } from "./github-auth.js";
 import type { ArchiveStore } from "./archive.js";
+import type { StarStore } from "./star.js";
 import type { ReadStateStore } from "./read-state.js";
 import type { RunProvenance, RunProvenanceStore } from "./run-provenance.js";
 import { applyMessageProvenance, type MessageProvenanceStore } from "./message-provenance.js";
@@ -113,6 +114,8 @@ export interface RouteDeps {
   githubAuth: GithubAuth;
   transcriber: Transcriber;
   archive: ArchiveStore;
+  /** Per-chat starred/pinned-flag sidecar (#373). Orthogonal to `archive`. */
+  star: StarStore;
   readState: ReadStateStore;
   runProvenance: RunProvenanceStore;
   /**
@@ -160,6 +163,7 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     githubAuth,
     transcriber,
     archive,
+    star,
     readState,
     runProvenance,
     messageProvenance,
@@ -380,6 +384,8 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
       const keeper = keeperAgentName(project.slug);
       const archivedOf = (s: import("@herdctl/core").DiscoveredSession) =>
         archive.isArchived(keeper, s.sessionId);
+      const starredOf = (s: import("@herdctl/core").DiscoveredSession) =>
+        star.isStarred(keeper, s.sessionId);
       const user = readStateUser(req);
       const lastSeenOf = (s: import("@herdctl/core").DiscoveredSession) =>
         readState.getLastSeen(user, keeper, s.sessionId);
@@ -409,6 +415,7 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
           lastSeenOf,
           provenanceOf,
           triggerOf,
+          starredOf,
         ),
       };
     } catch (err) {
@@ -1041,6 +1048,8 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
       const keeper = keeperAgentName(project.slug);
       const archivedOf = (s: import("@herdctl/core").DiscoveredSession) =>
         archive.isArchived(keeper, s.sessionId);
+      const starredOf = (s: import("@herdctl/core").DiscoveredSession) =>
+        star.isStarred(keeper, s.sessionId);
       const user = readStateUser(req);
       const lastSeenOf = (s: import("@herdctl/core").DiscoveredSession) =>
         readState.getLastSeen(user, keeper, s.sessionId);
@@ -1059,6 +1068,7 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
           lastSeenOf,
           provenanceOf,
           triggerOf,
+          starredOf,
         ),
       };
     } catch (err) {
@@ -1270,8 +1280,9 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
         const agent = await agentForSlug(req.params.slug);
         await cleanupAttachments(agent, req.params.sessionId);
         const removed = await herdctl.deleteSession(agent, req.params.sessionId);
-        // Drop any archived flag so a future session id can't inherit it.
+        // Drop any archived/starred flag so a future session id can't inherit it.
         await archive.setArchived(agent, req.params.sessionId, false).catch(() => undefined);
+        await star.setStarred(agent, req.params.sessionId, false).catch(() => undefined);
         return reply.code(200).send({ ok: true, removed });
       } catch (err) {
         return sendProjectError(reply, err);
@@ -1337,6 +1348,23 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     },
   );
 
+  // Star (or unstar) a project chat (#373). A non-destructive toggle on a
+  // persisted per-chat flag — orthogonal to archiving; a starred chat just sorts
+  // to the top of its population (active or Archived). Fires no lifecycle event.
+  app.post<{ Params: { slug: string; sessionId: string }; Body: { starred?: boolean } }>(
+    "/api/projects/:slug/chats/:sessionId/star",
+    async (req, reply) => {
+      try {
+        const agent = await agentForSlug(req.params.slug);
+        const starred = req.body?.starred !== false; // default true
+        await star.setStarred(agent, req.params.sessionId, starred);
+        return reply.code(200).send({ ok: true, starred });
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
   // Mark a project chat SEEN (#189): persist the user's last-viewed moment for
   // this chat server-side (keyed by user when present, else a shared bucket), so
   // the unread affordance (#160/#161) follows the user across devices. Body's
@@ -1377,6 +1405,8 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
             undefined,
             await readState.getLastSeen(user, SCRATCH_AGENT, s.sessionId).catch(() => 0),
             await runProvenance.get(s.sessionId).catch(() => null),
+            undefined,
+            await star.isStarred(SCRATCH_AGENT, s.sessionId).catch(() => false),
           ),
         ),
       ),
@@ -1430,6 +1460,7 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
         await cleanupAttachments(SCRATCH_AGENT, req.params.sessionId);
         const removed = await herdctl.deleteSession(SCRATCH_AGENT, req.params.sessionId);
         await archive.setArchived(SCRATCH_AGENT, req.params.sessionId, false).catch(() => undefined);
+        await star.setStarred(SCRATCH_AGENT, req.params.sessionId, false).catch(() => undefined);
         return reply.code(200).send({ ok: true, removed });
       } catch (err) {
         return sendProjectError(reply, err);
@@ -1446,6 +1477,21 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
         const archived = req.body?.archived !== false; // default true
         await archive.setArchived(SCRATCH_AGENT, req.params.sessionId, archived);
         return reply.code(200).send({ ok: true, archived });
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  // Star (or unstar) a one-off (scratch) chat (#373). Same non-destructive toggle
+  // as the project variant.
+  app.post<{ Params: { sessionId: string }; Body: { starred?: boolean } }>(
+    "/api/chats/:sessionId/star",
+    async (req, reply) => {
+      try {
+        const starred = req.body?.starred !== false; // default true
+        await star.setStarred(SCRATCH_AGENT, req.params.sessionId, starred);
+        return reply.code(200).send({ ok: true, starred });
       } catch (err) {
         return sendProjectError(reply, err);
       }
@@ -1626,6 +1672,7 @@ function toChatDto(
   lastSeen?: number,
   provenance?: RunProvenance | null,
   trigger?: ChatTriggerInfo | null,
+  starred = false,
 ) {
   const preview = previewOverride ?? s.preview;
   return {
@@ -1638,6 +1685,9 @@ function toChatDto(
     // Whether this chat is filed away in the Archived section (#95). Always
     // present so the client can partition the list without a fallback.
     archived,
+    // Whether this chat is starred/pinned (#373) — sorts to the top of its
+    // population (active or archived). Always present, orthogonal to `archived`.
+    starred,
     // ISO timestamp of the last turn the agent FINISHED (from job records, not
     // mtime) — the unread signal (#160). Absent when no completed job record
     // exists yet (session-mode chats, or a brand-new chat still on turn 1).
@@ -1714,16 +1764,20 @@ async function buildProjectChats(
   triggerOf?: (
     s: import("@herdctl/core").DiscoveredSession,
   ) => Promise<ChatTriggerInfo | undefined>,
+  starredOf?: (
+    s: import("@herdctl/core").DiscoveredSession,
+  ) => Promise<boolean>,
 ) {
   return Promise.all(
     sessions.map(async (s) => {
-      // Resolve the usage ring, archived flag, read-state, provenance, trigger, name.
+      // Resolve the usage ring, archived flag, read-state, provenance, trigger, star, name.
       const usage = usageOf ? await usageOf(s).catch(() => null) : null;
       const archived = archivedOf ? await archivedOf(s).catch(() => false) : false;
       const turnAt = lastTurnAt?.get(s.sessionId);
       const lastSeen = lastSeenOf ? await lastSeenOf(s).catch(() => 0) : 0;
       const provenance = provenanceOf ? await provenanceOf(s).catch(() => null) : null;
       const trigger = triggerOf ? await triggerOf(s).catch(() => undefined) : undefined;
+      const starred = starredOf ? await starredOf(s).catch(() => false) : false;
       // A preview polluted by a machine-prepended wrapper: the preload context
       // block (#1) and/or the composer-attachment block (#328). Either makes the
       // raw first message a poor display name, so recover the real request below.
@@ -1732,7 +1786,7 @@ async function buildProjectChats(
         !s.autoName &&
         (s.preview?.startsWith(PRELOAD_CONTEXT_OPEN) || s.preview?.startsWith(ATTACHMENTS_OPEN));
       if (!pollutedPreview)
-        return toChatDto(s, undefined, usage, archived, turnAt, lastSeen, provenance, trigger);
+        return toChatDto(s, undefined, usage, archived, turnAt, lastSeen, provenance, trigger, starred);
 
       const full = await readFirstUserText(projectDir, s.sessionId).catch(() => undefined);
       // Strip preload FIRST (it wraps the whole thing), then the attachment block
@@ -1740,10 +1794,10 @@ async function buildProjectChats(
       const cleaned = stripAttachmentsWrapper(stripPreloadWrapper(full ?? s.preview ?? "")).trim();
       // couldn't recover
       if (!cleaned)
-        return toChatDto(s, undefined, usage, archived, turnAt, lastSeen, provenance, trigger);
+        return toChatDto(s, undefined, usage, archived, turnAt, lastSeen, provenance, trigger, starred);
       const preview =
         cleaned.length > PREVIEW_MAX ? `${cleaned.slice(0, PREVIEW_MAX)}...` : cleaned;
-      return toChatDto(s, preview, usage, archived, turnAt, lastSeen, provenance, trigger);
+      return toChatDto(s, preview, usage, archived, turnAt, lastSeen, provenance, trigger, starred);
     }),
   );
 }

@@ -275,6 +275,12 @@ export interface Chat {
    */
   archived?: boolean;
   /**
+   * Whether the chat is starred/pinned (issue #373). Starred chats float to the
+   * top of their population (active or Archived). Orthogonal to `archived` — a
+   * chat can be both. A non-destructive per-chat flag.
+   */
+  starred?: boolean;
+  /**
    * ISO timestamp of the last turn the agent FINISHED (from server job records,
    * NOT mtime — so it doesn't tick on the user's own sends). Drives the unread
    * affordance (#160): a chat is unread when this is newer than the locally

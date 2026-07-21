@@ -21,6 +21,7 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ForkChatModal } from "../components/ForkChatModal";
 import {
   ArchiveIcon,
+  StarIcon,
   BoltIcon,
   BranchIcon,
   ChatIcon,
@@ -555,12 +556,43 @@ export function ProjectView() {
     [slug],
   );
 
+  // Star or unstar a chat (#373): toggle the persisted flag and optimistically
+  // re-pin it to the top of its population. Orthogonal to archiving — starring
+  // never moves a chat between the active and Archived sections.
+  const starChat = useCallback(
+    async (chat: Chat) => {
+      const next = !chat.starred;
+      setChats((prev) =>
+        prev.map((c) => (c.sessionId === chat.sessionId ? { ...c, starred: next } : c)),
+      );
+      try {
+        await api.starProjectChat(slug, chat.sessionId, next);
+      } catch (e) {
+        // Roll back the optimistic pin on failure.
+        setChats((prev) =>
+          prev.map((c) => (c.sessionId === chat.sessionId ? { ...c, starred: chat.starred } : c)),
+        );
+        setLoadErr(e instanceof Error ? e.message : "Failed to star chat");
+      }
+    },
+    [slug],
+  );
+
+  // Float starred chats to the top of a list while preserving the existing
+  // (server, mtime-ordered) order within the starred and unstarred groups (#373).
+  // `Array.filter` is a stable partition, so this is order-preserving.
+  const starredFirst = (list: Chat[]) => [
+    ...list.filter((c) => c.starred),
+    ...list.filter((c) => !c.starred),
+  ];
+
   // Partition the (search-filtered) chat list into the current (top) and
-  // archived (bottom) groups (#95). Search (#96) still finds archived chats — it
-  // just surfaces them in the Archived section. `activeTotal` is the unfiltered
-  // non-archived count, for the "N/total" badge while searching.
-  const activeChats = visibleChats.filter((c) => !c.archived);
-  const archivedChats = visibleChats.filter((c) => c.archived);
+  // archived (bottom) groups (#95), each with starred chats pinned to the top
+  // (#373). Search (#96) still finds archived chats — it just surfaces them in
+  // the Archived section. `activeTotal` is the unfiltered non-archived count,
+  // for the "N/total" badge while searching.
+  const activeChats = starredFirst(visibleChats.filter((c) => !c.archived));
+  const archivedChats = starredFirst(visibleChats.filter((c) => c.archived));
   const activeTotal = chats.filter((c) => !c.archived).length;
   const activeIsArchived = chats.some((c) => c.archived && c.sessionId === activeSession);
 
@@ -779,6 +811,24 @@ export function ProjectView() {
           className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-rose-100 hover:text-rose-600 focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-rose-950/60 dark:hover:text-rose-400"
         >
           <TrashIcon width={13} height={13} />
+        </button>
+        {/* Star / pin (#373): rightmost action. When starred, always visible and
+            gold (solid star); otherwise it behaves exactly like the archive
+            button — hidden until row hover/focus. */}
+        <button
+          type="button"
+          aria-label={`${c.starred ? "Unstar" : "Star"} chat ${c.name}`}
+          aria-pressed={!!c.starred}
+          title={c.starred ? "Unstar chat" : "Star chat — pin it to the top of the list"}
+          onClick={(e) => {
+            e.stopPropagation();
+            void starChat(c);
+          }}
+          className={`flex h-6 w-6 items-center justify-center rounded-md transition focus:opacity-100 group-hover/chat:opacity-100 hover:bg-paddock-200 hover:text-amber-500 dark:hover:bg-paddock-700 dark:hover:text-amber-400 ${
+            c.starred ? "text-amber-400 opacity-100" : "text-paddock-400 opacity-0"
+          }`}
+        >
+          <StarIcon width={13} height={13} fill={c.starred ? "currentColor" : "none"} />
         </button>
       </div>
     </div>

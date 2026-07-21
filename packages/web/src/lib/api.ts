@@ -323,6 +323,22 @@ export const api = {
     });
   },
 
+  /** Star or unstar a project chat (issue #373). Pins it to the top of its list. */
+  async starProjectChat(slug: string, sessionId: string, starred: boolean): Promise<void> {
+    await req<{ ok: boolean }>(
+      `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}/star`,
+      { method: "POST", body: JSON.stringify({ starred }) },
+    );
+  },
+
+  /** Star or unstar a one-off (scratch) chat (issue #373). */
+  async starScratchChat(sessionId: string, starred: boolean): Promise<void> {
+    await req<{ ok: boolean }>(`/api/chats/${encodeURIComponent(sessionId)}/star`, {
+      method: "POST",
+      body: JSON.stringify({ starred }),
+    });
+  },
+
   /**
    * Promote a one-off (scratch) chat into a new project (issue #20). Creates the
    * project and re-homes the chat's transcript into it. `promoted:false` means
