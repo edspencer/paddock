@@ -4,22 +4,18 @@
  * These pure functions are the seam between a project's `project.yaml` hooks and the
  * `hook-<slug>-<name>` herdctl agent each hook registers as: sanitise a hand-edited
  * map (dropping malformed entries so one bad edit can't brick `addAgent`), project a
- * capability set onto the exact herdctl agent tool-config fields, and resolve a
- * `promptFile` to a safe absolute path under `.paddock/hooks/`.
+ * capability set onto the exact herdctl agent tool-config fields, (the surviving shared
+ * foundation the unified trigger system reuses).
  */
 import { describe, it, expect } from "vitest";
-import path from "node:path";
 import {
   sanitizeHook,
   sanitizeHooks,
   sanitizeCapabilities,
   hookToAgentToolConfig,
-  hookPromptFileAbsPath,
   isValidHookName,
   resolveHooksMcpEnabled,
   mergeHookUpdate,
-  toChatHookInfo,
-  HOOK_PROMPT_DIR,
   HOOK_DEFAULT_MAX_TURNS,
 } from "../../src/hook-config.js";
 
@@ -271,80 +267,5 @@ describe("hookToAgentToolConfig", () => {
     expect(out.allowed_tools).toEqual([]);
     expect(out).not.toHaveProperty("model");
     expect(out).not.toHaveProperty("denied_tools");
-  });
-});
-
-describe("toChatHookInfo", () => {
-  it("projects a full hook DTO onto the web-facing capability descriptor", () => {
-    expect(
-      toChatHookInfo({
-        name: "cleanup",
-        agentName: "hook-my-proj-cleanup",
-        event: "onArchive",
-        enabled: true,
-        capabilities: {
-          allowedTools: ["Bash", "Read"],
-          deniedTools: ["WebFetch"],
-          permissionMode: "acceptEdits",
-          model: "claude-haiku-4-5-20251001",
-          maxTurns: 12,
-        },
-      }),
-    ).toEqual({
-      name: "cleanup",
-      agentName: "hook-my-proj-cleanup",
-      event: "onArchive",
-      enabled: true,
-      allowedTools: ["Bash", "Read"],
-      deniedTools: ["WebFetch"],
-      permissionMode: "acceptEdits",
-      model: "claude-haiku-4-5-20251001",
-      maxTurns: 12,
-    });
-  });
-
-  it("mirrors the enforced defaults: tool-less → [] and the default max_turns; enabled defaults false", () => {
-    expect(
-      toChatHookInfo({ name: "note", agentName: "hook-p-note", event: "onArchive" }),
-    ).toEqual({
-      name: "note",
-      agentName: "hook-p-note",
-      event: "onArchive",
-      enabled: false,
-      allowedTools: [],
-      maxTurns: HOOK_DEFAULT_MAX_TURNS,
-    });
-  });
-
-  it("omits optional fields the hook doesn't set (no denied/permission/model keys)", () => {
-    const info = toChatHookInfo({
-      name: "n",
-      agentName: "hook-p-n",
-      event: "onArchive",
-      enabled: false,
-      capabilities: { allowedTools: ["Read"] },
-    });
-    expect(info.allowedTools).toEqual(["Read"]);
-    expect(info).not.toHaveProperty("deniedTools");
-    expect(info).not.toHaveProperty("permissionMode");
-    expect(info).not.toHaveProperty("model");
-  });
-});
-
-describe("hookPromptFileAbsPath", () => {
-  const wd = "/tmp/proj";
-  const base = path.join(wd, HOOK_PROMPT_DIR);
-
-  it("resolves a bare .md name under .paddock/hooks/", () => {
-    expect(hookPromptFileAbsPath(wd, "cleanup.md")).toBe(path.join(base, "cleanup.md"));
-    expect(hookPromptFileAbsPath(wd, "sub/deep.md")).toBe(path.join(base, "sub/deep.md"));
-  });
-
-  it("rejects traversal, absolute paths, and non-.md files", () => {
-    expect(hookPromptFileAbsPath(wd, "../../etc/passwd")).toBeNull();
-    expect(hookPromptFileAbsPath(wd, "../secret.md")).toBeNull();
-    expect(hookPromptFileAbsPath(wd, "/etc/passwd.md")).toBeNull();
-    expect(hookPromptFileAbsPath(wd, "cleanup.txt")).toBeNull();
-    expect(hookPromptFileAbsPath(wd, "")).toBeNull();
   });
 });

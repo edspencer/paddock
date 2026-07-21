@@ -24,12 +24,6 @@
  */
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { ProjectError, type ProjectStore, type Project, type CreateProjectInput, type UpdateProjectInput } from "./projects.js";
-import {
-  sanitizeSchedule,
-  isValidScheduleName,
-  scheduleToHerdctl,
-  type PaddockSchedule,
-} from "./schedule-config.js";
 import { AttachmentStore, collectAttachmentIds } from "./attachments.js";
 import {
   resolveAttachmentsConfig,
@@ -38,7 +32,7 @@ import {
 } from "./attachments-config.js";
 import { inferAttachmentKind, stripAttachmentsWrapper, ATTACHMENTS_OPEN } from "./attachments-hint.js";
 import type { HerdctlService } from "./herdctl.js";
-import { SCRATCH_SLUG, SCRATCH_AGENT, keeperAgentName, hookAgentName, HOOK_AGENT_PREFIX, TRIGGER_AGENT_PREFIX, triggerAgentName } from "./herdctl.js";
+import { SCRATCH_SLUG, SCRATCH_AGENT, keeperAgentName, TRIGGER_AGENT_PREFIX, triggerAgentName } from "./herdctl.js";
 import type { GitService } from "./git.js";
 import type { GithubAuth } from "./github-auth.js";
 import type { ArchiveStore } from "./archive.js";
@@ -94,15 +88,7 @@ import {
 import { type SessionTokenUsage } from "./usage.js";
 import { isValidMaxSpawnDepth, MAX_SPAWN_DEPTH_LIMIT } from "./spawn-capability.js";
 import type { PaddockEventBus } from "./event-bus.js";
-import { toHookDto, type HookService } from "./hooks.js";
-import {
-  GRANTABLE_TOOLS,
-  HOOK_EVENTS,
-  isValidHookName,
-  sanitizeHook,
-  toChatHookInfo,
-  type ChatHookInfo,
-} from "./hook-config.js";
+import { GRANTABLE_TOOLS } from "./hook-config.js";
 import { toTriggerDto, type TriggerService } from "./triggers.js";
 import { buildTriggerRuntime } from "./trigger-runtime.js";
 import {
@@ -132,14 +118,6 @@ export interface RouteDeps {
   messageProvenance: MessageProvenanceStore;
   attachments: AttachmentStore;
   /**
-   * Manually fire a project's schedule NOW (issue #266 / D4), backing the
-   * `POST …/schedules/:name/trigger` route. Supplied by the chat handler
-   * (`makeChatHandler(...).fireSchedule`) so a "trigger now" runs the schedule
-   * through the SAME hub path a cron fire uses — a first-class, discoverable chat.
-   * Resolves the started chat's session id, or `null` if nothing started.
-   */
-  fireSchedule: (slug: string, scheduleName: string) => Promise<string | null>;
-  /**
    * Manually fire a project's TRIGGER now (Epic T follow-up / #327), backing the
    * `POST …/triggers/:name/run` "Run now" route + the `run_trigger` self-MCP verb.
    * Supplied by the chat handler (`makeChatHandler(...).fireTrigger`) so a manual run
@@ -151,19 +129,12 @@ export interface RouteDeps {
    */
   fireTrigger?: (slug: string, triggerName: string) => Promise<string | null>;
   /**
-   * In-process lifecycle event bus (Epic G / G1). The archive route emits `onArchive`
-   * on it AFTER the archive commits, so the hook dispatcher (wired in the chat
-   * handler) fires the project's enabled onArchive hooks. Optional so tests that don't
-   * exercise hooks can omit it.
+   * In-process lifecycle event bus (Epic T). The archive route emits `onArchive`
+   * on it AFTER the archive commits, so the trigger dispatcher (wired in the chat
+   * handler) fires the project's enabled onArchive event triggers. Optional so tests
+   * that don't exercise triggers can omit it.
    */
   events?: PaddockEventBus;
-  /**
-   * Hook CRUD service (Epic G / G4). Backs the per-project Hooks tab's
-   * list/create/edit/delete + enable-disable (enable/disable is just `set` with
-   * the `enabled` field flipped — not a separate verb). Delegates persistence +
-   * `hook-<slug>-<name>` agent (re)registration to {@link HookService}.
-   */
-  hooks: HookService;
   /**
    * Unified trigger CRUD service (Epic T "Unify Triggers" / T3). Backs the
    * `/api/projects/:slug/triggers[/:name]` REST surface the Triggers tab (T4) will
@@ -188,10 +159,8 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     runProvenance,
     messageProvenance,
     attachments,
-    fireSchedule,
     fireTrigger,
     events,
-    hooks,
     triggers,
     cfg,
   } = deps;
@@ -414,9 +383,6 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
       // usage ring (#116) it's fine to resolve inline for the initial payload.
       const provenanceOf = (s: import("@herdctl/core").DiscoveredSession) =>
         runProvenance.get(s.sessionId);
-      // Hook capability descriptor for hook chats (G3 / GG-6) — truthful from the
-      // registered hook agent config. A no-op for the keeper chats that dominate.
-      const hookOf = makeHookResolver(project);
       // Trigger capability descriptor for trigger chats (Epic T / T4) — truthful from
       // the registered trigger agent config. A no-op for the keeper chats that dominate.
       const triggerOf = makeTriggerResolver(project);
@@ -437,7 +403,6 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
           lastTurnAt,
           lastSeenOf,
           provenanceOf,
-          hookOf,
           triggerOf,
         ),
       };
@@ -538,261 +503,9 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     }
   });
 
-  // --- schedules (issue #266 / D4) ---------------------------------------
-  // The per-project scheduled-chat management surface the Settings pane drives.
-  // The schedule DEFINITION is declared in project.yaml (herdctl's `ScheduleSchema`
-  // shape, D3) — its persistence half is `ProjectStore.set/removeSchedule`; the
-  // RUNTIME arming half is `HerdctlService.set/removeAgentSchedule` (herdctl#376),
-  // behind the per-deployment `scheduleMutationEnabled` gate. Each mutating route
-  // persists to project.yaml FIRST (the source of truth — it re-arms on restart),
-  // then arms herdctl, warning-but-not-failing if the runtime arm hiccups.
-
-  /**
-   * Merge a project.yaml schedule declaration with herdctl's live runtime state
-   * (status / last / next run) into the DTO the Settings pane renders. `info` is
-   * absent for a just-declared schedule herdctl hasn't armed yet (or when the
-   * keeper isn't running) — then status falls back to the declared `enabled`.
-   */
-  const toScheduleDto = (
-    name: string,
-    rec: PaddockSchedule,
-    info?: ScheduleRuntimeInfo,
-  ) => ({
-    name,
-    type: rec.type,
-    cron: rec.cron ?? null,
-    interval: rec.interval ?? null,
-    prompt: rec.prompt ?? null,
-    promptFile: rec.promptFile ?? null,
-    resumeSession: rec.resume_session === true,
-    enabled: rec.enabled !== false,
-    status: info?.status ?? (rec.enabled === false ? "disabled" : "idle"),
-    lastRunAt: info?.lastRunAt ?? null,
-    nextRunAt: info?.nextRunAt ?? null,
-    lastError: info?.lastError ?? null,
-  });
-
-  // List a project's schedules (declaration + live runtime state), plus the
-  // per-deployment mutation gate so the pane can render read-only with a hint.
-  app.get<{ Params: { slug: string } }>(
-    "/api/projects/:slug/schedules",
-    async (req, reply) => {
-      try {
-        const project = await projects.get(req.params.slug); // throws not_found
-        const declared = project.schedules ?? {};
-        const runtime = await herdctl.listAgentSchedules(project).catch(() => []);
-        const byName = new Map(runtime.map((s) => [s.name, s]));
-        const schedules = Object.entries(declared).map(([name, rec]) =>
-          toScheduleDto(name, rec, byName.get(name)),
-        );
-        return { schedules, mutationEnabled: cfg.scheduleMutationEnabled };
-      } catch (err) {
-        return sendProjectError(reply, err);
-      }
-    },
-  );
-
-  // Create or replace one schedule (keyed by name). Persists to project.yaml, then
-  // arms herdctl at runtime via the granular setAgentSchedule (no stale-leaving
-  // whole-agent replace). 403 when the deployment hasn't opted into mutation.
-  app.put<{ Params: { slug: string; name: string }; Body: unknown }>(
-    "/api/projects/:slug/schedules/:name",
-    async (req, reply) => {
-      if (!cfg.scheduleMutationEnabled) return sendMutationDisabled(reply);
-      const { slug, name } = req.params;
-      if (!isValidScheduleName(name)) {
-        return reply.code(400).send({ error: `Invalid schedule name: ${name}`, code: "invalid" });
-      }
-      const clean = sanitizeSchedule(req.body);
-      if (!clean) {
-        return reply.code(400).send({ error: "Invalid schedule definition", code: "invalid" });
-      }
-      try {
-        const project = await projects.setSchedule(slug, name, clean); // throws not_found/invalid
-        try {
-          await herdctl.setAgentSchedule(project, name, scheduleToHerdctl(clean));
-        } catch (err) {
-          req.log.warn({ err }, "runtime setAgentSchedule failed — armed on next restart");
-        }
-        return { schedule: toScheduleDto(name, clean), mutationEnabled: true };
-      } catch (err) {
-        return sendProjectError(reply, err);
-      }
-    },
-  );
-
-  // Delete one schedule. Removes it from project.yaml AND prunes herdctl's armed
-  // copy + persisted state (so a re-added name doesn't inherit stale last-run).
-  app.delete<{ Params: { slug: string; name: string } }>(
-    "/api/projects/:slug/schedules/:name",
-    async (req, reply) => {
-      if (!cfg.scheduleMutationEnabled) return sendMutationDisabled(reply);
-      const { slug, name } = req.params;
-      try {
-        const project = await projects.removeSchedule(slug, name); // throws not_found
-        try {
-          await herdctl.removeAgentSchedule(project, name);
-        } catch (err) {
-          req.log.warn({ err }, "runtime removeAgentSchedule failed");
-        }
-        return reply.code(200).send({ ok: true, name });
-      } catch (err) {
-        return sendProjectError(reply, err);
-      }
-    },
-  );
-
-  // Enable/disable one schedule. Flips herdctl's persisted enable-state (which is
-  // read, not config, so it wins over the armed copy) AND persists `enabled` back
-  // to project.yaml for restart parity. `:action` is `enable` | `disable`.
-  app.post<{ Params: { slug: string; name: string; action: string } }>(
-    "/api/projects/:slug/schedules/:name/:action(enable|disable)",
-    async (req, reply) => {
-      if (!cfg.scheduleMutationEnabled) return sendMutationDisabled(reply);
-      const { slug, name, action } = req.params;
-      const enable = action === "enable";
-      try {
-        const project = await projects.get(slug); // throws not_found
-        const rec = project.schedules?.[name];
-        if (!rec) {
-          return reply.code(404).send({ error: `No such schedule: ${name}`, code: "not_found" });
-        }
-        // Persist the flag to project.yaml (round-trips on restart) …
-        const updated = await projects.setSchedule(slug, name, { ...rec, enabled: enable });
-        // … and flip herdctl's persisted runtime state so it takes effect now.
-        let info: ScheduleRuntimeInfo | undefined;
-        try {
-          info = enable
-            ? await herdctl.enableSchedule(project, name)
-            : await herdctl.disableSchedule(project, name);
-        } catch (err) {
-          req.log.warn({ err }, `runtime ${action}Schedule failed — applied on next restart`);
-        }
-        const nextRec = updated.schedules?.[name] ?? { ...rec, enabled: enable };
-        return { schedule: toScheduleDto(name, nextRec, info), mutationEnabled: true };
-      } catch (err) {
-        return sendProjectError(reply, err);
-      }
-    },
-  );
-
-  // Trigger a schedule NOW — runs it through the same hub path a cron fire uses,
-  // so the resulting chat is a first-class, discoverable, `scheduled`-badged run
-  // (E1/#267). Allowed regardless of the mutation gate: it runs an already-declared
-  // schedule, it doesn't change the schedule set. `enabled: false` still fires (a
-  // manual trigger is deliberate — DD-1). Responds 202 with the started session id.
-  app.post<{ Params: { slug: string; name: string } }>(
-    "/api/projects/:slug/schedules/:name/trigger",
-    async (req, reply) => {
-      const { slug, name } = req.params;
-      try {
-        const project = await projects.get(slug); // throws not_found
-        if (!project.schedules?.[name]) {
-          return reply.code(404).send({ error: `No such schedule: ${name}`, code: "not_found" });
-        }
-        const sessionId = await fireSchedule(slug, name);
-        if (!sessionId) {
-          return reply
-            .code(502)
-            .send({ error: "Schedule fire did not start a chat", code: "trigger_failed" });
-        }
-        return reply.code(202).send({ ok: true, name, sessionId });
-      } catch (err) {
-        return sendProjectError(reply, err);
-      }
-    },
-  );
-
-  // --- hooks (Epic G / G4) -----------------------------------------------
-  // The per-project event-hook management surface the Hooks tab drives. A hook is
-  // an event-triggered agent `hook-<slug>-<name>` whose tool config IS its
-  // capability (GG-1); its DEFINITION lives in project.yaml (+ `.paddock/hooks/*.md`
-  // prompt files). Each route delegates to HookService, which persists to
-  // project.yaml FIRST (the source of truth — re-armed on restart) then registers
-  // the hook agent, warning-but-not-failing if the runtime arm hiccups.
-  //
-  // Unlike schedules there is NO per-deployment mutation gate on the tab: the
-  // coarse opt-in gate is only on the hook-management MCP (G5, `hooksMcpEnabled`),
-  // not on an operator using the UI. Enable/disable is NOT a separate verb — it's
-  // `set` (PUT) with the `enabled` field flipped (GG-3); new hooks default disabled.
-
-  // List a project's hooks (DTOs) + the picker's catalog: the grantable tools and
-  // the events a hook can fire on, so the Hooks tab renders a precise capability
-  // picker without hard-coding the tool list client-side.
-  app.get<{ Params: { slug: string } }>(
-    "/api/projects/:slug/hooks",
-    async (req, reply) => {
-      try {
-        const list = await hooks.list(req.params.slug); // throws not_found
-        return {
-          hooks: list,
-          grantableTools: GRANTABLE_TOOLS,
-          events: [...HOOK_EVENTS],
-        };
-      } catch (err) {
-        return sendProjectError(reply, err);
-      }
-    },
-  );
-
-  // Get one hook by name (404 when the project declares no such hook).
-  app.get<{ Params: { slug: string; name: string } }>(
-    "/api/projects/:slug/hooks/:name",
-    async (req, reply) => {
-      const { slug, name } = req.params;
-      try {
-        const hook = await hooks.get(slug, name); // throws not_found (project)
-        if (!hook) {
-          return reply.code(404).send({ error: `No such hook: ${name}`, code: "not_found" });
-        }
-        return { hook };
-      } catch (err) {
-        return sendProjectError(reply, err);
-      }
-    },
-  );
-
-  // Create or replace one hook (keyed by name). Persists to project.yaml, then
-  // registers (replaces) its `hook-<slug>-<name>` agent so it's immediately
-  // fireable. Enabling/disabling is the same route with `enabled` flipped.
-  app.put<{ Params: { slug: string; name: string }; Body: unknown }>(
-    "/api/projects/:slug/hooks/:name",
-    async (req, reply) => {
-      const { slug, name } = req.params;
-      if (!isValidHookName(name)) {
-        return reply.code(400).send({ error: `Invalid hook name: ${name}`, code: "invalid" });
-      }
-      // Reject a malformed record early (unknown/absent event) so the client gets a
-      // 400 instead of the store's generic error; HookService.set re-sanitises.
-      if (!sanitizeHook(req.body)) {
-        return reply.code(400).send({ error: "Invalid hook definition", code: "invalid" });
-      }
-      try {
-        const hook = await hooks.set(slug, name, req.body); // throws not_found/invalid
-        return { hook };
-      } catch (err) {
-        return sendProjectError(reply, err);
-      }
-    },
-  );
-
-  // Delete one hook. Removes it from project.yaml AND unregisters its agent.
-  app.delete<{ Params: { slug: string; name: string } }>(
-    "/api/projects/:slug/hooks/:name",
-    async (req, reply) => {
-      const { slug, name } = req.params;
-      try {
-        const removed = await hooks.remove(slug, name); // throws not_found (project)
-        return reply.code(200).send({ ok: true, name, removed });
-      } catch (err) {
-        return sendProjectError(reply, err);
-      }
-    },
-  );
-
   // --- triggers (Epic T "Unify Triggers" / T3) ----------------------------
-  // The per-project UNIFIED trigger management surface the Triggers tab (T4) will
-  // drive — the successor that collapses the paired hooks + schedules REST/verbs
+  // The per-project UNIFIED trigger management surface the Triggers tab drives —
+  // the sole successor that collapses the retired hooks + schedules REST/verbs
   // onto ONE `TriggerService` over `project.yaml`'s single `triggers` block. A
   // trigger is WHEN (`trigger`, a discriminated union `schedule|event|webhook`) +
   // WHAT (`run`, the shared agent-run definition) + `enabled`. Each route delegates
@@ -802,9 +515,7 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
   // if the runtime arm hiccups.
   //
   // Verb collapse (GG-3): enable/disable is NOT a separate route — it's `set` (PUT)
-  // with the `enabled` field flipped; new triggers default disabled. The `hooks:`
-  // + `schedules:` REST surfaces remain until the Triggers tab (T4) retires them;
-  // T3 lands the unified surface additively (see the PR notes).
+  // with the `enabled` field flipped; new triggers default disabled.
   const triggersGuard = (reply: import("fastify").FastifyReply): boolean => {
     if (!triggers) {
       reply.code(503).send({ error: "Trigger management is unavailable", code: "unavailable" });
@@ -1300,7 +1011,6 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
         readState.getLastSeen(user, keeper, s.sessionId);
       const provenanceOf = (s: import("@herdctl/core").DiscoveredSession) =>
         runProvenance.get(s.sessionId);
-      const hookOf = makeHookResolver(project);
       const triggerOf = makeTriggerResolver(project);
       // No usage resolver — see the GET /api/projects/:slug route (issue #116).
       // Usage rings are fetched separately so a list refresh stays cheap.
@@ -1313,7 +1023,6 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
           lastTurnAt,
           lastSeenOf,
           provenanceOf,
-          hookOf,
           triggerOf,
         ),
       };
@@ -1860,7 +1569,6 @@ function toChatDto(
   lastTurnCompletedAt?: string,
   lastSeen?: number,
   provenance?: RunProvenance | null,
-  hook?: ChatHookInfo | null,
   trigger?: ChatTriggerInfo | null,
 ) {
   const preview = previewOverride ?? s.preview;
@@ -1892,16 +1600,11 @@ function toChatDto(
     // "ran without me" cases. Absent when no marker was recorded (older chats,
     // or ones created before A1). Human origin renders no badge (the default).
     ...(provenance ? { provenance } : {}),
-    // For a HOOK chat (Epic G / G3, GG-6): the truthful-from-config capability
-    // descriptor — trigger event + granted tools — read from the same hook agent
-    // config herdctl enforces. Drives the floating capability banner atop the chat.
-    // Absent for non-hook chats.
-    ...(hook ? { hook } : {}),
     // For a TRIGGER chat (Epic T / T4): the truthful-from-config capability
     // descriptor — trigger type (schedule/event/webhook) + WHEN it fires + granted
     // tools — read from the same `trigger-<slug>-<name>` agent config herdctl
     // enforces. Drives the floating capability banner atop the chat. Absent for
-    // non-trigger chats (the unified successor to `hook`).
+    // non-trigger chats.
     ...(trigger ? { trigger } : {}),
   };
 }
@@ -1952,22 +1655,18 @@ async function buildProjectChats(
   provenanceOf?: (
     s: import("@herdctl/core").DiscoveredSession,
   ) => Promise<RunProvenance | undefined>,
-  hookOf?: (
-    s: import("@herdctl/core").DiscoveredSession,
-  ) => Promise<ChatHookInfo | undefined>,
   triggerOf?: (
     s: import("@herdctl/core").DiscoveredSession,
   ) => Promise<ChatTriggerInfo | undefined>,
 ) {
   return Promise.all(
     sessions.map(async (s) => {
-      // Resolve the usage ring, archived flag, read-state, provenance, hook/trigger, name.
+      // Resolve the usage ring, archived flag, read-state, provenance, trigger, name.
       const usage = usageOf ? await usageOf(s).catch(() => null) : null;
       const archived = archivedOf ? await archivedOf(s).catch(() => false) : false;
       const turnAt = lastTurnAt?.get(s.sessionId);
       const lastSeen = lastSeenOf ? await lastSeenOf(s).catch(() => 0) : 0;
       const provenance = provenanceOf ? await provenanceOf(s).catch(() => null) : null;
-      const hook = hookOf ? await hookOf(s).catch(() => undefined) : undefined;
       const trigger = triggerOf ? await triggerOf(s).catch(() => undefined) : undefined;
       // A preview polluted by a machine-prepended wrapper: the preload context
       // block (#1) and/or the composer-attachment block (#328). Either makes the
@@ -1977,7 +1676,7 @@ async function buildProjectChats(
         !s.autoName &&
         (s.preview?.startsWith(PRELOAD_CONTEXT_OPEN) || s.preview?.startsWith(ATTACHMENTS_OPEN));
       if (!pollutedPreview)
-        return toChatDto(s, undefined, usage, archived, turnAt, lastSeen, provenance, hook, trigger);
+        return toChatDto(s, undefined, usage, archived, turnAt, lastSeen, provenance, trigger);
 
       const full = await readFirstUserText(projectDir, s.sessionId).catch(() => undefined);
       // Strip preload FIRST (it wraps the whole thing), then the attachment block
@@ -1985,43 +1684,17 @@ async function buildProjectChats(
       const cleaned = stripAttachmentsWrapper(stripPreloadWrapper(full ?? s.preview ?? "")).trim();
       // couldn't recover
       if (!cleaned)
-        return toChatDto(s, undefined, usage, archived, turnAt, lastSeen, provenance, hook, trigger);
+        return toChatDto(s, undefined, usage, archived, turnAt, lastSeen, provenance, trigger);
       const preview =
         cleaned.length > PREVIEW_MAX ? `${cleaned.slice(0, PREVIEW_MAX)}...` : cleaned;
-      return toChatDto(s, preview, usage, archived, turnAt, lastSeen, provenance, hook, trigger);
+      return toChatDto(s, preview, usage, archived, turnAt, lastSeen, provenance, trigger);
     }),
   );
 }
 
 /**
- * Build the `hookOf` resolver for {@link buildProjectChats} (Epic G / G3, GG-6):
- * for a chat whose attributed agent is a `hook-<slug>-<name>` agent, resolve its
- * hook's truthful-from-config capability descriptor for the floating capability
- * banner. Returns `undefined` for every non-hook chat (the common case).
- *
- * Built from the ALREADY-LOADED project record (the route has it in hand), so this
- * adds no extra disk reads: the project's declared hooks are projected ONCE into an
- * `agentName -> ChatHookInfo` map (via the same `toHookDto` → `toChatHookInfo`
- * projection `HookService` uses, so the descriptor is truthful from config), and each
- * hook chat is an O(1) map lookup. The `HOOK_AGENT_PREFIX` fast-path skips even the
- * lookup for the keeper chats that dominate the list.
- */
-function makeHookResolver(
-  project: Project,
-): (s: import("@herdctl/core").DiscoveredSession) => Promise<ChatHookInfo | undefined> {
-  const byAgentName = new Map<string, ChatHookInfo>();
-  for (const [name, hook] of Object.entries(project.hooks ?? {})) {
-    byAgentName.set(hookAgentName(project.slug, name), toChatHookInfo(toHookDto(project.slug, name, hook)));
-  }
-  return async (s) => {
-    if (!s.agentName || !s.agentName.startsWith(HOOK_AGENT_PREFIX)) return undefined;
-    return byAgentName.get(s.agentName);
-  };
-}
-
-/**
  * Build the `triggerOf` resolver for {@link buildProjectChats} (Epic T / T4 — the
- * unified successor to {@link makeHookResolver}): for a chat whose attributed agent
+ * Epic T / T4): for a chat whose attributed agent
  * is a `trigger-<slug>-<name>` agent, resolve its trigger's truthful-from-config
  * capability descriptor for the floating capability banner. Returns `undefined` for
  * every non-trigger chat (the common case).
@@ -2093,30 +1766,6 @@ export function parseRangeHeader(
   }
   if (start > end || start >= total) return "unsatisfiable";
   return { start, end };
-}
-
-/**
- * The slice of herdctl's `ScheduleInfo` the schedules DTO surfaces (issue #266 /
- * D4): live runtime state herdctl tracks for an armed schedule. Kept as a local
- * structural type so routes don't depend on `@herdctl/core`'s import surface.
- */
-interface ScheduleRuntimeInfo {
-  status: "idle" | "running" | "disabled";
-  lastRunAt: string | null;
-  nextRunAt: string | null;
-  lastError: string | null;
-}
-
-/**
- * 403 for a schedule-mutation route when the deployment hasn't opted into
- * programmatic schedule mutation (`PADDOCK_SCHEDULE_MUTATION` off, DD-7). The pane
- * renders read-only in this case; this guards the API directly too.
- */
-function sendMutationDisabled(reply: import("fastify").FastifyReply) {
-  return reply.code(403).send({
-    error: "Schedule mutation is disabled on this deployment",
-    code: "schedule_mutation_disabled",
-  });
 }
 
 function sendProjectError(reply: import("fastify").FastifyReply, err: unknown) {

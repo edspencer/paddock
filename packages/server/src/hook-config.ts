@@ -18,14 +18,12 @@
  *  - {@link hookToAgentToolConfig} — project a hook's {@link HookCapabilities} onto
  *    the exact herdctl agent tool-config fields, so the hook agent enforces the
  *    capability by construction (the capability banner in G6 is therefore truthful).
- *  - {@link hookPromptFileAbsPath} — resolve a `promptFile` to an absolute path under
  *    the project's `.paddock/hooks/` dir, rejecting traversal / non-`.md`.
  *
  * Keeping this off `projects.ts`/`herdctl.ts` makes each piece unit-testable in
  * isolation and gives G3/G4/G5 (visibility, Hooks tab, hook MCP) ONE frozen shape to
  * build against.
  */
-import path from "node:path";
 
 /**
  * The lifecycle events a hook can trigger on. v1 wires **`onArchive`** (fired after
@@ -149,32 +147,6 @@ export interface ChatHookInfo {
   /** The hook's max agent turns (its runaway bound). */
   maxTurns: number;
 }
-
-/**
- * Project a persisted hook ({@link HookDto} fields) onto the web-facing
- * {@link ChatHookInfo}, resolving the SAME capability defaults
- * {@link hookToAgentToolConfig} uses so the banner mirrors the enforced grant
- * exactly: an absent/empty allow-list surfaces as a tool-less `[]`, and an unset
- * `maxTurns` surfaces the {@link HOOK_DEFAULT_MAX_TURNS} bound herdctl applies.
- */
-export function toChatHookInfo(dto: HookDto): ChatHookInfo {
-  const caps = dto.capabilities;
-  const info: ChatHookInfo = {
-    name: dto.name,
-    event: dto.event,
-    agentName: dto.agentName,
-    enabled: dto.enabled === true,
-    allowedTools: caps?.allowedTools ?? [],
-    maxTurns: caps?.maxTurns ?? HOOK_DEFAULT_MAX_TURNS,
-  };
-  if (caps?.deniedTools) info.deniedTools = caps.deniedTools;
-  if (caps?.permissionMode) info.permissionMode = caps.permissionMode;
-  if (caps?.model) info.model = caps.model;
-  return info;
-}
-
-/** The dir (relative to a project's working dir) holding keeper-editable prompts. */
-export const HOOK_PROMPT_DIR = path.join(".paddock", "hooks");
 
 /** Default max agent turns for a hook when its capabilities don't set one. */
 export const HOOK_DEFAULT_MAX_TURNS = 30;
@@ -375,22 +347,4 @@ export function hookToAgentToolConfig(caps: HookCapabilities | undefined): Recor
   if (caps?.permissionMode) out.permission_mode = caps.permissionMode;
   if (caps?.model) out.model = caps.model;
   return out;
-}
-
-/**
- * Resolve a `promptFile` to an absolute path under the project's `.paddock/hooks/`
- * dir, or `null` if it escapes that dir, is absolute, or isn't a `.md` file. The
- * name is treated as relative to the hooks dir (so a bare `"cleanup.md"` resolves to
- * `<workingDir>/.paddock/hooks/cleanup.md`). Byte-for-byte the schedule twin's guard.
- */
-export function hookPromptFileAbsPath(workingDir: string, promptFile: string): string | null {
-  if (typeof promptFile !== "string" || promptFile.trim() === "") return null;
-  const rel = promptFile.trim();
-  if (path.isAbsolute(rel)) return null;
-  const base = path.resolve(workingDir, HOOK_PROMPT_DIR);
-  const target = path.resolve(base, rel);
-  const within = target === base || target.startsWith(base + path.sep);
-  if (!within) return null;
-  if (!target.toLowerCase().endsWith(".md")) return null;
-  return target;
 }
