@@ -18,6 +18,7 @@ import { api } from "../lib/api";
 import { readChatModel, writeChatModel } from "../lib/chatModel";
 import { readDraft, writeDraft } from "../lib/draft";
 import { readQueued, writeQueued, readQueuedTs, writeQueuedTs } from "../lib/queued";
+import { readAttachmentRefs, writeAttachmentRefs } from "../lib/attachmentRefs";
 import {
   AlertIcon,
   BranchIcon,
@@ -402,7 +403,13 @@ export function ChatPane({
   // --- composer attachments (issue #328) -------------------------------------
   // Files the user has picked/dropped/pasted and uploaded to the store, held
   // until send. `attachRef` mirrors it for the send callback (like `queuedRef`).
-  const [attachments, setAttachments] = useState<AttachmentRef[]>([]);
+  // Issue #346: seed from any staged refs persisted for this chat so they survive
+  // a chat switch / reload instead of being silently dropped (mirrors the composer
+  // draft above; the bytes live durably server-side, so only the refs need saving —
+  // see lib/attachmentRefs.ts).
+  const [attachments, setAttachments] = useState<AttachmentRef[]>(() =>
+    readAttachmentRefs(initialSessionId, projectSlug),
+  );
   const attachRef = useRef<AttachmentRef[]>([]);
   attachRef.current = attachments;
   const [uploading, setUploading] = useState(false);
@@ -697,6 +704,16 @@ export function ChatPane({
     writeQueued(initialSessionId, projectSlug, queued);
     writeQueuedTs(initialSessionId, projectSlug, queued ? queuedTsRef.current : null);
   }, [queued, initialSessionId, projectSlug]);
+
+  // Issue #346: persist the staged composer attachments so they survive a chat
+  // switch / reload too — otherwise navigating away and back silently drops them
+  // while the draft text right next to them is restored. Every tray mutation
+  // (add / remove / clear-on-send) flows through setAttachments, so keying off
+  // `attachments` covers them all; writing an empty list forgets the key. Only the
+  // lightweight refs are stored (the bytes are durable server-side).
+  useEffect(() => {
+    writeAttachmentRefs(initialSessionId, projectSlug, attachments);
+  }, [attachments, initialSessionId, projectSlug]);
 
   // Push the queued message to the server (#197/#245) — the server is authoritative
   // for auto-send, so this pane just keeps the server's copy in sync. Carries the

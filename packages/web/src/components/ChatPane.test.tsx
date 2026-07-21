@@ -806,6 +806,77 @@ describe("ChatPane: draft persistence", () => {
   });
 });
 
+describe("ChatPane: attachment persistence (#346)", () => {
+  const STAGED = JSON.stringify([
+    { id: "att-1", filename: "diagram.png", kind: "image" },
+    { id: "att-2", filename: "notes.txt", kind: "text", size: 42 },
+  ]);
+
+  it("restores persisted attachment refs into the tray on mount (new chat)", async () => {
+    localStorage.setItem("paddock:attachments:new:proj", STAGED);
+    render(<ChatPane projectSlug="proj" isProjectChat />);
+    await screen.findByRole("button", { name: /^Send$/ });
+    const tray = await screen.findByTestId("attachment-tray");
+    expect(tray).toBeInTheDocument();
+    expect(screen.getByText("diagram.png")).toBeInTheDocument();
+    expect(screen.getByText("notes.txt")).toBeInTheDocument();
+    // A restored attachment (no text) enables Send on its own (#328).
+    expect(screen.getByRole("button", { name: /^Send$/ })).toBeEnabled();
+  });
+
+  it("keys a resumed chat's attachments by its session id", async () => {
+    localStorage.setItem("paddock:attachments:sess-1", STAGED);
+    const loadHistory = vi.fn().mockResolvedValue([]);
+    render(
+      <ChatPane
+        projectSlug="proj"
+        initialSessionId="sess-1"
+        loadHistory={loadHistory}
+        isProjectChat
+      />,
+    );
+    expect(await screen.findByText("diagram.png")).toBeInTheDocument();
+  });
+
+  it("does not restore attachments for a scratch (non-project) chat", async () => {
+    localStorage.setItem("paddock:attachments:new:proj", STAGED);
+    render(<ChatPane projectSlug="proj" />);
+    await screen.findByRole("button", { name: /^Send$/ });
+    // The tray is project-chat-only (upload endpoint is project-scoped, #328).
+    expect(screen.queryByTestId("attachment-tray")).not.toBeInTheDocument();
+  });
+
+  it("removing a staged attachment updates the persisted refs", async () => {
+    localStorage.setItem("paddock:attachments:new:proj", STAGED);
+    render(<ChatPane projectSlug="proj" isProjectChat />);
+    await screen.findByTestId("attachment-tray");
+    const removeBtns = screen.getAllByTestId("attachment-remove");
+    fireEvent.click(removeBtns[0]);
+    await waitFor(() => {
+      const stored = JSON.parse(localStorage.getItem("paddock:attachments:new:proj") ?? "[]");
+      expect(stored.map((r: { id: string }) => r.id)).toEqual(["att-2"]);
+    });
+  });
+
+  it("sends restored attachments and clears the persisted refs on send", async () => {
+    localStorage.setItem("paddock:attachments:new:proj", STAGED);
+    render(<ChatPane projectSlug="proj" isProjectChat />);
+    const box = await screen.findByPlaceholderText(/Message the keeper agent/i);
+    await screen.findByTestId("attachment-tray");
+    await userEvent.type(box, "here you go");
+    fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
+    // The turn carried the restored attachment refs on the wire (#328).
+    expect(sends).toHaveLength(1);
+    const opts = sends[0].opts as { attachments?: Array<{ id: string }> };
+    expect(opts.attachments?.map((a) => a.id)).toEqual(["att-1", "att-2"]);
+    // The tray cleared and the stored refs were forgotten (mirrors draft clear).
+    await waitFor(() =>
+      expect(localStorage.getItem("paddock:attachments:new:proj")).toBeNull(),
+    );
+    expect(screen.queryByTestId("attachment-tray")).not.toBeInTheDocument();
+  });
+});
+
 describe("ChatPane: fork", () => {
   it("shows a 'Fork of <parent>' back-link and navigates to the parent on click", async () => {
     const onOpenForkParent = vi.fn();
