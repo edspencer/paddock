@@ -1,5 +1,51 @@
 # @paddock/web
 
+## 0.40.0
+
+### Minor Changes
+
+- [#370](https://github.com/edspencer/paddock/pull/370) [`5337925`](https://github.com/edspencer/paddock/commit/5337925c6dc55cff7b62d463f4f1cfc4f1104b40) Thanks [@edspencer](https://github.com/edspencer)! - Promote a **notebook** project into a **repo-backed** one _in place_ (#213),
+  preserving its chats and sidecar metadata. Repo-backing was previously set only at
+  creation (`repo` immutable, #187/#194); this relaxes that on one path so a
+  history-rich notebook can attach an external git repo without a teardown/recreate.
+
+  `ProjectStore.promote(slug, repo)` clones the repo into the nested `.gitignore`d
+  checkout (clone-first with rollback — a clone failure leaves the notebook wholly
+  intact), sets `repo:` in `project.yaml` (flipping the keeper's cwd to the checkout so
+  the repo's own `CLAUDE.md`/git/PR flow apply), writes the sidecar `.gitignore`
+  (`/<repo-name>/` + `/.chats/`), and removes the notebook's sweeper-owned `CLAUDE.md`
+  (the repo's own takes over). Existing chats need no transcript surgery: they already
+  live in `.chats/`, and re-registering the keeper re-symlinks the new cwd's encoded
+  transcript path at that same store, so every chat stays listed and resumable.
+
+  Surfaced as `POST /api/projects/:slug/promote` and a two-step-confirm "Repository
+  backing" section in the project Settings tab (a repo-backed project shows its backing
+  read-only — promotion is one-way).
+
+### Patch Changes
+
+- [#371](https://github.com/edspencer/paddock/pull/371) [`29b92f0`](https://github.com/edspencer/paddock/commit/29b92f0b50beec6edefb041f26448891da0102a3) Thanks [@edspencer](https://github.com/edspencer)! - Bump `@herdctl/core` to `^5.23.0` and `@herdctl/chat` to `^0.8.0`. This herdctl
+  release carries inline-image support (herdctl #385/#386 — image content blocks are
+  preserved through extraction and translation) and token-accounting fixes
+  (herdctl #378). `@herdctl/core` is deduped to a single installed version (5.23.0),
+  which is also what `@herdctl/chat@0.8.0` resolves — no split/duplicated core.
+
+- [#368](https://github.com/edspencer/paddock/pull/368) [`0c669aa`](https://github.com/edspencer/paddock/commit/0c669aa7db44978be54b195e5d3e3e8f0908da0e) Thanks [@edspencer](https://github.com/edspencer)! - fix(#365): keep the voice-dictation mic usable while the keeper is replying
+
+  The composer's mic button was disabled for the whole in-flight turn (`ChatPane`
+  passed `disabled={streaming}` to `DictationButton`), so voice was locked out
+  precisely when hands-free queuing is most useful — you could type a follow-up
+  and have it queue mid-turn, but you couldn't dictate one.
+
+  The mic now follows the same enabled semantics as the composer's text input: it
+  is interactive regardless of turn state. A clip dictated during a live turn
+  transcribes into the composer draft exactly like typing, and submitting it
+  follows the existing single-slot queue-while-streaming path (`QueuedMessageStore`,
+  auto-flush after the turn) — no new send path. Idle behaviour and transcription-
+  error surfacing are unchanged. The now-unused composer-busy `disabled` prop was
+  dropped from `DictationButton` (its own record/transcribe/error state still
+  governs what a click does).
+
 ## 0.39.1
 
 ## 0.39.0

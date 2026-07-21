@@ -1,5 +1,63 @@
 # @paddock/server
 
+## 0.40.0
+
+### Minor Changes
+
+- [#370](https://github.com/edspencer/paddock/pull/370) [`5337925`](https://github.com/edspencer/paddock/commit/5337925c6dc55cff7b62d463f4f1cfc4f1104b40) Thanks [@edspencer](https://github.com/edspencer)! - Promote a **notebook** project into a **repo-backed** one _in place_ (#213),
+  preserving its chats and sidecar metadata. Repo-backing was previously set only at
+  creation (`repo` immutable, #187/#194); this relaxes that on one path so a
+  history-rich notebook can attach an external git repo without a teardown/recreate.
+
+  `ProjectStore.promote(slug, repo)` clones the repo into the nested `.gitignore`d
+  checkout (clone-first with rollback — a clone failure leaves the notebook wholly
+  intact), sets `repo:` in `project.yaml` (flipping the keeper's cwd to the checkout so
+  the repo's own `CLAUDE.md`/git/PR flow apply), writes the sidecar `.gitignore`
+  (`/<repo-name>/` + `/.chats/`), and removes the notebook's sweeper-owned `CLAUDE.md`
+  (the repo's own takes over). Existing chats need no transcript surgery: they already
+  live in `.chats/`, and re-registering the keeper re-symlinks the new cwd's encoded
+  transcript path at that same store, so every chat stays listed and resumable.
+
+  Surfaced as `POST /api/projects/:slug/promote` and a two-step-confirm "Repository
+  backing" section in the project Settings tab (a repo-backed project shows its backing
+  read-only — promotion is one-way).
+
+### Patch Changes
+
+- [#371](https://github.com/edspencer/paddock/pull/371) [`29b92f0`](https://github.com/edspencer/paddock/commit/29b92f0b50beec6edefb041f26448891da0102a3) Thanks [@edspencer](https://github.com/edspencer)! - Bump `@herdctl/core` to `^5.23.0` and `@herdctl/chat` to `^0.8.0`. This herdctl
+  release carries inline-image support (herdctl #385/#386 — image content blocks are
+  preserved through extraction and translation) and token-accounting fixes
+  (herdctl #378). `@herdctl/core` is deduped to a single installed version (5.23.0),
+  which is also what `@herdctl/chat@0.8.0` resolves — no split/duplicated core.
+
+- [#366](https://github.com/edspencer/paddock/pull/366) [`41f6740`](https://github.com/edspencer/paddock/commit/41f6740516c51f9eac60e4ef4b04af23c0dbbd11) Thanks [@edspencer](https://github.com/edspencer)! - Narrow the keeper's over-broad `rm -rf` deny rule (#179). The default
+  `denied_tools` list carried `Bash(rm -rf /*)`, whose trailing `*` made it a
+  prefix match on `rm -rf /` — so it denied **every** absolute-path delete,
+  including the keeper cleaning up its own scratch/clone dirs
+  (`rm -rf /tmp/foo`, `rm -rf /var/lib/.../clones/x`), while giving false
+  security (a relative `rm -rf clones/x` sailed straight through). The rule is
+  replaced with a narrow, honest set of catastrophic root/home/system-dir
+  patterns (`rm -rf /`, `rm -rf / <args>`, `rm -rf ~`/`$HOME`, and bare top-level
+  system dirs matched exactly) that leaves legitimate absolute-path cleanup under
+  project/tmp roots untouched. `sudo *` and `chmod 777 *` are unchanged. This
+  denylist is best-effort defence-in-depth, not a sandbox — real per-agent
+  filesystem isolation is tracked separately (#7).
+
+- [#367](https://github.com/edspencer/paddock/pull/367) [`c750e03`](https://github.com/edspencer/paddock/commit/c750e03b35364649d779227217d0a94974e34072) Thanks [@edspencer](https://github.com/edspencer)! - Fix RunProvenance mislabelling a human chat as "scheduled" (#353). A session
+  wake is a _resume_, not a _creation_: `onSessionWake` fires when a
+  `ScheduleWakeup`/`/loop` resumes an already-existing chat, and it never creates
+  one. It was stamping `stampIfAbsent(SCHEDULED_ROOT)`, which was correct only for
+  chats that already carried a creation stamp — but a chat that predates
+  provenance stamping (empty slot) and later arms a `ScheduleWakeup` would get
+  falsely labelled `scheduled` on its first wake, badging a human-rooted chat as a
+  cron root.
+
+  The wake path no longer stamps a creation origin at all. Genuinely
+  schedule-_created_ chats are already stamped `scheduled` at creation
+  (`fireTriggerForProject` → `startAgentTurn`), so nothing is lost for them;
+  legacy/blank chats now stay unbadged (the correct outcome for a human chat)
+  instead of mislabelled.
+
 ## 0.39.1
 
 ### Patch Changes
