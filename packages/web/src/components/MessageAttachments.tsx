@@ -67,7 +67,11 @@ export function AttachmentTrayItem({
   onRemove: (id: string) => void;
 }) {
   const url = attachmentRawUrl(attachment.id);
-  const isImage = attachment.kind === "image";
+  // Fall back to the generic file icon if the image can't load — a persisted ref
+  // (issue #346) may point at a store file that was later cleaned up, and a 404
+  // must degrade to a chip rather than showing a broken-image glyph.
+  const [imgFailed, setImgFailed] = useState(false);
+  const isImage = attachment.kind === "image" && !imgFailed;
   const size = formatFileSize(attachment.size);
   return (
     <span
@@ -78,6 +82,7 @@ export function AttachmentTrayItem({
         <img
           src={url}
           alt={attachment.filename}
+          onError={() => setImgFailed(true)}
           className="h-9 w-9 shrink-0 rounded-md object-cover"
         />
       ) : (
