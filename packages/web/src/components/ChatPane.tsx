@@ -72,8 +72,11 @@ import {
   formatTokens,
   formatUsd,
   isCompactContinuation,
+  isLocalCommandCaveat,
+  isLocalCommandStdout,
   isTaskNotification,
   isTerminatedTaskStatus,
+  localCommandStdout,
   slashCommandEcho,
   taskNotificationStatus,
   taskNotificationSummary,
@@ -104,6 +107,11 @@ type Turn =
   // A `/compact` (or other) slash-command echo, rendered as a compact chip
   // rather than the raw `<command-name>…` XML as a user bubble (issue #106).
   | { kind: "command"; id: string; command: string }
+  // The rendered output of a client-local command (`/context`, `/usage`, …),
+  // recovered from its `<local-command-stdout>` block and shown as a labeled
+  // markdown output block instead of a raw-XML user bubble — or vanishing
+  // entirely, which is the default behavior this fixes (issue #158).
+  | { kind: "commandOutput"; id: string; content: string }
   // CC's post-compaction continuation summary, rendered as a "conversation
   // compacted" boundary (the summary is revealable) instead of a user bubble,
   // so a compacted chat no longer looks corrupted (issue #106).
@@ -1892,6 +1900,29 @@ function ConnDot({ state }: { state: ConnectionState }) {
  * text tucked behind a disclosure so nothing is lost but the chat no longer looks
  * like it ended on a stray user message.
  */
+/**
+ * The rendered output of a client-local slash command (`/context`, `/usage`, …),
+ * recovered from its `<local-command-stdout>` block (issue #158). Shown as a
+ * labeled, assistant-styled block — the output is genuine (markdown tables, cost
+ * summaries), it just lives in a transcript entry the herdctl parser/translator
+ * drop — so it reads as command output, not a message the human or the agent
+ * typed. Paddock's own context ring + cost meter remain the primary usage view;
+ * this simply stops the output vanishing (or rendering as raw XML).
+ */
+function LocalCommandOutput({ content }: { content: string }) {
+  return (
+    <div className="flex animate-fade-in justify-start">
+      <div className="max-w-[92%] rounded-2xl rounded-bl-md bg-paddock-50 px-4 py-2.5 text-ink shadow-sm ring-1 ring-paddock-200/70 dark:bg-paddock-950 dark:text-ink-dark dark:ring-paddock-800">
+        <div className="mb-1 flex items-center gap-1 text-[11px] italic text-ink-subtle/80 dark:text-ink-dark/60">
+          <span aria-hidden>⌨</span>
+          <span>command output</span>
+        </div>
+        <Markdown>{content}</Markdown>
+      </div>
+    </div>
+  );
+}
+
 function CompactBoundary({ summary }: { summary: string }) {
   return (
     <div className="animate-fade-in py-1">
@@ -2018,6 +2049,14 @@ const TurnView = memo(function TurnView({ turn }: { turn: Turn }) {
         </span>
       </div>
     );
+  }
+  if (turn.kind === "commandOutput") {
+    // The rendered output of a client-local command (`/context`, `/usage`, …),
+    // recovered from its `<local-command-stdout>` block (issue #158). An empty
+    // payload (a display-only command that produced nothing, or the dropped
+    // `<local-command-caveat>`) renders nothing at all.
+    if (!turn.content) return null;
+    return <LocalCommandOutput content={turn.content} />;
   }
   if (turn.kind === "compact") {
     return <CompactBoundary summary={turn.summary} />;
@@ -2701,6 +2740,21 @@ function historyToTurn(m: HistoryMessage, id: string): Turn {
   const command = slashCommandEcho(m.content);
   if (command) {
     return { kind: "command", id, command };
+  }
+  // A client-local display command (`/context`, `/usage`, …) writes its rendered
+  // output as a `<local-command-stdout>` block and a `<local-command-caveat>`
+  // framing note (issue #158). Surface the stdout as a labeled output block and
+  // drop the caveat — both would otherwise render as raw-XML user bubbles. Route
+  // ANY stdout wrapper here (even an empty one) so an empty block collapses to
+  // nothing rather than falling through to the raw-XML user-bubble fallback — the
+  // last line of defense regardless of which path injected it.
+  if (isLocalCommandStdout(m.content)) {
+    return { kind: "commandOutput", id, content: localCommandStdout(m.content) ?? "" };
+  }
+  if (isLocalCommandCaveat(m.content)) {
+    // Harness scaffolding with no reader value — collapse to an empty command
+    // chip's sibling (a hidden marker); rendered as nothing (see toRenderedTurn).
+    return { kind: "commandOutput", id, content: "" };
   }
   // A background-agent `<task-notification>` block (harness metadata, not typed
   // by the human) — a subtle status line instead of a raw-XML bubble (issue #181).

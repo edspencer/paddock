@@ -35,6 +35,7 @@ import { projectChatsDir } from "./transcripts.js";
 import { fileKind } from "./projects.js";
 import { enrichWithSubagents } from "./subagents.js";
 import { enrichWithBackground } from "./background.js";
+import { enrichWithLocalCommands } from "./localcommand.js";
 import {
   SAFE_SEGMENT,
   statMtimeMs,
@@ -471,7 +472,7 @@ export async function attachToolDetails(
  * The single history-enrichment orchestrator (issue #237). Composes the three
  * server-side passes so the routes call one function: sub-agent recovery (#37) →
  * generalized per-tool detail (#237, subsuming #232's edit diff) → background /
- * task-notification folding (#230).
+ * task-notification folding (#230) → local-command stdout recovery (#158).
  */
 export async function enrichWithToolDetails(
   projectDir: string,
@@ -480,5 +481,6 @@ export async function enrichWithToolDetails(
 ): Promise<EnrichedMessage[]> {
   const withSubagents = await enrichWithSubagents(projectDir, sessionId, messages);
   const withDetails = await attachToolDetails(projectDir, sessionId, withSubagents);
-  return enrichWithBackground(withDetails);
+  const withBackground = enrichWithBackground(withDetails);
+  return enrichWithLocalCommands(projectDir, sessionId, withBackground);
 }

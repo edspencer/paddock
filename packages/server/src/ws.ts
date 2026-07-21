@@ -212,6 +212,65 @@ export function extractUsage(m: SDKMessage): ExtractedUsage {
   return { usage: anyTokens ? usage : null, model };
 }
 
+/** The `<synthetic>` model marker CC stamps on placeholder assistant turns. */
+const SYNTHETIC_MODEL = "<synthetic>";
+/**
+ * Bare synthetic placeholders that carry no output worth surfacing — e.g. the
+ * "No response requested." turn CC injects after a `/compact` continuation. Only a
+ * synthetic message with *substantive* text is a genuine local-command result.
+ */
+const SYNTHETIC_PLACEHOLDERS = new Set(["No response requested."]);
+
+/**
+ * The rendered output of a client-local slash command (`/context`, `/usage`, …) to
+ * surface as an assistant note, or null when this SDK message isn't one (issue #158).
+ *
+ * The interactive TUI renders these locally; a non-interactive SDK session (Paddock's
+ * path) instead surfaces the output as EITHER a `type:"system"` / `local_command`
+ * entry (its `content` wraps the output in `<local-command-stdout>…`) or a
+ * `model:"<synthetic>"` assistant placeholder carrying the text. @herdctl/chat's
+ * translator drops both (synthetic messages are skipped; system entries aren't text),
+ * so the live command turn would otherwise read as a silent no-op. We recover the text
+ * and emit it as an assistant note (mirroring the `compact_boundary` special-case),
+ * consistent with the history-path recovery in `localcommand.ts`. Bare placeholders
+ * (e.g. `/compact`'s "No response requested.") yield null so they stay quiet. Paddock's
+ * own context ring + cost meter remain the primary usage view; this just stops the
+ * output vanishing.
+ */
+export function extractLocalCommandOutput(m: SDKMessage): string | null {
+  const raw = m as unknown as {
+    type?: string;
+    subtype?: string;
+    content?: unknown;
+    message?: { model?: unknown; content?: unknown } | unknown;
+  };
+  // Disk/canonical form: a `system` / `local_command` entry wrapping the stdout.
+  if (raw.type === "system" && raw.subtype === "local_command") {
+    const content = typeof raw.content === "string" ? raw.content : "";
+    const inner = /<local-command-stdout>([\s\S]*)<\/local-command-stdout>/.exec(content)?.[1];
+    const text = (inner ?? "").trim();
+    return text.length > 0 ? text : null;
+  }
+  // Live/stream form: a synthetic placeholder assistant message carrying the text.
+  if (raw.type !== "assistant") return null;
+  const inner =
+    raw.message && typeof raw.message === "object"
+      ? (raw.message as { model?: unknown; content?: unknown })
+      : undefined;
+  if (!inner || inner.model !== SYNTHETIC_MODEL) return null;
+  let text = "";
+  if (typeof inner.content === "string") text = inner.content;
+  else if (Array.isArray(inner.content)) {
+    for (const block of inner.content) {
+      const b = block as { type?: unknown; text?: unknown };
+      if (b?.type === "text" && typeof b.text === "string") text += b.text;
+    }
+  }
+  text = text.trim();
+  if (text.length === 0 || SYNTHETIC_PLACEHOLDERS.has(text)) return null;
+  return text;
+}
+
 /**
  * The context snapshot a usage block implies: the tokens resident in the model's
  * context window for this turn (fresh input + cache reads + cache creation).
@@ -2779,6 +2838,18 @@ export function makeChatHandler(deps: {
                 type: "chat:response",
                 payload: { ...routing(), chunk: `🗜️ Context compacted${detail}.` },
               });
+              turn.emit({ type: "chat:message_boundary", payload: routing() });
+              return;
+            }
+            // Surface a client-local command's output (`/context`, `/usage`, …). CC
+            // returns it as a `model:"<synthetic>"` assistant message the translator
+            // drops as a placeholder (and, on disk, a `system`/`local_command` entry
+            // the history parser drops), so re-emit its text as an assistant note
+            // (issue #158) instead of the turn reading as a silent no-op. Trivial
+            // placeholders (e.g. `/compact`'s "No response requested.") are filtered out.
+            const localOut = extractLocalCommandOutput(m);
+            if (localOut) {
+              turn.emit({ type: "chat:response", payload: { ...routing(), chunk: localOut } });
               turn.emit({ type: "chat:message_boundary", payload: routing() });
               return;
             }
