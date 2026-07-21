@@ -33,12 +33,19 @@ export default defineConfig({
 					attrs: { type: 'module' },
 					content: `import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs'; mermaid.initialize({ startOnLoad: true, theme: 'dark' });`,
 				},
-				// OpenGraph / Twitter card
-				{ tag: 'meta', attrs: { property: 'og:title', content: 'Paddock — Claude Code agents, organized by project' } },
-				{ tag: 'meta', attrs: { property: 'og:description', content: 'Persistent, resumable Claude Code sessions with a web UI, built on herdctl.' } },
-				{ tag: 'meta', attrs: { property: 'og:type', content: 'website' } },
-				{ tag: 'meta', attrs: { property: 'og:url', content: 'https://paddock.edspencer.net' } },
-				{ tag: 'meta', attrs: { name: 'twitter:card', content: 'summary_large_image' } },
+				// Social-share image. Starlight already emits PER-PAGE og:title,
+				// og:description, og:url (canonical) and twitter:card=summary_large_image
+				// (see @astrojs/starlight/utils/head.ts), and a user `head` entry
+				// OVERRIDES those — so we must NOT restate them here (doing so pinned
+				// every page's unfurl to the homepage's title/description/URL). The one
+				// thing Starlight has no default for is the image, so a large-image card
+				// rendered empty. Supply a single global og:image/twitter:image (absolute
+				// URLs, as required by crawlers); the per-page title/description still win.
+				{ tag: 'meta', attrs: { property: 'og:image', content: 'https://paddock.edspencer.net/og-image.png' } },
+				{ tag: 'meta', attrs: { property: 'og:image:width', content: '1200' } },
+				{ tag: 'meta', attrs: { property: 'og:image:height', content: '630' } },
+				{ tag: 'meta', attrs: { property: 'og:image:alt', content: 'Paddock — your Claude Code agents, hosted and organized by project' } },
+				{ tag: 'meta', attrs: { name: 'twitter:image', content: 'https://paddock.edspencer.net/og-image.png' } },
 			],
 			social: [
 				{ icon: 'github', label: 'GitHub', href: 'https://github.com/edspencer/paddock' },
