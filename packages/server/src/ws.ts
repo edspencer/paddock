@@ -103,7 +103,6 @@ import {
   type RunProvenance,
   type TurnOrigin,
   HUMAN_ROOT,
-  SCHEDULED_ROOT,
   childOf,
 } from "./run-provenance.js";
 import type { MessageProvenanceStore, MessageSender } from "./message-provenance.js";
@@ -924,17 +923,17 @@ export function makeChatHandler(deps: {
     const slug = keeperSlugFromAgent(entry.agent) ?? SCRATCH_SLUG;
     let resolvedSession: string | null = entry.sessionId ?? null;
     const turn: TurnHandle = hub.startTurn(slug, null, entry.sessionId);
-    // A1 (#261): a scheduler-fired session wake is a non-human ("scheduled")
-    // turn. Stamp its provenance ONLY if the chat carries none yet — a wake
-    // resumes an EXISTING chat (a human's, or a spawn's, that self-scheduled a
-    // ScheduleWakeup/`/loop`), so `stampIfAbsent` preserves that creation
-    // provenance instead of relabelling it. depth 0: a schedule is a root
-    // trigger, like a human. (No cron scheduler is wired yet — Epic D — this
-    // just makes the path carry the marker.)
-    const stampScheduled = (id: string | null): void => {
-      if (id) void deps.runProvenance?.stampIfAbsent(id, SCHEDULED_ROOT).catch(() => undefined);
-    };
-    stampScheduled(resolvedSession);
+    // #353: DON'T stamp a creation origin here. A session wake is a *resume*, not
+    // a *creation* — `onSessionWake` only ever resumes an already-existing chat
+    // (a human's, or a spawn's, that armed a `ScheduleWakeup`/`/loop`), it never
+    // creates one. Genuinely schedule-*created* chats are already stamped
+    // `scheduled` at creation by `fireTriggerForProject` → `startAgentTurn`, so
+    // dropping the wake stamp loses nothing for them. The old
+    // `stampIfAbsent(SCHEDULED_ROOT)` here was a category error: a chat that
+    // predates provenance stamping (empty slot) and later arms a ScheduleWakeup
+    // would get falsely labelled `scheduled` on its first wake — mislabelling a
+    // human-rooted chat. Leaving a legacy/blank chat unstamped renders no badge
+    // (the correct outcome for a human chat) instead of a wrong one.
     const routing = (): Routing => ({
       projectSlug: slug,
       target: slug,
@@ -988,7 +987,8 @@ export function makeChatHandler(deps: {
         if (m.session_id) {
           resolvedSession = m.session_id;
           turn.setSession(m.session_id);
-          stampScheduled(m.session_id);
+          // #353: no provenance stamp on wake — see the note at the top of this
+          // handler. A resume must never write a creation origin.
         }
         const notice = noticeFromMessage(m as Parameters<typeof noticeFromMessage>[0]);
         if (notice) emitWakeNotice(notice);
