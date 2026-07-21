@@ -18,7 +18,6 @@
  *  - {@link hookToAgentToolConfig} — project a hook's {@link HookCapabilities} onto
  *    the exact herdctl agent tool-config fields, so the hook agent enforces the
  *    capability by construction (the capability banner in G6 is therefore truthful).
- *    the project's `.paddock/hooks/` dir, rejecting traversal / non-`.md`.
  *
  * Keeping this off `projects.ts`/`herdctl.ts` makes each piece unit-testable in
  * isolation and gives G3/G4/G5 (visibility, Hooks tab, hook MCP) ONE frozen shape to
@@ -106,9 +105,9 @@ export interface PaddockHook {
 }
 
 /**
- * The CRUD/DTO shape returned by the hook service ({@link import("./hooks.js").HookService}) —
- * a {@link PaddockHook} plus its map key `name` and the herdctl agent it registers
- * as. This is the frozen contract G4 (Hooks tab) and G5 (hook MCP) build against.
+ * A hook's CRUD/DTO shape — a {@link PaddockHook} plus its map key `name` and the
+ * herdctl agent it registers as. Retained as a shared building block the unified
+ * trigger DTO (trigger-config.ts) is projected from.
  */
 export interface HookDto extends PaddockHook {
   /** The hook's name — the `project.yaml` map key + the `<name>` in its agent name. */
@@ -122,10 +121,9 @@ export interface HookDto extends PaddockHook {
  * GG-6). Rides on the chat DTO whenever a chat's provenance origin is `hook`, so
  * the floating capability banner can state — TRUTHFULLY FROM CONFIG — what the hook
  * agent is: its trigger {@link event}, its herdctl agent name, whether it's armed,
- * and the exact tool grant herdctl enforces on its turns. Built by
- * {@link toChatHookInfo} from the same {@link HookCapabilities} that
- * {@link hookToAgentToolConfig} projects onto the registered agent, so the banner and
- * the enforced capability can never disagree.
+ * and the exact tool grant herdctl enforces on its turns, resolving the same
+ * {@link HookCapabilities} defaults {@link hookToAgentToolConfig} projects onto the
+ * registered agent, so the descriptor and the enforced capability can never disagree.
  */
 export interface ChatHookInfo {
   /** The hook's name (`project.yaml` map key + the `<name>` in its agent name). */
@@ -167,9 +165,9 @@ export function resolveHooksMcpEnabled(
 }
 
 /**
- * Merge a partial `set_hook` update (Epic G / G5) over the existing hook so an edit
- * that OMITS a field preserves it. `ProjectStore.setHook` full-REPLACES the named
- * record, so without this a caller that changes only the prompt would silently wipe
+ * Merge a partial hook update over the existing hook so an edit that OMITS a field
+ * preserves it (reused by the unified trigger merge). A full-REPLACE persist would
+ * otherwise let a caller that changes only the prompt silently wipe
  * the hook's capability grant (and vice versa). `incoming` carries ONLY the fields
  * the caller supplied (the MCP handler builds it that way), so a shallow overlay is
  * exactly "patch the provided fields": a supplied `capabilities` replaces the whole

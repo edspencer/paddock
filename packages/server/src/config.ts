@@ -179,7 +179,7 @@ export interface PaddockConfig {
   /**
    * Per-deployment gate for programmatic schedule mutation (issue #265 / DD-7).
    * When ON, the FleetManager is constructed with `allowScheduleMutation: true`,
-   * so the runtime add/remove APIs (`setAgentSchedule`/`removeAgentSchedule`, the
+   * so herdctl's runtime schedule add/remove APIs (the
    * seam the D4 schedules UI calls) are permitted; OFF (default) makes them throw.
    * Declaring schedules statically in `project.yaml` is unaffected either way.
    * Driven by `PADDOCK_SCHEDULE_MUTATION`; accepts 1/true/yes.

@@ -406,8 +406,7 @@ export class HerdctlService {
 
   /**
    * Register (or replace) every trigger a project declares that runs on its OWN scoped
-   * agent `trigger-<slug>-<name>` (Epic T) — the unified successor to
-   * {@link registerHookAgents}. Idempotent (`addAgent` replace:true). Which triggers
+   * agent `trigger-<slug>-<name>` (Epic T). Idempotent (`addAgent` replace:true). Which triggers
    * get a scoped agent is decided by {@link triggerRunsOnOwnAgent}: EVENT triggers
    * always; SCHEDULE triggers only when they declare a non-empty `run.tools` allow-list
    * (T2 — an unscoped schedule still rides the keeper's forwarded `schedules` block and
