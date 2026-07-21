@@ -6,6 +6,7 @@ import { makeProject } from "../test/factories";
 
 const updateProject = vi.fn();
 const getModels = vi.fn();
+const promoteProject = vi.fn();
 vi.mock("../lib/api", async () => {
   const actual = await vi.importActual<typeof import("../lib/api")>("../lib/api");
   return {
@@ -13,6 +14,7 @@ vi.mock("../lib/api", async () => {
     api: {
       updateProject: (...a: unknown[]) => updateProject(...a),
       getModels: (...a: unknown[]) => getModels(...a),
+      promoteProject: (...a: unknown[]) => promoteProject(...a),
       // Schedules moved out of Settings into the Triggers tab (Epic T / T4), so
       // SettingsPane no longer fetches them on mount.
     },
@@ -25,6 +27,7 @@ describe("SettingsPane", () => {
     updateProject.mockImplementation((_slug, patch) =>
       Promise.resolve(makeProject({ slug: "p1", ...patch })),
     );
+    promoteProject.mockReset();
     getModels.mockReset();
     getModels.mockResolvedValue({
       models: [
@@ -225,5 +228,88 @@ describe("SettingsPane", () => {
     fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
     await waitFor(() => expect(screen.getByText(/Unknown model/i)).toBeInTheDocument());
     expect(onSaved).not.toHaveBeenCalled();
+  });
+
+  // --- Repository backing / promotion (issue #213) -----------------------
+
+  it("shows a promote affordance for a notebook project", () => {
+    const project = makeProject({ slug: "p1", repoBacked: false });
+    render(<SettingsPane project={project} onSaved={vi.fn()} />);
+    expect(screen.getByText("Repository backing")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /promote to repo-backed/i })).toBeDisabled();
+    // Entering a valid URL enables the promote button.
+    fireEvent.change(screen.getByLabelText("Git repository URL"), {
+      target: { value: "https://github.com/owner/repo.git" },
+    });
+    expect(screen.getByRole("button", { name: /promote to repo-backed/i })).not.toBeDisabled();
+  });
+
+  it("flags an obviously-bad repo URL and keeps promote disabled", () => {
+    const project = makeProject({ slug: "p1", repoBacked: false });
+    render(<SettingsPane project={project} onSaved={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText("Git repository URL"), {
+      target: { value: "not a url" },
+    });
+    expect(screen.getByText(/doesn’t look like a git URL/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /promote to repo-backed/i })).toBeDisabled();
+  });
+
+  it("promotes through a two-step confirm and reports the updated project", async () => {
+    const project = makeProject({ slug: "p1", name: "Note Book", repoBacked: false });
+    const promoted = makeProject({
+      slug: "p1",
+      name: "Note Book",
+      repoBacked: true,
+      repo: "https://github.com/owner/repo.git",
+      workingDir: "/data/projects/p1/repo",
+    });
+    promoteProject.mockResolvedValueOnce(promoted);
+    const onSaved = vi.fn();
+    render(<SettingsPane project={project} onSaved={onSaved} />);
+
+    fireEvent.change(screen.getByLabelText("Git repository URL"), {
+      target: { value: "https://github.com/owner/repo.git" },
+    });
+    // First step reveals the confirm panel; it does NOT call the API yet.
+    fireEvent.click(screen.getByRole("button", { name: /promote to repo-backed/i }));
+    expect(promoteProject).not.toHaveBeenCalled();
+    // Second step confirms.
+    fireEvent.click(screen.getByRole("button", { name: /^yes, promote$/i }));
+    await waitFor(() =>
+      expect(promoteProject).toHaveBeenCalledWith("p1", "https://github.com/owner/repo.git"),
+    );
+    expect(onSaved).toHaveBeenCalledWith(promoted);
+  });
+
+  it("surfaces a promote API error without calling onSaved", async () => {
+    const { ApiError } = await vi.importActual<typeof import("../lib/api")>("../lib/api");
+    promoteProject.mockRejectedValueOnce(new ApiError("git clone failed", 400));
+    const project = makeProject({ slug: "p1", repoBacked: false });
+    const onSaved = vi.fn();
+    render(<SettingsPane project={project} onSaved={onSaved} />);
+    fireEvent.change(screen.getByLabelText("Git repository URL"), {
+      target: { value: "https://github.com/owner/repo.git" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /promote to repo-backed/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^yes, promote$/i }));
+    await waitFor(() => expect(screen.getByText(/git clone failed/i)).toBeInTheDocument());
+    expect(onSaved).not.toHaveBeenCalled();
+  });
+
+  it("shows the backing read-only for an already repo-backed project (no promote form)", () => {
+    const project = makeProject({
+      slug: "p1",
+      repoBacked: true,
+      repo: "https://github.com/owner/repo.git",
+      workingDir: "/data/projects/p1/repo",
+    });
+    render(<SettingsPane project={project} onSaved={vi.fn()} />);
+    expect(screen.getByText("Repository backing")).toBeInTheDocument();
+    expect(screen.getByText("https://github.com/owner/repo.git")).toBeInTheDocument();
+    expect(screen.getByText("/data/projects/p1/repo")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Git repository URL")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /promote to repo-backed/i }),
+    ).not.toBeInTheDocument();
   });
 });
