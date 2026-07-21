@@ -59,6 +59,166 @@ function ReadOnly({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 /**
+ * Repository backing (issue #213): a NOTEBOOK project can be PROMOTED to a
+ * repo-backed one IN PLACE — Paddock clones the given repo into a nested checkout,
+ * flips the keeper's working directory to it (so the repo's own `CLAUDE.md`, git
+ * history, branches and PR flow apply), and KEEPS the project's chats + sidecar
+ * metadata (OVERVIEW/CHANGELOG/settings). Irreversible in the UI, so it's behind a
+ * two-step confirm. A repo-backed project shows its backing read-only (promotion is
+ * one-way; `repo` stays immutable thereafter, per #187).
+ *
+ * This lives OUTSIDE the main settings `<form>`'s save flow — it has its own submit
+ * (a distinct server route) — hence its own local state + buttons (all `type=button`
+ * so they never trigger the surrounding form's save).
+ */
+function RepoBackingSection({
+  project,
+  onSaved,
+}: {
+  project: Project;
+  onSaved: (p: Project) => void;
+}) {
+  const [repo, setRepo] = useState("");
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Reset the form when switching projects (or after a successful promote).
+  useEffect(() => {
+    setRepo("");
+    setConfirming(false);
+    setError(null);
+  }, [project.slug, project.repoBacked]);
+
+  // Repo-backed already: show the backing read-only (promotion is one-way).
+  if (project.repoBacked) {
+    return (
+      <Section
+        title="Repository backing"
+        description="This project is backed by an external git repo — the keeper works in a checkout of it."
+      >
+        <dl className="grid grid-cols-1 gap-y-3">
+          <ReadOnly
+            label="Repository"
+            value={<span className="break-all font-mono text-[13px]">{project.repo}</span>}
+          />
+          <ReadOnly
+            label="Working directory"
+            value={<span className="break-all font-mono text-[13px]">{project.workingDir}</span>}
+          />
+        </dl>
+      </Section>
+    );
+  }
+
+  const trimmed = repo.trim();
+  const urlInvalid = trimmed.length > 0 && !looksLikeRepoUrl(trimmed);
+
+  const promote = async () => {
+    if (!trimmed || urlInvalid) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const updated = await api.promoteProject(project.slug, trimmed);
+      onSaved(updated);
+      setConfirming(false);
+      setRepo("");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to promote project");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Section
+      title="Repository backing"
+      description="Notebook project. Promote it to repo-backed to work directly in an external git repo — keeping all of this project's chats and notes."
+    >
+      <label className="block">
+        <span className="field-label">Git repository URL</span>
+        <input
+          className="input font-mono text-[13px]"
+          value={repo}
+          onChange={(e) => {
+            setRepo(e.target.value);
+            setConfirming(false);
+          }}
+          placeholder="https://github.com/owner/repo.git"
+          aria-invalid={urlInvalid}
+          aria-label="Git repository URL"
+        />
+        {urlInvalid ? (
+          <Hint>
+            <span className="text-rose-600 dark:text-rose-400">
+              That doesn’t look like a git URL (https://, git@…, ssh://, git://).
+            </span>
+          </Hint>
+        ) : (
+          <Hint>
+            Paddock clones this repo into a nested checkout and points the keeper at it. The repo’s
+            own <code>CLAUDE.md</code> and git tooling take over.
+          </Hint>
+        )}
+      </label>
+
+      {error && (
+        <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600 dark:bg-rose-950/40 dark:text-rose-300">
+          {error}
+        </p>
+      )}
+
+      {!confirming ? (
+        <button
+          type="button"
+          className="btn-primary mt-4"
+          disabled={busy || !trimmed || urlInvalid}
+          onClick={() => setConfirming(true)}
+        >
+          Promote to repo-backed…
+        </button>
+      ) : (
+        <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3 dark:border-amber-800/60 dark:bg-amber-950/30">
+          <p className="flex items-start gap-1.5 text-[13px] leading-snug text-amber-700 dark:text-amber-300">
+            <AlertIcon width={14} height={14} className="mt-0.5 shrink-0" />
+            <span>
+              Promote <span className="font-semibold">{project.name}</span> to repo-backed? This
+              clones <span className="break-all font-mono">{trimmed}</span>, moves the keeper into
+              that checkout, and stops curating this project’s <code>CLAUDE.md</code> (the repo’s own
+              takes over). Your <span className="font-medium">chats and notes are kept</span>. This
+              is <span className="font-medium">one-way</span>.
+            </span>
+          </p>
+          <div className="mt-3 flex items-center gap-2">
+            <button type="button" className="btn-primary" disabled={busy} onClick={promote}>
+              {busy ? "Promoting…" : "Yes, promote"}
+            </button>
+            <button
+              type="button"
+              className="btn-subtle"
+              disabled={busy}
+              onClick={() => setConfirming(false)}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </Section>
+  );
+}
+
+/**
+ * A permissive client-side git-URL sanity check mirroring the server's
+ * `isValidRepoUrl` (issue #187) — https(s)/git/ssh/file/absolute-path/`git@host:`.
+ * Advisory only (the server re-validates); it just gates the Promote button early.
+ */
+function looksLikeRepoUrl(url: string): boolean {
+  const u = url.trim();
+  return u.length > 0 && u.length <= 512 && /^(?:https?:\/\/|git:\/\/|ssh:\/\/|file:\/\/|\/|git@[^\s]+:).+/i.test(u);
+}
+
+/**
  * The project Settings tab (issue #122): the canonical place to view and edit
  * ALL per-project settings, grouped into sections with help text, replacing the
  * cramped EditProjectModal. Saves through the same `PATCH /api/projects/:slug`
@@ -594,6 +754,11 @@ export function SettingsPane({
           {/* Schedules moved out of Settings (Epic T / T4): they're now rows in the
               per-project Triggers tab (folded together with event hooks into the one
               unified trigger model). */}
+
+          {/* Repository backing (issue #213): promote a notebook → repo-backed in
+              place, or show the backing read-only. Its own submit (a distinct route),
+              so it lives outside the settings save flow above. */}
+          <RepoBackingSection project={project} onSaved={onSaved} />
 
           <Section
             title="Derived"

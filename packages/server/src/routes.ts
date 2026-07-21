@@ -508,6 +508,36 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     }
   });
 
+  // Promote a NOTEBOOK project into a REPO-BACKED one in place (issue #213):
+  // clone the given repo into the nested checkout, flip the keeper's cwd to it,
+  // and re-register the keeper (which re-symlinks the new cwd's transcript path at
+  // the project's existing `.chats/` store, so every chat stays listed + resumable).
+  // The project's chats + sidecar metadata (OVERVIEW/CHANGELOG/settings) are kept.
+  // On clone failure the notebook is left wholly intact (rollback in `promote()`).
+  app.post<{ Params: { slug: string }; Body: { repo?: string } }>(
+    "/api/projects/:slug/promote",
+    async (req, reply) => {
+      try {
+        const repo = req.body?.repo;
+        if (typeof repo !== "string" || !repo.trim()) {
+          return reply.code(400).send({ error: "A repo URL is required", code: "invalid" });
+        }
+        const project = await projects.promote(req.params.slug, repo);
+        // Re-register the keeper at the NEW working dir (the checkout) and re-symlink
+        // its transcript path at the project's `.chats/` — this is what keeps the
+        // existing chats listed + resumable under the new cwd (issue #213 #1).
+        try {
+          await herdctl.ensureProjectAgent(project);
+        } catch (err) {
+          req.log.warn({ err }, "promote: keeper re-registration failed (project still promoted)");
+        }
+        return reply.code(200).send({ project });
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
   // --- triggers (Epic T "Unify Triggers" / T3) ----------------------------
   // The per-project UNIFIED trigger management surface the Triggers tab drives —
   // the sole successor that collapses the retired hooks + schedules REST/verbs

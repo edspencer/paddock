@@ -255,6 +255,20 @@ export const api = {
     return project;
   },
 
+  /**
+   * Promote a NOTEBOOK project into a REPO-BACKED one in place (issue #213):
+   * clones `repo` into the project's nested checkout, flips the keeper's cwd to it,
+   * and preserves the project's chats + sidecar metadata. Returns the updated
+   * (now repo-backed) project DTO. A clone failure leaves the notebook intact.
+   */
+  async promoteProject(slug: string, repo: string): Promise<Project> {
+    const { project } = await req<{ project: Project }>(
+      `/api/projects/${encodeURIComponent(slug)}/promote`,
+      { method: "POST", body: JSON.stringify({ repo }) },
+    );
+    return project;
+  },
+
   /** Delete a project (dir + keeper agent). */
   async deleteProject(slug: string): Promise<void> {
     await req<{ ok: boolean }>(`/api/projects/${encodeURIComponent(slug)}`, {

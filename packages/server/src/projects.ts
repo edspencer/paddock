@@ -637,11 +637,7 @@ export class ProjectStore {
       // Keep the nested checkout (a full git repo) OUT of the instance data repo:
       // a sidecar `.gitignore` ignores the checkout dir (git-in-git per #187's
       // option A). `.chats/` (our transcript store) is likewise data-repo noise.
-      await fs.writeFile(
-        path.join(dir, GITIGNORE_FILE),
-        [`# Repo-backed project checkout (issue #187) — not tracked by the data repo.`, `/${checkoutName}/`, `/.chats/`, ""].join("\n"),
-        "utf8",
-      );
+      await this.ensureSidecarGitignore(dir, checkoutName);
     }
 
     await this.writeYaml(slug, yaml);
@@ -675,6 +671,95 @@ export class ProjectStore {
 
     // No OVERVIEW.md at creation — the first sweep writes it.
     return this.toDto(dir, yaml, false);
+  }
+
+  /**
+   * Promote an existing NOTEBOOK project into a REPO-BACKED one IN PLACE (issue
+   * #213), preserving its chats + sidecar metadata. This relaxes #187's create-time
+   * `repo` immutability on this ONE path: an existing project (a subdir of the data
+   * repo) gains an external git repo as its keeper's working directory.
+   *
+   * What it does (mirrors `create()`'s repo-backed branch, but non-destructively):
+   *   1. Clone the repo into the nested checkout `<dir>/<repo-name>/` — FIRST, so a
+   *      clone failure rolls back (rm just the checkout) and leaves the notebook
+   *      wholly intact (project.yaml, `.chats/`, OVERVIEW/CHANGELOG untouched).
+   *   2. Write the sidecar `.gitignore` (`/<repo-name>/` + `/.chats/`) so the
+   *      checkout + transcript store stay out of the data repo.
+   *   3. Set `repo:` in project.yaml → the DTO flips to repo-backed and the keeper's
+   *      cwd becomes the checkout ({@link workingDirFor}).
+   *   4. Drop the sweeper-owned per-project `CLAUDE.md`: a repo-backed project defers
+   *      to the repo's OWN `CLAUDE.md` (loaded natively from the checkout). Leaving
+   *      the notebook's would leak into the checkout's cwd walk-up (the metadata dir
+   *      is an ancestor of the nested checkout) — so it's removed (it survives in the
+   *      data repo's git history).
+   *
+   * The existing chats need NO transcript surgery: they already live in `<dir>/.chats/`;
+   * the caller's {@link import("./herdctl.js").HerdctlService.ensureProjectAgent} re-runs
+   * `ensureProjectChats(newWorkingDir, dir)` which re-symlinks the new cwd's encoded
+   * transcript path at that same `.chats/` store, so every chat stays listed + resumable
+   * (issue #213 open-question #1, resolved: Claude Code tolerates recorded-cwd ≠ process-cwd).
+   *
+   * Guards: throws `ProjectError("invalid")` for a not-yet-notebook (already
+   * repo-backed) project or a bad URL, and `ProjectError("exists")` if a
+   * `<repo-name>/` directory is already present (never clobber existing files).
+   */
+  async promote(slug: string, repoUrl: string): Promise<Project> {
+    const current = await this.get(slug); // throws not_found
+    if (current.repoBacked) {
+      throw new ProjectError(`Project is already repo-backed: ${slug}`, "invalid");
+    }
+    const repo = repoUrl?.trim();
+    if (!repo || !isValidRepoUrl(repo)) {
+      throw new ProjectError(`Invalid repo URL: ${repoUrl}`, "invalid");
+    }
+    const dir = current.dir;
+    const checkoutName = repoCheckoutName(repo);
+    const checkoutDir = path.join(dir, checkoutName);
+
+    // Never clobber an existing dir of that name (e.g. a stray checkout or a real
+    // subdirectory of the notebook) — refuse before cloning.
+    if (
+      await fs
+        .access(checkoutDir)
+        .then(() => true)
+        .catch(() => false)
+    ) {
+      throw new ProjectError(
+        `A "${checkoutName}" directory already exists in ${slug}; refusing to overwrite`,
+        "exists",
+      );
+    }
+
+    // Clone FIRST so a failure rolls back to a clean notebook (rm the checkout only,
+    // never the project dir + its chats). Mirrors create()'s rollback discipline.
+    try {
+      await cloneRepo(repo, checkoutDir);
+    } catch (err) {
+      await fs.rm(checkoutDir, { recursive: true, force: true }).catch(() => undefined);
+      throw new ProjectError(
+        err instanceof Error ? err.message : `Failed to clone ${repo}`,
+        "invalid",
+      );
+    }
+
+    // From here on, roll the checkout back on ANY failure so a botched promote can
+    // never leave a half-repo-backed project (yaml unset but a checkout present).
+    try {
+      await this.ensureSidecarGitignore(dir, checkoutName);
+      const next: ProjectYaml = {
+        ...this.stripDto(current),
+        repo,
+        updated: today(),
+      };
+      await this.writeYaml(slug, next);
+      // Defer to the repo's OWN CLAUDE.md — remove the notebook's sweeper-owned one
+      // (best-effort; absence is fine). It lives in the data-repo history if needed.
+      await fs.rm(path.join(dir, CLAUDE_FILE), { force: true }).catch(() => undefined);
+      return this.toDto(dir, next, await this.overviewExists(slug));
+    } catch (err) {
+      await fs.rm(checkoutDir, { recursive: true, force: true }).catch(() => undefined);
+      throw err;
+    }
   }
 
   /** Update mutable metadata fields and bump `updated`. */
@@ -1146,6 +1231,43 @@ export class ProjectStore {
         return t && Object.keys(t).length > 0 ? { triggers: t } : {};
       })(),
     };
+  }
+
+  /**
+   * Ensure the project dir's sidecar `.gitignore` ignores the nested repo-backed
+   * checkout (`/<checkoutName>/`) and the transcript store (`/.chats/`), so neither
+   * is tracked by the instance data repo (issue #187 option A). Idempotent and
+   * merge-aware: an existing `.gitignore` (rare for a notebook, but possible) keeps
+   * its lines and only the missing entries are appended — used by both `create()`
+   * and the in-place `promote()` (#213).
+   */
+  private async ensureSidecarGitignore(dir: string, checkoutName: string): Promise<void> {
+    const file = path.join(dir, GITIGNORE_FILE);
+    let existing = "";
+    try {
+      existing = await fs.readFile(file, "utf8");
+    } catch {
+      /* no .gitignore yet — write a fresh one below */
+    }
+    const want = [`/${checkoutName}/`, `/.chats/`];
+    const have = new Set(existing.split("\n").map((l) => l.trim()));
+    const missing = want.filter((l) => !have.has(l));
+    if (existing && missing.length === 0) return; // already covers everything
+    if (!existing) {
+      await fs.writeFile(
+        file,
+        [
+          `# Repo-backed project checkout (issue #187) — not tracked by the data repo.`,
+          ...want,
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+      return;
+    }
+    // Append only the missing lines to the existing file (preserve user content).
+    const body = existing.endsWith("\n") ? existing : `${existing}\n`;
+    await fs.writeFile(file, `${body}${missing.join("\n")}\n`, "utf8");
   }
 
   private async writeYaml(slug: string, yaml: ProjectYaml): Promise<void> {

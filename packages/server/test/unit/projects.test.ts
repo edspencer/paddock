@@ -711,6 +711,102 @@ describe("ProjectStore", () => {
     await expect(store.exists("ghost")).resolves.toBe(false);
     await expect(fs.access(path.join(root, "ghost"))).rejects.toBeTruthy();
   });
+
+  // --- promote notebook → repo-backed in place (issue #213) --------------
+
+  it("promote clones the repo, flips to repo-backed, and preserves chats + metadata", async () => {
+    const src = await makeSourceRepo(path.join(root, "_src", "demo.git"));
+    // A notebook with real chat history + notes + a settings override.
+    const nb = await store.create({ name: "Note Book", summary: "planning notes" });
+    await store.update(nb.slug, { model: "claude-opus-4-8" });
+    await store.writeOverview(nb.slug, "# Overview\n\ncurrent state\n");
+    await store.appendChangelog(nb.slug, "did a thing");
+    // Seed a fake transcript in .chats to prove it survives the promotion.
+    const chatsDir = path.join(nb.dir, ".chats");
+    await fs.mkdir(chatsDir, { recursive: true });
+    await fs.writeFile(path.join(chatsDir, "sess-1.jsonl"), '{"type":"user"}\n');
+    expect((await store.get(nb.slug)).repoBacked).toBe(false);
+
+    const p = await store.promote(nb.slug, src);
+
+    // DTO flips to repo-backed; cwd is the nested checkout named after the repo.
+    expect(p.repoBacked).toBe(true);
+    expect(p.repo).toBe(src);
+    expect(p.workingDir).toBe(path.join(p.dir, "demo"));
+    expect(p.dir).toBe(nb.dir); // same metadata dir — in place, no move
+
+    // Repo actually cloned into the checkout.
+    expect(await fs.readFile(path.join(p.workingDir, "CLAUDE.md"), "utf8")).toContain("Upstream Repo");
+    expect(await fs.access(path.join(p.workingDir, ".git")).then(() => true)).toBe(true);
+
+    // The notebook's sweeper-owned CLAUDE.md is dropped (defer to the repo's own).
+    await expect(fs.access(path.join(p.dir, "CLAUDE.md"))).rejects.toBeTruthy();
+
+    // Chats + sidecar metadata + settings all preserved.
+    expect(await fs.readFile(path.join(chatsDir, "sess-1.jsonl"), "utf8")).toContain('"type":"user"');
+    expect(await fs.readFile(path.join(p.dir, "OVERVIEW.md"), "utf8")).toContain("current state");
+    expect(await fs.readFile(path.join(p.dir, "CHANGELOG.md"), "utf8")).toContain("did a thing");
+    expect(p.summary).toBe("planning notes");
+    expect(p.model).toBe("claude-opus-4-8");
+
+    // Sidecar .gitignore covers the checkout + transcript store.
+    const gi = await fs.readFile(path.join(p.dir, ".gitignore"), "utf8");
+    expect(gi).toContain("/demo/");
+    expect(gi).toContain("/.chats/");
+
+    // Persisted + round-trips through get().
+    const reread = await store.get(p.slug);
+    expect(reread.repoBacked).toBe(true);
+    expect(reread.workingDir).toBe(path.join(p.dir, "demo"));
+    expect(reread.repo).toBe(src);
+  });
+
+  it("promote rejects an already-repo-backed project", async () => {
+    const src = await makeSourceRepo(path.join(root, "_src", "demo.git"));
+    const p = await store.create({ name: "Already", repo: src });
+    await expect(store.promote(p.slug, src)).rejects.toMatchObject({ code: "invalid" });
+  });
+
+  it("promote rejects an invalid repo URL and leaves the notebook untouched", async () => {
+    const nb = await store.create({ name: "Keep Me" });
+    await expect(store.promote(nb.slug, "not a url")).rejects.toMatchObject({ code: "invalid" });
+    const reread = await store.get(nb.slug);
+    expect(reread.repoBacked).toBe(false);
+    // The notebook's CLAUDE.md is still there (nothing was mutated).
+    expect(await fs.access(path.join(nb.dir, "CLAUDE.md")).then(() => true)).toBe(true);
+  });
+
+  it("promote rolls back on clone failure, leaving the notebook fully intact", async () => {
+    const nb = await store.create({ name: "Survivor", summary: "keep my notes" });
+    const chatsDir = path.join(nb.dir, ".chats");
+    await fs.mkdir(chatsDir, { recursive: true });
+    await fs.writeFile(path.join(chatsDir, "sess-x.jsonl"), '{"type":"user"}\n');
+
+    // A well-formed but nonexistent local path is a valid URL git can't clone.
+    const bogus = path.join(root, "_src", "does-not-exist.git");
+    await expect(store.promote(nb.slug, bogus)).rejects.toMatchObject({ code: "invalid" });
+
+    // Still a notebook, chats + CLAUDE.md + summary intact, no stray checkout dir.
+    const reread = await store.get(nb.slug);
+    expect(reread.repoBacked).toBe(false);
+    expect(reread.repo).toBeUndefined();
+    expect(reread.summary).toBe("keep my notes");
+    expect(await fs.access(path.join(nb.dir, "CLAUDE.md")).then(() => true)).toBe(true);
+    expect(await fs.readFile(path.join(chatsDir, "sess-x.jsonl"), "utf8")).toContain('"type":"user"');
+    await expect(fs.access(path.join(nb.dir, repoCheckoutName(bogus)))).rejects.toBeTruthy();
+  });
+
+  it("promote refuses to clobber an existing checkout-named directory", async () => {
+    const src = await makeSourceRepo(path.join(root, "_src", "demo.git"));
+    const nb = await store.create({ name: "Occupied" });
+    // A pre-existing `demo/` dir (the derived checkout name) blocks the promote.
+    await fs.mkdir(path.join(nb.dir, "demo"), { recursive: true });
+    await fs.writeFile(path.join(nb.dir, "demo", "keep.txt"), "mine\n");
+    await expect(store.promote(nb.slug, src)).rejects.toMatchObject({ code: "exists" });
+    // Untouched: still a notebook, the pre-existing dir + its file survive.
+    expect((await store.get(nb.slug)).repoBacked).toBe(false);
+    expect(await fs.readFile(path.join(nb.dir, "demo", "keep.txt"), "utf8")).toBe("mine\n");
+  });
 });
 
 /** Patch fields into a project's on-disk yaml (test helper). */
