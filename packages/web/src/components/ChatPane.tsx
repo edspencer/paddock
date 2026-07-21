@@ -1583,8 +1583,10 @@ export function ChatPane({
               </>
             )}
             {/* Voice dictation (#voice): renders nothing unless the instance has
-                a whisper backend configured. Disabled while a turn streams. */}
-            <DictationButton onText={insertDictation} disabled={streaming} />
+                a whisper backend configured. Interactive regardless of turn state
+                — dictated text lands in the draft and follows the same queue path
+                as typing during a live turn (issue #365). */}
+            <DictationButton onText={insertDictation} />
             {streaming ? (
               <button
                 type="button"
