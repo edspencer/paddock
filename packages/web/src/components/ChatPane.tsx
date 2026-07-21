@@ -58,6 +58,7 @@ import type {
   SentFileEnvelope,
   SlashCommand,
   TaskCreateInfo,
+  TurnNotice,
 } from "../lib/types";
 import {
   parseAttachments,
@@ -120,7 +121,12 @@ type Turn =
   // stopped) so a KILLED/STOPPED task — the turn-boundary-kill case that leaves a
   // keeper hung (#301) — renders a distinct "keeper is idle" + Continue affordance
   // instead of the neutral pill.
-  | { kind: "notification"; id: string; summary: string; status: string | null };
+  | { kind: "notification"; id: string; summary: string; status: string | null }
+  // A turn that dead-ended without a normal reply (issue #329): a
+  // subscription/usage-limit hit, the max-turns cap, or an error. Rendered as a
+  // distinct notice banner (with the reset time for a limit, and a Retry
+  // affordance where safe) instead of a silently-dead chat.
+  | { kind: "notice"; id: string; notice: TurnNotice };
 
 let idCounter = 0;
 const nextId = () => `t${++idCounter}`;
@@ -371,6 +377,11 @@ export function ChatPane({
   // queue (we hold rather than fire a follow-up into a cancelled turn). Cleared
   // on the next completion.
   const cancelledRef = useRef(false);
+  // #329: whether this turn already surfaced an inline notice (usage limit /
+  // max-turns / error). When it did, the failed-completion path skips the
+  // transient composer-level error toast (the richer inline notice supersedes it);
+  // when no notice arrived, the toast still shows as a backstop.
+  const noticeThisTurnRef = useRef(false);
 
   // Issue #1/#188: preload the project's curated OVERVIEW.md + CHANGELOG.md as
   // context on the FIRST turn of a new project chat. Default ON for project
@@ -884,7 +895,11 @@ export function ChatPane({
             onSessionEstablished?.(meta.sessionId);
           }
         }
-        if (!meta.success && meta.error) setError(meta.error);
+        // A failed turn surfaces as an inline notice turn (#329, via the preceding
+        // chat:notice frame) — richer, persistent, and retryable. Only fall back to
+        // the transient composer-level error toast when no such notice arrived this
+        // turn, so the failure is never invisible but also never double-surfaced.
+        if (!meta.success && meta.error && !noticeThisTurnRef.current) setError(meta.error);
         // Pull model: a completed turn may have triggered a sweep that rewrote
         // OVERVIEW.md / CHANGELOG / added files — let the parent re-fetch. Hand
         // up the live per-turn usage (already accurate, no disk dependency) so
@@ -984,6 +999,15 @@ export function ChatPane({
           { kind: "notification", id: nextId(), summary, status: "killed" },
         ]);
       },
+      onNotice: (notice, meta) => {
+        if (!framesBelong(meta)) return;
+        // A turn dead-ended without a normal reply (#329): a usage-limit hit, the
+        // max-turns cap, or an error. Seal any streaming bubble and append a
+        // distinct notice turn so the chat shows WHY it stopped. Mark the turn so
+        // the failed-completion path doesn't also raise the transient error toast.
+        noticeThisTurnRef.current = true;
+        setTurns((prev) => [...sealStreaming(prev), { kind: "notice", id: nextId(), notice }]);
+      },
     });
     return () => {
       sub.unsubscribe();
@@ -1020,6 +1044,9 @@ export function ChatPane({
       if (composerRef.current) composerRef.current.style.height = "auto";
       setStreaming(true);
       streamingRef.current = true;
+      // A fresh turn: clear the per-turn notice guard (#329) so this turn's own
+      // failed-completion backstop toast isn't suppressed by a prior turn's notice.
+      noticeThisTurnRef.current = false;
       // Each turn starts with an unknown jobId. Null it (and any stale deferred
       // cancel) so a Stop in the pre-arm window is detected as "no job yet" and
       // takes the deferred-cancel path — rather than firing chat:cancel against
@@ -2046,6 +2073,12 @@ const TurnView = memo(function TurnView({ turn }: { turn: Turn }) {
   if (turn.kind === "compact") {
     return <CompactBoundary summary={turn.summary} />;
   }
+  if (turn.kind === "notice") {
+    // A turn that dead-ended without a normal reply (issue #329): a
+    // subscription/usage-limit hit, the max-turns cap, or an error. A distinct
+    // banner surfaces WHY the chat stopped, with a Retry affordance where safe.
+    return <NoticeBlock notice={turn.notice} />;
+  }
   if (turn.kind === "notification") {
     // A KILLED/STOPPED background task (issue #301): the turn-boundary-kill case
     // (herdctl#374) that leaves the keeper alive-but-idle. Render a distinct amber
@@ -2133,6 +2166,81 @@ function KilledTaskNotice({ summary }: { summary: string }) {
               className="rounded-md bg-amber-600 px-2.5 py-1 text-[11px] font-medium text-white shadow-sm transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-amber-700 dark:hover:bg-amber-600"
             >
               {busy ? "Continuing…" : "Continue"}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A dead-ended turn (issue #329). Renders a distinct banner explaining WHY the
+ * chat stopped instead of leaving it looking dead:
+ *  - `usage_limit` — the shared Max-plan quota (recurring on this box): an amber
+ *    banner with the "resets …" time; NOT retryable (only the reset clears it).
+ *  - `max_turns` — the keeper hit its per-turn cap and wrote nothing renderable:
+ *    an amber banner with a Continue affordance.
+ *  - `error` — a network / API 5xx-overload / auth / crash failure: a rose banner
+ *    with the underlying detail and a Retry affordance.
+ *
+ * The Continue/Retry button reuses the Layer-2 recovery path ({@link
+ * RecoveryContext}) — a nudge that re-drives the still-alive keeper — and only
+ * shows when the notice is `retryable` AND recovery is enabled for this chat
+ * (session-mode keeper). A usage limit never offers it.
+ */
+function NoticeBlock({ notice }: { notice: TurnNotice }) {
+  const recovery = useContext(RecoveryContext);
+  const canRetry = notice.retryable && Boolean(recovery?.enabled);
+  const busy = Boolean(recovery?.busy);
+  const isError = notice.kind === "error";
+  const tone = isError
+    ? "border-rose-300/70 bg-rose-50 text-rose-900 dark:border-rose-900/60 dark:bg-rose-950/50 dark:text-rose-200"
+    : "border-amber-300/70 bg-amber-50 text-amber-900 dark:border-amber-700/60 dark:bg-amber-950/50 dark:text-amber-200";
+  const btnTone = isError
+    ? "bg-rose-600 hover:bg-rose-700 dark:bg-rose-700 dark:hover:bg-rose-600"
+    : "bg-amber-600 hover:bg-amber-700 dark:bg-amber-700 dark:hover:bg-amber-600";
+  const detailTone = isError
+    ? "text-rose-800/80 dark:text-rose-300/70"
+    : "text-amber-800/80 dark:text-amber-300/70";
+  const heading =
+    notice.kind === "usage_limit"
+      ? "Session limit reached"
+      : notice.kind === "max_turns"
+        ? "Turn limit reached"
+        : "The turn failed";
+  return (
+    <div className="flex animate-fade-in justify-center" data-notice={notice.kind}>
+      <div className={`flex max-w-[90%] flex-col gap-1.5 rounded-lg border px-3 py-2 text-xs ${tone}`}>
+        <div className="flex items-start gap-1.5">
+          <span aria-hidden className="leading-tight">
+            {isError ? "⚠" : "⏳"}
+          </span>
+          <span className="leading-snug">
+            <span className="font-medium">{heading}.</span>{" "}
+            {notice.message}
+            {notice.kind === "usage_limit" && notice.resetTime && (
+              <span className={`mt-0.5 block text-[11px] ${detailTone}`}>
+                Resets {notice.resetTime}. The keeper will respond again after the quota resets.
+              </span>
+            )}
+            {isError && notice.detail && (
+              <span className={`mt-0.5 block break-words font-mono text-[11px] ${detailTone}`}>
+                {notice.detail}
+              </span>
+            )}
+          </span>
+        </div>
+        {canRetry && (
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={recovery?.onContinue}
+              disabled={busy}
+              data-notice-action="retry"
+              className={`rounded-md px-2.5 py-1 text-[11px] font-medium text-white shadow-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${btnTone}`}
+            >
+              {busy ? "Retrying…" : notice.kind === "max_turns" ? "Continue" : "Retry"}
             </button>
           </div>
         )}
@@ -2708,6 +2816,12 @@ function settlePending(prev: Turn[]): Turn[] {
  * reload renders identically (issue #112).
  */
 function historyToTurn(m: HistoryMessage, id: string): Turn {
+  // A surfaced turn dead-end recovered from the transcript on reload (#329): the
+  // server appends a synthetic notice message. Check first — it rides on a
+  // `role:"assistant"` shell but must never render as an assistant bubble.
+  if (m.notice) {
+    return { kind: "notice", id, notice: m.notice };
+  }
   if (m.role === "tool" && m.toolCall) {
     const file = sentFileFromToolCall(m.toolCall);
     if (file) return { kind: "file", id, file };

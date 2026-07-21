@@ -116,6 +116,7 @@ import {
 import { resolveMaxSpawnDepth } from "./spawn-capability.js";
 import { resolveRecoveryConfig } from "./recovery-config.js";
 import { RecoveryEngine } from "./recovery.js";
+import { noticeFromMessage, errorNotice, type TurnNotice } from "./turn-notice.js";
 import type { PaddockEventBus } from "./event-bus.js";
 import { resolveHooksMcpEnabled } from "./hook-config.js";
 import type { TriggerService } from "./triggers.js";
@@ -616,6 +617,19 @@ export interface ChatKilledTaskMessage {
   };
 }
 
+/**
+ * A keeper turn dead-ended without a normal reply (issue #329): a synthetic
+ * subscription/usage-limit hit, the max-turns cap, or an error (network / API
+ * 5xx-overloaded / auth / crash). Emitted INLINE during the turn (session-routed
+ * like the other turn frames), so the chat surfaces WHY it stopped instead of
+ * looking dead. The client renders it as a distinct notice turn (with the reset
+ * time for a usage limit, and a Retry/Continue affordance when `retryable`).
+ */
+export interface ChatNoticeMessage {
+  type: "chat:notice";
+  payload: Routing & { notice: TurnNotice };
+}
+
 export interface PongMessage {
   type: "pong";
 }
@@ -631,6 +645,7 @@ export type ServerMessage =
   | ChatActiveMessage
   | ChatQueuedFlushedMessage
   | ChatKilledTaskMessage
+  | ChatNoticeMessage
   | PongMessage;
 
 function readSlug(p: ChatSendMessage["payload"]): string | undefined {
@@ -960,6 +975,14 @@ export function makeChatHandler(deps: {
         });
       },
     });
+    // #329: surface a dead-end (usage limit / max-turns / error) on this wake
+    // turn too, at most once. Same rationale as the interactive path.
+    let wakeNoticeEmitted = false;
+    const emitWakeNotice = (notice: TurnNotice): void => {
+      if (wakeNoticeEmitted) return;
+      wakeNoticeEmitted = true;
+      turn.emit({ type: "chat:notice", payload: { ...routing(), notice } });
+    };
     try {
       for await (const m of session.messages) {
         if (m.session_id) {
@@ -967,6 +990,8 @@ export function makeChatHandler(deps: {
           turn.setSession(m.session_id);
           stampScheduled(m.session_id);
         }
+        const notice = noticeFromMessage(m as Parameters<typeof noticeFromMessage>[0]);
+        if (notice) emitWakeNotice(notice);
         await translate(m as unknown as ChatSDKMessage);
         if (m.type === "result") break;
       }
@@ -976,6 +1001,7 @@ export function makeChatHandler(deps: {
       });
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
+      emitWakeNotice(errorNotice(error));
       turn.emit({ type: "chat:complete", payload: { ...routing(), success: false, error } });
     } finally {
       turn.end();
@@ -1663,6 +1689,16 @@ export function makeChatHandler(deps: {
     const isNewChat = resume === null;
     const turn: TurnHandle = hub.startTurn(projectSlug, null, resume ?? null);
     const seen: { usage: TurnUsage | null; model: string | null } = { usage: null, model: null };
+    // #329: whether this turn already surfaced a dead-end notice (usage limit /
+    // max-turns / error). At most one per turn — a synthetic session-limit turn
+    // repeats the message several times, and a failed turn can carry both an error
+    // `result` and a `success:false` completion. Emit the first, suppress the rest.
+    let noticeEmitted = false;
+    const emitNotice = (notice: TurnNotice): void => {
+      if (noticeEmitted) return;
+      noticeEmitted = true;
+      turn.emit({ type: "chat:notice", payload: { ...routing(), notice } });
+    };
 
     const routing = (): Routing => ({
       projectSlug,
@@ -1809,6 +1845,13 @@ export function makeChatHandler(deps: {
         const ex = extractUsage(m);
         if (ex.usage) seen.usage = pickTurnUsage(seen.usage, ex.usage);
         if (ex.model) seen.model = ex.model;
+        // #329: surface a dead-end BEFORE translating — a synthetic usage-limit
+        // message or a terminal error/`error_max_turns` result. The translator
+        // drops every synthetic message (so nothing would ever render), which is
+        // exactly why these turns look dead. `noticeFromMessage` returns null for
+        // ordinary output and for suppressed "No response requested." placeholders.
+        const notice = noticeFromMessage(m as Parameters<typeof noticeFromMessage>[0]);
+        if (notice) emitNotice(notice);
         await translate(m as unknown as ChatSDKMessage);
       },
     });
@@ -1832,6 +1875,11 @@ export function makeChatHandler(deps: {
               contextLimit: getContextLimit(completeModel),
             }
           : undefined;
+        // #329: a turn that failed WITHOUT a terminal error `result` reaching the
+        // stream (a thrown/rejected drive: network/DNS reset, process crash) never
+        // triggered `noticeFromMessage`. Surface it here as an inline error notice
+        // so the failure is visible — before chat:complete flips streaming off.
+        if (!result.success) emitNotice(errorNotice(result.error?.message));
         turn.emit({
           type: "chat:complete",
           payload: {
@@ -1863,6 +1911,9 @@ export function makeChatHandler(deps: {
       })
       .catch((err: unknown) => {
         const error = err instanceof Error ? err.message : String(err);
+        // #329: the drive itself rejected — surface the failure inline so the chat
+        // doesn't just look dead (deduped against any notice already emitted).
+        emitNotice(errorNotice(error));
         turn.emit({
           type: "chat:complete",
           payload: { ...routing(), sessionId: resolvedSession, jobId, success: false, error },
