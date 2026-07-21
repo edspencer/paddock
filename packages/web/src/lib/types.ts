@@ -617,6 +617,55 @@ export interface TriggersResponse {
 }
 
 /**
+ * A trigger's most-recent RUN (Epic T follow-up / #327) — projected from a herdctl job
+ * record, or synthesized from a schedule fire when no per-trigger job is attributable.
+ */
+export interface TriggerLastRun {
+  /** herdctl job id, or null when the last-run is only known from schedule state. */
+  jobId: string | null;
+  /** The chat the run belongs to (link target), or null. */
+  sessionId: string | null;
+  /** Terminal/live status: completed | failed | cancelled | running | pending. */
+  status: string;
+  /** Why it exited (success | error | max_turns | timeout | cancelled), if recorded. */
+  exitReason: string | null;
+  /** ISO timestamp the run started. */
+  startedAt: string;
+  /** ISO timestamp the run finished, or null while running. */
+  finishedAt: string | null;
+  /** Wall-clock seconds, or null while running / unrecorded. */
+  durationSeconds: number | null;
+  /** The agent's own one-line summary of the run, when it wrote one. */
+  summary: string | null;
+}
+
+/**
+ * One trigger's live RUNTIME state (Epic T follow-up / #327) — the "last-run / next-run
+ * / status" the Triggers tab renders alongside each trigger's config. Config is served
+ * by {@link TriggersResponse}; this is the runtime half, polled separately so the tab
+ * refreshes status without re-fetching the picker catalog. Keyed by `name`.
+ */
+export interface TriggerRuntime {
+  name: string;
+  type: TriggerType;
+  /** True when a run is in flight (a live job, or the cron scheduler reports running). */
+  running: boolean;
+  /** ISO timestamp of the next scheduled fire (schedule triggers only), else null. */
+  nextRunAt: string | null;
+  /** Cron scheduler status for a schedule trigger (idle/running/disabled), else null. */
+  scheduleStatus: string | null;
+  /** The last fire's error message (schedule triggers), or null. */
+  lastError: string | null;
+  /** The most-recent run, or null when the trigger has never fired. */
+  lastRun: TriggerLastRun | null;
+}
+
+/** The Triggers tab's runtime-state payload (the "status" half of the view). */
+export interface TriggerRuntimeResponse {
+  runtime: TriggerRuntime[];
+}
+
+/**
  * Per-run cost (P3 seam, DD-4 / X1#378 + X2#271): always `null` today — herdctl
  * doesn't yet persist per-run token accounting. Shape reserved so the cost column
  * slots in without a wire change.

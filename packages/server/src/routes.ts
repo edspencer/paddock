@@ -104,6 +104,7 @@ import {
   type ChatHookInfo,
 } from "./hook-config.js";
 import { toTriggerDto, type TriggerService } from "./triggers.js";
+import { buildTriggerRuntime } from "./trigger-runtime.js";
 import {
   TRIGGER_EVENTS,
   TRIGGER_TYPES,
@@ -137,6 +138,17 @@ export interface RouteDeps {
    * Resolves the started chat's session id, or `null` if nothing started.
    */
   fireSchedule: (slug: string, scheduleName: string) => Promise<string | null>;
+  /**
+   * Manually fire a project's TRIGGER now (Epic T follow-up / #327), backing the
+   * `POST …/triggers/:name/run` "Run now" route + the `run_trigger` self-MCP verb.
+   * Supplied by the chat handler (`makeChatHandler(...).fireTrigger`) so a manual run
+   * goes through the SAME hub path a cron / event fire uses — a first-class, badged
+   * chat, indistinguishable from an automatic fire. Fires ANY trigger type regardless
+   * of its `enabled` flag. Resolves the started chat's session id, or `null` if the
+   * project/trigger is gone or nothing started. Optional so tests that don't exercise
+   * triggers can omit it.
+   */
+  fireTrigger?: (slug: string, triggerName: string) => Promise<string | null>;
   /**
    * In-process lifecycle event bus (Epic G / G1). The archive route emits `onArchive`
    * on it AFTER the archive commits, so the hook dispatcher (wired in the chat
@@ -176,6 +188,7 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     messageProvenance,
     attachments,
     fireSchedule,
+    fireTrigger,
     events,
     hooks,
     triggers,
@@ -876,6 +889,67 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
       try {
         const removed = await triggers!.remove(slug, name); // throws not_found (project)
         return reply.code(200).send({ ok: true, name, removed });
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  // Per-trigger RUNTIME state (Epic T follow-up / #327) — the live "last-run / next-run
+  // / status" the Triggers tab renders alongside each trigger's config. `TriggerDto`
+  // carries config only, so this JOINS it with herdctl runtime state the tab lost when
+  // the Schedules section folded in: the cron scheduler's `ScheduleInfo` (next-fire,
+  // status — schedule triggers) + job records (last run, per the E3/#268 pattern) for
+  // each trigger's own scoped agent. Served as its OWN endpoint (not folded into the
+  // config list) so the tab can POLL it cheaply without re-fetching the config + picker
+  // catalog. A static path segment — matched before `/:name` — so no trigger shadows it.
+  app.get<{ Params: { slug: string } }>(
+    "/api/projects/:slug/triggers/runtime",
+    async (req, reply) => {
+      if (!triggersGuard(reply)) return reply;
+      try {
+        const project = await projects.get(req.params.slug); // throws not_found
+        const dtos = await triggers!.list(project.slug);
+        // The agents a trigger's runs land under: the keeper (unscoped schedule
+        // triggers) + every trigger's own scoped `trigger-<slug>-<name>` agent.
+        const agents = [keeperAgentName(project.slug), ...dtos.map((d) => d.agentName)];
+        const [runs, schedules] = await Promise.all([
+          herdctl.listRunsForAgents(agents).catch(() => []),
+          herdctl.listAgentSchedules(project).catch(() => []),
+        ]);
+        return { runtime: buildTriggerRuntime(dtos, runs, schedules, project.slug) };
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  // Fire a trigger NOW (Epic T follow-up / #327) — "Run now". Runs it through the same
+  // hub path a cron / event fire uses, so the resulting chat is a first-class, badged
+  // run (indistinguishable from an automatic fire). Fires ANY trigger type regardless
+  // of its `enabled` flag — a manual run is deliberate (mirrors the schedule DD-1 rule).
+  // 503 when the trigger fire entrypoint isn't wired (tests may omit it); 404 for an
+  // unknown trigger; 502 if the fire started no chat. Responds 202 with the session id.
+  app.post<{ Params: { slug: string; name: string } }>(
+    "/api/projects/:slug/triggers/:name/run",
+    async (req, reply) => {
+      if (!triggersGuard(reply)) return reply;
+      const { slug, name } = req.params;
+      if (!fireTrigger) {
+        return reply.code(503).send({ error: "Trigger firing is unavailable", code: "unavailable" });
+      }
+      try {
+        const project = await projects.get(slug); // throws not_found
+        if (!project.triggers?.[name]) {
+          return reply.code(404).send({ error: `No such trigger: ${name}`, code: "not_found" });
+        }
+        const sessionId = await fireTrigger(slug, name);
+        if (!sessionId) {
+          return reply
+            .code(502)
+            .send({ error: "Trigger fire did not start a chat", code: "trigger_failed" });
+        }
+        return reply.code(202).send({ ok: true, name, sessionId });
       } catch (err) {
         return sendProjectError(reply, err);
       }

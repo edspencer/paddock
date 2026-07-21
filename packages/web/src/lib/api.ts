@@ -32,6 +32,7 @@ import {
   type SlashCommand,
   type Trigger,
   type TriggerInput,
+  type TriggerRuntimeResponse,
   type TriggersResponse,
   type UpdateProjectInput,
 } from "./types";
@@ -602,6 +603,32 @@ export const api = {
       `/api/projects/${encodeURIComponent(slug)}/triggers/${encodeURIComponent(name)}`,
       { method: "DELETE" },
     );
+  },
+
+  /**
+   * A project's per-trigger RUNTIME state (Epic T follow-up / #327) — last-run /
+   * next-run / running-state, joined from herdctl job records + the cron scheduler.
+   * Served separately from {@link listTriggers} (config) so the tab can poll status
+   * cheaply without re-fetching the picker catalog.
+   */
+  async triggerRuntime(slug: string): Promise<TriggerRuntimeResponse> {
+    return req<TriggerRuntimeResponse>(
+      `/api/projects/${encodeURIComponent(slug)}/triggers/runtime`,
+    );
+  },
+
+  /**
+   * Fire a trigger NOW — "Run now". Runs it through the same hub path a cron / event
+   * fire uses, so the resulting chat is a first-class, badged run. Works for any
+   * trigger type regardless of its `enabled` flag. Resolves the started chat's
+   * session id.
+   */
+  async runTrigger(slug: string, name: string): Promise<string> {
+    const { sessionId } = await req<{ ok: boolean; sessionId: string }>(
+      `/api/projects/${encodeURIComponent(slug)}/triggers/${encodeURIComponent(name)}/run`,
+      { method: "POST", body: "{}" },
+    );
+    return sessionId;
   },
 
   // --- Git backing store ----------------------------------------------------

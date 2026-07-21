@@ -1084,6 +1084,25 @@ export class HerdctlService {
     return limit > 0 ? jobs.slice(0, limit) : jobs;
   }
 
+  /**
+   * Job records for a SET of agents, most-recent first (Epic T follow-up / #327) —
+   * the data source for the Triggers tab's per-trigger last-run column. Used to pull
+   * one project's keeper AND every scoped `trigger-<slug>-<name>` agent in a single
+   * pass so {@link import("./trigger-runtime.js").buildTriggerRuntime} can attribute a
+   * scoped trigger's newest run by agent name. `listJobs` has no multi-agent filter,
+   * so this scans the jobs dir once (unfiltered) and keeps only the requested agents;
+   * order (started_at descending) is preserved. Errors swallow to `[]` so the runtime
+   * view degrades to config-only rather than failing to render.
+   */
+  async listRunsForAgents(agents: string[], limit = 200): Promise<JobMetadata[]> {
+    if (agents.length === 0) return [];
+    const jobsDir = path.join(this.cfg.stateDir, "jobs");
+    const wanted = new Set(agents);
+    const { jobs } = await listJobs(jobsDir).catch(() => ({ jobs: [], errors: 0 }));
+    const filtered = jobs.filter((j) => wanted.has(j.agent));
+    return limit > 0 ? filtered.slice(0, limit) : filtered;
+  }
+
   /** The working directory used by one-off / scratch chats. */
   get scratchDir(): string {
     return this.cfg.scratchDir;

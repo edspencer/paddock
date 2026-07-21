@@ -1369,17 +1369,21 @@ export function makeChatHandler(deps: {
   });
 
   /**
-   * Fire a schedule-type TRIGGER now (Epic T / T1), reused by the "trigger now" REST
-   * route (T3/T4) and shared with the cron path below. Resolves the live project + its
-   * trigger record and fires via {@link fireTriggerForProject}. Returns the started
-   * chat's session id, or `null` if the project/trigger is gone or not a schedule
-   * trigger, or the turn never produced a session.
+   * Fire a TRIGGER now (Epic T / T1), reused by the "Run now" REST route + `run_trigger`
+   * self-MCP verb (#327) and shared with the cron path below. Resolves the live project +
+   * its trigger record and fires via {@link fireTriggerForProject} — through the SAME hub
+   * path a cron/event fire uses, so a manual run is indistinguishable from an automatic
+   * one. Fires ANY trigger type on demand (a schedule, an event trigger, or a reserved
+   * webhook trigger you want to smoke-test before its ingress lands) regardless of its
+   * `enabled` flag — a manual run is a deliberate act (mirrors the schedule DD-1 rule).
+   * Returns the started chat's session id, or `null` if the project/trigger is gone or
+   * the turn never produced a session.
    */
   async function fireTrigger(slug: string, triggerName: string): Promise<string | null> {
     const project = await deps.projects.get(slug).catch(() => null);
     if (!project) return null;
     const rec = project.triggers?.[triggerName];
-    if (!rec || rec.trigger.type !== "schedule") return null;
+    if (!rec) return null;
     return fireTriggerForProject(project, { name: triggerName, agentName: triggerAgentName(slug, triggerName), ...rec });
   }
 
@@ -1668,6 +1672,10 @@ export function makeChatHandler(deps: {
         removeTrigger: async (projectSlug, name) => {
           if (!deps.triggers) return false;
           return deps.triggers.remove(projectSlug, name);
+        },
+        runTrigger: async (projectSlug, name) => {
+          if (!deps.triggers) return null;
+          return fireTrigger(projectSlug, name);
         },
       };
     }
