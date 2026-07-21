@@ -16,9 +16,6 @@ import {
   type GitProjectStatus,
   type GitPushResult,
   type HistoryMessage,
-  type Hook,
-  type HookInput,
-  type HooksResponse,
   type ModelInfo,
   type PollResult,
   type Project,
@@ -26,8 +23,6 @@ import {
   type ProjectFile,
   type ProjectRuns,
   type RecoveryConfig,
-  type Schedule,
-  type ScheduleInput,
   SCRATCH_SLUG,
   type SlashCommand,
   type Trigger,
@@ -485,100 +480,13 @@ export const api = {
     return usage;
   },
 
-  // --- Schedules (issue #266 / D4) -----------------------------------------
-
-  /**
-   * A project's schedules (declaration + live runtime state) plus the
-   * per-deployment mutation gate. When `mutationEnabled` is false the Settings
-   * pane renders the list read-only (create/edit/delete/toggle are 403 server-side).
-   */
-  async listSchedules(slug: string): Promise<{ schedules: Schedule[]; mutationEnabled: boolean }> {
-    return req<{ schedules: Schedule[]; mutationEnabled: boolean }>(
-      `/api/projects/${encodeURIComponent(slug)}/schedules`,
-    );
-  },
-
-  /** Create or replace one schedule (keyed by name). Persists + arms it at runtime. */
-  async putSchedule(slug: string, name: string, input: ScheduleInput): Promise<Schedule> {
-    const { schedule } = await req<{ schedule: Schedule }>(
-      `/api/projects/${encodeURIComponent(slug)}/schedules/${encodeURIComponent(name)}`,
-      { method: "PUT", body: JSON.stringify(input) },
-    );
-    return schedule;
-  },
-
-  /** Delete one schedule (removes it from project.yaml + prunes herdctl's copy). */
-  async deleteSchedule(slug: string, name: string): Promise<void> {
-    await req<{ ok: boolean }>(
-      `/api/projects/${encodeURIComponent(slug)}/schedules/${encodeURIComponent(name)}`,
-      { method: "DELETE" },
-    );
-  },
-
-  /** Enable or disable one schedule (persisted; takes effect immediately). */
-  async setScheduleEnabled(slug: string, name: string, enabled: boolean): Promise<Schedule> {
-    const action = enabled ? "enable" : "disable";
-    // These carry no payload, but `req` sets a JSON content-type — send an empty
-    // object so Fastify's JSON parser doesn't reject an empty body (400).
-    const { schedule } = await req<{ schedule: Schedule }>(
-      `/api/projects/${encodeURIComponent(slug)}/schedules/${encodeURIComponent(name)}/${action}`,
-      { method: "POST", body: "{}" },
-    );
-    return schedule;
-  },
-
-  /**
-   * Fire a schedule NOW — runs it through the same hub path a cron fire uses, so
-   * the resulting chat is a first-class, `scheduled`-badged run. Resolves the
-   * started chat's session id.
-   */
-  async triggerSchedule(slug: string, name: string): Promise<string> {
-    const { sessionId } = await req<{ ok: boolean; sessionId: string }>(
-      `/api/projects/${encodeURIComponent(slug)}/schedules/${encodeURIComponent(name)}/trigger`,
-      { method: "POST", body: "{}" },
-    );
-    return sessionId;
-  },
-
-  // --- Hooks (Epic G / G4) -------------------------------------------------
-
-  /**
-   * A project's event hooks + the capability picker's catalog: the grantable tools
-   * and the events a hook can fire on (so the Hooks tab renders a precise picker
-   * without hard-coding the tool list client-side).
-   */
-  async listHooks(slug: string): Promise<HooksResponse> {
-    return req<HooksResponse>(`/api/projects/${encodeURIComponent(slug)}/hooks`);
-  },
-
-  /**
-   * Create or replace one hook (keyed by name). Persists to project.yaml + registers
-   * its `hook-<slug>-<name>` agent. Enabling/disabling is the SAME call with the
-   * `enabled` field flipped — there is no separate enable/disable verb (GG-3).
-   */
-  async putHook(slug: string, name: string, input: HookInput): Promise<Hook> {
-    const { hook } = await req<{ hook: Hook }>(
-      `/api/projects/${encodeURIComponent(slug)}/hooks/${encodeURIComponent(name)}`,
-      { method: "PUT", body: JSON.stringify(input) },
-    );
-    return hook;
-  },
-
-  /** Delete one hook (removes it from project.yaml + unregisters its agent). */
-  async deleteHook(slug: string, name: string): Promise<void> {
-    await req<{ ok: boolean }>(
-      `/api/projects/${encodeURIComponent(slug)}/hooks/${encodeURIComponent(name)}`,
-      { method: "DELETE" },
-    );
-  },
-
   // --- Triggers (Epic T / T3–T4) -------------------------------------------
 
   /**
    * A project's unified triggers + the picker's catalog: the grantable tools, the
    * events an event-trigger can fire on, and the trigger types — so the Triggers tab
    * renders precise type/event/capability pickers without hard-coding them. The
-   * successor to `listHooks` + `listSchedules` (Epic T folds both into one surface).
+   * single surface over both event and cron triggers (Epic T folds both in).
    */
   async listTriggers(slug: string): Promise<TriggersResponse> {
     return req<TriggersResponse>(`/api/projects/${encodeURIComponent(slug)}/triggers`);
