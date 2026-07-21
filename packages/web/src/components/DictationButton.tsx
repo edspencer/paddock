@@ -3,6 +3,12 @@
 // machinery lives in the useDictation hook; this component is just the button +
 // its visual states.
 //
+// The mic follows the same enabled semantics as the composer's text input: it is
+// interactive regardless of turn state, so a user can dictate a follow-up while a
+// turn is streaming and have it queue via the composer's existing single-slot
+// queue path (issue #365) — exactly like typing does. Its own record/transcribe/
+// error state is the only thing that changes what a click does.
+//
 // Visibility rules:
 //   - server dictation disabled           → render nothing
 //   - server enabled, browser unsupported → disabled button, explanatory tooltip
@@ -13,11 +19,9 @@ import { useDictation } from "../lib/useDictation";
 export interface DictationButtonProps {
   /** Receives transcribed text to append to the composer draft. */
   onText: (text: string) => void;
-  /** Disable while the chat is otherwise busy (e.g. a turn is streaming). */
-  disabled?: boolean;
 }
 
-export function DictationButton({ onText, disabled = false }: DictationButtonProps) {
+export function DictationButton({ onText }: DictationButtonProps) {
   const { state, available, supported, error, toggle, retry, dismiss, cancel } = useDictation({
     onText,
   });
@@ -93,8 +97,9 @@ export function DictationButton({ onText, disabled = false }: DictationButtonPro
       <button
         type="button"
         onClick={handleClick}
-        // Never disabled while recording/transcribing — those clicks stop/cancel.
-        disabled={disabled && !recording && !transcribing}
+        // Always interactive: idle records, recording stops, transcribing cancels
+        // — matching the composer's text input, which stays usable mid-turn so a
+        // dictated follow-up can queue like a typed one (issue #365).
         aria-label={
           recording
             ? "Stop recording"
@@ -118,7 +123,6 @@ export function DictationButton({ onText, disabled = false }: DictationButtonPro
               : errored
                 ? "bg-rose-100 text-rose-600 dark:bg-rose-950/60 dark:text-rose-400"
                 : "text-paddock-500 can-hover:hover:bg-paddock-100 can-hover:hover:text-paddock-700 dark:text-paddock-400 dark:can-hover:hover:bg-paddock-800 dark:can-hover:hover:text-paddock-200",
-          disabled && !recording && !transcribing && "cursor-not-allowed opacity-60",
         ]
           .filter(Boolean)
           .join(" ")}

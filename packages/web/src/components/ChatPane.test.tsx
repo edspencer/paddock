@@ -61,6 +61,11 @@ const chatContext = vi.fn();
 const subagentMessages = vi.fn();
 const projectCommands = vi.fn();
 const scratchCommands = vi.fn();
+// The composer's DictationButton probes transcriptionStatus on mount; default to
+// "dictation off" so it renders nothing and most tests see the same composer they
+// always have. The dictation-queue test (#365) overrides these two per-test.
+const transcriptionStatus = vi.fn();
+const transcribe = vi.fn();
 vi.mock("../lib/api", async () => {
   const actual = await vi.importActual<typeof import("../lib/api")>("../lib/api");
   return {
@@ -72,11 +77,8 @@ vi.mock("../lib/api", async () => {
       // Slash-command autocomplete source (issue #103).
       projectCommands: (...a: unknown[]) => projectCommands(...a),
       scratchCommands: (...a: unknown[]) => scratchCommands(...a),
-      // The composer's DictationButton probes this on mount; default to
-      // "dictation off" so it renders nothing and these tests see the same
-      // composer they always have.
-      transcriptionStatus: () =>
-        Promise.resolve({ available: false, mode: "off" as const, model: "" }),
+      transcriptionStatus: (...a: unknown[]) => transcriptionStatus(...a),
+      transcribe: (...a: unknown[]) => transcribe(...a),
     },
   };
 });
@@ -111,6 +113,10 @@ beforeEach(() => {
   subagentMessages.mockReset().mockResolvedValue([]);
   projectCommands.mockReset().mockResolvedValue(COMMANDS);
   scratchCommands.mockReset().mockResolvedValue(COMMANDS);
+  transcriptionStatus
+    .mockReset()
+    .mockResolvedValue({ available: false, mode: "off" as const, model: "" });
+  transcribe.mockReset().mockResolvedValue("");
   localStorage.clear();
 });
 
@@ -1270,6 +1276,88 @@ describe("ChatPane: message queue (issue #91)", () => {
     expect(queuedSets.at(-1)).toMatchObject({ sessionId: "s", text: "/compact" });
     act(() => sub().handlers.onComplete?.({ sessionId: "s", jobId: "job-1", success: true }));
     expect(commands).toHaveLength(0);
+    expect(sends).toHaveLength(1);
+  });
+});
+
+// Issue #365: the voice-dictation mic must stay interactive while a turn is
+// streaming, and a clip dictated mid-turn must land in the composer and follow
+// the SAME single-slot queue path a typed follow-up does (queue now, flush after
+// the turn) — rather than being locked out precisely when hands-free queuing is
+// most useful.
+describe("ChatPane: voice-dictation while streaming (issue #365)", () => {
+  const box = () => screen.getByPlaceholderText(/Message the keeper agent|Queue a message/i);
+
+  /** A controllable fake MediaRecorder whose stop() emits a chunk + fires onstop. */
+  class FakeMediaRecorder {
+    state: "inactive" | "recording" = "inactive";
+    ondataavailable: ((e: { data: Blob }) => void) | null = null;
+    onstop: (() => void) | null = null;
+    mimeType = "audio/webm";
+    start() {
+      this.state = "recording";
+    }
+    stop() {
+      this.state = "inactive";
+      this.ondataavailable?.({ data: new Blob(["audio"], { type: this.mimeType }) });
+      this.onstop?.();
+    }
+    static isTypeSupported() {
+      return true;
+    }
+  }
+
+  // Put the browser into a secure/mic-capable context so the mic renders live.
+  function enableMicSupport() {
+    Object.defineProperty(window, "isSecureContext", { value: true, configurable: true });
+    (window as unknown as { MediaRecorder: unknown }).MediaRecorder = FakeMediaRecorder;
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia: vi.fn(async () => ({ getTracks: () => [{ stop: vi.fn() }] })) },
+    });
+  }
+
+  it("keeps the mic interactive mid-turn and routes a dictated clip into the queue", async () => {
+    enableMicSupport();
+    transcriptionStatus.mockResolvedValue({ available: true, mode: "remote" as const, model: "base" });
+    transcribe.mockResolvedValue("dictated follow up");
+
+    render(<ChatPane projectSlug="proj" initialSessionId="s" loadHistory={vi.fn().mockResolvedValue([])} />);
+    await screen.findByRole("button", { name: /^Send$/ });
+
+    // Drive a turn into the streaming state (mirrors the queue-tests' startTurn).
+    await userEvent.type(box(), "first turn");
+    fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
+    act(() => sub().handlers.onResponse?.("…", { sessionId: "s", jobId: "job-1" }));
+    expect(screen.getByRole("button", { name: /Stop/ })).toBeInTheDocument();
+
+    // The mic is NOT disabled while the turn streams (the bug: it was greyed out).
+    const mic = await screen.findByRole("button", { name: /record a voice message/i });
+    expect(mic).toBeEnabled();
+
+    // Dictate: click to record, click to stop → transcription resolves and the
+    // text lands in the composer draft, exactly like typing would.
+    await act(async () => {
+      fireEvent.click(mic);
+    });
+    await act(async () => {
+      fireEvent.click(mic);
+    });
+    await waitFor(() =>
+      expect((box() as HTMLTextAreaElement).value).toBe("dictated follow up"),
+    );
+
+    // Submitting mid-turn follows the existing single-slot queue path: it queues
+    // (no second live send) and is persisted to the server for auto-flush.
+    fireEvent.keyDown(box(), { key: "Enter" });
+    expect(sends).toHaveLength(1);
+    expect(screen.getByText("queued")).toBeInTheDocument();
+    expect(screen.getByText("dictated follow up")).toBeInTheDocument();
+    expect(queuedSets.at(-1)).toMatchObject({ sessionId: "s", text: "dictated follow up" });
+    expect((box() as HTMLTextAreaElement).value).toBe("");
+
+    // The server owns auto-send; the client must not self-send on completion.
+    act(() => sub().handlers.onComplete?.({ sessionId: "s", jobId: "job-1", success: true }));
     expect(sends).toHaveLength(1);
   });
 });
