@@ -16,6 +16,7 @@ import {
   FORK_BATCH_MAX,
   coercePrompts,
   coerceToolList,
+  resolveModelArg,
   clampLimit,
   truncateText,
   READ_CHAT_DEFAULT_LIMIT,
@@ -189,8 +190,8 @@ describe("self-management MCP (Phase 1, read-only)", () => {
 
 interface RecordingWrite extends SelfMcpWriteContext {
   calls: {
-    createChat: Array<{ projectSlug: string; prompt: string; opts?: { name?: string; preloadContext?: boolean } }>;
-    forkChat: Array<{ projectSlug: string; sourceSessionId: string; prompt?: string; name?: string }>;
+    createChat: Array<{ projectSlug: string; prompt: string; opts?: { name?: string; preloadContext?: boolean; model?: string } }>;
+    forkChat: Array<{ projectSlug: string; sourceSessionId: string; prompt?: string; name?: string; model?: string }>;
     sendMessage: Array<{ projectSlug: string; sessionId: string; prompt: string }>;
     setArchived: Array<{ projectSlug: string; sessionId: string; archived: boolean }>;
     setTrigger: Array<{ projectSlug: string; name: string; trigger: Record<string, unknown> }>;
@@ -473,6 +474,81 @@ describe("self-management MCP (Phase 2, write tools)", () => {
     const { result } = await callWrite(write, "fork_chat_batch", { prompts: ["a"] });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("no chat to fork");
+  });
+
+  // ── Per-chat model override (issue #336) ──────────────────────────────────
+
+  it("create_chat threads a valid model through to createChat + echoes it", async () => {
+    const write = fakeWrite();
+    const { json } = await callWrite(write, "create_chat", { prompt: "go", model: "claude-sonnet-5" });
+    expect(json.model).toBe("claude-sonnet-5");
+    expect(write.calls.createChat[0].opts?.model).toBe("claude-sonnet-5");
+  });
+
+  it("create_chat omits model (inherits default) when the arg is absent", async () => {
+    const write = fakeWrite();
+    const { json } = await callWrite(write, "create_chat", { prompt: "go" });
+    expect("model" in json).toBe(false);
+    expect(write.calls.createChat[0].opts?.model).toBeUndefined();
+  });
+
+  it("create_chat rejects an unknown model (allow-list) and does NOT spawn", async () => {
+    const write = fakeWrite();
+    const { result } = await callWrite(write, "create_chat", { prompt: "go", model: "gpt-4o" });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('unknown model "gpt-4o"');
+    expect(write.calls.createChat).toHaveLength(0);
+  });
+
+  it("create_chat treats a blank model as absent (inherits default)", async () => {
+    const write = fakeWrite();
+    const { json } = await callWrite(write, "create_chat", { prompt: "go", model: "   " });
+    expect("model" in json).toBe(false);
+    expect(write.calls.createChat[0].opts?.model).toBeUndefined();
+  });
+
+  it("fork_chat threads a valid model through + rejects an unknown one", async () => {
+    const write = fakeWrite();
+    const { json } = await callWrite(write, "fork_chat", { prompt: "branch", model: "claude-haiku-4-5-20251001" });
+    expect(json.model).toBe("claude-haiku-4-5-20251001");
+    expect(write.calls.forkChat[0].model).toBe("claude-haiku-4-5-20251001");
+
+    const bad = await callWrite(fakeWrite(), "fork_chat", { prompt: "branch", model: "nope" });
+    expect(bad.result.isError).toBe(true);
+  });
+
+  it("fork_chat_batch applies ONE model to every fork + rejects an unknown one", async () => {
+    const write = fakeWrite();
+    const { json } = await callWrite(write, "fork_chat_batch", {
+      prompts: ["a", "b"],
+      model: "claude-sonnet-5",
+    });
+    expect(json.model).toBe("claude-sonnet-5");
+    expect(write.calls.forkChat.map((c) => c.model)).toEqual(["claude-sonnet-5", "claude-sonnet-5"]);
+
+    const bad = await callWrite(fakeWrite(), "fork_chat_batch", { prompts: ["a"], model: "bad-model" });
+    expect(bad.result.isError).toBe(true);
+  });
+
+  it("the spawn tools advertise the `model` param listing the picker allow-list", () => {
+    const def = selfMcpServerDef(fakeContext(), fakeWrite());
+    for (const name of ["create_chat", "fork_chat", "fork_chat_batch"]) {
+      const tool = def.tools.find((t) => t.name === name)!;
+      const props = tool.inputSchema.properties as Record<string, { description?: string }>;
+      expect(props.model).toBeDefined();
+      expect(props.model.description).toContain("claude-sonnet-5");
+    }
+  });
+
+  it("resolveModelArg validates against the allow-list", () => {
+    expect(resolveModelArg(undefined)).toEqual({});
+    expect(resolveModelArg("")).toEqual({});
+    expect(resolveModelArg("   ")).toEqual({});
+    expect(resolveModelArg("claude-opus-4-8")).toEqual({ model: "claude-opus-4-8" });
+    expect(resolveModelArg(" claude-sonnet-5 ")).toEqual({ model: "claude-sonnet-5" });
+    const err = resolveModelArg("gpt-4o");
+    expect(typeof err).toBe("string");
+    expect(err as string).toContain("Valid models:");
   });
 
   it("archive_chat defaults the target to the CURRENT chat (archive yourself)", async () => {

@@ -1520,6 +1520,13 @@ export function makeChatHandler(deps: {
           const composed = o?.preloadContext
             ? await composePreloadedPrompt(projectSlug, kickoff)
             : kickoff;
+          // Per-chat model override (#336): a valid requested model wins, else the
+          // project default. Re-register the (shared) keeper at it BEFORE the turn —
+          // the SAME mechanism (and single-user last-write-wins caveat) as the human
+          // model picker (see ensureKeeperModel). The handler already validated it;
+          // guard again defensively so an unknown id falls back, never reaches the fleet.
+          const overrideModel = o?.model && isKnownModel(o.model) ? o.model : undefined;
+          if (overrideModel) await deps.herdctl.ensureKeeperModel(p, overrideModel);
           const newId = await startAgentTurn({
             projectSlug,
             agentName: keeperAgentName(projectSlug),
@@ -1527,7 +1534,7 @@ export function makeChatHandler(deps: {
             resume: null,
             prompt: composed,
             driveMode: driveModeFor(p),
-            fallbackModel: p.model,
+            fallbackModel: overrideModel ?? p.model,
             origin: spawnedChild.origin,
             depth: spawnedChild.depth,
             maxSpawnDepth: maxSpawnDepthFor(p),
@@ -1544,7 +1551,7 @@ export function makeChatHandler(deps: {
           }
           return { sessionId: newId };
         },
-        forkChat: async ({ projectSlug, sourceSessionId, prompt: kickoff, name }) => {
+        forkChat: async ({ projectSlug, sourceSessionId, prompt: kickoff, name, model }) => {
           const p = await deps.projects.get(projectSlug);
           if (!(await deps.herdctl.sessionExists(p, sourceSessionId))) {
             throw new Error(`chat not found: ${sourceSessionId} in project ${projectSlug}`);
@@ -1555,6 +1562,12 @@ export function makeChatHandler(deps: {
           // kickoff never calls startAgentTurn, so this covers both cases.
           await deps.runProvenance?.stamp(newId, spawnedChild).catch(() => undefined);
           if (kickoff && kickoff.trim().length > 0) {
+            // Per-chat model override (#336): applies to the kickoff turn only (a
+            // fork with no kickoff runs no turn). Same shared-keeper re-registration
+            // + last-write-wins caveat as the human picker; handler pre-validated,
+            // guard again so an unknown id falls back to the project default.
+            const overrideModel = model && isKnownModel(model) ? model : undefined;
+            if (overrideModel) await deps.herdctl.ensureKeeperModel(p, overrideModel);
             await startAgentTurn({
               projectSlug,
               agentName: keeperAgentName(projectSlug),
@@ -1568,7 +1581,7 @@ export function makeChatHandler(deps: {
               // chat N times, one item each") actually work.
               prompt: forkKickoffPrompt(kickoff),
               driveMode: driveModeFor(p),
-              fallbackModel: p.model,
+              fallbackModel: overrideModel ?? p.model,
               // Resume of the just-forked child: the child was already stamped
               // above, so startAgentTurn won't re-stamp; this just describes the
               // kickoff run honestly. Its self-MCP is gated on the child's own
