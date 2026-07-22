@@ -100,8 +100,9 @@ describe("FilesPane (#259)", () => {
     setDir({ "": [{ name: "design", kind: "dir" }], design: [{ name: "plan.md", kind: "file" }] });
     renderPane("design/plan.md");
     expect(await screen.findByTestId("file-view")).toHaveTextContent("file: design/plan.md");
-    // A nested file is NOT pinnable (top-level only) — no pin toggle.
-    expect(screen.queryByRole("button", { name: /Pin as tab/i })).not.toBeInTheDocument();
+    // A nested file is pinnable too — the toggle carries its full subpath.
+    fireEvent.click(screen.getByRole("button", { name: /Pin as tab/i }));
+    expect(onTogglePin).toHaveBeenCalledWith("design/plan.md");
   });
 
   it("offers a Pin toggle for a top-level file in the viewer", async () => {
@@ -120,11 +121,11 @@ describe("FilesPane (#259)", () => {
     expect(onTogglePin).toHaveBeenCalledWith("page.html");
   });
 
-  it("does not offer a pin affordance for files inside a subdirectory", async () => {
+  it("pins a file inside a subdirectory from its list row (full subpath)", async () => {
     setDir({ design: [{ name: "plan.md", kind: "file" }] });
     renderPane("design");
-    await screen.findByText("plan.md");
-    expect(screen.queryByRole("button", { name: /Pin plan.md/i })).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: /^Pin plan.md$/i }));
+    expect(onTogglePin).toHaveBeenCalledWith("design/plan.md");
   });
 
   it("surfaces a load error", async () => {
