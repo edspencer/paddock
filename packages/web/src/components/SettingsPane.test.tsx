@@ -38,6 +38,7 @@ describe("SettingsPane", () => {
       keeperDefault: "claude-opus-4-8",
       sweeperDefault: "claude-haiku-4-5-20251001",
       keeperDriveModeDefault: "batch",
+      curationDefault: { overviewMaxTokens: 2000, changelogMaxTokens: 8000, claudeMaxTokens: 6000 },
     });
   });
 
@@ -112,8 +113,40 @@ describe("SettingsPane", () => {
       driveMode: null,
       // No per-project override set -> inherits the instance default (issue #262).
       maxSpawnDepth: null,
+      // No curation budget override set -> inherits the instance defaults (issue #384).
+      curation: null,
     });
     await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
+  });
+
+  it("sends a per-project curation budget override in the patch (issue #384)", async () => {
+    const project = makeProject({ slug: "p1", summary: "s" });
+    render(<SettingsPane project={project} onSaved={() => {}} />);
+    // The instance default is shown as the placeholder until overridden.
+    const changelogField = await screen.findByLabelText("CHANGELOG.md token budget");
+    expect(changelogField).toHaveAttribute("placeholder", "Instance default (8000)");
+
+    await userEvent.type(changelogField, "3000");
+    fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
+
+    await waitFor(() => expect(updateProject).toHaveBeenCalledTimes(1));
+    const patch = updateProject.mock.calls[0][1] as { curation: unknown };
+    // Only the field set is sent; the others inherit (absent from the override).
+    expect(patch.curation).toEqual({ changelogMaxTokens: 3000 });
+  });
+
+  it("prefills a curation override and clears it back to inherit (issue #384)", async () => {
+    const project = makeProject({ slug: "p1", curation: { overviewMaxTokens: 1500 } });
+    render(<SettingsPane project={project} onSaved={() => {}} />);
+    const overviewField = await screen.findByLabelText("OVERVIEW.md token budget");
+    expect(overviewField).toHaveValue(1500);
+
+    // Clearing the field makes the whole override null (inherit) -> a dirty change.
+    await userEvent.clear(overviewField);
+    fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    await waitFor(() => expect(updateProject).toHaveBeenCalledTimes(1));
+    const patch = updateProject.mock.calls[0][1] as { curation: unknown };
+    expect(patch.curation).toBeNull();
   });
 
   it("edits keeper-agent settings and sends them in the patch (issue #12)", async () => {

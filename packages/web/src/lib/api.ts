@@ -7,6 +7,7 @@ import {
   type AttachmentRef,
   type AttachmentsConfig,
   type Chat,
+  type CurationConfig,
   type ChatUsage,
   type CreateProjectInput,
   type DeviceFlowStart,
@@ -166,6 +167,10 @@ export const api = {
      *  inherits when its own `attachments` fields are unset (issue #328). Optional
      *  for back-compat with older servers / test mocks. */
     attachmentsDefault?: AttachmentsConfig;
+    /** Box-wide sweeper-curation budgets (PADDOCK_CURATION_*) a project inherits
+     *  when its own `curation` fields are unset (issue #384). Optional for
+     *  back-compat with older servers / test mocks. */
+    curationDefault?: CurationConfig;
   }> {
     return req<{
       models: ModelInfo[];
@@ -175,6 +180,7 @@ export const api = {
       maxSpawnDepthDefault?: number;
       recoveryDefault?: RecoveryConfig;
       attachmentsDefault?: AttachmentsConfig;
+      curationDefault?: CurationConfig;
     }>("/api/models");
   },
 

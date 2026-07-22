@@ -1,10 +1,35 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "../lib/api";
-import type { ModelInfo, Project, ProjectLink, ProjectStatus } from "../lib/types";
+import type {
+  CurationConfig,
+  CurationOverride,
+  ModelInfo,
+  Project,
+  ProjectLink,
+  ProjectStatus,
+} from "../lib/types";
 import { AREAS } from "../lib/areas";
 import { AlertIcon, CheckIcon, PinIcon, PlusIcon, TrashIcon } from "./icons";
 
 const STATUSES: ProjectStatus[] = ["idea", "active", "paused", "blocked", "done", "abandoned"];
+
+/**
+ * Build a per-project curation override (issue #384) from the three budget
+ * fields. Each `""` means "inherit" and is dropped; the result is an object of
+ * only the set fields, or `null` when none are set (clears the override). Field
+ * order is fixed so JSON.stringify comparisons in dirty-detection are stable.
+ */
+function buildCurationOverride(
+  overview: string,
+  changelog: string,
+  claude: string,
+): CurationOverride | null {
+  const out: CurationOverride = {};
+  if (overview !== "") out.overviewMaxTokens = Number(overview);
+  if (changelog !== "") out.changelogMaxTokens = Number(changelog);
+  if (claude !== "") out.claudeMaxTokens = Number(claude);
+  return Object.keys(out).length > 0 ? out : null;
+}
 
 /** Keeper permission modes offered here — mirrors the server's PERMISSION_MODES. */
 const PERMISSION_MODES: { value: string; label: string }[] = [
@@ -254,12 +279,28 @@ export function SettingsPane({
   const [maxSpawnDepth, setMaxSpawnDepth] = useState<string>(
     project.maxSpawnDepth != null ? String(project.maxSpawnDepth) : "",
   );
+  // "" = inherit the instance curation budget for that file (issue #384).
+  const [overviewBudget, setOverviewBudget] = useState<string>(
+    project.curation?.overviewMaxTokens != null ? String(project.curation.overviewMaxTokens) : "",
+  );
+  const [changelogBudget, setChangelogBudget] = useState<string>(
+    project.curation?.changelogMaxTokens != null ? String(project.curation.changelogMaxTokens) : "",
+  );
+  const [claudeBudget, setClaudeBudget] = useState<string>(
+    project.curation?.claudeMaxTokens != null ? String(project.curation.claudeMaxTokens) : "",
+  );
 
   const [models, setModels] = useState<ModelInfo[]>([]);
   // The box-wide drive-mode default a project inherits when `driveMode` is unset.
   const [driveModeDefault, setDriveModeDefault] = useState<"batch" | "session">("batch");
   // The instance-wide max-spawn-depth default inherited when `maxSpawnDepth` is unset.
   const [maxSpawnDepthDefault, setMaxSpawnDepthDefault] = useState<number>(1);
+  // The instance-wide curation budgets inherited when a per-file override is unset (#384).
+  const [curationDefault, setCurationDefault] = useState<CurationConfig>({
+    overviewMaxTokens: 2000,
+    changelogMaxTokens: 8000,
+    claudeMaxTokens: 6000,
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState(0);
@@ -279,6 +320,15 @@ export function SettingsPane({
     setDocker(project.docker);
     setDriveMode(project.driveMode ?? "");
     setMaxSpawnDepth(project.maxSpawnDepth != null ? String(project.maxSpawnDepth) : "");
+    setOverviewBudget(
+      project.curation?.overviewMaxTokens != null ? String(project.curation.overviewMaxTokens) : "",
+    );
+    setChangelogBudget(
+      project.curation?.changelogMaxTokens != null ? String(project.curation.changelogMaxTokens) : "",
+    );
+    setClaudeBudget(
+      project.curation?.claudeMaxTokens != null ? String(project.curation.claudeMaxTokens) : "",
+    );
     setError(null);
   }, [project]);
 
@@ -292,6 +342,7 @@ export function SettingsPane({
         setModels(r.models);
         if (r.keeperDriveModeDefault) setDriveModeDefault(r.keeperDriveModeDefault);
         if (typeof r.maxSpawnDepthDefault === "number") setMaxSpawnDepthDefault(r.maxSpawnDepthDefault);
+        if (r.curationDefault) setCurationDefault(r.curationDefault);
       })
       .catch(() => {
         /* non-fatal: the current values are still selectable / shown */
@@ -339,6 +390,9 @@ export function SettingsPane({
       driveMode: driveMode === "" ? null : (driveMode as "batch" | "session"),
       // Same tri-state as driveMode: "" -> null inherits the instance default (#262).
       maxSpawnDepth: maxSpawnDepth === "" ? null : Number(maxSpawnDepth),
+      // Curation budgets (#384): each field "" -> inherit; the whole override is
+      // an object of only the set fields, or `null` when none are set (clears it).
+      curation: buildCurationOverride(overviewBudget, changelogBudget, claudeBudget),
     }),
     [
       name,
@@ -354,6 +408,9 @@ export function SettingsPane({
       docker,
       driveMode,
       maxSpawnDepth,
+      overviewBudget,
+      changelogBudget,
+      claudeBudget,
     ],
   );
 
@@ -374,6 +431,13 @@ export function SettingsPane({
       // patch's "" -> null (clean when neither has an override).
       driveMode: project.driveMode ?? null,
       maxSpawnDepth: project.maxSpawnDepth ?? null,
+      // Same normalization as the patch builder so an absent/equal override
+      // compares clean (field order matches buildCurationOverride).
+      curation: buildCurationOverride(
+        project.curation?.overviewMaxTokens != null ? String(project.curation.overviewMaxTokens) : "",
+        project.curation?.changelogMaxTokens != null ? String(project.curation.changelogMaxTokens) : "",
+        project.curation?.claudeMaxTokens != null ? String(project.curation.claudeMaxTokens) : "",
+      ),
     };
     return JSON.stringify(patch) !== JSON.stringify(original);
   }, [patch, project]);
@@ -388,9 +452,15 @@ export function SettingsPane({
     maxSpawnDepth !== "" &&
     (!Number.isInteger(maxSpawnDepthNum) || maxSpawnDepthNum < 0 || maxSpawnDepthNum > 8);
 
+  // Each curation budget is either "" (inherit) or a positive integer (#384).
+  const budgetInvalid = (v: string) =>
+    v !== "" && (!Number.isInteger(Number(v)) || Number(v) < 1);
+  const curationInvalid =
+    budgetInvalid(overviewBudget) || budgetInvalid(changelogBudget) || budgetInvalid(claudeBudget);
+
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (nameInvalid || maxTurnsInvalid || maxSpawnDepthInvalid) return;
+    if (nameInvalid || maxTurnsInvalid || maxSpawnDepthInvalid || curationInvalid) return;
     setBusy(true);
     setError(null);
     try {
@@ -425,7 +495,9 @@ export function SettingsPane({
         <button
           type="submit"
           className="btn-primary ml-auto"
-          disabled={busy || !dirty || nameInvalid || maxTurnsInvalid || maxSpawnDepthInvalid}
+          disabled={
+            busy || !dirty || nameInvalid || maxTurnsInvalid || maxSpawnDepthInvalid || curationInvalid
+          }
         >
           {busy ? "Saving…" : "Save changes"}
         </button>
@@ -749,6 +821,82 @@ export function SettingsPane({
                 )}
               </div>
             </div>
+          </Section>
+
+          <Section
+            title="Curation budgets"
+            description="Per-file token limits the post-turn sweeper keeps this project's OVERVIEW.md, CHANGELOG.md and CLAUDE.md under. Leave a field blank to inherit the instance default."
+          >
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <label className="block">
+                <span className="field-label">OVERVIEW.md (tokens)</span>
+                <input
+                  type="number"
+                  min={1}
+                  className="input"
+                  placeholder={`Instance default (${curationDefault.overviewMaxTokens})`}
+                  value={overviewBudget}
+                  onChange={(e) => setOverviewBudget(e.target.value)}
+                  aria-label="OVERVIEW.md token budget"
+                />
+              </label>
+              <label className="block">
+                <span className="field-label">CHANGELOG.md (tokens)</span>
+                <input
+                  type="number"
+                  min={1}
+                  className="input"
+                  placeholder={`Instance default (${curationDefault.changelogMaxTokens})`}
+                  value={changelogBudget}
+                  onChange={(e) => setChangelogBudget(e.target.value)}
+                  aria-label="CHANGELOG.md token budget"
+                />
+              </label>
+              <label className="block">
+                <span className="field-label">CLAUDE.md (tokens)</span>
+                <input
+                  type="number"
+                  min={1}
+                  className="input"
+                  placeholder={`Instance default (${curationDefault.claudeMaxTokens})`}
+                  value={claudeBudget}
+                  onChange={(e) => setClaudeBudget(e.target.value)}
+                  aria-label="CLAUDE.md token budget"
+                />
+              </label>
+            </div>
+            {curationInvalid ? (
+              <Hint>Each budget must be a whole number of tokens (1 or more), or blank to inherit.</Hint>
+            ) : buildCurationOverride(overviewBudget, changelogBudget, claudeBudget) ? (
+              <Hint>
+                Overriding the instance defaults ({curationDefault.overviewMaxTokens}/
+                {curationDefault.changelogMaxTokens}/{curationDefault.claudeMaxTokens}) for the fields
+                set above.{" "}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOverviewBudget("");
+                    setChangelogBudget("");
+                    setClaudeBudget("");
+                  }}
+                  className="font-medium text-accent hover:underline"
+                >
+                  Reset all to instance defaults
+                </button>
+                . Repo-backed projects never have their CLAUDE.md curated, so that budget is moot for
+                them.
+              </Hint>
+            ) : (
+              <Hint>
+                Inheriting the instance defaults:{" "}
+                <span className="font-medium text-paddock-700 dark:text-paddock-200">
+                  {curationDefault.overviewMaxTokens}/{curationDefault.changelogMaxTokens}/
+                  {curationDefault.claudeMaxTokens}
+                </span>{" "}
+                tokens (OVERVIEW/CHANGELOG/CLAUDE). Lower a budget to shrink the context this project
+                injects into every chat.
+              </Hint>
+            )}
           </Section>
 
           {/* Schedules moved out of Settings (Epic T / T4): they're now rows in the

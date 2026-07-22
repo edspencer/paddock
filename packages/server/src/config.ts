@@ -13,6 +13,7 @@ import YAML from "yaml";
 import { type DriveMode, KEEPER_DEFAULT_DRIVE_MODE, isKnownDriveMode } from "./models.js";
 import { DEFAULT_MAX_SPAWN_DEPTH, isValidMaxSpawnDepth } from "./spawn-capability.js";
 import { type RecoveryConfig, DEFAULT_RECOVERY } from "./recovery-config.js";
+import { type CurationConfig, DEFAULT_CURATION } from "./curation-config.js";
 import {
   type AttachmentsConfig,
   DEFAULT_ATTACHMENTS,
@@ -666,27 +667,8 @@ export function loadPaddockConfig(): PaddockConfig {
   });
 }
 
-/**
- * Per-file token budgets for the post-turn sweeper's curated files (issue #379).
- * Tokens (not chars) so they read naturally against a chat's context window;
- * `SweepService` converts to an approximate char bound. Defaults chosen to bring
- * a preload-on keeper chat's opening context back toward the no-preload band.
- */
-export interface CurationConfig {
-  /** Budget for OVERVIEW.md (regenerated wholesale each sweep). */
-  overviewMaxTokens: number;
-  /** Budget for CHANGELOG.md (injected into the preload; the biggest lever). */
-  changelogMaxTokens: number;
-  /** Budget for the CLAUDE.md curated-notes section (auto-loaded every turn). */
-  claudeMaxTokens: number;
-}
-
-/** Built-in defaults when neither env nor YAML sets a curation budget. */
-export const DEFAULT_CURATION: CurationConfig = {
-  overviewMaxTokens: 2000,
-  changelogMaxTokens: 8000,
-  claudeMaxTokens: 6000,
-};
+// CurationConfig + DEFAULT_CURATION now live in ./curation-config.ts (issue #384),
+// alongside the per-project override resolver — mirroring recovery-config.ts.
 
 /** Resolve one positive-integer budget from env < file < built-in default. */
 function loadCurationNum(
