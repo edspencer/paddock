@@ -43,6 +43,13 @@ import type { RunProvenance, RunProvenanceStore } from "./run-provenance.js";
 import { applyMessageProvenance, type MessageProvenanceStore } from "./message-provenance.js";
 import { buildProjectRuns } from "./runs.js";
 import type { PaddockConfig } from "./config.js";
+import {
+  buildInstanceConfig,
+  writeInstanceConfig,
+  validatePatch,
+  instanceConfigPath,
+  InstanceConfigError,
+} from "./instance-config.js";
 import { type Transcriber, TranscriptionError } from "./transcribe.js";
 import { readFirstUserText, projectChatsDir } from "./transcripts.js";
 import { readSubagentMessages, readSessionTokenUsageWithSubagents } from "./subagents.js";
@@ -271,6 +278,44 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
   });
 
   app.get("/api/health", async () => ({ ok: true }));
+
+  // --- instance-wide settings (issue #385) --------------------------------
+  // A top-level admin screen over the frozen instance config. GET reports every
+  // surfaced field (value / default / editable / sensitive / env-shadow); PUT
+  // writes the editable subset to paddock.config.yaml (comment-preserving,
+  // atomic). Writes DO NOT hot-apply — the config is read once at boot and
+  // frozen — so a PUT returns `restartRequired: true` and the process keeps its
+  // current config until it restarts. This route mutates instance-wide config;
+  // it inherits whatever request-boundary auth the deployment configures (open
+  // in `none` mode, gated behind the proxy/IdP otherwise) — a role model is a
+  // follow-up per the ticket.
+  app.get("/api/instance-config", async () => buildInstanceConfig(cfg));
+
+  app.put<{ Body: { patch?: Record<string, unknown> } }>(
+    "/api/instance-config",
+    async (req, reply) => {
+      const patch = req.body?.patch;
+      if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
+        return reply.code(400).send({ error: "body must be { patch: { <field>: <value> } }" });
+      }
+      let pairs: { key: string; value: unknown }[];
+      try {
+        pairs = validatePatch(patch);
+      } catch (err) {
+        if (err instanceof InstanceConfigError) {
+          return reply.code(400).send({ error: err.message, field: err.field });
+        }
+        throw err;
+      }
+      try {
+        writeInstanceConfig(instanceConfigPath(cfg), pairs);
+      } catch (err) {
+        return reply.code(500).send({ error: `failed to write config file: ${(err as Error).message}` });
+      }
+      // The write lands in the file but NOT in the running (frozen) config.
+      return { restartRequired: true, configPath: instanceConfigPath(cfg) };
+    },
+  );
 
   // Selectable models + the keeper/sweeper defaults (CONTRACT-v3 §3). Static —
   // sourced from the models module so the picker and context meter agree.

@@ -16,6 +16,7 @@ import {
   type GitProjectStatus,
   type GitPushResult,
   type HistoryMessage,
+  type InstanceConfig,
   type ModelInfo,
   type PollResult,
   type Project,
@@ -176,6 +177,33 @@ export const api = {
       recoveryDefault?: RecoveryConfig;
       attachmentsDefault?: AttachmentsConfig;
     }>("/api/models");
+  },
+
+  // --- Instance-wide settings (issue #385) ----------------------------------
+
+  /**
+   * The instance-wide config surface (admin Settings screen): grouped fields,
+   * each with its value/default/editable/sensitive/env-shadow flags. Read once
+   * per screen mount. See {@link updateInstanceConfig} for writing.
+   */
+  async getInstanceConfig(): Promise<InstanceConfig> {
+    return req<InstanceConfig>("/api/instance-config");
+  },
+
+  /**
+   * Write a patch of editable instance-config fields to `paddock.config.yaml`
+   * (comment-preserving, atomic). Keyed by the field's dotted `key`. Writes do
+   * NOT hot-apply — the config is frozen at boot — so this resolves
+   * `{ restartRequired: true }` and the UI shows a restart banner. A 4xx body
+   * carries a human `error` (unknown/read-only key, or an invalid value).
+   */
+  async updateInstanceConfig(
+    patch: Record<string, unknown>,
+  ): Promise<{ restartRequired: boolean; configPath: string }> {
+    return req<{ restartRequired: boolean; configPath: string }>("/api/instance-config", {
+      method: "PUT",
+      body: JSON.stringify({ patch }),
+    });
   },
 
   /**
