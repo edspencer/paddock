@@ -19,6 +19,9 @@ import {
   noticeFromMessage,
   errorNotice,
   scanTranscriptNotice,
+  messageProducedReply,
+  suppressNoticeAfterReply,
+  type TurnNotice,
 } from "../../src/turn-notice.js";
 
 // The real on-box synthetic session-limit text (chat 6b87fdbe), · included.
@@ -156,6 +159,71 @@ describe("errorNotice (#329)", () => {
   });
   it("omits detail for an empty message", () => {
     expect(errorNotice("   ").detail).toBeUndefined();
+  });
+});
+
+describe("messageProducedReply (#380)", () => {
+  it("is true for a real assistant reply with end_turn + non-empty text", () => {
+    expect(
+      messageProducedReply({
+        type: "assistant",
+        message: { model: "claude-opus-4-8", stop_reason: "end_turn", content: [{ type: "text", text: "Hi." }] },
+      }),
+    ).toBe(true);
+  });
+
+  it("is true for a real assistant reply with text and NO stop_reason (runtime omits it)", () => {
+    expect(
+      messageProducedReply({ type: "assistant", message: { model: "claude-opus-4-8", content: "Hi." } }),
+    ).toBe(true);
+  });
+
+  it("is false for a synthetic assistant message (a placeholder / limit is not a reply)", () => {
+    expect(
+      messageProducedReply({
+        type: "assistant",
+        message: { model: "<synthetic>", stop_reason: "stop_sequence", content: [{ type: "text", text: "limit" }] },
+      }),
+    ).toBe(false);
+  });
+
+  it("is false for an assistant message with empty text", () => {
+    expect(
+      messageProducedReply({ type: "assistant", message: { model: "claude-opus-4-8", stop_reason: "end_turn", content: "   " } }),
+    ).toBe(false);
+  });
+
+  it("is false for a mid-turn tool_use assistant message (stop_reason:'tool_use')", () => {
+    expect(
+      messageProducedReply({
+        type: "assistant",
+        message: { model: "claude-opus-4-8", stop_reason: "tool_use", content: [{ type: "text", text: "calling a tool" }] },
+      }),
+    ).toBe(false);
+  });
+
+  it("is false for non-assistant messages", () => {
+    expect(messageProducedReply({ type: "result", subtype: "success" })).toBe(false);
+    expect(messageProducedReply({ type: "user", message: { content: "hi" } })).toBe(false);
+  });
+});
+
+describe("suppressNoticeAfterReply (#380)", () => {
+  const notice = (kind: TurnNotice["kind"]): TurnNotice => ({ kind, message: "x", retryable: kind !== "usage_limit" });
+
+  it("suppresses an error/max_turns dead-end once a reply was produced", () => {
+    expect(suppressNoticeAfterReply(notice("error"), true)).toBe(true);
+    expect(suppressNoticeAfterReply(notice("max_turns"), true)).toBe(true);
+  });
+
+  it("does NOT suppress when no reply was produced", () => {
+    expect(suppressNoticeAfterReply(notice("error"), false)).toBe(false);
+    expect(suppressNoticeAfterReply(notice("max_turns"), false)).toBe(false);
+  });
+
+  it("NEVER suppresses a usage_limit — a session-limit stop is real even beside a reply", () => {
+    expect(suppressNoticeAfterReply(notice("usage_limit"), true)).toBe(false);
+    expect(suppressNoticeAfterReply(notice("usage_limit"), false)).toBe(false);
   });
 });
 

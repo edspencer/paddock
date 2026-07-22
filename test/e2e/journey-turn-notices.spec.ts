@@ -66,6 +66,33 @@ test("a plain successful turn shows NO turn-failed banner (#329 invariant)", asy
   await expect(page.getByText(/The turn failed/i)).toHaveCount(0);
 });
 
+test("an error result AFTER a completed reply shows NO 'turn failed' banner (#380)", async ({
+  page,
+}) => {
+  await createProjectViaUI(page, { name: uniq("TN ReplyError") });
+
+  // [[REPLYERROR]]: a normal reply streams, THEN the terminal result carries an
+  // `error_during_execution` subtype — the live-vs-history asymmetry of #380. The
+  // reply must render with NO false "turn failed" banner beneath it (the live path
+  // now applies the same "a reply supersedes the dead-end" guard the reload path has).
+  await sendChatTurn(page, "keep going [[REPLYERROR]]", { expectReply: /Acknowledged:/i });
+
+  await expect(page.locator("[data-notice]")).toHaveCount(0);
+  await expect(page.getByText(/The turn failed/i)).toHaveCount(0);
+});
+
+test("a max-turns result AFTER a completed reply shows NO 'turn limit' banner (#380)", async ({
+  page,
+}) => {
+  await createProjectViaUI(page, { name: uniq("TN ReplyMaxTurns") });
+
+  // [[REPLYMAXTURNS]]: a normal reply then an `error_max_turns` result. No banner.
+  await sendChatTurn(page, "do a lot [[REPLYMAXTURNS]]", { expectReply: /Acknowledged:/i });
+
+  await expect(page.locator("[data-notice]")).toHaveCount(0);
+  await expect(page.getByText(/Turn limit reached/i)).toHaveCount(0);
+});
+
 test("a turn that RECOVERED from a mid-turn API error shows NO banner (#329 regression)", async ({
   page,
 }) => {

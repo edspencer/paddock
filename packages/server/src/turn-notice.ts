@@ -189,6 +189,44 @@ export function noticeFromMessage(m: RawMessage): TurnNotice | null {
 }
 
 /**
+ * Does this streamed message mark a COMPLETE assistant reply — a non-synthetic
+ * assistant message with `stop_reason:"end_turn"` and non-empty text content?
+ *
+ * The live paths (`ws.ts`) track this per turn so a terminal error/`max_turns`
+ * result that arrives AFTER a good reply already streamed does not paint a false
+ * "turn failed" banner beneath the answer (issue #380). In session mode the SDK's
+ * terminal `result` frame — which is streamed live but never persisted — can carry
+ * an `error_*` subtype / `success:false` even though a complete `end_turn` reply
+ * already exists on the transcript; on reload the history path
+ * ({@link scanTranscriptNotice}) already suppresses the dead-end via its "a real
+ * reply supersedes the notice" rule, and this predicate lets the live path apply
+ * the same guard. `end_turn` is the precise "the model finished a reply" marker.
+ */
+export function messageProducedReply(m: RawMessage): boolean {
+  if (m.type !== "assistant") return false;
+  if (m.message?.model === SYNTHETIC_MODEL) return false;
+  if (contentText(m.message?.content).trim().length === 0) return false;
+  // `end_turn` is the precise "the model finished a reply" marker (the SDK stamps
+  // it on the final assistant message). Some runtimes omit `stop_reason` on
+  // streamed assistant text — treat non-empty text with no stop_reason as a reply
+  // too (the history path clears on ANY real assistant text). A `tool_use` /
+  // `stop_sequence` stop_reason is NOT a completed reply, so it does not count.
+  const sr = m.message?.stop_reason;
+  return sr === "end_turn" || sr === undefined;
+}
+
+/**
+ * Should an already-classified {@link TurnNotice} be dropped because a complete
+ * reply already streamed this turn (issue #380)? An `error` / `max_turns`
+ * dead-end beneath a good answer is a false alarm — suppress it. A `usage_limit`
+ * is NOT suppressed: a session-limit stop is a real dead-end still worth showing
+ * even alongside text.
+ */
+export function suppressNoticeAfterReply(notice: TurnNotice, producedReply: boolean): boolean {
+  return producedReply && (notice.kind === "error" || notice.kind === "max_turns");
+}
+
+/**
  * Scan a transcript JSONL file for a TRAILING dead-end notice to surface on
  * reload (the history-hydration path). Only the synthetic usage-limit case is
  * recoverable from history: `@herdctl/core` drops synthetic messages when it

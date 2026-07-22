@@ -352,4 +352,62 @@ describe("integration: WS transport edge cases (real app, fake claude)", () => {
     );
     expect(complete.payload?.success).toBe(true);
   });
+
+  // --- #380: a dead-end notice is suppressed once a complete reply streamed -----
+  // The live path (this transport) surfaces the SDK's terminal `result` failure in
+  // real time — which in session mode can arrive AFTER a good `end_turn` reply
+  // already streamed, painting a false "turn failed" banner. The history path (on
+  // reload) already clears it via "a real reply supersedes the notice"; the live
+  // path must apply the same guard. The fake drives a reply-then-error result via
+  // [[REPLYERROR]] / [[REPLYMAXTURNS]].
+
+  const noticeIn = (mark: number, slug: string) =>
+    ws.events.slice(mark).find((e) => e.type === "chat:notice" && e.payload?.projectSlug === slug);
+
+  it("emits NO error notice when an error result follows a completed reply ([[REPLYERROR]])", async () => {
+    const mark = ws.mark();
+    ws.send({
+      type: "chat:send",
+      payload: { projectSlug: "ws-proj", sessionId: null, message: "keep going [[REPLYERROR]]" },
+    });
+    await ws.waitFor(
+      (e) => e.type === "chat:complete" && e.payload?.projectSlug === "ws-proj",
+      { from: mark },
+    );
+    // The reply rendered...
+    expect(ws.responseText(mark)).toContain("Acknowledged:");
+    // ...and NO dead-end banner was surfaced beneath it (the #380 fix).
+    expect(noticeIn(mark, "ws-proj")).toBeUndefined();
+  });
+
+  it("emits NO max_turns notice when a max_turns result follows a completed reply ([[REPLYMAXTURNS]])", async () => {
+    const mark = ws.mark();
+    ws.send({
+      type: "chat:send",
+      payload: { projectSlug: "ws-proj", sessionId: null, message: "do a lot [[REPLYMAXTURNS]]" },
+    });
+    await ws.waitFor(
+      (e) => e.type === "chat:complete" && e.payload?.projectSlug === "ws-proj",
+      { from: mark },
+    );
+    expect(ws.responseText(mark)).toContain("Acknowledged:");
+    expect(noticeIn(mark, "ws-proj")).toBeUndefined();
+  });
+
+  it("STILL emits an error notice when the error result has NO preceding reply ([[APIERROR]])", async () => {
+    // The guard must not over-suppress: a genuinely dead turn (no reply produced)
+    // keeps its error banner.
+    const mark = ws.mark();
+    ws.send({
+      type: "chat:send",
+      payload: { projectSlug: "ws-proj", sessionId: null, message: "trigger a failure [[APIERROR]]" },
+    });
+    await ws.waitFor(
+      (e) => e.type === "chat:complete" && e.payload?.projectSlug === "ws-proj",
+      { from: mark },
+    );
+    const notice = noticeIn(mark, "ws-proj");
+    expect(notice).toBeTruthy();
+    expect((notice?.payload?.notice as { kind?: string })?.kind).toBe("error");
+  });
 });

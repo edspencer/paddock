@@ -115,7 +115,13 @@ import {
 import { resolveMaxSpawnDepth } from "./spawn-capability.js";
 import { resolveRecoveryConfig } from "./recovery-config.js";
 import { RecoveryEngine } from "./recovery.js";
-import { noticeFromMessage, errorNotice, type TurnNotice } from "./turn-notice.js";
+import {
+  noticeFromMessage,
+  errorNotice,
+  messageProducedReply,
+  suppressNoticeAfterReply,
+  type TurnNotice,
+} from "./turn-notice.js";
 import type { PaddockEventBus } from "./event-bus.js";
 import { resolveHooksMcpEnabled } from "./hook-config.js";
 import type { TriggerService } from "./triggers.js";
@@ -976,9 +982,13 @@ export function makeChatHandler(deps: {
     });
     // #329: surface a dead-end (usage limit / max-turns / error) on this wake
     // turn too, at most once. Same rationale as the interactive path.
+    // #380: once a complete reply has streamed, an error/max_turns dead-end is a
+    // false alarm — suppress it (matching the history path). `usage_limit` stays.
     let wakeNoticeEmitted = false;
+    let wakeProducedReply = false;
     const emitWakeNotice = (notice: TurnNotice): void => {
       if (wakeNoticeEmitted) return;
+      if (suppressNoticeAfterReply(notice, wakeProducedReply)) return;
       wakeNoticeEmitted = true;
       turn.emit({ type: "chat:notice", payload: { ...routing(), notice } });
     };
@@ -990,6 +1000,8 @@ export function makeChatHandler(deps: {
           // #353: no provenance stamp on wake — see the note at the top of this
           // handler. A resume must never write a creation origin.
         }
+        if (messageProducedReply(m as Parameters<typeof messageProducedReply>[0]))
+          wakeProducedReply = true;
         const notice = noticeFromMessage(m as Parameters<typeof noticeFromMessage>[0]);
         if (notice) emitWakeNotice(notice);
         await translate(m as unknown as ChatSDKMessage);
@@ -1694,8 +1706,17 @@ export function makeChatHandler(deps: {
     // repeats the message several times, and a failed turn can carry both an error
     // `result` and a `success:false` completion. Emit the first, suppress the rest.
     let noticeEmitted = false;
+    // #380: whether a COMPLETE assistant reply already streamed this turn. In
+    // session mode the SDK's terminal `result` (streamed live, never persisted)
+    // can carry an `error_*` subtype / `success:false` AFTER a good `end_turn`
+    // reply, painting a false "turn failed" banner beneath the answer. Once a
+    // reply is seen we suppress the error/max_turns dead-end — the same guard the
+    // history path (`scanTranscriptNotice`) already applies on reload. A
+    // `usage_limit` dead-end still surfaces (a session-limit stop is real).
+    let producedReply = false;
     const emitNotice = (notice: TurnNotice): void => {
       if (noticeEmitted) return;
+      if (suppressNoticeAfterReply(notice, producedReply)) return;
       noticeEmitted = true;
       turn.emit({ type: "chat:notice", payload: { ...routing(), notice } });
     };
@@ -1850,6 +1871,10 @@ export function makeChatHandler(deps: {
         // drops every synthetic message (so nothing would ever render), which is
         // exactly why these turns look dead. `noticeFromMessage` returns null for
         // ordinary output and for suppressed "No response requested." placeholders.
+        // #380: track a completed reply so a trailing error/max_turns result
+        // (which races in AFTER the reply in session mode) is suppressed below.
+        if (messageProducedReply(m as Parameters<typeof messageProducedReply>[0]))
+          producedReply = true;
         const notice = noticeFromMessage(m as Parameters<typeof noticeFromMessage>[0]);
         if (notice) emitNotice(notice);
         await translate(m as unknown as ChatSDKMessage);
@@ -2291,8 +2316,17 @@ export function makeChatHandler(deps: {
       // and a failed turn can carry both an error `result` and a `success:false`
       // completion. Emit the first, suppress the rest.
       let noticeEmitted = false;
+      // #380: whether a COMPLETE assistant reply already streamed this turn. In
+      // session mode the SDK's terminal `result` (streamed live, never persisted)
+      // can carry an `error_*` subtype / `success:false` AFTER a good `end_turn`
+      // reply, painting a false "turn failed" banner beneath the answer. Once a
+      // reply is seen we suppress the error/max_turns dead-end — the same guard the
+      // history path (`scanTranscriptNotice`) already applies on reload. A
+      // `usage_limit` dead-end still surfaces (a session-limit stop is real).
+      let producedReply = false;
       const emitNotice = (notice: TurnNotice): void => {
         if (noticeEmitted) return;
+        if (suppressNoticeAfterReply(notice, producedReply)) return;
         noticeEmitted = true;
         turn.emit({ type: "chat:notice", payload: { ...routing(), notice } });
       };
@@ -2506,6 +2540,10 @@ export function makeChatHandler(deps: {
             // silently drops every synthetic message (which is exactly why these
             // turns look dead); `noticeFromMessage` returns null for ordinary output
             // and for suppressed "No response requested." placeholders.
+            // #380: track a completed reply so a trailing error/max_turns result
+            // (which races in AFTER the reply in session mode) is suppressed below.
+            if (messageProducedReply(m as Parameters<typeof messageProducedReply>[0]))
+              producedReply = true;
             const notice = noticeFromMessage(m as Parameters<typeof noticeFromMessage>[0]);
             if (notice) emitNotice(notice);
             // @herdctl/core's SDKMessage types `message` as `unknown` (wider);
