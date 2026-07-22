@@ -78,6 +78,11 @@
  *                     `is_error:true` (a turn that recovered from a transient
  *                     mid-turn API error). Must NOT surface a banner (#329
  *                     regression: is_error on a success result is not a failure).
+ *   • [[REPLYERROR]]→ stream a NORMAL reply, then an `error_during_execution`
+ *                     result. Must NOT surface a "turn failed" banner — a reply
+ *                     already streamed (#380 live/history asymmetry).
+ *   • [[REPLYMAXTURNS]] → stream a NORMAL reply, then an `error_max_turns` result.
+ *                     Must NOT surface a "turn limit" banner beneath the reply (#380).
  * Sweeper coverage: when the prompt looks like the paddock sweeper's curation
  * prompt (contains the literal "<<<OVERVIEW>>>" marker request), the fake emits a
  * marker-shaped reply (<<<OVERVIEW>>> … <<<CHANGELOG>>> … <<<END>>>) so
@@ -354,6 +359,9 @@ function main() {
       id: `msg_${crypto.randomBytes(8).toString("hex")}`,
       role: "assistant",
       model,
+      // The real SDK stamps the final assistant reply `end_turn` — the precise
+      // "the model finished a reply" marker the live path keys off (#380).
+      stop_reason: "end_turn",
       content: [{ type: "text", text }],
       usage,
     },
@@ -552,11 +560,28 @@ function main() {
   // the subtype is the authoritative signal, and it says success.
   const recoveredApiError = (prompt || "").includes("[[APIRECOVER]]");
 
-  // 3) result line — ends the watcher loop and marks the turn successful.
+  // [[REPLYERROR]] / [[REPLYMAXTURNS]] (test-only, #380): a COMPLETE reply streamed
+  // above, THEN the terminal result carries an error subtype — the live-vs-history
+  // asymmetry the fix targets. In session mode the SDK's terminal `result` (streamed
+  // live, never persisted) can arrive with an `error_*` subtype AFTER a good reply.
+  // The live path must suppress the error/max_turns dead-end notice once a reply was
+  // produced (the history path already clears it on reload), so NO false "turn failed"
+  // banner renders beneath the answer. The reply text is unchanged; only the result
+  // subtype flips.
+  const replyThenError = (prompt || "").includes("[[REPLYERROR]]");
+  const replyThenMaxTurns = (prompt || "").includes("[[REPLYMAXTURNS]]");
+  const errorSubtype = replyThenMaxTurns
+    ? "error_max_turns"
+    : replyThenError
+      ? "error_during_execution"
+      : null;
+
+  // 3) result line — ends the watcher loop. A plain turn marks it successful; the
+  // #380 directives flip the subtype to an error while the reply above still stands.
   append({
     type: "result",
-    subtype: "success",
-    is_error: recoveredApiError,
+    subtype: errorSubtype ?? "success",
+    is_error: errorSubtype ? true : recoveredApiError,
     session_id: sessionId,
     result: reply,
     usage: {
