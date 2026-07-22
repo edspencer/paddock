@@ -204,11 +204,29 @@ export interface RecoveryEngineDeps {
    * drain, or a prior recovery nudge. Under session-mode `chatSession(resume)` a
    * SECOND resume interrupts the first, so an auto re-drive fired into a live turn
    * would be swallowed (the "first message swallowed" symptom, #350/#347). If this
-   * reports the session busy, the engine stands down entirely — the keeper is not
-   * idle, and a fresh watch arms when that live turn completes. Default: never busy
-   * (so the pure unit-tested engine behaviour is unchanged).
+   * reports the session busy, the engine DEFERS (see {@link sdkSessionLive}) rather
+   * than firing — the keeper is not idle. Default: never busy (so the pure
+   * unit-tested engine behaviour is unchanged).
    */
   isBusy?: (sessionId: string) => boolean;
+  /**
+   * Is a `claude` SUBPROCESS still alive on this session at the herdctl/SDK layer?
+   * (issue #397.) {@link isBusy} only reflects turns PADDOCK's hub started, so it
+   * is BLIND to a session herdctl's `SessionReaper` is keeping alive for a killed
+   * background task (keepAlive) or holding through its ~15s re-invocation grace —
+   * throughout which `reaper.isSessionLive` is TRUE. Auto re-drive resumes via a
+   * FRESH `openChatSession` = a NEW subprocess on the same session id; firing while
+   * a prior subprocess is still live spawns a COMPETING concurrent resume that the
+   * SDK resolves by interrupting the in-flight turn (`[Request interrupted by
+   * user]`) — the recovery turn then produces nothing and the user is still stuck.
+   * Wired in prod to `getSessionLifecycle()?.reaper.isSessionLive(sessionId)`;
+   * default `() => false` keeps the pure engine behaviour unchanged (batch mode /
+   * no reaper). Treated as a busy signal ORed with {@link isBusy}; when EITHER is
+   * set the engine DEFERS the fire (not a permanent stand-down — see {@link
+   * DEFAULT_SETTLE_WINDOW_MS}) so the nudge lands exactly once, after the session
+   * is genuinely idle (reaper reaped, hub not running).
+   */
+  sdkSessionLive?: (sessionId: string) => boolean;
   /** Wall clock (ms). Default `Date.now`. */
   now?: () => number;
   /** Schedule a one-shot timer. Default `setTimeout`. */
@@ -228,6 +246,18 @@ export interface RecoveryEngineDeps {
   pollMs?: number;
   /** Extra window (ms) beyond `debounceMs` to allow the kill to land. Default {@link DEFAULT_KILL_GRACE_MS}. */
   killGraceMs?: number;
+  /**
+   * Cadence (ms) at which a DEFERRED fire re-checks liveness while the session is
+   * still held live by the hub or the reaper (issue #397). Default {@link
+   * DEFAULT_SETTLE_POLL_MS}.
+   */
+  settlePollMs?: number;
+  /**
+   * Total budget (ms) to keep deferring a fire while the session stays live before
+   * giving up, so a session the reaper never releases can't defer forever (issue
+   * #397). Default {@link DEFAULT_SETTLE_WINDOW_MS}.
+   */
+  settleWindowMs?: number;
   /** Optional structured-log sink for observability; default no-op. */
   log?: (msg: string, meta?: Record<string, unknown>) => void;
 }
@@ -240,6 +270,21 @@ export const DEFAULT_POLL_MS = 750;
  * this grace ensures its full `debounceMs` quiet window still fits inside the watch.
  */
 export const DEFAULT_KILL_GRACE_MS = 12_000;
+/**
+ * Cadence (ms) at which a deferred fire re-checks whether the session has gone
+ * idle (issue #397). Brisk enough to fire promptly once the reaper releases,
+ * cheap enough to ignore.
+ */
+export const DEFAULT_SETTLE_POLL_MS = 1_000;
+/**
+ * How long (ms) the engine keeps DEFERRING an otherwise-ready fire while the
+ * session is still live (hub or reaper) before standing down (issue #397). Must
+ * comfortably exceed herdctl's `DEFAULT_REINVOCATION_GRACE_MS` (15s) — the reaper
+ * holds a just-killed-task session live for that grace — plus margin, so the
+ * deferred nudge lands once the reaper reaps rather than giving up early. Bounds
+ * the defer so a session the reaper never releases can't retry forever.
+ */
+export const DEFAULT_SETTLE_WINDOW_MS = 30_000;
 
 /** Per-session recovery bookkeeping (issue #301 guards). */
 interface SessionGuard {
@@ -305,9 +350,12 @@ export class RecoveryEngine {
   private readonly fileSize: (file: string) => Promise<number>;
   private readonly pollMs: number;
   private readonly killGraceMs: number;
+  private readonly settlePollMs: number;
+  private readonly settleWindowMs: number;
   private readonly log: (msg: string, meta?: Record<string, unknown>) => void;
   private readonly surface: (project: Project, sessionId: string, summary: string | undefined) => void;
   private readonly isBusy: (sessionId: string) => boolean;
+  private readonly sdkSessionLive: (sessionId: string) => boolean;
 
   /** Per-session retry/debounce bookkeeping — cleared on a human message. */
   private readonly guards = new Map<string, SessionGuard>();
@@ -323,9 +371,12 @@ export class RecoveryEngine {
     this.fileSize = deps.fileSize ?? defaultFileSize;
     this.pollMs = deps.pollMs ?? DEFAULT_POLL_MS;
     this.killGraceMs = deps.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
+    this.settlePollMs = deps.settlePollMs ?? DEFAULT_SETTLE_POLL_MS;
+    this.settleWindowMs = deps.settleWindowMs ?? DEFAULT_SETTLE_WINDOW_MS;
     this.log = deps.log ?? (() => undefined);
     this.surface = deps.surface ?? (() => undefined);
     this.isBusy = deps.isBusy ?? (() => false);
+    this.sdkSessionLive = deps.sdkSessionLive ?? (() => false);
   }
 
   /**
@@ -435,6 +486,20 @@ export class RecoveryEngine {
   }
 
   /**
+   * A detected turn-boundary kill is ready to recover — kick off the fire, giving
+   * it a bounded {@link settleWindowMs} budget to wait out any still-live session.
+   * See {@link fireWhenIdle} for the surface/re-drive actions and the defer guard.
+   */
+  private async fire(
+    project: Project,
+    sessionId: string,
+    recovery: RecoveryConfig,
+    summary: string | undefined,
+  ): Promise<void> {
+    await this.fireWhenIdle(project, sessionId, recovery, summary, this.now() + this.settleWindowMs);
+  }
+
+  /**
    * Handle a detected turn-boundary kill. Two independent, resolved-config-gated
    * actions, in order:
    *   1. `surfaceKilledTask` — push the kill to attached clients LIVE so the
@@ -444,24 +509,63 @@ export class RecoveryEngine {
    *      FIRST (so a re-drive that itself hangs can't exceed the cap), then inject
    *      the recovery nudge via the shared Layer 2 path. A failed inject is logged.
    *
-   * Double-dispatch guard (issue #352): if a live turn is ALREADY driving this
-   * session by now — a human message, a queued-message drain, or a prior recovery
-   * nudge — the keeper is not idle. Surfacing "keeper is idle" would be misleading,
-   * and a re-drive would resume an in-flight session, which under session-mode
-   * `chatSession(resume)` interrupts and swallows the live turn (the "first message
-   * swallowed" symptom). So stand down entirely; the completing live turn arms a
-   * fresh watch, and a genuine re-hang is caught then.
+   * Liveness guard + defer (issues #352 / #397). Two busy signals mean the session
+   * is NOT idle and firing would collide with a live `claude` subprocess:
+   *   - {@link isBusy} (hub) — a live turn PADDOCK itself started (a human message,
+   *     a queued-message drain, or a prior recovery nudge).
+   *   - {@link sdkSessionLive} (reaper) — a subprocess herdctl is keeping alive for
+   *     the just-killed background task, or holding through its ~15s re-invocation
+   *     grace. `isBusy` is BLIND to this, which is what let the auto re-drive fire a
+   *     COMPETING resume and get interrupted (`[Request interrupted by user]`, #397).
+   *
+   * When EITHER is set we must NOT fire — but standing down *permanently* leaves
+   * recovery incomplete: the reaper reaps SILENTLY (no turn completes, so nothing
+   * re-arms a watch), and the user stays stuck. So instead we DEFER: re-check after
+   * {@link settlePollMs} and fire exactly once the session is genuinely idle
+   * (reaper reaped, hub not running). The deferral is bounded by
+   * {@link settleWindowMs} so a session that never releases can't retry forever, and
+   * is tracked in {@link watches} so a completing turn ({@link armWatch}) or a human
+   * message ({@link onHumanMessage}) supersedes/cancels it — no double fire.
    */
-  private async fire(
+  private async fireWhenIdle(
     project: Project,
     sessionId: string,
     recovery: RecoveryConfig,
     summary: string | undefined,
+    settleDeadline: number,
   ): Promise<void> {
-    if (this.isBusy(sessionId)) {
-      this.log("recovery: session already has a live turn — standing down (no surface, no re-drive)", {
+    const hubBusy = this.isBusy(sessionId);
+    const reaperLive = this.sdkSessionLive(sessionId);
+    if (hubBusy || reaperLive) {
+      if (this.now() >= settleDeadline) {
+        // The session never went idle within the settle budget — give up rather
+        // than defer forever. A later genuine hang re-arms a fresh watch.
+        this.log("recovery: session still live at settle deadline — standing down", {
+          slug: project.slug,
+          sessionId,
+          hubBusy,
+          reaperLive,
+        });
+        return;
+      }
+      // Defer: re-check liveness after the settle poll. Register as a watch so a
+      // fresh armWatch (a completing turn) or a human message cancels this retry.
+      const watch: Watch = { timer: null, cancelled: false };
+      this.watches.set(sessionId, watch);
+      watch.timer = this.setTimer(() => {
+        if (watch.cancelled) return;
+        // Drop this settle-watch from the map before re-attempting; fireWhenIdle
+        // re-registers a fresh one if it still needs to defer.
+        this.cancelWatch(sessionId);
+        void this.fireWhenIdle(project, sessionId, recovery, summary, settleDeadline).catch((err) => {
+          this.log("recovery: deferred fire failed", { sessionId, err: String(err) });
+        });
+      }, this.settlePollMs);
+      this.log("recovery: session still live (hub or reaper) — deferring nudge until idle", {
         slug: project.slug,
         sessionId,
+        hubBusy,
+        reaperLive,
       });
       return;
     }
