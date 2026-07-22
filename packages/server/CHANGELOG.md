@@ -1,5 +1,31 @@
 # @paddock/server
 
+## 0.42.0
+
+### Minor Changes
+
+- [#386](https://github.com/edspencer/paddock/pull/386) [`70bb8c8`](https://github.com/edspencer/paddock/commit/70bb8c86fb3ccaa9d4d15df8e96a25678c3a2636) Thanks [@edspencer](https://github.com/edspencer)! - Add an instance-wide Settings screen that edits `paddock.config.yaml` (#385)
+
+  A new top-level admin Settings screen (`/settings`, reachable from a gear in the
+  sidebar) reads the instance configuration and writes the editable subset back to
+  `paddock.config.yaml` — no more hand-editing the file + restarting for the ~25
+  instance knobs (curation budgets, capabilities, recovery, attachments, branding,
+  transcription, git identity, log level, …).
+
+  - `GET /api/instance-config` reports every surfaced field with its
+    `value`/`default`/`editable`/`sensitive`/`envOverridden` flags; no secret
+    values are ever included.
+  - `PUT /api/instance-config` validates a patch against an editable allowlist and
+    writes the file **comment-preservingly** (the `yaml` `Document` API) and
+    **atomically** (temp + rename), creating it on first write.
+  - Instance config is read once at boot and frozen, so writes are
+    **restart-required** — the screen shows a persistent banner saying so.
+  - Fields shadowed by a `PADDOCK_*` env var (env > file > default) render
+    read-only with an "overridden by environment variable" note; process/filesystem
+    bindings (ports, paths) and auth are read-only display in v1.
+
+- [#387](https://github.com/edspencer/paddock/pull/387) [`66d3ac8`](https://github.com/edspencer/paddock/commit/66d3ac8cbe1c5cfdfc80226552184bf702defc2a) Thanks [@edspencer](https://github.com/edspencer)! - Per-project curation budget overrides (#384). The sweeper's three token budgets (OVERVIEW / CHANGELOG / CLAUDE.md) can now be set per-project — in `project.yaml` (`curation:`) and in the project Settings tab — overriding the instance defaults from #383 field-by-field. Mirrors the existing `recovery`/`attachments` per-project-override pattern: a new `curation-config.ts` resolver, sanitisation on read/write, resolution at sweep time, and inherit/override/clear UI showing the instance default (exposed via `GET /api/models` as `curationDefault`).
+
 ## 0.41.0
 
 ### Minor Changes
