@@ -1,5 +1,11 @@
 # @paddock/server
 
+## 0.42.1
+
+### Patch Changes
+
+- [#391](https://github.com/edspencer/paddock/pull/391) [`45cb892`](https://github.com/edspencer/paddock/commit/45cb8923cb0aed4b9ea8ab2ccc2efe813dfb8d16) Thanks [@edspencer](https://github.com/edspencer)! - Bump `@herdctl/core` to `^5.24.0`, bringing two upstream fixes: in-flight (unpaired) `tool_use` blocks are now surfaced when rehydrating a transcript (`ChatToolCall.pending`), so a running foreground `Agent`/Task sub-agent no longer vanishes from the reconstructed history on refresh (herdctl#399); and `getAgentSessions` is now worktree-aware, so a keeper session that enters a native git worktree stays discoverable/attributed instead of dropping out of the sidebar (herdctl#401).
+
 ## 0.42.0
 
 ### Minor Changes
