@@ -672,6 +672,16 @@ function attachSubagentFields(
   let i = 0;
   return messages.map((m) => {
     if (!m.toolCall || !SUBAGENT_TOOL_NAMES.has(m.toolCall.toolName)) return m;
+    // An in-flight (`pending`) tool_use has no matching tool_result, so
+    // `readTaskToolUses` (paired-only) omits it — core@5.24.0 nonetheless injects
+    // the unpaired pending message into the parsed stream so it's visible on
+    // rehydration (herdctl#399). Skip it here so it does NOT consume a `taskUses`
+    // slot and shift every following completed sub-agent's enrichment onto the
+    // wrong call (the parallel-sub-agent case: a still-running Agent would else
+    // inherit a finished sibling's `hasSubagent`/`toolUseId` and wrongly render as
+    // expandable). It falls through unenriched → the generic running sub-agent box,
+    // matching the live `chat:tool_start` path.
+    if (m.toolCall.pending) return m;
     const use = taskUses[i++];
     if (!use) return m;
     return {

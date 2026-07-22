@@ -623,6 +623,15 @@ export interface ChatToolCall {
   output: string;
   isError: boolean;
   durationMs?: number;
+  /**
+   * True when this tool call is still in flight on history rehydration
+   * (herdctl#399 / `@herdctl/core@5.24.0`): `parseSessionMessages` emits an
+   * unpaired `tool_use` (no matching `tool_result`) as a `role:"tool"` message
+   * with `pending:true` (empty output, no duration), upgraded in place when the
+   * `tool_result` arrives. The web renders this as the same live "RUNNING" block
+   * (#175) so a foreground sub-agent/tool no longer vanishes on refresh.
+   */
+  pending?: boolean;
   // Sub-agent (Task/Agent tool) enrichment, added server-side (issue #37). Only
   // present on Task/Agent tool calls read from history; undefined otherwise.
   /** The parent tool_use id — the key to fetch this sub-agent's nested steps. */

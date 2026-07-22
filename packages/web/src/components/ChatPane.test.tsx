@@ -541,6 +541,55 @@ describe("ChatPane: history hydration", () => {
     expect(await screen.findByText("5.5s")).toBeInTheDocument();
     expect(screen.queryByText(/^~\$/)).not.toBeInTheDocument();
   });
+
+  // herdctl#399: a foreground tool still in flight when the transcript is read is
+  // emitted by core@5.24.0 as a `pending:true` tool message (empty output, no
+  // duration). On rehydration it must render the SAME live "running" affordance
+  // (#175) — a spinner + "Running…" — instead of vanishing or looking completed.
+  it("renders a pending (in-flight) tool block as 'running' on history rehydration (#399)", async () => {
+    const pendingHistory: HistoryMessage[] = [
+      { role: "user", content: "do the slow thing", timestamp: "2026-06-21T10:00:00Z" },
+      {
+        role: "tool",
+        content: "",
+        timestamp: "2026-06-21T10:00:01Z",
+        toolCall: { toolName: "Bash", inputSummary: "sleep 60", output: "", isError: false, pending: true },
+      },
+    ];
+    const loadHistory = vi.fn().mockResolvedValue(pendingHistory);
+    render(<ChatPane projectSlug="proj" initialSessionId="sess-p" loadHistory={loadHistory} />);
+
+    // The running affordance is present (spinner label + body), not a finished block.
+    expect(await screen.findByText("running")).toBeInTheDocument();
+    // The tool name still renders in the header.
+    expect(screen.getByText("Bash")).toBeInTheDocument();
+  });
+
+  // A pending sub-agent (Agent/Task) shows the running SUB-AGENT box and is NOT
+  // expandable — its transcript doesn't exist yet, so no nested-steps fetch fires.
+  it("renders a pending sub-agent as a running, non-expandable SUB-AGENT box (#399)", async () => {
+    subagentMessages.mockClear();
+    const pendingAgent: HistoryMessage[] = [
+      {
+        role: "tool",
+        content: "",
+        timestamp: "2026-06-21T10:00:02Z",
+        // Mirrors the live `chat:tool_start` frame + core@5.24.0's pending message:
+        // toolName + inputSummary only, no subagentType/description/toolUseId yet.
+        toolCall: { toolName: "Agent", inputSummary: "map the features", output: "", isError: false, pending: true },
+      },
+    ];
+    const loadHistory = vi.fn().mockResolvedValue(pendingAgent);
+    render(<ChatPane projectSlug="proj" initialSessionId="sess-pa" loadHistory={loadHistory} />);
+
+    // The SUB-AGENT badge + running spinner both render.
+    expect(await screen.findByText("sub-agent")).toBeInTheDocument();
+    expect(screen.getByText("running")).toBeInTheDocument();
+    // Expanding a pending sub-agent must NOT try to load nested steps (no transcript).
+    const header = screen.getByRole("button", { name: /sub-agent/i });
+    await userEvent.click(header);
+    expect(subagentMessages).not.toHaveBeenCalled();
+  });
 });
 
 // Issue #36: a brand-new chat should announce its session id the moment it
