@@ -189,30 +189,39 @@ export function noticeFromMessage(m: RawMessage): TurnNotice | null {
 }
 
 /**
- * Does this streamed message mark a COMPLETE assistant reply — a non-synthetic
- * assistant message with `stop_reason:"end_turn"` and non-empty text content?
+ * Did this streamed message emit REAL assistant prose — a non-synthetic assistant
+ * message carrying non-empty **text** content, regardless of `stop_reason`?
  *
- * The live paths (`ws.ts`) track this per turn so a terminal error/`max_turns`
- * result that arrives AFTER a good reply already streamed does not paint a false
- * "turn failed" banner beneath the answer (issue #380). In session mode the SDK's
- * terminal `result` frame — which is streamed live but never persisted — can carry
- * an `error_*` subtype / `success:false` even though a complete `end_turn` reply
- * already exists on the transcript; on reload the history path
- * ({@link scanTranscriptNotice}) already suppresses the dead-end via its "a real
- * reply supersedes the notice" rule, and this predicate lets the live path apply
- * the same guard. `end_turn` is the precise "the model finished a reply" marker.
+ * The live paths (`ws.ts`) OR-accumulate this across every message of a turn (a
+ * per-turn `producedReply` flag) so a terminal error/`max_turns` result that
+ * arrives AFTER the turn already showed the user real prose does not paint a false
+ * "turn failed" banner beneath the answer (issues #380, #394). In session mode the
+ * SDK's terminal `result` frame — streamed live but never persisted — can carry an
+ * `error_*` subtype / `success:false` even though the turn produced a perfectly
+ * good reply; on reload the history path ({@link scanTranscriptNotice}) suppresses
+ * the dead-end via its "any real assistant text supersedes the notice" rule, and
+ * this predicate lets the live path apply the SAME rule.
+ *
+ * #394 — why this is TEXT-ANY-STOP_REASON, not text+`end_turn`. The original #380
+ * predicate required a SINGLE message with non-empty text AND `stop_reason:
+ * "end_turn"`. Long tool-driven turns break both halves: (a) the visible prose
+ * usually rides on a message that ALSO makes a tool call → `stop_reason:"tool_use"`
+ * (excluded by the old gate), and (b) the terminal `end_turn` message is frequently
+ * **thinking-only** (zero text). So `producedReply` never flipped true and the
+ * benign terminal error result was surfaced. Keying off ANY non-synthetic assistant
+ * text (across all of the turn's messages, no `stop_reason` gate) makes a
+ * text+`tool_use` message count and exactly matches `scanTranscriptNotice`, killing
+ * the live/history asymmetry.
+ *
+ * DELIBERATELY text-only (a bare `thinking` block does NOT count): this mirrors the
+ * history path — which clears only on real text — so a genuinely empty turn (no
+ * assistant text ANYWHERE, e.g. an `error_max_turns` that wrote nothing renderable)
+ * still surfaces its error notice.
  */
 export function messageProducedReply(m: RawMessage): boolean {
   if (m.type !== "assistant") return false;
   if (m.message?.model === SYNTHETIC_MODEL) return false;
-  if (contentText(m.message?.content).trim().length === 0) return false;
-  // `end_turn` is the precise "the model finished a reply" marker (the SDK stamps
-  // it on the final assistant message). Some runtimes omit `stop_reason` on
-  // streamed assistant text — treat non-empty text with no stop_reason as a reply
-  // too (the history path clears on ANY real assistant text). A `tool_use` /
-  // `stop_sequence` stop_reason is NOT a completed reply, so it does not count.
-  const sr = m.message?.stop_reason;
-  return sr === "end_turn" || sr === undefined;
+  return contentText(m.message?.content).trim().length > 0;
 }
 
 /**

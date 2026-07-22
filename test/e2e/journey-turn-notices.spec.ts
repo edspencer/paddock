@@ -93,6 +93,24 @@ test("a max-turns result AFTER a completed reply shows NO 'turn limit' banner (#
   await expect(page.getByText(/Turn limit reached/i)).toHaveCount(0);
 });
 
+test("a tool-heavy turn (prose on a tool_use msg, thinking-only terminal) then an error result shows NO banner (#394)", async ({
+  page,
+}) => {
+  await createProjectViaUI(page, { name: uniq("TN ToolReply") });
+
+  // [[TOOLREPLYERROR]]: the residual #380 gap. The visible prose rides on a message
+  // that ALSO makes a tool call (`stop_reason:"tool_use"`), the terminal `end_turn`
+  // message is thinking-only (zero text), THEN the terminal result carries an
+  // `error_during_execution` subtype. The old live predicate (text + `end_turn` on a
+  // SINGLE message) never flipped `producedReply`, so the benign error painted a
+  // false "turn failed" banner that only cleared on reload. Post-fix the reply must
+  // render with NO banner beneath it — live, without a refresh.
+  await sendChatTurn(page, "read the notes [[TOOLREPLYERROR]]", { expectReply: /Acknowledged:/i });
+
+  await expect(page.locator("[data-notice]")).toHaveCount(0);
+  await expect(page.getByText(/The turn failed/i)).toHaveCount(0);
+});
+
 test("a turn that RECOVERED from a mid-turn API error shows NO banner (#329 regression)", async ({
   page,
 }) => {
