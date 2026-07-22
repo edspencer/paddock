@@ -58,16 +58,21 @@
     overscroll-behavior: none;
   }
   /*
-   * Mobile Safari auto-zooms the page whenever a focused form control has a
+   * Mobile Safari auto-zooms the page whenever a focused TEXT field has a
    * computed font-size < 16px — which then breaks our fixed 100dvh shell. Our
    * inputs/textareas are visually 14px (text-sm), so bump them to 16px on
    * small/coarse screens only, leaving the desktop density untouched. This is
    * the accessible fix for focus-zoom (vs. disabling user-scalable).
+   *
+   * `<select>` is deliberately EXCLUDED (#372): it opens a native picker rather
+   * than accepting a text caret, so it does not trigger the focus-zoom that
+   * breaks the shell — and force-bumping it to 16px made the composer's small
+   * model dropdown (text-[11px]) balloon out of scale with its row. Leaving
+   * selects alone keeps them at their intended size on mobile.
    */
   @media (max-width: 640px) {
     input,
-    textarea,
-    select {
+    textarea {
       /* !important so the rule wins over Tailwind's `text-sm` utility class
          (higher specificity) that the composer/modal inputs carry — otherwise
          they stay 14px and Safari still focus-zooms. Nothing is intentionally

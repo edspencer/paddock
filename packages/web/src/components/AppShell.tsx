@@ -13,6 +13,16 @@ import { ChatIcon, FolderIcon, MenuIcon, MoonIcon, PlusIcon, SunIcon, XIcon } fr
 import { PaneResizer, usePaneWidth } from "./PaneResizer";
 import { SIDENAV_PANE } from "../lib/paneWidth";
 
+/**
+ * Context handed down to route elements via <Outlet> (#372). A route that hosts
+ * its own top bar on mobile (e.g. ProjectView) uses `openNav` to drive the
+ * global project-nav drawer from a hamburger it renders inline — so the shell's
+ * separate mobile brand row can be dropped and the two rows collapse into one.
+ */
+export interface ShellOutletContext {
+  openNav: () => void;
+}
+
 /** Per-project sidebar counts (#161): unread replies + in-flight turns. */
 interface ProjectBadge {
   unread: number;
@@ -116,6 +126,12 @@ export function AppShell() {
   // Desktop-only draggable width for the side-nav (#374), persisted per-browser.
   const sidenav = usePaneWidth(SIDENAV_PANE);
 
+  // Project routes render their own single-row mobile header (with an inline
+  // hamburger fed by the Outlet context below), so the shell's separate brand
+  // row is dropped there to avoid stacking two rows of chrome (#372). Other
+  // routes (grid, tags, one-off chat) keep the shell's mobile brand bar.
+  const routeOwnsMobileHeader = location.pathname.startsWith("/projects/");
+
   // The mobile nav is an off-canvas drawer; close it on any navigation so a
   // project/chat tap doesn't leave it covering the content.
   useEffect(() => {
@@ -154,21 +170,25 @@ export function AppShell() {
 
   return (
     <div className="flex h-[100dvh] flex-col overflow-hidden bg-canvas dark:bg-canvas-dark lg:flex-row">
-      {/* Mobile top bar — hidden on lg+, where the sidebar is always present. */}
-      <header className="pt-safe flex items-center gap-2 border-b border-paddock-200 px-3 pb-2 dark:border-paddock-800 lg:hidden">
-        <button
-          type="button"
-          onClick={() => setNavOpen(true)}
-          aria-label="Open menu"
-          className="btn-subtle -ml-1 px-2 py-2"
-        >
-          <MenuIcon width={20} height={20} />
-        </button>
-        <NavLink to="/" className="flex items-center gap-2">
-          <BrandLogo brand={brand} className="h-7 w-7 text-sm" />
-          <span className="text-[15px] font-semibold tracking-tight">{brand.name}</span>
-        </NavLink>
-      </header>
+      {/* Mobile top bar — hidden on lg+, where the sidebar is always present.
+          Also dropped on project routes, which host their own single-row header
+          (with an inline hamburger) so the two rows collapse into one (#372). */}
+      {!routeOwnsMobileHeader && (
+        <header className="pt-safe flex items-center gap-2 border-b border-paddock-200 px-3 pb-2 dark:border-paddock-800 lg:hidden">
+          <button
+            type="button"
+            onClick={() => setNavOpen(true)}
+            aria-label="Open menu"
+            className="btn-subtle -ml-1 px-2 py-2"
+          >
+            <MenuIcon width={20} height={20} />
+          </button>
+          <NavLink to="/" className="flex items-center gap-2">
+            <BrandLogo brand={brand} className="h-7 w-7 text-sm" />
+            <span className="text-[15px] font-semibold tracking-tight">{brand.name}</span>
+          </NavLink>
+        </header>
+      )}
 
       {/* Drawer backdrop (mobile only, when open). */}
       {navOpen && (
@@ -284,7 +304,7 @@ export function AppShell() {
           (issue #11) — a brief, unobtrusive fallback while a route's JS loads. */}
       <main className="min-w-0 flex-1 overflow-hidden">
         <Suspense fallback={<RouteFallback />}>
-          <Outlet />
+          <Outlet context={{ openNav: () => setNavOpen(true) } satisfies ShellOutletContext} />
         </Suspense>
       </main>
 

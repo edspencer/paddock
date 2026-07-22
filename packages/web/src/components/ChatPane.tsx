@@ -1592,10 +1592,14 @@ export function ChatPane({
                 type="button"
                 onClick={cancel}
                 title="Stop generating"
+                aria-label="Stop"
                 className="btn bg-paddock-200 text-paddock-700 hover:bg-paddock-300 dark:bg-paddock-800 dark:text-paddock-200 dark:hover:bg-paddock-700"
               >
                 <StopIcon width={15} height={15} />
-                Stop
+                {/* Label hidden on mobile (icon-only) to give the textarea room
+                    so its placeholder fits one line at the 16px anti-zoom size (#372).
+                    aria-label keeps a stable accessible name for the icon-only state. */}
+                <span className="hidden sm:inline">Stop</span>
               </button>
             ) : (
               <button
@@ -1604,9 +1608,10 @@ export function ChatPane({
                 disabled={(!draft.trim() && attachments.length === 0) || uploading}
                 className="btn-primary"
                 title="Send (Enter)"
+                aria-label="Send"
               >
                 <SendIcon width={15} height={15} />
-                Send
+                <span className="hidden sm:inline">Send</span>
               </button>
             )}
           </div>
@@ -1661,7 +1666,10 @@ function PreloadToggle({
         className="h-3.5 w-3.5 rounded border-paddock-300 accent-accent focus:ring-accent/30 disabled:opacity-50 dark:border-paddock-600"
       />
       <span className="font-medium">Preload project context</span>
-      <span className="text-paddock-400 transition-opacity">
+      {/* The inline hint is redundant with the label's own tooltip, so it's
+          hidden on mobile (< sm) to keep the label on one line and reclaim
+          vertical space (#372); it stays inline on desktop. */}
+      <span className="hidden text-paddock-400 transition-opacity sm:inline">
         {available ? "(injects OVERVIEW.md + CHANGELOG.md)" : "(no overview yet)"}
       </span>
     </label>
