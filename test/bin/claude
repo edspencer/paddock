@@ -90,6 +90,10 @@
  *                     The pre-#394 live predicate (text + `end_turn` on ONE message)
  *                     never saw the reply → false banner. Must NOT surface a "turn
  *                     failed" banner beneath the answer.
+ *   • [[BIGCONTEXT]]→ a long tool-heavy turn whose assistant context snapshot grows
+ *                     to ~292k, then a terminal `result` whose usage is the
+ *                     CUMULATIVE per-turn total (~828k). The live context meter must
+ *                     track the 292k snapshot, NOT the 828k cumulative result (#398).
  * Sweeper coverage: when the prompt looks like the paddock sweeper's curation
  * prompt (contains the literal "<<<OVERVIEW>>>" marker request), the fake emits a
  * marker-shaped reply (<<<OVERVIEW>>> … <<<CHANGELOG>>> … <<<END>>>) so
@@ -403,6 +407,86 @@ function main() {
     cwd,
     sessionId,
   });
+
+  // [[BIGCONTEXT]] (test-only, #398): a long, tool-heavy turn whose assistant
+  // context snapshot grows monotonically to ~292k (each round re-reads a larger
+  // cached prefix), followed by a terminal `result` whose usage is the CUMULATIVE
+  // sum across every internal API call (~828k). The live context meter must track
+  // the assistant snapshot (292k), NOT the cumulative result total (828k) — the
+  // pre-fix bug let the result block win pickTurnUsage's max and spiked the meter
+  // to 828k until a refresh read disk. Self-contained: emits several tool
+  // round-trips + a final reply + the big cumulative result, then exits.
+  if ((prompt || "").includes("[[BIGCONTEXT]]")) {
+    const toolUseWith = (ctxUsage) => {
+      const toolUseId = `toolu_${crypto.randomBytes(8).toString("hex")}`;
+      append({
+        parentUuid: null,
+        isSidechain: false,
+        type: "assistant",
+        message: {
+          id: `msg_${crypto.randomBytes(8).toString("hex")}`,
+          role: "assistant",
+          model,
+          stop_reason: "tool_use",
+          content: [{ type: "tool_use", id: toolUseId, name: "Read", input: { file_path: "big.md" } }],
+          usage: ctxUsage,
+        },
+        uuid: crypto.randomUUID(),
+        timestamp: nowIso(),
+        cwd,
+        sessionId,
+      });
+      sleep(40);
+      append({
+        parentUuid: null,
+        isSidechain: false,
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: toolUseId, content: "big file contents", is_error: false }],
+        },
+        uuid: crypto.randomUUID(),
+        timestamp: nowIso(),
+        cwd,
+        sessionId,
+      });
+      sleep(40);
+    };
+    // Growing per-call context snapshots: ~100k → ~200k (input + cache_read + cache_creation).
+    toolUseWith({ input_tokens: 5000, output_tokens: 400, cache_read_input_tokens: 90000, cache_creation_input_tokens: 5000 });
+    toolUseWith({ input_tokens: 5000, output_tokens: 900, cache_read_input_tokens: 190000, cache_creation_input_tokens: 5000 });
+    // Final reply carries the LARGEST (== true window) snapshot: 292,101.
+    append({
+      parentUuid: null,
+      isSidechain: false,
+      type: "assistant",
+      message: {
+        id: `msg_${crypto.randomBytes(8).toString("hex")}`,
+        role: "assistant",
+        model,
+        stop_reason: "end_turn",
+        content: [{ type: "text", text: reply }],
+        usage: { input_tokens: 5101, output_tokens: 1600, cache_read_input_tokens: 282000, cache_creation_input_tokens: 5000 },
+      },
+      uuid: crypto.randomUUID(),
+      timestamp: nowIso(),
+      cwd,
+      sessionId,
+    });
+    sleep(40);
+    // Terminal result: CUMULATIVE totals summed across the turn's rounds (~828k
+    // context-shaped). Never persisted to disk — only the live path sees it.
+    append({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      session_id: sessionId,
+      result: reply,
+      usage: { input_tokens: 45000, output_tokens: 3200, cache_read_input_tokens: 760000, cache_creation_input_tokens: 23000 },
+    });
+    process.stdout.write(reply + "\n");
+    process.exit(0);
+  }
 
   // [[LIMIT]] / [[MAXTURNS]] / [[APIERROR]] (test-only, #329): drive the three
   // turn-dead-end shapes the UI must now surface. Each writes the MINIMAL
