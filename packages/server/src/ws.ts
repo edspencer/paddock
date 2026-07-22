@@ -2046,10 +2046,18 @@ export function makeChatHandler(deps: {
     getProject: (slug) => deps.projects.get(slug),
     reDrive: (project, sessionId) => injectRecoveryNudge(project, sessionId),
     // #352: a live turn on this session means the keeper isn't idle — the watch
-    // stands down rather than surface a stale "idle" banner or fire a re-drive that
+    // defers rather than surface a stale "idle" banner or fire a re-drive that
     // would interrupt (and be swallowed by) the in-flight turn. `injectRecoveryNudge`
     // holds the same guard for the recovery path's own dispatch window.
     isBusy: (sessionId) => hub.isRunning(sessionId),
+    // #397: `hub.isRunning` only sees turns PADDOCK started — it is BLIND to a
+    // session herdctl's reaper is keeping alive for the just-killed background task
+    // (or its ~15s re-invocation grace). Auto re-drive resumes via a FRESH
+    // subprocess, so firing while that prior subprocess is still live spawned a
+    // COMPETING resume the SDK interrupted (`[Request interrupted by user]`). Thread
+    // the reaper's true liveness in so the engine defers until the session is
+    // genuinely idle. Null-safe (batch mode / no reaper → false = pre-#397 path).
+    sdkSessionLive: (sessionId) => deps.herdctl.isSdkSessionLive(sessionId),
     // #347: when a background task is killed at the turn boundary, its
     // notification is trapped in the SDK input queue — the client would never
     // render the "keeper is idle" affordance until a refresh flushed it. On

@@ -440,6 +440,25 @@ export class HerdctlService {
     return this.fleet;
   }
 
+  /**
+   * Is a `claude` SUBPROCESS still alive on this session at the SDK/reaper layer
+   * (issue #397)? Consults herdctl's `SessionReaper` via the fleet's session
+   * lifecycle manager: `true` while the reaper is keeping a session open for a
+   * killed background task (keepAlive) or holding it through its re-invocation
+   * grace. Paddock's recovery engine treats this as a busy signal so it never
+   * fires a COMPETING resume into a session a prior subprocess still holds live
+   * (which the SDK resolves by interrupting the in-flight turn). Null-safe: with
+   * no fleet, no session-lifecycle manager (batch mode / reaper disabled), or any
+   * error, returns `false` — the pre-#397 behaviour.
+   */
+  isSdkSessionLive(sessionId: string): boolean {
+    try {
+      return this.fleet?.getSessionLifecycle()?.reaper.isSessionLive(sessionId) ?? false;
+    } catch {
+      return false;
+    }
+  }
+
   async fleetStatus(): Promise<FleetStatus> {
     return this.manager.getFleetStatus();
   }
