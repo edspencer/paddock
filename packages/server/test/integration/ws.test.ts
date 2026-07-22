@@ -380,6 +380,26 @@ describe("integration: WS transport edge cases (real app, fake claude)", () => {
     expect(noticeIn(mark, "ws-proj")).toBeUndefined();
   });
 
+  it("emits NO error notice on a tool-heavy turn (prose on a tool_use msg, thinking-only terminal) then error ([[TOOLREPLYERROR]], #394)", async () => {
+    // The #380 residual: the visible prose rides on a message that ALSO makes a
+    // tool call (`stop_reason:"tool_use"`), the terminal `end_turn` message is
+    // thinking-only (zero text), THEN an `error_during_execution` result arrives.
+    // The old predicate (text + `end_turn` on ONE message) never flipped
+    // `producedReply`, so the benign error painted a false banner. The reply must
+    // stream with NO notice beneath it.
+    const mark = ws.mark();
+    ws.send({
+      type: "chat:send",
+      payload: { projectSlug: "ws-proj", sessionId: null, message: "read the notes [[TOOLREPLYERROR]]" },
+    });
+    await ws.waitFor(
+      (e) => e.type === "chat:complete" && e.payload?.projectSlug === "ws-proj",
+      { from: mark },
+    );
+    expect(ws.responseText(mark)).toContain("Acknowledged:");
+    expect(noticeIn(mark, "ws-proj")).toBeUndefined();
+  });
+
   it("emits NO max_turns notice when a max_turns result follows a completed reply ([[REPLYMAXTURNS]])", async () => {
     const mark = ws.mark();
     ws.send({

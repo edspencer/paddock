@@ -982,8 +982,11 @@ export function makeChatHandler(deps: {
     });
     // #329: surface a dead-end (usage limit / max-turns / error) on this wake
     // turn too, at most once. Same rationale as the interactive path.
-    // #380: once a complete reply has streamed, an error/max_turns dead-end is a
-    // false alarm — suppress it (matching the history path). `usage_limit` stays.
+    // #380/#394: once the turn has shown the user real prose, an error/max_turns
+    // dead-end is a false alarm — suppress it (matching the history path).
+    // `wakeProducedReply` is OR-accumulated across every message (a tool-heavy
+    // turn's prose rides on a `tool_use` message, not the terminal one). A
+    // `usage_limit` still surfaces.
     let wakeNoticeEmitted = false;
     let wakeProducedReply = false;
     const emitWakeNotice = (notice: TurnNotice): void => {
@@ -1871,8 +1874,12 @@ export function makeChatHandler(deps: {
         // drops every synthetic message (so nothing would ever render), which is
         // exactly why these turns look dead. `noticeFromMessage` returns null for
         // ordinary output and for suppressed "No response requested." placeholders.
-        // #380: track a completed reply so a trailing error/max_turns result
-        // (which races in AFTER the reply in session mode) is suppressed below.
+        // #380/#394: track whether this turn showed the user real prose so a
+        // trailing error/max_turns result (which races in AFTER the reply in
+        // session mode) is suppressed below. OR-accumulated across ALL of the
+        // turn's messages — a tool-heavy turn's prose rides on a `tool_use`
+        // message and its terminal `end_turn` is often thinking-only (#394), so
+        // the flag must survive later text-less messages, not just the last one.
         if (messageProducedReply(m as Parameters<typeof messageProducedReply>[0]))
           producedReply = true;
         const notice = noticeFromMessage(m as Parameters<typeof noticeFromMessage>[0]);

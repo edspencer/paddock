@@ -83,6 +83,13 @@
  *                     already streamed (#380 live/history asymmetry).
  *   • [[REPLYMAXTURNS]] → stream a NORMAL reply, then an `error_max_turns` result.
  *                     Must NOT surface a "turn limit" banner beneath the reply (#380).
+ *   • [[TOOLREPLYERROR]] → the #394 residual shape. Emit the visible prose on a
+ *                     message that ALSO makes a tool call (`stop_reason:"tool_use"`),
+ *                     pair the tool_result, then a THINKING-ONLY terminal `end_turn`
+ *                     message (zero text), then an `error_during_execution` result.
+ *                     The pre-#394 live predicate (text + `end_turn` on ONE message)
+ *                     never saw the reply → false banner. Must NOT surface a "turn
+ *                     failed" banner beneath the answer.
  * Sweeper coverage: when the prompt looks like the paddock sweeper's curation
  * prompt (contains the literal "<<<OVERVIEW>>>" marker request), the fake emits a
  * marker-shaped reply (<<<OVERVIEW>>> … <<<CHANGELOG>>> … <<<END>>>) so
@@ -440,6 +447,76 @@ function main() {
     // A failed turn (e.g. an API/overload/auth error): an error result subtype.
     sleep(40);
     append({ type: "result", subtype: "error_during_execution", is_error: true, session_id: sessionId, usage });
+    process.exit(0);
+  }
+  if ((prompt || "").includes("[[TOOLREPLYERROR]]")) {
+    // #394: the tool-heavy false-banner shape. The visible prose rides on a message
+    // that ALSO makes a tool call (`stop_reason:"tool_use"`); the terminal `end_turn`
+    // message is THINKING-ONLY (zero text); then a benign terminal error result. The
+    // old live predicate (text + `end_turn` on ONE message) never saw the reply, so
+    // `producedReply` stayed false and the error painted a false banner. Post-fix the
+    // reply text (on the tool_use message) flips `producedReply` → notice suppressed.
+    const toolUseId = `toolu_${crypto.randomBytes(8).toString("hex")}`;
+    sleep(40);
+    // (a) assistant message: real prose + a tool_use, stop_reason:"tool_use".
+    append({
+      parentUuid: null,
+      isSidechain: false,
+      type: "assistant",
+      message: {
+        id: `msg_${crypto.randomBytes(8).toString("hex")}`,
+        role: "assistant",
+        model,
+        stop_reason: "tool_use",
+        content: [
+          { type: "text", text: reply },
+          { type: "tool_use", id: toolUseId, name: "Read", input: { file_path: "notes.md" } },
+        ],
+        usage,
+      },
+      uuid: crypto.randomUUID(),
+      timestamp: nowIso(),
+      cwd,
+      sessionId,
+    });
+    sleep(40);
+    // (b) the paired tool_result (a user line — never a reply).
+    append({
+      parentUuid: null,
+      isSidechain: false,
+      type: "user",
+      message: {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: toolUseId, content: "file contents here", is_error: false }],
+      },
+      uuid: crypto.randomUUID(),
+      timestamp: nowIso(),
+      cwd,
+      sessionId,
+    });
+    sleep(40);
+    // (c) THINKING-ONLY terminal assistant message (end_turn, zero text).
+    append({
+      parentUuid: null,
+      isSidechain: false,
+      type: "assistant",
+      message: {
+        id: `msg_${crypto.randomBytes(8).toString("hex")}`,
+        role: "assistant",
+        model,
+        stop_reason: "end_turn",
+        content: [{ type: "thinking", thinking: "Wrapped up — nothing more to add.", signature: "" }],
+        usage,
+      },
+      uuid: crypto.randomUUID(),
+      timestamp: nowIso(),
+      cwd,
+      sessionId,
+    });
+    sleep(40);
+    // (d) terminal error result — streamed live, would paint the false banner pre-fix.
+    append({ type: "result", subtype: "error_during_execution", is_error: true, session_id: sessionId, result: "", usage });
+    process.stdout.write(reply + "\n");
     process.exit(0);
   }
 

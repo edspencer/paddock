@@ -193,11 +193,46 @@ describe("messageProducedReply (#380)", () => {
     ).toBe(false);
   });
 
-  it("is false for a mid-turn tool_use assistant message (stop_reason:'tool_use')", () => {
+  // #394: a tool-heavy turn carries its visible prose in a message that ALSO makes
+  // a tool call (`stop_reason:"tool_use"`). That message DID show the user real
+  // text, so it counts as a produced reply — the old text+`end_turn` gate wrongly
+  // excluded it, leaving a false "turn failed" banner beneath the answer.
+  it("is TRUE for a text-bearing tool_use assistant message (stop_reason:'tool_use', #394)", () => {
     expect(
       messageProducedReply({
         type: "assistant",
-        message: { model: "claude-opus-4-8", stop_reason: "tool_use", content: [{ type: "text", text: "calling a tool" }] },
+        message: { model: "claude-opus-4-8", stop_reason: "tool_use", content: [{ type: "text", text: "Here you go, calling a tool…" }] },
+      }),
+    ).toBe(true);
+  });
+
+  // #394: a tool-only assistant message (a bare tool_use, no text) is NOT prose —
+  // it must not flip the reply flag on its own.
+  it("is false for a tool_use assistant message with NO text block (#394)", () => {
+    expect(
+      messageProducedReply({
+        type: "assistant",
+        message: {
+          model: "claude-opus-4-8",
+          stop_reason: "tool_use",
+          content: [{ type: "tool_use", id: "toolu_1", name: "Read", input: {} }],
+        },
+      }),
+    ).toBe(false);
+  });
+
+  // #394: a terminal `end_turn` message that is THINKING-ONLY (zero text) is not a
+  // reply by itself — but see the accumulation test below: prior text in the turn
+  // already flipped the flag, so the turn still counts.
+  it("is false for a thinking-only end_turn assistant message (zero text, #394)", () => {
+    expect(
+      messageProducedReply({
+        type: "assistant",
+        message: {
+          model: "claude-opus-4-8",
+          stop_reason: "end_turn",
+          content: [{ type: "thinking", thinking: "wrapping up" }],
+        },
       }),
     ).toBe(false);
   });
@@ -205,6 +240,54 @@ describe("messageProducedReply (#380)", () => {
   it("is false for non-assistant messages", () => {
     expect(messageProducedReply({ type: "result", subtype: "success" })).toBe(false);
     expect(messageProducedReply({ type: "user", message: { content: "hi" } })).toBe(false);
+  });
+});
+
+// #394: the live paths (`ws.ts`) OR-accumulate `messageProducedReply` across every
+// message of a turn (`producedReply = producedReply || messageProducedReply(m)`).
+// These pin the whole-turn behaviour for the exact tool-heavy shapes that used to
+// paint a false banner — text-on-a-tool_use message + a thinking-only terminal — vs
+// a genuinely empty turn that must STILL surface the error.
+describe("turn-level producedReply accumulation (#394)", () => {
+  // Fold the predicate over a turn's messages the way ws.ts does.
+  const turnProducedReply = (messages: unknown[]): boolean =>
+    messages.reduce<boolean>((acc, m) => acc || messageProducedReply(m as never), false);
+
+  it("counts a turn whose prose rides on a tool_use message, ending thinking-only + error result", () => {
+    const turn = [
+      // Prose lives on the message that ALSO makes the tool call.
+      { type: "assistant", message: { model: "claude-opus-4-8", stop_reason: "tool_use", content: [
+        { type: "text", text: "On it — reading the file now." },
+        { type: "tool_use", id: "toolu_1", name: "Read", input: { file_path: "notes.md" } },
+      ] } },
+      // Paired tool result (a user line — never a reply).
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "…" }] } },
+      // Terminal end_turn message is THINKING-ONLY (zero text).
+      { type: "assistant", message: { model: "claude-opus-4-8", stop_reason: "end_turn", content: [
+        { type: "thinking", thinking: "Done; nothing more to add." },
+      ] } },
+      // The benign terminal error result that used to paint the false banner.
+      { type: "result", subtype: "error_during_execution", is_error: true },
+    ];
+    expect(turnProducedReply(turn)).toBe(true);
+  });
+
+  it("does NOT count a genuinely empty turn (no assistant text anywhere) — error still surfaces", () => {
+    const turn = [
+      // A bare tool_use (no text) then a thinking-only terminal — no prose at all.
+      { type: "assistant", message: { model: "claude-opus-4-8", stop_reason: "tool_use", content: [
+        { type: "tool_use", id: "toolu_1", name: "Read", input: {} },
+      ] } },
+      { type: "assistant", message: { model: "claude-opus-4-8", stop_reason: "end_turn", content: [
+        { type: "thinking", thinking: "hit the cap" },
+      ] } },
+      { type: "result", subtype: "error_max_turns", is_error: true },
+    ];
+    expect(turnProducedReply(turn)).toBe(false);
+    // …so the terminal error result is NOT suppressed → banner shows.
+    const notice = noticeFromMessage(turn[turn.length - 1] as never);
+    expect(notice).toMatchObject({ kind: "max_turns" });
+    expect(suppressNoticeAfterReply(notice as TurnNotice, turnProducedReply(turn))).toBe(false);
   });
 });
 
