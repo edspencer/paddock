@@ -103,29 +103,27 @@ export function FilesPane({
     );
   }
 
-  // `path` is a file — the viewer, with a breadcrumb + a Pin toggle (top-level
-  // files only, matching the pinned-tab capability).
+  // `path` is a file — the viewer, with a breadcrumb + a Pin toggle. Any file
+  // reachable through the browser is pinnable, at any depth (issue #259 made the
+  // whole path pinnable; the pinned list stores the project-relative path).
   if (isFile) {
-    const isTopLevel = !path.includes("/");
     const isPinned = project.pinned.includes(path);
     return (
       <div className="flex min-h-0 flex-1 flex-col">
         <div className="flex items-center gap-2 border-b border-paddock-200 px-4 py-2 dark:border-paddock-800">
           <div className="min-w-0 flex-1">{breadcrumb}</div>
-          {isTopLevel && (
-            <button
-              onClick={() => onTogglePin(path)}
-              className={`ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
-                isPinned
-                  ? "bg-accent/10 text-accent"
-                  : "text-paddock-500 hover:bg-paddock-200/60 dark:hover:bg-paddock-800/60"
-              }`}
-              title={isPinned ? "Unpin (remove tab)" : "Pin as a tab"}
-            >
-              <PinIcon width={13} height={13} />
-              {isPinned ? "Pinned" : "Pin as tab"}
-            </button>
-          )}
+          <button
+            onClick={() => onTogglePin(path)}
+            className={`ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
+              isPinned
+                ? "bg-accent/10 text-accent"
+                : "text-paddock-500 hover:bg-paddock-200/60 dark:hover:bg-paddock-800/60"
+            }`}
+            title={isPinned ? "Unpin (remove tab)" : "Pin as a tab"}
+          >
+            <PinIcon width={13} height={13} />
+            {isPinned ? "Pinned" : "Pin as tab"}
+          </button>
         </div>
         <div className="flex-1 overflow-y-auto">
           <FileView slug={slug} name={path} />
@@ -168,7 +166,9 @@ export function FilesPane({
               const childPath = path ? `${path}/${e.name}` : e.name;
               const isDir = e.kind === "dir";
               const isPinned = project.pinned.includes(childPath);
-              const showPin = !isDir && path === "";
+              // Any file is pinnable, at any depth — the pin stores childPath
+              // (the full project-relative path), not just the basename.
+              const showPin = !isDir;
               const border = i > 0 || path !== "" ? "border-t border-paddock-200 dark:border-paddock-800" : "";
               return (
                 <div

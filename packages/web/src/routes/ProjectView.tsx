@@ -871,8 +871,8 @@ export function ProjectView() {
   //    highlight to its new sibling tab — the SAME reader keeps rendering it (no
   //    component swap), so the view doesn't jump.
   // A pinned sibling tab is highlighted when the current files subpath is exactly
-  // that pinned (top-level) file; otherwise the Files tab itself is active — for
-  // the root list, a subdirectory, or an unpinned file open in the reader.
+  // that pinned file (at any depth); otherwise the Files tab itself is active —
+  // for the root list, a subdirectory, or an unpinned file open in the reader.
   const activePinnedFile =
     view === "files" && filesSubpath && pinned.includes(filesSubpath) ? filesSubpath : null;
   const filesTabActive = view === "files" && !activePinnedFile;
@@ -1390,6 +1390,9 @@ function PinnedTab({
   onSelect: () => void;
   onUnpin: () => void;
 }) {
+  // A nested pin (e.g. "design/plan.md") shows its basename as the tab label to
+  // stay compact; the full project-relative path lives in the title/aria-label.
+  const label = file.includes("/") ? file.slice(file.lastIndexOf("/") + 1) : file;
   return (
     <div
       className={`group/pin -mb-px flex items-center gap-1 border-b-2 pr-1 transition-colors ${
@@ -1411,7 +1414,7 @@ function PinnedTab({
         }`}
       >
         <PinIcon width={12} height={12} className="shrink-0 text-accent" />
-        <span className="max-w-[10rem] truncate">{file}</span>
+        <span className="max-w-[10rem] truncate">{label}</span>
       </button>
       <button
         type="button"

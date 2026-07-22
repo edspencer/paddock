@@ -410,6 +410,21 @@ describe("ProjectView: files + pin-as-tab", () => {
     expect(screen.getByRole("tab", { name: /Open page.html tab/i })).toBeInTheDocument();
   });
 
+  it("a pinned nested file shows a tab labelled by basename but addressed by full path", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p", pinned: ["design/plan.md"] })),
+    );
+    setDir({ "": [{ name: "design", kind: "dir" }], design: [{ name: "plan.md", kind: "file" }] });
+    renderAt("/projects/p/files/design/plan.md");
+    // The reader renders the deep-linked nested file.
+    expect(await screen.findByTestId("file-view")).toHaveTextContent("file: design/plan.md");
+    // The tab carries the full project-relative path in its accessible name…
+    const tab = screen.getByRole("tab", { name: /Open design\/plan.md tab/i });
+    // …but shows only the basename as its visible label to stay compact.
+    expect(tab).toHaveTextContent("plan.md");
+    expect(tab).not.toHaveTextContent("design/plan.md");
+  });
+
   it("unpinning a viewed pinned tab calls unpin and falls back to the files list", async () => {
     apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p", pinned: ["page.html"] })));
     setDir({ "": [{ name: "page.html", kind: "file" }] });
