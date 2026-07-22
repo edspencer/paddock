@@ -34,7 +34,8 @@ import { DRIVE_MODES, KEEPER_DEFAULT_DRIVE_MODE } from "./models.js";
 import { DEFAULT_MAX_SPAWN_DEPTH, isValidMaxSpawnDepth } from "./spawn-capability.js";
 import { DEFAULT_RECOVERY } from "./recovery-config.js";
 import { DEFAULT_ATTACHMENTS, sanitizeAllowedTypes } from "./attachments-config.js";
-import { DEFAULT_CURATION, type PaddockConfig } from "./config.js";
+import { DEFAULT_CURATION } from "./curation-config.js";
+import { type PaddockConfig } from "./config.js";
 
 /** Groups the Settings screen renders, in display order. */
 export const GROUPS: { id: string; label: string; description?: string }[] = [
