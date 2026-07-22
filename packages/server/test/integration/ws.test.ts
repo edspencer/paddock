@@ -166,7 +166,7 @@ describe("integration: WS transport edge cases (real app, fake claude)", () => {
     // Seed an overview + a changelog the keeper should be primed with (issue #188:
     // the cross-session narrative must reach the chat, not just current state).
     await t.projects.writeOverview("preload-proj", "OVERVIEW: the secret is 'velvet'.");
-    await t.projects.appendChangelog("preload-proj", "shipped the tangerine feature");
+    await t.projects.writeChangelog("preload-proj", "## 2026-07-21\n- shipped the tangerine feature");
 
     const mark = ws.mark();
     ws.send({

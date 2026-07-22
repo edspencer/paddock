@@ -206,17 +206,43 @@ function sweeperReply(prompt) {
       /* fall through to the default */
     }
   }
+  // Wholesale-rewrite protocol (issue #379): each section is the FULL file (or
+  // NOCHANGE). The prompt shows the CURRENT files in full, so mimic a real
+  // curator by PRESERVING the existing changelog and prepending a new dated
+  // entry (rather than the old "one bullet, blind-append").
+  const today = new Date().toISOString().slice(0, 10);
+  const existing = extractPromptSection(
+    prompt,
+    "=== CURRENT CHANGELOG.md (full) ===",
+    "=== CURRENT CLAUDE.md",
+  );
+  const priorBody =
+    existing && existing !== "(empty)" ? existing.replace(/^#[^\n]*\n+/, "").trim() : "";
+  const changelog = [
+    `## ${today}`,
+    "- Curated recent chat activity into the overview.",
+    ...(priorBody ? ["", priorBody] : []),
+  ].join("\n");
   return [
     "<<<OVERVIEW>>>",
     "# Project Overview",
     "",
     "Synthesized current state from recent activity.",
     "<<<CHANGELOG>>>",
-    "Curated recent chat activity into the overview.",
+    changelog,
     "<<<CLAUDE>>>",
     "- A durable convention discovered from recent activity.",
     "<<<END>>>",
   ].join("\n");
+}
+
+/** Extract a `=== HEADER ===` section body from the sweeper prompt (fake helper). */
+function extractPromptSection(prompt, startMarker, endMarker) {
+  const a = (prompt || "").indexOf(startMarker);
+  if (a === -1) return "";
+  const from = a + startMarker.length;
+  const b = prompt.indexOf(endMarker, from);
+  return prompt.slice(from, b === -1 ? undefined : b).trim();
 }
 
 /** Concatenate prior assistant + user text from an existing transcript file. */
