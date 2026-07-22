@@ -1,5 +1,92 @@
 # @paddock/server
 
+## 0.42.2
+
+### Patch Changes
+
+- [#400](https://github.com/edspencer/paddock/pull/400) [`9f12b01`](https://github.com/edspencer/paddock/commit/9f12b011c910bd05117b826963a5b591f3af36bc) Thanks [@edspencer](https://github.com/edspencer)! - Fix live context meter inflating after tool-heavy turns (#398)
+
+  The live composer context meter (and chat-list ring) could jump far above the
+  true context — e.g. **828k/1M (83%)** live when the real window was ~292k
+  (~28%) — right after a long, multi-step turn. A refresh fixed it (the disk path
+  was already correct).
+
+  Root cause: the `ws.ts` turn loop ran `extractUsage` on every SDK message and
+  kept the block with the MAX `contextTokens` (`pickTurnUsage`, #165). It also read
+  top-level usage, so it ingested the terminal `type:"result"` message — whose
+  `usage` (`SDKResultSuccess.usage`) is the **cumulative** total aggregated across
+  every internal API call in the turn (`num_turns`), not a single context-window
+  snapshot. On a many-round turn that cumulative block dwarfs any single assistant
+  block, so it won the max and inflated `chat:complete.meta.usage.contextTokens`.
+  The result message is control-plane and never persisted to `.jsonl`, so the disk
+  endpoints only ever saw assistant blocks and stayed correct — hence a refresh
+  fixed it. (`pickTurnUsage`'s #165 comment assumed the result block carried zeroed
+  cache fields; the current SDK populates them cumulatively.)
+
+  Fix: `extractUsage` now flags the `type:"result"` message (`fromResult`), and the
+  turn loop (`foldTurnUsage`) routes its cumulative usage to a **separate** field
+  that never touches the context snapshot. The context meter derives from the
+  assistant snapshot only — the last assistant block's `input + cache_read +
+cache_creation`, which grows monotonically through the turn ("last" == "max") and
+  matches the disk path exactly, so there is no overshoot and no refresh needed. The
+  #165 behaviour is preserved (a cache-less/zeroed block never lowers the snapshot,
+  and a result-only turn still falls back to the result). The result's cumulative
+  `outputTokens` is still surfaced (for the cost readout), just never as
+  `contextTokens`.
+
+- [#399](https://github.com/edspencer/paddock/pull/399) [`59ffe9d`](https://github.com/edspencer/paddock/commit/59ffe9d72f1335616c8ebe71b44114758c3cc49e) Thanks [@edspencer](https://github.com/edspencer)! - Fix keeper auto-recovery firing a competing resume that self-interrupts (issue
+  #397). Layer-3 auto re-drive (#301/#352) detected a killed-at-turn-boundary hang
+  and injected the recovery nudge while herdctl's `SessionReaper` was still keeping
+  the original `claude` subprocess alive (keepAlive + its ~15s re-invocation grace).
+  Because Paddock drives every session-mode turn as a fresh `openChatSession(resume)`
+  = a NEW subprocess, the re-drive spawned a second `claude` on the same session id;
+  the SDK resolved the collision by interrupting the in-flight turn (`[Request
+interrupted by user]`), so the auto-recovery turn produced nothing and the user was
+  still stuck. The #352 stand-down guard only checked `hub.isRunning`, which is blind
+  to a reaper-kept-alive subprocess.
+
+  The recovery engine now consults the reaper's true liveness
+  (`getSessionLifecycle()?.reaper.isSessionLive`, null-safe) alongside `hub.isRunning`,
+  and — rather than standing down permanently (which left recovery incomplete, since
+  the reaper reaps silently and nothing re-arms) — DEFERS: it re-checks on a settle
+  poll and fires the nudge exactly once the session is genuinely idle, bounded by a
+  settle window so a session that never releases can't retry forever. Pairs with the
+  herdctl-side class-fix (herdctl#403: `openChatSession` should guard on
+  `isSessionLive` before spawning a second subprocess).
+
+- [#393](https://github.com/edspencer/paddock/pull/393) [`88b3c91`](https://github.com/edspencer/paddock/commit/88b3c9168029c793da2377d57316aa19e9f35dce) Thanks [@edspencer](https://github.com/edspencer)! - Render an in-flight tool block on history rehydration (herdctl#399)
+
+  `@herdctl/core@5.24.0` now emits a still-running foreground `tool_use` as a
+  `ChatToolCall.pending: true` message when a transcript is rehydrated (empty
+  output, no duration), upgraded in place when its `tool_result` arrives. This
+  wires that flag through the web so a page refresh mid-turn shows the same live
+  "RUNNING" affordance (#175) — a spinner + "Running…" body — instead of the tool
+  block vanishing or looking completed. A pending `Agent`/Task shows the running
+  SUB-AGENT box and is not treated as expandable.
+
+  - **web** — type `ChatToolCall.pending` end-to-end; the shared `ToolBlock`
+    already rendered the pending state from the live path, so the reload path now
+    reuses it unchanged.
+  - **server** — the two paired-only positional enrichment joins
+    (`attachSubagentFields`, `attachToolDetails`) now skip the injected unpaired
+    pending message so it can't consume a completed sibling's recovered
+    fields/detail and misalign it (e.g. a still-running parallel sub-agent wrongly
+    inheriting a finished sibling's `hasSubagent` and rendering as expandable).
+
+- [#395](https://github.com/edspencer/paddock/pull/395) [`0655f33`](https://github.com/edspencer/paddock/commit/0655f33f0a71cabd11d973f36830d204673f981e) Thanks [@edspencer](https://github.com/edspencer)! - Fix the false "The keeper turn failed before producing a reply." banner that still
+  appeared beneath complete, successful replies on tool-heavy turns (residual of
+  #380/#382; issue #394). The live-path reply predicate
+  (`messageProducedReply`/`suppressNoticeAfterReply`) required a single assistant
+  message with text **and** `stop_reason:"end_turn"`, but long tool-driven turns carry
+  their prose on a message that also makes a tool call (`stop_reason:"tool_use"`) and
+  end on a thinking-only `end_turn` message (zero text), so `producedReply` never
+  flipped and the benign terminal `error_*`/`success:false` result surfaced a banner
+  that only cleared on refresh. The predicate now treats **any** non-synthetic
+  assistant text as reply-producing (regardless of `stop_reason`), accumulated across
+  the whole turn on both the interactive and wake emit paths — matching the history
+  path exactly. A genuinely empty turn (no assistant text anywhere) still surfaces the
+  error.
+
 ## 0.42.1
 
 ### Patch Changes
