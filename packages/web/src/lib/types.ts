@@ -1070,3 +1070,44 @@ export type ServerWsMessage =
       payload: Routing & { notice: TurnNotice };
     }
   | { type: "pong" };
+
+// --- Instance-wide settings (issue #385) ------------------------------------
+
+/** The rendering/validation kind of an instance-config field. */
+export type InstanceConfigFieldType = "number" | "boolean" | "string" | "enum" | "string-list";
+
+/**
+ * One field on the instance-wide Settings screen (GET /api/instance-config).
+ * `value`/`default` are the JSON-serialized resolved value + built-in default.
+ * A field is rendered read-only when `!editable` OR `envOverridden` (an env var
+ * shadows the file, so editing it would silently no-op).
+ */
+export interface InstanceConfigField {
+  key: string;
+  group: string;
+  label: string;
+  help?: string;
+  type: InstanceConfigFieldType;
+  enumValues?: string[];
+  value: unknown;
+  default: unknown;
+  editable: boolean;
+  sensitive: boolean;
+  envOverridden: boolean;
+  /** The env var shadowing this field (present only when `envOverridden`). */
+  envVar?: string;
+}
+
+export interface InstanceConfigGroup {
+  id: string;
+  label: string;
+  description?: string;
+  fields: InstanceConfigField[];
+}
+
+export interface InstanceConfig {
+  groups: InstanceConfigGroup[];
+  /** Absolute path a PUT writes to (informational). */
+  configPath: string;
+  restartRequired: false;
+}

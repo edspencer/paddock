@@ -9,7 +9,7 @@ import { chatClient } from "../lib/ws";
 import { LAST_SEEN_EVENT, readLastSeen, setServerLastSeen } from "../lib/lastSeen";
 import { TagPill } from "./TagPill";
 import { NewProjectModal } from "./NewProjectModal";
-import { ChatIcon, FolderIcon, MenuIcon, MoonIcon, PlusIcon, SunIcon, XIcon } from "./icons";
+import { ChatIcon, CogIcon, FolderIcon, MenuIcon, MoonIcon, PlusIcon, SunIcon, XIcon } from "./icons";
 import { PaneResizer, usePaneWidth } from "./PaneResizer";
 import { SIDENAV_PANE } from "../lib/paneWidth";
 
@@ -286,10 +286,20 @@ export function AppShell() {
         </nav>
 
         <div className="border-t border-paddock-200 px-3 py-3 dark:border-paddock-800">
+          <NavLink
+            to="/settings"
+            className={({ isActive }) =>
+              `btn-subtle w-full justify-start ${isActive ? "bg-paddock-200/80 dark:bg-paddock-800" : ""}`
+            }
+            title="Instance settings"
+          >
+            <CogIcon width={15} height={15} />
+            Instance settings
+          </NavLink>
           <button
             type="button"
             onClick={toggleTheme}
-            className="btn-subtle w-full justify-start"
+            className="btn-subtle mt-1 w-full justify-start"
             aria-label={dark ? "Switch to light mode" : "Switch to dark mode"}
             title="Toggle light / dark theme"
           >

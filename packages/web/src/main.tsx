@@ -22,6 +22,9 @@ const ProjectRedirect = lazy(() =>
 const OneOffChat = lazy(() =>
   import("./routes/OneOffChat").then((m) => ({ default: m.OneOffChat })),
 );
+const InstanceSettings = lazy(() =>
+  import("./routes/InstanceSettings").then((m) => ({ default: m.InstanceSettings })),
+);
 
 // Reflect tab visibility onto <html data-tab-hidden> so CSS can pause the
 // continuous streaming animations (spinners, caret) while the tab is
@@ -72,6 +75,8 @@ const router = createBrowserRouter([
       { path: "projects/:slug/hooks", element: <ProjectView /> },
       { path: "chat", element: <OneOffChat /> },
       { path: "chat/:sessionId", element: <OneOffChat /> },
+      // Top-level, instance-wide admin settings (edits paddock.config.yaml) — #385.
+      { path: "settings", element: <InstanceSettings /> },
     ],
   },
 ]);
