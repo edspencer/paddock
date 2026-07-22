@@ -536,6 +536,25 @@ describe("ProjectStore", () => {
     });
   });
 
+  it("pinFile accepts a nested file and stores its full project-relative path", async () => {
+    const p = await store.create({ name: "PinsNested" });
+    await fs.mkdir(path.join(p.dir, "design", "sub"), { recursive: true });
+    await fs.writeFile(path.join(p.dir, "design", "sub", "plan.md"), "deep", "utf8");
+
+    const pinned = await store.pinFile("pinsnested", "design/sub/plan.md");
+    expect(pinned.pinned).toEqual(["design/sub/plan.md"]);
+    const parsed = YAML.parse(await fs.readFile(path.join(p.dir, "project.yaml"), "utf8"));
+    expect(parsed.pinned).toEqual(["design/sub/plan.md"]);
+
+    // A traversal that dips through a real subdir but escapes the project is still rejected.
+    await expect(store.pinFile("pinsnested", "design/../../escape.md")).rejects.toMatchObject({
+      code: "invalid",
+    });
+
+    const un = await store.unpinFile("pinsnested", "design/sub/plan.md");
+    expect(un.pinned).toEqual([]);
+  });
+
   it("writeChangelog replaces the file wholesale and asserts the canonical title (#379)", async () => {
     await store.create({ name: "CL" });
     const today = new Date().toISOString().slice(0, 10);
