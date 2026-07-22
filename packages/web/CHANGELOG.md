@@ -1,5 +1,62 @@
 # @paddock/web
 
+## 0.41.0
+
+### Minor Changes
+
+- [#377](https://github.com/edspencer/paddock/pull/377) [`bcda46a`](https://github.com/edspencer/paddock/commit/bcda46adf18c3fd64e623b22ab74016b54e3ba57) Thanks [@edspencer](https://github.com/edspencer)! - Draggable, persisted widths for the side-nav and chat-list panes on desktop
+  (#374). Each pane has a drag handle on its right edge; the chosen width is
+  clamped to sane bounds, persisted per-browser in localStorage (so a laptop and a
+  desktop can differ), reset on double-click, and keyboard-resizable (Arrow keys)
+  for accessibility. Desktop-only — gated on `(min-width: 1024px)` so the mobile
+  off-canvas drawer layout is unchanged.
+
+- [#376](https://github.com/edspencer/paddock/pull/376) [`219c565`](https://github.com/edspencer/paddock/commit/219c565766f6747e7ddac0c2a68afdc11e0a30f2) Thanks [@edspencer](https://github.com/edspencer)! - Star (pin) chats to the top of the list (#373). A new per-chat star flag,
+  orthogonal to archiving, floats starred chats to the top of both the active list
+  and the Archived section (order preserved within each group). Backed by a
+  `StarStore` sidecar mirroring `ArchiveStore`, with `POST /api/projects/:slug/chats/:sessionId/star`
+  (and a scratch equivalent) and a rightmost, gold star action on each chat row.
+
+### Patch Changes
+
+- [#382](https://github.com/edspencer/paddock/pull/382) [`613d7e8`](https://github.com/edspencer/paddock/commit/613d7e88176b70d39fb0e77d7f2e4fe9a494d097) Thanks [@edspencer](https://github.com/edspencer)! - Fix the false "The keeper turn failed" banner rendered beneath a completed reply
+  (#380). A session-mode turn can stream a normal `end_turn` reply and then have
+  the SDK's terminal `result` frame arrive with an error subtype (or
+  `success: false`) — a transient failure the runtime recovered a reply around.
+  The live path (`ws.ts`) surfaced that dead-end in real time, so a red banner
+  appeared under a perfectly good answer; a reload cleared it, because the
+  history-hydration path (`scanTranscriptNotice`) already suppresses a dead-end
+  once a real assistant reply is the last thing on the transcript.
+
+  The live path now applies that same guard: it tracks whether a complete reply
+  was produced this turn (`messageProducedReply` — a non-synthetic assistant
+  message with `end_turn` + non-empty text) and suppresses the `error`/`max_turns`
+  notice when one was, in all three drive loops (human `onChatSend`, spawned
+  `startAgentTurn`, and the wake loop). `usage_limit` notices are unaffected — a
+  session-limit stop is a real dead-end worth showing even beside text — and the
+  `chat:complete` `success` flag is left unchanged; only the user-facing notice is
+  suppressed. Sibling of #329/#363 (which fixed `is_error:true` on a
+  `subtype:"success"` result); this is the case where the subtype itself is an
+  error after a reply already streamed.
+
+- [#375](https://github.com/edspencer/paddock/pull/375) [`331e2ee`](https://github.com/edspencer/paddock/commit/331e2ee6b5066d523bb590a4cbc67d707415c107) Thanks [@edspencer](https://github.com/edspencer)! - Mobile: collapse the stacked header into one row and tidy the composer (#372).
+
+  On phone-sized screens the project/chat view showed two rows of chrome — the
+  shell's brand bar (logo + instance name + hamburger) stacked above the project
+  header (name + status + new-chat + menu). The shell now drops its brand row on
+  project routes and the project header hosts the hamburger inline via an
+  `openNav` Outlet context, collapsing the two into a single row and reclaiming
+  vertical space. The brand still lives in the nav drawer the hamburger opens.
+
+  The composer typography is also normalized on mobile: the anti-iOS-zoom rule no
+  longer force-bumps `<select>` to 16px (it opens a native picker, so it never
+  triggered focus-zoom), so the small model dropdown matches its row again; the
+  Send/Stop buttons go icon-only below `sm` so the textarea keeps enough width for
+  its placeholder to sit on one line; and the "Preload project context" hint
+  (`(injects OVERVIEW.md + CHANGELOG.md)`) is hidden below `sm` — it's redundant
+  with the label's own tooltip — so that line no longer wraps. Desktop is
+  unchanged.
+
 ## 0.40.0
 
 ### Minor Changes

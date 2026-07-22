@@ -1,5 +1,46 @@
 # @paddock/server
 
+## 0.41.0
+
+### Minor Changes
+
+- [#377](https://github.com/edspencer/paddock/pull/377) [`bcda46a`](https://github.com/edspencer/paddock/commit/bcda46adf18c3fd64e623b22ab74016b54e3ba57) Thanks [@edspencer](https://github.com/edspencer)! - Draggable, persisted widths for the side-nav and chat-list panes on desktop
+  (#374). Each pane has a drag handle on its right edge; the chosen width is
+  clamped to sane bounds, persisted per-browser in localStorage (so a laptop and a
+  desktop can differ), reset on double-click, and keyboard-resizable (Arrow keys)
+  for accessibility. Desktop-only — gated on `(min-width: 1024px)` so the mobile
+  off-canvas drawer layout is unchanged.
+
+- [#376](https://github.com/edspencer/paddock/pull/376) [`219c565`](https://github.com/edspencer/paddock/commit/219c565766f6747e7ddac0c2a68afdc11e0a30f2) Thanks [@edspencer](https://github.com/edspencer)! - Star (pin) chats to the top of the list (#373). A new per-chat star flag,
+  orthogonal to archiving, floats starred chats to the top of both the active list
+  and the Archived section (order preserved within each group). Backed by a
+  `StarStore` sidecar mirroring `ArchiveStore`, with `POST /api/projects/:slug/chats/:sessionId/star`
+  (and a scratch equivalent) and a rightmost, gold star action on each chat row.
+
+- [#383](https://github.com/edspencer/paddock/pull/383) [`b9894d5`](https://github.com/edspencer/paddock/commit/b9894d5b739deb33880f7c3c9f98cb2ab6ec7bd7) Thanks [@edspencer](https://github.com/edspencer)! - Retire the sweeper's tool-less structured-text truncation; make it a proper file-maintaining curator (#379). The post-turn sweeper is now shown each curated file (OVERVIEW.md / CHANGELOG.md / CLAUDE.md) IN FULL and returns either the complete new file or NOCHANGE, instead of seeing only the first 2000 chars and blind-appending. This stops CHANGELOG.md and the CLAUDE.md curated notes (and the per-chat context they feed) growing without bound. Adds configurable per-file token budgets (`PADDOCK_CURATION_{OVERVIEW,CHANGELOG,CLAUDEMD}_MAX_TOKENS`, tri-state env < YAML < default) enforced as a backstop, a CHANGELOG change-detection gate (no near-duplicate "one bullet per sweep" entries), and a concurrency fix so activity in a 4th+ chat active within a debounce window is no longer dropped from curation.
+
+### Patch Changes
+
+- [#382](https://github.com/edspencer/paddock/pull/382) [`613d7e8`](https://github.com/edspencer/paddock/commit/613d7e88176b70d39fb0e77d7f2e4fe9a494d097) Thanks [@edspencer](https://github.com/edspencer)! - Fix the false "The keeper turn failed" banner rendered beneath a completed reply
+  (#380). A session-mode turn can stream a normal `end_turn` reply and then have
+  the SDK's terminal `result` frame arrive with an error subtype (or
+  `success: false`) — a transient failure the runtime recovered a reply around.
+  The live path (`ws.ts`) surfaced that dead-end in real time, so a red banner
+  appeared under a perfectly good answer; a reload cleared it, because the
+  history-hydration path (`scanTranscriptNotice`) already suppresses a dead-end
+  once a real assistant reply is the last thing on the transcript.
+
+  The live path now applies that same guard: it tracks whether a complete reply
+  was produced this turn (`messageProducedReply` — a non-synthetic assistant
+  message with `end_turn` + non-empty text) and suppresses the `error`/`max_turns`
+  notice when one was, in all three drive loops (human `onChatSend`, spawned
+  `startAgentTurn`, and the wake loop). `usage_limit` notices are unaffected — a
+  session-limit stop is a real dead-end worth showing even beside text — and the
+  `chat:complete` `success` flag is left unchanged; only the user-facing notice is
+  suppressed. Sibling of #329/#363 (which fixed `is_error:true` on a
+  `subtype:"success"` result); this is the case where the subtype itself is an
+  error after a reply already streamed.
+
 ## 0.40.0
 
 ### Minor Changes
