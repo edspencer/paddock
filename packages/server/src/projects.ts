@@ -39,6 +39,7 @@ import {
   type PaddockTrigger,
 } from "./trigger-config.js";
 import { sanitizeRecoveryOverride, type RecoveryOverride } from "./recovery-config.js";
+import { sanitizeCurationOverride, type CurationOverride } from "./curation-config.js";
 import { sanitizeAttachmentsOverride, type AttachmentsOverride } from "./attachments-config.js";
 
 export type { PaddockSchedule };
@@ -265,6 +266,16 @@ export interface ProjectYaml {
    */
   attachments?: AttachmentsOverride;
   /**
+   * Per-project sweeper-curation budget override (issue #384). Every field
+   * optional; an absent field inherits the instance default (`cfg.curation`,
+   * itself `PADDOCK_CURATION_*` env / YAML), resolved at sweep time via
+   * {@link import("./curation-config.js").resolveCurationConfig} — the same
+   * inherit/override discipline as `recovery`/`attachments`. Absent ⇒ this
+   * project inherits every curation default. Persisted (and re-read) through
+   * {@link sanitizeCurationOverride} so a malformed hand-edit degrades cleanly.
+   */
+  curation?: CurationOverride;
+  /**
    * External git repo URL that backs this project (issue #187). When present the
    * project is REPO-BACKED: Paddock clones the repo into a nested `.gitignore`d
    * checkout under the project dir and the keeper's working directory is that
@@ -417,6 +428,13 @@ export type UpdateProjectInput = Partial<
    * unit — sanitised on write). Wired now for the Phase 2 Settings surface.
    */
   attachments?: AttachmentsOverride | null;
+  /**
+   * Sweeper-curation budget override (issue #384). A {@link CurationOverride}
+   * object REPLACES the per-project override; `null` CLEARS it so the project
+   * inherits every instance default again; `undefined`/absent leaves it
+   * untouched. Same tri-state as `recovery`/`attachments`, sanitised on write.
+   */
+  curation?: CurationOverride | null;
 };
 
 const PROJECT_FILE = "project.yaml";
@@ -785,6 +803,7 @@ export class ProjectStore {
       hooksMcpEnabled: hooksMcpPatch,
       recovery: recoveryPatch,
       attachments: attachmentsPatch,
+      curation: curationPatch,
       ...rest
     } = patch;
     const next: ProjectYaml = {
@@ -828,6 +847,15 @@ export class ProjectStore {
       const clean = sanitizeAttachmentsOverride(attachmentsPatch);
       if (clean) next.attachments = clean;
       else delete next.attachments;
+    }
+    if (curationPatch === null) {
+      // Clear the per-project override -> inherit every instance default (#384).
+      delete next.curation;
+    } else if (curationPatch !== undefined) {
+      // Sanitise the incoming override; an all-invalid object clears it (undefined).
+      const clean = sanitizeCurationOverride(curationPatch);
+      if (clean) next.curation = clean;
+      else delete next.curation;
     }
     await this.writeYaml(slug, next);
     return this.toDto(current.dir, next, await this.overviewExists(slug));
@@ -1210,6 +1238,14 @@ export class ProjectStore {
         const r = sanitizeRecoveryOverride(p.recovery);
         return r ? { recovery: r } : {};
       })(),
+      // curation (issue #384): carried only when at least one valid field survives
+      // sanitization — an absent/all-invalid override stays absent so files without
+      // it round-trip unchanged, and each field is resolved at sweep time
+      // (`resolveCurationConfig(project.curation, cfg.curation)`), NOT here.
+      ...(() => {
+        const c = sanitizeCurationOverride(p.curation);
+        return c ? { curation: c } : {};
+      })(),
       // repo (issue #187): carried only when present — its presence is what marks
       // the project repo-backed and drives the workingDir resolution in toDto.
       ...(typeof p.repo === "string" && p.repo.trim() ? { repo: p.repo.trim() } : {}),
@@ -1307,6 +1343,10 @@ export class ProjectStore {
       // instance default at request time, never baked concrete here), re-sanitised
       // so a corrupt hand-edit never reaches the web. Absent ⇒ omitted (#328).
       attachments: sanitizeAttachmentsOverride(yaml.attachments),
+      // Curation-budget override stays RAW (per-project only — resolved against
+      // the instance default at sweep time, never baked concrete here), re-
+      // sanitised so a corrupt hand-edit never reaches the web. Absent ⇒ omitted (#384).
+      curation: sanitizeCurationOverride(yaml.curation),
       dir,
       // Repo-backed (#187): the keeper's cwd is the nested checkout; a notebook's
       // cwd is the metadata dir itself. `repoBacked` is the presence of `repo`.

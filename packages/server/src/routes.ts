@@ -297,6 +297,10 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
       // The composer resolves the effective value (project.attachments[field] ??
       // this) to gate the picker + build the client-side accept/size guards.
       attachmentsDefault: cfg.attachments,
+      // Box-wide sweeper-curation budgets (PADDOCK_CURATION_*) a project inherits
+      // when its own `curation` override fields are unset (issue #384). Settings
+      // shows these as the "Instance default" for each per-file token budget.
+      curationDefault: cfg.curation,
     };
   });
 

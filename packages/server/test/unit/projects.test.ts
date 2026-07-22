@@ -450,6 +450,39 @@ describe("ProjectStore", () => {
     expect("recovery" in parsed).toBe(false);
   });
 
+  it("curation override sets, persists, sanitises, and clears back to inherit (#384)", async () => {
+    await store.create({ name: "CUR" });
+    const created = await store.get("cur");
+    expect(created.curation).toBeUndefined();
+
+    // A partial override persists only the fields it sets (others inherit at sweep time).
+    const set = await store.update("cur", { curation: { changelogMaxTokens: 4000 } });
+    expect(set.curation).toEqual({ changelogMaxTokens: 4000 });
+    let parsed = YAML.parse(await fs.readFile(path.join(root, "cur", "project.yaml"), "utf8"));
+    expect(parsed.curation).toEqual({ changelogMaxTokens: 4000 });
+
+    // An unrelated update leaves it untouched.
+    const untouched = await store.update("cur", { summary: "hi" });
+    expect(untouched.curation).toEqual({ changelogMaxTokens: 4000 });
+
+    // A new object REPLACES it; non-positive / non-integer fields are dropped.
+    const replaced = await store.update("cur", {
+      curation: { overviewMaxTokens: 1500, claudeMaxTokens: 0 } as never,
+    });
+    expect(replaced.curation).toEqual({ overviewMaxTokens: 1500 });
+
+    // An all-invalid override clears it entirely.
+    const wiped = await store.update("cur", { curation: { changelogMaxTokens: -1 } as never });
+    expect(wiped.curation).toBeUndefined();
+
+    // `null` explicitly CLEARS the override -> inherit the instance default.
+    await store.update("cur", { curation: { claudeMaxTokens: 3000 } });
+    const cleared = await store.update("cur", { curation: null });
+    expect(cleared.curation).toBeUndefined();
+    parsed = YAML.parse(await fs.readFile(path.join(root, "cur", "project.yaml"), "utf8"));
+    expect("curation" in parsed).toBe(false);
+  });
+
   it("keeper settings are absent from a sparse yaml until set (round-trip discipline)", async () => {
     await fs.mkdir(path.join(root, "sparse2"));
     await fs.writeFile(

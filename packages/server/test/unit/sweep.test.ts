@@ -47,6 +47,8 @@ interface StubOverrides {
   triggers?: Record<string, any>;
   /** Per-file curation token budgets (issue #379); defaults apply when unset. */
   budget?: { overviewMaxTokens: number; changelogMaxTokens: number; claudeMaxTokens: number };
+  /** A per-project `project.yaml` curation override on the stub project (issue #384). */
+  curation?: { overviewMaxTokens?: number; changelogMaxTokens?: number; claudeMaxTokens?: number };
 }
 
 describe("SweepService", () => {
@@ -94,6 +96,7 @@ describe("SweepService", () => {
       ...project,
       workingDir: project.dir,
       ...(o.triggers ? { triggers: o.triggers } : {}),
+      ...(o.curation ? { curation: o.curation } : {}),
     };
     const projects = {
       get: vi.fn(async (slug: string) => {
@@ -521,6 +524,45 @@ describe("SweepService", () => {
     expect(written).toContain("Entry 20"); // newest kept
     expect(written).not.toContain("Entry 1 "); // oldest dropped
     expect(written).toContain("compacted"); // compaction marker present
+    svc.stop();
+  });
+
+  it("a per-project curation override beats the instance default budget (#384)", async () => {
+    // Instance CHANGELOG budget is generous (8000 tok), but this project overrides
+    // it to a tiny 100 tok (~400 chars) — the sweep must bound to the OVERRIDE.
+    const sections = Array.from(
+      { length: 20 },
+      (_, i) => `## 2026-07-${String(20 - i).padStart(2, "0")}\n- Entry ${20 - i} ${"x".repeat(80)}`,
+    );
+    const reply = `<<<OVERVIEW>>>\n# O\n<<<CHANGELOG>>>\n${sections.join("\n\n")}\n<<<END>>>`;
+    const { svc } = makeService({
+      sweeperText: reply,
+      budget: { overviewMaxTokens: 2000, changelogMaxTokens: 8000, claudeMaxTokens: 6000 },
+      curation: { changelogMaxTokens: 100 }, // project override — 100 tok ≈ 400 chars
+    });
+    svc.enqueue("demo");
+    await vi.waitFor(() => expect(changelogAppends.length).toBe(1), { timeout: 2000 });
+    const written = changelogAppends[0];
+    expect(written.length).toBeLessThanOrEqual(100 * 4); // bounded to the PROJECT override
+    expect(written).toContain("Entry 20"); // newest kept
+    expect(written).toContain("compacted");
+    svc.stop();
+  });
+
+  it("inherits the instance budget for fields the project override leaves unset (#384)", async () => {
+    // Project overrides ONLY the changelog; the overview view/write must still use
+    // the instance default (2000 tok) — proving field-wise resolution.
+    const { svc, runSweeper } = makeService({
+      budget: { overviewMaxTokens: 2000, changelogMaxTokens: 8000, claudeMaxTokens: 6000 },
+      curation: { changelogMaxTokens: 500 },
+    });
+    svc.enqueue("demo");
+    await vi.waitFor(() => expect(runSweeper).toHaveBeenCalled(), { timeout: 2000 });
+    const prompt = runSweeper.mock.calls[0][1] as string;
+    // The prompt states the resolved budgets: changelog overridden to 500, others inherited.
+    expect(prompt).toContain("under ~500 tokens"); // changelog override surfaced
+    expect(prompt).toContain("under ~2000 tokens"); // overview inherited
+    expect(prompt).toContain("under ~6000 tokens"); // claude inherited
     svc.stop();
   });
 

@@ -53,6 +53,24 @@ export interface AttachmentsConfig {
 export type AttachmentsOverride = Partial<AttachmentsConfig>;
 
 /**
+ * Sweeper-curation per-file token budgets (mirrors `CurationConfig`,
+ * packages/server/src/curation-config.ts). Instance defaults are served by
+ * GET /api/models (`curationDefault`); a per-project partial overrides the fields
+ * it sets (issue #384).
+ */
+export interface CurationConfig {
+  /** Budget for OVERVIEW.md. */
+  overviewMaxTokens: number;
+  /** Budget for CHANGELOG.md (injected into the preload). */
+  changelogMaxTokens: number;
+  /** Budget for the CLAUDE.md curated-notes section. */
+  claudeMaxTokens: number;
+}
+
+/** A per-project curation override — every field optional (absent ⇒ inherit). */
+export type CurationOverride = Partial<CurationConfig>;
+
+/**
  * A file the user attached in the composer (issue #328), already uploaded to the
  * attachment store. Rendered as a thumbnail (image) or chip (other) in the user
  * bubble, and passed to the server on send so it prepends the Read-tool hint.
@@ -143,6 +161,13 @@ export interface Project {
    * (Surfacing this in Settings is Phase 2; the field is wired now.)
    */
   attachments?: AttachmentsOverride;
+  /**
+   * Per-project sweeper-curation budget override (issue #384). `undefined` =
+   * inherit every instance default (`PADDOCK_CURATION_*`); a partial object
+   * overrides the per-file token budgets it sets. Resolved against the instance
+   * default at sweep time.
+   */
+  curation?: CurationOverride;
   /**
    * Compact per-chat "last completed turn" timestamps for the sidebar UNREAD
    * badge (#161): one entry per project chat that has a completed keeper turn,

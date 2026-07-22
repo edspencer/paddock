@@ -40,7 +40,11 @@ import path from "node:path";
 import type { HerdctlService } from "./herdctl.js";
 import { keeperAgentName } from "./herdctl.js";
 import type { ProjectStore, Project } from "./projects.js";
-import { DEFAULT_CURATION, type CurationConfig } from "./config.js";
+import {
+  DEFAULT_CURATION,
+  resolveCurationConfig,
+  type CurationConfig,
+} from "./curation-config.js";
 import {
   curatorTriggerOf,
   triggerPromptFileAbsPath,
@@ -62,8 +66,10 @@ export interface SweepServiceOptions {
   /** Minimum ms between sweeps for a single project. Default 5 min. */
   minIntervalMs?: number;
   /**
-   * Per-file token budgets the curated files must stay under (issue #379).
-   * Defaults to {@link DEFAULT_CURATION} when unset.
+   * INSTANCE-default per-file token budgets the curated files must stay under
+   * (issue #379). A per-project `project.yaml` `curation` override wins field-by-
+   * field at sweep time (issue #384, via {@link resolveCurationConfig}). Defaults
+   * to {@link DEFAULT_CURATION} when unset.
    */
   budget?: CurationConfig;
   logger?: SweepLogger;
@@ -136,7 +142,7 @@ export class SweepService {
   private readonly projects: ProjectStore;
   private readonly stateFile: string;
   private readonly minIntervalMs: number;
-  private readonly budget: CurationConfig;
+  private readonly instanceCuration: CurationConfig;
   private readonly log: SweepLogger;
 
   /** In-memory watermark cache (loaded lazily, written through on change). */
@@ -154,7 +160,7 @@ export class SweepService {
     // `PADDOCK_SWEEP_MIN_INTERVAL_MS` is now folded into PaddockConfig (issue
     // #269) and passed in as `minIntervalMs`; the default applies when unset.
     this.minIntervalMs = opts.minIntervalMs ?? DEFAULT_MIN_INTERVAL_MS;
-    this.budget = opts.budget ?? DEFAULT_CURATION;
+    this.instanceCuration = opts.budget ?? DEFAULT_CURATION;
     this.log = opts.logger ?? consoleLogger();
   }
 
@@ -290,6 +296,10 @@ export class SweepService {
       .filter((s) => s.length > 0)
       .join("\n\n");
 
+    // Effective budgets for THIS project (issue #384): a `project.yaml` `curation`
+    // override wins field-by-field, else the instance default.
+    const budget = resolveCurationConfig(project.curation, this.instanceCuration);
+
     const prompt = this.curationPrompt({
       project,
       overview,
@@ -297,6 +307,7 @@ export class SweepService {
       claudeMd,
       digest,
       extraInstructions,
+      budget,
     });
 
     const { result, text } = await this.herdctl.runSweeper(project.slug, prompt);
@@ -324,7 +335,7 @@ export class SweepService {
     if (parsed.overview !== null) {
       const clean = enforceHeadBudget(
         stripBoxConventions(parsed.overview),
-        this.budgetChars("overviewMaxTokens"),
+        budgetChars(budget, "overviewMaxTokens"),
       );
       await this.projects.writeOverview(project.slug, clean);
     }
@@ -336,7 +347,7 @@ export class SweepService {
     if (parsed.changelog !== null) {
       const bounded = enforceChangelogBudget(
         parsed.changelog,
-        this.budgetChars("changelogMaxTokens"),
+        budgetChars(budget, "changelogMaxTokens"),
       );
       await this.projects.writeChangelog(project.slug, bounded);
     }
@@ -352,7 +363,7 @@ export class SweepService {
     // dirty the checkout and, if pushed, leak curation upstream). OVERVIEW.md +
     // CHANGELOG.md are still curated (sidecarred), just not CLAUDE.md.
     if (parsed.claude !== null && !project.repoBacked) {
-      const bounded = enforceHeadBudget(parsed.claude, this.budgetChars("claudeMaxTokens"));
+      const bounded = enforceHeadBudget(parsed.claude, budgetChars(budget, "claudeMaxTokens"));
       await this.projects.writeClaudeCurated(project.slug, bounded).catch((err) => {
         this.log.warn({ err, slug: project.slug }, "sweep: CLAUDE.md write failed (non-fatal)");
       });
@@ -371,10 +382,6 @@ export class SweepService {
     );
   }
 
-  /** A curated file's byte budget: its token budget × approximate chars-per-token. */
-  private budgetChars(key: keyof CurationConfig): number {
-    return this.budget[key] * TOKENS_TO_CHARS;
-  }
 
   /**
    * Build a compact digest of recent session activity to hand to the sweeper,
@@ -496,15 +503,17 @@ export class SweepService {
     digest: string;
     /** Optional per-project curator instructions (`.paddock/hooks/sweep.md`). */
     extraInstructions: string;
+    /** Effective (per-project-resolved) budgets for this sweep (issue #384). */
+    budget: CurationConfig;
   }): string {
-    const { project, overview, changelog, claudeMd, digest, extraInstructions } = args;
+    const { project, overview, changelog, claudeMd, digest, extraInstructions, budget } = args;
     const today = new Date().toISOString().slice(0, 10);
     // Budgets in tokens (for the instructions the model reads) and the matching
     // char bound for the FULL-FILE views below. Generous vs the old flat 2000-char
     // truncation, so the model can actually see (and therefore dedup) its files.
-    const b = this.budget;
-    const changelogView = boundedView(changelog, this.budgetChars("changelogMaxTokens"));
-    const claudeView = boundedView(claudeMd, this.budgetChars("claudeMaxTokens"));
+    const b = budget;
+    const changelogView = boundedView(changelog, budgetChars(budget, "changelogMaxTokens"));
+    const claudeView = boundedView(claudeMd, budgetChars(budget, "claudeMaxTokens"));
     return [
       `Project: ${project.name} (slug: ${project.slug})`,
       project.summary ? `Summary: ${project.summary}` : "",
@@ -626,6 +635,11 @@ function trim(s: string, max: number): string {
   if (!s) return "";
   const flat = s.replace(/\s+/g, " ").trim();
   return flat.length > max ? flat.slice(0, max) + "…" : flat;
+}
+
+/** A curated file's byte budget: its token budget × approximate chars-per-token. */
+function budgetChars(budget: CurationConfig, key: keyof CurationConfig): number {
+  return budget[key] * TOKENS_TO_CHARS;
 }
 
 /**
