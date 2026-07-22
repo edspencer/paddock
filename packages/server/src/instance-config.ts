@@ -71,6 +71,14 @@ interface FieldSpec {
   enumValues?: readonly string[];
   /** Env var(s) that shadow this field; the first set one is reported. */
   envVars: readonly string[];
+  /**
+   * Env-shadow semantics. Default (`false`) = the var shadows only when set to a
+   * non-blank value, matching `envOr`/`envOpt` in config.ts. Set `true` for
+   * `browserMcp`, whose loader (`loadBrowserMcp`) treats ANY defined value —
+   * including blank — as authoritative (`env !== undefined`), so a defined-but-
+   * blank `PADDOCK_BROWSER_MCP` forces `false` and must render read-only here too.
+   */
+  envShadowWhenDefined?: boolean;
   /** Built-in default (what you get with neither env nor file). `null` ⇒ unset. */
   default: unknown;
   /** Whether the UI may edit + PUT this field. Read-only fields are display-only. */
@@ -173,7 +181,7 @@ export const FIELDS: readonly FieldSpec[] = [
   { key: "maxSpawnDepth", group: "capabilities", label: "Max spawn depth", help: "How deep a spawn tree may grow before children lose the self-MCP.", type: "number", envVars: ["PADDOCK_MAX_SPAWN_DEPTH"], default: DEFAULT_MAX_SPAWN_DEPTH, editable: true, coerce: spawnDepth },
   { key: "scheduleMutationEnabled", group: "capabilities", label: "Schedule mutation", help: "Allow programmatic schedule add/remove at runtime.", type: "boolean", envVars: ["PADDOCK_SCHEDULE_MUTATION"], default: false, editable: true, coerce: asBool },
   { key: "hooksMcpEnabled", group: "capabilities", label: "Hooks MCP", help: "Let agents declare/edit their own event hooks (needs self-MCP write).", type: "boolean", envVars: ["PADDOCK_HOOKS_MCP"], default: false, editable: true, coerce: asBool },
-  { key: "browserMcp", group: "capabilities", label: "Browser MCP (Playwright)", help: "Give agents a headless Chromium browser MCP.", type: "boolean", envVars: ["PADDOCK_BROWSER_MCP"], default: false, editable: true, coerce: asBool },
+  { key: "browserMcp", group: "capabilities", label: "Browser MCP (Playwright)", help: "Give agents a headless Chromium browser MCP.", type: "boolean", envVars: ["PADDOCK_BROWSER_MCP"], envShadowWhenDefined: true, default: false, editable: true, coerce: asBool },
   { key: "devServers.enabled", group: "capabilities", label: "Dev servers advertised", help: "Tell keepers they may run dev servers via the on-box pm CLI.", type: "boolean", envVars: ["PADDOCK_DEV_SERVERS_ENABLED"], default: false, editable: true, coerce: asBool },
 
   // Recovery (issue #301).
@@ -236,11 +244,17 @@ function readPath(obj: unknown, dotted: string): unknown {
   return cur;
 }
 
-/** True iff any of `envVars` is set to a non-blank value (i.e. actually shadows). */
-function envOverride(envVars: readonly string[]): string | undefined {
+/**
+ * The env var currently shadowing a field, or undefined. By default a var
+ * shadows only when set to a non-blank value (matching `envOr`/`envOpt`); when
+ * `whenDefined` is set, ANY defined value shadows (matching `loadBrowserMcp`'s
+ * `env !== undefined` semantics — a defined-but-blank var still forces `false`).
+ */
+function envOverride(envVars: readonly string[], whenDefined = false): string | undefined {
   for (const name of envVars) {
     const v = process.env[name];
-    if (v !== undefined && v.trim().length > 0) return name;
+    if (v === undefined) continue;
+    if (whenDefined || v.trim().length > 0) return name;
   }
   return undefined;
 }
@@ -313,7 +327,7 @@ export function buildInstanceConfig(cfg: PaddockConfig): InstanceConfigDto {
   const groupById = new Map(groups.map((g) => [g.id, g]));
 
   for (const f of FIELDS) {
-    const shadow = envOverride(f.envVars);
+    const shadow = envOverride(f.envVars, f.envShadowWhenDefined);
     const raw = readPath(cfg, f.key);
     const dto: InstanceConfigFieldDto = {
       key: f.key,

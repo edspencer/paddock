@@ -77,10 +77,23 @@ describe("instance-config (#385)", () => {
       expect(overview.envVar).toBe("PADDOCK_CURATION_OVERVIEW_MAX_TOKENS");
     });
 
-    it("does not mark a field overridden by a blank env var", () => {
+    it("does not mark a normal field overridden by a blank env var", () => {
+      // For most knobs (envOr/envOpt semantics) a blank env var is not a shadow.
+      process.env.PADDOCK_CURATION_OVERVIEW_MAX_TOKENS = "   ";
+      const dto = buildInstanceConfig(loadPaddockConfig());
+      expect(field(dto, "curation.overviewMaxTokens").envOverridden).toBe(false);
+    });
+
+    it("marks browserMcp overridden by a DEFINED-but-blank env var (matches loadBrowserMcp)", () => {
+      // loadBrowserMcp keys off `env !== undefined`, so a defined-but-blank
+      // PADDOCK_BROWSER_MCP forces browserMcp=false — the UI must render it
+      // read-only, not as an editable toggle that would silently no-op.
       process.env.PADDOCK_BROWSER_MCP = "   ";
       const dto = buildInstanceConfig(loadPaddockConfig());
-      expect(field(dto, "browserMcp").envOverridden).toBe(false);
+      const bm = field(dto, "browserMcp");
+      expect(bm.value).toBe(false);
+      expect(bm.envOverridden).toBe(true);
+      expect(bm.envVar).toBe("PADDOCK_BROWSER_MCP");
     });
 
     it("never surfaces secret values (transcription apiKey / auth jwt)", () => {
