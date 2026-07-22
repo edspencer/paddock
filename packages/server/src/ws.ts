@@ -151,6 +151,13 @@ export interface TurnUsage {
 interface ExtractedUsage {
   usage: TurnUsage | null;
   model: string | null;
+  /**
+   * True when this usage came from the terminal `type:"result"` SDK message,
+   * whose `usage` is a CUMULATIVE per-turn total aggregated across every internal
+   * API call (num_turns), not a single context-window snapshot (#398). Such a
+   * block must never feed the context-snapshot meter.
+   */
+  fromResult: boolean;
 }
 
 function num(v: unknown): number {
@@ -163,9 +170,10 @@ function num(v: unknown): number {
  * slightly differently, so every field access is guarded.
  *
  * - assistant message: `m.message.usage` (Anthropic usage block) + `m.message.model`.
- * - result message: top-level `m.usage` (same field names).
+ * - result message: top-level `m.usage` (same field names). Flagged `fromResult`
+ *   because that block is a cumulative per-turn total, not a snapshot (#398).
  *
- * Returns `{ usage: null, model: null }` when neither is present.
+ * Returns `{ usage: null, model: null, fromResult: false }` when neither is present.
  */
 export function extractUsage(m: SDKMessage): ExtractedUsage {
   const raw = m as unknown as {
@@ -173,6 +181,7 @@ export function extractUsage(m: SDKMessage): ExtractedUsage {
     usage?: unknown;
     message?: { usage?: unknown; model?: unknown } | unknown;
   };
+  const fromResult = raw.type === "result";
 
   // Locate the usage block + model from whichever shape this message carries.
   let usageBlock: unknown;
@@ -190,7 +199,7 @@ export function extractUsage(m: SDKMessage): ExtractedUsage {
   if (usageBlock === undefined && raw.usage !== undefined) usageBlock = raw.usage;
 
   if (usageBlock === undefined || usageBlock === null || typeof usageBlock !== "object") {
-    return { usage: null, model };
+    return { usage: null, model, fromResult };
   }
 
   const u = usageBlock as {
@@ -208,7 +217,7 @@ export function extractUsage(m: SDKMessage): ExtractedUsage {
   // A usage block of all-zeros (e.g. a stub) is not informative; treat as none.
   const anyTokens =
     usage.inputTokens || usage.outputTokens || usage.cacheCreationTokens || usage.cacheReadTokens;
-  return { usage: anyTokens ? usage : null, model };
+  return { usage: anyTokens ? usage : null, model, fromResult };
 }
 
 /** The `<synthetic>` model marker CC stamps on placeholder assistant turns. */
@@ -279,21 +288,16 @@ function contextTokensOf(u: TurnUsage): number {
 }
 
 /**
- * Merge the turn's running usage with a newly-seen block, keeping whichever best
- * reflects the context snapshot (issue #165).
+ * Merge two context-snapshot usage blocks, keeping whichever best reflects the
+ * context window (issue #165). Only assistant / partial-assistant blocks are ever
+ * passed here — the terminal `result` block is folded separately (see
+ * {@link foldTurnUsage}), because its usage is cumulative, not a snapshot (#398).
  *
- * A turn emits two usage-bearing messages: the assistant message (full usage,
- * carrying `cache_read_input_tokens`/`cache_creation_input_tokens`) followed by
- * the terminal `result` message, whose top-level usage carries `input_tokens`
- * but ZEROED cache fields. A naive "keep the last non-null usage" therefore lets
- * the cache-less result block clobber the assistant block, dropping the cache
- * tokens and under-reporting context (meter showed 3,071 instead of 21,461).
- *
- * So we keep the block with the MAX contextTokens (input + cacheRead +
- * cacheCreation): the cache-less result block can never lower the snapshot, yet
- * if the result block is the ONLY usage seen this turn (some runtimes) it is
- * still adopted. `outputTokens` is tracked separately as the max seen, since the
- * result message typically carries the final cumulative output.
+ * Assistant usage grows monotonically through a turn (each round re-reads the
+ * cached prefix), so "last assistant" == "max assistant". We still keep the MAX
+ * `contextTokens` (input + cacheRead + cacheCreation) defensively: an odd
+ * cache-less block can never LOWER the snapshot. `outputTokens` keeps the max
+ * seen.
  */
 export function pickTurnUsage(prev: TurnUsage | null, next: TurnUsage): TurnUsage {
   if (!prev) return next;
@@ -301,6 +305,63 @@ export function pickTurnUsage(prev: TurnUsage | null, next: TurnUsage): TurnUsag
   return {
     ...chosen,
     outputTokens: Math.max(prev.outputTokens, next.outputTokens),
+  };
+}
+
+/**
+ * Running per-turn usage, keeping the context snapshot and the terminal result's
+ * cumulative totals STRICTLY SEPARATE (#398).
+ *
+ * The `result` SDK message's `usage` (`SDKResultSuccess.usage`) is a cumulative
+ * sum across every internal API call in the turn (`num_turns`) — on a long
+ * tool-heavy turn it dwarfs any single assistant block. Feeding it into the
+ * snapshot (as the old MAX heuristic did) inflated the live context meter (e.g.
+ * 828k when the true window was ~292k), only to be corrected on refresh from
+ * disk. So we route it to `cumulative` and never let it touch the snapshot.
+ */
+export interface TurnUsageState {
+  /** Context-window snapshot from assistant / partial-assistant messages. */
+  snapshot: TurnUsage | null;
+  /** Terminal result's cumulative per-turn totals — for cost/output only, never contextTokens. */
+  cumulative: TurnUsage | null;
+  /** Most recent model id seen paired with usage. */
+  model: string | null;
+}
+
+/** A fresh, empty per-turn usage accumulator. */
+export function initTurnUsage(): TurnUsageState {
+  return { snapshot: null, cumulative: null, model: null };
+}
+
+/**
+ * Fold one raw SDK message into the running usage state. Mirrors exactly what the
+ * ws.ts stream loop does, so tests can drive it the same way. Assistant usage
+ * accumulates into the context snapshot; the terminal `result` block is stashed
+ * separately as the turn's cumulative total (#398).
+ */
+export function foldTurnUsage(state: TurnUsageState, m: SDKMessage): TurnUsageState {
+  const ex = extractUsage(m);
+  if (ex.usage) {
+    if (ex.fromResult) state.cumulative = ex.usage;
+    else state.snapshot = pickTurnUsage(state.snapshot, ex.usage);
+  }
+  if (ex.model) state.model = ex.model;
+  return state;
+}
+
+/**
+ * Resolve the final per-turn usage emitted on `chat:complete`. `contextTokens`
+ * always derives from the snapshot (the true window). The cumulative result block
+ * is used only to lift `outputTokens` to the turn's final total, and as a
+ * last-resort fallback for context if NO assistant usage was seen this turn (some
+ * runtimes emit usage only on the result — there cumulative == the single call).
+ */
+export function resolveTurnUsage(state: TurnUsageState): TurnUsage | null {
+  const base = state.snapshot ?? state.cumulative;
+  if (!base) return null;
+  return {
+    ...base,
+    outputTokens: Math.max(base.outputTokens, state.cumulative?.outputTokens ?? 0),
   };
 }
 
@@ -1703,7 +1764,7 @@ export function makeChatHandler(deps: {
     let attributed = false;
     const isNewChat = resume === null;
     const turn: TurnHandle = hub.startTurn(projectSlug, null, resume ?? null);
-    const seen: { usage: TurnUsage | null; model: string | null } = { usage: null, model: null };
+    const seen: TurnUsageState = initTurnUsage();
     // #329: whether this turn already surfaced a dead-end notice (usage limit /
     // max-turns / error). At most one per turn — a synthetic session-limit turn
     // repeats the message several times, and a failed turn can carry both an error
@@ -1866,9 +1927,10 @@ export function makeChatHandler(deps: {
           turn.setSession(m.session_id);
           resolveId(m.session_id);
         }
-        const ex = extractUsage(m);
-        if (ex.usage) seen.usage = pickTurnUsage(seen.usage, ex.usage);
-        if (ex.model) seen.model = ex.model;
+        // Capture per-turn usage: assistant blocks feed the context snapshot; the
+        // terminal `result` block's CUMULATIVE usage is kept apart so it can't
+        // inflate the live context meter (#398).
+        foldTurnUsage(seen, m);
         // #329: surface a dead-end BEFORE translating — a synthetic usage-limit
         // message or a terminal error/`error_max_turns` result. The translator
         // drops every synthetic message (so nothing would ever render), which is
@@ -1896,7 +1958,7 @@ export function makeChatHandler(deps: {
           (result.success ? (result.sessionId ?? resolvedSession) : resolvedSession) ?? null;
         if (finalSession) turn.setSession(finalSession);
         const completeModel = seen.model ?? fallbackModel;
-        const u = seen.usage;
+        const u = resolveTurnUsage(seen);
         const completeUsage: ChatCompleteUsage | undefined = u
           ? {
               inputTokens: u.inputTokens,
@@ -2297,10 +2359,7 @@ export function makeChatHandler(deps: {
       // Per-turn usage + model captured off the SDK stream (last non-null wins).
       // Held on a mutable record (not bare `let`s) so the values assigned inside
       // the streaming callback are visible to control-flow analysis afterwards.
-      const seen: { usage: TurnUsage | null; model: string | null } = {
-        usage: null,
-        model: null,
-      };
+      const seen: TurnUsageState = initTurnUsage();
       // The model the turn will run on; resolved below once we know the target.
       let effectiveModel: string = KEEPER_DEFAULT_MODEL;
       // How this turn is driven (Paddock#111): the global default unless the
@@ -2535,13 +2594,11 @@ export function makeChatHandler(deps: {
               }
               turn.setSession(m.session_id);
             }
-            // Capture per-turn usage + model defensively. Keep the usage block
-            // with the largest context snapshot (issue #165): the terminal
-            // result message zeroes the cache fields, so "keep last" would drop
-            // the assistant block's cache tokens and under-report context.
-            const ex = extractUsage(m);
-            if (ex.usage) seen.usage = pickTurnUsage(seen.usage, ex.usage);
-            if (ex.model) seen.model = ex.model;
+            // Capture per-turn usage + model defensively. Assistant blocks feed
+            // the context snapshot (keeping the largest — issue #165); the terminal
+            // `result` block's CUMULATIVE usage is stashed separately so it can't
+            // inflate the live context meter (#398).
+            foldTurnUsage(seen, m);
             // #329: surface a dead-end BEFORE translating — a synthetic usage-limit
             // message or a terminal error/`error_max_turns` result. The translator
             // silently drops every synthetic message (which is exactly why these
@@ -2580,7 +2637,7 @@ export function makeChatHandler(deps: {
         // Surface the model + usage so the UI can render the context meter.
         // Omit both if no usage was observed this turn (§7).
         const completeModel = seen.model ?? effectiveModel;
-        const seenUsage = seen.usage;
+        const seenUsage = resolveTurnUsage(seen);
         const completeUsage: ChatCompleteUsage | undefined = seenUsage
           ? {
               inputTokens: seenUsage.inputTokens,
@@ -2664,7 +2721,7 @@ export function makeChatHandler(deps: {
       const slug = (msg.payload.projectSlug ?? msg.payload.target) as string;
       const { command, sessionId } = msg.payload;
       let resolvedSession: string | null = sessionId ?? null;
-      const seen: { usage: TurnUsage | null; model: string | null } = { usage: null, model: null };
+      const seen: TurnUsageState = initTurnUsage();
       // Same hub-tracked turn as onChatSend so a slash-command turn also survives
       // a mid-turn socket drop (issue #54). A command always targets an existing
       // session, so it's re-attachable from its first frame.
@@ -2731,11 +2788,10 @@ export function makeChatHandler(deps: {
               resolvedSession = m.session_id;
               turn.setSession(m.session_id);
             }
-            // Keep the largest context snapshot (issue #165) — see the note on
-            // pickTurnUsage; the cache-less result block must not clobber it.
-            const ex = extractUsage(m);
-            if (ex.usage) seen.usage = pickTurnUsage(seen.usage, ex.usage);
-            if (ex.model) seen.model = ex.model;
+            // Keep the largest context snapshot from assistant blocks (issue #165);
+            // the terminal `result` block's CUMULATIVE usage is stashed separately
+            // so it can't inflate the live context meter (#398).
+            foldTurnUsage(seen, m);
             // Surface a compaction as a visible assistant note (the SDK reports
             // it as a system/compact_boundary, which the text translator skips).
             if (m.type === "system" && m.subtype === "compact_boundary") {
@@ -2773,7 +2829,7 @@ export function makeChatHandler(deps: {
         }
 
         const completeModel = seen.model ?? KEEPER_DEFAULT_MODEL;
-        const seenUsage = seen.usage;
+        const seenUsage = resolveTurnUsage(seen);
         const completeUsage: ChatCompleteUsage | undefined = seenUsage
           ? {
               inputTokens: seenUsage.inputTokens,
