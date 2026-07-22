@@ -258,6 +258,51 @@ describe("subagents (issue #37)", () => {
       expect(enriched[2].toolCall).not.toHaveProperty("toolUseId");
     });
 
+    it("skips an in-flight (pending) tool message so it doesn't steal a completed sibling's fields (herdctl#399)", async () => {
+      // Core@5.24.0 injects the unpaired (still-running) tool_use into the parsed
+      // stream as a `pending:true` message so it's visible on rehydration. But
+      // `readTaskToolUses` is paired-only, so the pending message must NOT consume a
+      // `taskUses` slot — else a parallel completed sub-agent would render with the
+      // wrong `toolUseId`/`hasSubagent` (and become wrongly expandable).
+      await writeMain("s-pending", [
+        // Two Agents launched; only toolu_B has come back so far.
+        toolUse("Agent", "toolu_A", { subagent_type: "Explore", description: "still running" }),
+        toolUse("Agent", "toolu_B", { subagent_type: "general", description: "finished" }),
+        toolResult("toolu_B", "done B"),
+      ]);
+      await writeSubagent(
+        "s-pending",
+        "bbb",
+        { agentType: "general", description: "finished", toolUseId: "toolu_B" },
+        [{ type: "user", message: { content: "hi" } }],
+      );
+
+      // The parsed stream as core@5.24.0 yields it: the in-flight A (pending, empty
+      // output) BEFORE the completed B.
+      const pendingAgent: ChatMessage = {
+        role: "tool",
+        content: "",
+        timestamp: "2026-01-01T00:00:00Z",
+        toolCall: { toolName: "Agent", inputSummary: undefined, output: "", isError: false, pending: true },
+      };
+      const enriched = await enrichWithSubagents(projectDir, "s-pending", [
+        pendingAgent,
+        toolMsg("Agent", "done B"),
+      ]);
+
+      // Pending A is left generic (no paired data) — never inherits B's fields, so
+      // it stays a plain running box, not an expandable one.
+      expect(enriched[0].toolCall).not.toHaveProperty("toolUseId");
+      expect(enriched[0].toolCall?.hasSubagent).toBeUndefined();
+      expect(enriched[0].toolCall?.pending).toBe(true);
+      // Completed B gets its OWN recovered fields — alignment preserved.
+      expect(enriched[1].toolCall).toMatchObject({
+        toolUseId: "toolu_B",
+        subagentType: "general",
+        hasSubagent: true,
+      });
+    });
+
     it("reports the sub-agent's RUN time (first→last transcript timestamp), not the launch", async () => {
       await writeMain("s8", [
         toolUse("Agent", "toolu_A", { subagent_type: "Explore", description: "runs a while" }),

@@ -450,6 +450,11 @@ export async function attachToolDetails(
   return messages.map((m) => {
     const tc = m.toolCall;
     if (!tc || !DETAIL_TOOL_NAMES.has(tc.toolName)) return m;
+    // An in-flight (`pending`) tool_use is unpaired, so `readToolDetails`
+    // (paired-only, positionally joined) has no slot for it — core@5.24.0 injects
+    // it into the stream for rehydration (herdctl#399). Skip it before advancing
+    // the per-name cursor so it doesn't steal the next completed call's detail.
+    if (tc.pending) return m;
     const i = cursor.get(tc.toolName) ?? 0;
     cursor.set(tc.toolName, i + 1);
     const detail = byName.get(tc.toolName)?.[i];

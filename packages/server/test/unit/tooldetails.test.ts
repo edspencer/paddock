@@ -323,6 +323,30 @@ describe("tooldetails (issue #237)", () => {
     expect(out[0].toolCall!.readInfo!.basename).toBe("paired.ts");
   });
 
+  it("skips an in-flight (pending) tool message in the stream so it doesn't steal the completed call's detail (herdctl#399)", async () => {
+    // Core@5.24.0 now injects the unpaired in-flight tool_use into the parsed
+    // stream as a `pending:true` message (previously herdctl dropped it). The
+    // per-name positional join must skip it — else it consumes the completed
+    // sibling's recovered detail and both render wrong.
+    await writeMain("s1", [
+      toolUse("Read", "tu_1", { file_path: "/x/paired.ts" }),
+      toolResult("tu_1", { file: { filePath: "/x/paired.ts", numLines: 1, startLine: 1, totalLines: 1 } }),
+      toolUse("Read", "tu_2", { file_path: "/x/running.ts" }), // in-flight, no result yet
+    ]);
+    const pendingRead: EnrichedMessage = {
+      role: "tool",
+      content: "",
+      timestamp: "2026-07-16T00:00:00Z",
+      toolCall: { toolName: "Read", output: "", isError: false, pending: true },
+    };
+    const out = await attachToolDetails(projectDir, "s1", [toolMsg("Read"), pendingRead]);
+    // The completed Read keeps its own recovered range/basename.
+    expect(out[0].toolCall!.readInfo!.basename).toBe("paired.ts");
+    // The pending Read is left alone (no detail joined, flag preserved).
+    expect(out[1].toolCall!.readInfo).toBeUndefined();
+    expect(out[1].toolCall!.pending).toBe(true);
+  });
+
   it("passes a detail-free transcript through unchanged (early return identity)", async () => {
     const msgs = [toolMsg("WebFetch"), toolMsg("WebSearch")];
     const out = await attachToolDetails(projectDir, "s1", msgs);
