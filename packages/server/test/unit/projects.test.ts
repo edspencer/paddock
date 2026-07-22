@@ -202,29 +202,32 @@ describe("ProjectStore", () => {
     expect(claude).toContain("A themed thing.");
   });
 
-  it("appendClaudeMd amends under a Curated notes heading, preserving prior content (#177)", async () => {
+  it("writeClaudeCurated replaces the Curated notes section, preserving human content above (#177/#379)", async () => {
     await store.create({ name: "Amend", summary: "Base." });
     const seeded = await store.readClaudeMd("amend");
 
-    await store.appendClaudeMd("amend", "- First durable fact.");
+    await store.writeClaudeCurated("amend", "- First durable fact.");
     let body = await store.readClaudeMd("amend");
     // Human-authored seed (name + summary) is preserved verbatim above the note.
     expect(body.startsWith(seeded.trimEnd())).toBe(true);
     expect(body).toContain("## Curated notes");
     expect(body).toContain("- First durable fact.");
 
-    // A second append reuses the SAME heading (not a duplicate) and keeps both.
-    await store.appendClaudeMd("amend", "- Second durable fact.");
+    // A second write REPLACES the curated body wholesale (dedup/prune model,
+    // #379) — the heading isn't duplicated and the stale note is gone.
+    await store.writeClaudeCurated("amend", "- Second durable fact.");
     body = await store.readClaudeMd("amend");
     expect(body.match(/## Curated notes/g)?.length).toBe(1);
-    expect(body).toContain("- First durable fact.");
+    expect(body).not.toContain("- First durable fact.");
     expect(body).toContain("- Second durable fact.");
+    // Human header still intact after the wholesale rewrite.
+    expect(body.startsWith(seeded.trimEnd())).toBe(true);
   });
 
-  it("appendClaudeMd is a no-op for blank input (#177)", async () => {
+  it("writeClaudeCurated is a no-op for blank input (#379)", async () => {
     await store.create({ name: "Blank" });
     const before = await store.readClaudeMd("blank");
-    await store.appendClaudeMd("blank", "   \n  ");
+    await store.writeClaudeCurated("blank", "   \n  ");
     expect(await store.readClaudeMd("blank")).toBe(before);
     expect(before).not.toContain("## Curated notes");
   });
@@ -533,18 +536,27 @@ describe("ProjectStore", () => {
     });
   });
 
-  it("appendChangelog inserts under today's heading and creates a new section as needed", async () => {
+  it("writeChangelog replaces the file wholesale and asserts the canonical title (#379)", async () => {
     await store.create({ name: "CL" });
-    await store.appendChangelog("cl", "first note");
-    await store.appendChangelog("cl", "second note");
-    const body = await fs.readFile(path.join(root, "cl", "CHANGELOG.md"), "utf8");
     const today = new Date().toISOString().slice(0, 10);
+    // The sweeper returns the FULL changelog body; Paddock owns the title.
+    await store.writeChangelog("cl", `## ${today}\n- first note\n- second note`);
+    let body = await fs.readFile(path.join(root, "cl", "CHANGELOG.md"), "utf8");
+    expect(body).toContain("# Changelog — cl");
     expect(body).toContain(`## ${today}`);
     expect(body).toContain("- first note");
     expect(body).toContain("- second note");
-    // Both notes land under the same dated heading (one section for today).
-    const headings = body.split("\n").filter((l) => l === `## ${today}`);
-    expect(headings.length).toBe(1);
+
+    // A second write REPLACES the file (wholesale, not append) — old entries gone.
+    await store.writeChangelog("cl", `## ${today}\n- only the newest`);
+    body = await fs.readFile(path.join(root, "cl", "CHANGELOG.md"), "utf8");
+    expect(body).toContain("- only the newest");
+    expect(body).not.toContain("- first note");
+    // A model-supplied top-level heading is dropped so the title isn't doubled.
+    await store.writeChangelog("cl", `# Changelog — cl\n\n## ${today}\n- deduped title`);
+    body = await fs.readFile(path.join(root, "cl", "CHANGELOG.md"), "utf8");
+    expect(body.match(/# Changelog — cl/g)?.length).toBe(1);
+    expect(body).toContain("- deduped title");
   });
 
   it("readFile / readFileWithKind enforce the traversal guard and 404 on miss", async () => {
@@ -720,7 +732,7 @@ describe("ProjectStore", () => {
     const nb = await store.create({ name: "Note Book", summary: "planning notes" });
     await store.update(nb.slug, { model: "claude-opus-4-8" });
     await store.writeOverview(nb.slug, "# Overview\n\ncurrent state\n");
-    await store.appendChangelog(nb.slug, "did a thing");
+    await store.writeChangelog(nb.slug, "## 2026-07-21\n- did a thing");
     // Seed a fake transcript in .chats to prove it survives the promotion.
     const chatsDir = path.join(nb.dir, ".chats");
     await fs.mkdir(chatsDir, { recursive: true });

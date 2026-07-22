@@ -61,7 +61,7 @@ describe("integration: post-turn sweep curates OVERVIEW + CHANGELOG", () => {
     );
 
     // CHANGELOG.md gained the sweeper's single curated bullet (under a dated
-    // heading appendChangelog adds), in addition to the seeded "Project opened.".
+    // wholesale-rewritten changelog preserves the seeded "Project opened.".
     const changelog = (
       await t.app.inject({ method: "GET", url: "/api/projects/sweep-proj/changelog" })
     ).body;

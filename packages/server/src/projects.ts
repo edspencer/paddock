@@ -883,16 +883,20 @@ export class ProjectStore {
   }
 
   /**
-   * APPEND a newly-discovered durable fact to CLAUDE.md (issue #177) — never a
-   * wholesale rewrite. Unlike OVERVIEW.md (regenerated each sweep), CLAUDE.md is
-   * amend-only so human-authored identity/conventions are never clobbered: the
-   * addition is placed under a managed "Curated notes" heading (created once if
-   * absent), leaving everything above it untouched. The file is seeded from the
-   * template if it somehow doesn't exist yet (older projects predating #177).
-   * A blank addition is a no-op.
+   * Replace the CLAUDE.md "Curated notes" section wholesale with a sweeper-
+   * curated body (issue #379), preserving ALL human-authored content above the
+   * managed heading. This supersedes the old amend-only `appendClaudeMd`, which
+   * blind-appended and could never dedup — the sweeper only ever saw the first
+   * 2000 chars of the file, so it re-added "known" facts believing they were new.
+   * The sweeper now sees the full file and returns the ENTIRE curated-notes body,
+   * dedup'd/pruned to fit its budget. Everything up to and including the
+   * `## Curated notes` heading is kept verbatim; only the body below is rewritten.
+   * The file/heading is seeded if absent (older projects predating #177). A blank
+   * body is a no-op — the caller passes content only when there's something to
+   * write (NOCHANGE means "leave the file untouched", not "empty it").
    */
-  async appendClaudeMd(slug: string, addition: string): Promise<void> {
-    const trimmed = addition.trim();
+  async writeClaudeCurated(slug: string, curatedBody: string): Promise<void> {
+    const trimmed = curatedBody.trim();
     if (!trimmed) return;
     const dir = this.dirFor(slug);
     const file = path.join(dir, CLAUDE_FILE);
@@ -902,11 +906,12 @@ export class ProjectStore {
     } catch {
       body = claudeTemplate(slug, "");
     }
-    if (!body.includes(CLAUDE_CURATED_HEADING)) {
-      body = `${body.trimEnd()}\n\n${CLAUDE_CURATED_HEADING}\n`;
-    }
-    body = `${body.trimEnd()}\n\n${trimmed}\n`;
-    await fs.writeFile(file, body, "utf8");
+    const idx = body.indexOf(CLAUDE_CURATED_HEADING);
+    const head =
+      idx === -1
+        ? `${body.trimEnd()}\n\n${CLAUDE_CURATED_HEADING}`
+        : body.slice(0, idx + CLAUDE_CURATED_HEADING.length);
+    await fs.writeFile(file, `${head.trimEnd()}\n\n${trimmed}\n`, "utf8");
   }
 
   // --- pins (sibling-tab files) ------------------------------------------
@@ -999,34 +1004,26 @@ export class ProjectStore {
     return project;
   }
 
-  /** Append a dated bullet to the project's CHANGELOG.md (under today's heading). */
-  async appendChangelog(slug: string, line: string): Promise<void> {
-    const dir = this.dirFor(slug);
-    const file = path.join(dir, CHANGELOG_FILE);
-    let body = "";
-    try {
-      body = await fs.readFile(file, "utf8");
-    } catch {
-      body = `# Changelog — ${slug}\n`;
-    }
-    const heading = `## ${today()}`;
-    const entry = `- ${line}`;
-    if (body.includes(heading)) {
-      // Insert under the existing dated heading.
-      body = body.replace(heading, `${heading}\n${entry}`);
-    } else {
-      // Prepend a new dated section after the title block.
-      const lines = body.split("\n");
-      const insertAt = lines.findIndex((l) => l.startsWith("## "));
-      const section = ["", heading, entry, ""];
-      if (insertAt === -1) {
-        body = `${body.trimEnd()}\n${section.join("\n")}\n`;
-      } else {
-        lines.splice(insertAt, 0, ...section);
-        body = lines.join("\n");
-      }
-    }
-    await fs.writeFile(file, body, "utf8");
+  /**
+   * Replace CHANGELOG.md wholesale with a sweeper-curated body (issue #379). The
+   * sweeper now returns the FULL changelog — adding a dated entry for genuinely-
+   * new activity, coalescing duplicates, and dropping/summarizing the oldest to
+   * stay under its token budget — instead of one blind-appended bullet. That's
+   * what stops the file (and the per-chat preload that injects it) growing without
+   * bound. The `# Changelog — <slug>` title is owned by Paddock and re-asserted
+   * here so the model never has to reproduce it; if the model included its own
+   * top-level heading we drop it to avoid a duplicate title. A blank body is a
+   * no-op (guards against wiping the file on a malformed reply).
+   */
+  async writeChangelog(slug: string, body: string): Promise<void> {
+    const trimmed = body.trim();
+    if (!trimmed) return;
+    const file = path.join(this.dirFor(slug), CHANGELOG_FILE);
+    const title = `# Changelog — ${slug}`;
+    // Drop a leading top-level heading the model may have emitted, so the
+    // Paddock-owned title isn't duplicated.
+    const withoutTitle = /^#\s/.test(trimmed) ? trimmed.replace(/^#[^\n]*\n+/, "") : trimmed;
+    await fs.writeFile(file, `${title}\n\n${withoutTitle.trim()}\n`, "utf8");
   }
 
   /**

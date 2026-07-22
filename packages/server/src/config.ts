@@ -219,6 +219,15 @@ export interface PaddockConfig {
    */
   attachments: AttachmentsConfig;
   /**
+   * Per-file token budgets the post-turn sweeper (curation) must keep its three
+   * curated files under (issue #379). These bound the context every keeper chat
+   * pays for — CHANGELOG.md + OVERVIEW.md are injected into the project-context
+   * preload, and CLAUDE.md auto-loads every turn. The sweeper is told each budget
+   * (so it prunes/dedups to fit) and `SweepService` enforces it as a backstop.
+   * Instance defaults here (`PADDOCK_CURATION_*` env, YAML beneath).
+   */
+  curation: CurationConfig;
+  /**
    * Log level for the server's structured logger (Fastify/pino). Driven by
    * `LOG_LEVEL`; default `info`.
    */
@@ -322,6 +331,15 @@ export interface PaddockConfigFile {
     maxFileSizeMb?: number | string;
     maxFilesPerMessage?: number | string;
     allowedTypes?: string[] | string;
+  };
+  /**
+   * Per-file curation token budgets (issue #379). Every field optional; a
+   * matching `PADDOCK_CURATION_*` env var still overrides it (file < env).
+   */
+  curation?: {
+    overviewMaxTokens?: number | string;
+    changelogMaxTokens?: number | string;
+    claudeMaxTokens?: number | string;
   };
   logLevel?: string;
   browserMcp?: boolean | string;
@@ -636,6 +654,7 @@ export function loadPaddockConfig(): PaddockConfig {
     hooksMcpEnabled: loadHooksMcpEnabled(file.hooksMcpEnabled),
     recovery: loadRecoveryConfig(file.recovery),
     attachments: loadAttachmentsConfig(file.attachments),
+    curation: loadCurationConfig(file.curation),
     logLevel: envOr("LOG_LEVEL", fileOr(file.logLevel, "info")),
     browserMcp: loadBrowserMcp(file.browserMcp),
     sweepMinIntervalMs: loadSweepMinIntervalMs(file.sweepMinIntervalMs),
@@ -645,6 +664,61 @@ export function loadPaddockConfig(): PaddockConfig {
     },
     githubClientId: envOpt("PADDOCK_GITHUB_CLIENT_ID") ?? fileOpt(file.githubClientId),
   });
+}
+
+/**
+ * Per-file token budgets for the post-turn sweeper's curated files (issue #379).
+ * Tokens (not chars) so they read naturally against a chat's context window;
+ * `SweepService` converts to an approximate char bound. Defaults chosen to bring
+ * a preload-on keeper chat's opening context back toward the no-preload band.
+ */
+export interface CurationConfig {
+  /** Budget for OVERVIEW.md (regenerated wholesale each sweep). */
+  overviewMaxTokens: number;
+  /** Budget for CHANGELOG.md (injected into the preload; the biggest lever). */
+  changelogMaxTokens: number;
+  /** Budget for the CLAUDE.md curated-notes section (auto-loaded every turn). */
+  claudeMaxTokens: number;
+}
+
+/** Built-in defaults when neither env nor YAML sets a curation budget. */
+export const DEFAULT_CURATION: CurationConfig = {
+  overviewMaxTokens: 2000,
+  changelogMaxTokens: 8000,
+  claudeMaxTokens: 6000,
+};
+
+/** Resolve one positive-integer budget from env < file < built-in default. */
+function loadCurationNum(
+  envName: string,
+  file: number | string | undefined,
+  def: number,
+): number {
+  const raw = envOpt(envName) ?? fileOpt(file);
+  if (raw === undefined) return def;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : def;
+}
+
+/** Resolve the curation token budgets (issue #379), precedence env < file < default. */
+function loadCurationConfig(file?: PaddockConfigFile["curation"]): CurationConfig {
+  return {
+    overviewMaxTokens: loadCurationNum(
+      "PADDOCK_CURATION_OVERVIEW_MAX_TOKENS",
+      file?.overviewMaxTokens,
+      DEFAULT_CURATION.overviewMaxTokens,
+    ),
+    changelogMaxTokens: loadCurationNum(
+      "PADDOCK_CURATION_CHANGELOG_MAX_TOKENS",
+      file?.changelogMaxTokens,
+      DEFAULT_CURATION.changelogMaxTokens,
+    ),
+    claudeMaxTokens: loadCurationNum(
+      "PADDOCK_CURATION_CLAUDEMD_MAX_TOKENS",
+      file?.claudeMaxTokens,
+      DEFAULT_CURATION.claudeMaxTokens,
+    ),
+  };
 }
 
 /**

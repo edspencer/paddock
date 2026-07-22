@@ -155,6 +155,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
     projects,
     dataDir: cfg.dataDir,
     minIntervalMs: cfg.sweepMinIntervalMs,
+    budget: cfg.curation,
     logger: app.log,
   });
 

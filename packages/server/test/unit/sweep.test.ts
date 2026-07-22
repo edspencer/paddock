@@ -31,7 +31,7 @@ interface StubOverrides {
   sweeperSuccess?: boolean;
   /** Pre-existing CLAUDE.md content the sweeper is shown (issue #177). */
   claudeMd?: string;
-  /** Make appendClaudeMd reject to exercise the non-fatal path. */
+  /** Make writeClaudeCurated reject to exercise the non-fatal path. */
   claudeAppendThrows?: boolean;
   /**
    * Content of the optional per-project `.paddock/hooks/sweep.md` (issue #G2).
@@ -45,6 +45,8 @@ interface StubOverrides {
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   triggers?: Record<string, any>;
+  /** Per-file curation token budgets (issue #379); defaults apply when unset. */
+  budget?: { overviewMaxTokens: number; changelogMaxTokens: number; claudeMaxTokens: number };
 }
 
 describe("SweepService", () => {
@@ -112,12 +114,12 @@ describe("SweepService", () => {
       writeOverview: vi.fn(async (_slug: string, content: string) => {
         overviewWrites.push(content);
       }),
-      appendChangelog: vi.fn(async (_slug: string, line: string) => {
-        changelogAppends.push(line);
+      writeChangelog: vi.fn(async (_slug: string, body: string) => {
+        changelogAppends.push(body);
       }),
-      appendClaudeMd: vi.fn(async (_slug: string, addition: string) => {
+      writeClaudeCurated: vi.fn(async (_slug: string, body: string) => {
         if (o.claudeAppendThrows) throw new Error("disk full");
-        claudeAppends.push(addition);
+        claudeAppends.push(body);
       }),
     };
     const svc = new SweepService({
@@ -127,6 +129,7 @@ describe("SweepService", () => {
       projects: projects as any,
       dataDir,
       minIntervalMs: 0,
+      budget: o.budget,
       logger: silentLogger,
     });
     return { svc, herdctl, projects, runSweeper };
@@ -470,6 +473,70 @@ describe("SweepService", () => {
     expect(overviewWrites[0]).toContain("## Architecture");
     expect(overviewWrites[0]).not.toContain("Local Development");
     expect(overviewWrites[0]).not.toContain("localhost:4100");
+    svc.stop();
+  });
+
+  // --- issue #379: full-view + wholesale-rewrite + budgets + concurrency -----
+
+  it("leaves CHANGELOG and CLAUDE untouched when the sweeper returns NOCHANGE (#379)", async () => {
+    const reply =
+      "<<<OVERVIEW>>>\n# Overview\nState.\n<<<CHANGELOG>>>\nNOCHANGE\n" +
+      "<<<CLAUDE>>>\nNOCHANGE\n<<<END>>>";
+    const { svc } = makeService({ sweeperText: reply });
+    svc.enqueue("demo");
+    await vi.waitFor(() => expect(overviewWrites.length).toBe(1), { timeout: 2000 });
+    await new Promise((r) => setTimeout(r, 30));
+    // Overview still rewritten; the NOCHANGE files get no write call at all.
+    expect(changelogAppends).toEqual([]);
+    expect(claudeAppends).toEqual([]);
+    svc.stop();
+  });
+
+  it("writes the FULL changelog wholesale, not a single appended bullet (#379)", async () => {
+    const full = "## 2026-07-21\n- Newest thing.\n\n## 2026-07-20\n- Older thing.";
+    const reply = `<<<OVERVIEW>>>\n# Overview\n<<<CHANGELOG>>>\n${full}\n<<<END>>>`;
+    const { svc } = makeService({ sweeperText: reply });
+    svc.enqueue("demo");
+    await vi.waitFor(() => expect(changelogAppends.length).toBe(1), { timeout: 2000 });
+    expect(changelogAppends[0]).toContain("Newest thing.");
+    expect(changelogAppends[0]).toContain("Older thing.");
+    svc.stop();
+  });
+
+  it("enforces the CHANGELOG token budget by dropping the OLDEST sections (#379)", async () => {
+    // 20 newest-first dated sections, well over a tiny 200-token (~800-char) budget.
+    const sections = Array.from(
+      { length: 20 },
+      (_, i) => `## 2026-07-${String(20 - i).padStart(2, "0")}\n- Entry ${20 - i} ${"x".repeat(80)}`,
+    );
+    const reply = `<<<OVERVIEW>>>\n# O\n<<<CHANGELOG>>>\n${sections.join("\n\n")}\n<<<END>>>`;
+    const { svc } = makeService({
+      sweeperText: reply,
+      budget: { overviewMaxTokens: 2000, changelogMaxTokens: 200, claudeMaxTokens: 6000 },
+    });
+    svc.enqueue("demo");
+    await vi.waitFor(() => expect(changelogAppends.length).toBe(1), { timeout: 2000 });
+    const written = changelogAppends[0];
+    expect(written.length).toBeLessThanOrEqual(200 * 4);
+    expect(written).toContain("Entry 20"); // newest kept
+    expect(written).not.toContain("Entry 1 "); // oldest dropped
+    expect(written).toContain("compacted"); // compaction marker present
+    svc.stop();
+  });
+
+  it("digests MORE than 3 concurrent sessions since the watermark (#379 concurrency)", async () => {
+    const sessions = Array.from({ length: 5 }, (_, i) =>
+      session(`s${i + 1}`, `2026-07-2${i + 1}T00:00:00.000Z`),
+    );
+    const { svc, runSweeper } = makeService({ sessions });
+    svc.enqueue("demo");
+    await vi.waitFor(() => expect(runSweeper).toHaveBeenCalled(), { timeout: 2000 });
+    const prompt = runSweeper.mock.calls[0][1] as string;
+    // The old sweep sliced the digest to the newest 3; all 5 recent chats active
+    // in the window must now appear so none is silently dropped from curation.
+    for (const id of ["s1", "s2", "s3", "s4", "s5"]) {
+      expect(prompt).toContain(`chat-${id}`);
+    }
     svc.stop();
   });
 });

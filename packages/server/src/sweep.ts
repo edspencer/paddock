@@ -18,23 +18,29 @@
  *     recursion.
  *
  * The sweeper is TOOL-LESS: it returns the curated content as plain text in
- * marked sections (`<<<OVERVIEW>>> ... <<<CHANGELOG>>> [ <<<CLAUDE>>> ... ]
- * <<<END>>>`), and THIS service parses that text and writes the files itself —
- * replacing OVERVIEW.md wholesale (current synthesized state for an LLM to read
- * at the start of a new chat), appending ONE dated bullet to CHANGELOG.md
- * (append-only narrative), and — only when the sweeper reports a genuinely NEW
- * durable fact (issue #177) — AMENDING CLAUDE.md (durable project identity &
- * conventions; append-only, never a wholesale rewrite, so human-authored content
- * is preserved). If the returned text is unparseable the sweep throws (so the
- * mtime watermark doesn't advance and the next sweep retries) — no
- * partial/garbage writes. All sweep failures are non-fatal: they're logged and
- * never break chat.
+ * marked sections (`<<<OVERVIEW>>> ... <<<CHANGELOG>>> ... <<<CLAUDE>>> ...
+ * <<<END>>>`), and THIS service parses that text and writes the files itself.
+ * Each section is either a FULL replacement for that file or the literal
+ * NOCHANGE (issue #379): the sweeper is shown each file IN FULL (bounded only by
+ * a generous per-file TOKEN BUDGET) and maintains it like a human maintainer —
+ * regenerating OVERVIEW.md wholesale, rewriting CHANGELOG.md (add a dated entry
+ * only for genuinely-new activity, coalesce duplicates, drop the oldest to fit
+ * budget), and rewriting the CLAUDE.md "Curated notes" section (dedup against the
+ * whole file; human-authored content above the heading is preserved). This
+ * replaces the old design where the sweeper saw only the first 2000 chars of
+ * CHANGELOG/CLAUDE and blind-appended — which grew both files (and the per-chat
+ * context they feed) without bound. `SweepService` enforces each budget as a
+ * backstop after the model returns. If the returned text is structurally
+ * unparseable the sweep throws (so the mtime watermark doesn't advance and the
+ * next sweep retries) — no partial/garbage writes. All sweep failures are
+ * non-fatal: they're logged and never break chat.
  */
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { HerdctlService } from "./herdctl.js";
 import { keeperAgentName } from "./herdctl.js";
 import type { ProjectStore, Project } from "./projects.js";
+import { DEFAULT_CURATION, type CurationConfig } from "./config.js";
 import {
   curatorTriggerOf,
   triggerPromptFileAbsPath,
@@ -55,6 +61,11 @@ export interface SweepServiceOptions {
   dataDir: string;
   /** Minimum ms between sweeps for a single project. Default 5 min. */
   minIntervalMs?: number;
+  /**
+   * Per-file token budgets the curated files must stay under (issue #379).
+   * Defaults to {@link DEFAULT_CURATION} when unset.
+   */
+  budget?: CurationConfig;
   logger?: SweepLogger;
 }
 
@@ -90,6 +101,23 @@ const SWEEP_INSTRUCTIONS_FILE = ".paddock/hooks/sweep.md";
 const SWEEP_INSTRUCTIONS_MAX = 8000;
 
 /**
+ * Approximate chars-per-token used to convert a curation TOKEN budget (issue
+ * #379) into a char bound for the prompt view + write-time enforcement. English
+ * prose/markdown is ~3.5–4 chars/token; 4 is a deliberate slight over-estimate so
+ * the char bound is generous (we never under-show the sweeper its own files).
+ */
+const TOKENS_TO_CHARS = 4;
+
+/**
+ * Max recent sessions folded into one sweep's digest (issue #379 concurrency
+ * fix). The old sweep read only the newest 3 sessions but advanced the watermark
+ * past ALL of them, so a 4th+ chat active within the same debounce window was
+ * silently never curated. We now digest every session newer than the watermark,
+ * capped here so a burst of concurrent chats can't unbound the prompt.
+ */
+const MAX_DIGEST_SESSIONS = 6;
+
+/**
  * Whether post-turn curation is ON for a project. A project that has NOT overridden the
  * default (no curator trigger) → ON (behaves exactly as today). A project that DECLARES
  * a `curate-overview` trigger uses its `enabled` flag authoritatively — so curation can
@@ -108,6 +136,7 @@ export class SweepService {
   private readonly projects: ProjectStore;
   private readonly stateFile: string;
   private readonly minIntervalMs: number;
+  private readonly budget: CurationConfig;
   private readonly log: SweepLogger;
 
   /** In-memory watermark cache (loaded lazily, written through on change). */
@@ -125,6 +154,7 @@ export class SweepService {
     // `PADDOCK_SWEEP_MIN_INTERVAL_MS` is now folded into PaddockConfig (issue
     // #269) and passed in as `minIntervalMs`; the default applies when unset.
     this.minIntervalMs = opts.minIntervalMs ?? DEFAULT_MIN_INTERVAL_MS;
+    this.budget = opts.budget ?? DEFAULT_CURATION;
     this.log = opts.logger ?? consoleLogger();
   }
 
@@ -215,7 +245,7 @@ export class SweepService {
 
     this.running.add(slug);
     try {
-      await this.runSweep(project, sessions);
+      await this.runSweep(project, sessions, wm.lastSweptSessionMtime);
       // Stamp the watermark so a follow-up sweep with no new activity is
       // skipped, and the interval clock restarts.
       await this.setWatermark(slug, {
@@ -241,13 +271,14 @@ export class SweepService {
   private async runSweep(
     project: Project,
     sessions: Awaited<ReturnType<HerdctlService["recentSessions"]>>,
+    sinceMtime: string | null,
   ): Promise<void> {
     const [overview, changelog, claudeMd, digest, fileInstructions, triggerInstructions] =
       await Promise.all([
         this.projects.readOverview(project.slug),
         this.projects.readFile(project.slug, "CHANGELOG.md").catch(() => ""),
         this.projects.readClaudeMd(project.slug).catch(() => ""),
-        this.buildDigest(project, sessions),
+        this.buildDigest(project, sessions, sinceMtime),
         this.readSweepInstructions(project.slug),
         this.readTriggerInstructions(project),
       ]);
@@ -273,9 +304,11 @@ export class SweepService {
       throw result.error ?? new Error("sweeper trigger reported failure");
     }
 
-    // The sweeper returns text only (tool-less); parse its two marked sections
-    // and write the files ourselves. Throw on unparseable output so the
-    // watermark doesn't advance and the next sweep retries (no partial writes).
+    // The sweeper is tool-less: it returns the three marked sections and THIS
+    // service writes the files (issue #379). Each section is either a full
+    // replacement or the literal NOCHANGE (→ null). Throw on structurally-
+    // unparseable output so the watermark doesn't advance and the next sweep
+    // retries (no partial writes).
     const parsed = parseSweeperOutput(text);
     if (!parsed) {
       this.log.warn(
@@ -285,26 +318,43 @@ export class SweepService {
       throw new Error("sweeper output missing OVERVIEW/CHANGELOG markers");
     }
 
-    await this.projects.writeOverview(project.slug, stripBoxConventions(parsed.overview));
-    if (parsed.changelog) {
-      // appendChangelog adds the leading "- " + dated heading, so the sweeper
-      // returns the bare line.
-      await this.projects.appendChangelog(project.slug, parsed.changelog);
+    // OVERVIEW.md — regenerated wholesale (unchanged model), box-conventions
+    // stripped (#42) and bounded to its token budget as a backstop (#379).
+    // NOCHANGE (null) leaves the existing file untouched.
+    if (parsed.overview !== null) {
+      const clean = enforceHeadBudget(
+        stripBoxConventions(parsed.overview),
+        this.budgetChars("overviewMaxTokens"),
+      );
+      await this.projects.writeOverview(project.slug, clean);
     }
-    // CLAUDE.md (issue #177): only when the sweeper returned a genuinely-new
-    // durable fact (a <<<CLAUDE>>> section that wasn't NOCHANGE). Amend-only —
-    // never clobbers human-authored conventions. A failure here is non-fatal:
-    // OVERVIEW/CHANGELOG are already written and the watermark should still
-    // advance, so warn rather than throw.
+
+    // CHANGELOG.md — wholesale replace with the sweeper's curated full file
+    // (add/coalesce/prune), bounded to its budget by dropping the oldest whole
+    // dated sections (#379). NOCHANGE leaves it untouched — the change-detection
+    // gate that kills the old "one near-duplicate bullet per sweep" spam.
+    if (parsed.changelog !== null) {
+      const bounded = enforceChangelogBudget(
+        parsed.changelog,
+        this.budgetChars("changelogMaxTokens"),
+      );
+      await this.projects.writeChangelog(project.slug, bounded);
+    }
+
+    // CLAUDE.md — the sweeper now sees the FULL file and returns the entire
+    // curated-notes body (dedup'd/pruned), which replaces only that managed
+    // section; human-authored content above `## Curated notes` is preserved.
+    // NOCHANGE leaves it untouched. A write failure is non-fatal (OVERVIEW/
+    // CHANGELOG already landed; the watermark should still advance) → warn.
     //
     // REPO-BACKED projects (issue #187): the CLAUDE.md is the external repo's
     // OWN, upstream-owned file — the sweeper must NEVER write it (that would
     // dirty the checkout and, if pushed, leak curation upstream). OVERVIEW.md +
-    // CHANGELOG.md are still curated (sidecarred in the metadata dir), just not
-    // CLAUDE.md. So skip the amend entirely for repo-backed projects.
-    if (parsed.claude && !project.repoBacked) {
-      await this.projects.appendClaudeMd(project.slug, parsed.claude).catch((err) => {
-        this.log.warn({ err, slug: project.slug }, "sweep: CLAUDE.md append failed (non-fatal)");
+    // CHANGELOG.md are still curated (sidecarred), just not CLAUDE.md.
+    if (parsed.claude !== null && !project.repoBacked) {
+      const bounded = enforceHeadBudget(parsed.claude, this.budgetChars("claudeMaxTokens"));
+      await this.projects.writeClaudeCurated(project.slug, bounded).catch((err) => {
+        this.log.warn({ err, slug: project.slug }, "sweep: CLAUDE.md write failed (non-fatal)");
       });
     }
 
@@ -313,24 +363,38 @@ export class SweepService {
         slug: project.slug,
         sessionId: result.sessionId,
         jobId: result.jobId,
-        wroteChangelog: Boolean(parsed.changelog),
-        wroteClaude: Boolean(parsed.claude),
+        wroteOverview: parsed.overview !== null,
+        wroteChangelog: parsed.changelog !== null,
+        wroteClaude: parsed.claude !== null,
       },
       "sweep: completed",
     );
   }
 
+  /** A curated file's byte budget: its token budget × approximate chars-per-token. */
+  private budgetChars(key: keyof CurationConfig): number {
+    return this.budget[key] * TOKENS_TO_CHARS;
+  }
+
   /**
    * Build a compact digest of recent session activity to hand to the sweeper,
    * so it doesn't have to discover transcripts itself. We read the messages of
-   * the few most-recently-active sessions and summarize roles + tool usage +
-   * trimmed text.
+   * every session newer than the last sweep's watermark (issue #379 concurrency
+   * fix — so a 4th+ chat active within a debounce window is no longer dropped),
+   * capped at {@link MAX_DIGEST_SESSIONS}. On the first sweep (no watermark) we
+   * fall back to the newest few. Summarizes roles + tool usage + trimmed text.
    */
   private async buildDigest(
     project: Project,
     sessions: Awaited<ReturnType<HerdctlService["recentSessions"]>>,
+    sinceMtime: string | null,
   ): Promise<string> {
-    const recent = sessions.slice(0, 3); // newest few are enough for a sweep.
+    // All sessions with activity since the watermark; if none (first sweep or a
+    // clock edge), fall back to the newest few so we still curate something.
+    const fresh = sinceMtime
+      ? sessions.filter((s) => s.mtime > sinceMtime)
+      : sessions;
+    const recent = (fresh.length > 0 ? fresh : sessions).slice(0, MAX_DIGEST_SESSIONS);
     const parts: string[] = [];
     for (const s of recent) {
       const messages = await this.herdctl
@@ -435,51 +499,64 @@ export class SweepService {
   }): string {
     const { project, overview, changelog, claudeMd, digest, extraInstructions } = args;
     const today = new Date().toISOString().slice(0, 10);
+    // Budgets in tokens (for the instructions the model reads) and the matching
+    // char bound for the FULL-FILE views below. Generous vs the old flat 2000-char
+    // truncation, so the model can actually see (and therefore dedup) its files.
+    const b = this.budget;
+    const changelogView = boundedView(changelog, this.budgetChars("changelogMaxTokens"));
+    const claudeView = boundedView(claudeMd, this.budgetChars("claudeMaxTokens"));
     return [
       `Project: ${project.name} (slug: ${project.slug})`,
       project.summary ? `Summary: ${project.summary}` : "",
       "",
-      "You are curating project context files based on recent chat activity.",
+      "You are curating this project's three context files from recent chat " +
+        "activity. You are shown each file IN FULL (a curator that only sees a " +
+        "fragment re-adds things it already wrote). For each file you return " +
+        "either its complete new contents OR the literal NOCHANGE — never a " +
+        "fragment to blindly append.",
       "",
       "=== RECENT SESSION ACTIVITY (digest) ===",
+      "(This may span SEVERAL chats active since the last sweep — cover them all.)",
       digest,
       "",
-      "=== CURRENT OVERVIEW.md ===",
+      "=== CURRENT OVERVIEW.md (full) ===",
       overview || "(none yet — you are creating it for the first time)",
       "",
-      "=== RECENT CHANGELOG.md (tail) ===",
-      trim(changelog, 2000) || "(empty)",
+      "=== CURRENT CHANGELOG.md (full) ===",
+      changelogView || "(empty)",
       "",
-      "=== CURRENT CLAUDE.md (durable identity & conventions) ===",
-      trim(claudeMd, 2000) || "(none yet)",
+      "=== CURRENT CLAUDE.md (full — durable identity & conventions) ===",
+      claudeView || "(none yet)",
       "",
       "=== YOUR TASKS ===",
       "Do NOT use any tools. Output ONLY the three sections below, nothing else " +
         "(no preamble, no explanation). Use these LITERAL markers exactly:",
       "",
       "<<<OVERVIEW>>>",
-      "Then the FULL markdown OVERVIEW.md, which REPLACES the current one " +
-        "wholesale: a concise, synthesized snapshot of the project's CURRENT " +
-        "state — written for an LLM to read at the start of a NEW chat. Include " +
-        "what the project is, key decisions/facts established, open questions, " +
-        "and next steps. Prefer a short markdown doc with clear sections. Do NOT " +
-        "include a changelog or per-session history here — this is the living " +
-        "current state, replaced each sweep.",
+      "The FULL markdown OVERVIEW.md, REPLACING the current one wholesale: a " +
+        "concise synthesized snapshot of the project's CURRENT state for an LLM " +
+        "to read at the start of a NEW chat — what the project is, key decisions/" +
+        "facts, open questions, next steps. NOT a changelog or per-session " +
+        `history. Keep it under ~${b.overviewMaxTokens} tokens. (Output NOCHANGE ` +
+        "only if the existing overview is already accurate and complete.)",
       "<<<CHANGELOG>>>",
-      "Then EXACTLY ONE bullet line summarizing what happened in this recent " +
-        'activity, with NO leading "- " and no date heading — just the bare ' +
-        "sentence. (The system adds the bullet marker and today's " +
-        `\`## ${today}\` heading.)`,
+      "The FULL updated CHANGELOG.md. If this activity is a genuinely NEW, user-" +
+        `visible change, add ONE bullet under a \`## ${today}\` heading at the ` +
+        "TOP (newest-first); reuse the heading if it's already today. Otherwise — " +
+        "if the activity is already captured by a recent entry (e.g. continued/" +
+        "repeated work, polling, minor follow-ups) — output NOCHANGE and add " +
+        "nothing. COALESCE near-duplicate recent bullets into one. Keep the whole " +
+        `file under ~${b.changelogMaxTokens} tokens by summarizing or dropping the ` +
+        "OLDEST entries; preserve the rest verbatim. Do NOT re-log unchanged state.",
       "<<<CLAUDE>>>",
-      "Then ONLY genuinely NEW, DURABLE facts about the project's identity or " +
-        "conventions to APPEND to CLAUDE.md — long-lived things (what the " +
-        "project fundamentally is, key architectural decisions, how we work on " +
-        "it) that are NOT already present in the CURRENT CLAUDE.md above. Return " +
-        "bare markdown (e.g. one or a few bullet lines). This file is amend-only " +
-        "and rarely changes: do NOT restate current state, tasks, or history " +
-        "(those belong in OVERVIEW.md / CHANGELOG.md), and do NOT rewrite what is " +
-        "already there. If there is nothing genuinely new and durable to add, " +
-        "output exactly NOCHANGE and nothing else in this section.",
+      "The FULL curated-notes body for CLAUDE.md (everything that should appear " +
+        "under the `## Curated notes` heading) — ONLY genuinely durable facts " +
+        "about the project's identity/conventions (what it fundamentally is, key " +
+        "architectural decisions, how we work on it). You can see the whole file " +
+        "above, so DEDUP: fold repeated/near-duplicate notes into one, drop stale " +
+        `ones, and keep it under ~${b.claudeMaxTokens} tokens. Do NOT restate ` +
+        "current state/tasks/history (those are OVERVIEW/CHANGELOG). If nothing " +
+        "durable changed, output exactly NOCHANGE and nothing else in this section.",
       "<<<END>>>",
       "",
       "IMPORTANT — OVERVIEW.md describes the PROJECT, not the box it runs on. Do " +
@@ -552,74 +629,123 @@ function trim(s: string, max: number): string {
 }
 
 /**
- * Parse the tool-less sweeper's marked output into the overview body + a single
- * changelog line.
- *
- * Expected shape (markers are literal; `<<<CLAUDE>>>` is OPTIONAL, issue #177):
+ * A structure-preserving bounded view of a file for the sweeper's prompt (issue
+ * #379) — the head (which, for a newest-first CHANGELOG, is the most recent
+ * history) up to `maxChars`, cut on a line boundary with a marker. Unlike the old
+ * `trim(_, 2000)` this does NOT flatten whitespace, so the model sees real
+ * markdown and can dedup against it. Budgets are generous, so most files pass
+ * through whole.
+ */
+function boundedView(s: string, maxChars: number): string {
+  if (!s) return "";
+  if (s.length <= maxChars) return s;
+  const cut = s.lastIndexOf("\n", maxChars);
+  const head = s.slice(0, cut > maxChars * 0.5 ? cut : maxChars);
+  return `${head.trimEnd()}\n\n…[older content truncated from this view — preserve it]`;
+}
+
+/**
+ * Backstop enforcement of a head-oriented budget for OVERVIEW / CLAUDE curated
+ * body (issue #379): if the model ignored its budget, keep the head up to
+ * `maxChars` (line-aligned). The model is asked to stay under budget, so this
+ * rarely fires.
+ */
+function enforceHeadBudget(s: string, maxChars: number): string {
+  if (s.length <= maxChars) return s;
+  const cut = s.lastIndexOf("\n", maxChars);
+  return `${s.slice(0, cut > maxChars * 0.5 ? cut : maxChars).trimEnd()}\n`;
+}
+
+/**
+ * Backstop enforcement of the CHANGELOG budget (issue #379). CHANGELOG is
+ * newest-first (`## YYYY-MM-DD` sections at the top), so we keep whole leading
+ * sections until adding the next would exceed `maxChars`, then drop the rest and
+ * leave a compaction marker. This guarantees the file (and the per-chat preload
+ * that injects it) stays bounded even if the model returns an over-budget file.
+ */
+function enforceChangelogBudget(body: string, maxChars: number): string {
+  const trimmed = body.trim();
+  if (trimmed.length <= maxChars) return trimmed;
+  // Split into leading preamble + `## `-headed sections, keeping newest first.
+  const lines = trimmed.split("\n");
+  const sections: string[] = [];
+  let current: string[] = [];
+  for (const line of lines) {
+    if (/^##\s/.test(line) && current.length > 0) {
+      sections.push(current.join("\n"));
+      current = [line];
+    } else {
+      current.push(line);
+    }
+  }
+  if (current.length > 0) sections.push(current.join("\n"));
+
+  const kept: string[] = [];
+  let used = 0;
+  const marker = "\n\n_[older changelog entries compacted to stay within budget]_";
+  for (const section of sections) {
+    const add = (kept.length > 0 ? 2 : 0) + section.length;
+    if (used + add > maxChars - marker.length && kept.length > 0) break;
+    kept.push(section);
+    used += add;
+  }
+  return kept.join("\n\n").trimEnd() + marker;
+}
+
+/**
+ * Parse the tool-less sweeper's marked output (issue #379). Each of the three
+ * sections is either a FULL replacement for that file or the literal `NOCHANGE`:
  *
  *   <<<OVERVIEW>>>
- *   ...full markdown overview (replaces OVERVIEW.md wholesale)...
+ *   ...full OVERVIEW.md (or NOCHANGE)...
  *   <<<CHANGELOG>>>
- *   ...one bullet line (no leading "- ")...
+ *   ...full CHANGELOG.md body (or NOCHANGE)...
  *   <<<CLAUDE>>>
- *   ...NEW durable facts to append to CLAUDE.md, or the literal NOCHANGE...
+ *   ...full CLAUDE.md curated-notes body (or NOCHANGE)...
  *   <<<END>>>
  *
- * Returns null if the OVERVIEW/CHANGELOG markers are absent or the overview is
- * empty — the caller treats that as a failure and retries (no partial writes).
- * The `<<<END>>>` marker is optional (EOF is accepted). The changelog line is
- * trimmed to a single line; an empty changelog is allowed (overview-only write).
- *
- * `claude` is the amend-only CLAUDE.md addition (issue #177): non-null ONLY when
- * a real `<<<CLAUDE>>>` section carries non-empty content that isn't `NOCHANGE`.
- * Backward-compatible: a reply with no `<<<CLAUDE>>>` marker yields `claude:
- * null` (older sweeper output, or nothing durable to add).
+ * Returns `null` (→ caller retries, no partial writes) only on STRUCTURAL failure
+ * — the OVERVIEW or CHANGELOG marker is missing/misordered. Otherwise returns the
+ * three sections, each `null` when it is empty or `NOCHANGE` (→ leave that file
+ * untouched). `<<<CLAUDE>>>` and `<<<END>>>` remain optional (EOF accepted); a
+ * reply with no CLAUDE marker yields `claude: null`.
  */
 function parseSweeperOutput(
   text: string,
-): { overview: string; changelog: string; claude: string | null } | null {
+): { overview: string | null; changelog: string | null; claude: string | null } | null {
   if (!text) return null;
   const overviewIdx = text.indexOf("<<<OVERVIEW>>>");
   const changelogIdx = text.indexOf("<<<CHANGELOG>>>");
   if (overviewIdx === -1 || changelogIdx === -1 || changelogIdx < overviewIdx) return null;
 
-  const overview = text
-    .slice(overviewIdx + "<<<OVERVIEW>>>".length, changelogIdx)
-    .trim();
-  if (overview.length === 0) return null;
-
+  // The CLAUDE section (if present) closes the changelog; else <<<END>>>/EOF.
+  // Match "<<<CLAUDE" so a `<<<CLAUDE:NOCHANGE>>>` variant still delimits it.
   const endIdx = text.indexOf("<<<END>>>", changelogIdx);
-  // The CLAUDE section (if present) closes the changelog; otherwise <<<END>>> or
-  // EOF does. Match "<<<CLAUDE" so the `<<<CLAUDE:NOCHANGE>>>` variant also
-  // delimits the changelog rather than leaking into it.
   const claudeMarkerIdx = text.indexOf("<<<CLAUDE", changelogIdx);
   const changelogEnd = [claudeMarkerIdx, endIdx]
     .filter((i) => i !== -1)
     .reduce<number | undefined>((min, i) => (min === undefined || i < min ? i : min), undefined);
-  const rawChangelog = text.slice(changelogIdx + "<<<CHANGELOG>>>".length, changelogEnd);
-  // Collapse to the first non-empty line, stripping any leading "- " the model
-  // added despite instructions (appendChangelog adds its own bullet marker).
-  const changelog =
-    rawChangelog
-      .split("\n")
-      .map((l) => l.trim())
-      .find((l) => l.length > 0)
-      ?.replace(/^[-*]\s+/, "")
-      .trim() ?? "";
 
-  // CLAUDE.md addition (#177): only a full `<<<CLAUDE>>>` marker (not the
-  // `:NOCHANGE` variant) with non-empty, non-NOCHANGE content counts.
+  const overview = sectionOrNull(text.slice(overviewIdx + "<<<OVERVIEW>>>".length, changelogIdx));
+  const changelog = sectionOrNull(text.slice(changelogIdx + "<<<CHANGELOG>>>".length, changelogEnd));
+
   let claude: string | null = null;
   const claudeIdx = text.indexOf("<<<CLAUDE>>>", changelogIdx);
   if (claudeIdx !== -1) {
     const claudeEnd = text.indexOf("<<<END>>>", claudeIdx);
-    const rawClaude = text
-      .slice(claudeIdx + "<<<CLAUDE>>>".length, claudeEnd === -1 ? undefined : claudeEnd)
-      .trim();
-    if (rawClaude.length > 0 && !/^NOCHANGE$/i.test(rawClaude)) claude = rawClaude;
+    claude = sectionOrNull(
+      text.slice(claudeIdx + "<<<CLAUDE>>>".length, claudeEnd === -1 ? undefined : claudeEnd),
+    );
   }
 
   return { overview, changelog, claude };
+}
+
+/** A trimmed section, or `null` when it is empty or the literal `NOCHANGE`. */
+function sectionOrNull(raw: string): string | null {
+  const s = raw.trim();
+  if (s.length === 0 || /^NOCHANGE$/i.test(s)) return null;
+  return s;
 }
 
 /**
