@@ -1,0 +1,485 @@
+#!/usr/bin/env node
+/*
+ * pm — thin wrapper over PM2 + a shared ports registry for Paddock dev/preview
+ * servers. Lets Paddock agents run long-running dev servers on stable, assigned
+ * ports, with running-state visible to EVERY chat session (PM2 daemon + the
+ * ports.json registry are a single shared source of truth all sessions read).
+ *
+ * Vendored in the Paddock repo (scripts/pm). The devbox image installs it to
+ * /usr/local/bin/pm; see scripts/README.md for what it is and how to configure it.
+ *
+ * SPDX-License-Identifier: MIT
+ * Part of Paddock (https://github.com/edspencer/paddock), MIT licensed.
+ *
+ * Commands:
+ *   pm start <project> [--cwd DIR] [--host HOST] [-- <cmd...>]
+ *       Look up (or assign) the project's stable port, export PORT + HOST, and
+ *       start <cmd> under PM2 named <project>. On a re-start with no `-- cmd`
+ *       the previously-recorded command is reused.
+ *   pm stop <project>          Stop the process (keeps its assigned port).
+ *   pm restart <project>       Restart with a refreshed env.
+ *   pm rm <project>            Stop + forget (removes it from PM2 and registry).
+ *   pm status [project] [--json]
+ *       Join `pm2 jlist` + the ports registry → project · port · state · URL.
+ *   pm logs <project> [--lines N] [--follow]
+ *   pm ports                   Print the raw ports registry.
+ *   pm help
+ *
+ * Config knobs (resolution order: real env var -> host config file -> default).
+ * The config file lets `pm` show the right values even when the caller's env
+ * carries no PM_* vars — e.g. Paddock keeper agents invoke `pm` via a NON-login
+ * `bash -c`, which sources no profile. `pm` is a fresh process per call, so it
+ * reads the file at invocation time: updating it needs NO service restart.
+ *   PM_CONFIG     config file path      (default /etc/paddock-servers/pm.env)
+ *   PM_REGISTRY   registry JSON path    (default /var/lib/paddock-servers/ports.json)
+ *   PM_PUBLIC_HOST  host shown in URLs  (default localhost)
+ *   PM_PORT_MIN / PM_PORT_MAX  assignment range (default 5001 / 5999)
+ *   PM2_BIN       pm2 binary            (default: `pm2` on PATH, else /usr/bin/pm2)
+ */
+"use strict";
+
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const { spawnSync } = require("node:child_process");
+
+// Optional host-level config: simple KEY=VALUE lines (# comments, optional
+// quotes). Read once, up front. Missing/garbage file -> empty (safe fallback).
+const CONFIG_FILE = process.env.PM_CONFIG || "/etc/paddock-servers/pm.env";
+function loadConfigFile(file) {
+  const out = {};
+  let raw;
+  try {
+    raw = fs.readFileSync(file, "utf8");
+  } catch {
+    return out;
+  }
+  for (const line of raw.split(/\r?\n/)) {
+    const s = line.trim();
+    if (!s || s.startsWith("#")) continue;
+    const eq = s.indexOf("=");
+    if (eq === -1) continue;
+    const k = s.slice(0, eq).trim();
+    let v = s.slice(eq + 1).trim();
+    if (
+      v.length >= 2 &&
+      ((v.startsWith('"') && v.endsWith('"')) ||
+        (v.startsWith("'") && v.endsWith("'")))
+    ) {
+      v = v.slice(1, -1);
+    }
+    out[k] = v;
+  }
+  return out;
+}
+const CONFIG = loadConfigFile(CONFIG_FILE);
+
+/** Resolve a knob: real env var wins, then the host config file, then default. */
+function cfg(key, fallback) {
+  if (process.env[key] != null && process.env[key] !== "") return process.env[key];
+  if (CONFIG[key] != null && CONFIG[key] !== "") return CONFIG[key];
+  return fallback;
+}
+
+const REGISTRY = cfg("PM_REGISTRY", "/var/lib/paddock-servers/ports.json");
+const PUBLIC_HOST = cfg("PM_PUBLIC_HOST", "localhost");
+const PORT_MIN = parseInt(cfg("PM_PORT_MIN", "5001"), 10);
+const PORT_MAX = parseInt(cfg("PM_PORT_MAX", "5999"), 10);
+const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+// --- dev-server environment isolation --------------------------------------
+// A dev/preview server MUST NOT inherit production data pointers. paddock.service
+// exports PADDOCK_DATA_DIR=/var/lib/paddock (and friends); those flow keeper ->
+// pm -> dev server via the inherited env, so an un-overridden dev instance would
+// attach to PROD data (Paddock's OWN default is a safe `./data`, so the leak is
+// purely inheritance). We STRIP those state pointers from the child env and
+// inject an isolated per-server scratch dir instead. NB: secrets/tokens are
+// deliberately NOT stripped — a dev Paddock still needs its Claude auth to run.
+const SCRATCH_ROOT = cfg("PM_SCRATCH_ROOT", "/var/lib/paddock-servers");
+const SCRUB_VARS = cfg(
+  "PM_SCRUB_VARS",
+  "PADDOCK_DATA_DIR,PADDOCK_PROJECTS_DIR,PADDOCK_STATE_DIR,PADDOCK_HERDCTL_CONFIG,PADDOCK_SCRATCH_DIR"
+).split(",").map((s) => s.trim()).filter(Boolean);
+// Known production data roots a dev server must never be pointed at. Matched at
+// a path boundary so the scratch root (/var/lib/paddock-servers) is NOT flagged.
+const PROD_DATA_ROOTS = cfg(
+  "PM_PROD_DATA_ROOTS",
+  "/var/lib/paddock"
+).split(",").map((s) => s.trim()).filter(Boolean);
+
+function die(msg, code = 1) {
+  process.stderr.write(`pm: ${msg}\n`);
+  process.exit(code);
+}
+
+// --- pm2 plumbing ----------------------------------------------------------
+
+function pm2Bin() {
+  if (process.env.PM2_BIN) return process.env.PM2_BIN;
+  return "pm2"; // resolved via PATH; fallback handled in runPm2
+}
+
+function runPm2(args, opts = {}) {
+  const env = opts.env || process.env;
+  const stdio = opts.capture ? ["ignore", "pipe", "pipe"] : "inherit";
+  let r = spawnSync(pm2Bin(), args, { env, stdio, encoding: "utf8" });
+  if (r.error && r.error.code === "ENOENT" && pm2Bin() === "pm2") {
+    r = spawnSync("/usr/bin/pm2", args, { env, stdio, encoding: "utf8" });
+  }
+  if (r.error && r.error.code === "ENOENT") {
+    die("pm2 not found on PATH (npm i -g pm2)", 127);
+  }
+  return r;
+}
+
+/** Parse `pm2 jlist` into an array (empty on any trouble). */
+function pm2List() {
+  const r = runPm2(["jlist"], { capture: true });
+  if (!r.stdout) return [];
+  // pm2 sometimes prefixes jlist with log noise; slice from the first `[`.
+  const s = r.stdout.slice(r.stdout.indexOf("["));
+  try {
+    const arr = JSON.parse(s);
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+}
+
+function pm2Proc(list, name) {
+  return list.find((p) => p && p.name === name);
+}
+
+// --- registry --------------------------------------------------------------
+
+function loadRegistry() {
+  try {
+    const raw = fs.readFileSync(REGISTRY, "utf8");
+    const obj = JSON.parse(raw);
+    if (!obj || typeof obj !== "object") return { version: 1, ports: {} };
+    if (!obj.ports || typeof obj.ports !== "object") obj.ports = {};
+    return obj;
+  } catch {
+    return { version: 1, ports: {} };
+  }
+}
+
+function saveRegistry(reg) {
+  fs.mkdirSync(path.dirname(REGISTRY), { recursive: true });
+  const tmp = `${REGISTRY}.tmp-${process.pid}`;
+  fs.writeFileSync(tmp, JSON.stringify(reg, null, 2) + "\n", "utf8");
+  fs.renameSync(tmp, REGISTRY);
+}
+
+function assignPort(reg) {
+  const used = new Set(Object.values(reg.ports).map((e) => e.port));
+  for (let p = PORT_MIN; p <= PORT_MAX; p++) {
+    if (!used.has(p)) return p;
+  }
+  die(`no free port in range ${PORT_MIN}-${PORT_MAX}`);
+}
+
+// --- arg parsing -----------------------------------------------------------
+
+/** Split argv at the first bare `--`; everything after is the command. */
+function splitCommand(argv) {
+  const i = argv.indexOf("--");
+  if (i === -1) return { opts: argv, cmd: [] };
+  return { opts: argv.slice(0, i), cmd: argv.slice(i + 1) };
+}
+
+function takeFlag(opts, name) {
+  const i = opts.indexOf(name);
+  if (i === -1) return undefined;
+  const val = opts[i + 1];
+  opts.splice(i, 2);
+  return val;
+}
+
+function hasFlag(opts, name) {
+  const i = opts.indexOf(name);
+  if (i === -1) return false;
+  opts.splice(i, 1);
+  return true;
+}
+
+// --- presentation ----------------------------------------------------------
+
+function boxIp() {
+  const ifaces = os.networkInterfaces();
+  for (const list of Object.values(ifaces)) {
+    for (const a of list || []) {
+      if (a.family === "IPv4" && !a.internal) return a.address;
+    }
+  }
+  return "127.0.0.1";
+}
+
+function urlFor(port, host) {
+  return `http://${host || PUBLIC_HOST}:${port}`;
+}
+
+function mergedState() {
+  const reg = loadRegistry();
+  const list = pm2List();
+  const names = new Set([...Object.keys(reg.ports), ...list.map((p) => p.name)]);
+  const rows = [];
+  for (const name of [...names].sort()) {
+    const entry = reg.ports[name] || {};
+    const proc = pm2Proc(list, name);
+    const status = proc ? proc.pm2_env && proc.pm2_env.status : "not started";
+    rows.push({
+      project: name,
+      port: entry.port || null,
+      status: status || "unknown",
+      url: entry.port ? urlFor(entry.port, entry.host) : null,
+      cmd: entry.cmd || null,
+      cwd: entry.cwd || null,
+      pid: proc && proc.pid ? proc.pid : null,
+      restarts: proc && proc.pm2_env ? proc.pm2_env.restart_time : null,
+    });
+  }
+  return rows;
+}
+
+function printStatus(filter, asJson) {
+  let rows = mergedState();
+  if (filter) rows = rows.filter((r) => r.project === filter);
+  if (asJson) {
+    process.stdout.write(JSON.stringify(rows, null, 2) + "\n");
+    return;
+  }
+  if (rows.length === 0) {
+    process.stdout.write("No dev servers registered.\n");
+    return;
+  }
+  const w = (s, n) => String(s == null ? "-" : s).padEnd(n);
+  process.stdout.write(
+    w("PROJECT", 20) + w("PORT", 7) + w("STATE", 13) + "URL\n"
+  );
+  for (const r of rows) {
+    process.stdout.write(
+      w(r.project, 20) + w(r.port, 7) + w(r.status, 13) + (r.url || "-") + "\n"
+    );
+  }
+  process.stdout.write(
+    `\nURLs use ${PUBLIC_HOST} (set PM_PUBLIC_HOST to change). ` +
+      `If that name does not resolve to this host, use http://${boxIp()}:<port>.\n`
+  );
+}
+
+// --- dev-server env isolation ----------------------------------------------
+
+/**
+ * Return the production data root a string references (as a real path token),
+ * or null. Matches a root only at a path boundary (next char is not a word char
+ * or `-`), so the scratch root `/var/lib/paddock-servers` does NOT match the
+ * prod root `/var/lib/paddock`.
+ */
+function referencesProdData(s) {
+  if (!s) return null;
+  for (const root of PROD_DATA_ROOTS) {
+    const esc = root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp(esc + "(?![\\w-])").test(s)) return root;
+  }
+  return null;
+}
+
+/**
+ * The environment a dev/preview server runs with — the isolation boundary.
+ * Starts from the caller's env, STRIPS the Paddock state/data pointers
+ * (SCRUB_VARS) so nothing inherits prod data, and injects an isolated,
+ * persistent, per-server scratch data dir under SCRATCH_ROOT (outside any prod
+ * tree, so it also survives a reboot). Paddock derives projects/state/config/
+ * scratch from PADDOCK_DATA_DIR, so setting that one is enough. A `-- env VAR=…`
+ * prefix in the caller's command can still override these (e.g. an explicit
+ * scratch of its own) — the prod-path guard in cmdStart backstops that.
+ */
+function buildDevEnv(project, port) {
+  const scratch = path.join(SCRATCH_ROOT, project, "data");
+  try {
+    fs.mkdirSync(scratch, { recursive: true });
+  } catch {
+    /* best effort; the server will surface a real error if it truly can't write */
+  }
+  const env = { ...process.env };
+  for (const k of SCRUB_VARS) delete env[k];
+  env.PORT = String(port);
+  env.HOST = "0.0.0.0";
+  env.HOSTNAME = "0.0.0.0";
+  if (!env.NODE_ENV) env.NODE_ENV = "development";
+  env.PADDOCK_DATA_DIR = scratch;
+  return env;
+}
+
+// --- commands --------------------------------------------------------------
+
+/**
+ * Guard: a dev/preview server must NEVER be pointed at a PRODUCTION Paddock data
+ * dir. Refuse if `cmdStr` references one at a path boundary. The remedy text
+ * points at the ACTUAL offending token (`prodRef`) and explains the one
+ * exemption (`--cwd`), so an agent doesn't go chasing a `PADDOCK_DATA_DIR`
+ * override that isn't the problem.
+ */
+function assertNoProdData(project, cmdStr, verb) {
+  const prodRef = referencesProdData(cmdStr);
+  if (!prodRef) return;
+  die(
+    `refusing to ${verb} '${project}': its command references a PRODUCTION data path (${prodRef}).\n` +
+      `  Dev servers get an isolated scratch data dir automatically (${path.join(SCRATCH_ROOT, project, "data")}).\n` +
+      `  Only --cwd is exempt from this scan: move any launcher/wrapper script under ${path.join(SCRATCH_ROOT, project)}/\n` +
+      `  and reach your clone via --cwd, or point PADDOCK_DATA_DIR somewhere under ${SCRATCH_ROOT}.`
+  );
+}
+
+/**
+ * The single (re)launch path for a dev server. Builds the scrubbed, port-injected
+ * isolated env (buildDevEnv), re-applies the prod-data guard, and recreates the
+ * PM2 process deterministically. BOTH `pm start` and `pm restart` go through here
+ * so a restart can never re-inherit the box's PRODUCTION env — a bare
+ * `pm2 restart --update-env` would silently drop PORT and re-point the server at
+ * PADDOCK_DATA_DIR=/var/lib/paddock with NODE_ENV=production. `entry` must carry
+ * {port, cmd, cwd, host}.
+ */
+function launch(project, entry, verb) {
+  assertNoProdData(project, entry.cmd, verb);
+  // Scrubbed, isolated env: strips inherited prod data pointers + injects a
+  // per-server scratch data dir (see buildDevEnv). This is what stops a dev
+  // instance from silently attaching to production data.
+  const env = buildDevEnv(project, entry.port);
+  // Recreate deterministically so a changed cmd/cwd/env is applied cleanly.
+  runPm2(["delete", project], { env, capture: true });
+  const r = runPm2(
+    ["start", "/bin/bash", "--name", project, "--interpreter", "none",
+     "--cwd", entry.cwd, "--update-env", "--", "-c", entry.cmd],
+    { env }
+  );
+  runPm2(["save", "--force"], { env, capture: true });
+  if (r.status !== 0) die(`pm2 failed to ${verb} '${project}'`, r.status || 1);
+  const done = verb === "restart" ? "Restarted" : "Started";
+  process.stdout.write(`${done} ${project} on port ${entry.port} -> ${urlFor(entry.port, entry.host)}\n`);
+  process.stdout.write(`  (PORT=${entry.port} HOST=0.0.0.0, cmd: ${entry.cmd})\n`);
+}
+
+function cmdStart(argv) {
+  const { opts, cmd } = splitCommand(argv);
+  const rest = opts.slice();
+  const cwdFlag = takeFlag(rest, "--cwd");
+  const hostFlag = takeFlag(rest, "--host");
+  const project = rest[0];
+  if (!project) die("usage: pm start <project> [--cwd DIR] [--host HOST] [-- <cmd...>]");
+  if (!NAME_RE.test(project)) die(`invalid project name: ${project}`);
+
+  const reg = loadRegistry();
+  const entry = reg.ports[project] || {};
+  const port = entry.port || assignPort(reg);
+  const cwd = cwdFlag || entry.cwd || process.cwd();
+  const cmdStr = cmd.length ? cmd.join(" ") : entry.cmd;
+  if (!cmdStr) {
+    die(`no command recorded for '${project}'; first start needs: pm start ${project} -- <cmd...>`);
+  }
+  // Refuse a command that references a PRODUCTION data dir BEFORE persisting it,
+  // so a bad command never lands in the registry (and can't be silently reused
+  // on a later restart).
+  assertNoProdData(project, cmdStr, "start");
+  const host = hostFlag || entry.host || PUBLIC_HOST;
+
+  reg.ports[project] = {
+    port,
+    cmd: cmdStr,
+    cwd,
+    host,
+    updatedAt: new Date().toISOString(),
+  };
+  saveRegistry(reg);
+
+  // One (re)launch path for start + restart: builds the scrubbed, isolated,
+  // port-injected env and recreates the PM2 process (see launch()).
+  launch(project, reg.ports[project], "start");
+}
+
+function cmdStop(argv) {
+  const project = argv[0];
+  if (!project) die("usage: pm stop <project>");
+  const r = runPm2(["stop", project]);
+  runPm2(["save", "--force"], { capture: true });
+  if (r.status !== 0) die(`pm2 failed to stop '${project}'`, r.status || 1);
+  process.stdout.write(`Stopped ${project} (port stays reserved; pm start ${project} to resume)\n`);
+}
+
+function cmdRestart(argv) {
+  const project = argv[0];
+  if (!project) die("usage: pm restart <project>");
+  const reg = loadRegistry();
+  const entry = reg.ports[project];
+  if (!entry || !entry.cmd) {
+    die(`nothing to restart: '${project}' is not registered (start it first: pm start ${project} -- <cmd...>)`);
+  }
+  // Restart THROUGH the shared launch path so the server always comes back with
+  // the same scrubbed, port-injected env as a fresh start. A bare
+  // `pm2 restart --update-env` re-inherits the box's PRODUCTION env (no PORT,
+  // PADDOCK_DATA_DIR=/var/lib/paddock, NODE_ENV=production).
+  launch(project, entry, "restart");
+}
+
+function cmdRm(argv) {
+  const project = argv[0];
+  if (!project) die("usage: pm rm <project>");
+  runPm2(["delete", project], { capture: true });
+  const reg = loadRegistry();
+  const had = Object.prototype.hasOwnProperty.call(reg.ports, project);
+  delete reg.ports[project];
+  saveRegistry(reg);
+  runPm2(["save", "--force"], { capture: true });
+  process.stdout.write(`Removed ${project}${had ? "" : " (was not registered)"}\n`);
+}
+
+function cmdLogs(argv) {
+  const rest = argv.slice();
+  const lines = takeFlag(rest, "--lines") || "100";
+  const follow = hasFlag(rest, "--follow") || hasFlag(rest, "-f");
+  const project = rest[0];
+  if (!project) die("usage: pm logs <project> [--lines N] [--follow]");
+  const args = ["logs", project, "--lines", String(lines)];
+  if (!follow) args.push("--nostream");
+  runPm2(args);
+}
+
+function usage() {
+  process.stdout.write(
+    "pm — Paddock dev/preview servers (PM2 + shared ports registry)\n\n" +
+      "  pm start <project> [--cwd DIR] [--host HOST] [-- <cmd...>]\n" +
+      "  pm stop <project>\n" +
+      "  pm restart <project>\n" +
+      "  pm rm <project>\n" +
+      "  pm status [project] [--json]\n" +
+      "  pm logs <project> [--lines N] [--follow]\n" +
+      "  pm ports\n"
+  );
+}
+
+function main() {
+  const [, , sub, ...rest] = process.argv;
+  switch (sub) {
+    case "start": return cmdStart(rest);
+    case "stop": return cmdStop(rest);
+    case "restart": return cmdRestart(rest);
+    case "rm": case "remove": case "delete": return cmdRm(rest);
+    case "status": case "ls": case "list": {
+      const args = rest.slice();
+      const asJson = hasFlag(args, "--json");
+      return printStatus(args[0], asJson);
+    }
+    case "logs": return cmdLogs(rest);
+    case "ports": {
+      process.stdout.write(JSON.stringify(loadRegistry(), null, 2) + "\n");
+      return;
+    }
+    case "help": case "--help": case "-h": case undefined:
+      return usage();
+    default:
+      die(`unknown command: ${sub} (try 'pm help')`);
+  }
+}
+
+main();

@@ -1,0 +1,4 @@
+{
+  "//": "Not an npm workspace — this file only scopes the module system for scripts/. The extensionless `pm` wrapper is a CommonJS script (it uses require), so it must not inherit the repo root's \"type\": \"module\". The other scripts here are explicit .mjs and are unaffected.",
+  "type": "commonjs"
+}
