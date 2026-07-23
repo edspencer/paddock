@@ -1,5 +1,15 @@
 # @paddock/server
 
+## 0.42.4
+
+### Patch Changes
+
+- [#420](https://github.com/edspencer/paddock/pull/420) [`7d62c81`](https://github.com/edspencer/paddock/commit/7d62c8132d52275f1faece87ee54cc4a21eb4095) Thanks [@edspencer](https://github.com/edspencer)! - Bump `@herdctl/core` to 5.26.0, picking up herdctl #406/#407: the SessionReaper now defers its turn-end reap when a session is resumed with a prompt, so a replayed backlog turn on resume can no longer reap the resumed human turn out from under it (the `[Request interrupted by user]` self-interrupt).
+
+- [#419](https://github.com/edspencer/paddock/pull/419) [`1b9802d`](https://github.com/edspencer/paddock/commit/1b9802d8200d1130e372787749f11d753e916a91) Thanks [@edspencer](https://github.com/edspencer)! - Refactor: split the oversized `herdctl.ts` (~1660 lines) into focused sibling modules, leaving `HerdctlService` as the cohesive stateful seam. Extracts the pure name/visibility helpers + constants into `herdctl-agent-names.ts`, the four agent-config builders + `ensureConfigFile` into `herdctl-agent-config.ts` (pure functions taking `cfg`), and the on-disk `job-*.yaml` reads + adoption/attribution writes into `herdctl-jobs.ts`. `herdctl.ts` drops to ~975 lines; the public import surface is unchanged (all moved names are re-exported from `./herdctl.js`) and behavior is identical. Part of #403.
+
+- [#417](https://github.com/edspencer/paddock/pull/417) [`369d1da`](https://github.com/edspencer/paddock/commit/369d1da8e8e890d52b45c9046c68a643c5f65a1c) Thanks [@edspencer](https://github.com/edspencer)! - Refactor: split the oversized `self-mcp.ts` (~1160 lines) into focused per-tier modules (`self-mcp-{types,util,descriptions,read,write,triggers}.ts`), leaving `self-mcp.ts` as a thin assembly root that re-exports the public surface. Pure mechanical extraction — no behavior change; the `paddock_manage` MCP tool set and every import path are unchanged. Part of #403.
+
 ## 0.42.3
 
 ### Patch Changes
