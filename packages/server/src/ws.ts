@@ -327,6 +327,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
     emitAfterTurn,
     composePreloadedPrompt,
     fireTrigger,
+    makeBackgroundTurnSink,
   } = engine;
 
   const handle = async function handle(socket: WebSocket): Promise<void> {
@@ -753,12 +754,26 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
           driveMode === "session"
             ? deps.herdctl.chatSession.bind(deps.herdctl)
             : deps.herdctl.chat.bind(deps.herdctl);
+        // Gap B sink (session mode, non-scratch): one persistent sink groups every
+        // background re-invocation onto a single hub turn (skipping sidechain
+        // sub-agent steps). Built once so its turn/translator state spans the stream.
+        const bgSink =
+          driveMode === "session" && slug !== SCRATCH_SLUG
+            ? makeBackgroundTurnSink(slug)
+            : null;
         const result = await drive(agentName, {
           prompt,
           // omit -> agent-level fallback; explicit null -> new chat; id -> resume.
           resume: sessionId ?? null,
           triggerType: "web",
           injectedMcpServers,
+          // Gap B: deliver autonomous background-completion turns live (session
+          // mode only; batch `chat` ignores this). The human turn holds the
+          // session open when it launches background work; the persistent sink
+          // renders each later re-invocation onto ONE hub turn (skipping sidechain
+          // sub-agent steps). Scratch is skipped (no keeper worth streaming).
+          onBackgroundMessage: bgSink?.onMessage,
+          onBackgroundDone: bgSink?.onDone,
           onJobCreated: (id) => {
             jobId = id;
             turn.setJobId(id);
