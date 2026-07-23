@@ -30,7 +30,7 @@ import {
 } from "./wake-injection.js";
 import { resolveMaxSpawnDepth } from "./spawn-capability.js";
 import { RecoveryEngine } from "./recovery.js";
-import { extractSubagentLaunches, SUBAGENT_TOOL_NAMES, type SubagentLaunch } from "./subagents.js";
+import { extractSubagentLaunches, subagentLaunchFields, type SubagentLaunch } from "./subagents.js";
 import {
   noticeFromMessage,
   errorNotice,
@@ -84,27 +84,6 @@ export function isSidechainMessage(m: SDKMessage): boolean {
     message?: { parent_tool_use_id?: string | null };
   };
   return Boolean(anym.parent_tool_use_id ?? anym.message?.parent_tool_use_id);
-}
-
-/**
- * Live sub-agent enrichment for a tool frame (issue #429). When the tool is a
- * `Task`/`Agent` launch this turn already recovered (from its `tool_use` input,
- * via {@link extractSubagentLaunches}), return the real sub-agent type + title
- * plus `hasSubagent: true`, so the client renders the enriched, expandable card
- * the moment the launch streams — instead of the generic "Agent · <ms>" launch-ack
- * that only filled in on refresh. A safe spread for any non-sub-agent tool (returns
- * an empty object). `hasSubagent` is set optimistically: a `Task`/`Agent` launch is
- * expected to write a sub-agent transcript, and the client's expand path degrades
- * gracefully (a "waiting…" placeholder) until the sidecar appears on disk.
- */
-function subagentLaunchFields(
-  launches: Map<string, SubagentLaunch>,
-  toolName: string,
-  toolUseId: string | undefined,
-): { subagentType?: string; description?: string; hasSubagent?: boolean } {
-  if (!toolUseId || !SUBAGENT_TOOL_NAMES.has(toolName)) return {};
-  const l = launches.get(toolUseId);
-  return { subagentType: l?.subagentType, description: l?.description, hasSubagent: true };
 }
 
 /** The turn-execution surface ws.ts's socket layer consumes. */

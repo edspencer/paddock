@@ -425,6 +425,27 @@ async function readTaskUsesFromFileUncached(file: string): Promise<TaskToolUse[]
 }
 
 /**
+ * Live sub-agent enrichment for a tool frame (issue #429). When the tool is a
+ * `Task`/`Agent` launch this turn already recovered (via {@link extractSubagentLaunches}),
+ * return the real sub-agent type + title plus `hasSubagent: true`, so the client
+ * renders the enriched, expandable card the moment the launch streams — instead of
+ * the generic "Agent · <ms>" launch-ack that only filled in on refresh. A safe
+ * spread for any non-sub-agent tool (returns an empty object). `hasSubagent` is set
+ * optimistically: a `Task`/`Agent` launch is expected to write a sub-agent
+ * transcript, and the client's expand path degrades gracefully (a "waiting…"
+ * placeholder) until the sidecar appears on disk.
+ */
+export function subagentLaunchFields(
+  launches: Map<string, SubagentLaunch>,
+  toolName: string,
+  toolUseId: string | undefined,
+): { subagentType?: string; description?: string; hasSubagent?: boolean } {
+  if (!toolUseId || !SUBAGENT_TOOL_NAMES.has(toolName)) return {};
+  const l = launches.get(toolUseId);
+  return { subagentType: l?.subagentType, description: l?.description, hasSubagent: true };
+}
+
+/**
  * Read the `subagents/*.meta.json` sidecars for a session, keyed by `toolUseId`.
  * Returns an empty map when the session has no sub-agents (the common case) or
  * the directory is missing/unreadable.
