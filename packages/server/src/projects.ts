@@ -76,6 +76,7 @@ import {
   type CreateProjectInput,
   type UpdateProjectInput,
 } from "./project-types.js";
+import * as projectFiles from "./project-files.js";
 // Barrel: re-export all type declarations + normalizeLinks + the config-type
 // re-exports (PaddockSchedule/PaddockHook/PaddockTrigger/RecoveryOverride/
 // AttachmentsOverride) that project-types carries forward.
@@ -607,115 +608,40 @@ export class ProjectStore {
     await fs.writeFile(file, `${title}\n\n${withoutTitle.trim()}\n`, "utf8");
   }
 
-  /**
-   * List one level of a project directory (issue #259). `subpath` is a
-   * project-relative directory ("" = the project root); the returned entries
-   * carry a `kind` so the UI can distinguish (and descend into) subdirectories.
-   * Dotfiles are hidden as before; entries sort directories-first, then by name.
-   *
-   * Traversal is guarded by the shared `resolveInProject`, so `subpath` can't
-   * escape the project dir. Throws `ProjectError("not_found")` when the directory
-   * doesn't exist and `ProjectError("not_directory")` when `subpath` is a file —
-   * the latter lets the caller fall back to rendering that file.
-   */
-  async listFiles(slug: string, subpath = ""): Promise<FileEntry[]> {
-    const target = this.resolveInProject(slug, subpath);
-    let entries: import("node:fs").Dirent[];
-    try {
-      entries = await fs.readdir(target, { withFileTypes: true });
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code === "ENOENT") throw new ProjectError(`Directory not found: ${subpath}`, "not_found");
-      if (code === "ENOTDIR") throw new ProjectError(`Not a directory: ${subpath}`, "not_directory");
-      throw err;
-    }
-    return entries
-      .filter((e) => !e.name.startsWith("."))
-      .map((e): FileEntry => ({ name: e.name, kind: e.isDirectory() ? "dir" : "file" }))
-      .sort((a, b) =>
-        a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === "dir" ? -1 : 1,
-      );
-  }
+  // --- freeform file serving (delegated to project-files.ts, issue #403) ---
+  // Thin wrappers over the pure `(root, slug, …)` helpers so `ProjectStore`'s
+  // public file-read API (and its ProjectError codes) is unchanged.
 
   /**
-   * Resolve a freeform file name to an absolute path inside the project dir,
-   * rejecting path traversal. The single guard shared by every file read (and by
-   * the directory listing, issue #259). The project root itself (`name === ""`)
-   * resolves to the project dir and is allowed, so a root listing passes through.
+   * List one level of a project directory (issue #259). See
+   * {@link import("./project-files.js").listFiles}.
    */
-  private resolveInProject(slug: string, name: string): string {
-    const dir = this.dirFor(slug);
-    const resolved = path.resolve(dir, name);
-    if (resolved !== dir && !resolved.startsWith(dir + path.sep)) {
-      throw new ProjectError("Invalid file path", "invalid");
-    }
-    return resolved;
+  async listFiles(slug: string, subpath = ""): Promise<FileEntry[]> {
+    return projectFiles.listFiles(this.root, slug, subpath);
   }
 
   /** Read a freeform file's contents as UTF-8 text (path-traversal guarded). */
   async readFile(slug: string, name: string): Promise<string> {
-    return fs.readFile(this.resolveInProject(slug, name), "utf8");
+    return projectFiles.readProjectFile(this.root, slug, name);
   }
 
   /**
    * Read a file's raw bytes + its MIME type (issue #61), for the binary/image
-   * endpoint. Path-traversal guarded; throws ProjectError("not_found") if the
-   * file is missing so the route can 404 cleanly. NOT decoded as text, so binary
-   * (image) bytes survive intact.
+   * endpoint. See {@link import("./project-files.js").readFileBytes}.
    */
   async readFileBytes(slug: string, name: string): Promise<{ bytes: Buffer; mime: string }> {
-    const resolved = this.resolveInProject(slug, name);
-    try {
-      const bytes = await fs.readFile(resolved);
-      return { bytes, mime: contentTypeFor(name) };
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        throw new ProjectError(`File not found: ${name}`, "not_found");
-      }
-      throw err;
-    }
+    return projectFiles.readFileBytes(this.root, slug, name);
   }
 
   /**
-   * Read a file plus a render-kind hint derived from its extension, for the
-   * UI's markdown/Mermaid + sandboxed-iframe renderers (issue #3) and the image
-   * viewer (issue #61).
-   *
-   * For an IMAGE the raw bytes are NOT returned here (decoding binary as UTF-8
-   * would mangle it): `content` is empty and the client fetches the bytes from
-   * the raw endpoint. We still stat the file so a missing image 404s. Path-
-   * traversal guarded; throws ProjectError("not_found") when missing.
+   * Read a file plus a render-kind hint derived from its extension (issues #3 /
+   * #61). See {@link import("./project-files.js").readFileWithKind}.
    */
   async readFileWithKind(
     slug: string,
     name: string,
   ): Promise<{ name: string; kind: FileKind; content: string }> {
-    const kind = fileKind(name);
-    if (kind === "image") {
-      // Existence check only — the bytes go over the raw endpoint.
-      try {
-        await fs.stat(this.resolveInProject(slug, name));
-      } catch (err) {
-        if (err instanceof ProjectError) throw err;
-        if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-          throw new ProjectError(`File not found: ${name}`, "not_found");
-        }
-        throw err;
-      }
-      return { name, kind, content: "" };
-    }
-
-    let content: string;
-    try {
-      content = await this.readFile(slug, name);
-    } catch (err) {
-      if (err instanceof ProjectError) throw err; // traversal -> "invalid"
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        throw new ProjectError(`File not found: ${name}`, "not_found");
-      }
-      throw err;
-    }
-    return { name, kind, content };
+    return projectFiles.readFileWithKind(this.root, slug, name);
   }
 
   // --- internals ---------------------------------------------------------
