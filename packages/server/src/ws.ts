@@ -54,20 +54,17 @@
  * we accept both. Server events always carry both `projectSlug` and the legacy
  * `target` alias so existing/early frontends keep working.
  */
-import { promises as fs } from "node:fs";
 import type { WebSocket } from "@fastify/websocket";
 import type {
   SDKMessage,
   RuntimeSession,
   SessionWakeEntry,
   InjectedMcpServerDef,
-  TriggerInfo,
 } from "@herdctl/core";
 import { createSDKMessageHandler, type SDKMessage as ChatSDKMessage } from "@herdctl/chat";
 import {
   keeperAgentName,
   keeperSlugFromAgent,
-  triggerAgentName,
   SCRATCH_AGENT,
   SCRATCH_SLUG,
 } from "./herdctl.js";
@@ -80,7 +77,6 @@ import {
   type DriveMode,
 } from "./models.js";
 import { SessionHub, type TurnHandle, type ActiveInfo } from "./session-hub.js";
-import { wrapPreload, composePreloadContext } from "./preload.js";
 import { resolveAttachmentsConfig } from "./attachments-config.js";
 import { wrapAttachments, inferAttachmentKind, type PromptAttachment } from "./attachments-hint.js";
 import { sendFileServerDef, SEND_FILE_SERVER_KEY } from "./send-file-mcp.js";
@@ -103,14 +99,6 @@ import {
   type TurnNotice,
 } from "./turn-notice.js";
 import { resolveHooksMcpEnabled } from "./hook-config.js";
-import type { TriggerSessionStore } from "./trigger-session.js";
-import {
-  triggerPromptFileAbsPath,
-  triggerRunsOnOwnAgent,
-  isCuratorTrigger,
-  type TriggerDto,
-  type TriggerEvent,
-} from "./trigger-config.js";
 
 // --- protocol + usage math (extracted #403) ---------------------------------
 // The wire protocol (message interfaces + unions + `isClientMessage`) and the
@@ -123,6 +111,7 @@ import type { ChatHandlerDeps, StartAgentTurnOpts, ChatHandlerContext } from "./
 // forkKickoffPrompt so external importers (and its test) resolve it via ws.js.
 export { forkKickoffPrompt } from "./ws-self-mcp.js";
 import { buildSelfMcpServerDef } from "./ws-self-mcp.js";
+import { makeTriggerCluster } from "./ws-triggers.js";
 import {
   extractLocalCommandOutput,
   initTurnUsage,
@@ -168,15 +157,6 @@ export const RECOVERY_NUDGE =
 // See issue #46.
 const SERVER_PING_INTERVAL_MS = 30_000;
 
-/**
- * The context a fired lifecycle event carries into an EVENT trigger's prompt (Epic T /
- * T1). v1 (`onArchive`) supplies
- * the archived chat's session id so the trigger knows what to act on.
- */
-interface TriggerEventContext {
-  /** The session id of the chat whose lifecycle event fired the trigger. */
-  sessionId: string;
-}
 
 export function makeChatHandler(deps: ChatHandlerDeps) {
   // ONE hub shared across every socket this handler serves: it tracks each
@@ -326,253 +306,14 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
     }
     // Post-wake curation sweep, same as a human turn (never for scratch). T5: routed
     // through the `afterTurn` event so the folded-in curator dispatches once.
-    emitAfterTurn(slug, resolvedSession ?? null);
+    triggers.emitAfterTurn(slug, resolvedSession ?? null);
   });
 
-  /** Resolve a project's effective keeper drive mode (override else instance default). */
-  function resolveDriveMode(project: Awaited<ReturnType<typeof deps.projects.get>>): DriveMode {
-    return project.driveMode && isKnownDriveMode(project.driveMode)
-      ? project.driveMode
-      : deps.cfg.keeperDriveMode;
-  }
-
-  // Drive scheduler-fired chats onto the hub (issue #265 / DD-1, DD-2). herdctl's
-  // cron engine fires a project keeper's declared schedule and routes it HERE
-  // (setScheduleTriggerHandler) instead of running it headless.
-  deps.herdctl.onScheduleTrigger(async (info: TriggerInfo) => {
-    const slug = keeperSlugFromAgent(info.agent.name);
-    // Only keeper agents carry Paddock schedules; a non-keeper trigger (there are
-    // none today) has nowhere sensible to route, so ignore it rather than guess.
-    if (!slug) return;
-    const project = await deps.projects.get(slug).catch(() => null);
-    if (!project) return;
-    // Every armed keeper schedule belongs to a SCHEDULE-type trigger (forwarded into
-    // the keeper `schedules` block under its trigger name). Resolve + fire it via the
-    // single trigger fire path.
-    const trig = project.triggers?.[info.scheduleName];
-    if (trig && trig.trigger.type === "schedule" && trig.enabled === true) {
-      await fireTriggerForProject(project, {
-        name: info.scheduleName,
-        agentName: triggerAgentName(slug, info.scheduleName),
-        ...trig,
-      });
-    }
-    // A fired keeper schedule with no matching enabled SCHEDULE trigger is ignored:
-    // triggers are the only thing forwarded into the keeper's `schedules` block.
-  });
-
-  // --- unified triggers (Epic T / T1) ------------------------------------
-
-  /**
-   * Resolve the prompt a fired trigger should run. A trigger's `promptFile`
-   * (Paddock-only, `.paddock/triggers/*.md`, git-tracked + keeper-editable) is read
-   * FRESH here at fire time — so an edit takes effect on the very next fire with no
-   * agent re-register — and falls back to the inline `run.prompt` when there's no file
-   * or it can't be read. For an EVENT trigger, a short machine preamble naming the
-   * event + archived chat is prepended (so the trigger knows WHAT to act on); a
-   * schedule trigger gets no preamble. Mirrors {@link resolveSchedulePrompt} /
-   * {@link resolveHookPrompt}.
-   */
-  async function resolveTriggerPrompt(
-    project: Awaited<ReturnType<typeof deps.projects.get>>,
-    trigger: TriggerDto,
-    ctx?: TriggerEventContext,
-  ): Promise<string> {
-    let body = typeof trigger.run.prompt === "string" ? trigger.run.prompt : "";
-    if (trigger.run.promptFile) {
-      const abs = triggerPromptFileAbsPath(project.workingDir, trigger.run.promptFile);
-      if (abs) {
-        const content = await fs.readFile(abs, "utf8").catch(() => null);
-        if (content !== null) body = content;
-      }
-    }
-    if (trigger.trigger.type === "event" && ctx) {
-      const preamble =
-        `A \`${trigger.trigger.on}\` event trigger fired for project \`${project.slug}\`: ` +
-        `chat \`${ctx.sessionId}\` was just archived.\n\n`;
-      return preamble + body;
-    }
-    return body;
-  }
-
-  /**
-   * Run one fire of a trigger as a first-class chat on the hub — the ONE fire path for
-   * every trigger type (Epic T), replacing the separate schedule + hook fire paths with
-   * a single `startAgentTurn` call. Whether the fired turn runs on the trigger's OWN
-   * scoped `trigger-<slug>-<name>` agent (tool config = `run.tools`) or on the keeper is
-   * decided by {@link triggerRunsOnOwnAgent}: an EVENT trigger always runs scoped; a
-   * SCHEDULE trigger runs scoped ONLY when it declares a non-empty `run.tools` allow-list
-   * (T2 — #307), otherwise it runs as the keeper with the project-agent default toolset
-   * (pre-T2 behaviour, unchanged). `run.maxSpawnDepth` gates this fire's self-MCP spawn
-   * capability regardless of which agent runs it.
-   *
-   * `run.session` drives new-vs-accrete: `"new"` → a FRESH chat every fire
-   * (`resume: null`); `"resume"` → resume the trigger's ONE owned session (recorded on
-   * first fire in the {@link TriggerSessionStore}, rebound after a restart) so a
-   * "manager" accretes a single transcript. A stale owned id (its transcript deleted)
-   * is forgotten so the next fire re-creates one. FIRE-AND-FORGET: a rejection (the
-   * turn never produced a session id — its own failure frame already emitted) is
-   * swallowed so a transient failure never wedges the trigger. Resolves the
-   * created/resumed session id, or `null`.
-   */
-  async function fireTriggerForProject(
-    project: Awaited<ReturnType<typeof deps.projects.get>>,
-    trigger: TriggerDto,
-    ctx?: TriggerEventContext,
-  ): Promise<string | null> {
-    const slug = project.slug;
-    const isSchedule = trigger.trigger.type === "schedule";
-    // T2: a scoped trigger (every event; a schedule with a `run.tools` allow-list) runs
-    // on its OWN `trigger-<slug>-<name>` agent so herdctl enforces its capability; an
-    // unscoped schedule runs as the keeper (project-agent default toolset, unchanged).
-    const onOwnAgent = triggerRunsOnOwnAgent(trigger);
-    const agentName = onOwnAgent ? triggerAgentName(slug, trigger.name) : keeperAgentName(slug);
-    const prompt = await resolveTriggerPrompt(project, trigger, ctx);
-
-    // run.session: "resume" accretes into an owned session; "new" starts fresh.
-    let resume: string | null = null;
-    if (trigger.run.session === "resume" && deps.triggerSessions) {
-      const owned = await deps.triggerSessions.get(slug, trigger.name).catch(() => undefined);
-      if (owned && (await deps.herdctl.sessionExists(project, owned).catch(() => false))) {
-        resume = owned;
-      } else if (owned) {
-        await deps.triggerSessions.clear(slug, trigger.name).catch(() => undefined);
-      }
-    }
-
-    try {
-      const sessionId = await startAgentTurn({
-        projectSlug: slug,
-        agentName,
-        workingDir: project.workingDir,
-        resume,
-        prompt,
-        driveMode: resolveDriveMode(project),
-        fallbackModel: trigger.run.model ?? project.model,
-        // Provenance (A1/#261): a schedule fire is a root `scheduled` trigger; an event
-        // trigger reuses the `hook` origin (its E1 badge surface) — both depth 0.
-        origin: isSchedule ? "scheduled" : "hook",
-        depth: 0,
-        // A per-trigger `run.maxSpawnDepth` (design §2.3, T2) gates this fire's self-MCP
-        // spawn capability; it wins over the project override, which wins over the
-        // instance default (reuses B1's resolver).
-        maxSpawnDepth: resolveMaxSpawnDepth(
-          trigger.run.maxSpawnDepth ?? project.maxSpawnDepth,
-          deps.cfg.maxSpawnDepth,
-        ),
-        // Attribute the injected kickoff turn to the trigger that fired it (#290).
-        sender: {
-          kind: isSchedule ? "schedule" : "hook",
-          name: trigger.name,
-          project: slug,
-        },
-      });
-      // First fire of an accreting trigger: remember the chat it created so the next
-      // fire resumes THIS transcript (a resume already had an id).
-      if (trigger.run.session === "resume" && !resume && deps.triggerSessions) {
-        await deps.triggerSessions.set(slug, trigger.name, sessionId).catch(() => undefined);
-      }
-      return sessionId;
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * Resolve a project's ENABLED event triggers for `event` and fire each (after-commit,
-   * non-blocking — after-commit, non-blocking). Concurrent +
-   * independent; one trigger's failure never affects another. No-op when the trigger
-   * system isn't wired ({@link makeChatHandler} dep `triggers` absent) or the project
-   * has no matching enabled event trigger.
-   */
-  async function dispatchEventTriggers(
-    slug: string,
-    event: TriggerEvent,
-    ctx: TriggerEventContext,
-  ): Promise<void> {
-    if (!deps.triggers) return;
-    const project = await deps.projects.get(slug).catch(() => null);
-    if (!project) return;
-    const matching = await deps.triggers.enabledForEvent(slug, event).catch(() => []);
-    await Promise.all(matching.map((trigger) => fireTriggerForProject(project, trigger, ctx)));
-  }
-
-  // Dispatch enabled EVENT triggers on the SAME lifecycle events hooks fire on — the
-  // event-bus supports multiple listeners, so this rides alongside the hook dispatcher
-  // (they read disjoint config blocks). onArchive is the wired event; afterTurn is
-  // reserved for the sweeper fold-in (T5) and not emitted yet.
-  deps.events?.on("onArchive", (payload) => {
-    void dispatchEventTriggers(payload.slug, "onArchive", { sessionId: payload.sessionId });
-  });
-
-  /**
-   * Signal a completed turn's post-turn CURATION (Epic T / T5) — the sweeper, folded in
-   * as the default `curate-overview` (event/afterTurn) trigger. Emits the `afterTurn`
-   * lifecycle event so the curator dispatches EXACTLY ONCE per turn (its enabled gate +
-   * per-project prompt extension resolved inside SweepService). Scratch never curates.
-   * Falls back to a direct `sweep.enqueue` when the event bus isn't wired (older
-   * callers / tests), so behaviour is identical with or without the bus. Called from
-   * every post-turn commit site (a human chat turn, a session-mode wake, and every
-   * server-initiated `startAgentTurn`) — the ONE place the sweeper is now triggered.
-   */
-  function emitAfterTurn(slug: string, sessionId: string | null): void {
-    if (slug === SCRATCH_SLUG) return;
-    if (deps.events) deps.events.emit("afterTurn", { slug, sessionId });
-    else deps.sweep?.enqueue(slug);
-  }
-
-  // The folded-in sweeper (T5): `afterTurn` drives the default post-turn curator. Unlike
-  // `onArchive`, afterTurn is NOT fanned out to generic `trigger-<slug>-<name>` agents —
-  // the curator is tool-less and executed by SweepService (returns marked text, Paddock
-  // writes OVERVIEW.md/CHANGELOG.md). So this is the SOLE afterTurn consumer, which is
-  // what guarantees the sweeper runs exactly once per turn (no double-curation).
-  deps.events?.on("afterTurn", (payload) => {
-    if (payload.slug === SCRATCH_SLUG) return;
-    deps.sweep?.enqueue(payload.slug);
-  });
-
-  /**
-   * Fire a TRIGGER now (Epic T / T1), reused by the "Run now" REST route + `run_trigger`
-   * self-MCP verb (#327) and shared with the cron path below. Resolves the live project +
-   * its trigger record and fires via {@link fireTriggerForProject} — through the SAME hub
-   * path a cron/event fire uses, so a manual run is indistinguishable from an automatic
-   * one. Fires ANY trigger type on demand (a schedule, an event trigger, or a reserved
-   * webhook trigger you want to smoke-test before its ingress lands) regardless of its
-   * `enabled` flag — a manual run is a deliberate act (mirrors the schedule DD-1 rule).
-   * Returns the started chat's session id, or `null` if the project/trigger is gone or
-   * the turn never produced a session.
-   */
-  async function fireTrigger(slug: string, triggerName: string): Promise<string | null> {
-    const project = await deps.projects.get(slug).catch(() => null);
-    if (!project) return null;
-    const rec = project.triggers?.[triggerName];
-    if (!rec) return null;
-    // The post-turn CURATOR (any `event`/`afterTurn` trigger — the folded-in sweeper, T5)
-    // is NOT fireable on the generic path: it registers no scoped `trigger-<slug>-<name>`
-    // agent and runs via SweepService on `afterTurn`. Refuse rather than firing a turn on
-    // a non-existent agent (defence-in-depth — the REST route + run_trigger MCP reject it
-    // up front with a clear message; this guards any other caller).
-    if (isCuratorTrigger(rec)) return null;
-    return fireTriggerForProject(project, { name: triggerName, agentName: triggerAgentName(slug, triggerName), ...rec });
-  }
-
-  /**
-   * Compose the OVERVIEW.md + CHANGELOG.md preload block onto `baseMessage` for
-   * a NEW chat (issues #1/#188), shared (C2 / #264) by the human New-Chat path
-   * and the self-MCP `create_chat` spawn path so both inject the SAME context.
-   * Injects only when the project has an OVERVIEW.md (the signal that a sweep
-   * has curated real state); when it fires it prepends BOTH the overview
-   * (current state) AND the CHANGELOG.md (cross-session history), matching the
-   * UI checkbox. Returns `baseMessage` unchanged when there's no overview yet.
-   */
-  async function composePreloadedPrompt(projectSlug: string, baseMessage: string): Promise<string> {
-    const overview = await deps.projects.readOverview(projectSlug).catch(() => "");
-    if (overview.trim().length === 0) return baseMessage;
-    const changelog = await deps.projects.readChangelog(projectSlug).catch(() => "");
-    // Single-sourced wrapper (see preload.ts) so the chat-list can strip it back
-    // off for display (issue #62).
-    return wrapPreload(composePreloadContext(overview, changelog), baseMessage);
-  }
+  // Trigger / schedule / event firing (ws-triggers.ts, #403). Built here so it can
+  // close over the shared startAgentTurn engine (a hoisted declaration below) and
+  // wire its herdctl schedule handler + onArchive/afterTurn listeners. ws.ts consumes
+  // emitAfterTurn / composePreloadedPrompt / fireTrigger from it.
+  const triggers = makeTriggerCluster(deps, startAgentTurn);
 
   // The self-management MCP context (deps + shared closures), handed to the
   // extracted buildSelfMcpServerDef (ws-self-mcp.ts, #403) for both the live
@@ -582,8 +323,8 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
     deps,
     hub,
     startAgentTurn,
-    composePreloadedPrompt,
-    fireTrigger,
+    composePreloadedPrompt: triggers.composePreloadedPrompt,
+    fireTrigger: triggers.fireTrigger,
   };
 
   // ── Wake-time injected-MCP re-establishment (edspencer/herdctl#390) ──────────
@@ -914,7 +655,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
           /* non-fatal */
         }
         // T5: post-turn curation via the `afterTurn` event (folded-in sweeper).
-        if (result.success) emitAfterTurn(projectSlug, finalSession);
+        if (result.success) triggers.emitAfterTurn(projectSlug, finalSession);
         // Layer 3 (issue #301): arm a post-turn recovery watch for a session-mode
         // keeper turn that stayed alive — including a recovery re-drive itself, so a
         // re-drive that hangs again is caught (bounded by the per-session retry cap).
@@ -1443,7 +1184,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
           // curated state, else leaves the prompt untouched. Wraps the (possibly
           // attachment-wrapped) `prompt`, not the bare `message`.
           if (isNewChat && preloadContext) {
-            prompt = await composePreloadedPrompt(slug, prompt);
+            prompt = await triggers.composePreloadedPrompt(slug, prompt);
           }
         }
 
@@ -1554,7 +1295,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
         // separate agent triggered off the user-chat path). Skipped for scratch.
         // T5: routed through the `afterTurn` event so the folded-in `curate-overview`
         // trigger is the single dispatch (no double-curation).
-        if (result.success) emitAfterTurn(slug, result.sessionId ?? resolvedSession ?? null);
+        if (result.success) triggers.emitAfterTurn(slug, result.sessionId ?? resolvedSession ?? null);
 
         // Force a session-list refresh so a brand-new chat surfaces immediately
         // (rather than waiting out the discovery cache). Non-fatal.
@@ -1796,5 +1537,5 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
   // The socket handler PLUS the manual trigger-fire entrypoint: a "trigger now"
   // action fires a schedule-type trigger on demand through the exact same hub path a
   // cron fire uses, so the resulting chat is indistinguishable from a scheduled one.
-  return { handle, fireTrigger };
+  return { handle, fireTrigger: triggers.fireTrigger };
 }
