@@ -62,7 +62,7 @@ import {
   type ScheduleInfo,
   type JobMetadata,
 } from "@herdctl/core";
-import { consumeResumedTurn } from "./resume-drain.js";
+import { consumeResumedTurn, consumeBackgroundTurns } from "./resume-drain.js";
 import { createSDKMessageHandler, type SDKMessage as ChatSDKMessage } from "@herdctl/chat";
 import { promises as fs } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -99,6 +99,23 @@ export interface ChatTurnOptions {
    * `mcp__<key>__*` tools, so no change to the static `allowed_tools` is needed.
    */
   injectedMcpServers?: Record<string, InjectedMcpServerDef>;
+  /**
+   * Gap B (session mode only): a sink for messages that arrive on the session's
+   * stream AFTER the primary turn's terminal `result` — i.e. autonomous
+   * background-completion re-invocation turns the reaper holds the session open
+   * for. When provided, {@link chatSession} keeps consuming the same stream and
+   * forwards each subsequent message here so the caller can render it live (see
+   * `consumeBackgroundTurns` in ./resume-drain.ts). Omit for no live delivery of
+   * background turns (they still persist to the transcript regardless).
+   */
+  onBackgroundMessage?: (msg: SDKMessage) => void | Promise<void>;
+  /**
+   * Gap B (session mode only): called once the background stream ENDS (the reaper
+   * reaped the session). Lets the caller finalize the single hub turn it rendered
+   * background re-invocations onto (emit chat:complete + end the turn) so the
+   * streaming indicator clears. Paired with {@link onBackgroundMessage}.
+   */
+  onBackgroundDone?: () => void | Promise<void>;
 }
 
 /**
@@ -511,39 +528,47 @@ export class HerdctlService {
     let success = false;
     let error: Error | undefined;
     try {
-      if (isResume) {
-        // Resume self-interrupt fix: a stale async-input backlog (leftover
-        // `killed`/orphaned task-notifications) replays as its own turn ahead of
-        // ours; breaking on that backlog turn's `result` used to close the CLI and
-        // kill our (possibly slow) turn. Consume with the queue-drain break rule —
-        // break on a `result` only once the async queue is empty — so ours is the
-        // last turn we break on. No backlog → breaks after the first result (fast).
-        // See ./resume-drain.ts. The reaper owns teardown after we return.
-        const consumed = await consumeResumedTurn(session, {
-          residueProbe: () => this.residueDepthFor(agentName, sessionId ?? (opts.resume as string)),
-          onMessage: opts.onMessage,
-          onSessionId: (id) => {
-            sessionId = id;
-          },
-          log: (msg) =>
-            // eslint-disable-next-line no-console
-            console.log(`[resume-drain] chatSession ${agentName} (${sessionId ?? opts.resume}): ${msg}`),
-        });
-        success = consumed.success;
-        if (consumed.sessionId) sessionId = consumed.sessionId;
-      } else {
-        // Fresh session (no resume): no backlog possible — consume to the first result.
-        for await (const m of session.messages) {
-          if (m.session_id) sessionId = m.session_id;
-          if (opts.onMessage) await opts.onMessage(m);
-          if (m.type === "result") {
-            const errored =
-              (typeof m.subtype === "string" && m.subtype.startsWith("error")) ||
-              m.success === false;
-            success = !errored;
-            break;
-          }
-        }
+      // Gap A — survival parity. BOTH fresh and resume now consume via the
+      // NON-CLOSING consumeResumedTurn, which drives the stream with a manual
+      // iterator and stops on the primary turn's terminal `result` WITHOUT calling
+      // iterator.return() — leaving teardown to the reaper ("managed" session).
+      // The fresh path used to use `for await … break`, and a `break` invokes the
+      // iterator's `.return()`, which tears down the `claude` subprocess — killing
+      // any background task the fresh FIRST turn launched, bypassing the reaper's
+      // keepAlive (decideReap keeps a session alive while it holds background work).
+      // On a fresh session the async-input queue is empty, so residueProbe returns
+      // 0 and this breaks right after the first result exactly like the old fast
+      // path — just without the close, so a fresh-turn bg task now SURVIVES. A
+      // resume additionally drains any stale async-input backlog first (the #427
+      // resume self-interrupt fix). The reaper owns teardown after we return.
+      const consumed = await consumeResumedTurn(session, {
+        residueProbe: () => this.residueDepthFor(agentName, sessionId ?? opts.resume ?? ""),
+        onMessage: opts.onMessage,
+        onSessionId: (id) => {
+          sessionId = id;
+        },
+        log: (msg) =>
+          // eslint-disable-next-line no-console
+          console.log(`[resume-drain] chatSession ${agentName} (${sessionId ?? opts.resume}): ${msg}`),
+      });
+      success = consumed.success;
+      if (consumed.sessionId) sessionId = consumed.sessionId;
+      // Gap B — keep delivering autonomous background-completion turns. The reaper
+      // may hold this (managed) session open because the turn launched continuous
+      // background work; when a task completes, its re-invocation turn arrives
+      // LATER on this SAME stream. Detach a consumer over the handed-back iterator
+      // so those turns reach the live UI (via onBackgroundMessage) instead of only
+      // landing in the transcript — and so the stream keeps advancing, feeding the
+      // reaper its `activity`/`background_tasks_changed` signals. Detached (`void`)
+      // so THIS call still returns the moment the primary turn is done; it ends
+      // itself when the reaper reaps the idle session (stream yields `done`).
+      if (opts.onBackgroundMessage) {
+        void consumeBackgroundTurns(
+          consumed.iterator,
+          consumed.pending,
+          opts.onBackgroundMessage,
+          opts.onBackgroundDone,
+        );
       }
     } catch (err) {
       error = err instanceof Error ? err : new Error(String(err));
@@ -649,36 +674,28 @@ export class HerdctlService {
     let sessionId: string | null = isResume ? (opts.resume as string) : null;
 
     try {
-      if (isResume) {
-        // Resume self-interrupt fix: send the command (it queues behind any stale
-        // async-input backlog the CLI replays first), then consume with the
-        // queue-drain break rule so a backlog turn's result can't tear the command
-        // turn down. No backlog → breaks after the first result. See ./resume-drain.ts.
-        await session.send(opts.command);
-        const consumed = await consumeResumedTurn(session, {
-          residueProbe: () => this.residueDepthFor(agentName, sessionId ?? (opts.resume as string)),
-          onMessage: opts.onMessage,
-          onSessionId: (id) => {
-            sessionId = id;
-          },
-          log: (msg) =>
-            // eslint-disable-next-line no-console
-            console.log(`[resume-drain] runCommand ${agentName} (${sessionId ?? opts.resume}): ${msg}`),
-        });
-        if (consumed.sessionId) sessionId = consumed.sessionId;
-      } else {
-        // Fresh session: consume until the turn completes. Set up the consumer
-        // BEFORE sending so no early messages are missed.
-        const done = (async () => {
-          for await (const m of session.messages) {
-            if (m.session_id) sessionId = m.session_id;
-            if (opts.onMessage) await opts.onMessage(m);
-            if (m.type === "result") break;
-          }
-        })();
-        await session.send(opts.command);
-        await done;
-      }
+      // Gap A parity: BOTH branches consume via the non-closing consumeResumedTurn
+      // (no `for await … break`, whose break would iterator.return() and close the
+      // CLI mid-consume). Send the command first — it queues behind any stale
+      // async-input backlog the CLI replays — then consume with the queue-drain
+      // break rule so a backlog turn's `result` can't tear the command turn down.
+      // No backlog (the fresh case) → breaks right after the first result. NOTE:
+      // unlike chatSession, runCommand opens WITHOUT manageLifecycle, so the reaper
+      // does NOT own this session; we still close() it explicitly in `finally`, so
+      // a slash-command turn's teardown is unchanged — this only unifies HOW we
+      // stop consuming.
+      await session.send(opts.command);
+      const consumed = await consumeResumedTurn(session, {
+        residueProbe: () => this.residueDepthFor(agentName, sessionId ?? opts.resume ?? ""),
+        onMessage: opts.onMessage,
+        onSessionId: (id) => {
+          sessionId = id;
+        },
+        log: (msg) =>
+          // eslint-disable-next-line no-console
+          console.log(`[resume-drain] runCommand ${agentName} (${sessionId ?? opts.resume}): ${msg}`),
+      });
+      if (consumed.sessionId) sessionId = consumed.sessionId;
     } catch {
       // Stream error — fall through and let the caller surface completion.
     } finally {

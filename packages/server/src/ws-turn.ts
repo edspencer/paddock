@@ -69,6 +69,22 @@ export const RECOVERY_NUDGE =
   "re-run it in the FOREGROUND this turn (do not background it), otherwise summarise " +
   "what happened and continue.";
 
+/**
+ * Whether an SDK message is a sub-agent (sidechain) step — `parent_tool_use_id`
+ * points at the spawning `Task` tool_use. Present on the top-level SDK message
+ * and/or its nested `message` (assistant/user shapes differ). Sidechain steps are
+ * the sub-agent's own nested work; the main turn stream never renders them (they
+ * surface via the subagents endpoint on card-expand), so the background sink skips
+ * them to avoid scattering the sub-agent's work into phantom top-level rows.
+ */
+export function isSidechainMessage(m: SDKMessage): boolean {
+  const anym = m as unknown as {
+    parent_tool_use_id?: string | null;
+    message?: { parent_tool_use_id?: string | null };
+  };
+  return Boolean(anym.parent_tool_use_id ?? anym.message?.parent_tool_use_id);
+}
+
 /** The turn-execution surface ws.ts's socket layer consumes. */
 export interface TurnEngine {
   startAgentTurn: StartAgentTurn;
@@ -80,6 +96,17 @@ export interface TurnEngine {
   emitAfterTurn(slug: string, sessionId: string | null): void;
   composePreloadedPrompt(projectSlug: string, baseMessage: string): Promise<string>;
   fireTrigger(slug: string, triggerName: string): Promise<string | null>;
+  /**
+   * Gap B: build a per-turn sink that renders autonomous background-completion
+   * re-invocation turns (delivered on the same session stream after the primary
+   * turn) as their own live hub turns. The human socket path (ws.ts) passes the
+   * returned function as `onBackgroundMessage` so a fresh/resume human turn's
+   * background work is delivered live too — parity with the spawned path.
+   */
+  makeBackgroundTurnSink(projectSlug: string): {
+    onMessage: (m: SDKMessage) => Promise<void>;
+    onDone: () => void;
+  };
 }
 
 /**
@@ -168,6 +195,134 @@ const rebuildWakeInjection = async (
 // call site) so it sits beside the builder + cache it depends on.
 const wakeInjection = createWakeInjectionCache({ rebuild: rebuildWakeInjection });
 deps.herdctl.setResolveInjectedMcpServers((entry) => wakeInjection.resolve(entry));
+
+// ── Gap B: live delivery of autonomous background-completion turns ───────────
+// A session-mode turn that launches continuous background work is held open by
+// the reaper (decideReap keepAlives while backgroundTasks > 0). When a task
+// completes, the SDK hands the parent the result as a fresh autonomous
+// re-invocation turn on the SAME session stream — AFTER the primary turn. herdctl
+// `chatSession` keeps consuming that stream (consumeBackgroundTurns) and forwards
+// each subsequent message to this sink, which renders it onto the live hub — the
+// same delivery the scheduler-wake path uses (ws.ts onSessionWake) — so it appears
+// without a refresh.
+//
+// Grouping (the sub-agent fix): a background *sub-agent* (`Task` run_in_background)
+// streams for minutes and, unlike a foreground synchronous Task (whose nested steps
+// herdctl routes to a SEPARATE sidechain session, never the main turn stream), its
+// nested `isSidechain` steps arrive INLINE on this re-invocation stream. So we:
+//   1. SKIP sidechain messages (`parent_tool_use_id` set) from RENDERING — matching
+//      the foreground/history path, which never draws them top-level (they surface
+//      only via the subagents endpoint on card-expand). We still CONSUME them
+//      (consumeBackgroundTurns forwards everything to keep the stream + reaper
+//      lifecycle signals advancing) — we just don't render them.
+//   2. Use ONE persistent TurnHandle + ONE translator for the WHOLE background
+//      stream (not a fresh one per `result`), so a Task `tool_use`↔`tool_result`
+//      pair through the translator's persistent `pendingToolUses` into ONE
+//      reconciled card, and successive re-invocations render as boundary-separated
+//      bubbles under one turn group — instead of scattering into phantom untitled
+//      "Agent" cards. The turn is finalized once, when the stream ends ({@link
+//      onDone}), so the streaming indicator clears.
+const makeBackgroundTurnSink = (
+  projectSlug: string,
+): { onMessage: (m: SDKMessage) => Promise<void>; onDone: () => void } => {
+  let turn: TurnHandle | null = null;
+  let translate: ReturnType<typeof createSDKMessageHandler> | null = null;
+  let resolvedSession: string | null = null;
+  let producedReply = false;
+  let noticeEmitted = false;
+  let sawError = false;
+  const routing = (): Routing => ({
+    projectSlug,
+    target: projectSlug,
+    sessionId: resolvedSession,
+    jobId: turn?.jobId ?? null,
+  });
+  const emitNotice = (notice: TurnNotice): void => {
+    if (!turn || noticeEmitted) return;
+    if (suppressNoticeAfterReply(notice, producedReply)) return;
+    noticeEmitted = true;
+    turn.emit({ type: "chat:notice", payload: { ...routing(), notice } });
+  };
+  // Lazily open the single hub turn on the first RENDERED (main-agent) message, so
+  // a background stretch that is nothing but sub-agent sidechain steps opens no
+  // empty turn.
+  const ensureTurn = (sid: string | null): void => {
+    if (turn) return;
+    resolvedSession = sid;
+    turn = hub.startTurn(projectSlug, null, sid);
+    const t = turn;
+    translate = createSDKMessageHandler({
+      onText: (chunk) => {
+        if (chunk) t.emit({ type: "chat:response", payload: { ...routing(), chunk } });
+      },
+      onBoundary: () => {
+        t.emit({ type: "chat:message_boundary", payload: routing() });
+      },
+      onToolStart: (start) => {
+        t.emit({
+          type: "chat:tool_start",
+          payload: {
+            ...routing(),
+            toolName: start.toolName,
+            inputSummary: start.inputSummary,
+            toolUseId: start.toolUseId,
+            parentToolUseId: start.parentToolUseId,
+          },
+        });
+      },
+      onToolCall: (call) => {
+        t.emit({
+          type: "chat:tool_call",
+          payload: {
+            ...routing(),
+            toolName: call.toolName,
+            inputSummary: call.inputSummary,
+            output: call.output,
+            isError: call.isError,
+            durationMs: call.durationMs,
+            toolUseId: call.toolUseId,
+          },
+        });
+      },
+    });
+  };
+  const onMessage = async (m: SDKMessage): Promise<void> => {
+    // (1) Skip sidechain sub-agent nested steps from rendering (see header). The
+    // attribution lives on the top-level SDK message OR its nested `message`.
+    if (isSidechainMessage(m)) return;
+    if (m.session_id) resolvedSession = m.session_id;
+    // (2) One persistent turn+translator for the whole stream — never reset per
+    // `result`, so tool_use↔tool_result pairing and card reconciliation survive
+    // across re-invocation boundaries.
+    ensureTurn(m.session_id ?? resolvedSession);
+    if (m.session_id) turn!.setSession(m.session_id);
+    if (messageProducedReply(m as Parameters<typeof messageProducedReply>[0]))
+      producedReply = true;
+    const notice = noticeFromMessage(m as Parameters<typeof noticeFromMessage>[0]);
+    if (notice) emitNotice(notice);
+    if (
+      m.type === "result" &&
+      ((typeof m.subtype === "string" && m.subtype.startsWith("error")) || m.success === false)
+    ) {
+      sawError = true;
+    }
+    await translate!(m as unknown as ChatSDKMessage);
+  };
+  // Finalize the single turn once the background stream ends (reaper reap). No-op
+  // if nothing was ever rendered (a sidechain-only stretch opened no turn).
+  const onDone = (): void => {
+    if (!turn) return;
+    turn.emit({
+      type: "chat:complete",
+      payload: { ...routing(), sessionId: resolvedSession, success: !sawError },
+    });
+    turn.end();
+    turn = null;
+    translate = null;
+  };
+  return { onMessage, onDone };
+};
+
 
 /**
  * Kick off a keeper turn that is NOT driven by a socket — used by the
@@ -321,6 +476,14 @@ async function startAgentTurn(opts: StartAgentTurnOpts): Promise<string> {
       ? deps.herdctl.chatSession.bind(deps.herdctl)
       : deps.herdctl.chat.bind(deps.herdctl);
 
+  // Gap B sink (session mode, non-scratch): one persistent sink renders every
+  // background-completion re-invocation onto a single hub turn (skipping sidechain
+  // sub-agent steps). Built once so its state (turn/translator) spans the stream.
+  const bgSink =
+    driveMode === "session" && projectSlug !== SCRATCH_SLUG
+      ? makeBackgroundTurnSink(projectSlug)
+      : null;
+
   // Resolve the sessionId early; the caller returns it while the turn continues.
   let resolveId!: (id: string) => void;
   let rejectId!: (err: Error) => void;
@@ -342,6 +505,11 @@ async function startAgentTurn(opts: StartAgentTurnOpts): Promise<string> {
     triggerType: "manual",
     resume,
     injectedMcpServers,
+    // Gap B: deliver autonomous background-completion turns live (session mode
+    // only; batch `chat` ignores this). Scratch has no keeper worth streaming
+    // background turns for, so skip it. See makeBackgroundTurnSink above.
+    onBackgroundMessage: bgSink?.onMessage,
+    onBackgroundDone: bgSink?.onDone,
     onJobCreated: (id) => {
       jobId = id;
       turn.setJobId(id);
@@ -591,5 +759,6 @@ const recoveryEngine = new RecoveryEngine({
     emitAfterTurn: triggers.emitAfterTurn,
     composePreloadedPrompt: triggers.composePreloadedPrompt,
     fireTrigger: triggers.fireTrigger,
+    makeBackgroundTurnSink,
   };
 }

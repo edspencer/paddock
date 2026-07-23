@@ -81,6 +81,22 @@ export interface ConsumeResumedTurnResult {
   success: boolean;
   /** The session id seen on the stream, if any. */
   sessionId: string | null;
+  /**
+   * The live iterator this consume drove, handed back so the caller can KEEP
+   * consuming the SAME stream after the primary turn — without opening a second
+   * iterator over the SDK query (which would split messages unpredictably). Used
+   * by the Gap B background-turn delivery ({@link consumeBackgroundTurns}): the
+   * session is left open by the reaper for in-flight background work, and the
+   * autonomous re-invocation turns it later produces arrive on this iterator.
+   */
+  iterator: AsyncIterator<SDKMessage>;
+  /**
+   * The single in-flight `iterator.next()` left outstanding when we stopped
+   * consuming (awaiting the message AFTER the primary turn's terminal `result`).
+   * Handing it back — rather than dropping it and re-pulling — means no message
+   * between the primary result and the first background re-invocation is lost.
+   */
+  pending: Promise<Step>;
 }
 
 function isErrorResult(m: Msg): boolean {
@@ -176,5 +192,67 @@ export async function consumeResumedTurn(
     if ((await opts.residueProbe()) === 0) break; // async queue drained → real turn done
   }
   if (turns > 1) opts.log?.(`drained ${turns - 1} backlog turn(s) ahead of the real turn`);
-  return { success, sessionId };
+  return { success, sessionId, iterator, pending };
+}
+
+/**
+ * Gap B — deliver autonomous background-completion turns.
+ *
+ * After {@link consumeResumedTurn} returns, the primary turn is done but the
+ * session may be held OPEN by the reaper because the turn launched continuous
+ * background work (`decideReap` keepAlives while `backgroundTasks.length > 0`).
+ * The `claude` subprocess keeps running and, when a background task completes,
+ * the SDK hands the parent the result as a fresh autonomous re-invocation turn —
+ * emitted on the SAME message stream. Paddock used to stop consuming at the
+ * primary `result`, so those messages buffered undelivered: the CLI still
+ * PERSISTED the re-invocation to the transcript (the subprocess writes JSONL
+ * directly), but the live UI never saw it until a refresh replayed history.
+ *
+ * This keeps consuming the handed-back {@link ConsumeResumedTurnResult.iterator}
+ * (never a second iterator — that would split the stream), forwarding every
+ * subsequent message to `onMessage`. The caller's `onMessage` renders each
+ * autonomous turn to the hub exactly like the scheduler-wake path does, so it
+ * appears live. Consumption ALSO keeps `tapLifecycleStream` advancing, so the
+ * reaper keeps receiving its mid-turn `activity` / `background_tasks_changed`
+ * signals (they fire as a side effect of the consumer pulling messages) — the
+ * behaviour the reaper was designed around.
+ *
+ * The loop ends cleanly when the reaper reaps the idle session: `close()` ends
+ * the SDK query, the iterator yields `done`, and we return. A stream error is
+ * swallowed (the turn is already over). Detached by the caller (`void`), it
+ * never throws to the event loop.
+ */
+export async function consumeBackgroundTurns(
+  iterator: AsyncIterator<SDKMessage>,
+  pending: Promise<Step>,
+  onMessage: (m: SDKMessage) => void | Promise<void>,
+  onDone?: () => void | Promise<void>,
+): Promise<void> {
+  try {
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      let step: Step;
+      try {
+        step = await pending;
+      } catch {
+        return; // stream errored/closed — nothing more to deliver
+      }
+      if (step.done) return; // reaper reaped the session → stream ended
+      try {
+        await onMessage(step.value);
+      } catch {
+        /* a rendering failure for one message must not abort delivery */
+      }
+      pending = iterator.next();
+    }
+  } finally {
+    // Signal the caller (the background sink) that the stream has ended so it can
+    // finalize its single hub turn (emit chat:complete + turn.end()). Runs on
+    // normal end, error, or reap. Never throws to the event loop.
+    try {
+      await onDone?.();
+    } catch {
+      /* completion signalling must not throw to a detached consumer */
+    }
+  }
 }
