@@ -545,9 +545,15 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
           )}
           {mcp.isPaddock && (
             // Paddock's own injected MCP tool — a brand badge so it reads as a
-            // first-class Paddock action, not a random tool (issue #253).
+            // first-class Paddock action, not a random tool (issue #253). When the
+            // action targets a specific project (e.g. a cross-project create/fork/
+            // read/send in another project), label it with that target project so
+            // the badge matches the card body's "in {project}" line instead of
+            // reading as the host project's brand name.
             <span className="shrink-0 whitespace-nowrap rounded bg-accent/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent">
-              Paddock
+              {paddockManage && "project" in paddockManage && paddockManage.project
+                ? paddockManage.project
+                : "Paddock"}
             </span>
           )}
           {mcp.isMcp && !mcp.isPaddock && (
