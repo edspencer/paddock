@@ -58,31 +58,29 @@ import {
   type ResolveInjectedMcpServers,
   type ScheduleTriggerHandler,
   type ScheduleInfo,
-  listJobs,
   type JobMetadata,
 } from "@herdctl/core";
 import { createSDKMessageHandler, type SDKMessage as ChatSDKMessage } from "@herdctl/chat";
 import { promises as fs } from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import YAML from "yaml";
 import type { PaddockConfig } from "./config.js";
 import type { Project } from "./projects.js";
-import {
-  KEEPER_DEFAULT_MODEL,
-  SWEEPER_DEFAULT_MODEL,
-  KEEPER_DEFAULT_PERMISSION_MODE,
-  KEEPER_DEFAULT_MAX_TURNS,
-} from "./models.js";
+import { KEEPER_DEFAULT_MODEL } from "./models.js";
 import { ensureProjectChats, projectChatsDir } from "./transcripts.js";
 import {
-  triggerToAgentToolConfig,
-  triggersToHerdctlSchedules,
   triggerRunsOnOwnAgent,
   isCuratorTrigger,
-  curatorTriggerOf,
   type PaddockTrigger,
 } from "./trigger-config.js";
+import {
+  buildScratchConfig,
+  buildKeeperConfig,
+  buildSweeperConfig,
+  buildTriggerConfig,
+  ensureConfigFile as writeBootConfigFile,
+} from "./herdctl-agent-config.js";
+import * as jobs from "./herdctl-jobs.js";
 
 /** Options passed through to a streamed trigger. */
 export interface ChatTurnOptions {
@@ -101,248 +99,38 @@ export interface ChatTurnOptions {
 }
 
 /**
- * Maps a project slug to its keeper agent name. Kept deterministic so the
- * runtime registration and runtime lookups always agree.
+ * The name/visibility helpers + tool/model constants are pure (they only read
+ * their arguments, no fleet/cfg/session state), so they live in a sibling module
+ * for readability + isolated unit-testing (issue #403). Re-exported here so every
+ * external importer keeps resolving them via `./herdctl.js` unchanged.
  */
-export function keeperAgentName(slug: string): string {
-  return `keeper-${slug}`;
-}
-
-/**
- * Inverse of {@link keeperAgentName}: recover a project slug from a keeper agent
- * name (`keeper-<slug>` → `<slug>`). Returns `null` for a non-keeper agent (e.g.
- * scratch or a sweeper), so a scheduler-fired wake can route back to the right
- * project or fall through to scratch (Paddock#111).
- */
-export function keeperSlugFromAgent(agentName: string): string | null {
-  return agentName.startsWith("keeper-") ? agentName.slice("keeper-".length) : null;
-}
-
-/** The agent used for one-off / scratch chats. */
-export const SCRATCH_AGENT = "scratch";
-
-/**
- * The lightweight curator agent used by the post-turn sweep. Runs on a cheap
- * model (Haiku 4.5) with only read/write tools, no Bash.
- *
- * NOTE: herdctl agents bind working_directory per agent. Because a single
- * shared sweeper can only have one cwd, the SweepService registers ONE sweeper
- * agent PER PROJECT (keeper-style) so each has the right cwd. The name is
- * derived from the slug; the agent reads/writes that project's files.
- */
-export const SWEEPER_PREFIX = "sweeper-";
-
-/** Maps a project slug to its sweeper agent name. */
-export function sweeperAgentName(slug: string): string {
-  return `${SWEEPER_PREFIX}${slug}`;
-}
-
-/**
- * The agent-name prefix for event hooks (Epic G / G1). Each hook is its OWN herdctl
- * agent `hook-<slug>-<name>` (GG-1) — registered alongside the keeper/sweeper — whose
- * tool config IS the hook's capability set.
- */
-export const HOOK_AGENT_PREFIX = "hook-";
-
-/**
- * Maps a project slug + hook name to its agent name `hook-<slug>-<name>`. Kept
- * deterministic so runtime registration and firing (`startAgentTurn`) always agree.
- * (`slug` is a kebab id and `name` matches `[A-Za-z0-9._-]+`, so the composed name is
- * a valid herdctl agent name; the reverse mapping for visibility (G3) is resolved
- * from a project's declared hooks, not by parsing this string.)
- */
-export function hookAgentName(slug: string, hookName: string): string {
-  return `${HOOK_AGENT_PREFIX}${slug}-${hookName}`;
-}
-
-/**
- * The agent-name prefix for unified triggers (Epic T / T1). An EVENT trigger is its
- * OWN herdctl agent `trigger-<slug>-<name>` (tool config = capability), registered
- * alongside the keeper/sweeper — exactly like a hook agent. Schedule triggers run on
- * the keeper (T1) and webhook triggers are reserved, but every trigger carries this
- * deterministic name in its DTO so the mapping is stable across T2–T5.
- */
-export const TRIGGER_AGENT_PREFIX = "trigger-";
-
-/**
- * Maps a project slug + trigger name to its agent name `trigger-<slug>-<name>`. Kept
- * deterministic so runtime registration and firing always agree. The reverse mapping
- * (for visibility) is resolved from a project's declared triggers, not by parsing this
- * string (a slug may contain hyphens). Mirrors {@link hookAgentName}.
- */
-export function triggerAgentName(slug: string, triggerName: string): string {
-  return `${TRIGGER_AGENT_PREFIX}${slug}-${triggerName}`;
-}
-
-/**
- * The agents whose chats are VISIBLE in a project's chat list (Epic G / G3, GG-5):
- * the keeper plus every event hook the project declares (`hook-<slug>-<name>`). This
- * is the generalization of the old hard "keeper-only" listing — "all of a project's
- * agents EXCEPT those marked hidden."
- *
- * The **sweeper** (`sweeper-<slug>`) is the one hidden agent: it is deliberately
- * omitted here so its post-turn curation chats never surface (the `hideChats` case),
- * exactly as before. Scratch is a separate, global one-off list and never a project
- * agent. Disabled hooks are still included — a hook chat that already ran should stay
- * visible regardless of whether the hook is currently armed.
- *
- * Kept pure + exported so the listing filter is unit-testable in isolation (the
- * sweeper-stays-hidden regression lives here), and so future callers have ONE place
- * that answers "which of a project's agents' chats do we show?".
- */
-export function visibleProjectAgentNames(project: Project): string[] {
-  const names = [keeperAgentName(project.slug)];
-  for (const hookName of Object.keys(project.hooks ?? {})) {
-    names.push(hookAgentName(project.slug, hookName));
-  }
-  // Unified triggers (Epic T): a trigger that runs on its OWN `trigger-<slug>-<name>`
-  // agent produces visible chats (like a hook) — every event trigger, plus a scoped
-  // schedule trigger (T2: one with a `run.tools` allow-list). An unscoped schedule runs
-  // on the keeper (already listed) and a webhook never fires, so they add no distinct
-  // agent — but registering the deterministic name for every trigger is harmless (a name
-  // with no chats simply contributes nothing to the listing).
-  for (const triggerName of Object.keys(project.triggers ?? {})) {
-    names.push(triggerAgentName(project.slug, triggerName));
-  }
-  return names;
-}
-
-/**
- * The Claude Code tool pattern for the Playwright browser MCP. Must live on the
- * agent allowlist (the CLI runtime auto-denies any tool not on `--allowedTools`,
- * same reason `Skill` is listed) — so it is added to `defaults.allowed_tools`,
- * which the keeper + scratch agents inherit and the tool-less sweeper overrides
- * away. Harmless when the server isn't enabled: an allowed-but-absent tool is a
- * no-op.
- */
-export const BROWSER_MCP_TOOL = "mcp__playwright__*";
-
-/**
- * The keeper's default `denied_tools` — a **best-effort, defence-in-depth**
- * denylist, NOT a sandbox. Real isolation (per-agent filesystem confinement)
- * is tracked in #7; these string patterns are trivially bypassable (a relative
- * path, a `$VAR`, a `find -delete`) and are here only to make the obvious
- * catastrophic footguns require deliberate rephrasing.
- *
- * Claude Code Bash patterns are prefix-with-`*` matches: `Bash(foo *)` denies
- * any command starting with `foo `, and `Bash(foo)` denies EXACTLY `foo`.
- *
- * History (#179): this list used to carry `Bash(rm -rf /*)`, intended as "don't
- * wipe root". But `/*` is a trailing wildcard, so it actually denied
- * `rm -rf /<ANYTHING>` — i.e. every absolute-path delete, including the keeper
- * cleaning up its OWN scratch/clone dirs (`rm -rf /tmp/foo`,
- * `rm -rf /var/lib/.../clones/x`). That was both over-broad (blocked legitimate
- * work, wasted turns, confusing "denied" cards) and false security (the agent
- * just switched to a relative `rm -rf clones/x` and it went through).
- *
- * The honest replacement targets genuinely-catastrophic *bare* roots:
- * - `rm -rf /` and `rm -rf / *` (root, incl. `--no-preserve-root` variants),
- * - `rm -rf ~` / `rm -rf $HOME` (home, exact — a trailing wildcard would block
- *   `rm -rf ~/.cache/foo`, which is legitimate),
- * - bare top-level system dirs matched EXACTLY (`Bash(rm -rf /etc)`, …) so that
- *   real subpath deletes under them (notably `/var/lib/paddock/...` and
- *   `/tmp/...`) are NOT denied.
- *
- * Note the deliberate gaps: a literal `rm -rf /*` glob command and
- * `rm -rf /usr/local/...` are NOT caught, because the only pattern that would
- * catch them (`Bash(rm -rf /*)`, `Bash(rm -rf /usr*)`) also re-blocks the
- * legitimate absolute-path deletes we exist to allow. Narrow-and-honest beats
- * broad-and-leaky; the sandbox (#7) is the real fix.
- */
-export const KEEPER_DENIED_TOOLS: readonly string[] = [
-  // Privilege / permission footguns (unchanged from the original list).
-  "Bash(sudo *)",
-  "Bash(chmod 777 *)",
-  // Root wipes: exact `rm -rf /`, plus `rm -rf / <args>` (the trailing space
-  // means this does NOT match `rm -rf /tmp...`, only `rm -rf / --no-preserve-root`
-  // and friends).
-  "Bash(rm -rf /)",
-  "Bash(rm -rf / *)",
-  // Home-directory wipes (exact — no trailing wildcard, see doc-comment).
-  "Bash(rm -rf ~)",
-  "Bash(rm -rf ~/)",
-  "Bash(rm -rf $HOME)",
-  "Bash(rm -rf $HOME/)",
-  // Bare top-level system directories, matched EXACTLY so legitimate subpath
-  // deletes (e.g. `/var/lib/paddock/...`, `/tmp/...`) still pass.
-  "Bash(rm -rf /bin)",
-  "Bash(rm -rf /boot)",
-  "Bash(rm -rf /dev)",
-  "Bash(rm -rf /etc)",
-  "Bash(rm -rf /home)",
-  "Bash(rm -rf /lib)",
-  "Bash(rm -rf /lib64)",
-  "Bash(rm -rf /opt)",
-  "Bash(rm -rf /proc)",
-  "Bash(rm -rf /root)",
-  "Bash(rm -rf /sbin)",
-  "Bash(rm -rf /srv)",
-  "Bash(rm -rf /sys)",
-  "Bash(rm -rf /usr)",
-  "Bash(rm -rf /var)",
-];
-
-/**
- * The Playwright browser MCP server given to the keeper + scratch agents so
- * Claude Code can drive a headless Chromium (navigate / click / fill / snapshot
- * / screenshot). Returns `undefined` when `enabled` is false (sourced from
- * `cfg.browserMcp`, i.e. `PADDOCK_BROWSER_MCP=1` — issue #269), so a box WITHOUT
- * the browser stack simply omits the server (no failed spawns) and enabling it
- * is a per-box env flip — no code change.
- *
- * The browser is installed box-side by the homelab `paddock` Ansible role
- * (`npm i -g @playwright/mcp` + `playwright install chromium`, exposing the
- * `playwright-mcp` bin on PATH). The boxes are unprivileged LXCs, so Chromium
- * must run headless + `--no-sandbox` (the container is the isolation boundary);
- * `--isolated` keeps each session's profile in-memory (no persisted user-data
- * dir). `--browser chromium` is REQUIRED: @playwright/mcp defaults to the
- * `chrome` channel (branded Google Chrome), which isn't installed — without this
- * flag the server tries to `playwright install chrome` at first use and stalls.
- * The role installs the open-source `chromium` engine, so we select it here.
- * The tool-less sweeper deliberately never receives this server.
- */
-export function browserMcpServers(enabled: boolean): Record<string, unknown> | undefined {
-  if (!enabled) return undefined;
-  return {
-    playwright: {
-      command: "playwright-mcp",
-      args: ["--headless", "--no-sandbox", "--isolated", "--browser", "chromium"],
-    },
-  };
-}
-
-/**
- * The model used by the sweeper agent (cheap curation/summarization).
- *
- * Re-exported alias of `SWEEPER_DEFAULT_MODEL` (the canonical constant lives in
- * models.ts now) so existing imports of `SWEEPER_MODEL` keep working.
- */
-export const SWEEPER_MODEL = SWEEPER_DEFAULT_MODEL;
-
-/**
- * The slug clients use to address one-off chats over WS/REST. Routed to the
- * scratch agent (working_directory = the scratch dir), not a real project.
- */
-export const SCRATCH_SLUG = "scratch";
-
-/**
- * How many chat turns a project's keeper may run at once. herdctl defaults an
- * agent to `max_concurrent: 1`, which would serialize a project's chats and make
- * a second turn (e.g. the first message of a freshly *forked* chat sent while the
- * parent is still streaming) fail with a ConcurrencyLimitError. Paddock is a
- * single-user box that explicitly wants parallel chats per project — especially
- * forks — so we lift the keeper's limit. (The shared-keeper model is still
- * last-write-wins across concurrent chats of the same project; forks default to
- * the parent's model, so that caveat rarely bites in practice.)
- */
-const KEEPER_MAX_CONCURRENT = 10;
-
-/**
- * How long herdctl keeps a keeper's fallback session alive (Paddock#111). Sized
- * to the reaper's 7-day recurring-wake expiry so a fallback resume still finds
- * the session; explicit-id resume (Paddock's norm) bypasses this anyway.
- */
-const KEEPER_SESSION_TIMEOUT = "168h";
+export {
+  keeperAgentName,
+  keeperSlugFromAgent,
+  SCRATCH_AGENT,
+  SWEEPER_PREFIX,
+  sweeperAgentName,
+  HOOK_AGENT_PREFIX,
+  hookAgentName,
+  TRIGGER_AGENT_PREFIX,
+  triggerAgentName,
+  visibleProjectAgentNames,
+  BROWSER_MCP_TOOL,
+  KEEPER_DENIED_TOOLS,
+  browserMcpServers,
+  SWEEPER_MODEL,
+  SCRATCH_SLUG,
+  KEEPER_MAX_CONCURRENT,
+  KEEPER_SESSION_TIMEOUT,
+} from "./herdctl-agent-names.js";
+import {
+  keeperAgentName,
+  SCRATCH_AGENT,
+  sweeperAgentName,
+  hookAgentName,
+  triggerAgentName,
+  visibleProjectAgentNames,
+} from "./herdctl-agent-names.js";
 
 export class HerdctlService {
   private fleet: FleetManager | null = null;
@@ -943,154 +731,25 @@ export class HerdctlService {
   }
 
   /**
-   * Map each chat session id to the ISO timestamp of its most recent COMPLETED
-   * turn, read cheaply from herdctl's job-metadata records (NOT by parsing
-   * transcripts). In the default batch drive mode every keeper turn runs via
-   * `trigger()`, which writes a `job-*.yaml` whose `finished_at` is stamped when
-   * the turn finishes and whose `session_id` is filled in on completion — so the
-   * latest `finished_at` across a session's records is exactly "the agent last
-   * finished a turn." This is the server signal for the unread affordance (#160,
-   * reused per-project by #161): unlike the transcript mtime (`DiscoveredSession.
-   * mtime`) it does NOT tick on the user's own sends.
-   *
-   * Records still running (no `finished_at`) or not yet session-resolved (no
-   * `session_id`) are skipped. The synthetic adoption records paddock writes
-   * carry an earlier, mid-turn `finished_at`, so the max naturally prefers the
-   * real completion. Session-mode turns (`openChatSession`) write no job record,
-   * so their chats have no server timestamp and rely on the client live event.
-   *
-   * One `readdir` + per-file parse of the shared jobs dir — the same access
-   * pattern as {@link reattributeSession}, far cheaper than a transcript scan.
+   * The on-disk job-record reads (run history + the unread badge) live in
+   * `./herdctl-jobs.js` as pure functions over `<stateDir>/jobs` (issue #403);
+   * these thin wrappers thread `this.cfg.stateDir`. See there for the full
+   * semantics of each (unread signal, per-project grouping, run history).
    */
   async lastTurnCompletedAt(): Promise<Map<string, string>> {
-    const jobsDir = path.join(this.cfg.stateDir, "jobs");
-    const out = new Map<string, string>();
-    let entries: string[];
-    try {
-      entries = await fs.readdir(jobsDir);
-    } catch {
-      return out; // no jobs dir yet (fresh instance)
-    }
-    await Promise.all(
-      entries.map(async (name) => {
-        if (!name.endsWith(".yaml")) return;
-        let parsed: Record<string, unknown> | null = null;
-        try {
-          parsed = YAML.parse(await fs.readFile(path.join(jobsDir, name), "utf8")) as
-            | Record<string, unknown>
-            | null;
-        } catch {
-          return; // skip an unreadable/half-written record
-        }
-        const sid = parsed?.session_id;
-        const finished = parsed?.finished_at;
-        if (typeof sid !== "string" || typeof finished !== "string") return;
-        // ISO-8601 UTC strings sort lexicographically in chronological order.
-        const prev = out.get(sid);
-        if (!prev || finished > prev) out.set(sid, finished);
-      }),
-    );
-    return out;
+    return jobs.lastTurnCompletedAt(this.cfg.stateDir);
   }
 
-  /**
-   * Per-project variant of {@link lastTurnCompletedAt} for the sidebar unread
-   * badge (#161): group the same cheap job-record scan by the KEEPER agent that
-   * owns each session, so the projects-list payload can carry a compact
-   * `{ sessionId, lastTurnCompletedAt }` list per project WITHOUT the N+1
-   * `listSessions` fan-out or any transcript parse. Returns `slug -> (sessionId
-   * -> latest finished_at)`.
-   *
-   * Only keeper-attributed records (`agent: keeper-<slug>`) are kept — scratch
-   * and sweeper records carry their own session ids that are not project chats,
-   * so `keeperSlugFromAgent` returning `null` naturally filters them out. A chat
-   * promoted from scratch is grouped under its keeper slug (its keeper record).
-   */
   async lastTurnCompletedAtByProject(): Promise<Map<string, Map<string, string>>> {
-    const jobsDir = path.join(this.cfg.stateDir, "jobs");
-    const out = new Map<string, Map<string, string>>();
-    let entries: string[];
-    try {
-      entries = await fs.readdir(jobsDir);
-    } catch {
-      return out; // no jobs dir yet (fresh instance)
-    }
-    await Promise.all(
-      entries.map(async (name) => {
-        if (!name.endsWith(".yaml")) return;
-        let parsed: Record<string, unknown> | null = null;
-        try {
-          parsed = YAML.parse(await fs.readFile(path.join(jobsDir, name), "utf8")) as
-            | Record<string, unknown>
-            | null;
-        } catch {
-          return; // skip an unreadable/half-written record
-        }
-        const sid = parsed?.session_id;
-        const finished = parsed?.finished_at;
-        const agent = parsed?.agent;
-        if (typeof sid !== "string" || typeof finished !== "string" || typeof agent !== "string") {
-          return;
-        }
-        const slug = keeperSlugFromAgent(agent);
-        if (!slug) return; // only keeper (project) chats — skip scratch/sweeper
-        let bySession = out.get(slug);
-        if (!bySession) {
-          bySession = new Map<string, string>();
-          out.set(slug, bySession);
-        }
-        // ISO-8601 UTC strings sort lexicographically in chronological order.
-        const prev = bySession.get(sid);
-        if (!prev || finished > prev) bySession.set(sid, finished);
-      }),
-    );
-    return out;
+    return jobs.lastTurnCompletedAtByProject(this.cfg.stateDir);
   }
 
-  /**
-   * The raw herdctl job records for one project's keeper agent, most-recent
-   * first — the data source for the "while you were away" run-history view (E3 /
-   * #268 / DD-6). Each `trigger()` (batch drive mode) turn writes one
-   * `job-*.yaml` carrying `trigger_type`, `status`, `started_at`/`finished_at`,
-   * `duration_seconds`, `session_id`, `schedule` and `forked_from`; this reads
-   * them via core's `listJobs` (importable from `@herdctl/core`, sorted by
-   * `started_at` descending) filtered to `keeper-<slug>`, so scratch/sweeper
-   * records are excluded.
-   *
-   * The true human/scheduled/spawned provenance is carried by Paddock's
-   * {@link RunProvenanceStore} (origin/depth keyed by `session_id`), NOT by
-   * `trigger_type` — paddock-initiated turns still write `trigger_type:"manual"`
-   * (see ws.ts). The caller joins the two.
-   *
-   * Caveat (documented at {@link lastTurnCompletedAt}): session-mode turns
-   * (`openChatSession`) write NO job record, so runs driven that way don't
-   * appear here — only batch `trigger()` turns and paddock's synthetic adoption
-   * records do. Cost columns (DD-4) are P3 and not yet on the record.
-   */
   async listProjectRuns(project: Project, limit = 100): Promise<JobMetadata[]> {
-    const jobsDir = path.join(this.cfg.stateDir, "jobs");
-    const agent = keeperAgentName(project.slug);
-    const { jobs } = await listJobs(jobsDir, { agent }).catch(() => ({ jobs: [], errors: 0 }));
-    return limit > 0 ? jobs.slice(0, limit) : jobs;
+    return jobs.listProjectRuns(this.cfg.stateDir, project, limit);
   }
 
-  /**
-   * Job records for a SET of agents, most-recent first (Epic T follow-up / #327) —
-   * the data source for the Triggers tab's per-trigger last-run column. Used to pull
-   * one project's keeper AND every scoped `trigger-<slug>-<name>` agent in a single
-   * pass so {@link import("./trigger-runtime.js").buildTriggerRuntime} can attribute a
-   * scoped trigger's newest run by agent name. `listJobs` has no multi-agent filter,
-   * so this scans the jobs dir once (unfiltered) and keeps only the requested agents;
-   * order (started_at descending) is preserved. Errors swallow to `[]` so the runtime
-   * view degrades to config-only rather than failing to render.
-   */
   async listRunsForAgents(agents: string[], limit = 200): Promise<JobMetadata[]> {
-    if (agents.length === 0) return [];
-    const jobsDir = path.join(this.cfg.stateDir, "jobs");
-    const wanted = new Set(agents);
-    const { jobs } = await listJobs(jobsDir).catch(() => ({ jobs: [], errors: 0 }));
-    const filtered = jobs.filter((j) => wanted.has(j.agent));
-    return limit > 0 ? filtered.slice(0, limit) : filtered;
+    return jobs.listRunsForAgents(this.cfg.stateDir, agents, limit);
   }
 
   /** The working directory used by one-off / scratch chats. */
@@ -1149,7 +808,7 @@ export class HerdctlService {
 
     // Re-attribute the session to the keeper, then drop the discovery +
     // attribution caches so the move shows immediately.
-    await this.reattributeSession(sessionId, project, st ? st.mtime : new Date());
+    await jobs.reattributeSession(this.cfg.stateDir, sessionId, project, st ? st.mtime : new Date());
     this.invalidateSessions(keeperAgentName(project.slug));
     this.invalidateSessions(SCRATCH_AGENT);
   }
@@ -1209,55 +868,9 @@ export class HerdctlService {
     // relies on cwd attribution alone).
     const keeper = keeperAgentName(project.slug);
     if (name) await this.manager.setSessionName(keeper, newId, name).catch(() => undefined);
-    await this.writeAdoptionJob(newId, project, new Date());
+    await jobs.writeAdoptionJob(this.cfg.stateDir, newId, project, new Date());
     this.invalidateSessions(keeper);
     return newId;
-  }
-
-  /**
-   * Point every herdctl job record for `sessionId` at the project's keeper so
-   * the core attribution index (last-write-wins per session) lists the session
-   * under the project. A scratch chat writes one job record PER TURN (all
-   * `agent: scratch`); simply adding a keeper record alongside them is not
-   * enough — whichever record the index visits last wins. So we rewrite the
-   * `agent` field of all existing records for the session. When none exist
-   * (e.g. a transcript migrated from outside paddock), we synthesize one.
-   */
-  private async reattributeSession(
-    sessionId: string,
-    project: Project,
-    when: Date,
-  ): Promise<void> {
-    const jobsDir = path.join(this.cfg.stateDir, "jobs");
-    await fs.mkdir(jobsDir, { recursive: true });
-    const keeper = keeperAgentName(project.slug);
-
-    let entries: string[] = [];
-    try {
-      entries = await fs.readdir(jobsDir);
-    } catch {
-      entries = [];
-    }
-
-    let matched = 0;
-    for (const name of entries) {
-      if (!name.endsWith(".yaml")) continue;
-      const file = path.join(jobsDir, name);
-      let parsed: Record<string, unknown> | null = null;
-      try {
-        parsed = YAML.parse(await fs.readFile(file, "utf8")) as Record<string, unknown> | null;
-      } catch {
-        continue;
-      }
-      if (!parsed || parsed.session_id !== sessionId) continue;
-      matched++;
-      if (parsed.agent === keeper) continue;
-      parsed.agent = keeper;
-      await fs.writeFile(file, YAML.stringify(parsed), "utf8");
-    }
-
-    // No existing job records for the session — synthesize one (migration path).
-    if (matched === 0) await this.writeAdoptionJob(sessionId, project, when);
   }
 
   /**
@@ -1281,55 +894,8 @@ export class HerdctlService {
    */
   async attributeRunningSession(sessionId: string, agentName: string): Promise<void> {
     if (!/^[A-Za-z0-9._-]+$/.test(sessionId)) return;
-    await this.writeAgentAdoptionJob(sessionId, agentName, new Date());
+    await jobs.writeAgentAdoptionJob(this.cfg.stateDir, sessionId, agentName, new Date());
     this.invalidateSessions(agentName);
-  }
-
-  /**
-   * Write a herdctl job-metadata YAML mapping `sessionId -> keeper agent` so the
-   * core attribution index lists the session under the project. Mirrors the
-   * shape `scripts/migrate-chat.sh` writes (and the JobMetadataSchema: the id
-   * must match `job-YYYY-MM-DD-[a-z0-9]{6}`).
-   */
-  private async writeAdoptionJob(sessionId: string, project: Project, when: Date): Promise<void> {
-    await this.writeAgentAdoptionJob(sessionId, keeperAgentName(project.slug), when);
-  }
-
-  /**
-   * Underlying adoption-record writer, parametrized by the target agent name so
-   * it serves both project keepers (fork/promote/adopt) and the scratch agent
-   * (see {@link attributeRunningSession}). Writes a `<jobId>.yaml` mapping the
-   * session id to `agentName` plus a matching empty `.jsonl` output file.
-   */
-  private async writeAgentAdoptionJob(
-    sessionId: string,
-    agentName: string,
-    when: Date,
-  ): Promise<void> {
-    const jobsDir = path.join(this.cfg.stateDir, "jobs");
-    await fs.mkdir(jobsDir, { recursive: true });
-    const iso = (Number.isNaN(when.getTime()) ? new Date() : when).toISOString();
-    const date = iso.slice(0, 10);
-    const jobId = `job-${date}-${sessionId.slice(0, 6).toLowerCase()}`;
-    const outputFile = path.join(jobsDir, `${jobId}.jsonl`);
-    const record = {
-      id: jobId,
-      agent: agentName,
-      schedule: null,
-      trigger_type: "web",
-      status: "completed",
-      exit_reason: "success",
-      session_id: sessionId,
-      forked_from: null,
-      started_at: iso,
-      finished_at: iso,
-      duration_seconds: 0,
-      output_file: outputFile,
-    };
-    await fs.writeFile(path.join(jobsDir, `${jobId}.yaml`), YAML.stringify(record), "utf8");
-    // herdctl's listJobs tolerates a missing output file, but keep parity with
-    // a real job record (and migrate-chat.sh) by touching an empty one.
-    await fs.writeFile(outputFile, "", "utf8").catch(() => undefined);
   }
 
   /** Read the parsed messages of a session, by agent name. */
@@ -1373,292 +939,37 @@ export class HerdctlService {
   }
 
   // --- agent configs -----------------------------------------------------
+  //
+  // Thin instance wrappers over the pure builders in `./herdctl-agent-config.js`
+  // (issue #403): each threads `this.cfg` so the extracted functions stay pure
+  // (config in via params, no `this`). The private names are unchanged so the
+  // existing unit-test seams (which reach `sweeperAgentConfig`/`ensureConfigFile`
+  // via a cast) and internal callers keep working.
 
-  /**
-   * The scratch (one-off chats) agent config. Defaults to the keeper default
-   * model; a per-chat override may re-register it at a different model via
-   * `ensureScratchModel`.
-   */
   private scratchAgentConfig(model?: string): Record<string, unknown> & { name: string } {
-    const config: Record<string, unknown> & { name: string } = {
-      name: SCRATCH_AGENT,
-      description: "One-off / scratch chats.",
-      working_directory: this.cfg.scratchDir,
-      // Explicit CLI runtime (Max plan). The fleet `defaults.runtime` is dropped
-      // by @herdctl/core's config loader (runtime isn't a fleet-defaults field in
-      // 5.13.x), so without this the runner falls back to the SDK runtime. Set it
-      // per-agent to guarantee the Max/CLI path.
-      runtime: "cli",
-      model: model ?? KEEPER_DEFAULT_MODEL,
-      default_prompt: "How can I help?",
-    };
-    // Scratch chats get the native default coding prompt + CLAUDE.md hierarchy by
-    // default (issue #176), so an instance-wide CLAUDE.md (a common ancestor of
-    // the scratch dir) reaches out-of-project chats too. Only a non-native
-    // instance gets the terse replace prompt.
-    if (!this.cfg.nativeSystemPrompt) {
-      config.system_prompt =
-        "You are a Claude Code agent for one-off chats. Be helpful and concise.";
-    }
-    // Browser MCP (headless Chromium) when enabled for this box; `mcp__playwright__*`
-    // is already on the inherited defaults.allowed_tools.
-    const browser = browserMcpServers(this.cfg.browserMcp);
-    if (browser) config.mcp_servers = browser;
-    return config;
+    return buildScratchConfig(this.cfg, model);
   }
 
-  /**
-   * A project's keeper agent config. Inherits the fleet `defaults` (runtime,
-   * max_turns, permission_mode, allowed/denied tools) via addAgent's deep-merge;
-   * only project-specific fields are set here.
-   *
-   * Model resolution: `modelOverride` (a per-chat override) wins, else the
-   * project's persisted `model`, else the keeper default (Opus).
-   *
-   * System prompt: by default (`nativeSystemPrompt`, issue #176) we set NO
-   * `system_prompt`, so herdctl's CLI runtime passes no `--system-prompt` and
-   * Claude Code's full default coding prompt applies together with the project's
-   * CLAUDE.md hierarchy — the box's root CLAUDE.md (auto-loaded via the cwd
-   * walk-up, e.g. `/var/lib/paddock/projects/CLAUDE.md`) plus a per-project
-   * CLAUDE.md. This is now its OWN decision, independent of
-   * `PADDOCK_DEV_SERVERS_ENABLED` (a `pm`-capability flag it used to be
-   * conflated with). An instance with no CLAUDE.md files can opt back into the
-   * terse replace prompt below with `PADDOCK_KEEPER_NATIVE_PROMPT=false`.
-   */
   private keeperAgentConfig(
     project: Project,
     modelOverride?: string,
   ): Record<string, unknown> & { name: string } {
-    const config: Record<string, unknown> & { name: string } = {
-      name: keeperAgentName(project.slug),
-      description: project.summary || `Keeper agent for project ${project.name}.`,
-      // Repo-backed projects (issue #187): the keeper runs INSIDE the cloned
-      // checkout (project.workingDir), so the repo's own CLAUDE.md + git tooling
-      // apply. For a notebook project workingDir === dir, so this is unchanged.
-      working_directory: project.workingDir,
-      // Explicit CLI runtime (Max plan) — see the scratch agent note: the fleet
-      // `defaults.runtime` is dropped by the core config loader, so set it here.
-      runtime: "cli",
-      model: modelOverride ?? project.model ?? KEEPER_DEFAULT_MODEL,
-      // Per-project keeper settings (issue #12). The project DTO always carries
-      // concrete values (fleet defaults resolved in projects.ts), so setting
-      // them here just overrides the inherited fleet `defaults` per project.
-      permission_mode: project.permissionMode ?? KEEPER_DEFAULT_PERMISSION_MODE,
-      max_turns: project.maxTurns ?? KEEPER_DEFAULT_MAX_TURNS,
-      // Allow parallel chats per project (forks, and just multiple open chats)
-      // instead of herdctl's serialize-by-default max_concurrent: 1.
-      instances: { max_concurrent: KEEPER_MAX_CONCURRENT },
-      // Session retention (Paddock#111): keep an agent-level session alive long
-      // enough that a scheduler-fired wake can still resume its transcript. Note
-      // Paddock always resumes by EXPLICIT session id, which bypasses this
-      // timeout — and the transcript itself is governed by Claude Code's
-      // `cleanupPeriodDays` (default 30d, adequate for realistic wake horizons;
-      // set out-of-band via .claude/settings.json if longer horizons are needed).
-      // So this is defense-in-depth for the fallback-resume path, sized to the
-      // reaper's 7-day recurring-wake expiry.
-      session: { timeout: KEEPER_SESSION_TIMEOUT },
-      default_prompt: "Summarize the current state of this project.",
-    };
-    // Docker isolation: only set it when the project opts in, so a project that
-    // leaves it off keeps inheriting the fleet default (no Docker) unchanged.
-    if (project.docker) config.docker = { enabled: true };
-    // Native by default: omit the replace prompt so the default coding prompt +
-    // CLAUDE.md hierarchy apply (issue #176). Only a non-native instance
-    // (PADDOCK_KEEPER_NATIVE_PROMPT=false) gets the terse replace prompt.
-    if (!this.cfg.nativeSystemPrompt) {
-      config.system_prompt =
-        "You are a Claude Code keeper agent for this project directory. " +
-        "Honor any CLAUDE.md present. Keep CHANGELOG.md current. " +
-        "Create branches for significant changes; never force-push.";
-    }
-    // Unified triggers (Epic T / T1): SCHEDULE-type triggers are forwarded into the
-    // keeper agent's `schedules` block, in herdctl's OWN `ScheduleSchema` shape,
-    // UNMOLESTED — herdctl's cron engine reads `agent.schedules` live every tick, so
-    // declaring them here arms them with no translation. The Paddock-only `promptFile`
-    // is stripped (the schedule-trigger handler resolves it at fire time). Event/webhook
-    // triggers are excluded by triggersToHerdctlSchedules. Only set the key when
-    // non-empty so a trigger-less project stays byte-identical to before.
-    const schedules = triggersToHerdctlSchedules(project.triggers);
-    if (schedules) config.schedules = schedules;
-    // Browser MCP (headless Chromium) when enabled for this box; `mcp__playwright__*`
-    // is already on the inherited defaults.allowed_tools.
-    const browser = browserMcpServers(this.cfg.browserMcp);
-    if (browser) config.mcp_servers = browser;
-    return config;
+    return buildKeeperConfig(this.cfg, project, modelOverride);
   }
 
-  /**
-   * A project's sweeper (curator) agent config. TOOL-LESS: the sweeper has NO
-   * tools (`allowed_tools: []`) — it never reads or writes files. Instead it
-   * RETURNS the curated content as plain assistant text in marked sections
-   * (OVERVIEW / CHANGELOG / optional CLAUDE, issue #177); SweepService parses
-   * that text and writes OVERVIEW.md / CHANGELOG.md / CLAUDE.md itself.
-   *
-   * This is cheaper and far more predictable than letting a Haiku agent drive
-   * file edits: no tool-loop turns, no partial writes, no permission_mode /
-   * denied_tools to reason about (all irrelevant with zero tools).
-   */
   private sweeperAgentConfig(project: Project): Record<string, unknown> & { name: string } {
-    // T5: the sweeper IS the default `curate-overview` (event/afterTurn) trigger. When a
-    // project declares that trigger with a `run.model`, honor it as the sweeper agent's
-    // model (design §2.1 #4). herdctl's per-fire trigger API has no model override, so
-    // the per-project `sweeper-<slug>` agent carries it — applied at (re-)registration
-    // (boot / `ensureProjectAgent`). Absent ⇒ the cheap curation default, unchanged.
-    const curatorModel = curatorTriggerOf(project.triggers)?.run.model;
-    return {
-      name: sweeperAgentName(project.slug),
-      description: `Overview/changelog curator (sweeper) for project ${project.name}.`,
-      working_directory: project.dir,
-      // Explicit CLI runtime (Max plan) — see the scratch agent note.
-      runtime: "cli",
-      model: curatorModel ?? SWEEPER_DEFAULT_MODEL,
-      // Tool-less: a handful of turns is plenty since there are no tool loops.
-      max_turns: 4,
-      // NO tools. The sweeper returns text only; SweepService does the writing.
-      allowed_tools: [],
-      system_prompt:
-        "You are a concise project curator. You DO NOT use any tools — you only " +
-        "return text. From the recent activity, the current OVERVIEW.md, the " +
-        "recent CHANGELOG.md, and the current CLAUDE.md provided in the user " +
-        "message, produce these three sections wrapped in these literal markers, " +
-        "and NOTHING else:\n" +
-        "\n" +
-        "<<<OVERVIEW>>>\n" +
-        "<the full markdown OVERVIEW.md, which REPLACES the current one wholesale: " +
-        "a synthesized snapshot of the project's CURRENT state for an LLM to read " +
-        "at the start of a new chat — what the project is, key decisions/facts, " +
-        "open questions, and next steps. No changelog or per-session history here.>\n" +
-        "<<<CHANGELOG>>>\n" +
-        "<exactly ONE changelog bullet line summarizing this recent activity, with " +
-        'NO leading "- " and no date heading — just the bare sentence.>\n' +
-        "<<<CLAUDE>>>\n" +
-        "<ONLY genuinely NEW, DURABLE facts to APPEND to CLAUDE.md — long-lived " +
-        "identity/conventions (what the project fundamentally is, key decisions, " +
-        "how we work on it) NOT already in the current CLAUDE.md. Bare markdown " +
-        "bullets. CLAUDE.md is amend-only and rarely changes — never restate " +
-        "current state/tasks/history or rewrite existing content. If there is " +
-        "nothing genuinely new and durable to add, output exactly NOCHANGE.>\n" +
-        "<<<END>>>\n" +
-        "\n" +
-        "OVERVIEW.md describes the PROJECT, not the box it runs on: never record " +
-        "box/environment operational conventions (how to run/build/expose a dev " +
-        "server, ports, localhost vs. dev hostnames/URLs, where to clone, process " +
-        "managers) — those are owned by the box's own CLAUDE.md and must not be " +
-        "re-described or contradicted here.\n" +
-        "\n" +
-        "Be factual and terse. Do not invent details not present in the provided " +
-        "activity. Output ONLY the two sections between the markers — no preamble, " +
-        "no explanation, no tool use.",
-      default_prompt: "Curate OVERVIEW.md and CHANGELOG.md from recent activity.",
-    };
+    return buildSweeperConfig(project);
   }
 
-  /**
-   * A trigger's scoped herdctl agent config (Epic T) — the unified successor to
-   * {@link hookAgentConfig}. A trigger that {@link triggerRunsOnOwnAgent} (every event
-   * trigger; a schedule trigger with a non-empty `run.tools` allow-list — T2) is
-   * registered as its OWN agent `trigger-<slug>-<name>` whose tool config
-   * (`allowed_tools`/`permission_mode`/`model`/`max_turns`, projected by
-   * {@link triggerToAgentToolConfig} from the trigger's `run`) IS its capability set.
-   * Runs in the project's WORKING dir (so a trigger's Bash/Write act on the same tree
-   * the keeper does). A tool-less trigger gets `allowed_tools: []` and can only return text.
-   */
   private triggerAgentConfig(
     project: Project,
     triggerName: string,
     trigger: PaddockTrigger,
   ): Record<string, unknown> & { name: string } {
-    const config: Record<string, unknown> & { name: string } = {
-      name: triggerAgentName(project.slug, triggerName),
-      description: `Trigger "${triggerName}" (${trigger.trigger.type}) for project ${project.name}.`,
-      working_directory: project.workingDir,
-      // Explicit CLI runtime (Max plan) — the fleet `defaults.runtime` is dropped by
-      // the core config loader, so set it here (as keeper/sweeper/hook agents do).
-      runtime: "cli",
-      // Model defaults to the keeper default unless the run pins one;
-      // triggerToAgentToolConfig sets `model` only when the run specifies it, so
-      // provide the fallback here so a trigger never boots without a concrete model.
-      model: trigger.run.model ?? project.model ?? KEEPER_DEFAULT_MODEL,
-      // run → tool config (allowed tools, permission mode, model, max_turns).
-      ...triggerToAgentToolConfig(trigger.run),
-    };
-    if (project.docker) config.docker = { enabled: true };
-    const browser = browserMcpServers(this.cfg.browserMcp);
-    if (browser) config.mcp_servers = browser;
-    return config;
+    return buildTriggerConfig(this.cfg, project, triggerName, trigger);
   }
 
-  // --- config generation -------------------------------------------------
-
-  /**
-   * Write the minimal herdctl.yaml the FleetManager boots from: a fleet block
-   * plus the fleet-wide `defaults` (deep-merged into agents added at runtime),
-   * and ZERO agents. All agents are registered programmatically via
-   * `fleet.addAgent(...)` in init() — paddock no longer generates per-agent
-   * yaml files or calls `reload()`.
-   *
-   * The `fleet` block is strict (name/description only). `defaults` are deep-
-   * merged into each agent by addAgent (mergeDefaults defaults to true), so the
-   * keeper agents inherit runtime/model/permission_mode/denied_tools from here.
-   */
   private async ensureConfigFile(): Promise<void> {
-    const configDir = path.dirname(this.cfg.herdctlConfigPath);
-    await fs.mkdir(configDir, { recursive: true });
-    await fs.mkdir(this.cfg.scratchDir, { recursive: true });
-
-    const doc = {
-      version: 1,
-      fleet: {
-        name: "paddock",
-        description: "Paddock keeper-agent fleet (agents registered at runtime).",
-      },
-      defaults: {
-        runtime: "cli",
-        // Keeper default (Opus) so the scratch agent and any default-inheriting
-        // agent run on it; each keeper sets its own model explicitly anyway.
-        model: KEEPER_DEFAULT_MODEL,
-        // ~200 turns: enough for real multi-step coding sessions while still
-        // bounding runaway agents (CLAUDE.md: always set max_turns). A project
-        // can override this per-project (issue #12); this is the inherited
-        // default (shared constant so the DTO resolution stays in sync).
-        max_turns: KEEPER_DEFAULT_MAX_TURNS,
-        // Keeper agents run native (no Docker) with acceptEdits + denied
-        // dangerous bash patterns by default; a project can opt into Docker
-        // isolation or a different permission mode per-project (issue #12).
-        permission_mode: KEEPER_DEFAULT_PERMISSION_MODE,
-        // `Skill` MUST be in the allowlist or every skill invocation is
-        // permission-denied in `-p` (non-interactive) mode — the CLI is spawned
-        // with an explicit `--allowedTools` list (cli-runtime), and any tool not
-        // on it is auto-denied with no prompt. Built-in skills (claude-api,
-        // code-review, deep-research, ...) ship inside the CLI binary and are
-        // registered/visible regardless of setting-sources, so the ONLY thing
-        // blocking them was this missing tool. Skills routinely fan out to
-        // sub-agents (`Task`), track progress (`TodoWrite`), and edit notebooks
-        // (`NotebookEdit`), each of which is likewise permission-checked against
-        // this same allowlist — so include them here to keep skills functional
-        // end-to-end (adds no capability the keeper's existing tools don't).
-        // BROWSER_MCP_TOOL (mcp__playwright__*) is listed unconditionally: it is a
-        // no-op unless the keeper/scratch agent actually attaches the playwright
-        // server (gated by PADDOCK_BROWSER_MCP), and having it on the allowlist
-        // means enabling the browser is a per-box env flip with no code change.
-        // Timer-class autonomy tools (Paddock#111): `ScheduleWakeup` + the
-        // session-only `Cron*` set + `Monitor` must be on the allowlist or the
-        // runtime auto-denies them, so a keeper couldn't schedule a wake even in
-        // session mode. `ToolSearch` is the harness's deferred-tool loader —
-        // several of these surface as deferred tools reached through it. These
-        // only actually DO anything in session drive-mode (the reaper re-fires
-        // them); in batch mode they're inert (documented in the box CLAUDE.md).
-        allowed_tools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "WebFetch", "WebSearch", "Task", "TodoWrite", "Skill", "NotebookEdit", "ToolSearch", "ScheduleWakeup", "Monitor", "CronCreate", "CronList", "CronDelete", BROWSER_MCP_TOOL],
-        // Best-effort denylist (#179): narrow, honest catastrophic-wipe patterns
-        // that do NOT block legitimate absolute-path cleanup. See KEEPER_DENIED_TOOLS.
-        denied_tools: [...KEEPER_DENIED_TOOLS],
-      },
-    };
-
-    const header =
-      "# GENERATED by paddock-server. Do NOT hand-edit. Agents are NOT listed\n" +
-      "# here — they are registered at runtime via FleetManager.addAgent(). This\n" +
-      "# file only carries the fleet identity + the defaults merged into them.\n";
-    await fs.writeFile(this.cfg.herdctlConfigPath, header + YAML.stringify(doc), "utf8");
+    await writeBootConfigFile(this.cfg);
   }
 }
