@@ -655,4 +655,112 @@ describe("subagents (issue #37)", () => {
       expect(launch).toEqual({ toolUseId: "toolu_X", subagentType: undefined, description: undefined });
     });
   });
+
+  // #429: a sub-agent card's cost is the RECURSIVE total of the sub-agent plus every
+  // sub-agent it (transitively) spawned — cost only (duration stays per-agent, since
+  // nested children run in parallel). The tree comes from the sidecars' parentAgentId.
+  describe("subagentCosts — recursive rollup (#429)", () => {
+    const usage = (input: number) => ({
+      type: "assistant",
+      message: {
+        id: "u",
+        model: "claude-opus-4-8",
+        content: [{ type: "text", text: "working" }],
+        usage: { input_tokens: input, output_tokens: 0 },
+      },
+      timestamp: "2026-01-01T00:00:00.000Z",
+    });
+    const toolMsg = (toolName: string, output: string): ChatMessage => ({
+      role: "tool",
+      content: output,
+      timestamp: "2026-01-01T00:00:00Z",
+      toolCall: { toolName, inputSummary: undefined, output, isError: false },
+    });
+    // Single-model (opus) input-only cost is linear in tokens, so the expected
+    // subtree cost is just the price of the summed input tokens.
+    const price = (input: number) =>
+      estimateCostUsdByModel({
+        "claude-opus-4-8": {
+          inputTokens: input,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheCreationTokens: 0,
+        },
+      });
+
+    it("parent = own + all descendants; mid = own + its descendants; leaf = own only", async () => {
+      // Tree (input tokens): P(100) → C1(10) → GC(5); P → C2(20).
+      await writeMain("s-tree", [
+        toolUse("Agent", "toolu_P", { subagent_type: "gp", description: "parent" }),
+        toolResult("toolu_P", "done P"),
+      ]);
+      await writeSubagent(
+        "s-tree",
+        "p",
+        { toolUseId: "toolu_P", agentType: "gp", spawnDepth: 1 },
+        [
+          usage(100),
+          toolUse("Task", "toolu_C1", { subagent_type: "gp", description: "child 1" }),
+          toolResult("toolu_C1", "done C1"),
+          toolUse("Task", "toolu_C2", { subagent_type: "gp", description: "child 2" }),
+          toolResult("toolu_C2", "done C2"),
+        ],
+      );
+      await writeSubagent(
+        "s-tree",
+        "c1",
+        { toolUseId: "toolu_C1", agentType: "gp", parentAgentId: "p", spawnDepth: 2 },
+        [
+          usage(10),
+          toolUse("Task", "toolu_GC", { subagent_type: "gp", description: "grandchild" }),
+          toolResult("toolu_GC", "done GC"),
+        ],
+      );
+      await writeSubagent(
+        "s-tree",
+        "c2",
+        { toolUseId: "toolu_C2", agentType: "gp", parentAgentId: "p", spawnDepth: 2 },
+        [usage(20)],
+      );
+      await writeSubagent(
+        "s-tree",
+        "gc",
+        { toolUseId: "toolu_GC", agentType: "gp", parentAgentId: "c1", spawnDepth: 3 },
+        [usage(5)],
+      );
+
+      // Parent card (toolu_P): own 100 + C1 10 + C2 20 + GC 5 = 135.
+      const parent = await enrichWithSubagents(projectDir, "s-tree", [toolMsg("Agent", "done P")]);
+      expect(parent[0].toolCall?.subagentCostUsd).toBeCloseTo(price(135)!, 10);
+
+      // Mid node C1 (own 10 + GC 5 = 15) and leaf C2 (own 20) — read via the
+      // parent's nested steps, enriched against the same session-wide rollup.
+      const pSteps = await readSubagentMessages(projectDir, "s-tree", "toolu_P");
+      const c1 = pSteps.find((m) => m.toolCall?.toolUseId === "toolu_C1");
+      const c2 = pSteps.find((m) => m.toolCall?.toolUseId === "toolu_C2");
+      expect(c1?.toolCall?.subagentCostUsd).toBeCloseTo(price(15)!, 10);
+      expect(c2?.toolCall?.subagentCostUsd).toBeCloseTo(price(20)!, 10);
+
+      // Leaf grandchild GC (own 5 only) — read via C1's nested steps.
+      const c1Steps = await readSubagentMessages(projectDir, "s-tree", "toolu_C1");
+      const gc = c1Steps.find((m) => m.toolCall?.toolUseId === "toolu_GC");
+      expect(gc?.toolCall?.subagentCostUsd).toBeCloseTo(price(5)!, 10);
+    });
+
+    it("keeps a leaf null when it has no priceable usage and no children", async () => {
+      await writeMain("s-null", [
+        toolUse("Agent", "toolu_N", { subagent_type: "gp", description: "no usage" }),
+        toolResult("toolu_N", "done N"),
+      ]);
+      // A transcript with no usage block at all → nothing to price, no children.
+      await writeSubagent(
+        "s-null",
+        "n",
+        { toolUseId: "toolu_N", agentType: "gp", spawnDepth: 1 },
+        [{ type: "assistant", message: { id: "x", content: [{ type: "text", text: "hi" }] } }],
+      );
+      const enriched = await enrichWithSubagents(projectDir, "s-null", [toolMsg("Agent", "done N")]);
+      expect(enriched[0].toolCall?.subagentCostUsd).toBeNull();
+    });
+  });
 });
