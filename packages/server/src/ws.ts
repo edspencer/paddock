@@ -64,7 +64,6 @@ import type {
   TriggerInfo,
 } from "@herdctl/core";
 import { createSDKMessageHandler, type SDKMessage as ChatSDKMessage } from "@herdctl/chat";
-import type { HerdctlService } from "./herdctl.js";
 import {
   keeperAgentName,
   keeperSlugFromAgent,
@@ -72,9 +71,7 @@ import {
   SCRATCH_AGENT,
   SCRATCH_SLUG,
 } from "./herdctl.js";
-import type { Project, ProjectStore } from "./projects.js";
-import type { SweepService } from "./sweep.js";
-import type { PaddockConfig } from "./config.js";
+import type { Project } from "./projects.js";
 import {
   isKnownModel,
   getContextLimit,
@@ -94,18 +91,13 @@ import {
   type SelfMcpWriteContext,
   type SelfMcpTrigger,
 } from "./self-mcp.js";
-import type { AttachmentStore } from "./attachments.js";
-import type { QueuedMessageStore } from "./queued-message.js";
-import type { ArchiveStore } from "./archive.js";
-import type { ScheduleSessionStore } from "./schedule-session.js";
 import {
   type RunProvenanceStore,
   type RunProvenance,
-  type TurnOrigin,
   HUMAN_ROOT,
   childOf,
 } from "./run-provenance.js";
-import type { MessageProvenanceStore, MessageSender } from "./message-provenance.js";
+import type { MessageSender } from "./message-provenance.js";
 import {
   buildInjectedMcpServers,
   createWakeInjectionCache,
@@ -122,9 +114,7 @@ import {
   suppressNoticeAfterReply,
   type TurnNotice,
 } from "./turn-notice.js";
-import type { PaddockEventBus } from "./event-bus.js";
 import { resolveHooksMcpEnabled } from "./hook-config.js";
-import type { TriggerService } from "./triggers.js";
 import type { TriggerSessionStore } from "./trigger-session.js";
 import {
   triggerPromptFileAbsPath,
@@ -141,6 +131,7 @@ import {
 // surface so external importers (and tests) that `import … from "./ws.js"`
 // resolve unchanged, then pull in the handful this module uses directly.
 export * from "./ws-protocol.js";
+import type { ChatHandlerDeps, StartAgentTurnOpts } from "./ws-context.js";
 import {
   extractLocalCommandOutput,
   initTurnUsage,
@@ -267,70 +258,7 @@ interface TriggerEventContext {
   sessionId: string;
 }
 
-export function makeChatHandler(deps: {
-  herdctl: HerdctlService;
-  projects: ProjectStore;
-  attachments: AttachmentStore;
-  /** Server config — carries the global keeper drive-mode default (Paddock#111). */
-  cfg: PaddockConfig;
-  /** Optional: post-turn overview/changelog curation engine (issues #2/#6). */
-  sweep?: SweepService;
-  /** Per-chat queued message persistence (#197). */
-  queuedMessage?: QueuedMessageStore;
-  /**
-   * Per-chat provenance sidecar (issue #261 / DD-3, DD-6): records how each chat
-   * was created (origin human/scheduled/spawned + spawn depth) so #262 can
-   * depth-gate spawning and #267 can badge provenance. A1 only carries/persists
-   * the marker — nothing gates on it yet.
-   */
-  runProvenance?: RunProvenanceStore;
-  /**
-   * Per-MESSAGE provenance sidecar (issue #290): records WHO injected each
-   * machine-added turn (send_message / schedule / spawn kickoff) keyed by the
-   * TARGET session, so the chat history can attribute injected turns. Optional so
-   * existing tests need not supply it; absent ⇒ injected turns just render as
-   * unlabelled user bubbles (today's behaviour).
-   */
-  messageProvenance?: MessageProvenanceStore;
-  /**
-   * Per-chat archived-flag sidecar (#95). Used by the self-MCP archive_chat /
-   * unarchive_chat write tools (#263) so a keeper can file a chat away — most
-   * usefully ITSELF, powering the "work → archive myself on success" convention.
-   */
-  archive: ArchiveStore;
-  /**
-   * Owned-session sidecar for accreting schedules (issue #265 / DD-2): maps a
-   * `resume_session: true` schedule to the one chat it owns, created on its first
-   * fire and reused thereafter. Absent ⇒ scheduled chats still work but every
-   * accreting schedule would start fresh each fire (degrades to `resume_session:
-   * false`); wired in production, optional so existing tests need not supply it.
-   */
-  scheduleSessions?: ScheduleSessionStore;
-  /**
-   * In-process lifecycle event bus (Epic T). When present (with {@link triggers}),
-   * this handler subscribes to lifecycle events (v1: `onArchive`) and fires each of
-   * the project's ENABLED matching EVENT triggers as its own `trigger-<slug>-<name>`
-   * agent turn via {@link startAgentTurn}. Absent ⇒ no event-trigger dispatch, so
-   * tests that don't exercise triggers need not supply it.
-   */
-  events?: PaddockEventBus;
-  /**
-   * Unified trigger registry (Epic T / T1). When present, this handler fires the
-   * project's enabled EVENT triggers (via the {@link events} bus) and its SCHEDULE
-   * triggers (via herdctl's `setScheduleTriggerHandler`) through the SAME
-   * {@link startAgentTurn} core — the single execution engine for every trigger. Absent
-   * ⇒ no trigger dispatch, so tests that don't exercise triggers need not supply it.
-   */
-  triggers?: TriggerService;
-  /**
-   * Owned-session sidecar for accreting triggers (`run.session: "resume"`, Epic T /
-   * T1) — maps a resume-type trigger to the one chat it accretes into across fires,
-   * created on its first fire and rebound off this store after a restart. Absent ⇒
-   * resume-type triggers degrade to a fresh chat each fire; wired in production,
-   * optional so existing tests need not supply it.
-   */
-  triggerSessions?: TriggerSessionStore;
-}) {
+export function makeChatHandler(deps: ChatHandlerDeps) {
   // ONE hub shared across every socket this handler serves: it tracks each
   // session's in-flight turn and fans its frames out to whichever socket(s) are
   // currently attached, so a turn survives the death of the socket that started
@@ -1119,38 +1047,7 @@ export function makeChatHandler(deps: {
    * `depth`. A human who later opens a spawned chat still gets the full tools via
    * the regular socket path (any keeper chat may use them) — unchanged.
    */
-  async function startAgentTurn(opts: {
-    projectSlug: string;
-    agentName: string;
-    workingDir: string;
-    resume: string | null;
-    prompt: string;
-    driveMode: DriveMode;
-    fallbackModel: string;
-    /**
-     * Provenance of this server-initiated turn (issue #261 / DD-3). The self-MCP
-     * write tools pass `spawned` + the child's depth. Persisted for a NEW chat
-     * only (a resume/message keeps the target chat's existing marker).
-     */
-    origin: TurnOrigin;
-    depth: number;
-    /**
-     * The effective `maxSpawnDepth` for the chat this turn runs in (issue #262),
-     * already resolved by the caller from the TARGET project (per-project override
-     * else instance default). Gates whether this turn receives the self-MCP.
-     */
-    maxSpawnDepth: number;
-    /**
-     * WHO caused this injected turn (issue #290). Present for a machine injection
-     * (another chat `send_message` / a schedule fire / a spawn kickoff); absent for
-     * a turn with no attributable non-human sender. When set, the injected prompt is
-     * recorded in the per-message provenance store (so the chat history can label
-     * it) and — for an injection into an EXISTING chat (`resume`) — a `chat:injected`
-     * frame is emitted so a client already viewing the recipient sees the user turn
-     * live, not just the assistant reply (Part 2).
-     */
-    sender?: MessageSender;
-  }): Promise<string> {
+  async function startAgentTurn(opts: StartAgentTurnOpts): Promise<string> {
     const { projectSlug, agentName, workingDir, resume, prompt, driveMode, fallbackModel, origin, depth, maxSpawnDepth, sender } =
       opts;
     let resolvedSession: string | null = resume ?? null;
