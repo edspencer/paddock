@@ -45,6 +45,8 @@
  */
 import {
   FleetManager,
+  countPendingAsyncQueueEntries,
+  getCliSessionFile,
   type DiscoveredSession,
   type ChatMessage,
   type SDKMessage,
@@ -60,6 +62,7 @@ import {
   type ScheduleInfo,
   type JobMetadata,
 } from "@herdctl/core";
+import { consumeResumedTurn } from "./resume-drain.js";
 import { createSDKMessageHandler, type SDKMessage as ChatSDKMessage } from "@herdctl/chat";
 import { promises as fs } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -150,6 +153,14 @@ export class HerdctlService {
   private agentModels = new Map<string, string>();
 
   /**
+   * Each agent's working directory (the keeper's cwd / scratch dir), recorded at
+   * registration. Used to resolve the `claude` CLI transcript for a resume so we
+   * can measure its pending async-input-queue depth (the resume self-interrupt
+   * fix's residue gate — see {@link residueDepthFor} + `./resume-drain.ts`).
+   */
+  private agentWorkingDirs = new Map<string, string>();
+
+  /**
    * Live session-mode turns keyed by the synthetic turn id we hand back as the
    * `jobId` (Paddock#111). `openChatSession` creates no herdctl job record, so
    * there's no core `jobId` to cancel via `cancelJob`; instead we register the
@@ -185,6 +196,7 @@ export class HerdctlService {
     await ensureProjectChats(this.cfg.scratchDir);
     await this.fleet.addAgent(this.scratchAgentConfig(), { replace: true });
     this.agentModels.set(SCRATCH_AGENT, KEEPER_DEFAULT_MODEL);
+    this.agentWorkingDirs.set(SCRATCH_AGENT, this.cfg.scratchDir);
 
     // Register a keeper + sweeper for every existing project, recording each
     // keeper's resolved model so per-chat overrides can short-circuit later.
@@ -203,6 +215,7 @@ export class HerdctlService {
       // webhook triggers are reserved.
       await this.registerTriggerAgents(project);
       this.agentModels.set(keeperAgentName(project.slug), project.model ?? KEEPER_DEFAULT_MODEL);
+      this.agentWorkingDirs.set(keeperAgentName(project.slug), project.workingDir);
     }
   }
 
@@ -274,6 +287,7 @@ export class HerdctlService {
     // no-op. ensureProjectAgent re-registers at project.model (the persisted
     // default), so a model change via PATCH takes effect here too.
     this.agentModels.set(keeperAgentName(project.slug), project.model ?? KEEPER_DEFAULT_MODEL);
+    this.agentWorkingDirs.set(keeperAgentName(project.slug), project.workingDir);
   }
 
   /**
@@ -426,6 +440,24 @@ export class HerdctlService {
   }
 
   /**
+   * Pending async-input-queue depth of a resumed session's `claude` transcript —
+   * the residue gate for the resume self-interrupt drain (see `./resume-drain.ts`
+   * and {@link drainBacklogThenConsume}). Resolves the agent's CLI transcript from
+   * its recorded working directory. Returns 0 (→ no drain, original fast path) for
+   * an unknown agent or any read error, so a detection failure never changes turn
+   * behavior. Public so the ws.ts wake consumer can gate on it too.
+   */
+  async residueDepthFor(agentName: string, sessionId: string): Promise<number> {
+    const workingDir = this.agentWorkingDirs.get(agentName);
+    if (!workingDir) return 0;
+    try {
+      return await countPendingAsyncQueueEntries(getCliSessionFile(workingDir, sessionId));
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
    * Session-mode counterpart to {@link chat} (Paddock#111). Drives the turn
    * through a persistent, herdctl-managed `openChatSession` (`manageLifecycle:
    * true`) instead of a one-shot `trigger()`, so a `ScheduleWakeup` / `/loop` the
@@ -444,6 +476,8 @@ export class HerdctlService {
   async chatSession(agentName: string, opts: ChatTurnOptions): Promise<TriggerResult> {
     const startedAt = new Date().toISOString();
     const turnId = randomUUID();
+    const isResume = typeof opts.resume === "string";
+
     let session: RuntimeSession;
     try {
       session = await this.manager.openChatSession(agentName, {
@@ -473,21 +507,42 @@ export class HerdctlService {
     // a subsequent chat:cancel routes back to this live session.
     opts.onJobCreated?.(turnId);
 
-    let sessionId: string | null = typeof opts.resume === "string" ? opts.resume : null;
+    let sessionId: string | null = isResume ? (opts.resume as string) : null;
     let success = false;
     let error: Error | undefined;
     try {
-      // Consume the stream until the turn's terminal `result` (same pattern as
-      // runCommand). The reaper owns teardown after we return.
-      for await (const m of session.messages) {
-        if (m.session_id) sessionId = m.session_id;
-        if (opts.onMessage) await opts.onMessage(m);
-        if (m.type === "result") {
-          const errored =
-            (typeof m.subtype === "string" && m.subtype.startsWith("error")) ||
-            m.success === false;
-          success = !errored;
-          break;
+      if (isResume) {
+        // Resume self-interrupt fix: a stale async-input backlog (leftover
+        // `killed`/orphaned task-notifications) replays as its own turn ahead of
+        // ours; breaking on that backlog turn's `result` used to close the CLI and
+        // kill our (possibly slow) turn. Consume with the queue-drain break rule —
+        // break on a `result` only once the async queue is empty — so ours is the
+        // last turn we break on. No backlog → breaks after the first result (fast).
+        // See ./resume-drain.ts. The reaper owns teardown after we return.
+        const consumed = await consumeResumedTurn(session, {
+          residueProbe: () => this.residueDepthFor(agentName, sessionId ?? (opts.resume as string)),
+          onMessage: opts.onMessage,
+          onSessionId: (id) => {
+            sessionId = id;
+          },
+          log: (msg) =>
+            // eslint-disable-next-line no-console
+            console.log(`[resume-drain] chatSession ${agentName} (${sessionId ?? opts.resume}): ${msg}`),
+        });
+        success = consumed.success;
+        if (consumed.sessionId) sessionId = consumed.sessionId;
+      } else {
+        // Fresh session (no resume): no backlog possible — consume to the first result.
+        for await (const m of session.messages) {
+          if (m.session_id) sessionId = m.session_id;
+          if (opts.onMessage) await opts.onMessage(m);
+          if (m.type === "result") {
+            const errored =
+              (typeof m.subtype === "string" && m.subtype.startsWith("error")) ||
+              m.success === false;
+            success = !errored;
+            break;
+          }
         }
       }
     } catch (err) {
@@ -585,30 +640,50 @@ export class HerdctlService {
       onMessage?: (msg: SDKMessage) => void | Promise<void>;
     },
   ): Promise<{ sessionId: string | null }> {
+    const isResume = typeof opts.resume === "string";
     const session = await this.manager.openChatSession(agentName, {
       resume: opts.resume,
       // Stream the command's assistant text token-by-token (paddock#315).
       includePartialMessages: true,
     });
-    let sessionId: string | null = typeof opts.resume === "string" ? opts.resume : null;
+    let sessionId: string | null = isResume ? (opts.resume as string) : null;
 
-    // Consume the stream until the turn completes (a `result` message). Set up
-    // the consumer BEFORE sending so no early messages are missed.
-    const done = (async () => {
-      try {
-        for await (const m of session.messages) {
-          if (m.session_id) sessionId = m.session_id;
-          if (opts.onMessage) await opts.onMessage(m);
-          if (m.type === "result") break;
-        }
-      } catch {
-        // Stream error — fall through and let the caller surface completion.
+    try {
+      if (isResume) {
+        // Resume self-interrupt fix: send the command (it queues behind any stale
+        // async-input backlog the CLI replays first), then consume with the
+        // queue-drain break rule so a backlog turn's result can't tear the command
+        // turn down. No backlog → breaks after the first result. See ./resume-drain.ts.
+        await session.send(opts.command);
+        const consumed = await consumeResumedTurn(session, {
+          residueProbe: () => this.residueDepthFor(agentName, sessionId ?? (opts.resume as string)),
+          onMessage: opts.onMessage,
+          onSessionId: (id) => {
+            sessionId = id;
+          },
+          log: (msg) =>
+            // eslint-disable-next-line no-console
+            console.log(`[resume-drain] runCommand ${agentName} (${sessionId ?? opts.resume}): ${msg}`),
+        });
+        if (consumed.sessionId) sessionId = consumed.sessionId;
+      } else {
+        // Fresh session: consume until the turn completes. Set up the consumer
+        // BEFORE sending so no early messages are missed.
+        const done = (async () => {
+          for await (const m of session.messages) {
+            if (m.session_id) sessionId = m.session_id;
+            if (opts.onMessage) await opts.onMessage(m);
+            if (m.type === "result") break;
+          }
+        })();
+        await session.send(opts.command);
+        await done;
       }
-    })();
-
-    await session.send(opts.command);
-    await done;
-    await session.close();
+    } catch {
+      // Stream error — fall through and let the caller surface completion.
+    } finally {
+      await session.close();
+    }
     return { sessionId };
   }
 
