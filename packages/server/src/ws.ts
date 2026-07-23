@@ -68,6 +68,7 @@ import {
   SCRATCH_AGENT,
   SCRATCH_SLUG,
 } from "./herdctl.js";
+import { consumeResumedTurn } from "./resume-drain.js";
 import {
   isKnownModel,
   getContextLimit,
@@ -257,20 +258,43 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       wakeNoticeEmitted = true;
       turn.emit({ type: "chat:notice", payload: { ...routing(), notice } });
     };
+    // Per-message wake handling, shared by the fast path and the drain path.
+    const onWakeSessionId = (id: string): void => {
+      resolvedSession = id;
+      turn.setSession(id);
+      // #353: no provenance stamp on wake — see the note at the top of this
+      // handler. A resume must never write a creation origin.
+    };
+    const onWakeMessage = async (m: SDKMessage): Promise<void> => {
+      if (messageProducedReply(m as Parameters<typeof messageProducedReply>[0]))
+        wakeProducedReply = true;
+      const notice = noticeFromMessage(m as Parameters<typeof noticeFromMessage>[0]);
+      if (notice) emitWakeNotice(notice);
+      await translate(m as unknown as ChatSDKMessage);
+    };
     try {
-      for await (const m of session.messages) {
-        if (m.session_id) {
-          resolvedSession = m.session_id;
-          turn.setSession(m.session_id);
-          // #353: no provenance stamp on wake — see the note at the top of this
-          // handler. A resume must never write a creation origin.
+      // Resume self-interrupt fix. A woken session that still holds a stale
+      // async-input backlog replays it as its OWN turn ahead of the wake turn; the
+      // old break-after-first-result then closed the CLI on the backlog turn's
+      // result, killing the wake turn. A wake is always a resume, so consume with
+      // the queue-drain break rule — break on a `result` only once the async queue
+      // has drained (after the LAST/real wake turn). No backlog → breaks after the
+      // first result (fast). See ./resume-drain.ts.
+      if (entry.sessionId) {
+        await consumeResumedTurn(session, {
+          residueProbe: () => deps.herdctl.residueDepthFor(entry.agent, entry.sessionId as string),
+          onMessage: onWakeMessage,
+          onSessionId: onWakeSessionId,
+          log: (msg) =>
+            // eslint-disable-next-line no-console
+            console.log(`[resume-drain] wake ${entry.agent} (${entry.sessionId}): ${msg}`),
+        });
+      } else {
+        for await (const m of session.messages) {
+          if (m.session_id) onWakeSessionId(m.session_id);
+          await onWakeMessage(m as SDKMessage);
+          if (m.type === "result") break;
         }
-        if (messageProducedReply(m as Parameters<typeof messageProducedReply>[0]))
-          wakeProducedReply = true;
-        const notice = noticeFromMessage(m as Parameters<typeof noticeFromMessage>[0]);
-        if (notice) emitWakeNotice(notice);
-        await translate(m as unknown as ChatSDKMessage);
-        if (m.type === "result") break;
       }
       turn.emit({
         type: "chat:complete",
