@@ -9,6 +9,7 @@ import {
   readSubagentMessages,
   enrichWithSubagents,
   readSessionTokenUsageWithSubagents,
+  extractSubagentLaunches,
 } from "../../src/subagents.js";
 import { estimateCostUsdByModel, type TokenTotals } from "../../src/models.js";
 import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
@@ -589,6 +590,69 @@ describe("subagents (issue #37)", () => {
       const u = await readSessionTokenUsageWithSubagents(projectDir, "../escape");
       expect(u.hasData).toBe(false);
       expect(u.inputTotal).toBe(0);
+    });
+  });
+
+  // #429: the LIVE launch extractor — the counterpart to readTaskToolUses that
+  // recovers subagent_type + description straight from a raw SDK message's tool_use
+  // input, so the live card renders enriched before the history subagent-join runs.
+  describe("extractSubagentLaunches (issue #429)", () => {
+    const assistant = (content: unknown) => ({ type: "assistant", message: { content } });
+
+    it("recovers type + description from a Task tool_use block", () => {
+      const launches = extractSubagentLaunches(
+        assistant([
+          { type: "text", text: "spawning" },
+          {
+            type: "tool_use",
+            name: "Task",
+            id: "toolu_A",
+            input: { subagent_type: "Explore", description: "map the code", prompt: "…" },
+          },
+        ]),
+      );
+      expect(launches).toEqual([
+        { toolUseId: "toolu_A", subagentType: "Explore", description: "map the code" },
+      ]);
+    });
+
+    it("recovers multiple parallel launches in order (Agent SDK tool name too)", () => {
+      const launches = extractSubagentLaunches(
+        assistant([
+          { type: "tool_use", name: "Agent", id: "toolu_1", input: { subagent_type: "a" } },
+          { type: "tool_use", name: "Task", id: "toolu_2", input: { description: "b" } },
+        ]),
+      );
+      expect(launches.map((l) => l.toolUseId)).toEqual(["toolu_1", "toolu_2"]);
+      expect(launches[0]).toEqual({ toolUseId: "toolu_1", subagentType: "a", description: undefined });
+      expect(launches[1]).toEqual({ toolUseId: "toolu_2", subagentType: undefined, description: "b" });
+    });
+
+    it("ignores non-sub-agent tool_use, non-assistant, and malformed messages", () => {
+      expect(
+        extractSubagentLaunches(assistant([{ type: "tool_use", name: "Bash", id: "b", input: {} }])),
+      ).toEqual([]);
+      expect(extractSubagentLaunches({ type: "result" })).toEqual([]);
+      expect(extractSubagentLaunches(null)).toEqual([]);
+      expect(extractSubagentLaunches({ message: { content: "not-an-array" } })).toEqual([]);
+      // A tool_use with no id can't be keyed for reconciliation → skipped.
+      expect(
+        extractSubagentLaunches(assistant([{ type: "tool_use", name: "Task", input: {} }])),
+      ).toEqual([]);
+    });
+
+    it("coerces blank/non-string input fields to undefined", () => {
+      const [launch] = extractSubagentLaunches(
+        assistant([
+          {
+            type: "tool_use",
+            name: "Task",
+            id: "toolu_X",
+            input: { subagent_type: "   ", description: 42 },
+          },
+        ]),
+      );
+      expect(launch).toEqual({ toolUseId: "toolu_X", subagentType: undefined, description: undefined });
     });
   });
 });

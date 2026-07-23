@@ -422,6 +422,14 @@ export interface ChatToolCallMessage {
      * the pending row it created on the earlier `chat:tool_start` frame (#175).
      */
     toolUseId?: string;
+    // Live sub-agent enrichment (issue #429). Present only on a `Task`/`Agent`
+    // completion, recovered from the launch's tool_use input so the card shows the
+    // real type/title + stays expandable WITHOUT a refresh (the history-path
+    // subagent-join used to be the only source). Duration/cost still fill from the
+    // subagent-join on reload (they need the sub-agent's finished transcript).
+    subagentType?: string;
+    description?: string;
+    hasSubagent?: boolean;
   };
 }
 
@@ -440,6 +448,13 @@ export interface ChatToolStartMessage {
     toolUseId?: string;
     /** Subagent attribution: null = main agent, else the spawning Task tool_use id. */
     parentToolUseId: string | null;
+    // Live sub-agent enrichment (issue #429). Present only on a `Task`/`Agent`
+    // start, recovered from the launch's tool_use input so the pending card shows
+    // the real sub-agent type/title + is expandable into its (streaming) steps the
+    // instant it launches, instead of the generic "Agent · running" placeholder.
+    subagentType?: string;
+    description?: string;
+    hasSubagent?: boolean;
   };
 }
 

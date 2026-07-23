@@ -11,6 +11,16 @@ export const SubagentFetchContext = createContext<
 >(null);
 
 /**
+ * Whether this chat currently has a live turn in flight (issue #429). Threaded to
+ * the tool cards so a sub-agent card can show a running/spinner state and poll its
+ * (growing) nested-step transcript WHILE the sub-agent works — including a
+ * background sub-agent whose launching `Task` tool_call already completed (the
+ * launch-ack) but whose own run continues on the still-active session. Flips false
+ * when the turn (or the trailing background stream) ends, settling the card.
+ */
+export const SubagentLiveContext = createContext<boolean>(false);
+
+/**
  * Builds a raw-file URL for an image `Read` rendered inline (issue #239). Bound to
  * the project slug; null for a scratch chat (no servable project-file endpoint), so
  * ToolBlock falls back to the generic block there.

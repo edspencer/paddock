@@ -700,6 +700,12 @@ class ChatClient {
             isError: msg.payload.isError,
             durationMs: msg.payload.durationMs,
             toolUseId: msg.payload.toolUseId,
+            // Live sub-agent enrichment (#429): real type/title + expandable flag,
+            // recovered server-side from the launch input so the card fills without
+            // a refresh. Undefined for non-sub-agent tools.
+            subagentType: msg.payload.subagentType,
+            description: msg.payload.description,
+            hasSubagent: msg.payload.hasSubagent,
           },
           meta,
         );
@@ -713,6 +719,10 @@ class ChatClient {
             output: "",
             isError: false,
             pending: true,
+            // Live sub-agent enrichment (#429) — see chat:tool_call above.
+            subagentType: msg.payload.subagentType,
+            description: msg.payload.description,
+            hasSubagent: msg.payload.hasSubagent,
           },
           meta,
         );

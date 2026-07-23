@@ -1003,6 +1003,10 @@ export type ServerWsMessage =
         durationMs?: number;
         /** Reconcile key for the pending row created on `chat:tool_start` (#175). */
         toolUseId?: string;
+        /** Live sub-agent enrichment recovered from the launch input (#429). */
+        subagentType?: string;
+        description?: string;
+        hasSubagent?: boolean;
       };
     }
   | {
@@ -1013,6 +1017,10 @@ export type ServerWsMessage =
         inputSummary?: string;
         toolUseId?: string;
         parentToolUseId: string | null;
+        /** Live sub-agent enrichment recovered from the launch input (#429). */
+        subagentType?: string;
+        description?: string;
+        hasSubagent?: boolean;
       };
     }
   | { type: "chat:message_boundary"; payload: Routing }

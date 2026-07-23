@@ -37,7 +37,52 @@ import {
 import { estimateCostUsdByModel, type TokenTotals } from "./models.js";
 
 /** Tool names that launch a sub-agent. `Task` = classic Claude Code, `Agent` = Agent SDK. */
-const SUBAGENT_TOOL_NAMES = new Set(["Task", "Agent"]);
+export const SUBAGENT_TOOL_NAMES = new Set(["Task", "Agent"]);
+
+/**
+ * A `Task`/`Agent` launch recovered LIVE from a raw SDK message's `tool_use`
+ * block (issue #429). `subagentType`/`description` come straight from the tool
+ * INPUT the launching assistant message carries — so a consumer can enrich the
+ * live tool card with the real sub-agent type + title the instant it starts,
+ * WITHOUT waiting for the history-path subagent-join (which only runs on reload).
+ */
+export interface SubagentLaunch {
+  toolUseId: string;
+  subagentType?: string;
+  description?: string;
+}
+
+/**
+ * Extract every `Task`/`Agent` `tool_use` block from a single raw SDK message,
+ * with `subagent_type` + `description` read directly from the tool input. Returns
+ * [] for any message that carries no sub-agent launch (the common case). This is
+ * the live counterpart to {@link readTaskToolUses} (which recovers the same fields
+ * from the transcript on disk): it lets ws-turn enrich the live `chat:tool_start`
+ * / `chat:tool_call` frames as the launch streams, closing the "generic launch-ack
+ * live, only enriches on refresh" gap (#429). The message shape is loosely typed
+ * in core, so every field access is guarded.
+ */
+export function extractSubagentLaunches(m: unknown): SubagentLaunch[] {
+  const content = (m as { message?: { content?: unknown } })?.message?.content;
+  if (!Array.isArray(content)) return [];
+  const out: SubagentLaunch[] = [];
+  for (const block of content) {
+    const b = block as {
+      type?: string;
+      name?: string;
+      id?: string;
+      input?: { subagent_type?: unknown; description?: unknown };
+    };
+    if (b?.type === "tool_use" && b.name && SUBAGENT_TOOL_NAMES.has(b.name) && typeof b.id === "string") {
+      out.push({
+        toolUseId: b.id,
+        subagentType: str(b.input?.subagent_type),
+        description: str(b.input?.description),
+      });
+    }
+  }
+  return out;
+}
 
 /** Both sessionId and toolUseId are path segments — keep them inside `.chats/`. */
 export const SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/;
