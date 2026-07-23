@@ -1,5 +1,7 @@
 # @paddock/web
 
+## 0.43.0
+
 ## 0.42.5
 
 ### Patch Changes
