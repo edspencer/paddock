@@ -1,5 +1,6 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { Chat, ChatCompleteUsage, ChatUsage } from "../../lib/types";
+import type { ProjectViewTab } from "./urls";
 import { ContextRing } from "../../components/ContextRing";
 import { ProvenanceBadge } from "../../components/ProvenanceBadge";
 import { PaneResizer, usePaneWidth } from "../../components/PaneResizer";
@@ -61,7 +62,7 @@ export function SessionSidebar({
   setChatSearch: Dispatch<SetStateAction<string>>;
   searching: boolean;
   newChat: () => void;
-  view: "home" | "chat" | "files" | "changes" | "settings" | "history" | "triggers";
+  view: ProjectViewTab;
   activeSession: string | null;
   pendingChat: string | null;
   chats: Chat[];
