@@ -1,5 +1,0 @@
----
-"@paddock/web": patch
----
-
-Refactor: split the oversized `ProjectView.tsx` (~1700 lines) React route into focused sibling modules under `routes/ProjectView/`, leaving the route shell (URL-derived tab/chat/file state, data fetching, chat lifecycle side-effects, and the establish/sweep-race guards) cohesive at ~1000 lines. Behavior is identical — same routes, tabs, sidebar, and unread/running semantics. Extracts the pure URL helpers + `deriveView`/`ProjectViewTab` into `urls.ts`; the props-only `TabButton`, `PinnedTab`, and the inlined Home tab (`HomePane` + `Meta`) into their own files; the session-list column (`chatRow` + sidebar JSX) into `SessionSidebar.tsx` (drilled via one props object; the WS subscription and `runningSessions` stay owned by `ProjectView` so the fleet-wide running set doesn't fragment); and the unread affordance (`markSeen`, the server-lastSeen fold, the `unread` memo, and the running-set transition effects, owning `liveUnread`/`seenVersion`) into the `useUnreadChats` hook. `ProjectView` remains the sole export; no importer changes. Part of #403.

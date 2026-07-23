@@ -1,6 +1,6 @@
 {
   "name": "@paddock/web",
-  "version": "0.42.4",
+  "version": "0.42.5",
   "private": true,
   "description": "Paddock project-first web SPA (Vite + React + Tailwind).",
   "type": "module",
