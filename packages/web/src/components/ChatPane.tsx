@@ -12,10 +12,8 @@ import { api } from "../lib/api";
 import { readChatModel, writeChatModel } from "../lib/chatModel";
 import { readDraft, writeDraft } from "../lib/draft";
 import { readQueued, writeQueued, readQueuedTs, writeQueuedTs } from "../lib/queued";
-import { readAttachmentRefs, writeAttachmentRefs } from "../lib/attachmentRefs";
 import { AlertIcon, PaperclipIcon, SendIcon, SparkIcon, StopIcon } from "./icons";
 import type {
-  AttachmentRef,
   AttachmentsConfig,
   AttachmentsOverride,
   ChatCompleteUsage,
@@ -27,10 +25,7 @@ import type {
   RecoveryOverride,
   SlashCommand,
 } from "../lib/types";
-import {
-  isTypeAllowed as isAttachmentTypeAllowed,
-  acceptAttribute,
-} from "../lib/attachments";
+import { acceptAttribute } from "../lib/attachments";
 import { AttachmentTrayItem } from "./MessageAttachments";
 import { SCRATCH_SLUG } from "../lib/types";
 import { TriggerCapabilityBanner } from "./TriggerCapabilityBanner";
@@ -52,6 +47,7 @@ import {
 } from "./chat/ComposerBits";
 import { TurnView } from "./chat/Transcript";
 import { useChatSocket } from "./chat/useChatSocket";
+import { useComposerAttachments } from "./chat/useComposerAttachments";
 
 // `historyToTurns` was previously defined here; it now lives in ./chat/turnModel.
 // Re-export it so existing importers (e.g. ChatPane.turns.test.ts) resolve unchanged.
@@ -212,21 +208,6 @@ export function ChatPane({
   // composer's effective config. Null until fetched (allow-all defaults apply).
   const [attachmentsDefault, setAttachmentsDefault] = useState<AttachmentsConfig | null>(null);
 
-  // --- composer attachments (issue #328) -------------------------------------
-  // Files the user has picked/dropped/pasted and uploaded to the store, held
-  // until send. `attachRef` mirrors it for the send callback (like `queuedRef`).
-  // Issue #346: seed from any staged refs persisted for this chat so they survive
-  // a chat switch / reload instead of being silently dropped (mirrors the composer
-  // draft above; the bytes live durably server-side, so only the refs need saving —
-  // see lib/attachmentRefs.ts).
-  const [attachments, setAttachments] = useState<AttachmentRef[]>(() =>
-    readAttachmentRefs(initialSessionId, projectSlug),
-  );
-  const attachRef = useRef<AttachmentRef[]>([]);
-  attachRef.current = attachments;
-  const [uploading, setUploading] = useState(false);
-  const [dragOver, setDragOver] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // --- slash-command autocomplete (issue #103) -------------------------------
   // The commands available to this chat's agent, fetched once per chat (the
@@ -260,6 +241,34 @@ export function ChatPane({
   // jobId yet, so there's nothing to cancel. `armJob` fires this deferred cancel
   // the instant the jobId arrives, so Stop isn't a silent no-op there (#196).
   const pendingCancelRef = useRef(false);
+
+  // --- composer attachments (issue #328) — extracted to a hook (#403) --------
+  // The staged-tray state + paste/drag/drop/pick handlers live in
+  // useComposerAttachments; the refs it returns are read by the send path below.
+  const {
+    attachments,
+    attachRef,
+    setAttachments,
+    uploading,
+    dragOver,
+    fileInputRef,
+    attachConfig,
+    attachEnabled,
+    removeAttachment,
+    onComposerPaste,
+    onComposerDragOver,
+    onComposerDragLeave,
+    onComposerDrop,
+    onPickFiles,
+  } = useComposerAttachments({
+    projectSlug,
+    isProjectChat,
+    initialSessionId,
+    attachmentsDefault,
+    projectAttachments,
+    sessionRef,
+    setError,
+  });
 
   // Lazy-loader for sub-agent nested steps (issue #37). Bound to this chat's slug
   // + current session; the sessionRef read defers to click time so it's correct
@@ -517,15 +526,6 @@ export function ChatPane({
     writeQueuedTs(initialSessionId, projectSlug, queued ? queuedTsRef.current : null);
   }, [queued, initialSessionId, projectSlug]);
 
-  // Issue #346: persist the staged composer attachments so they survive a chat
-  // switch / reload too — otherwise navigating away and back silently drops them
-  // while the draft text right next to them is restored. Every tray mutation
-  // (add / remove / clear-on-send) flows through setAttachments, so keying off
-  // `attachments` covers them all; writing an empty list forgets the key. Only the
-  // lightweight refs are stored (the bytes are durable server-side).
-  useEffect(() => {
-    writeAttachmentRefs(initialSessionId, projectSlug, attachments);
-  }, [attachments, initialSessionId, projectSlug]);
 
   // Push the queued message to the server (#197/#245) — the server is authoritative
   // for auto-send, so this pane just keeps the server's copy in sync. Carries the
@@ -691,126 +691,6 @@ export function ChatPane({
     sendText(text);
   }, [draft, streaming, sendText, isProjectChat]);
 
-  // --- composer attachments (#328): effective config + upload handlers --------
-  // The composer's effective attachment config: the per-project override wins
-  // field-wise over the instance default (from /api/models). Allow-all defaults
-  // apply until the fetch lands. Mirrors the server's resolveAttachmentsConfig.
-  const attachConfig = useMemo<AttachmentsConfig>(() => {
-    const d = attachmentsDefault ?? {
-      enabled: true,
-      maxFileSizeMb: 25,
-      maxFilesPerMessage: 10,
-      allowedTypes: ["*"],
-    };
-    const o = projectAttachments ?? {};
-    return {
-      enabled: o.enabled ?? d.enabled,
-      maxFileSizeMb: o.maxFileSizeMb ?? d.maxFileSizeMb,
-      maxFilesPerMessage: o.maxFilesPerMessage ?? d.maxFilesPerMessage,
-      allowedTypes: o.allowedTypes ?? d.allowedTypes,
-    };
-  }, [attachmentsDefault, projectAttachments]);
-  // Attachments are project-chat-only (the upload endpoint is project-scoped) and
-  // gated by the effective `enabled` knob.
-  const attachEnabled = isProjectChat && attachConfig.enabled;
-
-  // Client-side validate (UX guardrail; the server re-validates authoritatively),
-  // then upload accepted files and append their refs to the tray.
-  const addFiles = useCallback(
-    async (incoming: File[]) => {
-      if (!attachEnabled || incoming.length === 0) return;
-      const maxBytes = attachConfig.maxFileSizeMb * 1024 * 1024;
-      const room = attachConfig.maxFilesPerMessage - attachRef.current.length;
-      if (room <= 0) {
-        setError(`You can attach at most ${attachConfig.maxFilesPerMessage} files per message.`);
-        return;
-      }
-      const accepted: File[] = [];
-      for (const f of incoming.slice(0, room)) {
-        if (!isAttachmentTypeAllowed(attachConfig.allowedTypes, f.type, f.name)) {
-          setError(`File type not allowed: ${f.name}`);
-          continue;
-        }
-        if (f.size > maxBytes) {
-          setError(`File too large (max ${attachConfig.maxFileSizeMb} MB): ${f.name}`);
-          continue;
-        }
-        accepted.push(f);
-      }
-      if (incoming.length > room) {
-        setError(`You can attach at most ${attachConfig.maxFilesPerMessage} files per message.`);
-      }
-      if (accepted.length === 0) return;
-      setUploading(true);
-      try {
-        const { files } = await api.uploadAttachments(
-          projectSlug,
-          sessionRef.current ?? "new",
-          accepted,
-        );
-        setAttachments((prev) => [...prev, ...files]);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Upload failed.");
-      } finally {
-        setUploading(false);
-      }
-    },
-    [attachEnabled, attachConfig, projectSlug],
-  );
-
-  const removeAttachment = useCallback((id: string) => {
-    setAttachments((prev) => prev.filter((a) => a.id !== id));
-  }, []);
-
-  // Cmd/Ctrl+V of a screenshot (or any file) into the composer (#328).
-  const onComposerPaste = useCallback(
-    (e: React.ClipboardEvent) => {
-      if (!attachEnabled) return;
-      const files = Array.from(e.clipboardData?.files ?? []);
-      if (files.length > 0) {
-        e.preventDefault();
-        void addFiles(files);
-      }
-    },
-    [attachEnabled, addFiles],
-  );
-
-  // Drag-and-drop onto the composer (#328). `dragOver` highlights the drop zone.
-  const onComposerDragOver = useCallback(
-    (e: React.DragEvent) => {
-      if (!attachEnabled) return;
-      if (Array.from(e.dataTransfer?.types ?? []).includes("Files")) {
-        e.preventDefault();
-        setDragOver(true);
-      }
-    },
-    [attachEnabled],
-  );
-  const onComposerDragLeave = useCallback((e: React.DragEvent) => {
-    // Only clear when the pointer actually leaves the drop zone (not a child).
-    if (e.currentTarget === e.target) setDragOver(false);
-  }, []);
-  const onComposerDrop = useCallback(
-    (e: React.DragEvent) => {
-      if (!attachEnabled) return;
-      const files = Array.from(e.dataTransfer?.files ?? []);
-      if (files.length > 0) {
-        e.preventDefault();
-        setDragOver(false);
-        void addFiles(files);
-      }
-    },
-    [attachEnabled, addFiles],
-  );
-  const onPickFiles = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const files = Array.from(e.target.files ?? []);
-      if (files.length > 0) void addFiles(files);
-      // Reset so re-picking the same file fires onChange again.
-      e.target.value = "";
-    },
-    [addFiles],
-  );
 
 
   // Pop the queued message back into the composer for editing. This CANCELS the
