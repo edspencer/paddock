@@ -55,6 +55,16 @@ volumes:
   paddock-data:
 ```
 
+:::tip[Ready-made deploy recipes]
+For a maintained starting point, the
+[**`paddock-deploy`**](https://github.com/edspencer/paddock-deploy) repo collects
+self-hosting recipes you can copy: a base + devbox
+[`docker/`](https://github.com/edspencer/paddock-deploy/tree/main/docker)
+compose stack, `proxmox-iac/` (Tofu + Ansible), `kubernetes/` (Kustomize), and an
+`auth-basic/` Caddy sidecar for a quick login gate. See
+[Deploying Paddock](/guides/deploying/) for the recommended setup.
+:::
+
 :::caution[No built-in login]
 Paddock has **no authentication of its own**. Run it behind a reverse proxy / auth
 layer you trust — see [Authentication](/configuration/authentication/). It reads

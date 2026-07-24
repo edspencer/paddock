@@ -20,6 +20,29 @@ agents into a place where agents **run on their own** — fired by events and
 schedules, spawning and reporting back to each other — with the UI making all
 that unattended work legible at a glance.
 
+## 0.44 — Two official images & ready-made deploy recipes
+
+- **Two published images.** The Docker build now ships as **two** tags from the
+  same source: `ghcr.io/edspencer/paddock:latest` — the lean **base** image (app +
+  `git`, `gh`, the `claude` CLI) — and `ghcr.io/edspencer/paddock:devbox`, which
+  layers the coding-agent toolbox on top (`pm`/PM2 preview servers, `ffmpeg`, a
+  headless Playwright browser, the Docker CLI). Same app and `/data` layout, so you
+  can swap tags against one volume. See [Getting started](/getting-started/#two-image-flavors-base-vs-devbox)
+  and [The Dev Box flavor](/guides/dev-box-flavor/).
+- **A recipes repo.** Self-hosting recipes now live in their own public repo,
+  [**`paddock-deploy`**](https://github.com/edspencer/paddock-deploy):
+  [`docker/`](https://github.com/edspencer/paddock-deploy/tree/main/docker)
+  (base + devbox compose), `proxmox-iac/` (Tofu + Ansible for a dev box or home
+  box), `kubernetes/` (Kustomize manifests), and `auth-basic/` (a Caddy Basic Auth
+  sidecar → `trusted-header`). The [Deploying](/guides/deploying/),
+  [Proxmox (LXC)](/guides/proxmox-lxc/), [Kubernetes](/guides/kubernetes/), and
+  [Securing](/guides/securing/) guides each point at the matching recipe.
+- **Safe-by-default binding.** A fresh source/tarball run now binds `127.0.0.1`
+  (loopback only) and refuses to expose itself without either a real auth mode or
+  an explicit `PADDOCK_DANGEROUSLY_ALLOW_OPEN` opt-in. Container images still bind
+  `0.0.0.0` (the network namespace is their boundary); the recipes carry the
+  host-side publish posture.
+
 ## 0.38 — Send files & images to a keeper
 
 - **Attachments in the composer.** Attach files and images to a message —
