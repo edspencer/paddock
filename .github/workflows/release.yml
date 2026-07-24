@@ -189,8 +189,19 @@ jobs:
       - name: Tag multi-arch images
         run: |
           set -euo pipefail
-          base_digests="$(printf "${IMAGE}@sha256:%s " $(ls /tmp/digests/digests-base-*/))"
-          devbox_digests="$(printf "${IMAGE}@sha256:%s " $(ls /tmp/digests/digests-devbox-*/))"
+          # Each build leg uploaded ONE digest file per (target, arch), living at
+          # /tmp/digests/digests-<target>-<arch>/<digest-hex> (named by the digest,
+          # no `sha256:` prefix). Iterate the files directly and basename each —
+          # `ls` on multiple dirs emits `dirname:` header lines that would corrupt
+          # the reference list (that was the release-tag failure this fixes).
+          base_digests=""
+          for f in /tmp/digests/digests-base-*/*; do
+            base_digests="${base_digests} ${IMAGE}@sha256:$(basename "$f")"
+          done
+          devbox_digests=""
+          for f in /tmp/digests/digests-devbox-*/*; do
+            devbox_digests="${devbox_digests} ${IMAGE}@sha256:$(basename "$f")"
+          done
 
           docker buildx imagetools create \
             -t "${IMAGE}:${VERSION}" \
