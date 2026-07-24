@@ -56,8 +56,12 @@ async function boot(opts: {
     PADDOCK_BRAND_NAME: process.env.PADDOCK_BRAND_NAME,
     PADDOCK_BRAND_LOGO: process.env.PADDOCK_BRAND_LOGO,
     PADDOCK_BRAND_ACCENT: process.env.PADDOCK_BRAND_ACCENT,
+    HOST: process.env.HOST,
   };
   process.env.HOME = home;
+  // Pin loopback so the safe-by-default bind guard (#435) doesn't refuse to boot
+  // under a dev box's ambient HOST=0.0.0.0 + auth=none (CI leaves HOST unset).
+  process.env.HOST = "127.0.0.1";
   delete process.env.CLAUDE_HOME;
   delete process.env.PADDOCK_FAKE_SCRIPT;
   process.env.PATH = `${FAKE_BIN}${path.delimiter}${process.env.PATH ?? ""}`;

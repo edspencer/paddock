@@ -218,7 +218,7 @@ export const FIELDS: readonly FieldSpec[] = [
 
   // Advanced — read-only display (process / filesystem bindings).
   { key: "port", group: "advanced", label: "Port", type: "number", envVars: ["PORT"], default: 4000, editable: false },
-  { key: "host", group: "advanced", label: "Host", type: "string", envVars: ["HOST"], default: "0.0.0.0", editable: false },
+  { key: "host", group: "advanced", label: "Host", type: "string", envVars: ["HOST", "PADDOCK_HOST"], default: "127.0.0.1", editable: false },
   { key: "dataDir", group: "advanced", label: "Data dir", type: "string", envVars: ["PADDOCK_DATA_DIR"], default: null, editable: false },
   { key: "projectsRoot", group: "advanced", label: "Projects root", type: "string", envVars: ["PADDOCK_PROJECTS_DIR"], default: null, editable: false },
   { key: "stateDir", group: "advanced", label: "State dir", type: "string", envVars: ["PADDOCK_STATE_DIR"], default: null, editable: false },

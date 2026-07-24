@@ -84,9 +84,19 @@ export async function startTestApp(opts: StartOptions = {}): Promise<TestApp> {
     PADDOCK_KEEPER_DRIVE_MODE: process.env.PADDOCK_KEEPER_DRIVE_MODE,
     PADDOCK_GITHUB_CLIENT_ID: process.env.PADDOCK_GITHUB_CLIENT_ID,
     LOG_LEVEL: process.env.LOG_LEVEL,
+    HOST: process.env.HOST,
+    PADDOCK_HOST: process.env.PADDOCK_HOST,
+    PADDOCK_DANGEROUSLY_ALLOW_OPEN: process.env.PADDOCK_DANGEROUSLY_ALLOW_OPEN,
   };
 
   process.env.HOME = home;
+  // Hermetic bind: the safe-by-default guard (#435) refuses a non-loopback bind
+  // under auth=none, and a dev box may export HOST=0.0.0.0. Pin loopback so the
+  // in-process app builds deterministically regardless of the ambient env (CI
+  // leaves HOST unset, where the new loopback default applies anyway).
+  process.env.HOST = "127.0.0.1";
+  delete process.env.PADDOCK_HOST;
+  delete process.env.PADDOCK_DANGEROUSLY_ALLOW_OPEN;
   delete process.env.CLAUDE_HOME; // fall back to $HOME/.claude, matching the CLI runtime
   // Hermetic drive mode: this integration harness drives turns through a fake
   // `claude` on PATH, which only the CLI (batch) runtime uses — the SDK/session

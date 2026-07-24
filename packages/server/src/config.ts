@@ -100,8 +100,14 @@ export interface BrandConfig {
 export interface PaddockConfig {
   /** HTTP/WS port. */
   port: number;
-  /** Bind host. */
+  /** Bind host. Defaults to loopback (`127.0.0.1`) — safe by default (#435). */
   host: string;
+  /**
+   * Dangerously opt in to an OPEN, unauthenticated server: allow a non-loopback
+   * bind while `auth.mode === "none"` (which the bind-safety guard otherwise
+   * refuses). Driven by `PADDOCK_DANGEROUSLY_ALLOW_OPEN`; accepts 1/true/yes.
+   */
+  dangerouslyAllowOpen: boolean;
   /** Absolute (canonical) path to the data root. Holds state files (e.g. sweep). */
   dataDir: string;
   /** Absolute path to the root that contains per-project directories. */
@@ -543,6 +549,17 @@ function loadAuthConfig(file: PaddockConfigFile["auth"] = {}): AuthConfig {
 }
 
 /**
+ * Resolve the dangerously-open opt-in from `PADDOCK_DANGEROUSLY_ALLOW_OPEN`
+ * (#435). Off by default; accepts the shared 1/true/yes truthy convention. When
+ * set, the bind-safety guard downgrades its refusal (non-loopback + auth=none)
+ * to a loud boot warning instead of failing closed.
+ */
+function loadDangerouslyAllowOpen(): boolean {
+  const raw = envOr("PADDOCK_DANGEROUSLY_ALLOW_OPEN", "false").toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes";
+}
+
+/**
  * Resolve the dev/preview-server capability from env. Defaults to disabled, so a
  * plain instance never advertises `pm`; the projects instance opts in by setting
  * `PADDOCK_DEV_SERVERS_ENABLED=true` in its own env file. Accepts 1/true/yes.
@@ -634,7 +651,14 @@ export function loadPaddockConfig(): PaddockConfig {
 
   return Object.freeze({
     port: Number(envOr("PORT", fileOr(file.port, "4000"))),
-    host: envOr("HOST", fileOr(file.host, "0.0.0.0")),
+    // Safe by default (#435): bind loopback unless explicitly told otherwise, so
+    // a fresh source/tarball run is network-closed. Non-loopback + no auth is then
+    // gated by the bind-safety guard (see bind-safety.ts). Existing deployments
+    // that set HOST/PADDOCK_HOST are unaffected — only the DEFAULT changed from
+    // 0.0.0.0. (The container image keeps ENV HOST=0.0.0.0: the network namespace
+    // is its boundary and Docker can't reach 127.0.0.1 inside the container.)
+    host: envOr("HOST", envOr("PADDOCK_HOST", fileOr(file.host, "127.0.0.1"))),
+    dangerouslyAllowOpen: loadDangerouslyAllowOpen(),
     dataDir,
     projectsRoot,
     stateDir,
