@@ -76,6 +76,9 @@ export default defineConfig({
 					items: [
 						{ label: 'Who Paddock is for', slug: 'guides/who-its-for' },
 						{ label: 'Deploying Paddock', slug: 'guides/deploying' },
+						{ label: 'The Dev Box flavor', slug: 'guides/dev-box-flavor' },
+						{ label: 'Running Paddock on Proxmox (LXC)', slug: 'guides/proxmox-lxc' },
+						{ label: 'Running Paddock on Kubernetes', slug: 'guides/kubernetes' },
 						{ label: 'Securing Paddock', slug: 'guides/securing' },
 						{ label: 'A home-lab setup', slug: 'guides/home-lab' },
 					],

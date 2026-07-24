@@ -47,6 +47,31 @@ reboot or power blip, which is the whole point of an always-on host. A
 docker-compose file (see [Getting started](/getting-started/)) is the tidy way to
 keep the config in version control.
 
+Two image tags are published from the same source: **`:latest`** (base — the app plus
+`git`/`gh`/`claude`) and **`:devbox`** (base plus `pm`, `ffmpeg`, a headless browser,
+and the Docker CLI, for keepers that build and run apps). See
+[The Dev Box flavor](/guides/dev-box-flavor/).
+
+:::tip[Don't hand-roll it — use a recipe]
+The **[`edspencer/paddock-deploy`](https://github.com/edspencer/paddock-deploy)** repo
+holds ready-made, copy-and-go deployment recipes so you don't have to assemble the
+flags yourself:
+
+- **[`docker/`](https://github.com/edspencer/paddock-deploy/tree/main/docker)** — a
+  Compose file with `base` and `devbox` profiles, loopback-only publishing, a
+  healthcheck, and the Docker socket mount wired up.
+- **[`proxmox-iac/`](https://github.com/edspencer/paddock-deploy/tree/main/proxmox-iac)** —
+  OpenTofu + Ansible to provision an LXC and run Paddock as a tarball+systemd service
+  (see [Running Paddock on Proxmox (LXC)](/guides/proxmox-lxc/)).
+- **[`kubernetes/`](https://github.com/edspencer/paddock-deploy/tree/main/kubernetes)** —
+  Kustomize manifests for a single-writer deployment
+  (see [Running Paddock on Kubernetes](/guides/kubernetes/)).
+- **[`auth-basic/`](https://github.com/edspencer/paddock-deploy/tree/main/auth-basic)** —
+  a Caddy/nginx Basic-Auth-over-TLS sidecar to put a quick gate in front.
+
+Copy the one you want, drop your token into `.env`, and bring it up.
+:::
+
 ### Data & backups
 
 Everything Paddock persists lives under `PADDOCK_DATA_DIR` — projects, chat
@@ -91,6 +116,7 @@ not optional, even on your home network.
 
 ## Next
 
+- [`paddock-deploy`](https://github.com/edspencer/paddock-deploy) — copy-and-go recipes for Docker, Proxmox, Kubernetes, and a Basic-Auth sidecar.
 - [Securing Paddock](/guides/securing/) — authentication in front of Paddock.
 - [A home-lab setup](/guides/home-lab/) — a full always-on, composed deployment.
 - [Environment variables](/configuration/environment/) — every `PADDOCK_*` setting.

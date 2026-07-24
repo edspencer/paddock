@@ -37,6 +37,17 @@ capable as the tools on the box. The author's container provisions:
 Swap in whatever your projects call for. The principle holds: **compose Paddock with
 the tools that make your work real.**
 
+:::tip[The modern shortcut: the devbox image]
+This setup installs that toolbox onto the host by hand (via Ansible, below). The
+**[devbox image](/guides/dev-box-flavor/)** (`ghcr.io/edspencer/paddock:devbox`) now
+ships exactly this composition pre-baked — `pm`/PM2, `ffmpeg`, a headless Playwright
+browser, and the Docker CLI on top of `git`/`gh`/`claude` — so you get the same capable
+agents from a single image tag, no host provisioning required. The as-code narrative
+below still holds; you just swap "Ansible installs the toolbox" for "run the devbox
+tag." The [`paddock-deploy`](https://github.com/edspencer/paddock-deploy) recipes cover
+both shapes.
+:::
+
 ## Secrets: delivered at runtime, never committed
 
 No token is ever written into an image or committed to a repo. Secrets live in a
@@ -79,7 +90,10 @@ reviewable rather than a hand-built pet.
 The author's home-lab repo is **private** — it encodes real internal topology and
 addresses — so it isn't linked here. This guide describes the reproducible *shape* of
 it; you don't need the same tools (any IaC, any secrets store, any SSO) to follow the
-same pattern.
+same pattern. The generalized, placeholder-only version of this OpenTofu + Ansible
+shape lives in the public
+[`paddock-deploy`](https://github.com/edspencer/paddock-deploy/tree/main/proxmox-iac)
+`proxmox-iac/` recipe — start there.
 :::
 
 ## The takeaway
