@@ -27,7 +27,12 @@ import {
   WrenchIcon,
 } from "../icons";
 import { type Turn, historyToTurns } from "./turnModel";
-import { RecoveryContext, SubagentFetchContext, ToolImageUrlContext } from "./chatContexts";
+import {
+  RecoveryContext,
+  SubagentFetchContext,
+  SubagentLiveContext,
+  ToolImageUrlContext,
+} from "./chatContexts";
 import {
   SUBAGENT_TOOLS,
   diffLineClass,
@@ -402,6 +407,10 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
       paddockManage.tool === "fork_chat_batch");
   const [open, setOpen] = useState(pmActionDefaultOpen);
   const toolImageUrl = useContext(ToolImageUrlContext);
+  // #429: whether this chat has a live turn in flight. Drives the sub-agent
+  // running indicator + nested-step polling while the sub-agent works (incl. a
+  // background sub-agent whose launch-ack tool_call already completed).
+  const chatLive = useContext(SubagentLiveContext);
   // In-flight tool (#175): rendered before it completes — no output/duration
   // yet, just a "running…" affordance so a slow tool/subagent is visibly alive.
   const pending = Boolean(tool.pending);
@@ -435,9 +444,19 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
   const bashSplit = Boolean(bash && bash.stderr);
   const searchCount = search ? searchCountLabel(search) : null;
   const readRange = readInfo ? readRangeLabel(readInfo) : null;
-  // Expandable-into-steps only when the sub-agent's transcript is on disk — never
-  // while pending (the transcript doesn't exist until it produces output, #175).
-  const expandable = Boolean(!pending && isSubagent && tool.hasSubagent && tool.toolUseId);
+  // A sub-agent is still working when the chat is live and we don't yet have its
+  // final metrics (subagentDurationMs is filled by the history subagent-join once
+  // its transcript is complete) (#429). Covers BOTH a pending synchronous Task and
+  // a background Task whose launch-ack tool_call already completed but whose run
+  // continues on the still-active session. A reloaded/finished card has a duration
+  // → never shows as running.
+  const subagentRunning = isSubagent && chatLive && tool.subagentDurationMs == null;
+  // Expandable-into-steps once the launch is known (live) or its transcript is on
+  // disk (history). #429 relaxes the old `!pending` guard for sub-agents: the
+  // launching card is now expandable the instant it starts, and NestedSteps polls
+  // the (growing) transcript live — showing a "waiting…" placeholder until the
+  // sidecar appears. Non-sub-agent tools are unaffected.
+  const expandable = Boolean(isSubagent && tool.hasSubagent && tool.toolUseId);
   // Sub-agent header reads as "<type> — <description>"; the detail-bearing tools show
   // a friendlier subtitle; others keep the classic "<toolName> <inputSummary>".
   const label = isSubagent
@@ -587,10 +606,12 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
                 error
               </span>
             )}
-            {pending ? (
-              // In-flight tool (#175): a spinner + "running" instead of the
-              // completion metadata (events/status/diff/duration) it lacks yet.
-              <span className="flex items-center gap-1.5 text-accent" title="Tool is running">
+            {pending || subagentRunning ? (
+              // In-flight tool (#175) or a still-working sub-agent (#429): a spinner
+              // + "running" instead of the completion metadata it lacks yet (for a
+              // background sub-agent, this replaces the misleading near-instant
+              // launch-ack duration until its real run finishes).
+              <span className="flex items-center gap-1.5 text-accent" title="Sub-agent is running">
                 <span
                   className="h-3 w-3 animate-spin rounded-full border-2 border-accent/30 border-t-accent"
                   aria-hidden="true"
@@ -657,7 +678,7 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
         </button>
         {open &&
           (expandable ? (
-            <NestedSteps toolUseId={tool.toolUseId!} />
+            <NestedSteps toolUseId={tool.toolUseId!} live={subagentRunning} />
           ) : isBg && events.length > 0 ? (
             // Monitor: the streamed events, grouped under the launching call
             // instead of scattered as separate pills (issue #230).
@@ -794,16 +815,33 @@ function TaskCreateBody({ info }: { info: TaskCreateInfo }) {
   );
 }
 
+/** How often to re-fetch a live sub-agent's growing transcript while it runs (#429). */
+const NESTED_POLL_MS = 2000;
+
 /**
  * A sub-agent's own step-by-step transcript, lazy-loaded on first expand and
  * rendered inline (issue #37). Reuses TurnView, so any Task/Agent steps the
  * sub-agent itself ran render as further-expandable ToolBlocks — arbitrary depth
  * through the same SubagentFetchContext (sub-agents are flat under the session).
+ *
+ * When `live` (the sub-agent is still working, #429) it POLLS the endpoint every
+ * {@link NESTED_POLL_MS}: the sub-agent's transcript grows on disk as it runs, so
+ * each re-fetch surfaces its new steps INSIDE the card without a refresh — nested
+ * launches recurse through the same path. The last loaded steps stay visible
+ * across polls (no flash back to the spinner), and a transient read error while
+ * live just retries rather than tearing the stream down.
  */
-function NestedSteps({ toolUseId }: { toolUseId: string }) {
+function NestedSteps({ toolUseId, live = false }: { toolUseId: string; live?: boolean }) {
   const fetchSubagent = useContext(SubagentFetchContext);
   const [msgs, setMsgs] = useState<HistoryMessage[] | null>(null);
   const [error, setError] = useState(false);
+
+  // Reset only when the sub-agent changes — NOT when `live` flips off, so the
+  // finished steps don't flash back to the loading spinner as the turn settles.
+  useEffect(() => {
+    setMsgs(null);
+    setError(false);
+  }, [toolUseId]);
 
   useEffect(() => {
     if (!fetchSubagent) {
@@ -811,15 +849,28 @@ function NestedSteps({ toolUseId }: { toolUseId: string }) {
       return;
     }
     let cancelled = false;
-    setMsgs(null);
-    setError(false);
-    fetchSubagent(toolUseId)
-      .then((m) => !cancelled && setMsgs(m))
-      .catch(() => !cancelled && setError(true));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = () => {
+      fetchSubagent(toolUseId)
+        .then((m) => {
+          if (cancelled) return;
+          setMsgs(m);
+          if (live) timer = setTimeout(tick, NESTED_POLL_MS);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          // Keep streaming through a transient read error while live (retry); a
+          // one-shot history load surfaces it.
+          if (live) timer = setTimeout(tick, NESTED_POLL_MS);
+          else setError(true);
+        });
+    };
+    tick();
     return () => {
       cancelled = true;
+      if (timer) clearTimeout(timer);
     };
-  }, [fetchSubagent, toolUseId]);
+  }, [fetchSubagent, toolUseId, live]);
 
   const turns = useMemo(() => historyToTurns(msgs ?? []), [msgs]);
 
@@ -833,12 +884,27 @@ function NestedSteps({ toolUseId }: { toolUseId: string }) {
           <span className="ml-1">loading sub-agent steps…</span>
         </div>
       ) : turns.length === 0 ? (
-        <div className="text-[11.5px] text-paddock-400">(no recorded steps)</div>
+        <div className="flex items-center gap-1.5 text-[11.5px] text-paddock-400">
+          {live ? (
+            <>
+              <Dot /> <Dot delay="150ms" /> <Dot delay="300ms" />
+              <span className="ml-1">waiting for sub-agent steps…</span>
+            </>
+          ) : (
+            <span>(no recorded steps)</span>
+          )}
+        </div>
       ) : (
         <div className="space-y-3 border-l-2 border-accent/30 pl-3">
           {turns.map((t) => (
             <TurnView key={t.id} turn={t} />
           ))}
+          {live && (
+            <div className="flex items-center gap-1.5 text-[11px] text-accent/80">
+              <Dot /> <Dot delay="150ms" /> <Dot delay="300ms" />
+              <span className="ml-1">sub-agent working…</span>
+            </div>
+          )}
         </div>
       )}
     </div>

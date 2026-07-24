@@ -30,6 +30,7 @@ import {
 } from "./wake-injection.js";
 import { resolveMaxSpawnDepth } from "./spawn-capability.js";
 import { RecoveryEngine } from "./recovery.js";
+import { extractSubagentLaunches, subagentLaunchFields, type SubagentLaunch } from "./subagents.js";
 import {
   noticeFromMessage,
   errorNotice,
@@ -231,6 +232,9 @@ const makeBackgroundTurnSink = (
   let producedReply = false;
   let noticeEmitted = false;
   let sawError = false;
+  // #429: sub-agent launches recovered live from the tool_use input, keyed by
+  // toolUseId, so the enriched card renders without a refresh (see subagentLaunchFields).
+  const launches = new Map<string, SubagentLaunch>();
   const routing = (): Routing => ({
     projectSlug,
     target: projectSlug,
@@ -267,6 +271,7 @@ const makeBackgroundTurnSink = (
             inputSummary: start.inputSummary,
             toolUseId: start.toolUseId,
             parentToolUseId: start.parentToolUseId,
+            ...subagentLaunchFields(launches, start.toolName, start.toolUseId),
           },
         });
       },
@@ -281,6 +286,7 @@ const makeBackgroundTurnSink = (
             isError: call.isError,
             durationMs: call.durationMs,
             toolUseId: call.toolUseId,
+            ...subagentLaunchFields(launches, call.toolName, call.toolUseId),
           },
         });
       },
@@ -291,6 +297,9 @@ const makeBackgroundTurnSink = (
     // attribution lives on the top-level SDK message OR its nested `message`.
     if (isSidechainMessage(m)) return;
     if (m.session_id) resolvedSession = m.session_id;
+    // #429: recover any Task/Agent launch from this (main-agent) message's tool_use
+    // input so the enriched, expandable card renders live (before translate fires).
+    for (const l of extractSubagentLaunches(m)) launches.set(l.toolUseId, l);
     // (2) One persistent turn+translator for the whole stream — never reset per
     // `result`, so tool_use↔tool_result pairing and card reconciliation survive
     // across re-invocation boundaries.
@@ -363,6 +372,11 @@ async function startAgentTurn(opts: StartAgentTurnOpts): Promise<string> {
   const isNewChat = resume === null;
   const turn: TurnHandle = hub.startTurn(projectSlug, null, resume ?? null);
   const seen: TurnUsageState = initTurnUsage();
+  // #429: sub-agent launches recovered live from the tool_use input (keyed by
+  // toolUseId), so the launching card shows the real type/title + is expandable
+  // without a refresh. Populated in onMessage before each translate; read by the
+  // onToolStart/onToolCall closures below via subagentLaunchFields.
+  const subagentLaunches = new Map<string, SubagentLaunch>();
   // #329: whether this turn already surfaced a dead-end notice (usage limit /
   // max-turns / error). At most one per turn — a synthetic session-limit turn
   // repeats the message several times, and a failed turn can carry both an error
@@ -437,6 +451,7 @@ async function startAgentTurn(opts: StartAgentTurnOpts): Promise<string> {
           inputSummary: start.inputSummary,
           toolUseId: start.toolUseId,
           parentToolUseId: start.parentToolUseId,
+          ...subagentLaunchFields(subagentLaunches, start.toolName, start.toolUseId),
         },
       });
     },
@@ -451,6 +466,7 @@ async function startAgentTurn(opts: StartAgentTurnOpts): Promise<string> {
           isError: call.isError,
           durationMs: call.durationMs,
           toolUseId: call.toolUseId,
+          ...subagentLaunchFields(subagentLaunches, call.toolName, call.toolUseId),
         },
       });
     },
@@ -557,6 +573,9 @@ async function startAgentTurn(opts: StartAgentTurnOpts): Promise<string> {
         producedReply = true;
       const notice = noticeFromMessage(m as Parameters<typeof noticeFromMessage>[0]);
       if (notice) emitNotice(notice);
+      // #429: recover any Task/Agent launch from this message's tool_use input so
+      // the enriched card renders live — must run before translate fires onToolStart.
+      for (const l of extractSubagentLaunches(m)) subagentLaunches.set(l.toolUseId, l);
       await translate(m as unknown as ChatSDKMessage);
     },
   });

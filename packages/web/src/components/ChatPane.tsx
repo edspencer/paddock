@@ -36,6 +36,7 @@ import {
   RecoveryContext,
   type RecoveryContextValue,
   SubagentFetchContext,
+  SubagentLiveContext,
   ToolImageUrlContext,
 } from "./chat/chatContexts";
 import {
@@ -854,17 +855,19 @@ export function ChatPane({
           )}
 
           <SubagentFetchContext.Provider value={fetchSubagent}>
-            <ToolImageUrlContext.Provider value={toolImageUrl}>
-              <PaddockManageProjectContext.Provider value={projectSlug}>
-                <RecoveryContext.Provider value={recoveryCtx}>
-                  <div className="space-y-4">
-                    {turns.map((t) => (
-                      <TurnView key={t.id} turn={t} />
-                    ))}
-                  </div>
-                </RecoveryContext.Provider>
-              </PaddockManageProjectContext.Provider>
-            </ToolImageUrlContext.Provider>
+            <SubagentLiveContext.Provider value={streaming}>
+              <ToolImageUrlContext.Provider value={toolImageUrl}>
+                <PaddockManageProjectContext.Provider value={projectSlug}>
+                  <RecoveryContext.Provider value={recoveryCtx}>
+                    <div className="space-y-4">
+                      {turns.map((t) => (
+                        <TurnView key={t.id} turn={t} />
+                      ))}
+                    </div>
+                  </RecoveryContext.Provider>
+                </PaddockManageProjectContext.Provider>
+              </ToolImageUrlContext.Provider>
+            </SubagentLiveContext.Provider>
           </SubagentFetchContext.Provider>
         </div>
       </div>

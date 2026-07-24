@@ -37,7 +37,52 @@ import {
 import { estimateCostUsdByModel, type TokenTotals } from "./models.js";
 
 /** Tool names that launch a sub-agent. `Task` = classic Claude Code, `Agent` = Agent SDK. */
-const SUBAGENT_TOOL_NAMES = new Set(["Task", "Agent"]);
+export const SUBAGENT_TOOL_NAMES = new Set(["Task", "Agent"]);
+
+/**
+ * A `Task`/`Agent` launch recovered LIVE from a raw SDK message's `tool_use`
+ * block (issue #429). `subagentType`/`description` come straight from the tool
+ * INPUT the launching assistant message carries — so a consumer can enrich the
+ * live tool card with the real sub-agent type + title the instant it starts,
+ * WITHOUT waiting for the history-path subagent-join (which only runs on reload).
+ */
+export interface SubagentLaunch {
+  toolUseId: string;
+  subagentType?: string;
+  description?: string;
+}
+
+/**
+ * Extract every `Task`/`Agent` `tool_use` block from a single raw SDK message,
+ * with `subagent_type` + `description` read directly from the tool input. Returns
+ * [] for any message that carries no sub-agent launch (the common case). This is
+ * the live counterpart to {@link readTaskToolUses} (which recovers the same fields
+ * from the transcript on disk): it lets ws-turn enrich the live `chat:tool_start`
+ * / `chat:tool_call` frames as the launch streams, closing the "generic launch-ack
+ * live, only enriches on refresh" gap (#429). The message shape is loosely typed
+ * in core, so every field access is guarded.
+ */
+export function extractSubagentLaunches(m: unknown): SubagentLaunch[] {
+  const content = (m as { message?: { content?: unknown } })?.message?.content;
+  if (!Array.isArray(content)) return [];
+  const out: SubagentLaunch[] = [];
+  for (const block of content) {
+    const b = block as {
+      type?: string;
+      name?: string;
+      id?: string;
+      input?: { subagent_type?: unknown; description?: unknown };
+    };
+    if (b?.type === "tool_use" && b.name && SUBAGENT_TOOL_NAMES.has(b.name) && typeof b.id === "string") {
+      out.push({
+        toolUseId: b.id,
+        subagentType: str(b.input?.subagent_type),
+        description: str(b.input?.description),
+      });
+    }
+  }
+  return out;
+}
 
 /** Both sessionId and toolUseId are path segments — keep them inside `.chats/`. */
 export const SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/;
@@ -111,6 +156,15 @@ export interface SubagentMeta {
   agentType?: string;
   description?: string;
   spawnDepth?: number;
+  /**
+   * This sub-agent's own agent id (the `<hex>` of its `agent-<hex>` transcript),
+   * and — when it was itself spawned by another sub-agent — that parent sub-agent's
+   * agent id (`parentAgentId` in the sidecar; absent for a depth-1 sub-agent whose
+   * parent is the main session). Together these form the sub-agent tree used for the
+   * recursive per-card cost rollup (see {@link subagentCosts}).
+   */
+  agentId?: string;
+  parentAgentId?: string;
   /** Absolute path to the sibling `agent-<hex>.jsonl`. */
   transcriptPath: string;
 }
@@ -135,11 +189,13 @@ export type EnrichedToolCall = ChatToolCall & {
    */
   subagentDurationMs?: number;
   /**
-   * The sub-agent's estimated API-rate cost in USD, priced per-model from its own
-   * transcript's cumulative token usage (issue #166). `null` when the sub-agent
-   * ran on a model with no known pricing; `undefined` for a non-sub-agent tool.
-   * A parent sub-agent's cost does not include its nested children's cost — each
-   * sub-agent is priced from only its own transcript (see {@link subagentCosts}).
+   * The sub-agent's estimated API-rate cost in USD (issue #166), as the RECURSIVE
+   * total of this sub-agent plus every sub-agent it (transitively) spawned — priced
+   * per-model from the merged token usage of its whole subtree (see
+   * {@link subagentCosts}). `null` when the entire subtree has no priceable usage;
+   * `undefined` for a non-sub-agent tool. Cost only: {@link subagentDurationMs}
+   * stays per-agent because nested children run in parallel (overlapping wall-clock),
+   * so summing durations would mislead — dollars are additive regardless.
    */
   subagentCostUsd?: number | null;
 
@@ -380,6 +436,27 @@ async function readTaskUsesFromFileUncached(file: string): Promise<TaskToolUse[]
 }
 
 /**
+ * Live sub-agent enrichment for a tool frame (issue #429). When the tool is a
+ * `Task`/`Agent` launch this turn already recovered (via {@link extractSubagentLaunches}),
+ * return the real sub-agent type + title plus `hasSubagent: true`, so the client
+ * renders the enriched, expandable card the moment the launch streams — instead of
+ * the generic "Agent · <ms>" launch-ack that only filled in on refresh. A safe
+ * spread for any non-sub-agent tool (returns an empty object). `hasSubagent` is set
+ * optimistically: a `Task`/`Agent` launch is expected to write a sub-agent
+ * transcript, and the client's expand path degrades gracefully (a "waiting…"
+ * placeholder) until the sidecar appears on disk.
+ */
+export function subagentLaunchFields(
+  launches: Map<string, SubagentLaunch>,
+  toolName: string,
+  toolUseId: string | undefined,
+): { subagentType?: string; description?: string; hasSubagent?: boolean } {
+  if (!toolUseId || !SUBAGENT_TOOL_NAMES.has(toolName)) return {};
+  const l = launches.get(toolUseId);
+  return { subagentType: l?.subagentType, description: l?.description, hasSubagent: true };
+}
+
+/**
  * Read the `subagents/*.meta.json` sidecars for a session, keyed by `toolUseId`.
  * Returns an empty map when the session has no sub-agents (the common case) or
  * the directory is missing/unreadable.
@@ -401,6 +478,7 @@ export async function listSubagents(
       agentType?: unknown;
       description?: unknown;
       spawnDepth?: unknown;
+      parentAgentId?: unknown;
     };
     try {
       meta = JSON.parse(raw);
@@ -408,11 +486,18 @@ export async function listSubagents(
       continue;
     }
     if (typeof meta.toolUseId !== "string") continue;
+    // This sub-agent's own id is the `<hex>` of its `agent-<hex>.meta.json` filename
+    // (the sidecar records only its PARENT's id, not its own); `parentAgentId` links
+    // it to the sub-agent that spawned it. Together they build the tree for the cost
+    // rollup. An empty id (a malformed name) is dropped to undefined.
+    const agentId = entry.replace(/^agent-/, "").replace(/\.meta\.json$/, "") || undefined;
     out.set(meta.toolUseId, {
       toolUseId: meta.toolUseId,
       agentType: str(meta.agentType),
       description: str(meta.description),
       spawnDepth: typeof meta.spawnDepth === "number" ? meta.spawnDepth : undefined,
+      agentId,
+      parentAgentId: str(meta.parentAgentId),
       // The transcript is the sidecar's sibling: agent-<hex>.meta.json → agent-<hex>.jsonl
       transcriptPath: path.join(dir, entry.replace(/\.meta\.json$/, ".jsonl")),
     });
@@ -520,31 +605,99 @@ async function readSubagentDurationMsUncached(file: string): Promise<number | un
 }
 
 /**
- * Compute each sub-agent's estimated API-rate cost (USD) from its own transcript,
- * keyed by toolUseId. Reuses the same primitives as the per-chat cost: accumulate
- * per-model token usage over the sub-agent transcript ({@link readSessionTokenUsageFile})
- * then price it per-model ({@link estimateCostUsdByModel}). Like durations, this
- * runs once per session on chat open and only over that session's sub-agent files.
+ * Compute each sub-agent's estimated API-rate cost (USD), keyed by toolUseId, as
+ * the RECURSIVE total of the sub-agent PLUS every sub-agent it (transitively)
+ * spawned. Runs once per session on chat open, over that session's sub-agent files.
  *
- * A parent sub-agent's cost reflects only its own transcript's usage — nested
- * children run in their own sibling transcripts, so their cost is priced under
- * their own tool_use ids, not folded into the parent (acceptable first cut).
+ * The sub-agent tree comes from the `.meta.json` sidecars: each carries its
+ * `parentAgentId`, and its own agent id is its `agent-<hex>` transcript name (see
+ * {@link listSubagents}). For each node we merge the per-model token usage across
+ * its whole subtree, then price once ({@link estimateCostUsdByModel}). Merging
+ * TOKEN USAGE (rather than summing already-priced dollars) is what keeps an
+ * unpriced-model descendant from zeroing out its priced neighbours: the result is
+ * `null` only when the entire subtree has no priceable usage (e.g. a leaf that ran
+ * on a model with no known pricing and spawned nothing), and a number otherwise.
+ *
+ * COST ONLY. Duration is deliberately NOT rolled up ({@link subagentDurations}
+ * stays per-agent): nested children run in PARALLEL, so their wall-clock overlaps
+ * the parent's and each other's — summing durations would badly overstate elapsed
+ * time. Dollar cost, by contrast, is additive regardless of concurrency, so a
+ * subtree total is meaningful. The chat grand-total
+ * ({@link readSessionTokenUsageWithSubagents}) is a SEPARATE value that already
+ * flat-sums every sub-agent once (issue #242) — untouched here, and no
+ * double-count, since these per-card subtree totals are never summed together.
  */
 async function subagentCosts(
   subagents: Map<string, SubagentMeta>,
 ): Promise<Map<string, number | null>> {
-  const out = new Map<string, number | null>();
+  const metas = [...subagents.values()];
+  // 1. Each sub-agent's OWN per-model token usage (parallel, mtime-memoized reads).
+  const ownByModel = new Map<string, Record<string, TokenTotals>>();
   await Promise.all(
-    [...subagents.values()].map(async (m) => {
-      out.set(m.toolUseId, await readSubagentCostUsd(m.transcriptPath));
+    metas.map(async (m) => {
+      const usage = await readSubagentUsageFile(m.transcriptPath);
+      ownByModel.set(m.toolUseId, usage.byModel);
     }),
   );
+  // 2. Build the tree: agentId → meta, and parentAgentId → child agentIds. A
+  //    depth-1 sub-agent has no parentAgentId (its parent is the main session), so
+  //    it's a root; only links to a KNOWN sub-agent id form an edge.
+  const metaByAgentId = new Map<string, SubagentMeta>();
+  for (const m of metas) if (m.agentId) metaByAgentId.set(m.agentId, m);
+  const childrenOf = new Map<string, string[]>();
+  for (const m of metas) {
+    if (m.agentId && m.parentAgentId && metaByAgentId.has(m.parentAgentId)) {
+      const kids = childrenOf.get(m.parentAgentId) ?? [];
+      kids.push(m.agentId);
+      childrenOf.set(m.parentAgentId, kids);
+    }
+  }
+  // 3. For each node, DFS its subtree (self + all transitive descendants), merging
+  //    per-model usage, then price once. `seen` guards against a malformed cyclic link.
+  const out = new Map<string, number | null>();
+  for (const m of metas) {
+    const merged: Record<string, TokenTotals> = {};
+    const seen = new Set<string>();
+    const visit = (toolUseId: string, agentId?: string): void => {
+      mergeByModelInto(merged, ownByModel.get(toolUseId) ?? {});
+      if (!agentId) return;
+      for (const childId of childrenOf.get(agentId) ?? []) {
+        if (seen.has(childId)) continue;
+        seen.add(childId);
+        const child = metaByAgentId.get(childId);
+        if (child) visit(child.toolUseId, child.agentId);
+      }
+    };
+    if (m.agentId) seen.add(m.agentId);
+    visit(m.toolUseId, m.agentId);
+    out.set(m.toolUseId, estimateCostUsdByModel(merged));
+  }
   return out;
+}
+
+/** Add one per-model usage map into a running accumulator (mirrors the fold in
+ *  {@link mergeSubagentUsage}). Used by the recursive cost rollup. */
+function mergeByModelInto(
+  target: Record<string, TokenTotals>,
+  src: Record<string, TokenTotals>,
+): void {
+  for (const [model, t] of Object.entries(src)) {
+    const b = (target[model] ??= {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+    });
+    b.inputTokens += t.inputTokens;
+    b.outputTokens += t.outputTokens;
+    b.cacheReadTokens += t.cacheReadTokens;
+    b.cacheCreationTokens += t.cacheCreationTokens;
+  }
 }
 
 /**
  * Cumulative token usage of a single sub-agent transcript, memoized on its mtime.
- * The shared primitive behind both the per-block cost ({@link readSubagentCostUsd})
+ * The shared primitive behind both the per-card cost rollup ({@link subagentCosts})
  * and the chat-total roll-up ({@link readSessionTokenUsageWithSubagents}), so a
  * chat open parses each sub-agent file at most once.
  */
@@ -557,12 +710,6 @@ async function readSubagentUsageFile(file: string): Promise<SessionTokenUsage> {
   const usage = await readSessionTokenUsageFile(file);
   if (mtimeMs !== undefined) mtimeCacheSet(usageCache, file, mtimeMs, usage);
   return usage;
-}
-
-/** The estimated cost of a sub-agent transcript, priced per-model from its usage. */
-async function readSubagentCostUsd(file: string): Promise<number | null> {
-  const usage = await readSubagentUsageFile(file);
-  return estimateCostUsdByModel(usage.byModel);
 }
 
 /**
