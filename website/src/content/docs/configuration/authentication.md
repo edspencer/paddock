@@ -32,6 +32,15 @@ header. That is only acceptable when the network guarantees the proxy is the
 sole ingress (e.g. Paddock binds a private interface / Docker network and the
 proxy is the one hop in front of it).
 
+:::tip[Turnkey Tier-1 gate]
+For the simplest real login, the
+[**`auth-basic/`**](https://github.com/edspencer/paddock-deploy/tree/main/auth-basic)
+recipe in `paddock-deploy` puts a Caddy + Basic Auth sidecar in front of Paddock
+and feeds it a `trusted-header` identity — a ready-made version of the pattern
+below. The [Securing Paddock](/guides/securing/) guide lays out the full ladder,
+from network isolation up through JWT forward-auth.
+:::
+
 **`jwt` mode is the only spoof-proof option.** Paddock verifies the token's
 signature itself against the IdP's JWKS, so a forged or replayed-without-key
 token is rejected even if it arrives directly. Paddock holds **no key material**

@@ -69,7 +69,8 @@ Consequences worth knowing:
 >
 > Inside a container the network namespace is the isolation boundary and Docker
 > can't reach `127.0.0.1` inside the container, so the **image** keeps binding
-> `0.0.0.0`; the safe posture there is carried by the deploy recipe's
+> `0.0.0.0`; the safe posture there is carried by the
+> [deploy recipe's](https://github.com/edspencer/paddock-deploy/tree/main/docker)
 > port-publish (e.g. `-p 127.0.0.1:4000:4000`), not this app-level guard.
 
 > **`PADDOCK_CONFIG__*` is not implemented.** There is no generic
