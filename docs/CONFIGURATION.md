@@ -30,7 +30,7 @@ declarations will live in, and it matches the repo's YAML house style
 - **Shape.** Keys mirror the resolved config: top-level scalars (`port`, `host`,
   `logLevel`, `keeperDriveMode`, `maxSpawnDepth`, `browserMcp`,
   `sweepMinIntervalMs`, `selfMcpEnabled`, …) plus nested sections `auth`,
-  `brand`, `devServers`, `transcription`, and `gitAuthor`. Unknown keys are
+  `brand`, `transcription`, and `gitAuthor`. Unknown keys are
   ignored. Each value is coerced through the same parsing an env value would get,
   so the same default/validation rules (below) apply.
 
@@ -45,8 +45,6 @@ auth:
 brand:
   name: Homelab
   accent: "#3c6ec2"
-devServers:
-  enabled: true
 gitAuthor:
   name: Paddock
   email: paddock@localhost
@@ -149,12 +147,15 @@ HushPod's whisper config so both can share a backend. See [DEV.md](../DEV.md#voi
 | `PADDOCK_SELF_MCP_WRITE` | `false` | no | Additionally give keepers the self-management **write** tools (`create_chat`, `fork_chat`, `send_message`, `fork_chat_batch`). Only honored when `PADDOCK_SELF_MCP` is also on (write implies read). |
 | `PADDOCK_BROWSER_MCP` | *(off)* | no | When `=1`, inject a headless-Chromium Playwright MCP into keepers (browse/screenshot). |
 
-## Dev servers / git / GitHub
+## Git / GitHub
+
+> **Preview servers (`pm`).** Running long-lived dev/preview servers is a
+> capability of the **devbox image** (which ships the `pm` PM2 wrapper), advertised
+> to keepers by an instance-wide `CLAUDE.md` on the mounted data volume — not a
+> Paddock config flag. There is no `PADDOCK_DEV_SERVERS_*` variable.
 
 | Variable | Default | Required | Purpose |
 |----------|---------|----------|---------|
-| `PADDOCK_DEV_SERVERS_ENABLED` | `false` | no | Advertise the on-box `pm` dev-server capability to keepers (per-instance opt-in). Accepts `1`/`true`/`yes`. |
-| `PADDOCK_DEV_SERVERS_DOMAIN` | `projects.valfenda.net` | no | Base domain shown in dev-server URLs (must match the `pm` wrapper's public host). |
 | `PADDOCK_GIT_AUTHOR_NAME` | `Paddock` | no | Author name for commits the server makes on the backing store. |
 | `PADDOCK_GIT_AUTHOR_EMAIL` | `paddock@localhost` | no | Author email for those commits. |
 | `PADDOCK_GITHUB_CLIENT_ID` | — | *(for GitHub auth)* | GitHub OAuth **client id** enabling the device-flow connect. Without it the GitHub-auth feature reports "not configured"; invoking a flow throws. |
