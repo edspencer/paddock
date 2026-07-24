@@ -1,5 +1,21 @@
 # @paddock/web
 
+## 0.44.1
+
+### Patch Changes
+
+- [#452](https://github.com/edspencer/paddock/pull/452) [`de705a0`](https://github.com/edspencer/paddock/commit/de705a05e7e1fd3960612c01aecc623abf1d8a22) Thanks [@edspencer](https://github.com/edspencer)! - docs(website): link the `edspencer/paddock-deploy` recipes repo across the
+  entry-point pages, complementing the existing Guides coverage.
+
+  - **Getting started** gains a "Ready-made deploy recipes" pointer after the
+    docker-compose block, linking the repo and its `docker/` subdir.
+  - **Authentication** cross-links the `auth-basic/` Caddy sidecar as the turnkey
+    Tier-1 gate and points at the Securing ladder.
+  - **What's New** adds a 0.44 entry covering the two official images (`:latest`
+    base + `:devbox`) and the new `paddock-deploy` recipes repo.
+  - **Environment variables** links the deploy recipe's port-publish note to the
+    `docker/` recipe.
+
 ## 0.44.0
 
 ### Minor Changes
