@@ -37,8 +37,8 @@ A file value is coerced through the **same** parsing an env value gets, so all
 the rules on the [environment page](/configuration/environment/#how-values-are-parsed)
 — blank-is-unset, the `1`/`true`/`yes` boolean convention, unknown-enum-falls-
 back-to-default, path canonicalisation — apply identically to file values. A
-scalar may be written in its natural YAML type (`port: 4000`, `devServers: {
-enabled: true }`) or as a string; both resolve the same way.
+scalar may be written in its natural YAML type (`port: 4000`, `brand: { name:
+Homelab }`) or as a string; both resolve the same way.
 :::
 
 ## Where the file lives

@@ -158,12 +158,17 @@ instance default when unset), resolved at request time. See
 | `PADDOCK_ATTACHMENTS_MAX_FILES_PER_MESSAGE` | `10` | no | How many files a single message may carry. Enforced client-side (tray cap) **and** server-side (per upload request + at send). Positive integer, else the default. |
 | `PADDOCK_ATTACHMENTS_ALLOWED_TYPES` | `*` (allow all) | no | Comma-separated allow-list of MIME patterns (`image/*`, `application/pdf`) and/or extensions (`.csv`, `.pdf`). A file passes if its MIME matches any pattern **or** its extension matches any extension entry; the sentinel `*` allows everything. A hygiene/UX guardrail, **not** a security boundary (client-provided types, no magic-byte sniffing). |
 
-## Dev servers / git / GitHub
+## Git / GitHub
+
+:::note[Preview servers (`pm`)]
+Running long-lived dev/preview servers is a capability of the **devbox image**
+(which ships the `pm` PM2 wrapper), advertised to keepers by an instance-wide
+`CLAUDE.md` on the mounted data volume — not a Paddock config flag. There is no
+`PADDOCK_DEV_SERVERS_*` variable.
+:::
 
 | Variable | Default | Required | Purpose |
 |----------|---------|----------|---------|
-| `PADDOCK_DEV_SERVERS_ENABLED` | `false` | no | Advertise the on-box `pm` dev-server capability to keepers (per-instance opt-in). Accepts `1`/`true`/`yes`. |
-| `PADDOCK_DEV_SERVERS_DOMAIN` | `projects.valfenda.net` | no | Base domain shown in dev-server URLs (must match the `pm` wrapper's public host). |
 | `PADDOCK_GIT_AUTHOR_NAME` | `Paddock` | no | Author name for commits the server makes on the backing store. |
 | `PADDOCK_GIT_AUTHOR_EMAIL` | `paddock@localhost` | no | Author email for those commits. |
 | `PADDOCK_GITHUB_CLIENT_ID` | — | *(for GitHub auth)* | GitHub OAuth **client id** enabling the device-flow connect. Without it the GitHub-auth feature reports "not configured"; invoking a flow throws. |
