@@ -189,8 +189,18 @@ jobs:
       - name: Tag multi-arch images
         run: |
           set -euo pipefail
-          base_digests="$(printf "${IMAGE}@sha256:%s " $(ls /tmp/digests/digests-base-*/))"
-          devbox_digests="$(printf "${IMAGE}@sha256:%s " $(ls /tmp/digests/digests-devbox-*/))"
+          # download-artifact@v4 lands each per-arch digest in its own
+          # digests-<target>-<arch>/ subdir, one file whose NAME is the digest.
+          # Iterate the files directly (basename = digest); do NOT `ls` the
+          # dirs -- `ls` prints a "dir:" header per directory when given more
+          # than one, which corrupts the reference list (invalid reference).
+          collect_digests() {
+            for f in /tmp/digests/"$1"-*/*; do
+              printf "%s@sha256:%s " "${IMAGE}" "$(basename "$f")"
+            done
+          }
+          base_digests="$(collect_digests digests-base)"
+          devbox_digests="$(collect_digests digests-devbox)"
 
           docker buildx imagetools create \
             -t "${IMAGE}:${VERSION}" \
