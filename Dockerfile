@@ -117,6 +117,13 @@ RUN npm install -g pm2
 COPY scripts/pm /usr/local/bin/pm
 RUN chmod +x /usr/local/bin/pm
 
+# Install Chromium OUTSIDE /data. HOME=/data (so ~/.claude survives restarts),
+# but /data is the runtime VOLUME mount — Playwright's default browser dir
+# ($HOME/.cache/ms-playwright) would be shadowed by the mounted volume at run
+# time and the browser would vanish. Pin it to an image-baked path instead; the
+# bundled playwright and the server-spawned MCP both honour this env at launch.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
 # Playwright MCP server (exposes the `playwright-mcp` bin on PATH) + a matching
 # headless Chromium installed via the `playwright` bundled inside @playwright/mcp
 # (mirrors the box: `node .../playwright/cli.js install --with-deps chromium`).
