@@ -67,21 +67,6 @@ export interface AuthConfig {
 }
 
 /**
- * Dev/preview-server capability. When enabled, keeper agents are told (in their
- * system prompt) that they may run long-running dev servers via the on-box `pm`
- * CLI (a PM2 + shared-ports-registry wrapper). Driven entirely by env so it is
- * scoped PER INSTANCE — only the instance whose env sets
- * `PADDOCK_DEV_SERVERS_ENABLED` advertises the capability (e.g. the projects
- * instance), leaving house/homelab prompts untouched.
- */
-export interface DevServersConfig {
-  /** Whether keeper agents may run dev servers via `pm` (default false). */
-  enabled: boolean;
-  /** Host shown in dev-server URLs; must match the `pm` wrapper's PM_PUBLIC_HOST. */
-  domain: string;
-}
-
-/**
  * Per-instance branding (issue #34). Lets several Paddock instances (Projects,
  * Homelab, House, …) be told apart at a glance. All optional; the defaults
  * preserve today's look (🐎 / "Paddock" / terracotta). Injected into index.html
@@ -119,8 +104,6 @@ export interface PaddockConfig {
   scratchDir: string;
   /** Provider-agnostic user-authentication config (see AUTH.md). */
   auth: AuthConfig;
-  /** Dev/preview-server capability advertised to keeper agents (per-instance). */
-  devServers: DevServersConfig;
   /** Voice-dictation (Whisper) capability (per-instance; default off). */
   transcription: TranscriptionConfig;
   /** Per-instance branding (title/logo/accent; defaults preserve today's look). */
@@ -138,9 +121,8 @@ export interface PaddockConfig {
    * project CLAUDE.md hierarchy (true, the default) instead of a terse Paddock
    * "replace" system prompt (false). Driven by `PADDOCK_KEEPER_NATIVE_PROMPT`.
    *
-   * This is DELIBERATELY decoupled from {@link DevServersConfig.enabled} (issue
-   * #176): the dev-servers flag advertises a `pm` capability and has nothing to
-   * do with which system prompt an agent gets. When native (the default on every
+   * This is its own decision (issue #176) governing only which system prompt an
+   * agent gets. When native (the default on every
    * instance), an instance-wide `CLAUDE.md` (a common ancestor of `projects/` and
    * the scratch dir) plus a per-project `CLAUDE.md` are auto-loaded — the two-
    * level native-context model. Set `PADDOCK_KEEPER_NATIVE_PROMPT=false` to fall
@@ -294,7 +276,6 @@ export interface PaddockConfigFile {
     usernameClaim?: string;
     groupsClaim?: string;
   };
-  devServers?: { enabled?: boolean | string; domain?: string };
   transcription?: {
     mode?: string;
     model?: string;
@@ -543,20 +524,6 @@ function loadAuthConfig(file: PaddockConfigFile["auth"] = {}): AuthConfig {
 }
 
 /**
- * Resolve the dev/preview-server capability from env. Defaults to disabled, so a
- * plain instance never advertises `pm`; the projects instance opts in by setting
- * `PADDOCK_DEV_SERVERS_ENABLED=true` in its own env file. Accepts 1/true/yes.
- */
-function loadDevServersConfig(file: PaddockConfigFile["devServers"] = {}): DevServersConfig {
-  const raw = envOr("PADDOCK_DEV_SERVERS_ENABLED", fileOr(file.enabled, "false")).toLowerCase();
-  const enabled = raw === "1" || raw === "true" || raw === "yes";
-  return {
-    enabled,
-    domain: envOr("PADDOCK_DEV_SERVERS_DOMAIN", fileOr(file.domain, "projects.valfenda.net")),
-  };
-}
-
-/**
  * Resolve the voice-dictation (Whisper) capability from env. Defaults to `off`,
  * so a plain instance never shows a mic button. The mode defaults to `remote`
  * when an endpoint is configured (the common case — point it at a shared whisper
@@ -642,7 +609,6 @@ export function loadPaddockConfig(): PaddockConfig {
     webDist: abs(envOr("PADDOCK_WEB_DIST", fileOr(file.webDist, defaultWebDist))),
     scratchDir,
     auth: loadAuthConfig(file.auth),
-    devServers: loadDevServersConfig(file.devServers),
     transcription: loadTranscriptionConfig(file.transcription),
     brand: loadBrandConfig(file.brand),
     keeperDriveMode: loadKeeperDriveMode(file.keeperDriveMode),
@@ -907,7 +873,7 @@ function loadSelfMcpEnabled(file?: PaddockConfigFile["selfMcpEnabled"]): boolean
  * hierarchy (issue #176). Defaults to `true` (native) on every instance so a
  * seeded instance-wide + per-project `CLAUDE.md` is auto-loaded; set
  * `PADDOCK_KEEPER_NATIVE_PROMPT` to 0/false/no to fall back to the terse replace
- * prompt. Intentionally independent of `PADDOCK_DEV_SERVERS_ENABLED`.
+ * prompt.
  */
 function loadNativeSystemPrompt(file?: PaddockConfigFile["nativeSystemPrompt"]): boolean {
   const raw = envOr("PADDOCK_KEEPER_NATIVE_PROMPT", fileOr(file, "true")).toLowerCase();

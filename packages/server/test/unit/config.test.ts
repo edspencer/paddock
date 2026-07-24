@@ -1,8 +1,8 @@
 /**
  * Unit tests for loadPaddockConfig env resolution — focused on the native
- * system-prompt toggle (issue #176), which is deliberately DECOUPLED from the
- * dev-servers capability flag. Each case saves/restores the touched env vars and
- * points PADDOCK_DATA_DIR at a throwaway tmp dir (loadPaddockConfig mkdirs it).
+ * system-prompt toggle (issue #176). Each case saves/restores the touched env
+ * vars and points PADDOCK_DATA_DIR at a throwaway tmp dir (loadPaddockConfig
+ * mkdirs it).
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
@@ -13,7 +13,6 @@ import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
 const ENV_KEYS = [
   "PADDOCK_DATA_DIR",
   "PADDOCK_KEEPER_NATIVE_PROMPT",
-  "PADDOCK_DEV_SERVERS_ENABLED",
   "PADDOCK_MAX_SPAWN_DEPTH",
 ];
 
@@ -38,7 +37,6 @@ describe("loadPaddockConfig: nativeSystemPrompt (#176)", () => {
     for (const k of ENV_KEYS) saved[k] = process.env[k];
     process.env.PADDOCK_DATA_DIR = dataDir;
     delete process.env.PADDOCK_KEEPER_NATIVE_PROMPT;
-    delete process.env.PADDOCK_DEV_SERVERS_ENABLED;
     delete process.env.PADDOCK_MAX_SPAWN_DEPTH;
   });
   afterEach(async () => {
@@ -51,14 +49,6 @@ describe("loadPaddockConfig: nativeSystemPrompt (#176)", () => {
 
   it("defaults to native (true) on every instance", () => {
     expect(loadPaddockConfig().nativeSystemPrompt).toBe(true);
-  });
-
-  it("is independent of PADDOCK_DEV_SERVERS_ENABLED", () => {
-    process.env.PADDOCK_DEV_SERVERS_ENABLED = "false";
-    const cfg = loadPaddockConfig();
-    expect(cfg.devServers.enabled).toBe(false);
-    // Dev servers off must NOT force a replace prompt anymore (the old coupling).
-    expect(cfg.nativeSystemPrompt).toBe(true);
   });
 
   it.each(["0", "false", "no", "FALSE", "No"])(
@@ -309,7 +299,6 @@ describe("loadPaddockConfig: YAML instance-config file (#270)", () => {
     "PADDOCK_BRAND_NAME",
     "PADDOCK_KEEPER_DRIVE_MODE",
     "PADDOCK_MAX_SPAWN_DEPTH",
-    "PADDOCK_DEV_SERVERS_ENABLED",
     "PADDOCK_SELF_MCP",
     "PADDOCK_SELF_MCP_WRITE",
     "PADDOCK_HOOKS_MCP",
@@ -356,7 +345,6 @@ describe("loadPaddockConfig: YAML instance-config file (#270)", () => {
     // Built-in default flipped to session (#316); env + file still override.
     expect(cfg.keeperDriveMode).toBe("session");
     expect(cfg.maxSpawnDepth).toBe(1);
-    expect(cfg.devServers.enabled).toBe(false);
     expect(cfg.gitAuthor).toEqual({ name: "Paddock", email: "paddock@localhost" });
   });
 
@@ -381,8 +369,6 @@ describe("loadPaddockConfig: YAML instance-config file (#270)", () => {
         "brand:",
         "  name: Homelab",
         "  accent: '#123456'",
-        "devServers:",
-        "  enabled: true",
         "selfMcpEnabled: true",
         "selfMcpWriteEnabled: true",
         "hooksMcpEnabled: true",
@@ -407,7 +393,6 @@ describe("loadPaddockConfig: YAML instance-config file (#270)", () => {
     expect(cfg.auth.mode).toBe("jwt");
     expect(cfg.auth.jwksUrl).toBe("https://idp.example/jwks");
     expect(cfg.brand).toMatchObject({ name: "Homelab", accent: "#123456" });
-    expect(cfg.devServers.enabled).toBe(true);
     expect(cfg.selfMcpEnabled).toBe(true);
     expect(cfg.selfMcpWriteEnabled).toBe(true);
     expect(cfg.hooksMcpEnabled).toBe(true);
@@ -437,12 +422,6 @@ describe("loadPaddockConfig: YAML instance-config file (#270)", () => {
     expect(cfg.brand.name).toBe("FromEnv");
     // …while an un-shadowed file value is still honoured.
     expect(cfg.auth.mode).toBe("jwt");
-  });
-
-  it("env overrides a file boolean too (dev servers off via env beats file `true`)", () => {
-    writeConfig(["devServers:", "  enabled: true"].join("\n") + "\n");
-    process.env.PADDOCK_DEV_SERVERS_ENABLED = "false";
-    expect(loadPaddockConfig().devServers.enabled).toBe(false);
   });
 
   it("PADDOCK_BROWSER_MCP keeps literal-'1' env semantics over any file value", () => {
@@ -484,13 +463,12 @@ describe("loadPaddockConfig: YAML instance-config file (#270)", () => {
 
   it("treats an empty nested section (valueless key → null) as absent, not a crash", () => {
     // `brand:` / `auth:` with nothing after them parse to null; must NOT throw.
-    writeConfig(["port: 4000", "brand:", "auth:", "devServers:"].join("\n") + "\n");
+    writeConfig(["port: 4000", "brand:", "auth:"].join("\n") + "\n");
     let cfg!: ReturnType<typeof loadPaddockConfig>;
     expect(() => (cfg = loadPaddockConfig())).not.toThrow();
     expect(cfg.port).toBe(4000);
     expect(cfg.brand.name).toBe("Paddock");
     expect(cfg.auth.mode).toBe("none");
-    expect(cfg.devServers.enabled).toBe(false);
   });
 
   it("treats a null scalar (valueless key) as absent, falling back to the default", () => {

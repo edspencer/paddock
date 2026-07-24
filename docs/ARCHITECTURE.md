@@ -467,8 +467,11 @@ main knobs:
 | **Keeper** | `PADDOCK_KEEPER_DRIVE_MODE` (session), `PADDOCK_KEEPER_NATIVE_PROMPT` (true), `PADDOCK_SELF_MCP` (false), `PADDOCK_SELF_MCP_WRITE` (false; implies read) |
 | **Sweeper** | `PADDOCK_SWEEP_MIN_INTERVAL_MS` (300000) |
 | **Whisper** | `PADDOCK_WHISPER_MODE` (off/local/remote), `PADDOCK_WHISPER_ENDPOINT`, `PADDOCK_WHISPER_MODEL` (base), `PADDOCK_WHISPER_API_KEY`, `PADDOCK_WHISPER_LANGUAGE`, `PADDOCK_WHISPER_MAX_UPLOAD_BYTES` (25 MB) |
-| **Dev servers** | `PADDOCK_DEV_SERVERS_ENABLED` (false), `PADDOCK_DEV_SERVERS_DOMAIN` |
 | **Brand** | `PADDOCK_BRAND_NAME` (Paddock), `PADDOCK_BRAND_LOGO` (🐎), `PADDOCK_BRAND_ACCENT` (#c2603c) |
+
+> Running long-lived dev/preview servers is a capability of the **devbox image**
+> (which ships the `pm` PM2 wrapper) advertised via an instance-wide `CLAUDE.md` on
+> the data volume — not a Paddock config flag.
 
 ---
 

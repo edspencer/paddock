@@ -88,10 +88,9 @@ export function buildScratchConfig(
  * Claude Code's full default coding prompt applies together with the project's
  * CLAUDE.md hierarchy — the box's root CLAUDE.md (auto-loaded via the cwd
  * walk-up, e.g. `/var/lib/paddock/projects/CLAUDE.md`) plus a per-project
- * CLAUDE.md. This is now its OWN decision, independent of
- * `PADDOCK_DEV_SERVERS_ENABLED` (a `pm`-capability flag it used to be
- * conflated with). An instance with no CLAUDE.md files can opt back into the
- * terse replace prompt below with `PADDOCK_KEEPER_NATIVE_PROMPT=false`.
+ * CLAUDE.md. This is its own decision (issue #176): an instance with no
+ * CLAUDE.md files can opt back into the terse replace prompt below with
+ * `PADDOCK_KEEPER_NATIVE_PROMPT=false`.
  */
 export function buildKeeperConfig(
   cfg: PaddockConfig,
