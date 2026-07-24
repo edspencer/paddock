@@ -198,3 +198,84 @@ export async function readSessionTokenUsage(
   cache.set(file, { mtime, usage });
   return usage;
 }
+
+/**
+ * Per-message context-window fill, keyed by the transcript record `uuid` that the
+ * messages DTO carries (issue #451). For every `type:"assistant"` record we store
+ * `input + cache_read + cache_creation` — the context-window fill at that turn.
+ *
+ * A single assistant message is written across several JSONL records (one per
+ * content block: text, tool_use, …), each with its own `uuid` but the SAME
+ * message-level `usage`, so keying by record `uuid` resolves any of a message's
+ * turn ids to the identical fill. Callers forward-fill the value across the
+ * non-assistant records between turns (user prompts, tool results) to answer
+ * "how full was the context as of this point" for every message.
+ *
+ * This is a SEPARATE pass from {@link readSessionTokenUsageFile} on purpose: it
+ * only runs on the open-chat messages path, never the chat-list rings, so the
+ * list DTO stays lean. It rides its own mtime cache below.
+ */
+export async function readContextSeriesFile(file: string): Promise<Map<string, number>> {
+  const series = new Map<string, number>();
+  const stream = createReadStream(file, { encoding: "utf8" });
+  stream.on("error", () => undefined);
+  const rl = createInterface({ input: stream, crlfDelay: Infinity });
+  try {
+    for await (const line of rl) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      let parsed: {
+        type?: string;
+        uuid?: unknown;
+        message?: { usage?: Record<string, unknown> };
+      };
+      try {
+        parsed = JSON.parse(trimmed);
+      } catch {
+        continue;
+      }
+      if (parsed.type !== "assistant") continue;
+      const uuid = typeof parsed.uuid === "string" ? parsed.uuid : undefined;
+      const usage = parsed.message?.usage;
+      if (!uuid || !usage) continue;
+      series.set(
+        uuid,
+        num(usage.input_tokens) +
+          num(usage.cache_creation_input_tokens) +
+          num(usage.cache_read_input_tokens),
+      );
+    }
+  } catch {
+    return series;
+  } finally {
+    rl.close();
+    stream.destroy();
+  }
+  return series;
+}
+
+/** mtime-keyed cache of the per-message context series (see {@link readContextSeriesFile}). */
+const seriesCache = new Map<string, { mtime: number; series: Map<string, number> }>();
+
+/**
+ * Per-message context series for a chat, resolved from `<projectDir>/.chats/`.
+ * Memoized on the transcript's mtime (parity with {@link readSessionTokenUsage}).
+ * Returns an empty map for an unsafe session id or a session with no transcript.
+ */
+export async function readContextSeries(
+  projectDir: string,
+  sessionId: string,
+): Promise<Map<string, number>> {
+  if (!SAFE_SEGMENT.test(sessionId)) return new Map();
+  const file = path.join(projectChatsDir(projectDir), `${sessionId}.jsonl`);
+  const mtime = await fs
+    .stat(file)
+    .then((s) => s.mtimeMs)
+    .catch(() => 0);
+  if (!mtime) return new Map();
+  const hit = seriesCache.get(file);
+  if (hit && hit.mtime === mtime) return hit.series;
+  const series = await readContextSeriesFile(file);
+  seriesCache.set(file, { mtime, series });
+  return series;
+}

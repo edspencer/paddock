@@ -152,6 +152,81 @@ import {
   visibleProjectAgentNames,
 } from "./herdctl-agent-names.js";
 
+/**
+ * Slice a Claude Code transcript to the PREFIX up to and including the message
+ * turn anchored at `cutUuid` (issue #451 — fork/revert from a point). Returns the
+ * sliced JSONL, or null if no record carries that uuid.
+ *
+ * A logical turn spans several JSONL records: one assistant message is written as
+ * one record per content block (text, tool_use, …), all sharing one `message.id`
+ * but each with its own `uuid`; a tool_use is then answered by a `type:"user"`
+ * `tool_result` record. To keep the kept prefix internally consistent (no
+ * assistant tool_use left without its result, which would break resume), after
+ * the anchor record we greedily absorb (a) further records of the same
+ * `message.id` — the anchor message's sibling blocks — and (b) immediately
+ * following `type:"user"` tool_result records answering them, stopping at the
+ * next genuine new turn. This is exact for plain chat turns (the primary case);
+ * for deeply interleaved tool turns the boundary is a safe over-include.
+ */
+function sliceTranscriptAtUuid(raw: string, cutUuid: string): string | null {
+  const lines = raw.split("\n");
+  const meta = lines.map((ln) => {
+    const t = ln.trim();
+    if (!t) return null;
+    try {
+      const o = JSON.parse(t) as {
+        uuid?: string;
+        type?: string;
+        message?: { id?: string; content?: unknown };
+      };
+      const content = o.message?.content;
+      const hasToolResult =
+        Array.isArray(content) &&
+        content.some((b) => (b as { type?: string })?.type === "tool_result");
+      return {
+        uuid: typeof o.uuid === "string" ? o.uuid : undefined,
+        type: o.type,
+        mid: typeof o.message?.id === "string" ? o.message.id : undefined,
+        hasToolResult,
+      };
+    } catch {
+      return null;
+    }
+  });
+
+  let idx = -1;
+  let anchorMid: string | undefined;
+  for (let i = 0; i < meta.length; i++) {
+    if (meta[i]?.uuid === cutUuid) {
+      idx = i;
+      anchorMid = meta[i]!.mid;
+      break;
+    }
+  }
+  if (idx === -1) return null;
+
+  let end = idx;
+  for (let j = idx + 1; j < meta.length; j++) {
+    const m = meta[j];
+    if (m === null) {
+      // Blank line — includable filler; keep scanning.
+      end = j;
+      continue;
+    }
+    if (anchorMid && m.mid === anchorMid) {
+      end = j; // a sibling content block of the anchor's assistant message
+      continue;
+    }
+    if (m.type === "user" && m.hasToolResult) {
+      end = j; // a tool_result answering a kept tool_use
+      continue;
+    }
+    break;
+  }
+
+  return lines.slice(0, end + 1).join("\n") + "\n";
+}
+
 export class HerdctlService {
   private fleet: FleetManager | null = null;
   private started = false;
@@ -936,13 +1011,30 @@ export class HerdctlService {
     }
   }
 
-  async forkSession(project: Project, sourceSessionId: string, name?: string): Promise<string> {
+  async forkSession(
+    project: Project,
+    sourceSessionId: string,
+    name?: string,
+    fromUuid?: string,
+  ): Promise<string> {
     if (!/^[A-Za-z0-9._-]+$/.test(sourceSessionId)) {
       throw new Error(`Invalid session id: ${sourceSessionId}`);
     }
     const dir = projectChatsDir(project.dir);
     // Read the source transcript (throws ENOENT for an unknown/absent session).
-    const raw = await fs.readFile(path.join(dir, `${sourceSessionId}.jsonl`), "utf8");
+    let raw = await fs.readFile(path.join(dir, `${sourceSessionId}.jsonl`), "utf8");
+
+    // Fork-from-here (issue #451): when a message uuid is given, copy only the
+    // transcript PREFIX up to and including that message's turn, so the new chat
+    // branches at the chosen point instead of inheriting the whole history. The
+    // tail (later turns) is left out of the copy; the source is untouched.
+    if (fromUuid) {
+      const sliced = sliceTranscriptAtUuid(raw, fromUuid);
+      if (sliced == null) {
+        throw new Error(`Message ${fromUuid} not found in session ${sourceSessionId}`);
+      }
+      raw = sliced;
+    }
 
     const newId = randomUUID();
     // Rewrite the embedded session id on every line. Claude Code writes compact
@@ -963,6 +1055,53 @@ export class HerdctlService {
     await jobs.writeAdoptionJob(this.cfg.stateDir, newId, project, new Date());
     this.invalidateSessions(keeper);
     return newId;
+  }
+
+  /**
+   * Revert a chat back to an earlier message (issue #451): truncate the session's
+   * transcript at `toUuid`, in place, keeping the SAME session id — so the chat's
+   * identity/URL is preserved and the next turn continues as if the later
+   * messages never happened. The dropped tail is backed up (recoverable) to a
+   * `.reverts/` sidecar that is deliberately kept out of the discoverable
+   * `<id>.jsonl` namespace so it never lists as a chat.
+   *
+   * NOTE: this rolls back the CONVERSATION only — real-world side-effects of the
+   * reverted turns (files written, PRs opened, messages sent) are NOT undone. The
+   * caller's UI is responsible for warning about that. Returns the number of
+   * transcript records dropped.
+   */
+  async revertSession(
+    project: Project,
+    sessionId: string,
+    toUuid: string,
+  ): Promise<{ removed: number }> {
+    if (!/^[A-Za-z0-9._-]+$/.test(sessionId)) {
+      throw new Error(`Invalid session id: ${sessionId}`);
+    }
+    const dir = projectChatsDir(project.dir);
+    const file = path.join(dir, `${sessionId}.jsonl`);
+    const raw = await fs.readFile(file, "utf8");
+    const sliced = sliceTranscriptAtUuid(raw, toUuid);
+    if (sliced == null) {
+      throw new Error(`Message ${toUuid} not found in session ${sessionId}`);
+    }
+    const countLines = (s: string) => s.split("\n").filter((l) => l.trim()).length;
+    const removed = countLines(raw) - countLines(sliced);
+    // Back up the full transcript before truncating (recoverable revert). The
+    // `.reverts/` dir is not the `<id>.jsonl` session namespace, so it is never
+    // discovered/listed as a chat.
+    const backupsDir = path.join(dir, ".reverts");
+    await fs.mkdir(backupsDir, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    await fs
+      .copyFile(file, path.join(backupsDir, `${sessionId}-${stamp}.jsonl`))
+      .catch(() => undefined);
+    await fs.writeFile(file, sliced, "utf8");
+    // The truncated file's shrunk mtime invalidates the usage/context mtime
+    // caches automatically; drop the discovery cache so the shorter transcript
+    // (new preview/last-turn) lists immediately.
+    this.invalidateSessions(keeperAgentName(project.slug));
+    return { removed };
   }
 
   /**
