@@ -20,6 +20,24 @@ docker run -d --name paddock -p 4000:4000 \
 
 Then open **http://localhost:4000** and click **New Project**.
 
+### Two image flavors: base vs devbox
+
+Paddock publishes **two official images** from the same source — pick the tag that
+matches what your agents do:
+
+- **`ghcr.io/edspencer/paddock:latest`** — the **base** image (used above). The lean
+  runtime: the Paddock app plus `git`, `gh`, and the `claude` CLI. Everything a stock
+  instance needs to read, write, and reason over code.
+- **`ghcr.io/edspencer/paddock:devbox`** — the **devbox** image. Base *plus* the
+  coding-agent toolbox: `pm`/PM2 preview servers, `ffmpeg`, a headless Playwright MCP
+  browser, and the Docker CLI. Reach for it when your keepers **build and run** apps,
+  not just edit them.
+
+The devbox only adds tools — same app, same `/data` layout — so you can swap tags
+against the same volume. It's a much bigger image (the Chromium layer alone is ~1 GB),
+so stay on base unless you need those tools. See
+[The Dev Box flavor](/guides/dev-box-flavor/) for the full breakdown.
+
 ### docker-compose
 
 ```yaml
