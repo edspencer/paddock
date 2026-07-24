@@ -24,6 +24,7 @@ import { GithubAuth } from "./github-auth.js";
 import { makeTranscriber, type Transcriber } from "./transcribe.js";
 import { registerRoutes } from "./routes.js";
 import { registerAuth } from "./auth.js";
+import { evaluateBindSafety } from "./bind-safety.js";
 import { renderIndexHtml } from "./brand.js";
 import { makeChatHandler } from "./ws.js";
 import { SweepService } from "./sweep.js";
@@ -89,6 +90,22 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   const app = Fastify({
     logger: { level: cfg.logLevel },
   });
+
+  // --- safe-by-default bind guard (#435) --------------------------------
+  // Fail closed if the resolved bind host is non-loopback AND auth is `none`:
+  // that would expose an unauthenticated Paddock (which runs code + spends
+  // tokens) on a routable interface. Mirrors the jwt-without-JWKS fail-closed
+  // check below. A dangerously-worded env opt-in downgrades the refusal to a
+  // loud one-line boot warning.
+  {
+    const decision = evaluateBindSafety({
+      host: cfg.host,
+      authMode: cfg.auth.mode,
+      dangerouslyAllowOpen: cfg.dangerouslyAllowOpen,
+    });
+    if (decision.action === "refuse") throw new Error(decision.message);
+    if (decision.action === "warn") app.log.warn(decision.message);
+  }
 
   // --- auth (provider-agnostic) -----------------------------------------
   // Registered first so its onRequest hook guards every REST + WS request

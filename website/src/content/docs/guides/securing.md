@@ -33,6 +33,26 @@ So there are two jobs, and you should do **both**:
   to show you a running app) **bypass Paddock's own request handling** — keep those
   ports LAN-only or behind the same auth, and never expose them directly.
 
+### Safe by default: the bind guard
+
+Paddock is **safe by default** and helps enforce the two rules above:
+
+- The bind host (`HOST` / `PADDOCK_HOST`) defaults to **`127.0.0.1`** — loopback
+  only, so a fresh install is network-closed until you deliberately open it.
+- If you bind a **non-loopback** host (e.g. `HOST=0.0.0.0`) while
+  `PADDOCK_AUTH_MODE=none`, Paddock **refuses to start** — it won't let you stand
+  up an open, unauthenticated instance by accident. Give it a real auth mode /
+  proxy (below) and it starts with no flag. If you *genuinely* want an open server,
+  set `PADDOCK_DANGEROUSLY_ALLOW_OPEN=1` and it boots with a loud warning.
+- **Containers are different:** inside a container the network namespace is the
+  isolation boundary and Docker can't reach `127.0.0.1` *inside* the container, so
+  the image binds `0.0.0.0` and the app can't police host-side exposure. The
+  **deploy recipe** carries the safety instead — publish to the host loopback for a
+  local trial (`docker run -p 127.0.0.1:4000:4000 …`, never a bare `-p 4000:4000`,
+  which is `0.0.0.0` on the host), and for real use don't publish Paddock's port at
+  all — put it on an internal network behind the auth sidecar / reverse proxy.
+  Publishing on `0.0.0.0` is the explicit dangerous step you own.
+
 ## 2. Authenticate every request
 
 Paddock is designed to sit behind an authenticating reverse proxy and read the
@@ -125,6 +145,7 @@ Security isn't only the front door — it's also what the agents can reach:
 ## Checklist
 
 - [ ] Paddock's port is **not** on a public interface — only the proxy is.
+- [ ] Bind host is loopback by default; a non-loopback bind with `AUTH_MODE=none` is refused unless you knowingly set `PADDOCK_DANGEROUSLY_ALLOW_OPEN=1`.
 - [ ] There is an **auth layer** (password at minimum; SSO ideally) on every path.
 - [ ] `PADDOCK_AUTH_MODE` matches how your proxy establishes identity.
 - [ ] `trusted-header`: the proxy **sets/overwrites** the header and is the only route in.

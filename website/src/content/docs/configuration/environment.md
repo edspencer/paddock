@@ -54,8 +54,23 @@ Consequences worth knowing:
 | `PADDOCK_HERDCTL_CONFIG` | `<data>/herdctl.yaml` | no | Path to the generated `herdctl.yaml` the FleetManager loads (Paddock owns/regenerates it). |
 | `PADDOCK_WEB_DIST` | `packages/web/dist` | no | Built SPA served in production (resolved relative to the server module). |
 | `PORT` | `4000` | no | HTTP/WS listen port. |
-| `HOST` | `0.0.0.0` | no | Bind host. |
+| `HOST` | `127.0.0.1` | no | Bind host. **Safe by default:** defaults to loopback, so a fresh run is network-closed. `PADDOCK_HOST` is an alias. Set to `0.0.0.0` (all interfaces) only behind auth or a proxy — see the guard below. |
+| `PADDOCK_DANGEROUSLY_ALLOW_OPEN` | `false` | no | Escape hatch for the open-server guard: allow a non-loopback bind **with no authentication** (`PADDOCK_AUTH_MODE=none`). Accepts `1`/`true`/`yes`. Without it, that combination **refuses to start**; with it, the server boots but logs a loud one-line warning. Leave unset unless you truly intend an unauthenticated server on a routable interface. |
 | `CLAUDE_HOME` | `~/.claude` | no | Claude home used for session/transcript discovery. |
+
+> **Safe-by-default binding.** Paddock runs code and spends Claude tokens, so it
+> refuses to expose itself carelessly. The bind host defaults to `127.0.0.1`
+> (loopback only). If you bind a **non-loopback** host (e.g. `0.0.0.0`) while
+> authentication is `none`, startup **fails closed** with a clear message —
+> mirroring the jwt-without-JWKS check. Fix it by putting a real auth mode
+> (`trusted-header`/`jwt`) or a reverse proxy in front (no flag needed), keeping
+> the bind on loopback, or — only if you genuinely want an open server — setting
+> `PADDOCK_DANGEROUSLY_ALLOW_OPEN=1` (boots with a warning).
+>
+> Inside a container the network namespace is the isolation boundary and Docker
+> can't reach `127.0.0.1` inside the container, so the **image** keeps binding
+> `0.0.0.0`; the safe posture there is carried by the deploy recipe's
+> port-publish (e.g. `-p 127.0.0.1:4000:4000`), not this app-level guard.
 
 > **`PADDOCK_CONFIG__*` is not implemented.** There is no generic
 > `PADDOCK_CONFIG__foo__bar` → nested-herdctl-key override mechanism in this tree.

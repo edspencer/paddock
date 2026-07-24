@@ -339,7 +339,9 @@ describe("loadPaddockConfig: YAML instance-config file (#270)", () => {
   it("no file present → env-only behaviour is unchanged (a no-op)", () => {
     const cfg = loadPaddockConfig();
     expect(cfg.port).toBe(4000);
-    expect(cfg.host).toBe("0.0.0.0");
+    // Safe by default (#435): the bind host now defaults to loopback.
+    expect(cfg.host).toBe("127.0.0.1");
+    expect(cfg.dangerouslyAllowOpen).toBe(false);
     expect(cfg.auth.mode).toBe("none");
     expect(cfg.brand.name).toBe("Paddock");
     // Built-in default flipped to session (#316); env + file still override.

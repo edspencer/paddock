@@ -39,6 +39,24 @@ Either way, **health/readiness endpoints are always exempt** so the proxy and
 monitoring can probe a locked-down server: `/api/health` (Paddock's own),
 `/healthz`, `/-/health`, `/health`, `/readyz`, `/livez`.
 
+### Safe-by-default binding
+
+Because `none` is fully open, Paddock **won't let you expose it unauthenticated
+by accident**. The bind host defaults to **`127.0.0.1`** (loopback only), and if
+you bind a non-loopback host (e.g. `0.0.0.0`) while `PADDOCK_AUTH_MODE=none`,
+startup **fails closed** with a clear message — the same fail-closed posture as
+`jwt` mode without a JWKS URL. To bind a routable interface, do one of:
+
+- put a real auth mode (`trusted-header`/`jwt`) or a reverse proxy in front — no
+  flag needed;
+- keep the bind on loopback and reach Paddock via a proxy/sidecar on the same host;
+- or, **only if you truly intend an open, unauthenticated server**, set
+  `PADDOCK_DANGEROUSLY_ALLOW_OPEN=1` — it boots but logs a loud warning.
+
+(Inside a container the network namespace is the boundary and Docker can't reach
+`127.0.0.1` in the container, so the image binds `0.0.0.0` and the deploy recipe
+carries the safe host-side publish — see the Securing guide.)
+
 ---
 
 ## Environment variables
