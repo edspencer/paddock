@@ -42,3 +42,17 @@ export interface RecoveryContextValue {
   onContinue: () => void;
 }
 export const RecoveryContext = createContext<RecoveryContextValue | null>(null);
+
+/**
+ * Per-message fork/revert affordances (issue #451), provided per-chat and
+ * consumed by the transcript's hover rail. `onFork`/`onRevert` receive the
+ * anchor message's transcript `uuid`; `contextLimit` is the running model's
+ * context window (for the hover fill %). Null outside a resumable project chat
+ * (a scratch chat, or a brand-new chat with no session id yet).
+ */
+export interface TurnActionsValue {
+  onFork: (uuid: string) => void;
+  onRevert: (uuid: string) => void;
+  contextLimit?: number;
+}
+export const TurnActionsContext = createContext<TurnActionsValue | null>(null);

@@ -1,7 +1,13 @@
 import { memo, useContext, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { type ToolCall } from "../../lib/ws";
-import { formatDuration, formatUsd, isTerminatedTaskStatus } from "../../lib/format";
+import {
+  formatDuration,
+  formatTokens,
+  formatUsd,
+  isTerminatedTaskStatus,
+  relativeTime,
+} from "../../lib/format";
 import type {
   BashDetails,
   EditDiff,
@@ -17,6 +23,7 @@ import { InlineImage } from "../MediaImage";
 import { PaddockManageBody } from "../PaddockManageBlock";
 import { mcpToolInfo, parsePaddockManage, paddockManageSummary } from "../../lib/mcpTools";
 import {
+  BranchIcon,
   CheckIcon,
   ChevronRightIcon,
   ClockIcon,
@@ -32,6 +39,7 @@ import {
   SubagentFetchContext,
   SubagentLiveContext,
   ToolImageUrlContext,
+  TurnActionsContext,
 } from "./chatContexts";
 import {
   SUBAGENT_TOOLS,
@@ -140,6 +148,73 @@ export const TurnView = memo(function TurnView({ turn }: { turn: Turn }) {
     </div>
   );
 });
+
+/** A reload-stable turn id is the Claude Code record uuid (optionally `#n`). Live
+ *  streamed turns use an ephemeral `t<n>` counter, which we must NOT anchor
+ *  fork/revert on — gate on the uuid shape. */
+const UUID_TURN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-/;
+
+/**
+ * Wraps a rendered turn with the per-message hover rail (issue #451): a floating
+ * cluster — revealed on hover — showing the message time and the context-window
+ * fill as of that point, plus "Fork from here" and "Revert to here" buttons. The
+ * rail only appears on reloaded user/assistant turns (which carry a stable uuid +
+ * timestamp) when the chat exposes the actions; every other turn renders bare.
+ */
+export function TurnRow({ turn }: { turn: Turn }) {
+  const actions = useContext(TurnActionsContext);
+  const anchorable =
+    !!actions &&
+    (turn.kind === "user" || turn.kind === "assistant") &&
+    typeof turn.timestamp === "string" &&
+    UUID_TURN_ID.test(turn.id);
+  if (!anchorable) return <TurnView turn={turn} />;
+
+  const uuid = turn.id.split("#")[0];
+  const ctx = turn.contextTokens;
+  const limit = actions.contextLimit;
+  const pct = ctx != null && limit ? Math.min(100, Math.round((ctx / limit) * 100)) : null;
+  const chip =
+    "flex items-center rounded-full bg-canvas/95 shadow-sm ring-1 ring-paddock-200/70 backdrop-blur dark:bg-canvas-dark/95 dark:ring-paddock-800";
+
+  return (
+    <div className="group relative">
+      <div className="pointer-events-none absolute -top-3 right-1 z-10 flex items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100">
+        <span
+          className={`${chip} gap-1 px-2 py-0.5 text-[11px] text-ink-subtle dark:text-ink-dark/70`}
+          title={new Date(turn.timestamp!).toLocaleString()}
+        >
+          <span>{relativeTime(turn.timestamp)}</span>
+          {ctx != null ? (
+            <span className="text-ink-subtle/70 dark:text-ink-dark/50" title="Context-window fill as of this message">
+              · {formatTokens(ctx)}
+              {pct != null ? ` · ${pct}%` : ""}
+            </span>
+          ) : null}
+        </span>
+        <button
+          type="button"
+          onClick={() => actions.onFork(uuid)}
+          title="Fork a new chat from here"
+          aria-label="Fork a new chat from here"
+          className={`${chip} h-6 w-6 justify-center text-ink-subtle hover:text-accent dark:text-ink-dark/70`}
+        >
+          <BranchIcon width={13} height={13} />
+        </button>
+        <button
+          type="button"
+          onClick={() => actions.onRevert(uuid)}
+          title="Revert conversation back to here"
+          aria-label="Revert conversation back to here"
+          className={`${chip} h-6 w-6 justify-center text-ink-subtle hover:text-rose-500 dark:text-ink-dark/70`}
+        >
+          <ClockIcon width={13} height={13} />
+        </button>
+      </div>
+      <TurnView turn={turn} />
+    </div>
+  );
+}
 
 function Dot({ delay }: { delay?: string }) {
   return (

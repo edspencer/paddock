@@ -20,8 +20,19 @@ import {
 } from "../../lib/format";
 import { sentFileFromToolCall } from "./toolFormatting";
 
+/**
+ * Cross-cutting per-message metadata surfaced on hover (issue #451): the source
+ * message's ISO timestamp and the context-window fill (tokens) as of that point.
+ * Both optional — present on reloaded history turns, absent on ephemeral
+ * live-streamed turns (which have no stable uuid to anchor fork/revert on).
+ */
+export interface TurnMeta {
+  timestamp?: string;
+  contextTokens?: number;
+}
+
 /** One rendered item in the transcript. Assistant boundaries split bubbles. */
-export type Turn =
+type TurnBody =
   // `sender` present ⇒ a machine injected this turn (#290); it renders a subtle
   // attribution above the bubble. Absent ⇒ human-typed (no attribution).
   // `attachments` present ⇒ the user attached files (issue #328); they render as
@@ -60,6 +71,8 @@ export type Turn =
   // distinct notice banner (with the reset time for a limit, and a Retry
   // affordance where safe) instead of a silently-dead chat.
   | { kind: "notice"; id: string; notice: TurnNotice };
+
+export type Turn = TurnBody & TurnMeta;
 
 let idCounter = 0;
 /**
@@ -218,6 +231,12 @@ export function historyToTurns(msgs: HistoryMessage[]): Turn[] {
     } else {
       id = nextId();
     }
-    return historyToTurn(m, id);
+    // Attach per-message hover metadata (#451): the source timestamp and the
+    // context-window fill as of this message. Set on the built turn (both are
+    // optional TurnMeta fields, so the discriminated body is unaffected).
+    const turn = historyToTurn(m, id);
+    turn.timestamp = m.timestamp;
+    if (m.contextTokens != null) turn.contextTokens = m.contextTokens;
+    return turn;
   });
 }

@@ -809,6 +809,13 @@ export interface HistoryMessage {
    * kickoff turns, so the history can show "↩ sent by …" / "⏰ scheduled by …".
    */
   sender?: MessageSender;
+  /**
+   * Context-window fill (tokens) as of this message (issue #451): the nearest
+   * assistant turn's `input + cache_read + cache_creation`, forward-filled across
+   * the turns between. Drives the per-message hover meter. Absent before the
+   * first assistant turn (and on older transcripts).
+   */
+  contextTokens?: number;
 }
 
 /** Enriched single-project response from GET /api/projects/:slug. */

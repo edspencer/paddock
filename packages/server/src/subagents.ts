@@ -344,6 +344,11 @@ export type EnrichedMessage = Omit<ChatMessage, "toolCall"> & {
   bgConsumed?: boolean;
   /** Who injected this machine-added turn (issue #290); absent ⇒ human-typed. */
   sender?: MessageSender;
+  /** Context-window fill (tokens) as of this message — the nearest assistant
+   *  turn's `input + cache_read + cache_creation`, forward-filled across the
+   *  turns between (issue #451). Drives the per-message hover meter + the
+   *  fork/revert-from-here anchor. Absent before the first assistant turn. */
+  contextTokens?: number;
   /** A surfaced turn-ending condition (issue #329): a subscription/usage-limit
    *  hit recovered from the transcript on reload. Present only on the synthetic
    *  notice message appended by the history endpoint; the web renders it as a

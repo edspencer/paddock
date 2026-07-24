@@ -345,6 +345,44 @@ export function ProjectView() {
     },
     [navigate, slug, refreshChats],
   );
+  // Fork a NEW chat branched at an earlier message (issue #451): fork the active
+  // session's PREFIX up to `uuid`, then jump to the new chat to continue it.
+  const forkFromMessage = useCallback(
+    async (uuid: string) => {
+      if (!activeSession) return;
+      const source = chats.find((c) => c.sessionId === activeSession);
+      const name = source ? `Fork of ${source.name}` : undefined;
+      let newId: string;
+      try {
+        newId = await api.forkChat(slug, activeSession, name, uuid);
+      } catch (e) {
+        setLoadErr(e instanceof Error ? e.message : "Failed to fork chat");
+        return;
+      }
+      if (source) writeForkParent(newId, { sessionId: source.sessionId, name: source.name });
+      await refreshChats();
+      navigate(`/projects/${slug}/chat/${encodeURIComponent(newId)}`, {
+        state: { justForked: true },
+      });
+    },
+    [activeSession, chats, navigate, slug, refreshChats],
+  );
+  // Revert the active chat back to an earlier message (issue #451): truncate in
+  // place (same session id); the pane reloads its own shorter transcript once
+  // this resolves. Rethrow so the pane surfaces the failure and skips its reload.
+  const revertToMessage = useCallback(
+    async (uuid: string) => {
+      if (!activeSession) return;
+      try {
+        await api.revertChat(slug, activeSession, uuid);
+      } catch (e) {
+        setLoadErr(e instanceof Error ? e.message : "Failed to revert chat");
+        throw e;
+      }
+      await refreshChats();
+    },
+    [activeSession, slug, refreshChats],
+  );
   // The chat this one was forked from (for the composer back-link), from local
   // lineage recorded at fork time.
   const forkParent = readForkParent(routeSessionId);
@@ -922,6 +960,8 @@ export function ProjectView() {
               projectAttachments={project.attachments}
               forkParent={forkParent ?? undefined}
               onOpenForkParent={openChat}
+              onForkFromMessage={forkFromMessage}
+              onRevertToMessage={revertToMessage}
               autoFocus={justForked}
               isProjectChat
               // For a trigger chat (Epic T / T4): the owning trigger's truthful-from-
