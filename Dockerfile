@@ -4,6 +4,14 @@
 # unit of deployment. It bundles the Fastify server, the built React SPA, and the
 # `claude` CLI that Paddock shells out to via @herdctl/core's cli runtime.
 #
+# This Dockerfile produces TWO images from shared stages (build once, publish
+# both — pick with `--target`):
+#   - base   (`--target base`)   the lean runtime: app + git, gh, claude CLI.
+#   - devbox (`--target devbox`) base + the coding-agent toolbox — PM2 + the `pm`
+#                                preview-server wrapper, ffmpeg, the Playwright
+#                                MCP browser (headless Chromium) and the Docker
+#                                CLI — for keepers that develop code in-container.
+#
 # Runtime requirements (supplied at `docker run` time, NOT baked in):
 #   - CLAUDE_CODE_OAUTH_TOKEN   Claude Max auth (runtime: cli). Or ANTHROPIC_API_KEY for sdk.
 #   - a volume mounted at /data  Persistent project store + Claude session transcripts.
@@ -12,7 +20,7 @@
 #
 # Multi-arch (linux/amd64, linux/arm64) is built in CI on native per-arch
 # runners (see release.yml); each leg pushes by digest and the manifests are
-# merged with `docker buildx imagetools create`.
+# merged with `docker buildx imagetools create` (one manifest per target).
 
 # ---- build stage ----------------------------------------------------------
 # Pinned to $BUILDPLATFORM: this stage only emits arch-independent JS
@@ -32,8 +40,10 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
-# ---- runtime stage --------------------------------------------------------
-FROM node:22-slim AS runtime
+# ---- base runtime stage ---------------------------------------------------
+# The lean, publishable runtime image (ghcr.io/edspencer/paddock:<version> /
+# :latest). Everything a stock Paddock instance needs and nothing more.
+FROM node:22-slim AS base
 WORKDIR /app
 
 ENV NODE_ENV=production \
@@ -75,3 +85,50 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["node", "packages/server/dist/index.js"]
+
+# ---- devbox stage ---------------------------------------------------------
+# base + the coding-agent toolbox (ghcr.io/edspencer/paddock:<version>-devbox /
+# :devbox). This is the heavy image: the Playwright Chromium layer alone is
+# ~1 GB. It inherits base's ENV / VOLUME / EXPOSE / HEALTHCHECK / ENTRYPOINT /
+# CMD unchanged — HOST=0.0.0.0 stays (the container namespace is the security
+# boundary; #435 handled the source default + open-network guard).
+FROM base AS devbox
+
+# Browser tools attach out of the box (issue #269): PADDOCK_BROWSER_MCP=1 makes
+# browserMcpServers() launch the Playwright MCP server we install below.
+ENV PADDOCK_BROWSER_MCP=1
+
+# ffmpeg (media work) + the Docker CLI. Ship the *client* only — no daemon, no
+# privilege baked in; the deploy recipe decides socket-mount (docker-outside-of-
+# docker) vs privileged DinD. docker-ce-cli comes from Docker's own apt repo.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ffmpeg ca-certificates curl gnupg \
+    && install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
+    && chmod a+r /etc/apt/keyrings/docker.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list \
+    && apt-get update && apt-get install -y --no-install-recommends docker-ce-cli \
+    && rm -rf /var/lib/apt/lists/*
+
+# PM2 + the vendored `pm` preview-server wrapper (scripts/pm, MIT). `pm` is a
+# thin PM2 + shared-ports-registry wrapper; installing it to /usr/local/bin
+# makes the devbox turnkey for the dev-server convention.
+RUN npm install -g pm2
+COPY scripts/pm /usr/local/bin/pm
+RUN chmod +x /usr/local/bin/pm
+
+# Install Chromium OUTSIDE /data. HOME=/data (so ~/.claude survives restarts),
+# but /data is the runtime VOLUME mount — Playwright's default browser dir
+# ($HOME/.cache/ms-playwright) would be shadowed by the mounted volume at run
+# time and the browser would vanish. Pin it to an image-baked path instead; the
+# bundled playwright and the server-spawned MCP both honour this env at launch.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
+# Playwright MCP server (exposes the `playwright-mcp` bin on PATH) + a matching
+# headless Chromium installed via the `playwright` bundled inside @playwright/mcp
+# (mirrors the box: `node .../playwright/cli.js install --with-deps chromium`).
+# --with-deps pulls the shared libs Chromium needs; paddock launches it headless
+# --no-sandbox --isolated --browser chromium (the container is the sandbox).
+RUN npm install -g @playwright/mcp \
+    && node "$(npm root -g)/@playwright/mcp/node_modules/playwright/cli.js" install --with-deps chromium \
+    && rm -rf /var/lib/apt/lists/*

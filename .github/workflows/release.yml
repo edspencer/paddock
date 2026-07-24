@@ -72,12 +72,15 @@ jobs:
             echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           fi
 
-  # Build each arch on a NATIVE runner (amd64 on x86, arm64 on GitHub's free
-  # arm runners) instead of emulating arm64 under QEMU on one x86 runner —
-  # emulation made this step take ~9-10 min; native runners take ~1-2 min each,
-  # in parallel. Each leg pushes by digest; `artifacts` merges the manifest.
+  # Build each (target × arch) on a NATIVE runner (amd64 on x86, arm64 on
+  # GitHub's free arm runners) instead of emulating arm64 under QEMU on one x86
+  # runner — emulation made this step take ~9-10 min; native runners take
+  # ~1-2 min each, in parallel. Each leg pushes by digest; `artifacts` merges
+  # one manifest per target (base + devbox). The cross-product of `target` and
+  # `platform` is 4 legs; the `include` entries attach arch+runner to every
+  # combination that shares their `platform`.
   build-image:
-    name: Build image (${{ matrix.platform }})
+    name: Build image (${{ matrix.target }} · ${{ matrix.platform }})
     needs: release
     if: needs.release.outputs.should_release == 'true'
     runs-on: ${{ matrix.runner }}
@@ -87,6 +90,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        target: [base, devbox]
+        platform: [linux/amd64, linux/arm64]
         include:
           - platform: linux/amd64
             arch: amd64
@@ -111,10 +116,13 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          target: ${{ matrix.target }}
           platforms: ${{ matrix.platform }}
           outputs: type=image,name=ghcr.io/edspencer/paddock,push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=gha,scope=${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+          # Separate cache scope per target: base and devbox share the build +
+          # base layers, but devbox stacks the heavy browser layer on top.
+          cache-from: type=gha,scope=${{ matrix.target }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.target }}-${{ matrix.arch }}
 
       - name: Export digest
         run: |
@@ -125,7 +133,7 @@ jobs:
       - name: Upload digest
         uses: actions/upload-artifact@v4
         with:
-          name: digests-${{ matrix.arch }}
+          name: digests-${{ matrix.target }}-${{ matrix.arch }}
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1
@@ -158,13 +166,14 @@ jobs:
       - name: Build tarball
         run: bash scripts/make-tarball.sh
 
-      # ---- assemble multi-arch image from per-arch digests ----
+      # ---- assemble one multi-arch manifest per target from per-arch digests ----
+      # Keep each artifact in its own subdir (no merge-multiple) so the base and
+      # devbox digests stay separable: digests-<target>-<arch>/<digest>.
       - name: Download digests
         uses: actions/download-artifact@v4
         with:
           path: /tmp/digests
           pattern: digests-*
-          merge-multiple: true
 
       - uses: docker/setup-buildx-action@v3
 
@@ -175,16 +184,28 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Tag multi-arch image
-        working-directory: /tmp/digests
+      # base   → :<version> + :latest
+      # devbox → :<version>-devbox + :devbox
+      - name: Tag multi-arch images
         run: |
+          set -euo pipefail
+          base_digests="$(printf "${IMAGE}@sha256:%s " $(ls /tmp/digests/digests-base-*/))"
+          devbox_digests="$(printf "${IMAGE}@sha256:%s " $(ls /tmp/digests/digests-devbox-*/))"
+
           docker buildx imagetools create \
             -t "${IMAGE}:${VERSION}" \
             -t "${IMAGE}:latest" \
-            $(printf "${IMAGE}@sha256:%s " *)
+            ${base_digests}
 
-      - name: Inspect image
-        run: docker buildx imagetools inspect "${IMAGE}:${VERSION}"
+          docker buildx imagetools create \
+            -t "${IMAGE}:${VERSION}-devbox" \
+            -t "${IMAGE}:devbox" \
+            ${devbox_digests}
+
+      - name: Inspect images
+        run: |
+          docker buildx imagetools inspect "${IMAGE}:${VERSION}"
+          docker buildx imagetools inspect "${IMAGE}:${VERSION}-devbox"
 
       # ---- GitHub Release (creates the v<version> tag at this SHA) ----
       - name: Create GitHub Release
