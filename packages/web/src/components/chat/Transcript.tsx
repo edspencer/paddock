@@ -177,9 +177,14 @@ export function TurnRow({ turn }: { turn: Turn }) {
   const chip =
     "flex items-center rounded-full bg-canvas/95 shadow-sm ring-1 ring-paddock-200/70 backdrop-blur dark:bg-canvas-dark/95 dark:ring-paddock-800";
 
+  // Reveal the rail on hover OR keyboard focus (`focus-within`), so tabbing to a
+  // fork/revert button actually shows it instead of leaving an invisible focus
+  // stop (#451 QA). `focus-visible` rings give each button a keyboard focus cue.
+  const btn = `${chip} h-6 w-6 justify-center text-ink-subtle dark:text-ink-dark/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent`;
+
   return (
     <div className="group relative">
-      <div className="pointer-events-none absolute -top-3 right-1 z-10 flex items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100">
+      <div className="pointer-events-none absolute -top-3 right-1 z-10 flex items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
         <span
           className={`${chip} gap-1 px-2 py-0.5 text-[11px] text-ink-subtle dark:text-ink-dark/70`}
           title={new Date(turn.timestamp!).toLocaleString()}
@@ -197,7 +202,7 @@ export function TurnRow({ turn }: { turn: Turn }) {
           onClick={() => actions.onFork(uuid)}
           title="Fork a new chat from here"
           aria-label="Fork a new chat from here"
-          className={`${chip} h-6 w-6 justify-center text-ink-subtle hover:text-accent dark:text-ink-dark/70`}
+          className={`${btn} hover:text-accent`}
         >
           <BranchIcon width={13} height={13} />
         </button>
@@ -206,7 +211,7 @@ export function TurnRow({ turn }: { turn: Turn }) {
           onClick={() => actions.onRevert(uuid)}
           title="Revert conversation back to here"
           aria-label="Revert conversation back to here"
-          className={`${chip} h-6 w-6 justify-center text-ink-subtle hover:text-rose-500 dark:text-ink-dark/70`}
+          className={`${btn} hover:text-rose-500`}
         >
           <ClockIcon width={13} height={13} />
         </button>
