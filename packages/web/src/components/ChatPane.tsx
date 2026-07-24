@@ -538,7 +538,15 @@ export function ChatPane({
     async (uuid: string) => {
       if (!onRevertToMessage) return;
       const idx = turns.findIndex((t) => t.id.split("#")[0] === uuid);
-      const after = idx >= 0 ? turns.slice(idx + 1) : [];
+      // The server keeps the anchor turn's OWN trailing tool calls (they belong to
+      // the same assistant message) + their results, and only drops from the next
+      // real turn on. Mirror that here so the dialog's count matches what's
+      // actually removed (#451 QA: it over-counted by the anchor's tool calls).
+      let start = idx + 1;
+      while (start < turns.length && (turns[start].kind === "tool" || turns[start].kind === "file")) {
+        start++;
+      }
+      const after = idx >= 0 ? turns.slice(start) : [];
       const toolCount = after.filter((t) => t.kind === "tool").length;
       const msg =
         `Revert this chat back to here?\n\n` +

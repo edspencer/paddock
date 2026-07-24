@@ -84,6 +84,9 @@ export function ProjectView() {
   // transcript the user is watching would remount and flash. So we keep the same
   // key across the `null -> <newId>` establish transition.
   const paneKeyRef = useRef({ counter: 0, session: routeSessionId ?? null });
+  // Single-flight guard for fork-from-message so a double-click can't mint two
+  // forks (#451 QA). ProjectView outlives chat navigation, so it's a ref, not state.
+  const forkingRef = useRef(false);
   if (paneKeyRef.current.session !== (routeSessionId ?? null)) {
     const established = (location.state as { established?: boolean } | null)?.established;
     if (!established) paneKeyRef.current.counter += 1;
@@ -350,6 +353,10 @@ export function ProjectView() {
   const forkFromMessage = useCallback(
     async (uuid: string) => {
       if (!activeSession) return;
+      // Guard against a double-click minting two forks (#451 QA): ignore a second
+      // invocation while one is already in flight. Navigation unmounts on success.
+      if (forkingRef.current) return;
+      forkingRef.current = true;
       const source = chats.find((c) => c.sessionId === activeSession);
       const name = source ? `Fork of ${source.name}` : undefined;
       let newId: string;
@@ -357,6 +364,7 @@ export function ProjectView() {
         newId = await api.forkChat(slug, activeSession, name, uuid);
       } catch (e) {
         setLoadErr(e instanceof Error ? e.message : "Failed to fork chat");
+        forkingRef.current = false;
         return;
       }
       if (source) writeForkParent(newId, { sessionId: source.sessionId, name: source.name });
@@ -364,6 +372,9 @@ export function ProjectView() {
       navigate(`/projects/${slug}/chat/${encodeURIComponent(newId)}`, {
         state: { justForked: true },
       });
+      // ProjectView stays mounted across chat navigation, so clear the guard for
+      // the next (deliberate) fork.
+      forkingRef.current = false;
     },
     [activeSession, chats, navigate, slug, refreshChats],
   );
