@@ -1,5 +1,62 @@
 # @paddock/server
 
+## 0.44.0
+
+### Minor Changes
+
+- [#436](https://github.com/edspencer/paddock/pull/436) [`52f25aa`](https://github.com/edspencer/paddock/commit/52f25aa56bda7997e6f79778038e651230cf7d95) Thanks [@edspencer](https://github.com/edspencer)! - Background sub-agent cards now render live, without a refresh.
+
+  Building on the background-work delivery in the previous release, a `Task`/`Agent` sub-agent's card is now enriched the instant it launches — instead of showing a generic launch acknowledgement until the chat is reloaded.
+
+  - **Real type + title, live.** The sub-agent's type (e.g. `general-purpose`) and description are recovered from the tool call's input as it streams and shown on the card immediately.
+  - **Running state.** A still-working sub-agent shows a running spinner in place of its near-instant launch time — including a background sub-agent whose launch call has already returned but whose own run continues.
+  - **Streaming inner steps.** Expanding a running sub-agent now streams its nested steps as they happen (polled from the growing sub-agent transcript), recursing into nested sub-agent launches at any depth.
+  - Enrichment is applied across every turn path (interactive chat, scheduled wake, and slash-command turns), and the reload view is unchanged.
+  - **Sub-agent card cost is now the recursive total** of the sub-agent plus everything it spawned (cost only; durations stay per-agent because nested work runs in parallel).
+
+  Known cosmetic limitations, tracked as follow-ups: a nested (depth 2+) launch shows a generic label until it completes; a running sub-agent's duration and cost appear once it settles or on reload; and reloading while a background sub-agent is still running shows a partial duration rather than the running state.
+
+- [#438](https://github.com/edspencer/paddock/pull/438) [`011bb9d`](https://github.com/edspencer/paddock/commit/011bb9dabf23d2d0674680535a115819d25d1ef6) Thanks [@edspencer](https://github.com/edspencer)! - Safe-by-default binding (#435): the bind host now defaults to `127.0.0.1`
+  (loopback only) instead of `0.0.0.0`, so a fresh source/tarball run is
+  network-closed. A new bind-safety guard couples exposure to authentication —
+  binding a non-loopback host while `PADDOCK_AUTH_MODE=none` **refuses to start**
+  (mirroring the jwt-without-JWKS fail-closed check) unless
+  `PADDOCK_DANGEROUSLY_ALLOW_OPEN` is set, in which case it boots with a loud
+  warning. Binding non-loopback with a real auth mode (`trusted-header`/`jwt`)
+  needs no flag, and deployments that set `HOST`/`PADDOCK_HOST` explicitly are
+  unaffected — only the default changed. The container image keeps binding
+  `0.0.0.0` (the network namespace is its boundary); recipes carry the host-side
+  publish posture.
+
+### Patch Changes
+
+- [#448](https://github.com/edspencer/paddock/pull/448) [`c8ab500`](https://github.com/edspencer/paddock/commit/c8ab500e2dab34f06b1fcbdf597fab2a5e06cd6a) Thanks [@edspencer](https://github.com/edspencer)! - Bump `@herdctl/core` to 5.26.1. Picks up two herdctl fixes: durable session wakes are now retired when the agent runs `CronDelete` (recurring `CronCreate`/`/loop` wakes are cancellable again instead of firing until the 7-day prune), and `tool_reference`-content tool results are preserved so ToolSearch cards no longer stick in a RUNNING state.
+
+- [#439](https://github.com/edspencer/paddock/pull/439) [`83ab73a`](https://github.com/edspencer/paddock/commit/83ab73a33f3b6ece6f6d4c1b7daa99d870bc1781) Thanks [@edspencer](https://github.com/edspencer)! - Remove the dead `devServers` / `PADDOCK_DEV_SERVERS_ENABLED` config. It was loaded and unit-tested but nothing consumed it — it used to gate the system-prompt style before #176 decoupled that into `PADDOCK_KEEPER_NATIVE_PROMPT`. The `PADDOCK_DEV_SERVERS_ENABLED` / `PADDOCK_DEV_SERVERS_DOMAIN` env vars, the `devServers` config block, and the associated instance-config field are gone. The preview-server (`pm`) capability is provided by the devbox image and advertised via an instance-wide `CLAUDE.md`, not a Paddock flag.
+
+- [#444](https://github.com/edspencer/paddock/pull/444) [`8f5f4cd`](https://github.com/edspencer/paddock/commit/8f5f4cdf6f4cc0721a5a4296e552ae918996baf1) Thanks [@edspencer](https://github.com/edspencer)! - Docs: add a **Running Paddock on Kubernetes** guide (#415). Covers when a cluster makes sense, the Kustomize manifest layout, the `/data` PVC and single-writer statefulness (`replicas: 1` + `Recreate` + `ReadWriteOnce`, on which resume depends), the Claude/GitHub token Secret, base vs. `:devbox` image, and ingress with auth at the edge. Links the `kubernetes/` recipe in `paddock-deploy` and the Securing Paddock guide.
+
+- [#446](https://github.com/edspencer/paddock/pull/446) [`e4d6eb3`](https://github.com/edspencer/paddock/commit/e4d6eb3f3ee323b529c6db37ab0a2d0a341fb8fc) Thanks [@edspencer](https://github.com/edspencer)! - Docs: add a **Running Paddock on Proxmox (LXC)** guide — a bridge between the generic Deploying guide and the home-lab narrative. Covers creating an unprivileged Debian LXC (UI / `pct` / the `proxmox-iac/` Tofu module, incl. `nesting=1,keyctl=1` for Docker/devbox), then both deploy paths: **Path A** — `docker run` inside the LXC (`paddock-deploy/docker/`), and **Path B** — tarball + systemd via OpenTofu + Ansible (`paddock-deploy/proxmox-iac/`). Links the Securing guide and the `auth-basic/` Tier-1 sidecar, and explains the safe-by-default loopback bind + `PADDOCK_DANGEROUSLY_ALLOW_OPEN` for the container case.
+
+- [#443](https://github.com/edspencer/paddock/pull/443) [`4509b1e`](https://github.com/edspencer/paddock/commit/4509b1e376b5ac10bf1f27138bd60e1bb01a6f88) Thanks [@edspencer](https://github.com/edspencer)! - Docs: refresh the **Securing Paddock** guide into a four-tier ladder — Tier 0 network isolation (`none` + VPN), Tier 1 sidecar Basic Auth (`trusted-header`, recipe in `paddock-deploy/auth-basic/`), Tier 2 Cloudflare Access (`jwt`), Tier 3 Authentik/Authelia forward-auth (`jwt`) — all edge-based, no built-in password. Adds the Cloudflare Access `jwt` config and links the new Basic Auth sidecar recipe.
+
+- [#442](https://github.com/edspencer/paddock/pull/442) [`546e32c`](https://github.com/edspencer/paddock/commit/546e32ce126b2282de389d8073067525c8b6cf80) Thanks [@edspencer](https://github.com/edspencer)! - feat: split the Docker image into `base` + `devbox` targets
+
+  The Dockerfile now builds two images from shared stages. `base` (`--target
+base`) is the lean runtime published as `:<version>` / `:latest` — the app plus
+  `git`, `gh` and the `claude` CLI. `devbox` (`--target devbox`) layers the
+  coding-agent toolbox on top — PM2 + the vendored `pm` preview-server wrapper,
+  `ffmpeg`, the Playwright MCP browser (headless Chromium) and the Docker CLI —
+  and is published as `:<version>-devbox` / `:devbox` (with `PADDOCK_BROWSER_MCP=1`
+  so browser tools attach out of the box). The release workflow now builds each
+  target per-arch on native runners and merges one manifest per target.
+
+- [#437](https://github.com/edspencer/paddock/pull/437) [`fb08a29`](https://github.com/edspencer/paddock/commit/fb08a29284f9e15e56ec4a01d7f7af7a567a44bc) Thanks [@edspencer](https://github.com/edspencer)! - chore: vendor scripts/pm preview-server wrapper
+
+  Vendor the `pm` CLI (a PM2 + shared-ports-registry wrapper for stable-port
+  preview servers) into the repo at `scripts/pm`, so it's MIT-licensed here and
+  the devbox image can bundle one canonical copy. Documented in `scripts/README.md`.
+
 ## 0.43.0
 
 ### Minor Changes

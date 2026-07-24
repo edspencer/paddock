@@ -1,5 +1,61 @@
 # @paddock/web
 
+## 0.44.0
+
+### Minor Changes
+
+- [#436](https://github.com/edspencer/paddock/pull/436) [`52f25aa`](https://github.com/edspencer/paddock/commit/52f25aa56bda7997e6f79778038e651230cf7d95) Thanks [@edspencer](https://github.com/edspencer)! - Background sub-agent cards now render live, without a refresh.
+
+  Building on the background-work delivery in the previous release, a `Task`/`Agent` sub-agent's card is now enriched the instant it launches — instead of showing a generic launch acknowledgement until the chat is reloaded.
+
+  - **Real type + title, live.** The sub-agent's type (e.g. `general-purpose`) and description are recovered from the tool call's input as it streams and shown on the card immediately.
+  - **Running state.** A still-working sub-agent shows a running spinner in place of its near-instant launch time — including a background sub-agent whose launch call has already returned but whose own run continues.
+  - **Streaming inner steps.** Expanding a running sub-agent now streams its nested steps as they happen (polled from the growing sub-agent transcript), recursing into nested sub-agent launches at any depth.
+  - Enrichment is applied across every turn path (interactive chat, scheduled wake, and slash-command turns), and the reload view is unchanged.
+  - **Sub-agent card cost is now the recursive total** of the sub-agent plus everything it spawned (cost only; durations stay per-agent because nested work runs in parallel).
+
+  Known cosmetic limitations, tracked as follow-ups: a nested (depth 2+) launch shows a generic label until it completes; a running sub-agent's duration and cost appear once it settles or on reload; and reloading while a background sub-agent is still running shows a partial duration rather than the running state.
+
+### Patch Changes
+
+- [#445](https://github.com/edspencer/paddock/pull/445) [`9b45121`](https://github.com/edspencer/paddock/commit/9b45121f19eb8380de7cc4cf8f0a10a89e004cf5) Thanks [@edspencer](https://github.com/edspencer)! - docs(website): add "The Dev Box flavor" guide
+
+  New Guides page explaining the `devbox` image — what it adds over `base` (the `pm`
+  preview-server wrapper, `ffmpeg`, the headless Playwright MCP browser with
+  `PADDOCK_BROWSER_MCP=1` on by default, and the Docker CLI), how to run it, using
+  `pm`, and the docker-in-docker trade-offs — cross-linked to the `docker/` recipe
+  in `paddock-deploy`.
+
+- [#433](https://github.com/edspencer/paddock/pull/433) [`4da36de`](https://github.com/edspencer/paddock/commit/4da36de1ecaf9a94c8bc8400a710454f91fb779c) Thanks [@edspencer](https://github.com/edspencer)! - Fix the Paddock MCP tool badge showing the wrong project. The brand badge on a `paddock_manage` tool card (e.g. `create_chat`) was a hardcoded "Paddock" label that CSS-uppercased to "PADDOCK", so a cross-project action — a keeper in project A creating a chat in project B — mislabelled the badge with the brand name instead of the target project, contradicting the card body's own "in {project}" line and open-chat link. The badge now reads the tool result's target `project` when the action carries one (create/fork/read/send/list-in-another-project), falling back to the "Paddock" brand label for project-less actions (`list_projects`, `fork_chat_batch`). Badge and body now agree.
+
+- [#442](https://github.com/edspencer/paddock/pull/442) [`546e32c`](https://github.com/edspencer/paddock/commit/546e32ce126b2282de389d8073067525c8b6cf80) Thanks [@edspencer](https://github.com/edspencer)! - feat: split the Docker image into `base` + `devbox` targets
+
+  The Dockerfile now builds two images from shared stages. `base` (`--target
+base`) is the lean runtime published as `:<version>` / `:latest` — the app plus
+  `git`, `gh` and the `claude` CLI. `devbox` (`--target devbox`) layers the
+  coding-agent toolbox on top — PM2 + the vendored `pm` preview-server wrapper,
+  `ffmpeg`, the Playwright MCP browser (headless Chromium) and the Docker CLI —
+  and is published as `:<version>-devbox` / `:devbox` (with `PADDOCK_BROWSER_MCP=1`
+  so browser tools attach out of the box). The release workflow now builds each
+  target per-arch on native runners and merges one manifest per target.
+
+- [#437](https://github.com/edspencer/paddock/pull/437) [`fb08a29`](https://github.com/edspencer/paddock/commit/fb08a29284f9e15e56ec4a01d7f7af7a567a44bc) Thanks [@edspencer](https://github.com/edspencer)! - chore: vendor scripts/pm preview-server wrapper
+
+  Vendor the `pm` CLI (a PM2 + shared-ports-registry wrapper for stable-port
+  preview servers) into the repo at `scripts/pm`, so it's MIT-licensed here and
+  the devbox image can bundle one canonical copy. Documented in `scripts/README.md`.
+
+- [#447](https://github.com/edspencer/paddock/pull/447) [`a919421`](https://github.com/edspencer/paddock/commit/a919421edf7608321a99ab03ba8bd95816104718) Thanks [@edspencer](https://github.com/edspencer)! - docs(website): wire the new deploy guides into the sidebar and thread the images +
+  `paddock-deploy` recipes through the existing docs.
+
+  - Add **The Dev Box flavor**, **Running Paddock on Proxmox (LXC)**, and **Running
+    Paddock on Kubernetes** to the Guides sidebar group.
+  - **Getting started** now explains the `:latest` (base) vs `:devbox` image tags.
+  - **Deploying Paddock** points at the `edspencer/paddock-deploy` recipes (`docker/`,
+    `proxmox-iac/`, `kubernetes/`, `auth-basic/`).
+  - **A home-lab setup** notes the devbox image as the modern, pre-composed path and
+    cross-links `paddock-deploy`, keeping the as-code narrative intact.
+
 ## 0.43.0
 
 ## 0.42.5
