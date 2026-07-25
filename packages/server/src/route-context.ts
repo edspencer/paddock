@@ -21,6 +21,7 @@ import type { GithubAuth } from "./github-auth.js";
 import type { ArchiveStore } from "./archive.js";
 import type { StarStore } from "./star.js";
 import type { ReadStateStore } from "./read-state.js";
+import type { UnreadStore } from "./unread.js";
 import type { RunProvenanceStore } from "./run-provenance.js";
 import type { MessageProvenanceStore } from "./message-provenance.js";
 import type { PaddockConfig } from "./config.js";
@@ -67,6 +68,13 @@ export interface RouteDeps {
   /** Per-chat starred/pinned-flag sidecar (#373). Orthogonal to `archive`. */
   star: StarStore;
   readState: ReadStateStore;
+  /**
+   * Per-user MANUAL "unread" override sidecar (#458): an explicit "mark unread"
+   * flag layered on top of the derived read-state, so a chat can resurface its
+   * unread cue even after its last turn was seen. Cleared when the chat is marked
+   * seen (opened / focused / marked read).
+   */
+  unread: UnreadStore;
   runProvenance: RunProvenanceStore;
   /**
    * Per-MESSAGE provenance sidecar (issue #290): who injected each machine-added

@@ -25,8 +25,18 @@ import { buildProjectChats, makeTriggerResolver } from "../chat-dto.js";
 import type { RouteCtx } from "../route-context.js";
 
 export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void {
-  const { projects, herdctl, git, archive, star, readState, runProvenance, readStateUser, cfg } =
-    ctx;
+  const {
+    projects,
+    herdctl,
+    git,
+    archive,
+    star,
+    readState,
+    unread,
+    runProvenance,
+    readStateUser,
+    cfg,
+  } = ctx;
 
   app.get(
     "/api/projects",
@@ -71,7 +81,16 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
                 const lastSeen = await readState
                   .getLastSeen(user, keeper, sessionId)
                   .catch(() => 0);
-                return { sessionId, lastTurnCompletedAt, ...(lastSeen ? { lastSeen } : {}) };
+                // Manual unread override (#458): carry it so the sidebar's project
+                // unread badge counts a manually-flagged chat, staying in step with
+                // the per-chat unread dot (which folds the same flag in).
+                const isUnread = await unread.isUnread(user, keeper, sessionId).catch(() => false);
+                return {
+                  sessionId,
+                  lastTurnCompletedAt,
+                  ...(lastSeen ? { lastSeen } : {}),
+                  ...(isUnread ? { unread: true } : {}),
+                };
               }),
             )
           : [];
@@ -176,6 +195,10 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
       const user = readStateUser(req);
       const lastSeenOf = (s: import("@herdctl/core").DiscoveredSession) =>
         readState.getLastSeen(user, keeper, s.sessionId);
+      // Manual unread override (#458): the per-user "mark unread" flag, resolved
+      // inline like the read-state above (a cheap in-memory sidecar read).
+      const unreadOf = (s: import("@herdctl/core").DiscoveredSession) =>
+        unread.isUnread(user, keeper, s.sessionId);
       // Provenance badge (#267): how each chat was created — human / scheduled /
       // spawned (A1's #261 marker). A cheap in-memory map read, so unlike the
       // usage ring (#116) it's fine to resolve inline for the initial payload.
@@ -203,6 +226,7 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
           provenanceOf,
           triggerOf,
           starredOf,
+          unreadOf,
         ),
       };
     } catch (err) {

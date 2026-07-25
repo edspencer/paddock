@@ -1,7 +1,7 @@
 /**
  * Chat (session) routes: the project-chat cluster (list / runs / usage / create /
- * messages / subagents / context / delete / rename / fork / archive / star / seen)
- * and the mirrored one-off scratch-chat cluster (incl. scratch→project promote).
+ * messages / subagents / context / delete / rename / fork / archive / star / seen /
+ * unread) and the mirrored one-off scratch-chat cluster (incl. scratch→project promote).
  * Chat SENDING happens over WS; these are the REST reads + lifecycle mutations.
  */
 import path from "node:path";
@@ -13,6 +13,7 @@ import { buildProjectRuns } from "../runs.js";
 import { KEEPER_DEFAULT_MODEL } from "../models.js";
 import { projectChatsDir } from "../transcripts.js";
 import { readSubagentMessages, readSessionTokenUsageWithSubagents } from "../subagents.js";
+import { readContextSeries } from "../usage.js";
 import { enrichWithToolDetails } from "../tooldetails.js";
 import { scanTranscriptNotice } from "../turn-notice.js";
 import type { RunProvenance } from "../run-provenance.js";
@@ -36,6 +37,7 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
     archive,
     star,
     readState,
+    unread,
     runProvenance,
     messageProvenance,
     events,
@@ -85,6 +87,7 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
       const user = readStateUser(req);
       const lastSeenOf = (s: DiscoveredSession) =>
         readState.getLastSeen(user, keeper, s.sessionId);
+      const unreadOf = (s: DiscoveredSession) => unread.isUnread(user, keeper, s.sessionId);
       const provenanceOf = (s: DiscoveredSession) => runProvenance.get(s.sessionId);
       const triggerOf = makeTriggerResolver(project);
       // No usage resolver — see the GET /api/projects/:slug route (issue #116).
@@ -100,6 +103,7 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
           provenanceOf,
           triggerOf,
           starredOf,
+          unreadOf,
         ),
       };
     } catch (err) {
@@ -359,6 +363,20 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
         // Human-typed turns match no marker and stay unlabelled (the default).
         const markers = await messageProvenance.list(req.params.sessionId).catch(() => []);
         const withProvenance = applyMessageProvenance(enriched, markers);
+        // Per-message context fill (issue #451): join the uuid→contextTokens
+        // series (assistant turns only) and forward-fill it across the user/tool
+        // messages between turns, so every message answers "how full was the
+        // window as of here". Rides the mtime-cached series; open-chat path only.
+        const series = SAFE_SESSION_ID.test(req.params.sessionId)
+          ? await readContextSeries(projectDir, req.params.sessionId).catch(() => new Map())
+          : new Map<string, number>();
+        if (series.size > 0) {
+          let lastCtx: number | undefined;
+          for (const m of withProvenance) {
+            if (m.uuid && series.has(m.uuid)) lastCtx = series.get(m.uuid);
+            if (lastCtx !== undefined) m.contextTokens = lastCtx;
+          }
+        }
         // #329: `@herdctl/core` drops synthetic messages when it parses the
         // transcript, so a turn that dead-ended at a subscription/usage limit
         // leaves no visible trace on reload. Re-scan the raw JSONL for a TRAILING
@@ -509,9 +527,12 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
         const agent = await agentForSlug(req.params.slug);
         await cleanupAttachments(agent, req.params.sessionId);
         const removed = await herdctl.deleteSession(agent, req.params.sessionId);
-        // Drop any archived/starred flag so a future session id can't inherit it.
+        // Drop any archived/starred/unread flag so a future session id can't inherit it.
         await archive.setArchived(agent, req.params.sessionId, false).catch(() => undefined);
         await star.setStarred(agent, req.params.sessionId, false).catch(() => undefined);
+        await unread
+          .setUnread(readStateUser(req), agent, req.params.sessionId, false)
+          .catch(() => undefined);
         return reply.code(200).send({ ok: true, removed });
       } catch (err) {
         return sendProjectError(reply, err);
@@ -572,14 +593,17 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
   // away — a real, resumable chat with the parent's full history — rather than
   // being created lazily on a first message. Optional `name` sets its title
   // (e.g. "Fork of <parent>"). Returns the new session id.
-  app.post<{ Params: { slug: string; sessionId: string }; Body: { name?: string } }>(
+  app.post<{
+    Params: { slug: string; sessionId: string };
+    Body: { name?: string; fromUuid?: string };
+  }>(
     "/api/projects/:slug/chats/:sessionId/fork",
     {
       schema: {
         tags: ["Chats"],
         summary: "Fork a project chat",
         description:
-          "Eagerly duplicates a project chat's transcript into a NEW session in the same project (leaving the source untouched), so the fork exists immediately as a real, resumable chat with the parent's full history. Optional body `{ name }` sets the fork's title. Responds 201 with `{ sessionId }` (the new session id).",
+          "Eagerly duplicates a project chat's transcript into a NEW session in the same project (leaving the source untouched), so the fork exists immediately as a real, resumable chat with the parent's history. Optional body `{ name }` sets the fork's title; optional `{ fromUuid }` branches at an earlier message so the fork inherits only the prefix up to that turn (issue #451). Responds 201 with `{ sessionId }` (the new session id).",
         params: {
           type: "object",
           properties: {
@@ -593,8 +617,11 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
           additionalProperties: true,
           properties: {
             name: { description: "Title for the new forked chat." },
+            fromUuid: {
+              description:
+                "Message uuid to branch at; the fork inherits only the history up to that turn. Omitted ⇒ the full transcript.",
+            },
           },
-          required: [],
         },
         response: {
           201: {
@@ -608,8 +635,65 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
     async (req, reply) => {
       try {
         const project = await projects.get(req.params.slug);
-        const newId = await herdctl.forkSession(project, req.params.sessionId, req.body?.name);
+        // `fromUuid` (issue #451): branch at an earlier message instead of copying
+        // the whole history — the fork inherits only the prefix up to that turn.
+        const newId = await herdctl.forkSession(
+          project,
+          req.params.sessionId,
+          req.body?.name,
+          req.body?.fromUuid,
+        );
         return reply.code(201).send({ sessionId: newId });
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  // Revert a project chat back to an earlier message (issue #451): truncate this
+  // session's transcript at `uuid`, in place (same session id), so the chat
+  // continues as if the later turns never happened. The dropped tail is backed
+  // up (recoverable). Rolls back the CONVERSATION only — real side-effects of the
+  // reverted turns are NOT undone (the UI warns). Returns the count dropped.
+  app.post<{ Params: { slug: string; sessionId: string }; Body: { uuid?: string } }>(
+    "/api/projects/:slug/chats/:sessionId/revert",
+    {
+      schema: {
+        tags: ["Chats"],
+        summary: "Revert a project chat to an earlier message",
+        description:
+          "Truncates the chat's transcript at `uuid`, in place (same session id), so the conversation continues as if the later turns never happened. The dropped tail is backed up and recoverable. Rolls back the CONVERSATION only — real side-effects of the reverted turns are NOT undone. Requires body `{ uuid }` (400 without it). Returns an object with the count of removed messages.",
+        params: {
+          type: "object",
+          properties: {
+            slug: { type: "string", description: "Project slug." },
+            sessionId: { type: "string", description: "Chat (session) id to revert." },
+          },
+          required: ["slug", "sessionId"],
+        },
+        body: {
+          type: ["object", "null"],
+          additionalProperties: true,
+          properties: {
+            uuid: { description: "Message uuid to truncate at (required; 400 when missing)." },
+          },
+        },
+        response: {
+          200: {
+            description: "Object reporting how many messages were removed.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
+    async (req, reply) => {
+      try {
+        const uuid = req.body?.uuid;
+        if (!uuid) return reply.code(400).send({ error: "uuid is required" });
+        const project = await projects.get(req.params.slug);
+        const { removed } = await herdctl.revertSession(project, req.params.sessionId, uuid);
+        return reply.code(200).send({ ok: true, removed });
       } catch (err) {
         return sendProjectError(reply, err);
       }
@@ -764,8 +848,61 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
           typeof req.body?.when === "number" && Number.isFinite(req.body.when)
             ? req.body.when
             : Date.now();
-        await readState.setLastSeen(readStateUser(req), agent, req.params.sessionId, when);
+        const user = readStateUser(req);
+        await readState.setLastSeen(user, agent, req.params.sessionId, when);
+        // Marking a chat seen also clears any MANUAL unread override (#458): once
+        // the user has viewed it, the "look at it again later" flag is spent.
+        await unread.setUnread(user, agent, req.params.sessionId, false).catch(() => undefined);
         return reply.code(200).send({ ok: true, lastSeen: when });
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  // Mark a project chat UNREAD (#458): set (or clear) the per-user MANUAL unread
+  // override, so a chat resurfaces its unread cue even after its last turn was
+  // seen — the email "mark as unread" pattern. Mirrors the archive/star toggles'
+  // shape (`{ unread?: boolean }`, defaults true). Clearing it is equivalent to
+  // marking seen; the client's toggle uses `/seen` for read and this for unread.
+  app.post<{ Params: { slug: string; sessionId: string }; Body: { unread?: boolean } }>(
+    "/api/projects/:slug/chats/:sessionId/unread",
+    {
+      schema: {
+        tags: ["Chats"],
+        summary: "Mark a project chat unread",
+        description:
+          "Sets (or clears) the per-user MANUAL unread override so a chat resurfaces its unread cue even after its last turn was seen — the email \"mark as unread\" pattern. Body `{ unread }` defaults to true; clearing it is equivalent to marking seen (see the `/seen` route). Returns `{ ok, unread }`.",
+        params: {
+          type: "object",
+          properties: {
+            slug: { type: "string", description: "Project slug." },
+            sessionId: { type: "string", description: "Chat (session) id." },
+          },
+          required: ["slug", "sessionId"],
+        },
+        body: {
+          type: ["object", "null"],
+          additionalProperties: true,
+          properties: {
+            unread: { description: "Whether to flag the chat unread. Defaults to true." },
+          },
+        },
+        response: {
+          200: {
+            description: "Object `{ ok, unread }` reflecting the stored flag.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
+    async (req, reply) => {
+      try {
+        const agent = await agentForSlug(req.params.slug);
+        const flag = req.body?.unread !== false; // default true
+        await unread.setUnread(readStateUser(req), agent, req.params.sessionId, flag);
+        return reply.code(200).send({ ok: true, unread: flag });
       } catch (err) {
         return sendProjectError(reply, err);
       }
@@ -808,6 +945,7 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
             await runProvenance.get(s.sessionId).catch(() => null),
             undefined,
             await star.isStarred(SCRATCH_AGENT, s.sessionId).catch(() => false),
+            await unread.isUnread(user, SCRATCH_AGENT, s.sessionId).catch(() => false),
           ),
         ),
       ),
@@ -953,6 +1091,9 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
         const removed = await herdctl.deleteSession(SCRATCH_AGENT, req.params.sessionId);
         await archive.setArchived(SCRATCH_AGENT, req.params.sessionId, false).catch(() => undefined);
         await star.setStarred(SCRATCH_AGENT, req.params.sessionId, false).catch(() => undefined);
+        await unread
+          .setUnread(readStateUser(req), SCRATCH_AGENT, req.params.sessionId, false)
+          .catch(() => undefined);
         return reply.code(200).send({ ok: true, removed });
       } catch (err) {
         return sendProjectError(reply, err);
@@ -1089,8 +1230,55 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
           typeof req.body?.when === "number" && Number.isFinite(req.body.when)
             ? req.body.when
             : Date.now();
-        await readState.setLastSeen(readStateUser(req), SCRATCH_AGENT, req.params.sessionId, when);
+        const user = readStateUser(req);
+        await readState.setLastSeen(user, SCRATCH_AGENT, req.params.sessionId, when);
+        // Also clear any manual unread override (#458) — same as the project variant.
+        await unread.setUnread(user, SCRATCH_AGENT, req.params.sessionId, false).catch(() => undefined);
         return reply.code(200).send({ ok: true, lastSeen: when });
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  // Mark a one-off (scratch) chat UNREAD (#458). Same manual override as the
+  // project variant.
+  app.post<{ Params: { sessionId: string }; Body: { unread?: boolean } }>(
+    "/api/chats/:sessionId/unread",
+    {
+      schema: {
+        tags: ["Chats"],
+        summary: "Mark a scratch chat unread",
+        description:
+          "The one-off (scratch) chat variant of the manual unread override (#458). Body `{ unread }` defaults to true; clearing it is equivalent to marking seen. Returns `{ ok, unread }`.",
+        params: {
+          type: "object",
+          properties: {
+            sessionId: { type: "string", description: "Scratch chat (session) id." },
+          },
+          required: ["sessionId"],
+        },
+        body: {
+          type: ["object", "null"],
+          additionalProperties: true,
+          properties: {
+            unread: { description: "Whether to flag the chat unread. Defaults to true." },
+          },
+        },
+        response: {
+          200: {
+            description: "Object `{ ok, unread }` reflecting the stored flag.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
+    async (req, reply) => {
+      try {
+        const flag = req.body?.unread !== false; // default true
+        await unread.setUnread(readStateUser(req), SCRATCH_AGENT, req.params.sessionId, flag);
+        return reply.code(200).send({ ok: true, unread: flag });
       } catch (err) {
         return sendProjectError(reply, err);
       }

@@ -34,6 +34,7 @@ import { SweepService } from "./sweep.js";
 import { ArchiveStore } from "./archive.js";
 import { StarStore } from "./star.js";
 import { ReadStateStore } from "./read-state.js";
+import { UnreadStore } from "./unread.js";
 import { QueuedMessageStore } from "./queued-message.js";
 import { RunProvenanceStore } from "./run-provenance.js";
 import { MessageProvenanceStore } from "./message-provenance.js";
@@ -65,6 +66,8 @@ export interface BuiltApp {
   archive: ArchiveStore;
   star: StarStore;
   readState: ReadStateStore;
+  /** Per-user manual "unread" override sidecar (#458). */
+  unread: UnreadStore;
   queuedMessage: QueuedMessageStore;
   transcriber: Transcriber;
   /** In-process lifecycle event bus (Epic T) — commit sites emit lifecycle events. */
@@ -141,6 +144,10 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   const star = new StarStore(cfg.dataDir);
   // Per-user (or shared, in `none` mode) chat read-state sidecar (#189).
   const readState = new ReadStateStore(cfg.dataDir);
+  // Per-user manual "unread" override sidecar (#458) — layered on read-state so a
+  // chat can be re-flagged unread after its last turn was seen ("look at it again
+  // in the morning"). Cleared whenever the chat is marked seen.
+  const unread = new UnreadStore(cfg.dataDir);
   // Per-chat queued message sidecar (#197) for server-side auto-send.
   const queuedMessage = new QueuedMessageStore(cfg.dataDir);
   // Per-chat provenance sidecar (issue #261): records how each chat was created
@@ -242,7 +249,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
 
   const chatHandler = makeChatHandler({ herdctl, projects, sweep, attachments, queuedMessage, runProvenance, messageProvenance, archive, scheduleSessions, events, triggers, triggerSessions, cfg });
 
-  await registerRoutes(app, { projects, herdctl, git, githubAuth, transcriber, archive, star, readState, runProvenance, messageProvenance, attachments, fireTrigger: chatHandler.fireTrigger, events, triggers, cfg });
+  await registerRoutes(app, { projects, herdctl, git, githubAuth, transcriber, archive, star, readState, unread, runProvenance, messageProvenance, attachments, fireTrigger: chatHandler.fireTrigger, events, triggers, cfg });
 
   await app.register(async (scoped) => {
     // `hide: true` keeps the WS upgrade out of the OpenAPI doc — it's not a REST
@@ -318,5 +325,5 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
     await app.close().catch(() => undefined);
   };
 
-  return { app, cfg, projects, herdctl, git, githubAuth, sweep, archive, star, readState, queuedMessage, transcriber, events, triggers, close };
+  return { app, cfg, projects, herdctl, git, githubAuth, sweep, archive, star, readState, unread, queuedMessage, transcriber, events, triggers, close };
 }

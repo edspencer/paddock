@@ -84,6 +84,9 @@ export function ProjectView() {
   // transcript the user is watching would remount and flash. So we keep the same
   // key across the `null -> <newId>` establish transition.
   const paneKeyRef = useRef({ counter: 0, session: routeSessionId ?? null });
+  // Single-flight guard for fork-from-message so a double-click can't mint two
+  // forks (#451 QA). ProjectView outlives chat navigation, so it's a ref, not state.
+  const forkingRef = useRef(false);
   if (paneKeyRef.current.session !== (routeSessionId ?? null)) {
     const established = (location.state as { established?: boolean } | null)?.established;
     if (!established) paneKeyRef.current.counter += 1;
@@ -164,11 +167,30 @@ export function ProjectView() {
   // The active chat session is the URL's sessionId (null = a fresh "new chat").
   const activeSession = routeSessionId ?? null;
 
+  // Clear a chat's MANUAL unread override (#458) in local state when it's marked
+  // seen. Stable (setChats identity is stable) so it doesn't churn markSeen and
+  // re-fire the auto-mark-seen effect.
+  const clearManualUnread = useCallback(
+    (id: string) =>
+      setChats((prev) =>
+        prev.map((c) => (c.sessionId === id && c.unread ? { ...c, unread: false } : c)),
+      ),
+    [],
+  );
+
   // Unread affordance (#160): owns liveUnread/seenVersion, folds server read-state
   // (#189), and derives the unread set + marks the focused chat seen. Takes the
   // WS-owned `runningSessions` (kept owned here so the fleet-wide set doesn't
-  // fragment) to flag chats that finish a turn while unfocused.
-  const { unread } = useUnreadChats({ slug, chats, view, activeSession, runningSessions });
+  // fragment) to flag chats that finish a turn while unfocused. `onSeen` clears
+  // the manual unread override (#458) whenever a chat is marked seen.
+  const { unread, markSeen } = useUnreadChats({
+    slug,
+    chats,
+    view,
+    activeSession,
+    runningSessions,
+    onSeen: clearManualUnread,
+  });
 
   // The chats actually rendered in the sidebar, after applying the search
   // filter (issue #96). Empty query -> the full list unchanged.
@@ -344,6 +366,52 @@ export function ProjectView() {
       });
     },
     [navigate, slug, refreshChats],
+  );
+  // Fork a NEW chat branched at an earlier message (issue #451): fork the active
+  // session's PREFIX up to `uuid`, then jump to the new chat to continue it.
+  const forkFromMessage = useCallback(
+    async (uuid: string) => {
+      if (!activeSession) return;
+      // Guard against a double-click minting two forks (#451 QA): ignore a second
+      // invocation while one is already in flight. Navigation unmounts on success.
+      if (forkingRef.current) return;
+      forkingRef.current = true;
+      const source = chats.find((c) => c.sessionId === activeSession);
+      const name = source ? `Fork of ${source.name}` : undefined;
+      let newId: string;
+      try {
+        newId = await api.forkChat(slug, activeSession, name, uuid);
+      } catch (e) {
+        setLoadErr(e instanceof Error ? e.message : "Failed to fork chat");
+        forkingRef.current = false;
+        return;
+      }
+      if (source) writeForkParent(newId, { sessionId: source.sessionId, name: source.name });
+      await refreshChats();
+      navigate(`/projects/${slug}/chat/${encodeURIComponent(newId)}`, {
+        state: { justForked: true },
+      });
+      // ProjectView stays mounted across chat navigation, so clear the guard for
+      // the next (deliberate) fork.
+      forkingRef.current = false;
+    },
+    [activeSession, chats, navigate, slug, refreshChats],
+  );
+  // Revert the active chat back to an earlier message (issue #451): truncate in
+  // place (same session id); the pane reloads its own shorter transcript once
+  // this resolves. Rethrow so the pane surfaces the failure and skips its reload.
+  const revertToMessage = useCallback(
+    async (uuid: string) => {
+      if (!activeSession) return;
+      try {
+        await api.revertChat(slug, activeSession, uuid);
+      } catch (e) {
+        setLoadErr(e instanceof Error ? e.message : "Failed to revert chat");
+        throw e;
+      }
+      await refreshChats();
+    },
+    [activeSession, slug, refreshChats],
   );
   // The chat this one was forked from (for the composer back-link), from local
   // lineage recorded at fork time.
@@ -536,6 +604,33 @@ export function ProjectView() {
       }
     },
     [slug],
+  );
+
+  // Toggle a chat's read/unread state (#458) — the sixth chat action. If the chat
+  // currently reads as unread (for ANY reason: manual flag, a live completion, or
+  // a turn finished while away), mark it seen (clears the manual flag + advances
+  // last-seen). Otherwise set the manual unread override so it resurfaces its cue
+  // later ("look at it again in the morning"), optimistically with rollback.
+  const toggleUnread = useCallback(
+    async (chat: Chat) => {
+      if (unread.has(chat.sessionId)) {
+        markSeen(chat.sessionId);
+        return;
+      }
+      setChats((prev) =>
+        prev.map((c) => (c.sessionId === chat.sessionId ? { ...c, unread: true } : c)),
+      );
+      try {
+        await api.markChatUnread(slug, chat.sessionId, true);
+      } catch (e) {
+        // Roll back the optimistic flag on failure.
+        setChats((prev) =>
+          prev.map((c) => (c.sessionId === chat.sessionId ? { ...c, unread: false } : c)),
+        );
+        setLoadErr(e instanceof Error ? e.message : "Failed to mark chat unread");
+      }
+    },
+    [unread, markSeen, slug],
   );
 
   // Float starred chats to the top of a list while preserving the existing
@@ -760,6 +855,7 @@ export function ProjectView() {
           archiveChat={archiveChat}
           setDeletingChat={setDeletingChat}
           starChat={starChat}
+          toggleUnread={toggleUnread}
         />
 
         {/* Main: tabs + content. The active tab is derived from the URL. */}
@@ -925,6 +1021,8 @@ export function ProjectView() {
               projectAttachments={project.attachments}
               forkParent={forkParent ?? undefined}
               onOpenForkParent={openChat}
+              onForkFromMessage={forkFromMessage}
+              onRevertToMessage={revertToMessage}
               autoFocus={justForked}
               isProjectChat
               // For a trigger chat (Epic T / T4): the owning trigger's truthful-from-

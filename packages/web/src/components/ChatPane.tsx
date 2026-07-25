@@ -38,6 +38,8 @@ import {
   SubagentFetchContext,
   SubagentLiveContext,
   ToolImageUrlContext,
+  TurnActionsContext,
+  type TurnActionsValue,
 } from "./chat/chatContexts";
 import {
   ConnDot,
@@ -46,7 +48,7 @@ import {
   StatusRow,
   WorkingIndicator,
 } from "./chat/ComposerBits";
-import { TurnView } from "./chat/Transcript";
+import { TurnRow } from "./chat/Transcript";
 import { useChatSocket } from "./chat/useChatSocket";
 import { useComposerAttachments } from "./chat/useComposerAttachments";
 
@@ -131,6 +133,20 @@ export interface ChatPaneProps {
    * (enabled + size/count/type caps). Undefined for scratch / when unset.
    */
   projectAttachments?: AttachmentsOverride;
+  /**
+   * Fork a NEW chat branched at an earlier message (issue #451): given the anchor
+   * message's transcript uuid, the parent forks this session's PREFIX up to that
+   * turn and navigates to the new chat. Undefined ⇒ the per-message fork
+   * affordance is hidden (scratch / new chats with no session id yet).
+   */
+  onForkFromMessage?: (uuid: string) => void;
+  /**
+   * Revert this chat back to an earlier message (issue #451): given the anchor
+   * message's transcript uuid, the parent truncates the session in place. Resolves
+   * after the server write so the pane can reload its (now shorter) transcript.
+   * Undefined ⇒ the per-message revert affordance is hidden.
+   */
+  onRevertToMessage?: (uuid: string) => Promise<void>;
 }
 
 export function ChatPane({
@@ -152,6 +168,8 @@ export function ChatPane({
   trigger,
   projectRecovery,
   projectAttachments,
+  onForkFromMessage,
+  onRevertToMessage,
 }: ChatPaneProps) {
   const [turns, setTurns] = useState<Turn[]>([]);
   // Seed the composer from any unsent draft persisted for this chat. The pane is
@@ -503,6 +521,91 @@ export function ChatPane({
       cancelled = true;
     };
   }, [projectSlug, initialSessionId, loadHistory]);
+
+  // --- per-message fork/revert affordances (issue #451) ----------------------
+  // Reload this chat's transcript + context ring after a revert truncates it, so
+  // the pane reflects the shorter history without a full remount.
+  const reloadHistory = useCallback(async () => {
+    if (!initialSessionId || !loadHistory) return;
+    try {
+      const msgs = await loadHistory(initialSessionId);
+      setTurns(historyToTurns(msgs));
+    } catch {
+      setError("Could not reload this chat's history.");
+    }
+    try {
+      const ctx = await api.chatContext(projectSlug, initialSessionId);
+      if (ctx) {
+        setUsage({
+          inputTokens: ctx.contextTokens,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheCreationTokens: 0,
+          contextTokens: ctx.contextTokens,
+          contextLimit: ctx.contextLimit,
+        });
+        setSessionUsage(ctx);
+      }
+    } catch {
+      /* leave the meter as-is */
+    }
+  }, [initialSessionId, loadHistory, projectSlug]);
+
+  // Revert with a confirmation that counts the lost turns — and warns that tool
+  // actions after this point are NOT undone (only the conversation is).
+  const handleRevert = useCallback(
+    async (uuid: string) => {
+      if (!onRevertToMessage) return;
+      const idx = turns.findIndex((t) => t.id.split("#")[0] === uuid);
+      const anchorIsUser = idx >= 0 && turns[idx].kind === "user";
+      // Mirror the server's landing boundary so the count matches what's removed:
+      // - assistant anchor: keep it + its OWN trailing tool calls; drop from the
+      //   next real turn on (#451 QA — it used to over-count the anchor's tools).
+      // - user anchor: revert rewinds to the assistant's previous reply, so the
+      //   clicked message (and everything after) is removed.
+      let start = idx + 1;
+      if (anchorIsUser) {
+        let a = idx - 1;
+        while (a >= 0 && turns[a].kind !== "assistant") a--;
+        start = a + 1;
+      } else {
+        while (start < turns.length && (turns[start].kind === "tool" || turns[start].kind === "file")) {
+          start++;
+        }
+      }
+      const after = idx >= 0 ? turns.slice(start) : [];
+      const toolCount = after.filter((t) => t.kind === "tool").length;
+      const msg =
+        `Revert this chat back to here?\n\n` +
+        (anchorIsUser ? `This rewinds to the assistant's previous reply. ` : ``) +
+        `${after.length} message${after.length === 1 ? "" : "s"} will be removed` +
+        (toolCount > 0
+          ? `, including ${toolCount} tool call${toolCount === 1 ? "" : "s"}. Those actions ` +
+            `(files written, PRs opened, messages sent) are NOT undone — only the conversation.`
+          : ".") +
+        `\n\nThe removed messages are backed up, and this chat keeps its id.`;
+      if (!window.confirm(msg)) return;
+      try {
+        await onRevertToMessage(uuid);
+        await reloadHistory();
+      } catch {
+        setError("Could not revert this chat.");
+      }
+    },
+    [onRevertToMessage, reloadHistory, turns],
+  );
+
+  const turnActions = useMemo<TurnActionsValue | null>(
+    () =>
+      onForkFromMessage && onRevertToMessage
+        ? {
+            onFork: onForkFromMessage,
+            onRevert: (uuid: string) => void handleRevert(uuid),
+            contextLimit: usage?.contextLimit,
+          }
+        : null,
+    [onForkFromMessage, onRevertToMessage, handleRevert, usage?.contextLimit],
+  );
 
   // --- resolve the picker's model + reset usage on a chat switch -------------
   // Keyed on the chat identity (slug + sessionId) so switching chats restores
@@ -878,11 +981,13 @@ export function ChatPane({
               <ToolImageUrlContext.Provider value={toolImageUrl}>
                 <PaddockManageProjectContext.Provider value={projectSlug}>
                   <RecoveryContext.Provider value={recoveryCtx}>
-                    <div className="space-y-4">
-                      {turns.map((t) => (
-                        <TurnView key={t.id} turn={t} />
-                      ))}
-                    </div>
+                    <TurnActionsContext.Provider value={turnActions}>
+                      <div className="space-y-4">
+                        {turns.map((t) => (
+                          <TurnRow key={t.id} turn={t} />
+                        ))}
+                      </div>
+                    </TurnActionsContext.Provider>
                   </RecoveryContext.Provider>
                 </PaddockManageProjectContext.Provider>
               </ToolImageUrlContext.Provider>

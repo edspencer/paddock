@@ -1862,7 +1862,7 @@
         "tags": [
           "Chats"
         ],
-        "description": "Eagerly duplicates a project chat's transcript into a NEW session in the same project (leaving the source untouched), so the fork exists immediately as a real, resumable chat with the parent's full history. Optional body `{ name }` sets the fork's title. Responds 201 with `{ sessionId }` (the new session id).",
+        "description": "Eagerly duplicates a project chat's transcript into a NEW session in the same project (leaving the source untouched), so the fork exists immediately as a real, resumable chat with the parent's history. Optional body `{ name }` sets the fork's title; optional `{ fromUuid }` branches at an earlier message so the fork inherits only the prefix up to that turn (issue #451). Responds 201 with `{ sessionId }` (the new session id).",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1875,9 +1875,11 @@
                 "properties": {
                   "name": {
                     "description": "Title for the new forked chat."
+                  },
+                  "fromUuid": {
+                    "description": "Message uuid to branch at; the fork inherits only the history up to that turn. Omitted ⇒ the full transcript."
                   }
-                },
-                "required": []
+                }
               }
             }
           }
@@ -1909,6 +1911,67 @@
               "application/json": {
                 "schema": {
                   "description": "Object `{ sessionId }` with the new forked session id.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/chats/{sessionId}/revert": {
+      "post": {
+        "summary": "Revert a project chat to an earlier message",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Truncates the chat's transcript at `uuid`, in place (same session id), so the conversation continues as if the later turns never happened. The dropped tail is backed up and recoverable. Rolls back the CONVERSATION only — real side-effects of the reverted turns are NOT undone. Requires body `{ uuid }` (400 without it). Returns an object with the count of removed messages.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": true,
+                "properties": {
+                  "uuid": {
+                    "description": "Message uuid to truncate at (required; 400 when missing)."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "description": "Chat (session) id to revert."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object reporting how many messages were removed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object reporting how many messages were removed.",
                   "type": "object",
                   "additionalProperties": true
                 }
@@ -2095,6 +2158,67 @@
               "application/json": {
                 "schema": {
                   "description": "Object `{ ok, lastSeen }` with the recorded watermark.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/chats/{sessionId}/unread": {
+      "post": {
+        "summary": "Mark a project chat unread",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Sets (or clears) the per-user MANUAL unread override so a chat resurfaces its unread cue even after its last turn was seen — the email \"mark as unread\" pattern. Body `{ unread }` defaults to true; clearing it is equivalent to marking seen (see the `/seen` route). Returns `{ ok, unread }`.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": true,
+                "properties": {
+                  "unread": {
+                    "description": "Whether to flag the chat unread. Defaults to true."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "description": "Chat (session) id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ ok, unread }` reflecting the stored flag.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ ok, unread }` reflecting the stored flag.",
                   "type": "object",
                   "additionalProperties": true
                 }
@@ -2473,6 +2597,58 @@
               "application/json": {
                 "schema": {
                   "description": "Object `{ ok, lastSeen }` with the recorded watermark.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chats/{sessionId}/unread": {
+      "post": {
+        "summary": "Mark a scratch chat unread",
+        "tags": [
+          "Chats"
+        ],
+        "description": "The one-off (scratch) chat variant of the manual unread override (#458). Body `{ unread }` defaults to true; clearing it is equivalent to marking seen. Returns `{ ok, unread }`.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": true,
+                "properties": {
+                  "unread": {
+                    "description": "Whether to flag the chat unread. Defaults to true."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "description": "Scratch chat (session) id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ ok, unread }` reflecting the stored flag.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ ok, unread }` reflecting the stored flag.",
                   "type": "object",
                   "additionalProperties": true
                 }
