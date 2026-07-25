@@ -1,0 +1,2758 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Paddock HTTP API",
+    "description": "HTTP API for Paddock — the keeper-agent platform (persistent chats, projects, unified triggers).\n\nThis document is **generated from the server's route schemas** via `@fastify/swagger`, so it\ntracks the code: a new or changed route with a schema shows up here automatically.\n\n**Live chat is WebSocket, not REST.** Sending a message, streaming the response, tool-call\nevents, cancel, slash-commands and the live queue all flow over `GET /ws`. This spec covers the\nHTTP surface: reads, project/chat/trigger/git management, instance config, and attachment\nupload/serve. The two-step attachment flow is: `POST .../chats/:sessionId/upload` (HTTP, here)\nthen reference the returned file ids in the `chat:send` WebSocket frame.\n\n## Authentication\n\nPaddock has no built-in login — authentication is provider-agnostic and handled at the edge (reverse proxy / IdP). **When these docs are served by the Paddock instance itself, behind your proxy, a `Try it out` request is a same-origin call that inherits your existing SSO session — it authenticates automatically, nothing to paste here.** Use the **Authorize** button only for the explicit-token path (a different origin, a programmatic client, or testing without the proxy).\n\nThis instance runs **jwt** mode: a signed token in the `Authorization` header, verified against the JWKS.",
+    "version": "0.45.0"
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "JWT auth (`PADDOCK_AUTH_MODE=jwt`). A signed token verified against the configured JWKS (`PADDOCK_AUTH_JWKS_URL`), sent as `Authorization: Bearer <token>`."
+      }
+    },
+    "schemas": {}
+  },
+  "paths": {
+    "/api/transcription": {
+      "get": {
+        "summary": "Voice-dictation capability probe",
+        "tags": [
+          "System"
+        ],
+        "description": "Reports whether voice dictation is enabled on this instance so the composer can decide whether to show a mic button. Returns a JSON object with `available` (boolean), `mode`, and `model`.",
+        "responses": {
+          "200": {
+            "description": "Transcription capability info.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Transcription capability info.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/transcribe": {
+      "post": {
+        "summary": "Transcribe a recorded audio blob",
+        "tags": [
+          "System"
+        ],
+        "description": "Accepts `multipart/form-data` with a single `file` field (a recorded WebM/Opus audio blob) and runs whisper (remote OpenAI-compatible endpoint or local whisper.cpp). Returns a JSON object with `text`, `model`, `mode`, and `durationMs`. Returns 503 when dictation is disabled, 400 when no file is present, and 413 on oversize/malformed uploads.",
+        "responses": {
+          "200": {
+            "description": "Transcription result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Transcription result.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/me": {
+      "get": {
+        "summary": "Current authenticated principal",
+        "tags": [
+          "System"
+        ],
+        "description": "Returns the authenticated principal for this request. In `none` auth mode this is the frozen anonymous principal (`{ username: \"anonymous\", anonymous: true }`); in trusted-header / jwt modes it is the real proxy/IdP identity. Returns a JSON object describing the user.",
+        "responses": {
+          "200": {
+            "description": "The request principal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "The request principal.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/health": {
+      "get": {
+        "summary": "Health check",
+        "tags": [
+          "System"
+        ],
+        "description": "Liveness probe. Returns a JSON object `{ ok: true }`.",
+        "responses": {
+          "200": {
+            "description": "Service is up.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Service is up.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/instance-config": {
+      "get": {
+        "summary": "Read instance-wide config",
+        "tags": [
+          "System"
+        ],
+        "description": "Reports every surfaced instance-config field (value / default / editable / sensitive / env-shadow) for the top-level admin screen. Returns a JSON object keyed by field.",
+        "responses": {
+          "200": {
+            "description": "Instance config snapshot.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Instance config snapshot.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Write instance-wide config",
+        "tags": [
+          "System"
+        ],
+        "description": "Writes the editable subset of the instance config to paddock.config.yaml (comment-preserving, atomic). Writes DO NOT hot-apply — the config is frozen at boot — so a successful write returns `{ restartRequired: true, configPath }` and the process keeps its current config until it restarts. Returns 400 on a malformed patch or invalid field, 500 on write failure.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": true,
+                "properties": {
+                  "patch": {
+                    "description": "Map of config field name to new value to write."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Write accepted; restart required to apply.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Write accepted; restart required to apply.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/models": {
+      "get": {
+        "summary": "Selectable models and instance defaults",
+        "tags": [
+          "System"
+        ],
+        "description": "Returns the models this instance offers (the built-in catalog filtered to the `PADDOCK_MODELS` / YAML `models:` allow-list; unset ⇒ the whole catalog) plus the keeper/sweeper defaults and the box-wide defaults (drive mode, max spawn depth, recovery, attachments, curation) that projects fall back to when their own overrides are unset. `keeperDefault` is the effective default for the offered list. Returns a JSON object with `models`, `keeperDefault`, `sweeperDefault`, `keeperDriveModeDefault`, `maxSpawnDepthDefault`, `recoveryDefault`, `attachmentsDefault`, and `curationDefault`.",
+        "responses": {
+          "200": {
+            "description": "Model list and inherited defaults.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Model list and inherited defaults.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/commands": {
+      "get": {
+        "summary": "Slash commands for scratch chats",
+        "tags": [
+          "System"
+        ],
+        "description": "Lists the scratch agent's slash commands (the one-off-chat equivalent of the per-project commands endpoint). Returns a JSON object with `commands`; on failure returns 503 with `{ commands: [], error }`.",
+        "responses": {
+          "200": {
+            "description": "Available scratch-chat slash commands.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Available scratch-chat slash commands.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/fleet": {
+      "get": {
+        "summary": "Fleet status and agents",
+        "tags": [
+          "System"
+        ],
+        "description": "Returns the herdctl fleet status and the list of agents. Returns a JSON object with `status` and `agents`; on failure returns `{ status: null, agents: [], error }`.",
+        "responses": {
+          "200": {
+            "description": "Fleet status and agent list.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Fleet status and agent list.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chat-files/{id}": {
+      "get": {
+        "summary": "Serve raw attachment bytes",
+        "tags": [
+          "Attachments"
+        ],
+        "description": "Serves the raw file bytes of an attachment addressed by its opaque id (a file the agent shared via send_file, or a composer upload). Returns the raw bytes with `Accept-Ranges: bytes` — a `Range` request is honored with `206 Partial Content`, otherwise the full body with `200`; `416` for an unsatisfiable range and `404` when the id is unknown. Locked down with nosniff + a sandbox CSP.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "description": "Opaque attachment id from the chat transcript."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/chats/{sessionId}/upload": {
+      "post": {
+        "summary": "Composer file upload",
+        "tags": [
+          "Attachments"
+        ],
+        "description": "Accepts `multipart/form-data` with one or more `file` fields; copies each posted file's bytes into the attachment store and returns opaque ids the composer holds until send. Validation is server-authoritative (enabled/size/count/type per the effective project config). Returns a JSON object with `files` (each `{ id, filename, size, kind }`). Returns 403 when attachments are disabled, 413 on oversize/too-many files, 415 on a disallowed type, and 400 when no files are present.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "description": "Chat session id; accepted for a not-yet-created chat too (it only scopes the request)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Stored attachment descriptors.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Stored attachment descriptors.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/git": {
+      "get": {
+        "summary": "Get fleet-level git remote and GitHub connection state",
+        "tags": [
+          "Git"
+        ],
+        "description": "Returns the configured backing-store remote details merged with a `github` object describing the current GitHub device-flow connection status.",
+        "responses": {
+          "200": {
+            "description": "Object containing the remote configuration fields plus a nested `github` object with connection state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object containing the remote configuration fields plus a nested `github` object with connection state.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/git/push": {
+      "post": {
+        "summary": "Push the working tree to origin",
+        "tags": [
+          "Git"
+        ],
+        "description": "Pushes the projects working tree to the configured remote (the NAS bare repo / origin). Returns an object describing the push result.",
+        "responses": {
+          "200": {
+            "description": "Object describing the outcome of the push operation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object describing the outcome of the push operation.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/git/github/connect": {
+      "post": {
+        "summary": "Begin GitHub device-flow authentication",
+        "tags": [
+          "Git"
+        ],
+        "description": "Starts the GitHub device-flow authorization and returns the device/user codes and verification URL. Responds with 400 (`{ error }`) if the flow cannot be started.",
+        "responses": {
+          "200": {
+            "description": "Object with the GitHub device-flow details (e.g. device code, user code, verification URI).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object with the GitHub device-flow details (e.g. device code, user code, verification URI).",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Error object `{ error }` when the device flow cannot be started.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Error object `{ error }` when the device flow cannot be started.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/git/github/poll": {
+      "post": {
+        "summary": "Poll GitHub device-flow authentication",
+        "tags": [
+          "Git"
+        ],
+        "description": "Polls GitHub for completion of a previously-started device flow using the supplied `deviceCode`. Returns the current auth status; responds with 400 (`{ error }`) if `deviceCode` is missing.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": true,
+                "properties": {
+                  "deviceCode": {
+                    "description": "The device code returned by the connect step."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Object describing the current device-flow poll result / auth status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object describing the current device-flow poll result / auth status.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Error object `{ error }` when `deviceCode` is missing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Error object `{ error }` when `deviceCode` is missing.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/git/github/disconnect": {
+      "post": {
+        "summary": "Disconnect the GitHub connection",
+        "tags": [
+          "Git"
+        ],
+        "description": "Clears the stored GitHub credentials / connection. Returns `{ ok: true }` on success.",
+        "responses": {
+          "200": {
+            "description": "Object `{ ok: true }` confirming the disconnect.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ ok: true }` confirming the disconnect.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/git/status": {
+      "get": {
+        "summary": "Get a project's git working-tree status",
+        "tags": [
+          "Git"
+        ],
+        "description": "Returns the uncommitted changes confined to this project's subtree. Returns `{ repo: false }` when the projects dir isn't a git working tree. Never throws on git errors.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "The project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object describing the project's working-tree status, or `{ repo: false }` when not a git working tree.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object describing the project's working-tree status, or `{ repo: false }` when not a git working tree.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/git/diff": {
+      "get": {
+        "summary": "Get a project's unified diff",
+        "tags": [
+          "Git"
+        ],
+        "description": "Returns the raw unified diff (text/plain) for the project's tracked changes (working tree vs HEAD), or for a single file via `?file=`. Untracked files are reported by /git/status instead.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "query",
+            "name": "file",
+            "required": false,
+            "description": "Optional project-relative path to diff a single file."
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "The project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/git/commit": {
+      "post": {
+        "summary": "Commit a project's pending changes",
+        "tags": [
+          "Git"
+        ],
+        "description": "Commits the project's pending changes. Optional `files` (project-relative) commits only those changes; omitted commits the whole subtree. Returns an object where `committed: false` indicates there was nothing to commit. Push is a separate explicit action (/api/git/push).",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": true,
+                "properties": {
+                  "message": {
+                    "description": "Optional commit message; defaults to `Update <project name>`."
+                  },
+                  "files": {
+                    "description": "Optional project-relative paths (array) to commit only those changes."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "The project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object describing the commit result; `committed: false` when there was nothing to commit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object describing the commit result; `committed: false` when there was nothing to commit.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects": {
+      "get": {
+        "summary": "List projects",
+        "tags": [
+          "Projects"
+        ],
+        "description": "Returns `{ projects }`, an array of project objects. Each entry carries the project metadata plus a compact `chatTurns` array (per-chat `{ sessionId, lastTurnCompletedAt, lastSeen? }` for the sidebar UNREAD count) and a `dirty` uncommitted-file count.",
+        "responses": {
+          "200": {
+            "description": "Object with a `projects` array; each item is a project object enriched with `chatTurns` and `dirty`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object with a `projects` array; each item is a project object enriched with `chatTurns` and `dirty`.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a project",
+        "tags": [
+          "Projects"
+        ],
+        "description": "Creates a project from `CreateProjectInput` and registers its keeper/sweeper agents. Set `repo` to create a repo-backed project (cloned checkout as the keeper cwd); omit it for a notebook project. Responds 201 with `{ project }`.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": true,
+                "properties": {
+                  "name": {
+                    "description": "Human-readable project name."
+                  },
+                  "slug": {
+                    "description": "URL slug (derived from name if omitted)."
+                  },
+                  "status": {
+                    "description": "Project status."
+                  },
+                  "domain": {
+                    "description": "Domain tags for the project."
+                  },
+                  "group": {
+                    "description": "Group the project belongs to."
+                  },
+                  "visibility": {
+                    "description": "Project visibility."
+                  },
+                  "summary": {
+                    "description": "Short project summary."
+                  },
+                  "links": {
+                    "description": "Related links for the project."
+                  },
+                  "repo": {
+                    "description": "External git repo URL to back this project (repo-backed if set)."
+                  }
+                },
+                "required": []
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Object with the created `project`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object with the created `project`.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}": {
+      "get": {
+        "summary": "Get a project",
+        "tags": [
+          "Projects"
+        ],
+        "description": "Returns `{ project, changelog, chats }` — the project metadata, its raw CHANGELOG.md text, and its chats (sessions) enriched with archived/starred/last-seen/provenance/trigger flags. Per-chat usage rings are filled separately by the client.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object with `project`, `changelog` text, and a `chats` array.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object with `project`, `changelog` text, and a `chats` array.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update a project",
+        "tags": [
+          "Projects"
+        ],
+        "description": "Applies an `UpdateProjectInput` partial and re-registers the keeper. Keeper overrides (`model`, `permissionMode`, `maxTurns`, `docker`, `driveMode`, `maxSpawnDepth`, `hooksMcpEnabled`) are validated at runtime — an invalid value returns 400. Tri-state override fields accept `null` to clear the override. Responds with `{ project }`.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": true,
+                "properties": {
+                  "name": {
+                    "description": "Human-readable project name."
+                  },
+                  "status": {
+                    "description": "Project status."
+                  },
+                  "domain": {
+                    "description": "Domain tags."
+                  },
+                  "group": {
+                    "description": "Group the project belongs to."
+                  },
+                  "visibility": {
+                    "description": "Project visibility."
+                  },
+                  "summary": {
+                    "description": "Short project summary."
+                  },
+                  "links": {
+                    "description": "Related links."
+                  },
+                  "model": {
+                    "description": "Keeper model override (validated at runtime)."
+                  },
+                  "permissionMode": {
+                    "description": "Keeper permission mode override (validated at runtime)."
+                  },
+                  "maxTurns": {
+                    "description": "Keeper max-turns override (validated at runtime)."
+                  },
+                  "docker": {
+                    "description": "Whether the keeper runs in Docker."
+                  },
+                  "driveMode": {
+                    "description": "Keeper drive-mode override; `null` clears it."
+                  },
+                  "maxSpawnDepth": {
+                    "description": "Max spawn-depth override; `null` clears it."
+                  },
+                  "hooksMcpEnabled": {
+                    "description": "Hook-management MCP override; `null` clears it."
+                  },
+                  "recovery": {
+                    "description": "Keeper-chat recovery override object; `null` clears it."
+                  },
+                  "attachments": {
+                    "description": "Inbound-attachment override object; `null` clears it."
+                  },
+                  "curation": {
+                    "description": "Sweeper-curation budget override object; `null` clears it."
+                  }
+                },
+                "required": []
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object with the updated `project`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object with the updated `project`.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a project",
+        "tags": [
+          "Projects"
+        ],
+        "description": "Removes the project directory and unregisters its keeper + sweeper agents (the inverse of create). Responds with `{ ok: true, slug }`.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object with `ok: true` and the deleted project `slug`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object with `ok: true` and the deleted project `slug`.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/promote": {
+      "post": {
+        "summary": "Promote a notebook project to repo-backed",
+        "tags": [
+          "Projects"
+        ],
+        "description": "Clones `repo` into the project's nested checkout, flips the keeper cwd to it, and re-registers the keeper (keeping existing chats + metadata). A missing/blank `repo` returns 400; clone failure rolls back to the intact notebook. Responds with `{ project }`.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": true,
+                "properties": {
+                  "repo": {
+                    "description": "Git repo URL to clone and back the project with."
+                  }
+                },
+                "required": []
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object with the promoted `project`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object with the promoted `project`.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/files": {
+      "get": {
+        "summary": "List one level of a project's file tree",
+        "tags": [
+          "Projects"
+        ],
+        "description": "Lists a single directory level. `?path=<subpath>` descends into a subdirectory (omitted/empty = project root). Returns `{ path, kind, entries }`: a directory yields `kind: \"dir\"` with `entries` (dirs first); a path naming a file yields `kind: \"file\"` with empty `entries` (200, not an error).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "query",
+            "name": "path",
+            "required": false,
+            "description": "Subpath to descend into; omitted/empty = project root."
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object with `path`, `kind` (\"dir\" | \"file\"), and an `entries` array.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object with `path`, `kind` (\"dir\" | \"file\"), and an `entries` array.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/changelog": {
+      "get": {
+        "summary": "Get a project's CHANGELOG.md",
+        "tags": [
+          "Projects"
+        ],
+        "description": "Returns the raw CHANGELOG.md text with content-type `text/markdown; charset=utf-8` (empty string if none). No response schema — the body is raw markdown text, not JSON.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/overview": {
+      "get": {
+        "summary": "Get a project's OVERVIEW.md",
+        "tags": [
+          "Projects"
+        ],
+        "description": "Returns the raw OVERVIEW.md text (sweep-curated current-state context) with content-type `text/markdown; charset=utf-8`; empty string if the project has no overview yet. No response schema — the body is raw markdown text, not JSON.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/commands": {
+      "get": {
+        "summary": "List a project's keeper slash commands",
+        "tags": [
+          "Projects"
+        ],
+        "description": "Returns `{ commands }` — the slash commands available to the project's keeper agent (built-ins plus the project's `.claude/commands` and MCP-provided commands) for composer autocomplete. Result is memoized per agent.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object with a `commands` array.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object with a `commands` array.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/files/{name}": {
+      "get": {
+        "summary": "Get a single project file",
+        "tags": [
+          "Projects"
+        ],
+        "description": "Dual-mode. By default returns JSON with the file content plus a render-kind hint (markdown | html | text | image). With `?raw=1` it instead STREAMS the file's raw bytes with the correct Content-Type (locked down: sandbox CSP + nosniff + inline disposition) — how the image viewer loads an `<img>`. No response schema is declared so the raw byte stream is never corrupted.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "query",
+            "name": "raw",
+            "required": false,
+            "description": "Set to a truthy value (e.g. `1`) to stream raw bytes instead of JSON."
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "description": "URL-encoded file name."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/pins": {
+      "put": {
+        "summary": "Pin a file as a sibling tab",
+        "tags": [
+          "Projects"
+        ],
+        "description": "Pins `file` as a sibling tab (validates the file exists + dedupes). Responds with `{ project }` reflecting the updated pins.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": true,
+                "properties": {
+                  "file": {
+                    "description": "Path of the file to pin."
+                  }
+                },
+                "required": []
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object with the updated `project`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object with the updated `project`.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/pins/{file}": {
+      "delete": {
+        "summary": "Unpin a file",
+        "tags": [
+          "Projects"
+        ],
+        "description": "Removes the pin for the given URL-encoded file `name`. Responds with `{ project }` reflecting the updated pins.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "file",
+            "required": true,
+            "description": "URL-encoded name of the pinned file to remove."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object with the updated `project`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object with the updated `project`.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/triggers": {
+      "get": {
+        "summary": "List a project's triggers plus the picker catalog",
+        "tags": [
+          "Triggers"
+        ],
+        "description": "Returns the project's trigger DTOs together with the Triggers-tab picker catalog. Success (200) is an object with `triggers` (array of trigger DTOs, each combining the `trigger` when-clause, the `run` definition, `enabled`, and derived fields like `agentName`), `grantableTools` (the tools an event/webhook trigger may be granted), `events` (the lifecycle events an event trigger can fire on), and `triggerTypes` (the supported trigger kinds).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The trigger DTO list plus picker catalog (`triggers`, `grantableTools`, `events`, `triggerTypes`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "The trigger DTO list plus picker catalog (`triggers`, `grantableTools`, `events`, `triggerTypes`).",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/triggers/{name}": {
+      "get": {
+        "summary": "Get one trigger by name",
+        "tags": [
+          "Triggers"
+        ],
+        "description": "Fetches a single trigger's config by name. Success (200) is an object with a `trigger` field holding the trigger DTO (`trigger` when-clause + `run` + `enabled` + derived fields). Returns 404 when the project declares no trigger with that name.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "description": "Trigger name."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "An object with a `trigger` field holding the trigger DTO.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "An object with a `trigger` field holding the trigger DTO.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Create or replace one trigger",
+        "tags": [
+          "Triggers"
+        ],
+        "description": "Creates or fully replaces a trigger keyed by name, persisting it to project.yaml then arming it. Enabling/disabling is this same route with `enabled` flipped. The body is the FULL trigger record: `trigger` is the WHEN clause — a discriminated union on `trigger.type` (`schedule` with `cron` xor `interval`; `event` with an `on` value such as `onArchive`/`afterTurn`; `webhook` with a `path`, shape-reserved) — `run` is the shared agent-run definition (prompt/promptFile, model, tools, etc.), and `enabled` is the on/off flag. Success (200) is an object with a `trigger` field holding the persisted trigger DTO. Returns 400 for an invalid name or malformed trigger definition.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": true,
+                "properties": {
+                  "trigger": {
+                    "description": "The WHEN clause: a discriminated union on `trigger.type` (`schedule`/`event`/`webhook`) with type-specific fields."
+                  },
+                  "run": {
+                    "description": "The WHAT clause: the shared agent-run definition (prompt/promptFile, model, tools, session mode, etc.)."
+                  },
+                  "enabled": {
+                    "description": "Whether the trigger is armed; new triggers default disabled."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "description": "Trigger name."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "An object with a `trigger` field holding the persisted trigger DTO.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "An object with a `trigger` field holding the persisted trigger DTO.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete one trigger",
+        "tags": [
+          "Triggers"
+        ],
+        "description": "Removes a trigger from project.yaml AND disarms it (an event trigger's agent is torn down; a schedule trigger's forwarded entry is dropped). Success (200) is an object with `ok: true`, the `name`, and `removed` describing what was removed.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "description": "Trigger name."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "An object with `ok`, `name`, and `removed`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "An object with `ok`, `name`, and `removed`.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/triggers/runtime": {
+      "get": {
+        "summary": "Live runtime state for a project's triggers",
+        "tags": [
+          "Triggers"
+        ],
+        "description": "Per-trigger live last-run / next-run / status, joining each trigger's config with herdctl runtime state (the cron scheduler's next-fire + status for schedule triggers, plus job records for last run). This is a static path segment, matched BEFORE `/:name`, so no trigger name shadows it. It is served as its own pollable endpoint (separate from the config list). Success (200) is an object with a `runtime` field describing each trigger's live state.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "An object with a `runtime` field describing each trigger's live last-run/next-run/status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "An object with a `runtime` field describing each trigger's live last-run/next-run/status.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/triggers/{name}/run": {
+      "post": {
+        "summary": "Run a trigger now",
+        "tags": [
+          "Triggers"
+        ],
+        "description": "Fires a trigger immediately (\"Run now\") through the same hub path a cron/event fire uses, producing a first-class badged run. Fires any trigger type regardless of its `enabled` flag. Success is 202 with an object containing `ok: true`, the `name`, and the started `sessionId`. Returns 503 when firing is unavailable, 404 for an unknown trigger, 409 for the post-turn curator trigger (not runnable on demand), and 502 if the fire started no chat.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "description": "Trigger name."
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "An object with `ok`, `name`, and the started `sessionId`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "An object with `ok`, `name`, and the started `sessionId`.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/chats": {
+      "get": {
+        "summary": "List a project's chats",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Returns the project's chats (sessions) with per-chat metadata (name, last-turn time, archived/starred flags, last-seen watermark, run provenance, trigger info). Usage rings are fetched separately (see GET /api/projects/:slug/chats/usage). Response: an object `{ chats: [...] }`.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ chats }` where `chats` is an array of chat DTOs.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ chats }` where `chats` is an array of chat DTOs.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Get the WS target for a new project chat",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Thin endpoint: validates the project and returns the WebSocket target for opening a new chat. It does NOT create the chat or send a message — a new chat is minted lazily by the first WS `chat:send` (with no sessionId), and the session id arrives in `chat:complete`. Responds 201 with `{ projectSlug, sessionId: null, ws: \"/ws\", note }`.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Object `{ projectSlug, sessionId, ws, note }` giving the WS target `/ws`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ projectSlug, sessionId, ws, note }` giving the WS target `/ws`.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/runs": {
+      "get": {
+        "summary": "List a project's run history",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Returns the project's 'while you were away' run history (scheduled + spawned + human runs) sourced from herdctl job records joined with provenance markers, plus the per-user since-last-visit watermark. Response: an object describing runs and the last-seen digest state.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "description": "Max number of runs to return (clamped server-side)."
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object with the project's runs and since-last-visit digest state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object with the project's runs and since-last-visit digest state.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/runs/seen": {
+      "post": {
+        "summary": "Mark a project's runs as seen",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Advances the per-user 'runs last seen' watermark (clears the since-last-visit digest). Optional body `{ when }` (epoch-ms) defaults to now; monotonic in the store (an older `when` is a no-op). Response: `{ ok, lastSeen }`.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": true,
+                "properties": {
+                  "when": {
+                    "description": "Epoch-ms timestamp to record as last seen; defaults to now."
+                  }
+                },
+                "required": []
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ ok, lastSeen }` with the recorded watermark.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ ok, lastSeen }` with the recorded watermark.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/chats/usage": {
+      "get": {
+        "summary": "Bulk context-window usage for a project's chats",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Returns per-chat context-window usage keyed by session id, for all of a project's chats — the expensive data the chat list needs for its usage rings. Sessions with no usage data are omitted. Response: `{ usage: { <sessionId>: <usage> } }`.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ usage }` mapping session id to its context-window usage.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ usage }` mapping session id to its context-window usage.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/chats/{sessionId}/messages": {
+      "get": {
+        "summary": "Read a project chat's messages",
+        "tags": [
+          "Chats"
+        ],
+        "description": "READ-ONLY: returns the messages of a project chat, enriched with tool details and per-message provenance, plus a synthetic trailing notice if the chat dead-ended at a usage/subscription limit. Sending a message is WebSocket-only (a `chat:send` frame on GET /ws) — there is no HTTP send-message endpoint. Response: `{ messages: [...] }`.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "description": "Chat (session) id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ messages }` with the chat's message array.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ messages }` with the chat's message array.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/chats/{sessionId}/subagents/{toolUseId}/messages": {
+      "get": {
+        "summary": "Read a sub-agent's transcript within a project chat",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Returns the step-by-step transcript of a sub-agent launched from a Task/Agent tool block within a project chat. `toolUseId` is the parent tool_use id carried on the enriched tool call. Response: `{ messages: [...] }`.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "description": "Chat (session) id."
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "toolUseId",
+            "required": true,
+            "description": "Parent tool_use id of the sub-agent launch."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ messages }` with the sub-agent's message array.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ messages }` with the sub-agent's message array.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/chats/{sessionId}/context": {
+      "get": {
+        "summary": "Context-window usage for a project chat",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Returns the context-window usage for a project chat, read from the transcript's most recent turn — lets the UI show 'context used' before a new turn streams a fresh value. Response: `{ usage }`, where `usage` is null when the transcript has no usage data.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "description": "Chat (session) id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ usage }` (null when the transcript has no usage data).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ usage }` (null when the transcript has no usage data).",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/chats/{sessionId}": {
+      "delete": {
+        "summary": "Delete a project chat",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Deletes a project chat (session): removes its transcript JSONL and clears any archived/starred flag so a future session id can't inherit it. Responds 200 with `{ ok, removed }`.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "description": "Chat (session) id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ ok, removed }` indicating whether the transcript was removed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ ok, removed }` indicating whether the transcript was removed.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Rename a project chat",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Sets or clears a project chat's custom display name. A null/empty `name` in the body clears any custom name. Responds 200 with `{ ok }`.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": true,
+                "properties": {
+                  "name": {
+                    "description": "New display name; null/empty clears the custom name."
+                  }
+                },
+                "required": []
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "description": "Chat (session) id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ ok }`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ ok }`.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/chats/{sessionId}/fork": {
+      "post": {
+        "summary": "Fork a project chat",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Eagerly duplicates a project chat's transcript into a NEW session in the same project (leaving the source untouched), so the fork exists immediately as a real, resumable chat with the parent's history. Optional body `{ name }` sets the fork's title; optional `{ fromUuid }` branches at an earlier message so the fork inherits only the prefix up to that turn (issue #451). Responds 201 with `{ sessionId }` (the new session id).",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": true,
+                "properties": {
+                  "name": {
+                    "description": "Title for the new forked chat."
+                  },
+                  "fromUuid": {
+                    "description": "Message uuid to branch at; the fork inherits only the history up to that turn. Omitted ⇒ the full transcript."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "description": "Source chat (session) id to fork."
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Object `{ sessionId }` with the new forked session id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ sessionId }` with the new forked session id.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/chats/{sessionId}/revert": {
+      "post": {
+        "summary": "Revert a project chat to an earlier message",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Truncates the chat's transcript at `uuid`, in place (same session id), so the conversation continues as if the later turns never happened. The dropped tail is backed up and recoverable. Rolls back the CONVERSATION only — real side-effects of the reverted turns are NOT undone. Requires body `{ uuid }` (400 without it). Returns an object with the count of removed messages.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": true,
+                "properties": {
+                  "uuid": {
+                    "description": "Message uuid to truncate at (required; 400 when missing)."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "description": "Chat (session) id to revert."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object reporting how many messages were removed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object reporting how many messages were removed.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/chats/{sessionId}/archive": {
+      "post": {
+        "summary": "Archive or unarchive a project chat",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Non-destructive toggle of a project chat's persisted archived flag — the transcript is untouched and the chat stays openable/resumable/forkable. Body `{ archived }` defaults to true; a real transition into archived fires the project's onArchive hooks. Responds 200 with `{ ok, archived }`.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": true,
+                "properties": {
+                  "archived": {
+                    "description": "Target archived state; defaults to true when omitted."
+                  }
+                },
+                "required": []
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "description": "Chat (session) id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ ok, archived }` with the resulting archived state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ ok, archived }` with the resulting archived state.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/chats/{sessionId}/star": {
+      "post": {
+        "summary": "Star or unstar a project chat",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Non-destructive toggle of a project chat's persisted starred flag (orthogonal to archiving; a starred chat sorts to the top of its population). Body `{ starred }` defaults to true. Responds 200 with `{ ok, starred }`.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": true,
+                "properties": {
+                  "starred": {
+                    "description": "Target starred state; defaults to true when omitted."
+                  }
+                },
+                "required": []
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "description": "Chat (session) id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ ok, starred }` with the resulting starred state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ ok, starred }` with the resulting starred state.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/chats/{sessionId}/seen": {
+      "post": {
+        "summary": "Mark a project chat as seen",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Persists the user's last-viewed moment for a project chat server-side, driving the cross-device unread affordance. Optional body `{ when }` (epoch-ms) defaults to now; monotonic in the store (an older `when` is a no-op). Responds 200 with `{ ok, lastSeen }`.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": true,
+                "properties": {
+                  "when": {
+                    "description": "Epoch-ms timestamp to record as last seen; defaults to now."
+                  }
+                },
+                "required": []
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "description": "Chat (session) id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ ok, lastSeen }` with the recorded watermark.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ ok, lastSeen }` with the recorded watermark.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/chats/{sessionId}/unread": {
+      "post": {
+        "summary": "Mark a project chat unread",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Sets (or clears) the per-user MANUAL unread override so a chat resurfaces its unread cue even after its last turn was seen — the email \"mark as unread\" pattern. Body `{ unread }` defaults to true; clearing it is equivalent to marking seen (see the `/seen` route). Returns `{ ok, unread }`.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": true,
+                "properties": {
+                  "unread": {
+                    "description": "Whether to flag the chat unread. Defaults to true."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "description": "Chat (session) id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ ok, unread }` reflecting the stored flag.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ ok, unread }` reflecting the stored flag.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chats": {
+      "get": {
+        "summary": "List one-off (scratch) chats",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Returns all one-off scratch chats with per-chat metadata (usage, archived/starred flags, last-seen watermark, run provenance). Scratch chats never get context preload. Response: `{ chats: [...] }`.",
+        "responses": {
+          "200": {
+            "description": "Object `{ chats }` with an array of scratch chat DTOs.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ chats }` with an array of scratch chat DTOs.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chats/{sessionId}/messages": {
+      "get": {
+        "summary": "Read a scratch chat's messages",
+        "tags": [
+          "Chats"
+        ],
+        "description": "READ-ONLY: returns the messages of a one-off (scratch) chat, enriched with tool details. Sending a message is WebSocket-only (a `chat:send` frame on GET /ws) — there is no HTTP send-message endpoint. Response: `{ messages: [...] }`.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "description": "Scratch chat (session) id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ messages }` with the chat's message array.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ messages }` with the chat's message array.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chats/{sessionId}/subagents/{toolUseId}/messages": {
+      "get": {
+        "summary": "Read a sub-agent's transcript within a scratch chat",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Returns the step-by-step transcript of a sub-agent launched from a Task/Agent tool block within a one-off (scratch) chat. `toolUseId` is the parent tool_use id. Response: `{ messages: [...] }`.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "description": "Scratch chat (session) id."
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "toolUseId",
+            "required": true,
+            "description": "Parent tool_use id of the sub-agent launch."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ messages }` with the sub-agent's message array.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ messages }` with the sub-agent's message array.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chats/{sessionId}/context": {
+      "get": {
+        "summary": "Context-window usage for a scratch chat",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Returns the context-window usage for a one-off (scratch) chat, read from the transcript's most recent turn (see the project variant). Response: `{ usage }`, where `usage` is null when the transcript has no usage data.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "description": "Scratch chat (session) id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ usage }` (null when the transcript has no usage data).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ usage }` (null when the transcript has no usage data).",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chats/{sessionId}": {
+      "delete": {
+        "summary": "Delete a scratch chat",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Deletes a one-off (scratch) chat: removes its transcript and clears any archived/starred flag. Responds 200 with `{ ok, removed }`.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "description": "Scratch chat (session) id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ ok, removed }` indicating whether the transcript was removed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ ok, removed }` indicating whether the transcript was removed.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Rename a scratch chat",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Sets or clears a one-off (scratch) chat's custom display name. A null/empty `name` clears any custom name. Responds 200 with `{ ok }`.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": true,
+                "properties": {
+                  "name": {
+                    "description": "New display name; null/empty clears the custom name."
+                  }
+                },
+                "required": []
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "description": "Scratch chat (session) id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ ok }`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ ok }`.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chats/{sessionId}/archive": {
+      "post": {
+        "summary": "Archive or unarchive a scratch chat",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Non-destructive toggle of a scratch chat's persisted archived flag (same as the project variant). Body `{ archived }` defaults to true. Responds 200 with `{ ok, archived }`.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": true,
+                "properties": {
+                  "archived": {
+                    "description": "Target archived state; defaults to true when omitted."
+                  }
+                },
+                "required": []
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "description": "Scratch chat (session) id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ ok, archived }` with the resulting archived state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ ok, archived }` with the resulting archived state.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chats/{sessionId}/star": {
+      "post": {
+        "summary": "Star or unstar a scratch chat",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Non-destructive toggle of a scratch chat's persisted starred flag (same as the project variant). Body `{ starred }` defaults to true. Responds 200 with `{ ok, starred }`.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": true,
+                "properties": {
+                  "starred": {
+                    "description": "Target starred state; defaults to true when omitted."
+                  }
+                },
+                "required": []
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "description": "Scratch chat (session) id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ ok, starred }` with the resulting starred state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ ok, starred }` with the resulting starred state.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chats/{sessionId}/seen": {
+      "post": {
+        "summary": "Mark a scratch chat as seen",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Persists the user's last-viewed moment for a one-off (scratch) chat (same as the project variant). Optional body `{ when }` (epoch-ms) defaults to now; monotonic in the store. Responds 200 with `{ ok, lastSeen }`.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": true,
+                "properties": {
+                  "when": {
+                    "description": "Epoch-ms timestamp to record as last seen; defaults to now."
+                  }
+                },
+                "required": []
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "description": "Scratch chat (session) id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ ok, lastSeen }` with the recorded watermark.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ ok, lastSeen }` with the recorded watermark.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chats/{sessionId}/unread": {
+      "post": {
+        "summary": "Mark a scratch chat unread",
+        "tags": [
+          "Chats"
+        ],
+        "description": "The one-off (scratch) chat variant of the manual unread override (#458). Body `{ unread }` defaults to true; clearing it is equivalent to marking seen. Returns `{ ok, unread }`.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": true,
+                "properties": {
+                  "unread": {
+                    "description": "Whether to flag the chat unread. Defaults to true."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "description": "Scratch chat (session) id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ ok, unread }` reflecting the stored flag.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ ok, unread }` reflecting the stored flag.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chats/{sessionId}/promote": {
+      "post": {
+        "summary": "Promote a scratch chat into a new project",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Promotes a one-off (scratch) chat into a NEW project: creates the project + keeper, then re-homes the chat's transcript into it so it lists and resumes under the project. `name` is required (validated at runtime; a missing/blank name returns 400). Responds 201 with `{ project, promoted, sessionId }` — `promoted:false` means the project was created but the transcript couldn't be moved (e.g. an unknown session id); the project is still usable.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": true,
+                "properties": {
+                  "name": {
+                    "description": "New project name (required; validated at runtime)."
+                  },
+                  "slug": {
+                    "description": "Optional explicit project slug."
+                  },
+                  "group": {
+                    "description": "Optional project group."
+                  },
+                  "summary": {
+                    "description": "Optional project summary."
+                  },
+                  "domain": {
+                    "description": "Optional project domain tags."
+                  }
+                },
+                "required": []
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "description": "Scratch chat (session) id to promote."
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Object `{ project, promoted, sessionId }` describing the created project and whether the transcript was re-homed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ project, promoted, sessionId }` describing the created project and whether the transcript was re-homed.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "System",
+      "description": "Health, identity, models, fleet, instance config, voice."
+    },
+    {
+      "name": "Attachments",
+      "description": "Composer file uploads and serving agent-shared file bytes."
+    },
+    {
+      "name": "Git",
+      "description": "Repo remote state, GitHub auth, per-project status/diff/commit."
+    },
+    {
+      "name": "Projects",
+      "description": "Project CRUD, promote, files, changelog/overview, pins."
+    },
+    {
+      "name": "Triggers",
+      "description": "Unified schedule/event/webhook triggers: CRUD, runtime status, run-now."
+    },
+    {
+      "name": "Chats",
+      "description": "Chat (session) lifecycle: list, read messages, usage/context, fork, archive, star, rename, delete, run history, promote. NOTE: sending a message is WebSocket-only (GET /ws)."
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { getBrand, logoIsImage, DEFAULT_BRAND } from "./brand";
+import { getBrand, getOpenApi, logoIsImage, DEFAULT_BRAND, DEFAULT_OPENAPI } from "./brand";
 
 type WithConfig = { __PADDOCK_CONFIG__?: unknown };
 
@@ -20,6 +20,18 @@ describe("getBrand", () => {
   it("ignores a malformed / empty config", () => {
     (globalThis as WithConfig).__PADDOCK_CONFIG__ = {};
     expect(getBrand()).toEqual(DEFAULT_BRAND);
+  });
+});
+
+describe("getOpenApi", () => {
+  it("defaults to disabled when no config is injected", () => {
+    expect(getOpenApi()).toEqual(DEFAULT_OPENAPI);
+    expect(getOpenApi().enabled).toBe(false);
+  });
+
+  it("reads the injected enabled flag + path", () => {
+    (globalThis as WithConfig).__PADDOCK_CONFIG__ = { openapi: { enabled: true, path: "/open-api" } };
+    expect(getOpenApi()).toEqual({ enabled: true, path: "/open-api" });
   });
 });
 

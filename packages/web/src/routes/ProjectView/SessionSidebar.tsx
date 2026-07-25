@@ -10,6 +10,7 @@ import {
   BranchIcon,
   ChatIcon,
   ChevronDownIcon,
+  EnvelopeIcon,
   PencilIcon,
   PlusIcon,
   SearchIcon,
@@ -54,6 +55,7 @@ export function SessionSidebar({
   archiveChat,
   setDeletingChat,
   starChat,
+  toggleUnread,
 }: {
   chatList: ReturnType<typeof usePaneWidth>;
   sessionsOpen: boolean;
@@ -82,6 +84,7 @@ export function SessionSidebar({
   archiveChat: (chat: Chat) => Promise<void>;
   setDeletingChat: Dispatch<SetStateAction<Chat | null>>;
   starChat: (chat: Chat) => Promise<void>;
+  toggleUnread: (chat: Chat) => Promise<void>;
 }) {
   // One chat row — used by both the current list and the Archived section, so
   // the two stay identical (context ring, hover-menu actions) apart from where
@@ -197,6 +200,24 @@ export function SessionSidebar({
           className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-rose-100 hover:text-rose-600 focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-rose-950/60 dark:hover:text-rose-400"
         >
           <TrashIcon width={13} height={13} />
+        </button>
+        {/* Mark read / unread (#458): toggle the chat's unread state. Mirrors the
+            email "mark as unread" pattern so a chat you glanced at can resurface
+            its cue later. Label + icon flip with `isUnread` (the same derived
+            state that drives the accent dot); hover-revealed like the other
+            actions. */}
+        <button
+          type="button"
+          aria-label={`Mark chat ${c.name} ${isUnread ? "read" : "unread"}`}
+          aria-pressed={isUnread}
+          title={isUnread ? "Mark as read" : "Mark as unread — resurface it later"}
+          onClick={(e) => {
+            e.stopPropagation();
+            void toggleUnread(c);
+          }}
+          className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-paddock-200 hover:text-accent focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-paddock-700 dark:hover:text-accent"
+        >
+          <EnvelopeIcon width={13} height={13} open={!isUnread} />
         </button>
         {/* Star / pin (#373): rightmost action. When starred, always visible and
             gold (solid star); otherwise it behaves exactly like the archive

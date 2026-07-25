@@ -121,6 +121,23 @@ export const api = {
   },
 
   /**
+   * Set (or clear) a chat's MANUAL unread override (#458) — the "mark as unread"
+   * action, so a chat resurfaces its unread cue after its last turn was seen.
+   * `unread:false` is equivalent to marking it seen. Routes to the scratch
+   * endpoint for the scratch slug.
+   */
+  async markChatUnread(slug: string, sessionId: string, unread: boolean): Promise<void> {
+    const path =
+      slug === SCRATCH_SLUG
+        ? `/api/chats/${encodeURIComponent(sessionId)}/unread`
+        : `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}/unread`;
+    await req<{ ok: boolean; unread: boolean }>(path, {
+      method: "POST",
+      body: JSON.stringify({ unread }),
+    });
+  },
+
+  /**
    * Run history for a project (#268 / E3): recent herdctl runs joined with their
    * provenance (human / scheduled / spawned) plus the viewer's since-last-visit
    * watermark + a count of new unattended runs. Powers the "while you were away"
@@ -392,14 +409,36 @@ export const api = {
    * Fork a project chat: eagerly duplicates its transcript into a new session in
    * the same project (source untouched) and returns the new session id. The fork
    * is a real, resumable chat with the parent's full history from the start.
-   * Optional `name` sets its title (e.g. "Fork of <parent>").
+   * Optional `name` sets its title (e.g. "Fork of <parent>"). Optional `fromUuid`
+   * (issue #451) branches at an earlier message — the fork inherits only the
+   * prefix up to that turn instead of the whole history.
    */
-  async forkChat(slug: string, sessionId: string, name?: string): Promise<string> {
+  async forkChat(
+    slug: string,
+    sessionId: string,
+    name?: string,
+    fromUuid?: string,
+  ): Promise<string> {
     const { sessionId: newId } = await req<{ sessionId: string }>(
       `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}/fork`,
-      { method: "POST", body: JSON.stringify({ name }) },
+      { method: "POST", body: JSON.stringify({ name, fromUuid }) },
     );
     return newId;
+  },
+
+  /**
+   * Revert a project chat back to an earlier message (issue #451): truncate the
+   * session's transcript at `uuid`, in place (same session id), so it continues
+   * as if the later turns never happened. The dropped tail is backed up
+   * server-side (recoverable). Returns the number of transcript records dropped.
+   * NOTE: rolls back the conversation only — real side-effects are NOT undone.
+   */
+  async revertChat(slug: string, sessionId: string, uuid: string): Promise<number> {
+    const { removed } = await req<{ removed: number }>(
+      `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}/revert`,
+      { method: "POST", body: JSON.stringify({ uuid }) },
+    );
+    return removed;
   },
 
   /**

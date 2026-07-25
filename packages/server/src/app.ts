@@ -13,6 +13,9 @@ import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
 import websocket from "@fastify/websocket";
 import fastifyStatic from "@fastify/static";
 import fastifyMultipart from "@fastify/multipart";
+import fastifySwagger from "@fastify/swagger";
+import fastifySwaggerUi from "@fastify/swagger-ui";
+import { createRequire } from "node:module";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { loadPaddockConfig, type PaddockConfig } from "./config.js";
@@ -31,6 +34,7 @@ import { SweepService } from "./sweep.js";
 import { ArchiveStore } from "./archive.js";
 import { StarStore } from "./star.js";
 import { ReadStateStore } from "./read-state.js";
+import { UnreadStore } from "./unread.js";
 import { QueuedMessageStore } from "./queued-message.js";
 import { RunProvenanceStore } from "./run-provenance.js";
 import { MessageProvenanceStore } from "./message-provenance.js";
@@ -38,6 +42,18 @@ import { ScheduleSessionStore } from "./schedule-session.js";
 import { TriggerSessionStore } from "./trigger-session.js";
 import { PaddockEventBus } from "./event-bus.js";
 import { TriggerService } from "./triggers.js";
+import { buildSwaggerOptions, buildSwaggerUiOptions, type SwaggerImage } from "./openapi.js";
+
+// Resolve the package version at runtime (dist/app.js → ../package.json) so the
+// generated OpenAPI document's info.version tracks the release without a build step.
+const pkgVersion: string = (() => {
+  try {
+    const require = createRequire(import.meta.url);
+    return (require("../package.json") as { version?: string }).version ?? "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+})();
 
 export interface BuiltApp {
   app: FastifyInstance;
@@ -50,6 +66,8 @@ export interface BuiltApp {
   archive: ArchiveStore;
   star: StarStore;
   readState: ReadStateStore;
+  /** Per-user manual "unread" override sidecar (#458). */
+  unread: UnreadStore;
   queuedMessage: QueuedMessageStore;
   transcriber: Transcriber;
   /** In-process lifecycle event bus (Epic T) — commit sites emit lifecycle events. */
@@ -126,6 +144,10 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   const star = new StarStore(cfg.dataDir);
   // Per-user (or shared, in `none` mode) chat read-state sidecar (#189).
   const readState = new ReadStateStore(cfg.dataDir);
+  // Per-user manual "unread" override sidecar (#458) — layered on read-state so a
+  // chat can be re-flagged unread after its last turn was seen ("look at it again
+  // in the morning"). Cleared whenever the chat is marked seen.
+  const unread = new UnreadStore(cfg.dataDir);
   // Per-chat queued message sidecar (#197) for server-side auto-send.
   const queuedMessage = new QueuedMessageStore(cfg.dataDir);
   // Per-chat provenance sidecar (issue #261): records how each chat was created
@@ -184,12 +206,56 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   await app.register(fastifyMultipart, {
     limits: { fileSize: cfg.transcription.maxUploadBytes, files: 1 },
   });
+  // --- OpenAPI (derived from route schemas) -----------------------------
+  // @fastify/swagger MUST register before the routes: it hooks `onRoute` to
+  // collect each route's schema into a live OpenAPI document. Swagger UI mounts
+  // at /docs and reads that document (raw spec at /docs/json). Both sit behind
+  // whatever auth mode is configured (no special exemption) — the docs are
+  // gated exactly like the API they describe. The security schemes advertised in
+  // the spec reflect this instance's auth mode (see openapi.ts / authDoc).
+  //
+  // The topbar logo + favicon are the shipped Paddock icons from the built web
+  // bundle (icons/*.png), so the docs are branded like the app; missing assets
+  // (API-only mode with no web dist) just fall back to the stock look.
+  if (cfg.openapi.enabled) {
+    const readImage = async (rel: string, type: string): Promise<SwaggerImage | undefined> => {
+      try {
+        return { type, content: await fs.readFile(path.join(cfg.webDist, rel)) };
+      } catch {
+        return undefined;
+      }
+    };
+    const [swaggerLogo, swaggerFavicon] = await Promise.all([
+      readImage(path.join("icons", "icon-192.png"), "image/png"),
+      readImage(path.join("icons", "favicon-32.png"), "image/png"),
+    ]);
+    await app.register(fastifySwagger, buildSwaggerOptions(pkgVersion, cfg.auth));
+    await app.register(
+      fastifySwaggerUi,
+      buildSwaggerUiOptions({
+        routePrefix: cfg.openapi.path,
+        logo: swaggerLogo,
+        favicon: swaggerFavicon,
+        accent: cfg.brand.accent,
+      }),
+    );
+    // Stable, tool-friendly alias for the raw spec (e.g. `/open-api.json`), next
+    // to the UI's own `<path>/json`. Hidden from the spec itself.
+    app.get(`${cfg.openapi.path}.json`, { schema: { hide: true } }, () => app.swagger());
+    app.log.info({ path: cfg.openapi.path }, "OpenAPI reference mounted");
+  } else {
+    app.log.info("OpenAPI reference off (set PADDOCK_OPENAPI_ENABLED=1 to mount /open-api)");
+  }
+
   const chatHandler = makeChatHandler({ herdctl, projects, sweep, attachments, queuedMessage, runProvenance, messageProvenance, archive, scheduleSessions, events, triggers, triggerSessions, cfg });
 
-  await registerRoutes(app, { projects, herdctl, git, githubAuth, transcriber, archive, star, readState, runProvenance, messageProvenance, attachments, fireTrigger: chatHandler.fireTrigger, events, triggers, cfg });
+  await registerRoutes(app, { projects, herdctl, git, githubAuth, transcriber, archive, star, readState, unread, runProvenance, messageProvenance, attachments, fireTrigger: chatHandler.fireTrigger, events, triggers, cfg });
 
   await app.register(async (scoped) => {
-    scoped.get("/ws", { websocket: true }, (socket) => {
+    // `hide: true` keeps the WS upgrade out of the OpenAPI doc — it's not a REST
+    // endpoint (a Swagger "Try it out" against it would just fail); the WS frame
+    // protocol is documented in the spec description + docs/API.md instead.
+    scoped.get("/ws", { websocket: true, schema: { hide: true } }, (socket) => {
       void chatHandler.handle(socket);
     });
   });
@@ -206,7 +272,10 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
       // startup, then serve that string for the app root + every client-side
       // route.
       const rawIndex = await fs.readFile(path.join(cfg.webDist, "index.html"), "utf8");
-      const indexHtml = renderIndexHtml(rawIndex, cfg.brand);
+      const indexHtml = renderIndexHtml(rawIndex, cfg.brand, {
+        enabled: cfg.openapi.enabled,
+        path: cfg.openapi.path,
+      });
       const sendIndex = (reply: FastifyReply) =>
         reply.type("text/html; charset=utf-8").send(indexHtml);
 
@@ -256,5 +325,5 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
     await app.close().catch(() => undefined);
   };
 
-  return { app, cfg, projects, herdctl, git, githubAuth, sweep, archive, star, readState, queuedMessage, transcriber, events, triggers, close };
+  return { app, cfg, projects, herdctl, git, githubAuth, sweep, archive, star, readState, unread, queuedMessage, transcriber, events, triggers, close };
 }

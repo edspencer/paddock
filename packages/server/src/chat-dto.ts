@@ -98,6 +98,7 @@ export function toChatDto(
   provenance?: RunProvenance | null,
   trigger?: ChatTriggerInfo | null,
   starred = false,
+  unread = false,
 ) {
   const preview = previewOverride ?? s.preview;
   return {
@@ -121,6 +122,11 @@ export function toChatDto(
     // the source of truth for the unread affordance, so it follows the user
     // across devices. 0/absent means never seen on this instance.
     ...(lastSeen ? { lastSeen } : {}),
+    // Whether the user MANUALLY flagged this chat unread (#458) — a per-user
+    // override on top of the derived unread signal, so a chat resurfaces its cue
+    // even after its last turn was seen. Only emitted when set (absent ⇒ false),
+    // keeping the payload compact like `lastSeen`.
+    ...(unread ? { unread: true } : {}),
     // The context-window fill as of the session's last completed turn (for the
     // per-chat usage ring) plus the chat's cumulative token totals and cost
     // estimate (issue #152), so the list can render both without opening the
@@ -158,10 +164,11 @@ export async function buildProjectChats(
   provenanceOf?: (s: DiscoveredSession) => Promise<RunProvenance | undefined>,
   triggerOf?: (s: DiscoveredSession) => Promise<ChatTriggerInfo | undefined>,
   starredOf?: (s: DiscoveredSession) => Promise<boolean>,
+  unreadOf?: (s: DiscoveredSession) => Promise<boolean>,
 ) {
   return Promise.all(
     sessions.map(async (s) => {
-      // Resolve the usage ring, archived flag, read-state, provenance, trigger, star, name.
+      // Resolve the usage ring, archived flag, read-state, provenance, trigger, star, unread, name.
       const usage = usageOf ? await usageOf(s).catch(() => null) : null;
       const archived = archivedOf ? await archivedOf(s).catch(() => false) : false;
       const turnAt = lastTurnAt?.get(s.sessionId);
@@ -169,6 +176,7 @@ export async function buildProjectChats(
       const provenance = provenanceOf ? await provenanceOf(s).catch(() => null) : null;
       const trigger = triggerOf ? await triggerOf(s).catch(() => undefined) : undefined;
       const starred = starredOf ? await starredOf(s).catch(() => false) : false;
+      const unread = unreadOf ? await unreadOf(s).catch(() => false) : false;
       // A preview polluted by a machine-prepended wrapper: the preload context
       // block (#1) and/or the composer-attachment block (#328). Either makes the
       // raw first message a poor display name, so recover the real request below.
@@ -177,7 +185,7 @@ export async function buildProjectChats(
         !s.autoName &&
         (s.preview?.startsWith(PRELOAD_CONTEXT_OPEN) || s.preview?.startsWith(ATTACHMENTS_OPEN));
       if (!pollutedPreview)
-        return toChatDto(s, undefined, usage, archived, turnAt, lastSeen, provenance, trigger, starred);
+        return toChatDto(s, undefined, usage, archived, turnAt, lastSeen, provenance, trigger, starred, unread);
 
       const full = await readFirstUserText(projectDir, s.sessionId).catch(() => undefined);
       // Strip preload FIRST (it wraps the whole thing), then the attachment block
@@ -185,10 +193,10 @@ export async function buildProjectChats(
       const cleaned = stripAttachmentsWrapper(stripPreloadWrapper(full ?? s.preview ?? "")).trim();
       // couldn't recover
       if (!cleaned)
-        return toChatDto(s, undefined, usage, archived, turnAt, lastSeen, provenance, trigger, starred);
+        return toChatDto(s, undefined, usage, archived, turnAt, lastSeen, provenance, trigger, starred, unread);
       const preview =
         cleaned.length > PREVIEW_MAX ? `${cleaned.slice(0, PREVIEW_MAX)}...` : cleaned;
-      return toChatDto(s, preview, usage, archived, turnAt, lastSeen, provenance, trigger, starred);
+      return toChatDto(s, preview, usage, archived, turnAt, lastSeen, provenance, trigger, starred, unread);
     }),
   );
 }

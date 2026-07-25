@@ -144,6 +144,49 @@ describe("loadPaddockConfig: hooksMcpEnabled (G5)", () => {
   });
 });
 
+describe("loadPaddockConfig: openapi reference", () => {
+  let dataDir: string;
+  let saved: Record<string, string | undefined>;
+  const KEYS = ["PADDOCK_DATA_DIR", "PADDOCK_OPENAPI_ENABLED", "PADDOCK_OPENAPI_PATH"];
+
+  beforeEach(async () => {
+    dataDir = await makeTmpDir("paddock-config-");
+    saved = {};
+    for (const k of KEYS) saved[k] = process.env[k];
+    process.env.PADDOCK_DATA_DIR = dataDir;
+    delete process.env.PADDOCK_OPENAPI_ENABLED;
+    delete process.env.PADDOCK_OPENAPI_PATH;
+  });
+  afterEach(async () => {
+    for (const k of KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+    await rmTmpDir(dataDir);
+  });
+
+  it("defaults OFF (opt-in) with the /open-api path", () => {
+    const cfg = loadPaddockConfig();
+    expect(cfg.openapi.enabled).toBe(false);
+    expect(cfg.openapi.path).toBe("/open-api");
+  });
+
+  it.each(["1", "true", "yes", "on", "TRUE"])("PADDOCK_OPENAPI_ENABLED=%s enables it", (raw) => {
+    process.env.PADDOCK_OPENAPI_ENABLED = raw;
+    expect(loadPaddockConfig().openapi.enabled).toBe(true);
+  });
+
+  it.each(["0", "false", "no", "off", "nonsense", ""])("leaves it OFF for %s", (raw) => {
+    process.env.PADDOCK_OPENAPI_ENABLED = raw;
+    expect(loadPaddockConfig().openapi.enabled).toBe(false);
+  });
+
+  it("normalizes a custom path to a leading slash, no trailing slash", () => {
+    process.env.PADDOCK_OPENAPI_PATH = "api-docs/";
+    expect(loadPaddockConfig().openapi.path).toBe("/api-docs");
+  });
+});
+
 describe("loadPaddockConfig: recovery (#301)", () => {
   let dataDir: string;
   let saved: Record<string, string | undefined>;

@@ -18,14 +18,34 @@ export const DEFAULT_BRAND: Brand = {
   accent: "#c2603c",
 };
 
+/** OpenAPI reference availability for this instance (see server openapi config). */
+export interface OpenApiInfo {
+  enabled: boolean;
+  path: string;
+}
+
+/**
+ * Default when the server injects nothing (dev via Vite, or tests): the
+ * reference is treated as unavailable so the nav link stays hidden. A real
+ * server injects `{ enabled, path }` per its `PADDOCK_OPENAPI_*` config.
+ */
+export const DEFAULT_OPENAPI: OpenApiInfo = { enabled: false, path: "/open-api" };
+
 interface InjectedConfig {
   brand?: Partial<Brand>;
+  openapi?: Partial<OpenApiInfo>;
 }
 
 /** The resolved branding for this instance (injected global merged over defaults). */
 export function getBrand(): Brand {
   const injected = (globalThis as { __PADDOCK_CONFIG__?: InjectedConfig }).__PADDOCK_CONFIG__;
   return { ...DEFAULT_BRAND, ...(injected?.brand ?? {}) };
+}
+
+/** Whether/where the OpenAPI reference is served for this instance. */
+export function getOpenApi(): OpenApiInfo {
+  const injected = (globalThis as { __PADDOCK_CONFIG__?: InjectedConfig }).__PADDOCK_CONFIG__;
+  return { ...DEFAULT_OPENAPI, ...(injected?.openapi ?? {}) };
 }
 
 /**

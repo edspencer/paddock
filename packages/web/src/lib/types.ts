@@ -184,7 +184,13 @@ export interface Project {
    * chats. `lastSeen` is the per-user (or shared) last-viewed epoch-ms, absent
    * when the chat has never been seen on this instance.
    */
-  chatTurns?: { sessionId: string; lastTurnCompletedAt: string; lastSeen?: number }[];
+  chatTurns?: {
+    sessionId: string;
+    lastTurnCompletedAt: string;
+    lastSeen?: number;
+    /** Manual unread override (#458) — folded into the sidebar unread badge count. */
+    unread?: boolean;
+  }[];
   /**
    * Count of uncommitted files in this project's subtree (#258) — drives the
    * projects-grid "N uncommitted" chip so pending work is visible before you
@@ -334,6 +340,13 @@ export interface Chat {
    * client cache (`lib/lastSeen.ts`) on load. Absent when never seen.
    */
   lastSeen?: number;
+  /**
+   * Whether the user MANUALLY flagged this chat unread (#458) — a per-user
+   * override layered on top of the derived unread signal, so a chat resurfaces
+   * its cue even after its last turn was seen ("look at it again in the
+   * morning"). Cleared when the chat is marked seen. Absent ⇒ not manually flagged.
+   */
+  unread?: boolean;
   /**
    * Context-window fill as of the chat's last completed turn (for the usage
    * ring, issue #77) plus the chat's cumulative lifetime token totals and cost
@@ -823,6 +836,13 @@ export interface HistoryMessage {
    * kickoff turns, so the history can show "↩ sent by …" / "⏰ scheduled by …".
    */
   sender?: MessageSender;
+  /**
+   * Context-window fill (tokens) as of this message (issue #451): the nearest
+   * assistant turn's `input + cache_read + cache_creation`, forward-filled across
+   * the turns between. Drives the per-message hover meter. Absent before the
+   * first assistant turn (and on older transcripts).
+   */
+  contextTokens?: number;
 }
 
 /** Enriched single-project response from GET /api/projects/:slug. */

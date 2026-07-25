@@ -83,14 +83,23 @@ function safeJson(value: unknown): string {
  * stylesheet's `--accent` defaults by source order. Idempotent-ish: called once
  * at startup and the result cached.
  */
-export function renderIndexHtml(rawHtml: string, brand: BrandConfig): string {
+export function renderIndexHtml(
+  rawHtml: string,
+  brand: BrandConfig,
+  openapi?: { enabled: boolean; path: string },
+): string {
   let html = rawHtml;
 
   // 1. Title.
   html = html.replace(/<title>[^<]*<\/title>/i, `<title>${escapeHtml(brand.name)}</title>`);
 
-  // 2. Config global + accent override, injected before </head>.
-  const config = safeJson({ brand: { name: brand.name, logo: brand.logo, accent: brand.accent } });
+  // 2. Config global + accent override, injected before </head>. The `openapi`
+  // block lets the SPA render (or hide) the "Swagger API" nav link without a
+  // round-trip — flash-free, same as the brand.
+  const config = safeJson({
+    brand: { name: brand.name, logo: brand.logo, accent: brand.accent },
+    ...(openapi ? { openapi } : {}),
+  });
   const accentStyle = accentRootStyle(brand.accent);
   const injection =
     `<script>window.__PADDOCK_CONFIG__=${config};</script>` +

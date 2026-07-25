@@ -3,13 +3,13 @@ import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useProjects } from "../lib/projects-context";
 import { useTheme } from "../lib/theme";
 import type { Project } from "../lib/types";
-import { getBrand, logoIsImage } from "../lib/brand";
+import { getBrand, getOpenApi, logoIsImage } from "../lib/brand";
 import { areaLabel, orderAreaSlugs } from "../lib/areas";
 import { chatClient } from "../lib/ws";
 import { LAST_SEEN_EVENT, readLastSeen, setServerLastSeen } from "../lib/lastSeen";
 import { TagPill } from "./TagPill";
 import { NewProjectModal } from "./NewProjectModal";
-import { ChatIcon, CogIcon, FolderIcon, MenuIcon, MoonIcon, PlusIcon, SunIcon, XIcon } from "./icons";
+import { ChatIcon, CogIcon, FolderIcon, LinkIcon, MenuIcon, MoonIcon, PlusIcon, SunIcon, XIcon } from "./icons";
 import { PaneResizer, usePaneWidth } from "./PaneResizer";
 import { SIDENAV_PANE } from "../lib/paneWidth";
 
@@ -47,7 +47,9 @@ function useProjectBadges(projects: Project[]): Map<string, ProjectBadge> {
   // sessionId -> { slug, at(ms) } completion signals: seeded from the server
   // payload and augmented live when a turn stops. Kept in a ref (not state) so
   // it accumulates across refetches; `version` forces the memo to recompute.
-  const completionsRef = useRef(new Map<string, { slug: string; at: number }>());
+  const completionsRef = useRef(
+    new Map<string, { slug: string; at: number; unread?: boolean }>(),
+  );
   const [version, setVersion] = useState(0);
 
   // Fold the server's per-chat completed-turn timestamps in whenever the list
@@ -62,7 +64,10 @@ function useProjectBadges(projects: Project[]): Map<string, ProjectBadge> {
         const at = Date.parse(t.lastTurnCompletedAt);
         if (!Number.isFinite(at)) continue;
         const prev = m.get(t.sessionId);
-        if (!prev || at > prev.at) m.set(t.sessionId, { slug: p.slug, at });
+        // Refresh the manual unread flag (#458) from the latest payload even when
+        // `at` is unchanged — toggling unread doesn't move the completed-turn time.
+        if (!prev || at > prev.at) m.set(t.sessionId, { slug: p.slug, at, unread: t.unread });
+        else prev.unread = t.unread;
       }
     }
     setVersion((v) => v + 1);
@@ -104,10 +109,11 @@ function useProjectBadges(projects: Project[]): Map<string, ProjectBadge> {
       }
       return b;
     };
-    for (const [sid, { slug, at }] of completionsRef.current) {
+    for (const [sid, { slug, at, unread }] of completionsRef.current) {
       // A currently-running turn hasn't "landed" a reply yet — count it only as
-      // in-flight below, never as unread.
-      if (!active.has(sid) && at > readLastSeen(sid)) ensure(slug).unread += 1;
+      // in-flight below, never as unread. Otherwise it's unread if the user
+      // manually flagged it (#458) or a reply landed since they last saw it.
+      if (!active.has(sid) && (unread || at > readLastSeen(sid))) ensure(slug).unread += 1;
     }
     for (const slug of active.values()) ensure(slug).inflight += 1;
     return badges;
@@ -123,6 +129,7 @@ export function AppShell() {
   const navigate = useNavigate();
   const location = useLocation();
   const brand = getBrand();
+  const openapi = getOpenApi();
   // Desktop-only draggable width for the side-nav (#374), persisted per-browser.
   const sidenav = usePaneWidth(SIDENAV_PANE);
 
@@ -291,11 +298,23 @@ export function AppShell() {
             className={({ isActive }) =>
               `btn-subtle w-full justify-start ${isActive ? "bg-paddock-200/80 dark:bg-paddock-800" : ""}`
             }
-            title="Instance settings"
+            title="Settings"
           >
             <CogIcon width={15} height={15} />
-            Instance settings
+            Settings
           </NavLink>
+          {openapi.enabled && (
+            <a
+              href={openapi.path}
+              target="_blank"
+              rel="noreferrer"
+              className="btn-subtle mt-1 w-full justify-start"
+              title="OpenAPI / Swagger reference (opens in a new tab)"
+            >
+              <LinkIcon width={15} height={15} />
+              Swagger API
+            </a>
+          )}
           <button
             type="button"
             onClick={toggleTheme}

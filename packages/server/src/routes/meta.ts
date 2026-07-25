@@ -35,16 +35,52 @@ export function registerMetaRoutes(app: FastifyInstance, ctx: RouteCtx): void {
   // --- voice dictation (#voice): capability probe + transcription -------
   // The composer polls this to decide whether to show a mic button. `available`
   // is false on instances with dictation off (or a misconfigured remote).
-  app.get("/api/transcription", async () => ({
-    available: transcriber.available,
-    mode: transcriber.mode,
-    model: transcriber.model,
-  }));
+  app.get(
+    "/api/transcription",
+    {
+      schema: {
+        tags: ["System"],
+        summary: "Voice-dictation capability probe",
+        description:
+          "Reports whether voice dictation is enabled on this instance so the composer can decide whether to show a mic button. Returns a JSON object with `available` (boolean), `mode`, and `model`.",
+        response: {
+          200: {
+            description: "Transcription capability info.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
+    async () => ({
+      available: transcriber.available,
+      mode: transcriber.mode,
+      model: transcriber.model,
+    }),
+  );
 
   // Transcribe a recorded audio blob (multipart `file`) → `{ text }`. The mic
   // button records WebM/Opus in the browser and POSTs it here; the server runs
   // whisper (remote OpenAI-compatible endpoint or local whisper.cpp).
-  app.post("/api/transcribe", async (req, reply) => {
+  app.post(
+    "/api/transcribe",
+    {
+      schema: {
+        tags: ["System"],
+        summary: "Transcribe a recorded audio blob",
+        description:
+          "Accepts `multipart/form-data` with a single `file` field (a recorded WebM/Opus audio blob) and runs whisper (remote OpenAI-compatible endpoint or local whisper.cpp). Returns a JSON object with `text`, `model`, `mode`, and `durationMs`. Returns 503 when dictation is disabled, 400 when no file is present, and 413 on oversize/malformed uploads.",
+        consumes: ["multipart/form-data"],
+        response: {
+          200: {
+            description: "Transcription result.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
+    async (req, reply) => {
     if (!transcriber.available) {
       return reply.code(503).send({ error: "voice dictation is not enabled on this instance" });
     }
@@ -82,16 +118,52 @@ export function registerMetaRoutes(app: FastifyInstance, ctx: RouteCtx): void {
       req.log.warn({ err }, "transcription failed");
       return reply.code(status).send({ error: (err as Error).message });
     }
-  });
+    },
+  );
 
   // --- identity ----------------------------------------------------------
   // The authenticated principal for this request (#189). In `none` mode this is
   // the frozen anonymous principal (`{ username: "anonymous", anonymous: true }`);
   // in trusted-header / jwt modes it's the real proxy/IdP identity. The web app
   // uses it to surface who it is and to know whether read-state is user-keyed.
-  app.get("/api/me", async (req) => req.user);
+  app.get(
+    "/api/me",
+    {
+      schema: {
+        tags: ["System"],
+        summary: "Current authenticated principal",
+        description:
+          "Returns the authenticated principal for this request. In `none` auth mode this is the frozen anonymous principal (`{ username: \"anonymous\", anonymous: true }`); in trusted-header / jwt modes it is the real proxy/IdP identity. Returns a JSON object describing the user.",
+        response: {
+          200: {
+            description: "The request principal.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
+    async (req) => req.user,
+  );
 
-  app.get("/api/health", async () => ({ ok: true }));
+  app.get(
+    "/api/health",
+    {
+      schema: {
+        tags: ["System"],
+        summary: "Health check",
+        description: "Liveness probe. Returns a JSON object `{ ok: true }`.",
+        response: {
+          200: {
+            description: "Service is up.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
+    async () => ({ ok: true }),
+  );
 
   // --- instance-wide settings (issue #385) --------------------------------
   // A top-level admin screen over the frozen instance config. GET reports every
@@ -103,10 +175,51 @@ export function registerMetaRoutes(app: FastifyInstance, ctx: RouteCtx): void {
   // it inherits whatever request-boundary auth the deployment configures (open
   // in `none` mode, gated behind the proxy/IdP otherwise) — a role model is a
   // follow-up per the ticket.
-  app.get("/api/instance-config", async () => buildInstanceConfig(cfg));
+  app.get(
+    "/api/instance-config",
+    {
+      schema: {
+        tags: ["System"],
+        summary: "Read instance-wide config",
+        description:
+          "Reports every surfaced instance-config field (value / default / editable / sensitive / env-shadow) for the top-level admin screen. Returns a JSON object keyed by field.",
+        response: {
+          200: {
+            description: "Instance config snapshot.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
+    async () => buildInstanceConfig(cfg),
+  );
 
   app.put<{ Body: { patch?: Record<string, unknown> } }>(
     "/api/instance-config",
+    {
+      schema: {
+        tags: ["System"],
+        summary: "Write instance-wide config",
+        description:
+          "Writes the editable subset of the instance config to paddock.config.yaml (comment-preserving, atomic). Writes DO NOT hot-apply — the config is frozen at boot — so a successful write returns `{ restartRequired: true, configPath }` and the process keeps its current config until it restarts. Returns 400 on a malformed patch or invalid field, 500 on write failure.",
+        body: {
+          // Documentation-only (no validation/coercion): accept any/empty body.
+          type: ["object", "null"],
+          additionalProperties: true,
+          properties: {
+            patch: { description: "Map of config field name to new value to write." },
+          },
+        },
+        response: {
+          200: {
+            description: "Write accepted; restart required to apply.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
     async (req, reply) => {
       const patch = req.body?.patch;
       if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
@@ -141,8 +254,25 @@ export function registerMetaRoutes(app: FastifyInstance, ctx: RouteCtx): void {
   // `PADDOCK_KEEPER_DRIVE_MODE` (per instance, not static): the Settings tab shows
   // it as the effective value a project inherits when its own `driveMode` is left
   // on "Global default".
-  app.get("/api/models", async () => {
-    const models = resolveModels(cfg.models);
+  app.get(
+    "/api/models",
+    {
+      schema: {
+        tags: ["System"],
+        summary: "Selectable models and instance defaults",
+        description:
+          "Returns the models this instance offers (the built-in catalog filtered to the `PADDOCK_MODELS` / YAML `models:` allow-list; unset ⇒ the whole catalog) plus the keeper/sweeper defaults and the box-wide defaults (drive mode, max spawn depth, recovery, attachments, curation) that projects fall back to when their own overrides are unset. `keeperDefault` is the effective default for the offered list. Returns a JSON object with `models`, `keeperDefault`, `sweeperDefault`, `keeperDriveModeDefault`, `maxSpawnDepthDefault`, `recoveryDefault`, `attachmentsDefault`, and `curationDefault`.",
+        response: {
+          200: {
+            description: "Model list and inherited defaults.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
+    async () => {
+      const models = resolveModels(cfg.models);
     return {
       models,
       keeperDefault: resolveKeeperDefault(models),
@@ -167,11 +297,29 @@ export function registerMetaRoutes(app: FastifyInstance, ctx: RouteCtx): void {
       // shows these as the "Instance default" for each per-file token budget.
       curationDefault: cfg.curation,
     };
-  });
+    },
+  );
 
   // Slash commands for one-off (scratch) chats — the scratch agent's equivalent
   // of GET /api/projects/:slug/commands (issue #103). Same cached wrapper.
-  app.get("/api/commands", async (_req, reply) => {
+  app.get(
+    "/api/commands",
+    {
+      schema: {
+        tags: ["System"],
+        summary: "Slash commands for scratch chats",
+        description:
+          "Lists the scratch agent's slash commands (the one-off-chat equivalent of the per-project commands endpoint). Returns a JSON object with `commands`; on failure returns 503 with `{ commands: [], error }`.",
+        response: {
+          200: {
+            description: "Available scratch-chat slash commands.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
+    async (_req, reply) => {
     try {
       const commands = await herdctl.listCommands(SCRATCH_AGENT);
       return { commands };
@@ -179,15 +327,34 @@ export function registerMetaRoutes(app: FastifyInstance, ctx: RouteCtx): void {
       reply.code(503);
       return { commands: [], error: (err as Error).message };
     }
-  });
+    },
+  );
 
-  app.get("/api/fleet", async () => {
+  app.get(
+    "/api/fleet",
+    {
+      schema: {
+        tags: ["System"],
+        summary: "Fleet status and agents",
+        description:
+          "Returns the herdctl fleet status and the list of agents. Returns a JSON object with `status` and `agents`; on failure returns `{ status: null, agents: [], error }`.",
+        response: {
+          200: {
+            description: "Fleet status and agent list.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
+    async () => {
     try {
       return { status: await herdctl.fleetStatus(), agents: await herdctl.agents() };
     } catch (err) {
       return { status: null, agents: [], error: (err as Error).message };
     }
-  });
+    },
+  );
 
   // Serve the RAW BYTES of a file the agent shared via `mcp__paddock__send_file`
   // (issue #112). The bytes were copied into the attachment store AT SEND TIME
@@ -207,7 +374,27 @@ export function registerMetaRoutes(app: FastifyInstance, ctx: RouteCtx): void {
   // for a media subresource and we keep it OFF for video/PDF so nothing can
   // interfere with playback — those get a plain `default-src 'none'`. Everything
   // else keeps the byte-for-byte `sandbox; default-src 'none'` as before.
-  app.get<{ Params: { id: string } }>("/api/chat-files/:id", async (req, reply) => {
+  app.get<{ Params: { id: string } }>(
+    "/api/chat-files/:id",
+    {
+      schema: {
+        tags: ["Attachments"],
+        summary: "Serve raw attachment bytes",
+        description:
+          "Serves the raw file bytes of an attachment addressed by its opaque id (a file the agent shared via send_file, or a composer upload). Returns the raw bytes with `Accept-Ranges: bytes` — a `Range` request is honored with `206 Partial Content`, otherwise the full body with `200`; `416` for an unsatisfiable range and `404` when the id is unknown. Locked down with nosniff + a sandbox CSP.",
+        params: {
+          type: "object",
+          properties: {
+            id: {
+              type: "string",
+              description: "Opaque attachment id from the chat transcript.",
+            },
+          },
+          required: ["id"],
+        },
+      },
+    },
+    async (req, reply) => {
     const found = await attachments.read(req.params.id);
     if (!found) return reply.code(404).send({ error: "not_found" });
     const { bytes, mime } = found;
@@ -237,7 +424,8 @@ export function registerMetaRoutes(app: FastifyInstance, ctx: RouteCtx): void {
     }
     // No (or unhandled) Range header → full body, 200.
     return reply.send(bytes);
-  });
+    },
+  );
 
   // Inbound composer upload (issue #328 Phase 1). Copies each posted file's bytes
   // into the attachment store (reusing the send_file store) and returns opaque
@@ -251,6 +439,37 @@ export function registerMetaRoutes(app: FastifyInstance, ctx: RouteCtx): void {
   // frame) — storage is flat and doesn't need it; it only scopes the request.
   app.post<{ Params: { slug: string; sessionId: string } }>(
     "/api/projects/:slug/chats/:sessionId/upload",
+    {
+      schema: {
+        tags: ["Attachments"],
+        summary: "Composer file upload",
+        description:
+          "Accepts `multipart/form-data` with one or more `file` fields; copies each posted file's bytes into the attachment store and returns opaque ids the composer holds until send. Validation is server-authoritative (enabled/size/count/type per the effective project config). Returns a JSON object with `files` (each `{ id, filename, size, kind }`). Returns 403 when attachments are disabled, 413 on oversize/too-many files, 415 on a disallowed type, and 400 when no files are present.",
+        consumes: ["multipart/form-data"],
+        params: {
+          type: "object",
+          properties: {
+            slug: {
+              type: "string",
+              description: "Project slug.",
+            },
+            sessionId: {
+              type: "string",
+              description:
+                "Chat session id; accepted for a not-yet-created chat too (it only scopes the request).",
+            },
+          },
+          required: ["slug", "sessionId"],
+        },
+        response: {
+          200: {
+            description: "Stored attachment descriptors.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
     async (req, reply) => {
       let project;
       try {
