@@ -25,6 +25,7 @@
     "@fastify/websocket": "10.0.1",
     "@herdctl/chat": "^0.8.0",
     "@herdctl/core": "^5.26.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "fastify": "4.28.1",
     "jose": "^6.2.3",
     "yaml": "2.5.1",

@@ -171,6 +171,7 @@ managementApi:
 |-------|---------|---------|
 | `instanceId` | — | Binds `pdk_<instanceId>_…` tokens to this instance. |
 | `publicUrl` | — | **Required with `clients`.** Canonical public origin; https unless loopback. |
+| `authorizationServers` | `[]` | OAuth issuer URLs, advertised in the discovery document. Leave empty for token-only. |
 | `clients.<id>.auth.ref` | — | **Required.** `env:VAR_NAME` holding the token. Inline values are rejected. |
 | `clients.<id>.scope.projects` | `["*"]` | Project slugs this client may reach. |
 | `clients.<id>.scope.allow` | `["list_*", "read_chat"]` | Operations it may invoke. Supports a trailing `*`. |
@@ -189,6 +190,29 @@ secret scanners:
 ```sh
 printf 'pdk_%s_%s' "$(hostname -s)" "$(openssl rand -hex 24)"
 ```
+
+**Connecting a client.** The endpoint speaks streamable-HTTP MCP at `POST /mcp`:
+
+```sh
+claude mcp add --transport http --scope user paddock \
+  https://paddock.example.com/mcp --header "Authorization: Bearer pdk_..."
+```
+
+Three things that will otherwise cost you an afternoon:
+
+- An entry with a `url` but no `type` is treated as a **stdio** server and fails.
+  The CLI sets `"type": "http"` for you; hand-written JSON must include it.
+- Use `--scope user` (or `local`). A `--scope project` server needs interactive
+  approval before it will connect.
+- A configured `Authorization` header and OAuth are **mutually exclusive**: if the
+  header is rejected, the client reports a failed connection rather than falling
+  back to OAuth.
+
+**Discovery.** Paddock publishes RFC 9728 protected-resource metadata at
+`/.well-known/oauth-protected-resource/mcp` (the path-inserted form, which is what
+clients actually request) — but **only when `authorizationServers` is set**. The
+MCP spec requires that field, so a token-only deployment publishes no document
+rather than an invalid one; clients using a static bearer token never fetch it.
 
 **Behind a proxy.** Any edge gate must **exempt `/mcp`**: a Basic Auth sidecar
 collides with the client's own `Authorization: Bearer`, and an SSO proxy answers

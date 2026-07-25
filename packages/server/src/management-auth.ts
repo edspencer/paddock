@@ -23,6 +23,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { ManagementApiConfig, ManagementClient } from "./management-config.js";
 import { tokenInstanceId } from "./management-config.js";
+import { metadataUrl } from "./management-metadata.js";
 // `ManagementDeniedError` is referenced only as a TYPE here (denialResponse
 // annotates its parameter and reads fields off it); the class is constructed by
 // the ops layer, so a type-only import is enough and keeps this module's runtime
@@ -179,16 +180,14 @@ export function denialResponse(
 }
 
 /**
- * The RFC 9728 protected-resource metadata URL for this instance's `/mcp`.
+ * The RFC 9728 protected-resource metadata URL to advertise in a challenge.
  *
- * The PATH-INSERTED form (`/.well-known/oauth-protected-resource/mcp`) — which
- * is what MCP clients actually request for a resource that has a path. Built
- * from the configured `publicUrl` rather than from request headers, because the
- * value must byte-match what the client used and `Host` is not trustworthy.
+ * Delegates to {@link metadataUrl} so there is ONE rule for when a document
+ * exists: advertising a `resource_metadata` URL that then 404s would send a
+ * client down a discovery path that cannot succeed.
  */
 export function resourceMetadataUrl(cfg: ManagementApiConfig): string | undefined {
-  if (!cfg.publicUrl) return undefined;
-  return `${cfg.publicUrl}/.well-known/oauth-protected-resource/mcp`;
+  return metadataUrl(cfg);
 }
 
 /**

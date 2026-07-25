@@ -28,6 +28,26 @@ afterEach(async () => {
   app = undefined;
 });
 
+/** POST a JSON-RPC message with the Accept types the transport requires. */
+async function mcpPost(a: TestApp, token: string, body: unknown) {
+  return a.app.inject({
+    method: "POST",
+    url: "/mcp",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+    },
+    payload: body as Record<string, unknown>,
+  });
+}
+
+/** The single data frame out of an SSE-framed reply. */
+function sseJson(body: string): Record<string, unknown> | undefined {
+  const line = body.split("\n").find((l) => l.startsWith("data: "));
+  return line ? JSON.parse(line.slice("data: ".length)) : undefined;
+}
+
 /** Boot an app with N configured management clients (or none). */
 async function boot(opts: { clients?: Record<string, unknown>; instanceId?: string } = {}) {
   app = await startTestApp({
@@ -117,25 +137,36 @@ describe("/mcp — authentication", () => {
     expect(res.statusCode).toBe(401);
   });
 
-  it("admits a valid token and reports the authenticated client", async () => {
+  it("admits a valid token through to the transport", async () => {
+    const a = await boot({ clients: oneClient });
+    const res = await mcpPost(a, TOKEN, {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/list",
+      params: {},
+    });
+    // Past the gate: the transport answered rather than the guard refusing.
+    expect(res.statusCode).not.toBe(401);
+    expect(res.statusCode).not.toBe(404);
+    expect(res.body).toContain("tools");
+  });
+
+  // The transport requires BOTH content types in Accept; a request without them
+  // is refused by the transport (406), which is still proof the gate let it by.
+  it("rejects an authenticated POST that omits the SSE Accept type", async () => {
     const a = await boot({ clients: oneClient });
     const res = await a.app.inject({
       method: "POST",
       url: "/mcp",
-      headers: { authorization: `Bearer ${TOKEN}` },
+      headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+      payload: { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} },
     });
-    // M1 authenticates but mounts no transport yet.
-    expect(res.statusCode).toBe(501);
-    expect(res.json()).toMatchObject({ code: "mcp_transport_not_mounted", clientId: "laptop" });
+    expect(res.statusCode).toBe(406);
   });
 
   it("never echoes the presented credential back", async () => {
     const a = await boot({ clients: oneClient });
-    const res = await a.app.inject({
-      method: "POST",
-      url: "/mcp",
-      headers: { authorization: `Bearer ${TOKEN}` },
-    });
+    const res = await mcpPost(a, TOKEN, { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} });
     expect(res.body).not.toContain(TOKEN);
   });
 });
@@ -148,18 +179,17 @@ describe("/mcp — per-client credentials", () => {
         peer: { auth: { ref: "env:MCP_TOKEN_B" } },
       },
     });
-    const one = await a.app.inject({
-      method: "POST",
-      url: "/mcp",
-      headers: { authorization: `Bearer ${TOKEN}` },
-    });
-    const two = await a.app.inject({
-      method: "POST",
-      url: "/mcp",
-      headers: { authorization: `Bearer ${OTHER_TOKEN}` },
-    });
-    expect(one.json().clientId).toBe("laptop");
-    expect(two.json().clientId).toBe("peer");
+    const LIST = { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} };
+    // Both credentials authenticate independently — revoking one must not
+    // affect the other, which is the point of per-client tokens.
+    for (const token of [TOKEN, OTHER_TOKEN]) {
+      const res = await mcpPost(a, token, LIST);
+      expect(res.statusCode).not.toBe(401);
+      expect(sseJson(res.body)).toBeDefined();
+    }
+    // A third, unconfigured credential is still refused.
+    const bad = await mcpPost(a, "pdk_testinstance_" + "0".repeat(40), LIST);
+    expect(bad.statusCode).toBe(401);
   });
 });
 
@@ -184,12 +214,8 @@ describe("/mcp — instance binding", () => {
       clients: { laptop: { auth: { ref: "env:MCP_TOKEN_A" } } },
       instanceId: "testinstance",
     });
-    const res = await a.app.inject({
-      method: "POST",
-      url: "/mcp",
-      headers: { authorization: `Bearer ${TOKEN}` },
-    });
-    expect(res.statusCode).toBe(501);
+    const res = await mcpPost(a, TOKEN, { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} });
+    expect(res.statusCode).not.toBe(401);
   });
 });
 
