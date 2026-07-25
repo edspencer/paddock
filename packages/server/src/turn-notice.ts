@@ -236,6 +236,29 @@ export function suppressNoticeAfterReply(notice: TurnNotice, producedReply: bool
 }
 
 /**
+ * Did this turn effectively succeed for the purposes of its post-turn side
+ * effects — the queue drain, the after-turn curation sweep, and the recovery
+ * watch (issue #404)?
+ *
+ * The raw `result.success` handed back by the drive is computed purely from the
+ * terminal `result` frame (`!error_* subtype && !success:false`). In session
+ * mode that frame routinely carries an `error_*` subtype / `success:false` even
+ * when a complete reply already streamed — the very asymmetry the #380/#394
+ * banner fix exists for. Gating side effects on the raw signal silently strands
+ * a queued follow-up (the flush that {@link drainQueue} owns never runs), skips
+ * the sweep, and drops the recovery arm.
+ *
+ * This is the side-effect twin of {@link suppressNoticeAfterReply}: both trust
+ * the same `producedReply` signal (a real assistant reply streamed this turn) to
+ * override a benign trailing failure. A turn is effectively successful when the
+ * raw signal says so OR a real reply was produced. A genuinely dead turn (no
+ * reply — a Stop, an up-front API error) keeps `false`, so its queue is held.
+ */
+export function turnEffectivelySucceeded(rawSuccess: boolean, producedReply: boolean): boolean {
+  return rawSuccess || producedReply;
+}
+
+/**
  * Scan a transcript JSONL file for a TRAILING dead-end notice to surface on
  * reload (the history-hydration path). Only the synthetic usage-limit case is
  * recoverable from history: `@herdctl/core` drops synthetic messages when it
