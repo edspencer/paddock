@@ -1,6 +1,6 @@
 // Paddock LIVE final verification (post-redeploy).
 //
-// Drives a real Chromium against the LIVE https://projects.valfenda.net:
+// Drives a real Chromium against a running Paddock instance (set BASE_URL):
 //   1. Landing renders + the real seeded projects show.
 //   2. Open "Garage Water Heater".
 //   3. New Chat -> send a planning question -> assert a streamed reply renders.
@@ -9,7 +9,7 @@
 // Reuses the selectors proven in scripts/e2e.mjs. Self-contained: no token
 // needed here (the server has the Max OAuth token).
 //
-// Run:  BASE_URL=https://projects.valfenda.net node scripts/live-final-verify.mjs
+// Run:  BASE_URL=http://localhost:4000 node scripts/live-final-verify.mjs
 //
 // Prints (on stdout) the sessionId of the chat it created so the caller can
 // delete it via the API afterwards (keeps the landing clean / chats empty).
@@ -17,7 +17,7 @@ import { chromium } from "playwright";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
-const BASE_URL = process.env.BASE_URL ?? "https://projects.valfenda.net";
+const BASE_URL = process.env.BASE_URL ?? "http://localhost:4000";
 const SHOT_DIR = path.resolve("docs/screenshots");
 const HEADLESS = process.env.HEADED !== "1";
 const TURN_TIMEOUT = 180_000;

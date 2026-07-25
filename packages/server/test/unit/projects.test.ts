@@ -132,9 +132,9 @@ describe("repo-backed helpers (issue #187)", () => {
 describe("normalizeLinks (legacy bare-string links)", () => {
   it("coerces a bare YAML string list into {label,url} objects", () => {
     // The shape that crashed the Settings pane: `links: [ - https://… ]`.
-    expect(normalizeLinks(["https://github.com/edspencer/hushpod", "https://podcasts.valfenda.net"])).toEqual([
+    expect(normalizeLinks(["https://github.com/edspencer/hushpod", "https://example.com"])).toEqual([
       { label: "", url: "https://github.com/edspencer/hushpod" },
-      { label: "", url: "https://podcasts.valfenda.net" },
+      { label: "", url: "https://example.com" },
     ]);
   });
 
@@ -523,7 +523,7 @@ describe("ProjectStore", () => {
     await fs.mkdir(path.join(root, "legacy"));
     await fs.writeFile(
       path.join(root, "legacy", "project.yaml"),
-      "name: Legacy\nslug: legacy\nlinks:\n  - https://github.com/edspencer/hushpod\n  - https://podcasts.valfenda.net\n",
+      "name: Legacy\nslug: legacy\nlinks:\n  - https://github.com/edspencer/hushpod\n  - https://example.com\n",
       "utf8",
     );
 
@@ -532,7 +532,7 @@ describe("ProjectStore", () => {
     // would otherwise throw during render on a string entry).
     expect(dto.links).toEqual([
       { label: "", url: "https://github.com/edspencer/hushpod" },
-      { label: "", url: "https://podcasts.valfenda.net" },
+      { label: "", url: "https://example.com" },
     ]);
 
     // A save round-trips the file into the object form — the project self-heals.
@@ -540,7 +540,7 @@ describe("ProjectStore", () => {
     const parsed = YAML.parse(await fs.readFile(path.join(root, "legacy", "project.yaml"), "utf8"));
     expect(parsed.links).toEqual([
       { label: "", url: "https://github.com/edspencer/hushpod" },
-      { label: "", url: "https://podcasts.valfenda.net" },
+      { label: "", url: "https://example.com" },
     ]);
   });
 

@@ -1,6 +1,6 @@
 // Paddock LIVE verification AFTER the herdctl 5.11.0 + chat 0.4.0 adoption.
 //
-// Drives a real Chromium against the LIVE https://projects.valfenda.net to prove
+// Drives a real Chromium against a running Paddock instance (set BASE_URL) to prove
 // the API adoption did not regress anything and the new session-rename feature
 // works.
 //
@@ -24,12 +24,12 @@
 //   - (file-on-disk + project deletion are handled by the surrounding shell)
 //   -> screenshots: live-adopt-chat.png, live-adopt-rename.png
 //
-//   BASE_URL=https://projects.valfenda.net node scripts/live-adopt-verify.mjs
+//   BASE_URL=http://localhost:4000 node scripts/live-adopt-verify.mjs
 import { chromium } from "playwright";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
-const BASE_URL = process.env.BASE_URL ?? "https://projects.valfenda.net";
+const BASE_URL = process.env.BASE_URL ?? "http://localhost:4000";
 const SHOT_DIR = path.resolve("docs/screenshots");
 const HEADLESS = process.env.HEADED !== "1";
 const TURN_TIMEOUT = Number(process.env.TURN_TIMEOUT ?? 180_000);

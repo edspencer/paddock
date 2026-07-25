@@ -1,6 +1,6 @@
 // Paddock LIVE feature verification for the new feature set (issues #1-#6).
 //
-// Drives a real Chromium against the LIVE https://projects.valfenda.net and
+// Drives a real Chromium against a running Paddock instance (set BASE_URL) and
 // asserts, on the "Garage Water Heater" project:
 //   - plan.md renders with a Mermaid SVG
 //   - spec.html renders inside a sandboxed iframe (sandbox="allow-scripts",
@@ -12,12 +12,12 @@
 // Captures live-feat-{overview,mermaid,html,pins,preload}.png into
 // docs/screenshots/. No token needed (the server holds the Max OAuth token).
 //
-//   BASE_URL=https://projects.valfenda.net node scripts/live-feat-verify.mjs
+//   BASE_URL=http://localhost:4000 node scripts/live-feat-verify.mjs
 import { chromium } from "playwright";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
-const BASE_URL = process.env.BASE_URL ?? "https://projects.valfenda.net";
+const BASE_URL = process.env.BASE_URL ?? "http://localhost:4000";
 const SHOT_DIR = path.resolve("docs/screenshots");
 const HEADLESS = process.env.HEADED !== "1";
 const TARGET = "Garage Water Heater";
