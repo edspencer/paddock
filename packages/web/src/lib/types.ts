@@ -184,7 +184,13 @@ export interface Project {
    * chats. `lastSeen` is the per-user (or shared) last-viewed epoch-ms, absent
    * when the chat has never been seen on this instance.
    */
-  chatTurns?: { sessionId: string; lastTurnCompletedAt: string; lastSeen?: number }[];
+  chatTurns?: {
+    sessionId: string;
+    lastTurnCompletedAt: string;
+    lastSeen?: number;
+    /** Manual unread override (#458) — folded into the sidebar unread badge count. */
+    unread?: boolean;
+  }[];
   /**
    * Count of uncommitted files in this project's subtree (#258) — drives the
    * projects-grid "N uncommitted" chip so pending work is visible before you

@@ -47,7 +47,9 @@ function useProjectBadges(projects: Project[]): Map<string, ProjectBadge> {
   // sessionId -> { slug, at(ms) } completion signals: seeded from the server
   // payload and augmented live when a turn stops. Kept in a ref (not state) so
   // it accumulates across refetches; `version` forces the memo to recompute.
-  const completionsRef = useRef(new Map<string, { slug: string; at: number }>());
+  const completionsRef = useRef(
+    new Map<string, { slug: string; at: number; unread?: boolean }>(),
+  );
   const [version, setVersion] = useState(0);
 
   // Fold the server's per-chat completed-turn timestamps in whenever the list
@@ -62,7 +64,10 @@ function useProjectBadges(projects: Project[]): Map<string, ProjectBadge> {
         const at = Date.parse(t.lastTurnCompletedAt);
         if (!Number.isFinite(at)) continue;
         const prev = m.get(t.sessionId);
-        if (!prev || at > prev.at) m.set(t.sessionId, { slug: p.slug, at });
+        // Refresh the manual unread flag (#458) from the latest payload even when
+        // `at` is unchanged — toggling unread doesn't move the completed-turn time.
+        if (!prev || at > prev.at) m.set(t.sessionId, { slug: p.slug, at, unread: t.unread });
+        else prev.unread = t.unread;
       }
     }
     setVersion((v) => v + 1);
@@ -104,10 +109,11 @@ function useProjectBadges(projects: Project[]): Map<string, ProjectBadge> {
       }
       return b;
     };
-    for (const [sid, { slug, at }] of completionsRef.current) {
+    for (const [sid, { slug, at, unread }] of completionsRef.current) {
       // A currently-running turn hasn't "landed" a reply yet — count it only as
-      // in-flight below, never as unread.
-      if (!active.has(sid) && at > readLastSeen(sid)) ensure(slug).unread += 1;
+      // in-flight below, never as unread. Otherwise it's unread if the user
+      // manually flagged it (#458) or a reply landed since they last saw it.
+      if (!active.has(sid) && (unread || at > readLastSeen(sid))) ensure(slug).unread += 1;
     }
     for (const slug of active.values()) ensure(slug).inflight += 1;
     return badges;

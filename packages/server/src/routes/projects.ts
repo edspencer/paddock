@@ -63,7 +63,16 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
                 const lastSeen = await readState
                   .getLastSeen(user, keeper, sessionId)
                   .catch(() => 0);
-                return { sessionId, lastTurnCompletedAt, ...(lastSeen ? { lastSeen } : {}) };
+                // Manual unread override (#458): carry it so the sidebar's project
+                // unread badge counts a manually-flagged chat, staying in step with
+                // the per-chat unread dot (which folds the same flag in).
+                const isUnread = await unread.isUnread(user, keeper, sessionId).catch(() => false);
+                return {
+                  sessionId,
+                  lastTurnCompletedAt,
+                  ...(lastSeen ? { lastSeen } : {}),
+                  ...(isUnread ? { unread: true } : {}),
+                };
               }),
             )
           : [];
