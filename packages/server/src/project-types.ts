@@ -25,14 +25,22 @@ export type {
   AttachmentsOverride,
 };
 
-/** project.yaml status enum (matches the documented standard). */
-export type ProjectStatus =
-  | "idea"
-  | "active"
-  | "paused"
-  | "blocked"
-  | "done"
-  | "abandoned";
+/**
+ * project.yaml status enum (matches the documented standard). The runtime list is
+ * the single source of truth, with {@link ProjectStatus} derived from it, so a
+ * caller that must VALIDATE a status string (the `create_project` MCP tool, issue
+ * #467) and a caller that merely types one can't drift apart.
+ */
+export const PROJECT_STATUSES = [
+  "idea",
+  "active",
+  "paused",
+  "blocked",
+  "done",
+  "abandoned",
+] as const;
+
+export type ProjectStatus = (typeof PROJECT_STATUSES)[number];
 
 export type ProjectVisibility = "public" | "private";
 

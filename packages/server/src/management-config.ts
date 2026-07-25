@@ -26,7 +26,7 @@
  */
 import {
   DEFAULT_READ_ONLY_SCOPE,
-  grantsTurnSpawning,
+  grantsCodeExecution,
   type ManagementScope,
 } from "./management-policy.js";
 
@@ -342,11 +342,12 @@ export function resolveManagementApiConfig(
     }
 
     const scope = resolveClientScope(raw.scope);
-    if (grantsTurnSpawning(scope)) {
+    if (grantsCodeExecution(scope)) {
       // Deliberately loud: this grant is code execution on the host.
       warnings.push(
-        `${where}: scope grants turn-spawning operations — this client can run code on this host ` +
-          `via a spawned keeper. Ensure its token is treated as a production secret.`,
+        `${where}: scope grants code-execution operations — this client can run code on this host ` +
+          `(a spawned keeper has a shell; create_project clones a caller-supplied URL). Ensure its ` +
+          `token is treated as a production secret.`,
       );
     }
 

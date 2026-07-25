@@ -7,16 +7,22 @@
  * callbacks, which START real keeper turns. Present only when the write flag is on.
  */
 import type { McpToolCallResult } from "@herdctl/core";
-import type { SelfMcpWriteContext } from "./self-mcp-types.js";
+import type { SelfMcpCreateProjectInput, SelfMcpWriteContext } from "./self-mcp-types.js";
 import {
   ok,
   fail,
   errText,
   truncateText,
+  redactPaths,
   resolveModelArg,
   coercePrompts,
   FORK_BATCH_MAX,
 } from "./self-mcp-util.js";
+// The SAME shape validators `ProjectStore.create` uses, so the tool's up-front
+// checks can't drift from the store's (issue #467). `project-paths.ts` is pure
+// (node:path only), so importing it keeps these handlers fleet-free/unit-testable.
+import { SLUG_RE, isValidRepoUrl } from "./project-paths.js";
+import { PROJECT_STATUSES } from "./project-types.js";
 
 export function createChatHandler(write: SelfMcpWriteContext) {
   return async (args: Record<string, unknown>): Promise<McpToolCallResult> => {
@@ -122,6 +128,73 @@ export function archiveChatHandler(write: SelfMcpWriteContext, archived: boolean
       return ok({ archived, project, sessionId });
     } catch (error) {
       return fail(`Error ${verb} chat: ${errText(error)}`);
+    }
+  };
+}
+
+/**
+ * `create_project` (issue #467) — provision a whole new project. The one write tool
+ * that does NOT act inside an existing project, which is why it sits behind its own
+ * `projectsMcpEnabled` gate.
+ *
+ * Pure, like its siblings: it trims + SHAPE-validates the args (using the very same
+ * `SLUG_RE` / `isValidRepoUrl` / `PROJECT_STATUSES` the store and DTO use, so there
+ * is no second definition of "valid") and delegates to `write.createProject`, which
+ * runs `ProjectStore.create` + `ensureProjectAgent` — literally the REST create path.
+ * The up-front checks are a fast, actionable-error convenience, NOT a replacement for
+ * the store's own validation: the store still rejects a duplicate slug, a bad URL and
+ * an unclonable repo, and still rolls the whole project dir back on a clone failure.
+ */
+export function createProjectHandler(write: SelfMcpWriteContext) {
+  return async (args: Record<string, unknown>): Promise<McpToolCallResult> => {
+    try {
+      const name = typeof args.name === "string" ? args.name.trim() : "";
+      if (!name) return fail("Error: `name` is required (the project's display name).");
+
+      const slugArg = typeof args.slug === "string" ? args.slug.trim() : "";
+      // Only validate a slug the caller actually SUPPLIED — an omitted slug is
+      // derived from `name` by the store (slugify), which can't produce a bad one.
+      if (slugArg && !SLUG_RE.test(slugArg)) {
+        return fail(
+          `Error: invalid slug "${slugArg}" — must be kebab-case (lowercase a-z, 0-9 and ` +
+            "single hyphens, e.g. \"my-new-project\"). Omit `slug` to derive it from `name`.",
+        );
+      }
+
+      const repoArg = typeof args.repo === "string" ? args.repo.trim() : "";
+      if (repoArg && !isValidRepoUrl(repoArg)) {
+        return fail(
+          `Error: invalid repo URL "${repoArg}" — expected an https://, git://, ssh:// or ` +
+            "git@host:owner/repo url. Omit `repo` to create a notebook project.",
+        );
+      }
+
+      const statusArg = typeof args.status === "string" ? args.status.trim().toLowerCase() : "";
+      if (statusArg && !(PROJECT_STATUSES as readonly string[]).includes(statusArg)) {
+        return fail(
+          `Error: unknown status "${statusArg}". Valid statuses: ${PROJECT_STATUSES.join(", ")}.`,
+        );
+      }
+
+      const summary = typeof args.summary === "string" ? args.summary.trim() : "";
+      const area = typeof args.area === "string" ? args.area.trim() : "";
+
+      const input: SelfMcpCreateProjectInput = {
+        name,
+        ...(slugArg ? { slug: slugArg } : {}),
+        ...(repoArg ? { repo: repoArg } : {}),
+        ...(summary ? { summary } : {}),
+        ...(area ? { group: area } : {}),
+        ...(statusArg ? { status: statusArg } : {}),
+      };
+      const project = await write.createProject(input);
+      return ok({ created: true, ...project });
+    } catch (error) {
+      // Redact server filesystem paths: a clone failure arrives as git's whole argv
+      // (`Command failed: git clone -- <url> <dest>`), and the agent needs the repo
+      // URL + git's reason, not our on-disk layout. Capped so a verbose git failure
+      // can't flood the tool result.
+      return fail(`Error creating project: ${truncateText(redactPaths(errText(error)))}`);
     }
   };
 }

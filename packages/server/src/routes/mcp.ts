@@ -187,8 +187,15 @@ export function registerMcpRoutes(app: FastifyInstance, ctx: RouteCtx): void {
         currentProjectSlug: "",
         currentSessionId: () => null,
         parentProvenance: HUMAN_ROOT,
+        // All three capability gates are opened here and NARROWED by scope
+        // immediately below. That is the right split for an external caller:
+        // these per-project/per-instance gates exist to bound what a KEEPER may
+        // reach, whereas an external client is bounded by its credential. So a
+        // client gets `create_project` only by naming it in `allow` — the
+        // read-only default excludes it, as it does every other mutation.
         includeWrite: true,
         includeTriggers: true,
+        includeProjects: true,
         spawnDepthCap: principal.scope.maxSpawnDepth,
       });
       const policed = enforceManagementPolicy(ops, principal);

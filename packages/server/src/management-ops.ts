@@ -40,6 +40,7 @@ import type {
   SelfMcpWriteContext,
   SelfMcpTrigger,
 } from "./self-mcp.js";
+import type { CreateProjectInput } from "./projects.js";
 import { type RunProvenance, childOf } from "./run-provenance.js";
 import type { MessageSender } from "./message-provenance.js";
 import { resolveMaxSpawnDepth } from "./spawn-capability.js";
@@ -134,6 +135,12 @@ export interface ManagementOpsParams {
   includeWrite: boolean;
   includeTriggers: boolean;
   /**
+   * Whether to expose `create_project` (#467). Its OWN gate, separate from the
+   * other write tools, because it creates INSTANCE-level state and clones
+   * caller-supplied git URLs.
+   */
+  includeProjects: boolean;
+  /**
    * Optional ceiling on the spawn depth granted to turns these ops start
    * (a scoped external principal's `scope.maxSpawnDepth`). Applied as a MINIMUM
    * against the target project's resolved bound, so a scope can only ever
@@ -161,6 +168,7 @@ export function buildManagementOps(
     parentProvenance,
     includeWrite,
     includeTriggers,
+    includeProjects,
     spawnDepthCap,
   } = params;
   const { deps, hub, startAgentTurn, composePreloadedPrompt, fireTrigger } = ctx;
@@ -330,6 +338,42 @@ export function buildManagementOps(
         deps.events?.emit("onArchive", { slug: projectSlug, sessionId: targetSessionId });
       }
     },
+    // Project provisioning (#467). Behind its OWN gate, separate from the other
+    // write tools, because this is the one that creates INSTANCE-level state. The
+    // body is deliberately the SAME two calls, in the same order, that
+    // `POST /api/projects` makes — store create, then keeper registration — so the
+    // REST and MCP paths can't drift: all validation, the #187 repo clone and its
+    // rollback live in `ProjectStore.create`.
+    projectsMcpEnabled: includeProjects,
+    createProject: async (input) => {
+      // The handler already validated `status` against PROJECT_STATUSES (the same
+      // list ProjectStatus is derived from), so narrowing it here is sound — it's
+      // only `string` on the MCP input type to keep that module free of the
+      // project layer's types.
+      const project = await deps.projects.create({
+        ...input,
+        status: input.status as CreateProjectInput["status"],
+      });
+      // Mirror the route's non-fatal treatment: the project IS created even if
+      // registering its keeper/sweeper agents fails. Unlike the route (which only
+      // logs) we report it, since the agent's very next step is usually a
+      // `create_chat` into this project, which needs a live keeper.
+      let keeperRegistered = true;
+      try {
+        await deps.herdctl.ensureProjectAgent(project);
+      } catch {
+        keeperRegistered = false;
+      }
+      return {
+        slug: project.slug,
+        name: project.name,
+        dir: project.dir,
+        workingDir: project.workingDir,
+        repoBacked: project.repoBacked === true,
+        ...(project.repo ? { repo: project.repo } : {}),
+        keeperRegistered,
+      };
+    },
     triggersMcpEnabled: includeTriggers,
     listTriggers: async (projectSlug) => {
       if (!deps.triggers) return [];
@@ -431,6 +475,12 @@ export function enforceManagementPolicy(
   const write: SelfMcpWriteContext = {
     currentProjectSlug: w.currentProjectSlug,
     currentSessionId: w.currentSessionId,
+    // Instance-level, so there is no project to scope-check — only the verb.
+    projectsMcpEnabled: w.projectsMcpEnabled && isOperationAllowed(scope, "create_project"),
+    createProject: (input) => {
+      assertOperation(principal, "create_project");
+      return w.createProject(input);
+    },
     createChat: (projectSlug, prompt, o) =>
       guard("create_chat", projectSlug, () => w.createChat(projectSlug, prompt, o)),
     // NOTE: `fork_chat_batch` is a convenience wrapper that calls this same
