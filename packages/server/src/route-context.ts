@@ -28,6 +28,7 @@ import type { PaddockConfig } from "./config.js";
 import { type Transcriber } from "./transcribe.js";
 import { readSessionTokenUsageWithSubagents } from "./subagents.js";
 import type { PaddockEventBus } from "./event-bus.js";
+import type { ChatHandlerContext } from "./ws-context.js";
 import type { TriggerService } from "./triggers.js";
 import { type ChatUsage, toChatUsage } from "./chat-dto.js";
 
@@ -94,6 +95,16 @@ export interface RouteDeps {
    * triggers can omit it.
    */
   fireTrigger?: (slug: string, triggerName: string) => Promise<string | null>;
+  /**
+   * The shared Management API ops context (issue #312 M1) — the SAME bag the
+   * in-process self-MCP is built from (`makeChatHandler(...).managementOpsContext`).
+   * Handed to the route layer so a non-socket caller can build the management ops
+   * for itself via `buildManagementOps` + `enforceManagementPolicy`: the `/mcp`
+   * transport in M2, and the turn-spawning REST endpoints in #465, which is why
+   * this is threaded now rather than when the transport lands. Optional so tests
+   * that don't exercise the management API can omit it.
+   */
+  managementOpsContext?: ChatHandlerContext;
   /**
    * In-process lifecycle event bus (Epic T). The archive route emits `onArchive`
    * on it AFTER the archive commits, so the trigger dispatcher (wired in the chat

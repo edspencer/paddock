@@ -31,7 +31,8 @@ declarations will live in, and it matches the repo's YAML house style
   `logLevel`, `keeperDriveMode`, `maxSpawnDepth`, `browserMcp`,
   `sweepMinIntervalMs`, `selfMcpEnabled`, …), the `models` allow-list array, plus
   nested sections `auth`,
-  `brand`, `transcription`, and `gitAuthor`. Unknown keys are
+  `brand`, `transcription`, `gitAuthor`, and `managementApi` (the last is
+  file-only — it has no env equivalent). Unknown keys are
   ignored. Each value is coerced through the same parsing an env value would get,
   so the same default/validation rules (below) apply.
 
@@ -113,6 +114,88 @@ for modes, provider examples, and secret handling — this table is only the kno
 | `PADDOCK_AUTH_JWT_AUDIENCE` | — | no | *(jwt)* Expected `aud` claim (validated when set). |
 | `PADDOCK_AUTH_USERNAME_CLAIM` | *(auto)* | no | *(jwt)* Claim to read the username from. Default tries `preferred_username` → `email` → `sub`. |
 | `PADDOCK_AUTH_GROUPS_CLAIM` | `groups` | no | *(jwt)* Claim to read groups from. |
+
+## Management API (`/mcp`, external callers)
+
+The Management API lets a caller **outside** this instance — a laptop Claude Code
+session, or a peer Paddock — drive the same operations a keeper reaches through
+its in-process `paddock_manage` tools. It is **file-only** configuration (there is
+no `PADDOCK_MANAGEMENT_*` env equivalent), because a client list doesn't express
+well as a scalar.
+
+> **Any write scope is effectively remote code execution on this host.**
+> `create_chat`, `send_message`, `fork_chat*` and `run_trigger` start keeper
+> turns, and a keeper runs with `Bash`. Read-only is the default for a reason;
+> grant writes only to a client whose token you treat as a production secret.
+
+Three properties are worth stating plainly:
+
+- **It authenticates itself.** Independent of `PADDOCK_AUTH_MODE` and of any
+  reverse proxy — `/mcp` stays credential-gated even at `auth.mode: none`, and
+  running Paddock with no proxy at all is fully supported.
+- **It fails closed.** With no `clients` (or no `publicUrl`), `/mcp` returns
+  **404** — the endpoint does not exist until you deliberately turn it on. A
+  missing or bad credential is **401** with a `WWW-Authenticate` challenge, never
+  a redirect to a login page.
+- **Token material is referenced, never inlined.** This file is git-tracked, so an
+  inline `token:` is a hard error. Point at an environment variable instead.
+
+```yaml
+managementApi:
+  # Identifies THIS instance. A token minted as `pdk_<instanceId>_<secret>` is
+  # refused unless this matches, so copying a credential to another Paddock
+  # doesn't make it work there.
+  instanceId: my-paddock
+  # The canonical public origin clients reach this instance at. Required once
+  # `clients` is set: RFC 9728 requires the discovery document's `resource` to
+  # byte-match the URL the client used, and that can't be derived from the
+  # (attacker-controlled) Host header. Must be https unless it's loopback.
+  publicUrl: https://paddock.example.com
+  clients:
+    my-laptop:
+      auth:
+        # `env:VAR_NAME` is the only supported form.
+        ref: env:PADDOCK_MCP_TOKEN_MY_LAPTOP
+      # Omit `scope` entirely for the read-only default.
+    ci:
+      auth:
+        ref: env:PADDOCK_MCP_TOKEN_CI
+      scope:
+        projects: [website]        # `["*"]` for all; omit for all
+        allow: [list_*, read_chat, create_chat]
+        deny: [archive_chat]       # deny always beats allow
+        maxSpawnDepth: 1           # can only narrow the project's own bound
+```
+
+| Field | Default | Purpose |
+|-------|---------|---------|
+| `instanceId` | — | Binds `pdk_<instanceId>_…` tokens to this instance. |
+| `publicUrl` | — | **Required with `clients`.** Canonical public origin; https unless loopback. |
+| `clients.<id>.auth.ref` | — | **Required.** `env:VAR_NAME` holding the token. Inline values are rejected. |
+| `clients.<id>.scope.projects` | `["*"]` | Project slugs this client may reach. |
+| `clients.<id>.scope.allow` | `["list_*", "read_chat"]` | Operations it may invoke. Supports a trailing `*`. |
+| `clients.<id>.scope.deny` | `[]` | Operations explicitly refused; beats `allow`. |
+| `clients.<id>.scope.denyProjects` | `[]` | Projects explicitly refused; beats `projects`. |
+| `clients.<id>.scope.maxSpawnDepth` | *(project default)* | Narrows the spawn bound for turns this client starts. |
+
+Operation names match the tool names: `list_projects`, `list_chats`, `read_chat`,
+`create_chat`, `fork_chat`, `fork_chat_batch`, `send_message`, `archive_chat`,
+`unarchive_chat`, `list_triggers`, `set_trigger`, `remove_trigger`, `run_trigger`.
+
+**Generating a token.** Any high-entropy string of 24+ characters works, but
+prefer the bound form so it is useless at another instance and greppable by
+secret scanners:
+
+```sh
+printf 'pdk_%s_%s' "$(hostname -s)" "$(openssl rand -hex 24)"
+```
+
+**Behind a proxy.** Any edge gate must **exempt `/mcp`**: a Basic Auth sidecar
+collides with the client's own `Authorization: Bearer`, and an SSO proxy answers
+with an HTML login redirect that breaks MCP discovery. Ship a Paddock that
+authenticates `/mcp` *before* applying the exemption — the fail-closed 404 is the
+backstop if the ordering slips. Paddock also refuses plaintext requests from
+non-loopback clients, so terminate TLS and forward `X-Forwarded-Proto`.
 
 ## Branding (per-instance)
 

@@ -20,6 +20,11 @@ import { DEFAULT_MAX_SPAWN_DEPTH, isValidMaxSpawnDepth } from "./spawn-capabilit
 import { type RecoveryConfig, DEFAULT_RECOVERY } from "./recovery-config.js";
 import { type CurationConfig, DEFAULT_CURATION } from "./curation-config.js";
 import {
+  resolveManagementApiConfig,
+  type ManagementApiConfig,
+  type ManagementApiConfigFile,
+} from "./management-config.js";
+import {
   type AttachmentsConfig,
   DEFAULT_ATTACHMENTS,
   sanitizeAllowedTypes,
@@ -226,6 +231,23 @@ export interface PaddockConfig {
    */
   scheduleMutationEnabled: boolean;
   /**
+   * External Management API clients (issue #312 M1) — the `/mcp` surface for
+   * callers OUTSIDE this instance (a laptop Claude Code session, a peer Paddock).
+   *
+   * Self-contained and INDEPENDENT of {@link auth}: `/mcp` authenticates itself,
+   * so it stays credential-gated even at `auth.mode: none`, and needs no reverse
+   * proxy. An EMPTY client list means the surface is off entirely and `/mcp`
+   * 404s — the endpoint does not exist until deliberately configured.
+   */
+  managementApi: ManagementApiConfig;
+  /**
+   * Operator-facing problems found while resolving {@link managementApi} — a
+   * malformed client (`errors`) or one dropped because its credential wouldn't
+   * resolve (`warnings`). Carried on the config rather than logged at parse time
+   * because config loading has no logger; app.ts logs these at boot.
+   */
+  managementApiDiagnostics: { errors: string[]; warnings: string[] };
+  /**
    * Instance default for the hook-management MCP (Epic G / G5, GG-4) — the
    * `mcp__paddock_manage__{list,set,remove}_hook` tools that let a project agent
    * declare/edit/delete its own event hooks. A sibling of {@link selfMcpWriteEnabled}:
@@ -358,6 +380,12 @@ export interface PaddockConfigFile {
   maxSpawnDepth?: number | string;
   scheduleMutationEnabled?: boolean | string;
   hooksMcpEnabled?: boolean | string;
+  /**
+   * External Management API config (issue #312 M1). Token material is given as
+   * an `env:VAR_NAME` REFERENCE — never inlined, because this file is
+   * git-tracked. Absent ⇒ no external clients ⇒ `/mcp` 404s (fail closed).
+   */
+  managementApi?: ManagementApiConfigFile;
   /**
    * Keeper-chat recovery config (issue #301). Every field optional; a matching
    * `PADDOCK_RECOVERY_*` env var still overrides it (precedence file < env).
@@ -709,6 +737,15 @@ export function loadPaddockConfig(): PaddockConfig {
       loadSelfMcpProjectsEnabled(file.selfMcpProjectsEnabled),
     maxSpawnDepth: loadMaxSpawnDepth(file.maxSpawnDepth),
     scheduleMutationEnabled: loadScheduleMutationEnabled(file.scheduleMutationEnabled),
+    ...(() => {
+      // #312 M1: resolved against the real environment (token material is only
+      // ever an `env:` reference). Diagnostics ride along for app.ts to log.
+      const { config, errors, warnings } = resolveManagementApiConfig(
+        file.managementApi,
+        process.env,
+      );
+      return { managementApi: config, managementApiDiagnostics: { errors, warnings } };
+    })(),
     hooksMcpEnabled: loadHooksMcpEnabled(file.hooksMcpEnabled),
     recovery: loadRecoveryConfig(file.recovery),
     attachments: loadAttachmentsConfig(file.attachments),
