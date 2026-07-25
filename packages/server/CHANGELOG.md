@@ -1,5 +1,85 @@
 # @paddock/server
 
+## 0.45.0
+
+### Minor Changes
+
+- [#462](https://github.com/edspencer/paddock/pull/462) [`603b392`](https://github.com/edspencer/paddock/commit/603b392c4a289a54ed26801e8bf9ca02567260f9) Thanks [@edspencer](https://github.com/edspencer)! - feat(models): make the offered model list configurable per instance + per project
+
+  The built-in `MODELS` catalog stays the authoritative source of model metadata
+  (label / context limit / pricing) and the `isKnownModel` validation set. What
+  becomes configurable is the ALLOW-LIST of which catalog models are offered —
+  operators pick from the catalog by id, so they can't misconfigure a context
+  limit.
+
+  - **Instance allow-list.** New `models` config knob — env `PADDOCK_MODELS`
+    (comma-separated ids) over YAML `models:` (a string array) over the default
+    (unset ⇒ every catalog model, unchanged behaviour). Unknown ids are dropped;
+    an empty result collapses back to the full catalog, so an instance never
+    offers zero models. Editable from the Instance Settings screen.
+  - **`GET /api/models`** now returns the resolved instance allow-list and the
+    EFFECTIVE keeper default (the keeper default if still offered, else the first
+    offered model).
+  - **Per-project override.** New per-project `models` allow-list (`project.yaml`
+    - DTO + PATCH). It may only SUBSET the instance list — each id must be a known
+      catalog model AND currently offered by the instance (a 400 otherwise). The
+      Settings tab exposes a checkbox list; the per-project default and the per-chat
+      picker are constrained to the project's subset when it sets one.
+  - Backward-compatible: with nothing configured, every catalog model is offered
+    exactly as before.
+
+- [#457](https://github.com/edspencer/paddock/pull/457) [`d06133d`](https://github.com/edspencer/paddock/commit/d06133d9e19613feba8df3e52bd6b1a6225bd481) Thanks [@edspencer](https://github.com/edspencer)! - feat(models): add Claude Opus 5 and make it the default keeper model
+
+  Opus 5 (`claude-opus-5`) shipped 2026-07-24 — same $5/$25 per-MTok pricing as
+  Opus 4.8 but greatly improved performance for the same cost (stronger
+  verification/iteration, fewer reasoning tokens), and Anthropic's new default on
+  Claude Max, which is the tier Paddock's keeper agents run on.
+
+  - Add `claude-opus-5` as the first entry in the model picker (1M context
+    window, $5/$25 pricing) and set `KEEPER_DEFAULT_MODEL` to it, so new
+    projects and un-overridden keepers use Opus 5.
+  - Keep `claude-opus-4-8` selectable (non-default) for regression comparison and
+    prompts tuned to 4.8's behaviour.
+  - Sweeper/curator default is unchanged (`claude-haiku-4-5-20251001`).
+
+  No config-schema change: the picker list, `/api/models`, `isKnownModel`
+  validation, context meter, and cost math all read the one-file `models.ts`
+  catalog, so this is a catalog + default bump only. Making the available-model
+  list itself instance/project-configurable is scoped as a follow-up.
+
+### Patch Changes
+
+- [#461](https://github.com/edspencer/paddock/pull/461) [`d5b265c`](https://github.com/edspencer/paddock/commit/d5b265cec2bd721ed38894858fc978f5e5f081a4) Thanks [@edspencer](https://github.com/edspencer)! - fix(chat): flush a queued follow-up after a session-mode turn that ended
+  `success:false` (#404).
+
+  A message queued while the keeper was still replying was silently dropped in
+  session drive-mode. The queue drain (and the after-turn curation sweep and the
+  recovery-watch arm) were gated on herdctl's raw `result.success`, which in
+  session mode routinely reports `false` on a turn that produced a complete reply
+  but ended with a trailing `error_*` / `success:false` result frame — the same
+  signal the #380/#394 false-"turn failed" banner fix already learned to distrust.
+
+  The live banner path suppressed the benign failure via `producedReply`, but the
+  post-turn side effects never got the same treatment, so the queued message
+  stranded. This extracts a single `turnEffectivelySucceeded(rawSuccess,
+producedReply)` predicate — the side-effect twin of `suppressNoticeAfterReply` —
+  and routes the drain, sweep, and recovery gates through it on both the
+  human-chat path and the shared trigger/spawn/wake turn engine, so a real reply
+  supersedes a benign trailing failure and the four gates stay consistent. A
+  genuinely dead turn (no reply) still holds its queue and keeps its error banner.
+
+- [#456](https://github.com/edspencer/paddock/pull/456) [`2f8e40c`](https://github.com/edspencer/paddock/commit/2f8e40ce2ce438dded74b69a7bba1e2454099f23) Thanks [@edspencer](https://github.com/edspencer)! - ci(release): also attach a stable-named `paddock-latest.tgz` (+ `.sha256`) to
+  each GitHub Release, alongside the existing pinned `paddock-<version>.tgz`.
+
+  GitHub's `releases/latest/download/<asset>` redirect only resolves when the
+  asset filename is identical across every release, so the version-named tarball
+  could never be fetched that way — the natural-looking
+  `releases/latest/download/paddock-latest.tgz` 404'd. The release job now uploads
+  an identical copy of the tarball under the fixed name `paddock-latest.tgz`, so
+  that URL always points at the newest release. Self-hosters and deploy recipes
+  can pick a floating (`paddock-latest.tgz`) or pinned (`paddock-<version>.tgz`)
+  download. Fixes #454.
+
 ## 0.44.0
 
 ### Minor Changes

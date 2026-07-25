@@ -6,6 +6,8 @@ import {
   isKnownModel,
   getContextLimit,
   getModelInfo,
+  resolveModels,
+  resolveKeeperDefault,
   DRIVE_MODES,
   KEEPER_DEFAULT_DRIVE_MODE,
   isKnownDriveMode,
@@ -51,6 +53,41 @@ describe("models", () => {
       pricing: { inputPer1M: 10, outputPer1M: 50 },
     });
     expect(getModelInfo("nope")).toBeUndefined();
+  });
+
+  it("resolveModels: undefined/empty allow-list returns the full catalog", () => {
+    expect(resolveModels()).toBe(MODELS);
+    expect(resolveModels(undefined)).toBe(MODELS);
+    expect(resolveModels([])).toBe(MODELS);
+  });
+
+  it("resolveModels: a subset preserves catalog order + metadata, ignoring unknown ids", () => {
+    // Ids given out of catalog order + an unknown one; the result stays in
+    // catalog order and drops the unknown.
+    const out = resolveModels(["claude-sonnet-5", "gpt-4", "claude-opus-5"]);
+    expect(out.map((m) => m.id)).toEqual(["claude-opus-5", "claude-sonnet-5"]);
+    // The entries are the catalog's own ModelInfo objects (metadata intact).
+    expect(out[0]).toBe(getModelInfo("claude-opus-5"));
+    expect(out[1].contextLimit).toBe(1_000_000);
+  });
+
+  it("resolveModels: an all-unknown allow-list resolves empty (loader collapses that to all)", () => {
+    expect(resolveModels(["gpt-4", "nope"])).toEqual([]);
+  });
+
+  it("resolveKeeperDefault: keeper default when offered, else the first offered model", () => {
+    // Keeper default present → it wins regardless of position.
+    expect(resolveKeeperDefault(resolveModels(["claude-sonnet-5", "claude-opus-5"]))).toBe(
+      "claude-opus-5",
+    );
+    // Keeper default NOT offered → first entry (catalog order) is the default.
+    expect(resolveKeeperDefault(resolveModels(["claude-sonnet-5", "claude-haiku-4-5-20251001"]))).toBe(
+      "claude-sonnet-5",
+    );
+    // Empty list → fall back to the keeper default id (never undefined).
+    expect(resolveKeeperDefault([])).toBe(KEEPER_DEFAULT_MODEL);
+    // Full catalog → the keeper default.
+    expect(resolveKeeperDefault(MODELS)).toBe(KEEPER_DEFAULT_MODEL);
   });
 
   it("driveMode: batch/session are known, default is session (#316)", () => {

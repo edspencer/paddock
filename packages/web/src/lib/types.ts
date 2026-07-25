@@ -127,6 +127,13 @@ export interface Project {
   pinned: string[];
   /** The keeper model this project runs on. Always concrete (server resolves the default). */
   model: string;
+  /**
+   * Per-project offered-models allow-list (issue #457 Step 2). `undefined` =
+   * offer the instance list (`/api/models`); a non-empty array of catalog ids
+   * NARROWS the picker to that subset. Raw override (not baked concrete) — the UI
+   * resolves the offered list as `models ?? instance list`.
+   */
+  models?: string[];
   /** Keeper permission mode. Always concrete (server resolves the default). Issue #12. */
   permissionMode: string;
   /** Keeper max_turns. Always concrete (server resolves the default). Issue #12. */
@@ -266,6 +273,13 @@ export interface UpdateProjectInput {
   visibility?: "public" | "private";
   /** The keeper model id; server re-registers the keeper on change (must be a known model). */
   model?: string;
+  /**
+   * Per-project offered-models allow-list (issue #457 Step 2). A non-empty array
+   * of catalog ids narrows this project's picker (each must be within the instance
+   * allow-list); an empty array or `null` clears the override so it offers the
+   * instance list again. Same reset-to-inherit tri-state as `driveMode`.
+   */
+  models?: string[] | null;
   /** Keeper permission mode; server validates + re-registers the keeper (issue #12). */
   permissionMode?: string;
   /** Keeper max_turns (1–1000); server validates + re-registers the keeper (issue #12). */

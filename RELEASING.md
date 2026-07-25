@@ -42,7 +42,11 @@ page (`website/src/content/docs/whats-new.md`) so the docs site stays current.
    - builds & pushes `ghcr.io/edspencer/paddock:<version>` and `:latest`
      (linux/amd64 + linux/arm64);
    - builds `paddock-<version>.tgz` (+ `.sha256`);
-   - creates GitHub Release `v<version>` with the tarball attached.
+   - creates GitHub Release `v<version>` with the tarball attached — both the
+     pinned `paddock-<version>.tgz` and a stable-named `paddock-latest.tgz`
+     (+ `.sha256`) copy, so
+     `releases/latest/download/paddock-latest.tgz` always resolves to the
+     newest release.
 
 `workflow_dispatch` is available to re-run the pipeline manually.
 

@@ -36,6 +36,7 @@ import {
   errorNotice,
   messageProducedReply,
   suppressNoticeAfterReply,
+  turnEffectivelySucceeded,
   type TurnNotice,
 } from "./turn-notice.js";
 import type {
@@ -584,8 +585,13 @@ async function startAgentTurn(opts: StartAgentTurnOpts): Promise<string> {
   // what. Never throws to the event loop (guards the fan-out from one bad turn).
   void drivePromise
     .then((result) => {
+      // #404: mirror the human-turn path — a session-mode turn that produced a real
+      // reply routinely ends with a trailing `error_*` / `success:false` result
+      // frame, so gating the post-turn sweep / recovery arm on raw `result.success`
+      // silently skips them. Trust the same `producedReply` signal the banner does.
+      const effectiveSuccess = turnEffectivelySucceeded(result.success, producedReply);
       const finalSession =
-        (result.success ? (result.sessionId ?? resolvedSession) : resolvedSession) ?? null;
+        (effectiveSuccess ? (result.sessionId ?? resolvedSession) : resolvedSession) ?? null;
       if (finalSession) turn.setSession(finalSession);
       const completeModel = seen.model ?? fallbackModel;
       const u = resolveTurnUsage(seen);
@@ -622,11 +628,11 @@ async function startAgentTurn(opts: StartAgentTurnOpts): Promise<string> {
         /* non-fatal */
       }
       // T5: post-turn curation via the `afterTurn` event (folded-in sweeper).
-      if (result.success) triggers.emitAfterTurn(projectSlug, finalSession);
+      if (effectiveSuccess) triggers.emitAfterTurn(projectSlug, finalSession);
       // Layer 3 (issue #301): arm a post-turn recovery watch for a session-mode
       // keeper turn that stayed alive — including a recovery re-drive itself, so a
       // re-drive that hangs again is caught (bounded by the per-session retry cap).
-      if (result.success && finalSession && driveMode === "session" && projectSlug !== SCRATCH_SLUG) {
+      if (effectiveSuccess && finalSession && driveMode === "session" && projectSlug !== SCRATCH_SLUG) {
         recoveryEngine.armWatch({ slug: projectSlug, sessionId: finalSession });
       }
       if (!resolvedSession) {

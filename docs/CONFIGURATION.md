@@ -29,7 +29,8 @@ declarations will live in, and it matches the repo's YAML house style
   instead of a mapping.)
 - **Shape.** Keys mirror the resolved config: top-level scalars (`port`, `host`,
   `logLevel`, `keeperDriveMode`, `maxSpawnDepth`, `browserMcp`,
-  `sweepMinIntervalMs`, `selfMcpEnabled`, …) plus nested sections `auth`,
+  `sweepMinIntervalMs`, `selfMcpEnabled`, …), the `models` allow-list array, plus
+  nested sections `auth`,
   `brand`, `transcription`, and `gitAuthor`. Unknown keys are
   ignored. Each value is coerced through the same parsing an env value would get,
   so the same default/validation rules (below) apply.
@@ -131,7 +132,7 @@ HushPod's whisper config so both can share a backend. See [DEV.md](../DEV.md#voi
 | Variable | Default | Required | Purpose |
 |----------|---------|----------|---------|
 | `PADDOCK_WHISPER_MODE` | `off` (or `remote` if an endpoint is set) | no | `off` \| `remote` \| `local`. Unknown → `off`. |
-| `PADDOCK_WHISPER_ENDPOINT` | — | *(remote)* | OpenAI-compatible base URL, e.g. `http://192.168.1.200:8385/v1` (`/audio/transcriptions` is appended). Its presence flips the default mode to `remote`. |
+| `PADDOCK_WHISPER_ENDPOINT` | — | *(remote)* | OpenAI-compatible base URL, e.g. `http://whisper.local:8385/v1` (`/audio/transcriptions` is appended). Its presence flips the default mode to `remote`. |
 | `PADDOCK_WHISPER_API_KEY` | — | no | *(remote)* Optional bearer token for the endpoint. |
 | `PADDOCK_WHISPER_MODEL` | `base` | no | Whisper model (`tiny`/`base`/`small`/…; `.en` variants for English-only). |
 | `PADDOCK_WHISPER_LANGUAGE` | — | no | Optional spoken-language hint (e.g. `en`); unset ⇒ auto-detect. |
@@ -142,6 +143,7 @@ HushPod's whisper config so both can share a backend. See [DEV.md](../DEV.md#voi
 | Variable | Default | Required | Purpose |
 |----------|---------|----------|---------|
 | `PADDOCK_KEEPER_DRIVE_MODE` | `session` | no | Box-wide default for how keeper turns are driven. `session` (the default, #316) runs the persistent `openChatSession` path, enabling cross-turn autonomy (`ScheduleWakeup` / `/loop`) and SDK streaming; set `batch` for the legacy one-shot `trigger()` path. A per-project `driveMode` overrides this at dispatch. Unknown → default. |
+| `PADDOCK_MODELS` | *(all)* | no | Comma-separated allow-list of which built-in catalog models the picker offers (e.g. `claude-opus-5,claude-sonnet-5`). Unset ⇒ every catalog model is offered. Unknown ids are dropped; if nothing valid remains the full catalog is offered (never zero). The catalog stays the source of each model's label/context-limit/pricing — this only narrows what's offered. Also settable as a YAML `models:` array, and a per-project `models` override may further subset it. |
 | `PADDOCK_KEEPER_NATIVE_PROMPT` | `true` | no | Keeper **and** scratch agents use the native Claude Code system prompt + `CLAUDE.md` hierarchy. Set `0`/`false`/`no` for the terse Paddock "replace" prompt (e.g. an instance with no `CLAUDE.md`). |
 | `PADDOCK_SELF_MCP` | `false` | no | Give keepers the read-only self-management MCP (`mcp__paddock_manage__*`: enumerate projects/chats, read another chat's transcript). Never injected on scratch turns. |
 | `PADDOCK_SELF_MCP_WRITE` | `false` | no | Additionally give keepers the self-management **write** tools (`create_chat`, `fork_chat`, `send_message`, `fork_chat_batch`). Only honored when `PADDOCK_SELF_MCP` is also on (write implies read). |

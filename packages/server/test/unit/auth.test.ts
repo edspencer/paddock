@@ -135,7 +135,7 @@ describe("auth: mode=trusted-header", () => {
 describe("auth: mode=jwt", () => {
   let app: FastifyInstance;
   let privateKey: KeyLike;
-  const ISSUER = "https://sso.valfenda.net/application/o/paddock/";
+  const ISSUER = "https://sso.example.com/application/o/paddock/";
   const AUDIENCE = "paddock";
 
   beforeAll(async () => {

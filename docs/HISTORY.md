@@ -6,7 +6,7 @@
 
 > **Paddock** = a project-first launchpad built on **herdctl**. Projects are the
 > first-class citizen (like claude.ai but projects-first; one-off chats are
-> secondary). Deployed to **https://projects.valfenda.net** in the homelab.
+> secondary). Deployed to **https://projects.example.com** in the homelab.
 >
 > This file is the shared brain for the overnight autonomous build. **Every
 > sub-agent must read this first and append to the STATUS LOG when done.**
@@ -24,7 +24,7 @@ live inside a project; one-off chats supported but secondary.
 | Decision | Choice |
 |---|---|
 | Auth for deployed service | **Claude Max** (`runtime: cli`, `CLAUDE_CODE_OAUTH_TOKEN`) |
-| Deploy target | **New dedicated LXC** on Proxmox; `projects.valfenda.net` via Caddy on netops |
+| Deploy target | **New dedicated LXC** on Proxmox; `projects.example.com` via Caddy on netops |
 | Priority if time short | **A deployed, working POC** above all |
 | Project-model locus | **Hybrid** — app-layer now; push to herdctl core (local + PR) where it clearly belongs |
 | Trust posture (per-project agents) | Docker-isolated preferred; fall back to `acceptEdits` + denied dangerous bash if nested Docker in the LXC is troublesome |
@@ -41,18 +41,18 @@ live inside a project; one-off chats supported but secondary.
 
 ## Homelab facts (deploy)
 
-- Domain: **valfenda.net** (note: Ed sometimes says "valfender"). Internal + Tailscale only.
-- Reverse proxy: **Caddy on netops (192.168.1.33)**, Let's Encrypt via DNS-01.
-- DNS: **Unbound host-overrides on OPNsense (192.168.1.1)** via API (creds in
+- Domain: **example.com** (placeholder for the homelab domain). Internal + Tailscale only.
+- Reverse proxy: **Caddy on netops (192.0.2.33)**, Let's Encrypt via DNS-01.
+- DNS: **Unbound host-overrides on OPNsense (192.0.2.1)** via API (creds in
   `~/herds/personal/homelab/firewall-key.txt`, basic auth `-u key:secret`).
-  After change: reconfigure unbound, then `pihole reloaddns` on 192.168.1.53 & .54.
-- Proxmox cluster `valfenda`, nodes pve-1..5 (pve-1 = 192.168.1.71), shared NFS.
+  After change: reconfigure unbound, then `pihole reloaddns` on 192.0.2.53 & .54.
+- Proxmox cluster `homelab`, nodes pve-1..5 (pve-1 = 192.0.2.71), shared NFS.
   Create LXC with `pct` on a node. Add the **claude ssh key** to the new LXC
   (`~/herds/personal/homelab/claude-ssh-key.pub`). Add `~/.ssh/config` alias.
 - SSH aliases that work today: `netops`, `devbox` (runs herdctl), `pve-1`.
 - IP registry: `~/herds/personal/homelab/IP-ALLOCATIONS.md`. Pick a free IP in the
-  192.168.1.x server range for the new LXC; reserve in registry.
-- Proven pattern to mirror: **devbox** (192.168.1.35) already runs herdctl + web
+  192.0.2.x server range for the new LXC; reserve in registry.
+- Proven pattern to mirror: **devbox** (192.0.2.35) already runs herdctl + web
   behind Caddy with Max auth — copy its setup for the projects LXC.
 - Max token: `CLAUDE_CODE_OAUTH_TOKEN` in `~/herds/.env`. Deployed service needs
   Node 22 + the `claude` CLI + this token in env.
@@ -60,7 +60,7 @@ live inside a project; one-off chats supported but secondary.
 ## Architecture (hybrid, app-layer first)
 
 ```
-Browser ──https──> Caddy(netops) ──> projects.valfenda.net LXC
+Browser ──https──> Caddy(netops) ──> projects.example.com LXC
                                         │
                                         ├─ paddock-server (Fastify + WS)
                                         │     uses @herdctl/core FleetManager
@@ -86,7 +86,7 @@ Browser ──https──> Caddy(netops) ──> projects.valfenda.net LXC
   `docs/INTEGRATION.md` (exact public API contract). (P) provision the LXC.
 - **P2:** backend (project model + API + WS chat) and frontend (project-first UI).
 - **P3:** integrate + local smoke test (create project → new chat → streamed Claude reply).
-- **P4:** deploy to LXC; Caddy + Unbound DNS; verify projects.valfenda.net e2e.
+- **P4:** deploy to LXC; Caddy + Unbound DNS; verify projects.example.com e2e.
 - **P5:** herdctl local fixes → branch + changeset + PR text (no push).
 
 ## Fallbacks
@@ -330,13 +330,13 @@ Browser ──https──> Caddy(netops) ──> projects.valfenda.net LXC
   `.gitignore` extended with playwright output dirs. `scripts/e2e.mjs` is rerunnable:
   `BASE_URL=… PADDOCK_DATA_DIR=… node scripts/e2e.mjs` (exit 0 = all green).
 
-- 2026-06-21 — Sub-agent (DEPLOY to homelab LXC): **DONE. https://projects.valfenda.net
+- 2026-06-21 — Sub-agent (DEPLOY to homelab LXC): **DONE. https://projects.example.com
   IS LIVE AND WORKING END-TO-END, with Claude Max OAuth (NO API-key fallback needed).**
   Drove a real chat through the public HTTPS URL in a browser → keeper agent wrote a
   file on disk under `/var/lib/paddock`. All 7 deploy steps applied; shared infra
   touched surgically + additively, with backups, and existing services confirmed intact.
 
-  **What was deployed (LXC `projects` @ 192.168.1.83, CTID 123, pve-1):**
+  **What was deployed (LXC `projects` @ 192.0.2.83, CTID 123, pve-1):**
   - **Code**: shipped the working tree to `/opt/paddock` via `tar | ssh` (rsync absent
     on the LXC; excluded node_modules/dist/.git/data). `npm ci` (436 pkgs) + `npm run
     build` → both packages built clean. Entrypoint `packages/server/dist/index.js`;
@@ -366,27 +366,27 @@ Browser ──https──> Caddy(netops) ──> projects.valfenda.net LXC
 
   **Shared infra changed (SURGICAL + ADDITIVE, backups taken, existing services
   re-verified):**
-  - **Caddy on netops (192.168.1.33, docker `caddy`)**: backed up
+  - **Caddy on netops (192.0.2.33, docker `caddy`)**: backed up
     `/opt/netops/caddy/Caddyfile` → `Caddyfile.bak.1782018728`, appended a
-    `projects.valfenda.net { tls{dns cloudflare …} reverse_proxy 192.168.1.83:4000 }`
+    `projects.example.com { tls{dns cloudflare …} reverse_proxy 192.0.2.83:4000 }`
     block mirroring the devbox block EXACTLY. `caddy validate` → "Valid configuration";
-    hot `caddy reload`. **devbox.valfenda.net + podcasts.valfenda.net still HTTP 200**
+    hot `caddy reload`. **devbox.example.com + podcasts.example.com still HTTP 200**
     after reload (no regression).
   - **DNS (Unbound on OPNsense via API)**: added host override
-    `projects.valfenda.net → 192.168.1.33` (netops/Caddy), uuid
+    `projects.example.com → 192.0.2.33` (netops/Caddy), uuid
     `27496a8f-f23b-4fd3-bf4f-2b5b95258cc3`; `unbound/service/reconfigure` → `{"status":"ok"}`.
     `pihole reloaddns` on .53 (via `pihole-1` alias) and .54 (via `pihole-2` alias).
     Note: pihole-2's host key had legitimately rotated (ecdsa→ed25519); removed ONLY the
     stale `known_hosts` line for .54 (`ssh-keygen -R`) so ssh re-learned it — did NOT
-    disable host-key checking globally. `dig +short projects.valfenda.net` → 192.168.1.33
+    disable host-key checking globally. `dig +short projects.example.com` → 192.0.2.33
     on Unbound, BOTH pi-holes, and the laptop default resolver. devbox still resolves
     (no regression).
   - **`~/herds/personal/homelab/IP-ALLOCATIONS.md`**: added the
-    `192.168.1.83 | projects | … | pve-1 LXC 123` row under Development Workloads.
+    `192.0.2.83 | projects | … | pve-1 LXC 123` row under Development Workloads.
 
   **END-TO-END FROM THE LAPTOP (the headline result):**
-  - `curl https://projects.valfenda.net/` → HTTP 200, serves the SPA; **valid Let's
-    Encrypt cert** `CN=projects.valfenda.net` (issued 04:14 UTC, auto via DNS-01; no
+  - `curl https://projects.example.com/` → HTTP 200, serves the SPA; **valid Let's
+    Encrypt cert** `CN=projects.example.com` (issued 04:14 UTC, auto via DNS-01; no
     wait needed). `/api/projects` + `/api/health` return JSON over HTTPS.
   - **Playwright against the LIVE https URL**: created project "Live Verify 14043"
     through the real UI, sent a chat over the live WS → keeper agent wrote
@@ -472,7 +472,7 @@ Browser ──https──> Caddy(netops) ──> projects.valfenda.net LXC
   out of scope here.
 
 - 2026-06-21 — Sub-agent (finalize / redeploy upgrade + clean-slate seed + live verify):
-  **DONE. UPGRADED SITE IS LIVE AND HEALTHY at https://projects.valfenda.net. No
+  **DONE. UPGRADED SITE IS LIVE AND HEALTHY at https://projects.example.com. No
   rollback needed.** Shipped the latest `main` (commit `5824e7a` — project/chat delete,
   edit metadata, self-hosted fonts, polish), wiped the test junk, seeded Ed's 4 real
   projects, and proved the live upgrade end-to-end in a real browser.
@@ -492,7 +492,7 @@ Browser ──https──> Caddy(netops) ──> projects.valfenda.net LXC
   - **Restarted** `paddock.service`. **Health (LXC)**: `/api/health`→200 `{ok:true}`,
     `/api/projects`→200, `/fonts/inter-latin.woff2`→**200 font/woff2**,
     `/fonts/jetbrains-mono-latin.woff2`→**200 font/woff2**, `/`→200 text/html.
-    **Health (laptop, HTTPS)**: same all-200, valid LE cert `CN=projects.valfenda.net`.
+    **Health (laptop, HTTPS)**: same all-200, valid LE cert `CN=projects.example.com`.
     Build succeeded + every check passed → **rollback path never exercised**.
 
   **TASK B — clean slate + seed real projects (DONE):**
@@ -520,7 +520,7 @@ Browser ──https──> Caddy(netops) ──> projects.valfenda.net LXC
     project,chat}.png`. The test chat was then **deleted** via the API so the landing is
     clean with empty projects (Ed starts the real chats). Max OAuth used (no API-key fallback).
   - **No infra regression**: `paddock.service` active + enabled-on-boot;
-    `devbox.valfenda.net`→200. `/opt/paddock.bak` retained (noted above).
+    `devbox.example.com`→200. `/opt/paddock.bak` retained (noted above).
 
   **Honest notes:** (a) deployed commit is `5824e7a` (current `main` HEAD; clean tree —
   nothing uncommitted shipped except, locally, the new `scripts/live-final-verify.mjs`,
@@ -683,7 +683,7 @@ Browser ──https──> Caddy(netops) ──> projects.valfenda.net LXC
   (e) **Not deployed to the LXC** (code + push only, per scope); redeploy is a separate step.
 
 - 2026-06-21 — Sub-agent (finalize / redeploy v2 features + worked example + live verify):
-  **DONE. UPGRADED SITE IS LIVE + HEALTHY at https://projects.valfenda.net. No rollback
+  **DONE. UPGRADED SITE IS LIVE + HEALTHY at https://projects.example.com. No rollback
   needed.** Shipped current `main` (commit `5b3d32c` — overview/sweep, preload checkbox,
   md+Mermaid + sandboxed-HTML rendering, pin-as-tab), built the real Garage Water Heater
   worked example via a live keeper chat, and verified all five new features live in a real
@@ -706,7 +706,7 @@ Browser ──https──> Caddy(netops) ──> projects.valfenda.net LXC
     `index.html` has 0 googleapis/gstatic refs.
   - **`systemctl restart paddock`** (unchanged unit). **Health (LXC localhost + laptop
     HTTPS)** all 200: `/api/health`, `/api/projects`, `/`, `/fonts/{inter,jetbrains-mono}-latin.woff2`;
-    valid LE cert `CN=projects.valfenda.net` (through Sep 2026). New code confirmed live:
+    valid LE cert `CN=projects.example.com` (through Sep 2026). New code confirmed live:
     `/api/projects/:slug/overview` now 200 (was 404), DTO now has `hasOverview`+`pinned`.
   - **Fleet registered keeper + sweeper agents**: 9 agents total = `scratch` + 4 `keeper-*`
     + **4 `sweeper-*`** (one per project; auto-generated yaml on startup). 0 errored.
@@ -735,7 +735,7 @@ Browser ──https──> Caddy(netops) ──> projects.valfenda.net LXC
     also wrote CHANGELOG entries during the chat via Edit; the sweeper's curation runs on top.)
 
   **TASK C — live verify + screenshots (Playwright vs the LIVE HTTPS URL) — 5/5 green:**
-  `scripts/live-feat-verify.mjs` drove a real Chromium against https://projects.valfenda.net:
+  `scripts/live-feat-verify.mjs` drove a real Chromium against https://projects.example.com:
   (1) **Overview badge** present in the Garage Water Heater header (hasOverview). (2) **Both
   files as pinned sibling tabs** (plan.md + spec.html). (3) **plan.md renders a Mermaid SVG**
   (1 svg, 53 `<g>` elements — real geometry, no error fallback). (4) **spec.html renders in a
@@ -744,7 +744,7 @@ Browser ──https──> Caddy(netops) ──> projects.valfenda.net LXC
   CDN Mermaid plumbing diagram + comparison table render INSIDE the frame). (5) **Preload
   checkbox present + default ON** on a new chat (checked, enabled). Screenshots in
   `docs/screenshots/`: `live-feat-{overview,mermaid,html,html-mermaid,pins,preload}.png`.
-  **No infra regression**: `devbox.valfenda.net`→200; `paddock.service` active + enabled-on-boot;
+  **No infra regression**: `devbox.example.com`→200; `paddock.service` active + enabled-on-boot;
   projects health 200; fleet 9 agents, 0 errors.
 
   **TASK D — issues**: closed **#1, #2, #3, #4, #5, #6** on edspencer/paddock (implemented +
@@ -853,7 +853,7 @@ Browser ──https──> Caddy(netops) ──> projects.valfenda.net LXC
   public export). **Not deployed** — redeploy is a separate agent's step.
 
 - 2026-06-21 — Sub-agent (redeploy on @herdctl/core@5.11.0 + chat@0.4.0 + live verify):
-  **DONE. UPGRADED SITE IS LIVE + HEALTHY at https://projects.valfenda.net on the new
+  **DONE. UPGRADED SITE IS LIVE + HEALTHY at https://projects.example.com on the new
   herdctl. No rollback needed.** Shipped current `main` (`b5eaa87` — the 5.11.0 API
   adoption + session rename), upgraded deps on the LXC, and verified live in a real
   browser (8/8). **Caught + fixed one regression introduced by the adoption** (tool-block
@@ -878,7 +878,7 @@ Browser ──https──> Caddy(netops) ──> projects.valfenda.net LXC
   - **Health (LXC localhost + laptop HTTPS)** all 200: `/api/health`, `/api/projects`, `/`,
     `/fonts/{inter,jetbrains-mono}-latin.woff2` (font/woff2),
     `/api/projects/garage-water-heater/overview` (text/markdown); valid LE cert
-    `CN=projects.valfenda.net` (ssl_verify=0). **Fleet = 9** (`scratch` + 4 `keeper-*` +
+    `CN=projects.example.com` (ssl_verify=0). **Fleet = 9** (`scratch` + 4 `keeper-*` +
     4 `sweeper-*`), 0 errored.
 
   **REGRESSION FOUND + FIXED (the honest headline):** the new shared translator
@@ -899,7 +899,7 @@ Browser ──https──> Caddy(netops) ──> projects.valfenda.net LXC
   id-bearing nested block, then paddock can drop the shim (herdctl PR candidate).
 
   **TASK B — live verify (Playwright vs the LIVE HTTPS URL) — 8/8 green:**
-  `scripts/live-adopt-verify.mjs` drove a real Chromium against https://projects.valfenda.net:
+  `scripts/live-adopt-verify.mjs` drove a real Chromium against https://projects.example.com:
   - **Garage Water Heater (regression guard, step 4):** Overview badge present; plan.md +
     spec.html as pinned sibling tabs; **plan.md renders a Mermaid SVG** (53 g-elements);
     **spec.html renders in a sandboxed iframe** (`sandbox="allow-scripts"`, NOT
@@ -917,7 +917,7 @@ Browser ──https──> Caddy(netops) ──> projects.valfenda.net LXC
     to **9** (0 errored), no straggler dirs on disk.
   - Screenshots: `docs/screenshots/live-adopt-{water-heater,chat,rename}.png`
     (live-adopt-chat clearly shows the fixed `Bash pwd 113ms` + `Write … 38ms` tool blocks).
-  - **No infra regression**: `devbox.valfenda.net` + `podcasts.valfenda.net` → 200;
+  - **No infra regression**: `devbox.example.com` + `podcasts.example.com` → 200;
     `paddock.service` active + enabled-on-boot.
 
   **TASK C — issues:** closed **#9** (adopt merged herdctl programmatic APIs) and **#10**

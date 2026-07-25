@@ -93,6 +93,7 @@ import {
   errorNotice,
   messageProducedReply,
   suppressNoticeAfterReply,
+  turnEffectivelySucceeded,
   type TurnNotice,
 } from "./turn-notice.js";
 import { resolveHooksMcpEnabled } from "./hook-config.js";
@@ -854,13 +855,21 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
           },
         });
 
+        // #404: session-mode turns that produced a real reply routinely end with a
+        // trailing `error_*` / `success:false` result frame (the #380/#394 banner
+        // asymmetry). Raw `result.success` is reply-unaware, so gating the post-turn
+        // side effects below on it silently strands a queued follow-up, skips the
+        // sweep, and drops the recovery arm. Trust the same `producedReply` signal
+        // the banner already does — a real reply supersedes a benign trailing failure.
+        const effectiveSuccess = turnEffectivelySucceeded(result.success, producedReply);
+
         // Post-turn sweep (issues #2/#6): on a successful USER turn in a real
         // project, enqueue a coalesced/debounced curation sweep. Out of band —
         // never blocks or breaks chat, and can't recurse (the sweep uses a
         // separate agent triggered off the user-chat path). Skipped for scratch.
         // T5: routed through the `afterTurn` event so the folded-in `curate-overview`
         // trigger is the single dispatch (no double-curation).
-        if (result.success) emitAfterTurn(slug, result.sessionId ?? resolvedSession ?? null);
+        if (effectiveSuccess) emitAfterTurn(slug, result.sessionId ?? resolvedSession ?? null);
 
         // Force a session-list refresh so a brand-new chat surfaces immediately
         // (rather than waiting out the discovery cache). Non-fatal.
@@ -890,7 +899,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
 
         // Ensure the turn is keyed under its final session id before the terminal
         // frame, so a client re-attaching right at the end gets the completion.
-        const finalSession = result.success ? (result.sessionId ?? resolvedSession) : resolvedSession;
+        const finalSession = effectiveSuccess ? (result.sessionId ?? resolvedSession) : resolvedSession;
         if (finalSession) turn.setSession(finalSession);
         // #329: a turn that failed WITHOUT a terminal error `result` reaching the
         // stream (a thrown/rejected drive: network reset, process crash) never hit
@@ -913,7 +922,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
         // After a SUCCESSFUL turn, auto-send any queued follow-up (#197/#245). A
         // Stop/failed turn holds the queue for the user (no drain). drainQueue owns
         // the take + client notify + next-turn kickoff, shared with the idle path.
-        if (result.success && finalSession) {
+        if (effectiveSuccess && finalSession) {
           await drainQueue(slug, finalSession);
         }
 
@@ -922,7 +931,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
         // at the turn boundary (herdctl#374) and the keeper doesn't wake on its own,
         // the engine auto-injects the recovery nudge — gated on the resolved
         // `recovery.autoReDrive` (default OFF), a debounce window, and a retry cap.
-        if (result.success && finalSession && driveMode === "session" && slug !== SCRATCH_SLUG) {
+        if (effectiveSuccess && finalSession && driveMode === "session" && slug !== SCRATCH_SLUG) {
           recoveryEngine.armWatch({ slug, sessionId: finalSession });
         }
       } catch (err) {

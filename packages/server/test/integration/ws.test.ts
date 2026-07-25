@@ -430,4 +430,80 @@ describe("integration: WS transport edge cases (real app, fake claude)", () => {
     expect(notice).toBeTruthy();
     expect((notice?.payload?.notice as { kind?: string })?.kind).toBe("error");
   });
+
+  // --- #404: the queue-drain machinery the fix gates -----------------------------
+  // Exercises the end-to-end flow the #404 gate routes through: a message queued
+  // WHILE a turn is running is stored (not drained on set), then flushed +
+  // re-dispatched when the turn completes. The turn here uses [[SLOWTOOL]] to stay
+  // open long enough to queue mid-turn, and [[REPLYERROR]] to end on the exact
+  // reply-then-error shape #404 targets.
+  //
+  // HONEST SCOPE: this batch harness reports `result.success === true` (batch
+  // derives success from the CLI job exit, not the terminal result subtype), so it
+  // does NOT exercise the `result.success === false` branch the fix corrects — that
+  // false signal only arises on the SESSION runtime (`chatSession` →
+  // `consumeResumedTurn` → `isErrorResult`). That branch is guarded by the
+  // `turnEffectivelySucceeded` unit tests and live-validated on a real session-mode
+  // server. What this guards is the drain FLOW itself (store → `chat:queued_flushed`
+  // → re-dispatch), which the fix's gate is the entry point to.
+
+  it("flushes a mid-turn queued message after the turn completes ([[SLOWTOOL]] [[REPLYERROR]], #404 flow)", async () => {
+    const prevSlow = process.env.PADDOCK_FAKE_SLOWTOOL_MS;
+    process.env.PADDOCK_FAKE_SLOWTOOL_MS = "1500";
+    try {
+      // 1) Establish a session id to queue against.
+      const m0 = ws.mark();
+      ws.send({
+        type: "chat:send",
+        payload: { projectSlug: "ws-proj", sessionId: null, message: "prime the session" },
+      });
+      const primed = await ws.waitFor(isComplete("ws-proj"), { from: m0 });
+      const sessionId = primed.payload?.sessionId as string;
+      expect(typeof sessionId).toBe("string");
+
+      // 2) Start a slow turn that produces a reply then an error result.
+      const mark = ws.mark();
+      ws.send({
+        type: "chat:send",
+        payload: { projectSlug: "ws-proj", sessionId, message: "work [[SLOWTOOL]] [[REPLYERROR]]" },
+      });
+      // Wait until the turn is demonstrably running (its slow tool started) so the
+      // queue is STORED (turn running) rather than drained on set (the idle path).
+      await ws.waitFor(
+        (e) => e.type === "chat:tool_start" && e.payload?.projectSlug === "ws-proj",
+        { from: mark },
+      );
+
+      // 3) Queue a follow-up mid-turn.
+      ws.send({
+        type: "chat:set_queue",
+        payload: { projectSlug: "ws-proj", sessionId, text: "the queued follow-up", ts: 1 },
+      });
+
+      // 4) The turn completes, and the drain flushes the queued message (text carried
+      // on the frame) then re-dispatches it as its own turn.
+      const flushed = await ws.waitFor(
+        (e) =>
+          e.type === "chat:queued_flushed" &&
+          e.payload?.sessionId === sessionId &&
+          e.payload?.text === "the queued follow-up",
+        { from: mark, timeoutMs: 10000 },
+      );
+      expect(flushed.payload?.text).toBe("the queued follow-up");
+
+      // The re-dispatched follow-up turn runs and completes cleanly.
+      const followUp = await ws.waitFor(
+        (e) =>
+          e.type === "chat:complete" &&
+          e.payload?.projectSlug === "ws-proj" &&
+          e.payload?.sessionId === sessionId &&
+          e.payload?.success === true,
+        { from: mark, timeoutMs: 10000 },
+      );
+      expect(followUp.payload?.success).toBe(true);
+    } finally {
+      if (prevSlow === undefined) delete process.env.PADDOCK_FAKE_SLOWTOOL_MS;
+      else process.env.PADDOCK_FAKE_SLOWTOOL_MS = prevSlow;
+    }
+  });
 });

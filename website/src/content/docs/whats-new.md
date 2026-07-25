@@ -1,6 +1,6 @@
 ---
 title: What's New
-description: "The user-facing highlights of each Paddock release — attachments, token-by-token streaming, unified triggers, keeper-chat recovery, event hooks, schedules, provenance, YAML config, and more."
+description: "The user-facing highlights of each Paddock release — official Docker images & deploy recipes, live nested sub-agent cards, surviving background work, an instance-wide settings screen, per-project curation budgets, pinned chats & file tabs, attachments, streaming, unified triggers, and more."
 ---
 
 The headline changes in recent Paddock releases, newest first. These are the
@@ -42,6 +42,100 @@ that unattended work legible at a glance.
   an explicit `PADDOCK_DANGEROUSLY_ALLOW_OPEN` opt-in. Container images still bind
   `0.0.0.0` (the network namespace is their boundary); the recipes carry the
   host-side publish posture.
+- **Live nested sub-agent cards.** When a keeper spawns sub-agents — even several
+  levels deep — each one now renders as its own live card that fills in as it
+  runs: a running spinner, streaming progress, and a cost that rolls its
+  descendants' costs up into the parent. Nested unattended work is legible while
+  it happens, not just after a refresh.
+
+## 0.43 — Background work that outlives the turn
+
+- **Background tasks survive the turn boundary.** In session mode, work a keeper
+  kicks off in the background — a `run_in_background` sub-agent or shell, a build,
+  a deploy, a scheduled wake-up — now keeps running when the turn that started it
+  ends, and **delivers its result live** the moment it finishes, waking the keeper
+  to continue or report back. No reload, and no more tasks quietly dying at the
+  turn boundary. This is what makes "kick off something slow, get pinged when it's
+  done" reliable for keepers.
+
+## 0.42 — Instance settings, curation budgets & pinned files
+
+- **An instance-wide Settings screen.** A new top-level **Instance settings**
+  screen (the gear in the sidebar) edits your `paddock.config.yaml` straight from
+  the UI — grouped fields for curation, capability gates, auth, attachments and
+  more. Instance config is read once at boot and frozen, so a save writes the file
+  and shows a **restart-to-apply** banner; a field already pinned by an environment
+  variable renders read-only with an "overridden by `ENV`" note, so the precedence
+  is never a surprise.
+
+![The instance-wide Settings screen, editing paddock.config.yaml from the UI with a restart-to-apply banner](../../assets/whats-new/instance-settings.png)
+
+- **Per-project curation budgets.** Each project's **Settings** tab can now cap the
+  post-turn sweeper's per-file token budgets — how big it lets `OVERVIEW.md`,
+  `CHANGELOG.md` and `CLAUDE.md` grow — or leave a field blank to inherit the
+  instance default. Lower a budget to shrink the context a chatty project injects
+  into every one of its chats.
+
+![Per-project curation budgets in the Settings tab, overriding two files and inheriting the third](../../assets/whats-new/curation-budgets.png)
+
+- **Pin any file as a tab — at any depth.** The Files browser's pin now works on a
+  file **anywhere** in the tree, including nested ones; a pinned file rides along
+  as a persistent tab in the project header next to Home / Chat / Files, one click
+  from whatever you keep coming back to.
+
+![Pinned files riding along as tabs in the project header, at any depth](../../assets/whats-new/pinned-file-tabs.png)
+
+## 0.41 — Pinned chats, resizable panes & a smarter sweeper
+
+- **Star a chat to pin it.** Star any chat and it floats to the top of its list —
+  a lightweight way to keep the conversation you're living in (or the run you're
+  waiting on) one click away. Starring is purely presentational and independent of
+  archiving: starred chats float to the top of both the active and the archived
+  sections.
+
+![The chat list with two starred chats pinned to the top](../../assets/whats-new/starred-chats.png)
+
+- **Draggable, persisted pane widths.** Grab the divider to resize the side-nav and
+  the chat-list column to taste; your widths are remembered in the browser across
+  reloads, so the layout you like stays put.
+- **A one-row mobile header.** On a phone the project header collapses to a single
+  row and the composer typography was tidied up, so the small-screen layout stops
+  fighting for vertical space.
+- **The sweeper is a full-file curator.** Post-turn curation now **rewrites** the
+  whole `OVERVIEW.md` / `CHANGELOG.md` to stay within a token budget, instead of
+  only ever appending — so those files stay tight and readable rather than growing
+  without bound. (0.42's per-project budgets tune exactly these limits.)
+
+## 0.40 — Promote a notebook to a repo, dictate while it types
+
+- **Promote a notebook project to repo-backed, in place.** A notes-only project can
+  now be turned into a full code project without recreating it: point it at a git
+  repo and Paddock clones it as the keeper's working directory — the repo's own
+  `CLAUDE.md`, branches and PR flow take over from there — keeping the project's
+  history and chats.
+- **Dictate while the keeper is replying.** The composer's microphone stays usable
+  **during** a streaming reply, so you can start dictating your next message while
+  the agent is still writing its last one — no waiting for the turn to land.
+
+## 0.39 — Dead-end turns, made legible
+
+- **Turn errors and usage-limit hits surface in the UI.** A keeper turn can stop
+  *without* a normal reply — a subscription/usage-limit hit, the max-turns cap, or
+  an outright error. These used to leave a chat looking mysteriously dead. Each now
+  shows a distinct inline notice: a usage-limit note with the reset time, a
+  turn-limit note with a **Continue** button, or an error with **Retry**.
+
+![An inline 'Session limit reached' notice showing when the quota resets](../../assets/whats-new/turn-notice.png)
+
+- **Run-now + live status for triggers.** The **Triggers** tab regained a
+  **Run now** action to fire any schedule or event on demand, plus live run-status
+  and Last/Next-run columns — so you can test a trigger and watch it go without
+  waiting for its clock.
+- **Spawned chats can pick their model.** The `create_chat` / fork self-management
+  tools can now set the model of the chat they spawn, so a manager keeper can send
+  cheap work to a smaller model and hard work to a bigger one.
+- **Client-local slash commands render.** `/context` and `/usage` now show their
+  formatted output inline instead of an empty (or raw-XML) bubble.
 
 ## 0.38 — Send files & images to a keeper
 
