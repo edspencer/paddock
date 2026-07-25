@@ -764,6 +764,9 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
             parentProvenance: HUMAN_ROOT,
             includeWrite: deps.cfg.selfMcpWriteEnabled,
             includeTriggers,
+            // Project provisioning (#467) rides on the write block behind its own
+            // instance flag — no per-project override, so nothing to resolve here.
+            includeProjects: deps.cfg.selfMcpWriteEnabled && deps.cfg.selfMcpProjectsEnabled,
           });
         }
 

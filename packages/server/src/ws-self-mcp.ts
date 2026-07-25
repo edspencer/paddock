@@ -9,6 +9,7 @@
 import type { InjectedMcpServerDef } from "@herdctl/core";
 import type { ChatHandlerContext } from "./ws-context.js";
 import { keeperAgentName } from "./herdctl.js";
+import type { CreateProjectInput } from "./projects.js";
 import { isKnownModel, isKnownDriveMode, type DriveMode } from "./models.js";
 import {
   selfMcpServerDef,
@@ -124,9 +125,22 @@ export function buildSelfMcpServerDef(
    * meaningful when `includeWrite` is on — the trigger tools live in the write block.
    */
   includeTriggers: boolean;
+  /**
+   * Whether to additionally append the PROJECT tool (`create_project`, issue #467).
+   * Resolved by the caller from the instance `selfMcpProjectsEnabled` gate. Like
+   * `includeTriggers`, only meaningful when `includeWrite` is on — the project tool
+   * lives in the write block.
+   */
+  includeProjects: boolean;
 }): InjectedMcpServerDef {
-  const { currentProjectSlug, currentSessionId, parentProvenance, includeWrite, includeTriggers } =
-    params;
+  const {
+    currentProjectSlug,
+    currentSessionId,
+    parentProvenance,
+    includeWrite,
+    includeTriggers,
+    includeProjects,
+  } = params;
   const { deps, hub, startAgentTurn, composePreloadedPrompt, fireTrigger } = ctx;
 
   const selfMcpContext: SelfMcpContext = {
@@ -335,6 +349,42 @@ export function buildSelfMcpServerDef(
         if (changed && archived) {
           deps.events?.emit("onArchive", { slug: projectSlug, sessionId: targetSessionId });
         }
+      },
+      // Project provisioning (issue #467). Gated separately from the other write
+      // tools (`includeProjects`) because this is the one that creates
+      // instance-level state. The body is deliberately the SAME two calls, in the
+      // same order, that `POST /api/projects` makes — store create, then keeper
+      // registration — so the REST and MCP paths can't drift: all validation, the
+      // #187 repo clone and its rollback live in `ProjectStore.create`.
+      projectsMcpEnabled: includeProjects,
+      createProject: async (input) => {
+        // The handler already validated `status` against PROJECT_STATUSES (the same
+        // list ProjectStatus is derived from), so narrowing it here is sound — it's
+        // only `string` on the MCP input type to keep that module free of the
+        // project layer's types.
+        const project = await deps.projects.create({
+          ...input,
+          status: input.status as CreateProjectInput["status"],
+        });
+        // Mirror the route's non-fatal treatment: the project IS created even if
+        // registering its keeper/sweeper agents fails. Unlike the route (which only
+        // logs) we report it, since the agent's very next step is usually a
+        // `create_chat` into this project, which needs a live keeper.
+        let keeperRegistered = true;
+        try {
+          await deps.herdctl.ensureProjectAgent(project);
+        } catch {
+          keeperRegistered = false;
+        }
+        return {
+          slug: project.slug,
+          name: project.name,
+          dir: project.dir,
+          workingDir: project.workingDir,
+          repoBacked: project.repoBacked === true,
+          ...(project.repo ? { repo: project.repo } : {}),
+          keeperRegistered,
+        };
       },
       // Unified trigger management (Epic T / T3). Delegates to the shared T1
       // TriggerService (persist to project.yaml's single `triggers` block, then

@@ -12,7 +12,7 @@
  *   - `self-mcp-util.ts`         — result envelopes, clamps, arg coercion + caps
  *   - `self-mcp-descriptions.ts` — the agent-facing `*_DESC` prose
  *   - `self-mcp-read.ts`         — list_projects / list_chats / read_chat handlers
- *   - `self-mcp-write.ts`        — create/fork/send/archive/fork-batch handlers
+ *   - `self-mcp-write.ts`        — create/fork/send/archive/fork-batch + create_project handlers
  *   - `self-mcp-triggers.ts`     — list/set/remove/run trigger handlers
  *
  * ── How it reaches the keeper ───────────────────────────────────────────────
@@ -45,6 +45,7 @@ import {
   ARCHIVE_CHAT_DESC,
   UNARCHIVE_CHAT_DESC,
   FORK_CHAT_BATCH_DESC,
+  CREATE_PROJECT_DESC,
   SET_TRIGGER_DESC,
   REMOVE_TRIGGER_DESC,
   RUN_TRIGGER_DESC,
@@ -57,7 +58,9 @@ import {
   sendMessageHandler,
   archiveChatHandler,
   forkChatBatchHandler,
+  createProjectHandler,
 } from "./self-mcp-write.js";
+import { PROJECT_STATUSES } from "./project-types.js";
 import {
   listTriggersHandler,
   setTriggerHandler,
@@ -75,9 +78,12 @@ export type {
   SelfMcpTrigger,
   SelfMcpContext,
   SelfMcpWriteContext,
+  SelfMcpCreateProjectInput,
+  SelfMcpCreatedProject,
 } from "./self-mcp-types.js";
 export {
   FORK_BATCH_MAX,
+  redactPaths,
   READ_CHAT_DEFAULT_LIMIT,
   READ_CHAT_MAX_LIMIT,
   READ_CHAT_MAX_TEXT,
@@ -281,6 +287,52 @@ function writeTools(write: SelfMcpWriteContext): ServerTools {
 }
 
 /**
+ * The PROJECT tools (issue #467 — `create_project`). Appended only when
+ * {@link SelfMcpWriteContext.projectsMcpEnabled} is on: the same coarse binary gate
+ * as the trigger tools (when off the tool is ABSENT, not present-but-refusing). Its
+ * own flag because — unlike every other write tool — this one provisions
+ * instance-level state and clones a caller-supplied git URL.
+ */
+function projectTools(write: SelfMcpWriteContext): ServerTools {
+  return [
+    {
+      name: "create_project",
+      description: CREATE_PROJECT_DESC,
+      inputSchema: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Display name for the new project (required)." },
+          slug: {
+            type: "string",
+            description:
+              "Optional kebab-case url slug (a-z, 0-9, single hyphens). Omit to derive it from `name`.",
+          },
+          repo: {
+            type: "string",
+            description:
+              "Optional git URL (https://, git://, ssh:// or git@host:owner/repo). Supplying it " +
+              "makes the project REPO-BACKED: the repo is cloned into a nested checkout that " +
+              "becomes the keeper's working directory. Omit for a notebook project.",
+          },
+          summary: { type: "string", description: "Optional one-line description of the project." },
+          area: {
+            type: "string",
+            description: "Optional area/group the project is filed under in the sidebar.",
+          },
+          status: {
+            type: "string",
+            enum: [...PROJECT_STATUSES],
+            description: 'Optional initial status (default "active").',
+          },
+        },
+        required: ["name"],
+      },
+      handler: createProjectHandler(write),
+    },
+  ];
+}
+
+/**
  * The Epic T / T3 unified trigger-management tools (list/set/remove/run). Appended
  * only when {@link SelfMcpWriteContext.triggersMcpEnabled} is on — a coarse binary
  * gate: when off the tools are ABSENT (not present-but-refusing). These COLLAPSE
@@ -425,10 +477,12 @@ function triggerTools(write: SelfMcpWriteContext): ServerTools {
  * ALWAYS included. When a {@link SelfMcpWriteContext} is provided (the stricter
  * write flag is on), the WRITE tools (create_chat/fork_chat/send_message/
  * archive_chat/unarchive_chat/fork_chat_batch) are appended too; omit it for
- * unchanged read-only behavior. When that write context additionally has
- * {@link SelfMcpWriteContext.triggersMcpEnabled} on (the per-project trigger-MCP
- * opt-in, Epic T / T3), the unified trigger-management tools (list_triggers/
- * set_trigger/remove_trigger/run_trigger) are appended as well. Inject under
+ * unchanged read-only behavior. Two further blocks hang off independent gates ON
+ * that write context: {@link SelfMcpWriteContext.projectsMcpEnabled} (issue #467)
+ * appends the project tool (create_project), and
+ * {@link SelfMcpWriteContext.triggersMcpEnabled} (the per-project trigger-MCP
+ * opt-in, Epic T / T3) appends the unified trigger-management tools (list_triggers/
+ * set_trigger/remove_trigger/run_trigger). Inject under
  * {@link SELF_MCP_SERVER_KEY}.
  */
 export function selfMcpServerDef(
@@ -439,6 +493,9 @@ export function selfMcpServerDef(
 
   if (write) {
     tools.push(...writeTools(write));
+    if (write.projectsMcpEnabled) {
+      tools.push(...projectTools(write));
+    }
     if (write.triggersMcpEnabled) {
       tools.push(...triggerTools(write));
     }
@@ -463,6 +520,14 @@ export const SELF_MCP_WRITE_TOOL_NAMES = {
   archiveChat: `mcp__${SERVER_NAME}__archive_chat`,
   unarchiveChat: `mcp__${SERVER_NAME}__unarchive_chat`,
   forkChatBatch: `mcp__${SERVER_NAME}__fork_chat_batch`,
+} as const;
+
+/**
+ * The fully-qualified name of the PROJECT tool (issue #467), present only when a
+ * write context has {@link SelfMcpWriteContext.projectsMcpEnabled} on.
+ */
+export const SELF_MCP_PROJECT_TOOL_NAMES = {
+  createProject: `mcp__${SERVER_NAME}__create_project`,
 } as const;
 
 /**

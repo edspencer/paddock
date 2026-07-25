@@ -17,6 +17,45 @@ export interface SelfMcpProject {
   status: string;
 }
 
+/**
+ * The arguments `create_project` passes through to the create path (issue #467) —
+ * the subset of {@link import("./project-types.js").CreateProjectInput} the tool
+ * exposes, already trimmed + shape-validated by the handler. Deliberately a local
+ * declaration (not an import of `CreateProjectInput`) so this module keeps zero
+ * runtime coupling; the caller widens it back to the real input at the boundary.
+ */
+export interface SelfMcpCreateProjectInput {
+  name: string;
+  /** Explicit kebab-case slug; absent ⇒ the store derives one from `name`. */
+  slug?: string;
+  /** Git URL ⇒ a REPO-BACKED project (#187): cloned into a nested checkout. */
+  repo?: string;
+  summary?: string;
+  /** The project's area (persisted as `group`; `list_projects` reports it as `area`). */
+  group?: string;
+  status?: string;
+}
+
+/** A newly-created project as surfaced back to the agent (issue #467). */
+export interface SelfMcpCreatedProject {
+  slug: string;
+  name: string;
+  /** The project's metadata dir (OVERVIEW/CHANGELOG/`.chats` live here). */
+  dir: string;
+  /** The keeper's cwd — the nested checkout when repo-backed, else `dir`. */
+  workingDir: string;
+  /** Whether the project is backed by a cloned external repo (#187). */
+  repoBacked: boolean;
+  /** The repo URL when repo-backed, else undefined. */
+  repo?: string;
+  /**
+   * Whether the keeper agent registered. The REST create path treats a registration
+   * failure as non-fatal (the project IS created), so this mirrors it — but reports
+   * it, because a project with no live keeper can't take a `create_chat` yet.
+   */
+  keeperRegistered: boolean;
+}
+
 /** A chat as surfaced to the agent. */
 export interface SelfMcpChat {
   /** Owning project slug. */
@@ -141,6 +180,23 @@ export interface SelfMcpWriteContext {
   sendMessage: (projectSlug: string, sessionId: string, prompt: string) => Promise<void>;
   /** Set (or clear) a chat's archived flag (presentational metadata only). */
   setArchived: (projectSlug: string, sessionId: string, archived: boolean) => Promise<void>;
+  /**
+   * Whether the PROJECT tools (`create_project`, issue #467) are enabled for this
+   * instance — the `selfMcpProjectsEnabled` gate, resolved by the caller. When false
+   * the tool is NOT injected at all (absent, not present-but-refusing), the same
+   * binary discipline as {@link triggersMcpEnabled}.
+   */
+  projectsMcpEnabled: boolean;
+  /**
+   * Provision a whole new project and register its keeper agent — the SAME two steps
+   * `POST /api/projects` performs, in the same order (`ProjectStore.create` then
+   * `ensureProjectAgent`), so the REST and MCP paths cannot drift. All the real work
+   * (slug/repo validation, `project.yaml`, seeded CHANGELOG/CLAUDE.md, the #187
+   * repo-backed clone into a nested `.gitignore`d checkout WITH rollback on failure)
+   * stays in the store. Throws on a create failure; a keeper-registration failure is
+   * non-fatal (mirroring the route) and reported via `keeperRegistered`.
+   */
+  createProject: (input: SelfMcpCreateProjectInput) => Promise<SelfMcpCreatedProject>;
   /**
    * Whether the unified trigger-management MCP is enabled for THIS turn's project
    * (Epic T / T3 — the successor to the G5 hook-MCP gate, resolved from the SAME
