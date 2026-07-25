@@ -217,6 +217,23 @@ jobs:
           docker buildx imagetools inspect "${IMAGE}:${VERSION}"
           docker buildx imagetools inspect "${IMAGE}:${VERSION}-devbox"
 
+      # ---- stable-named ("latest") copies ----
+      # GitHub's `releases/latest/download/<asset>` redirect only resolves when
+      # <asset> has the SAME filename in every release, so the version-named
+      # paddock-<version>.tgz can't be reached that way. Attach an identical
+      # copy under a fixed name (paddock-latest.tgz) so
+      # releases/latest/download/paddock-latest.tgz always points at the newest
+      # build, while keeping the pinned paddock-<version>.tgz too. See #454.
+      - name: Stage stable-named tarball
+        run: |
+          set -euo pipefail
+          cp "paddock-${VERSION}.tgz" "paddock-latest.tgz"
+          # Regenerate the checksum against the stable filename so
+          # `sha256sum -c paddock-latest.tgz.sha256` verifies as-is.
+          ( command -v sha256sum >/dev/null \
+              && sha256sum "paddock-latest.tgz" \
+              || shasum -a 256 "paddock-latest.tgz" ) > "paddock-latest.tgz.sha256"
+
       # ---- GitHub Release (creates the v<version> tag at this SHA) ----
       - name: Create GitHub Release
         env:
@@ -226,4 +243,6 @@ jobs:
             --title "v${VERSION}" \
             --generate-notes \
             "paddock-${VERSION}.tgz" \
-            "paddock-${VERSION}.tgz.sha256"
+            "paddock-${VERSION}.tgz.sha256" \
+            "paddock-latest.tgz" \
+            "paddock-latest.tgz.sha256"
