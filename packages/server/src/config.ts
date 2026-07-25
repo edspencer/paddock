@@ -10,7 +10,12 @@ import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
 import YAML from "yaml";
-import { type DriveMode, KEEPER_DEFAULT_DRIVE_MODE, isKnownDriveMode } from "./models.js";
+import {
+  type DriveMode,
+  KEEPER_DEFAULT_DRIVE_MODE,
+  isKnownDriveMode,
+  isKnownModel,
+} from "./models.js";
 import { DEFAULT_MAX_SPAWN_DEPTH, isValidMaxSpawnDepth } from "./spawn-capability.js";
 import { type RecoveryConfig, DEFAULT_RECOVERY } from "./recovery-config.js";
 import { type CurationConfig, DEFAULT_CURATION } from "./curation-config.js";
@@ -122,6 +127,20 @@ export interface PaddockConfig {
    * `PADDOCK_KEEPER_DRIVE_MODE=batch` for the legacy one-shot `trigger()` path.
    */
   keeperDriveMode: DriveMode;
+  /**
+   * The instance ALLOW-LIST of offered models (issue #457 Step 2), by catalog id
+   * — which of the built-in {@link import("./models.js").MODELS} catalog the model
+   * picker + per-project default offer. `undefined` (the default, when neither
+   * `PADDOCK_MODELS` nor a YAML `models:` list is set) means "offer every catalog
+   * model" — fully backward-compatible. When set it is a validated, de-duped subset
+   * (unknown ids dropped; an empty result collapses back to the full catalog, so an
+   * instance never offers zero models). The catalog itself stays the source of each
+   * model's metadata and of {@link import("./models.js").isKnownModel}; this only
+   * narrows what's OFFERED. Resolved to concrete {@link ModelInfo} via
+   * {@link import("./models.js").resolveModels}. A per-project `models` override can
+   * narrow it further (never widen beyond this list).
+   */
+  models?: string[];
   /**
    * Whether keeper AND scratch agents use the native Claude Code system prompt +
    * project CLAUDE.md hierarchy (true, the default) instead of a terse Paddock
@@ -291,6 +310,13 @@ export interface PaddockConfigFile {
     maxUploadBytes?: number | string;
   };
   brand?: { name?: string; logo?: string; accent?: string };
+  /**
+   * Instance allow-list of offered models (issue #457 Step 2). A real array of
+   * catalog ids (or a comma-separated string, coerced the same way); a matching
+   * `PADDOCK_MODELS` env var (comma-separated) still overrides it (file < env).
+   * Absent ⇒ every catalog model is offered (unchanged behaviour).
+   */
+  models?: string[] | string;
   keeperDriveMode?: string;
   nativeSystemPrompt?: boolean | string;
   selfMcpEnabled?: boolean | string;
@@ -635,6 +661,7 @@ export function loadPaddockConfig(): PaddockConfig {
     auth: loadAuthConfig(file.auth),
     transcription: loadTranscriptionConfig(file.transcription),
     brand: loadBrandConfig(file.brand),
+    models: loadModels(file.models),
     keeperDriveMode: loadKeeperDriveMode(file.keeperDriveMode),
     nativeSystemPrompt: loadNativeSystemPrompt(file.nativeSystemPrompt),
     selfMcpEnabled: loadSelfMcpEnabled(file.selfMcpEnabled),
@@ -902,6 +929,39 @@ function loadSelfMcpEnabled(file?: PaddockConfigFile["selfMcpEnabled"]): boolean
 function loadNativeSystemPrompt(file?: PaddockConfigFile["nativeSystemPrompt"]): boolean {
   const raw = envOr("PADDOCK_KEEPER_NATIVE_PROMPT", fileOr(file, "true")).toLowerCase();
   return !(raw === "0" || raw === "false" || raw === "no");
+}
+
+/**
+ * Resolve the instance model allow-list (issue #457 Step 2), precedence
+ * env `PADDOCK_MODELS` (comma-separated ids) over YAML `models:` (a string array,
+ * or a comma-separated string coerced the same way) over the default (undefined ⇒
+ * every catalog model is offered). Each id is validated against the catalog with
+ * {@link isKnownModel}; unknown/blank/duplicate ids are dropped. If nothing valid
+ * survives — or the list was unset — the result is `undefined`, which downstream
+ * ({@link import("./models.js").resolveModels}) treats as "offer the full catalog",
+ * so an instance is never left with zero models.
+ */
+function loadModels(file?: PaddockConfigFile["models"]): string[] | undefined {
+  const env = envOpt("PADDOCK_MODELS");
+  const raw: string[] | undefined =
+    env !== undefined
+      ? env.split(",")
+      : Array.isArray(file)
+        ? file.map((v) => String(v))
+        : typeof file === "string"
+          ? file.split(",")
+          : undefined;
+  if (raw === undefined) return undefined;
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const item of raw) {
+    const id = item.trim();
+    if (!id || seen.has(id) || !isKnownModel(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  // Empty after filtering (all unknown/blank) ⇒ fall back to the full catalog.
+  return ids.length > 0 ? ids : undefined;
 }
 
 /**

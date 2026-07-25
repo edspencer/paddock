@@ -87,6 +87,13 @@ export interface ChatPaneProps {
    */
   projectModel?: string;
   /**
+   * The project's per-project offered-models allow-list (issue #457 Step 2), from
+   * the Project DTO. When non-empty it NARROWS this chat's model picker to that
+   * subset of the instance list; undefined/empty ⇒ the full instance list. Absent
+   * for scratch chats.
+   */
+  projectModels?: string[];
+  /**
    * When set, this is a FORK composer: the chat has no session id yet, and its
    * first message is sent with `forkFrom` so the server branches this source
    * session (resumes its context, writes to a brand-new id). Cleared naturally
@@ -136,6 +143,7 @@ export function ChatPane({
   isProjectChat = false,
   preloadAvailable = false,
   projectModel,
+  projectModels,
   forkParent,
   onOpenForkParent,
   autoFocus,
@@ -233,6 +241,17 @@ export function ChatPane({
 
   // The chat's default model: project model for project chats, else keeperDefault.
   const defaultModel = (isProjectChat ? projectModel : keeperDefault) ?? keeperDefault;
+
+  // The models OFFERED in this chat's picker (issue #457 Step 2): the instance list
+  // narrowed to the project's allow-list when it sets one, else the full instance
+  // list. Scratch chats (no `projectModels`) always get the full list.
+  const pickerModels = useMemo(
+    () =>
+      projectModels && projectModels.length > 0
+        ? models.filter((m) => projectModels.includes(m.id))
+        : models,
+    [models, projectModels],
+  );
 
   // Session id is kept in a ref (the WS sub needs the latest without re-subscribing).
   const sessionRef = useRef<string | null>(initialSessionId ?? null);
@@ -904,7 +923,7 @@ export function ChatPane({
             />
           )}
           <StatusRow
-            models={models}
+            models={pickerModels}
             model={model}
             onSelectModel={selectModel}
             usage={usage}

@@ -30,7 +30,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { parseDocument } from "yaml";
-import { DRIVE_MODES, KEEPER_DEFAULT_DRIVE_MODE } from "./models.js";
+import { DRIVE_MODES, KEEPER_DEFAULT_DRIVE_MODE, MODELS, isKnownModel } from "./models.js";
 import { DEFAULT_MAX_SPAWN_DEPTH, isValidMaxSpawnDepth } from "./spawn-capability.js";
 import { DEFAULT_RECOVERY } from "./recovery-config.js";
 import { DEFAULT_ATTACHMENTS, sanitizeAllowedTypes } from "./attachments-config.js";
@@ -155,6 +155,31 @@ const stringList = (raw: unknown): Coerced => {
   return list ? { ok: true, value: list } : { ok: false, error: "must be a non-empty list of type/extension strings" };
 };
 
+/**
+ * Coerce a raw model allow-list (issue #457 Step 2) into a de-duped list of
+ * KNOWN catalog ids. Accepts a real array or a comma-separated string. Rejects
+ * (400) an unknown id — operators pick from the built-in catalog by id, so a typo
+ * surfaces rather than silently offering nothing — and rejects an empty result
+ * (write at least one, or clear the whole field to fall back to the full catalog).
+ */
+const modelList = (raw: unknown): Coerced => {
+  const arr = Array.isArray(raw) ? raw : typeof raw === "string" ? raw.split(",") : null;
+  if (!arr) return { ok: false, error: "must be a list of model ids" };
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const item of arr) {
+    if (typeof item !== "string") continue;
+    const id = item.trim();
+    if (!id || seen.has(id)) continue;
+    if (!isKnownModel(id)) return { ok: false, error: `unknown model id: ${id}` };
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids.length > 0
+    ? { ok: true, value: ids }
+    : { ok: false, error: "must include at least one known model id" };
+};
+
 const LOG_LEVELS = ["trace", "debug", "info", "warn", "error", "fatal", "silent"] as const;
 
 // --- field catalog ----------------------------------------------------------
@@ -176,6 +201,7 @@ export const FIELDS: readonly FieldSpec[] = [
 
   // Capabilities.
   { key: "keeperDriveMode", group: "capabilities", label: "Keeper drive mode", help: "session = persistent (streaming + cross-turn autonomy); batch = legacy one-shot.", type: "enum", enumValues: DRIVE_MODES, envVars: ["PADDOCK_KEEPER_DRIVE_MODE"], default: KEEPER_DEFAULT_DRIVE_MODE, editable: true, coerce: oneOf(DRIVE_MODES) },
+  { key: "models", group: "capabilities", label: "Offered models", help: "Which built-in catalog models the picker offers, by id (e.g. claude-opus-5, claude-sonnet-5). Blank = offer all catalog models.", type: "string-list", envVars: ["PADDOCK_MODELS"], default: MODELS.map((m) => m.id), editable: true, coerce: modelList },
   { key: "nativeSystemPrompt", group: "capabilities", label: "Native system prompt", help: "Use Claude Code's native prompt + CLAUDE.md hierarchy (recommended).", type: "boolean", envVars: ["PADDOCK_KEEPER_NATIVE_PROMPT"], default: true, editable: true, coerce: asBool },
   { key: "selfMcpEnabled", group: "capabilities", label: "Self-management MCP (read)", help: "Let keepers list/read projects and other chats.", type: "boolean", envVars: ["PADDOCK_SELF_MCP"], default: false, editable: true, coerce: asBool },
   { key: "selfMcpWriteEnabled", group: "capabilities", label: "Self-management MCP (write)", help: "Let keepers create/fork/message chats (needs read enabled too).", type: "boolean", envVars: ["PADDOCK_SELF_MCP_WRITE"], default: false, editable: true, coerce: asBool },

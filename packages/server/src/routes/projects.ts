@@ -16,6 +16,7 @@ import {
   isKnownPermissionMode,
   isValidMaxTurns,
   isKnownDriveMode,
+  resolveModels,
   MAX_TURNS_LIMIT,
 } from "../models.js";
 import { isValidMaxSpawnDepth, MAX_SPAWN_DEPTH_LIMIT } from "../spawn-capability.js";
@@ -24,7 +25,8 @@ import { buildProjectChats, makeTriggerResolver } from "../chat-dto.js";
 import type { RouteCtx } from "../route-context.js";
 
 export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void {
-  const { projects, herdctl, git, archive, star, readState, runProvenance, readStateUser } = ctx;
+  const { projects, herdctl, git, archive, star, readState, runProvenance, readStateUser, cfg } =
+    ctx;
 
   app.get("/api/projects", async (req) => {
     // Fold a compact per-project list of `{ sessionId, lastTurnCompletedAt,
@@ -136,6 +138,28 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
         // bad) — these re-register the keeper, so a bad value must not persist.
         if (body.model !== undefined && !isKnownModel(body.model)) {
           return reply.code(400).send({ error: `Unknown model: ${body.model}`, code: "invalid" });
+        }
+        // Offered-models allow-list (issue #457 Step 2). `null` / an empty array is
+        // valid — it clears the per-project override (offer the instance list). A
+        // non-empty array must be a subset of the instance allow-list: each id must
+        // be a known catalog model AND currently offered by the instance (an
+        // operator can't offer a project a model the instance itself hides).
+        if (body.models !== undefined && body.models !== null) {
+          if (!Array.isArray(body.models)) {
+            return reply.code(400).send({ error: "models must be an array of ids", code: "invalid" });
+          }
+          const offered = new Set(resolveModels(cfg.models).map((m) => m.id));
+          for (const id of body.models) {
+            if (typeof id !== "string" || !isKnownModel(id)) {
+              return reply.code(400).send({ error: `Unknown model: ${String(id)}`, code: "invalid" });
+            }
+            if (!offered.has(id)) {
+              return reply.code(400).send({
+                error: `Model not offered by this instance: ${id}`,
+                code: "invalid",
+              });
+            }
+          }
         }
         if (body.permissionMode !== undefined && !isKnownPermissionMode(body.permissionMode)) {
           return reply

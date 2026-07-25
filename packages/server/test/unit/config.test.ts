@@ -491,3 +491,63 @@ describe("loadPaddockConfig: YAML instance-config file (#270)", () => {
     expect(cfg.auth.jwksUrl).toBe("https://idp.example/jwks");
   });
 });
+
+/**
+ * Instance offered-models allow-list (issue #457 Step 2): env `PADDOCK_MODELS`
+ * (comma-separated) over YAML `models:` (a string array) over the default
+ * (undefined ⇒ offer the full catalog). Unknown ids are dropped; an all-unknown /
+ * empty result falls back to undefined (the full catalog), so an instance is never
+ * left offering zero models.
+ */
+describe("loadPaddockConfig: models allow-list (#457)", () => {
+  const MODELS_ENV_KEYS = ["PADDOCK_DATA_DIR", "PADDOCK_CONFIG", "PADDOCK_MODELS"];
+  let dataDir: string;
+  let saved: Record<string, string | undefined>;
+
+  const writeConfig = (body: string): string => {
+    const p = path.join(dataDir, "paddock.config.yaml");
+    fs.writeFileSync(p, body, "utf8");
+    return p;
+  };
+
+  beforeEach(async () => {
+    dataDir = await makeTmpDir("paddock-config-models-");
+    saved = {};
+    for (const k of MODELS_ENV_KEYS) {
+      saved[k] = process.env[k];
+      delete process.env[k];
+    }
+    process.env.PADDOCK_DATA_DIR = dataDir;
+  });
+  afterEach(async () => {
+    for (const k of MODELS_ENV_KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+    await rmTmpDir(dataDir);
+  });
+
+  it("defaults to undefined (offer the full catalog) when neither env nor file set", () => {
+    expect(loadPaddockConfig().models).toBeUndefined();
+  });
+
+  it("reads a YAML `models:` array, dropping unknown ids and de-duping", () => {
+    writeConfig(
+      ["models:", "  - claude-opus-5", "  - gpt-4", "  - claude-sonnet-5", "  - claude-opus-5"].join(
+        "\n",
+      ) + "\n",
+    );
+    expect(loadPaddockConfig().models).toEqual(["claude-opus-5", "claude-sonnet-5"]);
+  });
+
+  it("env `PADDOCK_MODELS` (comma-separated) overrides the YAML list", () => {
+    writeConfig(["models:", "  - claude-opus-5"].join("\n") + "\n");
+    process.env.PADDOCK_MODELS = "claude-sonnet-5, claude-haiku-4-5-20251001";
+    expect(loadPaddockConfig().models).toEqual(["claude-sonnet-5", "claude-haiku-4-5-20251001"]);
+  });
+
+  it("falls back to undefined (full catalog) when every configured id is unknown", () => {
+    process.env.PADDOCK_MODELS = "gpt-4,gemini";
+    expect(loadPaddockConfig().models).toBeUndefined();
+  });
+});

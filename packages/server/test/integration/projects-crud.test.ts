@@ -166,6 +166,45 @@ describe("integration: project CRUD over REST (real fleet, fake claude)", () => 
     expect(cleared.project.maxSpawnDepth).toBeUndefined();
   });
 
+  it("PATCHes a per-project models allow-list and clears it back to inherit (#457)", async () => {
+    await t.app.inject({ method: "POST", url: "/api/projects", payload: { name: "Models Proj" } });
+    // A valid subset of the instance list (full catalog by default) is accepted;
+    // the override preserves the requested order (set membership — order is not
+    // load-bearing; the web resolves offered = instance list filtered to it).
+    const set = (
+      await t.app.inject({
+        method: "PATCH",
+        url: "/api/projects/models-proj",
+        payload: { models: ["claude-sonnet-5", "claude-opus-5"] },
+      })
+    ).json();
+    expect(set.project.models).toEqual(["claude-sonnet-5", "claude-opus-5"]);
+    // Re-reading reflects the persisted override.
+    const got = (
+      await t.app.inject({ method: "GET", url: "/api/projects/models-proj" })
+    ).json();
+    expect(got.project.models).toEqual(["claude-sonnet-5", "claude-opus-5"]);
+    // `null` clears it — the DTO drops the field so it offers the instance list.
+    const cleared = (
+      await t.app.inject({
+        method: "PATCH",
+        url: "/api/projects/models-proj",
+        payload: { models: null },
+      })
+    ).json();
+    expect(cleared.project.models).toBeUndefined();
+  });
+
+  it("rejects an unknown id in a per-project models allow-list with 400 (#457)", async () => {
+    await t.app.inject({ method: "POST", url: "/api/projects", payload: { name: "Bad Models" } });
+    const res = await t.app.inject({
+      method: "PATCH",
+      url: "/api/projects/bad-models",
+      payload: { models: ["claude-opus-5", "gpt-4"] },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
   it("pins and unpins a file", async () => {
     const created = (
       await t.app.inject({ method: "POST", url: "/api/projects", payload: { name: "Pin Proj" } })
@@ -188,5 +227,52 @@ describe("integration: project CRUD over REST (real fleet, fake claude)", () => 
       url: "/api/projects/pin-proj/pins/notes.md",
     });
     expect(unpin.json().project.pinned).toEqual([]);
+  });
+});
+
+/**
+ * A separate app whose instance offered-models allow-list is NARROWED via
+ * `PADDOCK_MODELS` (issue #457 Step 2): `/api/models` reflects the allow-list +
+ * the effective keeper default, and a per-project override may only subset it.
+ */
+describe("integration: instance models allow-list (#457)", () => {
+  let t: TestApp;
+
+  beforeAll(async () => {
+    // Narrow to two models, keeper default (opus-5) deliberately EXCLUDED so the
+    // effective default falls to the first offered model.
+    t = await startTestApp({ models: ["claude-sonnet-5", "claude-haiku-4-5-20251001"] });
+  });
+  afterAll(async () => {
+    await t.teardown();
+  });
+
+  it("GET /api/models reflects the allow-list + the effective keeper default", async () => {
+    const body = (await t.app.inject({ method: "GET", url: "/api/models" })).json();
+    expect(body.models.map((m: { id: string }) => m.id)).toEqual([
+      "claude-sonnet-5",
+      "claude-haiku-4-5-20251001",
+    ]);
+    // Keeper default (opus-5) isn't offered → the first offered model wins.
+    expect(body.keeperDefault).toBe("claude-sonnet-5");
+  });
+
+  it("accepts a per-project subset but rejects an id the instance hides (#457)", async () => {
+    await t.app.inject({ method: "POST", url: "/api/projects", payload: { name: "Subset Proj" } });
+    // Within the instance list → accepted.
+    const ok = await t.app.inject({
+      method: "PATCH",
+      url: "/api/projects/subset-proj",
+      payload: { models: ["claude-sonnet-5"] },
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().project.models).toEqual(["claude-sonnet-5"]);
+    // A known catalog model the INSTANCE doesn't offer → 400 (can't widen).
+    const bad = await t.app.inject({
+      method: "PATCH",
+      url: "/api/projects/subset-proj",
+      payload: { models: ["claude-opus-5"] },
+    });
+    expect(bad.statusCode).toBe(400);
   });
 });

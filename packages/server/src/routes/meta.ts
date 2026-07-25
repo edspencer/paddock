@@ -21,8 +21,8 @@ import {
 } from "../instance-config.js";
 import { TranscriptionError } from "../transcribe.js";
 import {
-  MODELS,
-  KEEPER_DEFAULT_MODEL,
+  resolveModels,
+  resolveKeeperDefault,
   SWEEPER_DEFAULT_MODEL,
 } from "../models.js";
 import { sendProjectError } from "../route-errors.js";
@@ -131,15 +131,21 @@ export function registerMetaRoutes(app: FastifyInstance, ctx: RouteCtx): void {
     },
   );
 
-  // Selectable models + the keeper/sweeper defaults (CONTRACT-v3 §3). Static —
-  // sourced from the models module so the picker and context meter agree.
-  // `keeperDriveModeDefault` is the box-wide `PADDOCK_KEEPER_DRIVE_MODE` (per
-  // instance, not static): the Settings tab shows it as the effective value a
-  // project inherits when its own `driveMode` is left on "Global default".
+  // Selectable models + the keeper/sweeper defaults (CONTRACT-v3 §3). The offered
+  // models are the instance ALLOW-LIST (issue #457 Step 2): the built-in catalog
+  // filtered to `cfg.models` (env `PADDOCK_MODELS` / YAML `models:`), so an
+  // operator can narrow the picker without touching the catalog's metadata. Unset
+  // ⇒ the full catalog (unchanged behaviour). `keeperDefault` is the EFFECTIVE
+  // default for that list (the keeper default if still offered, else the first
+  // offered model). `keeperDriveModeDefault` is the box-wide
+  // `PADDOCK_KEEPER_DRIVE_MODE` (per instance, not static): the Settings tab shows
+  // it as the effective value a project inherits when its own `driveMode` is left
+  // on "Global default".
   app.get("/api/models", async () => {
+    const models = resolveModels(cfg.models);
     return {
-      models: MODELS,
-      keeperDefault: KEEPER_DEFAULT_MODEL,
+      models,
+      keeperDefault: resolveKeeperDefault(models),
       sweeperDefault: SWEEPER_DEFAULT_MODEL,
       keeperDriveModeDefault: cfg.keeperDriveMode,
       // Box-wide max spawn depth (PADDOCK_MAX_SPAWN_DEPTH) a project inherits when

@@ -27,6 +27,7 @@ import {
   KEEPER_DEFAULT_PERMISSION_MODE,
   KEEPER_DEFAULT_MAX_TURNS,
   KEEPER_DEFAULT_DOCKER,
+  isKnownModel,
 } from "./models.js";
 import { cloneRepo } from "./git.js";
 import { sanitizeSchedules } from "./schedule-config.js";
@@ -92,6 +93,29 @@ const CLAUDE_CURATED_HEADING = "## Curated notes";
 
 /** Filename of the sidecar `.gitignore` that keeps a nested checkout out of the data repo. */
 const GITIGNORE_FILE = ".gitignore";
+
+/**
+ * Sanitise a per-project offered-models override (issue #457 Step 2): keep only
+ * known catalog ids, trimmed and de-duped, order-preserving. Returns `undefined`
+ * when the input isn't a usable non-empty list (absent / not an array / all
+ * unknown), so a project with no override — or a corrupt hand-edit — cleanly
+ * inherits the instance list rather than persisting/exposing a bad value. The
+ * subset-of-instance-list check is enforced separately at PATCH time (the store
+ * has no `cfg` handle); this is the shape/known-id backstop.
+ */
+function sanitizeModelsOverride(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const item of raw) {
+    if (typeof item !== "string") continue;
+    const id = item.trim();
+    if (!id || seen.has(id) || !isKnownModel(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids.length > 0 ? ids : undefined;
+}
 
 export class ProjectStore {
   constructor(private readonly root: string) {}
@@ -358,6 +382,7 @@ export class ProjectStore {
       recovery: recoveryPatch,
       attachments: attachmentsPatch,
       curation: curationPatch,
+      models: modelsPatch,
       ...rest
     } = patch;
     const next: ProjectYaml = {
@@ -410,6 +435,16 @@ export class ProjectStore {
       const clean = sanitizeCurationOverride(curationPatch);
       if (clean) next.curation = clean;
       else delete next.curation;
+    }
+    if (modelsPatch === null) {
+      // Clear the per-project override -> offer the instance list again (#457).
+      delete next.models;
+    } else if (modelsPatch !== undefined) {
+      // Sanitise; an empty/all-invalid list clears the override (undefined). The
+      // subset-of-instance-list check is enforced upstream at the route.
+      const clean = sanitizeModelsOverride(modelsPatch);
+      if (clean) next.models = clean;
+      else delete next.models;
     }
     await this.writeYaml(slug, next);
     return this.toDto(current.dir, next, await this.overviewExists(slug));
@@ -689,6 +724,14 @@ export class ProjectStore {
       // default (an absent model stays absent in the yaml so existing files
       // without `model` still round-trip unchanged).
       ...(typeof p.model === "string" ? { model: p.model } : {}),
+      // models allow-list (issue #457 Step 2): carried only when at least one known
+      // catalog id survives sanitization — an absent/all-invalid override stays
+      // absent so files without it round-trip unchanged, and the offered list is
+      // resolved against the instance list in the web, NOT baked concrete here.
+      ...(() => {
+        const m = sanitizeModelsOverride(p.models);
+        return m ? { models: m } : {};
+      })(),
       // Keeper-agent overrides (issue #12): same round-trip discipline as model
       // — carried only when present so files without them are unchanged.
       ...(typeof p.permissionMode === "string" ? { permissionMode: p.permissionMode } : {}),
@@ -809,6 +852,12 @@ export class ProjectStore {
       // Always concrete in the DTO: an absent on-disk model resolves to the
       // keeper default (CONTRACT-v3 §4).
       model: yaml.model ?? KEEPER_DEFAULT_MODEL,
+      // Offered-models override stays RAW (per-project only — resolved against the
+      // instance allow-list in the web, never baked concrete here; the `model`/
+      // `recovery` discipline), re-sanitised so a corrupt hand-edit never reaches
+      // the web. Absent ⇒ omitted (undefined), so the project offers the instance
+      // list (issue #457 Step 2).
+      models: sanitizeModelsOverride(yaml.models),
       // Keeper-agent overrides — always concrete in the DTO (issue #12).
       permissionMode: yaml.permissionMode ?? KEEPER_DEFAULT_PERMISSION_MODE,
       maxTurns: yaml.maxTurns ?? KEEPER_DEFAULT_MAX_TURNS,
