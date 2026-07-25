@@ -1,7 +1,7 @@
 /**
  * Chat (session) routes: the project-chat cluster (list / runs / usage / create /
- * messages / subagents / context / delete / rename / fork / archive / star / seen)
- * and the mirrored one-off scratch-chat cluster (incl. scratch→project promote).
+ * messages / subagents / context / delete / rename / fork / archive / star / seen /
+ * unread) and the mirrored one-off scratch-chat cluster (incl. scratch→project promote).
  * Chat SENDING happens over WS; these are the REST reads + lifecycle mutations.
  */
 import path from "node:path";
@@ -36,6 +36,7 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
     archive,
     star,
     readState,
+    unread,
     runProvenance,
     messageProvenance,
     events,
@@ -61,6 +62,7 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
       const user = readStateUser(req);
       const lastSeenOf = (s: DiscoveredSession) =>
         readState.getLastSeen(user, keeper, s.sessionId);
+      const unreadOf = (s: DiscoveredSession) => unread.isUnread(user, keeper, s.sessionId);
       const provenanceOf = (s: DiscoveredSession) => runProvenance.get(s.sessionId);
       const triggerOf = makeTriggerResolver(project);
       // No usage resolver — see the GET /api/projects/:slug route (issue #116).
@@ -76,6 +78,7 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
           provenanceOf,
           triggerOf,
           starredOf,
+          unreadOf,
         ),
       };
     } catch (err) {
@@ -287,9 +290,12 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
         const agent = await agentForSlug(req.params.slug);
         await cleanupAttachments(agent, req.params.sessionId);
         const removed = await herdctl.deleteSession(agent, req.params.sessionId);
-        // Drop any archived/starred flag so a future session id can't inherit it.
+        // Drop any archived/starred/unread flag so a future session id can't inherit it.
         await archive.setArchived(agent, req.params.sessionId, false).catch(() => undefined);
         await star.setStarred(agent, req.params.sessionId, false).catch(() => undefined);
+        await unread
+          .setUnread(readStateUser(req), agent, req.params.sessionId, false)
+          .catch(() => undefined);
         return reply.code(200).send({ ok: true, removed });
       } catch (err) {
         return sendProjectError(reply, err);
@@ -387,8 +393,31 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
           typeof req.body?.when === "number" && Number.isFinite(req.body.when)
             ? req.body.when
             : Date.now();
-        await readState.setLastSeen(readStateUser(req), agent, req.params.sessionId, when);
+        const user = readStateUser(req);
+        await readState.setLastSeen(user, agent, req.params.sessionId, when);
+        // Marking a chat seen also clears any MANUAL unread override (#458): once
+        // the user has viewed it, the "look at it again later" flag is spent.
+        await unread.setUnread(user, agent, req.params.sessionId, false).catch(() => undefined);
         return reply.code(200).send({ ok: true, lastSeen: when });
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  // Mark a project chat UNREAD (#458): set (or clear) the per-user MANUAL unread
+  // override, so a chat resurfaces its unread cue even after its last turn was
+  // seen — the email "mark as unread" pattern. Mirrors the archive/star toggles'
+  // shape (`{ unread?: boolean }`, defaults true). Clearing it is equivalent to
+  // marking seen; the client's toggle uses `/seen` for read and this for unread.
+  app.post<{ Params: { slug: string; sessionId: string }; Body: { unread?: boolean } }>(
+    "/api/projects/:slug/chats/:sessionId/unread",
+    async (req, reply) => {
+      try {
+        const agent = await agentForSlug(req.params.slug);
+        const flag = req.body?.unread !== false; // default true
+        await unread.setUnread(readStateUser(req), agent, req.params.sessionId, flag);
+        return reply.code(200).send({ ok: true, unread: flag });
       } catch (err) {
         return sendProjectError(reply, err);
       }
@@ -414,6 +443,7 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
             await runProvenance.get(s.sessionId).catch(() => null),
             undefined,
             await star.isStarred(SCRATCH_AGENT, s.sessionId).catch(() => false),
+            await unread.isUnread(user, SCRATCH_AGENT, s.sessionId).catch(() => false),
           ),
         ),
       ),
@@ -468,6 +498,9 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
         const removed = await herdctl.deleteSession(SCRATCH_AGENT, req.params.sessionId);
         await archive.setArchived(SCRATCH_AGENT, req.params.sessionId, false).catch(() => undefined);
         await star.setStarred(SCRATCH_AGENT, req.params.sessionId, false).catch(() => undefined);
+        await unread
+          .setUnread(readStateUser(req), SCRATCH_AGENT, req.params.sessionId, false)
+          .catch(() => undefined);
         return reply.code(200).send({ ok: true, removed });
       } catch (err) {
         return sendProjectError(reply, err);
@@ -514,8 +547,26 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
           typeof req.body?.when === "number" && Number.isFinite(req.body.when)
             ? req.body.when
             : Date.now();
-        await readState.setLastSeen(readStateUser(req), SCRATCH_AGENT, req.params.sessionId, when);
+        const user = readStateUser(req);
+        await readState.setLastSeen(user, SCRATCH_AGENT, req.params.sessionId, when);
+        // Also clear any manual unread override (#458) — same as the project variant.
+        await unread.setUnread(user, SCRATCH_AGENT, req.params.sessionId, false).catch(() => undefined);
         return reply.code(200).send({ ok: true, lastSeen: when });
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  // Mark a one-off (scratch) chat UNREAD (#458). Same manual override as the
+  // project variant.
+  app.post<{ Params: { sessionId: string }; Body: { unread?: boolean } }>(
+    "/api/chats/:sessionId/unread",
+    async (req, reply) => {
+      try {
+        const flag = req.body?.unread !== false; // default true
+        await unread.setUnread(readStateUser(req), SCRATCH_AGENT, req.params.sessionId, flag);
+        return reply.code(200).send({ ok: true, unread: flag });
       } catch (err) {
         return sendProjectError(reply, err);
       }

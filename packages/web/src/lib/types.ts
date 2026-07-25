@@ -335,6 +335,13 @@ export interface Chat {
    */
   lastSeen?: number;
   /**
+   * Whether the user MANUALLY flagged this chat unread (#458) — a per-user
+   * override layered on top of the derived unread signal, so a chat resurfaces
+   * its cue even after its last turn was seen ("look at it again in the
+   * morning"). Cleared when the chat is marked seen. Absent ⇒ not manually flagged.
+   */
+  unread?: boolean;
+  /**
    * Context-window fill as of the chat's last completed turn (for the usage
    * ring, issue #77) plus the chat's cumulative lifetime token totals and cost
    * estimate (issue #152). All present together, or all absent when the

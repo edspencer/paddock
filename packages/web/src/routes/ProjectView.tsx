@@ -164,11 +164,30 @@ export function ProjectView() {
   // The active chat session is the URL's sessionId (null = a fresh "new chat").
   const activeSession = routeSessionId ?? null;
 
+  // Clear a chat's MANUAL unread override (#458) in local state when it's marked
+  // seen. Stable (setChats identity is stable) so it doesn't churn markSeen and
+  // re-fire the auto-mark-seen effect.
+  const clearManualUnread = useCallback(
+    (id: string) =>
+      setChats((prev) =>
+        prev.map((c) => (c.sessionId === id && c.unread ? { ...c, unread: false } : c)),
+      ),
+    [],
+  );
+
   // Unread affordance (#160): owns liveUnread/seenVersion, folds server read-state
   // (#189), and derives the unread set + marks the focused chat seen. Takes the
   // WS-owned `runningSessions` (kept owned here so the fleet-wide set doesn't
-  // fragment) to flag chats that finish a turn while unfocused.
-  const { unread } = useUnreadChats({ slug, chats, view, activeSession, runningSessions });
+  // fragment) to flag chats that finish a turn while unfocused. `onSeen` clears
+  // the manual unread override (#458) whenever a chat is marked seen.
+  const { unread, markSeen } = useUnreadChats({
+    slug,
+    chats,
+    view,
+    activeSession,
+    runningSessions,
+    onSeen: clearManualUnread,
+  });
 
   // The chats actually rendered in the sidebar, after applying the search
   // filter (issue #96). Empty query -> the full list unchanged.
@@ -538,6 +557,33 @@ export function ProjectView() {
     [slug],
   );
 
+  // Toggle a chat's read/unread state (#458) — the sixth chat action. If the chat
+  // currently reads as unread (for ANY reason: manual flag, a live completion, or
+  // a turn finished while away), mark it seen (clears the manual flag + advances
+  // last-seen). Otherwise set the manual unread override so it resurfaces its cue
+  // later ("look at it again in the morning"), optimistically with rollback.
+  const toggleUnread = useCallback(
+    async (chat: Chat) => {
+      if (unread.has(chat.sessionId)) {
+        markSeen(chat.sessionId);
+        return;
+      }
+      setChats((prev) =>
+        prev.map((c) => (c.sessionId === chat.sessionId ? { ...c, unread: true } : c)),
+      );
+      try {
+        await api.markChatUnread(slug, chat.sessionId, true);
+      } catch (e) {
+        // Roll back the optimistic flag on failure.
+        setChats((prev) =>
+          prev.map((c) => (c.sessionId === chat.sessionId ? { ...c, unread: false } : c)),
+        );
+        setLoadErr(e instanceof Error ? e.message : "Failed to mark chat unread");
+      }
+    },
+    [unread, markSeen, slug],
+  );
+
   // Float starred chats to the top of a list while preserving the existing
   // (server, mtime-ordered) order within the starred and unstarred groups (#373).
   // `Array.filter` is a stable partition, so this is order-preserving.
@@ -760,6 +806,7 @@ export function ProjectView() {
           archiveChat={archiveChat}
           setDeletingChat={setDeletingChat}
           starChat={starChat}
+          toggleUnread={toggleUnread}
         />
 
         {/* Main: tabs + content. The active tab is derived from the URL. */}
