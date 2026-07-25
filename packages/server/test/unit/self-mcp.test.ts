@@ -12,7 +12,9 @@ import {
   SELF_MCP_SERVER_KEY,
   SELF_MCP_TOOL_NAMES,
   SELF_MCP_WRITE_TOOL_NAMES,
+  SELF_MCP_PROJECT_TOOL_NAMES,
   SELF_MCP_TRIGGER_TOOL_NAMES,
+  redactPaths,
   FORK_BATCH_MAX,
   coercePrompts,
   coerceToolList,
@@ -27,6 +29,7 @@ import {
   type SelfMcpChat,
   type SelfMcpMessage,
   type SelfMcpProject,
+  type SelfMcpCreateProjectInput,
 } from "../../src/self-mcp.js";
 
 type Result = { content: Array<{ type: string; text: string }>; isError?: boolean };
@@ -194,6 +197,7 @@ interface RecordingWrite extends SelfMcpWriteContext {
     forkChat: Array<{ projectSlug: string; sourceSessionId: string; prompt?: string; name?: string; model?: string }>;
     sendMessage: Array<{ projectSlug: string; sessionId: string; prompt: string }>;
     setArchived: Array<{ projectSlug: string; sessionId: string; archived: boolean }>;
+    createProject: SelfMcpCreateProjectInput[];
     setTrigger: Array<{ projectSlug: string; name: string; trigger: Record<string, unknown> }>;
     removeTrigger: Array<{ projectSlug: string; name: string }>;
     listTriggers: Array<{ projectSlug: string }>;
@@ -207,6 +211,7 @@ function fakeWrite(over: Partial<SelfMcpWriteContext> = {}): RecordingWrite {
     forkChat: [],
     sendMessage: [],
     setArchived: [],
+    createProject: [],
     setTrigger: [],
     removeTrigger: [],
     listTriggers: [],
@@ -229,6 +234,24 @@ function fakeWrite(over: Partial<SelfMcpWriteContext> = {}): RecordingWrite {
     },
     setArchived: async (projectSlug, sessionId, archived) => {
       calls.setArchived.push({ projectSlug, sessionId, archived });
+    },
+    // Project provisioning (#467): default OFF (its own instance opt-in) so the base
+    // 9-tool shape is unchanged; a test opts in via `fakeWrite({ projectsMcpEnabled: true })`.
+    projectsMcpEnabled: false,
+    createProject: async (input) => {
+      calls.createProject.push(input);
+      const slug = input.slug ?? input.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+      const dir = `/srv/paddock/projects/${slug}`;
+      return {
+        slug,
+        name: input.name,
+        dir,
+        // A repo-backed project's cwd is the nested checkout; a notebook's is its dir.
+        workingDir: input.repo ? `${dir}/checkout` : dir,
+        repoBacked: Boolean(input.repo),
+        ...(input.repo ? { repo: input.repo } : {}),
+        keeperRegistered: true,
+      };
     },
     // T3 unified trigger management: default OFF (per-project opt-in) so the base
     // 9-tool shape is unchanged; a test opts in via `fakeWrite({ triggersMcpEnabled: true })`.
@@ -889,5 +912,181 @@ describe("self-management MCP (trigger tools + per-project gate)", () => {
     expect(SELF_MCP_TRIGGER_TOOL_NAMES.setTrigger).toBe("mcp__paddock_manage__set_trigger");
     expect(SELF_MCP_TRIGGER_TOOL_NAMES.removeTrigger).toBe("mcp__paddock_manage__remove_trigger");
     expect(SELF_MCP_TRIGGER_TOOL_NAMES.runTrigger).toBe("mcp__paddock_manage__run_trigger");
+  });
+});
+
+// ── create_project (issue #467) ─────────────────────────────────────────────
+
+describe("self-management MCP (create_project)", () => {
+  it("is ABSENT unless projectsMcpEnabled is on — even with the write tools present", () => {
+    const off = selfMcpServerDef(fakeContext(), fakeWrite());
+    expect(off.tools.map((t) => t.name)).not.toContain("create_project");
+
+    const on = selfMcpServerDef(fakeContext(), fakeWrite({ projectsMcpEnabled: true }));
+    expect(on.tools.map((t) => t.name)).toContain("create_project");
+    // Its own gate — it does NOT drag the trigger tools in with it.
+    expect(on.tools.map((t) => t.name)).not.toContain("set_trigger");
+    expect(on.tools).toHaveLength(10);
+  });
+
+  it("is absent WITHOUT a write ctx at all (it lives in the write block)", () => {
+    const def = selfMcpServerDef(fakeContext());
+    expect(def.tools.map((t) => t.name)).not.toContain("create_project");
+  });
+
+  it("names the project tool as mcp__paddock_manage__create_project", () => {
+    expect(SELF_MCP_PROJECT_TOOL_NAMES.createProject).toBe("mcp__paddock_manage__create_project");
+  });
+
+  it("creates a NOTEBOOK project from just a name, deriving the slug", async () => {
+    const write = fakeWrite({ projectsMcpEnabled: true });
+    const { json } = await callWrite(write, "create_project", { name: "Paddock Deploy" });
+    expect(write.calls.createProject).toEqual([{ name: "Paddock Deploy" }]);
+    expect(json.created).toBe(true);
+    expect(json.slug).toBe("paddock-deploy");
+    expect(json.repoBacked).toBe(false);
+    expect(json.repo).toBeUndefined();
+    expect(json.workingDir).toBe(json.dir);
+    expect(json.keeperRegistered).toBe(true);
+  });
+
+  it("passes every optional field through, mapping `area` onto the project's group", async () => {
+    const write = fakeWrite({ projectsMcpEnabled: true });
+    const { json } = await callWrite(write, "create_project", {
+      name: "Hello World",
+      slug: "hello-world",
+      repo: "https://github.com/octocat/Hello-World",
+      summary: " a tiny public repo ",
+      area: " Homelab ",
+      status: "Idea",
+    });
+    expect(write.calls.createProject).toEqual([
+      {
+        name: "Hello World",
+        slug: "hello-world",
+        repo: "https://github.com/octocat/Hello-World",
+        summary: "a tiny public repo",
+        group: "Homelab",
+        status: "idea",
+      },
+    ]);
+    // Repo-backed: the keeper's cwd is the nested checkout, not the metadata dir.
+    expect(json.repoBacked).toBe(true);
+    expect(json.repo).toBe("https://github.com/octocat/Hello-World");
+    expect(json.workingDir).not.toBe(json.dir);
+  });
+
+  it("requires a non-blank name", async () => {
+    const write = fakeWrite({ projectsMcpEnabled: true });
+    for (const args of [{}, { name: "   " }, { name: 42 }]) {
+      const { result } = await callWrite(write, "create_project", args);
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("`name` is required");
+    }
+    expect(write.calls.createProject).toEqual([]);
+  });
+
+  it("rejects a non-kebab-case slug before touching the store", async () => {
+    const write = fakeWrite({ projectsMcpEnabled: true });
+    for (const slug of ["Not Kebab", "UPPER", "trailing-", "double--hyphen", "under_score"]) {
+      const { result } = await callWrite(write, "create_project", { name: "X", slug });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("invalid slug");
+    }
+    expect(write.calls.createProject).toEqual([]);
+  });
+
+  it("rejects a malformed repo URL before touching the store", async () => {
+    const write = fakeWrite({ projectsMcpEnabled: true });
+    const { result } = await callWrite(write, "create_project", {
+      name: "X",
+      repo: "github.com/octocat/Hello-World",
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("invalid repo URL");
+    expect(write.calls.createProject).toEqual([]);
+  });
+
+  it("rejects an unknown status, listing the valid ones", async () => {
+    const write = fakeWrite({ projectsMcpEnabled: true });
+    const { result } = await callWrite(write, "create_project", { name: "X", status: "wip" });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('unknown status "wip"');
+    expect(result.content[0].text).toContain("active");
+    expect(write.calls.createProject).toEqual([]);
+  });
+
+  it("surfaces a duplicate-slug store error as a clean isError", async () => {
+    const write = fakeWrite({
+      projectsMcpEnabled: true,
+      createProject: async () => {
+        throw new Error("Project already exists: paddock");
+      },
+    });
+    const { result } = await callWrite(write, "create_project", { name: "Paddock" });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toBe("Error creating project: Project already exists: paddock");
+  });
+
+  it("surfaces a CLONE FAILURE cleanly, keeping the repo URL but redacting server paths", async () => {
+    // What the real path throws: ProjectStore.create wraps cloneRepo, which wraps
+    // promisify(execFile) — whose message is git's WHOLE argv, destination included.
+    const write = fakeWrite({
+      projectsMcpEnabled: true,
+      createProject: async () => {
+        throw new Error(
+          "git clone failed: Command failed: git clone -- https://github.com/octocat/does-not-exist " +
+            "/srv/paddock/projects/nope/does-not-exist\n" +
+            "remote: Repository not found.\n" +
+            "fatal: repository 'https://github.com/octocat/does-not-exist/' not found\n",
+        );
+      },
+    });
+    const { result } = await callWrite(write, "create_project", {
+      name: "Nope",
+      repo: "https://github.com/octocat/does-not-exist",
+    });
+    expect(result.isError).toBe(true);
+    const text = result.content[0].text;
+    // The actionable parts survive…
+    expect(text).toContain("Repository not found");
+    expect(text).toContain("https://github.com/octocat/does-not-exist");
+    // …but the server's on-disk layout does not.
+    expect(text).not.toContain("/srv/paddock/projects");
+    expect(text).toContain("<path>");
+  });
+
+  it("reports keeperRegistered:false rather than failing when agent registration fails", async () => {
+    const write = fakeWrite({
+      projectsMcpEnabled: true,
+      createProject: async (input) => ({
+        slug: input.name,
+        name: input.name,
+        dir: "/srv/x",
+        workingDir: "/srv/x",
+        repoBacked: false,
+        keeperRegistered: false,
+      }),
+    });
+    const { result, json } = await callWrite(write, "create_project", { name: "x" });
+    expect(result.isError).toBeUndefined();
+    expect(json.created).toBe(true);
+    expect(json.keeperRegistered).toBe(false);
+  });
+});
+
+describe("redactPaths", () => {
+  it("strips multi-segment absolute paths but leaves URLs intact", () => {
+    expect(redactPaths("failed at /var/lib/paddock/projects/foo now")).toBe(
+      "failed at <path> now",
+    );
+    expect(redactPaths("cloning https://github.com/octocat/Hello-World.git")).toBe(
+      "cloning https://github.com/octocat/Hello-World.git",
+    );
+    expect(redactPaths("git clone -- git@github.com:octocat/Hello-World.git /srv/data/p/x")).toBe(
+      "git clone -- git@github.com:octocat/Hello-World.git <path>",
+    );
+    // Nothing path-like ⇒ unchanged.
+    expect(redactPaths("Project already exists: paddock")).toBe("Project already exists: paddock");
   });
 });

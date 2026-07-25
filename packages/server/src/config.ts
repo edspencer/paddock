@@ -194,6 +194,22 @@ export interface PaddockConfig {
    */
   selfMcpWriteEnabled: boolean;
   /**
+   * Whether keepers additionally get the self-management MCP **project** tools
+   * (issue #467) — `create_project`, which provisions a whole new project
+   * (directory + `project.yaml`, optionally a cloned repo-backed checkout) and
+   * registers its keeper agent. Driven by `PADDOCK_SELF_MCP_PROJECTS`; default OFF
+   * and only honored when {@link selfMcpWriteEnabled} is also on (the tool lives in
+   * the write block).
+   *
+   * Gated behind its OWN flag rather than folded into `selfMcpWriteEnabled` because
+   * every other write tool acts WITHIN an existing project, whereas this one mutates
+   * instance-level state (a new dir in the projects root, new long-lived agents) and
+   * runs `git clone` on a CALLER-SUPPLIED url. It is an operator-intent boundary, not
+   * a hard security one (a keeper with Bash in a write-enabled project can already
+   * clone what it likes) — but provisioning infrastructure should be opt-in.
+   */
+  selfMcpProjectsEnabled: boolean;
+  /**
    * Instance default for how deep a spawn tree may grow before spawned children
    * stop receiving the self-management MCP (issue #262 / DD-3). A spawned turn at
    * depth `d` gets the self-MCP (incl. write tools, so `send_message` exists and a
@@ -360,6 +376,7 @@ export interface PaddockConfigFile {
   nativeSystemPrompt?: boolean | string;
   selfMcpEnabled?: boolean | string;
   selfMcpWriteEnabled?: boolean | string;
+  selfMcpProjectsEnabled?: boolean | string;
   maxSpawnDepth?: number | string;
   scheduleMutationEnabled?: boolean | string;
   hooksMcpEnabled?: boolean | string;
@@ -712,6 +729,12 @@ export function loadPaddockConfig(): PaddockConfig {
     selfMcpEnabled: loadSelfMcpEnabled(file.selfMcpEnabled),
     selfMcpWriteEnabled:
       loadSelfMcpEnabled(file.selfMcpEnabled) && loadSelfMcpWriteEnabled(file.selfMcpWriteEnabled),
+    // Projects tool implies write implies read — the tool is appended in the write
+    // block, so both outer gates must be on for it to mean anything (issue #467).
+    selfMcpProjectsEnabled:
+      loadSelfMcpEnabled(file.selfMcpEnabled) &&
+      loadSelfMcpWriteEnabled(file.selfMcpWriteEnabled) &&
+      loadSelfMcpProjectsEnabled(file.selfMcpProjectsEnabled),
     maxSpawnDepth: loadMaxSpawnDepth(file.maxSpawnDepth),
     scheduleMutationEnabled: loadScheduleMutationEnabled(file.scheduleMutationEnabled),
     ...(() => {
@@ -983,6 +1006,17 @@ function loadHooksMcpEnabled(file?: PaddockConfigFile["hooksMcpEnabled"]): boole
  */
 function loadSelfMcpWriteEnabled(file?: PaddockConfigFile["selfMcpWriteEnabled"]): boolean {
   const raw = envOr("PADDOCK_SELF_MCP_WRITE", fileOr(file, "false")).toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes";
+}
+
+/**
+ * Resolve whether keepers additionally get the self-management MCP PROJECT tools
+ * (issue #467 — `create_project`). Defaults OFF; only takes effect when
+ * `PADDOCK_SELF_MCP` and `PADDOCK_SELF_MCP_WRITE` are also on (enforced at the call
+ * site above). Accepts 1/true/yes.
+ */
+function loadSelfMcpProjectsEnabled(file?: PaddockConfigFile["selfMcpProjectsEnabled"]): boolean {
+  const raw = envOr("PADDOCK_SELF_MCP_PROJECTS", fileOr(file, "false")).toLowerCase();
   return raw === "1" || raw === "true" || raw === "yes";
 }
 

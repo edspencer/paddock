@@ -78,6 +78,7 @@ export const READ_OPERATIONS = ["list_projects", "list_chats", "read_chat"] as c
 
 /** Chat write operations. The first four START TURNS (see the RCE note above). */
 export const WRITE_OPERATIONS = [
+  "create_project",
   "create_chat",
   "fork_chat",
   "send_message",
@@ -108,6 +109,22 @@ export const ALL_OPERATIONS: readonly string[] = [
  * execution on the host; kept as an explicit set so that fact stays greppable
  * and so docs/UI can warn on it.
  */
+/**
+ * Operations that grant code execution on the host, and so define the risk class
+ * a write scope really is. A superset of {@link TURN_SPAWNING_OPERATIONS}:
+ * `create_project` starts no turn, but it clones a CALLER-SUPPLIED git URL and
+ * creates instance-level state, which belongs in the same warning.
+ */
+export const HIGH_RISK_OPERATIONS: readonly string[] = [
+  "create_project",
+  "create_chat",
+  "fork_chat",
+  "fork_chat_batch",
+  "send_message",
+  "run_trigger",
+  "set_trigger",
+];
+
 export const TURN_SPAWNING_OPERATIONS: readonly string[] = [
   "create_chat",
   "fork_chat",
@@ -204,6 +221,11 @@ export function allowedOperations(scope: ManagementScope): string[] {
 /** True when `scope` grants at least one operation that starts a keeper turn. */
 export function grantsTurnSpawning(scope: ManagementScope): boolean {
   return TURN_SPAWNING_OPERATIONS.some((op) => isOperationAllowed(scope, op));
+}
+
+/** True when `scope` grants any operation that amounts to code execution. */
+export function grantsCodeExecution(scope: ManagementScope): boolean {
+  return HIGH_RISK_OPERATIONS.some((op) => isOperationAllowed(scope, op));
 }
 
 /**

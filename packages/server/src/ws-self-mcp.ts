@@ -5,8 +5,8 @@
  * What remains here is exactly the MCP-TRANSPORT concern: take a caller's built
  * {@link ManagementOps} and turn them into an {@link InjectedMcpServerDef}. The
  * operations themselves — and the policy that guards them — now live in
- * management-ops.ts, so a non-MCP caller (HTTP now, REST parity in #465) reaches
- * the same ops without going through this module.
+ * management-ops.ts, so a non-MCP caller (the `/mcp` transport now, REST parity
+ * in #465) reaches the same ops without going through this module.
  *
  * `forkKickoffPrompt` is re-exported for its existing importers (ws.ts re-exports
  * it in turn, and its unit test resolves it via ws.js).
@@ -27,8 +27,8 @@ export { forkKickoffPrompt } from "./management-ops.js";
 
 /**
  * Assemble an MCP server def from already-built, already-policed ops. This is
- * the seam M2's `/mcp` transport uses: authenticate → build ops for the
- * principal → hand them here.
+ * the seam the `/mcp` transport uses: authenticate → build ops for the principal
+ * → hand them here.
  */
 export function selfMcpServerDefForOps(
   ops: ManagementOps,
@@ -55,7 +55,16 @@ export function buildSelfMcpServerDef(
     currentSessionId: () => string | null;
     parentProvenance: RunProvenance;
     includeWrite: boolean;
+    /**
+     * Whether to additionally append the Epic T / T3 unified trigger-management
+     * tools. Resolved per-project by the caller from the REUSED hooks-MCP gate.
+     */
     includeTriggers: boolean;
+    /**
+     * Whether to expose `create_project` (#467) — its own instance-level gate,
+     * separate from the other write tools.
+     */
+    includeProjects: boolean;
   },
 ): InjectedMcpServerDef {
   const ops = buildManagementOps(ctx, params);
