@@ -344,7 +344,7 @@ export interface PaddockConfigFile {
  *
  * - `off`    — dictation disabled (default). No mic button in the composer.
  * - `remote` — POST audio to an OpenAI-compatible `/audio/transcriptions`
- *              endpoint (e.g. `http://192.168.1.200:8385/v1`). The same kind of
+ *              endpoint (e.g. `http://whisper.local:8385/v1`). The same kind of
  *              server HushPod points at.
  * - `local`  — run whisper.cpp on this box via nodejs-whisper (CPU; slower).
  */
@@ -356,7 +356,7 @@ export interface TranscriptionConfig {
   /** Whisper model name (e.g. `base`, `base.en`, `small`). */
   model: string;
   /**
-   * remote: OpenAI-compatible base URL, e.g. `http://192.168.1.200:8385/v1`.
+   * remote: OpenAI-compatible base URL, e.g. `http://whisper.local:8385/v1`.
    * `/audio/transcriptions` is appended. Required in `remote` mode.
    */
   endpoint?: string;

@@ -112,9 +112,9 @@ header. Each Authentik *application* exposes its own JWKS at
 ```bash
 PADDOCK_AUTH_MODE=jwt
 PADDOCK_AUTH_JWT_HEADER=X-authentik-jwt
-PADDOCK_AUTH_JWKS_URL=https://sso.valfenda.net/application/o/<app-slug>/jwks/
+PADDOCK_AUTH_JWKS_URL=https://sso.example.com/application/o/<app-slug>/jwks/
 # optional hardening:
-# PADDOCK_AUTH_JWT_ISSUER=https://sso.valfenda.net/application/o/<app-slug>/
+# PADDOCK_AUTH_JWT_ISSUER=https://sso.example.com/application/o/<app-slug>/
 # PADDOCK_AUTH_JWT_AUDIENCE=<client-id>
 ```
 

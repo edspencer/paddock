@@ -100,7 +100,7 @@ rm -rf /tmp/paddock-dev.*
 | `PADDOCK_DEV_PORT` *(Mode B)* | `5173` | Vite dev-server port. |
 | `PADDOCK_PROXY_TARGET` *(Mode B)* | `http://localhost:4000` | Backend origin the Vite dev server proxies `/api` + `/ws` to (WS target derived by swapping `http`→`ws`). |
 | `PADDOCK_WHISPER_MODE` | `off` (or `remote` if an endpoint is set) | Voice dictation backend: `off` \| `remote` \| `local`. |
-| `PADDOCK_WHISPER_ENDPOINT` | — | **remote:** OpenAI-compatible base URL, e.g. `http://192.168.1.200:8385/v1`. `/audio/transcriptions` is appended. |
+| `PADDOCK_WHISPER_ENDPOINT` | — | **remote:** OpenAI-compatible base URL, e.g. `http://whisper.local:8385/v1`. `/audio/transcriptions` is appended. |
 | `PADDOCK_WHISPER_MODEL` | `base` | Whisper model (`tiny`/`base`/`small`/…; `.en` variants for English-only). |
 | `PADDOCK_WHISPER_API_KEY` | — | **remote:** optional bearer token for the endpoint. |
 | `PADDOCK_WHISPER_LANGUAGE` | — | Optional spoken-language hint (e.g. `en`); unset ⇒ auto-detect. |
@@ -123,7 +123,7 @@ draft.
   server:
 
   ```bash
-  export PADDOCK_WHISPER_ENDPOINT=http://192.168.1.200:8385/v1
+  export PADDOCK_WHISPER_ENDPOINT=http://whisper.local:8385/v1
   export PADDOCK_WHISPER_MODEL=base
   ```
 
