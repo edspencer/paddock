@@ -9,9 +9,9 @@
  * constants — so changing the available models or a context limit is a one-file
  * edit here.
  *
- * Context limits (verified against the Models API): Fable 5, Opus 4.8 and
- * Sonnet 5 all have a 1,000,000-token context window; Haiku 4.5 is 200,000. On
- * the Max/CLI runtime the keeper agents run Opus 4.8 at its full 1M window, so
+ * Context limits (verified against the Models API): Opus 5, Fable 5, Opus 4.8
+ * and Sonnet 5 all have a 1,000,000-token context window; Haiku 4.5 is 200,000.
+ * On the Max/CLI runtime the keeper agents run Opus 5 at its full 1M window, so
  * the context meter must use 1M for it — otherwise a long chat reads >100%.
  */
 
@@ -50,6 +50,12 @@ export interface ModelInfo {
  */
 export const MODELS: ModelInfo[] = [
   {
+    id: "claude-opus-5",
+    label: "Opus 5",
+    contextLimit: 1_000_000,
+    pricing: { inputPer1M: 5, outputPer1M: 25 },
+  },
+  {
     id: "claude-opus-4-8",
     label: "Opus 4.8",
     contextLimit: 1_000_000,
@@ -76,7 +82,7 @@ export const MODELS: ModelInfo[] = [
 ];
 
 /** The model a project's keeper agent uses unless the project overrides it. */
-export const KEEPER_DEFAULT_MODEL = "claude-opus-4-8";
+export const KEEPER_DEFAULT_MODEL = "claude-opus-5";
 
 /**
  * Per-project keeper-agent settings surfaced in the project settings UI
