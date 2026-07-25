@@ -42,6 +42,33 @@ export function registerTriggerRoutes(app: FastifyInstance, ctx: RouteCtx): void
   // (folds in the G4 `GRANTABLE_TOOLS` list).
   app.get<{ Params: { slug: string } }>(
     "/api/projects/:slug/triggers",
+    {
+      schema: {
+        tags: ["Triggers"],
+        summary: "List a project's triggers plus the picker catalog",
+        description:
+          "Returns the project's trigger DTOs together with the Triggers-tab picker catalog. " +
+          "Success (200) is an object with `triggers` (array of trigger DTOs, each combining the " +
+          "`trigger` when-clause, the `run` definition, `enabled`, and derived fields like `agentName`), " +
+          "`grantableTools` (the tools an event/webhook trigger may be granted), `events` (the lifecycle " +
+          "events an event trigger can fire on), and `triggerTypes` (the supported trigger kinds).",
+        params: {
+          type: "object",
+          properties: {
+            slug: { type: "string", description: "Project slug." },
+          },
+          required: ["slug"],
+        },
+        response: {
+          200: {
+            description:
+              "The trigger DTO list plus picker catalog (`triggers`, `grantableTools`, `events`, `triggerTypes`).",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
     async (req, reply) => {
       if (!triggersGuard(reply)) return reply;
       try {
@@ -61,6 +88,31 @@ export function registerTriggerRoutes(app: FastifyInstance, ctx: RouteCtx): void
   // Get one trigger by name (404 when the project declares no such trigger).
   app.get<{ Params: { slug: string; name: string } }>(
     "/api/projects/:slug/triggers/:name",
+    {
+      schema: {
+        tags: ["Triggers"],
+        summary: "Get one trigger by name",
+        description:
+          "Fetches a single trigger's config by name. Success (200) is an object with a `trigger` field " +
+          "holding the trigger DTO (`trigger` when-clause + `run` + `enabled` + derived fields). Returns 404 " +
+          "when the project declares no trigger with that name.",
+        params: {
+          type: "object",
+          properties: {
+            slug: { type: "string", description: "Project slug." },
+            name: { type: "string", description: "Trigger name." },
+          },
+          required: ["slug", "name"],
+        },
+        response: {
+          200: {
+            description: "An object with a `trigger` field holding the trigger DTO.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
     async (req, reply) => {
       if (!triggersGuard(reply)) return reply;
       const { slug, name } = req.params;
@@ -82,6 +134,51 @@ export function registerTriggerRoutes(app: FastifyInstance, ctx: RouteCtx): void
   // — a full replace (unlike the self-MCP set_trigger, which patches partial edits).
   app.put<{ Params: { slug: string; name: string }; Body: unknown }>(
     "/api/projects/:slug/triggers/:name",
+    {
+      schema: {
+        tags: ["Triggers"],
+        summary: "Create or replace one trigger",
+        description:
+          "Creates or fully replaces a trigger keyed by name, persisting it to project.yaml then arming it. " +
+          "Enabling/disabling is this same route with `enabled` flipped. The body is the FULL trigger record: " +
+          "`trigger` is the WHEN clause — a discriminated union on `trigger.type` (`schedule` with `cron` xor " +
+          "`interval`; `event` with an `on` value such as `onArchive`/`afterTurn`; `webhook` with a `path`, " +
+          "shape-reserved) — `run` is the shared agent-run definition (prompt/promptFile, model, tools, etc.), " +
+          "and `enabled` is the on/off flag. Success (200) is an object with a `trigger` field holding the " +
+          "persisted trigger DTO. Returns 400 for an invalid name or malformed trigger definition.",
+        params: {
+          type: "object",
+          properties: {
+            slug: { type: "string", description: "Project slug." },
+            name: { type: "string", description: "Trigger name." },
+          },
+          required: ["slug", "name"],
+        },
+        body: {
+          // Documentation-only (no validation/coercion): accept any/empty body.
+          type: ["object", "null"],
+          additionalProperties: true,
+          properties: {
+            trigger: {
+              description:
+                "The WHEN clause: a discriminated union on `trigger.type` (`schedule`/`event`/`webhook`) with type-specific fields.",
+            },
+            run: {
+              description:
+                "The WHAT clause: the shared agent-run definition (prompt/promptFile, model, tools, session mode, etc.).",
+            },
+            enabled: { description: "Whether the trigger is armed; new triggers default disabled." },
+          },
+        },
+        response: {
+          200: {
+            description: "An object with a `trigger` field holding the persisted trigger DTO.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
     async (req, reply) => {
       if (!triggersGuard(reply)) return reply;
       const { slug, name } = req.params;
@@ -107,6 +204,31 @@ export function registerTriggerRoutes(app: FastifyInstance, ctx: RouteCtx): void
   // trigger's agent is torn down; a schedule trigger's forwarded entry is dropped).
   app.delete<{ Params: { slug: string; name: string } }>(
     "/api/projects/:slug/triggers/:name",
+    {
+      schema: {
+        tags: ["Triggers"],
+        summary: "Delete one trigger",
+        description:
+          "Removes a trigger from project.yaml AND disarms it (an event trigger's agent is torn down; a " +
+          "schedule trigger's forwarded entry is dropped). Success (200) is an object with `ok: true`, the " +
+          "`name`, and `removed` describing what was removed.",
+        params: {
+          type: "object",
+          properties: {
+            slug: { type: "string", description: "Project slug." },
+            name: { type: "string", description: "Trigger name." },
+          },
+          required: ["slug", "name"],
+        },
+        response: {
+          200: {
+            description: "An object with `ok`, `name`, and `removed`.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
     async (req, reply) => {
       if (!triggersGuard(reply)) return reply;
       const { slug, name } = req.params;
@@ -129,6 +251,32 @@ export function registerTriggerRoutes(app: FastifyInstance, ctx: RouteCtx): void
   // catalog. A static path segment — matched before `/:name` — so no trigger shadows it.
   app.get<{ Params: { slug: string } }>(
     "/api/projects/:slug/triggers/runtime",
+    {
+      schema: {
+        tags: ["Triggers"],
+        summary: "Live runtime state for a project's triggers",
+        description:
+          "Per-trigger live last-run / next-run / status, joining each trigger's config with herdctl runtime " +
+          "state (the cron scheduler's next-fire + status for schedule triggers, plus job records for last run). " +
+          "This is a static path segment, matched BEFORE `/:name`, so no trigger name shadows it. It is served " +
+          "as its own pollable endpoint (separate from the config list). Success (200) is an object with a " +
+          "`runtime` field describing each trigger's live state.",
+        params: {
+          type: "object",
+          properties: {
+            slug: { type: "string", description: "Project slug." },
+          },
+          required: ["slug"],
+        },
+        response: {
+          200: {
+            description: "An object with a `runtime` field describing each trigger's live last-run/next-run/status.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
     async (req, reply) => {
       if (!triggersGuard(reply)) return reply;
       try {
@@ -156,6 +304,33 @@ export function registerTriggerRoutes(app: FastifyInstance, ctx: RouteCtx): void
   // unknown trigger; 502 if the fire started no chat. Responds 202 with the session id.
   app.post<{ Params: { slug: string; name: string } }>(
     "/api/projects/:slug/triggers/:name/run",
+    {
+      schema: {
+        tags: ["Triggers"],
+        summary: "Run a trigger now",
+        description:
+          "Fires a trigger immediately (\"Run now\") through the same hub path a cron/event fire uses, producing " +
+          "a first-class badged run. Fires any trigger type regardless of its `enabled` flag. Success is 202 with " +
+          "an object containing `ok: true`, the `name`, and the started `sessionId`. Returns 503 when firing is " +
+          "unavailable, 404 for an unknown trigger, 409 for the post-turn curator trigger (not runnable on demand), " +
+          "and 502 if the fire started no chat.",
+        params: {
+          type: "object",
+          properties: {
+            slug: { type: "string", description: "Project slug." },
+            name: { type: "string", description: "Trigger name." },
+          },
+          required: ["slug", "name"],
+        },
+        response: {
+          202: {
+            description: "An object with `ok`, `name`, and the started `sessionId`.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
     async (req, reply) => {
       if (!triggersGuard(reply)) return reply;
       const { slug, name } = req.params;

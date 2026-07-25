@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Paddock HTTP API</title>
+    <meta
+      name="description"
+      content="HTTP API reference for Paddock — the keeper-agent platform. Generated from the server's route schemas."
+    />
+    <link rel="icon" type="image/png" href="./icon-192.png" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui.css" />
+    <style>
+      :root {
+        --paddock-accent: #c2603c;
+      }
+      body {
+        margin: 0;
+      }
+      /* Paddock-branded header (this static reference has no @fastify/swagger-ui
+         topbar). */
+      .paddock-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 20px;
+        background: #14181f;
+        border-bottom: 3px solid var(--paddock-accent);
+      }
+      .paddock-header img {
+        height: 34px;
+        width: 34px;
+        border-radius: 8px;
+      }
+      .paddock-header .name {
+        color: #fff;
+        font:
+          600 17px/1.2 system-ui,
+          -apple-system,
+          Segoe UI,
+          Roboto,
+          sans-serif;
+      }
+      .paddock-header .tag {
+        margin-left: auto;
+        color: #9aa4b2;
+        font:
+          400 12px/1.2 system-ui,
+          sans-serif;
+      }
+      .paddock-note {
+        padding: 8px 20px;
+        background: #fff7ed;
+        border-bottom: 1px solid #fed7aa;
+        color: #7c2d12;
+        font:
+          400 13px/1.4 system-ui,
+          sans-serif;
+      }
+      @media (prefers-color-scheme: dark) {
+        .paddock-note {
+          background: #1f1a17;
+          border-bottom-color: #7c2d12;
+          color: #fdba74;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="paddock-header">
+      <img src="./icon-192.png" alt="Paddock" />
+      <span class="name">Paddock HTTP API</span>
+      <span class="tag">reference · generated from route schemas</span>
+    </header>
+    <div class="paddock-note">
+      Static reference for the latest release — not connected to a live server, so <em>Try it out</em> is
+      disabled. Run a Paddock instance and open its <code>/open-api</code> to exercise the API against your
+      own server.
+    </div>
+    <div id="swagger-ui"></div>
+    <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui-bundle.js"></script>
+    <script>
+      window.ui = SwaggerUIBundle({
+        url: "./open-api.json",
+        dom_id: "#swagger-ui",
+        deepLinking: true,
+        docExpansion: "list",
+        defaultModelsExpandDepth: 0,
+        // Reference only — there is no server behind this static site, so hide the
+        // "Try it out" controls entirely (they would just fail).
+        supportedSubmitMethods: [],
+      });
+    </script>
+  </body>
+</html>

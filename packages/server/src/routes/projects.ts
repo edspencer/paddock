@@ -26,7 +26,25 @@ import type { RouteCtx } from "../route-context.js";
 export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void {
   const { projects, herdctl, git, archive, star, readState, runProvenance, readStateUser } = ctx;
 
-  app.get("/api/projects", async (req) => {
+  app.get(
+    "/api/projects",
+    {
+      schema: {
+        tags: ["Projects"],
+        summary: "List projects",
+        description:
+          "Returns `{ projects }`, an array of project objects. Each entry carries the project metadata plus a compact `chatTurns` array (per-chat `{ sessionId, lastTurnCompletedAt, lastSeen? }` for the sidebar UNREAD count) and a `dirty` uncommitted-file count.",
+        response: {
+          200: {
+            description:
+              "Object with a `projects` array; each item is a project object enriched with `chatTurns` and `dirty`.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
+    async (req) => {
     // Fold a compact per-project list of `{ sessionId, lastTurnCompletedAt,
     // lastSeen }` into the payload so the sidebar can compute each project's
     // UNREAD count (#161) server-backed (#189) — the completed-turn side comes
@@ -61,7 +79,46 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
     return { projects: projectsOut };
   });
 
-  app.post<{ Body: CreateProjectInput }>("/api/projects", async (req, reply) => {
+  app.post<{ Body: CreateProjectInput }>(
+    "/api/projects",
+    {
+      schema: {
+        tags: ["Projects"],
+        summary: "Create a project",
+        description:
+          "Creates a project from `CreateProjectInput` and registers its keeper/sweeper agents. Set `repo` to create a repo-backed project (cloned checkout as the keeper cwd); omit it for a notebook project. Responds 201 with `{ project }`.",
+        body: {
+          type: ["object", "null"],
+          additionalProperties: true,
+          properties: {
+            name: { description: "Human-readable project name." },
+            slug: { description: "URL slug (derived from name if omitted)." },
+            status: { description: "Project status." },
+            domain: {
+              description: "Domain tags for the project.",
+            },
+            group: { description: "Group the project belongs to." },
+            visibility: { description: "Project visibility." },
+            summary: { description: "Short project summary." },
+            links: {
+              description: "Related links for the project.",
+            },
+            repo: {
+              description: "External git repo URL to back this project (repo-backed if set).",
+            },
+          },
+          required: [],
+        },
+        response: {
+          201: {
+            description: "Object with the created `project`.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
+    async (req, reply) => {
     try {
       const project = await projects.create(req.body ?? ({} as CreateProjectInput));
       // Register the keeper + sweeper agents at runtime (fleet.addAgent).
@@ -76,7 +133,31 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
     }
   });
 
-  app.get<{ Params: { slug: string } }>("/api/projects/:slug", async (req, reply) => {
+  app.get<{ Params: { slug: string } }>(
+    "/api/projects/:slug",
+    {
+      schema: {
+        tags: ["Projects"],
+        summary: "Get a project",
+        description:
+          "Returns `{ project, changelog, chats }` — the project metadata, its raw CHANGELOG.md text, and its chats (sessions) enriched with archived/starred/last-seen/provenance/trigger flags. Per-chat usage rings are filled separately by the client.",
+        params: {
+          type: "object",
+          properties: {
+            slug: { type: "string", description: "Project slug." },
+          },
+          required: ["slug"],
+        },
+        response: {
+          200: {
+            description: "Object with `project`, `changelog` text, and a `chats` array.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
+    async (req, reply) => {
     try {
       const project = await projects.get(req.params.slug);
       // Enrich with changelog text + the project's chats (sessions).
@@ -129,6 +210,72 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
 
   app.patch<{ Params: { slug: string }; Body: UpdateProjectInput }>(
     "/api/projects/:slug",
+    {
+      schema: {
+        tags: ["Projects"],
+        summary: "Update a project",
+        description:
+          "Applies an `UpdateProjectInput` partial and re-registers the keeper. Keeper overrides (`model`, `permissionMode`, `maxTurns`, `docker`, `driveMode`, `maxSpawnDepth`, `hooksMcpEnabled`) are validated at runtime — an invalid value returns 400. Tri-state override fields accept `null` to clear the override. Responds with `{ project }`.",
+        params: {
+          type: "object",
+          properties: {
+            slug: { type: "string", description: "Project slug." },
+          },
+          required: ["slug"],
+        },
+        body: {
+          type: ["object", "null"],
+          additionalProperties: true,
+          properties: {
+            name: { description: "Human-readable project name." },
+            status: { description: "Project status." },
+            domain: {
+              description: "Domain tags.",
+            },
+            group: { description: "Group the project belongs to." },
+            visibility: { description: "Project visibility." },
+            summary: { description: "Short project summary." },
+            links: {
+              description: "Related links.",
+            },
+            model: { description: "Keeper model override (validated at runtime)." },
+            permissionMode: {
+              description: "Keeper permission mode override (validated at runtime).",
+            },
+            maxTurns: {
+              description: "Keeper max-turns override (validated at runtime).",
+            },
+            docker: { description: "Whether the keeper runs in Docker." },
+            driveMode: {
+              description: "Keeper drive-mode override; `null` clears it.",
+            },
+            maxSpawnDepth: {
+              description: "Max spawn-depth override; `null` clears it.",
+            },
+            hooksMcpEnabled: {
+              description: "Hook-management MCP override; `null` clears it.",
+            },
+            recovery: {
+              description: "Keeper-chat recovery override object; `null` clears it.",
+            },
+            attachments: {
+              description: "Inbound-attachment override object; `null` clears it.",
+            },
+            curation: {
+              description: "Sweeper-curation budget override object; `null` clears it.",
+            },
+          },
+          required: [],
+        },
+        response: {
+          200: {
+            description: "Object with the updated `project`.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
     async (req, reply) => {
       try {
         const body = req.body ?? {};
@@ -201,7 +348,31 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
 
   // Delete a project: remove its directory and unregister its keeper + sweeper
   // agents at runtime (fleet.removeAgent) — the inverse of the create flow.
-  app.delete<{ Params: { slug: string } }>("/api/projects/:slug", async (req, reply) => {
+  app.delete<{ Params: { slug: string } }>(
+    "/api/projects/:slug",
+    {
+      schema: {
+        tags: ["Projects"],
+        summary: "Delete a project",
+        description:
+          "Removes the project directory and unregisters its keeper + sweeper agents (the inverse of create). Responds with `{ ok: true, slug }`.",
+        params: {
+          type: "object",
+          properties: {
+            slug: { type: "string", description: "Project slug." },
+          },
+          required: ["slug"],
+        },
+        response: {
+          200: {
+            description: "Object with `ok: true` and the deleted project `slug`.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
+    async (req, reply) => {
     try {
       const project = await projects.remove(req.params.slug); // throws not_found
       try {
@@ -227,6 +398,38 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
   // On clone failure the notebook is left wholly intact (rollback in `promote()`).
   app.post<{ Params: { slug: string }; Body: { repo?: string } }>(
     "/api/projects/:slug/promote",
+    {
+      schema: {
+        tags: ["Projects"],
+        summary: "Promote a notebook project to repo-backed",
+        description:
+          "Clones `repo` into the project's nested checkout, flips the keeper cwd to it, and re-registers the keeper (keeping existing chats + metadata). A missing/blank `repo` returns 400; clone failure rolls back to the intact notebook. Responds with `{ project }`.",
+        params: {
+          type: "object",
+          properties: {
+            slug: { type: "string", description: "Project slug." },
+          },
+          required: ["slug"],
+        },
+        body: {
+          type: ["object", "null"],
+          additionalProperties: true,
+          properties: {
+            repo: {
+              description: "Git repo URL to clone and back the project with.",
+            },
+          },
+          required: [],
+        },
+        response: {
+          200: {
+            description: "Object with the promoted `project`.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
     async (req, reply) => {
       try {
         const repo = req.body?.repo;
@@ -258,6 +461,38 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
   // a noisy 409). Path-traversal guarded by ProjectStore.resolveInProject.
   app.get<{ Params: { slug: string }; Querystring: { path?: string } }>(
     "/api/projects/:slug/files",
+    {
+      schema: {
+        tags: ["Projects"],
+        summary: "List one level of a project's file tree",
+        description:
+          "Lists a single directory level. `?path=<subpath>` descends into a subdirectory (omitted/empty = project root). Returns `{ path, kind, entries }`: a directory yields `kind: \"dir\"` with `entries` (dirs first); a path naming a file yields `kind: \"file\"` with empty `entries` (200, not an error).",
+        params: {
+          type: "object",
+          properties: {
+            slug: { type: "string", description: "Project slug." },
+          },
+          required: ["slug"],
+        },
+        querystring: {
+          type: "object",
+          additionalProperties: true,
+          properties: {
+            path: {
+              type: "string",
+              description: "Subpath to descend into; omitted/empty = project root.",
+            },
+          },
+        },
+        response: {
+          200: {
+            description: "Object with `path`, `kind` (\"dir\" | \"file\"), and an `entries` array.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
     async (req, reply) => {
       try {
         await projects.get(req.params.slug);
@@ -279,7 +514,24 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
     },
   );
 
-  app.get<{ Params: { slug: string } }>("/api/projects/:slug/changelog", async (req, reply) => {
+  app.get<{ Params: { slug: string } }>(
+    "/api/projects/:slug/changelog",
+    {
+      schema: {
+        tags: ["Projects"],
+        summary: "Get a project's CHANGELOG.md",
+        description:
+          "Returns the raw CHANGELOG.md text with content-type `text/markdown; charset=utf-8` (empty string if none). No response schema — the body is raw markdown text, not JSON.",
+        params: {
+          type: "object",
+          properties: {
+            slug: { type: "string", description: "Project slug." },
+          },
+          required: ["slug"],
+        },
+      },
+    },
+    async (req, reply) => {
     try {
       await projects.get(req.params.slug);
       const content = await projects.readFile(req.params.slug, "CHANGELOG.md").catch(() => "");
@@ -292,7 +544,24 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
 
   // Raw OVERVIEW.md (the sweep-curated current-state context). Returns "" if
   // the project has no overview yet (issue #2).
-  app.get<{ Params: { slug: string } }>("/api/projects/:slug/overview", async (req, reply) => {
+  app.get<{ Params: { slug: string } }>(
+    "/api/projects/:slug/overview",
+    {
+      schema: {
+        tags: ["Projects"],
+        summary: "Get a project's OVERVIEW.md",
+        description:
+          "Returns the raw OVERVIEW.md text (sweep-curated current-state context) with content-type `text/markdown; charset=utf-8`; empty string if the project has no overview yet. No response schema — the body is raw markdown text, not JSON.",
+        params: {
+          type: "object",
+          properties: {
+            slug: { type: "string", description: "Project slug." },
+          },
+          required: ["slug"],
+        },
+      },
+    },
+    async (req, reply) => {
     try {
       await projects.get(req.params.slug); // 404s for unknown slug
       const content = await projects.readOverview(req.params.slug);
@@ -309,7 +578,31 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
   // a dedicated endpoint mirroring GET /api/models, not part of toChatDto. The
   // underlying listAgentCommands spawns a short-lived `claude` subprocess, so the
   // service memoizes the result per agent (see HerdctlService.listCommands).
-  app.get<{ Params: { slug: string } }>("/api/projects/:slug/commands", async (req, reply) => {
+  app.get<{ Params: { slug: string } }>(
+    "/api/projects/:slug/commands",
+    {
+      schema: {
+        tags: ["Projects"],
+        summary: "List a project's keeper slash commands",
+        description:
+          "Returns `{ commands }` — the slash commands available to the project's keeper agent (built-ins plus the project's `.claude/commands` and MCP-provided commands) for composer autocomplete. Result is memoized per agent.",
+        params: {
+          type: "object",
+          properties: {
+            slug: { type: "string", description: "Project slug." },
+          },
+          required: ["slug"],
+        },
+        response: {
+          200: {
+            description: "Object with a `commands` array.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
+    async (req, reply) => {
     try {
       await projects.get(req.params.slug); // 404s for unknown slug
       const commands = await herdctl.listCommands(keeperAgentName(req.params.slug));
@@ -330,6 +623,32 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
   // or HTML file can't execute script in the app's origin.
   app.get<{ Params: { slug: string; name: string }; Querystring: { raw?: string } }>(
     "/api/projects/:slug/files/:name",
+    {
+      schema: {
+        tags: ["Projects"],
+        summary: "Get a single project file",
+        description:
+          "Dual-mode. By default returns JSON with the file content plus a render-kind hint (markdown | html | text | image). With `?raw=1` it instead STREAMS the file's raw bytes with the correct Content-Type (locked down: sandbox CSP + nosniff + inline disposition) — how the image viewer loads an `<img>`. No response schema is declared so the raw byte stream is never corrupted.",
+        params: {
+          type: "object",
+          properties: {
+            slug: { type: "string", description: "Project slug." },
+            name: { type: "string", description: "URL-encoded file name." },
+          },
+          required: ["slug", "name"],
+        },
+        querystring: {
+          type: "object",
+          additionalProperties: true,
+          properties: {
+            raw: {
+              type: "string",
+              description: "Set to a truthy value (e.g. `1`) to stream raw bytes instead of JSON.",
+            },
+          },
+        },
+      },
+    },
     async (req, reply) => {
       try {
         await projects.get(req.params.slug); // 404s for unknown slug
@@ -354,6 +673,36 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
   // Pin a file as a sibling tab (issue #4). Validates the file exists + dedupes.
   app.put<{ Params: { slug: string }; Body: { file?: string } }>(
     "/api/projects/:slug/pins",
+    {
+      schema: {
+        tags: ["Projects"],
+        summary: "Pin a file as a sibling tab",
+        description:
+          "Pins `file` as a sibling tab (validates the file exists + dedupes). Responds with `{ project }` reflecting the updated pins.",
+        params: {
+          type: "object",
+          properties: {
+            slug: { type: "string", description: "Project slug." },
+          },
+          required: ["slug"],
+        },
+        body: {
+          type: ["object", "null"],
+          additionalProperties: true,
+          properties: {
+            file: { description: "Path of the file to pin." },
+          },
+          required: [],
+        },
+        response: {
+          200: {
+            description: "Object with the updated `project`.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
     async (req, reply) => {
       try {
         const project = await projects.pinFile(req.params.slug, req.body?.file ?? "");
@@ -367,6 +716,29 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
   // Unpin a file (URL-encoded name) (issue #4).
   app.delete<{ Params: { slug: string; file: string } }>(
     "/api/projects/:slug/pins/:file",
+    {
+      schema: {
+        tags: ["Projects"],
+        summary: "Unpin a file",
+        description:
+          "Removes the pin for the given URL-encoded file `name`. Responds with `{ project }` reflecting the updated pins.",
+        params: {
+          type: "object",
+          properties: {
+            slug: { type: "string", description: "Project slug." },
+            file: { type: "string", description: "URL-encoded name of the pinned file to remove." },
+          },
+          required: ["slug", "file"],
+        },
+        response: {
+          200: {
+            description: "Object with the updated `project`.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
     async (req, reply) => {
       try {
         const project = await projects.unpinFile(

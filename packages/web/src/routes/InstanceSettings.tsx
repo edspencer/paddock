@@ -116,7 +116,7 @@ export function InstanceSettings() {
           <MenuIcon width={20} height={20} />
         </button>
         <CogIcon width={18} height={18} className="shrink-0 text-paddock-400" />
-        <h1 className="text-[15px] font-semibold tracking-tight">Instance settings</h1>
+        <h1 className="text-[15px] font-semibold tracking-tight">Settings</h1>
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">

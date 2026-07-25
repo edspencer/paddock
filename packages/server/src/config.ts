@@ -82,6 +82,14 @@ export interface BrandConfig {
   accent: string;
 }
 
+/** OpenAPI / Swagger-UI reference surface config (see PaddockConfig.openapi). */
+export interface OpenApiConfig {
+  /** Mount the `/open-api` UI + `/open-api.json` spec. Default true. */
+  enabled: boolean;
+  /** Route prefix the UI is served under (raw spec at `<path>.json`). */
+  path: string;
+}
+
 export interface PaddockConfig {
   /** HTTP/WS port. */
   port: number;
@@ -114,6 +122,14 @@ export interface PaddockConfig {
   transcription: TranscriptionConfig;
   /** Per-instance branding (title/logo/accent; defaults preserve today's look). */
   brand: BrandConfig;
+  /**
+   * OpenAPI / Swagger-UI reference (the `/open-api` docs + `/open-api.json`
+   * spec, derived from the route schemas). `enabled` mounts or omits the whole
+   * surface. Driven by `PADDOCK_OPENAPI_ENABLED` (1/true/yes/on enable);
+   * default OFF (opt-in) — publishing the API surface map is a deliberate
+   * choice. Gated by the instance auth mode like any other route when enabled.
+   */
+  openapi: OpenApiConfig;
   /**
    * Global default for how keeper chat turns are driven (Paddock#111), used when
    * a project doesn't override `driveMode`. `session` by default (#316) — the
@@ -291,6 +307,7 @@ export interface PaddockConfigFile {
     maxUploadBytes?: number | string;
   };
   brand?: { name?: string; logo?: string; accent?: string };
+  openapi?: { enabled?: boolean | string; path?: string };
   keeperDriveMode?: string;
   nativeSystemPrompt?: boolean | string;
   selfMcpEnabled?: boolean | string;
@@ -648,6 +665,7 @@ export function loadPaddockConfig(): PaddockConfig {
     curation: loadCurationConfig(file.curation),
     logLevel: envOr("LOG_LEVEL", fileOr(file.logLevel, "info")),
     browserMcp: loadBrowserMcp(file.browserMcp),
+    openapi: loadOpenApiConfig(file.openapi),
     sweepMinIntervalMs: loadSweepMinIntervalMs(file.sweepMinIntervalMs),
     gitAuthor: {
       name: envOr("PADDOCK_GIT_AUTHOR_NAME", fileOr(file.gitAuthor?.name, "Paddock")),
@@ -718,6 +736,28 @@ function loadBrowserMcp(file?: PaddockConfigFile["browserMcp"]): boolean {
   if (env !== undefined) return env === "1";
   const raw = fileOpt(file)?.toLowerCase();
   return raw === "1" || raw === "true" || raw === "yes";
+}
+
+/**
+ * Resolve the OpenAPI reference config. `enabled` defaults OFF (opt-in):
+ * publishing the API surface is a deliberate choice, so it only mounts when
+ * `PADDOCK_OPENAPI_ENABLED` / YAML is a truthy value (1/true/yes/on). `path`
+ * (the UI route prefix) defaults `/open-api`; it is normalized to a leading
+ * slash with no trailing slash.
+ */
+function loadOpenApiConfig(file?: PaddockConfigFile["openapi"]): OpenApiConfig {
+  const rawEnabled = (
+    process.env.PADDOCK_OPENAPI_ENABLED ??
+    (file?.enabled === undefined ? undefined : String(file.enabled))
+  )?.toLowerCase();
+  const enabled =
+    rawEnabled === "1" || rawEnabled === "true" || rawEnabled === "yes" || rawEnabled === "on";
+
+  let path = envOpt("PADDOCK_OPENAPI_PATH") ?? fileOpt(file?.path) ?? "/open-api";
+  if (!path.startsWith("/")) path = "/" + path;
+  if (path.length > 1 && path.endsWith("/")) path = path.slice(0, -1);
+
+  return { enabled, path };
 }
 
 /**
