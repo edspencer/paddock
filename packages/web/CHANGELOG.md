@@ -1,5 +1,103 @@
 # @paddock/web
 
+## 0.45.0
+
+### Minor Changes
+
+- [#462](https://github.com/edspencer/paddock/pull/462) [`603b392`](https://github.com/edspencer/paddock/commit/603b392c4a289a54ed26801e8bf9ca02567260f9) Thanks [@edspencer](https://github.com/edspencer)! - feat(models): make the offered model list configurable per instance + per project
+
+  The built-in `MODELS` catalog stays the authoritative source of model metadata
+  (label / context limit / pricing) and the `isKnownModel` validation set. What
+  becomes configurable is the ALLOW-LIST of which catalog models are offered —
+  operators pick from the catalog by id, so they can't misconfigure a context
+  limit.
+
+  - **Instance allow-list.** New `models` config knob — env `PADDOCK_MODELS`
+    (comma-separated ids) over YAML `models:` (a string array) over the default
+    (unset ⇒ every catalog model, unchanged behaviour). Unknown ids are dropped;
+    an empty result collapses back to the full catalog, so an instance never
+    offers zero models. Editable from the Instance Settings screen.
+  - **`GET /api/models`** now returns the resolved instance allow-list and the
+    EFFECTIVE keeper default (the keeper default if still offered, else the first
+    offered model).
+  - **Per-project override.** New per-project `models` allow-list (`project.yaml`
+    - DTO + PATCH). It may only SUBSET the instance list — each id must be a known
+      catalog model AND currently offered by the instance (a 400 otherwise). The
+      Settings tab exposes a checkbox list; the per-project default and the per-chat
+      picker are constrained to the project's subset when it sets one.
+  - Backward-compatible: with nothing configured, every catalog model is offered
+    exactly as before.
+
+- [#457](https://github.com/edspencer/paddock/pull/457) [`d06133d`](https://github.com/edspencer/paddock/commit/d06133d9e19613feba8df3e52bd6b1a6225bd481) Thanks [@edspencer](https://github.com/edspencer)! - feat(models): add Claude Opus 5 and make it the default keeper model
+
+  Opus 5 (`claude-opus-5`) shipped 2026-07-24 — same $5/$25 per-MTok pricing as
+  Opus 4.8 but greatly improved performance for the same cost (stronger
+  verification/iteration, fewer reasoning tokens), and Anthropic's new default on
+  Claude Max, which is the tier Paddock's keeper agents run on.
+
+  - Add `claude-opus-5` as the first entry in the model picker (1M context
+    window, $5/$25 pricing) and set `KEEPER_DEFAULT_MODEL` to it, so new
+    projects and un-overridden keepers use Opus 5.
+  - Keep `claude-opus-4-8` selectable (non-default) for regression comparison and
+    prompts tuned to 4.8's behaviour.
+  - Sweeper/curator default is unchanged (`claude-haiku-4-5-20251001`).
+
+  No config-schema change: the picker list, `/api/models`, `isKnownModel`
+  validation, context meter, and cost math all read the one-file `models.ts`
+  catalog, so this is a catalog + default bump only. Making the available-model
+  list itself instance/project-configurable is scoped as a follow-up.
+
+### Patch Changes
+
+- [#452](https://github.com/edspencer/paddock/pull/452) [`de705a0`](https://github.com/edspencer/paddock/commit/de705a05e7e1fd3960612c01aecc623abf1d8a22) Thanks [@edspencer](https://github.com/edspencer)! - docs(website): link the `edspencer/paddock-deploy` recipes repo across the
+  entry-point pages, complementing the existing Guides coverage.
+
+  - **Getting started** gains a "Ready-made deploy recipes" pointer after the
+    docker-compose block, linking the repo and its `docker/` subdir.
+  - **Authentication** cross-links the `auth-basic/` Caddy sidecar as the turnkey
+    Tier-1 gate and points at the Securing ladder.
+  - **What's New** adds a 0.44 entry covering the two official images (`:latest`
+    base + `:devbox`) and the new `paddock-deploy` recipes repo.
+  - **Environment variables** links the deploy recipe's port-publish note to the
+    `docker/` recipe.
+
+- [#456](https://github.com/edspencer/paddock/pull/456) [`2f8e40c`](https://github.com/edspencer/paddock/commit/2f8e40ce2ce438dded74b69a7bba1e2454099f23) Thanks [@edspencer](https://github.com/edspencer)! - ci(release): also attach a stable-named `paddock-latest.tgz` (+ `.sha256`) to
+  each GitHub Release, alongside the existing pinned `paddock-<version>.tgz`.
+
+  GitHub's `releases/latest/download/<asset>` redirect only resolves when the
+  asset filename is identical across every release, so the version-named tarball
+  could never be fetched that way — the natural-looking
+  `releases/latest/download/paddock-latest.tgz` 404'd. The release job now uploads
+  an identical copy of the tarball under the fixed name `paddock-latest.tgz`, so
+  that URL always points at the newest release. Self-hosters and deploy recipes
+  can pick a floating (`paddock-latest.tgz`) or pinned (`paddock-<version>.tgz`)
+  download. Fixes #454.
+
+- [#460](https://github.com/edspencer/paddock/pull/460) [`b04947b`](https://github.com/edspencer/paddock/commit/b04947b030e1606a7e2b72f962687ac0ce016c05) Thanks [@edspencer](https://github.com/edspencer)! - docs(website): bring the **What's New** page up to date through v0.44.
+
+  The page previously jumped from the 0.44 entry straight to 0.38, so five
+  releases were missing and the 0.44 entry omitted the live sub-agent work. Adds
+  user-facing entries for **0.39 → 0.43** and rounds out **0.44**, each with
+  integrated full-page and cropped screenshots of the new UI:
+
+  - **0.44** — live-rendering of nested background sub-agent cards (#429).
+  - **0.43** — session-mode background work that survives the turn boundary and
+    delivers its result live on completion (#430).
+  - **0.42** — the instance-wide Settings screen (#385), per-project curation
+    budgets (#384), and pinning any file as a tab at any depth (#388).
+  - **0.41** — star/pin chats (#373), draggable & persisted pane widths (#374),
+    the one-row mobile header (#372), and the full-file sweeper with per-file
+    token budgets (#379).
+  - **0.40** — promote a notebook project to repo-backed in place (#213) and keep
+    the dictation mic usable while the keeper is replying (#365).
+  - **0.39** — surface turn errors & usage-limit hits as inline notices (#329),
+    Run-now + live run-status in the Triggers tab (#327), spawned-chat model
+    selection (#336), and client-local slash-command rendering (#158).
+
+  New screenshots under `website/src/assets/whats-new/`: `instance-settings.png`,
+  `curation-budgets.png`, `pinned-file-tabs.png`, `starred-chats.png`,
+  `turn-notice.png`.
+
 ## 0.44.0
 
 ### Minor Changes
