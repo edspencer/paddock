@@ -49,6 +49,12 @@ interface StartOptions {
    * bare app (no value) reports the GitHub feature as "not configured".
    */
   githubClientId?: string;
+  /**
+   * Instance offered-models allow-list (issue #457 Step 2). Sets `PADDOCK_MODELS`
+   * (comma-separated) before build so it lands in `cfg.models` — narrows what
+   * `/api/models` offers and what a per-project `models` override may subset.
+   */
+  models?: string[];
 }
 
 /**
@@ -83,6 +89,7 @@ export async function startTestApp(opts: StartOptions = {}): Promise<TestApp> {
     PADDOCK_SWEEP_MIN_INTERVAL_MS: process.env.PADDOCK_SWEEP_MIN_INTERVAL_MS,
     PADDOCK_KEEPER_DRIVE_MODE: process.env.PADDOCK_KEEPER_DRIVE_MODE,
     PADDOCK_GITHUB_CLIENT_ID: process.env.PADDOCK_GITHUB_CLIENT_ID,
+    PADDOCK_MODELS: process.env.PADDOCK_MODELS,
     LOG_LEVEL: process.env.LOG_LEVEL,
     HOST: process.env.HOST,
     PADDOCK_HOST: process.env.PADDOCK_HOST,
@@ -134,6 +141,12 @@ export async function startTestApp(opts: StartOptions = {}): Promise<TestApp> {
     process.env.PADDOCK_GITHUB_CLIENT_ID = opts.githubClientId;
   } else {
     delete process.env.PADDOCK_GITHUB_CLIENT_ID;
+  }
+
+  if (opts.models !== undefined) {
+    process.env.PADDOCK_MODELS = opts.models.join(",");
+  } else {
+    delete process.env.PADDOCK_MODELS;
   }
 
   if (opts.gitRepo) {

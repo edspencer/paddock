@@ -127,6 +127,18 @@ export interface ProjectYaml {
    */
   model?: string;
   /**
+   * Per-project ALLOW-LIST of offered models (issue #457 Step 2), by catalog id.
+   * Optional on disk: absent ⇒ this project offers the instance list
+   * (`cfg.models` resolved, else the full catalog). When set it NARROWS the picker
+   * to this subset — every id must be a known catalog model AND within the instance
+   * allow-list (enforced by PATCH validation); it never widens beyond the instance
+   * list. The picker's default `model` is constrained to this subset in the UI. Same
+   * round-trip discipline as `model` — carried only when present so files without it
+   * are unchanged, resolved against the instance list in the web (never baked
+   * concrete on disk).
+   */
+  models?: string[];
+  /**
    * Per-project keeper-agent overrides (issue #12). All optional on disk — an
    * absent value inherits the fleet default and resolves to the concrete default
    * in the DTO. `permissionMode`/`maxTurns`/`docker` (Docker isolation on/off).
@@ -309,6 +321,14 @@ export type UpdateProjectInput = Partial<
     | "docker"
   >
 > & {
+  /**
+   * Per-project offered-models allow-list (issue #457 Step 2). A non-empty string
+   * array sets the per-project override (each id validated known + within the
+   * instance allow-list); an empty array or `null` CLEARS it so the project offers
+   * the instance list again; `undefined`/absent leaves the current value untouched.
+   * Same tri-state discipline as `driveMode`.
+   */
+  models?: string[] | null;
   /**
    * Keeper drive mode (Paddock#111). A string sets a per-project override;
    * `null` CLEARS the override so the project inherits the box-wide global

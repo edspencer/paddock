@@ -914,6 +914,9 @@ export function ProjectView() {
               onTurnComplete={onTurnComplete}
               preloadAvailable={project.hasOverview}
               projectModel={project.model}
+              // Per-project offered-models allow-list (issue #457 Step 2); narrows
+              // this chat's model picker to the subset when the project sets one.
+              projectModels={project.models}
               // Per-project keeper-chat recovery override (issue #301); combined
               // with the instance default to gate the killed-task Continue button.
               projectRecovery={project.recovery}

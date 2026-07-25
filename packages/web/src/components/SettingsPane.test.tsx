@@ -107,6 +107,8 @@ describe("SettingsPane", () => {
       links: [],
       // Keeper settings default to the project's current (concrete) values.
       model: "claude-opus-4-8",
+      // No per-project offered-models override -> inherits the instance list (#457).
+      models: null,
       permissionMode: "acceptEdits",
       maxTurns: 200,
       docker: false,
@@ -226,6 +228,44 @@ describe("SettingsPane", () => {
       "p1",
       expect.objectContaining({ maxSpawnDepth: 0 }),
     );
+  });
+
+  it("offered models: unchecking one narrows the per-project allow-list (#457)", async () => {
+    const project = makeProject({ slug: "p1" });
+    render(<SettingsPane project={project} onSaved={vi.fn()} />);
+    // Wait for the instance model list to load (checkboxes render from it).
+    const haiku = (await screen.findByRole("checkbox", { name: "Haiku 4.5" })) as HTMLInputElement;
+    // Inheriting the instance list -> every model box is checked.
+    expect(haiku.checked).toBe(true);
+    expect(screen.getByText(/Offering all instance models/i)).toBeInTheDocument();
+
+    // Unchecking Haiku seeds the allow-list with every OTHER offered model.
+    fireEvent.click(haiku);
+    expect(haiku.checked).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    await waitFor(() => expect(updateProject).toHaveBeenCalledTimes(1));
+    const patch = updateProject.mock.calls[0][1] as { models: unknown };
+    expect(patch.models).toEqual(["claude-opus-4-8", "claude-sonnet-5"]);
+  });
+
+  it("offered models: prefills an allow-list and clears it back to inherit (#457)", async () => {
+    const project = makeProject({ slug: "p1", models: ["claude-sonnet-5"] });
+    render(<SettingsPane project={project} onSaved={vi.fn()} />);
+    const sonnet = (await screen.findByRole("checkbox", { name: "Sonnet 5" })) as HTMLInputElement;
+    const opus = (await screen.findByRole("checkbox", { name: "Opus 4.8" })) as HTMLInputElement;
+    // Only the override members are checked.
+    expect(sonnet.checked).toBe(true);
+    expect(opus.checked).toBe(false);
+    // The per-project default picker is constrained to the allow-list.
+    expect(screen.queryByRole("option", { name: "Haiku 4.5" })).not.toBeInTheDocument();
+
+    // "Offer all instance models" clears the override.
+    fireEvent.click(screen.getByRole("button", { name: /offer all instance models/i }));
+    fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    await waitFor(() => expect(updateProject).toHaveBeenCalledTimes(1));
+    const patch = updateProject.mock.calls[0][1] as { models: unknown };
+    expect(patch.models).toBeNull();
   });
 
   it("edits and persists labelled links", async () => {

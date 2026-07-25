@@ -85,6 +85,41 @@ export const MODELS: ModelInfo[] = [
 export const KEEPER_DEFAULT_MODEL = "claude-opus-5";
 
 /**
+ * Resolve the models OFFERED (the picker/allow-list) from an optional list of
+ * allowed ids (issue #457 Step 2). {@link MODELS} stays the authoritative CATALOG
+ * — the source of every model's metadata (label/contextLimit/pricing) and the
+ * validation set for {@link isKnownModel}; this only narrows WHICH catalog models
+ * an instance/project offers.
+ *
+ * - `allowIds` undefined or empty ⇒ every catalog model is offered (today's
+ *   behaviour, fully backward-compatible).
+ * - Otherwise the catalog is filtered to `allowIds`, PRESERVING catalog order and
+ *   metadata (the returned entries are the catalog's own `ModelInfo` objects, so
+ *   an operator can't set a wrong context limit — they only pick by id).
+ * - Unknown ids in `allowIds` are ignored (they aren't in the catalog).
+ *
+ * The result may be empty only when every id was unknown; callers that must never
+ * offer zero models (the config loader) collapse that back to the full catalog.
+ */
+export function resolveModels(allowIds?: string[]): ModelInfo[] {
+  if (!allowIds || allowIds.length === 0) return MODELS;
+  const allow = new Set(allowIds);
+  return MODELS.filter((m) => allow.has(m.id));
+}
+
+/**
+ * The effective keeper default for a resolved model list: {@link KEEPER_DEFAULT_MODEL}
+ * when it's still offered, else the first offered model's id (the list is in
+ * picker order, so the first entry is the natural default). Falls back to
+ * {@link KEEPER_DEFAULT_MODEL} when the list is empty, so callers always get a
+ * concrete id.
+ */
+export function resolveKeeperDefault(models: ModelInfo[]): string {
+  if (models.length === 0) return KEEPER_DEFAULT_MODEL;
+  return models.some((m) => m.id === KEEPER_DEFAULT_MODEL) ? KEEPER_DEFAULT_MODEL : models[0].id;
+}
+
+/**
  * Per-project keeper-agent settings surfaced in the project settings UI
  * (issue #12). These mirror the fleet-wide `defaults` in herdctl.ts so a project
  * that doesn't override a field inherits the same value it would have anyway —

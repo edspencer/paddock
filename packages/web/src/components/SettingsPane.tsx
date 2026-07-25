@@ -270,6 +270,9 @@ export function SettingsPane({
   const [links, setLinks] = useState<ProjectLink[]>(project.links ?? []);
   // Keeper-agent settings (issue #12 + Paddock#111).
   const [model, setModel] = useState(project.model);
+  // Per-project offered-models allow-list (issue #457 Step 2). [] = inherit the
+  // instance list (offer all); a non-empty subset narrows this project's picker.
+  const [allowedModels, setAllowedModels] = useState<string[]>(project.models ?? []);
   const [permissionMode, setPermissionMode] = useState(project.permissionMode);
   const [maxTurns, setMaxTurns] = useState(String(project.maxTurns));
   const [docker, setDocker] = useState(project.docker);
@@ -315,6 +318,7 @@ export function SettingsPane({
     setVisibility(project.visibility);
     setLinks(project.links ?? []);
     setModel(project.model);
+    setAllowedModels(project.models ?? []);
     setPermissionMode(project.permissionMode);
     setMaxTurns(String(project.maxTurns));
     setDocker(project.docker);
@@ -381,6 +385,10 @@ export function SettingsPane({
       visibility,
       links: cleanedLinks,
       model,
+      // "" -> [] is the "inherit the instance list" state; [] -> null CLEARS the
+      // per-project override (offer all instance models). `null` (not `undefined`)
+      // is required so JSON.stringify keeps the key and the server sees the reset.
+      models: allowedModels.length > 0 ? allowedModels : null,
       permissionMode,
       maxTurns: Number(maxTurns),
       docker,
@@ -403,6 +411,7 @@ export function SettingsPane({
       visibility,
       cleanedLinks,
       model,
+      allowedModels,
       permissionMode,
       maxTurns,
       docker,
@@ -424,6 +433,9 @@ export function SettingsPane({
       visibility: project.visibility,
       links: (project.links ?? []).map((l) => ({ label: l.label, url: l.url })),
       model: project.model,
+      // Normalize an absent override to null so it compares equal to the patch's
+      // [] -> null (clean when neither has an override).
+      models: project.models && project.models.length > 0 ? project.models : null,
       permissionMode: project.permissionMode,
       maxTurns: project.maxTurns,
       docker: project.docker,
@@ -477,6 +489,17 @@ export function SettingsPane({
   // The box-wide default label — what "Global default" resolves to, regardless
   // of the current (possibly overriding) selection.
   const defaultDriveLabel = driveModeDefault === "session" ? "Session" : "Batch";
+
+  // The models offered in the per-project default picker: the project's allow-list
+  // when it narrows one (issue #457 Step 2), else the full instance list.
+  const modelOptions =
+    allowedModels.length > 0 ? models.filter((m) => allowedModels.includes(m.id)) : models;
+
+  /** Toggle one model in/out of the per-project allow-list. */
+  const toggleAllowedModel = (id: string, on: boolean) =>
+    setAllowedModels((prev) =>
+      on ? [...prev.filter((x) => x !== id), id] : prev.filter((x) => x !== id),
+    );
 
   return (
     <form onSubmit={save} className="flex min-h-0 flex-1 flex-col">
@@ -663,9 +686,12 @@ export function SettingsPane({
                   <span className="field-label">Model</span>
                   <select className="input" value={model} onChange={(e) => setModel(e.target.value)}>
                     {/* Keep the current model selectable even if the list hasn't
-                        loaded (or it's since been removed from the picker). */}
-                    {!models.some((m) => m.id === model) && <option value={model}>{model}</option>}
-                    {models.map((m) => (
+                        loaded (or it's since been removed from the picker / narrowed
+                        out by the allow-list below). */}
+                    {!modelOptions.some((m) => m.id === model) && (
+                      <option value={model}>{model}</option>
+                    )}
+                    {modelOptions.map((m) => (
                       <option key={m.id} value={m.id}>
                         {m.label}
                       </option>
@@ -740,6 +766,65 @@ export function SettingsPane({
                   <Caution>Requires a working Docker daemon on the box, or the keeper won’t start.</Caution>
                 ) : (
                   <Hint>Isolate the keeper's tool calls in a container.</Hint>
+                )}
+              </div>
+              <div className="col-span-2 block">
+                <span className="field-label">Offered models</span>
+                {models.length === 0 ? (
+                  <p className="mt-1 text-[12px] italic text-paddock-400">
+                    Loading the instance model list…
+                  </p>
+                ) : (
+                  <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1.5">
+                    {models.map((m) => {
+                      const on = allowedModels.length === 0 || allowedModels.includes(m.id);
+                      return (
+                        <label
+                          key={m.id}
+                          className="flex cursor-pointer items-center gap-2 text-sm text-paddock-700 dark:text-paddock-200"
+                        >
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 accent-accent"
+                            checked={on}
+                            // When inheriting (no override yet), the first UNCHECK
+                            // seeds the allow-list with every OTHER model, so the box
+                            // the user just cleared is the one dropped.
+                            onChange={(e) => {
+                              if (allowedModels.length === 0) {
+                                setAllowedModels(
+                                  e.target.checked ? [] : models.filter((x) => x.id !== m.id).map((x) => x.id),
+                                );
+                              } else {
+                                toggleAllowedModel(m.id, e.target.checked);
+                              }
+                            }}
+                            aria-label={m.label}
+                          />
+                          <span>{m.label}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+                {allowedModels.length === 0 ? (
+                  <Hint>
+                    Offering all instance models. Uncheck any to restrict this project's picker to a
+                    subset; the model default above is then constrained to it.
+                  </Hint>
+                ) : (
+                  <Hint>
+                    Restricting this project's picker to {allowedModels.length} of {models.length}{" "}
+                    instance models.{" "}
+                    <button
+                      type="button"
+                      onClick={() => setAllowedModels([])}
+                      className="font-medium text-accent hover:underline"
+                    >
+                      Offer all instance models
+                    </button>
+                    .
+                  </Hint>
                 )}
               </div>
               <div className="col-span-2 block">
