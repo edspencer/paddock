@@ -1,5 +1,174 @@
 # @paddock/web
 
+## 0.46.0
+
+### Minor Changes
+
+- [#469](https://github.com/edspencer/paddock/pull/469) [`423d1fb`](https://github.com/edspencer/paddock/commit/423d1fba7d2c9c632fab17b3aeccaf44e91f5d2d) Thanks [@edspencer](https://github.com/edspencer)! - Self-management MCP: add `create_project` so a keeper can provision a project (#467)
+
+  Keepers could create chats inside an existing project but never the project itself,
+  so agent-driven setup always stopped to ask a human to click **New project** (and an
+  on-box `curl` to `POST /api/projects` has no credential on a JWT instance).
+
+  `create_project` takes `name` (required) plus optional `slug`, `repo`, `summary`,
+  `area` and `status`, and returns the new slug, working dir and whether it is
+  repo-backed. Passing a `repo` git URL creates a repo-backed project — cloned into a
+  nested checkout that becomes the keeper's cwd, with the existing rollback-on-clone-
+  failure behaviour, so a bad URL leaves no half-made project behind. Under the hood it
+  calls the same `ProjectStore.create` + `ensureProjectAgent` pair `POST /api/projects`
+  does, so the REST and MCP paths can't drift.
+
+  Gated behind a new instance flag `selfMcpProjectsEnabled` / `PADDOCK_SELF_MCP_PROJECTS`
+  (default OFF, only honoured when the self-MCP write tools are also on). It gets its own
+  switch rather than riding on `selfMcpWriteEnabled` because — unlike every other write
+  tool — it creates instance-level state and clones a caller-supplied git URL. Existing
+  deployments see no change to their tool surface.
+
+- [#472](https://github.com/edspencer/paddock/pull/472) [`c0e0436`](https://github.com/edspencer/paddock/commit/c0e0436d8233a612104b627ee632abd33163dd6b) Thanks [@edspencer](https://github.com/edspencer)! - feat(management-api): mount the streamable-HTTP MCP transport at `/mcp` (#312 M2).
+
+  Stacked on the M1 policy layer. An external MCP client — a laptop Claude Code
+  session, or eventually a peer Paddock — can now drive the management operations
+  over HTTP, bounded by the scope its credential carries.
+
+  The toolset is **not** redefined for external callers: the same
+  `InjectedMcpServerDef` a keeper receives in-process is adapted onto the MCP SDK,
+  so adding a self-MCP tool exposes it over `/mcp` with no further work, and a
+  client's toolset upgrades when the server does.
+
+  - **Transport:** `@modelcontextprotocol/sdk@1.29.0` (protocol revision
+    `2025-11-25`), `WebStandardStreamableHTTPServerTransport`, **stateless** — a
+    fresh server and transport per request, so there is no session store, restarts
+    are transparent, and one principal's tool visibility cannot leak into another's
+    session. Implemented against the low-level `Server` so the existing
+    hand-written JSON Schemas pass through verbatim rather than round-tripping
+    through Zod.
+  - **Scope shapes the wire.** A read-only client is _offered_ only read verbs, and
+    a call to a verb it wasn't offered is refused rather than executed. Project
+    scoping keeps the M1 split: enumerations filter, explicitly-addressed targets
+    are denied.
+  - **`GET`/`DELETE` answer `405`.** In stateless mode a `GET` would open an SSE
+    stream that never emits, leaving the client waiting on a header-less socket.
+  - **Response headers are flushed before the body.** Node buffers `writeHead()`
+    until the first byte, so a slow tool call — and every turn-spawning operation
+    is one — would otherwise stall the _headers_ for its whole duration and read as
+    a hang to any proxy with a response-header timeout.
+  - **RFC 9728 discovery** at the path-inserted
+    `/.well-known/oauth-protected-resource/mcp` (plus the root form), served
+    unauthenticated with permissive CORS — a client fetches it before holding any
+    credential. Published **only when `managementApi.authorizationServers` is
+    configured**: the MCP spec makes `authorization_servers` mandatory, and a
+    token-only deployment has none, so it publishes nothing rather than a document
+    that sends clients hunting for an authorization server that doesn't exist.
+  - **OAuth scopes** (`paddock:read` / `paddock:write`) are a coarse projection of
+    the fine-grained operation lists, used only in challenges and discovery —
+    because those are read by humans on a consent screen. Authorization is still
+    decided on the operation list.
+
+- [#471](https://github.com/edspencer/paddock/pull/471) [`a37a8e5`](https://github.com/edspencer/paddock/commit/a37a8e53daefa32637b20844a77209d5d89f83a6) Thanks [@edspencer](https://github.com/edspencer)! - feat(management-api): policy layer + config-token authentication for external callers (#312 M1).
+
+  The first half of Phase 3 of the self-management MCP epic (#214): everything an
+  external caller needs _except_ the MCP transport itself, which lands in M2. The
+  `/mcp` endpoint exists and authenticates, but answers `501` until the transport
+  is mounted.
+
+  Management-API auth is **entirely self-contained** — independent of
+  `PADDOCK_AUTH_MODE` and of any reverse proxy. Paddock authenticates `/mcp`
+  itself, so it stays credential-gated even at `auth.mode: none`, and a proxy is
+  never a prerequisite for running Paddock.
+
+  - **Ops layer split out of the MCP transport.** `buildSelfMcpServerDef` used to
+    build the operation callbacks _and_ assemble the MCP server def in one
+    function, so a non-MCP caller couldn't reach the operations.
+    `buildManagementOps` now constructs them alone; `ws-self-mcp.ts` is reduced to
+    transport assembly. `makeChatHandler` additionally returns the shared ops
+    context, threaded through `app.ts` into the route layer beside the existing
+    `fireTrigger`.
+  - **Policy is enforced at the ops layer, not per-transport.** Every operation is
+    checked against a `ManagementPrincipal` centrally, so the REST parity work in
+    #465 inherits identical auth + scope rather than reimplementing it and
+    drifting. Enumerating operations filter to the permitted projects; operations
+    naming a target assert, and raise a denial the transport maps to `403` +
+    `WWW-Authenticate: … error="insufficient_scope"`. The in-process keeper path
+    runs under a full-trust internal principal (it is bounded by depth, not scope)
+    and bypasses the wrapper, so keeper behaviour is unchanged.
+  - **Read-only by default.** Any write scope is effectively remote code execution
+    on the host — `create_chat` / `send_message` / `fork_chat*` / `run_trigger`
+    start keeper turns, and a keeper has `Bash` — so a client configured without an
+    explicit scope gets the risk class that cannot execute code, and a scope that
+    does grant it is called out loudly at boot.
+  - **Config tokens are referenced, never inlined.** `auth: { ref: "env:VAR" }`;
+    an inline secret in the git-tracked config file is a hard error. A credential
+    that won't resolve (unset, or below the length floor) drops _that client_ and
+    leaves the rest working. Comparison is constant-time over fixed-width digests,
+    and a `pdk_<instanceId>_…` token is rejected unless the instance matches, so a
+    credential minted for one Paddock is meaningless at another.
+  - **`managementApi.publicUrl` is required** once clients are configured — RFC
+    9728 requires the metadata document's `resource` to byte-match the URL the
+    client used, and that can't be derived from an attacker-controlled `Host`
+    header. Plaintext is refused for non-loopback hosts, since `/mcp` carries
+    bearer tokens.
+  - **Fail closed.** `/mcp` 404s unless clients _and_ a public URL are configured;
+    a missing or bad credential is `401` + `WWW-Authenticate`, never a `302` to a
+    login page (which no MCP client can follow, and which breaks OAuth discovery).
+  - **`/.well-known/` and `/mcp` are excluded from the SPA catch-all.** Both are
+    extension-less, so the not-found handler previously answered them with the app
+    shell and a `200`. That holed the fail-closed guarantee and broke MCP OAuth
+    discovery: a client fetching the protected-resource metadata received HTML,
+    failed to parse it, and silently fell back to treating Paddock as its own
+    authorization server with no error naming the cause.
+
+- [#463](https://github.com/edspencer/paddock/pull/463) [`fd7d6b4`](https://github.com/edspencer/paddock/commit/fd7d6b4973f8d463fe1eb3ce3e997a743c274551) Thanks [@edspencer](https://github.com/edspencer)! - feat(chats): add a sixth chat action to mark a conversation unread (#458).
+
+  A new hover action on each chat row toggles the chat's read/unread state — the
+  email-client pattern for "I glanced at this late at night, resurface it in the
+  morning". Marking a read chat unread re-raises its accent-dot cue; marking an
+  unread chat read is equivalent to the existing mark-seen flow.
+
+  - **Server:** a new per-user `UnreadStore` sidecar (`unread-state.json`) holding a
+    manual "unread" override, layered on top of the derived read-state. It's keyed
+    by user like read-state (not shared like star/archive), since "I haven't dealt
+    with this yet" is personal. New `POST .../chats/:id/unread` routes (project +
+    scratch); the existing `/seen` routes now also clear the override, so opening or
+    focusing a chat spends the flag. The flag surfaces on the chat DTO as `unread`.
+  - **Web:** a `toggleUnread` handler (optimistic with rollback, mirroring
+    archive/star), a sixth envelope button in the session sidebar, and the unread
+    derivation now folds in the manual override. The `useUnreadChats` hook clears
+    the override whenever a chat is marked seen so the cue can't flicker back.
+
+- [#464](https://github.com/edspencer/paddock/pull/464) [`31f84e9`](https://github.com/edspencer/paddock/commit/31f84e961d80b8b3529d2fe8f55ebb6da079dac3) Thanks [@edspencer](https://github.com/edspencer)! - feat(chat): per-message hover — context usage + timestamp, Fork-from-here & Revert-to-here
+
+  Hovering a message in the transcript now reveals a small rail at its top-right
+  showing **when** that message happened and **how full the context window was** at
+  that point, plus two actions: **Fork a new chat from here** and **Revert
+  conversation back to here**. On a long chat this answers "is this from minutes or
+  days ago?" and "where did the context actually fill up?", and lets you branch off
+  or roll back from any earlier point.
+
+  - **Per-message context + timestamp.** Each assistant turn's `usage` already
+    equals the context-window fill at that moment (`input + cache_read +
+cache_creation`), so this is a point-in-time read, not a cumulative sum. A new
+    mtime-cached `readContextSeries` pass maps each transcript record `uuid` to its
+    fill; the messages endpoint forward-fills it across the turns between, so every
+    message can answer "how full was the window as of here". The chat-LIST path is
+    deliberately untouched — this runs only when a chat is open, so the sidebar
+    stays lean.
+  - **Fork from here.** `forkSession` gains an optional cut point: the new chat
+    copies only the transcript PREFIX up to the chosen message (tool_use/tool_result
+    pairing preserved) instead of the whole history. The source is untouched. Both
+    the HTTP route and the `fork_chat` MCP tool inherit it.
+  - **Revert to here.** New `revertSession` truncates the chat in place, keeping its
+    session id (so the URL and lineage survive) and backing the dropped tail up to a
+    `.reverts/` sidecar. Reverting to one of your OWN messages rewinds to the
+    assistant's previous reply rather than leaving a dangling un-answered prompt —
+    otherwise resume replays it as a phantom turn and the model reads your
+    instruction as stale backlog.
+  - **Revert warns about side-effects.** The confirm dialog counts the messages and
+    tool calls that will be removed and states plainly that those actions (files
+    written, PRs opened, messages sent) are **not** undone — only the conversation.
+  - The rail is keyboard-accessible (`focus-within` reveal + focus rings), anchors
+    on the record `uuid`, and appears only on reloaded user/assistant turns — never
+    on tool cards, notices, or live-streaming turns.
+
 ## 0.45.0
 
 ### Minor Changes
