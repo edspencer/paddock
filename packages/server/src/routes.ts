@@ -26,6 +26,7 @@ import { registerGitRoutes } from "./routes/git.js";
 import { registerProjectRoutes } from "./routes/projects.js";
 import { registerTriggerRoutes } from "./routes/triggers.js";
 import { registerChatRoutes } from "./routes/chats.js";
+import { registerMcpRoutes } from "./routes/mcp.js";
 
 // Re-exported for callers/tests that reference the dep bag or the byte helper by
 // name; the definitions now live in the extracted modules (issue #403).
@@ -40,4 +41,8 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
   registerProjectRoutes(app, ctx);
   registerTriggerRoutes(app, ctx);
   registerChatRoutes(app, ctx);
+  // #312 M1: the external Management API gate. Registered unconditionally (it
+  // answers 404 when unconfigured) so an unconfigured `/mcp` can never fall
+  // through to the SPA not-found handler and be served the app shell.
+  registerMcpRoutes(app, ctx);
 }

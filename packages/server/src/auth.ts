@@ -97,9 +97,29 @@ function isStaticAsset(pathname: string): boolean {
   return STATIC_ASSET_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 }
 
+/**
+ * The Management API surface (issue #312). Exempt from THIS hook because it
+ * authenticates itself — see management-auth.ts — and because the browser modes
+ * are actively wrong for it:
+ *
+ *  - `jwt` mode reads `Authorization`, which COLLIDES head-on with an MCP
+ *    client's `Authorization: Bearer <management token>`;
+ *  - an SSO proxy in front answers with an HTML login redirect, which no MCP
+ *    client can follow and which breaks OAuth discovery (M2).
+ *
+ * This exemption is safe ONLY because `/mcp` runs its own authenticator and
+ * fails closed (404 when unconfigured, 401 otherwise) — it is never open, not
+ * even at `auth.mode: none`. Prefix-matched so M2's sub-paths inherit it.
+ */
+const MANAGEMENT_API_PREFIX = "/mcp";
+
+function isManagementApiPath(pathname: string): boolean {
+  return pathname === MANAGEMENT_API_PREFIX || pathname.startsWith(`${MANAGEMENT_API_PREFIX}/`);
+}
+
 function isExempt(url: string): boolean {
   const p = normalizePath(url);
-  return HEALTH_PATHS.has(p) || isStaticAsset(p);
+  return HEALTH_PATHS.has(p) || isStaticAsset(p) || isManagementApiPath(p);
 }
 
 const ANONYMOUS: AuthUser = Object.freeze({ username: "anonymous", anonymous: true });

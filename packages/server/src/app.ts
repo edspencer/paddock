@@ -249,7 +249,28 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
 
   const chatHandler = makeChatHandler({ herdctl, projects, sweep, attachments, queuedMessage, runProvenance, messageProvenance, archive, scheduleSessions, events, triggers, triggerSessions, cfg });
 
-  await registerRoutes(app, { projects, herdctl, git, githubAuth, transcriber, archive, star, readState, unread, runProvenance, messageProvenance, attachments, fireTrigger: chatHandler.fireTrigger, events, triggers, cfg });
+  // --- external Management API (#312 M1) ---------------------------------
+  // Surface how the `managementApi` block resolved. A malformed client is an
+  // ERROR (the operator wrote something meaningless); a dropped one is a WARNING
+  // (its credential wouldn't resolve, so it failed closed). Logged here because
+  // config loading has no logger of its own.
+  for (const message of cfg.managementApiDiagnostics.errors) app.log.error(message);
+  for (const message of cfg.managementApiDiagnostics.warnings) app.log.warn(message);
+  if (cfg.managementApi.clients.length > 0) {
+    app.log.info(
+      {
+        clients: cfg.managementApi.clients.map((c) => c.clientId),
+        instanceId: cfg.managementApi.instanceId,
+      },
+      "management API: /mcp enabled (self-authenticated — independent of PADDOCK_AUTH_MODE and of any proxy)",
+    );
+  } else {
+    app.log.info(
+      "management API: /mcp disabled (no managementApi.clients configured) — the endpoint 404s",
+    );
+  }
+
+  await registerRoutes(app, { projects, herdctl, git, githubAuth, transcriber, archive, star, readState, unread, runProvenance, messageProvenance, attachments, fireTrigger: chatHandler.fireTrigger, managementOpsContext: chatHandler.managementOpsContext, events, triggers, cfg });
 
   await app.register(async (scoped) => {
     // `hide: true` keeps the WS upgrade out of the OpenAPI doc — it's not a REST

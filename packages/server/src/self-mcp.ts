@@ -92,6 +92,16 @@ const SERVER_NAME = "paddock_manage";
 
 type ServerTools = InjectedMcpServerDef["tools"];
 
+/** Assembly-time options for {@link selfMcpServerDef}. */
+export interface SelfMcpServerDefOptions {
+  /**
+   * Which tools to OFFER, by bare tool name (`"read_chat"`, not the
+   * `mcp__paddock_manage__` form). Used by the Management API (#312) to hide
+   * out-of-scope verbs from an external principal. Omit to offer everything.
+   */
+  toolFilter?: (toolName: string) => boolean;
+}
+
 /** The always-on READ tools (list_projects / list_chats / read_chat). */
 function readTools(context: SelfMcpContext): ServerTools {
   return [
@@ -434,6 +444,7 @@ function triggerTools(write: SelfMcpWriteContext): ServerTools {
 export function selfMcpServerDef(
   context: SelfMcpContext,
   write?: SelfMcpWriteContext,
+  opts?: SelfMcpServerDefOptions,
 ): InjectedMcpServerDef {
   const tools: ServerTools = [...readTools(context)];
 
@@ -444,7 +455,13 @@ export function selfMcpServerDef(
     }
   }
 
-  return { name: SERVER_NAME, version: "0.1.0", tools };
+  // Scope-driven visibility (#312 M1). Absent ⇒ every assembled tool is offered,
+  // which is the in-process keeper path and every pre-#312 caller. An external
+  // principal passes a filter so it is never shown a verb outside its scope.
+  // This is presentation only — the ops layer is what actually refuses a call.
+  const visible = opts?.toolFilter ? tools.filter((t) => opts.toolFilter!(t.name)) : tools;
+
+  return { name: SERVER_NAME, version: "0.1.0", tools: visible };
 }
 
 /** The record key + the fully-qualified tool names the agent sees. */

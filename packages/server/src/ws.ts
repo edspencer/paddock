@@ -1118,5 +1118,13 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
   // The socket handler PLUS the manual trigger-fire entrypoint: a "trigger now"
   // action fires a schedule-type trigger on demand through the exact same hub path a
   // cron fire uses, so the resulting chat is indistinguishable from a scheduled one.
-  return { handle, fireTrigger };
+  //
+  // `managementOpsContext` (#312 M1) completes the hoist: it is the SAME shared
+  // context the in-process self-MCP is built from (deps + hub + startAgentTurn +
+  // composePreloadedPrompt + fireTrigger), handed out so a NON-socket caller can
+  // build the management ops for itself — the `/mcp` transport in M2, and the
+  // turn-spawning REST endpoints in #465. Exposing the CONTEXT rather than a
+  // pre-built ops bag is deliberate: ops are built PER CALLER, because they close
+  // over that caller's project/session/provenance and its policy principal.
+  return { handle, fireTrigger, managementOpsContext: selfMcpCtx };
 }
