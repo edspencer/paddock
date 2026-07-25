@@ -22,8 +22,13 @@ import { DEFAULT_READ_ONLY_SCOPE, grantsTurnSpawning } from "../../src/managemen
 const tok = (instance?: string): string =>
   instance ? `${TOKEN_PREFIX}${instance}_${"a".repeat(40)}` : "z".repeat(40);
 
+/** A well-formed block. `publicUrl` is required whenever clients exist. */
 const file = (clients: ManagementApiConfigFile["clients"], instanceId?: string) =>
-  ({ ...(instanceId ? { instanceId } : {}), clients }) as ManagementApiConfigFile;
+  ({
+    publicUrl: "https://paddock.example.test",
+    ...(instanceId ? { instanceId } : {}),
+    clients,
+  }) as ManagementApiConfigFile;
 
 describe("resolveManagementApiConfig — the happy path", () => {
   it("resolves a client from an env reference and defaults it to read-only", () => {
@@ -149,6 +154,60 @@ describe("resolveManagementApiConfig — fail-closed drops", () => {
   it("yields no clients at all for an absent block (so /mcp stays 404)", () => {
     expect(resolveManagementApiConfig(undefined, {}).config.clients).toEqual([]);
     expect(resolveManagementApiConfig({}, {}).config.clients).toEqual([]);
+  });
+});
+
+describe("publicUrl", () => {
+  const withUrl = (publicUrl: string) =>
+    resolveManagementApiConfig(
+      { publicUrl, clients: { c: { auth: { ref: "env:TOK" } } } },
+      { TOK: tok() },
+    );
+
+  it("is required once clients are configured, and disables the API when absent", () => {
+    const { config, errors } = resolveManagementApiConfig(
+      { clients: { c: { auth: { ref: "env:TOK" } } } },
+      { TOK: tok() },
+    );
+    expect(config.clients).toEqual([]);
+    expect(errors[0]).toContain("managementApi.publicUrl: required");
+  });
+
+  it("is not required when there are no clients", () => {
+    expect(resolveManagementApiConfig({}, {}).errors).toEqual([]);
+  });
+
+  it("normalises away a trailing slash so the RFC 9728 comparison has one form", () => {
+    expect(withUrl("https://paddock.example.test/").config.publicUrl).toBe(
+      "https://paddock.example.test",
+    );
+  });
+
+  it("accepts a path-mounted origin", () => {
+    expect(withUrl("https://example.test/paddock").config.publicUrl).toBe(
+      "https://example.test/paddock",
+    );
+  });
+
+  // Bearer tokens over plaintext would be readable in transit.
+  it("rejects a non-loopback http URL", () => {
+    const { config, errors } = withUrl("http://paddock.example.test");
+    expect(config.clients).toEqual([]);
+    expect(errors[0]).toContain("must be https");
+  });
+
+  it("allows http for loopback (local development)", () => {
+    expect(withUrl("http://localhost:4000").config.publicUrl).toBe("http://localhost:4000");
+    expect(withUrl("http://127.0.0.1:4000").config.clients).toHaveLength(1);
+  });
+
+  it("rejects a non-absolute or non-http URL", () => {
+    expect(withUrl("/mcp").errors[0]).toContain("absolute URL");
+    expect(withUrl("ftp://example.test").errors[0]).toContain("http(s)");
+  });
+
+  it("rejects a URL carrying a query or fragment", () => {
+    expect(withUrl("https://example.test/?a=1").errors[0]).toContain("query string");
   });
 });
 

@@ -23,7 +23,11 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { ManagementApiConfig, ManagementClient } from "./management-config.js";
 import { tokenInstanceId } from "./management-config.js";
-import type { ManagementPrincipal } from "./management-policy.js";
+// `ManagementDeniedError` is referenced only as a TYPE here (denialResponse
+// annotates its parameter and reads fields off it); the class is constructed by
+// the ops layer, so a type-only import is enough and keeps this module's runtime
+// dependencies to none.
+import type { ManagementPrincipal, ManagementDeniedError } from "./management-policy.js";
 
 /** Why a credential was refused. Shapes the challenge; never leaks the secret. */
 export type ManagementAuthFailure =
@@ -129,7 +133,73 @@ export function challengeHeader(
   return `Bearer ${params.join(", ")}`;
 }
 
-/** Whether the external management API is configured at all (drives the 404). */
+/**
+ * The challenge for an authenticated caller whose SCOPE doesn't cover what it
+ * asked for (MCP spec revision 2025-11-25 / RFC 6750 §3.1).
+ *
+ * Deliberately distinct from the 401 above: the credential was valid, so
+ * re-authenticating changes nothing — the caller needs a WIDER GRANT. The
+ * transport pairs this with **403**, and the `scope` parameter names what was
+ * required, which is what lets a client ask for incremental consent instead of
+ * failing opaquely.
+ */
+export function insufficientScopeChallenge(
+  requiredScope: string,
+  resourceMetadataUrl?: string,
+): string {
+  const params = [
+    'realm="paddock"',
+    'error="insufficient_scope"',
+    `error_description="the authenticated client's scope does not permit this operation"`,
+    `scope="${requiredScope}"`,
+  ];
+  if (resourceMetadataUrl) params.push(`resource_metadata="${resourceMetadataUrl}"`);
+  return `Bearer ${params.join(", ")}`;
+}
+
+/**
+ * The HTTP shape for a policy denial raised by the ops layer.
+ *
+ * Kept HERE, next to the other challenge builders, so that every transport maps
+ * a `ManagementDeniedError` the same way instead of inventing its own status.
+ * Both denial codes are scope problems, hence 403 rather than 401.
+ */
+export function denialResponse(
+  error: ManagementDeniedError,
+  resourceMetadataUrl?: string,
+): { status: 403; challenge: string; body: { error: string; code: string; message: string } } {
+  return {
+    status: 403,
+    challenge: insufficientScopeChallenge(
+      error.code === "project_denied" ? `project:${error.projectSlug}` : error.operation,
+      resourceMetadataUrl,
+    ),
+    body: { error: "forbidden", code: error.code, message: error.message },
+  };
+}
+
+/**
+ * The RFC 9728 protected-resource metadata URL for this instance's `/mcp`.
+ *
+ * The PATH-INSERTED form (`/.well-known/oauth-protected-resource/mcp`) — which
+ * is what MCP clients actually request for a resource that has a path. Built
+ * from the configured `publicUrl` rather than from request headers, because the
+ * value must byte-match what the client used and `Host` is not trustworthy.
+ */
+export function resourceMetadataUrl(cfg: ManagementApiConfig): string | undefined {
+  if (!cfg.publicUrl) return undefined;
+  return `${cfg.publicUrl}/.well-known/oauth-protected-resource/mcp`;
+}
+
+/**
+ * Whether the external management API is configured at all (drives the 404).
+ *
+ * Requires BOTH a client and a canonical public URL: without the latter, M2's
+ * discovery document could not be served correctly, so the surface stays off
+ * rather than half-working. `resolveManagementApiConfig` already empties the
+ * client list when `publicUrl` is missing or bad; this is the belt to that
+ * braces.
+ */
 export function isManagementApiEnabled(cfg: ManagementApiConfig | undefined): boolean {
-  return (cfg?.clients.length ?? 0) > 0;
+  return (cfg?.clients.length ?? 0) > 0 && Boolean(cfg?.publicUrl);
 }

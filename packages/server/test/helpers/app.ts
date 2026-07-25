@@ -55,6 +55,18 @@ interface StartOptions {
    * `/api/models` offers and what a per-project `models` override may subset.
    */
   models?: string[];
+  /**
+   * Instance YAML config (issue #270) for this app, written to the temp dir and
+   * pointed at via `PADDOCK_CONFIG`. Use for config that has no env equivalent —
+   * e.g. the `managementApi.clients` block (#312), which is file-only by design.
+   */
+  configFile?: Record<string, unknown>;
+  /**
+   * Extra environment variables to set before build (restored on teardown).
+   * Needed for config that is REFERENCED from the YAML rather than inlined —
+   * management-API tokens are `ref: env:VAR`, so the test must supply the var.
+   */
+  env?: Record<string, string>;
 }
 
 /**
@@ -94,6 +106,8 @@ export async function startTestApp(opts: StartOptions = {}): Promise<TestApp> {
     HOST: process.env.HOST,
     PADDOCK_HOST: process.env.PADDOCK_HOST,
     PADDOCK_DANGEROUSLY_ALLOW_OPEN: process.env.PADDOCK_DANGEROUSLY_ALLOW_OPEN,
+    PADDOCK_CONFIG: process.env.PADDOCK_CONFIG,
+    ...Object.fromEntries(Object.keys(opts.env ?? {}).map((k) => [k, process.env[k]])),
   };
 
   process.env.HOME = home;
@@ -148,6 +162,19 @@ export async function startTestApp(opts: StartOptions = {}): Promise<TestApp> {
   } else {
     delete process.env.PADDOCK_MODELS;
   }
+
+  // Instance YAML config (#270). Written before build and pointed at explicitly,
+  // so it layers under env exactly as a real deployment's file does.
+  if (opts.configFile) {
+    const YAML = await import("yaml");
+    const configPath = path.join(tmp, "paddock.config.yaml");
+    await fs.writeFile(configPath, YAML.stringify(opts.configFile), "utf8");
+    process.env.PADDOCK_CONFIG = configPath;
+  } else {
+    delete process.env.PADDOCK_CONFIG;
+  }
+
+  for (const [k, v] of Object.entries(opts.env ?? {})) process.env[k] = v;
 
   if (opts.gitRepo) {
     await initGitRepo(projectsRoot);

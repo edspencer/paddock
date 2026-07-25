@@ -123,6 +123,41 @@ describe("integration: app.ts static-SPA serving", () => {
     expect(apiMiss.json().error).toBe("not found");
   });
 
+  // #312: the discovery + management surfaces are MACHINE endpoints and must 404
+  // honestly. Both are extension-less, so before they were excluded from the
+  // catch-all they were served the SPA shell with a 200 — which (a) holed the
+  // fail-closed guarantee (an unconfigured management API appeared to "exist" at
+  // its discovery URL) and (b) broke MCP OAuth discovery: a client fetching the
+  // metadata gets HTML, fails to parse it, and silently falls back to treating
+  // Paddock as its own authorization server, with no error naming the real cause.
+  it("404s /.well-known/ and /mcp instead of serving the SPA shell (issue #312)", async () => {
+    h = await boot({ withDist: true });
+    const app = h.built.app;
+
+    // Sanity: an extension-less client route DOES still get the shell, so the
+    // assertions below are about the exclusion, not a broken fallback.
+    const spa = await app.inject({
+      method: "GET",
+      url: "/projects/anything",
+      headers: { accept: "text/html" },
+    });
+    expect(spa.statusCode).toBe(200);
+    expect(spa.body).toContain("paddock SPA");
+
+    for (const url of [
+      "/.well-known/oauth-protected-resource",
+      "/.well-known/oauth-protected-resource/mcp",
+      "/.well-known/anything-else",
+      "/mcp/sub-path",
+    ]) {
+      // A browser-shaped navigation is the hostile case: it is exactly what
+      // would otherwise satisfy the "is a navigation → serve the shell" branch.
+      const res = await app.inject({ method: "GET", url, headers: { accept: "text/html" } });
+      expect(res.statusCode, `${url} must not be served the SPA shell`).toBe(404);
+      expect(res.body).not.toContain("paddock SPA");
+    }
+  });
+
   it("404s a missing static asset instead of serving index.html (issue #220)", async () => {
     h = await boot({ withDist: true });
     const app = h.built.app;

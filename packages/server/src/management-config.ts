@@ -66,12 +66,61 @@ export interface ManagementApiConfig {
    * binding is not enforced (an unprefixed-token deployment still works).
    */
   instanceId?: string;
+  /**
+   * The canonical PUBLIC origin clients reach this instance at, with no trailing
+   * slash (e.g. `https://paddock.example.com`).
+   *
+   * Required whenever clients are configured, because RFC 9728 §3.3 makes the
+   * `resource` value in the protected-resource metadata document a byte-for-byte
+   * match against the URL the client used — a mismatch means the client MUST
+   * discard the document. It cannot be derived from `Host`: behind a
+   * TLS-terminating proxy the scheme is wrong, and the header is
+   * attacker-controlled. So the operator states it once, here.
+   */
+  publicUrl?: string;
 }
 
 /** On-disk shape of the `managementApi` block. Every field optional. */
 export interface ManagementApiConfigFile {
   instanceId?: string;
+  publicUrl?: string;
   clients?: Record<string, ManagementClientConfigFile | null | undefined>;
+}
+
+/**
+ * Validate the canonical public URL. Returns the normalised origin (no trailing
+ * slash) or an error string.
+ *
+ * Rejects plaintext for anything but loopback: `/mcp` carries bearer tokens, so
+ * advertising an `http://` origin to the world would publish a URL on which the
+ * credential is readable in transit. This is the config-time half of the epic's
+ * "refuse to serve `/mcp` over plaintext" rule (routes/mcp.ts enforces the
+ * per-request half).
+ */
+export function validatePublicUrl(raw: string): { url: string } | { error: string } {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw.trim());
+  } catch {
+    return { error: `must be an absolute URL (got "${raw}")` };
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    return { error: `must be an http(s) URL (got "${parsed.protocol}")` };
+  }
+  const host = parsed.hostname;
+  const isLoopback = host === "localhost" || host === "127.0.0.1" || host === "::1";
+  if (parsed.protocol === "http:" && !isLoopback) {
+    return {
+      error:
+        `must be https for a non-loopback host (got "${raw}") — the management API carries ` +
+        `bearer tokens, so a plaintext public URL would expose them in transit`,
+    };
+  }
+  if (parsed.search || parsed.hash) return { error: "must not carry a query string or fragment" };
+  // Normalise to an origin + optional path, dropping any trailing slash so the
+  // RFC 9728 byte-comparison has one canonical form to work from.
+  const path = parsed.pathname.replace(/\/+$/, "");
+  return { url: `${parsed.origin}${path}` };
 }
 
 export interface ManagementClientConfigFile {
@@ -179,6 +228,29 @@ export function resolveManagementApiConfig(
   const instanceId = file?.instanceId?.trim() || undefined;
   const entries = Object.entries(file?.clients ?? {});
 
+  // Resolve the canonical public URL up front: it gates the whole surface, so a
+  // bad or missing value must fail the feature closed rather than half-enable it.
+  let publicUrl: string | undefined;
+  const rawPublicUrl = file?.publicUrl?.trim();
+  if (rawPublicUrl) {
+    const checked = validatePublicUrl(rawPublicUrl);
+    if ("error" in checked) {
+      errors.push(`managementApi.publicUrl: ${checked.error} — the management API is disabled`);
+      return { config: { clients: [], ...(instanceId ? { instanceId } : {}) }, errors, warnings };
+    }
+    publicUrl = checked.url;
+  } else if (entries.length > 0) {
+    // Required whenever clients exist. Enforced in M1 (before any client can be
+    // configured) so that turning on M2's discovery is a no-op for the operator
+    // rather than a breaking config change.
+    errors.push(
+      "managementApi.publicUrl: required when managementApi.clients is set (the canonical " +
+        "public origin clients reach this instance at, e.g. https://paddock.example.com) — " +
+        "the management API is disabled",
+    );
+    return { config: { clients: [], ...(instanceId ? { instanceId } : {}) }, errors, warnings };
+  }
+
   for (const [rawId, raw] of entries) {
     const clientId = rawId.trim();
     if (clientId.length === 0) {
@@ -271,7 +343,11 @@ export function resolveManagementApiConfig(
   }
 
   return {
-    config: { clients, ...(instanceId ? { instanceId } : {}) },
+    config: {
+      clients,
+      ...(instanceId ? { instanceId } : {}),
+      ...(publicUrl ? { publicUrl } : {}),
+    },
     errors,
     warnings,
   };

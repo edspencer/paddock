@@ -414,7 +414,15 @@ export function enforceManagementPolicy(
   if (!ops.write || (!grantsAnyWrite && !grantsAnyTrigger)) return { read };
 
   const w = ops.write;
-  const guard = <T>(operation: string, projectSlug: string, run: () => Promise<T>): Promise<T> => {
+  // `async` so a denial surfaces as a REJECTED PROMISE, never a synchronous
+  // throw: these callbacks are typed as returning promises, and a caller that
+  // only attaches `.catch()` (rather than awaiting inside a try) would otherwise
+  // see the error escape as an unhandled exception.
+  const guard = async <T>(
+    operation: string,
+    projectSlug: string,
+    run: () => Promise<T>,
+  ): Promise<T> => {
     assertOperation(principal, operation);
     assertProject(principal, operation, projectSlug);
     return run();

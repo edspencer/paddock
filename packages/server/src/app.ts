@@ -311,7 +311,22 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
       });
       await app.register(fastifyStatic, { root: cfg.webDist, wildcard: false });
       app.setNotFoundHandler((req, reply) => {
-        if (req.method === "GET" && !req.url.startsWith("/api") && !req.url.startsWith("/ws")) {
+        if (
+          req.method === "GET" &&
+          !req.url.startsWith("/api") &&
+          !req.url.startsWith("/ws") &&
+          // #312: `/.well-known/` and `/mcp` are MACHINE surfaces and must 404
+          // honestly when absent. Both are extension-less, so without this they
+          // would fall into the client-side-route branch below and be answered
+          // with the SPA shell + 200 — which (a) holes the fail-closed guarantee
+          // (an unconfigured management API would "exist" at the discovery URL)
+          // and (b) breaks MCP OAuth discovery: a client fetching the
+          // protected-resource metadata receives HTML, fails to parse it, and
+          // silently falls back to treating Paddock as its own authorization
+          // server, with no error naming the real cause.
+          !req.url.startsWith("/.well-known/") &&
+          !req.url.startsWith("/mcp")
+        ) {
           // Serve the SPA shell for client-side routes — but NEVER for a request
           // that is clearly a missing *static asset* (a stale hashed chunk after a
           // deploy, or any missing file). Those must 404 (issue #220): otherwise the

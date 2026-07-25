@@ -113,8 +113,25 @@ function isStaticAsset(pathname: string): boolean {
  */
 const MANAGEMENT_API_PREFIX = "/mcp";
 
+/**
+ * RFC 9728 protected-resource metadata (M2 discovery). Exempt for the same
+ * reason: an MCP client fetches this BEFORE it holds any credential, so gating
+ * it would make discovery impossible. The document is public by design — it
+ * names the authorization server and supported scopes, never a secret.
+ *
+ * Matched as a PREFIX because the path-inserted form is what clients actually
+ * request: for a resource at `/mcp` the metadata lives at
+ * `/.well-known/oauth-protected-resource/mcp`, not at the bare root.
+ */
+const PROTECTED_RESOURCE_METADATA_PREFIX = "/.well-known/oauth-protected-resource";
+
 function isManagementApiPath(pathname: string): boolean {
-  return pathname === MANAGEMENT_API_PREFIX || pathname.startsWith(`${MANAGEMENT_API_PREFIX}/`);
+  return (
+    pathname === MANAGEMENT_API_PREFIX ||
+    pathname.startsWith(`${MANAGEMENT_API_PREFIX}/`) ||
+    pathname === PROTECTED_RESOURCE_METADATA_PREFIX ||
+    pathname.startsWith(`${PROTECTED_RESOURCE_METADATA_PREFIX}/`)
+  );
 }
 
 function isExempt(url: string): boolean {
@@ -192,6 +209,11 @@ export function registerAuth(app: FastifyInstance, auth: AuthConfig): void {
 
   if (cfg.mode === "none") {
     app.decorateRequest("user", null);
+    // This branch refuses nothing, so the management-API exemption changes no
+    // OUTCOME here — `/mcp` is reachable either way, and its own authenticator
+    // is what gates it (management-auth.ts). It is called out rather than
+    // applied because the rule that matters is "the browser hook never decides
+    // anything about /mcp", and in this mode the hook decides nothing at all.
     app.addHook("onRequest", async (req) => {
       req.user = ANONYMOUS;
     });
