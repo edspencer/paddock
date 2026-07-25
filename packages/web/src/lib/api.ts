@@ -121,6 +121,23 @@ export const api = {
   },
 
   /**
+   * Set (or clear) a chat's MANUAL unread override (#458) — the "mark as unread"
+   * action, so a chat resurfaces its unread cue after its last turn was seen.
+   * `unread:false` is equivalent to marking it seen. Routes to the scratch
+   * endpoint for the scratch slug.
+   */
+  async markChatUnread(slug: string, sessionId: string, unread: boolean): Promise<void> {
+    const path =
+      slug === SCRATCH_SLUG
+        ? `/api/chats/${encodeURIComponent(sessionId)}/unread`
+        : `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}/unread`;
+    await req<{ ok: boolean; unread: boolean }>(path, {
+      method: "POST",
+      body: JSON.stringify({ unread }),
+    });
+  },
+
+  /**
    * Run history for a project (#268 / E3): recent herdctl runs joined with their
    * provenance (human / scheduled / spawned) plus the viewer's since-last-visit
    * watermark + a count of new unattended runs. Powers the "while you were away"

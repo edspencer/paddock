@@ -212,6 +212,27 @@ describe("AppShell: per-project badges (#161)", () => {
     expect(within(link).getByLabelText(/1 unread reply/i)).toHaveTextContent("1");
   });
 
+  it("counts a manually-unread chat (#458) even after its completed turn was seen", () => {
+    mockProjects = [
+      makeProject({
+        slug: "a",
+        name: "Alpha",
+        group: "homelab",
+        chatTurns: [
+          // Seen AFTER its completed turn (so NOT timestamp-unread), but the user
+          // manually flagged it unread — the badge must still count it.
+          { sessionId: "s1", lastTurnCompletedAt: FUTURE, unread: true },
+          { sessionId: "s2", lastTurnCompletedAt: FUTURE },
+        ],
+      }),
+    ];
+    writeLastSeen("s1", Date.now() + 120_000); // s1 seen; only the manual flag keeps it unread
+    renderShell();
+    const link = screen.getByRole("link", { name: /Alpha/ });
+    // s1 (manual) + s2 (timestamp) → "2".
+    expect(within(link).getByLabelText(/2 unread replies/i)).toHaveTextContent("2");
+  });
+
   it("renders no badges when the project is quiet (no unread, none in flight)", () => {
     mockProjects = [makeProject({ slug: "a", name: "Alpha", group: "homelab" })];
     renderShell();
