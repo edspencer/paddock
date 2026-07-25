@@ -21,6 +21,7 @@ import {
   scanTranscriptNotice,
   messageProducedReply,
   suppressNoticeAfterReply,
+  turnEffectivelySucceeded,
   type TurnNotice,
 } from "../../src/turn-notice.js";
 
@@ -307,6 +308,24 @@ describe("suppressNoticeAfterReply (#380)", () => {
   it("NEVER suppresses a usage_limit — a session-limit stop is real even beside a reply", () => {
     expect(suppressNoticeAfterReply(notice("usage_limit"), true)).toBe(false);
     expect(suppressNoticeAfterReply(notice("usage_limit"), false)).toBe(false);
+  });
+});
+
+describe("turnEffectivelySucceeded (#404)", () => {
+  it("succeeds when the raw drive signal is success (no reply needed)", () => {
+    expect(turnEffectivelySucceeded(true, false)).toBe(true);
+    expect(turnEffectivelySucceeded(true, true)).toBe(true);
+  });
+
+  it("succeeds when a real reply streamed even though the raw signal failed", () => {
+    // The session-mode asymmetry: a good reply, then a trailing error_* / success:false
+    // result frame. The queue drain / sweep / recovery must still run (#404).
+    expect(turnEffectivelySucceeded(false, true)).toBe(true);
+  });
+
+  it("holds (fails) a genuinely dead turn — no reply and a raw failure", () => {
+    // A Stop, or an up-front API error that never produced prose: the queue is held.
+    expect(turnEffectivelySucceeded(false, false)).toBe(false);
   });
 });
 
