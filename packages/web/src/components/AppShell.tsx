@@ -3,13 +3,13 @@ import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useProjects } from "../lib/projects-context";
 import { useTheme } from "../lib/theme";
 import type { Project } from "../lib/types";
-import { getBrand, logoIsImage } from "../lib/brand";
+import { getBrand, getOpenApi, logoIsImage } from "../lib/brand";
 import { areaLabel, orderAreaSlugs } from "../lib/areas";
 import { chatClient } from "../lib/ws";
 import { LAST_SEEN_EVENT, readLastSeen, setServerLastSeen } from "../lib/lastSeen";
 import { TagPill } from "./TagPill";
 import { NewProjectModal } from "./NewProjectModal";
-import { ChatIcon, CogIcon, FolderIcon, MenuIcon, MoonIcon, PlusIcon, SunIcon, XIcon } from "./icons";
+import { ChatIcon, CogIcon, FolderIcon, LinkIcon, MenuIcon, MoonIcon, PlusIcon, SunIcon, XIcon } from "./icons";
 import { PaneResizer, usePaneWidth } from "./PaneResizer";
 import { SIDENAV_PANE } from "../lib/paneWidth";
 
@@ -129,6 +129,7 @@ export function AppShell() {
   const navigate = useNavigate();
   const location = useLocation();
   const brand = getBrand();
+  const openapi = getOpenApi();
   // Desktop-only draggable width for the side-nav (#374), persisted per-browser.
   const sidenav = usePaneWidth(SIDENAV_PANE);
 
@@ -297,11 +298,23 @@ export function AppShell() {
             className={({ isActive }) =>
               `btn-subtle w-full justify-start ${isActive ? "bg-paddock-200/80 dark:bg-paddock-800" : ""}`
             }
-            title="Instance settings"
+            title="Settings"
           >
             <CogIcon width={15} height={15} />
-            Instance settings
+            Settings
           </NavLink>
+          {openapi.enabled && (
+            <a
+              href={openapi.path}
+              target="_blank"
+              rel="noreferrer"
+              className="btn-subtle mt-1 w-full justify-start"
+              title="OpenAPI / Swagger reference (opens in a new tab)"
+            >
+              <LinkIcon width={15} height={15} />
+              Swagger API
+            </a>
+          )}
           <button
             type="button"
             onClick={toggleTheme}

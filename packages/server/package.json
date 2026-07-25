@@ -20,6 +20,8 @@
   "dependencies": {
     "@fastify/multipart": "^8.3.1",
     "@fastify/static": "7.0.4",
+    "@fastify/swagger": "^8.15.0",
+    "@fastify/swagger-ui": "^4.2.0",
     "@fastify/websocket": "10.0.1",
     "@herdctl/chat": "^0.8.0",
     "@herdctl/core": "^5.26.1",
