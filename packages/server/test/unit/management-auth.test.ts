@@ -219,13 +219,19 @@ describe("denialResponse", () => {
 
 describe("resourceMetadataUrl", () => {
   // Clients request the PATH-INSERTED form for a resource that has a path.
-  it("builds the path-inserted well-known URL from the public URL", () => {
-    expect(resourceMetadataUrl(cfg())).toBe(
+  it("builds the path-inserted well-known URL when a document will be served", () => {
+    expect(resourceMetadataUrl({ ...cfg(), authorizationServers: ["https://idp.test/app"] })).toBe(
       "https://paddock.example.test/.well-known/oauth-protected-resource/mcp",
     );
   });
 
   it("is undefined without a public URL", () => {
     expect(resourceMetadataUrl({ clients: [] })).toBeUndefined();
+  });
+
+  // Advertising a `resource_metadata` URL that then 404s promises a discovery
+  // path that cannot succeed — so the pointer is omitted with the document.
+  it("is undefined when no authorization server is configured", () => {
+    expect(resourceMetadataUrl(cfg())).toBeUndefined();
   });
 });

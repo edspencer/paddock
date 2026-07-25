@@ -78,12 +78,23 @@ export interface ManagementApiConfig {
    * attacker-controlled. So the operator states it once, here.
    */
   publicUrl?: string;
+  /**
+   * Issuer URLs of the OAuth authorization servers that may issue tokens for
+   * this resource, advertised in the RFC 9728 discovery document.
+   *
+   * Optional and empty by default: with only config tokens configured there IS
+   * no authorization server, and advertising one would send clients into an
+   * OAuth flow that cannot complete. Populated when the OAuth authenticator is
+   * configured.
+   */
+  authorizationServers?: string[];
 }
 
 /** On-disk shape of the `managementApi` block. Every field optional. */
 export interface ManagementApiConfigFile {
   instanceId?: string;
   publicUrl?: string;
+  authorizationServers?: string[] | string;
   clients?: Record<string, ManagementClientConfigFile | null | undefined>;
 }
 
@@ -342,11 +353,14 @@ export function resolveManagementApiConfig(
     clients.push({ clientId, token, scope });
   }
 
+  const authorizationServers = toList(file?.authorizationServers) ?? [];
+
   return {
     config: {
       clients,
       ...(instanceId ? { instanceId } : {}),
       ...(publicUrl ? { publicUrl } : {}),
+      ...(authorizationServers.length > 0 ? { authorizationServers } : {}),
     },
     errors,
     warnings,

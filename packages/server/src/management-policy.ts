@@ -206,6 +206,50 @@ export function grantsTurnSpawning(scope: ManagementScope): boolean {
   return TURN_SPAWNING_OPERATIONS.some((op) => isOperationAllowed(scope, op));
 }
 
+// ── OAuth scope vocabulary ─────────────────────────────────────────────────
+// Two DIFFERENT granularities, deliberately:
+//
+//   - Internally, a scope is a list of OPERATION names. That is the right
+//     granularity for an operator writing a config file, who wants to say
+//     exactly which verbs a CI token may call.
+//   - Over OAuth, scopes are coarse (`paddock:read` / `paddock:write`), because
+//     they are shown to a HUMAN on a consent screen. "Grant this app
+//     create_chat, fork_chat, fork_chat_batch, send_message…" is not a consent
+//     prompt anyone reads; "grant write access" is.
+//
+// So the coarse names are a projection of the fine-grained truth, used only in
+// the `scope` parameter of a challenge and in the discovery document. Authorization
+// is always decided on the fine-grained list.
+
+export const OAUTH_SCOPE_READ = "paddock:read";
+export const OAUTH_SCOPE_WRITE = "paddock:write";
+
+/** Every OAuth scope this resource server understands (for discovery). */
+export const OAUTH_SCOPES_SUPPORTED: readonly string[] = [OAUTH_SCOPE_READ, OAUTH_SCOPE_WRITE];
+
+/**
+ * The coarse OAuth scope an operation needs. Anything that mutates state or
+ * starts a turn is `write`; everything else is `read`.
+ */
+export function requiredOauthScope(operation: string): string {
+  if (READ_OPERATIONS.includes(operation as (typeof READ_OPERATIONS)[number])) {
+    return OAUTH_SCOPE_READ;
+  }
+  return operation === "list_triggers" ? OAUTH_SCOPE_READ : OAUTH_SCOPE_WRITE;
+}
+
+/** The coarse OAuth scopes a fine-grained scope amounts to. */
+export function oauthScopesFor(scope: ManagementScope): string[] {
+  const out: string[] = [];
+  if (ALL_OPERATIONS.some((op) => isOperationAllowed(scope, op) && requiredOauthScope(op) === OAUTH_SCOPE_READ)) {
+    out.push(OAUTH_SCOPE_READ);
+  }
+  if (ALL_OPERATIONS.some((op) => isOperationAllowed(scope, op) && requiredOauthScope(op) === OAUTH_SCOPE_WRITE)) {
+    out.push(OAUTH_SCOPE_WRITE);
+  }
+  return out;
+}
+
 /**
  * Thrown when policy refuses a call. Carries the structured facts a transport
  * needs to render its own error (MCP `isError` text, or an HTTP 403) and that
