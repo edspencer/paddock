@@ -63,9 +63,10 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
 
   it("GET /api/models lists models with keeper + sweeper defaults", async () => {
     const body = (await t.app.inject({ method: "GET", url: "/api/models" })).json();
-    expect(body.keeperDefault).toBe("claude-opus-4-8");
+    expect(body.keeperDefault).toBe("claude-opus-5");
     expect(body.sweeperDefault).toBe("claude-haiku-4-5-20251001");
     const ids = body.models.map((m: { id: string }) => m.id);
+    expect(ids).toContain("claude-opus-5");
     expect(ids).toContain("claude-opus-4-8");
     expect(ids).toContain("claude-fable-5");
     expect(ids).toContain("claude-sonnet-5");
@@ -394,7 +395,7 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
     ).json();
     expect(ctx.usage).toBeTruthy();
     expect(ctx.usage.contextTokens).toBeGreaterThan(0);
-    // Default keeper/scratch model is Opus 4.8 → 1M context window.
+    // Default keeper/scratch model is Opus 5 → 1M context window.
     expect(ctx.usage.contextLimit).toBe(1_000_000);
 
     const none = (
@@ -420,7 +421,7 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
       await t.app.inject({ method: "GET", url: `/api/chats/${sessionId}/context` })
     ).json();
     expect(ctx.usage).toBeTruthy();
-    // Default keeper/scratch model is Opus 4.8 → 1M context window.
+    // Default keeper/scratch model is Opus 5 → 1M context window.
     expect(ctx.usage.contextLimit).toBe(1_000_000);
 
     const none = (
@@ -461,7 +462,7 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
     ).json().usage as Record<string, { contextTokens: number; contextLimit: number }>;
     expect(usage[sessionId]).toBeTruthy();
     expect(usage[sessionId].contextTokens).toBeGreaterThan(0);
-    // Default keeper model is Opus 4.8 → 1M context window.
+    // Default keeper model is Opus 5 → 1M context window.
     expect(usage[sessionId].contextLimit).toBe(1_000_000);
   });
 

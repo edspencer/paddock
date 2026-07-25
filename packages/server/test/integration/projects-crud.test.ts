@@ -25,7 +25,7 @@ describe("integration: project CRUD over REST (real fleet, fake claude)", () => 
     const res = await t.app.inject({ method: "GET", url: "/api/models" });
     expect(res.statusCode).toBe(200);
     const body = res.json();
-    expect(body.keeperDefault).toBe("claude-opus-4-8");
+    expect(body.keeperDefault).toBe("claude-opus-5");
     expect(body.models.length).toBeGreaterThanOrEqual(3);
   });
 

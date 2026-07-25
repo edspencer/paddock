@@ -14,6 +14,7 @@ import {
 describe("models", () => {
   it("exposes the picker list in order with the keeper default first", () => {
     expect(MODELS.map((m) => m.id)).toEqual([
+      "claude-opus-5",
       "claude-opus-4-8",
       "claude-fable-5",
       "claude-sonnet-5",
@@ -23,7 +24,7 @@ describe("models", () => {
   });
 
   it("defaults: keeper = Opus, sweeper = Haiku", () => {
-    expect(KEEPER_DEFAULT_MODEL).toBe("claude-opus-4-8");
+    expect(KEEPER_DEFAULT_MODEL).toBe("claude-opus-5");
     expect(SWEEPER_DEFAULT_MODEL).toBe("claude-haiku-4-5-20251001");
     expect(isKnownModel(KEEPER_DEFAULT_MODEL)).toBe(true);
     expect(isKnownModel(SWEEPER_DEFAULT_MODEL)).toBe(true);
@@ -35,7 +36,8 @@ describe("models", () => {
   });
 
   it("getContextLimit returns the model's limit, 200k fallback for unknown", () => {
-    // Opus 4.8 runs a 1M context window on the Max/CLI runtime.
+    // Opus 5 runs a 1M context window on the Max/CLI runtime.
+    expect(getContextLimit("claude-opus-5")).toBe(1_000_000);
     expect(getContextLimit("claude-opus-4-8")).toBe(1_000_000);
     expect(getContextLimit("claude-haiku-4-5-20251001")).toBe(200_000);
     expect(getContextLimit("nope")).toBe(200_000);
