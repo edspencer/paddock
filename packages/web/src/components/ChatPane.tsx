@@ -557,19 +557,28 @@ export function ChatPane({
     async (uuid: string) => {
       if (!onRevertToMessage) return;
       const idx = turns.findIndex((t) => t.id.split("#")[0] === uuid);
-      // The server keeps the anchor turn's OWN trailing tool calls (they belong to
-      // the same assistant message) + their results, and only drops from the next
-      // real turn on. Mirror that here so the dialog's count matches what's
-      // actually removed (#451 QA: it over-counted by the anchor's tool calls).
+      const anchorIsUser = idx >= 0 && turns[idx].kind === "user";
+      // Mirror the server's landing boundary so the count matches what's removed:
+      // - assistant anchor: keep it + its OWN trailing tool calls; drop from the
+      //   next real turn on (#451 QA — it used to over-count the anchor's tools).
+      // - user anchor: revert rewinds to the assistant's previous reply, so the
+      //   clicked message (and everything after) is removed.
       let start = idx + 1;
-      while (start < turns.length && (turns[start].kind === "tool" || turns[start].kind === "file")) {
-        start++;
+      if (anchorIsUser) {
+        let a = idx - 1;
+        while (a >= 0 && turns[a].kind !== "assistant") a--;
+        start = a + 1;
+      } else {
+        while (start < turns.length && (turns[start].kind === "tool" || turns[start].kind === "file")) {
+          start++;
+        }
       }
       const after = idx >= 0 ? turns.slice(start) : [];
       const toolCount = after.filter((t) => t.kind === "tool").length;
       const msg =
         `Revert this chat back to here?\n\n` +
-        `${after.length} later message${after.length === 1 ? "" : "s"} will be removed` +
+        (anchorIsUser ? `This rewinds to the assistant's previous reply. ` : ``) +
+        `${after.length} message${after.length === 1 ? "" : "s"} will be removed` +
         (toolCount > 0
           ? `, including ${toolCount} tool call${toolCount === 1 ? "" : "s"}. Those actions ` +
             `(files written, PRs opened, messages sent) are NOT undone — only the conversation.`

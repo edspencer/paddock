@@ -167,8 +167,23 @@ import {
  * following `type:"user"` tool_result records answering them, stopping at the
  * next genuine new turn. This is exact for plain chat turns (the primary case);
  * for deeply interleaved tool turns the boundary is a safe over-include.
+ *
+ * `endOnCompletedAssistant` (used by REVERT, #451): when the anchor is one of the
+ * USER's own prompts, don't keep it as a dangling un-answered trailing turn —
+ * Paddock's resume-drain would replay that as a phantom turn on the next resume
+ * and the model would read the prompt as stale backlog. Instead, land the cut on
+ * the last COMPLETED assistant turn before that prompt (a record with a terminal
+ * `stop_reason`), so "revert to one of my messages" rewinds to the AI's reply
+ * just before it and the next message continues cleanly. Fork leaves this off so
+ * a fork from a user message keeps it (the fork's keeper answers it).
  */
-function sliceTranscriptAtUuid(raw: string, cutUuid: string): string | null {
+const TERMINAL_STOP = new Set(["end_turn", "stop_sequence", "max_tokens"]);
+
+export function sliceTranscriptAtUuid(
+  raw: string,
+  cutUuid: string,
+  endOnCompletedAssistant = false,
+): string | null {
   const lines = raw.split("\n");
   const meta = lines.map((ln) => {
     const t = ln.trim();
@@ -177,17 +192,20 @@ function sliceTranscriptAtUuid(raw: string, cutUuid: string): string | null {
       const o = JSON.parse(t) as {
         uuid?: string;
         type?: string;
-        message?: { id?: string; content?: unknown };
+        message?: { id?: string; content?: unknown; stop_reason?: unknown };
       };
       const content = o.message?.content;
       const hasToolResult =
         Array.isArray(content) &&
         content.some((b) => (b as { type?: string })?.type === "tool_result");
+      const stop = o.message?.stop_reason;
       return {
         uuid: typeof o.uuid === "string" ? o.uuid : undefined,
         type: o.type,
         mid: typeof o.message?.id === "string" ? o.message.id : undefined,
         hasToolResult,
+        // A completed assistant turn — safe boundary to end a reverted transcript on.
+        terminalAssistant: o.type === "assistant" && typeof stop === "string" && TERMINAL_STOP.has(stop),
       };
     } catch {
       return null;
@@ -204,6 +222,18 @@ function sliceTranscriptAtUuid(raw: string, cutUuid: string): string | null {
     }
   }
   if (idx === -1) return null;
+
+  // Revert to one of the user's own prompts → rewind to the last completed
+  // assistant turn before it, rather than leaving a dangling un-answered prompt.
+  if (endOnCompletedAssistant && meta[idx]!.type === "user" && !meta[idx]!.hasToolResult) {
+    for (let b = idx - 1; b >= 0; b--) {
+      if (meta[b]?.terminalAssistant) {
+        return lines.slice(0, b + 1).join("\n") + "\n";
+      }
+    }
+    // No completed assistant turn precedes it (e.g. the first user message): fall
+    // through to the normal inclusive slice — there's no cleaner boundary.
+  }
 
   let end = idx;
   for (let j = idx + 1; j < meta.length; j++) {
@@ -1081,7 +1111,10 @@ export class HerdctlService {
     const dir = projectChatsDir(project.dir);
     const file = path.join(dir, `${sessionId}.jsonl`);
     const raw = await fs.readFile(file, "utf8");
-    const sliced = sliceTranscriptAtUuid(raw, toUuid);
+    // endOnCompletedAssistant: revert lands on a completed AI turn (reverting to
+    // one of your own prompts rewinds to the reply before it) so resume doesn't
+    // replay a dangling prompt as a phantom turn (#451).
+    const sliced = sliceTranscriptAtUuid(raw, toUuid, true);
     if (sliced == null) {
       throw new Error(`Message ${toUuid} not found in session ${sessionId}`);
     }
