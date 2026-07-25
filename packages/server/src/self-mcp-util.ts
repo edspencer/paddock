@@ -31,6 +31,29 @@ export function errText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * Absolute POSIX paths of two-or-more segments (`/var/lib/paddock/projects/x`), NOT
+ * preceded by `:` or `/` so the path component of a URL (`https://host/owner/repo`)
+ * is left alone. Used by {@link redactPaths}.
+ */
+const ABS_PATH_RE = /(?<![:/\w])\/[\w.@%+-]+(?:\/[\w.@%+-]+)+\/?/g;
+
+/**
+ * Strip server filesystem paths out of an error message before it reaches the agent
+ * (issue #467). Motivating case: `create_project` on an unreachable repo surfaces
+ * git's failure through `promisify(execFile)`, whose message is the WHOLE argv —
+ * `Command failed: git clone -- <url> /srv/data/projects/foo/foo` — i.e. the server's
+ * internal layout. The repo URL is the actionable part and is preserved (URLs are
+ * skipped by {@link ABS_PATH_RE}); bare absolute paths become `<path>`.
+ *
+ * A hygiene measure, not a security boundary: a keeper can see its own cwd anyway.
+ * The point is that a tool error reads as a clean, actionable message rather than a
+ * raw subprocess dump — the same cleanup applied to the other write tools' errors.
+ */
+export function redactPaths(text: string): string {
+  return text.replace(ABS_PATH_RE, "<path>");
+}
+
 /** Clamp a caller-supplied limit into [1, MAX], defaulting when absent/invalid. */
 export function clampLimit(raw: unknown): number {
   if (typeof raw !== "number" || !Number.isFinite(raw)) return READ_CHAT_DEFAULT_LIMIT;

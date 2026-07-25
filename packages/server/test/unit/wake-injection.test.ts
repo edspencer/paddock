@@ -41,7 +41,12 @@ function markerSelfMcp(params: {
 function ctx(overrides: Partial<InjectedMcpBuildContext> = {}): InjectedMcpBuildContext {
   return {
     scratchSlug: SCRATCH,
-    cfg: { selfMcpEnabled: true, selfMcpWriteEnabled: true, hooksMcpEnabled: false },
+    cfg: {
+      selfMcpEnabled: true,
+      selfMcpWriteEnabled: true,
+      selfMcpProjectsEnabled: false,
+      hooksMcpEnabled: false,
+    },
     saveAttachment: async () => "att-id",
     getProvenance: undefined,
     getProjectHooksMcp: async () => undefined,
@@ -90,7 +95,14 @@ describe("buildInjectedMcpServers", () => {
   it("omits the self-MCP when the instance opt-in is off", async () => {
     const servers = await buildInjectedMcpServers(
       BASE_ARGS,
-      ctx({ cfg: { selfMcpEnabled: false, selfMcpWriteEnabled: true, hooksMcpEnabled: true } }),
+      ctx({
+        cfg: {
+          selfMcpEnabled: false,
+          selfMcpWriteEnabled: true,
+          selfMcpProjectsEnabled: false,
+          hooksMcpEnabled: true,
+        },
+      }),
     );
     expect(servers[SELF_MCP_SERVER_KEY]).toBeUndefined();
   });
@@ -107,11 +119,24 @@ describe("buildInjectedMcpServers", () => {
   it("read-only self-MCP when writes are disabled (no trigger tools)", async () => {
     const servers = await buildInjectedMcpServers(
       BASE_ARGS,
-      ctx({ cfg: { selfMcpEnabled: true, selfMcpWriteEnabled: false, hooksMcpEnabled: true } }),
+      ctx({
+        cfg: {
+          selfMcpEnabled: true,
+          selfMcpWriteEnabled: false,
+          selfMcpProjectsEnabled: true,
+          hooksMcpEnabled: true,
+        },
+      }),
     );
     expect(servers[SELF_MCP_SERVER_KEY]).toBeDefined();
     // includeTriggers is only ever resolved when writes are on.
-    expect(selfParams(servers)).toMatchObject({ includeWrite: false, includeTriggers: false });
+    // includeTriggers/includeProjects are only ever on when writes are — note this
+    // ctx has selfMcpProjectsEnabled ON, and it is still gated off by the write flag.
+    expect(selfParams(servers)).toMatchObject({
+      includeWrite: false,
+      includeTriggers: false,
+      includeProjects: false,
+    });
   });
 
   it("includes trigger tools when the project's hooks-MCP override enables them", async () => {
@@ -125,9 +150,36 @@ describe("buildInjectedMcpServers", () => {
   it("includes trigger tools via the instance default when there is no override", async () => {
     const servers = await buildInjectedMcpServers(
       BASE_ARGS,
-      ctx({ cfg: { selfMcpEnabled: true, selfMcpWriteEnabled: true, hooksMcpEnabled: true } }),
+      ctx({
+        cfg: {
+          selfMcpEnabled: true,
+          selfMcpWriteEnabled: true,
+          selfMcpProjectsEnabled: false,
+          hooksMcpEnabled: true,
+        },
+      }),
     );
     expect(selfParams(servers)).toMatchObject({ includeTriggers: true });
+  });
+
+  it("includes the project tool only when the instance projects flag is on (#467)", async () => {
+    // Default ctx has selfMcpProjectsEnabled OFF — writes on, project tool off.
+    const off = await buildInjectedMcpServers(BASE_ARGS, ctx());
+    expect(selfParams(off)).toMatchObject({ includeWrite: true, includeProjects: false });
+
+    const on = await buildInjectedMcpServers(
+      BASE_ARGS,
+      ctx({
+        cfg: {
+          selfMcpEnabled: true,
+          selfMcpWriteEnabled: true,
+          selfMcpProjectsEnabled: true,
+          hooksMcpEnabled: false,
+        },
+      }),
+    );
+    // Its own gate: on without dragging the trigger tools in with it.
+    expect(selfParams(on)).toMatchObject({ includeProjects: true, includeTriggers: false });
   });
 
   it("gates a resume on the chat's OWN recorded depth (not the caller's depth)", async () => {

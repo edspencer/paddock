@@ -397,6 +397,8 @@ describe("loadPaddockConfig: YAML instance-config file (#270)", () => {
     expect(cfg.brand).toMatchObject({ name: "Homelab", accent: "#123456" });
     expect(cfg.selfMcpEnabled).toBe(true);
     expect(cfg.selfMcpWriteEnabled).toBe(true);
+    // Not in the file above ⇒ the project tool (#467) stays off even with write on.
+    expect(cfg.selfMcpProjectsEnabled).toBe(false);
     expect(cfg.hooksMcpEnabled).toBe(true);
     // Recovery (#301): file values populate the group; the unset `maxRetries`
     // still falls back to the built-in default (1).
@@ -408,6 +410,30 @@ describe("loadPaddockConfig: YAML instance-config file (#270)", () => {
       limboTimeoutMs: 60000,
     });
     expect(cfg.gitAuthor).toEqual({ name: "Ed", email: "ed@example.com" });
+  });
+
+  it("selfMcpProjectsEnabled implies write implies read (#467)", () => {
+    // Alone it is inert — the project tool rides on the write block.
+    writeConfig("selfMcpProjectsEnabled: true\n");
+    expect(loadPaddockConfig().selfMcpProjectsEnabled).toBe(false);
+
+    // Write without read is also inert (the existing implication), so is projects.
+    writeConfig(["selfMcpWriteEnabled: true", "selfMcpProjectsEnabled: true"].join("\n") + "\n");
+    expect(loadPaddockConfig().selfMcpProjectsEnabled).toBe(false);
+
+    // All three ⇒ on.
+    writeConfig(
+      ["selfMcpEnabled: true", "selfMcpWriteEnabled: true", "selfMcpProjectsEnabled: true"].join(
+        "\n",
+      ) + "\n",
+    );
+    expect(loadPaddockConfig().selfMcpProjectsEnabled).toBe(true);
+
+    // Env shadows the file, same as its siblings.
+    writeConfig(["selfMcpEnabled: true", "selfMcpWriteEnabled: true"].join("\n") + "\n");
+    expect(loadPaddockConfig().selfMcpProjectsEnabled).toBe(false);
+    process.env.PADDOCK_SELF_MCP_PROJECTS = "1";
+    expect(loadPaddockConfig().selfMcpProjectsEnabled).toBe(true);
   });
 
   it("env overrides a recovery file value (precedence file < env)", () => {

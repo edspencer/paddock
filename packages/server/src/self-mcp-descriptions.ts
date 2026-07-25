@@ -95,6 +95,22 @@ export const FORK_CHAT_BATCH_DESC =
   `that model. Up to ${FORK_BATCH_MAX} forks per call; they run ` +
   "concurrently. Returns the source and every new child's sessionId.";
 
+// ── Project tools (issue #467) ──────────────────────────────────────────────
+
+export const CREATE_PROJECT_DESC =
+  "Create a BRAND-NEW Paddock project — the workspace a keeper agent lives in — and " +
+  "register its keeper. `name` is the only required argument; the kebab-case `slug` " +
+  "is derived from it unless you pass one. Two kinds: pass a `repo` git URL for a " +
+  "REPO-BACKED project (the repo is cloned into a nested checkout that becomes the " +
+  "keeper's working directory — this is what you want for a project that IS a " +
+  "codebase), or omit `repo` for a NOTEBOOK project (a notes/docs workspace whose " +
+  "own directory is the working directory). Optionally set `summary` (a one-line " +
+  "description), `area` (the grouping shown in the sidebar) and `status`. Returns " +
+  "the new project's slug, its working directory, and whether it is repo-backed — " +
+  "pass that slug to `create_chat` to start working in it. A bad or unreachable " +
+  "repo URL fails cleanly and leaves NO half-created project behind, so it is safe " +
+  "to retry with a corrected URL.";
+
 // ── Unified trigger tools (Epic T / T3) ─────────────────────────────────────
 
 export const SET_TRIGGER_DESC =

@@ -69,7 +69,12 @@ export interface InjectedMcpBuildContext {
   /** The reserved scratch slug (`SCRATCH_SLUG`) — scratch turns get no self-MCP. */
   scratchSlug: string;
   /** Instance self-MCP gates (resolved from `PaddockConfig`). */
-  cfg: { selfMcpEnabled: boolean; selfMcpWriteEnabled: boolean; hooksMcpEnabled: boolean };
+  cfg: {
+    selfMcpEnabled: boolean;
+    selfMcpWriteEnabled: boolean;
+    selfMcpProjectsEnabled: boolean;
+    hooksMcpEnabled: boolean;
+  };
   /** Persist a file's bytes into the attachment store (send_file's snapshot). */
   saveAttachment: (bytes: Buffer, filenameForExt: string) => Promise<string>;
   /**
@@ -94,6 +99,7 @@ export interface InjectedMcpBuildContext {
     parentProvenance: { origin: TurnOrigin; depth: number };
     includeWrite: boolean;
     includeTriggers: boolean;
+    includeProjects: boolean;
   }) => InjectedMcpServerDef;
 }
 
@@ -149,6 +155,9 @@ export async function buildInjectedMcpServers(
       parentProvenance: { origin, depth: injectionDepth },
       includeWrite: selfMcp.includeWrite,
       includeTriggers,
+      // The project tool (#467) is a purely instance-level gate — no per-project
+      // override — but still rides on the write block, so writes must be on.
+      includeProjects: selfMcp.includeWrite && ctx.cfg.selfMcpProjectsEnabled,
     });
   }
   return servers;
