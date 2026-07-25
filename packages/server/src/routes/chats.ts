@@ -13,6 +13,7 @@ import { buildProjectRuns } from "../runs.js";
 import { KEEPER_DEFAULT_MODEL } from "../models.js";
 import { projectChatsDir } from "../transcripts.js";
 import { readSubagentMessages, readSessionTokenUsageWithSubagents } from "../subagents.js";
+import { readContextSeries } from "../usage.js";
 import { enrichWithToolDetails } from "../tooldetails.js";
 import { scanTranscriptNotice } from "../turn-notice.js";
 import type { RunProvenance } from "../run-provenance.js";
@@ -207,6 +208,20 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
         // Human-typed turns match no marker and stay unlabelled (the default).
         const markers = await messageProvenance.list(req.params.sessionId).catch(() => []);
         const withProvenance = applyMessageProvenance(enriched, markers);
+        // Per-message context fill (issue #451): join the uuid→contextTokens
+        // series (assistant turns only) and forward-fill it across the user/tool
+        // messages between turns, so every message answers "how full was the
+        // window as of here". Rides the mtime-cached series; open-chat path only.
+        const series = SAFE_SESSION_ID.test(req.params.sessionId)
+          ? await readContextSeries(projectDir, req.params.sessionId).catch(() => new Map())
+          : new Map<string, number>();
+        if (series.size > 0) {
+          let lastCtx: number | undefined;
+          for (const m of withProvenance) {
+            if (m.uuid && series.has(m.uuid)) lastCtx = series.get(m.uuid);
+            if (lastCtx !== undefined) m.contextTokens = lastCtx;
+          }
+        }
         // #329: `@herdctl/core` drops synthetic messages when it parses the
         // transcript, so a turn that dead-ended at a subscription/usage limit
         // leaves no visible trace on reload. Re-scan the raw JSONL for a TRAILING
@@ -319,13 +334,40 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
   // away — a real, resumable chat with the parent's full history — rather than
   // being created lazily on a first message. Optional `name` sets its title
   // (e.g. "Fork of <parent>"). Returns the new session id.
-  app.post<{ Params: { slug: string; sessionId: string }; Body: { name?: string } }>(
-    "/api/projects/:slug/chats/:sessionId/fork",
+  app.post<{
+    Params: { slug: string; sessionId: string };
+    Body: { name?: string; fromUuid?: string };
+  }>("/api/projects/:slug/chats/:sessionId/fork", async (req, reply) => {
+    try {
+      const project = await projects.get(req.params.slug);
+      // `fromUuid` (issue #451): branch at an earlier message instead of copying
+      // the whole history — the fork inherits only the prefix up to that turn.
+      const newId = await herdctl.forkSession(
+        project,
+        req.params.sessionId,
+        req.body?.name,
+        req.body?.fromUuid,
+      );
+      return reply.code(201).send({ sessionId: newId });
+    } catch (err) {
+      return sendProjectError(reply, err);
+    }
+  });
+
+  // Revert a project chat back to an earlier message (issue #451): truncate this
+  // session's transcript at `uuid`, in place (same session id), so the chat
+  // continues as if the later turns never happened. The dropped tail is backed
+  // up (recoverable). Rolls back the CONVERSATION only — real side-effects of the
+  // reverted turns are NOT undone (the UI warns). Returns the count dropped.
+  app.post<{ Params: { slug: string; sessionId: string }; Body: { uuid?: string } }>(
+    "/api/projects/:slug/chats/:sessionId/revert",
     async (req, reply) => {
       try {
+        const uuid = req.body?.uuid;
+        if (!uuid) return reply.code(400).send({ error: "uuid is required" });
         const project = await projects.get(req.params.slug);
-        const newId = await herdctl.forkSession(project, req.params.sessionId, req.body?.name);
-        return reply.code(201).send({ sessionId: newId });
+        const { removed } = await herdctl.revertSession(project, req.params.sessionId, uuid);
+        return reply.code(200).send({ ok: true, removed });
       } catch (err) {
         return sendProjectError(reply, err);
       }
