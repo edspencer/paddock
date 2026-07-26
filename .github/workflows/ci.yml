@@ -28,6 +28,46 @@ jobs:
       - name: Unit + integration tests
         run: npm test
 
+  website:
+    name: Docs site build
+    runs-on: ubuntu-latest
+    # paths-filter reads the PR's changed-file list through the API.
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+      # `website/` is deliberately outside the root npm workspaces and Cloudflare
+      # Pages builds it on its own, so nothing else here would catch a sidebar
+      # `slug` that doesn't resolve or a relative image path that doesn't exist.
+      # Only worth the runner time when the docs actually change — `openapi-site/**`
+      # counts because website's `prebuild` copies it into `public/api/`.
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            docs:
+              - 'website/**'
+              - 'openapi-site/**'
+      - uses: actions/setup-node@v4
+        if: steps.filter.outputs.docs == 'true'
+        with:
+          node-version: 22
+          cache: npm
+      # No lockfile by design, and the build deps live in `dependencies` (not
+      # `devDependencies`) so a NODE_ENV=production install still gets them —
+      # `npm install` is exactly what Cloudflare Pages runs. rehype-mermaid uses
+      # the `pre-mermaid` strategy (diagrams render client-side), so the build
+      # needs no Playwright browser download.
+      - name: Install docs-site deps
+        if: steps.filter.outputs.docs == 'true'
+        run: npm install
+        working-directory: website
+      - name: Build docs site
+        if: steps.filter.outputs.docs == 'true'
+        run: npm run build
+        working-directory: website
+
   e2e:
     name: E2E (Playwright, fake-claude)
     runs-on: ubuntu-latest

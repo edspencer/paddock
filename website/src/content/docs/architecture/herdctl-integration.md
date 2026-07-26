@@ -3,41 +3,59 @@ title: "herdctl integration contract"
 description: "The exact public @herdctl/core API surface Paddock depends on."
 ---
 
-> The public-npm API surface paddock depends on, verified against the
-> **installed** `@herdctl/core@5.10.1` (the public npm package — NOT the local
-> symlink). Every claim here was checked against the shipped `.d.ts`
-> declarations and proven by a real spike (`packages/server/src/spike.ts`,
-> which typechecks and runs against the package, constructing + initializing a
-> FleetManager and a SessionDiscoveryService).
+> The public-npm API surface paddock depends on. Every claim here was checked
+> against the shipped `.d.ts` declarations and proven by a real spike
+> (`packages/server/src/spike.ts`, which typechecks and runs against the
+> package, constructing + initializing a FleetManager and a
+> SessionDiscoveryService).
 >
-> Pinned versions inspected: `@herdctl/core@5.10.1` (used),
-> `@herdctl/web@0.9.10` and `@herdctl/chat@0.3.14` (referenced for protocol
-> shape only — see question f).
+> Paddock currently depends on **`@herdctl/core@^5.26.1`** and
+> `@herdctl/chat@^0.8.0` (see `packages/server/package.json`).
+
+:::caution[This page is a snapshot, and core has moved on]
+The contract below was written against `@herdctl/core@5.10.1` and has **not**
+been re-verified end to end against 5.26.1. Two of its headline findings are now
+out of date, because herdctl closed the gaps this page asked for:
+
+- **`FleetManager.addAgent()` / `removeAgent()` now exist** — programmatic,
+  in-memory agent registration, no yaml-write + `reload()` round trip. Paddock
+  uses them today (`packages/server/src/herdctl.ts`), so section **b** below
+  describes an approach paddock has since moved off.
+- **`FleetManager.getAgentSessions()` now exists** — session enumeration no
+  longer requires hand-wiring a separate `SessionDiscoveryService` with each
+  agent's working directory.
+
+Treat the sections below as historical background on *why* the integration is
+shaped the way it is, not as the current call-by-call contract. A full re-verify
+against 5.26.1 is tracked as follow-up work; `packages/server/src/herdctl.ts` is
+the authoritative description of what paddock actually calls.
+:::
 
 ## TL;DR verdict
 
 | Need | Public API supports it? | Mechanism |
 |---|---|---|
 | Construct + run a fleet | ✅ Yes | `new FleetManager({configPath, stateDir})` → `initialize()` → `start()` |
-| **Add an agent at runtime** | ⚠️ **Only via yaml + `reload()`** | No `addAgent()`. Generate per-agent yaml files + a `herdctl.yaml`, then `reload()`. **This works and is what paddock does.** |
+| **Add an agent at runtime** | ✅ Yes (as of 5.26.1) | `fleet.addAgent(config, {replace})` / `removeAgent(name)`. **This is what paddock does now.** At 5.10.1 it was ⚠️ yaml + `reload()` only — see section b. |
 | Stream a prompt's output | ✅ Yes | `trigger(agent, undefined, {prompt, resume, onMessage})` |
 | New vs resume session | ✅ Yes | `resume: null` (new) / `resume: <id>` (resume); final id on `TriggerResult.sessionId` |
 | List sessions + messages | ✅ Yes | `SessionDiscoveryService.getAgentSessions()` / `getSessionMessages()` |
 | FleetManager events | ✅ Yes | EventEmitter: `job:output`, `job:completed`, `config:reloaded`, … |
 | Reuse a web/chat transport | ❌ No (in core) | Transport lives in `@herdctl/web`/`@herdctl/chat`, not core. Build our own (we did, in `ws.ts`). |
 
-The integration is viable on the public package **today**. The only real
-constraint is dynamic agents (yaml+reload, not a programmatic registry) — which
-is acceptable because paddock owns the generated config dir.
+The integration is viable on the public package **today**. Its one original
+constraint — dynamic agents via yaml+reload rather than a programmatic registry
+— has since been lifted by `addAgent()`/`removeAgent()`.
 
 ---
 
 ## Package shape
 
-`@herdctl/core@5.10.1` ships as ESM (`"type": "module"`), `main:
-./dist/index.js`, `types: ./dist/index.d.ts`. **There is no `exports` map** —
-just `main` + `types`. Everything is re-exported flat from the root, so a single
-import works:
+`@herdctl/core` ships as ESM (`"type": "module"`), `main: ./dist/index.js`,
+`types: ./dist/index.d.ts`. **There is no `exports` map** — just `main` +
+`types`. Everything is re-exported flat from the root, so a single import works
+(the internal `dist/` layout has been reorganized since 5.10.1, but the flat root
+export is unchanged):
 
 ```ts
 import {
@@ -122,9 +140,17 @@ allowed_tools: []
 
 ---
 
-## b. CRITICAL — adding agents at runtime
+## b. Adding agents at runtime
 
-**There is NO programmatic agent-registration API.** The `FleetManager` class
+:::note[Superseded]
+This section describes the 5.10.1 situation. Core now ships
+`fleet.addAgent(agentConfig, {baseDir, mergeDefaults, replace})` and
+`fleet.removeAgent(name)`, and **paddock uses those** — it no longer writes
+per-agent yaml or calls `reload()` to register a keeper. The yaml+reload path
+below is kept because it explains the on-disk config layout paddock still owns.
+:::
+
+At 5.10.1, **there was NO programmatic agent-registration API.** The `FleetManager` class
 exposes (verified from `fleet-manager.d.ts`): `initialize`, `start`, `stop`,
 `getFleetStatus`, `getAgentInfo`, `getAgentInfoByName`, `getSchedules`,
 `enable/disableSchedule`, **`reload`**, `trigger`, `cancelJob`, `forkJob`,
@@ -170,10 +196,10 @@ Config-dir layout paddock owns (regenerated, never hand-edited):
   projects/<slug>/             # project dirs (project.yaml, CHANGELOG.md, …)
 ```
 
-> **GAP (minor, app-managed):** dynamic agents require file generation +
-> `reload()` rather than an in-memory call. Acceptable because paddock owns the
-> config dir. A future herdctl enhancement (`fleet.addAgent(resolvedAgent)`)
-> would remove the file round-trip — see Gap list.
+> **GAP (closed):** at 5.10.1, dynamic agents required file generation +
+> `reload()` rather than an in-memory call. The herdctl enhancement asked for
+> here — `fleet.addAgent(...)` — shipped, and paddock now uses it, so the file
+> round-trip is gone.
 
 ---
 
@@ -305,11 +331,13 @@ streaming we use the per-trigger `onMessage` callback (finer-grained, gives
 **No — not from `@herdctl/core`.** Core has zero HTTP/WS server code. The
 transport lives in sibling packages:
 
-- `@herdctl/web` (`0.9.10`) — Fastify + WS dashboard. Its `ws/types.ts` defines
+- `@herdctl/web` (inspected at `0.9.10`; not a paddock dependency) — Fastify + WS
+  dashboard. Its `ws/types.ts` defines
   the chat protocol (`chat:send` → `chat:response`/`chat:tool_call`/
   `chat:complete`/`chat:error`, plus `subscribe`/`job:output` for live logs) and
   its `chat/web-chat-manager.ts` does the SDKMessage→protocol translation.
-- `@herdctl/chat` (`0.3.14`) — shared session/streaming primitives.
+- `@herdctl/chat` (paddock depends on `^0.8.0`) — shared session/streaming
+  primitives.
 
 Core only exposes `IChatManager` (an interface) + `getChatManager(platform)` —
 i.e. core can *host* a chat manager you (or a sibling package) provide, but it
@@ -332,11 +360,14 @@ protocol contract — that's the only "reuse."
 
 ## Gaps requiring a local herdctl change (→ PR later)
 
-These are the points where the public API can't (yet) do what paddock's project
-model wants cleanly. None are blockers today — each has a working app-layer
-workaround — but they're the candidates for an upstream local fix + PR.
+These were the points where the 5.10.1 public API couldn't do what paddock's
+project model wanted cleanly. **Gaps 1 and 2 have since been closed upstream**
+and paddock uses the new APIs; they're kept here for the rationale. Gaps 3 and 4
+have not been re-checked against 5.26.1.
 
-1. **Programmatic dynamic agents (primary).** Add a public
+1. ~~**Programmatic dynamic agents (primary).**~~ **CLOSED** — core ships
+   `addAgent()`/`removeAgent()`; paddock calls them directly. Original ask:
+   add a public
    `FleetManager.addAgent(agent)` / `removeAgent(name)` (or
    `registerAgents(ResolvedAgent[])`) so paddock can register a project's keeper
    agent in-memory instead of writing yaml + `reload()`. The internals already
@@ -345,7 +376,9 @@ workaround — but they're the candidates for an upstream local fix + PR.
    `reload()`. Works, but couples paddock to herdctl's on-disk config format and
    forces a full re-read on every project create.
 
-2. **First-class session list on FleetManager.** Session enumeration requires
+2. ~~**First-class session list on FleetManager.**~~ **CLOSED** — core ships
+   `fleet.getAgentSessions(name, {limit})`, which derives the working directory
+   from the loaded config. Original ask: session enumeration requires
    instantiating `SessionDiscoveryService` separately and passing each agent's
    `{name, workingDirectory, dockerEnabled}` by hand. A
    `fleet.getAgentSessions(agentName)` / `fleet.getSessionMessages(agentName,
