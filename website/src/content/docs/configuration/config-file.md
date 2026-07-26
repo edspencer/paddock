@@ -99,10 +99,11 @@ brand:
 
 # --- Capabilities & safety gates (default OFF; maxSpawnDepth defaults to 1) ---
 selfMcpEnabled: true          # read-only self-management MCP for keepers
-selfMcpWriteEnabled: true     # + the write tools (create/fork/send/schedule)
+selfMcpWriteEnabled: true     # + the write tools (create/fork/send/archive/fan-out)
+selfMcpProjectsEnabled: false # + create_project (provisions a project, clones a repo)
 maxSpawnDepth: 1              # how deep spawned children may themselves spawn
 scheduleMutationEnabled: false
-hooksMcpEnabled: false
+hooksMcpEnabled: false        # + the trigger tools (list/set/remove/run_trigger)
 
 # --- External Management API (/mcp) — file-only, no env equivalent ---
 managementApi:
@@ -144,14 +145,19 @@ prime candidates for the config file because they rarely change between runs.
 Each is settable **either** in the YAML **or** via its env var (env wins), and
 several also take a per-project override that wins at dispatch time.
 
+The first four rows decide which of the fourteen `mcp__paddock_manage__*` tools a
+keeper is handed; the
+[self-management MCP reference](/reference/self-mcp/) lists every tool, its
+arguments and the exact gating matrix.
+
 | YAML key | Env var | Default | What it gates |
 |----------|---------|---------|---------------|
-| `selfMcpEnabled` | `PADDOCK_SELF_MCP` | `false` | Give keepers the read-only self-management MCP (`mcp__paddock_manage__*`). |
-| `selfMcpWriteEnabled` | `PADDOCK_SELF_MCP_WRITE` | `false` | Add the self-management **write** tools (`create_chat`, `fork_chat`, `send_message`, schedule/hook tools). **Only honoured when `selfMcpEnabled` is also on** — write implies read. |
+| `selfMcpEnabled` | `PADDOCK_SELF_MCP` | `false` | Give keepers the read-only [self-management MCP](/reference/self-mcp/) (`mcp__paddock_manage__*`): `list_projects`, `list_chats`, `read_chat`. |
+| `selfMcpWriteEnabled` | `PADDOCK_SELF_MCP_WRITE` | `false` | Add the self-management **write** tools: `create_chat`, `fork_chat`, `send_message`, `archive_chat`, `unarchive_chat`, `fork_chat_batch`. **Only honoured when `selfMcpEnabled` is also on** — write implies read. (The trigger tools are gated separately, by `hooksMcpEnabled` below.) |
 | `selfMcpProjectsEnabled` | `PADDOCK_SELF_MCP_PROJECTS` | `false` | Add the self-management **project** tool (`create_project`) — a keeper provisioning a whole new project, cloning a repo when repo-backed. **Only honoured when `selfMcpWriteEnabled` (and so `selfMcpEnabled`) is also on.** Its own flag because it creates instance-level state and clones a caller-supplied URL; when off the tool is **absent**, not present-but-refusing. |
-| `maxSpawnDepth` | `PADDOCK_MAX_SPAWN_DEPTH` | `1` | How deep a spawned chat may itself spawn: a chat at depth `d` gets the self-MCP only if `d ≤ maxSpawnDepth`. `0` restores "no spawned child gets it". A per-project override wins at dispatch. |
-| `scheduleMutationEnabled` | `PADDOCK_SCHEDULE_MUTATION` | `false` | Allow schedules to be created/edited/deleted programmatically (self-MCP schedule tools + the mutating Schedules REST routes). Schedules declared statically in `project.yaml` are armed regardless of this gate. |
-| `hooksMcpEnabled` | `PADDOCK_HOOKS_MCP` | `false` | Advertise the hook-management MCP tools (`list_hooks` / `set_hook` / `remove_hook`). Only meaningful alongside the self-MCP write tools; a per-project `hooksMcpEnabled` override wins at dispatch. |
+| `maxSpawnDepth` | `PADDOCK_MAX_SPAWN_DEPTH` | `1` | How deep a spawned chat may itself spawn: a **server-initiated** turn at depth `d` gets the self-MCP only if `d ≤ maxSpawnDepth`. `0` restores "no spawned child gets it"; valid values are `0`–`8`. A human turn is the depth-0 root and is never depth-gated. A per-project override wins at dispatch. |
+| `scheduleMutationEnabled` | `PADDOCK_SCHEDULE_MUTATION` | `false` | Construct herdctl's fleet manager with `allowScheduleMutation`, permitting its runtime schedule add/remove APIs; off (the default) makes them throw. It is **not** what gates the self-MCP trigger tools (that's `hooksMcpEnabled`), and triggers declared in `project.yaml` are armed regardless. |
+| `hooksMcpEnabled` | `PADDOCK_HOOKS_MCP` | `false` | Advertise the unified trigger-management MCP tools — `list_triggers`, `set_trigger`, `remove_trigger`, `run_trigger`. (There are no `list_hooks`/`set_hook`/`remove_hook` tools; Epic T collapsed the separate hook and schedule verbs into this one family, and kept this flag as their gate.) Only honoured alongside the self-MCP write tools; a per-project `hooksMcpEnabled` override wins at dispatch. |
 
 ### `managementApi` — the one file-only block
 

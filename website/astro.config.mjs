@@ -124,6 +124,7 @@ export default defineConfig({
 						{ label: 'HTTP API (Swagger)', link: '/api/' },
 						{ label: 'WebSocket protocol', slug: 'reference/websocket' },
 						{ label: 'Management API (MCP)', slug: 'reference/mcp' },
+						{ label: 'Self-management MCP', slug: 'reference/self-mcp' },
 						{ label: 'Hooks', slug: 'reference/hooks' },
 						{ label: 'Schedules', slug: 'reference/schedules' },
 					],
