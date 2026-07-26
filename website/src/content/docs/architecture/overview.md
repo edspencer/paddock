@@ -366,25 +366,38 @@ Two servers, both wired in `ws.ts` (`ws.ts:1173-1310`):
   `AttachmentStore` as an immutable snapshot. The web renders off the tool call
   itself, so it survives live streaming and reload (issue #112/#113).
 - **Self-management** (server key `paddock_manage`) — `selfMcpServerDef()` in
-  `self-mcp.ts`. **Keeper-only and env-gated** (`PADDOCK_SELF_MCP`), never on
-  scratch. Read tools (`list_projects`, `list_chats`, `read_chat`) are always
-  present; write tools (`create_chat`, `fork_chat`, `send_message`,
-  `fork_chat_batch` fan-out) are appended only when `PADDOCK_SELF_MCP_WRITE` is
-  *also* on. Write tools spawn real keeper turns via `startAgentTurn`, so spawned
-  chats appear in the sidebar, stream live, and are re-attachable (issue #214).
-  The project tool (`create_project`) hangs off a third, independent flag
-  (`PADDOCK_SELF_MCP_PROJECTS`) on top of write: unlike every other write tool it
-  provisions **instance-level** state and clones a caller-supplied git URL, so it
-  gets its own opt-in. It delegates to the same `ProjectStore.create` +
-  `ensureProjectAgent` pair `POST /api/projects` uses, so the REST and MCP
-  creation paths cannot drift (issue #467).
+  `self-mcp.ts`. **Keeper-only and env-gated**, never on scratch. Its 14 tools sit
+  in four tiers, each behind its own flag on top of the one below it: **read**
+  (`PADDOCK_SELF_MCP`), **write** (`PADDOCK_SELF_MCP_WRITE` — the chat-mutating
+  tools, including `archive_chat` / `unarchive_chat`), **project**
+  (`PADDOCK_SELF_MCP_PROJECTS`, `create_project` only), and **triggers**
+  (`PADDOCK_HOOKS_MCP`, with a per-project override). Several of them spawn real
+  keeper turns via `startAgentTurn`, so spawned chats appear in the sidebar, stream
+  live, and are re-attachable (issue #214). The
+  [self-management MCP reference](/reference/self-mcp/) is the authoritative
+  per-tool list and [gating matrix](/reference/self-mcp/#the-gating-matrix) — this
+  page deliberately doesn't restate it.
 
-**Anti-fork-bomb design:** spawned/automated turns (`startAgentTurn`,
-`triggerType: "agent"`) and scheduler wakes are injected with `send_file`
-**only** — never the self-MCP. An automated child therefore can't itself
-create/fork/message; recursion is simply not wired into the automated path. A
-human who later opens a spawned chat gets full tools again through the normal
-socket path.
+**Anti-fork-bomb design:** recursion is bounded by a **depth gate**, not by
+withholding the toolset from every automated turn. Every server-initiated turn
+carries a spawn `depth` (a human turn is the un-gated **depth-0 root**; each chat
+spawned by a tool-carrying parent is one hop deeper). `buildInjectedMcpServers()`
+in `wake-injection.ts` — the single injection policy shared by the live
+`startAgentTurn` path and scheduler-wake rebuilds — hands a spawned/automated turn
+the self-MCP iff `depth ≤ maxSpawnDepth`, per `spawnedSelfMcpDecision()` in
+`spawn-capability.ts`. The comparison is `≤` because it is evaluated **at the
+child**, using the child's own depth.
+
+`maxSpawnDepth` (`PADDOCK_MAX_SPAWN_DEPTH`, or `maxSpawnDepth` in
+`paddock.config.yaml`, with a per-project override that wins at dispatch) defaults
+to **`1`** and accepts `0`–`8`. So on a stock instance — once the self-MCP flags
+are on at all — a depth-1 child **does** receive the toolset, write tools included:
+it can `send_message` back to its parent and can itself spawn. Its depth-2
+grandchild fails `2 ≤ 1` and gets `send_file` only, so the tree terminates. Setting
+`maxSpawnDepth: 0` is what actually forbids *any* spawned child the toolset. The
+tier flags still apply on top: writes need `PADDOCK_SELF_MCP_WRITE`, so an operator
+who leaves writes off gets read-only children regardless of depth. A human who
+later opens a spawned chat gets full tools again through the normal socket path.
 
 ---
 
