@@ -1,6 +1,6 @@
 ---
 title: What's New
-description: "The user-facing highlights of each Paddock release — official Docker images & deploy recipes, live nested sub-agent cards, surviving background work, an instance-wide settings screen, per-project curation budgets, pinned chats & file tabs, attachments, streaming, unified triggers, and more."
+description: "The user-facing highlights of each Paddock release — an external MCP endpoint, a generated API reference, per-message fork & revert, Claude Opus 5 by default, configurable model lists, official Docker images & deploy recipes, live nested sub-agent cards, surviving background work, an instance-wide settings screen, attachments, streaming, unified triggers, and more."
 ---
 
 The headline changes in recent Paddock releases, newest first. These are the
@@ -18,7 +18,115 @@ unified into a single `set_trigger` family in a subsequent release.
 A theme runs through this stretch: Paddock grew from a place to *chat with*
 agents into a place where agents **run on their own** — fired by events and
 schedules, spawning and reporting back to each other — with the UI making all
-that unattended work legible at a glance.
+that unattended work legible at a glance. With 0.46 the boundary opens the other
+way as well: Paddock is now something you can **drive from outside**, over an MCP
+endpoint and a published HTTP API, carrying its own credentials and its own
+read-only-by-default policy rather than borrowing your proxy's. An instance is
+becoming less an app you visit and more a service your other tools talk to.
+
+## 0.46 — Drive Paddock from outside
+
+- **An external MCP client can now drive Paddock.** The management operations are
+  served over a streamable-HTTP MCP transport at `/mcp`, so a Claude Code session
+  on your laptop — and eventually a peer Paddock — can list projects, read chats
+  and, with the scope for it, start turns, all bounded by the credential it
+  presents. External callers get the *same* toolset a keeper receives in-process
+  rather than a parallel one, so adding a self-management tool exposes it over
+  `/mcp` for free and the two surfaces can't drift. The transport is **stateless**
+  — a fresh server per request, no session store, restarts transparent — and
+  publishes RFC 9728 discovery metadata once you've configured an authorization
+  server.
+- **Management auth stands on its own, and is read-only by default.** Paddock
+  authenticates `/mcp` itself, independent of `PADDOCK_AUTH_MODE` and of any
+  reverse proxy, so the endpoint stays credential-gated even on an instance
+  running `auth.mode: none`. Policy is enforced at the operations layer rather
+  than per-transport, so every future access path inherits identical scoping
+  instead of reimplementing it. Client tokens are *referenced*, never inlined —
+  `auth: { ref: "env:VAR" }`, and a literal secret in the config file is a hard
+  error. A client configured without an explicit scope gets read-only on purpose:
+  any write scope can start keeper turns, and a keeper has `Bash`, so granting one
+  is effectively remote code execution on the host. The whole thing fails closed —
+  `/mcp` 404s until clients *and* a public URL are configured, and a bad
+  credential gets a `401`, never a redirect to a login page no MCP client can
+  follow.
+- **Hover a message to see when it happened — and how full the window was.**
+  Hovering any message in a transcript reveals a small rail at its top-right
+  showing that message's timestamp and the context-window fill **as of that
+  point**. It's a point-in-time read rather than a running total, so on a long
+  chat you can finally see *where* the window actually filled up, and whether what
+  you're reading is from minutes or days ago.
+
+![The per-message hover rail on an assistant reply, showing its age, the context-window fill at that point, and the fork and revert actions](../../assets/whats-new/per-message-hover.png)
+
+- **Fork or rewind from any point in a chat.** The same rail carries two actions.
+  **Fork from here** starts a new chat containing only the transcript *up to* that
+  message, leaving the original untouched — so you can try a second approach from
+  the moment things diverged. **Revert to here** truncates the chat in place: it
+  keeps the session id, so the URL and lineage survive, and backs the discarded
+  tail up to a `.reverts/` sidecar. The confirm dialog counts the messages and
+  tool calls about to disappear and says plainly what reverting does *not* undo —
+  files written, PRs opened, messages sent all stay done. You're rewinding the
+  conversation, not the world.
+- **Mark a conversation unread.** A sixth action on each chat row toggles its read
+  state, borrowing the email-client move for "I glanced at this at midnight,
+  resurface it in the morning" — marking a read chat unread re-raises its accent
+  dot in the list. The flag is per-user rather than shared like starring and
+  archiving, since "I haven't dealt with this yet" is personal, and opening or
+  focusing the chat spends it.
+
+![A chat row hovered to reveal its six actions, with the mark-unread envelope highlighted](../../assets/whats-new/mark-unread.png)
+
+- **An API reference, generated from the code.** Every REST route now carries a
+  schema, collected into a live OpenAPI 3 document. Set `PADDOCK_OPENAPI_ENABLED`
+  (**off by default**) and a Paddock-branded Swagger UI mounts at `/open-api` —
+  raw spec at `/open-api.json` — reachable from a new **Swagger API** link in the
+  sidebar, with an Authorize button that reflects your instance's auth mode. A
+  static copy is published on this site too, as the [API reference](/api/). (The
+  sidebar's "Instance settings" is now just **Settings**.)
+
+![The generated Swagger UI reference mounted at /open-api, listing the System routes](../../assets/whats-new/swagger-api.png)
+
+- **Keepers can create projects.** A new `create_project` self-management tool
+  lets an agent provision a project rather than stopping to ask you to click
+  **New project** — a notebook, or repo-backed by passing a git URL, which clones
+  into a nested checkout and rolls back cleanly if the clone fails. It's gated
+  behind its own `PADDOCK_SELF_MCP_PROJECTS` flag, **off by default**: unlike
+  every other write tool it creates instance-level state and clones a URL the
+  caller supplied, so it deliberately doesn't ride along on the general write
+  gate.
+
+## 0.45 — Opus 5, and a configurable model list
+
+- **Claude Opus 5 is the default keeper model.** `claude-opus-5` heads the model
+  picker — a 1M-token context window at the same per-token price as Opus 4.8, with
+  markedly better verification-and-iteration behaviour for the money. New projects
+  and any keeper you haven't overridden run on it now. `claude-opus-4-8` stays
+  selectable for regression comparison or prompts tuned to its behaviour, and the
+  sweeper keeps its cheaper Haiku default, so curation costs the same as before.
+- **Choose which models your instance offers.** The picker used to show every
+  model in the built-in catalog. An instance can now set an allow-list — the
+  `PADDOCK_MODELS` environment variable (comma-separated ids), a `models:` list in
+  `paddock.config.yaml`, or the field on the **Settings** screen — and each
+  project's **Settings** tab can narrow it further, though a project may only
+  *subset* what the instance offers. Leave it unset and every catalog model is
+  offered, exactly as before. The catalog still owns each model's context limit
+  and pricing, so an allow-list picks from it by id and can't misconfigure them.
+
+![A project's Settings tab restricting the offered models to three of the five the instance allows](../../assets/whats-new/model-allow-list.png)
+
+- **A queued follow-up is no longer dropped.** Type a second message while the
+  keeper is still replying and it now reliably sends once the turn lands. In
+  session mode a turn that produced a complete reply can still report failure in
+  its trailing result frame; the queue drain — along with the post-turn curation
+  sweep and the recovery watch — took that at face value and silently discarded
+  the message. A real reply now supersedes a benign trailing failure, while a
+  genuinely dead turn still holds its queue and keeps its error banner.
+- **`releases/latest/download/…` resolves at last.** Each GitHub Release now
+  carries a stable-named `paddock-latest.tgz` (and its `.sha256`) alongside the
+  version-named tarball, so a self-hoster or a deploy recipe can fetch the newest
+  build from a fixed URL — GitHub's `latest/download` redirect only works when the
+  filename is identical across every release. Pin `paddock-<version>.tgz` instead
+  when you'd rather not float.
 
 ## 0.44 — Two official images & ready-made deploy recipes
 
