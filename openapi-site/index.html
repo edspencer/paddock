@@ -42,11 +42,29 @@
           sans-serif;
       }
       .paddock-header .tag {
-        margin-left: auto;
         color: #9aa4b2;
         font:
           400 12px/1.2 system-ui,
           sans-serif;
+      }
+      /* This page bypasses the docs site's Astro/Starlight shell entirely, so it
+         has no site nav — the back-link is the only way out. */
+      .paddock-header .back {
+        margin-left: auto;
+        color: #fff;
+        text-decoration: none;
+        white-space: nowrap;
+        padding: 6px 12px;
+        border: 1px solid #3a4250;
+        border-radius: 6px;
+        font:
+          500 13px/1.2 system-ui,
+          sans-serif;
+      }
+      .paddock-header .back:hover,
+      .paddock-header .back:focus-visible {
+        border-color: var(--paddock-accent);
+        color: var(--paddock-accent);
       }
       .paddock-note {
         padding: 8px 20px;
@@ -71,6 +89,7 @@
       <img src="./icon-192.png" alt="Paddock" />
       <span class="name">Paddock HTTP API</span>
       <span class="tag">reference · generated from route schemas</span>
+      <a class="back" href="/">← Back to Paddock docs</a>
     </header>
     <div class="paddock-note">
       Static reference for the latest release — not connected to a live server, so <em>Try it out</em> is
@@ -81,7 +100,10 @@
     <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui-bundle.js"></script>
     <script>
       window.ui = SwaggerUIBundle({
-        url: "./open-api.json",
+        // Absolute, not relative: this page is published at `<docs site>/api/`,
+        // and a relative "./open-api.json" resolves to the site ROOT if the URL
+        // ever loses its trailing slash (/api → /open-api.json → 404).
+        url: "/api/open-api.json",
         dom_id: "#swagger-ui",
         deepLinking: true,
         docExpansion: "list",

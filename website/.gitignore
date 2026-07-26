@@ -1,5 +1,8 @@
 # build output
 dist/
+# Swagger UI copied from ../openapi-site by the `prebuild` script
+# (openapi-site/ stays the single source of truth — never commit the copy)
+public/api/
 # generated types
 .astro/
 

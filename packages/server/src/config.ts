@@ -94,7 +94,7 @@ export interface BrandConfig {
 
 /** OpenAPI / Swagger-UI reference surface config (see PaddockConfig.openapi). */
 export interface OpenApiConfig {
-  /** Mount the `/open-api` UI + `/open-api.json` spec. Default true. */
+  /** Mount the `/open-api` UI + `/open-api.json` spec. Opt-in — defaults false. */
   enabled: boolean;
   /** Route prefix the UI is served under (raw spec at `<path>.json`). */
   path: string;
