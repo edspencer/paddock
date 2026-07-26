@@ -2,8 +2,19 @@
 
 A self-contained, **read-only** API reference for the latest Paddock release:
 Swagger UI (`index.html`) rendering `open-api.json`. It is **not connected to a
-live server** — "Try it out" is disabled. It's meant to be published to a static
-host (e.g. Cloudflare Pages) at a subdomain like `paddock-api.<domain>`.
+live server** — "Try it out" is disabled.
+
+**This directory is the single source of truth for the published reference.** The
+docs site copies it verbatim into `website/public/api/` via `website`'s
+`prebuild` script (`website/scripts/copy-openapi-site.mjs`), so it ships at
+**`/api/`** on the docs site with no extra deploy config. `website/public/api/` is
+a gitignored build artifact — edit files *here*, never there.
+
+Because the published mount is `/api/`, `index.html` loads the spec from the
+absolute path **`/api/open-api.json`** (a relative URL breaks if the page URL
+loses its trailing slash). Publishing this directory at some *other* root — e.g.
+a standalone `paddock-api.<domain>` Pages project, as below — therefore needs
+that `url:` adjusted to match.
 
 ## Files
 

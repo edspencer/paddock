@@ -4,10 +4,12 @@
  * The spec is *derived from the route schemas* — every REST route attaches a
  * Fastify `schema` ({ tags, summary, description, params, querystring, body,
  * response }) and `@fastify/swagger` (registered in app.ts before the routes)
- * collects them into a live OpenAPI 3 document served at `/docs` (Swagger UI)
- * and `/docs/json` (raw spec). This module only provides the top-level document
- * metadata (info, tags, security) that Fastify can't infer from routes, plus the
- * Paddock-branded Swagger-UI mount options.
+ * collects them into a live OpenAPI 3 document. When enabled
+ * (`PADDOCK_OPENAPI_ENABLED`) it is served at `/open-api` (Swagger UI) with the
+ * raw spec at `/open-api/json` plus the `/open-api.json` alias; the prefix is
+ * configurable via `PADDOCK_OPENAPI_PATH`. This module only provides the
+ * top-level document metadata (info, tags, security) that Fastify can't infer
+ * from routes, plus the Paddock-branded Swagger-UI mount options.
  *
  * IMPORTANT — the live conversational surface is NOT REST. Sending a message,
  * streaming the reply, tool-call events, cancel, slash-commands and the live
@@ -209,7 +211,7 @@ function brandCss(accent: string): string {
   ].join("\n");
 }
 
-/** Swagger-UI mount options (served at /docs), Paddock-branded. */
+/** Swagger-UI mount options (served at `routePrefix`, default `/open-api`), Paddock-branded. */
 export function buildSwaggerUiOptions(brand: SwaggerUiBranding): FastifySwaggerUiOptions {
   const opts: FastifySwaggerUiOptions = {
     routePrefix: brand.routePrefix,
