@@ -113,7 +113,7 @@ in this order:
 | Status | When | Body / headers |
 |--------|------|----------------|
 | **404** | `managementApi.clients` is empty, or `publicUrl` is unset. | `{ "error": "not found" }` |
-| **403** | Plaintext request from a **non-loopback** client. | `code: "insecure_transport"` |
+| **403** | Plaintext request from a **non-loopback** client ([caveat](#plaintext-is-refused--as-defence-in-depth)). | `code: "insecure_transport"` |
 | **401** | Credential missing, malformed, or matching no configured client. | `WWW-Authenticate: Bearer …`, `code: "auth_required"` |
 | **405** | `GET` or `DELETE` on `/mcp`. | `Allow: POST`, JSON-RPC error `-32000` |
 | **503** | The surface is configured but the route has no ops context (a wiring error, not a client error). | `code: "ops_unavailable"` |
@@ -137,17 +137,41 @@ presented at all, and `resource_metadata` is present only when a discovery
 document will actually be served — pointing a client at a URL that then `404`s is
 worse than omitting the pointer.
 
-### Plaintext is refused
+### Plaintext is refused — as defence in depth
 
 A request counts as secure if it arrived over real TLS at the Paddock process, if
 a TLS-terminating proxy set `X-Forwarded-Proto: https`, or if the client is on
 loopback (nothing left the host, so there is no wire to sniff). Anything else is
-a bearer token readable in transit, and gets **`403 insecure_transport`**. So:
-terminate TLS in front of Paddock and forward `X-Forwarded-Proto`, or connect
-over loopback.
+a bearer token readable in transit, and gets **`403 insecure_transport`**.
 
-There is a config-time half of the same rule: a non-loopback `publicUrl` must be
-`https`, or the whole management API is disabled at startup.
+:::caution[This guard is a footgun-preventer, not a guarantee — see [#474](https://github.com/edspencer/paddock/issues/474)]
+`X-Forwarded-Proto` is currently honoured from **any** peer. Paddock configures no
+trusted-proxy list, so *the client itself* can send `X-Forwarded-Proto: https`
+over a plaintext connection and satisfy the check.
+
+That is **not** an authentication bypass — a valid bearer token is still
+required, and an attacker gains nothing they couldn't already do. The risk runs
+the other way: the guard exists to stop **the operator** leaking their own token
+over cleartext, and the operator is exactly who can switch it off by accident.
+A `403` here that gets "fixed" by adding the header is a copy-paste away from
+shipping a bearer token in the clear while believing the guard has your back.
+
+So do not read a `200` as proof the token didn't cross the network readable.
+**Terminate TLS in front of `/mcp` and verify that yourself**; treat the bearer
+token as the real security boundary.
+:::
+
+One case where this bites in normal operation: **a container's published port is
+not loopback from inside.** Docker publishing `127.0.0.1:4000` still NATs the
+peer address to something like the bridge gateway, so Paddock sees a non-loopback
+client and an in-container plaintext smoke test `403`s even though nothing left
+the host. Adding `-H "X-Forwarded-Proto: https"` is a legitimate workaround
+*there* — and precisely the habit that turns dangerous when copy-pasted onto a
+real network.
+
+There is a config-time half of the same rule, and it is not header-spoofable: a
+non-loopback `publicUrl` must be `https`, or the whole management API is disabled
+at startup.
 
 ### How a scope refusal actually surfaces
 

@@ -221,15 +221,40 @@ tier already uses for the health endpoints.
 
 Three more rules that stay yours even with the exemption in place:
 
-- **Keep TLS in front.** Paddock **refuses** a plaintext request to `/mcp` from a
-  non-loopback client (`403`), because a bearer token would be readable in
-  transit. Terminate TLS at the proxy and forward `X-Forwarded-Proto`.
+- **Keep TLS in front — and don't lean on Paddock's plaintext guard.** Paddock
+  refuses a plaintext `/mcp` request from a non-loopback client (`403
+  insecure_transport`), but it currently trusts `X-Forwarded-Proto` from *any*
+  peer ([#474](https://github.com/edspencer/paddock/issues/474)), so a client can
+  satisfy that check itself. It is defence in depth, **not** a guarantee the
+  token never crosses the wire in cleartext. Terminate TLS at the proxy, forward
+  `X-Forwarded-Proto`, and verify the TLS yourself. (Related gotcha: a
+  container's *published* port is not loopback from inside — Docker NATs the peer
+  address — so an in-container plaintext test can `403` even though nothing left
+  the host.)
 - **Strip the identity header on the exempt route.** No auth ran there, so there
   is no authenticated identity to assert — *delete* `X-Forwarded-User` (or
   whatever `PADDOCK_AUTH_USER_HEADER` names) rather than pass a client-supplied
   one through. Paddock ignores the browser identity on `/mcp` anyway, but the
   invariant "this proxy is the only source of that header" should hold on every
   route, not only the challenged ones.
+
+:::danger[nginx: `auth_basic off` does **not** clear `$remote_user`]
+The obvious nginx exemption — a `location /mcp` with `auth_basic off;` — opens a
+**header-forgery hole**. nginx parses `Authorization` lazily and still populates
+`$remote_user` from whatever the client sent, even where Basic Auth is disabled.
+So a naive exemption that keeps `proxy_set_header X-Forwarded-User $remote_user;`
+lets anyone forge an identity:
+
+```sh
+curl -u evil:anything https://paddock.example.com/mcp   # → X-Forwarded-User: evil
+```
+
+The fix is to route the identity through a variable that the exempt locations
+reset to the empty string, rather than reading `$remote_user` directly. The
+[`auth-basic/nginx`](https://github.com/edspencer/paddock-deploy/tree/main/auth-basic)
+recipe does exactly that — **use it rather than improvising**, and if you must
+hand-roll, test with the `curl -u` above before you ship.
+:::
 - **Treat a write-scoped token like a production secret.** The read-only default
   exists because any write scope starts keeper turns. Full detail in the
   [Management API reference](/reference/mcp/).
@@ -262,3 +287,7 @@ Security isn't only the front door — it's also what the agents can reach:
       later**.
 - [ ] Management-API client tokens live in the **environment** (`auth.ref:
       env:…`), never inline in `paddock.config.yaml`.
+- [ ] `/mcp` is reached over **real TLS** you verified — not merely a request
+      Paddock's `X-Forwarded-Proto` check accepted ([#474](https://github.com/edspencer/paddock/issues/474)).
+- [ ] nginx exemptions reset the forwarded-identity variable to `""`
+      (`auth_basic off` alone still lets `$remote_user` be forged).
