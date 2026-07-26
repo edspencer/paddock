@@ -53,14 +53,14 @@ the per-project Triggers tab keeps working, regardless.
 For a keeper to **schedule itself** from a conversation (the
 [manager-agent pattern](/using/scheduling-recurring-work/#schedule-from-a-chat-the-manager-agent-pattern)),
 it needs the schedule-management MCP tools — `set_trigger`, `list_triggers`,
-`remove_trigger`. These ride on Paddock's self-management MCP layer, so they only
+`remove_trigger`, `run_trigger`. These ride on Paddock's self-management MCP layer, so they only
 appear when **all** of the following are on — and each is **off by default**:
 
 | Setting | Env var | Default | What it does |
 | --- | --- | --- | --- |
 | `selfMcpEnabled` | `PADDOCK_SELF_MCP` | `false` (OFF) | Hand keepers the self-management MCP (read tools). The base layer everything else rides on. |
 | `selfMcpWriteEnabled` | `PADDOCK_SELF_MCP_WRITE` | `false` (OFF) | Add the **write** tools (create/fork/message — the ones that start real turns). Only honored when `PADDOCK_SELF_MCP` is also on. |
-| `hooksMcpEnabled` | `PADDOCK_HOOKS_MCP` | `false` (OFF) | On top of the write layer, include the trigger-management tools (`set_trigger` / `list_triggers` / `remove_trigger`), which manage schedules **and** event hooks. A per-project `hooksMcpEnabled` override wins over the instance default. |
+| `hooksMcpEnabled` | `PADDOCK_HOOKS_MCP` | `false` (OFF) | On top of the write layer, include the trigger-management tools (`set_trigger` / `list_triggers` / `remove_trigger` / `run_trigger`), which manage schedules **and** event hooks. A per-project `hooksMcpEnabled` override wins over the instance default. |
 
 All three accept `1` / `true` / `yes`. Because the trigger tools live on the
 self-MCP **write** server, `PADDOCK_HOOKS_MCP` on its own does nothing unless the

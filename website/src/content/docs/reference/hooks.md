@@ -72,9 +72,10 @@ The Triggers tab drives these; they're here for completeness.
 ## Hook-management MCP tools
 
 A keeper agent with the opt-in enabled (see `PADDOCK_HOOKS_MCP` in
-[Environment variables](/configuration/environment/)) gets three
+[Environment variables](/configuration/environment/)) gets four
 `mcp__paddock_manage__*` tools. They manage all triggers — this reference covers
-the **event** (hook) shape.
+the **event** (hook) shape. The three below shape a trigger; the fourth,
+[`run_trigger`](/reference/self-mcp/), fires one immediately.
 
 ### `list_triggers`
 
