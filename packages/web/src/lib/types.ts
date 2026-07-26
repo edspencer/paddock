@@ -369,6 +369,16 @@ export interface Chat {
    */
   provenance?: ChatProvenance;
   /**
+   * The chat that CREATED this one — the edge the sidebar nests on. Recorded at
+   * creation for newer chats, backfilled server-side from the injected kickoff
+   * message for older ones. Absent for roots and where no edge is recoverable.
+   *
+   * `project` may differ from the one being viewed (a keeper can spawn into a
+   * sibling project); the tree renders those as roots, since their parent isn't
+   * in this list to nest under.
+   */
+  parent?: ChatParentRef;
+  /**
    * For a TRIGGER chat (Epic T / T4): the truthful-from-config capability descriptor
    * of the trigger that owns it — its type (schedule/event/webhook), WHEN it fires,
    * and granted tools, read from the same `trigger-<slug>-<name>` agent config
@@ -425,6 +435,17 @@ export interface ChatProvenance {
   origin: ChatOrigin;
   /** Spawn hops from the human/scheduled root (0 = root itself). */
   depth: number;
+}
+
+/**
+ * The chat that created another one — the sidebar's nesting edge. Mirrors the
+ * server's `ChatParentRef` (packages/server/src/chat-dto.ts).
+ */
+export interface ChatParentRef {
+  project: string;
+  sessionId: string;
+  /** The parent's display name at creation time — a fallback label only. */
+  name?: string;
 }
 
 /**

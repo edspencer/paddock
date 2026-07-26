@@ -20,6 +20,50 @@ import { stripAttachmentsWrapper, ATTACHMENTS_OPEN } from "./attachments-hint.js
 /** A session id safe to interpolate into a transcript file path (issue #329). */
 export const SAFE_SESSION_ID = /^[A-Za-z0-9._-]+$/;
 
+/**
+ * The chat that created this one, as sent on the wire — what the sidebar files a
+ * child under. `project` is carried because a parent can live in ANOTHER project
+ * (a keeper spawning into a sibling repo); the list renders those as roots rather
+ * than hiding a chat under a parent the user can't see from here.
+ */
+export interface ChatParentRef {
+  project: string;
+  sessionId: string;
+  /** The parent's display name at creation time — a fallback label only. */
+  name?: string;
+}
+
+/**
+ * Build the `parentOf` resolver for {@link buildProjectChats} — the chat-list
+ * parent edge, resolved in two tiers:
+ *
+ *  1. `RunProvenance.parentSessionId` — the RECORDED edge, stamped at creation.
+ *  2. `MessageProvenanceStore.parentChat()` — a backfill for chats created before
+ *     tier 1 existed, inferred from who injected the kickoff prompt.
+ *
+ * Both are in-memory sidecar reads, so this is cheap enough to resolve inline for
+ * every row (unlike the usage ring, #116). A chat with neither is simply a root.
+ */
+export function makeParentResolver(
+  runProvenance: { get(sessionId: string): Promise<RunProvenance | undefined> },
+  messageProvenance: {
+    parentChat(sessionId: string): Promise<{ project: string; sessionId: string; name?: string } | null>;
+  },
+  projectSlug: string,
+): (s: DiscoveredSession) => Promise<ChatParentRef | null> {
+  return async (s: DiscoveredSession) => {
+    const p = await runProvenance.get(s.sessionId).catch(() => undefined);
+    if (p?.parentSessionId && p.parentProject)
+      return { project: p.parentProject, sessionId: p.parentSessionId };
+    const inferred = await messageProvenance.parentChat(s.sessionId).catch(() => null);
+    if (!inferred) return null;
+    // Defensive: a chat can't parent itself. The tree builder guards cycles, but
+    // a self-edge here would silently drop the row from the roots.
+    if (inferred.sessionId === s.sessionId) return null;
+    return { ...inferred, project: inferred.project || projectSlug };
+  };
+}
+
 /** Claude Code's own preview cap (mirrors extractFirstMessagePreview). */
 export const PREVIEW_MAX = 100;
 
@@ -99,6 +143,7 @@ export function toChatDto(
   trigger?: ChatTriggerInfo | null,
   starred = false,
   unread = false,
+  parent?: ChatParentRef | null,
 ) {
   const preview = previewOverride ?? s.preview;
   return {
@@ -137,6 +182,11 @@ export function toChatDto(
     // "ran without me" cases. Absent when no marker was recorded (older chats,
     // or ones created before A1). Human origin renders no badge (the default).
     ...(provenance ? { provenance } : {}),
+    // The chat that created this one, so the list can nest it under its parent
+    // instead of only badging it "spawned". Recorded at creation on newer chats
+    // (RunProvenance.parentSessionId) and backfilled from the first injected-message
+    // sender on older ones. Absent for roots and for chats with no recoverable edge.
+    ...(parent ? { parent } : {}),
     // For a TRIGGER chat (Epic T / T4): the truthful-from-config capability
     // descriptor — trigger type (schedule/event/webhook) + WHEN it fires + granted
     // tools — read from the same `trigger-<slug>-<name>` agent config herdctl
@@ -165,6 +215,7 @@ export async function buildProjectChats(
   triggerOf?: (s: DiscoveredSession) => Promise<ChatTriggerInfo | undefined>,
   starredOf?: (s: DiscoveredSession) => Promise<boolean>,
   unreadOf?: (s: DiscoveredSession) => Promise<boolean>,
+  parentOf?: (s: DiscoveredSession) => Promise<ChatParentRef | null>,
 ) {
   return Promise.all(
     sessions.map(async (s) => {
@@ -177,6 +228,7 @@ export async function buildProjectChats(
       const trigger = triggerOf ? await triggerOf(s).catch(() => undefined) : undefined;
       const starred = starredOf ? await starredOf(s).catch(() => false) : false;
       const unread = unreadOf ? await unreadOf(s).catch(() => false) : false;
+      const parent = parentOf ? await parentOf(s).catch(() => null) : null;
       // A preview polluted by a machine-prepended wrapper: the preload context
       // block (#1) and/or the composer-attachment block (#328). Either makes the
       // raw first message a poor display name, so recover the real request below.
@@ -185,7 +237,7 @@ export async function buildProjectChats(
         !s.autoName &&
         (s.preview?.startsWith(PRELOAD_CONTEXT_OPEN) || s.preview?.startsWith(ATTACHMENTS_OPEN));
       if (!pollutedPreview)
-        return toChatDto(s, undefined, usage, archived, turnAt, lastSeen, provenance, trigger, starred, unread);
+        return toChatDto(s, undefined, usage, archived, turnAt, lastSeen, provenance, trigger, starred, unread, parent);
 
       const full = await readFirstUserText(projectDir, s.sessionId).catch(() => undefined);
       // Strip preload FIRST (it wraps the whole thing), then the attachment block
@@ -193,10 +245,10 @@ export async function buildProjectChats(
       const cleaned = stripAttachmentsWrapper(stripPreloadWrapper(full ?? s.preview ?? "")).trim();
       // couldn't recover
       if (!cleaned)
-        return toChatDto(s, undefined, usage, archived, turnAt, lastSeen, provenance, trigger, starred, unread);
+        return toChatDto(s, undefined, usage, archived, turnAt, lastSeen, provenance, trigger, starred, unread, parent);
       const preview =
         cleaned.length > PREVIEW_MAX ? `${cleaned.slice(0, PREVIEW_MAX)}...` : cleaned;
-      return toChatDto(s, preview, usage, archived, turnAt, lastSeen, provenance, trigger, starred, unread);
+      return toChatDto(s, preview, usage, archived, turnAt, lastSeen, provenance, trigger, starred, unread, parent);
     }),
   );
 }

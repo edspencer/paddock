@@ -285,7 +285,14 @@ export function buildManagementOps(
       // Stamp the forked CHILD's provenance here (not via startAgentTurn, which
       // only stamps a brand-new `resume:null` chat): a fork with no kickoff never
       // calls startAgentTurn, so this covers both cases.
-      await deps.runProvenance?.stamp(newId, spawnedChild).catch(() => undefined);
+      //
+      // A fork's parent is the chat it was forked FROM, not the chat that called
+      // the tool — a fork belongs under its source in the tree. This is the only
+      // record of that edge: forkSession rewrites the source id out of the child's
+      // transcript, and a kickoff-less fork injects no message to infer it from.
+      await deps.runProvenance
+        ?.stamp(newId, childOf(parentProvenance, { project: projectSlug, sessionId: sourceSessionId }))
+        .catch(() => undefined);
       if (kickoff && kickoff.trim().length > 0) {
         const overrideModel = model && isKnownModel(model) ? model : undefined;
         if (overrideModel) await deps.herdctl.ensureKeeperModel(p, overrideModel);

@@ -16,7 +16,7 @@ import { readSubagentMessages, readSessionTokenUsageWithSubagents } from "../sub
 import { readContextSeries } from "../usage.js";
 import { enrichWithToolDetails } from "../tooldetails.js";
 import { scanTranscriptNotice } from "../turn-notice.js";
-import type { RunProvenance } from "../run-provenance.js";
+import { type RunProvenance, childOf, HUMAN_ROOT } from "../run-provenance.js";
 import { sendProjectError } from "../route-errors.js";
 import {
   type ChatUsage,
@@ -27,6 +27,7 @@ import {
   toChatDto,
   buildProjectChats,
   makeTriggerResolver,
+  makeParentResolver,
 } from "../chat-dto.js";
 import type { RouteCtx } from "../route-context.js";
 
@@ -90,6 +91,9 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
       const unreadOf = (s: DiscoveredSession) => unread.isUnread(user, keeper, s.sessionId);
       const provenanceOf = (s: DiscoveredSession) => runProvenance.get(s.sessionId);
       const triggerOf = makeTriggerResolver(project);
+      // Parent edge for the nested chat list: the recorded RunProvenance edge, or a
+      // backfill from who injected the kickoff prompt. Both in-memory sidecar reads.
+      const parentOf = makeParentResolver(runProvenance, messageProvenance, project.slug);
       // No usage resolver — see the GET /api/projects/:slug route (issue #116).
       // Usage rings are fetched separately so a list refresh stays cheap.
       return {
@@ -104,6 +108,7 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
           triggerOf,
           starredOf,
           unreadOf,
+          parentOf,
         ),
       };
     } catch (err) {
@@ -643,6 +648,17 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
           req.body?.name,
           req.body?.fromUuid,
         );
+        // Record the lineage. A UI fork previously stamped NO provenance at all,
+        // so a hand-forked chat was indistinguishable from a human root — and its
+        // only parent link lived in the forking browser's localStorage. Inherit
+        // depth from the source so the fork-bomb bound (#262) still holds.
+        const src = await runProvenance.get(req.params.sessionId).catch(() => undefined);
+        await runProvenance
+          .stamp(
+            newId,
+            childOf(src ?? HUMAN_ROOT, { project: project.slug, sessionId: req.params.sessionId }),
+          )
+          .catch(() => undefined);
         return reply.code(201).send({ sessionId: newId });
       } catch (err) {
         return sendProjectError(reply, err);
