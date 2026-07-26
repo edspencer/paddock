@@ -123,6 +123,7 @@ export default defineConfig({
 						{ label: 'API overview', slug: 'reference/api' },
 						{ label: 'HTTP API (Swagger)', link: '/api/' },
 						{ label: 'WebSocket protocol', slug: 'reference/websocket' },
+						{ label: 'Management API (MCP)', slug: 'reference/mcp' },
 						{ label: 'Hooks', slug: 'reference/hooks' },
 						{ label: 'Schedules', slug: 'reference/schedules' },
 					],

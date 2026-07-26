@@ -96,6 +96,35 @@ for modes, provider examples, and secret handling — this table is only the kno
 | `PADDOCK_AUTH_USERNAME_CLAIM` | *(auto)* | no | *(jwt)* Claim to read the username from. Default tries `preferred_username` → `email` → `sub`. |
 | `PADDOCK_AUTH_GROUPS_CLAIM` | `groups` | no | *(jwt)* Claim to read groups from. |
 
+## Management API tokens (`PADDOCK_MCP_TOKEN_*`)
+
+The external [Management API](/reference/mcp/) at `/mcp` has **no `PADDOCK_*`
+variables of its own** — the whole `managementApi` block is
+[config-file-only](/configuration/config-file/#managementapi--the-one-file-only-block).
+The environment's job is to hold the **client tokens**, which the file only ever
+*references*:
+
+```yaml
+managementApi:
+  clients:
+    my-laptop:
+      auth:
+        ref: env:PADDOCK_MCP_TOKEN_MY_LAPTOP
+```
+
+```bash
+PADDOCK_MCP_TOKEN_MY_LAPTOP=pdk_my-paddock_1a2b3c…
+```
+
+| Variable | Default | Required | Purpose |
+|----------|---------|----------|---------|
+| `PADDOCK_MCP_TOKEN_<CLIENT>` | — | *(per configured client)* | The bearer token for one `managementApi.clients` entry. The **name is a convention, not a built-in** — the variable read is whatever the client's `auth.ref` names, and Paddock's own error messages suggest this shape, uppercasing the client id and replacing every non-alphanumeric character with an underscore. Minimum 24 characters; prefer `pdk_<instanceId>_<secret>` so the token is bound to one instance. Unset, blank, or too short ⇒ that client is **dropped** with a warning. |
+
+`env:VAR_NAME` is the only supported form of `auth.ref`, and an inline `token:`
+or `secret:` in the YAML is a hard config error — the config file is git-tracked.
+Deliver these like any other runtime credential: from a secrets manager or a
+secrets file, not a committed `.env`.
+
 ## Branding (per-instance)
 
 Defaults preserve today's look; set these to tell several instances apart.
