@@ -162,9 +162,11 @@ becoming less an app you visit and more a service your other tools talk to.
   kicks off in the background — a `run_in_background` sub-agent or shell, a build,
   a deploy, a scheduled wake-up — now keeps running when the turn that started it
   ends, and **delivers its result live** the moment it finishes, waking the keeper
-  to continue or report back. No reload, and no more tasks quietly dying at the
-  turn boundary. This is what makes "kick off something slow, get pinged when it's
-  done" reliable for keepers.
+  to continue or report back. No reload, and no more work lost to Paddock's own
+  turn teardown. This is what makes "kick off something slow, get pinged when it's
+  done" reliable for keepers. A task can still be killed from further upstream —
+  that case is unchanged, and it's what
+  [keeper-chat recovery](/configuration/keeper-recovery/) is for.
 
 ## 0.42 — Instance settings, curation budgets & pinned files
 
