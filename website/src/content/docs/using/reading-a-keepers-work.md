@@ -1,6 +1,6 @@
 ---
 title: Reading a keeper's work
-description: How to review what a keeper actually did — richly rendered tool calls (diffs with line numbers, images, exit codes, search counts, background jobs, sub-agents), Paddock's own tools as first-class UI, the live context + cost meter, and the Files and Changes tabs for browsing and committing what the agent produced.
+description: How to review what a keeper actually did — richly rendered tool calls (diffs with line numbers, images, exit codes, search counts, background jobs), live nested sub-agent cards, Paddock's own tools as first-class UI, the context + cost meter, pinned file tabs, and the Files and Changes tabs for browsing and committing what the agent produced.
 ---
 
 A keeper doesn't just reply — it *works*: it reads files, edits them, runs
@@ -72,6 +72,50 @@ set is prefixed with `≥` so you know the real number is larger than shown.
   `completed`, `killed`, `timed out`) so long-lived async work is easy to spot and
   track.
 
+### Sub-agent cards fill in live
+
+You don't have to wait for a reload to see what a sub-agent is doing. The card is
+**enriched the instant the sub-agent launches**: its real type (e.g.
+`general-purpose`) and description are recovered from the tool call as it streams,
+and a still-working sub-agent shows a **running** spinner where its duration will
+land. **Expand a running sub-agent** and its nested steps appear as they happen,
+refreshed every couple of seconds from the sub-agent's own growing transcript —
+and those nested steps recurse, so a sub-agent that spawned its own sub-agents is
+expandable all the way down.
+
+Two things to know about the numbers on a sub-agent card:
+
+- **Cost is the recursive total** — the sub-agent *plus* everything it spawned,
+  however deep. That's what you want when you're asking "what did delegating this
+  actually cost."
+- **Durations stay per-agent.** Nested sub-agents run in parallel, so summing
+  their durations would badly overstate the elapsed time; each card reports only
+  its own run.
+
+:::note[What fills in later]
+A running sub-agent's **duration and cost** appear once it settles (or on
+reload) — they aren't estimated mid-flight. And while a *deeper* sub-agent (one
+spawned by another sub-agent) is still running it shows as a generic row; it
+picks up its real type, steps, duration and cost within a poll of finishing.
+:::
+
+### Background work outlives the turn
+
+Since **v0.43**, work a keeper kicks off in the background on a session-mode chat
+— a `run_in_background` shell, a background sub-agent, a long build — keeps
+running when the turn that started it ends, including on a brand-new chat's very
+first turn. When it finishes, the keeper's follow-up turn **streams into the open
+chat live**, with no refresh. So a card that says `running` when the turn ends is
+genuinely still working, and you'll see the result land in place.
+
+:::caution[Not every background death is fixed]
+A separate, upstream failure mode still exists — the underlying Claude Code
+runtime can kill a still-running background child a couple of seconds after a turn
+ends, leaving the keeper idle with nothing to wake it. That's what
+[keeper-chat recovery](/configuration/keeper-recovery/) surfaces and re-drives,
+and it's still shipping and still relevant.
+:::
+
 ### Errors and in-flight calls
 
 A tool that failed is tinted rose with an **error** chip; a tool still running
@@ -118,6 +162,25 @@ live in the sidebar (a **context ring** per chat) and in the composer's status r
   number is a **ballpark at standard API list prices** — a sense of scale, not a
   bill; on a Claude subscription it won't match what you're actually charged.
 
+The two are different *kinds* of number, which is worth internalising: **context
+is a snapshot, cost is a running total.** Context answers "how full is the window
+right now"; cost answers "what has this whole chat consumed so far".
+
+:::note[The meter used to overshoot after tool-heavy turns]
+Up to **v0.42.1** the live meter could jump far above the real figure right after
+a long, multi-step turn — reading something like `828k / 1000k (83%)` when the
+window actually held ~292k — and a refresh would correct it. It was folding the
+turn's *cumulative* usage (aggregated across every internal round-trip) into what
+should have been a single point-in-time snapshot. Fixed in **v0.42.2**: the live
+meter now matches what you'd get on reload, so a tool-heavy turn no longer
+inflates it.
+:::
+
+To see how the window filled up *over the course of* a chat rather than just where
+it stands now, hover any message — the
+[per-message rail](/using/working-in-chats/#hover-a-message-time-context-fork-and-rewind)
+shows the context fill as of that point.
+
 ## Browse what the agent wrote: the Files tab
 
 The **Files** tab lists the project's working directory, one level at a time. Sub-
@@ -131,8 +194,21 @@ back up.
 The current folder or file is carried in the URL as
 `/projects/<slug>/files/<path>`, so a view **deep into a subtree is
 deep-linkable** and survives a refresh — handy for pointing someone at exactly
-the file you're looking at. Clicking a file opens it inline; a top-level file can
-be **pinned as a tab** for quick access.
+the file you're looking at. Clicking a file opens it inline.
+
+### Pin a file as a tab — at any depth
+
+Any file you can reach through the Files browser can be **pinned as a tab**, from
+either its list row or its viewer. A pinned file then rides along in the project
+header next to **Home / Chat / Files**, one click from whatever you keep coming
+back to.
+
+![Pinned files riding along as tabs in the project header, at any depth](../../../assets/whats-new/pinned-file-tabs.png)
+
+Pinning used to be restricted to files at the **project root**; since **v0.42**
+that gate is gone, so a `design/plan.md` or `src/lib/auth.ts` pins just as well.
+A nested tab shows just the **basename** to stay compact — hover it for the full
+project-relative path.
 
 ## Review and commit: the Changes tab
 
@@ -156,7 +232,7 @@ branch icon and the count), fed by a single cheap `git status` over the whole
 store — so a checkpoint that's waiting to be made is visible before you even
 click in.
 
-## Name a fork before you branch it
+## Branch or rewind from what you just read
 
 Reviewing often turns into "let me try a variation from here." Forking a chat
 copies its full history into a new, independently resumable chat (see
@@ -165,6 +241,16 @@ up front**: the Fork dialog opens with a **Fork name** field pre-filled with
 *"Fork of ⟨chat⟩"*, selected so a keystroke replaces it — so the branch lands in
 your sidebar with a meaningful title instead of an auto-summary you have to rename
 later.
+
+You can also branch from a **specific point** rather than the whole chat. Hovering
+any message reveals **Fork a new chat from here** (which copies only the
+transcript up to that message) and **Revert conversation back to here** (which
+truncates this chat in place, backing the discarded tail up). That's the move when
+a review tells you the keeper went wrong at an identifiable step — rewind to just
+before it, or branch and try the other approach. See
+[the per-message rail](/using/working-in-chats/#hover-a-message-time-context-fork-and-rewind)
+for the details, including the important caveat that reverting rewinds the
+*conversation*, not the files, PRs or messages the keeper already produced.
 
 ## Next steps
 

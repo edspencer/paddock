@@ -1,6 +1,6 @@
 ---
 title: Working in chats
-description: A hands-on walkthrough — start a chat, understand keeper vs one-off/scratch chats, resume from anywhere, use the composer and message queue, Stop a turn, and keep a growing chat list legible with unread dots, the context + cost meter, search, and archive.
+description: A hands-on walkthrough — start a chat, understand keeper vs one-off/scratch chats, resume from anywhere, use the composer and message queue, Stop a turn, rewind or fork from any message, and keep a growing chat list legible with unread dots, stars, search, and archive.
 ---
 
 A **chat** is where you actually work in Paddock — one conversation with an
@@ -11,9 +11,9 @@ chat is (a persisted, resumable Claude Code session); this one walks through
 
 By the end you'll know how to start a chat, tell **keeper** chats from **one-off
 (scratch)** ones, pick a conversation back up from any device, drive the composer
-and its message **queue**, **Stop** a running turn, and keep a growing sidebar
-legible with **unread** dots, the per-chat **context + cost** meter, **search**,
-and **archive**.
+and its message **queue**, **Stop** a running turn, **fork or rewind** from any
+message, and keep a growing sidebar legible with **unread** dots, **stars**, the
+per-chat **context + cost** meter, **search**, and **archive**.
 
 ## Start a chat
 
@@ -145,14 +145,51 @@ nothing. That's fixed: if you click Stop before the id has arrived, Paddock
 as soon as you can see it.
 :::
 
+## Hover a message: time, context, fork and rewind
+
+Hover any message in the transcript and a small rail fades in at its top-right.
+It carries two readouts and two actions:
+
+![The per-message hover rail on an assistant reply, showing its age, the context-window fill at that point, and the fork and revert actions](../../../assets/whats-new/per-message-hover.png)
+
+- **When it happened.** A relative age (`3m ago`, `2d ago`); hover the chip itself
+  for the absolute local date and time.
+- **How full the window was *at that point*.** The token count and percentage
+  shown are a **point-in-time** read for that message, not a running total — so on
+  a long chat you can see *where* the context window actually filled up rather
+  than only what it totals now.
+- **Fork a new chat from here.** Copies the transcript **up to that message** into
+  a new chat and drops you into it. The original is untouched — this is how you
+  try a second approach from the moment things diverged.
+- **Revert conversation back to here.** Truncates this chat **in place**, keeping
+  its session id (so the URL and lineage survive). The confirm counts the messages
+  and tool calls about to disappear, and the discarded tail is backed up rather
+  than destroyed.
+
+:::caution[Reverting rewinds the conversation, not the world]
+Files the keeper wrote, PRs it opened, messages it sent — none of that is undone
+by a revert. You're only rolling back the transcript. Reverting to one of *your
+own* messages rewinds to the assistant's previous reply, so the prompt you clicked
+is itself removed.
+:::
+
+The rail appears on your and the keeper's messages once a turn has settled — not
+on tool blocks, notices, or the turn currently streaming — and it's a project-chat
+feature; one-off chats don't have it.
+
 ## Keep a growing chat list legible
 
-A busy project accumulates chats fast. The sidebar's chat list has three
+A busy project accumulates chats fast. The sidebar's chat list has several
 affordances that keep it readable:
 
 ![A crop of the sidebar chat list: several chats with unread dots and per-chat context rings, and the search box at the top](../../../assets/using/sidebar-chat-list.png)
 
-### Unread dots
+Hovering a chat row reveals its **six actions**, tucked beside the timestamp:
+**fork**, **rename**, **archive**, **delete**, **mark unread**, and **star**.
+
+![A chat row hovered to reveal its six actions, with the mark-unread envelope highlighted](../../../assets/whats-new/mark-unread.png)
+
+### Unread dots — and marking a chat unread
 
 When a chat you're **not** currently looking at finishes a turn, Paddock marks it
 **unread** — a small accent dot next to the chat name, with the name in a bolder
@@ -160,6 +197,29 @@ weight. Opening (focusing) the chat clears it. Read state is tracked
 **server-side per user**, so which replies you've seen follows you across devices
 rather than living only in one browser. (When Paddock runs without real user
 identity, read state falls back to a single shared bucket.)
+
+You can also raise that cue **yourself**. The envelope action on a chat row
+**marks it unread** again — the email-client move for "I glanced at this at
+midnight, resurface it in the morning." Opening or focusing the chat spends the
+flag, exactly as it would a real unread reply.
+
+Unlike starring and archiving, which are **shared** — archive a chat and everyone
+using the instance sees it archived — the unread flag is **yours**, keyed to your
+user alongside your read state.
+
+### Stars — pin a chat to the top
+
+Click the gold star at the right of a chat row and that chat **floats to the top
+of the list**. It's the lightweight way to keep the conversation you're living in
+(or the long-running job you're waiting on) one click away.
+
+![The chat list with two starred chats pinned to the top](../../../assets/whats-new/starred-chats.png)
+
+Starring is purely presentational and **orthogonal to archiving**: a starred chat
+sorts first within whichever section it already belongs to, so stars float to the
+top of the **active** list *and* the **Archived** section. Within each group the
+usual most-recent-first order is preserved. A starred chat keeps its star visible
+at rest, rather than only on hover.
 
 ### The context + cost meter
 
@@ -193,6 +253,16 @@ separate, collapsible **Archived** section at the bottom of the sidebar.
 Archiving is purely presentational — the transcript is untouched, and an archived
 chat is still openable, resumable, and forkable; unarchive it any time to bring it
 back to the top of the list.
+
+### Resize the columns
+
+On a desktop-width screen both left-hand columns — the app **side-nav** and the
+per-project **chat list** — have a drag handle on their right edge. Drag it to set
+the width you want, **double-click** it to snap back to the default, or focus it
+and nudge with the **arrow keys**. Widths are clamped to sane bounds and remembered
+**per browser** in local storage, so a laptop and a desktop can each keep their own
+layout. (Below desktop width the columns become the off-canvas drawer instead, and
+the handles don't apply.)
 
 ## Next steps
 
