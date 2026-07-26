@@ -150,7 +150,12 @@ jobs:
       VERSION: ${{ needs.release.outputs.version }}
       IMAGE: ghcr.io/edspencer/paddock
     steps:
+      # Full history: the final step commits the regenerated OpenAPI spec back to
+      # main, and `git rebase origin/main` cannot graft onto a depth-1 shallow
+      # clone if main moved while the images were building.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -246,3 +251,49 @@ jobs:
             "paddock-${VERSION}.tgz.sha256" \
             "paddock-latest.tgz" \
             "paddock-latest.tgz.sha256"
+
+      # ---- refresh the published OpenAPI reference ----
+      # openapi-site/open-api.json is what the docs site publishes at /api/
+      # (website's `prebuild` copies openapi-site/ into public/api/). It is
+      # DERIVED from the route schemas, and its `info.version` is stamped from
+      # packages/server/package.json -- so it goes stale the instant changesets
+      # cuts a version, and there is no earlier point in the pipeline where the
+      # new version number exists. Regenerate + commit here so the published
+      # reference tracks the release without anyone remembering to do it.
+      #
+      # Deliberately NOT a "fail if the committed spec differs" drift check: the
+      # version stamp guarantees a difference at every release, so that gate
+      # would be red on every run of the one event it is meant to guard.
+      #
+      # `npm run build` above already produced packages/server/dist, which the
+      # dump script boots in-process against a throwaway temp dir (no port
+      # bound, no real data). Runs after the Release so a failure here can never
+      # cost us the tag or the artifacts.
+      - name: Regenerate OpenAPI spec
+        run: node scripts/dump-openapi.mjs
+
+      # Pushes made with GITHUB_TOKEN do not trigger workflows, so this cannot
+      # loop back into Release. The v<version> tag was already created above, at
+      # the release commit, so it is unaffected.
+      #
+      # Deliberately NO `[skip ci]` marker: Cloudflare Pages honours that token
+      # too, and skipping the Pages build is precisely what we must not do --
+      # rebuilding the docs site is how the refreshed spec actually reaches
+      # /api/. Suppressing Actions is already handled by GITHUB_TOKEN.
+      - name: Commit the refreshed spec
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- openapi-site/open-api.json; then
+            echo "spec already current for v${VERSION} — nothing to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add openapi-site/open-api.json
+          git commit -m "chore: refresh OpenAPI spec for v${VERSION}"
+          # The concurrency group serialises Release runs, but main can still
+          # have moved while the images built. Rebase rather than fail a release
+          # that has already published everything.
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main
