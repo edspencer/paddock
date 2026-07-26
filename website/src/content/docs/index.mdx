@@ -35,6 +35,10 @@ working directory *is* that project, and the chats you see in the UI are that
 agent's Claude Code sessions — persisted on disk and resumable across reloads,
 reconnects, and devices.
 
+And a chat isn't the only way work starts. Keepers run on a **schedule**, react to
+**events**, and can be driven by an external MCP client — so a project keeps moving
+while you're asleep, and you read the transcript in the morning.
+
 **Paddock isn't just for software engineers.** A project can be a codebase, but it
 can just as easily be a research notebook, a writing desk, or a home-ops runbook —
 anything you'd want a capable, always-available agent to work on. It shines when you
@@ -46,19 +50,35 @@ GitHub token, `ffmpeg`, whatever your work calls for). See
 	<Card title="Project-first" icon="open-book">
 		Every project has its own keeper agent, files, and changelog. Notebook
 		projects live in your data repo; repo-backed projects clone an external git
-		repo as the agent's working directory.
+		repo as the agent's working directory — and a notebook can be promoted to
+		one later.
 	</Card>
 	<Card title="Persistent, resumable chats" icon="random">
 		Server-hosted sessions survive reloads, reconnects, and devices. Fork,
-		queue-while-streaming, stop, search, and archive are built in.
+		queue-while-streaming, stop, search, pin, and archive are built in, and a
+		keeper that gets stuck is nudged back to work.
 	</Card>
 	<Card title="Real tool use, streamed live" icon="rocket">
-		File writes, commands, and subagents render as they run, with a live
-		context/cost meter per chat.
+		Replies stream token by token. File writes, commands, and nested sub-agents
+		render as live cards as they run, with per-chat cost and a context meter you
+		can read at any point in the transcript. Send it files and images, too.
 	</Card>
-	<Card title="Built on herdctl" icon="puzzle">
-		A thin project layer over the herdctl FleetManager. Anything the fleet
-		engine does, Paddock can wire in.
+	<Card title="Work that starts itself" icon="setting">
+		One triggers model covers both halves of unattended work: cron **schedules**
+		and **event hooks** that fire a scoped agent when something happens. Run
+		history shows what ran while you were away.
+	</Card>
+	<Card title="Yours to host" icon="laptop">
+		Two official images — a lean **base** and a **devbox** with the full
+		coding-agent toolbox — plus ready-made Docker, Proxmox, Kubernetes and
+		reverse-proxy-auth recipes. Bring your own authentication; it ships with
+		none.
+	</Card>
+	<Card title="Open at both ends" icon="puzzle">
+		A thin project layer over the herdctl FleetManager, so anything the fleet
+		engine does Paddock can wire in. On the other side, a credential-gated
+		management API at `/mcp` lets an outside MCP client drive it — read-only
+		until you say otherwise.
 	</Card>
 </CardGrid>
 
@@ -66,9 +86,11 @@ GitHub token, `ffmpeg`, whatever your work calls for). See
 
 <CardGrid>
 	<LinkCard title="Getting started" href="/getting-started/" description="Run Paddock with Docker or from source." />
+	<LinkCard title="What's new" href="/whats-new/" description="What landed recently, release by release." />
+	<LinkCard title="Working in chats" href="/using/working-in-chats/" description="Streaming, queueing, forking, stopping — the day-to-day." />
 	<LinkCard title="Deploying Paddock" href="/guides/deploying/" description="The recommended always-on, low-power setup." />
 	<LinkCard title="Securing Paddock" href="/guides/securing/" description="Put authentication in front — read before exposing it." />
-	<LinkCard title="Concepts" href="/concepts/" description="Projects, keeper vs scratch agents, chats-as-sessions, the sweeper." />
+	<LinkCard title="Concepts" href="/concepts/" description="Projects, keeper vs scratch agents, chats-as-sessions, triggers, the sweeper." />
 	<LinkCard title="Configuration" href="/configuration/environment/" description="Every PADDOCK_* environment variable, with defaults." />
 	<LinkCard title="Architecture" href="/architecture/overview/" description="Storage model, WebSocket flow, MCP injection, auth." />
 </CardGrid>
