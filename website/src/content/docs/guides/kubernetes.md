@@ -132,8 +132,10 @@ images:
 
 The devbox image is much heavier (the Chromium layer alone is ~1 GB) and wants more
 memory — raise the container `resources.limits` in `deployment.yaml`. In
-production, pin a released version tag (e.g. `:v0.43.0` / `:v0.43.0-devbox`) rather
-than the moving `:latest` / `:devbox`.
+production, pin a released version tag — `:vX.Y.Z` for the base image,
+`:vX.Y.Z-devbox` for the devbox one — rather than the moving `:latest` /
+`:devbox`. Take `X.Y.Z` from the
+[latest release](https://github.com/edspencer/paddock/releases/latest).
 
 ## Ingress & auth at the edge
 
