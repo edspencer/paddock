@@ -1,13 +1,13 @@
 ---
 title: "The sweeper"
-description: "The post-turn, tool-less agent that curates each project OVERVIEW and CHANGELOG."
+description: "The post-turn, tool-less agent that curates each project's OVERVIEW, CHANGELOG and CLAUDE.md — a full-file curator working to a per-file token budget."
 ---
 
 The **sweeper** keeps a project's notes current without you having to. After each
 of your chat turns in a project, a per-project, **tool-less** curation agent reads
-what just happened and updates two files: `OVERVIEW.md` (the current state) and
-`CHANGELOG.md` (the running history). It runs quietly, out of band — you never
-chat with it.
+what just happened and updates three files: `OVERVIEW.md` (the current state),
+`CHANGELOG.md` (the running history), and the curated-notes section of
+`CLAUDE.md`. It runs quietly, out of band — you never chat with it.
 
 :::note[The sweeper is now a trigger]
 Since **v0.37** the sweeper is the project's **implicit default `curate-overview`
@@ -48,35 +48,90 @@ turn curation **off** — see below.
 
 ## What it produces
 
-The sweeper is prompted with a **digest** of recent activity (the last ~40
-messages of the 3 newest chats), plus the current `OVERVIEW.md`, `CHANGELOG.md`
-tail, and `CLAUDE.md`. It must reply with exactly three marked sections as plain
+The sweeper is prompted with a **digest** of recent activity — the last ~40
+messages of every chat that's been touched since the last sweep, capped at **6**
+chats so a burst of concurrent conversations can't unbound the prompt — plus each
+of the three curated files.
+
+Since **v0.41** the sweeper is a **full-file curator**, not an appender. It is
+shown each curated file **in full** and must return either that file's *complete
+new contents* or the literal `NOCHANGE`. It replies with marked sections as plain
 text:
 
 ```
 <<<OVERVIEW>>>
-…full markdown snapshot of the project's current state…
+…the FULL new OVERVIEW.md, or NOCHANGE…
 <<<CHANGELOG>>>
-…one bare bullet line summarizing this activity (no leading "- ", no date)…
+…the FULL new CHANGELOG.md, or NOCHANGE…
 <<<CLAUDE>>>
-…genuinely-new durable facts to append, or the literal NOCHANGE…
+…the FULL new "## Curated notes" body, or NOCHANGE…
 <<<END>>>
 ```
 
-`SweepService` parses the markers and writes the files itself:
+`SweepService` parses the markers and writes the files itself. A `NOCHANGE` (or
+empty) section leaves that file untouched:
 
-- **`OVERVIEW.md`** — replaced **wholesale** each sweep. It's a synthesized "what
-  this project is, key decisions, open questions, next steps" written for an LLM
-  to read at the start of a new chat (and offered as the optional preload context
-  on a new chat).
-- **`CHANGELOG.md`** — the single bullet is **appended** under today's
-  `## YYYY-MM-DD` heading (the service adds the `- ` and the date).
-- **`CLAUDE.md`** — amended **only** with genuinely-new durable facts, and
-  **never for a repo-backed project** (whose `CLAUDE.md` is upstream-owned).
+- **`OVERVIEW.md`** — replaced **wholesale**. It's a synthesized "what this
+  project is, key decisions, open questions, next steps" written for an LLM to
+  read at the start of a new chat (and offered as the optional preload context on
+  a new chat).
+- **`CHANGELOG.md`** — also replaced wholesale. The sweeper adds at most **one**
+  bullet under a `## YYYY-MM-DD` heading at the top (newest-first), reusing
+  today's heading if it's already there, **coalesces** near-duplicate recent
+  bullets, and drops or summarizes the oldest entries to stay inside the file's
+  budget. A change-detection gate means an uneventful turn returns `NOCHANGE`
+  rather than re-logging unchanged state. Paddock itself only stamps the
+  `# Changelog — <slug>` title.
+- **`CLAUDE.md`** — the body under the `## Curated notes` heading is replaced
+  with a de-duplicated, pruned version; everything above that heading is
+  preserved verbatim. Never curated for a repo-backed project (whose `CLAUDE.md`
+  is upstream-owned).
 
 If the markers are missing or unparseable, the sweep throws — the activity
 watermark doesn't advance and no partial/garbage content is written. Every sweep
 failure is non-fatal to your chat.
+
+:::tip[Why full-file, not append]
+The old sweeper saw only the first couple of thousand characters of each file and
+blind-appended to it — so it re-added things it had already written, and
+`CHANGELOG.md` (and the curated `CLAUDE.md` notes, and therefore the context every
+chat in the project preloads) grew without bound. Showing the curator the whole
+file is what lets it *rewrite* rather than only accrete.
+:::
+
+## Per-file token budgets
+
+Each curated file has a **token budget** the sweeper is told to keep it under, and
+which Paddock enforces as a backstop at write time:
+
+| File | Instance setting | Environment variable | Default |
+| --- | --- | --- | --- |
+| `OVERVIEW.md` | `curation.overviewMaxTokens` | `PADDOCK_CURATION_OVERVIEW_MAX_TOKENS` | `2000` |
+| `CHANGELOG.md` | `curation.changelogMaxTokens` | `PADDOCK_CURATION_CHANGELOG_MAX_TOKENS` | `8000` |
+| `CLAUDE.md` | `curation.claudeMaxTokens` | `PADDOCK_CURATION_CLAUDEMD_MAX_TOKENS` | `6000` |
+
+Precedence is the usual **built-in default → `paddock.config.yaml` → environment
+variable**, and since **v0.42** any project can override any subset of the three
+in its `project.yaml` (or from its **Settings** tab):
+
+```yaml
+# project.yaml — override two, inherit the third
+curation:
+  overviewMaxTokens: 800
+  changelogMaxTokens: 2400
+```
+
+Resolution is **field by field** at sweep time: a field you don't set tracks the
+instance default as you change it, and an invalid value degrades to "inherit"
+rather than failing the sweep. Lowering a budget shrinks the context a chatty
+project injects into every one of its chats. See
+[Creating & organizing projects](/using/creating-and-organizing-projects/#curation-budgets)
+for the Settings-tab view.
+
+When a file is already larger than its budget, the sweeper is shown a **bounded
+view** that keeps the **top** of the file and truncates the older tail, with an
+explicit marker telling it to preserve what it can't see. Because `CHANGELOG.md`
+is newest-first, that means the curator always sees the most recent history.
 
 ## Customise or disable it
 

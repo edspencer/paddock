@@ -42,6 +42,24 @@ pragmatic **app-side workaround**, because the one thing we *can* rely on is tha
 **the session stays alive and injectable**. Recovering a hung keeper is therefore
 exactly "automate the nudge a human already sends by hand."
 
+:::note[What changed in 0.43 — and what didn't]
+**v0.43** fixed a *different*, Paddock-side cause of the same symptom. Paddock's
+own consume loop used to tear down the `claude` subprocess when a **fresh chat's
+first turn** ended, killing any background task that turn had launched. It now
+stops without closing and leaves teardown to herdctl's reaper, which keeps a
+session alive while it holds live background work — and a completing background
+task's follow-up turn now streams into the open chat with no refresh. So on
+session-mode chats, background work genuinely does outlive the turn boundary now.
+
+What 0.43 did **not** change is the upstream kill described above: the Claude
+Agent SDK / native CLI still terminates a still-running background child a couple
+of seconds after a turn ends, and that killed task still wakes nothing. So the
+hang this page describes is **rarer than it was, not gone** — recovery is still
+armed after every session-mode keeper turn in current releases, and everything
+below still applies. (Recovery is session-mode only; batch-mode keepers don't arm
+a watch at all.)
+:::
+
 ## What the fix is — two layers
 
 Recovery is delivered in two independently-toggleable layers:

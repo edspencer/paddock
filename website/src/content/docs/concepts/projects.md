@@ -38,7 +38,10 @@ terse and amended conservatively. (See `projects.ts` for `ProjectStore`.)
 
 A project is one of two types, distinguished by a single field: the optional
 `repo` (an external git repo URL) in `project.yaml` (`repoBacked =
-Boolean(yaml.repo)`). The type is set at creation and **immutable** thereafter.
+Boolean(yaml.repo)`). The type is set at creation, or later by
+[**promoting**](/using/creating-and-organizing-projects/#promote-a-notebook-to-repo-backed)
+a notebook to repo-backed in place — a one-way transition. Once `repo` is set it
+never changes.
 
 ### Notebook (the classic type)
 
@@ -67,7 +70,8 @@ workingDir  = <dir>/<repo-name>                # nested checkout (keeper's cwd)
 ```
 
 The checkout name is derived deterministically from the repo URL's basename
-(`repoCheckoutName()`), which is why `repo` is immutable. The project's Paddock
+(`repoCheckoutName()`), which is why `repo` can never be *re-pointed* once set —
+the checkout on disk is named after it. The project's Paddock
 metadata — `project.yaml`, `OVERVIEW.md`, `CHANGELOG.md`, and `.chats/` — always
 lives in the **metadata dir** (`dir`), never inside the checkout. A sidecar
 `.gitignore` written into `dir` keeps the nested checkout and the transcripts out

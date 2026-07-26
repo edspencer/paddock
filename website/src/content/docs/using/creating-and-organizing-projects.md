@@ -1,6 +1,6 @@
 ---
 title: Creating & organizing projects
-description: A hands-on walkthrough — make a new project (notebook or repo-backed), fill in its project.yaml, group projects into areas, tune the keeper in Settings, and promote a scratch chat into a project.
+description: A hands-on walkthrough — make a new project (notebook or repo-backed), promote a notebook to repo-backed in place, fill in its project.yaml, group projects into areas, tune the keeper in Settings (models, curation budgets), and promote a scratch chat into a project.
 ---
 
 Everything you do in Paddock lives inside a **project**. This guide is the
@@ -48,8 +48,11 @@ are editable afterwards from the project's [Settings tab](#tune-the-keeper-the-s
 ## Choose the project type: notebook vs repo-backed
 
 The single choice that matters at creation time is whether you fill in the
-**Git repository URL** field. It's what splits the two project types, and it's
-**immutable** once the project exists — so it's worth getting right.
+**Git repository URL** field. It's what splits the two project types. You don't
+have to get it right first time: a notebook can be
+[promoted to repo-backed later](#promote-a-notebook-to-repo-backed), in place.
+That promotion is **one-way**, though — a repo-backed project can never go back
+to being a notebook.
 
 ### Notebook — for notes, plans, and ops
 
@@ -82,6 +85,43 @@ box.
 
 For the full mechanics of `dir` vs `workingDir` and why metadata stays outside
 the checkout, see the [Projects concept page](/concepts/projects/).
+
+### Promote a notebook to repo-backed
+
+A notes-only project that turns out to want a codebase doesn't have to be torn
+down and recreated. From its **Settings** tab, the **Repository backing** section
+turns a notebook into a repo-backed project **in place** — keeping every chat,
+`OVERVIEW.md`, `CHANGELOG.md`, and every bit of metadata it has accumulated.
+
+Paste the git URL, click **Promote to repo-backed…**, and confirm:
+
+![The Repository backing section of a notebook project's Settings tab, with a git URL entered and the confirm step showing what promotion will do](../../../assets/using/promote-to-repo-backed.png)
+
+Paddock **clones first**, so a clone that fails leaves the notebook completely
+untouched. Once the clone lands, `repo:` is written to `project.yaml` and the
+keeper's working directory **flips to the checkout** — from then on the repo's own
+`CLAUDE.md`, branches, and PR workflow apply, exactly as for a project created
+repo-backed.
+
+Two consequences worth knowing before you click:
+
+- **The notebook's `CLAUDE.md` is removed.** It was Paddock's to curate; the
+  repo's own now takes over. (The sweeper keeps curating `OVERVIEW.md` and
+  `CHANGELOG.md`, which live outside the checkout — it just never writes
+  `CLAUDE.md` for a repo-backed project.)
+- **It's one-way.** There is no un-promote, and no way to point an existing
+  repo-backed project at a different repo. A repo-backed project's Settings tab
+  shows its repository and working directory read-only.
+
+If a directory named after the repo already exists inside the project, Paddock
+refuses rather than overwriting it.
+
+:::note[Two different "promotes"]
+Don't confuse this with
+[promoting a *scratch chat* into a project](#promote-a-scratch-chat-into-a-project)
+further down. This one changes a project's **type**; that one turns a one-off
+conversation into a project in the first place.
+:::
 
 ## What a project.yaml holds
 
@@ -117,8 +157,12 @@ The fields:
 | `group` | The project's **area** — its single, exclusive home. |
 | `started`, `updated` | Creation date (immutable) and last-touched date (auto-bumped). |
 | `links` | Optional `{label, url}` bookmarks. |
-| `repo` | Present only for repo-backed projects; **immutable**. |
+| `repo` | Present only for repo-backed projects. Absent on a notebook, and set **once** — at creation, or by [promoting](#promote-a-notebook-to-repo-backed). Once set it never changes. |
 | `model`, `permissionMode`, `driveMode`, `maxTurns`, `docker` | Per-project keeper overrides — see below. Absent means *inherit the box default*. |
+| `models` | Optional allow-list narrowing which models this project offers — see [Restrict the offered models](#restrict-the-offered-models). |
+| `curation` | Optional per-file sweeper token budgets — see [Curation budgets](#curation-budgets). |
+| `maxSpawnDepth` | How deep this project's keeper may spawn tool-carrying children. |
+| `pinned` | The files pinned as tabs in the project header. Paddock maintains this for you. |
 
 Paddock writes only the fields it needs: on a freshly created project, keeper
 overrides you didn't set are absent from the file and resolve to the box-wide
@@ -130,10 +174,11 @@ changes this for some of them — see the caveat there.)
 As your collection grows, the projects home page keeps it legible by clustering
 cards under their **area** — the project's `group`. An area is simply a
 **free-form label**: the server stores whatever string you give it, so you can
-have as many areas as you like and name them anything. To make the common cases
-one click, the **Area** dropdown (in the New Project dialog and in Settings)
-comes pre-filled with three ready-made suggestions — **Homelab**, **House**, and
-**Side Projects** — plus **Unsorted**. You are in no way limited to those.
+have as many areas as you like and name them anything. The **Area** dropdown (in
+the New Project dialog and in Settings) offers three ready-made ones —
+**Homelab**, **House**, and **Side Projects** — plus **Unsorted**. Those four are
+what the *UI* offers; to use an area of your own naming, set `group:` in
+`project.yaml` (or via the API) and Settings will keep offering it thereafter.
 
 ![The projects grid grouped into Homelab, House, and Side Projects areas](../../../assets/using/projects-grid-areas.png)
 
@@ -180,18 +225,60 @@ and Links, all editable here. (Slug, Started, and Created are shown read-only.)
 - **Max turns** — an upper bound (1–1000) on agent turns in a single run.
 - **Docker sandbox** — run the keeper inside a Docker container (needs a working
   Docker daemon on the box).
+- **Max spawn depth** — how deep this keeper's spawned children may themselves
+  carry Paddock's tools. Leave it on **Instance default** to inherit.
 
 :::note[What "inherit" really means once you Save]
-Only **drive mode** genuinely keeps tracking the global default: left on **Global
-default** it stays *absent* from `project.yaml`, so the project follows the
-box-wide `PADDOCK_KEEPER_DRIVE_MODE` as you change it. The other keeper settings
-(model, permission mode, max turns, docker) are written with **concrete values**
-the first time you **Save** on this tab — so saving *freezes* them at their
-current values rather than leaving them to track the box default afterwards.
+**Model, permission mode, max turns and docker** are written with **concrete
+values** the first time you **Save** on this tab — so saving *freezes* them at
+their current values rather than leaving them to track the box default
+afterwards.
+
+The genuine inherit/override controls, which stay *absent* from `project.yaml`
+until you actually set them (and so keep tracking the instance default as it
+changes), are **Drive mode** (left on **Global default**), **Max spawn depth**,
+**Offered models**, and the three **Curation budgets**.
 :::
+
+Below the keeper block the tab carries three more sections:
+**[Offered models](#restrict-the-offered-models)**,
+**[Curation budgets](#curation-budgets)**, and — for a notebook —
+**[Repository backing](#promote-a-notebook-to-repo-backed)**. A final **Derived**
+section shows read-only state the keeper and sweeps maintain.
 
 See [Environment variables](/configuration/environment/) for the defaults a fresh
 project starts from.
+
+### Restrict the offered models
+
+By default a project offers whatever models the **instance** offers. The
+**Offered models** field — a checkbox per instance model — narrows that for this
+project: the project's own default model and the per-chat model picker are then
+constrained to the subset you tick.
+
+![A project's Settings tab restricting the offered models to three of the five the instance allows](../../../assets/whats-new/model-allow-list.png)
+
+A project may only ever **subset** the instance list, never widen it; ticking
+every box is the same as inheriting, and an **Offer all instance models** link
+clears the override outright. (The instance's own list is set with
+`PADDOCK_MODELS` or a `models:` list in `paddock.config.yaml`.) Because each
+model's context limit and pricing come from Paddock's built-in catalog, an
+allow-list only picks *which* models are offered — it can't misconfigure one.
+
+### Curation budgets
+
+The post-turn [sweeper](/concepts/sweeper/) keeps each of a project's three
+curated files under a **token budget**. The **Curation budgets** section overrides
+those per file for this project; leave a field blank to inherit the instance
+default, which the placeholder shows you:
+
+![Per-project curation budgets in the Settings tab, overriding two files and inheriting the third](../../../assets/whats-new/curation-budgets.png)
+
+Inheritance is **field by field** — override `CHANGELOG.md` alone and the other
+two keep tracking the instance defaults. Lowering a budget is the lever for a
+chatty project whose notes have grown big enough to weigh on every chat that
+preloads them. (A repo-backed project never has its `CLAUDE.md` curated, so that
+budget is moot for it.)
 
 ### Preload project context (in the composer, not Settings)
 
