@@ -38,6 +38,24 @@ export interface RunProvenance {
   origin: TurnOrigin;
   /** Spawn hops from the human/scheduled root (0 = root). #262 gates on this. */
   depth: number;
+  /**
+   * The chat that CREATED this one — the parent edge the nested chat list draws.
+   * `depth` alone says a chat was spawned and how deep, but never BY WHOM, so the
+   * list could badge a child yet not file it under its parent.
+   *
+   * Absent for roots, for chats created before this field existed, and for the
+   * external `/mcp` transport (no calling chat). Historical chats are backfilled
+   * at read time from MessageProvenanceStore — see `parentChat()` there.
+   */
+  parentSessionId?: string;
+  /** The parent's project slug — a parent can live in ANOTHER project. */
+  parentProject?: string;
+}
+
+/** A reference to the chat that created another one. */
+export interface ParentChatRef {
+  project: string;
+  sessionId: string;
 }
 
 /** The root of any chat tree a human starts: origin `human`, depth 0. */
@@ -56,8 +74,16 @@ export const SCHEDULED_ROOT: RunProvenance = { origin: "scheduled", depth: 0 };
  * depth is always the number of spawn hops from its human/scheduled root, which
  * is exactly what #262 bounds with `maxSpawnDepth`.
  */
-export function childOf(parent: RunProvenance): RunProvenance {
-  return { origin: "spawned", depth: parent.depth + 1 };
+export function childOf(parent: RunProvenance, parentRef?: ParentChatRef | null): RunProvenance {
+  return {
+    origin: "spawned",
+    depth: parent.depth + 1,
+    // Record WHICH chat spawned it, when the caller knows. Optional so every
+    // existing `childOf(p)` call site stays correct (just without the edge).
+    ...(parentRef?.sessionId
+      ? { parentSessionId: parentRef.sessionId, parentProject: parentRef.project }
+      : {}),
+  };
 }
 
 const ORIGINS: readonly TurnOrigin[] = ["human", "scheduled", "spawned", "hook"];
@@ -78,7 +104,18 @@ function coerce(value: unknown): RunProvenance | null {
   if (!isOrigin(o.origin)) return null;
   const depth = o.depth;
   if (typeof depth !== "number" || !Number.isFinite(depth) || depth < 0) return null;
-  return { origin: o.origin, depth: Math.floor(depth) };
+  // The parent edge is optional and only carried when BOTH halves survive
+  // validation — a session id without its project can't be resolved to a chat.
+  const parentSessionId =
+    typeof o.parentSessionId === "string" && isSafeId(o.parentSessionId)
+      ? o.parentSessionId
+      : undefined;
+  const parentProject = typeof o.parentProject === "string" ? o.parentProject : undefined;
+  return {
+    origin: o.origin,
+    depth: Math.floor(depth),
+    ...(parentSessionId && parentProject ? { parentSessionId, parentProject } : {}),
+  };
 }
 
 export class RunProvenanceStore {

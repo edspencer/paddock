@@ -177,6 +177,33 @@ export class MessageProvenanceStore {
   }
 
   /**
+   * The chat that most likely CREATED `sessionId` — its FIRST `chat`-kind sender.
+   *
+   * This is a backfill, not a recorded fact. A chat spawned via `create_chat` /
+   * `fork_chat` gets its kickoff prompt injected BY the creating chat, so the
+   * first marker is the parent. Later markers are ordinary `send_message` traffic
+   * (any chat can message any other), which is why only the first one counts.
+   *
+   * Newer chats carry a real, recorded edge on RunProvenance.parentSessionId;
+   * prefer that and fall back here for chats created before it existed. Returns
+   * null when the chat has no markers or was never injected into by a chat — that
+   * includes forks with no kickoff prompt, which record nothing at all.
+   *
+   * Pure in-memory read once loaded, so the chat list can call it per row.
+   */
+  async parentChat(sessionId: string): Promise<{ project: string; sessionId: string; name?: string } | null> {
+    for (const m of await this.list(sessionId)) {
+      if (m.sender.kind === "chat") {
+        // Never let a corrupt record make a chat its own parent — buildChatTree
+        // guards cycles too, but a self-edge is meaningless this far up.
+        if (m.sender.sessionId === sessionId) return null;
+        return { project: m.sender.project, sessionId: m.sender.sessionId, ...(m.sender.name ? { name: m.sender.name } : {}) };
+      }
+    }
+    return null;
+  }
+
+  /**
    * Append one injection marker for `sessionId`. Order is significant — the join
    * consumes markers in the order they were recorded — so this only ever appends.
    * A blank/unsafe session id or malformed sender is ignored (best effort; the

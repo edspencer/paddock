@@ -21,7 +21,7 @@ import {
 } from "../models.js";
 import { isValidMaxSpawnDepth, MAX_SPAWN_DEPTH_LIMIT } from "../spawn-capability.js";
 import { sendProjectError } from "../route-errors.js";
-import { buildProjectChats, makeTriggerResolver } from "../chat-dto.js";
+import { buildProjectChats, makeTriggerResolver, makeParentResolver } from "../chat-dto.js";
 import type { RouteCtx } from "../route-context.js";
 
 export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void {
@@ -34,6 +34,7 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
     readState,
     unread,
     runProvenance,
+    messageProvenance,
     readStateUser,
     cfg,
   } = ctx;
@@ -207,6 +208,9 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
       // Trigger capability descriptor for trigger chats (Epic T / T4) — truthful from
       // the registered trigger agent config. A no-op for the keeper chats that dominate.
       const triggerOf = makeTriggerResolver(project);
+      // Parent edge for the nested chat list: the recorded RunProvenance edge, or a
+      // backfill from who injected the kickoff prompt. Both in-memory sidecar reads.
+      const parentOf = makeParentResolver(runProvenance, messageProvenance, project.slug);
       // Deliberately NO usage resolver here (issue #116): the per-chat context
       // ring requires streaming+parsing each session's full transcript, which is
       // O(chats × transcript size) and blocked the whole ProjectView from
@@ -227,6 +231,7 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
           triggerOf,
           starredOf,
           unreadOf,
+          parentOf,
         ),
       };
     } catch (err) {

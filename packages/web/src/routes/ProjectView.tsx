@@ -32,6 +32,8 @@ import {
 import { relativeTime } from "../lib/format";
 import { clearLastTab, toSubPath, writeLastTab } from "../lib/lastTab";
 import { readForkParent, writeForkParent } from "../lib/forkLineage";
+import { buildChatTree, withAncestors } from "../lib/chatTree";
+import { readCollapsedChats, writeCollapsedChats } from "../lib/collapsedChats";
 import type { GitProjectStatus } from "../lib/types";
 import { decodeFilesSubpath, deriveView, repoHref } from "./ProjectView/urls";
 import { TabButton } from "./ProjectView/TabButton";
@@ -160,6 +162,25 @@ export function ProjectView() {
   // Whether the collapsible "Archived" section is expanded (#95). Collapsed by
   // default; auto-expands (once per session) when the open chat is archived.
   const [archivedOpen, setArchivedOpen] = useState(false);
+  // Which parents have their children folded away in the chat tree, persisted
+  // per-browser. Chats start EXPANDED: nesting re-orders and indents rows that
+  // were already in the flat list, so collapsing by default would hide chats the
+  // user can see today. Collapse is a tidy-up for a wide fan-out, not the default.
+  const [collapsedChats, setCollapsedChats] = useState<ReadonlySet<string>>(() =>
+    readCollapsedChats(slug),
+  );
+  const toggleChatCollapsed = useCallback(
+    (sessionId: string) => {
+      setCollapsedChats((prev) => {
+        const next = new Set(prev);
+        if (next.has(sessionId)) next.delete(sessionId);
+        else next.add(sessionId);
+        writeCollapsedChats(slug, next);
+        return next;
+      });
+    },
+    [slug],
+  );
   // Desktop-only draggable width for the chat-list pane (#374), persisted per-browser.
   const chatList = usePaneWidth(CHATLIST_PANE);
   const autoExpandedFor = useRef<string | null>(null);
@@ -197,11 +218,14 @@ export function ProjectView() {
   const visibleChats = useMemo(() => {
     const q = chatSearch.trim().toLowerCase();
     if (!q) return chats;
-    return chats.filter(
+    const matches = chats.filter(
       (c) =>
         c.name.toLowerCase().includes(q) ||
         (c.preview?.toLowerCase().includes(q) ?? false),
     );
+    // Keep matched chats' ancestors too, so a hit nested under a non-matching
+    // parent still renders in place instead of being reparented to the root.
+    return withAncestors(chats, matches);
   }, [chats, chatSearch]);
   const searching = chatSearch.trim().length > 0;
 
@@ -633,21 +657,21 @@ export function ProjectView() {
     [unread, markSeen, slug],
   );
 
-  // Float starred chats to the top of a list while preserving the existing
-  // (server, mtime-ordered) order within the starred and unstarred groups (#373).
-  // `Array.filter` is a stable partition, so this is order-preserving.
-  const starredFirst = (list: Chat[]) => [
-    ...list.filter((c) => c.starred),
-    ...list.filter((c) => !c.starred),
-  ];
-
   // Partition the (search-filtered) chat list into the current (top) and
-  // archived (bottom) groups (#95), each with starred chats pinned to the top
-  // (#373). Search (#96) still finds archived chats — it just surfaces them in
-  // the Archived section. `activeTotal` is the unfiltered non-archived count,
-  // for the "N/total" badge while searching.
-  const activeChats = starredFirst(visibleChats.filter((c) => !c.archived));
-  const archivedChats = starredFirst(visibleChats.filter((c) => c.archived));
+  // archived (bottom) groups (#95), then nest each into a tree so a chat created
+  // by another chat renders under it. Starring now floats within a sibling group
+  // rather than globally (#373's rule would otherwise pull a starred child out
+  // from under its parent) — see buildChatTree. Search (#96) still finds archived
+  // chats, surfacing them in the Archived section. `activeTotal` is the unfiltered
+  // non-archived count, for the "N/total" badge while searching.
+  const activeChats = useMemo(
+    () => buildChatTree(visibleChats.filter((c) => !c.archived)),
+    [visibleChats],
+  );
+  const archivedChats = useMemo(
+    () => buildChatTree(visibleChats.filter((c) => c.archived)),
+    [visibleChats],
+  );
   const activeTotal = chats.filter((c) => !c.archived).length;
   const activeIsArchived = chats.some((c) => c.archived && c.sessionId === activeSession);
 
@@ -846,6 +870,8 @@ export function ProjectView() {
           activeTotal={activeTotal}
           archivedOpen={archivedOpen}
           setArchivedOpen={setArchivedOpen}
+          collapsedChats={collapsedChats}
+          toggleChatCollapsed={toggleChatCollapsed}
           openChat={openChat}
           unread={unread}
           usageBySession={usageBySession}

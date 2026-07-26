@@ -1,6 +1,7 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { Chat, ChatCompleteUsage, ChatUsage } from "../../lib/types";
 import type { ProjectViewTab } from "./urls";
+import { type ChatNode, flattenTree } from "../../lib/chatTree";
 import { ContextRing } from "../../components/ContextRing";
 import { ProvenanceBadge } from "../../components/ProvenanceBadge";
 import { PaneResizer, usePaneWidth } from "../../components/PaneResizer";
@@ -18,6 +19,16 @@ import {
   TrashIcon,
   XIcon,
 } from "../../components/icons";
+
+/**
+ * How many levels of the chat tree get their own indent + guide line. Deeper
+ * chats still nest correctly (and collapse with their ancestors), they just stop
+ * moving right — a 264px sidebar runs out of title room around here.
+ */
+const MAX_INDENT_LEVELS = 4;
+
+/** Stable empty set, so the search path doesn't allocate one per render. */
+const EMPTY_COLLAPSED: ReadonlySet<string> = new Set();
 
 /**
  * The project's session-list column (extracted from ProjectView.tsx, issue #403):
@@ -46,6 +57,8 @@ export function SessionSidebar({
   activeTotal,
   archivedOpen,
   setArchivedOpen,
+  collapsedChats,
+  toggleChatCollapsed,
   openChat,
   unread,
   usageBySession,
@@ -70,11 +83,13 @@ export function SessionSidebar({
   chats: Chat[];
   fallbackChat: Chat | null;
   visibleChats: Chat[];
-  activeChats: Chat[];
-  archivedChats: Chat[];
+  activeChats: ChatNode[];
+  archivedChats: ChatNode[];
   activeTotal: number;
   archivedOpen: boolean;
   setArchivedOpen: Dispatch<SetStateAction<boolean>>;
+  collapsedChats: ReadonlySet<string>;
+  toggleChatCollapsed: (sessionId: string) => void;
   openChat: (sessionId: string) => void;
   unread: ReadonlySet<string>;
   usageBySession: Record<string, ChatUsage | ChatCompleteUsage>;
@@ -86,20 +101,80 @@ export function SessionSidebar({
   starChat: (chat: Chat) => Promise<void>;
   toggleUnread: (chat: Chat) => Promise<void>;
 }) {
+  // While searching, ignore the collapsed set. A query filters to matches and
+  // their ancestors, so honouring collapse would let a folded-up parent hide the
+  // very chat the user just searched for — it would render as a parent row with a
+  // count pill and no visible hit. Collapse state is preserved, not cleared: it
+  // returns as soon as the query does.
+  const effectiveCollapsed = searching ? EMPTY_COLLAPSED : collapsedChats;
+
+  // Does this project use nesting at all? When nothing has children, rows keep
+  // their original flush-left alignment instead of every one reserving an empty
+  // twisty gutter. A project that DOES nest reserves it on every row, so sibling
+  // titles line up whether or not a given chat has children of its own.
+  const anyNesting =
+    activeChats.some((n) => n.children.length > 0) ||
+    archivedChats.some((n) => n.children.length > 0);
+
   // One chat row — used by both the current list and the Archived section, so
   // the two stay identical (context ring, hover-menu actions) apart from where
   // they live. The Archive action toggles label/icon between the two states.
-  const chatRow = (c: Chat) => {
+  //
+  // `depth` / `childCount` come from the chat tree: a chat created by another
+  // chat renders indented beneath it. `pendingChat` and the #154 fallback row
+  // pass neither — they're always roots.
+  const chatRow = (c: Chat, depth = 0, childCount = 0, descendantCount = 0) => {
     const isUnread = unread.has(c.sessionId);
+    // Read the EFFECTIVE set so the twisty and the count pill agree with what's
+    // actually on screen — during a search a collapsed parent renders expanded,
+    // and a chevron still pointing right would be lying about it.
+    const isCollapsed = effectiveCollapsed.has(c.sessionId);
     return (
     <div
       key={c.sessionId}
-      className={`group/chat relative mb-0.5 rounded-lg transition-colors ${
+      className={`group/chat relative mb-0.5 flex rounded-lg transition-colors ${
         activeSession === c.sessionId && view === "chat"
           ? "bg-paddock-200/80 dark:bg-paddock-800"
           : "hover:bg-paddock-200/50 dark:hover:bg-paddock-800/50"
       }`}
     >
+      {/* One guide line per ancestor level: indentation you can actually trace
+          back to the parent, which plain padding doesn't give you once a family
+          runs past a screenful. Depth is capped so a long chain can't squeeze the
+          title out of a narrow sidebar — past the cap, rows stop indenting but
+          stay in their parent's subtree. */}
+      {Array.from({ length: Math.min(depth, MAX_INDENT_LEVELS) }, (_, i) => (
+        <div
+          key={i}
+          aria-hidden="true"
+          className="w-3 shrink-0 border-l border-paddock-300/60 dark:border-paddock-700/60"
+        />
+      ))}
+      {/* Twisty gutter. A separate control from the row button (a button can't
+          nest inside a button) so collapsing a fan-out never opens the chat. */}
+      {anyNesting && (
+        <div className="flex w-4 shrink-0 items-start justify-center pt-2.5">
+          {childCount > 0 && (
+            <button
+              type="button"
+              aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${descendantCount} chat${descendantCount === 1 ? "" : "s"} under ${c.name}`}
+              aria-expanded={!isCollapsed}
+              title={isCollapsed ? `Show ${descendantCount} nested chat${descendantCount === 1 ? "" : "s"}` : "Hide nested chats"}
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleChatCollapsed(c.sessionId);
+              }}
+              className="flex h-4 w-4 items-center justify-center rounded text-paddock-400 transition hover:bg-paddock-300/60 hover:text-paddock-700 dark:hover:bg-paddock-700 dark:hover:text-paddock-100"
+            >
+              <ChevronDownIcon
+                width={11}
+                height={11}
+                className={`transition-transform ${isCollapsed ? "-rotate-90" : ""}`}
+              />
+            </button>
+          )}
+        </div>
+      )}
       {/*
         #115: the title leads and the context/progress ring floats to the far
         right of row 1; the four hover actions drop to row 2 (an absolute
@@ -111,7 +186,7 @@ export function SessionSidebar({
       <button
         type="button"
         onClick={() => openChat(c.sessionId)}
-        className="flex w-full flex-col items-start gap-0.5 rounded-lg px-2.5 py-2 text-left text-sm"
+        className={`flex min-w-0 flex-1 flex-col items-start gap-0.5 rounded-lg py-2 pr-2.5 text-left text-sm ${anyNesting ? "pl-1" : "pl-2.5"}`}
       >
         {/* Row 1: title + the context/progress ring (spins while streaming). */}
         <span className="flex w-full items-center gap-1.5">
@@ -131,11 +206,28 @@ export function SessionSidebar({
           >
             {c.name}
           </span>
+          {/* How many chats are folded away under this one. Only while collapsed —
+              expanded, the indented rows say it better than a number can. */}
+          {isCollapsed && descendantCount > 0 && (
+            <span
+              className="shrink-0 rounded-full bg-paddock-300/70 px-1.5 text-[10px] font-medium leading-4 text-paddock-600 dark:bg-paddock-700 dark:text-paddock-300"
+              title={`${descendantCount} nested chat${descendantCount === 1 ? "" : "s"} hidden`}
+            >
+              {descendantCount}
+            </span>
+          )}
           {/* Provenance badge (#267): flags the "ran without me" chats —
               scheduled (a cron fired it), spawned (another chat created it), or
               hook (an event/webhook trigger fired it — reuses the hook origin).
-              Human-origin chats show nothing, so the list stays quiet. */}
-          <ProvenanceBadge provenance={c.provenance} hookName={c.trigger?.name} />
+              Human-origin chats show nothing, so the list stays quiet.
+
+              A nested row suppresses the `spawned` badge: sitting under its
+              parent already says another chat created it, and more loudly than
+              the chip did. Kept for a spawned chat rendered at the root (parent
+              in another project, or filtered out), where nothing else says it. */}
+          {!(depth > 0 && c.provenance?.origin === "spawned") && (
+            <ProvenanceBadge provenance={c.provenance} hookName={c.trigger?.name} />
+          )}
           {/* Ring data is fetched lazily (issue #116) so the list renders before
               the per-chat transcript parse; `working` spins it while streaming
               (issue #115). */}
@@ -377,7 +469,9 @@ export function SessionSidebar({
                 No active chats — see Archived below.
               </p>
             )}
-            {activeChats.map(chatRow)}
+            {flattenTree(activeChats, effectiveCollapsed).map((n) =>
+              chatRow(n.chat, n.depth, n.children.length, n.descendantCount),
+            )}
           </div>
           {/* Archived section (#95): a collapsible accordion pinned to the
               bottom. Collapsed by default with a count badge; expanding it
@@ -406,7 +500,9 @@ export function SessionSidebar({
               </button>
               {archivedOpen && (
                 <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-                  {archivedChats.map(chatRow)}
+                  {flattenTree(archivedChats, effectiveCollapsed).map((n) =>
+              chatRow(n.chat, n.depth, n.children.length, n.descendantCount),
+            )}
                 </div>
               )}
             </div>
