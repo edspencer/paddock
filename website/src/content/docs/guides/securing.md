@@ -237,6 +237,9 @@ Three more rules that stay yours even with the exemption in place:
   one through. Paddock ignores the browser identity on `/mcp` anyway, but the
   invariant "this proxy is the only source of that header" should hold on every
   route, not only the challenged ones.
+- **Treat a write-scoped token like a production secret.** The read-only default
+  exists because any write scope starts keeper turns. Full detail in the
+  [Management API reference](/reference/mcp/).
 
 :::danger[nginx: `auth_basic off` does **not** clear `$remote_user`]
 The obvious nginx exemption — a `location /mcp` with `auth_basic off;` — opens a
@@ -255,9 +258,6 @@ reset to the empty string, rather than reading `$remote_user` directly. The
 recipe does exactly that — **use it rather than improvising**, and if you must
 hand-roll, test with the `curl -u` above before you ship.
 :::
-- **Treat a write-scoped token like a production secret.** The read-only default
-  exists because any write scope starts keeper turns. Full detail in the
-  [Management API reference](/reference/mcp/).
 
 ## Protect the secrets too
 
