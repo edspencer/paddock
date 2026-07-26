@@ -103,7 +103,11 @@ export default defineConfig({
 					items: [
 						{ label: 'Environment variables', slug: 'configuration/environment' },
 						{ label: 'Config file (YAML)', slug: 'configuration/config-file' },
+						{ label: 'The Settings screen', slug: 'configuration/instance-settings' },
 						{ label: 'Authentication', slug: 'configuration/authentication' },
+						{ label: 'Binding & network exposure', slug: 'configuration/binding-and-exposure' },
+						{ label: 'Model allow-lists', slug: 'configuration/models' },
+						{ label: 'OpenAPI & Swagger', slug: 'configuration/openapi' },
 						{ label: 'Keeper-chat recovery', slug: 'configuration/keeper-recovery' },
 						{ label: 'Scheduling & the schedule gates', slug: 'configuration/schedules' },
 					],
