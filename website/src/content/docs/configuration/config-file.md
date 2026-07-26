@@ -104,6 +104,16 @@ maxSpawnDepth: 1              # how deep spawned children may themselves spawn
 scheduleMutationEnabled: false
 hooksMcpEnabled: false
 
+# --- External Management API (/mcp) — file-only, no env equivalent ---
+managementApi:
+  instanceId: my-paddock                    # binds `pdk_<instanceId>_…` tokens here
+  publicUrl: https://paddock.example.com    # required once `clients` is set
+  clients:
+    my-laptop:
+      auth:
+        ref: env:PADDOCK_MCP_TOKEN_MY_LAPTOP  # env reference ONLY — inline is an error
+      # omit `scope` for the read-only default
+
 # --- Inbound composer attachments (file/image upload; all optional) ---
 attachments:
   enabled: true                 # master switch (default on)
@@ -142,6 +152,25 @@ several also take a per-project override that wins at dispatch time.
 | `maxSpawnDepth` | `PADDOCK_MAX_SPAWN_DEPTH` | `1` | How deep a spawned chat may itself spawn: a chat at depth `d` gets the self-MCP only if `d ≤ maxSpawnDepth`. `0` restores "no spawned child gets it". A per-project override wins at dispatch. |
 | `scheduleMutationEnabled` | `PADDOCK_SCHEDULE_MUTATION` | `false` | Allow schedules to be created/edited/deleted programmatically (self-MCP schedule tools + the mutating Schedules REST routes). Schedules declared statically in `project.yaml` are armed regardless of this gate. |
 | `hooksMcpEnabled` | `PADDOCK_HOOKS_MCP` | `false` | Advertise the hook-management MCP tools (`list_hooks` / `set_hook` / `remove_hook`). Only meaningful alongside the self-MCP write tools; a per-project `hooksMcpEnabled` override wins at dispatch. |
+
+### `managementApi` — the one file-only block
+
+The external [Management API](/reference/mcp/) is configured **only** here. There
+is no `PADDOCK_MANAGEMENT_*` environment equivalent, because a list of clients
+each with its own scope doesn't express well as a scalar.
+
+The one thing that never goes in this file is the **token itself**. This file is
+git-tracked (and editable from the instance Settings screen), so a client's
+credential is given as an environment *reference* — `auth: { ref: "env:VAR" }` —
+and an inline `token:`/`secret:` is a **hard config error**, not a warning.
+
+The block fails closed in both directions: `/mcp` returns `404` until both
+`clients` and `publicUrl` are set, and a client whose referenced variable is
+unset, blank, or under 24 characters is dropped with a warning rather than
+weakening the gate. A client with no `scope` gets **read-only** — any write scope
+can start keeper turns, and a keeper has `Bash`. The
+[Management API reference](/reference/mcp/#config-schema) has the full schema,
+the scope grammar and a worked example.
 
 For the full list of settings — auth headers, Whisper models, recovery knobs,
 dev-server advertising, and more — see the

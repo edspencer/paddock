@@ -174,6 +174,91 @@ With SSO you get per-user accounts, MFA, and — if you run several apps — **o
 all of them**. Because Paddock captures the authenticated user, this is also what makes
 its per-user features (like read-state) meaningful.
 
+## The `/mcp` Management API
+
+Everything above puts auth **at the edge**. Paddock's external
+[Management API](/reference/mcp/) is the one surface that must be handled the
+other way round: it **authenticates itself**, and your edge gate has to get out
+of its way.
+
+Whichever tier you picked, the proxy must **exempt these two paths**:
+
+| Path | Why |
+|------|-----|
+| `/mcp` | An MCP client sends its own `Authorization: Bearer <management token>`. A Basic Auth gate, a JWT-in-`Authorization` mode, or any header-based scheme **collides with it** — the client's credential is consumed or overwritten and token discovery breaks. |
+| `/.well-known/oauth-protected-resource*` | Fetched **before** the client holds any credential. Gate it and discovery cannot happen at all. |
+
+This is **universal**, not Authentik-specific. Basic Auth sidecars, SSO
+forward-auth, Cloudflare Access, oauth2-proxy, plain header injection — all of
+them need the exemption, for the same two reasons. And an SSO proxy has a second
+failure mode: it answers an unauthenticated request with an **HTML login
+redirect**, which no MCP client can follow and which breaks OAuth discovery
+outright. Paddock's own gate always answers `401` with a `WWW-Authenticate`
+challenge instead.
+
+:::danger[Never add this exemption to an instance older than v0.46]
+The Management API — and the authenticator that gates it — **shipped in v0.46.0**.
+Before that release there is no management-API auth behind your proxy at all.
+
+On a pre-v0.46 instance, exempting `/mcp` **removes the only gate in front of it**
+and publishes an unauthenticated, turn-spawning endpoint to anyone who can reach
+the proxy. A keeper turn runs with `Bash`. That is remote code execution on the
+host, reachable without a credential.
+
+**Upgrade Paddock to v0.46.0 or later first, then change the proxy config.**
+Never the other way round, and never "prepare" the exemption ahead of a rollout.
+
+After v0.46 the ordering is safe by construction: `/mcp` returns **404** until you
+have configured both `managementApi.clients` and `managementApi.publicUrl`, so the
+exemption uncovers nothing until you deliberately turn the surface on.
+:::
+
+Turnkey recipes carry these exemptions already — see the `auth-basic/` (Caddy and
+nginx) and Kubernetes recipes in
+[**`paddock-deploy`**](https://github.com/edspencer/paddock-deploy). If you're
+hand-rolling a proxy, add the two path exemptions using the same mechanism your
+tier already uses for the health endpoints.
+
+Three more rules that stay yours even with the exemption in place:
+
+- **Keep TLS in front — and don't lean on Paddock's plaintext guard.** Paddock
+  refuses a plaintext `/mcp` request from a non-loopback client (`403
+  insecure_transport`), but it currently trusts `X-Forwarded-Proto` from *any*
+  peer ([#474](https://github.com/edspencer/paddock/issues/474)), so a client can
+  satisfy that check itself. It is defence in depth, **not** a guarantee the
+  token never crosses the wire in cleartext. Terminate TLS at the proxy, forward
+  `X-Forwarded-Proto`, and verify the TLS yourself. (Related gotcha: a
+  container's *published* port is not loopback from inside — Docker NATs the peer
+  address — so an in-container plaintext test can `403` even though nothing left
+  the host.)
+- **Strip the identity header on the exempt route.** No auth ran there, so there
+  is no authenticated identity to assert — *delete* `X-Forwarded-User` (or
+  whatever `PADDOCK_AUTH_USER_HEADER` names) rather than pass a client-supplied
+  one through. Paddock ignores the browser identity on `/mcp` anyway, but the
+  invariant "this proxy is the only source of that header" should hold on every
+  route, not only the challenged ones.
+- **Treat a write-scoped token like a production secret.** The read-only default
+  exists because any write scope starts keeper turns. Full detail in the
+  [Management API reference](/reference/mcp/).
+
+:::danger[nginx: `auth_basic off` does **not** clear `$remote_user`]
+The obvious nginx exemption — a `location /mcp` with `auth_basic off;` — opens a
+**header-forgery hole**. nginx parses `Authorization` lazily and still populates
+`$remote_user` from whatever the client sent, even where Basic Auth is disabled.
+So a naive exemption that keeps `proxy_set_header X-Forwarded-User $remote_user;`
+lets anyone forge an identity:
+
+```sh
+curl -u evil:anything https://paddock.example.com/mcp   # → X-Forwarded-User: evil
+```
+
+The fix is to route the identity through a variable that the exempt locations
+reset to the empty string, rather than reading `$remote_user` directly. The
+[`auth-basic/nginx`](https://github.com/edspencer/paddock-deploy/tree/main/auth-basic)
+recipe does exactly that — **use it rather than improvising**, and if you must
+hand-roll, test with the `curl -u` above before you ship.
+:::
+
 ## Protect the secrets too
 
 Security isn't only the front door — it's also what the agents can reach:
@@ -197,3 +282,12 @@ Security isn't only the front door — it's also what the agents can reach:
 - [ ] `jwt`: `PADDOCK_AUTH_JWKS_URL` (and, ideally, issuer/audience) are pinned.
 - [ ] Preview/`pm` ports are LAN/VPN-only or behind the same auth.
 - [ ] Tokens are scoped-minimal and never committed.
+- [ ] If you use the Management API: the proxy exempts `/mcp` **and**
+      `/.well-known/oauth-protected-resource*`, and the instance is **v0.46.0 or
+      later**.
+- [ ] Management-API client tokens live in the **environment** (`auth.ref:
+      env:…`), never inline in `paddock.config.yaml`.
+- [ ] `/mcp` is reached over **real TLS** you verified — not merely a request
+      Paddock's `X-Forwarded-Proto` check accepted ([#474](https://github.com/edspencer/paddock/issues/474)).
+- [ ] nginx exemptions reset the forwarded-identity variable to `""`
+      (`auth_basic off` alone still lets `$remote_user` be forged).
