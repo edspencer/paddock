@@ -48,6 +48,7 @@ Consequences worth knowing:
 | Variable | Default | Required | Purpose |
 |----------|---------|----------|---------|
 | `PADDOCK_DATA_DIR` | `./data` | no | Data root. **All paths below default to subdirectories of this** — set it and everything cascades. Holds projects, scratch, generated herdctl config, and state. |
+| `PADDOCK_CONFIG` | `<data>/paddock.config.yaml` | no | Path to the optional YAML instance-config file — the base layer *beneath* every variable on this page. Resolved against the bootstrap data dir when unset; a missing file **there** is fine (env-only deployments are unaffected), but an explicitly-set path that doesn't exist is a **startup error**, so a typo can't silently boot an instance with none of your settings. See [Config file (YAML)](/configuration/config-file/). |
 | `PADDOCK_PROJECTS_DIR` | `<data>/projects` | no | Root that contains per-project directories (each is a keeper's working dir). |
 | `PADDOCK_SCRATCH_DIR` | `<data>/scratch` | no | Working directory for one-off / scratch chats. |
 | `PADDOCK_STATE_DIR` | `<data>/.herdctl` | no | herdctl state directory. |
@@ -60,18 +61,15 @@ Consequences worth knowing:
 
 > **Safe-by-default binding.** Paddock runs code and spends Claude tokens, so it
 > refuses to expose itself carelessly. The bind host defaults to `127.0.0.1`
-> (loopback only). If you bind a **non-loopback** host (e.g. `0.0.0.0`) while
-> authentication is `none`, startup **fails closed** with a clear message —
-> mirroring the jwt-without-JWKS check. Fix it by putting a real auth mode
-> (`trusted-header`/`jwt`) or a reverse proxy in front (no flag needed), keeping
-> the bind on loopback, or — only if you genuinely want an open server — setting
-> `PADDOCK_DANGEROUSLY_ALLOW_OPEN=1` (boots with a warning).
+> (loopback only), and binding a **non-loopback** host (e.g. `0.0.0.0`) while
+> authentication is `none` **fails closed at startup** — mirroring the
+> jwt-without-JWKS check. The container images are the exception and still bind
+> `0.0.0.0`.
 >
-> Inside a container the network namespace is the isolation boundary and Docker
-> can't reach `127.0.0.1` inside the container, so the **image** keeps binding
-> `0.0.0.0`; the safe posture there is carried by the
-> [deploy recipe's](https://github.com/edspencer/paddock-deploy/tree/main/docker)
-> port-publish (e.g. `-p 127.0.0.1:4000:4000`), not this app-level guard.
+> The default changed in **v0.44**, which is breaking if you relied on the old
+> `0.0.0.0`. See **[Binding & network exposure](/configuration/binding-and-exposure/)**
+> for what counts as loopback, the exact guard conditions, the container story,
+> and how to fix an upgraded instance you can no longer reach.
 
 > **`PADDOCK_CONFIG__*` is not implemented.** There is no generic
 > `PADDOCK_CONFIG__foo__bar` → nested-herdctl-key override mechanism in this tree.
@@ -125,6 +123,19 @@ or `secret:` in the YAML is a hard config error — the config file is git-track
 Deliver these like any other runtime credential: from a secrets manager or a
 secrets file, not a committed `.env`.
 
+## OpenAPI / Swagger reference
+
+Opt-in, and off on a plain instance: mounting it publishes a map of the whole HTTP
+surface, so it's a deliberate choice. When enabled the instance serves a branded
+Swagger UI whose security schemes reflect *its own* auth mode. See
+**[OpenAPI & Swagger](/configuration/openapi/)** for the whole surface, and
+[`/api/`](/api/) for the always-available published reference for the latest release.
+
+| Variable | Default | Required | Purpose |
+|----------|---------|----------|---------|
+| `PADDOCK_OPENAPI_ENABLED` | `false` (OFF) | no | Mount the Swagger UI + the raw spec. Accepts `1`/`true`/`yes`/`on` — note this one also takes `on`, which the other boolean knobs don't. When off, none of the routes exist. |
+| `PADDOCK_OPENAPI_PATH` | `/open-api` | no | Route prefix the UI mounts under. Normalised to a leading slash with no trailing slash, so `open-api/` and `/open-api` are the same thing. The raw spec follows it: `<path>/json` plus a `<path>.json` alias. |
+
 ## Branding (per-instance)
 
 Defaults preserve today's look; set these to tell several instances apart.
@@ -154,10 +165,13 @@ HushPod's whisper config so both can share a backend. See [DEV.md](https://githu
 | Variable | Default | Required | Purpose |
 |----------|---------|----------|---------|
 | `PADDOCK_KEEPER_DRIVE_MODE` | `session` | no | Box-wide default for how keeper turns are driven. `session` (the built-in default since v0.36) enables cross-turn autonomy (`ScheduleWakeup` / `/loop`) and token-by-token streaming; `batch` is one-shot per turn. A per-project `driveMode` overrides this at dispatch. Unknown → default. |
+| `PADDOCK_MODELS` | *(every catalog model)* | no | Comma-separated allow-list of built-in catalog model **ids** (e.g. `claude-opus-5,claude-sonnet-5`) the model picker and the per-project default may offer. Unset ⇒ every catalog model is offered. Unknown, blank and duplicate ids are dropped silently, and if nothing valid survives the full catalog is offered again — **an instance never ends up offering zero models.** A per-project list can narrow this further, never widen it. See [Model allow-lists](/configuration/models/). |
 | `PADDOCK_KEEPER_NATIVE_PROMPT` | `true` | no | Keeper **and** scratch agents use the native Claude Code system prompt + `CLAUDE.md` hierarchy. Set `0`/`false`/`no` for the terse Paddock "replace" prompt (e.g. an instance with no `CLAUDE.md`). |
 | `PADDOCK_SELF_MCP` | `false` | no | Give keepers the read-only self-management MCP (`mcp__paddock_manage__*`: enumerate projects/chats, read another chat's transcript). Never injected on scratch turns. |
 | `PADDOCK_SELF_MCP_WRITE` | `false` | no | Additionally give keepers the self-management **write** tools (`create_chat`, `fork_chat`, `send_message`, `fork_chat_batch`). Only honored when `PADDOCK_SELF_MCP` is also on (write implies read). |
 | `PADDOCK_SELF_MCP_PROJECTS` | `false` | no | Additionally give keepers the self-management **project** tool (`create_project`) — provisioning a whole new project, cloning a repo when repo-backed. Gated separately from the other write tools because it creates instance-level state and clones a caller-supplied git URL. Only honored when `PADDOCK_SELF_MCP` and `PADDOCK_SELF_MCP_WRITE` are also on. |
+| `PADDOCK_MAX_SPAWN_DEPTH` | `1` | no | How deep a spawn tree may grow before spawned children stop receiving the self-management MCP: a spawned turn at depth `d` gets it (including the write tools, so a child can `send_message` back to its parent) only while `d ≤` this value. `0` means no spawned child ever gets it. A per-project `maxSpawnDepth` overrides this at dispatch; an out-of-range value falls back to the default rather than failing startup. Only meaningful when the **write** self-MCP is on — spawning needs those tools. |
+| `PADDOCK_SCHEDULE_MUTATION` | `false` | no | Allow schedules to be created / edited / deleted **programmatically** at runtime (the Schedules REST routes and the trigger MCP tools). Off by default, so a plain instance's schedules can only change by editing `project.yaml`. Schedules declared statically in `project.yaml` are armed either way. Accepts `1`/`true`/`yes`. See [Scheduling & the schedule gates](/configuration/schedules/). |
 | `PADDOCK_HOOKS_MCP` | `false` | no | Instance default for the hook/trigger-management tools (`list_triggers` / `set_trigger` / `remove_trigger`) — a keeper declaring and editing its own [event hooks](/concepts/hooks/) and schedules. Off by default; a per-project `hooksMcpEnabled` in `project.yaml` overrides it. Only honored when the self-management **write** MCP is also on; when off the tools are **absent** (not present-but-refusing). Accepts `1`/`true`/`yes`. |
 | `PADDOCK_BROWSER_MCP` | *(off)* | no | When `=1`, inject a headless-Chromium Playwright MCP into keepers (browse/screenshot). |
 
@@ -203,6 +217,24 @@ Running long-lived dev/preview servers is a capability of the **devbox image**
 | `PADDOCK_GIT_AUTHOR_NAME` | `Paddock` | no | Author name for commits the server makes on the backing store. |
 | `PADDOCK_GIT_AUTHOR_EMAIL` | `paddock@localhost` | no | Author email for those commits. |
 | `PADDOCK_GITHUB_CLIENT_ID` | — | *(for GitHub auth)* | GitHub OAuth **client id** enabling the device-flow connect. Without it the GitHub-auth feature reports "not configured"; invoking a flow throws. |
+
+## Curation (sweeper token budgets)
+
+Per-file token budgets the post-turn [sweeper](/concepts/sweeper/) keeps its three
+curated files under. These bound the context **every** chat in a project pays for:
+`CHANGELOG.md` and `OVERVIEW.md` are injected into the project-context preload, and
+`CLAUDE.md` auto-loads on every turn. The sweeper is told each budget so it prunes and
+de-duplicates to fit, and the server enforces it as a backstop. Each one also takes a
+per-project `curation` override in `project.yaml`, field by field.
+
+| Variable | Default | Required | Purpose |
+|----------|---------|----------|---------|
+| `PADDOCK_CURATION_OVERVIEW_MAX_TOKENS` | `2000` | no | Budget for `OVERVIEW.md`, which the sweeper regenerates wholesale each time. |
+| `PADDOCK_CURATION_CHANGELOG_MAX_TOKENS` | `8000` | no | Budget for `CHANGELOG.md`. The biggest lever — it's the largest of the three and it rides in the preload. |
+| `PADDOCK_CURATION_CLAUDEMD_MAX_TOKENS` | `6000` | no | Budget for the curated-notes section of `CLAUDE.md`. **Mind the name:** the variable says `CLAUDEMD` but the config-file key is `curation.claudeMaxTokens`. |
+
+Each must parse to a **positive** integer; anything else (zero, negative,
+non-numeric, blank) falls back to the default rather than failing startup.
 
 ## Sweep / spike (advanced)
 
