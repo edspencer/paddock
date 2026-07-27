@@ -18,19 +18,16 @@ API or the self-MCP tools). If you hand-edit `project.yaml`, or use the per-proj
 
 ![The Triggers tab, where schedules are declared and managed per project](../../../assets/schedules/triggers-tab-schedules.png)
 
-## The schedule-mutation gate (REST API)
+## The schedule-mutation gate
 
-The legacy per-project schedule REST API — `PUT` / `DELETE` on
-`/api/projects/:slug/schedules/:name`, and the enable/disable actions — is gated by
-a single per-deployment flag, **off by default**:
+A single per-deployment flag, **off by default**:
 
 | Setting | Env var | Default | What it does |
 | --- | --- | --- | --- |
-| `scheduleMutationEnabled` | `PADDOCK_SCHEDULE_MUTATION` | `false` (OFF) | Allow the schedule REST API to **create, update, enable/disable, and delete** schedules at runtime. |
+| `scheduleMutationEnabled` | `PADDOCK_SCHEDULE_MUTATION` | `false` (OFF) | Construct herdctl's fleet manager with `allowScheduleMutation`, permitting **herdctl's own** runtime schedule add/remove APIs. Off, they throw. |
 
-The variable accepts `1` / `true` / `yes` (case-insensitive) for on. With it off,
-those mutating routes return a `403` with code `schedule_mutation_disabled`; reads
-(`GET`) are always allowed. In a YAML instance-config file it's the same key:
+The variable accepts `1` / `true` / `yes` (case-insensitive) for on. In a YAML
+instance-config file it's the same key:
 
 ```yaml
 # instance config
@@ -42,10 +39,23 @@ scheduleMutationEnabled: true
 PADDOCK_SCHEDULE_MUTATION=1
 ```
 
+:::caution[This flag is narrower than its name suggests]
+It reaches exactly one line of Paddock: the `allowScheduleMutation` option on the
+FleetManager constructor. It is **not** what gates the self-MCP trigger tools —
+that's `hooksMcpEnabled`, [below](#self-scheduling-from-a-chat) — and it does not
+gate any Paddock HTTP route.
+
+In particular there is **no per-project schedule REST API**. `PUT` / `DELETE` on
+`/api/projects/:slug/schedules/:name`, the enable/disable actions and a
+`schedule_mutation_disabled` error code were all documented here, and none of them
+exist: the hooks and schedules REST surfaces were retired and collapsed onto the
+unified **trigger** routes. See [the trigger endpoints](/reference/schedules/#rest-endpoints)
+for what is actually served.
+:::
+
 :::note[This gate is about *runtime* mutation, not firing]
-Turning the gate off doesn't disable scheduling — it only means schedules can't be
-mutated through that REST surface. Statically-declared schedules keep firing, and
-the per-project Triggers tab keeps working, regardless.
+Turning it off doesn't disable scheduling. Statically-declared schedules keep
+firing, and the per-project Triggers tab keeps working, regardless.
 :::
 
 ## Self-scheduling from a chat
