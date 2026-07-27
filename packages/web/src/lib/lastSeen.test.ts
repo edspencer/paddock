@@ -2,59 +2,30 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   lastSeenKey,
   readLastSeen,
-  writeLastSeen,
+  markSeenLocally,
+  revertSeenLocally,
   setServerLastSeen,
+  legacyLastSeenEntries,
+  clearLegacyLastSeen,
   LAST_SEEN_EVENT,
 } from "./lastSeen";
 
 beforeEach(() => localStorage.clear());
 
-// Unique session id per assertion — the server-value cache is module-level and
-// has no reset, so tests must not reuse ids across the merge cases below.
+// Unique session id per assertion — the cache is module-level and has no reset,
+// so tests must not reuse ids across the cases below.
 let n = 0;
 const sid = () => `srv-${++n}`;
 
-describe("lastSeen persistence (#160)", () => {
-  it("keys a chat by its session id", () => {
-    expect(lastSeenKey("sess-1")).toBe("paddock:lastSeen:sess-1");
-  });
-
-  it("round-trips a last-seen timestamp", () => {
-    writeLastSeen("sess-1", 1_700_000_000_000);
-    expect(readLastSeen("sess-1")).toBe(1_700_000_000_000);
-  });
-
-  it("defaults `when` to now", () => {
-    const now = 1_699_999_999_999;
-    vi.spyOn(Date, "now").mockReturnValue(now);
-    writeLastSeen("sess-1");
-    expect(readLastSeen("sess-1")).toBe(now);
-    vi.restoreAllMocks();
-  });
-
+describe("lastSeen: server-authoritative read-state (#189 / #488)", () => {
   it("returns 0 for a never-seen chat (so it sorts before any completed turn)", () => {
-    expect(readLastSeen("missing")).toBe(0);
+    expect(readLastSeen(sid())).toBe(0);
   });
 
-  it("returns 0 for a non-numeric stored value", () => {
-    localStorage.setItem("paddock:lastSeen:sess-1", "not-a-number");
-    expect(readLastSeen("sess-1")).toBe(0);
-  });
-});
-
-describe("server-backed read-state (#189)", () => {
-  it("prefers the server value over the local mirror (max wins)", () => {
+  it("folds in a server value", () => {
     const s = sid();
-    writeLastSeen(s, 1000);
-    setServerLastSeen(s, 5000); // e.g. seen on another device
+    setServerLastSeen(s, 5000);
     expect(readLastSeen(s)).toBe(5000);
-  });
-
-  it("keeps a newer local (optimistic) value ahead of a stale server one", () => {
-    const s = sid();
-    setServerLastSeen(s, 1000); // stale server
-    writeLastSeen(s, 9000); // just opened here — optimistic
-    expect(readLastSeen(s)).toBe(9000);
   });
 
   it("is monotonic: an older/absent server value never lowers the effective time", () => {
@@ -75,22 +46,106 @@ describe("server-backed read-state (#189)", () => {
     window.removeEventListener(LAST_SEEN_EVENT, spy);
     expect(spy).toHaveBeenCalledTimes(1);
   });
+
+  // The heart of #488: the optimistic value must NOT be persisted, so it cannot
+  // outlive the page and shadow the server on this device forever.
+  it("does NOT persist an optimistic mark to localStorage", () => {
+    const s = sid();
+    markSeenLocally(s, 9000);
+    expect(readLastSeen(s)).toBe(9000); // visible in-memory…
+    expect(localStorage.getItem(lastSeenKey(s))).toBeNull(); // …but nothing stored
+    expect(localStorage.length).toBe(0);
+  });
+
+  it("markSeenLocally is monotonic and returns the previous value", () => {
+    const s = sid();
+    expect(markSeenLocally(s, 5000)).toBe(0); // no prior value
+    expect(markSeenLocally(s, 9000)).toBe(5000); // advances, reports prior
+    expect(markSeenLocally(s, 1000)).toBe(9000); // older — no-op
+    expect(readLastSeen(s)).toBe(9000);
+  });
+
+  it("a later server value still wins over an earlier optimistic one", () => {
+    const s = sid();
+    markSeenLocally(s, 1000);
+    setServerLastSeen(s, 5000); // e.g. seen on another device
+    expect(readLastSeen(s)).toBe(5000);
+  });
+});
+
+describe("lastSeen: optimistic rollback on a failed POST (#488)", () => {
+  it("reverts to the previous value so the cue honestly reappears", () => {
+    const s = sid();
+    setServerLastSeen(s, 1000);
+    const prev = markSeenLocally(s, 9000);
+    revertSeenLocally(s, prev, 9000);
+    expect(readLastSeen(s)).toBe(1000);
+  });
+
+  it("reverts to never-seen when there was no previous value", () => {
+    const s = sid();
+    const prev = markSeenLocally(s, 9000);
+    revertSeenLocally(s, prev, 9000);
+    expect(readLastSeen(s)).toBe(0);
+  });
+
+  it("does not clobber a server value that landed while the POST was in flight", () => {
+    const s = sid();
+    const prev = markSeenLocally(s, 9000);
+    setServerLastSeen(s, 12_000); // arrived before the failure came back
+    revertSeenLocally(s, prev, 9000); // superseded → leave it alone
+    expect(readLastSeen(s)).toBe(12_000);
+  });
+});
+
+describe("lastSeen: legacy localStorage helpers (#488 migration)", () => {
+  it("reads legacy entries and ignores unrelated / malformed keys", () => {
+    localStorage.setItem(lastSeenKey("a"), "1000");
+    localStorage.setItem(lastSeenKey("b"), "2000");
+    localStorage.setItem(lastSeenKey("bad"), "not-a-number");
+    localStorage.setItem("paddock:draft:x", "unrelated");
+    const entries = legacyLastSeenEntries();
+    expect(entries.get("a")).toBe(1000);
+    expect(entries.get("b")).toBe(2000);
+    expect(entries.has("bad")).toBe(false);
+    expect(entries.size).toBe(2);
+  });
+
+  it("clears only the named legacy keys", () => {
+    localStorage.setItem(lastSeenKey("a"), "1000");
+    localStorage.setItem(lastSeenKey("b"), "2000");
+    clearLegacyLastSeen(["a"]);
+    expect(localStorage.getItem(lastSeenKey("a"))).toBeNull();
+    expect(localStorage.getItem(lastSeenKey("b"))).toBe("2000");
+  });
+
+  it("legacy values do NOT feed readLastSeen (the server is authoritative)", () => {
+    const s = sid();
+    localStorage.setItem(lastSeenKey(s), "9999999");
+    expect(readLastSeen(s)).toBe(0);
+  });
 });
 
 describe("lastSeen resilience (private mode / quota)", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it("read never throws when getItem throws", () => {
-    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+  it("legacy read never throws when localStorage is denied", () => {
+    vi.spyOn(Storage.prototype, "key").mockImplementation(() => {
       throw new Error("denied");
     });
-    expect(readLastSeen("sess-1")).toBe(0);
+    expect(() => legacyLastSeenEntries()).not.toThrow();
   });
 
-  it("write swallows a throwing setItem", () => {
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+  it("legacy clear swallows a throwing removeItem", () => {
+    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
       throw new Error("quota");
     });
-    expect(() => writeLastSeen("sess-1")).not.toThrow();
+    expect(() => clearLegacyLastSeen(["sess-1"])).not.toThrow();
+  });
+
+  it("readLastSeen never touches localStorage at all", () => {
+    const spy = vi.spyOn(Storage.prototype, "getItem");
+    readLastSeen("sess-1");
+    expect(spy).not.toHaveBeenCalled();
   });
 });

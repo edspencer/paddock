@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../lib/api";
-import { readLastSeen, writeLastSeen, setServerLastSeen } from "../../lib/lastSeen";
+import {
+  readLastSeen,
+  markSeenLocally,
+  revertSeenLocally,
+  setServerLastSeen,
+} from "../../lib/lastSeen";
 import type { Chat } from "../../lib/types";
 
 /**
@@ -10,12 +15,12 @@ import type { Chat } from "../../lib/types";
  *  - `c.unread`: the per-user manual "mark unread" override (#458), server-backed;
  *  - `liveUnread`: chats flagged the instant a turn completed for a NON-focused
  *    chat this session (from the shared socket's running-set transitions);
- *  - server `lastTurnCompletedAt` newer than the locally stored last-seen time
+ *  - server `lastTurnCompletedAt` newer than the server-backed last-seen time
  *    (`lib/lastSeen.ts`), which covers reload + turns that finished while away.
- * Marking a chat seen (open/focus, or its turn completing while focused) writes
+ * Marking a chat seen (open/focus, or its turn completing while focused) bumps
  * lastSeen=now, clears its live flag, and clears the manual override (via the
  * `onSeen` callback + the server's `/seen` route). `seenVersion` bumps on every
- * mark so the (localStorage-backed) derivation recomputes.
+ * mark so the derivation recomputes.
  *
  * Owns `liveUnread`/`seenVersion` internally; the WS-owned `runningSessions` set
  * stays owned by ProjectView and is passed in (the fleet-wide running set must
@@ -43,15 +48,19 @@ export function useUnreadChats({
   const markSeen = useCallback(
     (sessionId: string) => {
       const when = Date.now();
-      // Optimistic same-tab clear (localStorage mirror + event), then persist to
-      // the server (#189) so read-state follows the user across devices. The POST
-      // is fire-and-forget — the mirror already cleared the cue; a failure just
-      // means the next refetch re-derives from whatever the server has.
-      writeLastSeen(sessionId, when);
+      // Optimistic in-memory clear (+ same-tab event), then persist to the server
+      // (#189), which is the sole source of truth (#488). The bump is session-
+      // scoped, so a reload always re-derives from the server and devices can't
+      // diverge; if the POST fails we roll it back so the cue honestly reappears
+      // rather than silently sticking (the pre-#488 behaviour).
+      const prev = markSeenLocally(sessionId, when);
       // The `/seen` route also clears any server-side manual unread override (#458);
       // `onSeen` mirrors that in the parent's chat state so the cue can't briefly
       // flicker back after leaving the chat, before the next list refetch.
-      void api.markChatSeen(slug, sessionId, when).catch(() => undefined);
+      void api.markChatSeen(slug, sessionId, when).catch(() => {
+        revertSeenLocally(sessionId, prev, when);
+        setSeenVersion((v) => v + 1);
+      });
       onSeen?.(sessionId);
       setLiveUnread((prev) => {
         if (!prev.has(sessionId)) return prev;
@@ -65,10 +74,15 @@ export function useUnreadChats({
   );
 
   // Fold the server-backed read-state (#189) from each chat DTO into the shared
-  // client cache whenever the list changes, so `readLastSeen` prefers it. This
-  // is what makes a chat opened on ANOTHER device show as read here.
+  // client cache whenever the list changes. This is what makes a chat opened on
+  // ANOTHER device show as read here. The `seenVersion` bump is REQUIRED: the
+  // cache is a plain module-level map, so folding into it doesn't invalidate the
+  // derivation below on its own. Without it a freshly-loaded chat renders unread
+  // until some other signal happened to recompute — visible as a cue that flashes
+  // on load for chats the server already knows are seen.
   useEffect(() => {
     for (const c of chats) setServerLastSeen(c.sessionId, c.lastSeen);
+    setSeenVersion((v) => v + 1);
   }, [chats]);
 
   // The set of unread chats, re-derived whenever the list, the focused chat, a
@@ -90,8 +104,8 @@ export function useUnreadChats({
       }
     }
     return s;
-    // seenVersion is a manual dep: readLastSeen reads localStorage, which isn't
-    // reactive, so a markSeen bumps it to force this recompute.
+    // seenVersion is a manual dep: readLastSeen reads a module-level map, which
+    // isn't reactive, so a markSeen bumps it to force this recompute.
   }, [chats, view, activeSession, liveUnread, seenVersion]);
 
   // Mark the focused chat seen on open / deep-link / reload (write lastSeen=now),

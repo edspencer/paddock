@@ -3,7 +3,7 @@ import { render, screen, fireEvent, within, act } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { AppShell } from "./AppShell";
 import { makeProject } from "../test/factories";
-import { writeLastSeen } from "../lib/lastSeen";
+import { markSeenLocally, resetLastSeenForTests } from "../lib/lastSeen";
 import type { Project } from "../lib/types";
 
 let mockProjects: Project[] = [];
@@ -72,6 +72,7 @@ beforeEach(() => {
   activeInfos = new Map();
   activeInfoCbs.clear();
   localStorage.clear();
+  resetLastSeenForTests();
 });
 
 describe("AppShell: sidebar shell", () => {
@@ -206,7 +207,7 @@ describe("AppShell: per-project badges (#161)", () => {
       }),
     ];
     // s1 already seen AFTER its completed turn → only s2 remains unread.
-    writeLastSeen("s1", Date.now() + 120_000);
+    markSeenLocally("s1", Date.now() + 120_000);
     renderShell();
     const link = screen.getByRole("link", { name: /Alpha/ });
     expect(within(link).getByLabelText(/1 unread reply/i)).toHaveTextContent("1");
@@ -226,7 +227,7 @@ describe("AppShell: per-project badges (#161)", () => {
         ],
       }),
     ];
-    writeLastSeen("s1", Date.now() + 120_000); // s1 seen; only the manual flag keeps it unread
+    markSeenLocally("s1", Date.now() + 120_000); // s1 seen; only the manual flag keeps it unread
     renderShell();
     const link = screen.getByRole("link", { name: /Alpha/ });
     // s1 (manual) + s2 (timestamp) → "2".
