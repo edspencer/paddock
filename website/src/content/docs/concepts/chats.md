@@ -75,8 +75,16 @@ A chat can be **forked** into a parallel child: `forkSession` *copies* the
 transcript and mints a new session id, so the child diverges without touching the
 parent. (Contrast with promotion, which *moves* a scratch chat into a project —
 see [Keeper vs. scratch](/concepts/keeper-and-scratch).) Forked children run under the
-same keeper (up to `KEEPER_MAX_CONCURRENT` in parallel) and appear as their own
-chats in the sidebar.
+same keeper (up to `KEEPER_MAX_CONCURRENT` in parallel) and are full chats in
+their own right — resumable, forkable, archivable.
+
+In the sidebar a fork is **filed underneath the chat it was forked from**, so
+splitting a conversation three ways gives you one foldable family rather than
+three unrelated rows. That's true however the fork was made — by you from the
+message hover rail, or by a keeper calling `fork_chat` — and note it nests under
+its **source**, which for a keeper-made fork isn't necessarily the keeper that
+made it. See [Provenance](/concepts/provenance/#from-badge-to-structure) for how
+that edge is recorded, and for the spawn-depth consequence of forking a fork.
 
 ## In one line
 

@@ -439,21 +439,10 @@ whenever the **resolved** client list is empty, which includes a config that has
 `clients` but whose `publicUrl` was missing or invalid — that discards every
 client. The `error`-level line immediately above names the real cause.
 
-## Worked example: a read-only laptop client
+## Setting one up
 
-**1. Mint a token** and put it in the instance's environment — never in the YAML:
-
-```sh
-printf 'pdk_%s_%s\n' my-paddock "$(openssl rand -hex 24)"
-```
-
-```bash
-# alongside CLAUDE_CODE_OAUTH_TOKEN etc. — a secrets file or your orchestrator,
-# not a committed .env
-PADDOCK_MCP_TOKEN_MY_LAPTOP=pdk_my-paddock_1a2b3c…
-```
-
-**2. Declare the client** in `paddock.config.yaml`:
+The whole minimal configuration is a token in the environment and this in
+`paddock.config.yaml`:
 
 ```yaml
 managementApi:
@@ -466,44 +455,19 @@ managementApi:
       # no scope ⇒ read-only across all projects
 ```
 
-**3. Restart** and check the log line — it names the enabled clients, or tells
-you the endpoint is disabled and `404`ing.
-
-**4. Point Claude Code at it** from your laptop:
-
-```sh
-claude mcp add --transport http --scope user paddock \
-  https://paddock.example.com/mcp \
-  --header "Authorization: Bearer pdk_my-paddock_1a2b3c…"
-```
-
-Three things that will otherwise cost you an afternoon:
-
-- An entry with a `url` but no `type` is treated as a **stdio** server and fails.
-  The CLI sets `"type": "http"` for you; hand-written JSON must include it.
-- Use `--scope user` (or `local`). A `--scope project` server needs interactive
-  approval before it will connect.
-- A configured `Authorization` header and OAuth are **mutually exclusive**. If the
-  header is rejected the client reports a failed connection rather than falling
-  back to OAuth.
-
-**5. Verify.** The session should offer `list_projects`, `list_chats`,
-`read_chat` and `list_triggers` — and *not* `create_chat` or `send_message`. A
-quick smoke test without a client:
-
-```sh
-curl -sS -X POST https://paddock.example.com/mcp \
-  -H "Authorization: Bearer $PADDOCK_MCP_TOKEN_MY_LAPTOP" \
-  -H 'Content-Type: application/json' \
-  -H 'Accept: application/json, text/event-stream' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
-```
+For the step-by-step version of that — minting the token, where to put it for
+systemd / Docker / Compose, the `claude mcp add` invocation, how to reach the
+endpoint over TLS with no proxy of your own, and a troubleshooting table keyed by
+status code — see **[Connect Claude Code to
+Paddock](/guides/connect-claude-code/)**.
 
 To grant that client writes later, add an explicit `allow` — and re-read the
 warning at the top of this page first.
 
 ## See also
 
+- **[Connect Claude Code to Paddock](/guides/connect-claude-code/)** — the
+  guide-level walkthrough of the read-only setup above.
 - **[Securing Paddock](/guides/securing/#the-mcp-management-api)** — the edge-proxy
   exemption every auth scheme needs, and the deploy-ordering hazard.
 - **[Config file (YAML)](/configuration/config-file/)** — where `managementApi`
