@@ -32,7 +32,7 @@ declarations will live in, and it matches the repo's YAML house style
   `sweepMinIntervalMs`, `selfMcpEnabled`, …), the `models` allow-list array, plus
   nested sections `auth`,
   `brand`, `transcription`, `gitAuthor`, and `managementApi` (the last is
-  file-only — it has no env equivalent). Unknown keys are
+  file-first — only its `trustedProxies` has an env equivalent). Unknown keys are
   ignored. Each value is coerced through the same parsing an env value would get,
   so the same default/validation rules (below) apply.
 
@@ -89,6 +89,7 @@ Consequences worth knowing:
 | `PORT` | `4000` | no | HTTP/WS listen port. |
 | `HOST` | `127.0.0.1` | no | Bind host. Loopback by default (#435) so a fresh source/tarball run is network-closed. The container images set `HOST=0.0.0.0` — the network namespace is their boundary. `PADDOCK_HOST` is an accepted alias. |
 | `PADDOCK_DANGEROUSLY_ALLOW_OPEN` | — | no | Permits binding a non-loopback host while `PADDOCK_AUTH_MODE=none`. Without it that combination **refuses to start**; see [AUTH.md](../AUTH.md). Boots with a loud warning when set. |
+| `PADDOCK_MANAGEMENT_TRUSTED_PROXIES` | `loopback, linklocal, uniquelocal` | no | Peers whose `X-Forwarded-Proto` the `/mcp` plaintext guard believes. IPs, CIDRs, `loopback`/`linklocal`/`uniquelocal`, or `none`/`all`. Overrides `managementApi.trustedProxies`; see [Management API](#management-api-mcp-external-callers). |
 | `CLAUDE_HOME` | `~/.claude` | no | Claude home used for session/transcript discovery. |
 
 > **`PADDOCK_CONFIG__*` is not implemented.** There is no generic
@@ -120,9 +121,10 @@ for modes, provider examples, and secret handling — this table is only the kno
 
 The Management API lets a caller **outside** this instance — a laptop Claude Code
 session, or a peer Paddock — drive the same operations a keeper reaches through
-its in-process `paddock_manage` tools. It is **file-only** configuration (there is
-no `PADDOCK_MANAGEMENT_*` env equivalent), because a client list doesn't express
-well as a scalar.
+its in-process `paddock_manage` tools. It is **file-first** configuration, because
+a client list doesn't express well as a scalar — the one exception is
+`trustedProxies`, which also reads `PADDOCK_MANAGEMENT_TRUSTED_PROXIES` (a flat
+list, and the thing a container deployment most often needs to set per-environment).
 
 > **Any write scope is effectively remote code execution on this host.**
 > `create_chat`, `send_message`, `fork_chat*` and `run_trigger` start keeper
@@ -152,6 +154,9 @@ managementApi:
   # byte-match the URL the client used, and that can't be derived from the
   # (attacker-controlled) Host header. Must be https unless it's loopback.
   publicUrl: https://paddock.example.com
+  # Whose `X-Forwarded-Proto` the plaintext guard believes. Name your TLS
+  # terminator's address here; see "Trusted proxies" below for the default.
+  trustedProxies: [172.18.0.0/16]
   clients:
     my-laptop:
       auth:
@@ -173,6 +178,7 @@ managementApi:
 | `instanceId` | — | Binds `pdk_<instanceId>_…` tokens to this instance. |
 | `publicUrl` | — | **Required with `clients`.** Canonical public origin; https unless loopback. |
 | `authorizationServers` | `[]` | OAuth issuer URLs, advertised in the discovery document. Leave empty for token-only. |
+| `trustedProxies` | `loopback, linklocal, uniquelocal` | Peers whose `X-Forwarded-Proto` the plaintext guard believes. Overridden by `PADDOCK_MANAGEMENT_TRUSTED_PROXIES`. |
 | `clients.<id>.auth.ref` | — | **Required.** `env:VAR_NAME` holding the token. Inline values are rejected. |
 | `clients.<id>.scope.projects` | `["*"]` | Project slugs this client may reach. |
 | `clients.<id>.scope.allow` | `["list_*", "read_chat"]` | Operations it may invoke. Supports a trailing `*`. |
@@ -221,6 +227,43 @@ with an HTML login redirect that breaks MCP discovery. Ship a Paddock that
 authenticates `/mcp` *before* applying the exemption — the fail-closed 404 is the
 backstop if the ordering slips. Paddock also refuses plaintext requests from
 non-loopback clients, so terminate TLS and forward `X-Forwarded-Proto`.
+
+**Trusted proxies.** `/mcp` carries a bearer token, so it refuses plaintext from
+anything but a loopback client. `X-Forwarded-Proto: https` lifts that refusal —
+but only from a peer in `trustedProxies`, because the header is set by whoever is
+talking to us and a client cannot vouch for its own transport (#474). The peer is
+the socket address, so it can't be forged; entries are IPs, CIDRs, the presets
+`loopback` / `linklocal` / `uniquelocal`, or the words `none` (believe nobody)
+and `all` (believe everybody — the old behaviour, warned about at boot).
+
+| Value | Meaning |
+|-------|---------|
+| *(unset)* | `loopback, linklocal, uniquelocal` — every private peer is treated as a possible proxy. Keeps sidecar deployments working, but does not distinguish your proxy from any other host on the same private network. |
+| `172.18.0.0/16` (or your proxy's IP) | **Recommended.** Only that peer's forwarded scheme is believed — the guard becomes a control rather than a footgun-preventer. |
+| `none` | No forwarded scheme is ever believed. Reach `/mcp` over real TLS or over loopback. |
+| `all` | Any peer may switch the guard off. Only for a network you fully control. |
+
+Two consequences worth knowing:
+
+- A **public** peer's `X-Forwarded-Proto` is never believed by default. That is the
+  case the default posture actually fixes.
+- The Docker bridge gateway (`172.17.0.1`) is **not** loopback-equivalent: a remote
+  client reaching a `0.0.0.0`-published port is SNAT'd to that same address, so it
+  proves nothing about where the traffic came from. To smoke-test a containerised
+  instance, go in through the container's own loopback instead of asserting a
+  scheme from outside:
+
+  ```sh
+  docker compose exec paddock curl -sS -X POST http://127.0.0.1:4000/mcp \
+    -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+    -H 'Accept: application/json, text/event-stream' \
+    -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+  ```
+
+This setting governs the `/mcp` transport guard only. `PADDOCK_AUTH_MODE=trusted-header`
+trusts its identity header from any peer by design — that mode assumes the proxy is
+the *sole* ingress (see [AUTH.md](../AUTH.md)), which is a network posture, not a
+header check.
 
 ## Branding (per-instance)
 

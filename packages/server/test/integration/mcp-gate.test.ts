@@ -49,13 +49,20 @@ function sseJson(body: string): Record<string, unknown> | undefined {
 }
 
 /** Boot an app with N configured management clients (or none). */
-async function boot(opts: { clients?: Record<string, unknown>; instanceId?: string } = {}) {
+async function boot(
+  opts: {
+    clients?: Record<string, unknown>;
+    instanceId?: string;
+    trustedProxies?: string[] | string;
+  } = {},
+) {
   app = await startTestApp({
     configFile: opts.clients
       ? {
           managementApi: {
             publicUrl: "https://paddock.example.test",
             ...(opts.instanceId ? { instanceId: opts.instanceId } : {}),
+            ...(opts.trustedProxies !== undefined ? { trustedProxies: opts.trustedProxies } : {}),
             clients: opts.clients,
           },
         }
@@ -87,7 +94,9 @@ describe("/mcp — fail closed when unconfigured", () => {
   });
 
   it("404s when a configured client's credential does not resolve (dropped ⇒ none left)", async () => {
-    const a = await boot({ clients: { laptop: { auth: { ref: "env:MCP_TOKEN_UNSET" } } } });
+    const a = await boot({
+      clients: { laptop: { auth: { ref: "env:MCP_TOKEN_UNSET" } } },
+    });
     const res = await a.app.inject({ method: "GET", url: "/mcp" });
     expect(res.statusCode).toBe(404);
   });
@@ -158,7 +167,10 @@ describe("/mcp — authentication", () => {
     const res = await a.app.inject({
       method: "POST",
       url: "/mcp",
-      headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+      headers: {
+        authorization: `Bearer ${TOKEN}`,
+        "content-type": "application/json",
+      },
       payload: { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} },
     });
     expect(res.statusCode).toBe(406);
@@ -166,7 +178,12 @@ describe("/mcp — authentication", () => {
 
   it("never echoes the presented credential back", async () => {
     const a = await boot({ clients: oneClient });
-    const res = await mcpPost(a, TOKEN, { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} });
+    const res = await mcpPost(a, TOKEN, {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/list",
+      params: {},
+    });
     expect(res.body).not.toContain(TOKEN);
   });
 });
@@ -214,7 +231,12 @@ describe("/mcp — instance binding", () => {
       clients: { laptop: { auth: { ref: "env:MCP_TOKEN_A" } } },
       instanceId: "testinstance",
     });
-    const res = await mcpPost(a, TOKEN, { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} });
+    const res = await mcpPost(a, TOKEN, {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/list",
+      params: {},
+    });
     expect(res.statusCode).not.toBe(401);
   });
 });
@@ -224,7 +246,11 @@ describe("/mcp — publicUrl is mandatory", () => {
   // discovery document could not be served with a byte-matching `resource`.
   it("disables the API entirely when publicUrl is absent", async () => {
     app = await startTestApp({
-      configFile: { managementApi: { clients: { laptop: { auth: { ref: "env:MCP_TOKEN_A" } } } } },
+      configFile: {
+        managementApi: {
+          clients: { laptop: { auth: { ref: "env:MCP_TOKEN_A" } } },
+        },
+      },
       env: { MCP_TOKEN_A: TOKEN },
     });
     const res = await app.app.inject({
@@ -246,7 +272,9 @@ describe("/.well-known/ — not swallowed by the SPA catch-all", () => {
   // This harness runs API-only (no web dist), so it exercises the route-level
   // behaviour; app-static.test.ts covers the shell-serving handler itself.
   it("404s the protected-resource metadata path while unimplemented", async () => {
-    const a = await boot({ clients: { laptop: { auth: { ref: "env:MCP_TOKEN_A" } } } });
+    const a = await boot({
+      clients: { laptop: { auth: { ref: "env:MCP_TOKEN_A" } } },
+    });
     for (const url of [
       "/.well-known/oauth-protected-resource",
       "/.well-known/oauth-protected-resource/mcp",
@@ -262,11 +290,105 @@ describe("/mcp — independence from the browser auth mode", () => {
   // The headline invariant: `auth.mode: none` (the default this harness runs
   // under) leaves the browser surface open, but `/mcp` is STILL credential-gated.
   it("stays gated when browser auth is none", async () => {
-    const a = await boot({ clients: { laptop: { auth: { ref: "env:MCP_TOKEN_A" } } } });
+    const a = await boot({
+      clients: { laptop: { auth: { ref: "env:MCP_TOKEN_A" } } },
+    });
     expect(a.cfg.auth.mode).toBe("none");
     // An unauthenticated API route is open in this mode…
     expect((await a.app.inject({ method: "GET", url: "/api/health" })).statusCode).toBe(200);
     // …but /mcp is not.
     expect((await a.app.inject({ method: "GET", url: "/mcp" })).statusCode).toBe(401);
+  });
+});
+
+/**
+ * The plaintext transport guard (#471) and whose word it takes for it (#474).
+ *
+ * `X-Forwarded-Proto` is a header any client can set, so before #474 the guard
+ * could be switched off by the caller — including by the operator, copy-pasting
+ * a smoke-test recipe onto a real network. It is now believed only from a peer
+ * in the trusted list, and the peer address comes from the socket.
+ *
+ * These requests carry NO credential, so "admitted by the transport guard" reads
+ * as 401 (the auth check, which runs next) and "refused" reads as 403.
+ */
+describe("/mcp — transport guard: whose X-Forwarded-Proto we believe (#474)", () => {
+  const oneClient = { laptop: { auth: { ref: "env:MCP_TOKEN_A" } } };
+
+  /** GET /mcp from `peer`, optionally claiming a forwarded scheme. */
+  const get = (a: TestApp, peer: string, forwarded?: string) =>
+    a.app.inject({
+      method: "GET",
+      url: "/mcp",
+      remoteAddress: peer,
+      ...(forwarded ? { headers: { "x-forwarded-proto": forwarded } } : {}),
+    });
+
+  it("admits a loopback client over plaintext (nothing was put on a wire)", async () => {
+    const a = await boot({ clients: oneClient });
+    for (const peer of ["127.0.0.1", "::1", "::ffff:127.0.0.1"]) {
+      expect((await get(a, peer)).statusCode).toBe(401);
+    }
+  });
+
+  it("refuses a plaintext non-loopback client that claims nothing", async () => {
+    const a = await boot({ clients: oneClient });
+    const res = await get(a, "203.0.113.9");
+    expect(res.statusCode).toBe(403);
+    expect(res.json().code).toBe("insecure_transport");
+  });
+
+  // THE BUG: any client could assert its own transport was secure.
+  it("refuses a spoofed X-Forwarded-Proto from an untrusted public peer", async () => {
+    const a = await boot({ clients: oneClient });
+    const res = await get(a, "203.0.113.9", "https");
+    expect(res.statusCode).toBe(403);
+    expect(res.json().code).toBe("insecure_transport");
+    // The refusal explains itself rather than repeating "terminate TLS".
+    expect(res.json().message).toContain("203.0.113.9");
+    expect(res.json().message).toContain("trustedProxies");
+  });
+
+  it("believes a proxy the operator named, and only that one", async () => {
+    const a = await boot({
+      clients: oneClient,
+      trustedProxies: ["172.18.0.0/16"],
+    });
+    // The named sidecar: believed.
+    expect((await get(a, "172.18.0.5", "https")).statusCode).toBe(401);
+    // Same private space, NOT named: refused, even though it looks internal.
+    expect((await get(a, "10.0.0.5", "https")).statusCode).toBe(403);
+    // And a peer the operator did not name cannot forge its way in from outside.
+    expect((await get(a, "203.0.113.9", "https")).statusCode).toBe(403);
+  });
+
+  it("trustedProxies: none believes nobody, but loopback is still loopback", async () => {
+    const a = await boot({ clients: oneClient, trustedProxies: "none" });
+    expect((await get(a, "172.18.0.5", "https")).statusCode).toBe(403);
+    // Not a forwarded claim — a loopback client needs no wire, so it is admitted
+    // on its own merits (and a spoofed header changes nothing either way).
+    expect((await get(a, "127.0.0.1")).statusCode).toBe(401);
+    expect((await get(a, "127.0.0.1", "https")).statusCode).toBe(401);
+  });
+
+  // Compatibility: the deployment recipes terminate TLS at a sidecar on a
+  // private Compose/pod network, so the default list must keep them working.
+  it("keeps the sidecar recipes working by default (private peer, https claim)", async () => {
+    const a = await boot({ clients: oneClient });
+    for (const peer of ["172.18.0.5", "10.42.0.9", "172.17.0.1", "::ffff:172.18.0.5"]) {
+      expect((await get(a, peer, "https")).statusCode).toBe(401);
+    }
+  });
+
+  it("ignores a forwarded claim of http, and reads only the first hop", async () => {
+    const a = await boot({
+      clients: oneClient,
+      trustedProxies: ["172.18.0.0/16"],
+    });
+    // The proxy says the client leg was plaintext — that is the leg that matters.
+    expect((await get(a, "172.18.0.5", "http")).statusCode).toBe(403);
+    // Multi-hop: the CLIENT-side scheme is the leftmost entry.
+    expect((await get(a, "172.18.0.5", "https, http")).statusCode).toBe(401);
+    expect((await get(a, "172.18.0.5", "http, https")).statusCode).toBe(403);
   });
 });
