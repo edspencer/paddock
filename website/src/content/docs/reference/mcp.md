@@ -45,7 +45,7 @@ secret.
 | Method | Path | Auth | What it is |
 |--------|------|------|------------|
 | `POST` | `/mcp` | Bearer token | The streamable-HTTP JSON-RPC MCP endpoint. |
-| `GET`, `DELETE` | `/mcp` | Bearer token | Always **`405`** + `Allow: POST`. |
+| `GET`, `DELETE` | `/mcp` | Bearer token | **`405`** + `Allow: POST` — *once authenticated*. The gate runs first, so without a valid token these are a `401` like any other request. |
 | `GET` | `/.well-known/oauth-protected-resource/mcp` | **None** | RFC 9728 protected-resource metadata (path-inserted form). |
 | `GET` | `/.well-known/oauth-protected-resource` | **None** | The same document at the bare root. |
 
@@ -59,12 +59,28 @@ visibility can never leak into another's session.
 The MCP server identifies itself as `paddock` in the `initialize` handshake, with
 the Paddock package version as its version string.
 
+A **successful** `POST` is answered as `Content-Type: text/event-stream`, not
+`application/json` — the streamable-HTTP transport frames its reply as a
+single SSE event:
+
+```text
+event: message
+data: {"result":{"tools":[…]},"jsonrpc":"2.0","id":1}
+```
+
+That is a normal `200`. It matters mostly when you're testing by hand, since
+a `curl` expecting bare JSON will look like it failed.
+
 ### `GET`/`DELETE /mcp` → `405`
 
 Refused explicitly rather than silently. In stateless mode the transport answers
 a `GET` with an SSE stream that never emits anything, so a client would hang
 forever on a socket that never gets headers. Paddock replies `405` with
 `Allow: POST` and a JSON-RPC error body instead.
+
+The auth gate runs **before** the method check, though, so this is what an
+*authenticated* `GET` gets. An unauthenticated one — opening `/mcp` in a browser,
+say — is a plain `401`.
 
 ### The discovery document
 
@@ -115,9 +131,14 @@ in this order:
 | **404** | `managementApi.clients` is empty, or `publicUrl` is unset. | `{ "error": "not found" }` |
 | **403** | Plaintext request from a **non-loopback** client ([caveat](#plaintext-is-refused--as-defence-in-depth)). | `code: "insecure_transport"` |
 | **401** | Credential missing, malformed, or matching no configured client. | `WWW-Authenticate: Bearer …`, `code: "auth_required"` |
-| **405** | `GET` or `DELETE` on `/mcp`. | `Allow: POST`, JSON-RPC error `-32000` |
+| **405** | `GET` or `DELETE` on `/mcp`, **after** the gate has passed. | `Allow: POST`, JSON-RPC error `-32000` |
 | **503** | The surface is configured but the route has no ops context (a wiring error, not a client error). | `code: "ops_unavailable"` |
-| **200** | Everything else — the JSON-RPC response, including in-band tool errors. | |
+| **406** | The request didn't send `Accept: application/json, text/event-stream`. Enforced by the MCP transport, so it lands *after* the gate above. | JSON-RPC error `-32000`, `Not Acceptable: Client must accept both application/json and text/event-stream` |
+| **200** | Everything else — the JSON-RPC response, including in-band tool errors. **SSE-framed** ([above](#post-mcp)), not bare JSON. | `Content-Type: text/event-stream` |
+
+Note the ordering: the gate is method-agnostic, so an unauthenticated `GET` is a
+`401` rather than the `405` you might expect, and a request missing its `Accept`
+header still has to get past auth before the `406`.
 
 ### Never a `302`
 
@@ -212,7 +233,8 @@ Content-Type: application/json
   before comparison, so the check leaks neither content nor length through
   timing. Every configured client is scanned without early exit, so total work
   doesn't depend on *which* client matched.
-- **Minimum length 24 characters.** Not a strength guarantee — a floor that stops
+- **Minimum length 24 characters**, measured across the **whole** token including
+  any `pdk_<instanceId>_` prefix. Not a strength guarantee — a floor that stops
   `changeme` from ever authenticating a turn-spawning client. A shorter token
   drops the client with a warning.
 - **The `pdk_` prefix binds a token to one instance.** A token shaped
@@ -220,7 +242,16 @@ Content-Type: application/json
   `managementApi.instanceId`, so copying a credential to a second Paddock does
   not make it work there even though the bytes are identical. An unprefixed token
   still works, but logs a warning that it is *not* bound — and the prefix gives
-  secret scanners something to match on.
+  secret scanners something to match on. Binding is only *enforced* when
+  `instanceId` is configured; with no `instanceId`, a `pdk_anything_…` token is
+  accepted as-is.
+
+:::caution[An `instanceId` containing `_` can never authenticate]
+The embedded id is parsed as everything between `pdk_` and the **next `_`**. So
+an `instanceId` of `my_paddock` and a token `pdk_my_paddock_<secret>` yields an
+embedded id of `my`, which never matches the configured `my_paddock` — and
+**every request 401s**, with only a boot warning to explain it. Use hyphens.
+:::
 
 Generate one like this:
 
@@ -320,7 +351,7 @@ Two granularities exist on purpose. Internally a scope is a list of **operation*
 names — the right granularity for an operator writing a config file, who wants to
 say exactly which verbs a CI token may call. Over OAuth, scopes are coarse
 (`paddock:read`, `paddock:write`) because they are shown to a *human* on a consent
-screen: "grant write access" is a prompt someone reads; a list of thirteen verbs
+screen: "grant write access" is a prompt someone reads; a list of fourteen verbs
 is not.
 
 The coarse names are a **projection** used only in the discovery document and in
@@ -369,7 +400,7 @@ managementApi:
 | Field | Default | Purpose |
 |-------|---------|---------|
 | `instanceId` | — | Binds `pdk_<instanceId>_…` tokens to this instance. Absent ⇒ binding is not enforced. |
-| `publicUrl` | — | **Required whenever `clients` is set.** Canonical public origin; `https` unless loopback; no query string or fragment; trailing slash stripped. |
+| `publicUrl` | — | **Required whenever `clients` is set.** Canonical public origin, optionally with a path for a path-mounted deployment; `https` unless loopback; no query string or fragment; trailing slash stripped. |
 | `authorizationServers` | `[]` | OAuth issuer URLs. **Gates whether the discovery document is published at all.** |
 | `clients.<id>.auth.type` | `token` | Credential type. Only `token` is supported. |
 | `clients.<id>.auth.ref` | — | **Required.** `env:VAR_NAME` holding the token. |
@@ -394,6 +425,19 @@ Two kinds of problem, handled differently on purpose:
 
 A scope that grants any code-execution operation is called out at boot with an
 explicit warning naming the client. Watch your logs after changing this block.
+
+At boot the surface reports itself one way or the other:
+
+```text
+management API: /mcp enabled (self-authenticated — independent of PADDOCK_AUTH_MODE and of any proxy)
+management API: /mcp disabled (no managementApi.clients configured) — the endpoint 404s
+```
+
+The enabled line carries the enabled client ids and the `instanceId` as
+structured fields. The disabled line is worded a little too narrowly: it prints
+whenever the **resolved** client list is empty, which includes a config that has
+`clients` but whose `publicUrl` was missing or invalid — that discards every
+client. The `error`-level line immediately above names the real cause.
 
 ## Setting one up
 
