@@ -12,6 +12,17 @@ import type { Project } from "./types";
 
 interface ProjectsContextValue {
   projects: Project[];
+  /**
+   * The ROOT project (issue #516) — the project whose directory IS the projects
+   * root — or `null` when this instance has none. Deliberately NOT folded into
+   * `projects`: it is invisible to `GET /api/projects` (which enumerates
+   * subdirectories) and never belongs in the grid or the sidebar project list.
+   *
+   * `undefined` while the first fetch is in flight, and that distinction is
+   * load-bearing: `/` renders root Home when this is a project and the projects
+   * grid when it is null, so routing must WAIT rather than flash the wrong one.
+   */
+  rootProject: Project | null | undefined;
   loading: boolean;
   error: string | null;
   refresh: () => Promise<void>;
@@ -19,12 +30,15 @@ interface ProjectsContextValue {
   upsert: (p: Project) => void;
   /** Drop a project locally (after delete) without a round-trip. */
   remove: (slug: string) => void;
+  /** Record a freshly-created root project locally (after POST /api/root-project). */
+  setRootProject: (p: Project) => void;
 }
 
 const Ctx = createContext<ProjectsContextValue | null>(null);
 
 export function ProjectsProvider({ children }: { children: ReactNode }) {
   const [projects, setProjects] = useState<Project[]>([]);
+  const [rootProject, setRootProject] = useState<Project | null | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -38,6 +52,11 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoading(false);
     }
+    // The root project rides along but is kept separate, and its failure is
+    // non-fatal: an instance without one (the default) is simply the pre-#516
+    // app, so resolving to `null` is the correct fallback for an older server
+    // that 404s this endpoint too.
+    setRootProject(await api.getRootProject().catch(() => null));
   }, []);
 
   const upsert = useCallback((p: Project) => {
@@ -53,8 +72,8 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
   }, [refresh]);
 
   const value = useMemo(
-    () => ({ projects, loading, error, refresh, upsert, remove }),
-    [projects, loading, error, refresh, upsert, remove],
+    () => ({ projects, rootProject, loading, error, refresh, upsert, remove, setRootProject }),
+    [projects, rootProject, loading, error, refresh, upsert, remove],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

@@ -112,6 +112,9 @@ function renderAt(path: string) {
         <Route path="/projects/:slug/settings" element={<ProjectView />} />
         <Route path="/projects/:slug/triggers" element={<ProjectView />} />
         <Route path="/projects/:slug/hooks" element={<ProjectView />} />
+        {/* The projects grid moved off `/` to `/projects` when the root became a
+            project (#516) — that is where deleting a project lands now. */}
+        <Route path="/projects" element={<div>HOME</div>} />
         <Route path="/" element={<div>HOME</div>} />
       </Routes>
     </MemoryRouter>,

@@ -284,6 +284,25 @@ export const api = {
     return projects;
   },
 
+  /**
+   * The root project (issue #516), or `null` when this instance has none. Its
+   * own endpoint because `GET /api/projects` enumerates SUBdirectories of the
+   * projects root, and the root's record sits at the root itself.
+   */
+  async getRootProject(): Promise<Project | null> {
+    const { project } = await req<{ project: Project | null }>("/api/root-project");
+    return project;
+  },
+
+  /** Create the root project — the opt-in that turns `/` into root Home (#516). */
+  async createRootProject(input: { name?: string; summary?: string } = {}): Promise<Project> {
+    const { project } = await req<{ project: Project }>("/api/root-project", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    return project;
+  },
+
   /** Enriched single-project payload: metadata + changelog + its chats. */
   async getProjectDetail(slug: string): Promise<ProjectDetail> {
     return req<ProjectDetail>(`/api/projects/${encodeURIComponent(slug)}`);

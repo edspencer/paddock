@@ -1,10 +1,10 @@
-import React, { lazy } from "react";
+import React, { lazy, type ReactElement } from "react";
 import ReactDOM from "react-dom/client";
 import { createBrowserRouter, RouterProvider, useParams } from "react-router-dom";
 import "./index.css";
 import { AppShell } from "./components/AppShell";
 import { RouteError } from "./components/RouteError";
-import { ProjectsProvider } from "./lib/projects-context";
+import { ProjectsProvider, useProjects } from "./lib/projects-context";
 import { registerServiceWorker } from "./lib/pwa";
 
 // Route components are code-split (issue #11): each becomes its own async chunk
@@ -41,6 +41,31 @@ function TaggedProjects() {
   return <ProjectsGrid filterTag={tag ? decodeURIComponent(tag) : undefined} />;
 }
 
+/**
+ * The two top-level routes whose meaning depends on whether this instance has a
+ * ROOT PROJECT (issue #516). Migration is gated on EXISTENCE, so:
+ *
+ *   no root project  → `/` is the projects grid and `/chat` is a scratch chat,
+ *                      exactly as before. Every existing instance stays here.
+ *   root project      → `/` is root Home and `/chat` is a root chat.
+ *
+ * Creating `<projectsRoot>/project.yaml` is the whole opt-in. Neither route
+ * renders until `rootProject` resolves, so `/` never flashes the wrong page.
+ */
+function RootGate({
+  withRoot,
+  without,
+}: {
+  withRoot: ReactElement;
+  without: ReactElement;
+}) {
+  const { rootProject } = useProjects();
+  if (rootProject === undefined) {
+    return <div className="p-8 text-sm text-paddock-500">Loading…</div>;
+  }
+  return rootProject ? withRoot : without;
+}
+
 const router = createBrowserRouter([
   {
     path: "/",
@@ -50,7 +75,17 @@ const router = createBrowserRouter([
     // current build instead of dead-ending at the default error screen (#222).
     errorElement: <RouteError />,
     children: [
-      { index: true, element: <ProjectsGrid /> },
+      // `/` is root Home when a root project exists, the projects grid otherwise
+      // (#516). No redirect and no sticky last tab at the root: `/` is the
+      // instance's front door and always renders the same thing.
+      {
+        index: true,
+        element: <RootGate withRoot={<ProjectView root />} without={<ProjectsGrid />} />,
+      },
+      // The projects grid keeps a real page of its own — it carries area
+      // sections, collapse state and tag filtering, so it can't just be a
+      // section of root Home (#516).
+      { path: "projects", element: <ProjectsGrid /> },
       // The projects grid, filtered to a single domain tag (click a tag pill).
       { path: "tags/:tag", element: <TaggedProjects /> },
       // Bare project URL redirects to the sticky last tab (defaults to home).
@@ -73,8 +108,16 @@ const router = createBrowserRouter([
       // Legacy Hooks route — the tab was renamed + folded into Triggers (Epic T / T4);
       // ProjectView redirects this to /triggers so old links/bookmarks don't 404.
       { path: "projects/:slug/hooks", element: <ProjectView /> },
-      { path: "chat", element: <OneOffChat /> },
-      { path: "chat/:sessionId", element: <OneOffChat /> },
+      // Root chats when there is a root project, scratch chats otherwise (#516).
+      // The URL is the same because root chats SUPERSEDE scratch — that is the
+      // whole point of the design (Phase 6 deletes the scratch cluster outright).
+      // Existing scratch transcripts stay on disk at `<dataDir>/scratch/.chats`
+      // and are re-homed by that phase.
+      { path: "chat", element: <RootGate withRoot={<ProjectView root />} without={<OneOffChat />} /> },
+      {
+        path: "chat/:sessionId",
+        element: <RootGate withRoot={<ProjectView root />} without={<OneOffChat />} />,
+      },
       // Top-level, instance-wide admin settings (edits paddock.config.yaml) — #385.
       { path: "settings", element: <InstanceSettings /> },
     ],

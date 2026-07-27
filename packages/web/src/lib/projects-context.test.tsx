@@ -4,9 +4,16 @@ import { ProjectsProvider, useProjects } from "./projects-context";
 import { makeProject } from "../test/factories";
 
 const listProjects = vi.fn();
+const getRootProject = vi.fn();
 vi.mock("./api", async () => {
   const actual = await vi.importActual<typeof import("./api")>("./api");
-  return { ...actual, api: { listProjects: (...a: unknown[]) => listProjects(...a) } };
+  return {
+    ...actual,
+    api: {
+      listProjects: (...a: unknown[]) => listProjects(...a),
+      getRootProject: (...a: unknown[]) => getRootProject(...a),
+    },
+  };
 });
 
 // A tiny probe component that surfaces the context for assertions + exposes the
@@ -33,6 +40,9 @@ function ctx() {
 
 beforeEach(() => {
   listProjects.mockReset();
+  // Most instances have no root project (#516) — the default everywhere.
+  getRootProject.mockReset();
+  getRootProject.mockResolvedValue(null);
 });
 
 describe("ProjectsProvider", () => {
