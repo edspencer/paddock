@@ -376,12 +376,20 @@ Two servers, both wired in `ws.ts` (`ws.ts:1173-1310`):
   `ensureProjectAgent` pair `POST /api/projects` uses, so the REST and MCP
   creation paths cannot drift (issue #467).
 
-**Anti-fork-bomb design:** spawned/automated turns (`startAgentTurn`,
-`triggerType: "agent"`) and scheduler wakes are injected with `send_file`
-**only** — never the self-MCP. An automated child therefore can't itself
-create/fork/message; recursion is simply not wired into the automated path. A
-human who later opens a spawned chat gets full tools again through the normal
-socket path.
+**Anti-fork-bomb design:** the limit on runaway recursion is a **configurable
+depth gate, not a structural barrier**. Spawned/automated turns (`startAgentTurn`,
+`triggerType: "agent"`) and scheduler wakes *do* receive the self-MCP — including
+its write tools — when the chat's own depth satisfies `depth <= maxSpawnDepth`
+(`spawnedTurnGetsSelfMcp`, `spawn-capability.ts:94`; the decision is applied in
+`wake-injection.ts:137`). The default `maxSpawnDepth` is **1**, so a depth-1 child
+can spawn and report back — the manager→children→report-back pattern works out of
+the box — while a depth-2 grandchild gets `send_file` only and the tree can't run
+away. It is tunable 0–8 (`PADDOCK_MAX_SPAWN_DEPTH`, or per-project via
+`resolveMaxSpawnDepth`); `0` means no spawned child ever gets the tools, which is
+the behaviour this section previously described as unconditional. The
+human/scheduled root (depth 0) isn't depth-gated at all — it keeps the plain
+instance-flag gating on the socket path. External `/mcp` callers carry their own
+cap from the client's `scope.maxSpawnDepth`.
 
 ---
 
@@ -433,9 +441,10 @@ writes the files, not the agent.
 
 ## 7. Auth boundary
 
-Paddock has **no native login**. It sits behind a reverse proxy / OIDC IdP and
-turns the upstream identity into `req.user` at the request edge, without
-hardcoding a provider (`auth.ts`). `registerAuth(app, cfg.auth)` is registered
+The **browser surface** has no native login. It sits behind a reverse proxy /
+OIDC IdP and turns the upstream identity into `req.user` at the request edge,
+without hardcoding a provider (`auth.ts`). The Management API is the exception —
+see the end of this section. `registerAuth(app, cfg.auth)` is registered
 **before routes** and installs an `onRequest` hook that guards every REST + WS
 request, populating `req.user: AuthUser { username, email?, groups?, anonymous? }`
 or replying 401.
@@ -458,19 +467,40 @@ login flow and the PWA shell load cleanly; every `/api` and `/ws` route stays
 authenticated. The identity is exposed to the SPA via `GET /api/me`
 (`routes.ts:151`).
 
+**The Management API authenticates itself.** `/mcp` and
+`/.well-known/oauth-protected-resource*` are exempt from the hook above
+(`auth.ts:114`) — not because they're open, but because they carry their own
+credential check (`management-auth.ts`), independent of `PADDOCK_AUTH_MODE` and
+of any reverse proxy. The endpoint therefore stays credential-gated even at
+`auth.mode: none`, and a bad token gets a `401` with a `WWW-Authenticate`
+challenge rather than a login redirect no MCP client could follow. Authorization
+is enforced once at the **operations layer** (`management-policy.ts`,
+`management-ops.ts`) rather than per-transport, so the in-process keeper path and
+the external HTTP path share one policy implementation. Clients default to
+read-only: any write scope can start a keeper turn and keepers have `Bash`, so a
+write grant is equivalent to code execution on the host, and the config loader
+logs a named warning when one is configured. Only static bearer tokens are
+implemented — `auth.type: "token"`; there is no OAuth authenticator yet, so RFC
+9728 metadata is published only once an authorization server is configured. The
+whole surface fails closed: with no `clients` or no `publicUrl`, `/mcp` 404s.
+See [CONFIGURATION.md](CONFIGURATION.md#management-api-mcp-external-callers).
+
 ---
 
 ## 8. Configuration
 
-Everything is environment-based (`config.ts`); there are no config files. The
-main knobs:
+Configuration is environment-first (`config.ts`), layered over an optional YAML
+instance-config file — precedence is built-in defaults < `paddock.config.yaml` <
+environment. (This section previously said there were no config files; the YAML
+layer is documented in [CONFIGURATION.md](CONFIGURATION.md).) The main knobs:
 
 | Area | Vars (default) |
 |---|---|
-| **Server** | `PORT` (4000), `HOST` (0.0.0.0), `LOG_LEVEL` (info) |
+| **Server** | `PORT` (4000), `HOST` (127.0.0.1 — loopback by default; images set 0.0.0.0), `PADDOCK_DANGEROUSLY_ALLOW_OPEN` (unset; required to bind routable + `auth.mode: none`), `LOG_LEVEL` (info) |
 | **Paths** | `PADDOCK_DATA_DIR` (./data), `PADDOCK_PROJECTS_DIR`, `PADDOCK_STATE_DIR` (`.herdctl`), `PADDOCK_HERDCTL_CONFIG`, `PADDOCK_SCRATCH_DIR`, `PADDOCK_WEB_DIST`, `CLAUDE_HOME` (~/.claude) |
 | **Auth** | `PADDOCK_AUTH_MODE` (none), `PADDOCK_AUTH_USER_HEADER` (X-Forwarded-User), `..._EMAIL_HEADER`, `..._GROUPS_HEADER`, `..._JWT_HEADER` (Authorization), `..._JWKS_URL`, `..._JWT_ISSUER`, `..._JWT_AUDIENCE`, `..._USERNAME_CLAIM`, `..._GROUPS_CLAIM` (groups) |
-| **Keeper** | `PADDOCK_KEEPER_DRIVE_MODE` (session), `PADDOCK_KEEPER_NATIVE_PROMPT` (true), `PADDOCK_SELF_MCP` (false), `PADDOCK_SELF_MCP_WRITE` (false; implies read) |
+| **Keeper** | `PADDOCK_KEEPER_DRIVE_MODE` (session), `PADDOCK_KEEPER_NATIVE_PROMPT` (true), `PADDOCK_SELF_MCP` (false), `PADDOCK_SELF_MCP_WRITE` (false; implies read), `PADDOCK_SELF_MCP_PROJECTS` (false; implies write), `PADDOCK_HOOKS_MCP` (false), `PADDOCK_MAX_SPAWN_DEPTH` (1; range 0–8) |
+| **Models / API** | `PADDOCK_MODELS` (unset = whole catalog; default keeper model `claude-opus-5`), `PADDOCK_OPENAPI_ENABLED` (off; mounts `/open-api`) |
 | **Sweeper** | `PADDOCK_SWEEP_MIN_INTERVAL_MS` (300000) |
 | **Whisper** | `PADDOCK_WHISPER_MODE` (off/local/remote), `PADDOCK_WHISPER_ENDPOINT`, `PADDOCK_WHISPER_MODEL` (base), `PADDOCK_WHISPER_API_KEY`, `PADDOCK_WHISPER_LANGUAGE`, `PADDOCK_WHISPER_MAX_UPLOAD_BYTES` (25 MB) |
 | **Brand** | `PADDOCK_BRAND_NAME` (Paddock), `PADDOCK_BRAND_LOGO` (🐎), `PADDOCK_BRAND_ACCENT` (#c2603c) |

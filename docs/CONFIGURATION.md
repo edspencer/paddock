@@ -87,7 +87,8 @@ Consequences worth knowing:
 | `PADDOCK_HERDCTL_CONFIG` | `<data>/herdctl.yaml` | no | Path to the generated `herdctl.yaml` the FleetManager loads (Paddock owns/regenerates it). |
 | `PADDOCK_WEB_DIST` | `packages/web/dist` | no | Built SPA served in production (resolved relative to the server module). |
 | `PORT` | `4000` | no | HTTP/WS listen port. |
-| `HOST` | `0.0.0.0` | no | Bind host. |
+| `HOST` | `127.0.0.1` | no | Bind host. Loopback by default (#435) so a fresh source/tarball run is network-closed. The container images set `HOST=0.0.0.0` — the network namespace is their boundary. `PADDOCK_HOST` is an accepted alias. |
+| `PADDOCK_DANGEROUSLY_ALLOW_OPEN` | — | no | Permits binding a non-loopback host while `PADDOCK_AUTH_MODE=none`. Without it that combination **refuses to start**; see [AUTH.md](../AUTH.md). Boots with a loud warning when set. |
 | `CLAUDE_HOME` | `~/.claude` | no | Claude home used for session/transcript discovery. |
 
 > **`PADDOCK_CONFIG__*` is not implemented.** There is no generic
