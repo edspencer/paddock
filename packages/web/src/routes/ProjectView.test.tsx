@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor, within, act } from "@testing-librar
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { ProjectView } from "./ProjectView";
 import { makeProject, makeChat } from "../test/factories";
+import { resetLastSeenForTests } from "../lib/lastSeen";
 import type { FileEntry, Project, GitProjectStatus, ProjectDetail } from "../lib/types";
 import type { ChatPaneProps } from "../components/ChatPane";
 
@@ -148,6 +149,7 @@ beforeEach(() => {
   upsert.mockReset();
   remove.mockReset();
   localStorage.clear();
+  resetLastSeenForTests();
 });
 
 /**
@@ -774,10 +776,17 @@ describe("ProjectView: unread affordance (#160)", () => {
   });
 
   it("does not show the cue once lastSeen is newer than the completed turn", async () => {
-    localStorage.setItem("paddock:lastSeen:s1", String(Date.parse(FUTURE) + 1));
+    // Seen-ness comes from the SERVER DTO (#189/#488) — there is no local mirror.
     apiFns.getProjectDetail.mockResolvedValue(
       detail(makeProject({ slug: "p" }), {
-        chats: [makeChat({ sessionId: "s1", name: "Seen chat", lastTurnCompletedAt: FUTURE })],
+        chats: [
+          makeChat({
+            sessionId: "s1",
+            name: "Seen chat",
+            lastTurnCompletedAt: FUTURE,
+            lastSeen: Date.parse(FUTURE) + 1,
+          }),
+        ],
       }),
     );
     renderAt("/projects/p/chat");

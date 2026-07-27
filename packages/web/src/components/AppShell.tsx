@@ -7,6 +7,7 @@ import { getBrand, getOpenApi, logoIsImage } from "../lib/brand";
 import { areaLabel, orderAreaSlugs } from "../lib/areas";
 import { chatClient } from "../lib/ws";
 import { LAST_SEEN_EVENT, readLastSeen, setServerLastSeen } from "../lib/lastSeen";
+import { backfillLegacyLastSeen } from "../lib/lastSeenBackfill";
 import { TagPill } from "./TagPill";
 import { NewProjectModal } from "./NewProjectModal";
 import { ChatIcon, CogIcon, FolderIcon, LinkIcon, MenuIcon, MoonIcon, PlusIcon, SunIcon, XIcon } from "./icons";
@@ -71,6 +72,10 @@ function useProjectBadges(projects: Project[]): Map<string, ProjectBadge> {
       }
     }
     setVersion((v) => v + 1);
+    // One-time (#488) migration: push any pre-existing localStorage read-state up
+    // to the server, so removing the local mirror doesn't resurface chats the user
+    // already read. Self-deleting and best-effort; needs the payload for the slug.
+    void backfillLegacyLastSeen(projects).catch(() => undefined);
   }, [projects]);
 
   // Live in-flight set + a completion signal each time a turn stops running.
@@ -88,15 +93,13 @@ function useProjectBadges(projects: Project[]): Map<string, ProjectBadge> {
   }, []);
 
   // Recompute when a `lastSeen` marker changes (opening a chat clears its
-  // unread) — same-tab custom event + cross-tab `storage`.
+  // unread). Same-tab custom event only: read-state is server-authoritative
+  // (#488), so there's no localStorage to raise a cross-tab `storage` event —
+  // another tab's mark-seen arrives with the next refetch.
   useEffect(() => {
     const bump = () => setVersion((v) => v + 1);
     window.addEventListener(LAST_SEEN_EVENT, bump);
-    window.addEventListener("storage", bump);
-    return () => {
-      window.removeEventListener(LAST_SEEN_EVENT, bump);
-      window.removeEventListener("storage", bump);
-    };
+    return () => window.removeEventListener(LAST_SEEN_EVENT, bump);
   }, []);
 
   return useMemo(() => {
