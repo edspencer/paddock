@@ -32,7 +32,7 @@ declarations will live in, and it matches the repo's YAML house style
   `sweepMinIntervalMs`, `selfMcpEnabled`, …), the `models` allow-list array, plus
   nested sections `auth`,
   `brand`, `transcription`, `gitAuthor`, and `managementApi` (the last is
-  file-only — it has no env equivalent). Unknown keys are
+  file-first — only its `trustedProxies` has an env equivalent). Unknown keys are
   ignored. Each value is coerced through the same parsing an env value would get,
   so the same default/validation rules (below) apply.
 
@@ -89,6 +89,7 @@ Consequences worth knowing:
 | `PORT` | `4000` | no | HTTP/WS listen port. |
 | `HOST` | `127.0.0.1` | no | Bind host. Loopback by default (#435) so a fresh source/tarball run is network-closed. The container images set `HOST=0.0.0.0` — the network namespace is their boundary. `PADDOCK_HOST` is an accepted alias. |
 | `PADDOCK_DANGEROUSLY_ALLOW_OPEN` | — | no | Permits binding a non-loopback host while `PADDOCK_AUTH_MODE=none`. Without it that combination **refuses to start**; see [AUTH.md](../AUTH.md). Boots with a loud warning when set. |
+| `PADDOCK_MANAGEMENT_TRUSTED_PROXIES` | `loopback, linklocal, uniquelocal` | no | Peers whose `X-Forwarded-Proto` the `/mcp` plaintext guard believes. IPs, CIDRs, `loopback`/`linklocal`/`uniquelocal`, or `none`/`all`. Overrides `managementApi.trustedProxies`; see [Management API](#management-api-mcp-external-callers). |
 | `CLAUDE_HOME` | `~/.claude` | no | Claude home used for session/transcript discovery. |
 
 > **`PADDOCK_CONFIG__*` is not implemented.** There is no generic
@@ -120,9 +121,10 @@ for modes, provider examples, and secret handling — this table is only the kno
 
 The Management API lets a caller **outside** this instance — a laptop Claude Code
 session, or a peer Paddock — drive the same operations a keeper reaches through
-its in-process `paddock_manage` tools. It is **file-only** configuration (there is
-no `PADDOCK_MANAGEMENT_*` env equivalent), because a client list doesn't express
-well as a scalar.
+its in-process `paddock_manage` tools. It is **file-first** configuration, because
+a client list doesn't express well as a scalar — the one exception is
+`trustedProxies`, which also reads `PADDOCK_MANAGEMENT_TRUSTED_PROXIES` (a flat
+list, and the thing a container deployment most often needs to set per-environment).
 
 > **Any write scope is effectively remote code execution on this host.**
 > `create_chat`, `send_message`, `fork_chat*` and `run_trigger` start keeper
