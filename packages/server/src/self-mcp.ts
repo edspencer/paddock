@@ -92,6 +92,7 @@ export {
   resolveModelArg,
   coercePrompts,
   coerceToolList,
+  coerceBoolean,
 } from "./self-mcp-util.js";
 
 const SERVER_NAME = "paddock_manage";
@@ -126,6 +127,13 @@ function readTools(context: SelfMcpContext): ServerTools {
           project: {
             type: "string",
             description: "Project slug to filter by. Omit to list chats across all projects.",
+          },
+          include_archived: {
+            type: "boolean",
+            description:
+              "Include archived chats. Defaults to false, matching the web UI. " +
+              "Pass true when you need an archived chat's session_id (e.g. to " +
+              "read or unarchive it) — nothing else surfaces session ids.",
           },
         },
       },

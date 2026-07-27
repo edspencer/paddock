@@ -10,7 +10,7 @@
  */
 import type { McpToolCallResult } from "@herdctl/core";
 import type { SelfMcpContext } from "./self-mcp-types.js";
-import { ok, fail, errText, clampLimit, truncateText } from "./self-mcp-util.js";
+import { ok, fail, errText, clampLimit, coerceBoolean, truncateText } from "./self-mcp-util.js";
 
 export function listProjectsHandler(context: SelfMcpContext) {
   return async (): Promise<McpToolCallResult> => {
@@ -27,8 +27,22 @@ export function listChatsHandler(context: SelfMcpContext) {
   return async (args: Record<string, unknown>): Promise<McpToolCallResult> => {
     try {
       const project = typeof args.project === "string" ? args.project.trim() : undefined;
-      const chats = await context.listChats(project && project.length > 0 ? project : undefined);
-      return ok({ count: chats.length, project: project ?? null, chats });
+      const includeArchived = coerceBoolean(args.include_archived, false);
+      const all = await context.listChats(project && project.length > 0 ? project : undefined);
+      // #489: archived chats are hidden by default so the tool agrees with the web
+      // UI (which files them into a collapsed section). Filtering HERE rather than
+      // in the op keeps the blast radius off `SelfMcpContext`, the policy wrapper
+      // and both test fakes. The omitted count is reported rather than dropped
+      // silently: `list_chats` is the ONLY source of session ids, so a silent
+      // filter would make an archived chat unaddressable — no read_chat, no
+      // unarchive_chat — with nothing in the response to hint at why.
+      const chats = includeArchived ? all : all.filter((c) => !c.archived);
+      return ok({
+        count: chats.length,
+        omittedArchived: all.length - chats.length,
+        project: project ?? null,
+        chats,
+      });
     } catch (error) {
       return fail(`Error listing chats: ${errText(error)}`);
     }

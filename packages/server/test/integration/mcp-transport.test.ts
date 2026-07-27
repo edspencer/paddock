@@ -7,8 +7,9 @@
  * gotcha), and — most importantly — that a principal's SCOPE actually shapes
  * the tool list it is offered over the wire.
  */
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, beforeAll, afterAll } from "vitest";
 import { startTestApp, type TestApp } from "../helpers/app.js";
+import { listen, connectWs, type WsClient, type WsEvent } from "../helpers/ws.js";
 
 const READER = "pdk_testinstance_reader00000000000000000000";
 const WRITER = "pdk_testinstance_writer00000000000000000000";
@@ -147,6 +148,101 @@ describe("/mcp scope shapes the offered toolset", () => {
     });
     expect(json.result.isError).toBe(true);
     expect(json.result.content[0].text).toContain("Unknown tool");
+  });
+});
+
+/**
+ * #489 — `list_chats` over the REAL ops layer (not a fake context), because the
+ * archived annotation is added in `buildManagementOps` and nothing else covers
+ * it: `git grep buildManagementOps packages/server/test` was empty before this.
+ * Uses its own app (chats need a listening socket for the WS turn) rather than
+ * the module-level `boot()`.
+ */
+describe("/mcp list_chats hides archived chats", () => {
+  let t: TestApp;
+  let ws: WsClient;
+  let n = 0;
+
+  const isComplete = (slug: string) => (e: WsEvent) =>
+    e.type === "chat:complete" && e.payload?.projectSlug === slug;
+
+  /** A fresh project with one chat — fresh so the chat is its FIRST session and
+   *  surfaces immediately (a later chat can lag herdctl's 30s discovery cache). */
+  async function projectWithChat(): Promise<{ slug: string; id: string }> {
+    const slug = `mcparch-${++n}`;
+    await t.app.inject({ method: "POST", url: "/api/projects", payload: { name: slug } });
+    const mark = ws.mark();
+    ws.send({
+      type: "chat:send",
+      payload: { projectSlug: slug, sessionId: null, message: "hello archive" },
+    });
+    const id = (await ws.waitFor(isComplete(slug), { from: mark })).payload?.sessionId as string;
+    return { slug, id };
+  }
+
+  const listChats = async (args: Record<string, unknown> = {}) => {
+    const { json } = await rpc(t, READER, {
+      jsonrpc: "2.0",
+      id: 9,
+      method: "tools/call",
+      params: { name: "list_chats", arguments: args },
+    });
+    return JSON.parse(json.result.content[0].text) as {
+      count: number;
+      omittedArchived: number;
+      chats: Array<{ sessionId: string; archived: boolean }>;
+    };
+  };
+
+  beforeAll(async () => {
+    t = await startTestApp({
+      script: { "hello archive": "hi from the keeper" },
+      configFile: {
+        managementApi: {
+          publicUrl: "https://paddock.example.test",
+          clients: { reader: { auth: { ref: "env:MCP_READER" } } },
+        },
+      },
+      env: {
+        MCP_READER: READER,
+        // Hermetic: this is the only test here that opens a real socket, and the
+        // browser-auth hook guards `/ws` app-wide. A dev box that exports
+        // PADDOCK_AUTH_MODE=jwt (the projects box does) would 401 the upgrade,
+        // so pin the mode the way the helper already pins HOST/drive-mode. CI
+        // has it unset, where `none` is the default anyway.
+        PADDOCK_AUTH_MODE: "none",
+      },
+    });
+    const { port } = await listen(t.app);
+    ws = await connectWs(port);
+  });
+  afterAll(async () => {
+    ws?.close();
+    await t?.teardown();
+  });
+
+  it("omits an archived chat by default, counts it, and returns it on request", async () => {
+    const active = await projectWithChat();
+    const filed = await projectWithChat();
+    await t.app.inject({
+      method: "POST",
+      url: `/api/projects/${filed.slug}/chats/${filed.id}/archive`,
+      payload: { archived: true },
+    });
+
+    const hidden = await listChats();
+    const ids = hidden.chats.map((c) => c.sessionId);
+    expect(ids).toContain(active.id);
+    expect(ids).not.toContain(filed.id);
+    expect(hidden.count).toBe(hidden.chats.length);
+    expect(hidden.omittedArchived).toBe(1);
+    // Everything still listed reports the flag the UI has always had.
+    expect(hidden.chats.every((c) => c.archived === false)).toBe(true);
+
+    const shown = await listChats({ include_archived: true });
+    expect(shown.chats.map((c) => c.sessionId)).toContain(filed.id);
+    expect(shown.chats.find((c) => c.sessionId === filed.id)?.archived).toBe(true);
+    expect(shown.omittedArchived).toBe(0);
   });
 });
 
