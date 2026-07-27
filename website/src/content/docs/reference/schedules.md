@@ -88,7 +88,7 @@ read and write), but existing `schedules` blocks keep working.
 
 When the [trigger-management MCP is enabled](/configuration/schedules/#self-scheduling-from-a-chat)
 — the self-MCP write layer (`PADDOCK_SELF_MCP` + `PADDOCK_SELF_MCP_WRITE`) **plus**
-`PADDOCK_HOOKS_MCP` (or a per-project `hooksMcpEnabled`) — the keeper is given three
+`PADDOCK_HOOKS_MCP` (or a per-project `hooksMcpEnabled`) — the keeper is given four
 tools. They manage every trigger type; for a schedule, use `type: "schedule"`.
 
 ### `set_trigger`
@@ -121,6 +121,13 @@ List a project's triggers (all types) — what's declared, and their state.
 
 Delete a trigger by name.
 
+### `run_trigger`
+
+Fire a trigger immediately, without waiting for its cron or event — the same
+"Run now" path the Triggers tab uses. Handy for testing a prompt before you leave
+it to a schedule. Like the REST route, it starts a real turn, so it is gated with
+the rest of this family.
+
 ## REST endpoints
 
 The Triggers tab drives the unified trigger surface. These endpoints are always
@@ -132,17 +139,20 @@ available (they don't require the schedule-mutation gate):
 | `GET /api/projects/:slug/triggers/:name` | Get one trigger. |
 | `PUT /api/projects/:slug/triggers/:name` | Create or replace one trigger (full `{ trigger, run, enabled }` record). Enable/disable is this call with `enabled` flipped. |
 | `DELETE /api/projects/:slug/triggers/:name` | Delete and disarm one trigger. |
+| `GET /api/projects/:slug/triggers/runtime` | Just the armed / next-fire runtime state, so the Triggers tab can poll cheaply without re-fetching the config and picker catalog. A static segment, matched before `/:name`. |
+| `POST /api/projects/:slug/triggers/:name/run` | **Run now** — fires through the same hub path a cron or event fire uses. `202` with the session id; `404` for an unknown trigger, `502` if the fire started no chat. |
 
-The older standalone schedule endpoints also remain. Their mutating routes are
-governed by the [schedule-mutation gate](/configuration/schedules/#the-schedule-mutation-gate-rest-api):
+:::note[There are no separate schedule endpoints]
+This page previously listed a parallel set of legacy routes —
+`GET`/`PUT`/`DELETE` on `/api/projects/:slug/schedules[/:name]`, plus
+`…/:name/:action(enable|disable)` and `…/:name/trigger` — described as still
+present and governed by the schedule-mutation gate. **None of them are
+registered.** The hooks and schedules REST surfaces were retired and collapsed
+onto the unified trigger routes above, which are the only ones served.
 
-| Method & path | Purpose |
-| --- | --- |
-| `GET /api/projects/:slug/schedules` | List the legacy `schedules` block (+ `mutationEnabled`). Ungated. |
-| `PUT /api/projects/:slug/schedules/:name` | Create/update a legacy schedule. Gated. |
-| `DELETE /api/projects/:slug/schedules/:name` | Delete a legacy schedule. Gated. |
-| `POST /api/projects/:slug/schedules/:name/:action(enable\|disable)` | Flip `enabled`. Gated. |
-| `POST /api/projects/:slug/schedules/:name/trigger` | Fire a legacy schedule now (useful for testing). |
+The legacy **`schedules:` block in `project.yaml`** is a different thing, and it
+does still load — it's only the HTTP surface that's gone.
+:::
 
 ## Next steps
 
