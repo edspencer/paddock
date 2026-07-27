@@ -14,7 +14,9 @@
  *          a 302 to a login page: an MCP client cannot follow a redirect, and
  *          OAuth discovery reads this exact challenge.
  *   403  — authenticated but out of scope (`insufficient_scope`), or plaintext
- *          from a non-loopback client.
+ *          from a non-loopback client. `X-Forwarded-Proto: https` lifts that
+ *          refusal only when the immediate peer is a trusted proxy (#474) —
+ *          a client cannot vouch for its own transport.
  *   405  — GET/DELETE. In stateless mode the transport answers a GET with an SSE
  *          stream that never emits anything, so a client would hang forever on a
  *          socket with no headers.
@@ -42,6 +44,8 @@ import { selfMcpServerDefForOps } from "../ws-self-mcp.js";
 import { buildManagementMcpServer } from "../management-mcp-server.js";
 import { HUMAN_ROOT } from "../run-provenance.js";
 import type { ManagementPrincipal } from "../management-policy.js";
+import type { ManagementApiConfig } from "../management-config.js";
+import { defaultTrustedProxies, isLoopbackAddress, isTrustedProxy } from "../trusted-proxy.js";
 
 /** The URL path the management surface is mounted at. */
 export const MCP_PATH = MCP_RESOURCE_PATH;
@@ -57,22 +61,77 @@ declare module "fastify" {
   }
 }
 
+/** How a request earned (or failed to earn) its "secure" verdict. */
+export interface TransportSecurity {
+  secure: boolean;
+  /**
+   * `tls` — real TLS at this process; `forwarded` — a TRUSTED proxy said https;
+   * `loopback` — the client is on this host; `spoofable` — a forwarded https
+   * claim we refused because the peer is not a trusted proxy; `plaintext` —
+   * no claim at all.
+   */
+  via: "tls" | "forwarded" | "loopback" | "spoofable" | "plaintext";
+  /** The immediate peer's socket address, for the log line and the 403 body. */
+  peer: string;
+  /**
+   * True when the verdict rests on a forwarded header believed under the
+   * DEFAULT trust list rather than an operator-named proxy — worth telling the
+   * operator once, since only an explicit list makes this a control (#474).
+   */
+  assumedProxy: boolean;
+}
+
 /**
  * Whether the request reached us over a secure channel.
  *
- * Accepts three cases: real TLS at this process, a TLS-terminating proxy that
- * set `X-Forwarded-Proto: https` (the common home-lab shape), or a loopback
- * client (nothing left the host, so there is no wire to sniff). Everything else
- * is plaintext over a real network, where a bearer token would be readable in
- * transit — refused, mirroring the spirit of the bind-safety guard (#435).
+ * Three ways to be secure: real TLS at this process, a TLS-terminating proxy
+ * that set `X-Forwarded-Proto: https`, or a loopback client (nothing left the
+ * host, so there is no wire to sniff). Everything else is plaintext over a real
+ * network, where a bearer token would be readable in transit — refused,
+ * mirroring the spirit of the bind-safety guard (#435).
+ *
+ * The forwarded case is the one #474 tightened: the header is believed only
+ * when the IMMEDIATE PEER — the socket address, which no client can set — is a
+ * trusted proxy. See trusted-proxy.ts for the trust list and its default.
+ *
+ * Note what this deliberately does NOT use: Fastify's `trustProxy`. In the
+ * version pinned here (4.28) enabling it makes `req.protocol` return
+ * `x-forwarded-proto` whenever the header is PRESENT, without consulting the
+ * trust function at all — the trust check applies to `req.ip`/`req.ips` only.
+ * Building this guard on `req.protocol` would therefore reproduce the exact bug
+ * it is meant to close, so the peer check is done here, explicitly.
  */
-export function isSecureRequest(req: FastifyRequest): boolean {
-  if (req.protocol === "https") return true;
+export function evaluateTransportSecurity(
+  req: FastifyRequest,
+  cfg: ManagementApiConfig,
+): TransportSecurity {
+  const peer = req.socket.remoteAddress ?? "";
+  const base = { peer, assumedProxy: false };
+  // `req.socket.encrypted` rather than `req.protocol`: with trustProxy off they
+  // agree, and this cannot be influenced by a header even if that changes.
+  if ((req.socket as { encrypted?: boolean }).encrypted) {
+    return { ...base, secure: true, via: "tls" };
+  }
+
   const fwd = req.headers["x-forwarded-proto"];
   const proto = (Array.isArray(fwd) ? fwd[0] : fwd)?.split(",")[0]?.trim().toLowerCase();
-  if (proto === "https") return true;
-  const ip = req.socket.remoteAddress ?? "";
-  return ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";
+  const trusted = cfg.trustedProxies ?? defaultTrustedProxies();
+  if (proto === "https") {
+    if (isTrustedProxy(peer, trusted)) {
+      return {
+        ...base,
+        secure: true,
+        via: "forwarded",
+        assumedProxy: !trusted.explicit,
+      };
+    }
+    // A loopback client that spoofs the header is still secure — by being on
+    // loopback, not by asking. Fall through so it gets the honest reason.
+    if (!isLoopbackAddress(peer)) return { ...base, secure: false, via: "spoofable" };
+  }
+
+  if (isLoopbackAddress(peer)) return { ...base, secure: true, via: "loopback" };
+  return { ...base, secure: false, via: "plaintext" };
 }
 
 export function registerMcpRoutes(app: FastifyInstance, ctx: RouteCtx): void {
@@ -107,23 +166,52 @@ export function registerMcpRoutes(app: FastifyInstance, ctx: RouteCtx): void {
   }
 
   // ── The gate ─────────────────────────────────────────────────────────────
+  // Peers we have already warned about (see the assumedProxy branch below).
+  // Per-app, and capped, so a hostile spread of source addresses can't grow it.
+  const warnedPeers = new Set<string>();
+
   const guard = async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
     if (!isManagementApiEnabled(cfg.managementApi)) {
       return reply.code(404).send({ error: "not found" });
     }
 
-    if (!isSecureRequest(req)) {
+    const transport = evaluateTransportSecurity(req, cfg.managementApi);
+    if (!transport.secure) {
       req.log.warn(
-        { url: req.url },
-        "management API: refusing a plaintext non-loopback request (a bearer token would be readable in transit)",
+        { url: req.url, peer: transport.peer, via: transport.via },
+        transport.via === "spoofable"
+          ? "management API: refusing a plaintext request whose X-Forwarded-Proto: https came from a peer that is not a trusted proxy (#474)"
+          : "management API: refusing a plaintext non-loopback request (a bearer token would be readable in transit)",
       );
       return reply.code(403).send({
         error: "https required",
         code: "insecure_transport",
         message:
-          "The management API refuses plaintext requests from non-loopback clients. " +
-          "Terminate TLS in front of Paddock (and forward X-Forwarded-Proto), or connect over loopback.",
+          transport.via === "spoofable"
+            ? `The management API refuses plaintext requests from non-loopback clients. ` +
+              `X-Forwarded-Proto: https was ignored because the peer (${transport.peer}) is not a ` +
+              `trusted proxy — a client cannot vouch for its own transport. If that address IS ` +
+              `your TLS-terminating proxy, list it in managementApi.trustedProxies (or ` +
+              `PADDOCK_MANAGEMENT_TRUSTED_PROXIES); otherwise terminate TLS in front of Paddock, ` +
+              `or connect over loopback.`
+            : `The management API refuses plaintext requests from non-loopback clients ` +
+              `(peer: ${transport.peer || "unknown"}). Terminate TLS in front of Paddock (and ` +
+              `forward X-Forwarded-Proto from a trusted proxy), or connect over loopback.`,
       });
+    }
+    // Believed a forwarded scheme from a peer that only matched the DEFAULT
+    // trust list. It is probably the operator's proxy — but nothing proves it,
+    // and if it is not, the token in this request just crossed a network in
+    // clear. Say so once per peer rather than on every request.
+    if (transport.assumedProxy && !warnedPeers.has(transport.peer)) {
+      if (warnedPeers.size < 32) warnedPeers.add(transport.peer);
+      req.log.warn(
+        { peer: transport.peer },
+        `management API: believing X-Forwarded-Proto: https from ${transport.peer}, which matched ` +
+          `the DEFAULT trusted-proxy list (loopback + private address space) rather than a proxy ` +
+          `you named. If that peer is not your TLS terminator, bearer tokens are reaching this ` +
+          `instance in plaintext. Set managementApi.trustedProxies to make this a control (#474).`,
+      );
     }
 
     const result = authenticateManagementRequest(req.headers.authorization, cfg.managementApi);
@@ -154,11 +242,17 @@ export function registerMcpRoutes(app: FastifyInstance, ctx: RouteCtx): void {
     schema: { hide: true },
     onRequest: guard,
     handler: async (_req, reply) =>
-      reply.code(405).header("allow", "POST").send({
-        jsonrpc: "2.0",
-        error: { code: -32000, message: "Method not allowed. Use POST for the MCP endpoint." },
-        id: null,
-      }),
+      reply
+        .code(405)
+        .header("allow", "POST")
+        .send({
+          jsonrpc: "2.0",
+          error: {
+            code: -32000,
+            message: "Method not allowed. Use POST for the MCP endpoint.",
+          },
+          id: null,
+        }),
   });
 
   // ── POST → the MCP transport ─────────────────────────────────────────────

@@ -29,6 +29,7 @@ import {
   grantsCodeExecution,
   type ManagementScope,
 } from "./management-policy.js";
+import { parseTrustedProxies, type TrustedProxies } from "./trusted-proxy.js";
 
 /**
  * Recommended token prefix. A prefixed token additionally carries the INSTANCE
@@ -88,6 +89,12 @@ export interface ManagementApiConfig {
    * configured.
    */
   authorizationServers?: string[];
+  /**
+   * Peers whose `X-Forwarded-Proto` the `/mcp` plaintext guard believes (#474).
+   * Absent ⇒ the compatibility default (loopback + private address space); see
+   * trusted-proxy.ts for what that default does and does not prove.
+   */
+  trustedProxies?: TrustedProxies;
 }
 
 /** On-disk shape of the `managementApi` block. Every field optional. */
@@ -95,6 +102,8 @@ export interface ManagementApiConfigFile {
   instanceId?: string;
   publicUrl?: string;
   authorizationServers?: string[] | string;
+  /** IPs / CIDRs / presets — see {@link parseTrustedProxies}. */
+  trustedProxies?: string[] | string;
   clients?: Record<string, ManagementClientConfigFile | null | undefined>;
 }
 
@@ -239,6 +248,16 @@ export function resolveManagementApiConfig(
   const instanceId = file?.instanceId?.trim() || undefined;
   const entries = Object.entries(file?.clients ?? {});
 
+  // Which peers may tell us "this arrived over https" (#474). Env wins over the
+  // file, matching every other setting's precedence; saying nothing yields the
+  // compatibility default rather than a strict list, so an existing deployment
+  // behind a TLS-terminating sidecar keeps working across the upgrade.
+  const trustedProxiesRaw = env.PADDOCK_MANAGEMENT_TRUSTED_PROXIES ?? file?.trustedProxies;
+  const parsedProxies = parseTrustedProxies(trustedProxiesRaw);
+  errors.push(...parsedProxies.errors);
+  warnings.push(...parsedProxies.warnings);
+  const trustedProxies = parsedProxies.trusted;
+
   // Resolve the canonical public URL up front: it gates the whole surface, so a
   // bad or missing value must fail the feature closed rather than half-enable it.
   let publicUrl: string | undefined;
@@ -247,7 +266,15 @@ export function resolveManagementApiConfig(
     const checked = validatePublicUrl(rawPublicUrl);
     if ("error" in checked) {
       errors.push(`managementApi.publicUrl: ${checked.error} — the management API is disabled`);
-      return { config: { clients: [], ...(instanceId ? { instanceId } : {}) }, errors, warnings };
+      return {
+        config: {
+          clients: [],
+          ...(instanceId ? { instanceId } : {}),
+          trustedProxies,
+        },
+        errors,
+        warnings,
+      };
     }
     publicUrl = checked.url;
   } else if (entries.length > 0) {
@@ -259,7 +286,15 @@ export function resolveManagementApiConfig(
         "public origin clients reach this instance at, e.g. https://paddock.example.com) — " +
         "the management API is disabled",
     );
-    return { config: { clients: [], ...(instanceId ? { instanceId } : {}) }, errors, warnings };
+    return {
+      config: {
+        clients: [],
+        ...(instanceId ? { instanceId } : {}),
+        trustedProxies,
+      },
+      errors,
+      warnings,
+    };
   }
 
   for (const [rawId, raw] of entries) {
@@ -292,11 +327,17 @@ export function resolveManagementApiConfig(
 
     const ref = auth.ref?.trim();
     if (!ref) {
-      errors.push(`${where}.auth.ref: required (e.g. \`env:PADDOCK_MCP_TOKEN_${clientId.toUpperCase().replace(/[^A-Z0-9]/g, "_")}\`) — skipped`);
+      errors.push(
+        `${where}.auth.ref: required (e.g. \`env:PADDOCK_MCP_TOKEN_${clientId
+          .toUpperCase()
+          .replace(/[^A-Z0-9]/g, "_")}\`) — skipped`,
+      );
       continue;
     }
     if (!ref.startsWith("env:")) {
-      errors.push(`${where}.auth.ref: must be an \`env:VAR_NAME\` reference (got "${ref}") — skipped`);
+      errors.push(
+        `${where}.auth.ref: must be an \`env:VAR_NAME\` reference (got "${ref}") — skipped`,
+      );
       continue;
     }
     const varName = ref.slice("env:".length).trim();
@@ -362,6 +403,7 @@ export function resolveManagementApiConfig(
       ...(instanceId ? { instanceId } : {}),
       ...(publicUrl ? { publicUrl } : {}),
       ...(authorizationServers.length > 0 ? { authorizationServers } : {}),
+      trustedProxies,
     },
     errors,
     warnings,
