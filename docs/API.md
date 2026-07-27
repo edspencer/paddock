@@ -101,6 +101,10 @@ return `{ error, code }` with `404` (not found), `409` (exists), or `400`
 | POST | `/api/projects/:slug/chats/:sessionId/fork` | Fork a chat into a new resumable session — body `{ name? }` → `201 { sessionId }`. | gated |
 | POST | `/api/projects/:slug/chats/:sessionId/archive` | Archive/unarchive (non-destructive) — body `{ archived? }`. | gated |
 | POST | `/api/projects/:slug/chats/:sessionId/seen` | Mark seen (server-side read-state) — body `{ when? }`. | gated |
+| POST | `/api/projects/:slug/chats/:sessionId/detach` | Detach a chat from its parent so it renders at the top level of the chat tree — body `{ detached? }`. An override checked AHEAD of both parent-resolution tiers (recorded + inferred); `false` re-attaches. | gated |
+| POST | `/api/projects/:slug/chats/batch/archive` | Archive/unarchive a SET of chats in one atomic sidecar write — body `{ sessionIds, archived? }` → `{ ok, archived, changed }`. | gated |
+| POST | `/api/projects/:slug/chats/batch/unread` | Mark a SET of chats read/unread — body `{ sessionIds, unread? }`. `unread:false` also advances each last-seen watermark. | gated |
+| POST | `/api/projects/:slug/chats/batch/delete` | Delete a SET of chats — body `{ sessionIds }` → `{ ok, removed, failed }`. Best-effort per chat: filesystem deletes can't be atomic, so the response names what it couldn't remove. | gated |
 
 ### One-off (scratch) chats
 

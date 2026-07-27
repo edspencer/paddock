@@ -382,6 +382,66 @@ export const api = {
     );
   },
 
+  /**
+   * Archive or unarchive a WHOLE subtree in one call (#508) — the chat list's
+   * Shift-click archive. One request rather than N, so a parent and its
+   * descendants can't end up on different sides of the Archived divider when a
+   * call fails halfway.
+   */
+  async archiveProjectChats(
+    slug: string,
+    sessionIds: string[],
+    archived: boolean,
+  ): Promise<void> {
+    await req<{ ok: boolean; changed: string[] }>(
+      `/api/projects/${encodeURIComponent(slug)}/chats/batch/archive`,
+      { method: "POST", body: JSON.stringify({ sessionIds, archived }) },
+    );
+  },
+
+  /**
+   * Mark a WHOLE subtree read or unread in one call (#508). `unread: false` is
+   * "mark read" and does both halves server-side (clears the manual override AND
+   * advances last-seen), so the derived unread signal can't immediately re-raise
+   * the cue.
+   */
+  async markChatsUnread(slug: string, sessionIds: string[], unread: boolean): Promise<void> {
+    await req<{ ok: boolean; changed: string[] }>(
+      `/api/projects/${encodeURIComponent(slug)}/chats/batch/unread`,
+      { method: "POST", body: JSON.stringify({ sessionIds, unread }) },
+    );
+  },
+
+  /**
+   * Delete a WHOLE subtree in one call (#508). Filesystem deletes can't be
+   * atomic, so the server attempts every id and reports which ones it couldn't
+   * remove — the caller surfaces a partial failure rather than assuming the
+   * family is gone.
+   */
+  async deleteProjectChats(
+    slug: string,
+    sessionIds: string[],
+  ): Promise<{ removed: string[]; failed: string[] }> {
+    const res = await req<{ ok: boolean; removed: string[]; failed: string[] }>(
+      `/api/projects/${encodeURIComponent(slug)}/chats/batch/delete`,
+      { method: "POST", body: JSON.stringify({ sessionIds }) },
+    );
+    return { removed: res.removed ?? [], failed: res.failed ?? [] };
+  },
+
+  /**
+   * Detach a chat from its parent (#508), promoting it — with its own nested
+   * chats — to the top level of the chat tree. Persisted as an override that
+   * beats both parent-resolution tiers, so it survives a reload; `detached:false`
+   * re-attaches.
+   */
+  async detachProjectChat(slug: string, sessionId: string, detached: boolean): Promise<void> {
+    await req<{ ok: boolean; detached: boolean }>(
+      `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}/detach`,
+      { method: "POST", body: JSON.stringify({ detached }) },
+    );
+  },
+
   /** Star or unstar a one-off (scratch) chat (issue #373). */
   async starScratchChat(sessionId: string, starred: boolean): Promise<void> {
     await req<{ ok: boolean }>(`/api/chats/${encodeURIComponent(sessionId)}/star`, {

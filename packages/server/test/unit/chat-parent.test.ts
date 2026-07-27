@@ -112,6 +112,66 @@ describe("makeParentResolver", () => {
     expect(await parentOf(session("b"))).toBeNull();
   });
 
+  // #508: detach is an OVERRIDE checked ahead of both tiers. The point of the
+  // ticket is that it can't be implemented by clearing an edge — most live edges
+  // are inferred, so a cleared one is re-derived on the very next list load.
+  it("#508: an explicit detach beats the RECORDED edge", async () => {
+    const { runProvenance, messageProvenance } = stores(
+      { child: { origin: "spawned", depth: 1, parentSessionId: "mgr", parentProject: "paddock" } },
+      {},
+    );
+    const detached = new Set(["child"]);
+    const parentOf = makeParentResolver(runProvenance, messageProvenance, "paddock", async (id) =>
+      detached.has(id),
+    );
+    expect(await parentOf(session("child"))).toBeNull();
+  });
+
+  it("#508: an explicit detach beats the INFERRED edge, which would otherwise re-derive", async () => {
+    const { runProvenance, messageProvenance } = stores(
+      {},
+      { old: { project: "paddock", sessionId: "mgr" } },
+    );
+    const detached = new Set(["old"]);
+    const parentOf = makeParentResolver(runProvenance, messageProvenance, "paddock", async (id) =>
+      detached.has(id),
+    );
+    expect(await parentOf(session("old"))).toBeNull();
+    // Re-attaching lifts the override and the inferred edge comes straight back.
+    detached.delete("old");
+    expect(await parentOf(session("old"))).toEqual({ project: "paddock", sessionId: "mgr" });
+  });
+
+  it("#508: detaching one chat leaves its siblings nested", async () => {
+    const { runProvenance, messageProvenance } = stores(
+      {
+        a: { origin: "spawned", depth: 1, parentSessionId: "mgr", parentProject: "paddock" },
+        b: { origin: "spawned", depth: 1, parentSessionId: "mgr", parentProject: "paddock" },
+      },
+      {},
+    );
+    const parentOf = makeParentResolver(
+      runProvenance,
+      messageProvenance,
+      "paddock",
+      async (id) => id === "a",
+    );
+    expect(await parentOf(session("a"))).toBeNull();
+    expect(await parentOf(session("b"))).toEqual({ project: "paddock", sessionId: "mgr" });
+  });
+
+  it("#508: a throwing detach lookup falls through to the normal tiers", async () => {
+    const { runProvenance, messageProvenance } = stores(
+      { child: { origin: "spawned", depth: 1, parentSessionId: "mgr", parentProject: "paddock" } },
+      {},
+    );
+    // A broken sidecar must not silently flatten the tree — the recorded edge wins.
+    const parentOf = makeParentResolver(runProvenance, messageProvenance, "paddock", async () => {
+      throw new Error("boom");
+    });
+    expect(await parentOf(session("child"))).toEqual({ project: "paddock", sessionId: "mgr" });
+  });
+
   it("survives a throwing store on either tier", async () => {
     const parentOf = makeParentResolver(
       { get: async () => { throw new Error("boom"); } },

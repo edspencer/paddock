@@ -5,7 +5,7 @@
  * Chat SENDING happens over WS; these are the REST reads + lifecycle mutations.
  */
 import path from "node:path";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 import type { DiscoveredSession } from "@herdctl/core";
 import { SCRATCH_SLUG, SCRATCH_AGENT, keeperAgentName } from "../herdctl.js";
 import { applyMessageProvenance } from "../message-provenance.js";
@@ -28,6 +28,8 @@ import {
   buildProjectChats,
   makeTriggerResolver,
   makeParentResolver,
+  normalizeBatchSessionIds,
+  BATCH_SESSIONS_MAX,
 } from "../chat-dto.js";
 import type { RouteCtx } from "../route-context.js";
 
@@ -39,6 +41,7 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
     star,
     readState,
     unread,
+    parentDetach,
     runProvenance,
     messageProvenance,
     events,
@@ -48,6 +51,18 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
     cleanupAttachments,
     chatUsageResolver,
   } = ctx;
+
+  /**
+   * The single 400 for a batch route whose `sessionIds` body is unusable —
+   * missing, empty, over the cap, or holding an id that isn't path-safe. Batch
+   * validation is all-or-nothing (see {@link normalizeBatchSessionIds}), so this
+   * is the only failure shape those routes have.
+   */
+  const sendBadBatch = (reply: FastifyReply) =>
+    reply.code(400).send({
+      error: `sessionIds must be an array of 1-${BATCH_SESSIONS_MAX} valid session ids`,
+      code: "bad_request",
+    });
 
   // --- chats (sessions) --------------------------------------------------
 
@@ -91,9 +106,12 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
       const unreadOf = (s: DiscoveredSession) => unread.isUnread(user, keeper, s.sessionId);
       const provenanceOf = (s: DiscoveredSession) => runProvenance.get(s.sessionId);
       const triggerOf = makeTriggerResolver(project);
-      // Parent edge for the nested chat list: the recorded RunProvenance edge, or a
-      // backfill from who injected the kickoff prompt. Both in-memory sidecar reads.
-      const parentOf = makeParentResolver(runProvenance, messageProvenance, project.slug);
+      // Parent edge for the nested chat list: an explicit detach (#508) wins, else
+      // the recorded RunProvenance edge, else a backfill from who injected the
+      // kickoff prompt. All three are in-memory sidecar reads.
+      const parentOf = makeParentResolver(runProvenance, messageProvenance, project.slug, (id) =>
+        parentDetach.isDetached(keeper, id),
+      );
       // No usage resolver — see the GET /api/projects/:slug route (issue #116).
       // Usage rings are fetched separately so a list refresh stays cheap.
       return {
@@ -919,6 +937,271 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
         const flag = req.body?.unread !== false; // default true
         await unread.setUnread(readStateUser(req), agent, req.params.sessionId, flag);
         return reply.code(200).send({ ok: true, unread: flag });
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+
+  // Detach a project chat from its parent (#508): promote it — with its own
+  // subtree intact — to the top level of the nested chat list, so a family can be
+  // archived/deleted "except this one".
+  //
+  // This is an OVERRIDE, not an edit: most live parent edges are INFERRED from
+  // who injected the kickoff prompt rather than recorded, so clearing an edge
+  // would simply be re-derived on the next list load. The flag is checked ahead of
+  // both resolver tiers (see `makeParentResolver`). Nothing is destroyed, so
+  // `{ detached: false }` re-attaches for free.
+  app.post<{ Params: { slug: string; sessionId: string }; Body: { detached?: boolean } }>(
+    "/api/projects/:slug/chats/:sessionId/detach",
+    {
+      schema: {
+        tags: ["Chats"],
+        summary: "Detach a project chat from its parent",
+        description:
+          "Promotes a nested chat to the top level of the chat tree, keeping its own descendants under it. Persisted as an explicit override that is checked AHEAD of both parent-resolution tiers (the recorded `RunProvenance.parentSessionId` and the inferred kickoff-message edge), so it survives a reload. Body `{ detached }` defaults to true; `false` re-attaches (the underlying edge was never destroyed). Responds 200 with `{ ok, detached }`.",
+        params: {
+          type: "object",
+          properties: {
+            slug: { type: "string", description: "Project slug." },
+            sessionId: { type: "string", description: "Chat (session) id." },
+          },
+          required: ["slug", "sessionId"],
+        },
+        body: {
+          type: ["object", "null"],
+          additionalProperties: true,
+          properties: {
+            detached: {
+              description:
+                "Whether the chat should render as a root regardless of its parent edge. Defaults to true.",
+            },
+          },
+          required: [],
+        },
+        response: {
+          200: {
+            description: "Object `{ ok, detached }` with the resulting detached state.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
+    async (req, reply) => {
+      try {
+        const agent = await agentForSlug(req.params.slug);
+        const detached = req.body?.detached !== false; // default true
+        await parentDetach.setDetached(agent, req.params.sessionId, detached);
+        return reply.code(200).send({ ok: true, detached });
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  // --- batch (subtree) chat actions (#508) -------------------------------
+  //
+  // Shift-clicking a parent row applies archive / mark-read-unread / delete to
+  // that chat AND every descendant. Looping the single-chat routes client-side
+  // over 21 chats is 21 round trips that can half-succeed, leaving a torn family
+  // (parent archived, some children not) with no single thing to roll back. These
+  // routes take the whole id set, so the flag sidecars commit in ONE write and the
+  // client has one call to roll back.
+  //
+  // They sit under the literal `/chats/batch/` prefix; a real session id is a UUID,
+  // so it can never collide with the `/chats/:sessionId/...` routes.
+
+  app.post<{ Params: { slug: string }; Body: { sessionIds?: unknown; archived?: boolean } }>(
+    "/api/projects/:slug/chats/batch/archive",
+    {
+      schema: {
+        tags: ["Chats"],
+        summary: "Archive or unarchive many project chats",
+        description:
+          "Applies a project chat's archived flag to a whole SET of chats (the nested chat list's shift-click subtree action, #508) in a single atomic sidecar write, so a parent and its descendants can't end up in different states. Body `{ sessionIds, archived }`; `archived` defaults to true. Each real transition into archived fires the project's onArchive triggers, exactly like the single-chat route. Responds 200 with `{ ok, archived, changed }` where `changed` lists the ids whose flag actually moved.",
+        params: {
+          type: "object",
+          properties: { slug: { type: "string", description: "Project slug." } },
+          required: ["slug"],
+        },
+        body: {
+          type: "object",
+          additionalProperties: true,
+          properties: {
+            sessionIds: {
+              type: "array",
+              items: { type: "string" },
+              description: "Chat (session) ids to apply the flag to. 1–500 entries.",
+            },
+            archived: { description: "Target archived state; defaults to true when omitted." },
+          },
+          required: ["sessionIds"],
+        },
+        response: {
+          200: {
+            description: "Object `{ ok, archived, changed }`.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
+    async (req, reply) => {
+      try {
+        const sessionIds = normalizeBatchSessionIds(req.body?.sessionIds);
+        if (!sessionIds) return sendBadBatch(reply);
+        const agent = await agentForSlug(req.params.slug);
+        const archived = req.body?.archived !== false; // default true
+        const changed = await archive.setManyArchived(agent, sessionIds, archived);
+        // One `onArchive` per REAL transition into archived — the same contract the
+        // single-chat route keeps, so a subtree archive fires the project's triggers
+        // for each newly-archived chat and for none of the already-archived ones.
+        if (archived) {
+          for (const sessionId of changed) {
+            events?.emit("onArchive", { slug: req.params.slug, sessionId });
+          }
+        }
+        return reply.code(200).send({ ok: true, archived, changed });
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  // Mark many project chats read or unread (#508). `unread: false` is the "mark
+  // read" half and does BOTH halves of what reading a chat means — clears the
+  // manual override AND advances each chat's last-seen watermark — because the
+  // derived unread signal (#160) would otherwise re-raise the cue the instant the
+  // manual flag was cleared.
+  app.post<{ Params: { slug: string }; Body: { sessionIds?: unknown; unread?: boolean } }>(
+    "/api/projects/:slug/chats/batch/unread",
+    {
+      schema: {
+        tags: ["Chats"],
+        summary: "Mark many project chats read or unread",
+        description:
+          "Applies the read/unread action to a whole SET of chats (the nested chat list's shift-click subtree action, #508) in a single atomic sidecar write. Body `{ sessionIds, unread }`; `unread` defaults to true. `unread: false` means \"mark read\": it clears each chat's manual unread override AND advances its last-seen watermark (the derived unread signal would otherwise immediately re-raise the cue). Responds 200 with `{ ok, unread, changed }`.",
+        params: {
+          type: "object",
+          properties: { slug: { type: "string", description: "Project slug." } },
+          required: ["slug"],
+        },
+        body: {
+          type: "object",
+          additionalProperties: true,
+          properties: {
+            sessionIds: {
+              type: "array",
+              items: { type: "string" },
+              description: "Chat (session) ids to apply the flag to. 1–500 entries.",
+            },
+            unread: { description: "Whether to flag the chats unread. Defaults to true." },
+          },
+          required: ["sessionIds"],
+        },
+        response: {
+          200: {
+            description: "Object `{ ok, unread, changed }`.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
+    async (req, reply) => {
+      try {
+        const sessionIds = normalizeBatchSessionIds(req.body?.sessionIds);
+        if (!sessionIds) return sendBadBatch(reply);
+        const agent = await agentForSlug(req.params.slug);
+        const user = readStateUser(req);
+        const flag = req.body?.unread !== false; // default true
+        const changed = await unread.setManyUnread(user, agent, sessionIds, flag);
+        // Marking read also advances read-state, mirroring the single-chat client
+        // flow (which calls `/seen`, and `/seen` clears the manual flag).
+        if (!flag) {
+          await readState
+            .setManyLastSeen(user, agent, sessionIds, Date.now())
+            .catch(() => undefined);
+        }
+        return reply.code(200).send({ ok: true, unread: flag, changed });
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  // Delete many project chats (#508) — the shift-click subtree delete, behind a
+  // count-aware confirmation in the UI.
+  //
+  // Unlike the flag routes this can NOT be atomic: each delete unlinks a transcript
+  // file, and the filesystem offers no transaction. So it is best-effort per chat
+  // and honest about it — every id is attempted (one failure never abandons the
+  // rest) and the response names which ones failed, so the client can surface a
+  // partial failure instead of pretending the family is gone.
+  app.post<{ Params: { slug: string }; Body: { sessionIds?: unknown } }>(
+    "/api/projects/:slug/chats/batch/delete",
+    {
+      schema: {
+        tags: ["Chats"],
+        summary: "Delete many project chats",
+        description:
+          "Deletes a SET of project chats (the nested chat list's shift-click subtree delete, #508): removes each transcript JSONL and clears its archived/starred/unread/detached flags. Body `{ sessionIds }`. Filesystem deletes cannot be atomic, so this is best-effort per chat: every id is attempted and the response reports `{ ok, removed, failed }` — `removed` lists the ids whose transcript was deleted, `failed` the ids that errored.",
+        params: {
+          type: "object",
+          properties: { slug: { type: "string", description: "Project slug." } },
+          required: ["slug"],
+        },
+        body: {
+          type: "object",
+          additionalProperties: true,
+          properties: {
+            sessionIds: {
+              type: "array",
+              items: { type: "string" },
+              description: "Chat (session) ids to delete. 1–500 entries.",
+            },
+          },
+          required: ["sessionIds"],
+        },
+        response: {
+          200: {
+            description: "Object `{ ok, removed, failed }`.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
+    async (req, reply) => {
+      try {
+        const sessionIds = normalizeBatchSessionIds(req.body?.sessionIds);
+        if (!sessionIds) return sendBadBatch(reply);
+        const agent = await agentForSlug(req.params.slug);
+        const user = readStateUser(req);
+        const removed: string[] = [];
+        const failed: string[] = [];
+        for (const sessionId of sessionIds) {
+          try {
+            await cleanupAttachments(agent, sessionId);
+            const gone = await herdctl.deleteSession(agent, sessionId);
+            if (gone) removed.push(sessionId);
+            else failed.push(sessionId);
+          } catch {
+            failed.push(sessionId);
+          }
+        }
+        // Drop every flag for the WHOLE requested set (not just `removed`), so a
+        // recycled session id can't inherit a stale archived/starred/unread/detached
+        // state — the same hygiene the single-chat delete performs.
+        await archive.setManyArchived(agent, sessionIds, false).catch(() => undefined);
+        await unread.setManyUnread(user, agent, sessionIds, false).catch(() => undefined);
+        for (const sessionId of sessionIds) {
+          await star.setStarred(agent, sessionId, false).catch(() => undefined);
+          await parentDetach.setDetached(agent, sessionId, false).catch(() => undefined);
+        }
+        return reply.code(200).send({ ok: true, removed, failed });
       } catch (err) {
         return sendProjectError(reply, err);
       }

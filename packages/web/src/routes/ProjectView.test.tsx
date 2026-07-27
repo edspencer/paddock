@@ -44,6 +44,11 @@ const apiFns = {
   getModels: vi.fn(),
   updateProject: vi.fn(),
   listTriggers: vi.fn(),
+  archiveProjectChats: vi.fn(),
+  markChatsUnread: vi.fn(),
+  markChatUnread: vi.fn(),
+  deleteProjectChats: vi.fn(),
+  detachProjectChat: vi.fn(),
 };
 vi.mock("../lib/api", async () => {
   const actual = await vi.importActual<typeof import("../lib/api")>("../lib/api");
@@ -68,6 +73,11 @@ vi.mock("../lib/api", async () => {
       getModels: (...a: unknown[]) => apiFns.getModels(...a),
       updateProject: (...a: unknown[]) => apiFns.updateProject(...a),
       listTriggers: (...a: unknown[]) => apiFns.listTriggers(...a),
+      archiveProjectChats: (...a: unknown[]) => apiFns.archiveProjectChats(...a),
+      markChatsUnread: (...a: unknown[]) => apiFns.markChatsUnread(...a),
+      markChatUnread: (...a: unknown[]) => apiFns.markChatUnread(...a),
+      deleteProjectChats: (...a: unknown[]) => apiFns.deleteProjectChats(...a),
+      detachProjectChat: (...a: unknown[]) => apiFns.detachProjectChat(...a),
     },
   };
 });
@@ -1015,5 +1025,216 @@ describe("ProjectView: in-flight chat visibility (#100)", () => {
       activeCb!(new Set(["s-known"]));
     });
     expect(apiFns.listProjectChats).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Subtree (Shift-click) chat actions + detach (#508).
+ *
+ * A family: Manager with two children, one of which has a child of its own — so
+ * every assertion here also proves the walk is RECURSIVE rather than one level
+ * deep, which is the failure mode nobody would notice until a grandchild
+ * survived a delete that promised to take it.
+ */
+describe("ProjectView: subtree chat actions (#508)", () => {
+  const family = () => [
+    makeChat({ sessionId: "mgr", name: "Manager" }),
+    makeChat({ sessionId: "c1", name: "Child one", parent: { project: "p", sessionId: "mgr" } }),
+    makeChat({ sessionId: "c2", name: "Child two", parent: { project: "p", sessionId: "mgr" } }),
+    makeChat({ sessionId: "g1", name: "Grandchild", parent: { project: "p", sessionId: "c1" } }),
+    makeChat({ sessionId: "solo", name: "Unrelated" }),
+  ];
+
+  const renderFamily = async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), { chats: family() }),
+    );
+    renderAt("/projects/p/chat");
+    await screen.findByText("Manager");
+  };
+
+  it("plain-clicking archive still affects only that chat", async () => {
+    await renderFamily();
+    apiFns.archiveProjectChat.mockResolvedValue(undefined);
+    fireEvent.click(screen.getByRole("button", { name: /Archive chat Manager/i }));
+    await waitFor(() => expect(apiFns.archiveProjectChat).toHaveBeenCalledWith("p", "mgr", true));
+    expect(apiFns.archiveProjectChats).not.toHaveBeenCalled();
+  });
+
+  it("shift-clicking archive takes the whole family, grandchild included", async () => {
+    await renderFamily();
+    apiFns.archiveProjectChats.mockResolvedValue(undefined);
+    fireEvent.click(screen.getByRole("button", { name: /Archive chat Manager/i }), {
+      shiftKey: true,
+    });
+    await waitFor(() => expect(apiFns.archiveProjectChats).toHaveBeenCalled());
+    const [slug, ids, archived] = apiFns.archiveProjectChats.mock.calls[0] as [
+      string,
+      string[],
+      boolean,
+    ];
+    expect(slug).toBe("p");
+    expect(archived).toBe(true);
+    expect([...ids].sort()).toEqual(["c1", "c2", "g1", "mgr"]);
+    // The unrelated chat is untouched, and all four moved together.
+    const archivedHeader = await screen.findByRole("button", { name: /^Archived/i });
+    expect(within(archivedHeader).getByText("4")).toBeInTheDocument();
+    expect(screen.getByText("Unrelated")).toBeInTheDocument();
+  });
+
+  it("rolls the whole family back when the batch archive fails", async () => {
+    await renderFamily();
+    apiFns.archiveProjectChats.mockRejectedValue(new Error("nope"));
+    fireEvent.click(screen.getByRole("button", { name: /Archive chat Manager/i }), {
+      shiftKey: true,
+    });
+    // One call, one undo: nothing is left archived, so the family can't be torn.
+    await screen.findByText("nope");
+    expect(screen.queryByRole("button", { name: /^Archived/i })).toBeNull();
+  });
+
+  it("shift-clicking a LEAF behaves exactly like a plain click", async () => {
+    await renderFamily();
+    apiFns.archiveProjectChat.mockResolvedValue(undefined);
+    fireEvent.click(screen.getByRole("button", { name: /Archive chat Unrelated/i }), {
+      shiftKey: true,
+    });
+    await waitFor(() => expect(apiFns.archiveProjectChat).toHaveBeenCalledWith("p", "solo", true));
+    expect(apiFns.archiveProjectChats).not.toHaveBeenCalled();
+  });
+
+  it("shift-clicking mark-unread flags the whole family", async () => {
+    await renderFamily();
+    apiFns.markChatsUnread.mockResolvedValue(undefined);
+    fireEvent.click(screen.getByRole("button", { name: /Mark chat Manager unread/i }), {
+      shiftKey: true,
+    });
+    await waitFor(() => expect(apiFns.markChatsUnread).toHaveBeenCalled());
+    const [, ids, unread] = apiFns.markChatsUnread.mock.calls[0] as [string, string[], boolean];
+    expect([...ids].sort()).toEqual(["c1", "c2", "g1", "mgr"]);
+    expect(unread).toBe(true);
+  });
+
+  it("announces the subtree in the tooltip and the accessible name", async () => {
+    await renderFamily();
+    // Shift-click is invisible otherwise. The count is the TOTAL the action
+    // affects (the chat plus its 3 descendants), not the descendant count alone —
+    // "archive all 3" while archiving four would be a lie.
+    const archive = screen.getByRole("button", { name: /Archive chat Manager/i });
+    expect(archive).toHaveAccessibleName(/Shift-click to archive all 4/i);
+    fireEvent.focus(archive);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Shift-click to archive all 4");
+    // The count sits mid-phrase for read/unread, which is why the hint is a
+    // completed phrase rather than a "<verb> all <n>" template.
+    expect(
+      screen.getByRole("button", { name: /Mark chat Manager unread/i }),
+    ).toHaveAccessibleName(/Shift-click to mark all 4 unread/i);
+    // A childless row promises nothing.
+    expect(screen.getByRole("button", { name: /Archive chat Unrelated/i })).toHaveAccessibleName(
+      "Archive chat Unrelated",
+    );
+  });
+
+  describe("count-aware delete confirmation", () => {
+    it("names the count and deletes the whole subtree", async () => {
+      await renderFamily();
+      apiFns.deleteProjectChats.mockResolvedValue({
+        removed: ["mgr", "c1", "c2", "g1"],
+        failed: [],
+      });
+      fireEvent.click(screen.getByRole("button", { name: /Delete chat Manager/i }), {
+        shiftKey: true,
+      });
+      // The dialog must say what it is about to destroy — those chats may not
+      // even be on screen (a collapsed parent hides them) and there is no undo.
+      expect(await screen.findByText("Delete 4 chats?")).toBeInTheDocument();
+      expect(screen.getByText(/and its 3 nested chats/i)).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: /^Delete 4 chats$/i }));
+      await waitFor(() => expect(apiFns.deleteProjectChats).toHaveBeenCalled());
+      const [slug, ids] = apiFns.deleteProjectChats.mock.calls[0] as [string, string[]];
+      expect(slug).toBe("p");
+      expect([...ids].sort()).toEqual(["c1", "c2", "g1", "mgr"]);
+      await waitFor(() => expect(screen.queryByText("Manager")).toBeNull());
+      expect(screen.getByText("Unrelated")).toBeInTheDocument();
+    });
+
+    it("keeps the single-chat copy for a plain click", async () => {
+      await renderFamily();
+      fireEvent.click(screen.getByRole("button", { name: /Delete chat Manager/i }));
+      expect(await screen.findByText("Delete chat?")).toBeInTheDocument();
+      expect(screen.queryByText(/nested chats/i)).toBeNull();
+    });
+
+    it("singularises for a one-child family", async () => {
+      apiFns.getProjectDetail.mockResolvedValue(
+        detail(makeProject({ slug: "p" }), {
+          chats: [
+            makeChat({ sessionId: "mgr", name: "Manager" }),
+            makeChat({
+              sessionId: "c1",
+              name: "Only child",
+              parent: { project: "p", sessionId: "mgr" },
+            }),
+          ],
+        }),
+      );
+      renderAt("/projects/p/chat");
+      await screen.findByText("Manager");
+      fireEvent.click(screen.getByRole("button", { name: /Delete chat Manager/i }), {
+        shiftKey: true,
+      });
+      expect(await screen.findByText("Delete 2 chats?")).toBeInTheDocument();
+      expect(screen.getByText(/and its 1 nested chat will be/i)).toBeInTheDocument();
+    });
+
+    it("keeps a chat the server could NOT delete in the list, and says so", async () => {
+      await renderFamily();
+      apiFns.deleteProjectChats.mockResolvedValue({
+        removed: ["mgr", "c1", "c2"],
+        failed: ["g1"],
+      });
+      fireEvent.click(screen.getByRole("button", { name: /Delete chat Manager/i }), {
+        shiftKey: true,
+      });
+      fireEvent.click(await screen.findByRole("button", { name: /^Delete 4 chats$/i }));
+      // A half-succeeded delete is reported rather than silently rendered as a
+      // clean sweep — the surviving transcript is still on disk.
+      expect(await screen.findByText(/Deleted 3 of 4 chats/i)).toBeInTheDocument();
+    });
+  });
+
+  describe("detach from parent", () => {
+    it("promotes a child to the top level, keeping its own subtree", async () => {
+      await renderFamily();
+      apiFns.detachProjectChat.mockResolvedValue(undefined);
+      // "Child one" renders nested and owns a grandchild.
+      fireEvent.click(screen.getByRole("button", { name: /Detach chat Child one/i }));
+      await waitFor(() =>
+        expect(apiFns.detachProjectChat).toHaveBeenCalledWith("p", "c1", true),
+      );
+      // It is a root now, so Manager's remaining family is smaller — but the
+      // grandchild travelled with it rather than scattering to the top level.
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("button", { name: /Detach chat Child one/i }),
+        ).toBeNull(),
+      );
+      expect(screen.getByRole("button", { name: /Detach chat Grandchild/i })).toBeInTheDocument();
+      expect(screen.getByText("Grandchild")).toBeInTheDocument();
+    });
+
+    it("offers no detach on a chat that already renders at the top level", async () => {
+      await renderFamily();
+      expect(screen.queryByRole("button", { name: /Detach chat Manager/i })).toBeNull();
+      expect(screen.queryByRole("button", { name: /Detach chat Unrelated/i })).toBeNull();
+    });
+
+    it("restores the nesting when the detach call fails", async () => {
+      await renderFamily();
+      apiFns.detachProjectChat.mockRejectedValue(new Error("detach failed"));
+      fireEvent.click(screen.getByRole("button", { name: /Detach chat Child one/i }));
+      await screen.findByText("detach failed");
+    });
   });
 });

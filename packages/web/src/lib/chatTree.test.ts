@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildChatTree, countNodes, flattenTree, withAncestors } from "./chatTree";
+import { buildChatTree, countNodes, flattenTree, subtreeIds, withAncestors } from "./chatTree";
 import type { Chat } from "./types";
 
 /** Minimal chat; `at` is a bare hour so orderings read plainly. */
@@ -147,5 +147,58 @@ describe("countNodes (#491)", () => {
 
   it("is 0 for an empty forest", () => {
     expect(countNodes([])).toBe(0);
+  });
+});
+
+/**
+ * subtreeIds (#508) — what a Shift-click on archive / delete / mark-read applies
+ * to. The contract that matters is that it agrees with `descendantCount`: the
+ * collapsed-row pill and the tooltips promise a number, the confirm dialog
+ * repeats it, and the delete is unrecoverable.
+ */
+describe("subtreeIds (#508)", () => {
+  it("is just the chat itself for a leaf", () => {
+    const [root] = buildChatTree([chat("a", "10")]);
+    expect(subtreeIds(root)).toEqual(["a"]);
+  });
+
+  it("includes descendants at EVERY level, not just direct children", () => {
+    // a → b → c → d. A non-recursive walk would return three ids and the confirm
+    // dialog would then under-count what it is about to delete.
+    const [root] = buildChatTree([
+      chat("a", "10"),
+      chat("b", "11", "a"),
+      chat("c", "12", "b"),
+      chat("d", "13", "c"),
+    ]);
+    expect(subtreeIds(root).sort()).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("matches descendantCount + 1 — the number the pill and tooltips promise", () => {
+    const roots = buildChatTree([
+      chat("p", "10"),
+      chat("c1", "11", "p"),
+      chat("c2", "12", "p"),
+      chat("g1", "13", "c1"),
+    ]);
+    const p = roots[0];
+    expect(p.descendantCount).toBe(3);
+    expect(subtreeIds(p)).toHaveLength(p.descendantCount + 1);
+  });
+
+  it("takes only the clicked chat's branch, never a sibling's", () => {
+    const roots = buildChatTree([
+      chat("p", "10"),
+      chat("c1", "11", "p"),
+      chat("c2", "12", "p"),
+      chat("g1", "13", "c1"),
+    ]);
+    const c1 = roots[0].children.find((n) => n.chat.sessionId === "c1")!;
+    expect(subtreeIds(c1).sort()).toEqual(["c1", "g1"]);
+  });
+
+  it("puts the chat itself first, so the caller can read the target off the head", () => {
+    const roots = buildChatTree([chat("p", "10"), chat("c1", "11", "p")]);
+    expect(subtreeIds(roots[0])[0]).toBe("p");
   });
 });

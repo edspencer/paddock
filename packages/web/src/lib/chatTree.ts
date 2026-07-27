@@ -121,6 +121,30 @@ export function countNodes(nodes: readonly ChatNode[]): number {
 }
 
 /**
+ * The session ids of a subtree: the node itself first, then every descendant at
+ * every level (#508). This is what a Shift-click on archive / delete / mark-read
+ * applies to, so it must match the `descendantCount` the collapsed-row pill and
+ * the tooltips promise — `subtreeIds(n).length === n.descendantCount + 1`.
+ *
+ * Recursive by construction. Depth ≥ 2 is unreachable while `maxSpawnDepth`
+ * defaults to 1, so today's trees are one level deep in practice — but a config
+ * bump or a fork-of-a-child produces deeper ones, and "delete this chat and its
+ * nested chats" silently missing a grandchild is not a bug anyone would notice
+ * until it had already happened.
+ */
+export function subtreeIds(node: ChatNode): string[] {
+  const out: string[] = [node.chat.sessionId];
+  const walk = (nodes: readonly ChatNode[]) => {
+    for (const n of nodes) {
+      out.push(n.chat.sessionId);
+      walk(n.children);
+    }
+  };
+  walk(node.children);
+  return out;
+}
+
+/**
  * Flatten the forest to the rows actually rendered, skipping the subtrees of
  * collapsed parents. Returning a flat array (rather than recursing in the
  * component) keeps the row markup — and its absolutely-positioned hover action

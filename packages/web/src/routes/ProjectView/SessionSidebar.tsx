@@ -1,10 +1,11 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { Chat, ChatCompleteUsage, ChatUsage } from "../../lib/types";
 import type { ProjectViewTab } from "./urls";
-import { type ChatNode, countNodes, flattenTree } from "../../lib/chatTree";
+import { type ChatNode, countNodes, flattenTree, subtreeIds } from "../../lib/chatTree";
 import { ContextRing } from "../../components/ContextRing";
 import { ProvenanceBadge } from "../../components/ProvenanceBadge";
 import { PaneResizer, usePaneWidth } from "../../components/PaneResizer";
+import { Tooltip } from "../../components/Tooltip";
 import { relativeTime, sessionUsageOf } from "../../lib/format";
 import {
   ArchiveIcon,
@@ -17,8 +18,14 @@ import {
   SearchIcon,
   StarIcon,
   TrashIcon,
+  UnlinkIcon,
   XIcon,
 } from "../../components/icons";
+
+/** "1 nested chat" / "3 nested chats" — used by both tooltips and aria labels. */
+function nested(n: number): string {
+  return `${n} nested chat${n === 1 ? "" : "s"}`;
+}
 
 /**
  * How many levels of the chat tree get their own indent + guide line. Deeper
@@ -66,9 +73,10 @@ export function SessionSidebar({
   setForkingChat,
   renameChat,
   archiveChat,
-  setDeletingChat,
+  requestDeleteChat,
   starChat,
   toggleUnread,
+  detachChat,
 }: {
   chatList: ReturnType<typeof usePaneWidth>;
   sessionsOpen: boolean;
@@ -96,10 +104,18 @@ export function SessionSidebar({
   runningSessions: ReadonlySet<string>;
   setForkingChat: Dispatch<SetStateAction<Chat | null>>;
   renameChat: (chat: Chat) => Promise<void>;
-  archiveChat: (chat: Chat) => Promise<void>;
-  setDeletingChat: Dispatch<SetStateAction<Chat | null>>;
+  /**
+   * The three subtree-capable actions (#508). `sessionIds` is the set to apply
+   * to — `[chat.sessionId]` on a plain click, the whole subtree on Shift-click.
+   * The sidebar owns the modifier + the tree walk (it has the ChatNode);
+   * ProjectView owns the optimistic update and its rollback.
+   */
+  archiveChat: (chat: Chat, sessionIds: string[]) => Promise<void>;
+  requestDeleteChat: (chat: Chat, sessionIds: string[]) => void;
+  toggleUnread: (chat: Chat, sessionIds: string[]) => Promise<void>;
   starChat: (chat: Chat) => Promise<void>;
-  toggleUnread: (chat: Chat) => Promise<void>;
+  /** Promote a nested chat (with its own subtree) to the top level (#508). */
+  detachChat: (chat: Chat) => Promise<void>;
 }) {
   // While searching, ignore the collapsed set. A query filters to matches and
   // their ancestors, so honouring collapse would let a folded-up parent hide the
@@ -128,15 +144,53 @@ export function SessionSidebar({
   // the two stay identical (context ring, hover-menu actions) apart from where
   // they live. The Archive action toggles label/icon between the two states.
   //
-  // `depth` / `childCount` come from the chat tree: a chat created by another
-  // chat renders indented beneath it. `pendingChat` and the #154 fallback row
-  // pass neither — they're always roots.
-  const chatRow = (c: Chat, depth = 0, childCount = 0, descendantCount = 0) => {
+  // `node` is the chat's place in the tree: a chat created by another chat
+  // renders indented beneath it, and the node is what the Shift-click subtree
+  // actions walk. `pendingChat` and the #154 fallback row pass none — they're
+  // always roots with no children.
+  const chatRow = (c: Chat, node?: ChatNode) => {
+    const depth = node?.depth ?? 0;
+    const childCount = node?.children.length ?? 0;
+    const descendantCount = node?.descendantCount ?? 0;
     const isUnread = unread.has(c.sessionId);
     // Read the EFFECTIVE set so the twisty and the count pill agree with what's
     // actually on screen — during a search a collapsed parent renders expanded,
     // and a chevron still pointing right would be lying about it.
     const isCollapsed = effectiveCollapsed.has(c.sessionId);
+
+    // #508: Shift-click applies an action to this chat AND every descendant.
+    // Only meaningful on a row that HAS descendants, so a stray Shift on a leaf
+    // behaves exactly like a plain click rather than silently doing something
+    // else. The set comes from the rendered tree, so it always matches the count
+    // the pill and the tooltips just promised — including while a search has
+    // narrowed the tree, where acting on chats the user can't see would be worse
+    // than acting on fewer.
+    const hasSubtree = !!node && descendantCount > 0;
+    const targetIds = (e: { shiftKey: boolean }) =>
+      hasSubtree && e.shiftKey ? subtreeIds(node) : [c.sessionId];
+    /** Total chats a Shift-click would hit — the chat plus its descendants. */
+    const subtreeTotal = descendantCount + 1;
+    /**
+     * Tooltip copy + the matching aria-label suffix. Shift-click is invisible
+     * otherwise, and it is also reachable from the keyboard (a browser sets
+     * `shiftKey` on the click it synthesises from Enter/Space), so the hint
+     * belongs in BOTH — the bubble is pointer-only.
+     *
+     * `phrase` is the COMPLETED action ("archive all 21"), not a bare verb: the
+     * count sits mid-phrase for read/unread ("mark all 21 read"), so a
+     * `${verb} all ${n}` template only reads correctly for half the actions.
+     */
+    const tip = (label: string, phrase: string) =>
+      hasSubtree ? (
+        <>
+          {label} · <span className="font-semibold">Shift-click</span> to {phrase}
+        </>
+      ) : (
+        label
+      );
+    const aria = (label: string, phrase: string) =>
+      hasSubtree ? `${label} (Shift-click to ${phrase})` : label;
+
     return (
     <div
       key={c.sessionId}
@@ -163,23 +217,24 @@ export function SessionSidebar({
       {anyNesting && (
         <div className="flex w-4 shrink-0 items-start justify-center pt-2.5">
           {childCount > 0 && (
-            <button
-              type="button"
-              aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${descendantCount} chat${descendantCount === 1 ? "" : "s"} under ${c.name}`}
-              aria-expanded={!isCollapsed}
-              title={isCollapsed ? `Show ${descendantCount} nested chat${descendantCount === 1 ? "" : "s"}` : "Hide nested chats"}
-              onClick={(e) => {
-                e.stopPropagation();
-                toggleChatCollapsed(c.sessionId);
-              }}
-              className="flex h-4 w-4 items-center justify-center rounded text-paddock-400 transition hover:bg-paddock-300/60 hover:text-paddock-700 dark:hover:bg-paddock-700 dark:hover:text-paddock-100"
-            >
-              <ChevronDownIcon
-                width={11}
-                height={11}
-                className={`transition-transform ${isCollapsed ? "-rotate-90" : ""}`}
-              />
-            </button>
+            <Tooltip content={isCollapsed ? `Show ${nested(descendantCount)}` : "Hide nested chats"}>
+              <button
+                type="button"
+                aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${descendantCount} chat${descendantCount === 1 ? "" : "s"} under ${c.name}`}
+                aria-expanded={!isCollapsed}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleChatCollapsed(c.sessionId);
+                }}
+                className="flex h-4 w-4 items-center justify-center rounded text-paddock-400 transition hover:bg-paddock-300/60 hover:text-paddock-700 dark:hover:bg-paddock-700 dark:hover:text-paddock-100"
+              >
+                <ChevronDownIcon
+                  width={11}
+                  height={11}
+                  className={`transition-transform ${isCollapsed ? "-rotate-90" : ""}`}
+                />
+              </button>
+            </Tooltip>
           )}
         </div>
       )}
@@ -202,12 +257,13 @@ export function SessionSidebar({
               the agent finished a turn the user hasn't seen. Subtle by design;
               never shown for the currently-open chat (excluded in `unread`). */}
           {isUnread && (
-            <span
-              data-unread="true"
-              aria-label="Unread reply"
-              title="New reply you haven't read yet"
-              className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
-            />
+            <Tooltip content="New reply you haven't read yet" className="shrink-0">
+              <span
+                data-unread="true"
+                aria-label="Unread reply"
+                className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
+              />
+            </Tooltip>
           )}
           <span
             className={`min-w-0 flex-1 truncate ${isUnread ? "font-semibold" : "font-medium"}`}
@@ -217,12 +273,11 @@ export function SessionSidebar({
           {/* How many chats are folded away under this one. Only while collapsed —
               expanded, the indented rows say it better than a number can. */}
           {isCollapsed && descendantCount > 0 && (
-            <span
-              className="shrink-0 rounded-full bg-paddock-300/70 px-1.5 text-[10px] font-medium leading-4 text-paddock-600 dark:bg-paddock-700 dark:text-paddock-300"
-              title={`${descendantCount} nested chat${descendantCount === 1 ? "" : "s"} hidden`}
-            >
-              {descendantCount}
-            </span>
+            <Tooltip content={`${nested(descendantCount)} hidden`} className="shrink-0">
+              <span className="shrink-0 rounded-full bg-paddock-300/70 px-1.5 text-[10px] font-medium leading-4 text-paddock-600 dark:bg-paddock-700 dark:text-paddock-300">
+                {descendantCount}
+              </span>
+            </Tooltip>
           )}
           {/* Provenance badge (#267): flags the "ran without me" chats —
               scheduled (a cron fired it), spawned (another chat created it), or
@@ -251,92 +306,151 @@ export function SessionSidebar({
         <span className="text-[11px] text-paddock-400">{relativeTime(c.updatedAt)}</span>
       </button>
       <div className="absolute bottom-1 right-1.5 flex items-center gap-0.5">
-        <button
-          type="button"
-          aria-label={`Fork chat ${c.name}`}
-          title="Fork chat — branch a new chat from this one's context"
-          onClick={(e) => {
-            e.stopPropagation();
-            setForkingChat(c);
-          }}
-          className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-paddock-200 hover:text-accent focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-paddock-700 dark:hover:text-accent"
+        {/* Detach from parent (#508) — only on a row that actually RENDERS
+            nested, so the button never appears where it would look like a no-op.
+            The whole subtree travels with it: the chat becomes a root and keeps
+            its own descendants, rather than scattering grandchildren. */}
+        {depth > 0 && (
+          <Tooltip
+            content={
+              descendantCount > 0
+                ? `Detach from parent — move this chat and its ${nested(descendantCount)} to the top level`
+                : "Detach from parent — move this chat to the top level"
+            }
+          >
+            <button
+              type="button"
+              aria-label={`Detach chat ${c.name} from its parent`}
+              onClick={(e) => {
+                e.stopPropagation();
+                void detachChat(c);
+              }}
+              className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-paddock-200 hover:text-accent focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-paddock-700 dark:hover:text-accent"
+            >
+              <UnlinkIcon width={13} height={13} />
+            </button>
+          </Tooltip>
+        )}
+        <Tooltip content="Fork chat — branch a new chat from this one's context">
+          <button
+            type="button"
+            aria-label={`Fork chat ${c.name}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              setForkingChat(c);
+            }}
+            className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-paddock-200 hover:text-accent focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-paddock-700 dark:hover:text-accent"
+          >
+            <BranchIcon width={13} height={13} />
+          </button>
+        </Tooltip>
+        <Tooltip content="Rename chat">
+          <button
+            type="button"
+            aria-label={`Rename chat ${c.name}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              void renameChat(c);
+            }}
+            className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-paddock-200 hover:text-paddock-700 focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-paddock-700 dark:hover:text-paddock-100"
+          >
+            <PencilIcon width={13} height={13} />
+          </button>
+        </Tooltip>
+        {/* Archive (#95) — subtree-capable (#508). Archiving a parent alone
+            leaves its children behind in the active list (they lose their parent
+            from that population and `buildChatTree` promotes them to roots), so
+            Shift-click is the "take the whole family with it" option. Reversible,
+            so no confirmation — but the tooltip says what it's about to do,
+            which matters most when the parent is COLLAPSED and the chats being
+            archived aren't on screen. */}
+        <Tooltip
+          content={tip(
+            c.archived ? "Unarchive chat" : "Archive chat — file it away without deleting",
+            c.archived ? `unarchive all ${subtreeTotal}` : `archive all ${subtreeTotal}`,
+          )}
         >
-          <BranchIcon width={13} height={13} />
-        </button>
-        <button
-          type="button"
-          aria-label={`Rename chat ${c.name}`}
-          title="Rename chat"
-          onClick={(e) => {
-            e.stopPropagation();
-            void renameChat(c);
-          }}
-          className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-paddock-200 hover:text-paddock-700 focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-paddock-700 dark:hover:text-paddock-100"
-        >
-          <PencilIcon width={13} height={13} />
-        </button>
-        <button
-          type="button"
-          aria-label={`${c.archived ? "Unarchive" : "Archive"} chat ${c.name}`}
-          title={c.archived ? "Unarchive chat" : "Archive chat — file it away without deleting"}
-          onClick={(e) => {
-            e.stopPropagation();
-            void archiveChat(c);
-          }}
-          className={`flex h-6 w-6 items-center justify-center rounded-md transition focus:opacity-100 group-hover/chat:opacity-100 hover:bg-paddock-200 hover:text-accent dark:hover:bg-paddock-700 dark:hover:text-accent ${
-            c.archived ? "text-accent opacity-100" : "text-paddock-400 opacity-0"
-          }`}
-        >
-          <ArchiveIcon width={13} height={13} />
-        </button>
-        <button
-          type="button"
-          aria-label={`Delete chat ${c.name}`}
-          title="Delete chat"
-          onClick={(e) => {
-            e.stopPropagation();
-            setDeletingChat(c);
-          }}
-          className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-rose-100 hover:text-rose-600 focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-rose-950/60 dark:hover:text-rose-400"
-        >
-          <TrashIcon width={13} height={13} />
-        </button>
+          <button
+            type="button"
+            aria-label={aria(
+              `${c.archived ? "Unarchive" : "Archive"} chat ${c.name}`,
+              c.archived ? `unarchive all ${subtreeTotal}` : `archive all ${subtreeTotal}`,
+            )}
+            onClick={(e) => {
+              e.stopPropagation();
+              void archiveChat(c, targetIds(e));
+            }}
+            className={`flex h-6 w-6 items-center justify-center rounded-md transition focus:opacity-100 group-hover/chat:opacity-100 hover:bg-paddock-200 hover:text-accent dark:hover:bg-paddock-700 dark:hover:text-accent ${
+              c.archived ? "text-accent opacity-100" : "text-paddock-400 opacity-0"
+            }`}
+          >
+            <ArchiveIcon width={13} height={13} />
+          </button>
+        </Tooltip>
+        {/* Delete — subtree-capable (#508) and the one action with no undo, so
+            both variants go through the count-aware confirm dialog. */}
+        <Tooltip content={tip("Delete chat", `delete all ${subtreeTotal}`)}>
+          <button
+            type="button"
+            aria-label={aria(`Delete chat ${c.name}`, `delete all ${subtreeTotal}`)}
+            onClick={(e) => {
+              e.stopPropagation();
+              requestDeleteChat(c, targetIds(e));
+            }}
+            className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-rose-100 hover:text-rose-600 focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-rose-950/60 dark:hover:text-rose-400"
+          >
+            <TrashIcon width={13} height={13} />
+          </button>
+        </Tooltip>
         {/* Mark read / unread (#458): toggle the chat's unread state. Mirrors the
             email "mark as unread" pattern so a chat you glanced at can resurface
             its cue later. Label + icon flip with `isUnread` (the same derived
             state that drives the accent dot); hover-revealed like the other
-            actions. */}
-        <button
-          type="button"
-          aria-label={`Mark chat ${c.name} ${isUnread ? "read" : "unread"}`}
-          aria-pressed={isUnread}
-          title={isUnread ? "Mark as read" : "Mark as unread — resurface it later"}
-          onClick={(e) => {
-            e.stopPropagation();
-            void toggleUnread(c);
-          }}
-          className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-paddock-200 hover:text-accent focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-paddock-700 dark:hover:text-accent"
+            actions. Subtree-capable (#508) — "I've dealt with this whole fan-out"
+            is the case it exists for. */}
+        <Tooltip
+          content={tip(
+            isUnread ? "Mark as read" : "Mark as unread — resurface it later",
+            isUnread ? `mark all ${subtreeTotal} read` : `mark all ${subtreeTotal} unread`,
+          )}
         >
-          <EnvelopeIcon width={13} height={13} open={!isUnread} />
-        </button>
+          <button
+            type="button"
+            aria-label={aria(
+              `Mark chat ${c.name} ${isUnread ? "read" : "unread"}`,
+              isUnread ? `mark all ${subtreeTotal} read` : `mark all ${subtreeTotal} unread`,
+            )}
+            aria-pressed={isUnread}
+            onClick={(e) => {
+              e.stopPropagation();
+              void toggleUnread(c, targetIds(e));
+            }}
+            className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-paddock-200 hover:text-accent focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-paddock-700 dark:hover:text-accent"
+          >
+            <EnvelopeIcon width={13} height={13} open={!isUnread} />
+          </button>
+        </Tooltip>
         {/* Star / pin (#373): rightmost action. When starred, always visible and
             gold (solid star); otherwise it behaves exactly like the archive
             button — hidden until row hover/focus. */}
-        <button
-          type="button"
-          aria-label={`${c.starred ? "Unstar" : "Star"} chat ${c.name}`}
-          aria-pressed={!!c.starred}
-          title={c.starred ? "Unstar chat" : "Star chat — pin it to the top of the list"}
-          onClick={(e) => {
-            e.stopPropagation();
-            void starChat(c);
-          }}
-          className={`flex h-6 w-6 items-center justify-center rounded-md transition focus:opacity-100 group-hover/chat:opacity-100 hover:bg-paddock-200 hover:text-amber-500 dark:hover:bg-paddock-700 dark:hover:text-amber-400 ${
-            c.starred ? "text-amber-400 opacity-100" : "text-paddock-400 opacity-0"
-          }`}
+        <Tooltip
+          content={c.starred ? "Unstar chat" : "Star chat — pin it to the top of the list"}
         >
-          <StarIcon width={13} height={13} fill={c.starred ? "currentColor" : "none"} />
-        </button>
+          <button
+            type="button"
+            aria-label={`${c.starred ? "Unstar" : "Star"} chat ${c.name}`}
+            aria-pressed={!!c.starred}
+            onClick={(e) => {
+              e.stopPropagation();
+              void starChat(c);
+            }}
+            className={`flex h-6 w-6 items-center justify-center rounded-md transition focus:opacity-100 group-hover/chat:opacity-100 hover:bg-paddock-200 hover:text-amber-500 dark:hover:bg-paddock-700 dark:hover:text-amber-400 ${
+              c.starred ? "text-amber-400 opacity-100" : "text-paddock-400 opacity-0"
+            }`}
+          >
+            <StarIcon width={13} height={13} fill={c.starred ? "currentColor" : "none"} />
+          </button>
+        </Tooltip>
       </div>
     </div>
     );
@@ -385,26 +499,28 @@ export function SessionSidebar({
               className="input py-1.5 pl-8 pr-8"
             />
             {searching && (
-              <button
-                type="button"
-                onClick={() => setChatSearch("")}
-                aria-label="Clear search"
-                title="Clear search"
-                className="absolute right-1.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-paddock-400 transition hover:bg-paddock-200 hover:text-paddock-700 dark:hover:bg-paddock-700 dark:hover:text-paddock-100"
-              >
-                <XIcon width={13} height={13} />
-              </button>
+              <Tooltip content="Clear search" className="absolute right-1.5 top-1/2 -translate-y-1/2">
+                <button
+                  type="button"
+                  onClick={() => setChatSearch("")}
+                  aria-label="Clear search"
+                  className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 transition hover:bg-paddock-200 hover:text-paddock-700 dark:hover:bg-paddock-700 dark:hover:text-paddock-100"
+                >
+                  <XIcon width={13} height={13} />
+                </button>
+              </Tooltip>
             )}
           </div>
-          <button
-            type="button"
-            className="btn-primary h-9 w-9 shrink-0 p-0"
-            onClick={newChat}
-            aria-label="New Chat"
-            title="New Chat"
-          >
-            <PlusIcon width={16} height={16} />
-          </button>
+          <Tooltip content="New chat">
+            <button
+              type="button"
+              className="btn-primary h-9 w-9 shrink-0 p-0"
+              onClick={newChat}
+              aria-label="New Chat"
+            >
+              <PlusIcon width={16} height={16} />
+            </button>
+          </Tooltip>
           <button
             type="button"
             onClick={() => setSessionsOpen(false)}
@@ -477,9 +593,7 @@ export function SessionSidebar({
                 No active chats — see Archived below.
               </p>
             )}
-            {flattenTree(activeChats, effectiveCollapsed).map((n) =>
-              chatRow(n.chat, n.depth, n.children.length, n.descendantCount),
-            )}
+            {flattenTree(activeChats, effectiveCollapsed).map((n) => chatRow(n.chat, n))}
           </div>
           {/* Archived section (#95): a collapsible accordion pinned to the
               bottom. Collapsed by default with a count badge; expanding it
@@ -508,9 +622,7 @@ export function SessionSidebar({
               </button>
               {archivedOpen && (
                 <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-                  {flattenTree(archivedChats, effectiveCollapsed).map((n) =>
-              chatRow(n.chat, n.depth, n.children.length, n.descendantCount),
-            )}
+                  {flattenTree(archivedChats, effectiveCollapsed).map((n) => chatRow(n.chat, n))}
                 </div>
               )}
             </div>
