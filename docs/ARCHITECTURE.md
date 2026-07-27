@@ -150,7 +150,12 @@ idempotent and self-healing: it creates `.chats/`, then repoints a drifted
 symlink, migrates a pre-existing real transcript directory (EXDEV-safe `cp`+`rm`
 across mounts), or just creates the symlink — and never throws. For a repo-backed
 project the transcripts land in the **metadata dir**, not the external checkout
-(the `chatsHostDir` split, issue #187).
+(the `chatsHostDir` split, issue #187). The ROOT (scratch) agent uses that same
+split: its cwd is `projectsRoot` (the backing repo, issue #512 — so
+`<projectsRoot>/CLAUDE.md` is on its walk-up) while its `.chats/` store stays at
+`<scratchDir>/.chats/`, outside the repo. `ensureScratchChats()` points the new
+cwd's encoded bucket at that unmoved store and retires the pre-#512 pointer, so
+an upgrade relocates no transcript and lists no session twice.
 
 Paddock reads transcripts two ways:
 

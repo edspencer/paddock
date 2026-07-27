@@ -176,6 +176,13 @@ export function buildRouteContext(deps: RouteDeps): RouteCtx {
     return keeperAgentName(slug);
   }
 
+  /**
+   * The `.chats/` HOST dir for a slug — what every transcript reader wants, NOT
+   * an agent cwd. For scratch that is `scratchDir`, which is deliberately still
+   * the transcript store after issue #512 moved the scratch agent's cwd to
+   * `projectsRoot`; for a repo-backed project it is likewise the metadata dir,
+   * not the keeper's checkout.
+   */
   async function projectDirForSlug(slug: string): Promise<string> {
     if (slug === SCRATCH_SLUG) return herdctl.scratchDir;
     return (await projects.get(slug)).dir;

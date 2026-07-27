@@ -13,6 +13,11 @@
  * `ensureProjectChats` is idempotent and self-healing: on first run for a project
  * whose encoded path is still a real directory (existing transcripts), it migrates
  * those files into `.chats/` and replaces the directory with the symlink.
+ *
+ * When an agent's cwd MOVES, the encoded bucket name changes with it. That is
+ * handled by pointing the new bucket at the SAME `.chats/` store (no chat file
+ * moves) and retiring the old pointer — {@link ensureScratchChats} /
+ * {@link retireChatsLink}, added for the root-agent cwd move in issue #512.
  */
 import { promises as fs, createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
@@ -74,14 +79,7 @@ export async function ensureProjectChats(
 
     // A real directory of existing transcripts — migrate into .chats, then link.
     if (st?.isDirectory()) {
-      for (const entry of await fs.readdir(encoded)) {
-        const from = path.join(encoded, entry);
-        const to = path.join(chatsDir, entry);
-        if (await fs.lstat(to).then(() => true).catch(() => false)) continue; // don't clobber
-        // cp+rm is robust across filesystems (rename would EXDEV across mounts).
-        await fs.cp(from, to, { recursive: true });
-        await fs.rm(from, { recursive: true, force: true });
-      }
+      await foldTranscriptsInto(encoded, chatsDir);
       await fs.rmdir(encoded).catch(() => undefined);
       await fs.symlink(chatsDir, encoded);
       return;
@@ -92,6 +90,119 @@ export async function ensureProjectChats(
   } catch {
     /* non-fatal: fall back to Claude Code's default location for this project */
   }
+}
+
+/**
+ * Move every entry of a real transcript dir into `chatsDir`, NEVER clobbering an
+ * entry that is already there (the pre-existing `.chats/` copy always wins).
+ * Shared by {@link ensureProjectChats} and {@link retireChatsLink} so both
+ * migrations have identical, one-place semantics.
+ */
+async function foldTranscriptsInto(fromDir: string, chatsDir: string): Promise<void> {
+  for (const entry of await fs.readdir(fromDir)) {
+    const from = path.join(fromDir, entry);
+    const to = path.join(chatsDir, entry);
+    if (await fs.lstat(to).then(() => true).catch(() => false)) continue; // don't clobber
+    // cp+rm is robust across filesystems (rename would EXDEV across mounts).
+    await fs.cp(from, to, { recursive: true });
+    await fs.rm(from, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Retire the encoded transcript pointer of a directory that is NO LONGER any
+ * agent's cwd — without ever losing a transcript. The inverse of
+ * {@link ensureProjectChats}, used when an agent's working directory MOVES.
+ *
+ * - A **real directory** (an instance that predates the `.chats/` relocation)
+ *   has its transcripts folded into `<chatsHostDir>/.chats/` first — same
+ *   non-clobbering copy as {@link ensureProjectChats} — and is then removed.
+ * - A **symlink** is removed only when it already resolves to that same
+ *   `.chats/` store, i.e. Paddock created it. A link pointing anywhere else
+ *   belongs to someone else and is left strictly alone.
+ * - Anything else (absent, a plain file) is left untouched.
+ *
+ * Idempotent and never throws — a failure here must not block boot.
+ */
+export async function retireChatsLink(
+  workingDir: string,
+  chatsHostDir: string = workingDir,
+): Promise<void> {
+  try {
+    const chatsDir = projectChatsDir(chatsHostDir);
+    const encoded = path.join(claudeHome(), "projects", encodeProjectDir(workingDir));
+    const st = await fs.lstat(encoded).catch(() => null);
+    if (!st) return;
+
+    if (st.isSymbolicLink()) {
+      const target = await fs.readlink(encoded).catch(() => "");
+      const resolved = path.resolve(path.dirname(encoded), target);
+      // Only ever remove OUR OWN pointer at the store we know about.
+      if (resolved === path.resolve(chatsDir)) await fs.rm(encoded, { force: true });
+      return;
+    }
+
+    if (st.isDirectory()) {
+      await fs.mkdir(chatsDir, { recursive: true });
+      await foldTranscriptsInto(encoded, chatsDir);
+      await fs.rmdir(encoded).catch(() => undefined);
+    }
+  } catch {
+    /* non-fatal: a stale pointer is harmless, a lost transcript would not be */
+  }
+}
+
+/**
+ * Point the ROOT ("scratch") agent's transcripts at its cwd, and retire the
+ * pointer the pre-#512 cwd left behind. Idempotent; never throws.
+ *
+ * Issue #512 moved the root agent's working directory from `<dataDir>/scratch`
+ * to `projectsRoot` — the instance's backing repo checkout — so the repo's own
+ * top-level `CLAUDE.md` resolves by Claude Code's cwd walk-up. Claude names a
+ * transcript bucket after the cwd, so that move renames the bucket.
+ *
+ * The transcript STORE deliberately does NOT move with it: it stays at
+ * `<scratchDir>/.chats/`, exactly as a repo-backed project keeps its `.chats/`
+ * out of its checkout (issue #187). Two consequences, both wanted: root
+ * transcripts never enter the backing repo's working tree, and **no chat file is
+ * ever relocated on upgrade** — only the pointer changes.
+ *
+ * So this:
+ *  1. points `~/.claude/projects/<encoded workingDir>` at `<storeDir>/.chats/`,
+ *     creating the store and folding in (never clobbering) any real transcript
+ *     dir that happens to already sit at the new encoded path;
+ *  2. retires the legacy `~/.claude/projects/<encoded storeDir>` pointer, first
+ *     folding in its contents if a pre-relocation instance left a real dir there.
+ *
+ * When the store IS the cwd (an instance that sets `PADDOCK_SCRATCH_DIR` to
+ * `projectsRoot`) step 2 is skipped — that pointer is the live one.
+ */
+export async function ensureScratchChats(workingDir: string, storeDir: string): Promise<void> {
+  await ensureProjectChats(workingDir, storeDir);
+  if (path.resolve(workingDir) === path.resolve(storeDir)) return;
+  await retireChatsLink(storeDir, storeDir);
+}
+
+/**
+ * Rewrite the `cwd` token embedded in a transcript JSONL, so a relocated chat
+ * resumes in its new working directory (used by promotion, scratch → project).
+ *
+ * Claude Code writes compact JSON (`"cwd":"/abs/path"` — no spaces, no escaping
+ * for a plain absolute path), the same assumption `scripts/migrate-chat.sh`
+ * relies on. The matched token INCLUDES the closing quote, so a `from` of
+ * `/data/projects` can never match a line whose cwd is `/data/projects/slug`.
+ *
+ * `fromDirs` is a list because a chat may have been written under an EARLIER
+ * cwd than the one its agent uses today — the root agent's cwd moved from the
+ * scratch dir to `projectsRoot` in issue #512, and chats predating that move
+ * must promote just as cleanly. Passing the same dir twice is harmless (the
+ * second pass finds nothing).
+ */
+export function rewriteTranscriptCwd(raw: string, fromDirs: string[], toDir: string): string {
+  return fromDirs.reduce(
+    (text, from) => text.split(`"cwd":"${from}"`).join(`"cwd":"${toDir}"`),
+    raw,
+  );
 }
 
 /**

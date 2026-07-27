@@ -30,6 +30,7 @@ import {
   isKnownModel,
 } from "./models.js";
 import { cloneRepo } from "./git.js";
+import { ensureGitignoreEntries } from "./gitignore.js";
 import { sanitizeSchedules } from "./schedule-config.js";
 import { sanitizeHooks } from "./hook-config.js";
 import {
@@ -90,9 +91,6 @@ const CLAUDE_FILE = "CLAUDE.md";
 
 /** Heading under which the sweeper appends newly-discovered durable facts. */
 const CLAUDE_CURATED_HEADING = "## Curated notes";
-
-/** Filename of the sidecar `.gitignore` that keeps a nested checkout out of the data repo. */
-const GITIGNORE_FILE = ".gitignore";
 
 /**
  * Sanitise a per-project offered-models override (issue #457 Step 2): keep only
@@ -807,32 +805,11 @@ export class ProjectStore {
    * and the in-place `promote()` (#213).
    */
   private async ensureSidecarGitignore(dir: string, checkoutName: string): Promise<void> {
-    const file = path.join(dir, GITIGNORE_FILE);
-    let existing = "";
-    try {
-      existing = await fs.readFile(file, "utf8");
-    } catch {
-      /* no .gitignore yet — write a fresh one below */
-    }
-    const want = [`/${checkoutName}/`, `/.chats/`];
-    const have = new Set(existing.split("\n").map((l) => l.trim()));
-    const missing = want.filter((l) => !have.has(l));
-    if (existing && missing.length === 0) return; // already covers everything
-    if (!existing) {
-      await fs.writeFile(
-        file,
-        [
-          `# Repo-backed project checkout (issue #187) — not tracked by the data repo.`,
-          ...want,
-          "",
-        ].join("\n"),
-        "utf8",
-      );
-      return;
-    }
-    // Append only the missing lines to the existing file (preserve user content).
-    const body = existing.endsWith("\n") ? existing : `${existing}\n`;
-    await fs.writeFile(file, `${body}${missing.join("\n")}\n`, "utf8");
+    await ensureGitignoreEntries(
+      dir,
+      [`/${checkoutName}/`, `/.chats/`],
+      `# Repo-backed project checkout (issue #187) — not tracked by the data repo.`,
+    );
   }
 
   private async writeYaml(slug: string, yaml: ProjectYaml): Promise<void> {

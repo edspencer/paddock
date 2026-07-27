@@ -40,9 +40,21 @@ import {
 } from "./herdctl-agent-names.js";
 
 /**
- * The scratch (one-off chats) agent config. Defaults to the keeper default
- * model; a per-chat override may re-register it at a different model via
- * `ensureScratchModel`.
+ * The scratch (one-off / instance-root chats) agent config. Defaults to the
+ * keeper default model; a per-chat override may re-register it at a different
+ * model via `ensureScratchModel`.
+ *
+ * Working directory (issue #512): `cfg.scratchWorkingDir` — which IS
+ * `cfg.projectsRoot`, the instance's backing repo checkout — NOT the scratch
+ * dir. The root's cwd used to be a SIBLING of the backing repo, so nothing above
+ * it carried instance context and a root chat started with none. Running the
+ * root agent in the repo itself makes `<projectsRoot>/CLAUDE.md` (the backing
+ * repo's own top-level CLAUDE.md) resolve by Claude Code's ordinary cwd walk-up,
+ * with no special-casing, and makes the root git-backed for free.
+ *
+ * Transcripts do NOT follow the cwd: they stay in `<scratchDir>/.chats/` (see
+ * `ensureScratchChats` in ./transcripts.js), so they never enter the backing
+ * repo's working tree — the same split a repo-backed project uses (issue #187).
  */
 export function buildScratchConfig(
   cfg: PaddockConfig,
@@ -51,7 +63,7 @@ export function buildScratchConfig(
   const config: Record<string, unknown> & { name: string } = {
     name: SCRATCH_AGENT,
     description: "One-off / scratch chats.",
-    working_directory: cfg.scratchDir,
+    working_directory: cfg.scratchWorkingDir,
     // Explicit CLI runtime (Max plan). The fleet `defaults.runtime` is dropped
     // by @herdctl/core's config loader (runtime isn't a fleet-defaults field in
     // 5.13.x), so without this the runner falls back to the SDK runtime. Set it
@@ -60,10 +72,12 @@ export function buildScratchConfig(
     model: model ?? KEEPER_DEFAULT_MODEL,
     default_prompt: "How can I help?",
   };
-  // Scratch chats get the native default coding prompt + CLAUDE.md hierarchy by
-  // default (issue #176), so an instance-wide CLAUDE.md (a common ancestor of
-  // the scratch dir) reaches out-of-project chats too. Only a non-native
-  // instance gets the terse replace prompt.
+  // Root chats get the native default coding prompt + CLAUDE.md hierarchy by
+  // default (issue #176) — Paddock sets NO system_prompt, so 100% of a root
+  // chat's standing instructions come from Claude Code's cwd walk-up. With the
+  // cwd above, that walk-up finds the instance-wide CLAUDE.md at
+  // `<projectsRoot>/CLAUDE.md` (issue #512). Only a non-native instance gets the
+  // terse replace prompt.
   if (!cfg.nativeSystemPrompt) {
     config.system_prompt =
       "You are a Claude Code agent for one-off chats. Be helpful and concise.";
@@ -86,10 +100,19 @@ export function buildScratchConfig(
  * System prompt: by default (`nativeSystemPrompt`, issue #176) we set NO
  * `system_prompt`, so herdctl's CLI runtime passes no `--system-prompt` and
  * Claude Code's full default coding prompt applies together with the project's
- * CLAUDE.md hierarchy — the box's root CLAUDE.md (auto-loaded via the cwd
- * walk-up, e.g. `/var/lib/paddock/projects/CLAUDE.md`) plus a per-project
- * CLAUDE.md. This is its own decision (issue #176): an instance with no
- * CLAUDE.md files can opt back into the terse replace prompt below with
+ * CLAUDE.md hierarchy — the INSTANCE-wide CLAUDE.md plus a per-project
+ * CLAUDE.md, both auto-loaded via the cwd walk-up.
+ *
+ * The instance-wide CLAUDE.md is canonically `<projectsRoot>/CLAUDE.md` (e.g.
+ * `/var/lib/paddock/projects/CLAUDE.md`) — the top-level CLAUDE.md of the
+ * backing repo checked out at `projectsRoot`, so it is version-controlled and
+ * travels with that repo. It is NOT `<dataDir>/CLAUDE.md`: `dataDir` sits
+ * outside the backing repo (issue #512, which also moved the root/scratch
+ * agent's cwd INTO `projectsRoot` so the walk-up reaches this same file from a
+ * root chat).
+ *
+ * This is its own decision (issue #176): an instance with no CLAUDE.md files can
+ * opt back into the terse replace prompt below with
  * `PADDOCK_KEEPER_NATIVE_PROMPT=false`.
  */
 export function buildKeeperConfig(

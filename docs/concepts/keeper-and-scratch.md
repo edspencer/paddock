@@ -32,14 +32,38 @@ per-trigger override is a herdctl follow-up.
 
 ## Scratch — one shared agent for one-off chats
 
-The **scratch** agent (`scratch`, cwd = `PADDOCK_SCRATCH_DIR`) exists for quick,
-throwaway chats that don't belong to any project yet — the "just open a chat and
-ask something" path. It's a single shared agent, not one-per-anything.
-Scratch chats:
+The **scratch** agent (`scratch`) backs the instance ROOT — quick chats that
+don't belong to any project yet, the "just open a chat and ask something" path.
+It's a single shared agent, not one-per-anything. Scratch chats:
 
 - Get the `send_file` MCP but **never** the self-management MCP.
 - Don't trigger a [sweep](./sweeper.md) (there's no project to curate).
-- Live under the scratch directory's own `.chats/`, not in any project.
+- Store their transcripts under `PADDOCK_SCRATCH_DIR`'s own `.chats/`, not in any
+  project.
+
+### Working directory (issue #512)
+
+The scratch agent's cwd is **`PADDOCK_PROJECTS_DIR`** — the instance's backing
+repo checkout — *not* `PADDOCK_SCRATCH_DIR`.
+
+Paddock sets no `system_prompt` when `nativeSystemPrompt` is on (the default), so
+100% of a root chat's standing instructions come from Claude Code's `CLAUDE.md`
+walk-up from the cwd. The scratch dir is a *sibling* of the backing repo with
+nothing above it, so root chats used to start with zero instance context while
+project chats got it. Running the root agent in the repo itself makes the
+instance-wide `<projectsRoot>/CLAUDE.md` resolve by the ordinary walk-up, exactly
+as it does for every keeper — the same two-level model, no special-casing.
+
+The transcript **store** did not move with the cwd: it stays at
+`<scratchDir>/.chats/`, reached through the symlink Paddock puts at Claude Code's
+encoded path for the new cwd (`ensureScratchChats` in `transcripts.ts`). That
+keeps root transcripts out of the backing repo's working tree — the same split a
+repo-backed project uses — and means an upgrade relocates no chat file at all,
+only the pointer. The pre-#512 pointer is retired on boot so a session is never
+listed from two buckets.
+
+The cwd move is *only* a cwd move: scratch is still not a project. No self-MCP,
+no sweeper, no per-project config — see [#513](https://github.com/edspencer/paddock/issues/513).
 
 ## Promotion: scratch → project
 
@@ -49,9 +73,11 @@ project)` (`herdctl.ts`, wired at `routes.ts:960`):
 
 1. **Moves the transcript** from the scratch `.chats/` into the project's
    `.chats/`, preserving mtime.
-2. **Rewrites the embedded `cwd` token** in the JSONL from the scratch dir to the
-   project's `workingDir`, so a promoted chat resumes in the right place — the
-   checkout, for a repo-backed project.
+2. **Rewrites the embedded `cwd` token** in the JSONL to the project's
+   `workingDir`, so a promoted chat resumes in the right place — the checkout,
+   for a repo-backed project. Both scratch cwds are rewritten (the current
+   `projectsRoot` and the legacy scratch dir), so a chat that predates #512
+   promotes just as cleanly.
 3. **Evicts the scratch agent's in-process session state**
    (`deleteSession(SCRATCH_AGENT, sessionId)`) so a same-process resume works.
 4. **Re-attributes** the session to `keeper-<slug>` and invalidates both agents'
@@ -65,7 +91,8 @@ rather than moving it — see [Chats](./chats.md).
 | | Keeper | Scratch |
 |---|---|---|
 | Count | One per project (`keeper-<slug>`) | One shared (`scratch`) |
-| Working dir | Project `workingDir` | `PADDOCK_SCRATCH_DIR` |
+| Working dir | Project `workingDir` | `PADDOCK_PROJECTS_DIR` (the backing repo) |
+| Transcript store | Project dir's `.chats/` | `PADDOCK_SCRATCH_DIR`'s `.chats/` |
 | Belongs to | A project | Nothing (yet) |
 | `send_file` MCP | ✅ | ✅ |
 | Self-management MCP | ✅ (env-gated) | ❌ |

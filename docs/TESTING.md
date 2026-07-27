@@ -87,6 +87,13 @@ temp data dir, with the fake `claude` first on `PATH`. Files:
   "Known gaps" for resume-after-promote.)
 - `git.test.ts` — status/diff/commit against a real temp git repo, and the
   `repo:false` path when the store isn't a repo.
+- `scratch-cwd.test.ts` — root (one-off) chats run in the backing repo (#512):
+  the turn's real cwd is `projectsRoot` (so `<projectsRoot>/CLAUDE.md` is on the
+  walk-up), the transcript store stays outside the repo at `<scratchDir>/.chats/`
+  with the new encoded bucket symlinked at it and the legacy one retired, the
+  chat still lists/hydrates/resumes, project chats don't leak into the Inbox
+  (herdctl's descendant-bucket union is filtered by attribution), and scratch is
+  still not a project.
 
 ### The fake-claude harness (`test/bin/claude`)
 

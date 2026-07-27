@@ -124,8 +124,29 @@ export interface PaddockConfig {
   herdctlConfigPath: string;
   /** Absolute path to the built web SPA (served in production). */
   webDist: string;
-  /** Working directory for one-off / scratch chats. */
+  /**
+   * Where one-off / root ("scratch") chat TRANSCRIPTS are stored — the `.chats/`
+   * host dir, plus any scratch files an out-of-project chat leaves behind.
+   * Driven by `PADDOCK_SCRATCH_DIR`, default `<dataDir>/scratch`.
+   *
+   * NOTE (issue #512): this is NOT the root agent's working directory any more.
+   * The cwd moved to {@link scratchWorkingDir} (== {@link projectsRoot}); the
+   * store deliberately stayed here, so root transcripts never enter the backing
+   * repo's working tree — exactly how a repo-backed project keeps its `.chats/`
+   * out of its checkout (issue #187).
+   */
   scratchDir: string;
+  /**
+   * The root ("scratch") agent's working directory: {@link projectsRoot}, i.e.
+   * the instance's backing git repo checkout (issue #512).
+   *
+   * Derived, not separately configurable — the point is that the root's cwd IS
+   * the backing repo, so (a) the repo's top-level `CLAUDE.md` is auto-loaded by
+   * Claude Code's cwd walk-up for root chats, and (b) the root is git-backed for
+   * free. Kept as its own field so every consumer names the decision instead of
+   * reaching for `projectsRoot` and meaning something else.
+   */
+  scratchWorkingDir: string;
   /** Provider-agnostic user-authentication config (see AUTH.md). */
   auth: AuthConfig;
   /** Voice-dictation (Whisper) capability (per-instance; default off). */
@@ -168,11 +189,16 @@ export interface PaddockConfig {
    * "replace" system prompt (false). Driven by `PADDOCK_KEEPER_NATIVE_PROMPT`.
    *
    * This is its own decision (issue #176) governing only which system prompt an
-   * agent gets. When native (the default on every
-   * instance), an instance-wide `CLAUDE.md` (a common ancestor of `projects/` and
-   * the scratch dir) plus a per-project `CLAUDE.md` are auto-loaded — the two-
-   * level native-context model. Set `PADDOCK_KEEPER_NATIVE_PROMPT=false` to fall
-   * back to the terse replace prompt (e.g. an instance with no CLAUDE.md files).
+   * agent gets. When native (the default on every instance), the two-level
+   * native-context model applies: the INSTANCE-wide `CLAUDE.md` — canonically
+   * `<projectsRoot>/CLAUDE.md`, i.e. the top-level `CLAUDE.md` of the backing
+   * repo checked out at {@link projectsRoot} — plus a per-project `CLAUDE.md`,
+   * both auto-loaded by Claude Code's own cwd walk-up. Every agent's cwd is at
+   * or below `projectsRoot` (keepers at `<projectsRoot>/<slug>[/<checkout>]`,
+   * the root/scratch agent AT `projectsRoot` itself since issue #512), so the
+   * walk-up reaches it from every chat. Set `PADDOCK_KEEPER_NATIVE_PROMPT=false`
+   * to fall back to the terse replace prompt (e.g. an instance with no
+   * `CLAUDE.md` files).
    */
   nativeSystemPrompt: boolean;
   /**
@@ -694,6 +720,9 @@ export function loadPaddockConfig(): PaddockConfig {
   const herdctlConfigPath = canonical(
     envOr("PADDOCK_HERDCTL_CONFIG", fileOr(file.herdctlConfigPath, path.join(dataRoot, "herdctl.yaml"))),
   );
+  // Transcript/scratch-file STORE for root chats. Still honoured (and still
+  // `PADDOCK_SCRATCH_DIR`-driven) after issue #512 — only the root agent's cwd
+  // moved to projectsRoot; the `.chats/` store deliberately stayed here.
   const scratchDir = canonical(
     envOr("PADDOCK_SCRATCH_DIR", fileOr(file.scratchDir, path.join(dataRoot, "scratch"))),
   );
@@ -720,6 +749,10 @@ export function loadPaddockConfig(): PaddockConfig {
     herdctlConfigPath,
     webDist: abs(envOr("PADDOCK_WEB_DIST", fileOr(file.webDist, defaultWebDist))),
     scratchDir,
+    // Issue #512: the root ("scratch") agent runs IN the backing repo checkout,
+    // so `<projectsRoot>/CLAUDE.md` is on its cwd walk-up like it is for every
+    // keeper. Derived, deliberately not separately configurable.
+    scratchWorkingDir: projectsRoot,
     auth: loadAuthConfig(file.auth),
     transcription: loadTranscriptionConfig(file.transcription),
     brand: loadBrandConfig(file.brand),

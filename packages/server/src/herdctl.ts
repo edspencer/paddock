@@ -70,7 +70,13 @@ import path from "node:path";
 import type { PaddockConfig } from "./config.js";
 import type { Project } from "./projects.js";
 import { KEEPER_DEFAULT_MODEL } from "./models.js";
-import { ensureProjectChats, projectChatsDir } from "./transcripts.js";
+import {
+  ensureProjectChats,
+  ensureScratchChats,
+  projectChatsDir,
+  rewriteTranscriptCwd,
+} from "./transcripts.js";
+import { ensureRootGitignore } from "./gitignore.js";
 import {
   triggerRunsOnOwnAgent,
   isCuratorTrigger,
@@ -313,12 +319,20 @@ export class HerdctlService {
     });
     await this.fleet.initialize();
 
-    // Register the scratch agent (one-off chats) at the keeper default model.
+    // Register the scratch agent (one-off / instance-root chats) at the keeper
+    // default model. Its cwd is `scratchWorkingDir` (== projectsRoot, the backing
+    // repo checkout) since issue #512, while its transcripts stay in
+    // `<scratchDir>/.chats/` — ensureScratchChats points the new cwd's encoded
+    // bucket at that unmoved store and retires the pre-#512 pointer, so existing
+    // root chats keep listing and resuming with no file relocation.
     await fs.mkdir(this.cfg.scratchDir, { recursive: true });
-    await ensureProjectChats(this.cfg.scratchDir);
+    await ensureScratchChats(this.cfg.scratchWorkingDir, this.cfg.scratchDir);
+    // The root agent now works INSIDE the backing repo, so keep its tooling's
+    // droppings untracked (no-op when projectsRoot isn't a repo).
+    await ensureRootGitignore(this.cfg.projectsRoot);
     await this.fleet.addAgent(this.scratchAgentConfig(), { replace: true });
     this.agentModels.set(SCRATCH_AGENT, KEEPER_DEFAULT_MODEL);
-    this.agentWorkingDirs.set(SCRATCH_AGENT, this.cfg.scratchDir);
+    this.agentWorkingDirs.set(SCRATCH_AGENT, this.cfg.scratchWorkingDir);
 
     // Register a keeper + sweeper for every existing project, recording each
     // keeper's resolved model so per-chat overrides can short-circuit later.
@@ -949,9 +963,24 @@ export class HerdctlService {
     return jobs.listRunsForAgents(this.cfg.stateDir, agents, limit);
   }
 
-  /** The working directory used by one-off / scratch chats. */
+  /**
+   * Where one-off / root (scratch) chat transcripts live — the `.chats/` HOST
+   * dir, i.e. what every transcript reader must be handed for a scratch chat.
+   * Since issue #512 this is NOT the scratch agent's working directory; see
+   * {@link scratchWorkingDir}.
+   */
   get scratchDir(): string {
     return this.cfg.scratchDir;
+  }
+
+  /**
+   * The scratch agent's working directory: the instance's backing repo checkout
+   * (`projectsRoot`), so `<projectsRoot>/CLAUDE.md` is on a root chat's cwd
+   * walk-up (issue #512). This is the cwd Claude Code records in a scratch
+   * transcript's `cwd` field.
+   */
+  get scratchWorkingDir(): string {
+    return this.cfg.scratchWorkingDir;
   }
 
   /**
@@ -976,15 +1005,18 @@ export class HerdctlService {
 
     // Read the scratch transcript (throws ENOENT for an unknown/absent session).
     const raw = await fs.readFile(fromFile, "utf8");
-    // Rewrite ONLY the embedded `cwd` token. Claude Code writes compact JSON
-    // (`"cwd":"/abs/path"` — no spaces, no escaping for a plain abs path), the
-    // same assumption scripts/migrate-chat.sh relies on.
-    // Rewrite the embedded cwd to the project's KEEPER cwd. For a repo-backed
-    // project that's the nested checkout (workingDir), not the metadata dir, so a
-    // promoted scratch chat resumes in the right place (issue #187).
-    const rewritten = raw
-      .split(`"cwd":"${this.cfg.scratchDir}"`)
-      .join(`"cwd":"${project.workingDir}"`);
+    // Rewrite ONLY the embedded `cwd` token, to the project's KEEPER cwd. For a
+    // repo-backed project that's the nested checkout (workingDir), not the
+    // metadata dir, so a promoted scratch chat resumes in the right place
+    // (issue #187). BOTH scratch cwds are rewritten: the current one
+    // (`scratchWorkingDir` == projectsRoot, issue #512) and the legacy
+    // `scratchDir`, so a chat started before the cwd move promotes just as
+    // cleanly as one started after.
+    const rewritten = rewriteTranscriptCwd(
+      raw,
+      [this.cfg.scratchWorkingDir, this.cfg.scratchDir],
+      project.workingDir,
+    );
 
     await fs.mkdir(projectChatsDir(project.dir), { recursive: true });
     await fs.writeFile(toFile, rewritten, "utf8");

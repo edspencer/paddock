@@ -81,8 +81,8 @@ Consequences worth knowing:
 |----------|---------|----------|---------|
 | `PADDOCK_CONFIG` | `<data>/paddock.config.yaml` | no | Path to the optional [YAML instance-config file](#instance-config-file-yaml) (base layer; env overrides it). When set explicitly, a missing file fails startup; unset, an absent default file is a no-op. |
 | `PADDOCK_DATA_DIR` | `./data` | no | Data root. **All paths below default to subdirectories of this** — set it and everything cascades. Holds projects, scratch, generated herdctl config, and state. |
-| `PADDOCK_PROJECTS_DIR` | `<data>/projects` | no | Root that contains per-project directories (each is a keeper's working dir). |
-| `PADDOCK_SCRATCH_DIR` | `<data>/scratch` | no | Working directory for one-off / scratch chats. |
+| `PADDOCK_PROJECTS_DIR` | `<data>/projects` | no | Root that contains per-project directories (each is a keeper's working dir). Also the **root (one-off) chat's working directory** and the canonical home of the instance-wide `CLAUDE.md` — see below. |
+| `PADDOCK_SCRATCH_DIR` | `<data>/scratch` | no | Where root (one-off / "scratch") chat **transcripts** are stored, plus any scratch files such a chat leaves behind. Since #512 this is *not* the root agent's working directory. |
 | `PADDOCK_STATE_DIR` | `<data>/.herdctl` | no | herdctl state directory. |
 | `PADDOCK_HERDCTL_CONFIG` | `<data>/herdctl.yaml` | no | Path to the generated `herdctl.yaml` the FleetManager loads (Paddock owns/regenerates it). |
 | `PADDOCK_WEB_DIST` | `packages/web/dist` | no | Built SPA served in production (resolved relative to the server module). |
@@ -98,6 +98,38 @@ Consequences worth knowing:
 > the path to the YAML instance-config file. The similarly-named
 > `window.__PADDOCK_CONFIG__` is a browser global the server injects into
 > `index.html` to carry branding to the SPA — not an env var.)
+
+### Working directories and the instance `CLAUDE.md`
+
+Every agent's working directory is at or below `PADDOCK_PROJECTS_DIR`:
+
+| Agent | Working directory |
+|---|---|
+| Keeper (notebook project) | `<projects>/<slug>` |
+| Keeper (repo-backed project) | `<projects>/<slug>/<checkout>` |
+| Root / one-off ("scratch") chats | `<projects>` itself |
+
+`PADDOCK_PROJECTS_DIR` is normally a checkout of the instance's **backing repo**,
+so its top-level `CLAUDE.md` — `<projects>/CLAUDE.md` — is the canonical
+**instance-wide** `CLAUDE.md`. With `PADDOCK_KEEPER_NATIVE_PROMPT` on (the
+default) Paddock sets no system prompt, and Claude Code's ordinary cwd walk-up
+auto-loads that file plus the per-project `CLAUDE.md` — the two-level
+native-context model. Because the root agent now runs *in* `<projects>` (issue
+#512), root chats get the instance file too; before that its cwd was
+`PADDOCK_SCRATCH_DIR`, a sibling with nothing above it, and root chats silently
+started with no instance context.
+
+Put the instance `CLAUDE.md` at `<projects>/CLAUDE.md`, **not** `<data>/CLAUDE.md`
+— `<data>` is outside the backing repo, so a file there is neither
+version-controlled nor pushed with the rest of the instance.
+
+Root chat *transcripts* deliberately do **not** live in the backing repo: they
+stay under `PADDOCK_SCRATCH_DIR` (`<scratch>/.chats/`), reached from the new cwd
+via Claude Code's encoded-path symlink. This is the same split a repo-backed
+project uses to keep `.chats/` out of its checkout. Paddock also appends
+`/.chats/` and `/.playwright-mcp/` to `<projects>/.gitignore` when that directory
+is a git repo, so a root chat's tooling can't leave untracked droppings at the
+repo root.
 
 ## Authentication
 

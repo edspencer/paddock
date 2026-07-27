@@ -5,6 +5,9 @@ import {
   encodeProjectDir,
   projectChatsDir,
   ensureProjectChats,
+  ensureScratchChats,
+  retireChatsLink,
+  rewriteTranscriptCwd,
   readFirstUserText,
 } from "../../src/transcripts.js";
 import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
@@ -161,5 +164,167 @@ describe("ensureProjectChats", () => {
     await fs.writeFile(badHome, "x", "utf8");
     process.env.CLAUDE_HOME = badHome;
     await expect(ensureProjectChats(projectDir)).resolves.toBeUndefined();
+  });
+});
+
+describe("rewriteTranscriptCwd (promotion, incl. the #512 legacy cwd)", () => {
+  const line = (cwd: string) => `{"type":"user","sessionId":"s","cwd":"${cwd}"}`;
+
+  it("rewrites every occurrence of each `from` dir to the target", () => {
+    const raw = [line("/data/scratch"), line("/data/scratch")].join("\n");
+    expect(rewriteTranscriptCwd(raw, ["/data/scratch"], "/data/projects/p")).toBe(
+      [line("/data/projects/p"), line("/data/projects/p")].join("\n"),
+    );
+  });
+
+  it("rewrites a chat written under EITHER scratch cwd (pre- and post-#512)", () => {
+    const raw = [line("/data/projects"), line("/data/scratch")].join("\n");
+    // The root agent's cwd moved from <dataDir>/scratch to projectsRoot, so a
+    // promoted chat may carry either. Both must land on the project's cwd.
+    const out = rewriteTranscriptCwd(raw, ["/data/projects", "/data/scratch"], "/data/projects/p");
+    expect(out).toBe([line("/data/projects/p"), line("/data/projects/p")].join("\n"));
+  });
+
+  it("does NOT match a deeper cwd that merely starts with the `from` dir", () => {
+    // The token carries the closing quote, so projectsRoot can't eat a project's
+    // own `<projectsRoot>/<slug>` cwd — the #512 prefix-collision guard.
+    const raw = line("/data/projects/other");
+    expect(rewriteTranscriptCwd(raw, ["/data/projects"], "/data/projects/p")).toBe(raw);
+  });
+
+  it("is a no-op when the same dir is passed twice (scratch store == cwd)", () => {
+    const raw = line("/data/projects");
+    expect(rewriteTranscriptCwd(raw, ["/data/projects", "/data/projects"], "/x")).toBe(line("/x"));
+  });
+});
+
+describe("retireChatsLink / ensureScratchChats — the #512 root-cwd move", () => {
+  let home: string;
+  let scratchDir: string;
+  let projectsRoot: string;
+  let prevClaudeHome: string | undefined;
+
+  beforeEach(async () => {
+    home = await makeTmpDir("paddock-claude-home-");
+    prevClaudeHome = process.env.CLAUDE_HOME;
+    process.env.CLAUDE_HOME = home;
+    scratchDir = await makeTmpDir("paddock-scratch-");
+    projectsRoot = await makeTmpDir("paddock-projects-");
+  });
+  afterEach(async () => {
+    if (prevClaudeHome === undefined) delete process.env.CLAUDE_HOME;
+    else process.env.CLAUDE_HOME = prevClaudeHome;
+    await rmTmpDir(home);
+    await rmTmpDir(scratchDir);
+    await rmTmpDir(projectsRoot);
+  });
+
+  const encoded = (dir: string) => path.join(home, "projects", encodeProjectDir(dir));
+
+  /** Seed the pre-#512 on-disk state: transcripts in <scratchDir>/.chats, with the
+   * encoded bucket for the OLD cwd (the scratch dir itself) symlinked at them. */
+  async function seedPre512(sessionId = "sess-live"): Promise<string> {
+    const chats = projectChatsDir(scratchDir);
+    await fs.mkdir(chats, { recursive: true });
+    const file = path.join(chats, `${sessionId}.jsonl`);
+    await fs.writeFile(file, `{"type":"user","cwd":"${scratchDir}"}\n`, "utf8");
+    await fs.mkdir(path.join(home, "projects"), { recursive: true });
+    await fs.symlink(chats, encoded(scratchDir));
+    return file;
+  }
+
+  it("upgrades a live instance: existing scratch chats stay put and are reachable from the NEW cwd", async () => {
+    await seedPre512();
+
+    await ensureScratchChats(projectsRoot, scratchDir);
+
+    // The store did NOT move — no chat file was relocated at all.
+    expect(
+      await fs.readFile(path.join(projectChatsDir(scratchDir), "sess-live.jsonl"), "utf8"),
+    ).toContain("user");
+    // …and it is readable THROUGH the new cwd's encoded bucket, which is what
+    // Claude Code / herdctl resolve for the relocated scratch agent.
+    expect(
+      await fs.readFile(path.join(encoded(projectsRoot), "sess-live.jsonl"), "utf8"),
+    ).toContain("user");
+    expect((await fs.lstat(encoded(projectsRoot))).isSymbolicLink()).toBe(true);
+  });
+
+  it("retires the pre-#512 pointer so a session is not listed from two buckets", async () => {
+    await seedPre512();
+    await ensureScratchChats(projectsRoot, scratchDir);
+    await expect(fs.lstat(encoded(scratchDir))).rejects.toThrow();
+  });
+
+  it("does NOT put the transcript store inside the backing repo (no repo pollution)", async () => {
+    await ensureScratchChats(projectsRoot, scratchDir);
+    // <projectsRoot>/.chats must not exist: the store stays outside the repo.
+    await expect(fs.lstat(path.join(projectsRoot, ".chats"))).rejects.toThrow();
+    expect((await fs.stat(projectChatsDir(scratchDir))).isDirectory()).toBe(true);
+  });
+
+  it("folds a legacy REAL transcript dir at the old cwd into the store before retiring it", async () => {
+    // An instance so old it predates the .chats relocation entirely.
+    const enc = encoded(scratchDir);
+    await fs.mkdir(enc, { recursive: true });
+    await fs.writeFile(path.join(enc, "old-1.jsonl"), '{"type":"user"}\n', "utf8");
+
+    await ensureScratchChats(projectsRoot, scratchDir);
+
+    expect(
+      await fs.readFile(path.join(projectChatsDir(scratchDir), "old-1.jsonl"), "utf8"),
+    ).toContain("user");
+    expect(
+      await fs.readFile(path.join(encoded(projectsRoot), "old-1.jsonl"), "utf8"),
+    ).toContain("user");
+    await expect(fs.lstat(enc)).rejects.toThrow();
+  });
+
+  it("never clobbers a transcript that already exists in the store", async () => {
+    const chats = projectChatsDir(scratchDir);
+    await fs.mkdir(chats, { recursive: true });
+    await fs.writeFile(path.join(chats, "dupe.jsonl"), "KEEP", "utf8");
+    const enc = encoded(scratchDir);
+    await fs.mkdir(enc, { recursive: true });
+    await fs.writeFile(path.join(enc, "dupe.jsonl"), "OVERWRITE", "utf8");
+
+    await ensureScratchChats(projectsRoot, scratchDir);
+
+    expect(await fs.readFile(path.join(chats, "dupe.jsonl"), "utf8")).toBe("KEEP");
+  });
+
+  it("leaves a FOREIGN symlink at the old cwd alone (only ever retires our own)", async () => {
+    const elsewhere = await makeTmpDir("paddock-elsewhere-");
+    await fs.mkdir(path.join(home, "projects"), { recursive: true });
+    await fs.symlink(elsewhere, encoded(scratchDir));
+
+    await ensureScratchChats(projectsRoot, scratchDir);
+
+    const target = await fs.readlink(encoded(scratchDir));
+    expect(path.resolve(path.dirname(encoded(scratchDir)), target)).toBe(elsewhere);
+    await rmTmpDir(elsewhere);
+  });
+
+  it("is idempotent — a second boot changes nothing", async () => {
+    await seedPre512();
+    await ensureScratchChats(projectsRoot, scratchDir);
+    await ensureScratchChats(projectsRoot, scratchDir);
+    expect(
+      await fs.readFile(path.join(encoded(projectsRoot), "sess-live.jsonl"), "utf8"),
+    ).toContain("user");
+    await expect(fs.lstat(encoded(scratchDir))).rejects.toThrow();
+  });
+
+  it("keeps the live pointer when the store IS the cwd (scratch dir == projects root)", async () => {
+    await ensureScratchChats(projectsRoot, projectsRoot);
+    expect((await fs.lstat(encoded(projectsRoot))).isSymbolicLink()).toBe(true);
+  });
+
+  it("never throws (retireChatsLink swallows a broken CLAUDE_HOME)", async () => {
+    const badHome = path.join(home, "afile");
+    await fs.writeFile(badHome, "x", "utf8");
+    process.env.CLAUDE_HOME = badHome;
+    await expect(ensureScratchChats(projectsRoot, scratchDir)).resolves.toBeUndefined();
+    await expect(retireChatsLink(scratchDir, scratchDir)).resolves.toBeUndefined();
   });
 });
