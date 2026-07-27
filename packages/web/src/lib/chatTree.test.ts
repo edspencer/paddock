@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { buildChatTree, countNodes, flattenTree, subtreeIds, withAncestors } from "./chatTree";
+import {
+  buildChatTree,
+  countNodes,
+  descendantIds,
+  flattenTree,
+  subtreeIds,
+  withAncestors,
+} from "./chatTree";
 import type { Chat } from "./types";
 
 /** Minimal chat; `at` is a bare hour so orderings read plainly. */
@@ -200,5 +207,46 @@ describe("subtreeIds (#508)", () => {
   it("puts the chat itself first, so the caller can read the target off the head", () => {
     const roots = buildChatTree([chat("p", "10"), chat("c1", "11", "p")]);
     expect(subtreeIds(roots[0])[0]).toBe("p");
+  });
+});
+
+/**
+ * descendantIds (#508 review follow-up) — the flat-list counterpart to
+ * `subtreeIds`. `subtreeIds` answers "what will this action touch" from the
+ * RENDERED tree; this answers "what else is attached" from the full list, which
+ * is what lets the delete dialog disclose the chats it will orphan rather than
+ * delete.
+ */
+describe("descendantIds (#508)", () => {
+  const all = [
+    chat("p", "10"),
+    chat("c1", "11", "p"),
+    chat("c2", "12", "p"),
+    chat("g1", "13", "c1"),
+    chat("other", "14"),
+  ];
+
+  it("finds every descendant at every level, and never the chat itself", () => {
+    expect(descendantIds(all, "p").sort()).toEqual(["c1", "c2", "g1"]);
+    expect(descendantIds(all, "c1")).toEqual(["g1"]);
+  });
+
+  it("is empty for a leaf and for an unknown id", () => {
+    expect(descendantIds(all, "g1")).toEqual([]);
+    expect(descendantIds(all, "nope")).toEqual([]);
+  });
+
+  it("sees descendants a filtered TREE would have dropped", () => {
+    // The search case: only one child survived the filter, so the rendered tree
+    // knows about one descendant while the real family has three.
+    const filtered = [all[0], all[1]];
+    expect(subtreeIds(buildChatTree(filtered)[0])).toHaveLength(2);
+    expect(descendantIds(all, "p")).toHaveLength(3);
+  });
+
+  it("terminates on a corrupt parent cycle instead of hanging", () => {
+    // A hand-edited sidecar can close a loop; the dialog must still open.
+    const cyclic = [chat("a", "10", "b"), chat("b", "11", "a"), chat("c", "12", "a")];
+    expect(descendantIds(cyclic, "a").sort()).toEqual(["b", "c"]);
   });
 });

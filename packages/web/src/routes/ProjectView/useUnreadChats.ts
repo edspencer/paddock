@@ -36,6 +36,7 @@ export function useUnreadChats({
   activeSession,
   runningSessions,
   onSeen,
+  onManySeen,
 }: {
   slug: string;
   chats: Chat[];
@@ -43,6 +44,14 @@ export function useUnreadChats({
   activeSession: string | null;
   runningSessions: ReadonlySet<string>;
   onSeen?: (sessionId: string) => void;
+  /**
+   * The bulk sibling of `onSeen` (#508): mirror the manual-unread clear for a
+   * whole set, and return an UNDO. `markManySeen` is an explicit bulk action with
+   * a rollback, so the mirror has to be reversible too — unlike `onSeen`, which
+   * rides the "you just opened this chat" path where there is nothing to undo.
+   * Need not be stable; nothing depends on it via an effect.
+   */
+  onManySeen?: (sessionIds: string[]) => () => void;
 }): {
   markSeen: (sessionId: string) => void;
   markManySeen: (sessionIds: string[]) => void;
@@ -96,21 +105,37 @@ export function useUnreadChats({
         return;
       }
       const when = Date.now();
-      const prev = sessionIds.map((id) => [id, markSeenLocally(id, when)] as const);
-      void api.markChatsUnread(slug, sessionIds, false).catch(() => {
-        for (const [id, p] of prev) revertSeenLocally(id, p, when);
-        setSeenVersion((v) => v + 1);
-      });
-      for (const id of sessionIds) onSeen?.(id);
+      // THREE things go optimistically read here, so all three have to come back
+      // if the POST fails. Rolling back only the lastSeen bump (as the first cut
+      // of this did) leaves the family showing as read forever: nothing polls, so
+      // the client never re-derives from the server until an unrelated turn or
+      // chat creation triggers a refetch.
+      const seenBefore = sessionIds.map((id) => [id, markSeenLocally(id, when)] as const);
+      const liveBefore = sessionIds.filter((id) => liveUnread.has(id));
+      // The parent mirrors the manual-unread clear in its own chat list and hands
+      // back the undo — it owns that state, so it owns restoring it.
+      const undoManualClear = onManySeen?.(sessionIds);
       setLiveUnread((live) => {
-        if (!sessionIds.some((id) => live.has(id))) return live;
+        if (!liveBefore.length) return live;
         const next = new Set(live);
-        for (const id of sessionIds) next.delete(id);
+        for (const id of liveBefore) next.delete(id);
         return next;
       });
       setSeenVersion((v) => v + 1);
+      void api.markChatsUnread(slug, sessionIds, false).catch(() => {
+        for (const [id, p] of seenBefore) revertSeenLocally(id, p, when);
+        if (liveBefore.length) {
+          setLiveUnread((live) => {
+            const next = new Set(live);
+            for (const id of liveBefore) next.add(id);
+            return next;
+          });
+        }
+        undoManualClear?.();
+        setSeenVersion((v) => v + 1);
+      });
     },
-    [slug, onSeen, markSeen],
+    [slug, onManySeen, markSeen, liveUnread],
   );
 
   // Fold the server-backed read-state (#189) from each chat DTO into the shared

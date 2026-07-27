@@ -225,6 +225,37 @@ describe("integration: batch subtree chat actions + detach (#508)", () => {
     expect(await dtoFor(doomed)).toBeUndefined();
   });
 
+  it("leaves the flags of a chat it FAILED to delete completely alone", async () => {
+    // Review catch: the cleanup used to run over the whole REQUESTED set, so a
+    // chat the response reported as SURVIVING was silently unarchived, unstarred,
+    // marked read and re-attached by the delete that spared it.
+    //
+    // Driven with an id that has no transcript, which is precisely the shape of a
+    // failed delete — flags key on (agent, sessionId) and don't require the chat
+    // to exist, so the sidecars can be set up exactly as a real chat's would be
+    // without putting a pool chat at risk.
+    const ghost = "ghost-session-508";
+    await batch("archive", { sessionIds: [ghost], archived: true });
+    await batch("unread", { sessionIds: [ghost], unread: true });
+    await detach(ghost, {});
+    await t.app.inject({
+      method: "POST",
+      url: `/api/projects/${slug}/chats/${ghost}/star`,
+      payload: { starred: true },
+    });
+
+    const res = await batch("delete", { sessionIds: [ghost] });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().removed).toEqual([]);
+    expect(res.json().failed).toEqual([ghost]);
+
+    // Told it survived — so it must be untouched, in every sidecar.
+    expect(await t.archive.isArchived(keeper, ghost)).toBe(true);
+    expect(await t.star.isStarred(keeper, ghost)).toBe(true);
+    expect(await t.unread.isUnread(null, keeper, ghost)).toBe(true);
+    expect(await t.parentDetach.isDetached(keeper, ghost)).toBe(true);
+  });
+
   it("deletes a whole family and clears its flags", async () => {
     const family = ids.slice(3, 5);
     await batch("archive", { sessionIds: family, archived: true });

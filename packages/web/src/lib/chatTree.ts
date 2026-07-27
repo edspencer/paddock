@@ -145,6 +145,43 @@ export function subtreeIds(node: ChatNode): string[] {
 }
 
 /**
+ * Every descendant of `rootId` within `all`, at every level — computed from the
+ * FLAT chat list rather than a built tree (#508).
+ *
+ * {@link subtreeIds} answers "what will this action touch", and is read off the
+ * rendered tree so it can never promise more than the user can see. This answers
+ * the different question "what else is attached to this chat", including chats
+ * a search has filtered out of the rendered tree — which is what lets the delete
+ * dialog disclose the children that will be ORPHANED rather than deleted.
+ *
+ * `all` should already be narrowed to one population (active or archived), since
+ * that is the granularity `buildChatTree` nests at. The seen-set makes a corrupt
+ * or hand-edited parent cycle terminate instead of hanging the dialog.
+ */
+export function descendantIds(all: readonly Chat[], rootId: string): string[] {
+  const childrenOf = new Map<string, string[]>();
+  for (const c of all) {
+    const parentId = c.parent?.sessionId;
+    if (!parentId) continue;
+    const siblings = childrenOf.get(parentId);
+    if (siblings) siblings.push(c.sessionId);
+    else childrenOf.set(parentId, [c.sessionId]);
+  }
+  const out: string[] = [];
+  const seen = new Set<string>([rootId]);
+  const stack = [rootId];
+  while (stack.length) {
+    for (const kid of childrenOf.get(stack.pop()!) ?? []) {
+      if (seen.has(kid)) continue;
+      seen.add(kid);
+      out.push(kid);
+      stack.push(kid);
+    }
+  }
+  return out;
+}
+
+/**
  * Flatten the forest to the rows actually rendered, skipping the subtrees of
  * collapsed parents. Returning a flat array (rather than recursing in the
  * component) keeps the row markup — and its absolutely-positioned hover action

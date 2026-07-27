@@ -550,12 +550,19 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
         const agent = await agentForSlug(req.params.slug);
         await cleanupAttachments(agent, req.params.sessionId);
         const removed = await herdctl.deleteSession(agent, req.params.sessionId);
-        // Drop any archived/starred/unread flag so a future session id can't inherit it.
+        // Drop any archived/starred/unread/detached flag so a future session id
+        // can't inherit it. (Read-state watermarks, other users' unread overrides,
+        // provenance and any queued message are deliberately NOT swept here — that
+        // predates #508 and is a wider cleanup than a chat delete should attempt.)
         await archive.setArchived(agent, req.params.sessionId, false).catch(() => undefined);
         await star.setStarred(agent, req.params.sessionId, false).catch(() => undefined);
         await unread
           .setUnread(readStateUser(req), agent, req.params.sessionId, false)
           .catch(() => undefined);
+        // #508: the detach override is per-chat state like the three above, so it
+        // has to be cleared on the same path — otherwise a recycled session id
+        // silently starts life detached from a parent it never had.
+        await parentDetach.setDetached(agent, req.params.sessionId, false).catch(() => undefined);
         return reply.code(200).send({ ok: true, removed });
       } catch (err) {
         return sendProjectError(reply, err);
@@ -1058,6 +1065,14 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
         // One `onArchive` per REAL transition into archived — the same contract the
         // single-chat route keeps, so a subtree archive fires the project's triggers
         // for each newly-archived chat and for none of the already-archived ones.
+        //
+        // Note the FAN-OUT this implies: shift-archiving a 21-chat family emits 21
+        // events, and a project with an enabled onArchive trigger will start 21
+        // agent turns from one click. That is the contract working as specified
+        // (the trigger asked to fire per archived chat), and coalescing here would
+        // silently drop events a subscriber is entitled to — but it is a real cost,
+        // and the first person to enable an onArchive trigger will meet it.
+        // Rate-limiting belongs in the dispatcher, not in this route.
         if (archived) {
           for (const sessionId of changed) {
             events?.emit("onArchive", { slug: req.params.slug, sessionId });
@@ -1192,12 +1207,18 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
             failed.push(sessionId);
           }
         }
-        // Drop every flag for the WHOLE requested set (not just `removed`), so a
-        // recycled session id can't inherit a stale archived/starred/unread/detached
-        // state — the same hygiene the single-chat delete performs.
-        await archive.setManyArchived(agent, sessionIds, false).catch(() => undefined);
-        await unread.setManyUnread(user, agent, sessionIds, false).catch(() => undefined);
-        for (const sessionId of sessionIds) {
+        // Drop the archived/starred/unread/detached flags of the chats that were
+        // ACTUALLY removed, so a recycled session id can't inherit stale state.
+        //
+        // Deliberately scoped to `removed`, NOT the whole requested set: a chat in
+        // `failed` still exists on disk, and the response has just told the user
+        // so. Clearing its flags would quietly unarchive it (so it reappears in
+        // the active list on the next refetch), unstar it, and re-attach it to the
+        // parent it was detached from — a chat the user was told SURVIVED, mutated
+        // by the delete that spared it.
+        await archive.setManyArchived(agent, removed, false).catch(() => undefined);
+        await unread.setManyUnread(user, agent, removed, false).catch(() => undefined);
+        for (const sessionId of removed) {
           await star.setStarred(agent, sessionId, false).catch(() => undefined);
           await parentDetach.setDetached(agent, sessionId, false).catch(() => undefined);
         }

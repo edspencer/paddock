@@ -1163,7 +1163,11 @@ describe("ProjectView: subtree chat actions (#508)", () => {
       await renderFamily();
       fireEvent.click(screen.getByRole("button", { name: /Delete chat Manager/i }));
       expect(await screen.findByText("Delete chat?")).toBeInTheDocument();
-      expect(screen.queryByText(/nested chats/i)).toBeNull();
+      // No subtree DELETION copy. (The dialog does still mention the nested
+      // chats — to say they survive and are moved to the top level — which is a
+      // different sentence and covered by its own test below.)
+      expect(screen.queryByText(/will be permanently removed — their transcripts/i)).toBeNull();
+      expect(screen.queryByRole("button", { name: /^Delete \d+ chats$/i })).toBeNull();
     });
 
     it("singularises for a one-child family", async () => {
@@ -1235,6 +1239,137 @@ describe("ProjectView: subtree chat actions (#508)", () => {
       apiFns.detachProjectChat.mockRejectedValue(new Error("detach failed"));
       fireEvent.click(screen.getByRole("button", { name: /Detach chat Child one/i }));
       await screen.findByText("detach failed");
+    });
+  });
+});
+
+/**
+ * Review follow-ups (#508): the two paths that weren't exercised live.
+ */
+describe("ProjectView: subtree mark-read rollback + delete disclosure (#508)", () => {
+  const family = () => [
+    makeChat({ sessionId: "mgr", name: "Manager", unread: true }),
+    makeChat({
+      sessionId: "c1",
+      name: "Child one",
+      unread: true,
+      parent: { project: "p", sessionId: "mgr" },
+    }),
+    makeChat({ sessionId: "c2", name: "Child two", parent: { project: "p", sessionId: "mgr" } }),
+    makeChat({ sessionId: "g1", name: "Grandchild", parent: { project: "p", sessionId: "c1" } }),
+  ];
+
+  const unreadCount = () => document.querySelectorAll('[data-unread="true"]').length;
+
+  it("restores every unread cue when the batch mark-read fails", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), { chats: family() }),
+    );
+    apiFns.markChatsUnread.mockRejectedValue(new Error("nope"));
+    renderAt("/projects/p/chat");
+    await screen.findByText("Manager");
+    expect(unreadCount()).toBe(2);
+
+    fireEvent.click(screen.getByRole("button", { name: /Mark chat Manager read/i }), {
+      shiftKey: true,
+    });
+    await waitFor(() => expect(apiFns.markChatsUnread).toHaveBeenCalled());
+
+    // The optimistic clear touched THREE things (lastSeen, the manual `unread`
+    // flag, and the live-unread set). Rolling back only lastSeen — the original
+    // bug — left the family reading as read forever, because nothing polls.
+    await waitFor(() => expect(unreadCount()).toBe(2));
+    expect(
+      screen.getByRole("button", { name: /Mark chat Manager read/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Mark chat Child one read/i })).toBeInTheDocument();
+    // The chat that was NOT flagged must not acquire a cue from the rollback.
+    expect(screen.getByRole("button", { name: /Mark chat Child two unread/i })).toBeInTheDocument();
+  });
+
+  it("keeps the cues cleared when the batch mark-read succeeds", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), { chats: family() }),
+    );
+    apiFns.markChatsUnread.mockResolvedValue(undefined);
+    renderAt("/projects/p/chat");
+    await screen.findByText("Manager");
+    expect(unreadCount()).toBe(2);
+
+    fireEvent.click(screen.getByRole("button", { name: /Mark chat Manager read/i }), {
+      shiftKey: true,
+    });
+    await waitFor(() => expect(unreadCount()).toBe(0));
+  });
+
+  describe("delete dialog discloses the chats it will ORPHAN", () => {
+    it("names them on a plain delete of a parent", async () => {
+      apiFns.getProjectDetail.mockResolvedValue(
+        detail(makeProject({ slug: "p" }), { chats: family() }),
+      );
+      renderAt("/projects/p/chat");
+      await screen.findByText("Manager");
+      fireEvent.click(screen.getByRole("button", { name: /Delete chat Manager/i }));
+      // Deleting Manager alone re-homes all three descendants to the top level.
+      // Silently, before this — an irreversible action restructuring the list.
+      expect(await screen.findByText(/3 other nested chats will be kept/i)).toBeInTheDocument();
+    });
+
+    it("says nothing when the subtree delete takes the whole family", async () => {
+      apiFns.getProjectDetail.mockResolvedValue(
+        detail(makeProject({ slug: "p" }), { chats: family() }),
+      );
+      renderAt("/projects/p/chat");
+      await screen.findByText("Manager");
+      fireEvent.click(screen.getByRole("button", { name: /Delete chat Manager/i }), {
+        shiftKey: true,
+      });
+      expect(await screen.findByText("Delete 4 chats?")).toBeInTheDocument();
+      expect(screen.queryByText(/will be kept and moved/i)).toBeNull();
+    });
+
+    it("counts the survivors when a SEARCH has narrowed the subtree", async () => {
+      // The reviewer's case: a query matches 1 of Manager's 3 descendants, so a
+      // shift-delete takes 2 chats and orphans the other 2. Accurate about what
+      // it deletes, but silent about the restructuring — until now.
+      apiFns.getProjectDetail.mockResolvedValue(
+        detail(makeProject({ slug: "p" }), { chats: family() }),
+      );
+      renderAt("/projects/p/chat");
+      await screen.findByText("Manager");
+      fireEvent.change(screen.getByRole("textbox", { name: /Search chats/i }), {
+        target: { value: "Child one" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: /Delete chat Manager/i }), {
+        shiftKey: true,
+      });
+      expect(await screen.findByText("Delete 2 chats?")).toBeInTheDocument();
+      expect(screen.getByText(/and its 1 nested chat will be/i)).toBeInTheDocument();
+      expect(screen.getByText(/2 other nested chats will be kept/i)).toBeInTheDocument();
+    });
+
+    it("ignores descendants in the OTHER population", async () => {
+      // An archived child of an active parent already renders as a root in the
+      // Archived tree, so deleting the parent doesn't re-home it — counting it
+      // as orphaned would be noise.
+      apiFns.getProjectDetail.mockResolvedValue(
+        detail(makeProject({ slug: "p" }), {
+          chats: [
+            makeChat({ sessionId: "mgr", name: "Manager" }),
+            makeChat({
+              sessionId: "c1",
+              name: "Archived child",
+              archived: true,
+              parent: { project: "p", sessionId: "mgr" },
+            }),
+          ],
+        }),
+      );
+      renderAt("/projects/p/chat");
+      await screen.findByText("Manager");
+      fireEvent.click(screen.getByRole("button", { name: /Delete chat Manager/i }));
+      expect(await screen.findByText("Delete chat?")).toBeInTheDocument();
+      expect(screen.queryByText(/will be kept and moved/i)).toBeNull();
     });
   });
 });

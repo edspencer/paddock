@@ -33,6 +33,15 @@ not work, because most live edges are *inferred* from the kickoff message and
 would simply be re-derived on the next load. Nothing is destroyed, so re-attach
 is just clearing the flag.
 
+The delete dialog also names the nested chats it will **keep**: deleting a parent
+without its children re-homes them to the top level, and an irreversible action
+shouldn't restructure the list silently. That covers a plain delete of a parent
+(previously silent) as well as a subtree delete narrowed by an active search.
+
+Single-chat delete now clears a chat's detach override too, alongside the
+archived/starred/unread flags it already cleared, so a recycled session id can't
+start life detached from a parent it never had.
+
 Discoverability comes from a new shared **`Tooltip`** component, which replaces
 every native `title=` in the chat list: themed, portalled out of the sidebar's
 scroll container, rich enough to carry "Archive · **Shift-click** to archive all

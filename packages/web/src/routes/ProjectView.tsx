@@ -32,7 +32,7 @@ import {
 import { relativeTime } from "../lib/format";
 import { clearLastTab, toSubPath, writeLastTab } from "../lib/lastTab";
 import { readForkParent, writeForkParent } from "../lib/forkLineage";
-import { buildChatTree, withAncestors } from "../lib/chatTree";
+import { buildChatTree, descendantIds, withAncestors } from "../lib/chatTree";
 import { readCollapsedChats, writeCollapsedChats } from "../lib/collapsedChats";
 import type { GitProjectStatus } from "../lib/types";
 import { decodeFilesSubpath, deriveView, repoHref } from "./ProjectView/urls";
@@ -162,7 +162,19 @@ export function ProjectView() {
    * about to destroy: shift-deleting a fan-out takes out chats that may not even
    * be on screen (the parent can be collapsed), and there is no undo.
    */
-  const [deletingChat, setDeletingChat] = useState<{ chat: Chat; ids: string[] } | null>(null);
+  const [deletingChat, setDeletingChat] = useState<{
+    chat: Chat;
+    ids: string[];
+    /**
+     * Nested chats that will SURVIVE the delete and be promoted to the top level
+     * by it. Non-zero whenever the chat has descendants the action isn't taking:
+     * a plain click on a parent (which never took them), or a Shift-click while a
+     * search has narrowed the rendered tree to a couple of matching children.
+     * The dialog says so — orphaning twenty chats is not something an
+     * irreversible action should do without mentioning it.
+     */
+    orphanCount: number;
+  } | null>(null);
   // The chat awaiting a fork-name in the naming dialog (issue #279); null when
   // the dialog is closed.
   const [forkingChat, setForkingChat] = useState<Chat | null>(null);
@@ -211,6 +223,31 @@ export function ProjectView() {
   // WS-owned `runningSessions` (kept owned here so the fleet-wide set doesn't
   // fragment) to flag chats that finish a turn while unfocused. `onSeen` clears
   // the manual unread override (#458) whenever a chat is marked seen.
+  /**
+   * The reversible bulk form of {@link clearManualUnread} (#508). A subtree
+   * "mark read" can fail, and when it does every optimistic change has to come
+   * back — including this mirror. Returns the undo rather than letting the hook
+   * guess: only this component knows which of those chats were actually flagged.
+   */
+  const clearManualUnreadMany = useCallback(
+    (ids: string[]) => {
+      const target = new Set(ids);
+      const wasFlagged = chats
+        .filter((c) => target.has(c.sessionId) && c.unread)
+        .map((c) => c.sessionId);
+      if (!wasFlagged.length) return () => {};
+      setChats((prev) =>
+        prev.map((c) => (target.has(c.sessionId) && c.unread ? { ...c, unread: false } : c)),
+      );
+      const restore = new Set(wasFlagged);
+      return () =>
+        setChats((prev) =>
+          prev.map((c) => (restore.has(c.sessionId) ? { ...c, unread: true } : c)),
+        );
+    },
+    [chats],
+  );
+
   const { unread, markManySeen } = useUnreadChats({
     slug,
     chats,
@@ -218,6 +255,7 @@ export function ProjectView() {
     activeSession,
     runningSessions,
     onSeen: clearManualUnread,
+    onManySeen: clearManualUnreadMany,
   });
 
   // The chats actually rendered in the sidebar, after applying the search
@@ -594,9 +632,21 @@ export function ProjectView() {
   }, [deletingChat, slug, activeSession, navigate]);
 
   /** Open the count-aware delete confirmation for a chat (or a whole subtree). */
-  const requestDeleteChat = useCallback((chat: Chat, ids: string[]) => {
-    setDeletingChat({ chat, ids });
-  }, []);
+  const requestDeleteChat = useCallback(
+    (chat: Chat, ids: string[]) => {
+      // Descendants are counted against the UNFILTERED list, narrowed to this
+      // chat's own population (active or archived) because that's what the tree
+      // nests at. Anything attached but not being deleted gets orphaned to the
+      // root, and the dialog has to say so.
+      const population = chats.filter((c) => !!c.archived === !!chat.archived);
+      const taking = new Set(ids);
+      const orphanCount = descendantIds(population, chat.sessionId).filter(
+        (id) => !taking.has(id),
+      ).length;
+      setDeletingChat({ chat, ids, orphanCount });
+    },
+    [chats],
+  );
 
   const renameChat = useCallback(
     async (chat: Chat) => {
@@ -1185,17 +1235,35 @@ export function ProjectView() {
             : "Delete chat?"
         }
         message={
-          deletingChat && deletingChat.ids.length > 1 ? (
+          deletingChat && (
             <>
-              <span className="font-medium text-ink dark:text-ink-dark">
-                {deletingChat.chat.name}
-              </span>{" "}
-              and its {deletingChat.ids.length - 1} nested chat
-              {deletingChat.ids.length - 1 === 1 ? "" : "s"} will be permanently removed — their
-              transcripts too. This cannot be undone.
+              {deletingChat.ids.length > 1 ? (
+                <>
+                  <span className="font-medium text-ink dark:text-ink-dark">
+                    {deletingChat.chat.name}
+                  </span>{" "}
+                  and its {deletingChat.ids.length - 1} nested chat
+                  {deletingChat.ids.length - 1 === 1 ? "" : "s"} will be permanently removed —
+                  their transcripts too.
+                </>
+              ) : (
+                "This chat's transcript will be permanently removed."
+              )}
+              {/* Survivors, named. Reachable two ways: a plain click on a parent
+                  (which never takes its children), and a Shift-click while a
+                  search has narrowed the tree to a few matching children. Either
+                  way the rest are re-homed to the top level by an action that
+                  can't be undone, so the dialog says it out loud. */}
+              {deletingChat.orphanCount > 0 && (
+                <>
+                  {" "}
+                  Its {deletingChat.orphanCount} other nested chat
+                  {deletingChat.orphanCount === 1 ? "" : "s"} will be kept and moved to the top
+                  level.
+                </>
+              )}{" "}
+              This cannot be undone.
             </>
-          ) : (
-            "This chat's transcript will be permanently removed. This cannot be undone."
           )
         }
         confirmLabel={
