@@ -56,6 +56,8 @@ export { IMAGE_MIME, VIDEO_MIME, DOCUMENT_MIME, fileKind, contentTypeFor };
 
 import {
   SLUG_RE,
+  ROOT_SLUG,
+  isRootSlug,
   isValidRepoUrl,
   repoCheckoutName,
   workingDirFor,
@@ -64,7 +66,15 @@ import {
   claudeTemplate,
   ProjectError,
 } from "./project-paths.js";
-export { isValidRepoUrl, repoCheckoutName, workingDirFor, slugify, ProjectError };
+export {
+  ROOT_SLUG,
+  isRootSlug,
+  isValidRepoUrl,
+  repoCheckoutName,
+  workingDirFor,
+  slugify,
+  ProjectError,
+};
 
 import {
   normalizeLinks,
@@ -125,8 +135,88 @@ export class ProjectStore {
     await fs.mkdir(this.root, { recursive: true });
   }
 
+  /**
+   * The on-disk directory backing a slug.
+   *
+   * This is the ONE resolution seam the root project needs (issue #516): the
+   * reserved {@link ROOT_SLUG} maps to `projectsRoot` itself instead of a
+   * subdirectory of it, so every other `ProjectStore` method — read, update,
+   * overview/changelog, file serving — works on the root unchanged. `list()`
+   * still only walks subdirectories, so the root stays out of enumeration.
+   */
   private dirFor(slug: string): string {
+    if (isRootSlug(slug)) return this.root;
     return path.join(this.root, slug);
+  }
+
+  /**
+   * The root project (issue #516), or `null` when this instance has none.
+   *
+   * Existence of `<projectsRoot>/project.yaml` IS the feature gate: absent, the
+   * instance behaves exactly as before (no root keeper, no root chats, `/` stays
+   * the projects grid). Nothing seeds this file — creating it is the opt-in.
+   */
+  async getRoot(): Promise<Project | null> {
+    return this.readSafe(ROOT_SLUG);
+  }
+
+  /**
+   * Create the root project record at `<projectsRoot>/project.yaml` (issue #516)
+   * — the explicit opt-in that turns the instance root into an ordinary project.
+   *
+   * Deliberately NOT routed through {@link create}: that one validates against
+   * `SLUG_RE` (which rejects `__root__` by design) and mkdir's a new directory.
+   * Here the directory already exists and is the repo root, so this only writes
+   * the record and makes sure `.chats/` is ignored by the backing repo — exactly
+   * as a repo-backed project's sidecar `.gitignore` already does.
+   */
+  async createRoot(input: { name?: string; summary?: string } = {}): Promise<Project> {
+    if (await this.exists(ROOT_SLUG)) {
+      throw new ProjectError("Root project already exists", "exists");
+    }
+    const now = today();
+    const yaml: ProjectYaml = {
+      name: input.name?.trim() || path.basename(path.resolve(this.root)) || "Root",
+      slug: ROOT_SLUG,
+      status: "active",
+      domain: [],
+      visibility: "public",
+      started: now,
+      updated: now,
+      summary: input.summary ?? "",
+      links: [],
+      pinned: [],
+    };
+    await fs.mkdir(this.root, { recursive: true });
+    await this.ensureRootGitignore();
+    await this.writeYaml(ROOT_SLUG, yaml);
+    return this.toDto(this.root, yaml, await this.overviewExists(ROOT_SLUG));
+  }
+
+  /**
+   * Keep the root's `.chats/` out of the backing repo (issue #516). Root chats
+   * are ordinary chats and get the same treatment project chats already do
+   * ({@link ensureSidecarGitignore}) — transcripts are append-heavy JSONL and are
+   * not tracked anywhere today.
+   */
+  private async ensureRootGitignore(): Promise<void> {
+    const file = path.join(this.root, GITIGNORE_FILE);
+    let existing = "";
+    try {
+      existing = await fs.readFile(file, "utf8");
+    } catch {
+      /* no .gitignore yet */
+    }
+    const have = new Set(existing.split("\n").map((l) => l.trim()));
+    // Tolerate the equivalent forms an instance-wide .gitignore may already use.
+    if (have.has("/.chats/") || have.has(".chats/") || have.has(".chats")) return;
+    const body = existing && !existing.endsWith("\n") ? `${existing}\n` : existing;
+    await fs.writeFile(
+      file,
+      `${body}${existing ? "" : "# Paddock instance data repo.\n"}` +
+        `# Root chat transcripts (issue #516) — not tracked, like every project's.\n/.chats/\n`,
+      "utf8",
+    );
   }
 
   /** List all projects, newest-updated first. Skips `_`-prefixed dirs. */
@@ -300,6 +390,11 @@ export class ProjectStore {
    * `<repo-name>/` directory is already present (never clobber existing files).
    */
   async promote(slug: string, repoUrl: string): Promise<Project> {
+    // The root project's dir is `projectsRoot`, which is already the instance's
+    // own backing repo — cloning a second repo inside it is never what's meant.
+    if (isRootSlug(slug)) {
+      throw new ProjectError("The root project cannot be repo-backed", "invalid");
+    }
     const current = await this.get(slug); // throws not_found
     if (current.repoBacked) {
       throw new ProjectError(`Project is already repo-backed: ${slug}`, "invalid");
@@ -610,6 +705,12 @@ export class ProjectStore {
    * herdctl.yaml + reloading the fleet — the inverse of the create flow.
    */
   async remove(slug: string): Promise<Project> {
+    // The root project's directory IS the projects root (issue #516) — deleting
+    // it would take every project with it. The resolved-path guard below already
+    // refuses, but say so explicitly rather than leaning on a coincidence.
+    if (isRootSlug(slug)) {
+      throw new ProjectError("Refusing to delete the root project", "invalid");
+    }
     const project = await this.get(slug); // throws not_found
     const dir = this.dirFor(slug);
     // Guard against deleting the projects root itself if a bad slug slipped in.
@@ -701,7 +802,9 @@ export class ProjectStore {
   private normalize(p: Partial<ProjectYaml>, slug: string): ProjectYaml {
     const started = p.started ?? today();
     return {
-      name: p.name ?? slug,
+      // A hand-written root project.yaml with no `name` reads better as the
+      // directory's own basename than as the reserved sentinel (issue #516).
+      name: p.name ?? (isRootSlug(slug) ? path.basename(path.resolve(this.root)) : slug),
       slug: p.slug ?? slug,
       status: (p.status as ProjectStatus) ?? "active",
       domain: Array.isArray(p.domain) ? p.domain : [],

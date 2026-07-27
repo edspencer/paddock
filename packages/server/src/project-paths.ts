@@ -13,6 +13,27 @@ import path from "node:path";
 export const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 /**
+ * The reserved slug of the ROOT project (issue #516) — the project whose
+ * directory IS `projectsRoot` rather than a subdirectory of it.
+ *
+ * Deliberately underscore-delimited: {@link SLUG_RE} rejects underscores, so no
+ * user-created project can ever collide with it (neither `create()` nor
+ * `slugify()` can produce it). `ProjectStore.list()` only reads *subdirectories*
+ * of the root, so a `project.yaml` sitting directly at `projectsRoot` is
+ * invisible to enumeration — resolution goes through the explicit
+ * `dirFor()` branch instead.
+ *
+ * Existence is the gate: with no `<projectsRoot>/project.yaml` there is no root
+ * project at all and nothing changes for an existing instance.
+ */
+export const ROOT_SLUG = "__root__";
+
+/** Whether a slug addresses the root project (issue #516). */
+export function isRootSlug(slug: string): boolean {
+  return slug === ROOT_SLUG;
+}
+
+/**
  * Accepted repo-URL shapes for a repo-backed project (issue #187): https(s),
  * ssh (`git@host:owner/repo`), git://, and a local `file://` or absolute path
  * (the last two make deterministic tests possible without a network). Anything

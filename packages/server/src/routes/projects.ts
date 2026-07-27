@@ -101,6 +101,75 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
     return { projects: projectsOut };
   });
 
+  // --- the root project (issue #516) --------------------------------------
+  // The root project is the project whose directory IS `projectsRoot`. It is
+  // deliberately absent from `GET /api/projects` (which lists subdirectories), so
+  // it gets its own tiny pair of endpoints: one to ask whether this instance has
+  // one, and one to create it. Everything else about it — detail, chats, PATCH,
+  // triggers, files — goes through the ordinary `/api/projects/__root__/…`
+  // routes, because it IS an ordinary project.
+
+  app.get(
+    "/api/root-project",
+    {
+      schema: {
+        tags: ["Projects"],
+        summary: "Get the root project",
+        description:
+          "Returns `{ project }` for the root project (the project whose directory is the projects root), or `{ project: null }` when this instance has no root project. Existence gates the root Home/Chat UI; nothing seeds it.",
+        response: {
+          200: {
+            description: "Object with the root `project`, or `null`.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
+    async () => ({ project: await projects.getRoot() }),
+  );
+
+  app.post<{ Body: { name?: string; summary?: string } | null }>(
+    "/api/root-project",
+    {
+      schema: {
+        tags: ["Projects"],
+        summary: "Create the root project",
+        description:
+          "Writes `<projectsRoot>/project.yaml` and registers the root keeper + sweeper agents. This is the opt-in that turns the instance root into an ordinary project (root Home, root chats). Responds 201 with `{ project }`, or 409 if one already exists.",
+        body: {
+          type: ["object", "null"],
+          additionalProperties: true,
+          properties: {
+            name: { description: "Human-readable name (defaults to the root directory name)." },
+            summary: { description: "Short summary." },
+          },
+          required: [],
+        },
+        response: {
+          201: {
+            description: "Object with the created root `project`.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
+    async (req, reply) => {
+      try {
+        const project = await projects.createRoot(req.body ?? {});
+        try {
+          await herdctl.ensureProjectAgent(project);
+        } catch (err) {
+          req.log.warn({ err }, "root keeper registration failed (record still written)");
+        }
+        return reply.code(201).send({ project });
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
   app.post<{ Body: CreateProjectInput }>(
     "/api/projects",
     {
