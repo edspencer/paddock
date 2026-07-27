@@ -40,6 +40,7 @@ alias. Invalid JSON / unknown kinds get a `chat:error` reply.
 | `chat:command` | User runs a slash command (e.g. `/compact`) in the current chat. | `sessionId?: string \| null`, `command: string` (full text incl. leading slash) |
 | `chat:cancel` | User clicks Stop; cancels the running turn's job. | `jobId: string` |
 | `chat:set_queue` | Persist/clear the single-slot composer queue server-side (survives browser close). | `sessionId?: string \| null`, `text?: string \| null` (null/empty ⇒ clear), `ts?: number \| null` |
+| `chat:continue` | The **Continue** button on a killed-task notice — re-drives a hung keeper with a recovery-attributed nudge (`sender: { kind: "recovery" }`). Refused server-side when the resolved `recovery.surfaceKilledTask` is off, so a client can't re-drive an instance whose operator turned Layer 2 off. | `sessionId: string` (**required** — recovery needs a chat), `projectSlug?: string`, `target?: string` |
 | `ping` | Client keepalive every 25s. | *(none)* |
 
 ## Server → client
@@ -55,6 +56,8 @@ alias. Invalid JSON / unknown kinds get a `chat:error` reply.
 | `chat:error` | A turn threw before/without a resolved session (sent to the origin socket only); also the reply to invalid JSON / unknown frames. | `projectSlug: string`, `target: string`, `error: string` (no `sessionId`/`jobId`/`seq`) |
 | `chat:resync` | Reconnect fallback: the live turn's frame buffer aged out past the requested gap, so the client must re-hydrate from the transcript. | `projectSlug: string`, `target: string`, `sessionId: string` |
 | `chat:queued_flushed` | The server auto-drained the persisted queued message after a turn (or when idle). | `projectSlug: string`, `target: string`, `sessionId: string`, `text?: string` (present ⇒ render as a user bubble; absent ⇒ just clear a stale copy) |
+| `chat:killed_task` | A background task the keeper was waiting on was killed. Broadcast **live**, the moment the recovery engine detects it — otherwise the notification sits in the SDK input queue until some later turn flushes it, and the "keeper is idle / Continue" affordance only appears after a manual refresh. Rendered as the amber killed-task notice. Gated on `recovery.surfaceKilledTask`, which is **on by default**. | `projectSlug: string`, `target: string`, `sessionId: string`, `summary: string` (the killed `<task-notification>`'s `<summary>`, or a generic fallback), `timestamp: string` (ISO, used client-side to dedup replays) |
+| `chat:notice` | A turn dead-ended without a normal reply — a usage/subscription limit, the max-turns cap, or an error (network, API 5xx-overloaded, auth, crash). Emitted **inline during the turn** and session-routed like the other turn frames, so the chat says *why* it stopped instead of looking dead. | `notice: TurnNotice` (carries the reset time for a usage limit, and `retryable` for the Retry/Continue affordance) |
 | `pong` | Reply to a client `ping`. | *(none)* |
 
 **`ChatCompleteUsage`** (on `chat:complete`): `inputTokens`, `outputTokens`,

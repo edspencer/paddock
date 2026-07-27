@@ -105,9 +105,11 @@ seam.
    into `index.html` and a SPA-aware not-found handler that serves the shell for
    navigations but 404s missing hashed assets (`app.ts:150-191`, issue #220).
 
-Configuration is entirely environment-based — no config files. Every knob is a
-`PADDOCK_*` env var resolved once by `loadPaddockConfig()` into a frozen
-`PaddockConfig` (`config.ts:308`). See [§8](#8-configuration) for the catalog.
+Configuration resolves once, at startup, into a frozen `PaddockConfig` via
+`loadPaddockConfig()` (`config.ts:669`) — from a **YAML instance file** layered
+under the `PADDOCK_*` environment (`loadConfigFile()`, `config.ts:543`, reading
+`PADDOCK_CONFIG` or `<dataDir>/paddock.config.yaml`). Env wins over file. See
+[§8](#8-configuration) for the catalog.
 
 ---
 
@@ -224,7 +226,7 @@ replayed to reconnecting or additional clients.
 
 ### Protocol
 
-Client → server (`ClientMessage` union, `ws.ts:301`):
+Client → server (`ClientMessage` union, `ws-protocol.ts`):
 
 | Type | Purpose |
 |---|---|
@@ -233,9 +235,10 @@ Client → server (`ClientMessage` union, `ws.ts:301`):
 | `chat:cancel` | Stop a running turn (`jobId`). |
 | `chat:subscribe` | Re-attach to a session (`sessionId`, `wantReplay?`, `lastSeq?`). |
 | `chat:set_queue` | Set/clear the queued follow-up message. |
+| `chat:continue` | Re-drive a hung keeper from a killed-task notice (`sessionId`); gated on `recovery.surfaceKilledTask`. |
 | `ping` | Keepalive. |
 
-Server → client (`ServerMessage` union, `ws.ts:454`):
+Server → client (`ServerMessage` union, `ws-protocol.ts`):
 
 | Type | Payload highlight |
 |---|---|
@@ -247,9 +250,11 @@ Server → client (`ServerMessage` union, `ws.ts:454`):
 | `chat:error` | Turn error to the origin socket. |
 | `chat:resync` | Buffer aged out — client should re-hydrate from the REST transcript. |
 | `chat:queued_flushed` | A queued message was auto-sent. |
+| `chat:killed_task` | A background task the keeper awaited was killed — broadcast live by the recovery engine so the Continue affordance appears without a refresh. |
+| `chat:notice` | The turn dead-ended (usage limit, max-turns, error) — rendered inline so the chat says why it stopped. |
 | `pong` | Keepalive reply. |
 
-Every hub-routed frame carries a `Routing` payload (`ws.ts:311`): `projectSlug`,
+Every hub-routed frame carries a `Routing` payload (`ws-protocol.ts`): `projectSlug`,
 `target` (legacy alias), `sessionId`, `jobId`, and a hub-stamped monotonic `seq`.
 
 ### Turn lifecycle (`onChatSend`, `ws.ts:1034`)
@@ -418,8 +423,9 @@ engine; the agent that does the writing is a dedicated **tool-less** per-project
   advanced past the persisted `sweep-state.json` watermark for that slug (no new
   activity → no sweep). On success the watermark advances; on failure only the
   timestamp advances (not the mtime), so the next sweep retries the same activity.
-- **Digest.** `buildDigest()` summarizes the last ~40 messages of the 3 newest
-  sessions (tool calls compacted, text trimmed) and `curationPrompt()` bundles
+- **Digest.** `buildDigest()` summarizes the last ~40 messages of the 6 newest
+  sessions (`MAX_DIGEST_SESSIONS`, `sweep.ts:124`; tool calls compacted, text
+  trimmed) and `curationPrompt()` bundles
   that with the current `OVERVIEW.md`, `CHANGELOG.md` tail, and `CLAUDE.md`.
 - **Tool-less contract.** The sweeper is configured with `allowed_tools: []` and
   instructed to use **no tools** and emit exactly three marked sections as plain
@@ -427,18 +433,28 @@ engine; the agent that does the writing is a dedicated **tool-less** per-project
 
   ```
   <<<OVERVIEW>>>   …full markdown, replaces OVERVIEW.md wholesale…
-  <<<CHANGELOG>>>  …one bare bullet line (no leading "- ", no date)…
-  <<<CLAUDE>>>     …new durable facts to append, or literal NOCHANGE…
+  <<<CHANGELOG>>>  …the full curated CHANGELOG.md, or literal NOCHANGE…
+  <<<CLAUDE>>>     …the full curated managed section, or literal NOCHANGE…
   <<<END>>>
   ```
 
-  `SweepService` parses the markers (`parseSweeperOutput`, `sweep.ts:436`) and
-  writes the files itself: `writeOverview` (wholesale replace), `appendChangelog`
-  (one dated bullet, the service adds `- ` + the `## YYYY-MM-DD` heading), and
-  `appendClaudeMd` (amend-only, and **skipped for repo-backed projects** whose
-  `CLAUDE.md` is upstream-owned). If the markers are missing/unparseable, it
-  throws — the watermark doesn't advance and no partial/garbage content is
-  written. All sweep failures are non-fatal to the chat.
+  `SweepService` parses the markers (`parseSweeperOutput`, `sweep.ts:727`) and
+  writes the files itself: `writeOverview` and `writeChangelog` (both
+  **wholesale replace** — the sweeper returns each file in full, so it can
+  coalesce and prune as well as add) and `writeClaudeCurated`, which replaces
+  only the managed section and is **skipped for repo-backed projects** whose
+  `CLAUDE.md` is upstream-owned. If the markers are missing or unparseable it
+  throws — the watermark doesn't advance and no partial content is written. All
+  sweep failures are non-fatal to the chat.
+
+  :::caution[This is a full-file curator, not an appender]
+  It used to be one: pre-v0.41 the contract was `appendChangelog` (one bare
+  bullet, the service adding `- ` and a `## YYYY-MM-DD` heading) and an
+  amend-only `appendClaudeMd`. Neither function exists any more. The distinction
+  matters because a prompt still written against the *append* contract will
+  emit one bullet, and the replace-semantics writer will take that as the
+  entire new file — see [#480](https://github.com/edspencer/paddock/issues/480).
+  :::
 
 Why tool-less: the sweeper returns text-only so it can never touch the working
 tree, can never enqueue another sweep, and runs cheaply on a small model
@@ -467,23 +483,40 @@ Three providers, selected by `PADDOCK_AUTH_MODE`:
   `createRemoteJWKSet` built once at registration). Fail-closed: missing
   `jwksUrl` throws at startup; a bad token → 401.
 
-**Exemptions** (`isExempt`, `auth.ts:100`): health/readiness probes and immutable
-static front-end assets (`/assets/`, `/icons/`, `/fonts/`, `/sw.js`,
-`/manifest.webmanifest`, `/favicon.ico` — issue #223) bypass auth so the SSO
-login flow and the PWA shell load cleanly; every `/api` and `/ws` route stays
-authenticated. The identity is exposed to the SPA via `GET /api/me`
-(`routes.ts:151`).
+**Exemptions** (`isExempt`, `auth.ts:137`) — three groups, not two:
+
+1. **Health/readiness probes**, so a proxy can probe a locked-down instance.
+2. **Immutable static front-end assets** (`/assets/`, `/icons/`, `/fonts/`,
+   `/sw.js`, `/manifest.webmanifest`, `/favicon.ico` — issue #223), so the SSO
+   login flow and the PWA shell load cleanly.
+3. **The Management API** — the `/mcp` prefix and
+   `/.well-known/oauth-protected-resource` (`auth.ts:114-135`). This one is not
+   a hole: `/mcp` runs its own per-client token authenticator, independent of
+   `PADDOCK_AUTH_MODE`, and 404s until an operator configures it. It is exempt
+   *because* the browser modes are actively wrong for it — `jwt` mode would
+   consume the client's own `Authorization: Bearer`. See
+   [Management API (MCP)](/reference/mcp/).
+
+Every other `/api` and `/ws` route stays authenticated. The identity is exposed
+to the SPA via `GET /api/me` (`routes/meta.ts`).
 
 ---
 
 ## 8. Configuration
 
-Everything is environment-based (`config.ts`); there are no config files. The
-main knobs:
+Two layers, resolved in `config.ts`: a **YAML instance file**
+(`PADDOCK_CONFIG`, else `<dataDir>/paddock.config.yaml`) with the environment
+layered on top — env wins per key. An explicitly-set `PADDOCK_CONFIG` that
+doesn't exist is a hard startup error; an absent default file is fine. The file
+is also what the Settings screen edits (`instance-config.ts`), and it is the
+*only* home for the `managementApi` block, which has no env equivalent. See
+[Config file (YAML)](/configuration/config-file/).
+
+The main knobs:
 
 | Area | Vars (default) |
 |---|---|
-| **Server** | `PORT` (4000), `HOST` (0.0.0.0), `LOG_LEVEL` (info) |
+| **Server** | `PORT` (4000), `HOST` (**127.0.0.1** since v0.44 — see [Binding & exposure](/configuration/binding-and-exposure/)), `LOG_LEVEL` (info) |
 | **Paths** | `PADDOCK_DATA_DIR` (./data), `PADDOCK_PROJECTS_DIR`, `PADDOCK_STATE_DIR` (`.herdctl`), `PADDOCK_HERDCTL_CONFIG`, `PADDOCK_SCRATCH_DIR`, `PADDOCK_WEB_DIST`, `CLAUDE_HOME` (~/.claude) |
 | **Auth** | `PADDOCK_AUTH_MODE` (none), `PADDOCK_AUTH_USER_HEADER` (X-Forwarded-User), `..._EMAIL_HEADER`, `..._GROUPS_HEADER`, `..._JWT_HEADER` (Authorization), `..._JWKS_URL`, `..._JWT_ISSUER`, `..._JWT_AUDIENCE`, `..._USERNAME_CLAIM`, `..._GROUPS_CLAIM` (groups) |
 | **Keeper** | `PADDOCK_KEEPER_DRIVE_MODE` (session), `PADDOCK_KEEPER_NATIVE_PROMPT` (true), `PADDOCK_SELF_MCP` (false), `PADDOCK_SELF_MCP_WRITE` (false; implies read) |
@@ -539,10 +572,13 @@ Projects concept page).
 | Concern | File(s) |
 |---|---|
 | Bootstrap / DI | `app.ts`, `index.ts` |
-| Config | `config.ts`, `models.ts` |
+| Config | `config.ts`, `models.ts`, `instance-config.ts` |
 | Auth boundary | `auth.ts` |
-| REST | `routes.ts` |
-| WS transport | `ws.ts`, `session-hub.ts` |
+| REST | `routes.ts` (a 48-line registrar) → `routes/{chats,projects,triggers,meta,git,mcp}.ts` |
+| WS transport | `ws.ts`, `ws-protocol.ts`, `ws-turn.ts`, `ws-triggers.ts`, `session-hub.ts` |
+| Triggers (hooks + schedules) | `triggers.ts`, `trigger-config.ts`, `hook-config.ts` |
+| Management API (`/mcp`) | `management-{config,auth,policy,ops,metadata,mcp-server}.ts` |
+| Keeper recovery | `recovery-config.ts` |
 | herdctl wrapper | `herdctl.ts`, `spike.ts` |
 | Project layer | `projects.ts` |
 | Sidecar stores | `archive.ts`, `read-state.ts`, `queued-message.ts`, `attachments.ts` |

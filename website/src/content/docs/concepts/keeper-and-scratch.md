@@ -48,7 +48,7 @@ Scratch chats:
 
 A scratch chat that turns out to matter can be **promoted** into a project,
 re-homing it under the keeper. `HerdctlService.promoteScratchSession(sessionId,
-project)` (`herdctl.ts`, wired at `routes.ts:960`):
+project)` (`herdctl.ts`, wired at `routes/chats.ts`):
 
 1. **Moves the transcript** from the scratch `.chats/` into the project's
    `.chats/`, preserving mtime.
