@@ -93,3 +93,48 @@ project still gives the keeper a first-class checkout to do real engineering in.
 See [`../DESIGN-backing-store.md`](../DESIGN-backing-store.md) for the durability
 model and [`../ARCHITECTURE.md`](../ARCHITECTURE.md) for how `dir`/`workingDir`
 flow through the system.
+
+## The root project
+
+An instance can also give a keeper to **the projects root itself** (#516). The
+framing is deliberately plain: *the root is the project whose directory is
+`projectsRoot` instead of a subdirectory of it.* It is a notebook project in
+every other respect — same `project.yaml`, same `OVERVIEW.md`/`CHANGELOG.md`
+curated by the same sweeper, same `.chats/`, same keeper agent config
+(`max_concurrent: 10`, self-MCP, per-chat model), same archive/star/unread/fork/
+nesting on its chats.
+
+```
+<projectsRoot>/
+├── CLAUDE.md         # already reaches every project keeper (the SDK's cwd walk-up)
+├── project.yaml      # the ROOT project's own record  ← the only new thing
+├── .chats/           # root-level chats (gitignored, like every project's)
+├── some-project/     # an ordinary project
+└── other-project/    # an ordinary project
+```
+
+It takes the reserved slug **`__root`**, which no user can create: `SLUG_RE`
+rejects underscores, so neither `create()` nor `slugify()` can produce it. (The
+trailing character is alphanumeric on purpose — herdctl's session store validates
+identifiers with a stricter pattern than `addAgent` does, and a name ending in
+`_` fails it on the first resume.) `ProjectStore.list()` only walks
+subdirectories, so the root never appears in enumeration; `dirFor()` resolves the
+sentinel and everything else follows.
+
+Its URLs are flat and top-level rather than namespaced under `/projects/:slug`:
+`/` is root Home and `/chat[/:sessionId]` its chats, with the projects grid at
+`/projects`. `/` always renders Home — unlike a project, there is no redirect to
+a sticky last tab, so the instance's front door is predictable.
+
+> **The root keeper is an omniscient admin, by design.** Its working directory
+> *contains* every project, so root chats can read and edit any project's files
+> and the root's git status is the whole repo. That is the point — the root is
+> where you act across the instance — but it is a meaningful escalation over a
+> project keeper, which is confined to its own subtree. Two things follow from
+> it: `remove()` refuses the root (its directory is the entire store), and
+> `promote()` refuses it (that directory is already the instance's backing repo).
+
+**Nothing seeds it.** Existence of `<projectsRoot>/project.yaml` is the feature
+gate: without it there is no root project, `/` is the projects grid, and the
+instance behaves exactly as it did before. Creating it is the opt-in — an
+"Enable" card on the projects grid, or `POST /api/root-project`.
