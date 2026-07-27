@@ -124,3 +124,47 @@ describe("ProjectsProvider", () => {
     spy.mockRestore();
   });
 });
+
+describe("ProjectsProvider — the root project (#516)", () => {
+  it("exposes the root project separately, never inside `projects`", async () => {
+    listProjects.mockResolvedValue([makeProject({ slug: "a" })]);
+    getRootProject.mockResolvedValue(makeProject({ slug: "__root", name: "Root" }));
+    render(
+      <ProjectsProvider>
+        <Probe />
+      </ProjectsProvider>,
+    );
+    await waitFor(() => expect(ctx().rootProject).not.toBeUndefined());
+    expect(ctx().rootProject?.slug).toBe("__root");
+    // The root is invisible to `GET /api/projects` and must stay out of the
+    // sidebar + grid, both of which render `projects`.
+    expect(ctx().projects.map((p) => p.slug)).toEqual(["a"]);
+  });
+
+  it("routes an upsert of the root project to `rootProject`, not the list", async () => {
+    listProjects.mockResolvedValue([makeProject({ slug: "a" })]);
+    render(
+      <ProjectsProvider>
+        <Probe />
+      </ProjectsProvider>,
+    );
+    await waitFor(() => expect(ctx().rootProject).toBeNull());
+    act(() => ctx().upsert(makeProject({ slug: "__root", name: "Root" })));
+    expect(ctx().rootProject?.name).toBe("Root");
+    expect(ctx().projects.map((p) => p.slug)).toEqual(["a"]);
+  });
+
+  it("resolves the root to null when the endpoint fails (an older server)", async () => {
+    listProjects.mockResolvedValue([]);
+    getRootProject.mockRejectedValue(new Error("404"));
+    render(
+      <ProjectsProvider>
+        <Probe />
+      </ProjectsProvider>,
+    );
+    await waitFor(() => expect(ctx().rootProject).toBeNull());
+    // A failed root lookup is NOT a page-level error: no root project is the
+    // normal state, and `/` must keep rendering the projects grid.
+    expect(ctx().error).toBeNull();
+  });
+});

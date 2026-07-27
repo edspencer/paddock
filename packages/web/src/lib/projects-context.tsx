@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { api } from "./api";
+import { ROOT_SLUG } from "../routes/ProjectView/urls";
 import type { Project } from "./types";
 
 interface ProjectsContextValue {
@@ -60,6 +61,15 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const upsert = useCallback((p: Project) => {
+    // The root project is never a member of `projects` (#516) — it would show up
+    // in the sidebar and the grid, neither of which is where it belongs. Route it
+    // to its own slot instead. No caller reaches this today (the root's Files and
+    // Settings tabs, which upsert, land in later phases), but the invariant
+    // should hold before those arrive rather than after.
+    if (p.slug === ROOT_SLUG) {
+      setRootProject(p);
+      return;
+    }
     setProjects((prev) => [p, ...prev.filter((x) => x.slug !== p.slug)]);
   }, []);
 
