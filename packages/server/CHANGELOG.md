@@ -1,5 +1,58 @@
 # @paddock/server
 
+## 0.48.1
+
+### Patch Changes
+
+- [#505](https://github.com/edspencer/paddock/pull/505) [`770439e`](https://github.com/edspencer/paddock/commit/770439e5637e3e1242df89129e322a6927d91e9f) Thanks [@edspencer](https://github.com/edspencer)! - Management API: only believe `X-Forwarded-Proto` from a trusted proxy (#474)
+
+  The `/mcp` plaintext guard refuses a bearer token over a plaintext non-loopback
+  connection. It honoured `X-Forwarded-Proto: https` from **any** peer, so the
+  guard could be switched off by the caller — including by the operator it exists
+  to protect, copy-pasting a header out of a smoke-test recipe onto a real network.
+
+  The forwarded scheme is now believed only when the immediate peer (the socket
+  address, which no client can set) is a trusted proxy. New
+  `managementApi.trustedProxies` / `PADDOCK_MANAGEMENT_TRUSTED_PROXIES`: IPs,
+  CIDRs, the presets `loopback` / `linklocal` / `uniquelocal`, or `none` / `all`.
+
+  The default — loopback plus the private address space — keeps every sidecar
+  deployment working, while a **public** peer can no longer switch the guard off.
+  Name your TLS terminator explicitly to turn the guard into a real control; the
+  server logs a one-per-peer warning while it is leaning on the default.
+
+  Not an authentication change: `/mcp` still requires a valid bearer token, and
+  spoofing the header never granted access.
+
+- [#504](https://github.com/edspencer/paddock/pull/504) [`ff1fab6`](https://github.com/edspencer/paddock/commit/ff1fab6b096047d55ac0e6aaa3e8b76c898480c4) Thanks [@edspencer](https://github.com/edspencer)! - Fix a nested chat list (#485) defect where a keeper reporting back could
+  re-parent the chat it reported to. The chat-list parent edge fell through to its
+  inference tier for any chat with no recorded parent — including chats whose
+  provenance already marks them as roots — so on the documented report-back
+  workflow (human starts a manager, manager spawns a child, child `send_message`s
+  home) the manager adopted its own child as its parent. Both edges then pointed at
+  each other and the tree builder's cycle guard picked a winner per render, so the
+  manager flipped between top-level and nested under its own child. Inference is
+  now skipped for a recorded root, and the "only the first injection marker counts"
+  rule is applied positionally as its documentation already claimed.
+
+  Also fixes two sidebar counts that read `.length` off a roots-only array while
+  their denominators stayed flat chat counts: the search badge (which read `1/40`
+  for a search matching five chats under one parent) and the Archived badge (which
+  undercounted nested archived chats).
+
+- [#503](https://github.com/edspencer/paddock/pull/503) [`98321e9`](https://github.com/edspencer/paddock/commit/98321e945ffbe394e6ab64f92de09925827dbd3e) Thanks [@edspencer](https://github.com/edspencer)! - Sweeper: bring the registered `system_prompt` in line with the whole-file
+  replace contract the curator has actually implemented since #379. It still told
+  the model to emit "exactly ONE changelog bullet line … just the bare sentence"
+  and described `CLAUDE.md` as "amend-only … never rewrite existing content",
+  while `sweep.ts` and the per-sweep user prompt both ask for the full file and
+  `writeChangelog`/`writeClaudeMd` replace wholesale. A model that weighted the
+  system prompt over the user prompt replaced the entire `CHANGELOG.md` with one
+  sentence — observed in the wild on this repo's own changelog. The prompt now
+  asks for the full `CHANGELOG.md` with existing dated entries preserved,
+  describes the `CLAUDE.md` curated-notes body as a section replace with dedup,
+  and says "three sections" instead of "two". Adds a unit test pinning the
+  contract so it cannot silently drift back.
+
 ## 0.48.0
 
 ### Minor Changes
