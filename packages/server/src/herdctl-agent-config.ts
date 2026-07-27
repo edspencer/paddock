@@ -197,17 +197,25 @@ export function buildSweeperConfig(
       "<the full markdown OVERVIEW.md, which REPLACES the current one wholesale: " +
       "a synthesized snapshot of the project's CURRENT state for an LLM to read " +
       "at the start of a new chat — what the project is, key decisions/facts, " +
-      "open questions, and next steps. No changelog or per-session history here.>\n" +
+      "open questions, and next steps. No changelog or per-session history here. " +
+      "Output exactly NOCHANGE only if the current one is already accurate.>\n" +
       "<<<CHANGELOG>>>\n" +
-      "<exactly ONE changelog bullet line summarizing this recent activity, with " +
-      'NO leading "- " and no date heading — just the bare sentence.>\n' +
+      "<the full markdown CHANGELOG.md, which REPLACES the current one wholesale. " +
+      "PRESERVE the existing dated entries and add at most ONE new bullet under a " +
+      "`## YYYY-MM-DD` heading at the TOP (newest-first), reusing today's heading " +
+      "if present; coalesce near-duplicate recent bullets. What you return becomes " +
+      "the ENTIRE file, so never emit a bare sentence or a lone bullet here — that " +
+      "would destroy the file's history. If this activity is already captured by a " +
+      "recent entry, output exactly NOCHANGE and change nothing.>\n" +
       "<<<CLAUDE>>>\n" +
-      "<ONLY genuinely NEW, DURABLE facts to APPEND to CLAUDE.md — long-lived " +
-      "identity/conventions (what the project fundamentally is, key decisions, " +
-      "how we work on it) NOT already in the current CLAUDE.md. Bare markdown " +
-      "bullets. CLAUDE.md is amend-only and rarely changes — never restate " +
-      "current state/tasks/history or rewrite existing content. If there is " +
-      "nothing genuinely new and durable to add, output exactly NOCHANGE.>\n" +
+      "<the full curated-notes body for CLAUDE.md — everything that belongs under " +
+      "the `## Curated notes` heading — which REPLACES that managed section " +
+      "wholesale (human-authored content above it is preserved for you). ONLY " +
+      "long-lived identity/conventions: what the project fundamentally is, key " +
+      "decisions, how we work on it. You are shown the whole current file, so " +
+      "DEDUP — fold near-duplicate notes into one and drop stale ones. Never " +
+      "restate current state/tasks/history (those are OVERVIEW/CHANGELOG). If " +
+      "nothing durable changed, output exactly NOCHANGE.>\n" +
       "<<<END>>>\n" +
       "\n" +
       "OVERVIEW.md describes the PROJECT, not the box it runs on: never record " +
@@ -217,9 +225,9 @@ export function buildSweeperConfig(
       "re-described or contradicted here.\n" +
       "\n" +
       "Be factual and terse. Do not invent details not present in the provided " +
-      "activity. Output ONLY the two sections between the markers — no preamble, " +
+      "activity. Output ONLY the three sections between the markers — no preamble, " +
       "no explanation, no tool use.",
-    default_prompt: "Curate OVERVIEW.md and CHANGELOG.md from recent activity.",
+    default_prompt: "Curate OVERVIEW.md, CHANGELOG.md and CLAUDE.md from recent activity.",
   };
 }
 
