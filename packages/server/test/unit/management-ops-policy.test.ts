@@ -38,8 +38,8 @@ function stubOps() {
         { slug: "beta", name: "Beta", status: "active" },
       ]),
       listChats: rec("listChats", [
-        { project: "alpha", sessionId: "s1", name: "one", updatedAt: "t", running: false },
-        { project: "beta", sessionId: "s2", name: "two", updatedAt: "t", running: false },
+        { project: "alpha", sessionId: "s1", name: "one", updatedAt: "t", running: false, archived: false },
+        { project: "beta", sessionId: "s2", name: "two", updatedAt: "t", running: false, archived: false },
       ]),
       readChat: rec("readChat", []),
     },

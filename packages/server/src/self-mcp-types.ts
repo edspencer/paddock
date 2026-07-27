@@ -67,6 +67,13 @@ export interface SelfMcpChat {
   updatedAt: string;
   /** Whether a turn is currently in flight for this chat. */
   running: boolean;
+  /**
+   * Whether the chat is filed away in the UI's "Archived" section (#489). Always
+   * present — `list_chats` hides archived chats by default, so the flag is what
+   * lets a caller that passed `include_archived: true` tell the two apart, and it
+   * mirrors the REST DTO (`chat-dto.ts`), which has always carried it.
+   */
+  archived: boolean;
 }
 
 /** One transcript message as surfaced to the agent. */

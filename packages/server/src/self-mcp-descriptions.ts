@@ -32,8 +32,14 @@ export const LIST_PROJECTS_DESC =
 export const LIST_CHATS_DESC =
   "List chats. Pass `project` (a slug) to list only that project's chats, or omit " +
   "it to list chats across ALL projects. Returns each chat's owning project, " +
-  "sessionId, display name, last-updated time, and whether a turn is currently " +
-  "running. Cheap — does not read full transcripts; use `read_chat` for content.";
+  "sessionId, display name, last-updated time, whether a turn is currently " +
+  "running, and whether it is archived. ARCHIVED chats are EXCLUDED by default " +
+  "(matching the web UI, which files them away in a collapsed section); the " +
+  "result's `omittedArchived` count says how many were hidden — pass " +
+  "`include_archived: true` to get them back. You MUST do that to obtain the " +
+  "session_id of an archived chat: this tool is the only source of session ids, " +
+  "so an archived chat is otherwise unreachable by `read_chat`/`unarchive_chat`. " +
+  "Cheap — does not read full transcripts; use `read_chat` for content.";
 
 export const READ_CHAT_DESC =
   "Read a trimmed tail of a chat's transcript. Pass `project` (slug) and " +

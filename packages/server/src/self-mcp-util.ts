@@ -63,6 +63,23 @@ export function clampLimit(raw: unknown): number {
   return n;
 }
 
+/**
+ * Normalize a BOOLEAN tool argument, defaulting when absent/unusable. A real
+ * boolean is taken as-is; `"true"`/`"false"` (any case, padded) are accepted too
+ * because the CLI-runtime MCP transport has proven lossy with non-string args
+ * (see {@link coercePrompts}) — the same defensive parse, one type down. Anything
+ * else falls back rather than erroring: a mistyped flag shouldn't fail a read.
+ */
+export function coerceBoolean(raw: unknown, fallback: boolean): boolean {
+  if (typeof raw === "boolean") return raw;
+  if (typeof raw === "string") {
+    const s = raw.trim().toLowerCase();
+    if (s === "true") return true;
+    if (s === "false") return false;
+  }
+  return fallback;
+}
+
 /** Truncate a single message's text with an explicit marker. */
 export function truncateText(text: string): string {
   if (text.length <= READ_CHAT_MAX_TEXT) return text;

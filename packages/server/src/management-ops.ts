@@ -190,6 +190,8 @@ export function buildManagementOps(
       const chats = [];
       for (const p of targets) {
         const sessions = await deps.herdctl.listSessions(p);
+        // Hoisted: every session in this project is keyed by the SAME keeper agent.
+        const agent = keeperAgentName(p.slug);
         for (const s of sessions) {
           chats.push({
             project: p.slug,
@@ -197,6 +199,11 @@ export function buildManagementOps(
             name: s.customName ?? s.autoName ?? s.sessionId.slice(0, 8),
             updatedAt: s.mtime,
             running: hub.isRunning(s.sessionId),
+            // #489: the archived flag the web UI has always had (`chat-dto.ts`) but
+            // the MCP surface never reported — so the two disagreed about what "the
+            // chat list" is. Cost is nil: ArchiveStore lazy-loads once and caches,
+            // so this is a `Set.has()` per chat, not a read per chat.
+            archived: await deps.archive.isArchived(agent, s.sessionId),
           });
         }
       }

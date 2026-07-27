@@ -148,12 +148,23 @@ omitted when the project has none. Use `slug` to target the other tools.
 | Argument | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `project` | string | no | Project slug to filter by. **Omit to list chats across all projects.** |
+| `include_archived` | boolean | no | Include archived chats. **Defaults to `false`**, matching the web UI. |
 
 Cheap — it does not read transcripts.
 
-**Returns** `{ count, project, chats: [{ project, sessionId, name, updatedAt, running }] }`,
+**Returns** `{ count, omittedArchived, project, chats: [{ project, sessionId, name, updatedAt, running, archived }] }`,
 where `project` echoes the filter (`null` when unfiltered), `updatedAt` is the
 last transcript write and `running` says whether a turn is in flight.
+
+**Archived chats are hidden by default.** The web UI files them into a collapsed
+"Archived" section, and this tool now agrees — on an instance with a few hundred
+chats the archived ones would otherwise dominate the response. `omittedArchived`
+reports how many were withheld, so the filter is never silent.
+
+That matters more than it looks: `list_chats` is the **only** way anything
+discovers a `session_id`. Hide an archived chat without saying so and it becomes
+unaddressable — no `read_chat`, no `unarchive_chat`, and no clue why. Pass
+`include_archived: true` whenever you need one back.
 
 ### `read_chat`
 

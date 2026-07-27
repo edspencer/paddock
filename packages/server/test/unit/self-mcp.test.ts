@@ -60,8 +60,11 @@ const PROJECTS: SelfMcpProject[] = [
 ];
 
 const CHATS: SelfMcpChat[] = [
-  { project: "paddock", sessionId: "aaa", name: "Chat A", updatedAt: "2026-07-14T00:00:00Z", running: true },
-  { project: "herdctl", sessionId: "bbb", name: "Chat B", updatedAt: "2026-07-13T00:00:00Z", running: false },
+  { project: "paddock", sessionId: "aaa", name: "Chat A", updatedAt: "2026-07-14T00:00:00Z", running: true, archived: false },
+  { project: "herdctl", sessionId: "bbb", name: "Chat B", updatedAt: "2026-07-13T00:00:00Z", running: false, archived: false },
+  // #489: archived — hidden from the default listing, and the reason
+  // `omittedArchived` exists.
+  { project: "paddock", sessionId: "ccc", name: "Chat C", updatedAt: "2026-07-12T00:00:00Z", running: false, archived: true },
 ];
 
 function fakeContext(over: Partial<SelfMcpContext> = {}): SelfMcpContext {
@@ -103,6 +106,55 @@ describe("self-management MCP (Phase 1, read-only)", () => {
     expect(json.count).toBe(1);
     expect(json.project).toBe("herdctl");
     expect(json.chats[0].sessionId).toBe("bbb");
+  });
+
+  // ── #489: archived chats are hidden by default, but never SILENTLY ─────────
+
+  it("list_chats HIDES archived chats by default and reports how many it hid", async () => {
+    const { json } = await call(fakeContext(), "list_chats");
+    expect(json.chats.map((c: SelfMcpChat) => c.sessionId)).toEqual(["aaa", "bbb"]);
+    expect(json.count).toBe(2);
+    // The load-bearing part: list_chats is the only source of session ids, so a
+    // caller must be able to SEE that something was withheld.
+    expect(json.omittedArchived).toBe(1);
+  });
+
+  it("list_chats with include_archived returns archived chats and their flag", async () => {
+    const { json } = await call(fakeContext(), "list_chats", { include_archived: true });
+    expect(json.chats.map((c: SelfMcpChat) => c.sessionId)).toEqual(["aaa", "bbb", "ccc"]);
+    expect(json.count).toBe(3);
+    expect(json.omittedArchived).toBe(0);
+    expect(json.chats.find((c: SelfMcpChat) => c.sessionId === "ccc").archived).toBe(true);
+  });
+
+  it("list_chats composes include_archived with the project filter", async () => {
+    const { json: hidden } = await call(fakeContext(), "list_chats", { project: "paddock" });
+    expect(hidden.chats.map((c: SelfMcpChat) => c.sessionId)).toEqual(["aaa"]);
+    expect(hidden.omittedArchived).toBe(1);
+
+    const { json: shown } = await call(fakeContext(), "list_chats", {
+      project: "paddock",
+      include_archived: true,
+    });
+    expect(shown.chats.map((c: SelfMcpChat) => c.sessionId)).toEqual(["aaa", "ccc"]);
+    expect(shown.omittedArchived).toBe(0);
+  });
+
+  it("list_chats accepts include_archived as a STRING (lossy CLI MCP transport)", async () => {
+    const { json: on } = await call(fakeContext(), "list_chats", { include_archived: "true" });
+    expect(on.count).toBe(3);
+    const { json: off } = await call(fakeContext(), "list_chats", { include_archived: "False" });
+    expect(off.count).toBe(2);
+    // A junk value falls back to the default rather than erroring a read.
+    const { json: junk } = await call(fakeContext(), "list_chats", { include_archived: "yes" });
+    expect(junk.count).toBe(2);
+  });
+
+  it("list_chats declares include_archived in its inputSchema", () => {
+    const schema = toolByName(fakeContext(), "list_chats").inputSchema as {
+      properties: Record<string, { type: string }>;
+    };
+    expect(schema.properties.include_archived?.type).toBe("boolean");
   });
 
   it("read_chat returns the trimmed tail with total/returned counts", async () => {
