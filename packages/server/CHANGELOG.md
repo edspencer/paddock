@@ -1,5 +1,25 @@
 # @paddock/server
 
+## 0.48.0
+
+### Minor Changes
+
+- [#500](https://github.com/edspencer/paddock/pull/500) [`55c2d2e`](https://github.com/edspencer/paddock/commit/55c2d2e0d98bf753edd235cf14bc024c6f9918f7) Thanks [@edspencer](https://github.com/edspencer)! - `list_chats` (self-management + Management API MCP) now hides archived chats by
+  default, matching the web UI, and reports each chat's `archived` flag. Pass
+  `include_archived: true` to get them back; the result's `omittedArchived` count
+  always says how many were withheld, so an archived chat's `session_id` is never
+  silently unreachable.
+
+### Patch Changes
+
+- [#502](https://github.com/edspencer/paddock/pull/502) [`9d98d08`](https://github.com/edspencer/paddock/commit/9d98d08575d5d9ec61c9e0b5304628b803838ccb) Thanks [@edspencer](https://github.com/edspencer)! - Docker images: install `openssh-client` in the base image and the `docker
+buildx` / `docker compose` CLI plugins in devbox. The base image shipped `git`
+  with no ssh transport, so every `git@` remote failed mid-turn with `error:
+cannot run ssh: No such file or directory`; devbox shipped `docker-ce-cli` with
+  an empty plugin path, so `docker compose` and `docker buildx` were both
+  `unknown command`. Both were missing runtime dependencies of tooling the images
+  already deliberately include.
+
 ## 0.47.0
 
 ### Minor Changes
