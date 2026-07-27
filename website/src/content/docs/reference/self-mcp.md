@@ -198,6 +198,11 @@ ignored.
 **Returns** `{ created: true, project, sessionId, name, model, prompt }` — the
 prompt is echoed (truncated) so the tool call renders with the real message.
 
+The new chat appears **nested under the chat that called this tool**, so a
+fan-out folds up as one family in the sidebar. Called over the external
+[`/mcp`](/reference/mcp/) instead there is no calling chat to nest under, and the
+new chat is a root.
+
 ### `fork_chat`
 
 Fork an existing chat into a new child that inherits its history, then optionally
@@ -212,6 +217,10 @@ kick the child off.
 | `model` | string | no | Applies to the kickoff turn only — so a `model` without a `prompt` has no effect. |
 
 **Returns** `{ forked: true, project, sessionId, from, name, model, prompt }`.
+
+A fork nests under its **source** — the chat named by `session_id` — not under
+the chat that called the tool. Forking someone else's chat therefore files the
+result beside that chat's own children, not beside yours.
 
 Fails with `no chat to fork (current chat id not yet known — pass session_id)`
 if it defaults to the current chat before that chat's id has resolved.

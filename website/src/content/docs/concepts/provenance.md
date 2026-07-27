@@ -16,13 +16,20 @@ once a chat is running, see
 
 ## The provenance marker: origin + depth
 
-Every server-initiated turn carries a small marker with two fields:
+Every server-initiated turn carries a small marker. Two fields are always
+present:
 
 - **`origin`** — how the chat came to exist: `human`, `scheduled`, `spawned`, or
   `hook`.
 - **`depth`** — how many spawn hops it is from the human (or scheduled) root of
   its tree. A human-started chat is `depth: 0`; a chat it spawns is `depth: 1`;
   that child's own children are `depth: 2`; and so on.
+
+Two more appear when the chat has an identifiable parent —
+**`parentSessionId`** and **`parentProject`**, naming that chat. `depth` says
+*how far* a chat is from its root; these say *which chat* it came from, and
+that's what lets the sidebar draw the tree
+([below](#from-badge-to-structure)).
 
 So a human-started chat is `{ origin: human, depth: 0 }` — the root of any
 fan-out tree. A chat a keeper creates with a self-management tool becomes
@@ -61,6 +68,14 @@ unadorned:
 - **Human** chats — the default — show **no badge**, so only the unattended runs
   draw the eye.
 
+:::note[A nested chat hides its `spawned` badge]
+Now that spawned chats sit **underneath** the chat that created them, the violet
+branch chip would be saying something the indentation already says. So a nested
+row drops it. You'll still see it on a spawned chat rendered at the top level —
+its parent is in another project, archived, or filtered out — which is exactly
+the case where nothing else would tell you.
+:::
+
 The same origin colors reappear in the project's **History** tab, which lists
 recent runs (You / Scheduled / Spawned) so the work that happened while you were
 away is easy to find and open.
@@ -97,6 +112,48 @@ Attribution isn't only a history feature. When a message is injected into a chat
 you already have open, it now **streams in immediately** over the WebSocket —
 you see the incoming turn and its attribution appear in place, rather than only
 the reply showing up and having to refresh to learn where it came from.
+
+## From badge to structure
+
+Provenance used to only *decorate* the chat list. It now **shapes** it: a chat
+with a recorded parent is drawn nested underneath that parent, so a keeper's
+fan-out reads as one foldable family instead of a wall of sibling rows. The
+[chat-list guide](/using/working-in-chats/#nested-chats--a-fan-out-reads-as-a-tree)
+covers what that looks like; this is where the edge comes from.
+
+Paddock resolves each chat's parent in two tiers, in this order:
+
+1. **The recorded edge.** `parentSessionId` + `parentProject` on the chat's own
+   provenance marker, written when the chat was created. Authoritative.
+2. **An inferred edge.** Failing that, Paddock looks at the chat's message
+   provenance and takes the first turn injected *by another chat* — because a
+   spawned chat's kickoff prompt is injected by whoever spawned it. This is a
+   best guess, not a recorded fact.
+
+Tier 2 exists because tier 1 is new. **There is no migration**: chats created
+before nesting shipped have no recorded parent and never will, so the inference
+is what recovers most of their lineage at read time. It recovers a lot, but not
+everything — a chat forked with no kickoff prompt injected nothing into its
+child, so there is no signal at all and that child stays a permanent root.
+
+Which paths record a parent:
+
+| How the chat was created | Parent recorded? | Where it lands |
+|---|---|---|
+| A keeper forks a chat (`fork_chat`, or the UI's **Fork**) | **Yes** | Under the chat it was **forked from** — not under whoever ran the tool |
+| A keeper spawns a chat (`create_chat`) | Inferred | Under the chat that spawned it |
+| You start a new chat | No | A root, correctly |
+| A schedule or an event hook fires one | No | A root — a trigger is its own origin, not a child |
+| An **external** MCP client calls `create_chat` over `/mcp` | No | A root — the caller isn't a chat, so there's nothing to nest under |
+
+:::caution[Forking now counts against spawn depth]
+A fork made from the UI used to record nothing at all. It now records a real
+parent, which also means it inherits `depth = source.depth + 1`. Since `depth` is
+what gates a chat's access to the self-management tools, **repeatedly forking a
+fork can walk a chat past the limit** and quietly leave it without
+`paddock_manage`. If a deep fork seems to have lost its self-management tools,
+this is why.
+:::
 
 ## Why it matters
 
