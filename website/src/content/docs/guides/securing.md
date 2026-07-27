@@ -219,6 +219,10 @@ nginx) and Kubernetes recipes in
 hand-rolling a proxy, add the two path exemptions using the same mechanism your
 tier already uses for the health endpoints.
 
+If you're setting the endpoint up for the first time, [**Connect Claude Code to
+Paddock**](/guides/connect-claude-code/) walks the whole thing end to end, from
+minting the token to the first `tools/list`.
+
 Three more rules that stay yours even with the exemption in place:
 
 - **Keep TLS in front — and don't lean on Paddock's plaintext guard.** Paddock

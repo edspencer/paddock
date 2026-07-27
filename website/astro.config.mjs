@@ -80,6 +80,7 @@ export default defineConfig({
 						{ label: 'Running Paddock on Proxmox (LXC)', slug: 'guides/proxmox-lxc' },
 						{ label: 'Running Paddock on Kubernetes', slug: 'guides/kubernetes' },
 						{ label: 'Securing Paddock', slug: 'guides/securing' },
+						{ label: 'Connect Claude Code to Paddock', slug: 'guides/connect-claude-code' },
 						{ label: 'A home-lab setup', slug: 'guides/home-lab' },
 					],
 				},
