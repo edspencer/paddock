@@ -165,7 +165,7 @@ export class ProjectStore {
    * — the explicit opt-in that turns the instance root into an ordinary project.
    *
    * Deliberately NOT routed through {@link create}: that one validates against
-   * `SLUG_RE` (which rejects `__root__` by design) and mkdir's a new directory.
+   * `SLUG_RE` (which rejects `__root` by design) and mkdir's a new directory.
    * Here the directory already exists and is the repo root, so this only writes
    * the record and makes sure `.chats/` is ignored by the backing repo — exactly
    * as a repo-backed project's sidecar `.gitignore` already does.

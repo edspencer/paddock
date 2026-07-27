@@ -27,17 +27,17 @@ describe("integration: the root project (#516)", () => {
 
     const fleet = (await t.app.inject({ method: "GET", url: "/api/fleet" })).json();
     const names = (fleet.agents as Array<{ name: string }>).map((a) => a.name);
-    expect(names).not.toContain("keeper-__root__");
+    expect(names).not.toContain("keeper-__root");
 
     // Nothing was seeded at the projects root — existence is the opt-in.
     await expect(fs.access(path.join(t.projectsRoot, "project.yaml"))).rejects.toBeTruthy();
 
     // A slug the user CAN'T create is still a clean 404, not a 500.
-    const detail = await t.app.inject({ method: "GET", url: "/api/projects/__root__" });
+    const detail = await t.app.inject({ method: "GET", url: "/api/projects/__root" });
     expect(detail.statusCode).toBe(404);
   });
 
-  it("creates the root project and registers keeper-__root__ + sweeper-__root__", async () => {
+  it("creates the root project and registers keeper-__root + sweeper-__root", async () => {
     const create = await t.app.inject({
       method: "POST",
       url: "/api/root-project",
@@ -45,15 +45,15 @@ describe("integration: the root project (#516)", () => {
     });
     expect(create.statusCode).toBe(201);
     const project = create.json().project;
-    expect(project.slug).toBe("__root__");
+    expect(project.slug).toBe("__root");
     expect(project.dir).toBe(t.projectsRoot);
     expect(project.workingDir).toBe(t.projectsRoot);
     expect(project.repoBacked).toBe(false);
 
     const fleet = (await t.app.inject({ method: "GET", url: "/api/fleet" })).json();
     const names = (fleet.agents as Array<{ name: string }>).map((a) => a.name);
-    expect(names).toContain("keeper-__root__");
-    expect(names).toContain("sweeper-__root__");
+    expect(names).toContain("keeper-__root");
+    expect(names).toContain("sweeper-__root");
 
     // The record really is at the projects root, and .chats/ is gitignored there.
     await fs.access(path.join(t.projectsRoot, "project.yaml"));
@@ -68,13 +68,13 @@ describe("integration: the root project (#516)", () => {
   });
 
   it("serves the root through the ordinary project detail + chat routes", async () => {
-    const detail = await t.app.inject({ method: "GET", url: "/api/projects/__root__" });
+    const detail = await t.app.inject({ method: "GET", url: "/api/projects/__root" });
     expect(detail.statusCode).toBe(200);
     expect(detail.json().project.name).toBe("Instance Root");
     // An ordinary project detail payload: project + chats + changelog.
     expect(Array.isArray(detail.json().chats)).toBe(true);
 
-    const chats = await t.app.inject({ method: "GET", url: "/api/projects/__root__/chats" });
+    const chats = await t.app.inject({ method: "GET", url: "/api/projects/__root/chats" });
     expect(chats.statusCode).toBe(200);
   });
 
@@ -83,13 +83,13 @@ describe("integration: the root project (#516)", () => {
     const list = (await t.app.inject({ method: "GET", url: "/api/projects" })).json();
     const slugs = (list.projects as Array<{ slug: string }>).map((p) => p.slug);
     expect(slugs).toContain("alpha");
-    expect(slugs).not.toContain("__root__");
+    expect(slugs).not.toContain("__root");
   });
 
   it("accepts ordinary metadata edits on the root", async () => {
     const patch = await t.app.inject({
       method: "PATCH",
-      url: "/api/projects/__root__",
+      url: "/api/projects/__root",
       payload: { summary: "edited from the settings pane" },
     });
     expect(patch.statusCode).toBe(200);
@@ -97,7 +97,7 @@ describe("integration: the root project (#516)", () => {
   });
 
   it("refuses to DELETE the root project — its dir is the whole projects root", async () => {
-    const del = await t.app.inject({ method: "DELETE", url: "/api/projects/__root__" });
+    const del = await t.app.inject({ method: "DELETE", url: "/api/projects/__root" });
     expect(del.statusCode).toBe(400);
     // Everything survives.
     await fs.access(path.join(t.projectsRoot, "project.yaml"));
@@ -113,7 +113,7 @@ describe("integration: the root project (#516)", () => {
     try {
       const fleet = (await rebuilt.app.inject({ method: "GET", url: "/api/fleet" })).json();
       const names = (fleet.agents as Array<{ name: string }>).map((a) => a.name);
-      expect(names).toContain("keeper-__root__");
+      expect(names).toContain("keeper-__root");
     } finally {
       await rebuilt.close().catch(() => undefined);
     }

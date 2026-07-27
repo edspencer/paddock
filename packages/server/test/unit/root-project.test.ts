@@ -12,9 +12,21 @@ import {
 import { SLUG_RE } from "../../src/project-paths.js";
 import { keeperAgentName, sweeperAgentName } from "../../src/herdctl-agent-names.js";
 import { buildKeeperConfig } from "../../src/herdctl-agent-config.js";
-import { AGENT_NAME_PATTERN } from "@herdctl/core";
+import { AGENT_NAME_PATTERN, type DiscoveredSession } from "@herdctl/core";
+import { hookAgentName, triggerAgentName } from "../../src/herdctl-agent-names.js";
+import { childOf, HUMAN_ROOT } from "../../src/run-provenance.js";
+import { makeParentResolver } from "../../src/chat-dto.js";
 import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
 import type { PaddockConfig } from "../../src/config.js";
+
+/**
+ * herdctl's session-store path-safety guard
+ * (`@herdctl/core` `state/utils/path-safety.ts` → `SAFE_IDENTIFIER_PATTERN`).
+ * NOT exported from the package's public surface, so it is mirrored here — a
+ * drift shows up as the integration resume test failing, which is the real
+ * guard; this one just makes the reason legible.
+ */
+const SAFE_IDENTIFIER_PATTERN = /^[a-zA-Z0-9]([a-zA-Z0-9_.-]*[a-zA-Z0-9])?$/;
 
 /**
  * "The root is a project" (issue #516) — Phase 1: root project RESOLUTION.
@@ -39,7 +51,7 @@ describe("root project (#516) — resolution", () => {
   it("reserves a slug no user can ever create", () => {
     // SLUG_RE rejects underscores, so neither create() nor slugify() can mint it.
     expect(SLUG_RE.test(ROOT_SLUG)).toBe(false);
-    expect(slugify("__root__")).not.toBe(ROOT_SLUG);
+    expect(slugify("__root")).not.toBe(ROOT_SLUG);
     expect(isRootSlug(ROOT_SLUG)).toBe(true);
     expect(isRootSlug("root")).toBe(false);
   });
@@ -156,22 +168,80 @@ describe("root project (#516) — the keeper is an ordinary keeper", () => {
   });
   afterEach(() => rmTmpDir(root));
 
-  it("implies herdctl agent names that are actually legal", () => {
-    // The design flagged this as an assumption, not a fact. herdctl's
-    // AGENT_NAME_PATTERN allows underscores after the first character.
-    expect(AGENT_NAME_PATTERN.test(keeperAgentName(ROOT_SLUG))).toBe(true);
-    expect(AGENT_NAME_PATTERN.test(sweeperAgentName(ROOT_SLUG))).toBe(true);
-    expect(keeperAgentName(ROOT_SLUG)).toBe("keeper-__root__");
+  it("implies herdctl agent names that are legal under BOTH herdctl patterns", () => {
+    // #516 flagged agent-name legality as an assumption, not a fact — and it is
+    // the subtler kind of assumption, because herdctl validates agent names in
+    // TWO places with DIFFERENT rules:
+    //
+    //   addAgent      AGENT_NAME_PATTERN     /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/
+    //   session store SAFE_IDENTIFIER_PATTERN /^[a-zA-Z0-9]([a-zA-Z0-9_.-]*[a-zA-Z0-9])?$/
+    //
+    // The design's original `__root__` passes the first and FAILS the second
+    // (trailing underscore), so `keeper-__root__` registers happily and then
+    // throws PathTraversalError on the first session resume. Both must hold.
+    for (const name of [
+      keeperAgentName(ROOT_SLUG),
+      sweeperAgentName(ROOT_SLUG),
+      hookAgentName(ROOT_SLUG, "x"),
+      triggerAgentName(ROOT_SLUG, "x"),
+    ]) {
+      expect(AGENT_NAME_PATTERN.test(name), `${name} vs AGENT_NAME_PATTERN`).toBe(true);
+      expect(SAFE_IDENTIFIER_PATTERN.test(name), `${name} vs SAFE_IDENTIFIER_PATTERN`).toBe(true);
+    }
+    expect(keeperAgentName(ROOT_SLUG)).toBe("keeper-__root");
   });
 
   it("builds a keeper config rooted at projectsRoot with max_concurrent SET", async () => {
     const project = await store.createRoot({ name: "Root" });
     const cfg = { nativeSystemPrompt: true, browserMcp: false } as unknown as PaddockConfig;
     const config = buildKeeperConfig(cfg, project);
-    expect(config.name).toBe("keeper-__root__");
+    expect(config.name).toBe("keeper-__root");
     expect(config.working_directory).toBe(root);
     // Scratch omits `instances`, so herdctl serializes its turns at 1. The root
     // is a keeper and must NOT repeat that (design decision, #516 Phase 1).
     expect(config.instances).toEqual({ max_concurrent: 10 });
+  });
+});
+
+/**
+ * #516 Phase 2 flagged "widen `parent: {project, sessionId}` to accept the
+ * sentinel" as work. It turned out to be a no-op: `parentProject` is an
+ * unvalidated string end to end (`RunProvenance` sanitises the session id, not
+ * the project), so a root chat's lineage edge records and resolves like any
+ * other. These lock that in so a future narrowing doesn't silently orphan root
+ * chats.
+ */
+describe("root project (#516) — chat lineage carries the sentinel", () => {
+  const session = (sessionId: string): DiscoveredSession =>
+    ({
+      sessionId,
+      workingDirectory: "/w",
+      mtime: "2026-07-27T10:00:00.000Z",
+      resumable: true,
+    }) as DiscoveredSession;
+
+  it("stamps a recorded edge whose parent lives at the root", () => {
+    expect(childOf(HUMAN_ROOT, { project: ROOT_SLUG, sessionId: "abc" })).toEqual({
+      origin: "spawned",
+      depth: 1,
+      parentSessionId: "abc",
+      parentProject: ROOT_SLUG,
+    });
+  });
+
+  it("resolves a child of a root chat back to the root project", async () => {
+    const parentOf = makeParentResolver(
+      {
+        get: async () => ({
+          origin: "spawned",
+          depth: 1,
+          parentSessionId: "mgr",
+          parentProject: ROOT_SLUG,
+        }),
+      },
+      { parentChat: async () => null },
+      ROOT_SLUG,
+    );
+    expect(await parentOf(session("child"))).toEqual({ project: ROOT_SLUG, sessionId: "mgr" });
   });
 });
