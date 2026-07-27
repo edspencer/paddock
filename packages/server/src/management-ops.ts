@@ -253,6 +253,20 @@ export function buildManagementOps(
     return { kind: "chat", project: currentProjectSlug, sessionId: sid, name };
   };
 
+  /**
+   * THIS chat, as the parent edge to record on anything it creates (#509).
+   * Deliberately id-only and name-free: unlike the message sender above, a
+   * lineage edge is resolved against the live chat list at render time, so
+   * caching a display name here would just go stale.
+   *
+   * Null when there is no calling chat — the external `/mcp` transport binds
+   * `currentSessionId: () => null`, and a schedule/hook fire has no parent.
+   */
+  const parentRefForCurrentChat = (): { project: string; sessionId: string } | undefined => {
+    const sid = currentSessionId();
+    return sid ? { project: currentProjectSlug, sessionId: sid } : undefined;
+  };
+
   const write: SelfMcpWriteContext = {
     currentProjectSlug,
     currentSessionId,
@@ -273,6 +287,7 @@ export function buildManagementOps(
         fallbackModel: overrideModel ?? p.model,
         origin: spawnedChild.origin,
         depth: spawnedChild.depth,
+        parent: parentRefForCurrentChat(),
         maxSpawnDepth: maxSpawnDepthFor(p),
         sender: await senderForCurrentChat(),
       });

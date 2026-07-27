@@ -115,6 +115,16 @@ export interface StartAgentTurnOpts {
   origin: TurnOrigin;
   depth: number;
   /**
+   * The chat that CREATED this one, when a chat did (issue #509). Stamped
+   * alongside `origin`/`depth` for a NEW chat, giving the nested chat list a
+   * RECORDED parent edge instead of leaving it to infer one from the kickoff
+   * message's sender.
+   *
+   * Absent when no calling chat exists — a schedule/hook fire, or the external
+   * `/mcp` transport (which binds `currentSessionId: () => null`).
+   */
+  parent?: { project: string; sessionId: string };
+  /**
    * The effective `maxSpawnDepth` for the chat this turn runs in (issue #262),
    * already resolved by the caller from the TARGET project (per-project override
    * else instance default). Gates whether this turn receives the self-MCP.
