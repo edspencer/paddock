@@ -1,6 +1,6 @@
 ---
 title: What's New
-description: "The user-facing highlights of each Paddock release — an external MCP endpoint, a generated API reference, per-message fork & revert, Claude Opus 5 by default, configurable model lists, official Docker images & deploy recipes, live nested sub-agent cards, surviving background work, an instance-wide settings screen, attachments, streaming, unified triggers, and more."
+description: "The user-facing highlights of each Paddock release — a chat list that nests spawned chats under their parent, an external MCP endpoint, a generated API reference, per-message fork & revert, Claude Opus 5 by default, configurable model lists, official Docker images & deploy recipes, live nested sub-agent cards, surviving background work, an instance-wide settings screen, attachments, streaming, unified triggers, and more."
 ---
 
 The headline changes in recent Paddock releases, newest first. These are the
@@ -23,6 +23,37 @@ way as well: Paddock is now something you can **drive from outside**, over an MC
 endpoint and a published HTTP API, carrying its own credentials and its own
 read-only-by-default policy rather than borrowing your proxy's. An instance is
 becoming less an app you visit and more a service your other tools talk to.
+
+## 0.47 — The chat list learns who spawned whom
+
+- **Spawned chats now nest under the chat that created them.** The sidebar was
+  the last place a fan-out still looked like a flat pile: a keeper that split
+  work eight ways gave you eight top-level rows, in no obvious relationship to
+  each other or to the chat that started it. Now a chat sits **underneath its
+  parent**, indented, with a twisty to fold the whole family away and a count
+  pill telling you how many chats you just folded. Everything starts expanded,
+  and what you collapse is remembered per project, in that browser — folding a
+  noisy fan-out on a laptop shouldn't fold it on a phone.
+
+  The tree also changes how the list *sorts*. Siblings order by the most recent
+  activity anywhere in their subtree, so a parent rises with its working
+  children instead of sinking while they run, and a starred chat now floats to
+  the top of **its own group** rather than the top of everything. A nested chat
+  drops its violet `spawned` badge, since sitting under its parent says the same
+  thing more loudly — it keeps the badge on the rare occasion it's shown at the
+  top level, because its parent is archived, in another project, or filtered out
+  by a search. Search pulls a match's ancestors along with it so you can see
+  where a hit sits, and temporarily ignores what you'd folded.
+
+  The edge behind all this is recorded on the chat's provenance at creation, so
+  it's the same data that already drove the origin badges — now shaping the list
+  rather than just decorating it. Forks record it too, nesting under the chat
+  they were forked *from*. Chats you start yourself, and chats fired by a
+  schedule or an event hook, stay roots: they weren't created by another chat.
+  There's no migration for chats that predate this, so Paddock falls back to
+  inferring the parent from who injected the chat's opening prompt — which
+  recovers most existing spawned chats, though a fork made with no kickoff
+  prompt left no trace to recover and stays flat.
 
 ## 0.46 — Drive Paddock from outside
 

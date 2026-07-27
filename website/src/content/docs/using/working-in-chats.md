@@ -207,19 +207,54 @@ Unlike starring and archiving, which are **shared** — archive a chat and every
 using the instance sees it archived — the unread flag is **yours**, keyed to your
 user alongside your read state.
 
+### Nested chats — a fan-out reads as a tree
+
+A chat that another chat created is **filed underneath it** in the sidebar,
+indented, with a twisty on the parent to fold the whole family away. A keeper
+that spawns eight children no longer buries your other work under eight
+top-level rows; it takes up one, with an `8` count pill when you collapse it.
+
+- **Everything is expanded by default.** Nothing is hidden from you until you
+  choose to fold it.
+- **Collapse state is per project and per browser**, kept in local storage
+  alongside your other layout preferences. Folding a noisy fan-out on your
+  laptop deliberately doesn't fold it on your phone.
+- **Indentation stops at four levels.** Deeper chats still nest, sort and
+  collapse correctly — they just stop marching rightwards, so a deep tree can't
+  squeeze the chat names into nothing.
+- **A nested chat drops its violet `spawned` badge.** Sitting under its parent
+  already says another chat made it, more loudly than the chip did. The badge
+  comes back if that chat is shown at the top level.
+
+Which chats nest and which stay flat comes down to whether Paddock recorded a
+parent for them; [Provenance](/concepts/provenance/#from-badge-to-structure) has
+the full picture. The short version: chats a keeper spawned or forked nest;
+chats *you* started, chats a schedule or an event hook fired, and chats created
+by an **external** MCP client are roots.
+
+Some chats surface at the top level even though they do have a parent — because
+the parent is in another project, or archived, or filtered out by your search.
+That's deliberate: a chat whose parent isn't on screen is promoted to a root
+rather than vanishing with it.
+
 ### Stars — pin a chat to the top
 
 Click the gold star at the right of a chat row and that chat **floats to the top
-of the list**. It's the lightweight way to keep the conversation you're living in
-(or the long-running job you're waiting on) one click away.
+of its group**. It's the lightweight way to keep the conversation you're living
+in (or the long-running job you're waiting on) one click away.
 
 ![The chat list with two starred chats pinned to the top](../../../assets/whats-new/starred-chats.png)
 
 Starring is purely presentational and **orthogonal to archiving**: a starred chat
-sorts first within whichever section it already belongs to, so stars float to the
-top of the **active** list *and* the **Archived** section. Within each group the
-usual most-recent-first order is preserved. A starred chat keeps its star visible
-at rest, rather than only on hover.
+sorts first among its siblings, so stars float to the top of the **active** list
+*and* the **Archived** section — and, now that chats nest, to the top of whatever
+group of siblings the chat belongs to rather than to the top of the whole list. A
+starred chat keeps its star visible at rest, rather than only on hover.
+
+Below the stars, siblings sort by **the most recent activity anywhere in their
+subtree**, not by their own last message. A parent whose child is mid-turn rises
+with it, so an active family travels up the list as a unit instead of the parent
+sinking while its children work.
 
 ### The context + cost meter
 
@@ -245,6 +280,11 @@ chats as you type — a case-insensitive match over each chat's name and its
 first-message preview. It filters what's already loaded (no server round-trip), so
 it's instant, and it searches archived chats too.
 
+A match **drags its ancestors into view** so you can see where it sits, which
+means some rows in a search result are scaffolding rather than hits. Search also
+**temporarily overrides collapse** — a match buried inside a folded family still
+shows — and your folded state comes back untouched when you clear the box.
+
 ### Archive
 
 To file a finished chat away without deleting it, hover its row and click the
@@ -253,6 +293,11 @@ separate, collapsible **Archived** section at the bottom of the sidebar.
 Archiving is purely presentational — the transcript is untouched, and an archived
 chat is still openable, resumable, and forkable; unarchive it any time to bring it
 back to the top of the list.
+
+**Archiving a parent doesn't archive its children.** The active list and the
+Archived section are two separate trees, so a parent you archive moves out on its
+own and its still-active children are promoted to top-level rows rather than
+following it or being hidden behind it.
 
 ### Resize the columns
 
