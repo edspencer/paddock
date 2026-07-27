@@ -106,6 +106,21 @@ function createsCycle(node: ChatNode, parent: ChatNode, byId: Map<string, ChatNo
 }
 
 /**
+ * How many CHATS a forest holds, all levels — not how many roots (#491).
+ *
+ * `ChatNode[]` reads like the old flat chat array but isn't one: `roots.length`
+ * counts only top-level chats, so any sidebar count taken from it silently
+ * undercounts the moment one chat nests under another (a search matching five
+ * siblings of one parent read `1/40`). Every count the UI shows is a chat count,
+ * so it goes through here.
+ */
+export function countNodes(nodes: readonly ChatNode[]): number {
+  // Walks `children` rather than trusting `descendantCount`, so it is correct for
+  // a forest that hasn't been through annotate() (tests, or a partial subtree).
+  return nodes.reduce((n, node) => n + 1 + countNodes(node.children), 0);
+}
+
+/**
  * Flatten the forest to the rows actually rendered, skipping the subtrees of
  * collapsed parents. Returning a flat array (rather than recursing in the
  * component) keeps the row markup — and its absolutely-positioned hover action

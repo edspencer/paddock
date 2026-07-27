@@ -90,6 +90,52 @@ describe("message provenance — store", () => {
   });
 });
 
+describe("message provenance — parentChat (#485, #491)", () => {
+  let dir: string;
+  beforeEach(async () => {
+    dir = await makeTmpDir();
+  });
+  afterEach(async () => {
+    await rmTmpDir(dir);
+  });
+
+  it("infers the parent from a chat-kind FIRST marker (the spawned kickoff)", async () => {
+    const store = new MessageProvenanceStore(dir);
+    await store.record("child", CHAT_SENDER, "go and do the thing");
+    expect(await store.parentChat("child")).toEqual({
+      project: "paddock",
+      sessionId: "sess-b",
+      name: "Report-back test",
+    });
+  });
+
+  it("#491: a LATER chat marker is send_message traffic, not a parent edge", async () => {
+    // A schedule-fired chat: created by the scheduler, then messaged by a child
+    // reporting in. Scanning for the first chat-KIND marker made the cron chat a
+    // child of the very chat it spawned; only marker[0] decides parentage.
+    const store = new MessageProvenanceStore(dir);
+    await store.record("cron", SCHEDULE_SENDER, "the scheduled kickoff");
+    await store.record("cron", CHAT_SENDER, "reporting back: done");
+    expect(await store.parentChat("cron")).toBeNull();
+  });
+
+  it("returns null with no markers at all (a fork with no kickoff)", async () => {
+    const store = new MessageProvenanceStore(dir);
+    expect(await store.parentChat("lonely")).toBeNull();
+  });
+
+  it("never reports a chat as its own parent", async () => {
+    const store = new MessageProvenanceStore(dir);
+    await store.record("self", { kind: "chat", project: "paddock", sessionId: "self" }, "loop");
+    expect(await store.parentChat("self")).toBeNull();
+  });
+
+  it("survives an unsafe session id", async () => {
+    const store = new MessageProvenanceStore(dir);
+    expect(await store.parentChat("../escape")).toBeNull();
+  });
+});
+
 describe("message provenance — applyMessageProvenance join", () => {
   const user = (content: string) => ({ role: "user" as const, content });
   const assistant = (content: string) => ({ role: "assistant" as const, content });

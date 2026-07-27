@@ -678,6 +678,63 @@ describe("ProjectView: archive chats (#95)", () => {
   });
 });
 
+describe("ProjectView: sidebar counts are chat counts, not root counts (#491)", () => {
+  it("the search badge counts the chats shown, not the roots", async () => {
+    // Two matches nested under one non-matching parent, plus an unrelated chat.
+    // The parent is kept as scaffolding (withAncestors) so the hits render in
+    // place, so three rows show out of four chats. Reading `.length` off the
+    // roots array reported `1/4`.
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [
+          makeChat({ sessionId: "root", name: "Manager" }),
+          makeChat({
+            sessionId: "c1",
+            name: "Deploy alpha",
+            parent: { project: "p", sessionId: "root" },
+          }),
+          makeChat({
+            sessionId: "c2",
+            name: "Deploy bravo",
+            parent: { project: "p", sessionId: "root" },
+          }),
+          makeChat({ sessionId: "other", name: "Unrelated" }),
+        ],
+      }),
+    );
+    renderAt("/projects/p/chat");
+    await screen.findByText("Manager");
+
+    fireEvent.change(screen.getByRole("textbox", { name: /Search chats/i }), {
+      target: { value: "deploy" },
+    });
+    expect(screen.getByText("Deploy alpha")).toBeInTheDocument();
+    expect(screen.getByText("Deploy bravo")).toBeInTheDocument();
+    expect(screen.queryByText("Unrelated")).not.toBeInTheDocument();
+    expect(screen.getByText("3/4")).toBeInTheDocument();
+  });
+
+  it("the Archived badge counts nested archived chats too", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [
+          makeChat({ sessionId: "a1", name: "Archived parent", archived: true }),
+          makeChat({
+            sessionId: "a2",
+            name: "Archived child",
+            archived: true,
+            parent: { project: "p", sessionId: "a1" },
+          }),
+        ],
+      }),
+    );
+    renderAt("/projects/p/chat");
+    const archivedHeader = await screen.findByRole("button", { name: /^Archived/i });
+    // One archived root with one archived child is TWO archived chats.
+    expect(within(archivedHeader).getByText("2")).toBeInTheDocument();
+  });
+});
+
 describe("ProjectView: star chats (#373)", () => {
   // True when `first`'s title appears before `second`'s in document order.
   const isBefore = (first: string, second: string) =>

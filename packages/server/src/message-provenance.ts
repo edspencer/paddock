@@ -177,12 +177,20 @@ export class MessageProvenanceStore {
   }
 
   /**
-   * The chat that most likely CREATED `sessionId` — its FIRST `chat`-kind sender.
+   * The chat that most likely CREATED `sessionId` — the sender of its very FIRST
+   * injection marker, and only if that sender is a chat.
    *
    * This is a backfill, not a recorded fact. A chat spawned via `create_chat` /
    * `fork_chat` gets its kickoff prompt injected BY the creating chat, so the
    * first marker is the parent. Later markers are ordinary `send_message` traffic
    * (any chat can message any other), which is why only the first one counts.
+   *
+   * That "only the first one counts" rule is POSITIONAL (#491). Scanning for the
+   * first `chat`-KIND marker instead — as this did originally, despite the doc
+   * comment — makes a chat whose creation was NOT a chat injection adopt whichever
+   * chat happens to message it first: a schedule-fired chat is re-parented under
+   * the child that reports back to it. So a non-chat first marker means "not
+   * created by a chat", and returns null rather than searching on.
    *
    * Newer chats carry a real, recorded edge on RunProvenance.parentSessionId;
    * prefer that and fall back here for chats created before it existed. Returns
@@ -192,15 +200,16 @@ export class MessageProvenanceStore {
    * Pure in-memory read once loaded, so the chat list can call it per row.
    */
   async parentChat(sessionId: string): Promise<{ project: string; sessionId: string; name?: string } | null> {
-    for (const m of await this.list(sessionId)) {
-      if (m.sender.kind === "chat") {
-        // Never let a corrupt record make a chat its own parent — buildChatTree
-        // guards cycles too, but a self-edge is meaningless this far up.
-        if (m.sender.sessionId === sessionId) return null;
-        return { project: m.sender.project, sessionId: m.sender.sessionId, ...(m.sender.name ? { name: m.sender.name } : {}) };
-      }
-    }
-    return null;
+    const [first] = await this.list(sessionId);
+    if (first?.sender.kind !== "chat") return null;
+    // Never let a corrupt record make a chat its own parent — buildChatTree
+    // guards cycles too, but a self-edge is meaningless this far up.
+    if (first.sender.sessionId === sessionId) return null;
+    return {
+      project: first.sender.project,
+      sessionId: first.sender.sessionId,
+      ...(first.sender.name ? { name: first.sender.name } : {}),
+    };
   }
 
   /**

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildChatTree, flattenTree, withAncestors } from "./chatTree";
+import { buildChatTree, countNodes, flattenTree, withAncestors } from "./chatTree";
 import type { Chat } from "./types";
 
 /** Minimal chat; `at` is a bare hour so orderings read plainly. */
@@ -123,5 +123,29 @@ describe("withAncestors", () => {
   it("terminates on a cyclic ancestry chain", () => {
     const cyclic = [chat("x", "10", "y"), chat("y", "11", "x")];
     expect(withAncestors(cyclic, [cyclic[0]]).map((c) => c.sessionId)).toEqual(["x", "y"]);
+  });
+});
+
+describe("countNodes (#491)", () => {
+  it("counts every chat in the forest, not just the roots", () => {
+    // Five chats under one parent: `roots.length` is 1, the answer is 6.
+    const siblings = ["c1", "c2", "c3", "c4", "c5"].map((id) => chat(id, "11", "p"));
+    const roots = buildChatTree([chat("p", "10"), ...siblings]);
+    expect(roots).toHaveLength(1);
+    expect(countNodes(roots)).toBe(6);
+  });
+
+  it("counts across several levels and several roots", () => {
+    const roots = buildChatTree([
+      chat("a", "10"),
+      chat("b", "11", "a"),
+      chat("c", "12", "b"),
+      chat("d", "13"),
+    ]);
+    expect(countNodes(roots)).toBe(4);
+  });
+
+  it("is 0 for an empty forest", () => {
+    expect(countNodes([])).toBe(0);
   });
 });
