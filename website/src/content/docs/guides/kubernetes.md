@@ -47,6 +47,15 @@ and are wired together by `kustomization.yaml`:
 | `secret.example.yaml` | Template for the Claude / GitHub token Secret. |
 | `ingress.yaml` | Optional external route — only safe behind an auth layer. |
 
+`deployment.yaml` sets **`PADDOCK_DANGEROUSLY_ALLOW_OPEN`** for you, and it has to: in a
+container Paddock binds `0.0.0.0`, and the fail-closed
+[bind guard](/configuration/binding-and-exposure/#containers-are-different) refuses to
+start on a non-loopback bind while `PADDOCK_AUTH_MODE=none`. Without it the pod would
+`CrashLoopBackOff`. What actually keeps the instance closed is that the Service is a
+`ClusterIP` with nothing published until you add an Ingress — so when you do add one,
+put auth in front of it (see [Ingress & auth at the edge](#ingress--auth-at-the-edge))
+rather than assuming that flag protected you.
+
 ## Quick start
 
 You need a cluster with a `kubectl` context pointing at it, and a **default

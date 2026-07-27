@@ -63,8 +63,9 @@ Consequences worth knowing:
 > refuses to expose itself carelessly. The bind host defaults to `127.0.0.1`
 > (loopback only), and binding a **non-loopback** host (e.g. `0.0.0.0`) while
 > authentication is `none` **fails closed at startup** — mirroring the
-> jwt-without-JWKS check. The container images are the exception and still bind
-> `0.0.0.0`.
+> jwt-without-JWKS check. The container images still bind `0.0.0.0` by design, but
+> they are **not** exempt from that check — a container run needs an auth mode or
+> `PADDOCK_DANGEROUSLY_ALLOW_OPEN=1`, or it won't start at all.
 >
 > The default changed in **v0.44**, which is breaking if you relied on the old
 > `0.0.0.0`. See **[Binding & network exposure](/configuration/binding-and-exposure/)**

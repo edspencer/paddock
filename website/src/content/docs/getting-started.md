@@ -11,14 +11,34 @@ published Docker image; you can also run it from source for development.
 Run the published image, point it at a data volume, and give it a Claude token:
 
 ```bash
-docker run -d --name paddock -p 4000:4000 \
+docker run -d --name paddock -p 127.0.0.1:4000:4000 \
   -e CLAUDE_CODE_OAUTH_TOKEN=…       `# Max plan (CLI runtime)` \
   -e PADDOCK_DATA_DIR=/data \
+  -e PADDOCK_DANGEROUSLY_ALLOW_OPEN=1 `# required in a container — see below` \
   -v paddock-data:/data \
   ghcr.io/edspencer/paddock:latest
 ```
 
 Then open **http://localhost:4000** and click **New Project**.
+
+:::caution[Both of those flags are load-bearing — without the first, Paddock won't start]
+**`PADDOCK_DANGEROUSLY_ALLOW_OPEN=1` is required for *any* container run.** Inside a
+container the app always binds `0.0.0.0`, because Docker's port publishing can't route
+to an in-container `127.0.0.1`. Paddock's fail-closed
+[bind guard](/configuration/binding-and-exposure/) sees a non-loopback bind under the
+default `PADDOCK_AUTH_MODE=none` and **refuses to boot** — the container exits straight
+away with `refusing to start: bind host "0.0.0.0" is not loopback…`. The flag downgrades
+that refusal to a boot warning.
+
+**`-p 127.0.0.1:4000:4000`** is what actually keeps you safe, and it's why the flag
+above is acceptable here. It publishes to the host's loopback only, so the real boundary
+is the container's network namespace plus this publish — not the in-container bind.
+Publishing on a routable address (`-p 4000:4000`) with no auth mode hands an
+unauthenticated, code-executing Paddock to your whole network.
+
+To reach it from another machine, keep the loopback publish and put a reverse proxy in
+front — see [Securing Paddock](/guides/securing/).
+:::
 
 ### Two image flavors: base vs devbox
 
@@ -45,10 +65,13 @@ services:
   paddock:
     image: ghcr.io/edspencer/paddock:latest
     ports:
-      - "4000:4000"
+      # Loopback only. Do NOT use "4000:4000" without an auth mode in front.
+      - "127.0.0.1:4000:4000"
     environment:
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN} # or ANTHROPIC_API_KEY for the SDK runtime
       PADDOCK_DATA_DIR: /data
+      # Required in a container — see the caution above.
+      PADDOCK_DANGEROUSLY_ALLOW_OPEN: "1"
     volumes:
       - paddock-data:/data
 volumes:
