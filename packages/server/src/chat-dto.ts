@@ -34,6 +34,29 @@ export interface ChatParentRef {
 }
 
 /**
+ * Origins that are, by definition, the ROOT of a chat tree — a human typed it, a
+ * schedule fired it, or an event hook did. None of them is created BY another
+ * chat, so none can acquire a parent.
+ */
+const ROOT_ORIGINS: ReadonlySet<RunProvenance["origin"]> = new Set([
+  "human",
+  "scheduled",
+  "hook",
+]);
+
+/**
+ * Does this recorded provenance describe a chat that is a root by construction?
+ *
+ * `depth` counts spawn hops from the human/scheduled root, so depth 0 IS the root
+ * — and a root-origin marker says the same thing from the other direction. Either
+ * one means "this chat has no parent", as opposed to "this chat's parent was
+ * never recorded", which is the only case the inference tier exists to cover.
+ */
+export function isRecordedRoot(p: RunProvenance): boolean {
+  return p.depth === 0 || ROOT_ORIGINS.has(p.origin);
+}
+
+/**
  * Build the `parentOf` resolver for {@link buildProjectChats} — the chat-list
  * parent edge, resolved in two tiers:
  *
@@ -41,8 +64,17 @@ export interface ChatParentRef {
  *  2. `MessageProvenanceStore.parentChat()` — a backfill for chats created before
  *     tier 1 existed, inferred from who injected the kickoff prompt.
  *
- * Both are in-memory sidecar reads, so this is cheap enough to resolve inline for
- * every row (unlike the usage ring, #116). A chat with neither is simply a root.
+ * Tier 2 only applies to a chat whose parent is genuinely UNKNOWN. A chat with a
+ * recorded root marker (#491) is skipped outright: it isn't missing an edge, it
+ * has none. Without that guard, the documented report-back workflow re-parents a
+ * human's own chat — manager spawns child, child `send_message`s its report home,
+ * the manager now carries a `chat`-kind marker and infers its own child as its
+ * parent. Both edges then point at each other and `buildChatTree`'s cycle guard
+ * decides, per render, which of the two gets promoted to a root.
+ *
+ * All reads are in-memory sidecar lookups, so this is cheap enough to resolve
+ * inline for every row (unlike the usage ring, #116). A chat with neither tier is
+ * simply a root.
  */
 export function makeParentResolver(
   runProvenance: { get(sessionId: string): Promise<RunProvenance | undefined> },
@@ -55,6 +87,8 @@ export function makeParentResolver(
     const p = await runProvenance.get(s.sessionId).catch(() => undefined);
     if (p?.parentSessionId && p.parentProject)
       return { project: p.parentProject, sessionId: p.parentSessionId };
+    // A recorded root never falls through to inference (#491).
+    if (p && isRecordedRoot(p)) return null;
     const inferred = await messageProvenance.parentChat(s.sessionId).catch(() => null);
     if (!inferred) return null;
     // Defensive: a chat can't parent itself. The tree builder guards cycles, but

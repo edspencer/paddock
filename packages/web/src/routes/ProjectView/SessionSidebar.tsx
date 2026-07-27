@@ -1,7 +1,7 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { Chat, ChatCompleteUsage, ChatUsage } from "../../lib/types";
 import type { ProjectViewTab } from "./urls";
-import { type ChatNode, flattenTree } from "../../lib/chatTree";
+import { type ChatNode, countNodes, flattenTree } from "../../lib/chatTree";
 import { ContextRing } from "../../components/ContextRing";
 import { ProvenanceBadge } from "../../components/ProvenanceBadge";
 import { PaneResizer, usePaneWidth } from "../../components/PaneResizer";
@@ -115,6 +115,14 @@ export function SessionSidebar({
   const anyNesting =
     activeChats.some((n) => n.children.length > 0) ||
     archivedChats.some((n) => n.children.length > 0);
+
+  // Both sidebar counts are CHAT counts, so they walk the whole forest instead of
+  // reading `.length` off the roots array (#491). `activeCount` is the numerator
+  // of the "N/total" search badge, whose denominator `activeTotal` is a flat
+  // unfiltered chat count — pairing it with a roots-only numerator read `1/40`
+  // for a search that matched five chats sitting under one parent.
+  const activeCount = countNodes(activeChats);
+  const archivedCount = countNodes(archivedChats);
 
   // One chat row — used by both the current list and the Archived section, so
   // the two stay identical (context ring, hover-menu actions) apart from where
@@ -411,7 +419,7 @@ export function SessionSidebar({
             <span className="section-label">Chats</span>
             {activeTotal > 0 && (
               <span className="text-[11px] text-paddock-400">
-                {searching ? `${activeChats.length}/${activeTotal}` : activeTotal}
+                {searching ? `${activeCount}/${activeTotal}` : activeTotal}
               </span>
             )}
           </div>
@@ -495,7 +503,7 @@ export function SessionSidebar({
                 />
                 <span>Archived</span>
                 <span className="ml-auto rounded-full bg-paddock-200 px-1.5 py-0.5 text-[10px] font-semibold normal-case text-paddock-600 dark:bg-paddock-800 dark:text-paddock-300">
-                  {archivedChats.length}
+                  {archivedCount}
                 </span>
               </button>
               {archivedOpen && (
