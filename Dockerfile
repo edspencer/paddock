@@ -53,8 +53,14 @@ ENV NODE_ENV=production \
     HOME=/data
 
 # System deps + GitHub CLI + the Claude CLI that Paddock spawns (runtime: cli).
+# openssh-client belongs here, next to git rather than in devbox: without it git
+# has no ssh transport at all, so every `git@` remote dies mid-turn with
+# "cannot run ssh: No such file or directory" (#487). The entrypoint's
+# GITHUB_TOKEN rewrite only covers https://github.com/ URLs, so an SSH remote —
+# or any non-GitHub host — has no working path in the lean image either. Cost is
+# ~1.1 MB download / ~6 MiB installed (pulls libcbor0.8 + libfido2-1).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git ca-certificates curl \
+      git openssh-client ca-certificates curl \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
     && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
@@ -101,13 +107,20 @@ ENV PADDOCK_BROWSER_MCP=1
 # ffmpeg (media work) + the Docker CLI. Ship the *client* only — no daemon, no
 # privilege baked in; the deploy recipe decides socket-mount (docker-outside-of-
 # docker) vs privileged DinD. docker-ce-cli comes from Docker's own apt repo.
+# The buildx/compose plugins ship separately from docker-ce-cli — without them
+# `docker compose` and `docker buildx` are "unknown command" because the
+# cli-plugins dir doesn't exist at all (#487). They are pure client-side
+# binaries: they talk to whatever socket the deploy recipe chose, so they add no
+# daemon and no privilege — the boundary above still holds. ~25 MB download /
+# ~100 MiB installed, on a ~4.5 GB image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ffmpeg ca-certificates curl gnupg \
     && install -m 0755 -d /etc/apt/keyrings \
     && curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
     && chmod a+r /etc/apt/keyrings/docker.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list \
-    && apt-get update && apt-get install -y --no-install-recommends docker-ce-cli \
+    && apt-get update && apt-get install -y --no-install-recommends \
+         docker-ce-cli docker-buildx-plugin docker-compose-plugin \
     && rm -rf /var/lib/apt/lists/*
 
 # PM2 + the vendored `pm` preview-server wrapper (scripts/pm, MIT). `pm` is a
