@@ -78,6 +78,19 @@ describe("integration: the root project (#516)", () => {
     expect(chats.statusCode).toBe(200);
   });
 
+  it("serves the root's file listing from the projects root itself", async () => {
+    // `project-files.ts` keeps its OWN copy of the slug->dir resolution, which
+    // is a second place the sentinel has to be honoured. Missing it made every
+    // root file route 404 (`<projectsRoot>/__root` doesn't exist) — caught in
+    // live QA, because Home fetches the file list on load.
+    const res = await t.app.inject({ method: "GET", url: "/api/projects/__root/files" });
+    expect(res.statusCode).toBe(200);
+    const names = (res.json().entries as Array<{ name: string }>).map((f) => f.name);
+    // The root's own record, plus every project as a subdirectory — the root
+    // keeper is deliberately omniscient (its cwd contains every project).
+    expect(names).toContain("project.yaml");
+  });
+
   it("keeps the root out of GET /api/projects", async () => {
     await t.app.inject({ method: "POST", url: "/api/projects", payload: { name: "Alpha" } });
     const list = (await t.app.inject({ method: "GET", url: "/api/projects" })).json();

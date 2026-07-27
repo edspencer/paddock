@@ -9,12 +9,24 @@
  */
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { ProjectError } from "./project-paths.js";
+import { ProjectError, isRootSlug } from "./project-paths.js";
 import { fileKind, contentTypeFor } from "./project-mime.js";
 import type { FileEntry, FileKind } from "./project-types.js";
 
-/** The per-slug project directory under the projects root. */
+/**
+ * The per-slug project directory under the projects root — a second copy of
+ * `ProjectStore.dirFor`'s resolution, and so the second place the ROOT project
+ * (issue #516) has to be honoured: its directory IS the projects root.
+ *
+ * Without this branch every file route for `__root` resolves to
+ * `<projectsRoot>/__root` and 404s (found in live QA — Home fetches the file
+ * list on load). The traversal guard below is unaffected: it compares against
+ * whatever this returns, so at the root "inside the project dir" means "inside
+ * the projects root", which is exactly the scope of a keeper whose cwd is that
+ * directory.
+ */
 function dirFor(root: string, slug: string): string {
+  if (isRootSlug(slug)) return root;
   return path.join(root, slug);
 }
 
