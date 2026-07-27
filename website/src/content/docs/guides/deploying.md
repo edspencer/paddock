@@ -34,13 +34,23 @@ Paddock ships as a Docker image, which is the simplest way to deploy on any of t
 hosts above:
 
 ```bash
-docker run -d --name paddock -p 4000:4000 \
+docker run -d --name paddock -p 127.0.0.1:4000:4000 \
   -e CLAUDE_CODE_OAUTH_TOKEN=…       `# or ANTHROPIC_API_KEY` \
   -e PADDOCK_DATA_DIR=/data \
+  -e PADDOCK_DANGEROUSLY_ALLOW_OPEN=1 `# every container run needs this` \
   -v paddock-data:/data \
   --restart unless-stopped \
   ghcr.io/edspencer/paddock:latest
 ```
+
+`PADDOCK_DANGEROUSLY_ALLOW_OPEN=1` is not optional here: in a container the app binds
+`0.0.0.0`, and the fail-closed
+[bind guard](/configuration/binding-and-exposure/#containers-are-different) **refuses to
+boot** on a non-loopback bind under the default `PADDOCK_AUTH_MODE=none`. It is safe in
+this command only because the publish is `127.0.0.1`-bound — the container namespace
+plus that publish is the real boundary. Publish on a routable address instead and you
+should drop this flag and set a real auth mode; see
+[Securing Paddock](/guides/securing/).
 
 `--restart unless-stopped` matters here — it's what makes Paddock come back after a
 reboot or power blip, which is the whole point of an always-on host. A

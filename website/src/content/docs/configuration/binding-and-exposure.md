@@ -19,9 +19,11 @@ broken; it is bound where you didn't ask it to be reachable.
 **The fix is one variable, plus a decision about auth** — see
 [I upgraded and now I can't reach it](#i-upgraded-and-now-i-cant-reach-it) below.
 
-You are **not** affected if you run a container image (it still binds `0.0.0.0` — see
-[Containers](#containers-are-different)), or if you already set `HOST` /
-`PADDOCK_HOST` explicitly. Only the *default* changed.
+The changed *default* doesn't reach you if you run a **container image** — those still
+bind `0.0.0.0` deliberately — but the fail-closed guard below applies to containers just
+the same, and they need a flag of their own to boot at all. See
+[Containers](#containers-are-different). You're unaffected either way if you already set
+`HOST` / `PADDOCK_HOST` explicitly; only the default changed.
 :::
 
 ## The two rules
@@ -110,14 +112,35 @@ publish posture from inside, so it's in no position to police it.
 The safe posture for a container is therefore carried by **how you publish the port**,
 not by the bind host:
 
+:::danger[A container still trips the guard — and won't boot without the override]
+The guard is **not** skipped for containers. Nothing in Paddock detects that it's
+running in one: `evaluateBindSafety` runs unconditionally at startup and a refusal
+`throw`s. So the image's `HOST=0.0.0.0`, plus the default `PADDOCK_AUTH_MODE=none`,
+plus no override is exactly the refuse case — a plain
+`docker run ghcr.io/edspencer/paddock:latest` **exits immediately**:
+
+```text
+refusing to start: bind host "0.0.0.0" is not loopback and PADDOCK_AUTH_MODE=none, …
+```
+
+Every container run therefore needs **either** a real auth mode **or**
+`PADDOCK_DANGEROUSLY_ALLOW_OPEN=1`. The latter is the right answer *only* when the
+publish is loopback-bound, as below — it tells the app "I know the bind looks open; the
+namespace and the publish are my boundary."
+:::
+
 ```bash
 # reachable only from the host, not the LAN
-docker run -p 127.0.0.1:4000:4000 ghcr.io/edspencer/paddock:latest
+docker run -p 127.0.0.1:4000:4000 \
+  -e PADDOCK_DANGEROUSLY_ALLOW_OPEN=1 \
+  ghcr.io/edspencer/paddock:latest
 ```
 
 The [`paddock-deploy`](https://github.com/edspencer/paddock-deploy/tree/main/docker)
-recipes already do this. The app-level guard in this page is for bare-metal, tarball,
-VM and systemd-in-LXC runs.
+recipes already do both — the loopback publish *and* the override, with the reasoning
+inline. The distinction that matters is which *mechanism* protects you: on bare metal,
+tarball, VM and systemd-in-LXC runs it's the bind host; in a container it's the publish
+posture, and the flag is how you tell the app so.
 
 ## See also
 
