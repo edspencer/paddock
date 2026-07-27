@@ -1,9 +1,13 @@
 # Authentication
 
-Paddock has **no login of its own**. It is designed to run behind a reverse
-proxy that has already authenticated the user against an identity provider
-(OIDC/SAML/etc.), and to turn that upstream identity into a `req.user` that the
-rest of the app can read.
+Paddock's **browser surface** has no login of its own. It is designed to run
+behind a reverse proxy that has already authenticated the user against an
+identity provider (OIDC/SAML/etc.), and to turn that upstream identity into a
+`req.user` that the rest of the app can read.
+
+There is one exception, covered at the end of this document: the **Management
+API** at `/mcp` authenticates itself with its own credentials, independent of
+everything below.
 
 The auth layer is **provider-agnostic** — driven entirely by `PADDOCK_AUTH_*`
 environment variables — so it is not tied to any single proxy or IdP. It works
@@ -160,8 +164,56 @@ the realm JWKS (`.../realms/<realm>/protocol/openid-connect/certs`).
 
 ---
 
+## The Management API (`/mcp`) — a separate credential
+
+Everything above governs the **browser surface**: `/api`, `/ws`, and the SPA.
+The external Management API is deliberately **not** part of it.
+
+`/mcp` (and its `/.well-known/oauth-protected-resource*` metadata) is exempt
+from the `onRequest` auth hook — not because it's open, but because it runs its
+own credential check first. Paddock authenticates that surface **itself**, so it
+stays gated even on an instance running `PADDOCK_AUTH_MODE=none`, and it does
+not inherit or depend on your proxy's identity.
+
+Practical consequences:
+
+- **A proxy-level auth layer must exempt `/mcp`.** MCP clients present a bearer
+  token; they can't complete an interactive SSO redirect. Send a bad credential
+  and Paddock replies `401` with a `WWW-Authenticate` challenge — never a
+  redirect to a login page. If your proxy intercepts `/mcp` with Basic Auth or
+  an OIDC flow, MCP clients will fail before reaching Paddock.
+- **Read-only is the default, and widening it is a serious grant.** A client
+  configured without an explicit scope gets `list_projects`, `list_chats`,
+  `list_triggers` and `read_chat`. Any *write* scope can start a keeper turn,
+  and a keeper has `Bash` — **granting write on the Management API is
+  equivalent to granting remote code execution on the host.** Scope such tokens
+  to specific projects, treat them like SSH keys, and watch for the named
+  warning the config loader logs at boot when a client holds one.
+- **Static bearer tokens only.** `auth.type` accepts `"token"` and nothing else;
+  OAuth is not implemented, so RFC 9728 discovery metadata is published only
+  once an authorization server is configured — which no shipped path does yet.
+- **Tokens are referenced, never inlined.** Clients declare
+  `auth: { ref: "env:VAR_NAME" }` (the only supported scheme); an inline
+  `token`/`secret` key in the git-tracked config file is a hard error and the
+  client is skipped.
+- **It fails closed.** With no `clients`, or no `publicUrl`, `/mcp` returns
+  `404` — the endpoint doesn't exist rather than opening up. The same happens if
+  every configured client's token fails to resolve.
+
+Setup, the scope grammar, and the per-tool reference live in
+[docs/CONFIGURATION.md](docs/CONFIGURATION.md#management-api-mcp-external-callers)
+and on the [documentation site](https://paddock.edspencer.net/reference/mcp/).
+
+---
+
 ## Implementation notes
 
+- The Management API's own auth lives in
+  `packages/server/src/management-auth.ts` (credential check) and
+  `packages/server/src/management-policy.ts` (scope enforcement), with the
+  transport in `packages/server/src/routes/mcp.ts`. Policy is enforced at the
+  operations layer, so the in-process keeper path and the external HTTP path
+  share one implementation rather than two.
 - Wiring lives in `packages/server/src/auth.ts`; config in
   `packages/server/src/config.ts` (`cfg.auth`). It is registered in
   `packages/server/src/app.ts` as an `onRequest` hook **before** the routes and
