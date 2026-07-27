@@ -365,7 +365,7 @@ const makeBackgroundTurnSink = (
  * the regular socket path (any keeper chat may use them) — unchanged.
  */
 async function startAgentTurn(opts: StartAgentTurnOpts): Promise<string> {
-  const { projectSlug, agentName, workingDir, resume, prompt, driveMode, fallbackModel, origin, depth, maxSpawnDepth, sender } =
+  const { projectSlug, agentName, workingDir, resume, prompt, driveMode, fallbackModel, origin, depth, parent, maxSpawnDepth, sender } =
     opts;
   let resolvedSession: string | null = resume ?? null;
   let jobId: string | null = null;
@@ -544,8 +544,17 @@ async function startAgentTurn(opts: StartAgentTurnOpts): Promise<string> {
           // spawned, depth = parent+1) so #262 can depth-gate and #267 can
           // badge it. Only a new chat is stamped here; a resume/message target
           // (fork kickoff, send_message) keeps its own creation provenance.
+          //
+          // #509: carry the creating chat through too. This used to rebuild the
+          // marker from `origin`/`depth` alone, silently dropping the parent on
+          // the create_chat path — the dominant way children are made — so the
+          // chat tree had to infer every edge from the kickoff sender instead.
           await deps.runProvenance
-            ?.stamp(m.session_id, { origin, depth })
+            ?.stamp(m.session_id, {
+              origin,
+              depth,
+              ...(parent ? { parentSessionId: parent.sessionId, parentProject: parent.project } : {}),
+            })
             .catch(() => undefined);
           // #290: record the kickoff's sender for the NEW chat now that its id
           // is known (no live emit — see handleInjection; the labelled turn
