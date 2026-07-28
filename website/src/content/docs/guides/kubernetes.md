@@ -130,14 +130,21 @@ app plus the `git` / `gh` / `claude` CLIs. That's enough for keepers that write
 code and open PRs.
 
 For the full coding-agent toolbox — `pm` preview servers, `ffmpeg`, a headless
-Playwright browser, the Docker CLI — switch to the **devbox** image by editing the
-tag in `kustomization.yaml`:
+Playwright browser, the Docker CLI, `kubectl` — switch to the **devbox** image by
+editing the tag in `kustomization.yaml`:
 
 ```yaml
 images:
   - name: ghcr.io/edspencer/paddock
     newTag: devbox        # was: latest
 ```
+
+The devbox is also the image to pick if you want a keeper to be able to *look at*
+the cluster it runs in — it carries `kubectl`, though deliberately no kubeconfig
+and no credentials. Giving it either (a projected service-account token and an
+in-cluster RBAC Role, or a mounted kubeconfig) is a decision you make explicitly;
+scope it to what you want an agent touching, because a keeper can do anything
+that credential can.
 
 The devbox image is much heavier (the Chromium layer alone is ~1 GB) and wants more
 memory — raise the container `resources.limits` in `deployment.yaml`. In

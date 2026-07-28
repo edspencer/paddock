@@ -1,6 +1,6 @@
 ---
 title: The Dev Box flavor
-description: The devbox image — what it adds over the base image, when to want it, and how to run preview servers, a browser, ffmpeg, and Docker in-container.
+description: The devbox image — what it adds over the base image, when to want it, and how to run preview servers, a browser, ffmpeg, Docker and kubectl in-container.
 ---
 
 Paddock ships as **two official images** built from the same source. Pick the one
@@ -11,8 +11,8 @@ that matches what your agents actually do:
   instance needs to read, write, and reason over text and code — and nothing more.
 - **`ghcr.io/edspencer/paddock:devbox`** — the **devbox** image. Base *plus* the
   software-engineering toolbox a coding agent reaches for: `pm` preview servers,
-  `ffmpeg`, a headless browser, the Docker CLI, and a scripting kit (`python3`,
-  `pip`, `uv`, `jq`, `rsync`).
+  `ffmpeg`, a headless browser, the Docker CLI, `kubectl`, and a scripting kit
+  (`python3`, `pip`, `uv`, `jq`, `rsync`).
 
 The devbox only adds **tools**. It's the same app, the same data layout, the same
 `/data` volume — so you can stop one profile and start the other against the same
@@ -96,6 +96,40 @@ container, testing a Compose stack. The devbox ships the Docker **client** (`doc
 on `PATH`) — but **no daemon and no privilege baked in**. Whether that CLI can
 actually reach a daemon is a deployment decision; see
 [Docker-in-Docker](#docker-in-docker) below.
+
+### `kubectl` — making a cluster legible
+
+If your agents ship to Kubernetes, the question they get asked most is some form
+of *"is the deploy healthy?"* — and answering it means `kubectl get`,
+`kubectl describe pod`, `kubectl logs`, `kubectl rollout status`. Without the
+client on `PATH` there is no amount of credentials that lets an agent answer;
+devbox carries it.
+
+Same shape as the Docker CLI above: **the client only**. The image bakes in **no
+kubeconfig and no cluster credentials** — those are per-deployment and yours to
+supply. Mount or project one in at run time and point `KUBECONFIG` at it:
+
+```bash
+docker run -d --name paddock -p 127.0.0.1:4000:4000 \
+  -e CLAUDE_CODE_OAUTH_TOKEN=… \
+  -e PADDOCK_DANGEROUSLY_ALLOW_OPEN=1 \
+  -e KUBECONFIG=/data/.kube/config \
+  -v paddock-data:/data \
+  ghcr.io/edspencer/paddock:devbox
+```
+
+:::caution[A kubeconfig is a credential, and the agent will use it]
+Whatever that config can do, a keeper can do — including `delete`. If you wire
+one in, give it a service account scoped to what you actually want an agent
+touching (read-only is a fine place to start), not your admin context.
+:::
+
+`kubectl` is a **pinned static binary**, not an apt package — the Kubernetes
+project publishes no package in Debian's archive, Docker's, or GitHub CLI's, so
+installing it from apt would mean adding a new trust root to the image for one
+binary. The version lives in the `KUBECTL_VERSION` build arg in the Dockerfile
+alongside a per-arch SHA-256 that is verified at build time, so the image is
+reproducible and the binary matches the arch it ships on.
 
 ## Running the devbox image
 
