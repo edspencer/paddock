@@ -28,7 +28,6 @@ import {
   type PaddockTrigger,
 } from "./trigger-config.js";
 import {
-  SCRATCH_AGENT,
   keeperAgentName,
   sweeperAgentName,
   triggerAgentName,
@@ -39,41 +38,6 @@ import {
   KEEPER_SESSION_TIMEOUT,
 } from "./herdctl-agent-names.js";
 
-/**
- * The scratch (one-off chats) agent config. Defaults to the keeper default
- * model; a per-chat override may re-register it at a different model via
- * `ensureScratchModel`.
- */
-export function buildScratchConfig(
-  cfg: PaddockConfig,
-  model?: string,
-): Record<string, unknown> & { name: string } {
-  const config: Record<string, unknown> & { name: string } = {
-    name: SCRATCH_AGENT,
-    description: "One-off / scratch chats.",
-    working_directory: cfg.scratchDir,
-    // Explicit CLI runtime (Max plan). The fleet `defaults.runtime` is dropped
-    // by @herdctl/core's config loader (runtime isn't a fleet-defaults field in
-    // 5.13.x), so without this the runner falls back to the SDK runtime. Set it
-    // per-agent to guarantee the Max/CLI path.
-    runtime: "cli",
-    model: model ?? KEEPER_DEFAULT_MODEL,
-    default_prompt: "How can I help?",
-  };
-  // Scratch chats get the native default coding prompt + CLAUDE.md hierarchy by
-  // default (issue #176), so an instance-wide CLAUDE.md (a common ancestor of
-  // the scratch dir) reaches out-of-project chats too. Only a non-native
-  // instance gets the terse replace prompt.
-  if (!cfg.nativeSystemPrompt) {
-    config.system_prompt =
-      "You are a Claude Code agent for one-off chats. Be helpful and concise.";
-  }
-  // Browser MCP (headless Chromium) when enabled for this box; `mcp__playwright__*`
-  // is already on the inherited defaults.allowed_tools.
-  const browser = browserMcpServers(cfg.browserMcp);
-  if (browser) config.mcp_servers = browser;
-  return config;
-}
 
 /**
  * A project's keeper agent config. Inherits the fleet `defaults` (runtime,
@@ -86,11 +50,16 @@ export function buildScratchConfig(
  * System prompt: by default (`nativeSystemPrompt`, issue #176) we set NO
  * `system_prompt`, so herdctl's CLI runtime passes no `--system-prompt` and
  * Claude Code's full default coding prompt applies together with the project's
- * CLAUDE.md hierarchy — the box's root CLAUDE.md (auto-loaded via the cwd
- * walk-up, e.g. `/var/lib/paddock/projects/CLAUDE.md`) plus a per-project
- * CLAUDE.md. This is its own decision (issue #176): an instance with no
- * CLAUDE.md files can opt back into the terse replace prompt below with
- * `PADDOCK_KEEPER_NATIVE_PROMPT=false`.
+ * CLAUDE.md hierarchy — the canonical instance-wide `<projectsRoot>/CLAUDE.md`
+ * (auto-loaded via the cwd walk-up, since a project dir is a child of the
+ * projects root) plus a per-project CLAUDE.md. This is its own decision (issue
+ * #176): an instance with no CLAUDE.md files can opt back into the terse replace
+ * prompt below with `PADDOCK_KEEPER_NATIVE_PROMPT=false`.
+ *
+ * This is the reading #512 settled on, and the reason it is `projectsRoot` and
+ * not `<dataDir>`: `projectsRoot` IS the instance's backing repo, so the file is
+ * version-controlled. Since #516 the ROOT project reaches it the same way —
+ * its cwd IS `projectsRoot`, so the walk-up needs no special-casing.
  */
 export function buildKeeperConfig(
   cfg: PaddockConfig,
@@ -281,7 +250,6 @@ export function buildTriggerConfig(
 export async function ensureConfigFile(cfg: PaddockConfig): Promise<void> {
   const configDir = path.dirname(cfg.herdctlConfigPath);
   await fs.mkdir(configDir, { recursive: true });
-  await fs.mkdir(cfg.scratchDir, { recursive: true });
 
   const doc = {
     version: 1,

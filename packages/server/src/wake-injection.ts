@@ -66,8 +66,6 @@ export interface InjectedMcpBuildArgs {
 
 /** The (mostly injected) collaborators {@link buildInjectedMcpServers} needs. */
 export interface InjectedMcpBuildContext {
-  /** The reserved scratch slug (`SCRATCH_SLUG`) — scratch turns get no self-MCP. */
-  scratchSlug: string;
   /** Instance self-MCP gates (resolved from `PaddockConfig`). */
   cfg: {
     selfMcpEnabled: boolean;
@@ -135,7 +133,6 @@ export async function buildInjectedMcpServers(
   }
 
   const selfMcp = spawnedSelfMcpDecision({
-    isScratch: projectSlug === ctx.scratchSlug,
     selfMcpEnabled: ctx.cfg.selfMcpEnabled,
     selfMcpWriteEnabled: ctx.cfg.selfMcpWriteEnabled,
     depth: injectionDepth,

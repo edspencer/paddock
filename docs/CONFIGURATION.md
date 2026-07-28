@@ -80,9 +80,9 @@ Consequences worth knowing:
 | Variable | Default | Required | Purpose |
 |----------|---------|----------|---------|
 | `PADDOCK_CONFIG` | `<data>/paddock.config.yaml` | no | Path to the optional [YAML instance-config file](#instance-config-file-yaml) (base layer; env overrides it). When set explicitly, a missing file fails startup; unset, an absent default file is a no-op. |
-| `PADDOCK_DATA_DIR` | `./data` | no | Data root. **All paths below default to subdirectories of this** — set it and everything cascades. Holds projects, scratch, generated herdctl config, and state. |
+| `PADDOCK_DATA_DIR` | `./data` | no | Data root. **All paths below default to subdirectories of this** — set it and everything cascades. Holds projects, generated herdctl config, and state. |
 | `PADDOCK_PROJECTS_DIR` | `<data>/projects` | no | Root that contains per-project directories (each is a keeper's working dir). |
-| `PADDOCK_SCRATCH_DIR` | `<data>/scratch` | no | Working directory for one-off / scratch chats. |
+| `PADDOCK_SCRATCH_DIR` | `<data>/scratch` | no | **Legacy.** Where one-off ("scratch") chats lived before #516 Phase 6 retired them. No agent runs here and nothing reads it any more; the setting survives so an existing env/config file doesn't fail validation, and so any old transcripts stay findable by hand at `<scratchDir>/.chats`. They are **not** migrated and no longer listed. |
 | `PADDOCK_STATE_DIR` | `<data>/.herdctl` | no | herdctl state directory. |
 | `PADDOCK_HERDCTL_CONFIG` | `<data>/herdctl.yaml` | no | Path to the generated `herdctl.yaml` the FleetManager loads (Paddock owns/regenerates it). |
 | `PADDOCK_WEB_DIST` | `packages/web/dist` | no | Built SPA served in production (resolved relative to the server module). |
@@ -295,8 +295,8 @@ HushPod's whisper config so both can share a backend. See [DEV.md](../DEV.md#voi
 |----------|---------|----------|---------|
 | `PADDOCK_KEEPER_DRIVE_MODE` | `session` | no | Box-wide default for how keeper turns are driven. `session` (the default, #316) runs the persistent `openChatSession` path, enabling cross-turn autonomy (`ScheduleWakeup` / `/loop`) and SDK streaming; set `batch` for the legacy one-shot `trigger()` path. A per-project `driveMode` overrides this at dispatch. Unknown → default. |
 | `PADDOCK_MODELS` | *(all)* | no | Comma-separated allow-list of which built-in catalog models the picker offers (e.g. `claude-opus-5,claude-sonnet-5`). Unset ⇒ every catalog model is offered. Unknown ids are dropped; if nothing valid remains the full catalog is offered (never zero). The catalog stays the source of each model's label/context-limit/pricing — this only narrows what's offered. Also settable as a YAML `models:` array, and a per-project `models` override may further subset it. |
-| `PADDOCK_KEEPER_NATIVE_PROMPT` | `true` | no | Keeper **and** scratch agents use the native Claude Code system prompt + `CLAUDE.md` hierarchy. Set `0`/`false`/`no` for the terse Paddock "replace" prompt (e.g. an instance with no `CLAUDE.md`). |
-| `PADDOCK_SELF_MCP` | `false` | no | Give keepers the read-only self-management MCP (`mcp__paddock_manage__*`: enumerate projects/chats, read another chat's transcript). Never injected on scratch turns. |
+| `PADDOCK_KEEPER_NATIVE_PROMPT` | `true` | no | Keeper agents use the native Claude Code system prompt + `CLAUDE.md` hierarchy. Set `0`/`false`/`no` for the terse Paddock "replace" prompt (e.g. an instance with no `CLAUDE.md`). |
+| `PADDOCK_SELF_MCP` | `false` | no | Give keepers the read-only self-management MCP (`mcp__paddock_manage__*`: enumerate projects/chats, read another chat's transcript). |
 | `PADDOCK_SELF_MCP_WRITE` | `false` | no | Additionally give keepers the self-management **write** tools (`create_chat`, `fork_chat`, `send_message`, `fork_chat_batch`). Only honored when `PADDOCK_SELF_MCP` is also on (write implies read). |
 | `PADDOCK_SELF_MCP_PROJECTS` | `false` | no | Additionally give keepers the self-management **project** tool (`create_project`) — provisioning a whole new project, cloning a repo when repo-backed. Gated separately from the other write tools because it creates instance-level state and clones a caller-supplied git URL. Only honored when `PADDOCK_SELF_MCP` and `PADDOCK_SELF_MCP_WRITE` are also on. |
 | `PADDOCK_BROWSER_MCP` | *(off)* | no | When `=1`, inject a headless-Chromium Playwright MCP into keepers (browse/screenshot). |

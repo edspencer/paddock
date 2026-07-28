@@ -37,9 +37,12 @@ export function HomePane({
   runningSessions: ReadonlySet<string>;
   onOpenChat: (sessionId: string) => void;
   onNewChat: () => void;
-  onOpenFile: (name: string) => void;
-  onOpenFiles: () => void;
-  onEditDetails: () => void;
+  // Files + Settings are optional so the ROOT project (issue #516) can render
+  // Home before its Files/Settings tabs exist (Phases 4-5). Omitting a handler
+  // hides the affordance it drives, rather than pointing it at a dead URL.
+  onOpenFile?: (name: string) => void;
+  onOpenFiles?: () => void;
+  onEditDetails?: () => void;
 }) {
   const recentChats = chats.slice(0, 6);
   const recentFiles = files.slice(0, 6);
@@ -52,13 +55,15 @@ export function HomePane({
             <h3 className="text-sm font-semibold uppercase tracking-wide text-paddock-500">
               Overview
             </h3>
-            <button
-              onClick={onEditDetails}
-              className="btn-subtle -mr-1 gap-1.5 px-2 py-1 text-xs"
-            >
-              <PencilIcon width={13} height={13} />
-              Edit details
-            </button>
+            {onEditDetails && (
+              <button
+                onClick={onEditDetails}
+                className="btn-subtle -mr-1 gap-1.5 px-2 py-1 text-xs"
+              >
+                <PencilIcon width={13} height={13} />
+                Edit details
+              </button>
+            )}
           </div>
           <div className="card">
             {project.summary ? (
@@ -146,7 +151,10 @@ export function HomePane({
           )}
         </section>
 
-        {/* Files: a preview of the file index; "View all" jumps to the Files tab. */}
+        {/* Files: a preview of the file index; "View all" jumps to the Files tab.
+            Omitted entirely where there is no Files tab to jump TO (the root, until
+            #516 Phase 4). */}
+        {onOpenFile && (
         <section className="mb-8">
           <div className="mb-2 flex items-center justify-between">
             <h3 className="text-sm font-semibold uppercase tracking-wide text-paddock-500">
@@ -187,6 +195,7 @@ export function HomePane({
             </div>
           )}
         </section>
+        )}
 
         {/* CHANGELOG.md — the curated project log. */}
         <section>

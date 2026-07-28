@@ -77,7 +77,6 @@ import {
   type PaddockTrigger,
 } from "./trigger-config.js";
 import {
-  buildScratchConfig,
   buildKeeperConfig,
   buildSweeperConfig,
   buildTriggerConfig,
@@ -127,7 +126,6 @@ export interface ChatTurnOptions {
 export {
   keeperAgentName,
   keeperSlugFromAgent,
-  SCRATCH_AGENT,
   SWEEPER_PREFIX,
   sweeperAgentName,
   HOOK_AGENT_PREFIX,
@@ -139,13 +137,11 @@ export {
   KEEPER_DENIED_TOOLS,
   browserMcpServers,
   SWEEPER_MODEL,
-  SCRATCH_SLUG,
   KEEPER_MAX_CONCURRENT,
   KEEPER_SESSION_TIMEOUT,
 } from "./herdctl-agent-names.js";
 import {
   keeperAgentName,
-  SCRATCH_AGENT,
   sweeperAgentName,
   hookAgentName,
   triggerAgentName,
@@ -263,7 +259,7 @@ export class HerdctlService {
 
   /**
    * The model currently registered for each agent (keyed by agent name). Lets
-   * `ensureKeeperModel`/`ensureScratchModel` skip a re-registration when the
+   * `ensureKeeperModel` skips a re-registration when the
    * requested model already matches the live agent config.
    *
    * SINGLE-USER CAVEAT: the keeper is one shared agent per project, so the
@@ -312,13 +308,6 @@ export class HerdctlService {
       allowScheduleMutation: this.cfg.scheduleMutationEnabled,
     });
     await this.fleet.initialize();
-
-    // Register the scratch agent (one-off chats) at the keeper default model.
-    await fs.mkdir(this.cfg.scratchDir, { recursive: true });
-    await ensureProjectChats(this.cfg.scratchDir);
-    await this.fleet.addAgent(this.scratchAgentConfig(), { replace: true });
-    this.agentModels.set(SCRATCH_AGENT, KEEPER_DEFAULT_MODEL);
-    this.agentWorkingDirs.set(SCRATCH_AGENT, this.cfg.scratchDir);
 
     // Register a keeper + sweeper for every existing project, recording each
     // keeper's resolved model so per-chat overrides can short-circuit later.
@@ -475,18 +464,6 @@ export class HerdctlService {
     if (this.agentModels.get(name) === model) return;
     await this.fleet.addAgent(this.keeperAgentConfig(project, model), { replace: true });
     this.agentModels.set(name, model);
-  }
-
-  /**
-   * Ensure the scratch agent is registered at `model`, re-registering it only
-   * when the model actually changed. Same per-chat-override mechanism as
-   * `ensureKeeperModel`, for one-off / scratch chats.
-   */
-  async ensureScratchModel(model: string): Promise<void> {
-    if (!this.fleet) return;
-    if (this.agentModels.get(SCRATCH_AGENT) === model) return;
-    await this.fleet.addAgent(this.scratchAgentConfig(model), { replace: true });
-    this.agentModels.set(SCRATCH_AGENT, model);
   }
 
   /**
@@ -922,11 +899,6 @@ export class HerdctlService {
     return merged;
   }
 
-  /** List one-off / scratch sessions. */
-  async listScratchSessions(): Promise<DiscoveredSession[]> {
-    return this.manager.getAgentSessions(SCRATCH_AGENT);
-  }
-
   /**
    * The on-disk job-record reads (run history + the unread badge) live in
    * `./herdctl-jobs.js` as pure functions over `<stateDir>/jobs` (issue #403);
@@ -949,65 +921,69 @@ export class HerdctlService {
     return jobs.listRunsForAgents(this.cfg.stateDir, agents, limit);
   }
 
-  /** The working directory used by one-off / scratch chats. */
-  get scratchDir(): string {
-    return this.cfg.scratchDir;
-  }
-
   /**
-   * Promote a one-off (scratch) chat into a project: re-home its transcript into
-   * the project's `.chats/` (rewriting the embedded `cwd` so resume targets the
-   * project dir) and synthesize a herdctl job record attributing the session to
-   * the project's keeper agent. After this + the cache invalidations below the
-   * chat lists and resumes under the project with NO restart — unlike
+   * Promote a chat into a NEW project: re-home its transcript into that
+   * project's `.chats/` (rewriting the embedded `cwd` so the transcript reports
+   * the new project dir) and re-point the session's herdctl job records at the
+   * new keeper. After this + the cache invalidations below the chat lists and
+   * resumes under the new project with NO restart — unlike
    * `scripts/migrate-chat.sh`, which writes the same files from outside the
    * process and therefore needs a restart to drop the attribution-index cache.
    *
-   * The caller MUST have already created the project and registered its keeper
-   * (ensureProjectAgent), so the project's `.chats/` + transcript symlink exist.
-   * Throws if the scratch transcript can't be read (e.g. unknown session id).
+   * Generalised from `promoteScratchSession` when #516 Phase 6 retired scratch.
+   * The operation was never really about scratch — it moves one chat from one
+   * keeper's store to another's — and the root is a project like any other, so
+   * the root chats that inherited scratch's URL inherit its promote action too.
+   *
+   * The caller MUST have already created `to` and registered its keeper
+   * (ensureProjectAgent), so its `.chats/` + transcript symlink exist. Throws if
+   * the source transcript can't be read (e.g. unknown session id).
    */
-  async promoteScratchSession(sessionId: string, project: Project): Promise<void> {
+  async promoteSession(sessionId: string, from: Project, to: Project): Promise<void> {
     if (!/^[A-Za-z0-9._-]+$/.test(sessionId)) {
       throw new Error(`Invalid session id: ${sessionId}`);
     }
-    const fromFile = path.join(projectChatsDir(this.cfg.scratchDir), `${sessionId}.jsonl`);
-    const toFile = path.join(projectChatsDir(project.dir), `${sessionId}.jsonl`);
+    const fromFile = path.join(projectChatsDir(from.dir), `${sessionId}.jsonl`);
+    const toFile = path.join(projectChatsDir(to.dir), `${sessionId}.jsonl`);
 
-    // Read the scratch transcript (throws ENOENT for an unknown/absent session).
+    // Read the source transcript (throws ENOENT for an unknown/absent session).
     const raw = await fs.readFile(fromFile, "utf8");
     // Rewrite ONLY the embedded `cwd` token. Claude Code writes compact JSON
     // (`"cwd":"/abs/path"` — no spaces, no escaping for a plain abs path), the
     // same assumption scripts/migrate-chat.sh relies on.
-    // Rewrite the embedded cwd to the project's KEEPER cwd. For a repo-backed
-    // project that's the nested checkout (workingDir), not the metadata dir, so a
-    // promoted scratch chat resumes in the right place (issue #187).
-    const rewritten = raw
-      .split(`"cwd":"${this.cfg.scratchDir}"`)
-      .join(`"cwd":"${project.workingDir}"`);
+    // Rewrite to the destination's KEEPER cwd. For a repo-backed project that's
+    // the nested checkout (workingDir), not the metadata dir, so a promoted chat
+    // resumes in the right place (issue #187).
+    //
+    // Resume does not actually DEPEND on this: #516 Phase 6 established
+    // empirically that Claude Code keys resume on the transcript's location, not
+    // its recorded `cwd`. It is kept because the recorded value is what the
+    // transcript claims about itself, and a stale one is confusing to read.
+    const rewritten = raw.split(`"cwd":"${from.workingDir}"`).join(`"cwd":"${to.workingDir}"`);
 
-    await fs.mkdir(projectChatsDir(project.dir), { recursive: true });
+    await fs.mkdir(projectChatsDir(to.dir), { recursive: true });
     await fs.writeFile(toFile, rewritten, "utf8");
 
     // Preserve the real last-activity time on the moved file.
     const st = await fs.stat(fromFile).catch(() => null);
     if (st) await fs.utimes(toFile, st.atime, st.mtime).catch(() => undefined);
 
-    // Drop the scratch copy AND evict the scratch agent's in-process tracking of
-    // this session. The latter is essential for same-process resume: the scratch
-    // agent that CREATED the session still "owns" the session id in herdctl's
-    // live session state, so resuming under the keeper without evicting it forks
+    // Drop the source copy AND evict the SOURCE agent's in-process tracking of
+    // this session. The latter is essential for same-process resume: the agent
+    // that CREATED the session still "owns" the session id in herdctl's live
+    // session state, so resuming under the new keeper without evicting it forks
     // a fresh session instead of continuing (a process restart clears the same
     // state, which is why it "worked after restart"). deleteSession removes the
-    // scratch transcript (already moved → no-op on content) and clears that state.
-    await this.manager.deleteSession(SCRATCH_AGENT, sessionId).catch(() => undefined);
+    // source transcript (already moved → no-op on content) and clears that state.
+    const fromAgent = keeperAgentName(from.slug);
+    await this.manager.deleteSession(fromAgent, sessionId).catch(() => undefined);
     await fs.rm(fromFile, { force: true });
 
-    // Re-attribute the session to the keeper, then drop the discovery +
+    // Re-attribute the session to the new keeper, then drop the discovery +
     // attribution caches so the move shows immediately.
-    await jobs.reattributeSession(this.cfg.stateDir, sessionId, project, st ? st.mtime : new Date());
-    this.invalidateSessions(keeperAgentName(project.slug));
-    this.invalidateSessions(SCRATCH_AGENT);
+    await jobs.reattributeSession(this.cfg.stateDir, sessionId, to, st ? st.mtime : new Date());
+    this.invalidateSessions(keeperAgentName(to.slug));
+    this.invalidateSessions(fromAgent);
   }
 
   /**
@@ -1209,10 +1185,6 @@ export class HerdctlService {
   // (config in via params, no `this`). The private names are unchanged so the
   // existing unit-test seams (which reach `sweeperAgentConfig`/`ensureConfigFile`
   // via a cast) and internal callers keep working.
-
-  private scratchAgentConfig(model?: string): Record<string, unknown> & { name: string } {
-    return buildScratchConfig(this.cfg, model);
-  }
 
   private keeperAgentConfig(
     project: Project,

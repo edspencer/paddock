@@ -80,13 +80,4 @@ describe("integration: sub-agent transcript endpoints (issue #37)", () => {
     expect(res.json().messages).toEqual([]);
   });
 
-  it("serves a scratch sub-agent's nested steps too", async () => {
-    await writeSubagent(t.herdctl.scratchDir, "sess-S", "toolu_S");
-    const res = await t.app.inject({
-      method: "GET",
-      url: `/api/chats/sess-S/subagents/toolu_S/messages`,
-    });
-    expect(res.statusCode).toBe(200);
-    expect(res.json().messages.some((m: { content: string }) => m.content.includes("sub-agent step output"))).toBe(true);
-  });
 });

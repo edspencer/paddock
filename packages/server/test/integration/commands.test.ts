@@ -12,7 +12,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { startTestApp, type TestApp } from "../helpers/app.js";
-import { SCRATCH_AGENT, keeperAgentName } from "../../src/herdctl.js";
+import { keeperAgentName } from "../../src/herdctl.js";
 import type { SlashCommand } from "@herdctl/core";
 
 const FIXTURE: SlashCommand[] = [
@@ -57,13 +57,6 @@ describe("integration: slash-command listing endpoints (#103)", () => {
   it("GET /api/projects/:slug/commands 404s for an unknown project", async () => {
     const res = await t.app.inject({ method: "GET", url: "/api/projects/ghost/commands" });
     expect(res.statusCode).toBe(404);
-  });
-
-  it("GET /api/commands returns the scratch agent's commands", async () => {
-    const res = await t.app.inject({ method: "GET", url: "/api/commands" });
-    expect(res.statusCode).toBe(200);
-    expect(res.json().commands).toEqual(FIXTURE);
-    expect(spy).toHaveBeenCalledWith(SCRATCH_AGENT);
   });
 
   it("de-duplicates concurrent first calls into one subprocess", async () => {

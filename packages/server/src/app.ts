@@ -188,7 +188,16 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
     { mode: cfg.transcription.mode, available: transcriber.available },
     "voice dictation capability",
   );
-  const initialProjects = await projects.list();
+  // The root project (issue #516) is invisible to `list()` — its `project.yaml`
+  // sits AT `projectsRoot`, and `list()` only walks subdirectories. Resolve it
+  // explicitly and register its keeper alongside every other project's, so the
+  // root keeper is an ordinary keeper in every respect. Absent (the default, and
+  // the state of every existing instance) ⇒ nothing extra is registered.
+  const rootProject = await projects.getRoot();
+  if (rootProject) {
+    app.log.info({ dir: rootProject.dir }, "root project present — registering root keeper");
+  }
+  const initialProjects = [...(await projects.list()), ...(rootProject ? [rootProject] : [])];
   try {
     await herdctl.init(initialProjects);
     await herdctl.start();

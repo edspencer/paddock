@@ -27,7 +27,6 @@ import type {
 } from "../lib/types";
 import { acceptAttribute } from "../lib/attachments";
 import { AttachmentTrayItem } from "./MessageAttachments";
-import { SCRATCH_SLUG } from "../lib/types";
 import { TriggerCapabilityBanner } from "./TriggerCapabilityBanner";
 import { PaddockManageProjectContext } from "./PaddockManageBlock";
 // --- extracted chat modules (issue #403) -------------------------------------
@@ -57,7 +56,7 @@ import { useComposerAttachments } from "./chat/useComposerAttachments";
 export { historyToTurns };
 
 export interface ChatPaneProps {
-  /** Project slug, or "scratch" for one-off chats. */
+  /** The slug of the project this chat belongs to (`__root` for a root chat). */
   projectSlug: string;
   /** Existing session to resume, or undefined for a new chat. */
   initialSessionId?: string;
@@ -318,13 +317,9 @@ export function ChatPane({
         : Promise.resolve([]),
     [projectSlug],
   );
-  // Raw-file URL builder for inline image reads (issue #239). Only for real
-  // project chats — scratch has no servable project-file endpoint.
+  // Raw-file URL builder for inline image reads (issue #239).
   const toolImageUrl = useMemo(
-    () =>
-      projectSlug && projectSlug !== SCRATCH_SLUG
-        ? (relPath: string) => api.projectFileRawUrl(projectSlug, relPath)
-        : null,
+    () => (projectSlug ? (relPath: string) => api.projectFileRawUrl(projectSlug, relPath) : null),
     [projectSlug],
   );
   const isNewSessionRef = useRef<boolean>(!initialSessionId);
@@ -390,8 +385,9 @@ export function ChatPane({
   // --- slash commands (fetched once per chat) --------------------------------
   useEffect(() => {
     let cancelled = false;
-    // Project chats query their keeper; one-off chats query the scratch agent.
-    void (isProjectChat ? api.projectCommands(projectSlug) : api.scratchCommands())
+    // Every chat queries its project keeper (#516 Phase 6 retired the scratch agent).
+    void api
+      .projectCommands(projectSlug)
       .then((cmds) => {
         if (!cancelled) setCommands(cmds);
       })
@@ -868,7 +864,7 @@ export function ChatPane({
   // project chat with a known session id and no turn already running.
   const continueChat = useCallback(() => {
     const sid = sessionRef.current;
-    if (!sid || projectSlug === SCRATCH_SLUG) return;
+    if (!sid) return;
     if (streamingRef.current) return;
     setStreaming(true);
     chatClient.continueChat(projectSlug, sid);
@@ -878,7 +874,6 @@ export function ChatPane({
   // else the instance default, else the built-in ON (issue #301). Memoised so the
   // context value is stable across renders that don't change the inputs.
   const recoveryCtx = useMemo<RecoveryContextValue | null>(() => {
-    if (projectSlug === SCRATCH_SLUG) return null;
     const enabled =
       projectRecovery?.surfaceKilledTask ?? recoveryDefault?.surfaceKilledTask ?? true;
     return { enabled, busy: streaming, onContinue: continueChat };

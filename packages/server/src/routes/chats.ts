@@ -1,13 +1,17 @@
 /**
  * Chat (session) routes: the project-chat cluster (list / runs / usage / create /
  * messages / subagents / context / delete / rename / fork / archive / star / seen /
- * unread) and the mirrored one-off scratch-chat cluster (incl. scratch→project promote).
- * Chat SENDING happens over WS; these are the REST reads + lifecycle mutations.
+ * unread / promote). Chat SENDING happens over WS; these are the REST reads +
+ * lifecycle mutations.
+ *
+ * The mirrored one-off "scratch" cluster that used to live at the end of this
+ * file was deleted by #516 Phase 6 — the root is a project, so root chats are
+ * ordinary project chats served by the routes above.
  */
 import path from "node:path";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { DiscoveredSession } from "@herdctl/core";
-import { SCRATCH_SLUG, SCRATCH_AGENT, keeperAgentName } from "../herdctl.js";
+import { keeperAgentName } from "../herdctl.js";
 import { applyMessageProvenance } from "../message-provenance.js";
 import { buildProjectRuns } from "../runs.js";
 import { KEEPER_DEFAULT_MODEL } from "../models.js";
@@ -24,7 +28,6 @@ import {
   RUNS_SEEN_SESSION,
   clampRunsLimit,
   toChatUsage,
-  toChatDto,
   buildProjectChats,
   makeTriggerResolver,
   makeParentResolver,
@@ -504,11 +507,10 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
     async (req, reply) => {
       try {
         const projectDir = await projectDirForSlug(req.params.slug);
-        let model = KEEPER_DEFAULT_MODEL;
-        if (req.params.slug !== SCRATCH_SLUG) {
-          const p = await projects.get(req.params.slug).catch(() => null);
-          if (p?.model) model = p.model;
-        }
+        // Every slug here addresses a project now that scratch is gone (#516
+        // Phase 6), so the per-project model override always applies.
+        const p = await projects.get(req.params.slug).catch(() => null);
+        const model = p?.model ?? KEEPER_DEFAULT_MODEL;
         const u = await readSessionTokenUsageWithSubagents(projectDir, req.params.sessionId).catch(
           () => null,
         );
@@ -950,7 +952,6 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
     },
   );
 
-
   // Detach a project chat from its parent (#508): promote it — with its own
   // subtree intact — to the top level of the nested chat list, so a family can be
   // archived/deleted "except this one".
@@ -1229,447 +1230,34 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
     },
   );
 
-  // One-off chats (scratch dir). Scratch chats never get context preload, so
-  // their previews are never polluted — no wrapper stripping needed.
-  app.get(
-    "/api/chats",
-    {
-      schema: {
-        tags: ["Chats"],
-        summary: "List one-off (scratch) chats",
-        description:
-          "Returns all one-off scratch chats with per-chat metadata (usage, archived/starred flags, last-seen watermark, run provenance). Scratch chats never get context preload. Response: `{ chats: [...] }`.",
-        response: {
-          200: {
-            description: "Object `{ chats }` with an array of scratch chat DTOs.",
-            type: "object",
-            additionalProperties: true,
-          },
-        },
-      },
-    },
-    async (req) => {
-    const sessions = await herdctl.listScratchSessions().catch(() => []);
-    const usageOf = chatUsageResolver(herdctl.scratchDir, KEEPER_DEFAULT_MODEL);
-    const user = readStateUser(req);
-    return {
-      chats: await Promise.all(
-        sessions.map(async (s) =>
-          toChatDto(
-            s,
-            undefined,
-            await usageOf(s),
-            await archive.isArchived(SCRATCH_AGENT, s.sessionId).catch(() => false),
-            undefined,
-            await readState.getLastSeen(user, SCRATCH_AGENT, s.sessionId).catch(() => 0),
-            await runProvenance.get(s.sessionId).catch(() => null),
-            undefined,
-            await star.isStarred(SCRATCH_AGENT, s.sessionId).catch(() => false),
-            await unread.isUnread(user, SCRATCH_AGENT, s.sessionId).catch(() => false),
-          ),
-        ),
-      ),
-    };
-  });
-
-  // Messages of a one-off (scratch) chat.
-  app.get<{ Params: { sessionId: string } }>(
-    "/api/chats/:sessionId/messages",
-    {
-      schema: {
-        tags: ["Chats"],
-        summary: "Read a scratch chat's messages",
-        description:
-          "READ-ONLY: returns the messages of a one-off (scratch) chat, enriched with tool details. Sending a message is WebSocket-only (a `chat:send` frame on GET /ws) — there is no HTTP send-message endpoint. Response: `{ messages: [...] }`.",
-        params: {
-          type: "object",
-          properties: {
-            sessionId: { type: "string", description: "Scratch chat (session) id." },
-          },
-          required: ["sessionId"],
-        },
-        response: {
-          200: {
-            description: "Object `{ messages }` with the chat's message array.",
-            type: "object",
-            additionalProperties: true,
-          },
-        },
-      },
-    },
-    async (req) => {
-      const messages = await herdctl
-        .sessionMessages(SCRATCH_AGENT, req.params.sessionId)
-        .catch(() => []);
-      return {
-        messages: await enrichWithToolDetails(
-          herdctl.scratchDir,
-          req.params.sessionId,
-          messages,
-        ),
-      };
-    },
-  );
-
-  // Sub-agent transcript within a one-off (scratch) chat (issue #37).
-  app.get<{ Params: { sessionId: string; toolUseId: string } }>(
-    "/api/chats/:sessionId/subagents/:toolUseId/messages",
-    {
-      schema: {
-        tags: ["Chats"],
-        summary: "Read a sub-agent's transcript within a scratch chat",
-        description:
-          "Returns the step-by-step transcript of a sub-agent launched from a Task/Agent tool block within a one-off (scratch) chat. `toolUseId` is the parent tool_use id. Response: `{ messages: [...] }`.",
-        params: {
-          type: "object",
-          properties: {
-            sessionId: { type: "string", description: "Scratch chat (session) id." },
-            toolUseId: { type: "string", description: "Parent tool_use id of the sub-agent launch." },
-          },
-          required: ["sessionId", "toolUseId"],
-        },
-        response: {
-          200: {
-            description: "Object `{ messages }` with the sub-agent's message array.",
-            type: "object",
-            additionalProperties: true,
-          },
-        },
-      },
-    },
-    async (req) => {
-      const messages = await readSubagentMessages(
-        herdctl.scratchDir,
-        req.params.sessionId,
-        req.params.toolUseId,
-      );
-      return { messages };
-    },
-  );
-
-  // Context-window usage for a one-off (scratch) chat (see the project variant).
-  app.get<{ Params: { sessionId: string } }>(
-    "/api/chats/:sessionId/context",
-    {
-      schema: {
-        tags: ["Chats"],
-        summary: "Context-window usage for a scratch chat",
-        description:
-          "Returns the context-window usage for a one-off (scratch) chat, read from the transcript's most recent turn (see the project variant). Response: `{ usage }`, where `usage` is null when the transcript has no usage data.",
-        params: {
-          type: "object",
-          properties: {
-            sessionId: { type: "string", description: "Scratch chat (session) id." },
-          },
-          required: ["sessionId"],
-        },
-        response: {
-          200: {
-            description: "Object `{ usage }` (null when the transcript has no usage data).",
-            type: "object",
-            additionalProperties: true,
-          },
-        },
-      },
-    },
-    async (req) => {
-    const u = await readSessionTokenUsageWithSubagents(
-      herdctl.scratchDir,
-      req.params.sessionId,
-    ).catch(() => null);
-    return { usage: u ? toChatUsage(u, KEEPER_DEFAULT_MODEL) : null };
-  });
-
-  // Delete a one-off (scratch) chat.
-  app.delete<{ Params: { sessionId: string } }>(
-    "/api/chats/:sessionId",
-    {
-      schema: {
-        tags: ["Chats"],
-        summary: "Delete a scratch chat",
-        description:
-          "Deletes a one-off (scratch) chat: removes its transcript and clears any archived/starred flag. Responds 200 with `{ ok, removed }`.",
-        params: {
-          type: "object",
-          properties: {
-            sessionId: { type: "string", description: "Scratch chat (session) id." },
-          },
-          required: ["sessionId"],
-        },
-        response: {
-          200: {
-            description: "Object `{ ok, removed }` indicating whether the transcript was removed.",
-            type: "object",
-            additionalProperties: true,
-          },
-        },
-      },
-    },
-    async (req, reply) => {
-      try {
-        await cleanupAttachments(SCRATCH_AGENT, req.params.sessionId);
-        const removed = await herdctl.deleteSession(SCRATCH_AGENT, req.params.sessionId);
-        await archive.setArchived(SCRATCH_AGENT, req.params.sessionId, false).catch(() => undefined);
-        await star.setStarred(SCRATCH_AGENT, req.params.sessionId, false).catch(() => undefined);
-        await unread
-          .setUnread(readStateUser(req), SCRATCH_AGENT, req.params.sessionId, false)
-          .catch(() => undefined);
-        return reply.code(200).send({ ok: true, removed });
-      } catch (err) {
-        return sendProjectError(reply, err);
-      }
-    },
-  );
-
-  // Archive (or unarchive) a one-off (scratch) chat (#95). Same non-destructive
-  // toggle as the project variant.
-  app.post<{ Params: { sessionId: string }; Body: { archived?: boolean } }>(
-    "/api/chats/:sessionId/archive",
-    {
-      schema: {
-        tags: ["Chats"],
-        summary: "Archive or unarchive a scratch chat",
-        description:
-          "Non-destructive toggle of a scratch chat's persisted archived flag (same as the project variant). Body `{ archived }` defaults to true. Responds 200 with `{ ok, archived }`.",
-        params: {
-          type: "object",
-          properties: {
-            sessionId: { type: "string", description: "Scratch chat (session) id." },
-          },
-          required: ["sessionId"],
-        },
-        body: {
-          type: ["object", "null"],
-          additionalProperties: true,
-          properties: {
-            archived: { description: "Target archived state; defaults to true when omitted." },
-          },
-          required: [],
-        },
-        response: {
-          200: {
-            description: "Object `{ ok, archived }` with the resulting archived state.",
-            type: "object",
-            additionalProperties: true,
-          },
-        },
-      },
-    },
-    async (req, reply) => {
-      try {
-        const archived = req.body?.archived !== false; // default true
-        await archive.setArchived(SCRATCH_AGENT, req.params.sessionId, archived);
-        return reply.code(200).send({ ok: true, archived });
-      } catch (err) {
-        return sendProjectError(reply, err);
-      }
-    },
-  );
-
-  // Star (or unstar) a one-off (scratch) chat (#373). Same non-destructive toggle
-  // as the project variant.
-  app.post<{ Params: { sessionId: string }; Body: { starred?: boolean } }>(
-    "/api/chats/:sessionId/star",
-    {
-      schema: {
-        tags: ["Chats"],
-        summary: "Star or unstar a scratch chat",
-        description:
-          "Non-destructive toggle of a scratch chat's persisted starred flag (same as the project variant). Body `{ starred }` defaults to true. Responds 200 with `{ ok, starred }`.",
-        params: {
-          type: "object",
-          properties: {
-            sessionId: { type: "string", description: "Scratch chat (session) id." },
-          },
-          required: ["sessionId"],
-        },
-        body: {
-          type: ["object", "null"],
-          additionalProperties: true,
-          properties: {
-            starred: { description: "Target starred state; defaults to true when omitted." },
-          },
-          required: [],
-        },
-        response: {
-          200: {
-            description: "Object `{ ok, starred }` with the resulting starred state.",
-            type: "object",
-            additionalProperties: true,
-          },
-        },
-      },
-    },
-    async (req, reply) => {
-      try {
-        const starred = req.body?.starred !== false; // default true
-        await star.setStarred(SCRATCH_AGENT, req.params.sessionId, starred);
-        return reply.code(200).send({ ok: true, starred });
-      } catch (err) {
-        return sendProjectError(reply, err);
-      }
-    },
-  );
-
-  // Mark a one-off (scratch) chat SEEN (#189). Same as the project variant.
-  app.post<{ Params: { sessionId: string }; Body: { when?: number } }>(
-    "/api/chats/:sessionId/seen",
-    {
-      schema: {
-        tags: ["Chats"],
-        summary: "Mark a scratch chat as seen",
-        description:
-          "Persists the user's last-viewed moment for a one-off (scratch) chat (same as the project variant). Optional body `{ when }` (epoch-ms) defaults to now; monotonic in the store. Responds 200 with `{ ok, lastSeen }`.",
-        params: {
-          type: "object",
-          properties: {
-            sessionId: { type: "string", description: "Scratch chat (session) id." },
-          },
-          required: ["sessionId"],
-        },
-        body: {
-          type: ["object", "null"],
-          additionalProperties: true,
-          properties: {
-            when: { description: "Epoch-ms timestamp to record as last seen; defaults to now." },
-          },
-          required: [],
-        },
-        response: {
-          200: {
-            description: "Object `{ ok, lastSeen }` with the recorded watermark.",
-            type: "object",
-            additionalProperties: true,
-          },
-        },
-      },
-    },
-    async (req, reply) => {
-      try {
-        const when =
-          typeof req.body?.when === "number" && Number.isFinite(req.body.when)
-            ? req.body.when
-            : Date.now();
-        const user = readStateUser(req);
-        await readState.setLastSeen(user, SCRATCH_AGENT, req.params.sessionId, when);
-        // Also clear any manual unread override (#458) — same as the project variant.
-        await unread.setUnread(user, SCRATCH_AGENT, req.params.sessionId, false).catch(() => undefined);
-        return reply.code(200).send({ ok: true, lastSeen: when });
-      } catch (err) {
-        return sendProjectError(reply, err);
-      }
-    },
-  );
-
-  // Mark a one-off (scratch) chat UNREAD (#458). Same manual override as the
-  // project variant.
-  app.post<{ Params: { sessionId: string }; Body: { unread?: boolean } }>(
-    "/api/chats/:sessionId/unread",
-    {
-      schema: {
-        tags: ["Chats"],
-        summary: "Mark a scratch chat unread",
-        description:
-          "The one-off (scratch) chat variant of the manual unread override (#458). Body `{ unread }` defaults to true; clearing it is equivalent to marking seen. Returns `{ ok, unread }`.",
-        params: {
-          type: "object",
-          properties: {
-            sessionId: { type: "string", description: "Scratch chat (session) id." },
-          },
-          required: ["sessionId"],
-        },
-        body: {
-          type: ["object", "null"],
-          additionalProperties: true,
-          properties: {
-            unread: { description: "Whether to flag the chat unread. Defaults to true." },
-          },
-        },
-        response: {
-          200: {
-            description: "Object `{ ok, unread }` reflecting the stored flag.",
-            type: "object",
-            additionalProperties: true,
-          },
-        },
-      },
-    },
-    async (req, reply) => {
-      try {
-        const flag = req.body?.unread !== false; // default true
-        await unread.setUnread(readStateUser(req), SCRATCH_AGENT, req.params.sessionId, flag);
-        return reply.code(200).send({ ok: true, unread: flag });
-      } catch (err) {
-        return sendProjectError(reply, err);
-      }
-    },
-  );
-
-  // Rename a one-off (scratch) chat (issue #10).
-  app.patch<{ Params: { sessionId: string }; Body: { name?: string | null } }>(
-    "/api/chats/:sessionId",
-    {
-      schema: {
-        tags: ["Chats"],
-        summary: "Rename a scratch chat",
-        description:
-          "Sets or clears a one-off (scratch) chat's custom display name. A null/empty `name` clears any custom name. Responds 200 with `{ ok }`.",
-        params: {
-          type: "object",
-          properties: {
-            sessionId: { type: "string", description: "Scratch chat (session) id." },
-          },
-          required: ["sessionId"],
-        },
-        body: {
-          type: ["object", "null"],
-          additionalProperties: true,
-          properties: {
-            name: { description: "New display name; null/empty clears the custom name." },
-          },
-          required: [],
-        },
-        response: {
-          200: {
-            description: "Object `{ ok }`.",
-            type: "object",
-            additionalProperties: true,
-          },
-        },
-      },
-    },
-    async (req, reply) => {
-      try {
-        await herdctl.renameSession(SCRATCH_AGENT, req.params.sessionId, req.body?.name ?? null);
-        return reply.code(200).send({ ok: true });
-      } catch (err) {
-        return sendProjectError(reply, err);
-      }
-    },
-  );
-
-  // Promote a one-off (scratch) chat into a new project (issue #20): create the
-  // project + keeper, then re-home the chat's transcript into it so it lists +
-  // resumes under the project. Returns { project, promoted } — `promoted:false`
-  // means the project was created but the transcript couldn't be moved (e.g. an
-  // unknown session id); the project is still usable.
+  // Promote a chat into a NEW project (issue #20): create the project + keeper,
+  // then re-home the chat's transcript into it so it lists + resumes under the
+  // new project. Returns { project, promoted } — `promoted:false` means the
+  // project was created but the transcript couldn't be moved (e.g. an unknown
+  // session id); the project is still usable.
+  //
+  // Lived at `POST /api/chats/:sessionId/promote` until #516 Phase 6, when
+  // scratch was retired and the action followed the chats onto the root keeper.
+  // Nothing about it is root-specific: it takes a source project like every
+  // other route in this file, and the root is a project.
   app.post<{
-    Params: { sessionId: string };
+    Params: { slug: string; sessionId: string };
     Body: { name?: string; slug?: string; group?: string; summary?: string; domain?: string[] };
   }>(
-    "/api/chats/:sessionId/promote",
+    "/api/projects/:slug/chats/:sessionId/promote",
     {
       schema: {
         tags: ["Chats"],
-        summary: "Promote a scratch chat into a new project",
+        summary: "Promote a chat into a new project",
         description:
-          "Promotes a one-off (scratch) chat into a NEW project: creates the project + keeper, then re-homes the chat's transcript into it so it lists and resumes under the project. `name` is required (validated at runtime; a missing/blank name returns 400). Responds 201 with `{ project, promoted, sessionId }` — `promoted:false` means the project was created but the transcript couldn't be moved (e.g. an unknown session id); the project is still usable.",
+          "Promotes a chat into a NEW project: creates the project + keeper, then re-homes the chat's transcript into it so it lists and resumes under the new project. `name` is required (validated at runtime; a missing/blank name returns 400). Responds 201 with `{ project, promoted, sessionId }` — `promoted:false` means the project was created but the transcript couldn't be moved (e.g. an unknown session id); the project is still usable.",
         params: {
           type: "object",
           properties: {
-            sessionId: { type: "string", description: "Scratch chat (session) id to promote." },
+            slug: { type: "string", description: "Slug of the project the chat currently lives in." },
+            sessionId: { type: "string", description: "Chat (session) id to promote." },
           },
-          required: ["sessionId"],
+          required: ["slug", "sessionId"],
         },
         body: {
           type: ["object", "null"],
@@ -1679,15 +1267,14 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
             slug: { description: "Optional explicit project slug." },
             group: { description: "Optional project group." },
             summary: { description: "Optional project summary." },
-            domain: {
-              description: "Optional project domain tags.",
-            },
+            domain: { description: "Optional project domain tags." },
           },
           required: [],
         },
         response: {
           201: {
-            description: "Object `{ project, promoted, sessionId }` describing the created project and whether the transcript was re-homed.",
+            description:
+              "Object `{ project, promoted, sessionId }` describing the created project and whether the transcript was re-homed.",
             type: "object",
             additionalProperties: true,
           },
@@ -1695,35 +1282,38 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
       },
     },
     async (req, reply) => {
-    const body = req.body ?? {};
-    if (!body.name || !body.name.trim()) {
-      return reply.code(400).send({ error: "Project name is required", code: "invalid" });
-    }
-    try {
-      const project = await projects.create({
-        name: body.name,
-        slug: body.slug,
-        group: body.group,
-        summary: body.summary,
-        domain: Array.isArray(body.domain) ? body.domain : undefined,
-      });
-      // Register the keeper + sweeper (creates the project's .chats symlink)
-      // BEFORE moving the transcript into it.
-      try {
-        await herdctl.ensureProjectAgent(project);
-      } catch (err) {
-        req.log.warn({ err }, "promote: keeper registration failed (project still created)");
+      const body = req.body ?? {};
+      if (!body.name || !body.name.trim()) {
+        return reply.code(400).send({ error: "Project name is required", code: "invalid" });
       }
-      let promoted = false;
       try {
-        await herdctl.promoteScratchSession(req.params.sessionId, project);
-        promoted = true;
+        const from = await projects.get(req.params.slug);
+        const project = await projects.create({
+          name: body.name,
+          slug: body.slug,
+          group: body.group,
+          summary: body.summary,
+          domain: Array.isArray(body.domain) ? body.domain : undefined,
+        });
+        // Register the keeper + sweeper (creates the project's .chats symlink)
+        // BEFORE moving the transcript into it.
+        try {
+          await herdctl.ensureProjectAgent(project);
+        } catch (err) {
+          req.log.warn({ err }, "promote: keeper registration failed (project still created)");
+        }
+        let promoted = false;
+        try {
+          await herdctl.promoteSession(req.params.sessionId, from, project);
+          promoted = true;
+        } catch (err) {
+          req.log.warn({ err }, "promote: could not re-home the transcript");
+        }
+        return reply.code(201).send({ project, promoted, sessionId: req.params.sessionId });
       } catch (err) {
-        req.log.warn({ err }, "promote: could not re-home scratch transcript");
+        return sendProjectError(reply, err);
       }
-      return reply.code(201).send({ project, promoted, sessionId: req.params.sessionId });
-    } catch (err) {
-      return sendProjectError(reply, err);
-    }
-  });
+    },
+  );
+
 }

@@ -17,7 +17,7 @@ import type {
   InjectedMcpServerDef,
 } from "@herdctl/core";
 import { createSDKMessageHandler, type SDKMessage as ChatSDKMessage } from "@herdctl/chat";
-import { keeperAgentName, keeperSlugFromAgent, SCRATCH_SLUG } from "./herdctl.js";
+import { keeperAgentName, keeperSlugFromAgent } from "./herdctl.js";
 import type { Project } from "./projects.js";
 import { isKnownDriveMode, getContextLimit } from "./models.js";
 import { SessionHub, type TurnHandle } from "./session-hub.js";
@@ -140,7 +140,6 @@ const selfMcpCtx: ChatHandlerContext = {
 // The single injection-policy context, shared by the live `startAgentTurn` path
 // (below) AND the wake rebuild, so the two can never drift. See wake-injection.ts.
 const injectionBuildCtx: InjectedMcpBuildContext = {
-  scratchSlug: SCRATCH_SLUG,
   cfg: deps.cfg,
   saveAttachment: (bytes, name) => deps.attachments.save(bytes, name),
   // Optional, mirroring the optional `runProvenance` dep: absent ⇒ the caller's
@@ -161,14 +160,15 @@ function buildInjection(
 }
 
 // Rebuild a woken session's injection from scratch (cold-cache warm after a server
-// restart, when the live-turn cache is empty). Resolves the project (scratch/unknown
-// ⇒ no injection) then delegates to the shared builder; the resume gates self-MCP on
-// the chat's OWN recorded depth. Never throws (the cache also catches defensively).
+// restart, when the live-turn cache is empty). Resolves the project (a non-keeper
+// agent or an unknown project ⇒ no injection) then delegates to the shared builder;
+// the resume gates self-MCP on the chat's OWN recorded depth. Never throws (the
+// cache also catches defensively).
 const rebuildWakeInjection = async (
   entry: SessionWakeEntry,
 ): Promise<Record<string, InjectedMcpServerDef> | undefined> => {
   const slug = keeperSlugFromAgent(entry.agent);
-  if (!slug || slug === SCRATCH_SLUG) return undefined;
+  if (!slug) return undefined;
   let project: Awaited<ReturnType<typeof deps.projects.get>>;
   try {
     project = await deps.projects.get(slug);
@@ -493,13 +493,10 @@ async function startAgentTurn(opts: StartAgentTurnOpts): Promise<string> {
       ? deps.herdctl.chatSession.bind(deps.herdctl)
       : deps.herdctl.chat.bind(deps.herdctl);
 
-  // Gap B sink (session mode, non-scratch): one persistent sink renders every
+  // Gap B sink (session mode): one persistent sink renders every
   // background-completion re-invocation onto a single hub turn (skipping sidechain
   // sub-agent steps). Built once so its state (turn/translator) spans the stream.
-  const bgSink =
-    driveMode === "session" && projectSlug !== SCRATCH_SLUG
-      ? makeBackgroundTurnSink(projectSlug)
-      : null;
+  const bgSink = driveMode === "session" ? makeBackgroundTurnSink(projectSlug) : null;
 
   // Resolve the sessionId early; the caller returns it while the turn continues.
   let resolveId!: (id: string) => void;
@@ -641,7 +638,7 @@ async function startAgentTurn(opts: StartAgentTurnOpts): Promise<string> {
       // Layer 3 (issue #301): arm a post-turn recovery watch for a session-mode
       // keeper turn that stayed alive — including a recovery re-drive itself, so a
       // re-drive that hangs again is caught (bounded by the per-session retry cap).
-      if (effectiveSuccess && finalSession && driveMode === "session" && projectSlug !== SCRATCH_SLUG) {
+      if (effectiveSuccess && finalSession && driveMode === "session") {
         recoveryEngine.armWatch({ slug: projectSlug, sessionId: finalSession });
       }
       if (!resolvedSession) {
@@ -690,7 +687,7 @@ const injectingRecovery = new Set<string>();
  */
 const injectRecoveryNudge = async (project: Project, sessionId: string): Promise<void> => {
   const slug = project.slug;
-  if (!slug || slug === SCRATCH_SLUG) return;
+  if (!slug) return;
   // Single-flight double-dispatch guard (issue #352). Two dispatches resuming the
   // SAME session at once is fatal under session-mode `chatSession(resume)`: the
   // second resume interrupts the first, so one nudge is swallowed ("first message

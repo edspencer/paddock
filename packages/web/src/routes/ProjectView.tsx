@@ -14,9 +14,11 @@ import { useProjectRuns } from "../lib/useProjectRuns";
 import { FilesPane } from "../components/FilesPane";
 import { ProjectMenu } from "../components/ProjectMenu";
 import { SettingsPane } from "../components/SettingsPane";
+import { InstanceConfigForm } from "../components/InstanceConfigForm";
 import { TriggersPane } from "../components/TriggersPane";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ForkChatModal } from "../components/ForkChatModal";
+import { PromoteChatModal } from "../components/PromoteChatModal";
 import { usePaneWidth } from "../components/PaneResizer";
 import { CHATLIST_PANE } from "../lib/paneWidth";
 import {
@@ -35,7 +37,15 @@ import { readForkParent, writeForkParent } from "../lib/forkLineage";
 import { buildChatTree, descendantIds, withAncestors } from "../lib/chatTree";
 import { readCollapsedChats, writeCollapsedChats } from "../lib/collapsedChats";
 import type { GitProjectStatus } from "../lib/types";
-import { decodeFilesSubpath, deriveView, repoHref } from "./ProjectView/urls";
+import {
+  ROOT_SLUG,
+  decodeFilesSubpath,
+  deriveView,
+  gridUrl,
+  homeUrl,
+  repoHref,
+  viewBase,
+} from "./ProjectView/urls";
 import { TabButton } from "./ProjectView/TabButton";
 import { PinnedTab } from "./ProjectView/PinnedTab";
 import { HomePane } from "./ProjectView/HomePane";
@@ -52,10 +62,21 @@ import { useUnreadChats } from "./ProjectView/useUnreadChats";
  *   /projects/:slug/files[/:name]       -> Files tab / a specific file (or pin)
  *   /projects/:slug/changes[/:file]     -> Changes tab / a specific changed file
  *   /projects/:slug/settings            -> Settings tab (all per-project settings)
+ *
+ * With `root` (issue #516) the SAME component serves the ROOT project — the
+ * project whose directory is the projects root itself. Nothing about it is
+ * special-cased: it takes the reserved `__root` slug and hits the same
+ * `/api/projects/:slug/…` endpoints. It differs only in its browser URLs, which
+ * are flat and top-level (`/` is root Home, `/chat[/:sessionId]` its chats) —
+ * and that difference is carried entirely by `base` (see `viewBase`).
  */
-export function ProjectView() {
+export function ProjectView({ root = false }: { root?: boolean } = {}) {
   const params = useParams();
-  const slug = params.slug ?? "";
+  const slug = root ? ROOT_SLUG : (params.slug ?? "");
+  // Every in-context URL hangs off this: "" at the root, `/projects/:slug`
+  // otherwise. The ~20 navigation sites below are written against it, so both
+  // contexts share one implementation (issue #516 Phase 3).
+  const base = viewBase(slug);
   const location = useLocation();
   const navigate = useNavigate();
   // Opens the global project-nav drawer (#372). On mobile this view hosts the
@@ -64,16 +85,16 @@ export function ProjectView() {
   // falling back to a no-op.
   const shell = useOutletContext<ShellOutletContext | null>();
   const openNav = shell?.openNav ?? (() => {});
-  const { refresh: refreshProjects, upsert, remove } = useProjects();
+  const { refresh: refreshProjects, upsert, remove, rootProject } = useProjects();
 
   // Which sub-route are we on? Derived purely from the URL (see `deriveView`).
-  const view = deriveView(location.pathname, slug);
+  const view = deriveView(location.pathname, base);
   const routeSessionId = view === "chat" ? params.sessionId : undefined;
   // The Files tab nests: the directory or file being viewed is whatever follows
-  // `/projects/:slug/files/` in the URL (issue #259). We read it straight from
-  // the pathname (not a router param) and decode each segment, so real "/"
+  // `<base>/files/` in the URL (issue #259). We read it straight from the
+  // pathname (not a router param) and decode each segment, so real "/"
   // separators survive intact. "" = the project root's file list.
-  const filesSubpath = view === "files" ? decodeFilesSubpath(location.pathname, slug) : "";
+  const filesSubpath = view === "files" ? decodeFilesSubpath(location.pathname, base) : "";
   // The specific changed file deep-linked via /changes/:file (or undefined for
   // the Changes tab with no file selected — the pane defaults to the first one).
   const routeChangeFile =
@@ -178,6 +199,9 @@ export function ProjectView() {
   // The chat awaiting a fork-name in the naming dialog (issue #279); null when
   // the dialog is closed.
   const [forkingChat, setForkingChat] = useState<Chat | null>(null);
+  // The chat awaiting a name in the promote-into-a-project dialog (issue #20).
+  // Root-only — see SessionSidebar.setPromotingChat.
+  const [promotingChat, setPromotingChat] = useState<Chat | null>(null);
   // Whether the collapsible "Archived" section is expanded (#95). Collapsed by
   // default; auto-expands (once per session) when the open chat is archived.
   const [archivedOpen, setArchivedOpen] = useState(false);
@@ -321,7 +345,13 @@ export function ProjectView() {
   // Sticky last tab: persist the current in-project sub-path for this project
   // whenever the URL (view / session / file) changes, so the bare
   // `/projects/:slug` redirect can restore exactly where the user left off.
+  //
+  // Deliberately NOT done at the root (issue #516): `/` always renders Home. A
+  // sticky root tab would mean `/` — the instance's front door — sometimes lands
+  // on Files, which is exactly the weirdness a redirect scheme invites. Sticky
+  // tabs stay a project-only affordance.
   useEffect(() => {
+    if (root) return;
     const sub =
       view === "home"
         ? toSubPath({ view: "home" })
@@ -337,7 +367,7 @@ export function ProjectView() {
                 ? toSubPath({ view: "changes", file: routeChangeFile })
                 : toSubPath({ view: "files", path: filesSubpath || undefined });
     writeLastTab(slug, sub);
-  }, [slug, view, routeSessionId, filesSubpath, routeChangeFile]);
+  }, [root, slug, view, routeSessionId, filesSubpath, routeChangeFile]);
 
   // Refresh just the chat list (e.g. after a new session is established).
   const refreshChats = useCallback(async () => {
@@ -374,13 +404,15 @@ export function ProjectView() {
   }, [view, routeSessionId, filesSubpath, routeChangeFile]);
 
   // --- URL-driven navigation (all tab/chat/file clicks change the route) -----
-  const goHome = useCallback(() => navigate(`/projects/${slug}/home`), [navigate, slug]);
-  const goChat = useCallback(() => navigate(`/projects/${slug}/chat`), [navigate, slug]);
-  const goFiles = useCallback(() => navigate(`/projects/${slug}/files`), [navigate, slug]);
-  const goChanges = useCallback(() => navigate(`/projects/${slug}/changes`), [navigate, slug]);
-  const goHistory = useCallback(() => navigate(`/projects/${slug}/history`), [navigate, slug]);
-  const goSettings = useCallback(() => navigate(`/projects/${slug}/settings`), [navigate, slug]);
-  const goTriggers = useCallback(() => navigate(`/projects/${slug}/triggers`), [navigate, slug]);
+  // Root Home is the bare `/` — there is no `/home` at the root (#516), so the
+  // Home target is the only nav site that isn't a plain `${base}/…`.
+  const goHome = useCallback(() => navigate(homeUrl(base)), [navigate, base]);
+  const goChat = useCallback(() => navigate(`${base}/chat`), [navigate, base]);
+  const goFiles = useCallback(() => navigate(`${base}/files`), [navigate, base]);
+  const goChanges = useCallback(() => navigate(`${base}/changes`), [navigate, base]);
+  const goHistory = useCallback(() => navigate(`${base}/history`), [navigate, base]);
+  const goSettings = useCallback(() => navigate(`${base}/settings`), [navigate, base]);
+  const goTriggers = useCallback(() => navigate(`${base}/triggers`), [navigate, base]);
   // Select a specific changed file in the Changes tab, reflecting it in the URL
   // so a specific diff/file is deep-linkable (issue #107). null clears to the
   // bare /changes route.
@@ -388,18 +420,18 @@ export function ProjectView() {
     (file: string | null) =>
       navigate(
         file
-          ? `/projects/${slug}/changes/${encodeURIComponent(file)}`
-          : `/projects/${slug}/changes`,
+          ? `${base}/changes/${encodeURIComponent(file)}`
+          : `${base}/changes`,
       ),
-    [navigate, slug],
+    [navigate, base],
   );
   // The Hooks tab was renamed + folded into Triggers (Epic T / T4). Redirect any old
   // `/hooks` link/bookmark to the canonical `/triggers` route (replace so Back skips it).
   useEffect(() => {
-    if (location.pathname.startsWith(`/projects/${slug}/hooks`)) {
-      navigate(`/projects/${slug}/triggers`, { replace: true });
+    if (location.pathname.startsWith(`${base}/hooks`)) {
+      navigate(`${base}/triggers`, { replace: true });
     }
-  }, [location.pathname, navigate, slug]);
+  }, [location.pathname, navigate, base]);
   // Start a brand-new chat. Bump the pane nonce first so the ChatPane is force-
   // remounted into a clean, session-less composer even when the current pane is a
   // still-streaming new chat whose establish navigation hasn't landed yet (which
@@ -410,8 +442,8 @@ export function ProjectView() {
   }, [goChat]);
   const openChat = useCallback(
     (sessionId: string) =>
-      navigate(`/projects/${slug}/chat/${encodeURIComponent(sessionId)}`),
-    [navigate, slug],
+      navigate(`${base}/chat/${encodeURIComponent(sessionId)}`),
+    [navigate, base],
   );
   // Fork a chat with a chosen name: duplicate it server-side into a NEW session
   // in the same project, then jump straight to it. The fork exists immediately —
@@ -430,11 +462,11 @@ export function ProjectView() {
       }
       writeForkParent(newId, { sessionId: chat.sessionId, name: chat.name });
       await refreshChats();
-      navigate(`/projects/${slug}/chat/${encodeURIComponent(newId)}`, {
+      navigate(`${base}/chat/${encodeURIComponent(newId)}`, {
         state: { justForked: true },
       });
     },
-    [navigate, slug, refreshChats],
+    [navigate, base, slug, refreshChats],
   );
   // Fork a NEW chat branched at an earlier message (issue #451): fork the active
   // session's PREFIX up to `uuid`, then jump to the new chat to continue it.
@@ -457,14 +489,14 @@ export function ProjectView() {
       }
       if (source) writeForkParent(newId, { sessionId: source.sessionId, name: source.name });
       await refreshChats();
-      navigate(`/projects/${slug}/chat/${encodeURIComponent(newId)}`, {
+      navigate(`${base}/chat/${encodeURIComponent(newId)}`, {
         state: { justForked: true },
       });
       // ProjectView stays mounted across chat navigation, so clear the guard for
       // the next (deliberate) fork.
       forkingRef.current = false;
     },
-    [activeSession, chats, navigate, slug, refreshChats],
+    [activeSession, chats, navigate, base, slug, refreshChats],
   );
   // Revert the active chat back to an earlier message (issue #451): truncate in
   // place (same session id); the pane reloads its own shorter transcript once
@@ -496,10 +528,10 @@ export function ProjectView() {
     (subpath: string) =>
       navigate(
         subpath
-          ? `/projects/${slug}/files/${subpath.split("/").map(encodeURIComponent).join("/")}`
-          : `/projects/${slug}/files`,
+          ? `${base}/files/${subpath.split("/").map(encodeURIComponent).join("/")}`
+          : `${base}/files`,
       ),
-    [navigate, slug],
+    [navigate, base],
   );
 
   // A brand-new chat has started streaming and just learned its session id
@@ -512,13 +544,13 @@ export function ProjectView() {
       void refreshChats();
       void refreshProjects();
       if (!routeSessionId) {
-        navigate(`/projects/${slug}/chat/${encodeURIComponent(sessionId)}`, {
+        navigate(`${base}/chat/${encodeURIComponent(sessionId)}`, {
           replace: true,
           state: { established: true },
         });
       }
     },
-    [refreshChats, refreshProjects, routeSessionId, navigate, slug],
+    [refreshChats, refreshProjects, routeSessionId, navigate, base],
   );
 
   // When a brand-new chat first establishes its session id, reflect it in the
@@ -528,13 +560,13 @@ export function ProjectView() {
       void refreshChats();
       void refreshProjects();
       if (!routeSessionId) {
-        navigate(`/projects/${slug}/chat/${encodeURIComponent(sessionId)}`, {
+        navigate(`${base}/chat/${encodeURIComponent(sessionId)}`, {
           replace: true,
           state: { established: true },
         });
       }
     },
-    [refreshChats, refreshProjects, routeSessionId, navigate, slug],
+    [refreshChats, refreshProjects, routeSessionId, navigate, base],
   );
 
   // Drop the optimistic pending entry once the real chat lands in the list.
@@ -596,9 +628,9 @@ export function ProjectView() {
       setProject(updated);
       upsert(updated);
       // If the unpinned tab is the one being viewed, fall back to the Files list.
-      if (filesSubpath === file) navigate(`/projects/${slug}/files`, { replace: true });
+      if (filesSubpath === file) navigate(`${base}/files`, { replace: true });
     },
-    [slug, upsert, filesSubpath, navigate],
+    [slug, base, upsert, filesSubpath, navigate],
   );
 
   const confirmDeleteChat = useCallback(async () => {
@@ -624,12 +656,13 @@ export function ProjectView() {
     }
     const gone = new Set(removed);
     setChats((prev) => prev.filter((c) => !gone.has(c.sessionId)));
-    // If the open chat was among them, drop back to a fresh "new chat".
+    // If the open chat was among them, drop back to a fresh "new chat". `base`
+    // is "" at the root and `/projects/:slug` otherwise (#516).
     if (activeSession && gone.has(activeSession)) {
-      navigate(`/projects/${slug}/chat`, { replace: true });
+      navigate(`${base}/chat`, { replace: true });
     }
     setDeletingChat(null);
-  }, [deletingChat, slug, activeSession, navigate]);
+  }, [deletingChat, slug, base, activeSession, navigate]);
 
   /** Open the count-aware delete confirmation for a chat (or a whole subtree). */
   const requestDeleteChat = useCallback(
@@ -963,7 +996,9 @@ export function ProjectView() {
           </button>
           <ProjectMenu
             onEdit={goSettings}
-            onDelete={() => setDeleteOpen(true)}
+            // Deleting the ROOT is refused server-side — its directory IS the
+            // whole projects root — so the root menu offers Edit only (#516).
+            onDelete={root ? undefined : () => setDeleteOpen(true)}
             size={18}
           />
         </div>
@@ -1001,6 +1036,7 @@ export function ProjectView() {
           usageBySession={usageBySession}
           runningSessions={runningSessions}
           setForkingChat={setForkingChat}
+          setPromotingChat={root ? setPromotingChat : undefined}
           renameChat={renameChat}
           archiveChat={archiveChat}
           requestDeleteChat={requestDeleteChat}
@@ -1031,7 +1067,9 @@ export function ProjectView() {
             </TabButton>
             {/* The Changes tab appears ONLY when the projects dir is a git repo.
                 It carries a subtle "N uncommitted" badge so pending work is
-                visible without opening it. */}
+                visible without opening it. At the ROOT that status is the WHOLE
+                backing repo, which is the point — the root is where you commit
+                across the instance. */}
             {gitStatus && (
               <TabButton active={view === "changes"} onClick={goChanges}>
                 <span className="inline-flex items-center gap-1.5">
@@ -1066,6 +1104,10 @@ export function ProjectView() {
                 )}
               </span>
             </TabButton>
+            {/* At the ROOT this tab shows the root's OWN workspace settings AND
+                the instance-wide config, as two sections (#516 Phase 5) — which
+                is why `/settings` resolves here rather than to the standalone
+                InstanceSettings page once a root project exists. */}
             <TabButton active={view === "settings"} onClick={goSettings}>
               <span className="inline-flex items-center gap-1.5">
                 <WrenchIcon width={13} height={13} />
@@ -1083,7 +1125,10 @@ export function ProjectView() {
               </span>
             </TabButton>
             {/* Pinned file tabs (sibling tabs), order preserved by the server.
-                Each links to /files/:name so the tab is deep-linkable. */}
+                Each links to /files/:name so the tab is deep-linkable. Pinning is
+                driven FROM the Files tab, so these come with Phase 4 rather than
+                Phase 5 — a Files tab that can pin, next to a tab bar that won't
+                show the pin, would just be incoherent. */}
             {pinned.map((f) => (
               <PinnedTab
                 key={f}
@@ -1120,13 +1165,27 @@ export function ProjectView() {
             />
           )}
           {view === "settings" && (
-            <SettingsPane
-              project={project}
-              onSaved={(p) => {
-                setProject(p);
-                upsert(p);
-              }}
-            />
+            <div className="flex min-h-0 flex-1 flex-col">
+              <SettingsPane
+                project={project}
+                onSaved={(p) => {
+                  setProject(p);
+                  upsert(p);
+                }}
+              />
+              {/* At the ROOT, instance-wide config joins the tab as a SECOND
+                  section (#516 Phase 5) — the same form `/settings` shows on an
+                  instance with no root project. Kept as two sections rather than
+                  fused, because they are different things: `project.yaml` is
+                  workspace config, hot-applied by agent re-registration, while
+                  `paddock.config.yaml` is instance runtime config, frozen at boot
+                  and restart-required. Fusing them would hide that. */}
+              {root && (
+                <div className="border-t border-paddock-200 dark:border-paddock-800">
+                  <InstanceConfigForm />
+                </div>
+              )}
+            </div>
           )}
           {/* The Triggers tab (Epic T / T4): a self-contained CRUD surface for this
               project's unified triggers (schedules + events + reserved webhooks). Its
@@ -1219,7 +1278,9 @@ export function ProjectView() {
           await api.deleteProject(project.slug);
           remove(project.slug);
           clearLastTab(project.slug);
-          navigate("/");
+          // Back to the projects grid — `/` on an instance with no root project
+          // (unchanged), `/projects` once the root owns `/` (#516).
+          navigate(gridUrl(Boolean(rootProject)));
         }}
         onClose={() => setDeleteOpen(false)}
       />
@@ -1274,6 +1335,21 @@ export function ProjectView() {
         onConfirm={confirmDeleteChat}
         onClose={() => setDeletingChat(null)}
       />
+      {promotingChat && (
+        <PromoteChatModal
+          open
+          slug={slug}
+          sessionId={promotingChat.sessionId}
+          defaultName={promotingChat.name}
+          onClose={() => setPromotingChat(null)}
+          onPromoted={(project) => {
+            setPromotingChat(null);
+            // The transcript moved, so the chat is gone from this list and lives
+            // in the new project — land the user where it went.
+            navigate(`/projects/${project.slug}/chat`);
+          }}
+        />
+      )}
       {forkingChat && (
         <ForkChatModal
           open

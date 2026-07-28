@@ -3,7 +3,7 @@
   "info": {
     "title": "Paddock HTTP API",
     "description": "HTTP API for Paddock — the keeper-agent platform (persistent chats, projects, unified triggers).\n\nThis document is **generated from the server's route schemas** via `@fastify/swagger`, so it\ntracks the code: a new or changed route with a schema shows up here automatically.\n\n**Live chat is WebSocket, not REST.** Sending a message, streaming the response, tool-call\nevents, cancel, slash-commands and the live queue all flow over `GET /ws`. This spec covers the\nHTTP surface: reads, project/chat/trigger/git management, instance config, and attachment\nupload/serve. The two-step attachment flow is: `POST .../chats/:sessionId/upload` (HTTP, here)\nthen reference the returned file ids in the `chat:send` WebSocket frame.\n\n## Authentication\n\nPaddock has no built-in login — authentication is provider-agnostic and handled at the edge (reverse proxy / IdP). **When these docs are served by the Paddock instance itself, behind your proxy, a `Try it out` request is a same-origin call that inherits your existing SSO session — it authenticates automatically, nothing to paste here.** Use the **Authorize** button only for the explicit-token path (a different origin, a programmatic client, or testing without the proxy).\n\nThis instance runs **jwt** mode: a signed token in the `Authorization` header, verified against the JWKS.",
-    "version": "0.48.1"
+    "version": "0.50.0"
   },
   "components": {
     "securitySchemes": {
@@ -185,29 +185,6 @@
               "application/json": {
                 "schema": {
                   "description": "Model list and inherited defaults.",
-                  "type": "object",
-                  "additionalProperties": true
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/commands": {
-      "get": {
-        "summary": "Slash commands for scratch chats",
-        "tags": [
-          "System"
-        ],
-        "description": "Lists the scratch agent's slash commands (the one-off-chat equivalent of the per-project commands endpoint). Returns a JSON object with `commands`; on failure returns 503 with `{ commands: [], error }`.",
-        "responses": {
-          "200": {
-            "description": "Available scratch-chat slash commands.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "description": "Available scratch-chat slash commands.",
                   "type": "object",
                   "additionalProperties": true
                 }
@@ -666,6 +643,72 @@
               "application/json": {
                 "schema": {
                   "description": "Object with the created `project`.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/root-project": {
+      "get": {
+        "summary": "Get the root project",
+        "tags": [
+          "Projects"
+        ],
+        "description": "Returns `{ project }` for the root project (the project whose directory is the projects root), or `{ project: null }` when this instance has no root project. Existence gates the root Home/Chat UI; nothing seeds it.",
+        "responses": {
+          "200": {
+            "description": "Object with the root `project`, or `null`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object with the root `project`, or `null`.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create the root project",
+        "tags": [
+          "Projects"
+        ],
+        "description": "Writes `<projectsRoot>/project.yaml` and registers the root keeper + sweeper agents. This is the opt-in that turns the instance root into an ordinary project (root Home, root chats). Responds 201 with `{ project }`, or 409 if one already exists.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": true,
+                "properties": {
+                  "name": {
+                    "description": "Human-readable name (defaults to the root directory name)."
+                  },
+                  "summary": {
+                    "description": "Short summary."
+                  }
+                },
+                "required": []
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Object with the created root `project`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object with the created root `project`.",
                   "type": "object",
                   "additionalProperties": true
                 }
@@ -2228,443 +2271,13 @@
         }
       }
     },
-    "/api/chats": {
-      "get": {
-        "summary": "List one-off (scratch) chats",
-        "tags": [
-          "Chats"
-        ],
-        "description": "Returns all one-off scratch chats with per-chat metadata (usage, archived/starred flags, last-seen watermark, run provenance). Scratch chats never get context preload. Response: `{ chats: [...] }`.",
-        "responses": {
-          "200": {
-            "description": "Object `{ chats }` with an array of scratch chat DTOs.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "description": "Object `{ chats }` with an array of scratch chat DTOs.",
-                  "type": "object",
-                  "additionalProperties": true
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/chats/{sessionId}/messages": {
-      "get": {
-        "summary": "Read a scratch chat's messages",
-        "tags": [
-          "Chats"
-        ],
-        "description": "READ-ONLY: returns the messages of a one-off (scratch) chat, enriched with tool details. Sending a message is WebSocket-only (a `chat:send` frame on GET /ws) — there is no HTTP send-message endpoint. Response: `{ messages: [...] }`.",
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "in": "path",
-            "name": "sessionId",
-            "required": true,
-            "description": "Scratch chat (session) id."
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Object `{ messages }` with the chat's message array.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "description": "Object `{ messages }` with the chat's message array.",
-                  "type": "object",
-                  "additionalProperties": true
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/chats/{sessionId}/subagents/{toolUseId}/messages": {
-      "get": {
-        "summary": "Read a sub-agent's transcript within a scratch chat",
-        "tags": [
-          "Chats"
-        ],
-        "description": "Returns the step-by-step transcript of a sub-agent launched from a Task/Agent tool block within a one-off (scratch) chat. `toolUseId` is the parent tool_use id. Response: `{ messages: [...] }`.",
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "in": "path",
-            "name": "sessionId",
-            "required": true,
-            "description": "Scratch chat (session) id."
-          },
-          {
-            "schema": {
-              "type": "string"
-            },
-            "in": "path",
-            "name": "toolUseId",
-            "required": true,
-            "description": "Parent tool_use id of the sub-agent launch."
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Object `{ messages }` with the sub-agent's message array.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "description": "Object `{ messages }` with the sub-agent's message array.",
-                  "type": "object",
-                  "additionalProperties": true
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/chats/{sessionId}/context": {
-      "get": {
-        "summary": "Context-window usage for a scratch chat",
-        "tags": [
-          "Chats"
-        ],
-        "description": "Returns the context-window usage for a one-off (scratch) chat, read from the transcript's most recent turn (see the project variant). Response: `{ usage }`, where `usage` is null when the transcript has no usage data.",
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "in": "path",
-            "name": "sessionId",
-            "required": true,
-            "description": "Scratch chat (session) id."
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Object `{ usage }` (null when the transcript has no usage data).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "description": "Object `{ usage }` (null when the transcript has no usage data).",
-                  "type": "object",
-                  "additionalProperties": true
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/chats/{sessionId}": {
-      "delete": {
-        "summary": "Delete a scratch chat",
-        "tags": [
-          "Chats"
-        ],
-        "description": "Deletes a one-off (scratch) chat: removes its transcript and clears any archived/starred flag. Responds 200 with `{ ok, removed }`.",
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "in": "path",
-            "name": "sessionId",
-            "required": true,
-            "description": "Scratch chat (session) id."
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Object `{ ok, removed }` indicating whether the transcript was removed.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "description": "Object `{ ok, removed }` indicating whether the transcript was removed.",
-                  "type": "object",
-                  "additionalProperties": true
-                }
-              }
-            }
-          }
-        }
-      },
-      "patch": {
-        "summary": "Rename a scratch chat",
-        "tags": [
-          "Chats"
-        ],
-        "description": "Sets or clears a one-off (scratch) chat's custom display name. A null/empty `name` clears any custom name. Responds 200 with `{ ok }`.",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": [
-                  "object",
-                  "null"
-                ],
-                "additionalProperties": true,
-                "properties": {
-                  "name": {
-                    "description": "New display name; null/empty clears the custom name."
-                  }
-                },
-                "required": []
-              }
-            }
-          }
-        },
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "in": "path",
-            "name": "sessionId",
-            "required": true,
-            "description": "Scratch chat (session) id."
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Object `{ ok }`.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "description": "Object `{ ok }`.",
-                  "type": "object",
-                  "additionalProperties": true
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/chats/{sessionId}/archive": {
+    "/api/projects/{slug}/chats/{sessionId}/promote": {
       "post": {
-        "summary": "Archive or unarchive a scratch chat",
+        "summary": "Promote a chat into a new project",
         "tags": [
           "Chats"
         ],
-        "description": "Non-destructive toggle of a scratch chat's persisted archived flag (same as the project variant). Body `{ archived }` defaults to true. Responds 200 with `{ ok, archived }`.",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": [
-                  "object",
-                  "null"
-                ],
-                "additionalProperties": true,
-                "properties": {
-                  "archived": {
-                    "description": "Target archived state; defaults to true when omitted."
-                  }
-                },
-                "required": []
-              }
-            }
-          }
-        },
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "in": "path",
-            "name": "sessionId",
-            "required": true,
-            "description": "Scratch chat (session) id."
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Object `{ ok, archived }` with the resulting archived state.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "description": "Object `{ ok, archived }` with the resulting archived state.",
-                  "type": "object",
-                  "additionalProperties": true
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/chats/{sessionId}/star": {
-      "post": {
-        "summary": "Star or unstar a scratch chat",
-        "tags": [
-          "Chats"
-        ],
-        "description": "Non-destructive toggle of a scratch chat's persisted starred flag (same as the project variant). Body `{ starred }` defaults to true. Responds 200 with `{ ok, starred }`.",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": [
-                  "object",
-                  "null"
-                ],
-                "additionalProperties": true,
-                "properties": {
-                  "starred": {
-                    "description": "Target starred state; defaults to true when omitted."
-                  }
-                },
-                "required": []
-              }
-            }
-          }
-        },
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "in": "path",
-            "name": "sessionId",
-            "required": true,
-            "description": "Scratch chat (session) id."
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Object `{ ok, starred }` with the resulting starred state.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "description": "Object `{ ok, starred }` with the resulting starred state.",
-                  "type": "object",
-                  "additionalProperties": true
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/chats/{sessionId}/seen": {
-      "post": {
-        "summary": "Mark a scratch chat as seen",
-        "tags": [
-          "Chats"
-        ],
-        "description": "Persists the user's last-viewed moment for a one-off (scratch) chat (same as the project variant). Optional body `{ when }` (epoch-ms) defaults to now; monotonic in the store. Responds 200 with `{ ok, lastSeen }`.",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": [
-                  "object",
-                  "null"
-                ],
-                "additionalProperties": true,
-                "properties": {
-                  "when": {
-                    "description": "Epoch-ms timestamp to record as last seen; defaults to now."
-                  }
-                },
-                "required": []
-              }
-            }
-          }
-        },
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "in": "path",
-            "name": "sessionId",
-            "required": true,
-            "description": "Scratch chat (session) id."
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Object `{ ok, lastSeen }` with the recorded watermark.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "description": "Object `{ ok, lastSeen }` with the recorded watermark.",
-                  "type": "object",
-                  "additionalProperties": true
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/chats/{sessionId}/unread": {
-      "post": {
-        "summary": "Mark a scratch chat unread",
-        "tags": [
-          "Chats"
-        ],
-        "description": "The one-off (scratch) chat variant of the manual unread override (#458). Body `{ unread }` defaults to true; clearing it is equivalent to marking seen. Returns `{ ok, unread }`.",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": [
-                  "object",
-                  "null"
-                ],
-                "additionalProperties": true,
-                "properties": {
-                  "unread": {
-                    "description": "Whether to flag the chat unread. Defaults to true."
-                  }
-                }
-              }
-            }
-          }
-        },
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "in": "path",
-            "name": "sessionId",
-            "required": true,
-            "description": "Scratch chat (session) id."
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Object `{ ok, unread }` reflecting the stored flag.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "description": "Object `{ ok, unread }` reflecting the stored flag.",
-                  "type": "object",
-                  "additionalProperties": true
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/chats/{sessionId}/promote": {
-      "post": {
-        "summary": "Promote a scratch chat into a new project",
-        "tags": [
-          "Chats"
-        ],
-        "description": "Promotes a one-off (scratch) chat into a NEW project: creates the project + keeper, then re-homes the chat's transcript into it so it lists and resumes under the project. `name` is required (validated at runtime; a missing/blank name returns 400). Responds 201 with `{ project, promoted, sessionId }` — `promoted:false` means the project was created but the transcript couldn't be moved (e.g. an unknown session id); the project is still usable.",
+        "description": "Promotes a chat into a NEW project: creates the project + keeper, then re-homes the chat's transcript into it so it lists and resumes under the new project. `name` is required (validated at runtime; a missing/blank name returns 400). Responds 201 with `{ project, promoted, sessionId }` — `promoted:false` means the project was created but the transcript couldn't be moved (e.g. an unknown session id); the project is still usable.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -2702,9 +2315,18 @@
               "type": "string"
             },
             "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Slug of the project the chat currently lives in."
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
             "name": "sessionId",
             "required": true,
-            "description": "Scratch chat (session) id to promote."
+            "description": "Chat (session) id to promote."
           }
         ],
         "responses": {

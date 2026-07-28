@@ -222,27 +222,6 @@ describe("integration: WS transport edge cases (real app, fake claude)", () => {
     expect(firstUser.content).toBe("no overview here");
   });
 
-  it("preloadContext is a no-op for scratch (no project overview)", async () => {
-    const mark = ws.mark();
-    ws.send({
-      type: "chat:send",
-      payload: {
-        projectSlug: "scratch",
-        sessionId: null,
-        message: "scratch no preload",
-        preloadContext: true,
-      },
-    });
-    const complete = await ws.waitFor(isComplete("scratch"), { from: mark });
-    const sessionId = complete.payload?.sessionId as string;
-    const messages = (
-      await t.app.inject({ method: "GET", url: `/api/chats/${sessionId}/messages` })
-    ).json().messages;
-    const firstUser = messages.find((m: { role: string }) => m.role === "user");
-    expect(firstUser.content).not.toContain("<project-context>");
-    expect(firstUser.content).toBe("scratch no preload");
-  });
-
   // --- per-chat model override -----------------------------------------------
 
   it("a valid project model override re-registers the keeper at that model", async () => {
@@ -285,40 +264,6 @@ describe("integration: WS transport edge cases (real app, fake claude)", () => {
     spy.mockRestore();
   });
 
-  it("a valid scratch model override re-registers the scratch agent", async () => {
-    const spy = vi.spyOn(t.herdctl, "ensureScratchModel");
-    const mark = ws.mark();
-    ws.send({
-      type: "chat:send",
-      payload: {
-        projectSlug: "scratch",
-        sessionId: null,
-        message: "scratch model override",
-        model: "claude-sonnet-5",
-      },
-    });
-    await ws.waitFor(isComplete("scratch"), { from: mark });
-    expect(spy).toHaveBeenCalledWith("claude-sonnet-5");
-    spy.mockRestore();
-  });
-
-  it("an unknown scratch model override does NOT call ensureScratchModel", async () => {
-    const spy = vi.spyOn(t.herdctl, "ensureScratchModel");
-    const mark = ws.mark();
-    ws.send({
-      type: "chat:send",
-      payload: {
-        projectSlug: "scratch",
-        sessionId: null,
-        message: "scratch bad model",
-        model: "gpt-4",
-      },
-    });
-    await ws.waitFor(isComplete("scratch"), { from: mark });
-    expect(spy).not.toHaveBeenCalled();
-    spy.mockRestore();
-  });
-
   // --- chat:cancel ------------------------------------------------------------
 
   it("chat:cancel is accepted (best-effort) and never crashes the socket", async () => {
@@ -345,9 +290,9 @@ describe("integration: WS transport edge cases (real app, fake claude)", () => {
 
   it("accepts the legacy `target` field as a projectSlug alias", async () => {
     const mark = ws.mark();
-    ws.send({ type: "chat:send", payload: { target: "scratch", sessionId: null, message: "via target" } });
+    ws.send({ type: "chat:send", payload: { target: "ws-proj", sessionId: null, message: "via target" } });
     const complete = await ws.waitFor(
-      (e) => e.type === "chat:complete" && e.payload?.projectSlug === "scratch",
+      (e) => e.type === "chat:complete" && e.payload?.projectSlug === "ws-proj",
       { from: mark },
     );
     expect(complete.payload?.success).toBe(true);

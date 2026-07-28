@@ -1,5 +1,161 @@
 # @paddock/server
 
+## 0.50.0
+
+### Minor Changes
+
+- [#524](https://github.com/edspencer/paddock/pull/524) [`ae9ef1c`](https://github.com/edspencer/paddock/commit/ae9ef1c5d93d41c9f895d331df5fd0b9a38fa01f) Thanks [@edspencer](https://github.com/edspencer)! - feat: retire scratch — one-off chats are root chats now (#516 Phase 6).
+
+  No migration ships with this. The companion PR that re-homed existing scratch
+  transcripts onto the root keeper was dropped deliberately: it was a permanent
+  boot-time migration carrying a one-time, few-hundred-kilobyte data move for an
+  instance count in the single digits. Existing scratch transcripts stay on disk
+  at `<scratchDir>/.chats` and simply stop being listed. Nothing reads them.
+
+  Scratch existed because a chat had to belong to _some_ agent and there was no
+  agent for "the instance itself". #516 gave the instance's root a project and an
+  ordinary keeper, which makes scratch redundant — and strictly worse, since it was
+  deliberately denied self-MCP, curation, triggers, attachments, run history, the
+  `<projectsRoot>/CLAUDE.md` walk-up, and more than one turn at a time. Every one
+  of those a root chat gets for free.
+
+  **Removed**
+
+  - The mirrored scratch route cluster (11 routes under `/api/chats/…`) and
+    `GET /api/commands`.
+  - The `scratch` agent itself: `buildScratchConfig`, `ensureScratchModel`,
+    `listScratchSessions`, `herdctl.scratchDir`, `SCRATCH_AGENT`, `SCRATCH_SLUG`.
+  - The ~14 `slug === SCRATCH_SLUG` guards across `route-context`, `ws`,
+    `ws-turn`, `ws-triggers`, `wake-injection` and `spawn-capability`. Several were
+    the _only_ reason a code path had two branches.
+  - `OneOffChat.tsx`, the projects grid's Inbox section, and the scratch half of
+    the web API client.
+
+  **Changed**
+
+  - **`promote` is generalised, not deleted.** `promoteScratchSession(id, project)`
+    becomes `promoteSession(id, from, to)`, and
+    `POST /api/chats/:sessionId/promote` becomes
+    `POST /api/projects/:slug/chats/:sessionId/promote`. The operation was never
+    really about scratch — it moves one chat from one keeper's store to another's —
+    and the root is a project, so the chats that inherited scratch's URL inherit
+    its promote action. The UI offers it on root chats; the server route is
+    generic. New failure mode, pinned by a test: an unknown _source_ project 404s
+    and creates nothing.
+  - **`/chat` is unconditionally a root chat.** It used to fall back to a one-off
+    without a root project; it now 404s there, joining `/files`, `/changes`,
+    `/history` and `/triggers`. Nothing links to it without a root project — the
+    sidebar's chat CTA is hidden in that state.
+
+  **Kept on purpose:** `PADDOCK_SCRATCH_DIR` / `cfg.scratchDir`. Nothing runs or
+  reads there any more, but the setting is left in place so an existing env or
+  config file does not fail validation, and so the old transcripts remain findable
+  by hand. Documented as legacy in `CONFIGURATION.md` and relabelled in instance
+  settings.
+
+  **Breaking:** every `/api/chats/*` endpoint is gone, as is
+  `GET /api/commands`. An external client using the one-off API should move to
+  `/api/projects/__root/chats/*`.
+
+## 0.49.0
+
+### Minor Changes
+
+- [#517](https://github.com/edspencer/paddock/pull/517) [`e50f54c`](https://github.com/edspencer/paddock/commit/e50f54c5763365a1de5e96bb1e01f0893d225a6a) Thanks [@edspencer](https://github.com/edspencer)! - feat: the root is a project — root Home and root chats (#516, Phases 1–3).
+
+  A Paddock instance can now be as capable at its root as inside any project. The
+  framing: **the root is the project whose directory is `projectsRoot` instead of
+  a subdirectory of it.** Its keeper is an ordinary keeper — same
+  `buildKeeperConfig`, same self-MCP, same `max_concurrent: 10`, same chat tree,
+  same per-chat model, same sweeper. Nothing is special-cased; one assumption
+  about where a project directory sits is relaxed.
+
+  `ProjectStore.dirFor()` is the single resolution seam: the reserved `__root`
+  slug maps to the projects root itself, so read/update/overview/changelog/file
+  serving all work on it unchanged. `list()` is untouched — it only walks
+  subdirectories, so the root stays out of enumeration and is resolved explicitly
+  at boot. New `GET`/`POST /api/root-project` ask whether an instance has one and
+  create it; everything else goes through the ordinary `/api/projects/__root/…`.
+
+  In the web, `urls.ts` generalises `slug` → `base` (`""` at the root,
+  `/projects/:slug` otherwise), so one `ProjectView` serves both. Root URLs are
+  flat and top-level: `/` is root Home and `/chat[/:sessionId]` its chats, with
+  the projects grid moving to `/projects`. `/` always renders Home — no redirect
+  and no sticky last tab, so the instance's front door never lands on Files.
+
+  **Migration is gated on existence, so nothing changes for an existing
+  instance.** Nothing seeds `<projectsRoot>/project.yaml`; without it there is no
+  root project, `/` is the projects grid and `/chat` is a scratch chat exactly as
+  before. Creating the root project — an "Enable" card on the grid — is the whole
+  opt-in.
+
+  Worth being blunt about the escalation it buys: the root keeper's working
+  directory CONTAINS every project, so root chats can read and edit any project's
+  files. That is the intent — the root is where you act across the instance — but
+  it is a real step up from a project keeper, which is confined to its own
+  subtree.
+
+  Files, Changes, History, Settings and retiring scratch are follow-up phases;
+  their tabs are hidden at the root rather than pointed at URLs that don't
+  resolve. Note that once a root project exists, `/chat` is a root chat, so
+  existing scratch chats are not reachable in the UI until that final phase
+  re-homes them — their transcripts are untouched on disk.
+
+### Patch Changes
+
+- [#510](https://github.com/edspencer/paddock/pull/510) [`11ce96b`](https://github.com/edspencer/paddock/commit/11ce96b637da6899ba15fde5cd3486a4db2fc05a) Thanks [@edspencer](https://github.com/edspencer)! - fix(chats): record the creating chat on `create_chat`, so the chat tree stops relying on inference (#509).
+
+  The nested chat list resolves a parent edge from `RunProvenance.parentSessionId`
+  first, falling back to inferring one from the kickoff message's sender. But
+  `startAgentTurn` rebuilt the provenance marker from loose `origin`/`depth`
+  scalars, dropping the parent on the `create_chat` path — the dominant way
+  children are made. Result: **not one** of the 169 provenance records on the
+  dogfood instance carried the field, and every edge in the live tree came from
+  inference, which had already needed narrowing once (#491/#504) after it
+  re-parented human chats that a child reported back to.
+
+  `StartAgentTurnOpts` now carries an optional `parent`, `create_chat` supplies the
+  calling chat, and the stamp persists it. Absent where there is no calling chat
+  (schedule/hook fires, and the external `/mcp` transport, which binds
+  `currentSessionId` to `null`). Inference is unchanged and still backfills
+  historical chats — this only stops manufacturing new ones that need it.
+
+- [#518](https://github.com/edspencer/paddock/pull/518) [`1983929`](https://github.com/edspencer/paddock/commit/1983929250c678452b7a49de476fedec60ef60e1) Thanks [@edspencer](https://github.com/edspencer)! - fix(projects): refuse hidden (dot-prefixed) paths on the file surface, don't just omit them from listings.
+
+  `listFiles` has always dropped dot entries from what it _returns_ — but that is
+  presentation, not access control. Naming the path explicitly still resolved it,
+  and the read route's `:name` param decodes `%2F`, so a nominally single-segment
+  route accepts a whole nested path. Together those made
+  `GET /api/projects/:slug/files/.chats%2F<id>.jsonl` return a full chat
+  transcript, and `…/files/.git%2Fconfig` return a git config — which carries
+  credentials when a remote embeds a token. `?path=.chats` likewise enumerated
+  every transcript filename.
+
+  The root project (#516) widened the blast radius from one project's subtree to
+  the instance's own backing repo and every project at once, which is what
+  prompted the audit.
+
+  `resolveInProject` now rejects any dot-prefixed segment, checked against the
+  RESOLVED path relative to the project dir — so `a/../.git` and `./.git` are
+  caught alongside a literal `.git`, while a project dir that legitimately sits
+  under a dot-prefixed ancestor (e.g. `/srv/.paddock/projects`) still works.
+
+  **Honest severity: defense-in-depth, not a privilege boundary.** Paddock has no
+  per-user role model, and any caller who can reach these routes can already start
+  a keeper chat and run Bash — strictly more capability than reading a file. The
+  `/mcp` read-only token surface exposes no file verb, so it was never reachable
+  there. Worth closing because "hidden in the listing" should not be the only
+  thing between an API and a transcript. Nothing in the UI regresses: the Files
+  browser never listed dot entries, so it never had a link to one.
+
+  The leaf may still be a dotfile. Refusing _every_ dot segment was the first cut
+  and it broke the Changes pane: an untracked file has no diff, so the pane renders
+  its content through this same surface — and `.gitignore` is untracked in a fresh
+  repo-backed project, because `ensureSidecarGitignore` writes it. The harm is
+  descending _into_ `.git/` and `.chats/`, not reading a dotfile git is already
+  showing you. `listFiles` additionally refuses a hidden leaf, since listing one is
+  how `?path=.chats` enumerated every transcript.
+
 ## 0.48.1
 
 ### Patch Changes

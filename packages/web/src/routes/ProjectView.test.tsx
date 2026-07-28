@@ -85,7 +85,18 @@ vi.mock("../lib/api", async () => {
 const upsert = vi.fn();
 const remove = vi.fn();
 vi.mock("../lib/projects-context", () => ({
-  useProjects: () => ({ projects: [], loading: false, error: null, refresh: vi.fn(), upsert, remove }),
+  // `rootProject: null` — the instance-with-no-root-project case, which is what
+  // every assertion in this file describes (#516).
+  useProjects: () => ({
+    projects: [],
+    rootProject: null,
+    loading: false,
+    error: null,
+    refresh: vi.fn(),
+    upsert,
+    remove,
+    setRootProject: vi.fn(),
+  }),
 }));
 
 // ProjectView only uses `chatClient.onActiveSessions` (the running-turn set that
@@ -122,6 +133,8 @@ function renderAt(path: string) {
         <Route path="/projects/:slug/settings" element={<ProjectView />} />
         <Route path="/projects/:slug/triggers" element={<ProjectView />} />
         <Route path="/projects/:slug/hooks" element={<ProjectView />} />
+        {/* Deleting a project returns to the grid, which stays at `/` on an
+            instance with no root project — the case this harness models (#516). */}
         <Route path="/" element={<div>HOME</div>} />
       </Routes>
     </MemoryRouter>,

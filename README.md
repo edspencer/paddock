@@ -92,7 +92,8 @@ Then open **http://localhost:4000** and click **New Project**.
 Two images ship from the same source: **`:latest`** is the lean base (app plus
 `git`, `gh`, and the `claude` CLI), and **`:devbox`** layers on a coding-agent
 toolbox — PM2-backed preview servers, `ffmpeg`, a headless Playwright browser,
-the Docker CLI. Same app and same `/data` layout, so you can swap tags against
+the Docker CLI, `python3`/`uv`, `jq`, `rsync`. Same app and same `/data` layout,
+so you can swap tags against
 one volume. Ready-made self-hosting recipes (Compose, Kubernetes, Proxmox,
 a Basic Auth sidecar) live in
 [**`paddock-deploy`**](https://github.com/edspencer/paddock-deploy).
@@ -284,7 +285,7 @@ repo:
   MCP injection, auth boundary, the sweeper, drive modes).
 - **[docs/concepts/](docs/concepts/)** — short explanations of the core ideas:
   [projects](docs/concepts/projects.md) (notebook vs. repo-backed),
-  [keeper vs. scratch agents](docs/concepts/keeper-and-scratch.md),
+  [keeper agents](docs/concepts/keepers.md),
   [chats are Claude Code sessions](docs/concepts/chats.md), and
   [the sweeper](docs/concepts/sweeper.md).
 - **[docs/API.md](docs/API.md)** — Paddock's own REST + WebSocket API reference.

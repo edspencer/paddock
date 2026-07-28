@@ -5,7 +5,6 @@ import { useProjects } from "../lib/projects-context";
 import type { Chat, Project } from "../lib/types";
 import { StatusPill } from "../components/StatusPill";
 import { TagPill } from "../components/TagPill";
-import { ContextRing } from "../components/ContextRing";
 import { NewProjectModal } from "../components/NewProjectModal";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ProjectMenu } from "../components/ProjectMenu";
@@ -18,25 +17,29 @@ import {
   SparkIcon,
   XIcon,
 } from "../components/icons";
-import { relativeTime, sessionUsageOf } from "../lib/format";
-import { areaBlurb, areaLabel, INBOX, orderAreaSlugs } from "../lib/areas";
+import { relativeTime } from "../lib/format";
+import { areaBlurb, areaLabel, orderAreaSlugs } from "../lib/areas";
+import { gridUrl } from "./ProjectView/urls";
 
 /**
  * The projects grid. Two modes:
  *
  *  - **Full landing** (no `filterTag`): projects are grouped into collapsible
  *    sections by their `group` (area) — Homelab / House / Side Projects / …,
- *    Unsorted last — followed by an **Inbox** section listing one-off chats so
+ *    Unsorted last. (The **Inbox** section of one-off chats died with scratch
  *    they're findable. Collapse state per section persists in localStorage.
  *  - **Tag filter** (`/tags/:tag`): a flat grid of just the projects carrying
  *    that domain tag, with a clearable filter chip. (No area sections here —
  *    the filter already narrows the set.)
  */
 export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
-  const { projects: allProjects, loading, error, upsert, remove } = useProjects();
+  const { projects: allProjects, rootProject, loading, error, upsert, remove } = useProjects();
   const [modalOpen, setModalOpen] = useState(false);
   const [deleting, setDeleting] = useState<Project | null>(null);
   const navigate = useNavigate();
+  // Where "back to the grid" points: `/` on an instance with no root project
+  // (unchanged), `/projects` once the root owns `/` (#516).
+  const grid = gridUrl(Boolean(rootProject));
   // "Edit" now deep-links to the project's Settings tab (issue #122) rather than
   // opening a modal — the tab is the single source of truth for project settings.
   const editProject = useCallback(
@@ -78,24 +81,6 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
     };
   }, [slugs]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // One-off chats (the Inbox section). Only on the full landing.
-  const [inbox, setInbox] = useState<Chat[]>([]);
-  useEffect(() => {
-    if (filterTag) return;
-    let cancelled = false;
-    void api
-      .listScratchChats()
-      .then((chats) => {
-        if (!cancelled) setInbox(chats);
-      })
-      .catch(() => {
-        /* best-effort */
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [filterTag]);
-
   const onCreated = (p: Project) => {
     upsert(p);
     setModalOpen(false);
@@ -105,7 +90,7 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
   };
 
   const showEmpty =
-    !loading && !error && !filterTag && allProjects.length === 0 && inbox.length === 0;
+    !loading && !error && !filterTag && allProjects.length === 0;
 
   return (
     <div className="h-full overflow-y-auto">
@@ -125,7 +110,7 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
               <p className="mt-1.5 max-w-xl text-sm text-paddock-500">
                 {!loading &&
                   `${projects.length} ${projects.length === 1 ? "project" : "projects"} tagged “${filterTag}”.`}{" "}
-                <Link to="/" className="text-accent underline-offset-2 hover:underline">
+                <Link to={grid} className="text-accent underline-offset-2 hover:underline">
                   View all projects
                 </Link>
               </p>
@@ -148,8 +133,13 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
           </div>
         </header>
 
+        {/* The root-project opt-in (#516). Shown only while this instance has no
+            root project, and only on the unfiltered grid. Creating it is what
+            turns `/` into root Home — until then everything here is unchanged. */}
+        {!filterTag && rootProject === null && <EnableRootCard />}
+
         {/* Active-filter chip — only on /tags/:tag. The "×" clears the filter. */}
-        {filterTag && <FilterChip tag={filterTag} onClear={() => navigate("/")} />}
+        {filterTag && <FilterChip tag={filterTag} onClear={() => navigate(grid)} />}
 
         {error && (
           <div className="mb-6 rounded-lg border border-rose-300/60 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300">
@@ -169,7 +159,7 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
         )}
 
         {!loading && projects.length === 0 && !error && filterTag && (
-          <NoTagMatchState tag={filterTag} onClear={() => navigate("/")} />
+          <NoTagMatchState tag={filterTag} onClear={() => navigate(grid)} />
         )}
 
         {showEmpty && (
@@ -204,7 +194,6 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
                 onDelete={setDeleting}
               />
             ))}
-            <InboxSection chats={inbox} />
           </div>
         )}
       </div>
@@ -340,60 +329,6 @@ function AreaSection({
   );
 }
 
-/** The Inbox section: collapsible header + a grid of one-off chat cards. */
-function InboxSection({ chats }: { chats: Chat[] }) {
-  const [collapsed, toggle] = useCollapsed(INBOX.slug);
-  const open = !collapsed;
-  if (chats.length === 0) return null;
-  return (
-    <section className="mb-4">
-      <SectionHeader
-        open={open}
-        label={INBOX.label}
-        count={chats.length}
-        blurb={INBOX.blurb}
-        onToggle={toggle}
-      />
-      {open && (
-        <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {chats.map((c) => (
-            <InboxChatCard key={c.sessionId} chat={c} />
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-/** A compact card for a one-off chat in the Inbox — links to the chat. */
-function InboxChatCard({ chat }: { chat: Chat }) {
-  return (
-    <Link
-      to={`/chat/${encodeURIComponent(chat.sessionId)}`}
-      className="card group/card flex flex-col gap-2 !p-4"
-    >
-      <div className="flex items-center gap-2">
-        <ChatIcon width={14} height={14} className="shrink-0 text-paddock-400" />
-        <ContextRing
-          tokens={chat.contextTokens}
-          limit={chat.contextLimit}
-          usage={sessionUsageOf(chat)}
-        />
-        <span className="truncate text-sm font-medium">{chat.name}</span>
-      </div>
-      {chat.preview && (
-        <p className="line-clamp-2 text-xs text-paddock-500 dark:text-paddock-400">
-          {chat.preview}
-        </p>
-      )}
-      <div className="mt-auto flex items-center gap-1 text-[11px] text-paddock-400">
-        <ClockIcon width={12} height={12} />
-        {relativeTime(chat.updatedAt)}
-      </div>
-    </Link>
-  );
-}
-
 function ProjectCard({
   project,
   sessionCount,
@@ -518,6 +453,59 @@ function EmptyState({ onCreate, onChat }: { onCreate: () => void; onChat: () => 
         <button className="btn-ghost" onClick={onChat}>
           <ChatIcon width={16} height={16} />
           Just chat once
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The root-project opt-in (issue #516).
+ *
+ * "The root is a project" ships gated on EXISTENCE: with no
+ * `<projectsRoot>/project.yaml` there is no root project, `/` stays this grid,
+ * and every existing instance is untouched. This card is the one action that
+ * changes that — after it, `/` is root Home and `/chat` is a root chat, with an
+ * ordinary keeper whose working directory is the projects root.
+ *
+ * Worth being blunt about the escalation: that keeper's cwd CONTAINS every
+ * project, so root chats can read and edit any project's files. That is the
+ * intent (the root is where you act across the instance), but it is a real step
+ * up from a project keeper, which is confined to its own subtree.
+ */
+function EnableRootCard() {
+  const { setRootProject } = useProjects();
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const enable = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      setRootProject(await api.createRootProject());
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Failed to create the root project");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mb-6 rounded-2xl border border-paddock-200 bg-white/60 px-4 py-3 dark:border-paddock-800 dark:bg-paddock-900/50">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium">Make the root a project</p>
+          <p className="mt-0.5 max-w-2xl text-[13px] text-paddock-500">
+            Give this instance a keeper of its own, working in the projects root: root
+            chats at <span className="font-mono">/chat</span>, and this page moves to{" "}
+            <span className="font-mono">/projects</span>. The root keeper can read and
+            edit every project — that is the point, and a real escalation.
+          </p>
+          {err && <p className="mt-1 text-[13px] text-rose-600 dark:text-rose-400">{err}</p>}
+        </div>
+        <button className="btn-ghost shrink-0" onClick={() => void enable()} disabled={busy}>
+          <SparkIcon width={16} height={16} />
+          {busy ? "Creating…" : "Enable"}
         </button>
       </div>
     </div>

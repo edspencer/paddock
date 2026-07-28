@@ -546,7 +546,7 @@ Each keeper turn runs in one of two modes (`PADDOCK_KEEPER_DRIVE_MODE`, default
   cross-turn keeper autonomy. `cancel()` maps to `session.interrupt()` in session
   mode and `manager.cancelJob()` in batch mode.
 
-See [`concepts/keeper-and-scratch.md`](/concepts/keeper-and-scratch) for the
+See [`concepts/keepers.md`](/concepts/keepers) for the
 agent model and [`INTEGRATION.md`](/architecture/herdctl-integration) for the underlying herdctl
 trigger API.
 

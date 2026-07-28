@@ -5,19 +5,25 @@ import { AREAS } from "../lib/areas";
 import { XIcon } from "./icons";
 
 /**
- * Promote a one-off (scratch) chat into a project (issue #20). Same fields as
- * New Project (name + area + summary + tags), prefilled with the chat's name;
- * on confirm it creates the project AND re-homes this chat's transcript into it,
- * then hands the new project back so the caller can navigate into it.
+ * Promote a chat into a NEW project (issue #20). Same fields as New Project
+ * (name + area + summary + tags), prefilled with the chat's name; on confirm it
+ * creates the project AND re-homes this chat's transcript into it, then hands
+ * the new project back so the caller can navigate into it.
+ *
+ * Was scratch-only until #516 Phase 6 retired scratch. It now takes the chat's
+ * CURRENT project slug — in practice the root, which is where the chats that
+ * used to be one-offs now live.
  */
 export function PromoteChatModal({
   open,
+  slug,
   sessionId,
   defaultName,
   onClose,
   onPromoted,
 }: {
   open: boolean;
+  slug: string;
   sessionId: string;
   defaultName?: string;
   onClose: () => void;
@@ -53,7 +59,7 @@ export function PromoteChatModal({
     setBusy(true);
     setError(null);
     try {
-      const { project, promoted } = await api.promoteChat(sessionId, {
+      const { project, promoted } = await api.promoteChat(slug, sessionId, {
         name: name.trim(),
         group: group || undefined,
         summary: summary.trim() || undefined,

@@ -168,11 +168,25 @@ export interface PaddockConfig {
    * "replace" system prompt (false). Driven by `PADDOCK_KEEPER_NATIVE_PROMPT`.
    *
    * This is its own decision (issue #176) governing only which system prompt an
-   * agent gets. When native (the default on every
-   * instance), an instance-wide `CLAUDE.md` (a common ancestor of `projects/` and
-   * the scratch dir) plus a per-project `CLAUDE.md` are auto-loaded — the two-
-   * level native-context model. Set `PADDOCK_KEEPER_NATIVE_PROMPT=false` to fall
-   * back to the terse replace prompt (e.g. an instance with no CLAUDE.md files).
+   * agent gets. When native (the default on every instance) Paddock sets NO
+   * `system_prompt`, so 100% of an agent's standing instructions come from
+   * Claude Code's own `CLAUDE.md` walk-up from its cwd — which is what makes the
+   * cwd load-bearing. Set `PADDOCK_KEEPER_NATIVE_PROMPT=false` to fall back to
+   * the terse replace prompt (e.g. an instance with no CLAUDE.md files).
+   *
+   * **The canonical instance-wide `CLAUDE.md` is `<projectsRoot>/CLAUDE.md`**
+   * (issue #512). `projectsRoot` IS the instance's backing repo, so that file is
+   * version-controlled and pushed with everything else, whereas a
+   * `<dataDir>/CLAUDE.md` would sit outside the repo. It reaches every project
+   * keeper by walk-up (a project dir is a child of `projectsRoot`) and, since
+   * #516, the ROOT keeper too — the root project's cwd IS `projectsRoot`.
+   *
+   * The exception was SCRATCH (retired in #516 Phase 6), whose cwd was
+   * `<dataDir>/scratch`, a *sibling* of
+   * `projects/`, so nothing above it is the instance CLAUDE.md and a scratch chat
+   * starts with zero instance context. That is #512's original complaint; #516
+   * fixes it by making the root an ordinary project rather than by patching
+   * scratch, and #516 Phase 6 retires scratch outright.
    */
   nativeSystemPrompt: boolean;
   /**

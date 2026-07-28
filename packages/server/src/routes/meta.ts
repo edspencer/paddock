@@ -5,7 +5,6 @@
  * upload (#328), and the range-serving `/api/chat-files/:id` endpoint (#112/#126).
  */
 import type { FastifyInstance } from "fastify";
-import { SCRATCH_AGENT } from "../herdctl.js";
 import {
   resolveAttachmentsConfig,
   maxFileBytes,
@@ -297,36 +296,6 @@ export function registerMetaRoutes(app: FastifyInstance, ctx: RouteCtx): void {
       // shows these as the "Instance default" for each per-file token budget.
       curationDefault: cfg.curation,
     };
-    },
-  );
-
-  // Slash commands for one-off (scratch) chats — the scratch agent's equivalent
-  // of GET /api/projects/:slug/commands (issue #103). Same cached wrapper.
-  app.get(
-    "/api/commands",
-    {
-      schema: {
-        tags: ["System"],
-        summary: "Slash commands for scratch chats",
-        description:
-          "Lists the scratch agent's slash commands (the one-off-chat equivalent of the per-project commands endpoint). Returns a JSON object with `commands`; on failure returns 503 with `{ commands: [], error }`.",
-        response: {
-          200: {
-            description: "Available scratch-chat slash commands.",
-            type: "object",
-            additionalProperties: true,
-          },
-        },
-      },
-    },
-    async (_req, reply) => {
-    try {
-      const commands = await herdctl.listCommands(SCRATCH_AGENT);
-      return { commands };
-    } catch (err) {
-      reply.code(503);
-      return { commands: [], error: (err as Error).message };
-    }
     },
   );
 

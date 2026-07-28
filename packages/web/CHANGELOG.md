@@ -1,5 +1,128 @@
 # @paddock/web
 
+## 0.50.0
+
+### Minor Changes
+
+- [#524](https://github.com/edspencer/paddock/pull/524) [`ae9ef1c`](https://github.com/edspencer/paddock/commit/ae9ef1c5d93d41c9f895d331df5fd0b9a38fa01f) Thanks [@edspencer](https://github.com/edspencer)! - feat: retire scratch — one-off chats are root chats now (#516 Phase 6).
+
+  No migration ships with this. The companion PR that re-homed existing scratch
+  transcripts onto the root keeper was dropped deliberately: it was a permanent
+  boot-time migration carrying a one-time, few-hundred-kilobyte data move for an
+  instance count in the single digits. Existing scratch transcripts stay on disk
+  at `<scratchDir>/.chats` and simply stop being listed. Nothing reads them.
+
+  Scratch existed because a chat had to belong to _some_ agent and there was no
+  agent for "the instance itself". #516 gave the instance's root a project and an
+  ordinary keeper, which makes scratch redundant — and strictly worse, since it was
+  deliberately denied self-MCP, curation, triggers, attachments, run history, the
+  `<projectsRoot>/CLAUDE.md` walk-up, and more than one turn at a time. Every one
+  of those a root chat gets for free.
+
+  **Removed**
+
+  - The mirrored scratch route cluster (11 routes under `/api/chats/…`) and
+    `GET /api/commands`.
+  - The `scratch` agent itself: `buildScratchConfig`, `ensureScratchModel`,
+    `listScratchSessions`, `herdctl.scratchDir`, `SCRATCH_AGENT`, `SCRATCH_SLUG`.
+  - The ~14 `slug === SCRATCH_SLUG` guards across `route-context`, `ws`,
+    `ws-turn`, `ws-triggers`, `wake-injection` and `spawn-capability`. Several were
+    the _only_ reason a code path had two branches.
+  - `OneOffChat.tsx`, the projects grid's Inbox section, and the scratch half of
+    the web API client.
+
+  **Changed**
+
+  - **`promote` is generalised, not deleted.** `promoteScratchSession(id, project)`
+    becomes `promoteSession(id, from, to)`, and
+    `POST /api/chats/:sessionId/promote` becomes
+    `POST /api/projects/:slug/chats/:sessionId/promote`. The operation was never
+    really about scratch — it moves one chat from one keeper's store to another's —
+    and the root is a project, so the chats that inherited scratch's URL inherit
+    its promote action. The UI offers it on root chats; the server route is
+    generic. New failure mode, pinned by a test: an unknown _source_ project 404s
+    and creates nothing.
+  - **`/chat` is unconditionally a root chat.** It used to fall back to a one-off
+    without a root project; it now 404s there, joining `/files`, `/changes`,
+    `/history` and `/triggers`. Nothing links to it without a root project — the
+    sidebar's chat CTA is hidden in that state.
+
+  **Kept on purpose:** `PADDOCK_SCRATCH_DIR` / `cfg.scratchDir`. Nothing runs or
+  reads there any more, but the setting is left in place so an existing env or
+  config file does not fail validation, and so the old transcripts remain findable
+  by hand. Documented as legacy in `CONFIGURATION.md` and relabelled in instance
+  settings.
+
+  **Breaking:** every `/api/chats/*` endpoint is gone, as is
+  `GET /api/commands`. An external client using the one-off API should move to
+  `/api/projects/__root/chats/*`.
+
+## 0.49.0
+
+### Minor Changes
+
+- [#517](https://github.com/edspencer/paddock/pull/517) [`e50f54c`](https://github.com/edspencer/paddock/commit/e50f54c5763365a1de5e96bb1e01f0893d225a6a) Thanks [@edspencer](https://github.com/edspencer)! - feat: the root is a project — root Home and root chats (#516, Phases 1–3).
+
+  A Paddock instance can now be as capable at its root as inside any project. The
+  framing: **the root is the project whose directory is `projectsRoot` instead of
+  a subdirectory of it.** Its keeper is an ordinary keeper — same
+  `buildKeeperConfig`, same self-MCP, same `max_concurrent: 10`, same chat tree,
+  same per-chat model, same sweeper. Nothing is special-cased; one assumption
+  about where a project directory sits is relaxed.
+
+  `ProjectStore.dirFor()` is the single resolution seam: the reserved `__root`
+  slug maps to the projects root itself, so read/update/overview/changelog/file
+  serving all work on it unchanged. `list()` is untouched — it only walks
+  subdirectories, so the root stays out of enumeration and is resolved explicitly
+  at boot. New `GET`/`POST /api/root-project` ask whether an instance has one and
+  create it; everything else goes through the ordinary `/api/projects/__root/…`.
+
+  In the web, `urls.ts` generalises `slug` → `base` (`""` at the root,
+  `/projects/:slug` otherwise), so one `ProjectView` serves both. Root URLs are
+  flat and top-level: `/` is root Home and `/chat[/:sessionId]` its chats, with
+  the projects grid moving to `/projects`. `/` always renders Home — no redirect
+  and no sticky last tab, so the instance's front door never lands on Files.
+
+  **Migration is gated on existence, so nothing changes for an existing
+  instance.** Nothing seeds `<projectsRoot>/project.yaml`; without it there is no
+  root project, `/` is the projects grid and `/chat` is a scratch chat exactly as
+  before. Creating the root project — an "Enable" card on the grid — is the whole
+  opt-in.
+
+  Worth being blunt about the escalation it buys: the root keeper's working
+  directory CONTAINS every project, so root chats can read and edit any project's
+  files. That is the intent — the root is where you act across the instance — but
+  it is a real step up from a project keeper, which is confined to its own
+  subtree.
+
+  Files, Changes, History, Settings and retiring scratch are follow-up phases;
+  their tabs are hidden at the root rather than pointed at URLs that don't
+  resolve. Note that once a root project exists, `/chat` is a root chat, so
+  existing scratch chats are not reachable in the UI until that final phase
+  re-homes them — their transcripts are untouched on disk.
+
+- [#521](https://github.com/edspencer/paddock/pull/521) [`29ea303`](https://github.com/edspencer/paddock/commit/29ea30313758a6079c3513443c9a532b930d3553) Thanks [@edspencer](https://github.com/edspencer)! - feat: History, Settings and Triggers at the root (#516 Phase 5).
+
+  The root project now has the full tab bar — there is no tab a project gets and
+  the root doesn't. History and Triggers needed only routes and un-hidden tabs:
+  `/api/projects/:slug/runs` and `…/triggers` already resolved through
+  `projects.get()`, so they worked for `__root` the moment it resolved.
+
+  Settings is the one real merge. `InstanceSettings`' editor body is extracted
+  verbatim into a shared `InstanceConfigForm`, so:
+
+  - `/settings` **without** a root project is the standalone admin page, unchanged.
+  - `/settings` **with** one resolves to the root's Settings tab, showing the
+    root's own workspace config (`project.yaml`, hot-applied) above the instance
+    runtime config (`paddock.config.yaml`, frozen at boot, restart-required).
+
+  They stay two sections rather than being fused, because those lifecycles really
+  are different and fusing them would hide that.
+
+  The root's overflow menu returns with Edit but **without** Delete — `remove()`
+  refuses the root (its directory IS the projects root), so offering the action
+  could only ever produce an error. `ProjectMenu.onDelete` is now optional.
+
 ## 0.48.1
 
 ### Patch Changes

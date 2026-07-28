@@ -18,7 +18,6 @@ import {
   keeperAgentName,
   keeperSlugFromAgent,
   triggerAgentName,
-  SCRATCH_SLUG,
 } from "./herdctl.js";
 import { resolveMaxSpawnDepth } from "./spawn-capability.js";
 import { wrapPreload, composePreloadContext } from "./preload.js";
@@ -254,7 +253,6 @@ deps.events?.on("onArchive", (payload) => {
  * server-initiated `startAgentTurn`) — the ONE place the sweeper is now triggered.
  */
 function emitAfterTurn(slug: string, sessionId: string | null): void {
-  if (slug === SCRATCH_SLUG) return;
   if (deps.events) deps.events.emit("afterTurn", { slug, sessionId });
   else deps.sweep?.enqueue(slug);
 }
@@ -265,7 +263,6 @@ function emitAfterTurn(slug: string, sessionId: string | null): void {
 // writes OVERVIEW.md/CHANGELOG.md). So this is the SOLE afterTurn consumer, which is
 // what guarantees the sweeper runs exactly once per turn (no double-curation).
 deps.events?.on("afterTurn", (payload) => {
-  if (payload.slug === SCRATCH_SLUG) return;
   deps.sweep?.enqueue(payload.slug);
 });
 

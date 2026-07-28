@@ -64,7 +64,7 @@ describe("ProjectsGrid: area sectioning", () => {
     // Homelab (canonical, 1st) → Side Projects (canonical) → Garage (custom) →
     // Unsorted (last). House is absent (no projects) so it does not appear.
     const ordered = labels.filter((l) =>
-      ["Homelab", "House", "Side Projects", "Garage", "Unsorted", "Inbox"].includes(l ?? ""),
+      ["Homelab", "House", "Side Projects", "Garage", "Unsorted"].includes(l ?? ""),
     );
     expect(ordered).toEqual(["Homelab", "Side Projects", "Garage", "Unsorted"]);
   });
@@ -110,16 +110,6 @@ describe("ProjectsGrid: area sectioning", () => {
     expect(localStorage.getItem("paddock:area-collapsed:homelab")).toBe("1");
   });
 
-  it("renders an Inbox section for one-off chats", async () => {
-    mockProjects = [makeProject({ slug: "p", group: "homelab" })];
-    listScratchChats.mockResolvedValue([makeChat({ sessionId: "s1", name: "Loose chat" })]);
-    renderGrid();
-
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: /Inbox/ })).toBeInTheDocument(),
-    );
-    expect(screen.getByText("Loose chat")).toBeInTheDocument();
-  });
 });
 
 describe("ProjectsGrid: tag filter mode", () => {

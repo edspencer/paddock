@@ -20,6 +20,7 @@ describe("PromoteChatModal", () => {
     render(
       <PromoteChatModal
         open
+        slug="__root"
         sessionId="sess-9"
         defaultName="Heater chat"
         onClose={() => {}}
@@ -39,11 +40,12 @@ describe("PromoteChatModal", () => {
     expect(submit).toBeEnabled();
   });
 
-  it("calls promoteChat with sessionId + built payload and reports the promoted flag", async () => {
+  it("calls promoteChat with slug + sessionId + built payload and reports the promoted flag", async () => {
     const onPromoted = vi.fn();
     render(
       <PromoteChatModal
         open
+        slug="__root"
         sessionId="sess-9"
         defaultName="Heater"
         onClose={() => {}}
@@ -57,7 +59,7 @@ describe("PromoteChatModal", () => {
     fireEvent.click(screen.getByRole("button", { name: /promote to project/i }));
 
     await waitFor(() => expect(promoteChat).toHaveBeenCalledTimes(1));
-    expect(promoteChat).toHaveBeenCalledWith("sess-9", {
+    expect(promoteChat).toHaveBeenCalledWith("__root", "sess-9", {
       name: "Heater",
       group: "side-projects",
       summary: "promoted project",

@@ -9,8 +9,9 @@
 #   - base   (`--target base`)   the lean runtime: app + git, gh, claude CLI.
 #   - devbox (`--target devbox`) base + the coding-agent toolbox — PM2 + the `pm`
 #                                preview-server wrapper, ffmpeg, the Playwright
-#                                MCP browser (headless Chromium) and the Docker
-#                                CLI — for keepers that develop code in-container.
+#                                MCP browser (headless Chromium), the Docker CLI,
+#                                python3/pip/uv, jq and rsync — for keepers that
+#                                develop code in-container.
 #
 # Runtime requirements (supplied at `docker run` time, NOT baked in):
 #   - CLAUDE_CODE_OAUTH_TOKEN   Claude Max auth (runtime: cli). Or ANTHROPIC_API_KEY for sdk.
@@ -122,6 +123,34 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get update && apt-get install -y --no-install-recommends \
          docker-ce-cli docker-buildx-plugin docker-compose-plugin \
     && rm -rf /var/lib/apt/lists/*
+
+# Interpreters and small CLI utilities the agent reaches for by habit (#522).
+# The rule this follows: **interpreters and small CLI utilities in the image,
+# libraries in the project.** So `python3` — same category as `git` or `curl`,
+# and the default reach for a ten-line data transform whatever the surrounding
+# project is written in — but no torch/transformers/numpy: hundreds of MB, and
+# actively wrong for a project that pins its own versions. `jq` and `rsync` are
+# the same gap from the other end (both absent during the systemd→container
+# migration, where the host had them and the container did not).
+# python3-venv is here because pip alone is nearly unusable on Debian: bookworm
+# marks the interpreter EXTERNALLY-MANAGED (PEP 668), so a global `pip install`
+# refuses and a venv is the supported path. ~70 MB of layer, on a ~4.9 GB image.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      python3 python3-pip python3-venv jq rsync \
+    && rm -rf /var/lib/apt/lists/*
+
+# uv — alongside pip rather than instead of it. Single static binary, makes venvs
+# fast enough to be disposable, and it is where a lot of Python AI tooling has
+# landed; that covers "AI work needs Python" without putting a single AI library
+# in the image. Copied from Astral's own distroless image rather than curl|sh:
+# multi-arch by construction (the tag is a manifest list — buildx resolves the
+# per-arch variant, so this works unchanged on the arm64 release leg) and pinned,
+# so an image rebuild is reproducible. Bump the tag deliberately. ~54 MB.
+# NOTE the destination: /usr/local/bin, NOT the installer's default $HOME/.local/bin.
+# HOME=/data is the runtime VOLUME mount, so anything installed under it is
+# shadowed at run time and the binary vanishes — the same trap the Chromium
+# install below sidesteps with PLAYWRIGHT_BROWSERS_PATH.
+COPY --from=ghcr.io/astral-sh/uv:0.11.33 /uv /uvx /usr/local/bin/
 
 # PM2 + the vendored `pm` preview-server wrapper (scripts/pm, MIT). `pm` is a
 # thin PM2 + shared-ports-registry wrapper; installing it to /usr/local/bin
