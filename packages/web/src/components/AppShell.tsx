@@ -125,7 +125,7 @@ function useProjectBadges(projects: Project[]): Map<string, ProjectBadge> {
 }
 
 export function AppShell() {
-  const { projects, loading, upsert } = useProjects();
+  const { projects, rootProject, loading, upsert } = useProjects();
   const { dark, toggle: toggleTheme } = useTheme();
   const [modalOpen, setModalOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
@@ -140,7 +140,14 @@ export function AppShell() {
   // hamburger fed by the Outlet context below), so the shell's separate brand
   // row is dropped there to avoid stacking two rows of chrome (#372). Other
   // routes (grid, tags, one-off chat) keep the shell's mobile brand bar.
-  const routeOwnsMobileHeader = location.pathname.startsWith("/projects/");
+  // The root's flat top-level routes (#516) mount the SAME ProjectView, so they
+  // host their own header too — but only when there IS a root project (without
+  // one, `/` is the grid and `/chat` is a scratch chat, both of which want the
+  // shell's brand row).
+  const rootRoute =
+    Boolean(rootProject) &&
+    (location.pathname === "/" || location.pathname.startsWith("/chat"));
+  const routeOwnsMobileHeader = location.pathname.startsWith("/projects/") || rootRoute;
 
   // The mobile nav is an off-canvas drawer; close it on any navigation so a
   // project/chat tap doesn't leave it covering the content.
@@ -252,14 +259,20 @@ export function AppShell() {
             <PlusIcon width={16} height={16} />
             New Project
           </button>
+          {/* `/chat` is a ROOT chat on an instance with a root project and a
+              scratch one-off otherwise (#516) — same button, honest label. */}
           <button className="btn-subtle w-full justify-start" onClick={() => navigate("/chat")}>
             <ChatIcon width={16} height={16} />
-            New one-off chat
+            {rootProject ? "New root chat" : "New one-off chat"}
           </button>
         </div>
 
         <div className="mt-5 mb-1 flex items-center justify-between pr-4">
-          <span className="section-label">Projects</span>
+          {/* The grid moved off `/` to `/projects` when the root became a
+              project (#516), so the section label is the way back to it. */}
+          <NavLink to="/projects" className="section-label hover:text-accent">
+            Projects
+          </NavLink>
           {projects.length > 0 && (
             <span className="text-[11px] text-paddock-400">{projects.length}</span>
           )}
