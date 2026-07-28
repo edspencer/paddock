@@ -82,7 +82,7 @@ Consequences worth knowing:
 | `PADDOCK_CONFIG` | `<data>/paddock.config.yaml` | no | Path to the optional [YAML instance-config file](#instance-config-file-yaml) (base layer; env overrides it). When set explicitly, a missing file fails startup; unset, an absent default file is a no-op. |
 | `PADDOCK_DATA_DIR` | `./data` | no | Data root. **All paths below default to subdirectories of this** — set it and everything cascades. Holds projects, generated herdctl config, and state. |
 | `PADDOCK_PROJECTS_DIR` | `<data>/projects` | no | Root that contains per-project directories (each is a keeper's working dir). |
-| `PADDOCK_SCRATCH_DIR` | `<data>/scratch` | no | **Legacy.** Where one-off ("scratch") chats lived before #516 Phase 6 retired them. No agent runs here any more; the setting survives only so the one-time startup migration can find those transcripts and re-home them onto the root keeper. |
+| `PADDOCK_SCRATCH_DIR` | `<data>/scratch` | no | **Legacy.** Where one-off ("scratch") chats lived before #516 Phase 6 retired them. No agent runs here and nothing reads it any more; the setting survives so an existing env/config file doesn't fail validation, and so any old transcripts stay findable by hand at `<scratchDir>/.chats`. They are **not** migrated and no longer listed. |
 | `PADDOCK_STATE_DIR` | `<data>/.herdctl` | no | herdctl state directory. |
 | `PADDOCK_HERDCTL_CONFIG` | `<data>/herdctl.yaml` | no | Path to the generated `herdctl.yaml` the FleetManager loads (Paddock owns/regenerates it). |
 | `PADDOCK_WEB_DIST` | `packages/web/dist` | no | Built SPA served in production (resolved relative to the server module). |

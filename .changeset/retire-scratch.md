@@ -1,13 +1,15 @@
 ---
-"@paddock/server": major
-"@paddock/web": major
+"@paddock/server": minor
+"@paddock/web": minor
 ---
 
-feat: retire scratch — one-off chats are root chats now (#516 Phase 6, step 2 of 2).
+feat: retire scratch — one-off chats are root chats now (#516 Phase 6).
 
-The subtraction half of Phase 6, stacked on the migration that re-homed the
-chats. **Do not ship this without that migration**, and not before verifying it:
-the migration is reversible on its own, this is not.
+No migration ships with this. The companion PR that re-homed existing scratch
+transcripts onto the root keeper was dropped deliberately: it was a permanent
+boot-time migration carrying a one-time, few-hundred-kilobyte data move for an
+instance count in the single digits. Existing scratch transcripts stay on disk
+at `<scratchDir>/.chats` and simply stop being listed. Nothing reads them.
 
 Scratch existed because a chat had to belong to *some* agent and there was no
 agent for "the instance itself". #516 gave the instance's root a project and an
@@ -44,10 +46,11 @@ of those a root chat gets for free.
   `/history` and `/triggers`. Nothing links to it without a root project — the
   sidebar's chat CTA is hidden in that state.
 
-**Kept on purpose:** `PADDOCK_SCRATCH_DIR` / `cfg.scratchDir`. No agent runs
-there any more, but the Phase 6 migration reads `<scratchDir>/.chats` to find the
-transcripts it re-homes, so the setting outlives the feature. Documented as
-legacy in `CONFIGURATION.md` and relabelled in instance settings.
+**Kept on purpose:** `PADDOCK_SCRATCH_DIR` / `cfg.scratchDir`. Nothing runs or
+reads there any more, but the setting is left in place so an existing env or
+config file does not fail validation, and so the old transcripts remain findable
+by hand. Documented as legacy in `CONFIGURATION.md` and relabelled in instance
+settings.
 
 **Breaking:** every `/api/chats/*` endpoint is gone, as is
 `GET /api/commands`. An external client using the one-off API should move to
