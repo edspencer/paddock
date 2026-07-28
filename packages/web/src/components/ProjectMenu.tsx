@@ -14,7 +14,12 @@ export function ProjectMenu({
   size = 16,
 }: {
   onEdit: () => void;
-  onDelete: () => void;
+  /**
+   * Omit to hide the Delete item entirely (issue #516): the ROOT project cannot
+   * be deleted — its directory IS the whole projects root, and `remove()`
+   * refuses — so offering the action could only ever produce an error.
+   */
+  onDelete?: () => void;
   align?: "left" | "right";
   label?: string;
   size?: number;
@@ -78,19 +83,21 @@ export function ProjectMenu({
             <PencilIcon width={14} height={14} />
             Edit details
           </button>
-          <button
-            type="button"
-            role="menuitem"
-            className="menu-item-danger"
-            onClick={(e) => {
-              stop(e);
-              setOpen(false);
-              onDelete();
-            }}
-          >
-            <TrashIcon width={14} height={14} />
-            Delete project
-          </button>
+          {onDelete && (
+            <button
+              type="button"
+              role="menuitem"
+              className="menu-item-danger"
+              onClick={(e) => {
+                stop(e);
+                setOpen(false);
+                onDelete();
+              }}
+            >
+              <TrashIcon width={14} height={14} />
+              Delete project
+            </button>
+          )}
         </div>
       )}
     </div>

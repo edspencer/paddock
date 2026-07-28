@@ -24,6 +24,20 @@ vi.mock("../components/ChatPane", () => ({
   },
 }));
 
+// SettingsPane / InstanceConfigForm / HistoryPane are tested separately; stub
+// them to markers so the ROOT tab routing is what is asserted.
+vi.mock("../components/SettingsPane", () => ({
+  SettingsPane: ({ project }: { project: { slug: string } }) => (
+    <div data-testid="settings-pane">settings for {project.slug}</div>
+  ),
+}));
+vi.mock("../components/InstanceConfigForm", () => ({
+  InstanceConfigForm: () => <div data-testid="instance-config-form">instance config</div>,
+}));
+vi.mock("../components/HistoryPane", () => ({
+  HistoryPane: ({ slug }: { slug: string }) => <div data-testid="history-pane">runs for {slug}</div>,
+}));
+
 // ChangesPane is tested separately; stub it to a marker that echoes the slug it
 // was handed, so the root's Changes routing is what's asserted.
 vi.mock("../components/ChangesPane", () => ({
@@ -102,6 +116,9 @@ function renderRootAt(path: string) {
         <Route path="/files/*" element={<ProjectView root />} />
         <Route path="/changes" element={<ProjectView root />} />
         <Route path="/changes/:file" element={<ProjectView root />} />
+        <Route path="/history" element={<ProjectView root />} />
+        <Route path="/settings" element={<ProjectView root />} />
+        <Route path="/triggers" element={<ProjectView root />} />
       </Routes>
     </MemoryRouter>,
   );
@@ -166,17 +183,15 @@ describe("ProjectView root (#516)", () => {
     expect(screen.getByTestId("here").textContent).toBe("/");
   });
 
-  it("shows only the tabs that have somewhere to go (Phase 5 pending)", async () => {
+  it("shows the FULL tab bar — the root is an ordinary project (Phase 5)", async () => {
     apiFns.gitStatus.mockResolvedValue({ repo: true, files: [], clean: true, branch: "main" });
     renderRootAt("/chat");
     await screen.findByTestId("chat-pane");
-    for (const name of ["Home", "Chat", "Files", "Changes"]) {
+    // The end state #516 was aiming at: there is no tab a project gets and the
+    // root doesn't. (Changes is conditional on the dir being a git repo, for the
+    // root exactly as for a project.)
+    for (const name of ["Home", "Chat", "Files", "Changes", "History", "Settings", "Triggers"]) {
       expect(screen.getByRole("button", { name }), name).toBeInTheDocument();
-    }
-    // History/Settings/Triggers land in Phase 5; rendering their tabs now would
-    // navigate to a URL that doesn't resolve.
-    for (const name of ["History", "Settings", "Triggers"]) {
-      expect(screen.queryByRole("button", { name }), name).not.toBeInTheDocument();
     }
   });
 
@@ -231,9 +246,29 @@ describe("ProjectView root (#516)", () => {
     expect(readLastTab("__root")).toBeNull();
   });
 
-  it("hides the project overflow menu (no Settings tab yet; delete is refused)", async () => {
+  it("offers the overflow menu WITHOUT Delete — the root cannot be deleted", async () => {
     renderRootAt("/");
     await screen.findAllByText("everything, from the top");
-    expect(screen.queryByRole("button", { name: /project actions/i })).not.toBeInTheDocument();
+    const menu = screen.getByRole("button", { name: /project actions/i });
+    fireEvent.click(menu);
+    // Edit details is real (it opens the Settings tab, live as of Phase 5)…
+    expect(await screen.findByRole("menuitem", { name: /edit details/i })).toBeInTheDocument();
+    // …but deleting the root is refused server-side (its dir IS the projects
+    // root), so the action is absent rather than present-and-erroring.
+    expect(screen.queryByRole("menuitem", { name: /delete project/i })).not.toBeInTheDocument();
+  });
+
+  it("renders BOTH settings sections at the root: workspace + instance", async () => {
+    renderRootAt("/settings");
+    // The root's own project.yaml settings…
+    expect(await screen.findByTestId("settings-pane")).toBeInTheDocument();
+    // …and the instance-wide paddock.config.yaml form beneath it. They stay two
+    // sections because their lifecycles differ (hot-applied vs restart-required).
+    expect(await screen.findByTestId("instance-config-form")).toBeInTheDocument();
+  });
+
+  it("renders History at the flat `/history`", async () => {
+    renderRootAt("/history");
+    expect(await screen.findByTestId("history-pane")).toHaveTextContent("__root");
   });
 });

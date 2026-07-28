@@ -14,6 +14,7 @@ import { useProjectRuns } from "../lib/useProjectRuns";
 import { FilesPane } from "../components/FilesPane";
 import { ProjectMenu } from "../components/ProjectMenu";
 import { SettingsPane } from "../components/SettingsPane";
+import { InstanceConfigForm } from "../components/InstanceConfigForm";
 import { TriggersPane } from "../components/TriggersPane";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ForkChatModal } from "../components/ForkChatModal";
@@ -864,16 +865,13 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
           >
             <PlusIcon width={16} height={16} />
           </button>
-          {/* The root project has no overflow menu yet (#516): its Settings tab
-              lands in Phase 5 (merged with InstanceSettings), and deleting it is
-              refused server-side — its directory is the whole projects root. */}
-          {!root && (
-            <ProjectMenu
-              onEdit={goSettings}
-              onDelete={() => setDeleteOpen(true)}
-              size={18}
-            />
-          )}
+          <ProjectMenu
+            onEdit={goSettings}
+            // Deleting the ROOT is refused server-side — its directory IS the
+            // whole projects root — so the root menu offers Edit only (#516).
+            onDelete={root ? undefined : () => setDeleteOpen(true)}
+            size={18}
+          />
         </div>
         {project.summary && (
           <p className="mt-1.5 hidden text-sm text-paddock-600 lg:block dark:text-paddock-400">
@@ -933,10 +931,6 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
             <TabButton active={view === "chat"} onClick={goChat}>
               Chat
             </TabButton>
-            {/* History/Settings/Triggers land at the root in Phase 5; until they
-                have routes, rendering their tabs would navigate to a URL that
-                doesn't resolve. `root` is the honest gate. Files + Changes are
-                live as of Phase 4. */}
             <TabButton active={filesTabActive} onClick={goFiles}>
               Files
             </TabButton>
@@ -966,7 +960,6 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
                 badge counts unattended (scheduled + spawned) runs that finished
                 since the user last opened it, so unattended work is visible
                 without opening the tab. */}
-            {!root && (
             <TabButton active={view === "history"} onClick={goHistory}>
               <span className="inline-flex items-center gap-1.5">
                 History
@@ -980,27 +973,26 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
                 )}
               </span>
             </TabButton>
-            )}
-            {!root && (
+            {/* At the ROOT this tab shows the root's OWN workspace settings AND
+                the instance-wide config, as two sections (#516 Phase 5) — which
+                is why `/settings` resolves here rather than to the standalone
+                InstanceSettings page once a root project exists. */}
             <TabButton active={view === "settings"} onClick={goSettings}>
               <span className="inline-flex items-center gap-1.5">
                 <WrenchIcon width={13} height={13} />
                 Settings
               </span>
             </TabButton>
-            )}
             {/* The Triggers tab (Epic T / T4): per-project triggers — an agent turn
                 that fires on a schedule, a lifecycle event, or a webhook (reserved),
                 with a precise type + capability picker. Folds in the former Hooks tab
                 and the Settings→Schedules section. */}
-            {!root && (
             <TabButton active={view === "triggers"} onClick={goTriggers}>
               <span className="inline-flex items-center gap-1.5">
                 <BoltIcon width={13} height={13} />
                 Triggers
               </span>
             </TabButton>
-            )}
             {/* Pinned file tabs (sibling tabs), order preserved by the server.
                 Each links to /files/:name so the tab is deep-linkable. Pinning is
                 driven FROM the Files tab, so these come with Phase 4 rather than
@@ -1042,13 +1034,27 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
             />
           )}
           {view === "settings" && (
-            <SettingsPane
-              project={project}
-              onSaved={(p) => {
-                setProject(p);
-                upsert(p);
-              }}
-            />
+            <div className="flex min-h-0 flex-1 flex-col">
+              <SettingsPane
+                project={project}
+                onSaved={(p) => {
+                  setProject(p);
+                  upsert(p);
+                }}
+              />
+              {/* At the ROOT, instance-wide config joins the tab as a SECOND
+                  section (#516 Phase 5) — the same form `/settings` shows on an
+                  instance with no root project. Kept as two sections rather than
+                  fused, because they are different things: `project.yaml` is
+                  workspace config, hot-applied by agent re-registration, while
+                  `paddock.config.yaml` is instance runtime config, frozen at boot
+                  and restart-required. Fusing them would hide that. */}
+              {root && (
+                <div className="border-t border-paddock-200 dark:border-paddock-800">
+                  <InstanceConfigForm />
+                </div>
+              )}
+            </div>
           )}
           {/* The Triggers tab (Epic T / T4): a self-contained CRUD surface for this
               project's unified triggers (schedules + events + reserved webhooks). Its
@@ -1066,10 +1072,7 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
               onNewChat={newChat}
               onOpenFile={goToFilesPath}
               onOpenFiles={goFiles}
-              // The root has no Settings tab until #516 Phase 5 merges it with
-              // InstanceSettings, so that affordance stays omitted rather than
-              // pointed at a dead URL.
-              onEditDetails={root ? undefined : goSettings}
+              onEditDetails={goSettings}
             />
           )}
           {view === "chat" && (
