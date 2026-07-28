@@ -1,5 +1,104 @@
 # @paddock/server
 
+## 0.49.0
+
+### Minor Changes
+
+- [#517](https://github.com/edspencer/paddock/pull/517) [`e50f54c`](https://github.com/edspencer/paddock/commit/e50f54c5763365a1de5e96bb1e01f0893d225a6a) Thanks [@edspencer](https://github.com/edspencer)! - feat: the root is a project — root Home and root chats (#516, Phases 1–3).
+
+  A Paddock instance can now be as capable at its root as inside any project. The
+  framing: **the root is the project whose directory is `projectsRoot` instead of
+  a subdirectory of it.** Its keeper is an ordinary keeper — same
+  `buildKeeperConfig`, same self-MCP, same `max_concurrent: 10`, same chat tree,
+  same per-chat model, same sweeper. Nothing is special-cased; one assumption
+  about where a project directory sits is relaxed.
+
+  `ProjectStore.dirFor()` is the single resolution seam: the reserved `__root`
+  slug maps to the projects root itself, so read/update/overview/changelog/file
+  serving all work on it unchanged. `list()` is untouched — it only walks
+  subdirectories, so the root stays out of enumeration and is resolved explicitly
+  at boot. New `GET`/`POST /api/root-project` ask whether an instance has one and
+  create it; everything else goes through the ordinary `/api/projects/__root/…`.
+
+  In the web, `urls.ts` generalises `slug` → `base` (`""` at the root,
+  `/projects/:slug` otherwise), so one `ProjectView` serves both. Root URLs are
+  flat and top-level: `/` is root Home and `/chat[/:sessionId]` its chats, with
+  the projects grid moving to `/projects`. `/` always renders Home — no redirect
+  and no sticky last tab, so the instance's front door never lands on Files.
+
+  **Migration is gated on existence, so nothing changes for an existing
+  instance.** Nothing seeds `<projectsRoot>/project.yaml`; without it there is no
+  root project, `/` is the projects grid and `/chat` is a scratch chat exactly as
+  before. Creating the root project — an "Enable" card on the grid — is the whole
+  opt-in.
+
+  Worth being blunt about the escalation it buys: the root keeper's working
+  directory CONTAINS every project, so root chats can read and edit any project's
+  files. That is the intent — the root is where you act across the instance — but
+  it is a real step up from a project keeper, which is confined to its own
+  subtree.
+
+  Files, Changes, History, Settings and retiring scratch are follow-up phases;
+  their tabs are hidden at the root rather than pointed at URLs that don't
+  resolve. Note that once a root project exists, `/chat` is a root chat, so
+  existing scratch chats are not reachable in the UI until that final phase
+  re-homes them — their transcripts are untouched on disk.
+
+### Patch Changes
+
+- [#510](https://github.com/edspencer/paddock/pull/510) [`11ce96b`](https://github.com/edspencer/paddock/commit/11ce96b637da6899ba15fde5cd3486a4db2fc05a) Thanks [@edspencer](https://github.com/edspencer)! - fix(chats): record the creating chat on `create_chat`, so the chat tree stops relying on inference (#509).
+
+  The nested chat list resolves a parent edge from `RunProvenance.parentSessionId`
+  first, falling back to inferring one from the kickoff message's sender. But
+  `startAgentTurn` rebuilt the provenance marker from loose `origin`/`depth`
+  scalars, dropping the parent on the `create_chat` path — the dominant way
+  children are made. Result: **not one** of the 169 provenance records on the
+  dogfood instance carried the field, and every edge in the live tree came from
+  inference, which had already needed narrowing once (#491/#504) after it
+  re-parented human chats that a child reported back to.
+
+  `StartAgentTurnOpts` now carries an optional `parent`, `create_chat` supplies the
+  calling chat, and the stamp persists it. Absent where there is no calling chat
+  (schedule/hook fires, and the external `/mcp` transport, which binds
+  `currentSessionId` to `null`). Inference is unchanged and still backfills
+  historical chats — this only stops manufacturing new ones that need it.
+
+- [#518](https://github.com/edspencer/paddock/pull/518) [`1983929`](https://github.com/edspencer/paddock/commit/1983929250c678452b7a49de476fedec60ef60e1) Thanks [@edspencer](https://github.com/edspencer)! - fix(projects): refuse hidden (dot-prefixed) paths on the file surface, don't just omit them from listings.
+
+  `listFiles` has always dropped dot entries from what it _returns_ — but that is
+  presentation, not access control. Naming the path explicitly still resolved it,
+  and the read route's `:name` param decodes `%2F`, so a nominally single-segment
+  route accepts a whole nested path. Together those made
+  `GET /api/projects/:slug/files/.chats%2F<id>.jsonl` return a full chat
+  transcript, and `…/files/.git%2Fconfig` return a git config — which carries
+  credentials when a remote embeds a token. `?path=.chats` likewise enumerated
+  every transcript filename.
+
+  The root project (#516) widened the blast radius from one project's subtree to
+  the instance's own backing repo and every project at once, which is what
+  prompted the audit.
+
+  `resolveInProject` now rejects any dot-prefixed segment, checked against the
+  RESOLVED path relative to the project dir — so `a/../.git` and `./.git` are
+  caught alongside a literal `.git`, while a project dir that legitimately sits
+  under a dot-prefixed ancestor (e.g. `/srv/.paddock/projects`) still works.
+
+  **Honest severity: defense-in-depth, not a privilege boundary.** Paddock has no
+  per-user role model, and any caller who can reach these routes can already start
+  a keeper chat and run Bash — strictly more capability than reading a file. The
+  `/mcp` read-only token surface exposes no file verb, so it was never reachable
+  there. Worth closing because "hidden in the listing" should not be the only
+  thing between an API and a transcript. Nothing in the UI regresses: the Files
+  browser never listed dot entries, so it never had a link to one.
+
+  The leaf may still be a dotfile. Refusing _every_ dot segment was the first cut
+  and it broke the Changes pane: an untracked file has no diff, so the pane renders
+  its content through this same surface — and `.gitignore` is untracked in a fresh
+  repo-backed project, because `ensureSidecarGitignore` writes it. The harm is
+  descending _into_ `.git/` and `.chats/`, not reading a dotfile git is already
+  showing you. `listFiles` additionally refuses a hidden leaf, since listing one is
+  how `?path=.chats` enumerated every transcript.
+
 ## 0.48.1
 
 ### Patch Changes
