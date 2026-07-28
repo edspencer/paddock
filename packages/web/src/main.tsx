@@ -130,8 +130,19 @@ const router = createBrowserRouter([
       { path: "files/*", element: <ProjectView root /> },
       { path: "changes", element: <ProjectView root /> },
       { path: "changes/:file", element: <ProjectView root /> },
-      // Top-level, instance-wide admin settings (edits paddock.config.yaml) — #385.
-      { path: "settings", element: <InstanceSettings /> },
+      // Root History + Triggers (#516 Phase 5). Both were already generic
+      // server-side — `/api/projects/:slug/runs` and `…/triggers` resolve through
+      // `projects.get()` — so these are routes plus un-hidden tabs, nothing more.
+      { path: "history", element: <ProjectView root /> },
+      { path: "triggers", element: <ProjectView root /> },
+      // Instance-wide admin settings (edits paddock.config.yaml) — #385.
+      // With a root project this resolves to the root's Settings TAB, which shows
+      // the root's own workspace config and this same instance form as two
+      // sections (#516 Phase 5); without one it stays the standalone page.
+      {
+        path: "settings",
+        element: <RootGate withRoot={<ProjectView root />} without={<InstanceSettings />} />,
+      },
     ],
   },
 ]);
