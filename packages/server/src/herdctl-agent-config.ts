@@ -60,10 +60,20 @@ export function buildScratchConfig(
     model: model ?? KEEPER_DEFAULT_MODEL,
     default_prompt: "How can I help?",
   };
-  // Scratch chats get the native default coding prompt + CLAUDE.md hierarchy by
-  // default (issue #176), so an instance-wide CLAUDE.md (a common ancestor of
-  // the scratch dir) reaches out-of-project chats too. Only a non-native
-  // instance gets the terse replace prompt.
+  // Scratch chats get the native default coding prompt by default (issue #176);
+  // only a non-native instance gets the terse replace prompt.
+  //
+  // NOTE (issue #512): this comment used to claim an instance-wide CLAUDE.md "a
+  // common ancestor of the scratch dir" reaches these chats. It does not. The
+  // canonical instance CLAUDE.md is `<projectsRoot>/CLAUDE.md` (it lives in the
+  // backing repo), and `scratchDir` is a SIBLING of `projects/` — so the walk-up
+  // from here finds nothing and a scratch chat starts with zero instance
+  // context, silently. Only a `<dataDir>/CLAUDE.md` would reach it, and that
+  // file sits outside the backing repo, which is the opposite of what's wanted.
+  //
+  // Not patched here on purpose: #516 fixes this by making the ROOT an ordinary
+  // project whose cwd IS `projectsRoot` (so the walk-up works with no
+  // special-casing), and #516 Phase 6 retires scratch outright.
   if (!cfg.nativeSystemPrompt) {
     config.system_prompt =
       "You are a Claude Code agent for one-off chats. Be helpful and concise.";
@@ -86,11 +96,16 @@ export function buildScratchConfig(
  * System prompt: by default (`nativeSystemPrompt`, issue #176) we set NO
  * `system_prompt`, so herdctl's CLI runtime passes no `--system-prompt` and
  * Claude Code's full default coding prompt applies together with the project's
- * CLAUDE.md hierarchy — the box's root CLAUDE.md (auto-loaded via the cwd
- * walk-up, e.g. `/var/lib/paddock/projects/CLAUDE.md`) plus a per-project
- * CLAUDE.md. This is its own decision (issue #176): an instance with no
- * CLAUDE.md files can opt back into the terse replace prompt below with
- * `PADDOCK_KEEPER_NATIVE_PROMPT=false`.
+ * CLAUDE.md hierarchy — the canonical instance-wide `<projectsRoot>/CLAUDE.md`
+ * (auto-loaded via the cwd walk-up, since a project dir is a child of the
+ * projects root) plus a per-project CLAUDE.md. This is its own decision (issue
+ * #176): an instance with no CLAUDE.md files can opt back into the terse replace
+ * prompt below with `PADDOCK_KEEPER_NATIVE_PROMPT=false`.
+ *
+ * This is the reading #512 settled on, and the reason it is `projectsRoot` and
+ * not `<dataDir>`: `projectsRoot` IS the instance's backing repo, so the file is
+ * version-controlled. Since #516 the ROOT project reaches it the same way —
+ * its cwd IS `projectsRoot`, so the walk-up needs no special-casing.
  */
 export function buildKeeperConfig(
   cfg: PaddockConfig,
