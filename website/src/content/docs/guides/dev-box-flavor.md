@@ -11,7 +11,8 @@ that matches what your agents actually do:
   instance needs to read, write, and reason over text and code — and nothing more.
 - **`ghcr.io/edspencer/paddock:devbox`** — the **devbox** image. Base *plus* the
   software-engineering toolbox a coding agent reaches for: `pm` preview servers,
-  `ffmpeg`, a headless browser, and the Docker CLI.
+  `ffmpeg`, a headless browser, the Docker CLI, and a scripting kit (`python3`,
+  `pip`, `uv`, `jq`, `rsync`).
 
 The devbox only adds **tools**. It's the same app, the same data layout, the same
 `/data` volume — so you can stop one profile and start the other against the same
@@ -59,6 +60,33 @@ container itself is the sandbox.
 The browser is the heaviest thing in the image and the tools add up in an agent's
 context. If you want the other devbox tools but not the browser, set
 `PADDOCK_BROWSER_MCP=0` in your run config.
+:::
+
+### `python3`, `uv`, `jq`, `rsync` — the throwaway-script kit
+
+An agent asked to reshape some JSON or compare two dumps reaches for Python by
+habit, whatever the surrounding project is written in. On base that ends in
+`python3: not found` and the script gets rewritten in Node — friction on every
+ten-line analysis. devbox carries the interpreter (`python3` plus `pip` and
+`venv`), [`uv`](https://docs.astral.sh/uv/) for fast, disposable virtualenvs,
+and `jq`/`rsync` for the shell-shaped half of the same job.
+
+The line the image draws: **interpreters and small CLI utilities in the image,
+libraries in the project.** So there is a Python here, but no `numpy`, `torch`,
+or `transformers` — those are hundreds of megabytes, version-sensitive, and
+wrong for any project that pins its own. Install them per project instead:
+
+```bash
+cd /data/projects/my-analysis
+uv venv && . .venv/bin/activate
+uv pip install pandas
+```
+
+:::note[`pip install` at the system level will refuse]
+Debian marks its interpreter `EXTERNALLY-MANAGED` (PEP 668), so a global
+`pip install requests` errors out by design. Use a venv (above) — that's what
+`uv` is in the image for. `pip --break-system-packages` works but risks the
+system Python; prefer the venv.
 :::
 
 ### The Docker CLI — build and run containers in-container
