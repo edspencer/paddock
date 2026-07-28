@@ -54,10 +54,37 @@
  * from there, resumed cleanly AND recalled a codeword from its pre-move turns.
  * Claude Code keys resume on the transcript's location, not its recorded `cwd`.
  * So this migration does not rewrite `cwd`, and does not need to.
+ *
+ * ## Correction to the design doc: transcripts + sidecars are NOT enough
+ *
+ * `DESIGN-root-as-project.md` lists the work as "copy the transcripts, re-key
+ * five sidecars, two need no touch". Doing exactly that produces a chat list
+ * with **zero** entries in it, verified on a copy of the live data. The missing
+ * piece is herdctl's own **session attribution index**, built from the
+ * `job-*.yaml` records in `<stateDir>/jobs/`: a session is listed under the
+ * agent its job records name, and a re-homed chat's records still say `scratch`.
+ * `promoteScratchSession` has always had to do this (`reattributeSession`); the
+ * design doc simply did not carry it over.
+ *
+ * That one step is not purely additive, and it cannot be. herdctl assembles the
+ * index by iterating job files in completion order and letting the last writer
+ * win, so adding a `keeper-__root` record ALONGSIDE the `scratch` ones attributes
+ * the session nondeterministically — which is precisely why `reattributeSession`
+ * rewrites records rather than appending one. So the migration rewrites the
+ * `agent` field of the scratch records it owns.
+ *
+ * The cost is bounded and, on an instance that qualifies for this migration,
+ * zero in practice: those chats are already UI-unreachable via scratch (that is
+ * the problem being fixed), and job records are derived metadata — the
+ * transcripts, which are the only irreplaceable artifact here, are still in both
+ * places. Only records whose agent is exactly `scratch` AND whose session was
+ * re-homed are touched; every other agent's history is untouched.
  */
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import YAML from "yaml";
 import { SCRATCH_AGENT, keeperAgentName } from "./herdctl-agent-names.js";
+import { writeAgentAdoptionJob } from "./herdctl-jobs.js";
 import { ROOT_SLUG } from "./project-paths.js";
 
 /** Separator in every sidecar storage key; a NUL occurs in no segment. */
@@ -117,6 +144,15 @@ export interface ScratchMigrationResult {
   alreadyPresent: number;
   /** Re-keyed sidecar entries added this run, by file. Absent files are omitted. */
   rekeyed: Record<string, number>;
+  /**
+   * herdctl job RECORDS rewritten from `scratch` to the root keeper. A chat
+   * writes one record per turn, so this is >= the number of sessions affected.
+   */
+  reattributed: number;
+  /** Sessions with no job record at all, given a synthesized adoption record. */
+  adopted: number;
+  /** Sidechain (subagent) transcripts, copied but never attributed — they are not chats. */
+  sidechains: number;
 }
 
 export interface ScratchMigrationOptions {
@@ -126,6 +162,8 @@ export interface ScratchMigrationOptions {
   scratchDir: string;
   /** `cfg.projectsRoot` — the root project's dir; its `.chats/` is the destination. */
   projectsRoot: string;
+  /** `cfg.stateDir` — holds herdctl's `jobs/` attribution records. */
+  stateDir: string;
   /** Whether `<projectsRoot>/project.yaml` resolved. False ⇒ no-op. */
   hasRootProject: boolean;
   /** Optional pino-ish logger; the migration is best-effort and never throws. */
@@ -137,8 +175,10 @@ export interface ScratchMigrationOptions {
 }
 
 /**
- * Copy scratch transcripts into the root project's `.chats/` and add re-keyed
- * copies of their sidecar state. Never moves, never deletes, never clobbers.
+ * Copy scratch transcripts into the root project's `.chats/`, add re-keyed
+ * copies of their sidecar state, and point their herdctl job records at the
+ * root keeper so the chats actually list. No transcript is moved or deleted and
+ * no existing sidecar value is overwritten.
  *
  * Best-effort: a failure on any single file is logged and skipped rather than
  * thrown, so a half-readable sidecar can never stop the server from booting.
@@ -146,8 +186,16 @@ export interface ScratchMigrationOptions {
 export async function migrateScratchToRoot(
   opts: ScratchMigrationOptions,
 ): Promise<ScratchMigrationResult> {
-  const { dataDir, scratchDir, projectsRoot, hasRootProject, logger } = opts;
-  const empty: ScratchMigrationResult = { ran: false, copied: 0, alreadyPresent: 0, rekeyed: {} };
+  const { dataDir, scratchDir, projectsRoot, stateDir, hasRootProject, logger } = opts;
+  const empty: ScratchMigrationResult = {
+    ran: false,
+    copied: 0,
+    alreadyPresent: 0,
+    rekeyed: {},
+    reattributed: 0,
+    adopted: 0,
+    sidechains: 0,
+  };
 
   // Gate on existence, exactly as the rest of #516 does: without a root project
   // `/chat` still serves scratch, so nothing is stranded and nothing should move.
@@ -164,13 +212,14 @@ export async function migrateScratchToRoot(
   const toReal = await fs.realpath(toDir).catch(() => null);
   if (toReal && toReal === fromReal) return { ...empty, skipped: "same-dir" };
 
-  const result: ScratchMigrationResult = { ran: true, copied: 0, alreadyPresent: 0, rekeyed: {} };
+  const result: ScratchMigrationResult = { ...empty, ran: true };
 
   // --- transcripts -------------------------------------------------------
   // Mirrors `ensureProjectChats`'s existing in-repo migration (cp, skip-if-present)
   // MINUS its `fs.rm` of the source. `cp` recursively so the scratch agent's
   // `memory/` dir travels with its chats; `fs.cp` is used rather than `rename`
   // because the two dirs can sit on different mounts (rename would EXDEV).
+  const rehomed: string[] = [];
   try {
     await fs.mkdir(toDir, { recursive: true });
     for (const entry of await fs.readdir(fromReal)) {
@@ -182,14 +231,19 @@ export async function migrateScratchToRoot(
         .catch(() => false);
       if (exists) {
         result.alreadyPresent += 1;
-        continue;
+      } else {
+        try {
+          await fs.cp(from, to, { recursive: true, preserveTimestamps: true });
+          result.copied += 1;
+        } catch (err) {
+          logger?.warn({ err, entry }, "scratch migration: could not copy transcript");
+          continue;
+        }
       }
-      try {
-        await fs.cp(from, to, { recursive: true, preserveTimestamps: true });
-        result.copied += 1;
-      } catch (err) {
-        logger?.warn({ err, entry }, "scratch migration: could not copy transcript");
-      }
+      // Attribution is re-derived for everything at the destination, not just
+      // what this run copied: an interrupted earlier run could have copied a
+      // transcript and died before writing its job record.
+      if (entry.endsWith(".jsonl")) rehomed.push(entry.slice(0, -".jsonl".length));
     }
   } catch (err) {
     logger?.warn({ err }, "scratch migration: transcript copy failed");
@@ -205,7 +259,120 @@ export async function migrateScratchToRoot(
     }
   }
 
+  // --- herdctl attribution ------------------------------------------------
+  try {
+    Object.assign(result, await attributeToRoot(stateDir, toDir, rehomed, logger));
+  } catch (err) {
+    logger?.warn({ err }, "scratch migration: could not re-attribute sessions");
+  }
+
   return result;
+}
+
+/**
+ * Whether a transcript is a SIDECHAIN (subagent) transcript rather than a chat.
+ *
+ * These are named `agent-<id>.jsonl` in practice but the reliable marker is the
+ * `isSidechain` flag on the first record, which is what herdctl's own discovery
+ * keys on. They are copied like everything else — a re-homed chat's subagent
+ * detail panes read them — but they are not sessions and must never be given a
+ * job record, or the chat list fills with rows that resolve to nothing.
+ *
+ * On the instance this was written for, 27 of the 34 scratch transcripts are
+ * sidechains and only 7 are chats. Worth knowing before reading "34 transcripts"
+ * as "34 chats".
+ */
+async function isSidechainTranscript(file: string): Promise<boolean> {
+  try {
+    const head = await fs.readFile(file, "utf8");
+    const first = head.slice(0, head.indexOf("\n") === -1 ? undefined : head.indexOf("\n"));
+    if (!first.trim()) return false;
+    return (JSON.parse(first) as { isSidechain?: unknown }).isSidechain === true;
+  } catch {
+    return false;
+  }
+}
+
+/** A session id herdctl is willing to key on — mirrors `run-provenance`'s guard. */
+function isSafeId(sessionId: string): boolean {
+  return /^[A-Za-z0-9._-]+$/.test(sessionId);
+}
+
+/**
+ * Point herdctl's session attribution at the root keeper for every re-homed
+ * chat. See the module header for why this is a rewrite rather than an append.
+ *
+ * Scoped as tightly as the job allows: a record is rewritten only when its
+ * `session_id` is one we re-homed AND its `agent` is exactly `scratch`. A
+ * session with no records at all (never resumed under paddock's own job
+ * bookkeeping) gets a synthesized adoption record, the same path
+ * `reattributeSession` uses for a transcript migrated in from outside.
+ */
+async function attributeToRoot(
+  stateDir: string,
+  chatsDir: string,
+  sessionIds: string[],
+  logger?: ScratchMigrationOptions["logger"],
+): Promise<Pick<ScratchMigrationResult, "reattributed" | "adopted" | "sidechains">> {
+  const out = { reattributed: 0, adopted: 0, sidechains: 0 };
+
+  const chats: string[] = [];
+  for (const id of sessionIds) {
+    if (!isSafeId(id)) continue;
+    if (await isSidechainTranscript(path.join(chatsDir, `${id}.jsonl`))) {
+      out.sidechains += 1;
+      continue;
+    }
+    chats.push(id);
+  }
+  if (chats.length === 0) return out;
+
+  const wanted = new Set(chats);
+  const seen = new Set<string>();
+  const jobsDir = path.join(stateDir, "jobs");
+  const entries = await fs.readdir(jobsDir).catch(() => [] as string[]);
+
+  for (const name of entries) {
+    if (!name.endsWith(".yaml")) continue;
+    const file = path.join(jobsDir, name);
+    let parsed: Record<string, unknown> | null = null;
+    try {
+      parsed = YAML.parse(await fs.readFile(file, "utf8")) as Record<string, unknown> | null;
+    } catch {
+      continue; // unreadable / half-written record — leave it exactly as-is
+    }
+    const sid = parsed?.session_id;
+    if (typeof sid !== "string" || !wanted.has(sid)) continue;
+    // Already migrated, or belongs to some other agent entirely — either way,
+    // not ours to rewrite. Both count as "attributed" so no adoption record is
+    // synthesized on top.
+    if (parsed?.agent === ROOT_AGENT) {
+      seen.add(sid);
+      continue;
+    }
+    if (parsed?.agent !== SCRATCH_AGENT) continue;
+    parsed.agent = ROOT_AGENT;
+    try {
+      await fs.writeFile(file, YAML.stringify(parsed), "utf8");
+      seen.add(sid);
+      out.reattributed += 1;
+    } catch (err) {
+      logger?.warn({ err, file }, "scratch migration: could not rewrite job record");
+    }
+  }
+
+  for (const id of chats) {
+    if (seen.has(id)) continue;
+    try {
+      const st = await fs.stat(path.join(chatsDir, `${id}.jsonl`)).catch(() => null);
+      await writeAgentAdoptionJob(stateDir, id, ROOT_AGENT, st ? st.mtime : new Date());
+      out.adopted += 1;
+    } catch (err) {
+      logger?.warn({ err, sessionId: id }, "scratch migration: could not adopt session");
+    }
+  }
+
+  return out;
 }
 
 /**

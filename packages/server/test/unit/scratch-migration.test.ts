@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import YAML from "yaml";
 import {
   migrateScratchToRoot,
   rekeyScratchKey,
@@ -76,11 +77,13 @@ describe("migrateScratchToRoot", () => {
   let dataDir: string;
   let scratchDir: string;
   let projectsRoot: string;
+  let stateDir: string;
 
   const opts = (over: Partial<Parameters<typeof migrateScratchToRoot>[0]> = {}) => ({
     dataDir,
     scratchDir,
     projectsRoot,
+    stateDir,
     hasRootProject: true,
     ...over,
   });
@@ -94,6 +97,8 @@ describe("migrateScratchToRoot", () => {
     dataDir = await makeTmpDir("scratch-migration");
     scratchDir = path.join(dataDir, "scratch");
     projectsRoot = path.join(dataDir, "projects");
+    stateDir = path.join(dataDir, ".herdctl");
+    await fs.mkdir(path.join(stateDir, "jobs"), { recursive: true });
     await fs.mkdir(path.join(scratchDir, ".chats"), { recursive: true });
     await fs.mkdir(projectsRoot, { recursive: true });
     await fs.writeFile(path.join(scratchDir, ".chats", `${SID}.jsonl`), '{"type":"user"}\n', "utf8");
@@ -262,5 +267,100 @@ describe("migrateScratchToRoot", () => {
     await writeSidecar("star-state.json", [`scratch${NUL}${SID}`]);
     await migrateScratchToRoot(opts());
     expect((await fs.readdir(dataDir)).filter((f) => f.endsWith(".tmp"))).toEqual([]);
+  });
+
+  /**
+   * The step the design doc omitted. Copying transcripts and re-keying sidecars
+   * leaves the chat list EMPTY, because herdctl attributes a session to whatever
+   * agent its `job-*.yaml` records name — and a re-homed chat's still say
+   * `scratch`. These are the tests that would have caught that.
+   */
+  describe("herdctl job attribution", () => {
+    const jobsDir = () => path.join(stateDir, "jobs");
+    const writeJob = (name: string, rec: Record<string, unknown>) =>
+      fs.writeFile(path.join(jobsDir(), name), YAML.stringify(rec), "utf8");
+    const readJobs = async () => {
+      const out: Record<string, unknown>[] = [];
+      for (const f of await fs.readdir(jobsDir())) {
+        if (f.endsWith(".yaml"))
+          out.push(YAML.parse(await fs.readFile(path.join(jobsDir(), f), "utf8")));
+      }
+      return out;
+    };
+
+    it("rewrites every scratch job record for a re-homed session", async () => {
+      await writeJob("job-2026-06-21-aaaaaa.yaml", { id: "a", agent: "scratch", session_id: SID });
+      await writeJob("job-2026-06-21-bbbbbb.yaml", { id: "b", agent: "scratch", session_id: SID });
+      const res = await migrateScratchToRoot(opts());
+      expect(res.reattributed).toBe(2);
+      const forSid = (await readJobs()).filter((j) => j.session_id === SID);
+      expect(forSid.map((j) => j.agent)).toEqual([ROOT_AGENT, ROOT_AGENT]);
+    });
+
+    it("synthesizes an adoption record for a session with no job records", async () => {
+      const res = await migrateScratchToRoot(opts());
+      expect(res).toMatchObject({ reattributed: 0, adopted: 2 });
+      const jobs = await readJobs();
+      expect(jobs.map((j) => j.session_id).sort()).toEqual([SID, SID2].sort());
+      expect(jobs.every((j) => j.agent === ROOT_AGENT)).toBe(true);
+    });
+
+    it("never touches another agent's job record", async () => {
+      await writeJob("job-2026-06-21-cccccc.yaml", {
+        id: "c",
+        agent: "keeper-paddock",
+        session_id: SID,
+      });
+      await migrateScratchToRoot(opts());
+      const kept = (await readJobs()).find((j) => j.id === "c");
+      expect(kept?.agent).toBe("keeper-paddock");
+    });
+
+    /**
+     * Sidechain transcripts are subagent detail, not chats. Giving one a job
+     * record puts a row in the chat list that resolves to nothing. 27 of the 34
+     * transcripts on the instance this was written for are sidechains.
+     */
+    it("copies but never attributes a sidechain transcript", async () => {
+      await fs.writeFile(
+        path.join(scratchDir, ".chats", "agent-a6b3e1a.jsonl"),
+        `${JSON.stringify({ isSidechain: true, sessionId: "acf3a71b", type: "user" })}\n`,
+        "utf8",
+      );
+      const res = await migrateScratchToRoot(opts());
+      expect(res.sidechains).toBe(1);
+      expect(res.copied).toBe(3); // it IS copied — a chat's subagent pane reads it
+      expect(await fs.readdir(path.join(projectsRoot, ".chats"))).toContain("agent-a6b3e1a.jsonl");
+      const jobs = await readJobs();
+      expect(jobs.map((j) => j.session_id)).not.toContain("acf3a71b");
+      expect(jobs.length).toBe(2);
+    });
+
+    it("is idempotent — a second run re-attributes and adopts nothing", async () => {
+      await writeJob("job-2026-06-21-aaaaaa.yaml", { id: "a", agent: "scratch", session_id: SID });
+      const first = await migrateScratchToRoot(opts());
+      expect(first).toMatchObject({ reattributed: 1, adopted: 1 });
+      const after = await readJobs();
+
+      const second = await migrateScratchToRoot(opts());
+      expect(second).toMatchObject({ reattributed: 0, adopted: 0 });
+      expect(await readJobs()).toEqual(after);
+    });
+
+    it("re-attributes a transcript already at the destination (interrupted earlier run)", async () => {
+      await fs.mkdir(path.join(projectsRoot, ".chats"), { recursive: true });
+      await fs.copyFile(
+        path.join(scratchDir, ".chats", `${SID}.jsonl`),
+        path.join(projectsRoot, ".chats", `${SID}.jsonl`),
+      );
+      const res = await migrateScratchToRoot(opts());
+      expect(res).toMatchObject({ copied: 1, alreadyPresent: 1, adopted: 2 });
+    });
+
+    it("tolerates a missing jobs dir", async () => {
+      await fs.rm(jobsDir(), { recursive: true, force: true });
+      const res = await migrateScratchToRoot(opts());
+      expect(res.adopted).toBe(2);
+    });
   });
 });

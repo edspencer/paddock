@@ -158,10 +158,11 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
       dataDir: cfg.dataDir,
       scratchDir: cfg.scratchDir,
       projectsRoot: cfg.projectsRoot,
+      stateDir: cfg.stateDir,
       hasRootProject: Boolean(rootProject),
       logger: app.log,
     });
-    if (migration.copied > 0 || Object.keys(migration.rekeyed).length > 0) {
+    if (migration.copied > 0 || migration.reattributed > 0 || migration.adopted > 0) {
       app.log.info(migration, "scratch chats re-homed onto the root keeper (#516 Phase 6)");
     } else {
       app.log.debug(migration, "scratch → root migration: nothing to do");
