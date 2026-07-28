@@ -139,11 +139,10 @@ export function AppShell() {
   // Project routes render their own single-row mobile header (with an inline
   // hamburger fed by the Outlet context below), so the shell's separate brand
   // row is dropped there to avoid stacking two rows of chrome (#372). Other
-  // routes (grid, tags, one-off chat) keep the shell's mobile brand bar.
+  // routes (grid, tags) keep the shell's mobile brand bar.
   // The root's flat top-level routes (#516) mount the SAME ProjectView, so they
   // host their own header too — but only when there IS a root project (without
-  // one, `/` is the grid and `/chat` is a scratch chat, both of which want the
-  // shell's brand row).
+  // one, `/` is the grid, which wants the shell's brand row).
   const rootRoute =
     Boolean(rootProject) &&
     (location.pathname === "/" || location.pathname.startsWith("/chat"));
@@ -259,12 +258,14 @@ export function AppShell() {
             <PlusIcon width={16} height={16} />
             New Project
           </button>
-          {/* `/chat` is a ROOT chat on an instance with a root project and a
-              scratch one-off otherwise (#516) — same button, honest label. */}
-          <button className="btn-subtle w-full justify-start" onClick={() => navigate("/chat")}>
-            <ChatIcon width={16} height={16} />
-            {rootProject ? "New root chat" : "New one-off chat"}
-          </button>
+          {/* `/chat` is a root chat, and only exists on an instance that has a
+              root project — scratch one-offs were retired in #516 Phase 6. */}
+          {rootProject && (
+            <button className="btn-subtle w-full justify-start" onClick={() => navigate("/chat")}>
+              <ChatIcon width={16} height={16} />
+              New root chat
+            </button>
+          )}
         </div>
 
         <div className="mt-5 mb-1 flex items-center justify-between pr-4">

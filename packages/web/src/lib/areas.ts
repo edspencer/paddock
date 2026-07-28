@@ -26,9 +26,6 @@ export const AREAS: AreaDef[] = [
 /** The slug used for projects with no area set. Always rendered last. */
 export const UNSORTED_SLUG = "";
 
-/** The synthetic "area" for one-off chats shown at the foot of the landing page. */
-export const INBOX = { slug: "inbox", label: "Inbox", blurb: "One-off chats not yet tied to a project." };
-
 const BY_SLUG = new Map(AREAS.map((a) => [a.slug, a]));
 
 /** Human label for an area slug (falls back to a title-cased slug, or "Unsorted"). */

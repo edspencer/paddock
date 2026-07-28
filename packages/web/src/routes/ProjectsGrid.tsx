@@ -5,7 +5,6 @@ import { useProjects } from "../lib/projects-context";
 import type { Chat, Project } from "../lib/types";
 import { StatusPill } from "../components/StatusPill";
 import { TagPill } from "../components/TagPill";
-import { ContextRing } from "../components/ContextRing";
 import { NewProjectModal } from "../components/NewProjectModal";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ProjectMenu } from "../components/ProjectMenu";
@@ -18,8 +17,8 @@ import {
   SparkIcon,
   XIcon,
 } from "../components/icons";
-import { relativeTime, sessionUsageOf } from "../lib/format";
-import { areaBlurb, areaLabel, INBOX, orderAreaSlugs } from "../lib/areas";
+import { relativeTime } from "../lib/format";
+import { areaBlurb, areaLabel, orderAreaSlugs } from "../lib/areas";
 import { gridUrl } from "./ProjectView/urls";
 
 /**
@@ -27,7 +26,7 @@ import { gridUrl } from "./ProjectView/urls";
  *
  *  - **Full landing** (no `filterTag`): projects are grouped into collapsible
  *    sections by their `group` (area) — Homelab / House / Side Projects / …,
- *    Unsorted last — followed by an **Inbox** section listing one-off chats so
+ *    Unsorted last. (The **Inbox** section of one-off chats died with scratch
  *    they're findable. Collapse state per section persists in localStorage.
  *  - **Tag filter** (`/tags/:tag`): a flat grid of just the projects carrying
  *    that domain tag, with a clearable filter chip. (No area sections here —
@@ -82,29 +81,6 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
     };
   }, [slugs]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // One-off (scratch) chats, listed as the Inbox section. Only on the full
-  // landing — and skipped entirely once
-  // this instance has a root project (#516): root chats SUPERSEDE scratch and
-  // take over `/chat`, so an Inbox row would link to a `/chat/:sessionId` that
-  // resolves against the root keeper and can't find a scratch session. The
-  // transcripts are untouched on disk — Phase 6 re-homes them.
-  const [inbox, setInbox] = useState<Chat[]>([]);
-  useEffect(() => {
-    if (filterTag || rootProject) return;
-    let cancelled = false;
-    void api
-      .listScratchChats()
-      .then((chats) => {
-        if (!cancelled) setInbox(chats);
-      })
-      .catch(() => {
-        /* best-effort */
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [filterTag, rootProject]);
-
   const onCreated = (p: Project) => {
     upsert(p);
     setModalOpen(false);
@@ -114,7 +90,7 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
   };
 
   const showEmpty =
-    !loading && !error && !filterTag && allProjects.length === 0 && inbox.length === 0;
+    !loading && !error && !filterTag && allProjects.length === 0;
 
   return (
     <div className="h-full overflow-y-auto">
@@ -218,7 +194,6 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
                 onDelete={setDeleting}
               />
             ))}
-            <InboxSection chats={inbox} />
           </div>
         )}
       </div>
@@ -351,60 +326,6 @@ function AreaSection({
         </div>
       )}
     </section>
-  );
-}
-
-/** The Inbox section: collapsible header + a grid of one-off chat cards. */
-function InboxSection({ chats }: { chats: Chat[] }) {
-  const [collapsed, toggle] = useCollapsed(INBOX.slug);
-  const open = !collapsed;
-  if (chats.length === 0) return null;
-  return (
-    <section className="mb-4">
-      <SectionHeader
-        open={open}
-        label={INBOX.label}
-        count={chats.length}
-        blurb={INBOX.blurb}
-        onToggle={toggle}
-      />
-      {open && (
-        <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {chats.map((c) => (
-            <InboxChatCard key={c.sessionId} chat={c} />
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-/** A compact card for a one-off chat in the Inbox — links to the chat. */
-function InboxChatCard({ chat }: { chat: Chat }) {
-  return (
-    <Link
-      to={`/chat/${encodeURIComponent(chat.sessionId)}`}
-      className="card group/card flex flex-col gap-2 !p-4"
-    >
-      <div className="flex items-center gap-2">
-        <ChatIcon width={14} height={14} className="shrink-0 text-paddock-400" />
-        <ContextRing
-          tokens={chat.contextTokens}
-          limit={chat.contextLimit}
-          usage={sessionUsageOf(chat)}
-        />
-        <span className="truncate text-sm font-medium">{chat.name}</span>
-      </div>
-      {chat.preview && (
-        <p className="line-clamp-2 text-xs text-paddock-500 dark:text-paddock-400">
-          {chat.preview}
-        </p>
-      )}
-      <div className="mt-auto flex items-center gap-1 text-[11px] text-paddock-400">
-        <ClockIcon width={12} height={12} />
-        {relativeTime(chat.updatedAt)}
-      </div>
-    </Link>
   );
 }
 

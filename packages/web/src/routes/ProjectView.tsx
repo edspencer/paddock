@@ -18,6 +18,7 @@ import { InstanceConfigForm } from "../components/InstanceConfigForm";
 import { TriggersPane } from "../components/TriggersPane";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ForkChatModal } from "../components/ForkChatModal";
+import { PromoteChatModal } from "../components/PromoteChatModal";
 import { usePaneWidth } from "../components/PaneResizer";
 import { CHATLIST_PANE } from "../lib/paneWidth";
 import {
@@ -179,6 +180,9 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
   // The chat awaiting a fork-name in the naming dialog (issue #279); null when
   // the dialog is closed.
   const [forkingChat, setForkingChat] = useState<Chat | null>(null);
+  // The chat awaiting a name in the promote-into-a-project dialog (issue #20).
+  // Root-only — see SessionSidebar.setPromotingChat.
+  const [promotingChat, setPromotingChat] = useState<Chat | null>(null);
   // Whether the collapsible "Archived" section is expanded (#95). Collapsed by
   // default; auto-expands (once per session) when the open chat is archived.
   const [archivedOpen, setArchivedOpen] = useState(false);
@@ -907,6 +911,7 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
           usageBySession={usageBySession}
           runningSessions={runningSessions}
           setForkingChat={setForkingChat}
+          setPromotingChat={root ? setPromotingChat : undefined}
           renameChat={renameChat}
           archiveChat={archiveChat}
           setDeletingChat={setDeletingChat}
@@ -1161,6 +1166,21 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
         onConfirm={confirmDeleteChat}
         onClose={() => setDeletingChat(null)}
       />
+      {promotingChat && (
+        <PromoteChatModal
+          open
+          slug={slug}
+          sessionId={promotingChat.sessionId}
+          defaultName={promotingChat.name}
+          onClose={() => setPromotingChat(null)}
+          onPromoted={(project) => {
+            setPromotingChat(null);
+            // The transcript moved, so the chat is gone from this list and lives
+            // in the new project — land the user where it went.
+            navigate(`/projects/${project.slug}/chat`);
+          }}
+        />
+      )}
       {forkingChat && (
         <ForkChatModal
           open
