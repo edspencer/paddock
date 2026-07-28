@@ -186,11 +186,12 @@ export class JobsDirIndex {
       }),
     );
 
-    // Track the directory: forget files that are no longer there.
-    if (this.cache.size > yamls.length) {
-      const present = new Set(yamls);
-      for (const name of this.cache.keys()) if (!present.has(name)) this.cache.delete(name);
-    }
+    // Track the directory: forget files that are no longer there, so the cache
+    // stays the size of the dir rather than growing across a process's lifetime.
+    // (Unconditional — comparing sizes first would miss a scan that deletes and
+    // adds the same number of files, for no measurable saving.)
+    const present = new Set(yamls);
+    for (const name of this.cache.keys()) if (!present.has(name)) this.cache.delete(name);
 
     this.stats.parsed = parsed;
     this.stats.reused = reused;
