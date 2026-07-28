@@ -32,14 +32,45 @@ function dirFor(root: string, slug: string): string {
 
 /**
  * Resolve a freeform file name to an absolute path inside the project dir,
- * rejecting path traversal. The single guard shared by every file read (and by
- * the directory listing, issue #259). The project root itself (`name === ""`)
- * resolves to the project dir and is allowed, so a root listing passes through.
+ * rejecting path traversal AND hidden (dot-prefixed) path segments. The single
+ * guard shared by every file read and by the directory listing (issue #259).
+ * The project root itself (`name === ""`) resolves to the project dir and is
+ * allowed, so a root listing passes through.
+ *
+ * **Why dot segments are refused, not merely hidden.** {@link listFiles} drops
+ * dot-prefixed entries from what it *returns*, which is presentation, not access
+ * control: naming the path explicitly still resolved it. And the read route's
+ * `:name` param decodes `%2F`, so a nominally single-segment route accepts a
+ * whole nested path. Together those let a caller read
+ * `…/files/.chats%2F<id>.jsonl` (a full chat transcript) or
+ * `…/files/.git%2Fconfig` (which carries credentials when a remote embeds a
+ * token). The root project (#516) widened the blast radius from one project's
+ * subtree to the instance's own backing repo and every project at once.
+ *
+ * Honest severity: **defense-in-depth, not a privilege boundary.** Paddock has
+ * no per-user role model, and any caller who can reach these routes can already
+ * start a keeper chat and run Bash — strictly more capability than reading a
+ * file. The `/mcp` read-only token surface exposes no file verb, so it is not
+ * reachable there either. This is worth closing because "hidden in the listing"
+ * should not be the only thing standing between an API and a transcript, not
+ * because it grants anything new.
+ *
+ * Nothing in the UI regresses: the Files browser never lists dot entries, so it
+ * never had a link to one.
  */
 export function resolveInProject(root: string, slug: string, name: string): string {
   const dir = dirFor(root, slug);
   const resolved = path.resolve(dir, name);
   if (resolved !== dir && !resolved.startsWith(dir + path.sep)) {
+    throw new ProjectError("Invalid file path", "invalid");
+  }
+  // Check the RESOLVED path's segments relative to the project dir, not the
+  // caller's raw string: `a/./.git` and `a/b/../.git` both normalise to a dot
+  // segment that the raw string doesn't literally contain. The project dir
+  // itself may legitimately sit under a dot-prefixed ancestor (a data dir like
+  // `/srv/.paddock/projects`), which is why only the relative part is examined.
+  const rel = path.relative(dir, resolved);
+  if (rel && rel.split(path.sep).some((seg) => seg.startsWith("."))) {
     throw new ProjectError("Invalid file path", "invalid");
   }
   return resolved;
