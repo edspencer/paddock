@@ -41,22 +41,35 @@ describe("project-files — hidden paths are refused, not just hidden", () => {
   });
   afterEach(() => rmTmpDir(root));
 
-  it("refuses a dot segment at the root project — transcripts and .git alike", () => {
-    for (const p of [".chats/s1.jsonl", ".git/config", ".chats", ".git", ".gitignore"]) {
+  it("refuses descending THROUGH a hidden directory — transcripts and .git alike", () => {
+    for (const p of [".chats/s1.jsonl", ".git/config", ".git/refs/heads/main"]) {
       expect(() => resolveInProject(root, ROOT_SLUG, p), p).toThrow(/Invalid file path/);
     }
   });
 
-  it("refuses a dot segment inside an ordinary project too (pre-existing, same hole)", () => {
+  it("refuses a hidden directory inside an ordinary project too (pre-existing, same hole)", () => {
     expect(() => resolveInProject(root, "alpha", ".chats/s2.jsonl")).toThrow(/Invalid file path/);
   });
 
-  it("refuses a dot segment reached by normalisation, not just a literal one", () => {
+  it("refuses a hidden directory reached by normalisation, not just a literal one", () => {
     // The raw string contains no leading-dot segment; the RESOLVED path does.
     expect(() => resolveInProject(root, ROOT_SLUG, "alpha/../.chats/s1.jsonl")).toThrow(
       /Invalid file path/,
     );
     expect(() => resolveInProject(root, ROOT_SLUG, "./.git/config")).toThrow(/Invalid file path/);
+  });
+
+  it("STILL READS a dotfile leaf — the Changes pane depends on it", async () => {
+    // Regression guard. Refusing every dot segment was the first cut and it
+    // broke Changes: an untracked file has no diff, so the pane renders its
+    // CONTENT through this surface — and `.gitignore` is untracked in a fresh
+    // repo-backed project, because `ensureSidecarGitignore` writes it. Caught in
+    // live QA as a 400 on `/api/projects/__root/files/.gitignore`.
+    await fs.writeFile(path.join(root, ".gitignore"), "/.chats/\n");
+    expect(resolveInProject(root, ROOT_SLUG, ".gitignore")).toBe(
+      path.join(root, ".gitignore"),
+    );
+    expect(await store.readFile(ROOT_SLUG, ".gitignore")).toContain(".chats");
   });
 
   it("still refuses ordinary traversal out of the project dir", () => {
@@ -83,9 +96,11 @@ describe("project-files — hidden paths are refused, not just hidden", () => {
     );
   });
 
-  it("refuses to LIST a dot directory that was previously enumerable", async () => {
-    // `?path=.chats` used to enumerate every transcript filename.
+  it("refuses to LIST a hidden directory that was previously enumerable", async () => {
+    // `?path=.chats` used to enumerate every transcript filename. A listing
+    // target IS a directory, so unlike a read its leaf gets no pass.
     await expect(listFiles(root, ROOT_SLUG, ".chats")).rejects.toThrow(/Invalid file path/);
+    await expect(listFiles(root, ROOT_SLUG, ".git")).rejects.toThrow(/Invalid file path/);
     // …while the ordinary listing still works and still omits dot entries.
     const names = (await listFiles(root, ROOT_SLUG)).map((e) => e.name);
     expect(names).toContain("alpha");
@@ -97,6 +112,7 @@ describe("project-files — hidden paths are refused, not just hidden", () => {
     await expect(store.readFile(ROOT_SLUG, ".git/config")).rejects.toThrow(
       /Invalid file path/,
     );
+    await expect(store.listFiles(ROOT_SLUG, ".chats")).rejects.toThrow(/Invalid file path/);
     await expect(store.readFileBytes(ROOT_SLUG, ".chats/s1.jsonl")).rejects.toThrow(
       /Invalid file path/,
     );

@@ -29,3 +29,11 @@ a keeper chat and run Bash — strictly more capability than reading a file. The
 there. Worth closing because "hidden in the listing" should not be the only
 thing between an API and a transcript. Nothing in the UI regresses: the Files
 browser never listed dot entries, so it never had a link to one.
+
+The leaf may still be a dotfile. Refusing *every* dot segment was the first cut
+and it broke the Changes pane: an untracked file has no diff, so the pane renders
+its content through this same surface — and `.gitignore` is untracked in a fresh
+repo-backed project, because `ensureSidecarGitignore` writes it. The harm is
+descending *into* `.git/` and `.chats/`, not reading a dotfile git is already
+showing you. `listFiles` additionally refuses a hidden leaf, since listing one is
+how `?path=.chats` enumerated every transcript.
