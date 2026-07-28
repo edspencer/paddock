@@ -83,6 +83,7 @@ import {
   ensureConfigFile as writeBootConfigFile,
 } from "./herdctl-agent-config.js";
 import * as jobs from "./herdctl-jobs.js";
+import { JobsDirIndex } from "./herdctl-jobs-index.js";
 
 /** Options passed through to a streamed trigger. */
 export interface ChatTurnOptions {
@@ -287,6 +288,21 @@ export class HerdctlService {
    */
   private liveSessions = new Map<string, RuntimeSession>();
 
+  /**
+   * Incremental index of `<stateDir>/jobs`, backing the unread-badge reads
+   * (`lastTurnCompletedAt*`) — one per service, reused across requests so a warm
+   * scan only parses records it has never seen (#529). See
+   * `./herdctl-jobs-index.ts` for the invariant it rests on and its invalidation.
+   *
+   * Built lazily on first read, like the job-record helpers it replaced: unit
+   * tests construct this service against a partial config with no `stateDir`,
+   * and must keep being able to.
+   */
+  private jobsIndexOrNull: JobsDirIndex | null = null;
+  private get jobsIndex(): JobsDirIndex {
+    return (this.jobsIndexOrNull ??= new JobsDirIndex(this.cfg.stateDir));
+  }
+
   constructor(private readonly cfg: PaddockConfig) {}
 
   /**
@@ -337,6 +353,12 @@ export class HerdctlService {
     if (this.started) return;
     await this.fleet.start();
     this.started = true;
+    // Warm the jobs index off the critical path (#529). It is incremental, so
+    // the expensive full parse only ever happens once per process — doing it at
+    // boot rather than inside the user's first `GET /api/projects` is the
+    // difference between a ~1.1 s first paint and a ~40 ms one. Fire-and-forget:
+    // a failure here is invisible, since every read rebuilds what it needs.
+    void this.jobsIndex.read().catch(() => undefined);
   }
 
   async stop(): Promise<void> {
@@ -902,15 +924,16 @@ export class HerdctlService {
   /**
    * The on-disk job-record reads (run history + the unread badge) live in
    * `./herdctl-jobs.js` as pure functions over `<stateDir>/jobs` (issue #403);
-   * these thin wrappers thread `this.cfg.stateDir`. See there for the full
-   * semantics of each (unread signal, per-project grouping, run history).
+   * these thin wrappers thread `this.cfg.stateDir` (or, for the two unread-badge
+   * reads, this service's {@link jobsIndex}). See there for the full semantics of
+   * each (unread signal, per-project grouping, run history).
    */
   async lastTurnCompletedAt(): Promise<Map<string, string>> {
-    return jobs.lastTurnCompletedAt(this.cfg.stateDir);
+    return jobs.lastTurnCompletedAt(this.jobsIndex);
   }
 
   async lastTurnCompletedAtByProject(): Promise<Map<string, Map<string, string>>> {
-    return jobs.lastTurnCompletedAtByProject(this.cfg.stateDir);
+    return jobs.lastTurnCompletedAtByProject(this.jobsIndex);
   }
 
   async listProjectRuns(project: Project, limit = 100): Promise<JobMetadata[]> {
@@ -982,6 +1005,7 @@ export class HerdctlService {
     // Re-attribute the session to the new keeper, then drop the discovery +
     // attribution caches so the move shows immediately.
     await jobs.reattributeSession(this.cfg.stateDir, sessionId, to, st ? st.mtime : new Date());
+    this.jobsIndexOrNull?.invalidate();
     this.invalidateSessions(keeperAgentName(to.slug));
     this.invalidateSessions(fromAgent);
   }
@@ -1059,6 +1083,7 @@ export class HerdctlService {
     const keeper = keeperAgentName(project.slug);
     if (name) await this.manager.setSessionName(keeper, newId, name).catch(() => undefined);
     await jobs.writeAdoptionJob(this.cfg.stateDir, newId, project, new Date());
+    this.jobsIndexOrNull?.invalidate();
     this.invalidateSessions(keeper);
     return newId;
   }
@@ -1135,6 +1160,7 @@ export class HerdctlService {
   async attributeRunningSession(sessionId: string, agentName: string): Promise<void> {
     if (!/^[A-Za-z0-9._-]+$/.test(sessionId)) return;
     await jobs.writeAgentAdoptionJob(this.cfg.stateDir, sessionId, agentName, new Date());
+    this.jobsIndexOrNull?.invalidate();
     this.invalidateSessions(agentName);
   }
 
