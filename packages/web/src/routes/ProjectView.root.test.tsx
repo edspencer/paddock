@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
 import { ProjectView } from "./ProjectView";
 import { makeProject, makeChat } from "../test/factories";
@@ -24,9 +24,18 @@ vi.mock("../components/ChatPane", () => ({
   },
 }));
 
+// ChangesPane is tested separately; stub it to a marker that echoes the slug it
+// was handed, so the root's Changes routing is what's asserted.
+vi.mock("../components/ChangesPane", () => ({
+  ChangesPane: ({ slug }: { slug: string }) => (
+    <div data-testid="changes-pane">changes for {slug}</div>
+  ),
+}));
+
 const apiFns = {
   getProjectDetail: vi.fn(),
   listProjectFiles: vi.fn(),
+  listProjectDir: vi.fn(),
   gitStatus: vi.fn(),
   listProjectChats: vi.fn(),
   chatUsage: vi.fn(),
@@ -40,6 +49,7 @@ vi.mock("../lib/api", async () => {
     api: {
       getProjectDetail: (...a: unknown[]) => apiFns.getProjectDetail(...a),
       listProjectFiles: (...a: unknown[]) => apiFns.listProjectFiles(...a),
+      listProjectDir: (...a: unknown[]) => apiFns.listProjectDir(...a),
       gitStatus: (...a: unknown[]) => apiFns.gitStatus(...a),
       listProjectChats: (...a: unknown[]) => apiFns.listProjectChats(...a),
       chatUsage: (...a: unknown[]) => apiFns.chatUsage(...a),
@@ -88,6 +98,10 @@ function renderRootAt(path: string) {
         <Route path="/" element={<ProjectView root />} />
         <Route path="/chat" element={<ProjectView root />} />
         <Route path="/chat/:sessionId" element={<ProjectView root />} />
+        <Route path="/files" element={<ProjectView root />} />
+        <Route path="/files/*" element={<ProjectView root />} />
+        <Route path="/changes" element={<ProjectView root />} />
+        <Route path="/changes/:file" element={<ProjectView root />} />
       </Routes>
     </MemoryRouter>,
   );
@@ -100,6 +114,7 @@ beforeEach(() => {
   chatPaneProps = null;
   Object.values(apiFns).forEach((m) => m.mockReset());
   apiFns.listProjectFiles.mockResolvedValue([]);
+  apiFns.listProjectDir.mockResolvedValue({ path: "", kind: "dir", entries: [] });
   apiFns.gitStatus.mockResolvedValue({ repo: false, files: [], clean: true });
   apiFns.listProjectChats.mockResolvedValue([]);
   apiFns.chatUsage.mockResolvedValue({});
@@ -151,18 +166,61 @@ describe("ProjectView root (#516)", () => {
     expect(screen.getByTestId("here").textContent).toBe("/");
   });
 
-  it("shows only the tabs that have somewhere to go (Phases 4-5 pending)", async () => {
+  it("shows only the tabs that have somewhere to go (Phase 5 pending)", async () => {
     apiFns.gitStatus.mockResolvedValue({ repo: true, files: [], clean: true, branch: "main" });
     renderRootAt("/chat");
     await screen.findByTestId("chat-pane");
-    expect(screen.getByRole("button", { name: "Home" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Chat" })).toBeInTheDocument();
-    // Files/Changes/History/Settings/Triggers land in later phases; rendering
-    // their tabs now would navigate to a URL that doesn't resolve. Changes is
-    // the sharpest case — the git status IS a repo here, so it would show.
-    for (const name of ["Files", "Changes", "History", "Settings", "Triggers"]) {
-      expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+    for (const name of ["Home", "Chat", "Files", "Changes"]) {
+      expect(screen.getByRole("button", { name }), name).toBeInTheDocument();
     }
+    // History/Settings/Triggers land in Phase 5; rendering their tabs now would
+    // navigate to a URL that doesn't resolve.
+    for (const name of ["History", "Settings", "Triggers"]) {
+      expect(screen.queryByRole("button", { name }), name).not.toBeInTheDocument();
+    }
+  });
+
+  it("renders the Files tab at the flat `/files`, against the reserved slug", async () => {
+    apiFns.listProjectDir.mockResolvedValue({
+      path: "",
+      kind: "dir",
+      entries: [
+        { name: "some-project", kind: "dir" },
+        { name: "CLAUDE.md", kind: "file" },
+      ],
+    });
+    renderRootAt("/files");
+    expect(await screen.findByText("CLAUDE.md")).toBeInTheDocument();
+    // The root's working dir contains every project — browsing into one is the
+    // intended "omniscient admin" behaviour, not a leak (#516).
+    expect(screen.getByText("some-project")).toBeInTheDocument();
+    expect(apiFns.listProjectDir).toHaveBeenCalledWith("__root", "");
+  });
+
+  it("nests the Files subpath in the flat URL", async () => {
+    apiFns.listProjectDir.mockResolvedValue({ path: "docs", kind: "dir", entries: [] });
+    renderRootAt("/files/docs");
+    await waitFor(() => expect(apiFns.listProjectDir).toHaveBeenCalledWith("__root", "docs"));
+  });
+
+  it("renders the Changes tab at the flat `/changes` over the whole repo", async () => {
+    apiFns.gitStatus.mockResolvedValue({
+      repo: true,
+      files: [{ path: "a.md", status: "M", staged: false }],
+      clean: false,
+      branch: "main",
+    });
+    renderRootAt("/changes");
+    expect(await screen.findByTestId("changes-pane")).toHaveTextContent("changes for __root");
+  });
+
+  it("shows pinned file tabs at the root (pinning is driven from Files)", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "__root", name: "Root", pinned: ["NOTES.md"] })),
+    );
+    renderRootAt("/chat");
+    await screen.findByTestId("chat-pane");
+    expect(screen.getByRole("button", { name: /NOTES\.md/ })).toBeInTheDocument();
   });
 
   it("does NOT persist a sticky last tab at the root", async () => {

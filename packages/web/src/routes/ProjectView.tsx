@@ -933,19 +933,19 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
             <TabButton active={view === "chat"} onClick={goChat}>
               Chat
             </TabButton>
-            {/* Only Home + Chat exist at the root so far (issue #516 Phases 1-3).
-                Files/Changes land in Phase 4 and History/Settings/Pinned in Phase
-                5; until they have routes, rendering their tabs would just navigate
-                to a URL that doesn't resolve. `root` is the honest gate. */}
-            {!root && (
-              <TabButton active={filesTabActive} onClick={goFiles}>
-                Files
-              </TabButton>
-            )}
+            {/* History/Settings/Triggers land at the root in Phase 5; until they
+                have routes, rendering their tabs would navigate to a URL that
+                doesn't resolve. `root` is the honest gate. Files + Changes are
+                live as of Phase 4. */}
+            <TabButton active={filesTabActive} onClick={goFiles}>
+              Files
+            </TabButton>
             {/* The Changes tab appears ONLY when the projects dir is a git repo.
                 It carries a subtle "N uncommitted" badge so pending work is
-                visible without opening it. */}
-            {!root && gitStatus && (
+                visible without opening it. At the ROOT that status is the WHOLE
+                backing repo, which is the point — the root is where you commit
+                across the instance. */}
+            {gitStatus && (
               <TabButton active={view === "changes"} onClick={goChanges}>
                 <span className="inline-flex items-center gap-1.5">
                   Changes
@@ -1002,8 +1002,11 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
             </TabButton>
             )}
             {/* Pinned file tabs (sibling tabs), order preserved by the server.
-                Each links to /files/:name so the tab is deep-linkable. */}
-            {!root && pinned.map((f) => (
+                Each links to /files/:name so the tab is deep-linkable. Pinning is
+                driven FROM the Files tab, so these come with Phase 4 rather than
+                Phase 5 — a Files tab that can pin, next to a tab bar that won't
+                show the pin, would just be incoherent. */}
+            {pinned.map((f) => (
               <PinnedTab
                 key={f}
                 file={f}
@@ -1061,10 +1064,11 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
               runningSessions={runningSessions}
               onOpenChat={openChat}
               onNewChat={newChat}
-              // The root has no Files or Settings tab yet (#516 Phases 4-5), so
-              // those affordances are omitted rather than pointed at dead URLs.
-              onOpenFile={root ? undefined : goToFilesPath}
-              onOpenFiles={root ? undefined : goFiles}
+              onOpenFile={goToFilesPath}
+              onOpenFiles={goFiles}
+              // The root has no Settings tab until #516 Phase 5 merges it with
+              // InstanceSettings, so that affordance stays omitted rather than
+              // pointed at a dead URL.
               onEditDetails={root ? undefined : goSettings}
             />
           )}
