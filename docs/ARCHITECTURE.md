@@ -527,7 +527,7 @@ dispatch in `ws.ts`):
   cross-turn keeper autonomy. `cancel()` maps to `session.interrupt()` in session
   mode and `manager.cancelJob()` in batch mode.
 
-See [`concepts/keeper-and-scratch.md`](./concepts/keeper-and-scratch.md) for the
+See [`concepts/keepers.md`](./concepts/keepers.md) for the
 agent model and [`INTEGRATION.md`](./INTEGRATION.md) for the underlying herdctl
 trigger API.
 

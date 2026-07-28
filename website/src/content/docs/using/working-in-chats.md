@@ -313,7 +313,7 @@ the handles don't apply.)
 
 - [Chats are sessions](/concepts/chats/) — the concept behind persistence,
   resume, and forking.
-- [Keeper & scratch agents](/concepts/keeper-and-scratch/) — the two agents
+- [Keeper agents](/concepts/keepers/) — the agents
   behind keeper and one-off chats.
 - [Creating & organizing projects](/using/creating-and-organizing-projects/) —
   where keeper chats live, and how to promote a scratch chat.

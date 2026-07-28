@@ -250,7 +250,9 @@ export const FIELDS: readonly FieldSpec[] = [
   { key: "stateDir", group: "advanced", label: "State dir", type: "string", envVars: ["PADDOCK_STATE_DIR"], default: null, editable: false },
   { key: "herdctlConfigPath", group: "advanced", label: "herdctl config path", type: "string", envVars: ["PADDOCK_HERDCTL_CONFIG"], default: null, editable: false },
   { key: "webDist", group: "advanced", label: "Web dist", type: "string", envVars: ["PADDOCK_WEB_DIST"], default: null, editable: false },
-  { key: "scratchDir", group: "advanced", label: "Scratch dir", type: "string", envVars: ["PADDOCK_SCRATCH_DIR"], default: null, editable: false },
+  // Legacy: no agent runs here since #516 Phase 6 retired scratch. Still shown
+  // (read-only) because the one-time migration reads it to find the old transcripts.
+  { key: "scratchDir", group: "advanced", label: "Scratch dir (legacy)", type: "string", envVars: ["PADDOCK_SCRATCH_DIR"], default: null, editable: false },
   // Auth: read-only in v1 (misconfig can lock everyone out — issue #385). Only
   // the mode is surfaced; JWT/JWKS internals stay out of the API.
   { key: "auth.mode", group: "advanced", label: "Auth mode", type: "string", envVars: ["PADDOCK_AUTH_MODE"], default: "none", editable: false, sensitive: true },

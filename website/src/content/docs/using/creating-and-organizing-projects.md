@@ -314,7 +314,7 @@ have to decide up front.
 
 - [Projects](/concepts/projects/) — the concept behind notebook vs repo-backed,
   and what a project directory contains.
-- [Keeper & scratch agents](/concepts/keeper-and-scratch/) — the agents that do
+- [Keeper agents](/concepts/keepers/) — the agents that do
   the work in each project.
 - [The sweeper](/concepts/sweeper/) — how `OVERVIEW.md` and `CHANGELOG.md` stay
   curated (and what "Preload project context" injects).

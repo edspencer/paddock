@@ -9,7 +9,7 @@ Short, canonical explanations of Paddock's core ideas. Read these to understand
 
 - **[Projects](/concepts/projects)** — a directory + `project.yaml`; the two types,
   **notebook** and **repo-backed**.
-- **[Keeper vs. scratch agents](/concepts/keeper-and-scratch)** — one keeper per
+- **[Keeper agents](/concepts/keepers)** — one keeper per
   project, one shared scratch, and how a scratch chat is promoted into a project.
 - **[Chats are Claude Code sessions](/concepts/chats)** — persisted on disk,
   resumable across reloads, reconnects, and devices.
