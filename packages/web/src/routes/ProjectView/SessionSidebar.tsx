@@ -200,10 +200,20 @@ export function SessionSidebar({
     const aria = (label: string, phrase: string) =>
       hasSubtree ? `${label} (Shift-click to ${phrase})` : label;
 
+    // How many icons this row's hover strip holds: six always (fork, rename,
+    // archive, delete, read/unread, star), plus detach on a nested row and
+    // promote at the root. The strip is absolutely positioned OVER the
+    // timestamp, so `.chat-row--actions-N` tells the stylesheet how narrow the
+    // row has to get before it would cover it — see `.chat-row` in index.css.
+    // Interpolated rather than switched because these are hand-written classes,
+    // not Tailwind utilities, so there is no JIT scan to satisfy; the value is
+    // always 6, 7 or 8.
+    const actionCount = 6 + (depth > 0 ? 1 : 0) + (setPromotingChat ? 1 : 0);
+
     return (
     <div
       key={c.sessionId}
-      className={`group/chat relative mb-0.5 flex rounded-lg transition-colors ${
+      className={`group/chat chat-row chat-row--actions-${actionCount} relative mb-0.5 flex rounded-lg transition-colors ${
         activeSession === c.sessionId && view === "chat"
           ? "bg-paddock-200/80 dark:bg-paddock-800"
           : "hover:bg-paddock-200/50 dark:hover:bg-paddock-800/50"
@@ -312,7 +322,9 @@ export function SessionSidebar({
         </span>
         {/* Row 2 (left): relative time. The actions live on this row too, as
             an absolute sibling anchored bottom-right (below). */}
-        <span className="text-[11px] text-paddock-400">{relativeTime(c.updatedAt)}</span>
+        <span className="chat-row-time text-[11px] text-paddock-400">
+          {relativeTime(c.updatedAt)}
+        </span>
       </button>
       <div className="absolute bottom-1 right-1.5 flex items-center gap-0.5">
         {/* Detach from parent (#508) — only on a row that actually RENDERS

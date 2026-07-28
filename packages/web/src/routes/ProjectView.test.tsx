@@ -1386,3 +1386,78 @@ describe("ProjectView: subtree mark-read rollback + delete disclosure (#508)", (
     });
   });
 });
+
+/**
+ * Row action-count class (#508 review follow-up). The hover action strip is
+ * absolutely positioned over the timestamp, so a narrow sidebar has the icons
+ * land on top of it — measured at 44px of overlap on an 8-icon root row.
+ *
+ * The fix is a pure-CSS container query (see `.chat-row` in index.css), which
+ * jsdom can't evaluate. What IS testable, and what the stylesheet depends on, is
+ * that each row declares how many icons its strip holds — if that count drifts
+ * from the buttons actually rendered, the CSS silently picks the wrong
+ * threshold and the overlap comes back.
+ */
+describe("ProjectView: chat row declares its action count (#508)", () => {
+  const rowFor = (name: string) => {
+    const title = screen.getByText(name);
+    return title.closest(".chat-row") as HTMLElement;
+  };
+  /** The count the stylesheet will use, read off the row's class. */
+  const declaredCount = (row: HTMLElement) =>
+    Number(row.className.match(/chat-row--actions-(\d+)/)?.[1]);
+  /**
+   * The count actually rendered IN THE STRIP. Deliberately not every button in
+   * the row: a parent also renders a collapse twisty, which sits in the left
+   * gutter and has nothing to do with how wide the strip is.
+   */
+  const actualCount = (row: HTMLElement) =>
+    row.querySelector("div[class*=absolute]")!.querySelectorAll("button[aria-label]").length;
+
+  it("matches the buttons rendered on a plain row", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), { chats: [makeChat({ sessionId: "s1", name: "Solo" })] }),
+    );
+    renderAt("/projects/p/chat");
+    await screen.findByText("Solo");
+    const row = rowFor("Solo");
+    expect(declaredCount(row)).toBe(6);
+    expect(actualCount(row)).toBe(6);
+  });
+
+  it("counts the Detach action on a nested row", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [
+          makeChat({ sessionId: "mgr", name: "Manager" }),
+          makeChat({
+            sessionId: "c1",
+            name: "Child",
+            parent: { project: "p", sessionId: "mgr" },
+          }),
+        ],
+      }),
+    );
+    renderAt("/projects/p/chat");
+    await screen.findByText("Manager");
+    // The parent is a root — six actions in its strip (its collapse twisty is
+    // not one of them). The child renders nested, so it also has Detach, and its
+    // strip is one icon wider.
+    expect(declaredCount(rowFor("Manager"))).toBe(6);
+    expect(actualCount(rowFor("Manager"))).toBe(6);
+    expect(declaredCount(rowFor("Child"))).toBe(7);
+    expect(actualCount(rowFor("Child"))).toBe(7);
+  });
+
+  it("marks every row as a size container", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), { chats: [makeChat({ sessionId: "s1", name: "Solo" })] }),
+    );
+    renderAt("/projects/p/chat");
+    await screen.findByText("Solo");
+    // Without `.chat-row` there is no container for the query to resolve against
+    // and the timestamp would never hide.
+    expect(rowFor("Solo")).toHaveClass("chat-row");
+    expect(rowFor("Solo").querySelector(".chat-row-time")).toBeInTheDocument();
+  });
+});
