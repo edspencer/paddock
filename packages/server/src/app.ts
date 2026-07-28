@@ -20,6 +20,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { loadPaddockConfig, type PaddockConfig } from "./config.js";
 import { ProjectStore } from "./projects.js";
+import { migrateScratchToRoot } from "./scratch-migration.js";
 import { AttachmentStore } from "./attachments.js";
 import { HerdctlService } from "./herdctl.js";
 import { GitService } from "./git.js";
@@ -135,6 +136,38 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   const projects = new ProjectStore(cfg.projectsRoot);
   await projects.init();
 
+  // The root project (issue #516) is invisible to `list()` — its `project.yaml`
+  // sits AT `projectsRoot`, and `list()` only walks subdirectories. Resolve it
+  // explicitly so its keeper can be registered alongside every other project's,
+  // and so the root is an ordinary keeper in every respect. Absent (the default,
+  // and the state of every existing instance) ⇒ nothing extra is registered.
+  const rootProject = await projects.getRoot();
+  if (rootProject) {
+    app.log.info({ dir: rootProject.dir }, "root project present — registering root keeper");
+  }
+
+  // #516 Phase 6, step 1: re-home scratch chats onto the root keeper. Ordering
+  // is load-bearing and this is why the call sits HERE rather than next to the
+  // other boot work: it rewrites sidecar JSON on disk, and every sidecar store
+  // serialises its whole in-memory map over the file on the next write — so this
+  // must complete before any store is constructed, let alone loaded. Purely
+  // additive and idempotent (see scratch-migration.ts); a no-op without a root
+  // project, which is every instance that has not opted in.
+  {
+    const migration = await migrateScratchToRoot({
+      dataDir: cfg.dataDir,
+      scratchDir: cfg.scratchDir,
+      projectsRoot: cfg.projectsRoot,
+      hasRootProject: Boolean(rootProject),
+      logger: app.log,
+    });
+    if (migration.copied > 0 || Object.keys(migration.rekeyed).length > 0) {
+      app.log.info(migration, "scratch chats re-homed onto the root keeper (#516 Phase 6)");
+    } else {
+      app.log.debug(migration, "scratch → root migration: nothing to do");
+    }
+  }
+
   const herdctl = new HerdctlService(cfg);
   const git = new GitService(cfg.projectsRoot, cfg.gitAuthor);
   const githubAuth = new GithubAuth(path.join(cfg.dataDir, "github-auth.json"), cfg.githubClientId);
@@ -179,15 +212,6 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
     { mode: cfg.transcription.mode, available: transcriber.available },
     "voice dictation capability",
   );
-  // The root project (issue #516) is invisible to `list()` — its `project.yaml`
-  // sits AT `projectsRoot`, and `list()` only walks subdirectories. Resolve it
-  // explicitly and register its keeper alongside every other project's, so the
-  // root keeper is an ordinary keeper in every respect. Absent (the default, and
-  // the state of every existing instance) ⇒ nothing extra is registered.
-  const rootProject = await projects.getRoot();
-  if (rootProject) {
-    app.log.info({ dir: rootProject.dir }, "root project present — registering root keeper");
-  }
   const initialProjects = [...(await projects.list()), ...(rootProject ? [rootProject] : [])];
   try {
     await herdctl.init(initialProjects);
