@@ -1,5 +1,71 @@
 # @paddock/web
 
+## 0.49.0
+
+### Minor Changes
+
+- [#517](https://github.com/edspencer/paddock/pull/517) [`e50f54c`](https://github.com/edspencer/paddock/commit/e50f54c5763365a1de5e96bb1e01f0893d225a6a) Thanks [@edspencer](https://github.com/edspencer)! - feat: the root is a project — root Home and root chats (#516, Phases 1–3).
+
+  A Paddock instance can now be as capable at its root as inside any project. The
+  framing: **the root is the project whose directory is `projectsRoot` instead of
+  a subdirectory of it.** Its keeper is an ordinary keeper — same
+  `buildKeeperConfig`, same self-MCP, same `max_concurrent: 10`, same chat tree,
+  same per-chat model, same sweeper. Nothing is special-cased; one assumption
+  about where a project directory sits is relaxed.
+
+  `ProjectStore.dirFor()` is the single resolution seam: the reserved `__root`
+  slug maps to the projects root itself, so read/update/overview/changelog/file
+  serving all work on it unchanged. `list()` is untouched — it only walks
+  subdirectories, so the root stays out of enumeration and is resolved explicitly
+  at boot. New `GET`/`POST /api/root-project` ask whether an instance has one and
+  create it; everything else goes through the ordinary `/api/projects/__root/…`.
+
+  In the web, `urls.ts` generalises `slug` → `base` (`""` at the root,
+  `/projects/:slug` otherwise), so one `ProjectView` serves both. Root URLs are
+  flat and top-level: `/` is root Home and `/chat[/:sessionId]` its chats, with
+  the projects grid moving to `/projects`. `/` always renders Home — no redirect
+  and no sticky last tab, so the instance's front door never lands on Files.
+
+  **Migration is gated on existence, so nothing changes for an existing
+  instance.** Nothing seeds `<projectsRoot>/project.yaml`; without it there is no
+  root project, `/` is the projects grid and `/chat` is a scratch chat exactly as
+  before. Creating the root project — an "Enable" card on the grid — is the whole
+  opt-in.
+
+  Worth being blunt about the escalation it buys: the root keeper's working
+  directory CONTAINS every project, so root chats can read and edit any project's
+  files. That is the intent — the root is where you act across the instance — but
+  it is a real step up from a project keeper, which is confined to its own
+  subtree.
+
+  Files, Changes, History, Settings and retiring scratch are follow-up phases;
+  their tabs are hidden at the root rather than pointed at URLs that don't
+  resolve. Note that once a root project exists, `/chat` is a root chat, so
+  existing scratch chats are not reachable in the UI until that final phase
+  re-homes them — their transcripts are untouched on disk.
+
+- [#521](https://github.com/edspencer/paddock/pull/521) [`29ea303`](https://github.com/edspencer/paddock/commit/29ea30313758a6079c3513443c9a532b930d3553) Thanks [@edspencer](https://github.com/edspencer)! - feat: History, Settings and Triggers at the root (#516 Phase 5).
+
+  The root project now has the full tab bar — there is no tab a project gets and
+  the root doesn't. History and Triggers needed only routes and un-hidden tabs:
+  `/api/projects/:slug/runs` and `…/triggers` already resolved through
+  `projects.get()`, so they worked for `__root` the moment it resolved.
+
+  Settings is the one real merge. `InstanceSettings`' editor body is extracted
+  verbatim into a shared `InstanceConfigForm`, so:
+
+  - `/settings` **without** a root project is the standalone admin page, unchanged.
+  - `/settings` **with** one resolves to the root's Settings tab, showing the
+    root's own workspace config (`project.yaml`, hot-applied) above the instance
+    runtime config (`paddock.config.yaml`, frozen at boot, restart-required).
+
+  They stay two sections rather than being fused, because those lifecycles really
+  are different and fusing them would hide that.
+
+  The root's overflow menu returns with Edit but **without** Delete — `remove()`
+  refuses the root (its directory IS the projects root), so offering the action
+  could only ever produce an error. `ProjectMenu.onDelete` is now optional.
+
 ## 0.48.1
 
 ### Patch Changes
