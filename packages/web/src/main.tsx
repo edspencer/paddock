@@ -120,6 +120,16 @@ const router = createBrowserRouter([
         path: "chat/:sessionId",
         element: <RootGate withRoot={<ProjectView root />} without={<OneOffChat />} />,
       },
+      // Root Files + Changes (#516 Phase 4). These paths have no pre-#516
+      // meaning, so unlike `/` and `/chat` there is nothing to fall back TO —
+      // without a root project they 404 through the shell's error boundary,
+      // which is correct: the tabs that link here only render at the root.
+      { path: "files", element: <ProjectView root /> },
+      // A splat so the current directory / file nests in the URL, exactly as
+      // the project route does (issue #259).
+      { path: "files/*", element: <ProjectView root /> },
+      { path: "changes", element: <ProjectView root /> },
+      { path: "changes/:file", element: <ProjectView root /> },
       // Top-level, instance-wide admin settings (edits paddock.config.yaml) — #385.
       { path: "settings", element: <InstanceSettings /> },
     ],
