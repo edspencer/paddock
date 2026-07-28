@@ -44,6 +44,23 @@ export function homeUrl(base: string): string {
 }
 
 /**
+ * Where the projects GRID lives — which depends on whether this instance has a
+ * root project, because that is what decides who owns `/` (#516).
+ *
+ * The grid always has a page at `/projects`. But on an instance with NO root
+ * project, `/` renders the grid too, and that is the URL every existing link,
+ * bookmark and test already uses. Sending those users to `/projects` would be a
+ * gratuitous URL change for the identical page — and "an instance without a root
+ * project behaves exactly as before" is the load-bearing promise of the whole
+ * migration story. So: `/` until the root takes that slot, `/projects` after.
+ *
+ * Used by the post-delete return and the tag-filter "clear"/"view all" links.
+ */
+export function gridUrl(hasRootProject: boolean): string {
+  return hasRootProject ? "/projects" : "/";
+}
+
+/**
  * Which sub-route are we on? Derived from the URL pathname so it updates on
  * client-side navigation (the `/home`, `/files`, `/changes`, … segments
  * distinguish those tabs). The Hooks tab was renamed to Triggers (Epic T / T4);

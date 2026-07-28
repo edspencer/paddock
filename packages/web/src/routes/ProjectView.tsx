@@ -39,6 +39,7 @@ import {
   ROOT_SLUG,
   decodeFilesSubpath,
   deriveView,
+  gridUrl,
   homeUrl,
   repoHref,
   viewBase,
@@ -82,7 +83,7 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
   // falling back to a no-op.
   const shell = useOutletContext<ShellOutletContext | null>();
   const openNav = shell?.openNav ?? (() => {});
-  const { refresh: refreshProjects, upsert, remove } = useProjects();
+  const { refresh: refreshProjects, upsert, remove, rootProject } = useProjects();
 
   // Which sub-route are we on? Derived purely from the URL (see `deriveView`).
   const view = deriveView(location.pathname, base);
@@ -1139,9 +1140,9 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
           await api.deleteProject(project.slug);
           remove(project.slug);
           clearLastTab(project.slug);
-          // The projects grid, which moved off `/` when the root became a
-          // project (#516). `/projects` is its home in both configurations.
-          navigate("/projects");
+          // Back to the projects grid — `/` on an instance with no root project
+          // (unchanged), `/projects` once the root owns `/` (#516).
+          navigate(gridUrl(Boolean(rootProject)));
         }}
         onClose={() => setDeleteOpen(false)}
       />

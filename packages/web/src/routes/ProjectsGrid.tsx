@@ -20,6 +20,7 @@ import {
 } from "../components/icons";
 import { relativeTime, sessionUsageOf } from "../lib/format";
 import { areaBlurb, areaLabel, INBOX, orderAreaSlugs } from "../lib/areas";
+import { gridUrl } from "./ProjectView/urls";
 
 /**
  * The projects grid. Two modes:
@@ -37,6 +38,9 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
   const [modalOpen, setModalOpen] = useState(false);
   const [deleting, setDeleting] = useState<Project | null>(null);
   const navigate = useNavigate();
+  // Where "back to the grid" points: `/` on an instance with no root project
+  // (unchanged), `/projects` once the root owns `/` (#516).
+  const grid = gridUrl(Boolean(rootProject));
   // "Edit" now deep-links to the project's Settings tab (issue #122) rather than
   // opening a modal — the tab is the single source of truth for project settings.
   const editProject = useCallback(
@@ -78,8 +82,8 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
     };
   }, [slugs]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // One-off chats (the Inbox section). Only on the full landing.
-  // One-off (scratch) chats, listed as the Inbox section. Skipped entirely once
+  // One-off (scratch) chats, listed as the Inbox section. Only on the full
+  // landing — and skipped entirely once
   // this instance has a root project (#516): root chats SUPERSEDE scratch and
   // take over `/chat`, so an Inbox row would link to a `/chat/:sessionId` that
   // resolves against the root keeper and can't find a scratch session. The
@@ -130,7 +134,7 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
               <p className="mt-1.5 max-w-xl text-sm text-paddock-500">
                 {!loading &&
                   `${projects.length} ${projects.length === 1 ? "project" : "projects"} tagged “${filterTag}”.`}{" "}
-                <Link to="/projects" className="text-accent underline-offset-2 hover:underline">
+                <Link to={grid} className="text-accent underline-offset-2 hover:underline">
                   View all projects
                 </Link>
               </p>
@@ -159,7 +163,7 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
         {!filterTag && rootProject === null && <EnableRootCard />}
 
         {/* Active-filter chip — only on /tags/:tag. The "×" clears the filter. */}
-        {filterTag && <FilterChip tag={filterTag} onClear={() => navigate("/projects")} />}
+        {filterTag && <FilterChip tag={filterTag} onClear={() => navigate(grid)} />}
 
         {error && (
           <div className="mb-6 rounded-lg border border-rose-300/60 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300">
@@ -179,7 +183,7 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
         )}
 
         {!loading && projects.length === 0 && !error && filterTag && (
-          <NoTagMatchState tag={filterTag} onClear={() => navigate("/projects")} />
+          <NoTagMatchState tag={filterTag} onClear={() => navigate(grid)} />
         )}
 
         {showEmpty && (

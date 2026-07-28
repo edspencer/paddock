@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { ROOT_SLUG, decodeFilesSubpath, deriveView, homeUrl, viewBase } from "./urls";
+import {
+  ROOT_SLUG,
+  decodeFilesSubpath,
+  deriveView,
+  gridUrl,
+  homeUrl,
+  viewBase,
+} from "./urls";
 
 /**
  * The URL seam that lets one `ProjectView` serve both a project and the ROOT
@@ -81,5 +88,15 @@ describe("decodeFilesSubpath", () => {
     expect(decodeFilesSubpath("/projects/p/files", "/projects/p")).toBe("");
     expect(decodeFilesSubpath("/files", "")).toBe("");
     expect(decodeFilesSubpath("/projects/p/chat", "/projects/p")).toBe("");
+  });
+});
+
+describe("gridUrl", () => {
+  it("keeps the grid at `/` until a root project takes that slot", () => {
+    // Load-bearing for the migration promise: an instance with no root project
+    // must behave exactly as before, and `/` is the URL every existing link,
+    // bookmark and E2E assertion already uses for the grid.
+    expect(gridUrl(false)).toBe("/");
+    expect(gridUrl(true)).toBe("/projects");
   });
 });
