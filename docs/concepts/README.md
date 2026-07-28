@@ -6,8 +6,8 @@ Short, canonical explanations of Paddock's core ideas. Read these to understand
 
 - **[Projects](./projects.md)** — a directory + `project.yaml`; the two types,
   **notebook** and **repo-backed**.
-- **[Keeper vs. scratch agents](./keeper-and-scratch.md)** — one keeper per
-  project, one shared scratch, and how a scratch chat is promoted into a project.
+- **[Keeper agents](./keepers.md)** — one keeper per project (the root
+  included), and how a chat is promoted into a project of its own.
 - **[Chats are Claude Code sessions](./chats.md)** — persisted on disk,
   resumable across reloads, reconnects, and devices.
 - **[The sweeper](./sweeper.md)** — the per-project, post-turn, tool-less agent

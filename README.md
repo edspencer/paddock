@@ -284,7 +284,7 @@ repo:
   MCP injection, auth boundary, the sweeper, drive modes).
 - **[docs/concepts/](docs/concepts/)** — short explanations of the core ideas:
   [projects](docs/concepts/projects.md) (notebook vs. repo-backed),
-  [keeper vs. scratch agents](docs/concepts/keeper-and-scratch.md),
+  [keeper agents](docs/concepts/keepers.md),
   [chats are Claude Code sessions](docs/concepts/chats.md), and
   [the sweeper](docs/concepts/sweeper.md).
 - **[docs/API.md](docs/API.md)** — Paddock's own REST + WebSocket API reference.

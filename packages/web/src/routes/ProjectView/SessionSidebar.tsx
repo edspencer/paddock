@@ -64,6 +64,7 @@ export function SessionSidebar({
   usageBySession,
   runningSessions,
   setForkingChat,
+  setPromotingChat,
   renameChat,
   archiveChat,
   setDeletingChat,
@@ -95,6 +96,14 @@ export function SessionSidebar({
   usageBySession: Record<string, ChatUsage | ChatCompleteUsage>;
   runningSessions: ReadonlySet<string>;
   setForkingChat: Dispatch<SetStateAction<Chat | null>>;
+  /**
+   * Open the "promote this chat into a new project" dialog (issue #20).
+   * Undefined hides the action — it is only offered at the ROOT, where the
+   * chats that used to be scratch one-offs now live (#516 Phase 6). Promoting a
+   * chat that already belongs to a project would be a move between projects,
+   * which is a different feature and not what this ever meant.
+   */
+  setPromotingChat?: Dispatch<SetStateAction<Chat | null>>;
   renameChat: (chat: Chat) => Promise<void>;
   archiveChat: (chat: Chat) => Promise<void>;
   setDeletingChat: Dispatch<SetStateAction<Chat | null>>;
@@ -263,6 +272,20 @@ export function SessionSidebar({
         >
           <BranchIcon width={13} height={13} />
         </button>
+        {setPromotingChat && (
+          <button
+            type="button"
+            aria-label={`Promote chat ${c.name} into a project`}
+            title="Promote into a new project — give this chat a home of its own"
+            onClick={(e) => {
+              e.stopPropagation();
+              setPromotingChat(c);
+            }}
+            className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-paddock-200 hover:text-accent focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-paddock-700 dark:hover:text-accent"
+          >
+            <PlusIcon width={13} height={13} />
+          </button>
+        )}
         <button
           type="button"
           aria-label={`Rename chat ${c.name}`}

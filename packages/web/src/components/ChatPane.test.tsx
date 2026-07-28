@@ -60,7 +60,6 @@ const getModels = vi.fn();
 const chatContext = vi.fn();
 const subagentMessages = vi.fn();
 const projectCommands = vi.fn();
-const scratchCommands = vi.fn();
 // The composer's DictationButton probes transcriptionStatus on mount; default to
 // "dictation off" so it renders nothing and most tests see the same composer they
 // always have. The dictation-queue test (#365) overrides these two per-test.
@@ -76,7 +75,6 @@ vi.mock("../lib/api", async () => {
       subagentMessages: (...a: unknown[]) => subagentMessages(...a),
       // Slash-command autocomplete source (issue #103).
       projectCommands: (...a: unknown[]) => projectCommands(...a),
-      scratchCommands: (...a: unknown[]) => scratchCommands(...a),
       transcriptionStatus: (...a: unknown[]) => transcriptionStatus(...a),
       transcribe: (...a: unknown[]) => transcribe(...a),
     },
@@ -112,7 +110,6 @@ beforeEach(() => {
   chatContext.mockReset().mockResolvedValue(null);
   subagentMessages.mockReset().mockResolvedValue([]);
   projectCommands.mockReset().mockResolvedValue(COMMANDS);
-  scratchCommands.mockReset().mockResolvedValue(COMMANDS);
   transcriptionStatus
     .mockReset()
     .mockResolvedValue({ available: false, mode: "off" as const, model: "" });
@@ -220,13 +217,9 @@ describe("ChatPane: slash-command autocomplete (#103)", () => {
   const composer = () => screen.getByPlaceholderText(/Message the keeper agent/i);
   const menu = () => screen.queryByRole("menu", { name: /slash commands/i });
 
-  it("fetches project commands for a project chat, scratch commands otherwise", async () => {
-    const { unmount } = render(<ChatPane projectSlug="proj" isProjectChat />);
+  it("fetches the project's commands for every chat", async () => {
+    render(<ChatPane projectSlug="proj" isProjectChat />);
     await waitFor(() => expect(projectCommands).toHaveBeenCalledWith("proj"));
-    expect(scratchCommands).not.toHaveBeenCalled();
-    unmount();
-    render(<ChatPane projectSlug="scratch" />);
-    await waitFor(() => expect(scratchCommands).toHaveBeenCalled());
   });
 
   it("opens the menu on a leading slash and filters as the query narrows", async () => {

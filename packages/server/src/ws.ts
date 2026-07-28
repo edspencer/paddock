@@ -70,8 +70,6 @@ import {
 import {
   keeperAgentName,
   keeperSlugFromAgent,
-  SCRATCH_AGENT,
-  SCRATCH_SLUG,
 } from "./herdctl.js";
 import { consumeResumedTurn } from "./resume-drain.js";
 import {
@@ -195,7 +193,11 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
   // the chat later. We do NOT close the session: it's managed, so the reaper tears
   // it down when it goes idle again (and re-captures any fresh wakeups).
   deps.herdctl.onSessionWake(async (session: RuntimeSession, entry: SessionWakeEntry) => {
-    const slug = keeperSlugFromAgent(entry.agent) ?? SCRATCH_SLUG;
+    // Only KEEPER agents own chats. A wake from a sweeper/trigger/hook agent has
+    // no chat to drive, so there is nothing to route. (Before #516 Phase 6 this
+    // fell back to the scratch slug, which is no longer an addressable chat.)
+    const slug = keeperSlugFromAgent(entry.agent);
+    if (!slug) return;
     let resolvedSession: string | null = entry.sessionId ?? null;
     const turn: TurnHandle = hub.startTurn(slug, null, entry.sessionId);
     // #353: DON'T stamp a creation origin here. A session wake is a *resume*, not
@@ -435,7 +437,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
      */
     const onChatContinue = async (msg: ChatContinueMessage): Promise<void> => {
       const slug = msg.payload.projectSlug ?? msg.payload.target;
-      if (!slug || slug === SCRATCH_SLUG) return;
+      if (!slug) return;
       const sessionId = msg.payload.sessionId;
       if (!sessionId) return;
       let project: Awaited<ReturnType<typeof deps.projects.get>>;
@@ -485,7 +487,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
     // drained (a stale client re-assert on reload) so it isn't sent twice.
     const drainQueue = async (slug: string, sessionId: string): Promise<void> => {
       if (!deps.queuedMessage) return;
-      const agent = slug === SCRATCH_SLUG ? SCRATCH_AGENT : keeperAgentName(slug);
+      const agent = keeperAgentName(slug);
       const queued = await deps.queuedMessage.take(agent, sessionId).catch(() => null);
       if (!queued?.text) return;
       const markerKey = `${agent} ${sessionId}`;
@@ -527,8 +529,8 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       if (!slug) return;
       const sessionId = msg.payload.sessionId ?? null;
       const text = msg.payload.text ?? null;
-      // Determine the agent name for this chat (keeper for project, scratch for one-off)
-      const agent = slug === SCRATCH_SLUG ? SCRATCH_AGENT : keeperAgentName(slug);
+      // Every chat belongs to a project keeper (#516 Phase 6 retired scratch).
+      const agent = keeperAgentName(slug);
       if (!sessionId) {
         // New chat: queue isn't stored until the session id exists. The client
         // re-asserts it (with the same ts) once the id resolves, so it persists then.
@@ -656,26 +658,17 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       });
 
       try {
-        // Resolve the agent: "scratch" -> scratch agent; otherwise keeper-<slug>.
+        // Every slug resolves to a project keeper (`keeper-<slug>`), including
+        // the root's `keeper-__root` — #516 Phase 6 retired the scratch branch.
         let agentName: string;
         // Effective prompt — may be augmented with the project overview below.
         let prompt = message;
         // Whether this project agent gets the T3 unified trigger-management tools
         // (resolved from the project's REUSED hooks-MCP `hooksMcpEnabled` override
-        // else the instance default); stays false for scratch (no self-MCP).
+        // else the instance default).
         let includeTriggers = false;
         const requested = msg.payload.model;
-        if (slug === SCRATCH_SLUG) {
-          agentName = SCRATCH_AGENT;
-          sendFileWorkingDir = deps.herdctl.scratchDir;
-          // Scratch: honor a valid override, else the keeper default. Re-register
-          // the scratch agent at the requested model (no-op if unchanged).
-          effectiveModel =
-            requested && isKnownModel(requested) ? requested : KEEPER_DEFAULT_MODEL;
-          if (requested && isKnownModel(requested)) {
-            await deps.herdctl.ensureScratchModel(requested);
-          }
-        } else {
+        {
           // Verifies the project exists (throws if not); we keep the object so
           // we can resolve its model + re-register the keeper for an override.
           const project = await deps.projects.get(slug);
@@ -757,7 +750,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
         // HUMAN_ROOT. Write tools follow the instance write opt-in (B1 #262: the
         // shared builder is extracted so both paths agree). Depth-0 human gating is
         // unchanged from before B1 — the depth bound governs the spawned path only.
-        if (slug !== SCRATCH_SLUG && deps.cfg.selfMcpEnabled) {
+        if (deps.cfg.selfMcpEnabled) {
           injectedMcpServers[SELF_MCP_SERVER_KEY] = buildSelfMcpServerDef(selfMcpCtx, {
             currentProjectSlug: slug,
             currentSessionId: () => resolvedSession ?? sessionId ?? null,
@@ -778,13 +771,10 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
           driveMode === "session"
             ? deps.herdctl.chatSession.bind(deps.herdctl)
             : deps.herdctl.chat.bind(deps.herdctl);
-        // Gap B sink (session mode, non-scratch): one persistent sink groups every
-        // background re-invocation onto a single hub turn (skipping sidechain
-        // sub-agent steps). Built once so its turn/translator state spans the stream.
-        const bgSink =
-          driveMode === "session" && slug !== SCRATCH_SLUG
-            ? makeBackgroundTurnSink(slug)
-            : null;
+        // Gap B sink (session mode): one persistent sink groups every background
+        // re-invocation onto a single hub turn (skipping sidechain sub-agent
+        // steps). Built once so its turn/translator state spans the stream.
+        const bgSink = driveMode === "session" ? makeBackgroundTurnSink(slug) : null;
         const result = await drive(agentName, {
           prompt,
           // omit -> agent-level fallback; explicit null -> new chat; id -> resume.
@@ -934,7 +924,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
         // at the turn boundary (herdctl#374) and the keeper doesn't wake on its own,
         // the engine auto-injects the recovery nudge — gated on the resolved
         // `recovery.autoReDrive` (default OFF), a debounce window, and a retry cap.
-        if (effectiveSuccess && finalSession && driveMode === "session" && slug !== SCRATCH_SLUG) {
+        if (effectiveSuccess && finalSession && driveMode === "session") {
           recoveryEngine.armWatch({ slug, sessionId: finalSession });
         }
       } catch (err) {
@@ -1023,15 +1013,10 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       });
 
       try {
-        // Commands need an existing chat to act on; scratch resolves to its
-        // agent, a project to its keeper (verifying the project exists).
-        let agentName: string;
-        if (slug === SCRATCH_SLUG) {
-          agentName = SCRATCH_AGENT;
-        } else {
-          await deps.projects.get(slug); // throws if the project is unknown
-          agentName = keeperAgentName(slug);
-        }
+        // Commands need an existing chat to act on; the slug resolves to its
+        // project's keeper (verifying the project exists).
+        await deps.projects.get(slug); // throws if the project is unknown
+        const agentName = keeperAgentName(slug);
 
         const { sessionId: finalSession } = await deps.herdctl.runCommand(agentName, {
           command,

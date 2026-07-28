@@ -28,7 +28,6 @@ import {
   type PaddockTrigger,
 } from "./trigger-config.js";
 import {
-  SCRATCH_AGENT,
   keeperAgentName,
   sweeperAgentName,
   triggerAgentName,
@@ -39,51 +38,6 @@ import {
   KEEPER_SESSION_TIMEOUT,
 } from "./herdctl-agent-names.js";
 
-/**
- * The scratch (one-off chats) agent config. Defaults to the keeper default
- * model; a per-chat override may re-register it at a different model via
- * `ensureScratchModel`.
- */
-export function buildScratchConfig(
-  cfg: PaddockConfig,
-  model?: string,
-): Record<string, unknown> & { name: string } {
-  const config: Record<string, unknown> & { name: string } = {
-    name: SCRATCH_AGENT,
-    description: "One-off / scratch chats.",
-    working_directory: cfg.scratchDir,
-    // Explicit CLI runtime (Max plan). The fleet `defaults.runtime` is dropped
-    // by @herdctl/core's config loader (runtime isn't a fleet-defaults field in
-    // 5.13.x), so without this the runner falls back to the SDK runtime. Set it
-    // per-agent to guarantee the Max/CLI path.
-    runtime: "cli",
-    model: model ?? KEEPER_DEFAULT_MODEL,
-    default_prompt: "How can I help?",
-  };
-  // Scratch chats get the native default coding prompt by default (issue #176);
-  // only a non-native instance gets the terse replace prompt.
-  //
-  // NOTE (issue #512): this comment used to claim an instance-wide CLAUDE.md "a
-  // common ancestor of the scratch dir" reaches these chats. It does not. The
-  // canonical instance CLAUDE.md is `<projectsRoot>/CLAUDE.md` (it lives in the
-  // backing repo), and `scratchDir` is a SIBLING of `projects/` — so the walk-up
-  // from here finds nothing and a scratch chat starts with zero instance
-  // context, silently. Only a `<dataDir>/CLAUDE.md` would reach it, and that
-  // file sits outside the backing repo, which is the opposite of what's wanted.
-  //
-  // Not patched here on purpose: #516 fixes this by making the ROOT an ordinary
-  // project whose cwd IS `projectsRoot` (so the walk-up works with no
-  // special-casing), and #516 Phase 6 retires scratch outright.
-  if (!cfg.nativeSystemPrompt) {
-    config.system_prompt =
-      "You are a Claude Code agent for one-off chats. Be helpful and concise.";
-  }
-  // Browser MCP (headless Chromium) when enabled for this box; `mcp__playwright__*`
-  // is already on the inherited defaults.allowed_tools.
-  const browser = browserMcpServers(cfg.browserMcp);
-  if (browser) config.mcp_servers = browser;
-  return config;
-}
 
 /**
  * A project's keeper agent config. Inherits the fleet `defaults` (runtime,
@@ -296,7 +250,6 @@ export function buildTriggerConfig(
 export async function ensureConfigFile(cfg: PaddockConfig): Promise<void> {
   const configDir = path.dirname(cfg.herdctlConfigPath);
   await fs.mkdir(configDir, { recursive: true });
-  await fs.mkdir(cfg.scratchDir, { recursive: true });
 
   const doc = {
     version: 1,

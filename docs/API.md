@@ -36,7 +36,6 @@ return `{ error, code }` with `404` (not found), `409` (exists), or `400`
 | GET | `/api/me` | The authenticated principal (`req.user`); anonymous `{ username: "anonymous", anonymous: true }` in `none` mode. | gated |
 | GET | `/api/models` | Selectable models + keeper/sweeper defaults + `keeperDriveModeDefault`. | gated |
 | GET | `/api/fleet` | Fleet status + agents (`{ status, agents }`; `error` on failure). | gated |
-| GET | `/api/commands` | Slash commands for one-off (scratch) chats. | gated |
 
 ### Git backing store & GitHub
 
@@ -101,20 +100,7 @@ return `{ error, code }` with `404` (not found), `409` (exists), or `400`
 | POST | `/api/projects/:slug/chats/:sessionId/fork` | Fork a chat into a new resumable session — body `{ name? }` → `201 { sessionId }`. | gated |
 | POST | `/api/projects/:slug/chats/:sessionId/archive` | Archive/unarchive (non-destructive) — body `{ archived? }`. | gated |
 | POST | `/api/projects/:slug/chats/:sessionId/seen` | Mark seen (server-side read-state) — body `{ when? }`. | gated |
-
-### One-off (scratch) chats
-
-| Method | Path | Purpose | Auth |
-|--------|------|---------|------|
-| GET | `/api/chats` | List one-off (scratch) chats. | gated |
-| GET | `/api/chats/:sessionId/messages` | A scratch chat's messages (enriched). | gated |
-| GET | `/api/chats/:sessionId/context` | Context-window usage for a scratch chat. | gated |
-| GET | `/api/chats/:sessionId/subagents/:toolUseId/messages` | Sub-agent transcript within a scratch chat. | gated |
-| PATCH | `/api/chats/:sessionId` | Rename a scratch chat — body `{ name? }`. | gated |
-| DELETE | `/api/chats/:sessionId` | Delete a scratch chat. | gated |
-| POST | `/api/chats/:sessionId/archive` | Archive/unarchive a scratch chat — body `{ archived? }`. | gated |
-| POST | `/api/chats/:sessionId/seen` | Mark a scratch chat seen — body `{ when? }`. | gated |
-| POST | `/api/chats/:sessionId/promote` | Promote a scratch chat into a new project (re-homes its transcript) — body `{ name, slug?, group?, summary?, domain? }` → `201 { project, promoted, sessionId }`. | gated |
+| POST | `/api/projects/:slug/chats/:sessionId/promote` | Promote the chat into a NEW project (re-homes its transcript) — body `{ name, slug?, group?, summary?, domain? }` → `201 { project, promoted, sessionId }`. | gated |
 
 ---
 

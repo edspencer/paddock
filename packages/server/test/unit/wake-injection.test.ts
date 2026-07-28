@@ -19,7 +19,6 @@ import {
 import { SEND_FILE_SERVER_KEY } from "../../src/send-file-mcp.js";
 import { SELF_MCP_SERVER_KEY } from "../../src/self-mcp.js";
 
-const SCRATCH = "scratch";
 
 /** A recognisable stand-in for the self-MCP def, so tests can read back its flags. */
 function markerSelfMcp(params: {
@@ -40,7 +39,6 @@ function markerSelfMcp(params: {
 
 function ctx(overrides: Partial<InjectedMcpBuildContext> = {}): InjectedMcpBuildContext {
   return {
-    scratchSlug: SCRATCH,
     cfg: {
       selfMcpEnabled: true,
       selfMcpWriteEnabled: true,
@@ -84,12 +82,6 @@ describe("buildInjectedMcpServers", () => {
     const servers = await buildInjectedMcpServers(BASE_ARGS, ctx());
     expect(servers[SELF_MCP_SERVER_KEY]).toBeDefined();
     expect(selfParams(servers)).toMatchObject({ includeWrite: true, includeTriggers: false });
-  });
-
-  it("omits the self-MCP on a scratch turn (send_file only)", async () => {
-    const servers = await buildInjectedMcpServers({ ...BASE_ARGS, projectSlug: SCRATCH }, ctx());
-    expect(servers[SEND_FILE_SERVER_KEY]).toBeDefined();
-    expect(servers[SELF_MCP_SERVER_KEY]).toBeUndefined();
   });
 
   it("omits the self-MCP when the instance opt-in is off", async () => {

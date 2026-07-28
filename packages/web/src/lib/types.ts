@@ -972,9 +972,6 @@ export interface PollResult {
 
 // --- WS protocol (mirrors server/src/ws.ts) ---
 
-/** The slug used to address one-off chats. The server routes it to the scratch agent. */
-export const SCRATCH_SLUG = "scratch";
-
 /** Routing fields present on every server->client chat event. */
 interface Routing {
   projectSlug: string;

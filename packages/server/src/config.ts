@@ -181,7 +181,8 @@ export interface PaddockConfig {
    * keeper by walk-up (a project dir is a child of `projectsRoot`) and, since
    * #516, the ROOT keeper too — the root project's cwd IS `projectsRoot`.
    *
-   * The exception is SCRATCH, whose cwd is `<dataDir>/scratch`, a *sibling* of
+   * The exception was SCRATCH (retired in #516 Phase 6), whose cwd was
+   * `<dataDir>/scratch`, a *sibling* of
    * `projects/`, so nothing above it is the instance CLAUDE.md and a scratch chat
    * starts with zero instance context. That is #512's original complaint; #516
    * fixes it by making the root an ordinary project rather than by patching

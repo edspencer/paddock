@@ -25,7 +25,6 @@ import {
   type ProjectFile,
   type ProjectRuns,
   type RecoveryConfig,
-  SCRATCH_SLUG,
   type SlashCommand,
   type Trigger,
   type TriggerInput,
@@ -107,13 +106,10 @@ export const api = {
    * Mark a chat SEEN (#189): persist the user's last-viewed moment server-side
    * so the unread affordance follows them across devices. Fire-and-forget from
    * the UI (the local mirror clears the cue optimistically). `when` defaults to
-   * the server's now. Routes to the scratch endpoint for the scratch slug.
+   * the server's now.
    */
   async markChatSeen(slug: string, sessionId: string, when?: number): Promise<void> {
-    const path =
-      slug === SCRATCH_SLUG
-        ? `/api/chats/${encodeURIComponent(sessionId)}/seen`
-        : `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}/seen`;
+    const path = `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}/seen`;
     await req<{ ok: boolean; lastSeen: number }>(path, {
       method: "POST",
       body: JSON.stringify(when !== undefined ? { when } : {}),
@@ -123,14 +119,10 @@ export const api = {
   /**
    * Set (or clear) a chat's MANUAL unread override (#458) — the "mark as unread"
    * action, so a chat resurfaces its unread cue after its last turn was seen.
-   * `unread:false` is equivalent to marking it seen. Routes to the scratch
-   * endpoint for the scratch slug.
+   * `unread:false` is equivalent to marking it seen.
    */
   async markChatUnread(slug: string, sessionId: string, unread: boolean): Promise<void> {
-    const path =
-      slug === SCRATCH_SLUG
-        ? `/api/chats/${encodeURIComponent(sessionId)}/unread`
-        : `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}/unread`;
+    const path = `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}/unread`;
     await req<{ ok: boolean; unread: boolean }>(path, {
       method: "POST",
       body: JSON.stringify({ unread }),
@@ -273,12 +265,6 @@ export const api = {
     return commands;
   },
 
-  /** Slash commands for one-off (scratch) chats (issue #103). */
-  async scratchCommands(): Promise<SlashCommand[]> {
-    const { commands } = await req<{ commands: SlashCommand[] }>("/api/commands");
-    return commands;
-  },
-
   async listProjects(): Promise<Project[]> {
     const { projects } = await req<{ projects: Project[] }>("/api/projects");
     return projects;
@@ -354,27 +340,12 @@ export const api = {
     );
   },
 
-  /** Delete a one-off (scratch) chat. */
-  async deleteScratchChat(sessionId: string): Promise<void> {
-    await req<{ ok: boolean }>(`/api/chats/${encodeURIComponent(sessionId)}`, {
-      method: "DELETE",
-    });
-  },
-
   /** Rename a project chat (set/clear its custom display name). */
   async renameProjectChat(slug: string, sessionId: string, name: string | null): Promise<void> {
     await req<{ ok: boolean }>(
       `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}`,
       { method: "PATCH", body: JSON.stringify({ name }) },
     );
-  },
-
-  /** Rename a one-off (scratch) chat. */
-  async renameScratchChat(sessionId: string, name: string | null): Promise<void> {
-    await req<{ ok: boolean }>(`/api/chats/${encodeURIComponent(sessionId)}`, {
-      method: "PATCH",
-      body: JSON.stringify({ name }),
-    });
   },
 
   /** Archive or unarchive a project chat (issue #95). Non-destructive toggle. */
@@ -385,14 +356,6 @@ export const api = {
     );
   },
 
-  /** Archive or unarchive a one-off (scratch) chat (issue #95). */
-  async archiveScratchChat(sessionId: string, archived: boolean): Promise<void> {
-    await req<{ ok: boolean }>(`/api/chats/${encodeURIComponent(sessionId)}/archive`, {
-      method: "POST",
-      body: JSON.stringify({ archived }),
-    });
-  },
-
   /** Star or unstar a project chat (issue #373). Pins it to the top of its list. */
   async starProjectChat(slug: string, sessionId: string, starred: boolean): Promise<void> {
     await req<{ ok: boolean }>(
@@ -401,25 +364,22 @@ export const api = {
     );
   },
 
-  /** Star or unstar a one-off (scratch) chat (issue #373). */
-  async starScratchChat(sessionId: string, starred: boolean): Promise<void> {
-    await req<{ ok: boolean }>(`/api/chats/${encodeURIComponent(sessionId)}/star`, {
-      method: "POST",
-      body: JSON.stringify({ starred }),
-    });
-  },
-
   /**
-   * Promote a one-off (scratch) chat into a new project (issue #20). Creates the
-   * project and re-homes the chat's transcript into it. `promoted:false` means
-   * the project was created but the transcript couldn't be moved.
+   * Promote a chat into a new project (issue #20). Creates the project and
+   * re-homes the chat's transcript into it. `promoted:false` means the project
+   * was created but the transcript couldn't be moved.
+   *
+   * Took a bare `sessionId` while it was a scratch-only action; #516 Phase 6
+   * retired scratch and moved it onto the source project's chat routes, so the
+   * chat's current slug is now part of the address.
    */
   async promoteChat(
+    slug: string,
     sessionId: string,
     input: { name: string; group?: string; summary?: string; domain?: string[] },
   ): Promise<{ project: Project; promoted: boolean }> {
     return req<{ project: Project; promoted: boolean }>(
-      `/api/chats/${encodeURIComponent(sessionId)}/promote`,
+      `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}/promote`,
       { method: "POST", body: JSON.stringify(input) },
     );
   },
@@ -545,11 +505,6 @@ export const api = {
     return usage;
   },
 
-  async listScratchChats(): Promise<Chat[]> {
-    const { chats } = await req<{ chats: Chat[] }>("/api/chats");
-    return chats;
-  },
-
   /** Hydrate a project chat's transcript. */
   async projectChatMessages(slug: string, sessionId: string): Promise<HistoryMessage[]> {
     const { messages } = await req<{ messages: HistoryMessage[] }>(
@@ -558,29 +513,17 @@ export const api = {
     return messages;
   },
 
-  /** Hydrate a one-off (scratch) chat's transcript. */
-  async scratchChatMessages(sessionId: string): Promise<HistoryMessage[]> {
-    const { messages } = await req<{ messages: HistoryMessage[] }>(
-      `/api/chats/${encodeURIComponent(sessionId)}/messages`,
-    );
-    return messages;
-  },
-
   /**
    * Nested steps of a sub-agent launched from a Task/Agent tool block (issue
    * #37). `toolUseId` comes off the enriched tool call; sub-agents are flat under
-   * the session, so the same session id resolves every depth. Routes to the
-   * scratch endpoint when the slug is the scratch slug.
+   * the session, so the same session id resolves every depth.
    */
   async subagentMessages(
     slug: string,
     sessionId: string,
     toolUseId: string,
   ): Promise<HistoryMessage[]> {
-    const base =
-      slug === SCRATCH_SLUG
-        ? `/api/chats/${encodeURIComponent(sessionId)}`
-        : `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}`;
+    const base = `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}`;
     const { messages } = await req<{ messages: HistoryMessage[] }>(
       `${base}/subagents/${encodeURIComponent(toolUseId)}/messages`,
     );
@@ -591,13 +534,9 @@ export const api = {
    * Context-window usage for a chat, read from its transcript — drives the
    * context meter for a chat opened from history (before any new turn streams a
    * fresh usage). Returns null when the transcript carries no usage data.
-   * Routes to the scratch endpoint when the slug is the scratch slug.
    */
   async chatContext(slug: string, sessionId: string): Promise<ChatUsage | null> {
-    const path =
-      slug === SCRATCH_SLUG
-        ? `/api/chats/${encodeURIComponent(sessionId)}/context`
-        : `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}/context`;
+    const path = `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}/context`;
     const { usage } = await req<{ usage: ChatUsage | null }>(path);
     return usage;
   },

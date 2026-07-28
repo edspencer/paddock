@@ -52,8 +52,8 @@ Resumption is robust to interruptions at several layers:
 
 A chat can be **forked** into a parallel child: `forkSession` *copies* the
 transcript and mints a new session id, so the child diverges without touching the
-parent. (Contrast with promotion, which *moves* a scratch chat into a project —
-see [Keeper vs. scratch](./keeper-and-scratch.md).) Forked children run under the
+parent. (Contrast with promotion, which *moves* a chat into a project of its
+own — see [Keepers](./keepers.md).) Forked children run under the
 same keeper (up to `KEEPER_MAX_CONCURRENT` in parallel) and appear as their own
 chats in the sidebar.
 

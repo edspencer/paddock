@@ -19,9 +19,6 @@ const ProjectView = lazy(() =>
 const ProjectRedirect = lazy(() =>
   import("./routes/ProjectRedirect").then((m) => ({ default: m.ProjectRedirect })),
 );
-const OneOffChat = lazy(() =>
-  import("./routes/OneOffChat").then((m) => ({ default: m.OneOffChat })),
-);
 const InstanceSettings = lazy(() =>
   import("./routes/InstanceSettings").then((m) => ({ default: m.InstanceSettings })),
 );
@@ -42,15 +39,15 @@ function TaggedProjects() {
 }
 
 /**
- * The two top-level routes whose meaning depends on whether this instance has a
+ * The top-level routes whose meaning depends on whether this instance has a
  * ROOT PROJECT (issue #516). Migration is gated on EXISTENCE, so:
  *
- *   no root project  → `/` is the projects grid and `/chat` is a scratch chat,
- *                      exactly as before. Every existing instance stays here.
- *   root project      → `/` is root Home and `/chat` is a root chat.
+ *   no root project  → `/` is the projects grid, exactly as before. Every
+ *                      existing instance stays here.
+ *   root project      → `/` is root Home.
  *
- * Creating `<projectsRoot>/project.yaml` is the whole opt-in. Neither route
- * renders until `rootProject` resolves, so `/` never flashes the wrong page.
+ * Creating `<projectsRoot>/project.yaml` is the whole opt-in. The route does not
+ * render until `rootProject` resolves, so `/` never flashes the wrong page.
  */
 function RootGate({
   withRoot,
@@ -108,18 +105,14 @@ const router = createBrowserRouter([
       // Legacy Hooks route — the tab was renamed + folded into Triggers (Epic T / T4);
       // ProjectView redirects this to /triggers so old links/bookmarks don't 404.
       { path: "projects/:slug/hooks", element: <ProjectView /> },
-      // Root chats when there is a root project, scratch chats otherwise (#516).
-      // The URL is the same because root chats SUPERSEDE scratch: `/chat` IS root
-      // chats, not a redirect to them (the design doc said both in different
-      // places; settled in favour of this one). So Phase 6 is pure subtraction —
-      // it deletes the scratch cluster with no forwarding to write. Existing
-      // scratch transcripts stay on disk at `<dataDir>/scratch/.chats` and are
-      // re-homed by that phase.
-      { path: "chat", element: <RootGate withRoot={<ProjectView root />} without={<OneOffChat />} /> },
-      {
-        path: "chat/:sessionId",
-        element: <RootGate withRoot={<ProjectView root />} without={<OneOffChat />} />,
-      },
+      // Root chats (#516). `/chat` IS root chats — never a redirect to them.
+      // It used to fall back to a one-off "scratch" chat without a root project;
+      // Phase 6 retired scratch, so it now joins Files/Changes/History/Triggers
+      // in 404ing through the shell's error boundary instead. Nothing links here
+      // without a root project, and the chats that used to live at this URL were
+      // re-homed onto the root keeper by the Phase 6 migration.
+      { path: "chat", element: <ProjectView root /> },
+      { path: "chat/:sessionId", element: <ProjectView root /> },
       // Root Files + Changes (#516 Phase 4). These paths have no pre-#516
       // meaning, so unlike `/` and `/chat` there is nothing to fall back TO —
       // without a root project they 404 through the shell's error boundary,

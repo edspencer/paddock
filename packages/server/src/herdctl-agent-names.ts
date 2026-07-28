@@ -23,15 +23,12 @@ export function keeperAgentName(slug: string): string {
 /**
  * Inverse of {@link keeperAgentName}: recover a project slug from a keeper agent
  * name (`keeper-<slug>` → `<slug>`). Returns `null` for a non-keeper agent (e.g.
- * scratch or a sweeper), so a scheduler-fired wake can route back to the right
- * project or fall through to scratch (Paddock#111).
+ * a sweeper or a trigger agent), which is how a scheduler-fired wake tells "this
+ * is a chat to route back to a project" from "this is not a chat at all".
  */
 export function keeperSlugFromAgent(agentName: string): string | null {
   return agentName.startsWith("keeper-") ? agentName.slice("keeper-".length) : null;
 }
-
-/** The agent used for one-off / scratch chats. */
-export const SCRATCH_AGENT = "scratch";
 
 /**
  * The lightweight curator agent used by the post-turn sweep. Runs on a cheap
@@ -230,12 +227,6 @@ export function browserMcpServers(enabled: boolean): Record<string, unknown> | u
  * models.ts now) so existing imports of `SWEEPER_MODEL` keep working.
  */
 export const SWEEPER_MODEL = SWEEPER_DEFAULT_MODEL;
-
-/**
- * The slug clients use to address one-off chats over WS/REST. Routed to the
- * scratch agent (working_directory = the scratch dir), not a real project.
- */
-export const SCRATCH_SLUG = "scratch";
 
 /**
  * How many chat turns a project's keeper may run at once. herdctl defaults an

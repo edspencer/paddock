@@ -15,7 +15,7 @@ import type { DiscoveredSession } from "@herdctl/core";
 import type { ProjectStore } from "./projects.js";
 import { AttachmentStore, collectAttachmentIds } from "./attachments.js";
 import type { HerdctlService } from "./herdctl.js";
-import { SCRATCH_SLUG, SCRATCH_AGENT, keeperAgentName } from "./herdctl.js";
+import { keeperAgentName } from "./herdctl.js";
 import type { GitService } from "./git.js";
 import type { GithubAuth } from "./github-auth.js";
 import type { ArchiveStore } from "./archive.js";
@@ -171,13 +171,11 @@ export function buildRouteContext(deps: RouteDeps): RouteCtx {
     req.user && !req.user.anonymous ? req.user.username : null;
 
   async function agentForSlug(slug: string): Promise<string> {
-    if (slug === SCRATCH_SLUG) return SCRATCH_AGENT;
     await projects.get(slug); // throws not_found for unknown slug
     return keeperAgentName(slug);
   }
 
   async function projectDirForSlug(slug: string): Promise<string> {
-    if (slug === SCRATCH_SLUG) return herdctl.scratchDir;
     return (await projects.get(slug)).dir;
   }
 

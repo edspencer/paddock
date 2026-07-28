@@ -90,7 +90,7 @@ export default defineConfig({
 					items: [
 						{ label: 'Overview', slug: 'concepts' },
 						{ label: 'Projects', slug: 'concepts/projects' },
-						{ label: 'Keeper & scratch agents', slug: 'concepts/keeper-and-scratch' },
+						{ label: 'Keeper agents', slug: 'concepts/keepers' },
 						{ label: 'Chats are sessions', slug: 'concepts/chats' },
 						{ label: 'Schedules', slug: 'concepts/schedules' },
 						{ label: 'Provenance: who did what', slug: 'concepts/provenance' },

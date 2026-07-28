@@ -74,7 +74,7 @@ re-attach and replay behave the same whether or not tokens stream.
 A chat can be **forked** into a parallel child: `forkSession` *copies* the
 transcript and mints a new session id, so the child diverges without touching the
 parent. (Contrast with promotion, which *moves* a scratch chat into a project —
-see [Keeper vs. scratch](/concepts/keeper-and-scratch).) Forked children run under the
+see [Keepers](/concepts/keepers).) Forked children run under the
 same keeper (up to `KEEPER_MAX_CONCURRENT` in parallel) and are full chats in
 their own right — resumable, forkable, archivable.
 

@@ -7,14 +7,14 @@ import { createProjectViaUI, seedProject, sendChatTurn, uniq } from "./helpers";
  * Pixel 5, 393×851, isMobile + hasTouch).
  *
  * The desktop layout stacks fixed sidebars (AppShell w-72 + the in-project
- * w-64 session list / one-off w-60 recent list = ~540px of chrome) which
+ * w-64 session list = ~540px of chrome) which
  * crush a 393px phone. On mobile those become off-canvas DRAWERS behind a
  * hamburger (global nav) and a "Chats"/"Recent" toggle (session lists), and
  * the main content goes full-width. These tests assert that:
  *   - no screen scrolls horizontally (nothing overflows the viewport),
  *   - the global nav is hidden until the hamburger opens it (and closes again),
  *   - the chat composer is reachable without any drawer open,
- *   - the in-project + one-off session lists are reachable as drawers,
+ *   - the in-project session list is reachable as a drawer,
  *   - a real turn still sends + streams on a phone.
  *
  * The last test captures screenshots into test/e2e/.mobile-shots/ (gitignored)
@@ -77,22 +77,6 @@ test("project view: composer reachable; session list is a drawer; a turn sends",
   await sendChatTurn(page, "hello from a phone");
   await expect(page.getByText(/Acknowledged: hello from a phone/).first()).toBeVisible();
   expect(await hOverflow(page)).toBeLessThanOrEqual(1);
-});
-
-test("one-off chat: composer reachable; Recent is a drawer; a turn sends", async ({ page }) => {
-  await page.goto("/chat");
-  const composer = page.getByPlaceholder(/Ask anything/i);
-  await expect(composer).toBeInViewport();
-  expect(await hOverflow(page)).toBeLessThanOrEqual(1);
-
-  // Exact text: the sidebar's "New one-off chat" also contains "New one-off".
-  const newOneOff = page.getByRole("button", { name: "New one-off", exact: true });
-  await expect(newOneOff).not.toBeInViewport();
-  await page.getByRole("button", { name: /Show recent chats/i }).tap();
-  await expect(newOneOff).toBeInViewport();
-  await page.getByRole("button", { name: /Close recent chats/i }).tap();
-
-  await sendChatTurn(page, uniq("OO phone"), { placeholder: /Ask anything/i });
 });
 
 test("New Project modal fits the phone (no overflow, Create reachable)", async ({ page }) => {

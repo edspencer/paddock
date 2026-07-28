@@ -133,15 +133,4 @@ describe("integration: chat turn over WS (real CLI runtime, fake claude)", () =>
     expect(lastAssistant.content.toLowerCase()).toContain("pomegranate");
   });
 
-  it("a one-off (scratch) chat lists under /api/chats", async () => {
-    const mark = ws.mark();
-    ws.send({
-      type: "chat:send",
-      payload: { projectSlug: "scratch", sessionId: null, message: "scratch hello" },
-    });
-    const complete = await ws.waitFor(isComplete("scratch"), { from: mark });
-    const sessionId = complete.payload?.sessionId as string;
-    const chats = (await t.app.inject({ method: "GET", url: "/api/chats" })).json().chats;
-    expect(chats.map((c: { sessionId: string }) => c.sessionId)).toContain(sessionId);
-  });
 });

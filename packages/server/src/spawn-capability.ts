@@ -108,22 +108,20 @@ export interface SpawnedSelfMcpDecision {
 /**
  * The COMPLETE gate for whether a spawned/scheduled turn is handed the self-MCP,
  * factored out so the exact rule is unit-tested rather than buried in ws.ts.
- * A spawned turn gets the self-MCP iff it's a keeper (never scratch), the instance
- * opted in (`selfMcpEnabled`), AND its depth is within the bound
+ * A spawned turn gets the self-MCP iff the instance opted in
+ * (`selfMcpEnabled`) AND its depth is within the bound
  * ({@link spawnedTurnGetsSelfMcp}). The WRITE tools are further gated by the
  * instance write opt-in — in practice always on when a spawn is reachable (a spawn
  * only happens because a parent already had the write tools), but honoured so an
  * operator who disabled writes gets read-only spawned children too.
  */
 export function spawnedSelfMcpDecision(params: {
-  isScratch: boolean;
   selfMcpEnabled: boolean;
   selfMcpWriteEnabled: boolean;
   depth: number;
   maxSpawnDepth: number;
 }): SpawnedSelfMcpDecision {
   const inject =
-    !params.isScratch &&
     params.selfMcpEnabled &&
     spawnedTurnGetsSelfMcp(params.depth, params.maxSpawnDepth);
   return { inject, includeWrite: inject && params.selfMcpWriteEnabled };

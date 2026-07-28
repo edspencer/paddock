@@ -7,7 +7,7 @@ A **project** is the top-level unit of organization in Paddock. Concretely, it i
 **a directory plus a `project.yaml`** — a slug-named directory under the data root
 (`PADDOCK_PROJECTS_DIR`) that holds the project's metadata, curated notes, and its
 chat transcripts. One project → one long-lived Claude Code agent (its
-[keeper](/concepts/keeper-and-scratch)) whose working directory is tied to that project.
+[keeper](/concepts/keepers)) whose working directory is tied to that project.
 
 ## What's in a project directory
 

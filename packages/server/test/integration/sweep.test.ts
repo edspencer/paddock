@@ -102,17 +102,4 @@ describe("integration: post-turn sweep curates OVERVIEW + CHANGELOG", () => {
     enqueueSpy.mockRestore();
   });
 
-  it("does NOT sweep scratch chats", async () => {
-    const enqueueSpy = vi.spyOn(t.sweep, "enqueue");
-    const mark = ws.mark();
-    ws.send({
-      type: "chat:send",
-      payload: { projectSlug: "scratch", sessionId: null, message: "scratch turn, no sweep" },
-    });
-    await ws.waitFor(isComplete("scratch"), { from: mark });
-    // enqueue is never called for the scratch slug.
-    const sweptSlugs = enqueueSpy.mock.calls.map((c) => c[0]);
-    expect(sweptSlugs).not.toContain("scratch");
-    enqueueSpy.mockRestore();
-  });
 });

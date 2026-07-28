@@ -93,11 +93,7 @@ describe("api: reads", () => {
     expect(f.kind).toBe("markdown");
   });
 
-  it("chatContext routes scratch sessions to the scratch endpoint", async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ usage: { contextTokens: 5, contextLimit: 10 } }));
-    await api.chatContext("scratch", "sess-1");
-    expect(call()[0]).toBe("/api/chats/sess-1/context");
-    fetchMock.mockClear();
+  it("chatContext hits the project chat endpoint", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ usage: null }));
     const usage = await api.chatContext("proj", "sess-1");
     expect(call()[0]).toBe("/api/projects/proj/chats/sess-1/context");
@@ -161,15 +157,6 @@ describe("api: writes build the right request", () => {
     expect(JSON.parse(init?.body as string)).toEqual({ archived: true });
   });
 
-  it("archiveScratchChat POSTs { archived:false } to unarchive a scratch chat", async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ ok: true, archived: false }));
-    await api.archiveScratchChat("s9", false);
-    const [url, init] = call();
-    expect(url).toBe("/api/chats/s9/archive");
-    expect(init?.method).toBe("POST");
-    expect(JSON.parse(init?.body as string)).toEqual({ archived: false });
-  });
-
   it("starProjectChat POSTs { starred } to the star endpoint", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ ok: true, starred: true }));
     await api.starProjectChat("p", "s", true);
@@ -179,20 +166,11 @@ describe("api: writes build the right request", () => {
     expect(JSON.parse(init?.body as string)).toEqual({ starred: true });
   });
 
-  it("starScratchChat POSTs { starred:false } to unstar a scratch chat", async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ ok: true, starred: false }));
-    await api.starScratchChat("s9", false);
-    const [url, init] = call();
-    expect(url).toBe("/api/chats/s9/star");
-    expect(init?.method).toBe("POST");
-    expect(JSON.parse(init?.body as string)).toEqual({ starred: false });
-  });
-
-  it("promoteChat POSTs the build payload to the promote endpoint", async () => {
+  it("promoteChat POSTs the build payload to the source project's promote endpoint", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ project: makeProject(), promoted: true }));
-    const res = await api.promoteChat("sess-9", { name: "X", group: "g" });
+    const res = await api.promoteChat("__root", "sess-9", { name: "X", group: "g" });
     const [url, init] = call();
-    expect(url).toBe("/api/chats/sess-9/promote");
+    expect(url).toBe("/api/projects/__root/chats/sess-9/promote");
     expect(init?.method).toBe("POST");
     expect(JSON.parse(init?.body as string)).toEqual({ name: "X", group: "g" });
     expect(res.promoted).toBe(true);
@@ -289,8 +267,4 @@ describe("api: error handling", () => {
     expect(e.status).toBe(503);
   });
 
-  it("listScratchChats unwraps and surfaces the chat list", async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ chats: [makeChat({ sessionId: "s1" })] }));
-    expect((await api.listScratchChats())[0].sessionId).toBe("s1");
-  });
 });
