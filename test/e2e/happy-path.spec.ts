@@ -96,24 +96,3 @@ test("filter projects by a domain tag", async ({ page }) => {
   await expect(page.getByRole("heading", { name: /Projects tagged/i })).toBeVisible();
   await expect(page.getByRole("link", { name: /E2E Tagged/ }).first()).toBeVisible();
 });
-
-test("promote a one-off chat into a project", async ({ page }) => {
-  // Start a one-off chat and send a message so a session exists.
-  await page.goto("/chat");
-  const composer = page.getByPlaceholder(/Ask anything/i);
-  await composer.fill("scratch e2e message");
-  await page.getByRole("button", { name: /^Send$/ }).click();
-  await expect(page.getByText(/Acknowledged: scratch e2e message/)).toBeVisible({ timeout: 30_000 });
-  // The URL now carries the scratch session id.
-  await expect(page).toHaveURL(/\/chat\/[a-z0-9-]+/, { timeout: 15_000 });
-
-  // Promote it.
-  await page.getByRole("button", { name: /Promote to project/i }).click();
-  const dialog = page.locator("form").filter({ hasText: "Promote to project" });
-  await dialog.getByPlaceholder(/Garage Water Heater/i).fill("E2E Promoted Project");
-  await dialog.getByRole("button", { name: /Promote to project/i }).click();
-
-  // We land in the new project (its chat view), with the moved history present.
-  await expect(page).toHaveURL(/\/projects\/e2e-promoted-project/, { timeout: 15_000 });
-  await expect(page.getByText("scratch e2e message").first()).toBeVisible({ timeout: 15_000 });
-});

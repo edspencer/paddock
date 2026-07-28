@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import {
   AREAS,
   UNSORTED_SLUG,
-  INBOX,
   areaLabel,
   areaBlurb,
   orderAreaSlugs,
@@ -31,10 +30,6 @@ describe("areas: labels", () => {
     expect(areaBlurb("")).toBeUndefined();
   });
 
-  it("Inbox is a distinct synthetic area", () => {
-    expect(INBOX.slug).toBe("inbox");
-    expect(INBOX.label).toBe("Inbox");
-  });
 });
 
 describe("areas: orderAreaSlugs", () => {

@@ -6,15 +6,24 @@ import { startTestApp, type TestApp } from "../helpers/app.js";
 import { listen, connectWs, type WsClient, type WsEvent } from "../helpers/ws.js";
 
 /**
- * Promote a one-off (scratch) chat into a project (#20). Exercises the real
- * promoteScratchSession → reattributeSession/writeAdoptionJob machinery: after
- * promotion the chat must list + resume UNDER THE PROJECT (not scratch), with
- * its history intact — the exact saga the design doc calls out.
+ * Promote a chat into a NEW project (#20). Exercises the real
+ * `promoteSession` → `reattributeSession`/`writeAdoptionJob` machinery: after
+ * promotion the chat must list + resume UNDER THE NEW PROJECT (and be gone from
+ * the old one), with its history intact — the exact saga the design doc calls
+ * out.
+ *
+ * This was a scratch-only action until #516 Phase 6 retired scratch. The route
+ * moved onto the source project's chat cluster and the operation was
+ * generalised to project → project, so this test now promotes an ordinary
+ * project chat. The UI only offers it at the ROOT (where the chats that used to
+ * be one-offs live), but nothing in the server is root-specific, and testing the
+ * generic path is what actually covers it.
  */
-describe("integration: promote a scratch chat → project (real fleet, fake claude)", () => {
+describe("integration: promote a chat → new project (real fleet, fake claude)", () => {
   let t: TestApp;
   let port: number;
   let ws: WsClient;
+  const SOURCE = "source-proj";
 
   const completeFor = (slug: string) => (e: WsEvent) =>
     e.type === "chat:complete" &&
@@ -25,31 +34,34 @@ describe("integration: promote a scratch chat → project (real fleet, fake clau
     t = await startTestApp();
     ({ port } = await listen(t.app));
     ws = await connectWs(port);
+    await t.app.inject({ method: "POST", url: "/api/projects", payload: { name: "Source Proj" } });
   });
   afterAll(async () => {
     ws?.close();
     await t.teardown();
   });
 
-  it("promotes the chat: it lists under the project, history hydrates, re-attributes the job, and resumes with continuity", async () => {
-    // 1) Start a one-off scratch chat that sets a codeword.
+  it("promotes the chat: it lists under the new project, history hydrates, re-attributes the job, and resumes with continuity", async () => {
+    // 1) Start a chat in the source project that sets a codeword.
     const m1 = ws.mark();
     ws.send({
       type: "chat:send",
-      payload: { projectSlug: "scratch", sessionId: null, message: "the codeword is artichoke" },
+      payload: { projectSlug: SOURCE, sessionId: null, message: "the codeword is artichoke" },
     });
-    const c1 = await ws.waitFor(completeFor("scratch"), { from: m1 });
+    const c1 = await ws.waitFor(completeFor(SOURCE), { from: m1 });
     const sessionId = c1.payload?.sessionId as string;
     expect(sessionId).toBeTruthy();
 
-    // It currently lives in the scratch inbox.
-    let scratch = (await t.app.inject({ method: "GET", url: "/api/chats" })).json().chats;
-    expect(scratch.map((c: { sessionId: string }) => c.sessionId)).toContain(sessionId);
+    // It currently lives in the source project.
+    let sourceChats = (
+      await t.app.inject({ method: "GET", url: `/api/projects/${SOURCE}/chats` })
+    ).json().chats;
+    expect(sourceChats.map((c: { sessionId: string }) => c.sessionId)).toContain(sessionId);
 
     // 2) Promote it into a new project.
     const promote = await t.app.inject({
       method: "POST",
-      url: `/api/chats/${sessionId}/promote`,
+      url: `/api/projects/${SOURCE}/chats/${sessionId}/promote`,
       payload: { name: "Artichoke Project", group: "house" },
     });
     expect(promote.statusCode).toBe(201);
@@ -58,17 +70,19 @@ describe("integration: promote a scratch chat → project (real fleet, fake clau
     const slug = body.project.slug as string;
     expect(slug).toBe("artichoke-project");
 
-    // 3) It now lists UNDER the project…
+    // 3) It now lists UNDER the new project…
     const projectChats = (
       await t.app.inject({ method: "GET", url: `/api/projects/${slug}/chats` })
     ).json().chats;
     expect(projectChats.map((c: { sessionId: string }) => c.sessionId)).toContain(sessionId);
 
-    // …and is GONE from the scratch inbox.
-    scratch = (await t.app.inject({ method: "GET", url: "/api/chats" })).json().chats;
-    expect(scratch.map((c: { sessionId: string }) => c.sessionId)).not.toContain(sessionId);
+    // …and is GONE from the source project.
+    sourceChats = (
+      await t.app.inject({ method: "GET", url: `/api/projects/${SOURCE}/chats` })
+    ).json().chats;
+    expect(sourceChats.map((c: { sessionId: string }) => c.sessionId)).not.toContain(sessionId);
 
-    // 4) History hydrates under the project's keeper.
+    // 4) History hydrates under the new project's keeper.
     const messages = (
       await t.app.inject({
         method: "GET",
@@ -77,9 +91,9 @@ describe("integration: promote a scratch chat → project (real fleet, fake clau
     ).json().messages;
     expect(messages.some((m: { role: string }) => m.role === "user")).toBe(true);
 
-    // 5) A job record now attributes the session to the keeper (writeAdoptionjob /
-    //    reattributeSession). The transcript's embedded cwd was rewritten to the
-    //    project dir so resume targets the project.
+    // 5) A job record now attributes the session to the NEW keeper
+    //    (writeAdoptionJob / reattributeSession), and the transcript's embedded
+    //    cwd was rewritten from the source project's dir to the new one.
     const jobsDir = path.join(t.cfg.stateDir, "jobs");
     const jobFiles = await fs.readdir(jobsDir);
     let attributed = false;
@@ -95,9 +109,9 @@ describe("integration: promote a scratch chat → project (real fleet, fake clau
       "utf8",
     );
     expect(transcript).toContain(`"cwd":"${body.project.dir}"`);
-    expect(transcript).not.toContain(t.cfg.scratchDir + '"'); // scratch cwd rewritten away
+    expect(transcript).not.toContain(`"cwd":"${path.join(t.cfg.projectsRoot, SOURCE)}"`);
 
-    // 6) Resume the promoted chat under the project — and CONTINUE it.
+    // 6) Resume the promoted chat under the new project — and CONTINUE it.
     //
     // This was a known gap (herdctl's JobExecutor dropped an explicit `--resume`
     // when the agent had no stored session-info, so a promoted chat forked a
@@ -124,7 +138,7 @@ describe("integration: promote a scratch chat → project (real fleet, fake clau
   it("returns the project but promoted:false for an unknown session id", async () => {
     const res = await t.app.inject({
       method: "POST",
-      url: `/api/chats/does-not-exist/promote`,
+      url: `/api/projects/${SOURCE}/chats/does-not-exist/promote`,
       payload: { name: "Orphan Project" },
     });
     expect(res.statusCode).toBe(201);
@@ -136,9 +150,26 @@ describe("integration: promote a scratch chat → project (real fleet, fake clau
   it("rejects promotion with no name (400)", async () => {
     const res = await t.app.inject({
       method: "POST",
-      url: `/api/chats/whatever/promote`,
+      url: `/api/projects/${SOURCE}/chats/whatever/promote`,
       payload: {},
     });
     expect(res.statusCode).toBe(400);
+  });
+
+  /**
+   * The source project is resolved BEFORE the destination is created, so an
+   * unknown source is a 404 that leaves no half-made project behind. Worth
+   * pinning: the pre-Phase-6 route had no source at all, so this failure mode
+   * is new with the generalisation.
+   */
+  it("404s when the SOURCE project doesn't exist, and creates nothing", async () => {
+    const res = await t.app.inject({
+      method: "POST",
+      url: `/api/projects/no-such-project/chats/whatever/promote`,
+      payload: { name: "Ghost Project" },
+    });
+    expect(res.statusCode).toBe(404);
+    const listed = (await t.app.inject({ method: "GET", url: "/api/projects" })).json().projects;
+    expect(listed.map((p: { slug: string }) => p.slug)).not.toContain("ghost-project");
   });
 });

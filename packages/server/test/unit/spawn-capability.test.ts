@@ -107,7 +107,7 @@ describe("spawn-capability: resolveMaxSpawnDepth (per-project override beats def
 
 describe("spawn-capability: spawnedSelfMcpDecision (full ws.ts gate)", () => {
   // The instance opted fully in (read + write); the depth bound does the gating.
-  const ON = { isScratch: false, selfMcpEnabled: true, selfMcpWriteEnabled: true };
+  const ON = { selfMcpEnabled: true, selfMcpWriteEnabled: true };
 
   it("default max=1: a depth-1 child is injected WITH write tools (can report back)", () => {
     expect(spawnedSelfMcpDecision({ ...ON, depth: 1, maxSpawnDepth: 1 })).toEqual({
@@ -128,12 +128,6 @@ describe("spawn-capability: spawnedSelfMcpDecision (full ws.ts gate)", () => {
       inject: false,
       includeWrite: false,
     });
-  });
-
-  it("never injects on a scratch turn regardless of depth/flags", () => {
-    expect(
-      spawnedSelfMcpDecision({ ...ON, isScratch: true, depth: 1, maxSpawnDepth: 5 }).inject,
-    ).toBe(false);
   });
 
   it("respects the instance opt-in: disabled → nothing", () => {

@@ -70,7 +70,7 @@ export default defineConfig({
       // Phone-sized run (Pixel 5 = 393×851, isMobile + hasTouch, Chromium-based,
       // so the same `chromium` browser install covers it — no extra browser in
       // CI). Exercises the responsive layout: the hamburger nav drawer + the
-      // in-project / one-off session-list drawers, modals, and the file viewer.
+      // in-project session-list drawers, modals, and the file viewer.
       // Same non-git server as `chromium`.
       name: "mobile",
       testMatch: "**/journey-mobile.spec.ts",

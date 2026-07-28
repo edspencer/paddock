@@ -419,21 +419,6 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
     expect(res.statusCode).toBe(404);
   });
 
-  it("GET scratch /context returns usage after a scratch turn", async () => {
-    const sessionId = await oneTurn("scratch", "scratch for context");
-    const ctx = (
-      await t.app.inject({ method: "GET", url: `/api/chats/${sessionId}/context` })
-    ).json();
-    expect(ctx.usage).toBeTruthy();
-    // Default keeper/scratch model is Opus 5 → 1M context window.
-    expect(ctx.usage.contextLimit).toBe(1_000_000);
-
-    const none = (
-      await t.app.inject({ method: "GET", url: "/api/chats/no-such-session/context" })
-    ).json();
-    expect(none.usage).toBeNull();
-  });
-
   // --- chat-list usage ring (issue #77) --------------------------------------
 
   it("per-chat context usage comes from the bulk usage endpoint, not the list (issue #116)", async () => {
@@ -468,15 +453,6 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
     expect(usage[sessionId].contextTokens).toBeGreaterThan(0);
     // Default keeper model is Opus 5 → 1M context window.
     expect(usage[sessionId].contextLimit).toBe(1_000_000);
-  });
-
-  it("scratch chat-list DTOs carry per-chat context usage after a turn", async () => {
-    const sessionId = await oneTurn("scratch", "scratch for list usage");
-    const chats = (await t.app.inject({ method: "GET", url: "/api/chats" })).json()
-      .chats as Array<{ sessionId: string; contextTokens?: number; contextLimit?: number }>;
-    const entry = chats.find((c) => c.sessionId === sessionId);
-    expect(entry?.contextTokens).toBeGreaterThan(0);
-    expect(entry?.contextLimit).toBe(1_000_000);
   });
 
   // --- rename + delete chat (project) ----------------------------------------
@@ -549,32 +525,7 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
 
   // --- rename + delete chat (scratch) ----------------------------------------
 
-  it("PATCH + DELETE a scratch chat", async () => {
-    const sessionId = await oneTurn("scratch", "scratch rename+delete");
-
-    const rename = await t.app.inject({
-      method: "PATCH",
-      url: `/api/chats/${sessionId}`,
-      payload: { name: "Scratch Name" },
-    });
-    expect(rename.statusCode).toBe(200);
-
-    const del = await t.app.inject({ method: "DELETE", url: `/api/chats/${sessionId}` });
-    expect(del.statusCode).toBe(200);
-    expect(del.json().removed).toBe(true);
-  });
-
   // --- messages listings ------------------------------------------------------
-
-  it("GET scratch chat messages hydrates user+assistant roles", async () => {
-    const sessionId = await oneTurn("scratch", "scratch messages please");
-    const messages = (
-      await t.app.inject({ method: "GET", url: `/api/chats/${sessionId}/messages` })
-    ).json().messages;
-    const roles = messages.map((m: { role: string }) => m.role);
-    expect(roles).toContain("user");
-    expect(roles).toContain("assistant");
-  });
 
   it("GET project chat messages 404s for an unknown project slug", async () => {
     const res = await t.app.inject({
@@ -590,8 +541,9 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
     const body = (await t.app.inject({ method: "GET", url: "/api/fleet" })).json();
     expect(body.status).toBeTruthy();
     const names = (body.agents as Array<{ name: string }>).map((a) => a.name);
-    expect(names).toContain("scratch");
     expect(names).toContain("keeper-routes-proj");
+    // No scratch agent since #516 Phase 6.
+    expect(names).not.toContain("scratch");
   });
 
   it("GET /api/health is ok", async () => {
