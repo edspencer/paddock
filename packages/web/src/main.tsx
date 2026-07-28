@@ -109,10 +109,12 @@ const router = createBrowserRouter([
       // ProjectView redirects this to /triggers so old links/bookmarks don't 404.
       { path: "projects/:slug/hooks", element: <ProjectView /> },
       // Root chats when there is a root project, scratch chats otherwise (#516).
-      // The URL is the same because root chats SUPERSEDE scratch — that is the
-      // whole point of the design (Phase 6 deletes the scratch cluster outright).
-      // Existing scratch transcripts stay on disk at `<dataDir>/scratch/.chats`
-      // and are re-homed by that phase.
+      // The URL is the same because root chats SUPERSEDE scratch: `/chat` IS root
+      // chats, not a redirect to them (the design doc said both in different
+      // places; settled in favour of this one). So Phase 6 is pure subtraction —
+      // it deletes the scratch cluster with no forwarding to write. Existing
+      // scratch transcripts stay on disk at `<dataDir>/scratch/.chats` and are
+      // re-homed by that phase.
       { path: "chat", element: <RootGate withRoot={<ProjectView root />} without={<OneOffChat />} /> },
       {
         path: "chat/:sessionId",
