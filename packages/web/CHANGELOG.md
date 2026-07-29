@@ -1,5 +1,188 @@
 # @paddock/web
 
+## 0.52.0
+
+### Minor Changes
+
+- [#542](https://github.com/edspencer/paddock/pull/542) [`bea2276`](https://github.com/edspencer/paddock/commit/bea2276c55dcb5b8fd697811d405fb409c65c938) Thanks [@edspencer](https://github.com/edspencer)! - Chat list: a running-chats filter on the count badge, and a nested/flat view toggle
+
+  The "Chats" count badge splits when a turn goes live: total on the left,
+  running count on the right, and the right half toggles the list down to just the
+  chats working right now. Running chats were always findable by hunting for
+  spinning rings down the sidebar; now they are a target you can hit.
+
+  The filtered view renders FLAT. A running child sitting under its running parent
+  would reintroduce exactly the indentation the filter exists to remove, so the
+  running view drops nesting entirely — and it keeps the chat you currently have
+  open pinned in, so it cannot vanish from under you the moment its turn finishes.
+  Filtering to running composes with search rather than fighting it, and when the
+  last turn ends the list says "No chats are running" and offers the way back,
+  because the filter is sticky and can outlive the work it was filtering for.
+
+  Nesting itself is now optional: a second toolbar button beside "+" toggles the
+  list between the nested tree and a flat one. Both preferences are per-browser
+  and global, not per-project — how you like to read a list is not a per-project
+  fact.
+
+- [#515](https://github.com/edspencer/paddock/pull/515) [`6c21fcd`](https://github.com/edspencer/paddock/commit/6c21fcd94e06088f87648df7385ca63dcde4fb7f) Thanks [@edspencer](https://github.com/edspencer)! - feat(chats): subtree actions, detach-from-parent, and a real tooltip for the chat tree (#508).
+
+  The nested chat list (#485) could only act on one chat at a time. Archiving a
+  parent left its children behind — they lose their parent from the active
+  population, so `buildChatTree` promotes them to roots and the family silently
+  scatters back into the main list — and there was no way to say either "take the
+  whole family with it" or "keep this one out of it".
+
+  **Shift-click** on archive, delete, or mark-read/unread now applies to a chat and
+  **all** its descendants, recursively, matching the count the collapsed-row pill
+  already shows. A plain click is unchanged. Delete goes through a count-aware
+  confirmation — "Manager and its 3 nested chats will be permanently removed" —
+  because a collapsed parent means shift-deleting can destroy chats that aren't
+  even on screen, and there is no undo.
+
+  Those actions run through new **batch endpoints** (`POST
+…/chats/batch/{archive,unread,delete}`) rather than a client-side loop. The flag
+  sidecars commit the whole set in one write, so a parent and its children can't
+  end up in different states; the delete route can't be atomic (filesystem) so it
+  attempts every id and reports back which ones it couldn't remove, and the client
+  only drops what was actually deleted.
+
+  **Detach** (`POST …/chats/:sessionId/detach`, an unlink action on any nested row)
+  promotes a chat to the top level with its own subtree intact, so a family can be
+  archived _except_ one chat. It is persisted as an explicit override that is
+  checked AHEAD of both parent-resolution tiers — clearing the recorded edge would
+  not work, because most live edges are _inferred_ from the kickoff message and
+  would simply be re-derived on the next load. Nothing is destroyed, so re-attach
+  is just clearing the flag.
+
+  The delete dialog also names the nested chats it will **keep**: deleting a parent
+  without its children re-homes them to the top level, and an irreversible action
+  shouldn't restructure the list silently. That covers a plain delete of a parent
+  (previously silent) as well as a subtree delete narrowed by an active search.
+
+  Single-chat delete now clears a chat's detach override too, alongside the
+  archived/starred/unread flags it already cleared, so a recycled session id can't
+  start life detached from a parent it never had.
+
+  Discoverability comes from a new shared **`Tooltip`** component, which replaces
+  every native `title=` in the chat list: themed, portalled out of the sidebar's
+  scroll container, rich enough to carry "Archive · **Shift-click** to archive all
+  4", and shown only on the rows that actually have descendants. The same hint is
+  in each button's accessible name, so the affordance also reaches Shift+Enter from
+  the keyboard.
+
+- [#539](https://github.com/edspencer/paddock/pull/539) [`bd387dc`](https://github.com/edspencer/paddock/commit/bd387dc1093061186167ea598c40d6a1f441da8b) Thanks [@edspencer](https://github.com/edspencer)! - Fold the projects grid into root Home, split instance **Config** from workspace
+  **Settings**, and fix a phantom scrollbar on the tab strip.
+
+  **Navigation.** The sidebar's "New Project" and "New root chat" buttons are
+  replaced by a single **Home** link to `/`. Both actions live on root Home now —
+  the projects grid there carries "New Project", and Home's Chats section carries
+  "New chat" — so the sidebar no longer duplicates them.
+
+  **The Projects tab is gone.** The root workspace's tab bar leads with **Home**,
+  and the projects grid is a _section_ of the Home pane rather than a tab of its
+  own. `/projects` is a permanent redirect to `/`, so links and bookmarks from
+  v0.51.0 still land on the list. Home's sections read Chats → Projects → Files →
+  CHANGELOG.md → Overview: Chats lead because that section is on every workspace's
+  Home, so the page opens the same way whether or not there are children, and
+  Overview trails because it describes a workspace rather than offering a way into
+  one. Only a workspace with children renders the Projects section.
+
+  **`config` and `settings` are now two different screens, named for the files
+  they write.** v0.51.0 rendered the instance-wide `paddock.config.yaml` form as a
+  second section beneath the ROOT workspace's own settings form — two save bars,
+  one page inside another. They are split:
+
+  |              | Writes                       | Lifecycle                         | Where                         |
+  | ------------ | ---------------------------- | --------------------------------- | ----------------------------- |
+  | **Config**   | `paddock.config.yaml`        | frozen at boot — restart required | `/config` (sidebar gear)      |
+  | **Settings** | a workspace's `project.yaml` | hot-applied on save               | that workspace's Settings tab |
+
+  The sidebar's gear is relabelled **Config** and points at `/config`; `/settings`
+  is the root workspace's Settings tab, now identical to any project's. This also
+  fixes the tab not scrolling: `InstanceConfigForm` is a fragment whose `min-h-0
+flex-1 overflow-y-auto` body only works as a flex-column child, so stacked in a
+  plain `<div>` it grew to full content height, refused to shrink, squashed the
+  workspace form to **zero height**, and left nothing on the tab able to scroll.
+  One pane per tab, and the problem cannot recur.
+
+  **No more phantom scrollbar on the tab strip.** `overflow-x: auto` promotes
+  `overflow-y: visible` to `auto`, so the strip is a vertical scroll container too
+  — and a scroll container's scrollable area is the union of its descendants'
+  _border_ boxes, which negative margins do not pull in. Each tab's `-mb-px`
+  (which overlaps the active underline onto the strip's 1px rule) therefore left
+  1px of scrollable overflow and a scrollbar with nothing to scroll. The -1px now
+  hangs off the scroller itself, whose parent is not a scroll container: identical
+  geometry, `scrollHeight === clientHeight`, horizontal tab scrolling intact.
+
+### Patch Changes
+
+- [#538](https://github.com/edspencer/paddock/pull/538) [`4f67324`](https://github.com/edspencer/paddock/commit/4f67324fd132fe5e7b5c79b79ec92ed4e3ad6d76) Thanks [@edspencer](https://github.com/edspencer)! - Stop computing usage rings nobody can see (#537). `GET
+/api/projects/:slug/chats/usage` computed the context-ring fill for **every**
+  chat in a project, and there is no stored counter for that — each session's fill
+  is derived by streaming its transcript (and its sub-agents') end to end and
+  `JSON.parse`-ing every line. The sidebar collapses the Archived group by default,
+  so on a live-scale project most of that I/O produced rings that were never
+  rendered: of 234 chats and 495 MB of transcript, **182 chats and 349 MB (71%)
+  were archived**. The endpoint is called on every project open and after every
+  completed turn, per open tab.
+
+  The endpoint is now scoped: `?scope=active` (the new default) / `archived` /
+  `all`. The client asks for the archived half only once that group is actually
+  expanded. The lazy fetch keys off the group's **expanded state**, not the
+  disclosure button, because three separate things open it — the user toggling it,
+  archiving a chat, and deep-linking into an archived chat — and the failure mode
+  here is invisible (a ring that silently never appears). A turn completing
+  refreshes the archived rings only for a client that has already asked for them.
+
+  Also raises `MTIME_CACHE_MAX` (the sub-agent transcript memo) from 64 to 1024.
+  That corpus holds 514 transcript files for 234 chats, so at 64 a single sweep
+  evicted every entry before the next sweep could reuse one and the cache was pure
+  overhead. The entries are token tallies, not transcript text: pushing all 1,515
+  sessions in the corpus through both cached paths and then forcing GC retained
+  1.4 MB at the new cap versus 1.3 MB at the old one.
+
+  Measured on that corpus (v0.51.0 build vs. this one, same data, interleaved):
+  project open 4.18 s → **1.23 s** cold and 0.40–0.54 s → **0.014–0.021 s** warm.
+  Expanding Archived costs 3.05 s once, then 0.020 s. The two changes are not
+  redundant: scoping alone takes the warm call to 0.047–0.095 s and is the only
+  thing that moves cold; the cache cap takes it the rest of the way, and is worth
+  15× on its own for a same-scope call (0.44 s → 0.029 s at `scope=all`).
+  Behaviour is unchanged:
+  `active ∪ archived` is exactly the old response — same 234 keys, zero differing
+  fields — and the 234 rendered rings are byte-identical, in the same order,
+  between the two builds.
+
+- [#547](https://github.com/edspencer/paddock/pull/547) [`0c62cf3`](https://github.com/edspencer/paddock/commit/0c62cf39e8f5a56c85e3999e9c50255bde6dfae1) Thanks [@edspencer](https://github.com/edspencer)! - Replace the last three native browser dialogs with Paddock's own modals (#541).
+  Renaming a chat popped a `window.prompt()`, and reverting a chat / deleting a
+  trigger popped `window.confirm()` — grey, unthemed browser chrome sitting one
+  button away from Fork Chat's styled dialog, prefixed with `"<host> says"` in the
+  installed PWA, and blocking the main thread (including the live transcript)
+  until dismissed.
+
+  The revert dialog is the one that gains more than polish. Its warning — that
+  tool calls after the revert point are **not** undone, only the conversation is —
+  was being assembled into a single `\n\n`-delimited string, so the most important
+  sentence in the most destructive of the three actions arrived as undifferentiated
+  plain text. It is now structured content: the message and tool-call counts are
+  emphasised, and the "those actions are not undone" caveat is its own callout
+  instead of a clause buried mid-paragraph.
+
+  Two behaviours are deliberately preserved rather than reimplemented. Clearing
+  the rename field still **resets** a chat to its generated preview name — that was
+  `prompt()`'s `""`-vs-`null` return doing double duty, and a dialog that only
+  reported "closed" vs "submitted" would have quietly dropped it; the modal now
+  advertises it (the hint names the fallback and the button relabels to "Reset
+  name"), where the prompt could only be discovered by accident. And the revert
+  dialog opts out of backdrop-click dismissal, since it carries warning text meant
+  to be read and silently discarding that decision on a stray click is worse than
+  requiring a button.
+
+  Also: `ConfirmDialog` gains `wide` and `dismissOnBackdrop`, the Escape-to-close
+  listener the modals each had their own copy of is now one `useEscapeKey` hook,
+  and the two re-thrown failures (revert, trigger delete) now surface inside the
+  dialog and leave it open to retry rather than closing onto a banner elsewhere.
+  A source-scanning test keeps the ban enforced rather than documented.
+
 ## 0.51.0
 
 ### Minor Changes
