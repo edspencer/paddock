@@ -3,11 +3,20 @@ title: "Projects"
 description: "Notebook vs. repo-backed projects, and what a project directory contains."
 ---
 
-A **project** is the top-level unit of organization in Paddock. Concretely, it is
-**a directory plus a `project.yaml`** — a slug-named directory under the data root
+A **project** is a [workspace](/concepts/workspaces) nested inside the root. The
+instance's own directory is itself a workspace, and a project is one living beneath it —
+so a project is not the top-level unit any more, it is the *nested* case. Concretely it is
+**a directory plus a `project.yaml`**: a slug-named directory under the data root
 (`PADDOCK_PROJECTS_DIR`) that holds the project's metadata, curated notes, and its
 chat transcripts. One project → one long-lived Claude Code agent (its
 [keeper](/concepts/keepers)) whose working directory is tied to that project.
+
+What distinguishes a project is only that its
+[workspace key](/concepts/workspaces#identity-a-workspace-is-its-path) — its path relative
+to the projects root — is non-empty; the root's key is the empty string. Chats, files,
+changes, history, settings, and triggers all behave identically at either, because they
+are served by [literally the same handlers](/concepts/workspaces#one-plugin-two-mounts).
+This page covers what is specific to a nested workspace, chiefly the two project *types*.
 
 ## What's in a project directory
 
@@ -21,10 +30,26 @@ chat transcripts. One project → one long-lived Claude Code agent (its
 └── <authored files> # notes.md, spec.html, diagrams… (you write these)
 ```
 
-`project.yaml` is the source of truth for metadata. On disk it carries only what's
-set — required fields (`name`, `slug`, `status`, `visibility`, `started`,
-`updated`, `summary`) plus optional ones (`group`, `links`, `pinned`, `model`,
-`permissionMode`, `maxTurns`, `docker`, `driveMode`, `repo`). The server reads it
+`project.yaml` is the source of truth for metadata. On disk it carries only what's set.
+The eight **required** fields are `name`, `slug`, `status`, `domain` (a `string[]` of
+cross-cutting tags, defaulting to `[]`), `visibility`, `started`, `updated`, and `summary`.
+The **optional** ones fall into groups:
+
+| Group                 | Fields                                                             |
+| --------------------- | ------------------------------------------------------------------ |
+| Presentation          | `group` (the project's single "area"), `links`, `pinned`           |
+| Keeper overrides      | `model`, `models`, `permissionMode`, `maxTurns`, `docker`, `driveMode`, `maxSpawnDepth`, `hooksMcpEnabled` |
+| Inherited sub-configs | `recovery`, `attachments`, `curation`                              |
+| Backing repo          | `repo`                                                             |
+| Automation            | `schedules`, `hooks`, `triggers`                                    |
+
+Every keeper override and sub-config follows the same inherit/override discipline: absent
+on disk means "inherit the instance default", resolved at dispatch rather than baked
+concrete into the file. The three automation blocks are keyed records —
+[`triggers`](/concepts/hooks) is the unified successor that collapses the older separate
+`schedules` and `hooks` blocks.
+
+The server reads the file
 into a `ProjectYaml`, then resolves a fully-concrete `Project` DTO for the API —
 filling defaults (e.g. `model ?? KEEPER_DEFAULT_MODEL`) and deriving fields like
 `dir`, `workingDir`, `repoBacked`, and `hasOverview`. `stripDto()` is the inverse,
@@ -33,6 +58,27 @@ so round-tripping never rewrites fields that weren't set.
 `OVERVIEW.md` and `CHANGELOG.md` are maintained by the [sweeper](/concepts/sweeper).
 `CLAUDE.md` holds what the project *durably is* and how you work on it — seeded
 terse and amended conservatively. (See `projects.ts` for `ProjectStore`.)
+
+### Dot-prefixed paths are refused, not just hidden
+
+The Files API does not merely omit dotfiles from listings — it **refuses to resolve a path
+that traverses a dot-prefixed directory segment**. So `.chats/` and `.git/` are unreachable
+through `GET …/files` even when named explicitly, including via a normalising detour like
+`a/../.git/config`. Directory *listings* are stricter still: the target's own leaf may not
+be hidden either, since `?path=.chats` was exactly how every transcript filename used to be
+enumerable.
+
+Two deliberate carve-outs are worth knowing:
+
+- Only the path **relative to the project directory** is examined, so a data root that
+  itself sits under a dot-prefixed ancestor (`/srv/.paddock/projects`) still works.
+- A dotfile **leaf** elsewhere stays readable — that is what lets the Changes pane render
+  an untracked `.gitignore`.
+
+Honest severity: this is defence-in-depth, not a privilege boundary. Anyone who can reach
+these routes can already start a keeper chat and run Bash, which is strictly more
+capability than reading a file. It is worth closing because "hidden in the listing" should
+not be the only thing standing between an API and a transcript.
 
 ## The two project types
 
