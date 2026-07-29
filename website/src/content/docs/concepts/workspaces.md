@@ -145,8 +145,11 @@ URL:
 | Triggers | `/triggers` | `/projects/:slug/triggers` |
 
 Changes appears only when the workspace directory is a git repo. There is **no** Projects
-tab: the projects grid is a *section* of root Home, and `/projects` is kept as a permanent
-redirect to `/` so links from an earlier release don't land on an error screen.
+tab: the projects grid is a *section* of root Home, and old `/projects` links still land on
+`/` rather than an error screen.
+
+That section is gated on **being the root**, not on having any projects — a root workspace
+with zero projects still renders it, showing the grid's empty state.
 
 Two things stay instance-wide rather than workspace-scoped. `/settings` at the root edits
 the root workspace's own `project.yaml`, exactly like a project's Settings tab does;
