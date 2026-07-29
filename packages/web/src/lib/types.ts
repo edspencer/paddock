@@ -664,6 +664,13 @@ export interface ChatUsage {
   costUsd: number | null;
 }
 
+/**
+ * Which chats `GET /chats/usage` computes rings for (issue #537). The server
+ * defaults to `active`, so archived rings are only paid for once the sidebar's
+ * Archived group is expanded.
+ */
+export type ChatUsageScope = "active" | "archived" | "all";
+
 /** A persisted message hydrated from a session's transcript (core ChatMessage). */
 export interface ChatToolCall {
   toolName: string;

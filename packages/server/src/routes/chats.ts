@@ -24,6 +24,8 @@ import { type RunProvenance, childOf, HUMAN_ROOT } from "../run-provenance.js";
 import { sendProjectError } from "../route-errors.js";
 import {
   type ChatUsage,
+  type ChatUsageScope,
+  CHAT_USAGE_SCOPES,
   SAFE_SESSION_ID,
   RUNS_SEEN_SESSION,
   clampRunsLimit,
@@ -254,20 +256,40 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
   // transcript (memoized on transcript mtime). Split out of the project-detail
   // and chat-list payloads so the ProjectView renders immediately and the client
   // fills rings in progressively. Sessions with no usage data are omitted.
-  app.get<{ Params: { slug: string } }>(
+  //
+  // Scoped by archived state (issue #537). There is no stored counter: usage is
+  // derived by streaming each transcript end to end, so the cost is proportional
+  // to transcript bytes, not chat count. The sidebar collapses the Archived group
+  // by default, so computing archived rings on every project open is work whose
+  // result is never rendered — on a live-scale project that was 72% of the bytes
+  // streamed. `scope` therefore defaults to `active`; the client asks for
+  // `archived` only once that group is actually expanded.
+  app.get<{ Params: { slug: string }; Querystring: { scope?: ChatUsageScope } }>(
     "/chats/usage",
     {
       schema: {
         tags: ["Chats"],
         summary: "Bulk context-window usage for a project's chats",
         description:
-          "Returns per-chat context-window usage keyed by session id, for all of a project's chats — the expensive data the chat list needs for its usage rings. Sessions with no usage data are omitted. Response: `{ usage: { <sessionId>: <usage> } }`.",
+          "Returns per-chat context-window usage keyed by session id — the expensive data the chat list needs for its usage rings. Scoped by `scope`, which defaults to `active` (non-archived chats only): usage is derived by streaming each transcript, and archived rings are hidden behind a collapsed group, so computing them by default is wasted work (issue #537). Pass `scope=archived` when that group is expanded, or `scope=all` for the whole project. Sessions with no usage data are omitted. Response: `{ usage: { <sessionId>: <usage> } }`.",
         params: {
           type: "object",
           properties: {
             slug: { type: "string", description: "Project slug." },
           },
           required: ["slug"],
+        },
+        querystring: {
+          type: "object",
+          properties: {
+            scope: {
+              type: "string",
+              enum: [...CHAT_USAGE_SCOPES],
+              default: "active",
+              description:
+                "Which chats to compute usage for: `active` (non-archived, the default), `archived`, or `all`.",
+            },
+          },
         },
         response: {
           200: {
@@ -282,9 +304,20 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
       try {
         const project = await projects.get(req.params.slug);
         const sessions = await herdctl.listSessions(project).catch(() => []);
+        const scope = req.query.scope ?? "active";
+        const keeper = keeperAgentName(project.slug);
         const usageOf = chatUsageResolver(project.dir, project.model ?? KEEPER_DEFAULT_MODEL);
         const entries = await Promise.all(
           sessions.map(async (s) => {
+            // `all` skips the archive lookup entirely; the other two split on it.
+            // The lookup is an in-memory sidecar read, so it is free next to the
+            // transcript stream it is deciding whether to skip.
+            if (
+              scope !== "all" &&
+              (await archive.isArchived(keeper, s.sessionId)) !== (scope === "archived")
+            ) {
+              return null;
+            }
             const u = await usageOf(s).catch(() => null);
             return u ? ([s.sessionId, u] as const) : null;
           }),

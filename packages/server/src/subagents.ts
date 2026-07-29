@@ -99,8 +99,22 @@ export const SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/;
 // and the sub-agent reads. Mirrors core's mtime caches (herdctl #351).
 // ---------------------------------------------------------------------------
 
-/** Max files retained per mtime cache (small structures; bound to cap memory). */
-export const MTIME_CACHE_MAX = 64;
+/**
+ * Max files retained per mtime cache.
+ *
+ * Was 64, which a real project blows straight through: one live-scale project
+ * holds 514 transcript files across 234 chats, so a single sweep of
+ * `/chats/usage` evicted every entry before the next sweep could reuse one — the
+ * cache was pure overhead. Measured on that corpus (issue #537), raising the cap
+ * took the warm full-project usage call from ~440ms to ~29ms.
+ *
+ * The entries are token tallies and tool-use records, not transcript text, so
+ * this is cheap: forcing every one of the 1,515 sessions in that corpus through
+ * both the usage and sub-agent-listing paths and then running GC retained
+ * **1.4 MB** at this cap versus **1.3 MB** at 64 — a ~0.1 MB difference for a
+ * 15× speedup.
+ */
+export const MTIME_CACHE_MAX = 1024;
 
 export type MtimeCache<T> = Map<string, { mtimeMs: number; value: T }>;
 

@@ -143,6 +143,18 @@ export type ChatUsage = {
 };
 
 /**
+ * Which chats the bulk usage endpoint computes rings for (issue #537). Usage has
+ * no stored counter — it is derived by streaming each transcript end to end — so
+ * scoping the request to what the sidebar actually renders is the difference
+ * between a few MB and a few hundred. `active` is the default because the
+ * Archived group is collapsed on open.
+ */
+export const CHAT_USAGE_SCOPES = ["active", "archived", "all"] as const;
+
+/** One of {@link CHAT_USAGE_SCOPES}. */
+export type ChatUsageScope = (typeof CHAT_USAGE_SCOPES)[number];
+
+/**
  * Build the wire `ChatUsage` from a parsed {@link SessionTokenUsage} and the
  * chat's model. Returns null when the transcript has no usage yet, so the ring
  * simply hides. `totalTokens` is a headline "tokens this chat consumed" figure —
