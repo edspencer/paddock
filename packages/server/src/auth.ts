@@ -18,8 +18,9 @@
  *                         paddock holds no key material, only the JWKS URL, and
  *                         rejects missing/invalid/expired tokens with 401.
  *
- * Health/readiness probes are always exempt so the proxy and monitoring can poll
- * a server that is otherwise locked down.
+ * Paddock's health route (`/api/health`) is always exempt so the proxy and
+ * monitoring can poll a server that is otherwise locked down. Only registered
+ * routes may be exempted — see HEALTH_PATHS below for why (issue #569).
  *
  * Registered in app.ts BEFORE the routes so the `onRequest` hook guards every
  * REST + WS request. The decorator + hook are added directly to the root app
@@ -61,14 +62,23 @@ declare module "fastify" {
   }
 }
 
-/** Paths that must never require auth (proxy / monitoring health probes). */
-const HEALTH_PATHS = new Set<string>([
-  "/api/health", // paddock's own health route (routes.ts)
-  "/healthz",
-  "/-/health",
-  "/health",
-  "/readyz",
-  "/livez",
+/**
+ * Paths that must never require auth (proxy / monitoring health probes).
+ *
+ * **Every member must be a REGISTERED route** (see `routes/meta.ts`). Exempting a
+ * path that no route serves does not make it 404 — it makes the SPA not-found
+ * handler (`app.ts`) reachable *without a credential*, so the probe receives the
+ * HTML app shell with a 200 and reads a locked-down or half-broken instance as
+ * healthy. In the authenticated modes that inverts the truthful answer: an
+ * unregistered path 401s honestly, but an exempted unregistered one reports 200.
+ *
+ * This set previously carried five conventional aliases (`/healthz`, `/-/health`,
+ * `/health`, `/readyz`, `/livez`) that were never registered — issue #569.
+ * `test/integration/auth-health-paths.test.ts` now asserts every member resolves
+ * to a real route returning JSON, so the set cannot drift from the router again.
+ */
+export const HEALTH_PATHS: ReadonlySet<string> = new Set<string>([
+  "/api/health", // paddock's own health route (routes/meta.ts)
 ]);
 
 /** Strip the query string and trailing slash so exemption matching is robust. */
