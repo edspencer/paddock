@@ -232,7 +232,7 @@ loopback:
 ```bash
 docker compose exec paddock \
   curl -sS -X POST http://127.0.0.1:4000/mcp \
-    -H "Authorization: Bearer $PADDOCK_MCP_TOKEN_MY_LAPTOP" \
+    -H "Authorization: Bearer <the token your client config references>" \
     -H "Accept: application/json, text/event-stream" \
     -H "Content-Type: application/json" \
     -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
