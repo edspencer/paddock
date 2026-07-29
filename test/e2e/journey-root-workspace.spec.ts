@@ -124,21 +124,19 @@ test("'New chat' from the root Home opens a root chat composer (no 'Project not 
  * `projectSlug: ""` (verified directly against the built server over a raw
  * socket). The WEB client then throws those frames away:
  *
- *   // packages/web/src/lib/ws.ts:608-609
+ *   // packages/web/src/lib/ws.ts
  *   const slug = msg.payload.projectSlug ?? msg.payload.target;
  *   if (!slug) return;            // "" is falsy → every ROOT frame is dropped
  *
- * So a root chat turn sends, spins forever, never renders a reply, never
- * establishes its session id in the URL, and never clears the Stop button. This
- * is the last of the "falsy empty key" bugs the workspace refactor set out to
- * kill — ws.ts was simply never revisited (last touched in #436).
+ * So a root chat turn sent, span forever, never rendered a reply, never
+ * established its session id in the URL, and never cleared the Stop button.
  *
- * `test.fail()` keeps the coverage rather than deleting it: this test flips the
- * suite RED the moment the guard is fixed, which is the cue to drop the
- * annotation. Deliberately NOT fixed here — this change is test-only.
+ * Fixed (the guard now tests for an ABSENT key), but the test is the point:
+ * every server-side check passed while this was broken — the turn ran, the
+ * transcript was written, the API looked healthy. **Asserting persistence is
+ * not asserting that the user sees an answer.**
  */
 test("a root chat turn streams its reply back into the pane", async ({ page }) => {
-  test.fail();
   await page.goto("/chat");
   const composer = page.getByPlaceholder(/Message the keeper agent/i);
   await expect(composer).toBeVisible();
