@@ -7,12 +7,22 @@ Paddock ships as **two official images** built from the same source. Pick the on
 that matches what your agents actually do:
 
 - **`ghcr.io/edspencer/paddock:latest`** — the **base** image. The lean runtime:
-  the Paddock app plus `git`, `gh`, and the `claude` CLI. Everything a stock
-  instance needs to read, write, and reason over text and code — and nothing more.
+  the Paddock app plus `git`, `openssh-client`, `gh`, and the `claude` CLI.
+  Everything a stock instance needs to read, write, and reason over text and code —
+  and nothing more.
 - **`ghcr.io/edspencer/paddock:devbox`** — the **devbox** image. Base *plus* the
   software-engineering toolbox a coding agent reaches for: `pm` preview servers,
-  `ffmpeg`, a headless browser, the Docker CLI, `kubectl`, and a scripting kit
-  (`python3`, `pip`, `uv`, `jq`, `rsync`).
+  `ffmpeg`, a headless browser, the Docker CLI (with the `buildx` and `compose`
+  plugins), `kubectl`, and a scripting kit (`python3`, `pip`, `uv`, `jq`, `rsync`).
+
+:::note[`openssh-client` is in **base**, not devbox]
+Git's ssh transport is a separate binary from `git` itself. Without it every
+`git@…` remote dies mid-turn with `cannot run ssh: No such file or directory` — and
+the entrypoint's `GITHUB_TOKEN` rewrite only covers `https://github.com/` URLs, so
+an SSH remote (or any non-GitHub host) has no working path at all. That's the
+difference between an SSH-remote repo-backed project working or not, which makes it
+part of the lean runtime rather than the toolbox.
+:::
 
 The devbox only adds **tools**. It's the same app, the same data layout, the same
 `/data` volume — so you can stop one profile and start the other against the same
@@ -93,9 +103,15 @@ system Python; prefer the venv.
 
 Some agent work is itself Docker-shaped: building an image, running a throwaway
 container, testing a Compose stack. The devbox ships the Docker **client** (`docker`
-on `PATH`) — but **no daemon and no privilege baked in**. Whether that CLI can
-actually reach a daemon is a deployment decision; see
-[Docker-in-Docker](#docker-in-docker) below.
+on `PATH`) together with the **`buildx`** and **`compose`** CLI plugins — but **no
+daemon and no privilege baked in**. Whether that CLI can actually reach a daemon is a
+deployment decision; see [Docker-in-Docker](#docker-in-docker) below.
+
+The plugins are called out because they ship separately from the Docker CLI package,
+and without them `docker compose` and `docker buildx` are both *"unknown command"* —
+the `cli-plugins` directory doesn't exist at all. They're pure client-side binaries
+that talk to whatever socket the deployment chose, so they add no daemon and no
+privilege of their own.
 
 ### `kubectl` — making a cluster legible
 
@@ -225,8 +241,8 @@ with secrets or private data on it.
 
 ## Docker-in-Docker
 
-The devbox ships the Docker **CLI only** — no daemon runs in the container, and no
-privilege is baked into the image. That's deliberate: *how* the CLI reaches a
+The devbox ships the Docker **client only** (CLI plus the `buildx` and `compose`
+plugins) — no daemon runs in the container, and no privilege is baked into the image. That's deliberate: *how* the CLI reaches a
 daemon is a security trade-off the deployment recipe makes, not the image.
 
 There are two common shapes, and the
