@@ -105,10 +105,11 @@ maxSpawnDepth: 1              # how deep spawned children may themselves spawn
 scheduleMutationEnabled: false
 hooksMcpEnabled: false        # + the trigger tools (list/set/remove/run_trigger)
 
-# --- External Management API (/mcp) — file-only, no env equivalent ---
+# --- External Management API (/mcp) — file-first; only trustedProxies has an env var ---
 managementApi:
   instanceId: my-paddock                    # binds `pdk_<instanceId>_…` tokens here
   publicUrl: https://paddock.example.com    # required once `clients` is set
+  trustedProxies: [172.18.0.0/16]           # whose X-Forwarded-Proto the guard believes
   clients:
     my-laptop:
       auth:
@@ -159,11 +160,46 @@ arguments and the exact gating matrix.
 | `scheduleMutationEnabled` | `PADDOCK_SCHEDULE_MUTATION` | `false` | Construct herdctl's fleet manager with `allowScheduleMutation`, permitting its runtime schedule add/remove APIs; off (the default) makes them throw. It is **not** what gates the self-MCP trigger tools (that's `hooksMcpEnabled`), and triggers declared in `project.yaml` are armed regardless. |
 | `hooksMcpEnabled` | `PADDOCK_HOOKS_MCP` | `false` | Advertise the unified trigger-management MCP tools — `list_triggers`, `set_trigger`, `remove_trigger`, `run_trigger`. (There are no `list_hooks`/`set_hook`/`remove_hook` tools; Epic T collapsed the separate hook and schedule verbs into this one family, and kept this flag as their gate.) Only honoured alongside the self-MCP write tools; a per-project `hooksMcpEnabled` override wins at dispatch. |
 
-### `managementApi` — the one file-only block
+### `managementApi` — the file-first block
 
-The external [Management API](/reference/mcp/) is configured **only** here. There
-is no `PADDOCK_MANAGEMENT_*` environment equivalent, because a list of clients
-each with its own scope doesn't express well as a scalar.
+The external [Management API](/reference/mcp/) is configured **here rather than in
+the environment**, because a list of clients each with its own scope doesn't
+express well as a scalar.
+
+The one exception is **`trustedProxies`** — a flat list, and the thing a container
+deployment most often needs to set per-environment. It also reads
+`PADDOCK_MANAGEMENT_TRUSTED_PROXIES`, which **wins over the file**; that is the
+only `PADDOCK_MANAGEMENT_*` variable Paddock reads.
+
+`trustedProxies` names the peers whose `X-Forwarded-Proto: https` the `/mcp`
+plaintext guard believes. The peer is the socket address, so a client can't forge
+it — but a client also can't vouch for its own transport, which is why the list
+exists ([#474](https://github.com/edspencer/paddock/issues/474), shipped in
+0.48.1):
+
+```yaml
+managementApi:
+  # Recommended: name your TLS terminator, and only its forwarded scheme is
+  # believed. This is what makes the guard a control rather than a footgun-preventer.
+  trustedProxies: [172.18.0.5]
+
+  # The DEFAULT, if you omit the key entirely — equivalent to:
+  #   trustedProxies: [loopback, linklocal, uniquelocal]
+  # Loopback plus the whole private address space. Keeps a TLS-terminating
+  # sidecar working, but can't tell your proxy from any other private host, so
+  # believing a forwarded scheme under it logs a warning once per peer.
+  #
+  # Strictest — believe no forwarded scheme at all; reach /mcp over real TLS or
+  # over loopback:
+  #   trustedProxies: [none]
+  #
+  # The opposite, `all`, restores the pre-#474 behaviour and boots with a loud
+  # warning. Only for a network you fully control.
+```
+
+A comma- or newline-delimited string works in place of the array, and an entry
+that is not a valid IP, CIDR or preset is dropped with a logged error rather than
+failing startup — dropping one can only make the guard stricter.
 
 The one thing that never goes in this file is the **token itself**. This file is
 git-tracked (and editable from the instance Config screen), so a client's
