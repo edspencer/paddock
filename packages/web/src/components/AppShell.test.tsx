@@ -7,11 +7,18 @@ import { markSeenLocally, resetLastSeenForTests } from "../lib/lastSeen";
 import type { Project } from "../lib/types";
 
 let mockProjects: Project[] = [];
+/**
+ * The ROOT workspace (key `""`). Never a member of `projects` — that list is
+ * its children — but it IS the sidebar's other badge-bearing row (#553), so it
+ * is mocked independently.
+ */
+let mockRoot: Project | null = null;
 let mockLoading = false;
 const upsert = vi.fn();
 vi.mock("../lib/projects-context", () => ({
   useProjects: () => ({
     projects: mockProjects,
+    rootWorkspace: mockRoot,
     loading: mockLoading,
     error: null,
     refresh: vi.fn(),
@@ -61,6 +68,7 @@ function renderShell(initial = "/") {
 
 beforeEach(() => {
   mockProjects = [];
+  mockRoot = null;
   mockLoading = false;
   upsert.mockReset();
   activeInfos = new Map();
@@ -295,6 +303,139 @@ describe("AppShell: per-project badges (#161)", () => {
     setActiveInfos([]);
     expect(within(link()).queryByLabelText(/in flight/i)).not.toBeInTheDocument();
     expect(within(link()).getByLabelText(/1 unread reply/i)).toHaveTextContent("1");
+  });
+});
+
+/**
+ * The ROOT workspace's Home link carries the SAME badge as a project row (#553).
+ *
+ * The root is a workspace whose key is the empty string, so the interesting part
+ * is not "does a number render" but "does the empty key survive the whole path"
+ * — payload → badge map → lookup. Every falsy guard along that path would show
+ * up here as a missing badge, which is the failure mode this suite exists for.
+ */
+describe("AppShell: the root workspace's Home badge (#553)", () => {
+  const FUTURE = new Date(Date.now() + 60_000).toISOString();
+  const home = () => screen.getByRole("link", { name: /^Home/ });
+
+  it("counts the root workspace's unread replies on the Home link", () => {
+    mockRoot = makeProject({
+      slug: "", // the ROOT key — a real key, not an absent one
+      name: "Instance Root",
+      chatTurns: [
+        { sessionId: "r1", lastTurnCompletedAt: FUTURE },
+        { sessionId: "r2", lastTurnCompletedAt: FUTURE },
+      ],
+    });
+    renderShell("/projects/alpha/chat"); // off Home, so nothing auto-clears
+    expect(within(home()).getByLabelText(/2 unread replies/i)).toHaveTextContent("2");
+  });
+
+  it("uses the IDENTICAL badge markup as a project row (same component, same classes)", () => {
+    mockRoot = makeProject({
+      slug: "",
+      name: "Instance Root",
+      chatTurns: [{ sessionId: "r1", lastTurnCompletedAt: FUTURE }],
+    });
+    mockProjects = [
+      makeProject({
+        slug: "a",
+        name: "Alpha",
+        group: "homelab",
+        chatTurns: [{ sessionId: "s1", lastTurnCompletedAt: FUTURE }],
+      }),
+    ];
+    renderShell("/projects/alpha/chat");
+    const rootPill = within(home()).getByLabelText(/1 unread reply/i);
+    const projectPill = within(screen.getByRole("link", { name: /Alpha/ })).getByLabelText(
+      /1 unread reply/i,
+    );
+    // Byte-identical class list: this is a reuse assertion, and it fails the
+    // moment someone forks a bespoke root indicator.
+    expect(rootPill.className).toBe(projectPill.className);
+    expect(rootPill.tagName).toBe(projectPill.tagName);
+  });
+
+  it("shows the root's in-flight turns, keyed on the EMPTY workspace key", () => {
+    // The WS `chat:active` set carries the workspace key; the root's is `""`.
+    // A falsy check anywhere between here and the badge drops this entirely.
+    activeInfos = new Map([["r1", ""]]);
+    mockRoot = makeProject({ slug: "", name: "Instance Root" });
+    renderShell("/projects/alpha/chat");
+    expect(within(home()).getByLabelText(/1 chat in flight/i)).toHaveTextContent("1");
+  });
+
+  it("renders NO badge at all when the root workspace has no chats", () => {
+    mockRoot = makeProject({ slug: "", name: "Instance Root", chatTurns: [] });
+    renderShell("/projects/alpha/chat");
+    expect(within(home()).queryByLabelText(/unread/i)).not.toBeInTheDocument();
+    expect(within(home()).queryByLabelText(/in flight/i)).not.toBeInTheDocument();
+    // Not a "0" pill — a quiet workspace shows nothing.
+    expect(home()).toHaveTextContent(/^Home$/);
+  });
+
+  it("renders no badge before the root workspace has loaded", () => {
+    mockRoot = null;
+    renderShell("/projects/alpha/chat");
+    expect(home()).toHaveTextContent(/^Home$/);
+  });
+
+  it("clears the root's contribution once its chat has been seen", () => {
+    mockRoot = makeProject({
+      slug: "",
+      name: "Instance Root",
+      chatTurns: [
+        { sessionId: "r1", lastTurnCompletedAt: FUTURE },
+        { sessionId: "r2", lastTurnCompletedAt: FUTURE },
+      ],
+    });
+    markSeenLocally("r1", Date.now() + 120_000);
+    renderShell("/projects/alpha/chat");
+    expect(within(home()).getByLabelText(/1 unread reply/i)).toHaveTextContent("1");
+  });
+
+  it("keeps root and project counts separate — neither leaks into the other", () => {
+    activeInfos = new Map([
+      ["r9", ""], // root turn running
+      ["s9", "a"], // project turn running
+    ]);
+    mockRoot = makeProject({
+      slug: "",
+      name: "Instance Root",
+      chatTurns: [{ sessionId: "r1", lastTurnCompletedAt: FUTURE }],
+    });
+    mockProjects = [
+      makeProject({
+        slug: "a",
+        name: "Alpha",
+        group: "homelab",
+        chatTurns: [
+          { sessionId: "s1", lastTurnCompletedAt: FUTURE },
+          { sessionId: "s2", lastTurnCompletedAt: FUTURE },
+        ],
+      }),
+    ];
+    renderShell("/projects/alpha/chat");
+    expect(within(home()).getByLabelText(/1 unread reply/i)).toHaveTextContent("1");
+    expect(within(home()).getByLabelText(/1 chat in flight/i)).toHaveTextContent("1");
+    const alpha = screen.getByRole("link", { name: /Alpha/ });
+    expect(within(alpha).getByLabelText(/2 unread replies/i)).toHaveTextContent("2");
+    expect(within(alpha).getByLabelText(/1 chat in flight/i)).toHaveTextContent("1");
+  });
+
+  it("does not put the root workspace into the sidebar project list or its count", () => {
+    mockRoot = makeProject({
+      slug: "",
+      name: "Instance Root",
+      chatTurns: [{ sessionId: "r1", lastTurnCompletedAt: FUTURE }],
+    });
+    mockProjects = [makeProject({ slug: "a", name: "Alpha", group: "homelab" })];
+    renderShell("/projects/alpha/chat");
+    // The badge is on Home; the root is still not a row in the list, and the
+    // "PROJECTS n" count still counts children only.
+    expect(screen.queryByRole("link", { name: /Instance Root/ })).not.toBeInTheDocument();
+    const count = screen.getByRole("link", { name: "Projects" }).parentElement?.lastElementChild;
+    expect(count).toHaveTextContent("1");
   });
 });
 

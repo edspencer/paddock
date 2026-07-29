@@ -44,21 +44,28 @@ describe("api: reads", () => {
     expect(res.models).toHaveLength(1);
   });
 
-  it("listProjects unwraps { projects } to the array", async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ projects: [makeProject({ slug: "a" })] }));
+  it("listProjects returns the children AND the root from one payload", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        projects: [makeProject({ slug: "a" })],
+        root: makeProject({ slug: "", name: "Instance Root" }),
+      }),
+    );
     const res = await api.listProjects();
-    expect(res).toHaveLength(1);
-    expect(res[0].slug).toBe("a");
+    expect(call()[0]).toBe("/api/projects");
+    expect(res.projects).toHaveLength(1);
+    expect(res.projects[0].slug).toBe("a");
+    // The root rides along on the SAME response so the sidebar's Home badge and
+    // a project row's badge fold one payload, not two (#553). Its key is `""`,
+    // which is why this asserts on the value and not on truthiness.
+    expect(res.root?.slug).toBe("");
+    expect(res.root?.name).toBe("Instance Root");
   });
 
-  it("getRootWorkspace hits the root mount, not a slug path", async () => {
-    fetchMock.mockResolvedValue(
-      jsonResponse({ project: makeProject({ slug: "" }), changelog: "", chats: [] }),
-    );
-    await api.getRootWorkspace();
-    // An empty workspace key cannot ride in a URL path segment, so the same
-    // handlers are mounted twice — `/api/root` is the root's half of that seam.
-    expect(call()[0]).toBe("/api/root");
+  it("listProjects tolerates a payload with no root (older server / unreadable record)", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ projects: [] }));
+    const res = await api.listProjects();
+    expect(res.root).toBeNull();
   });
 
   it("getProjectDetail hits the encoded slug path", async () => {

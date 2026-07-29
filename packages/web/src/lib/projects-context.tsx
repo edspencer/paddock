@@ -17,10 +17,13 @@ interface ProjectsContextValue {
   /**
    * The ROOT workspace — the instance's own directory.
    *
-   * Always exists, so this is never null and there is no loading-vs-absent
-   * distinction to route on. Deliberately NOT folded into `projects`: that list
-   * is the root's children (`GET /api/projects` enumerates subdirectories), and
-   * the root belongs in neither the grid nor the sidebar project list.
+   * Always exists, so there is no loading-vs-absent distinction to route on.
+   * Deliberately NOT folded into `projects`: that list is the root's children
+   * (`GET /api/projects` enumerates subdirectories), and the root belongs in
+   * neither the grid nor the sidebar project list. It rides on the SAME
+   * response though, carrying the same `chatTurns` field as its siblings — so
+   * the sidebar's Home badge and a project row's badge are one computation over
+   * one payload, not two implementations over two endpoints (#553).
    *
    * `null` here means only "the first fetch hasn't landed yet".
    */
@@ -46,15 +49,20 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     setError(null);
     try {
-      setProjects(await api.listProjects());
+      // One call for both: the children list and the root workspace, the root
+      // enriched with the same `chatTurns` the sidebar badge folds. This used to
+      // be two requests, the second a full `GET /api/root` detail fetch whose
+      // `changelog` and `chats` were thrown away on arrival.
+      const { projects, root } = await api.listProjects();
+      setProjects(projects);
+      // Keep the last-known root on a null (unreadable record) rather than
+      // blanking the sidebar; `null` still means "nothing has landed yet".
+      if (root) setRootWorkspace(root);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load projects");
     } finally {
       setLoading(false);
     }
-    // The root workspace rides along but is kept separate. Its failure is not
-    // fatal to the children list, so it is fetched outside the try above.
-    setRootWorkspace(await api.getRootWorkspace().catch(() => null));
   }, []);
 
   const upsert = useCallback((p: Project) => {

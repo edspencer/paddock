@@ -142,6 +142,14 @@ root and `/api/projects/:slug` for a project — from one set of handlers, becau
 an empty key cannot ride in a URL path segment. Root and project therefore run
 literally the same code, rather than two implementations kept in step by hand.
 
+The list route is the exception that proves the shape: `GET /api/projects`
+enumerates the root's **children**, so the root cannot be one of them. It rides
+the same response as a sibling `root` field instead, carrying the identical
+`chatTurns` unread signal each child carries. That is what lets the sidebar's
+**Home** link show the same unread / in-flight badge a project row shows — one
+payload, folded by one function, with the root's counts keyed on `""` in the
+same map rather than computed by a parallel root-only path.
+
 The one place the empty key cannot be used directly is the **herdctl agent
 namespace**, which requires non-empty names satisfying two different patterns.
 There the key is encoded as `_root` (so the root keeper is `keeper-_root`), which

@@ -48,9 +48,12 @@ test("front door + projects grid: no horizontal overflow; nav drawer opens and c
   // (they live on root Home now), so the drawer's own "Home" nav link is what
   // tracks the slide — and unlike the old "New Project" button it is unambiguous:
   // there is exactly one of it, and it is only ever in the drawer.
+  // Prefix-matched, not exact: Home is the ROOT workspace's row and folds its
+  // unread/in-flight counts into its accessible name (#553), exactly as a
+  // project row does ("Alpha 2 unread replies").
   const navDrawerAction = page
     .getByRole("complementary")
-    .getByRole("link", { name: "Home", exact: true });
+    .getByRole("link", { name: /^Home/ });
   await expect(navDrawerAction).not.toBeInViewport();
 
   // Tapping the hamburger slides the drawer in → its actions enter the viewport.
@@ -170,7 +173,7 @@ test("mobile screenshots (visual capture)", async ({ page }) => {
   await page.getByRole("button", { name: /Open menu/i }).tap();
   // Let the 200ms slide-in settle so the capture isn't mid-transition.
   await expect(
-    page.getByRole("complementary").getByRole("link", { name: "Home", exact: true }),
+    page.getByRole("complementary").getByRole("link", { name: /^Home/ }),
   ).toBeInViewport();
   await page.waitForTimeout(300);
   await page.screenshot({ path: `${SHOTS}02-nav-drawer.png` });

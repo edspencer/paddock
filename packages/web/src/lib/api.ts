@@ -33,7 +33,7 @@ import {
   type TriggersResponse,
   type UpdateProjectInput,
 } from "./types";
-import { apiBase, ROOT_KEY } from "../routes/ProjectView/urls";
+import { apiBase } from "../routes/ProjectView/urls";
 
 const BASE = import.meta.env.VITE_API_BASE ?? "";
 
@@ -261,19 +261,22 @@ export const api = {
     return commands;
   },
 
-  async listProjects(): Promise<Project[]> {
-    const { projects } = await req<{ projects: Project[] }>("/api/projects");
-    return projects;
-  },
-
   /**
-   * The ROOT workspace. Always exists — it is the instance's own directory — so
-   * this cannot be null and there is nothing to create. It has no entry in
-   * `GET /api/projects`, which enumerates the root's CHILDREN.
+   * The sidebar's whole world in one call: the root workspace's CHILDREN plus
+   * the ROOT workspace itself.
+   *
+   * The root is deliberately NOT a member of `projects` (that list is its
+   * children, and the root belongs in neither the grid nor the sidebar project
+   * list) but it rides on the same response, carrying the same `chatTurns`
+   * field — that is what lets Home and a project row share one badge
+   * computation instead of two (#553). `root` is null only if the server could
+   * not read the root record.
    */
-  async getRootWorkspace(): Promise<Project> {
-    const { project } = await req<ProjectDetail>(apiBase(ROOT_KEY));
-    return project;
+  async listProjects(): Promise<{ projects: Project[]; root: Project | null }> {
+    const { projects, root } = await req<{ projects: Project[]; root?: Project | null }>(
+      "/api/projects",
+    );
+    return { projects, root: root ?? null };
   },
 
   /** Enriched single-workspace payload: metadata + changelog + its chats. */
