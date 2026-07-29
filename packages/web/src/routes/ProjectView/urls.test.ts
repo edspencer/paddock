@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  ROOT_SLUG,
+  ROOT_KEY,
   decodeFilesSubpath,
   deriveView,
   gridUrl,
@@ -10,16 +10,16 @@ import {
 
 /**
  * The URL seam that lets one `ProjectView` serve both a project and the ROOT
- * project (issue #516 Phase 3). These are pure string functions, so the whole
+ * workspace (issue #516 Phase 3). These are pure string functions, so the whole
  * generalisation is testable here rather than through the component.
  *
  * The project cases are the pre-#516 behaviour, asserted unchanged — the
- * generalisation must be invisible to an instance with no root project.
+ * generalisation must be invisible from inside a project.
  */
 describe("viewBase / homeUrl", () => {
   it("gives a project a namespaced base and the root a bare one", () => {
     expect(viewBase("paddock")).toBe("/projects/paddock");
-    expect(viewBase(ROOT_SLUG)).toBe("");
+    expect(viewBase(ROOT_KEY)).toBe("");
   });
 
   it("points Home at /home in a project and at `/` at the root", () => {
@@ -65,14 +65,19 @@ describe("deriveView — the root", () => {
     ["/settings", "settings"],
     ["/triggers", "triggers"],
     ["/hooks", "triggers"],
+    // The root's CHILDREN tab — the projects grid.
+    ["/projects", "projects"],
+    ["/projects/", "projects"],
   ])("%s -> %s", (pathname, expected) => {
     expect(deriveView(pathname, "")).toBe(expected);
   });
 
   it("does not mistake a project URL for a root tab", () => {
     // With base "" every path is its own tail, so `/projects/...` must not
-    // accidentally match one of the root's prefixes.
+    // accidentally match one of the root's prefixes — including the children
+    // tab, which is why `/projects` is matched EXACTLY and not by prefix.
     expect(deriveView("/projects/paddock/files", "")).toBe("home");
+    expect(deriveView("/projects/paddock", "")).toBe("home");
   });
 });
 
@@ -92,11 +97,10 @@ describe("decodeFilesSubpath", () => {
 });
 
 describe("gridUrl", () => {
-  it("keeps the grid at `/` until a root project takes that slot", () => {
-    // Load-bearing for the migration promise: an instance with no root project
-    // must behave exactly as before, and `/` is the URL every existing link,
-    // bookmark and E2E assertion already uses for the grid.
-    expect(gridUrl(false)).toBe("/");
-    expect(gridUrl(true)).toBe("/projects");
+  it("always points at `/projects` — the root workspace owns `/`", () => {
+    // The grid is the root's CHILDREN tab, not the front door. The root
+    // workspace always exists, so there is no longer a case where the grid
+    // takes over `/` and no flag to decide it on.
+    expect(gridUrl()).toBe("/projects");
   });
 });

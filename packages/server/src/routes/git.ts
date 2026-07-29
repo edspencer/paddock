@@ -8,7 +8,7 @@ import { sendProjectError } from "../route-errors.js";
 import type { RouteCtx } from "../route-context.js";
 
 export function registerGitRoutes(app: FastifyInstance, ctx: RouteCtx): void {
-  const { git, githubAuth, projects } = ctx;
+  const { git, githubAuth } = ctx;
 
   // --- git (backing store): fleet-level remote + connection state --------
   app.get(
@@ -148,13 +148,21 @@ export function registerGitRoutes(app: FastifyInstance, ctx: RouteCtx): void {
       return { ok: true };
     },
   );
+}
+
+/**
+ * The workspace-scoped git surface: registered once per workspace mount (root
+ * and per project) — see `workspace-mount.ts`. Paths are relative to the mount.
+ */
+export function registerGitWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx): void {
+  const { git, projects } = ctx;
 
   // --- git (backing-store capability, phase 1: read surface) -------------
   // Uncommitted changes confined to this project's subtree. Returns
   // `{ repo: false }` when the projects dir isn't a git working tree, so the
   // UI hides the git affordance entirely. Never throws on git errors.
   app.get<{ Params: { slug: string } }>(
-    "/api/projects/:slug/git/status",
+    "/git/status",
     {
       schema: {
         tags: ["Git"],
@@ -191,7 +199,7 @@ export function registerGitRoutes(app: FastifyInstance, ctx: RouteCtx): void {
   // Unified diff for the project's tracked changes (working tree vs HEAD), or a
   // single file via ?file=. Untracked files are reported by /git/status instead.
   app.get<{ Params: { slug: string }; Querystring: { file?: string } }>(
-    "/api/projects/:slug/git/diff",
+    "/git/diff",
     {
       schema: {
         tags: ["Git"],
@@ -233,7 +241,7 @@ export function registerGitRoutes(app: FastifyInstance, ctx: RouteCtx): void {
   // Commit this project's pending changes (phase 2). `committed: false` when
   // there was nothing to commit. Push is a separate explicit action (/api/git/push).
   app.post<{ Params: { slug: string }; Body: { message?: string; files?: string[] } }>(
-    "/api/projects/:slug/git/commit",
+    "/git/commit",
     {
       schema: {
         tags: ["Git"],

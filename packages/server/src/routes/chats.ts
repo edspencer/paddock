@@ -34,7 +34,16 @@ import {
 } from "../chat-dto.js";
 import type { RouteCtx } from "../route-context.js";
 
-export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
+/**
+ * Workspace-scoped chat routes: paths are declared RELATIVE to the workspace
+ * (e.g. `/chats/:sessionId`), and this plugin is mounted TWICE — once at
+ * `/api/root` and once at `/api/projects/:slug` (see `workspace-mount.ts`).
+ *
+ * Handlers still read `req.params.slug`; the root mount injects `slug: ""` in an
+ * `onRequest` hook, which runs before params validation, so the `required:
+ * ["slug"]` schemas below keep validating unchanged on both mounts.
+ */
+export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx): void {
   const {
     projects,
     herdctl,
@@ -55,7 +64,7 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
   // --- chats (sessions) --------------------------------------------------
 
   app.get<{ Params: { slug: string } }>(
-    "/api/projects/:slug/chats",
+    "/chats",
     {
       schema: {
         tags: ["Chats"],
@@ -129,7 +138,7 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
   // sentinel session id below (a plain UUID can't contain "__", so it can never
   // alias a real chat's read-state).
   app.get<{ Params: { slug: string }; Querystring: { limit?: string } }>(
-    "/api/projects/:slug/runs",
+    "/runs",
     {
       schema: {
         tags: ["Chats"],
@@ -193,7 +202,7 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
   // digest). Mirrors the chat-seen endpoint: optional `{ when }`, defaults to now,
   // monotonic in the store (an older `when` is a no-op).
   app.post<{ Params: { slug: string }; Body: { when?: number } }>(
-    "/api/projects/:slug/runs/seen",
+    "/runs/seen",
     {
       schema: {
         tags: ["Chats"],
@@ -246,7 +255,7 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
   // and chat-list payloads so the ProjectView renders immediately and the client
   // fills rings in progressively. Sessions with no usage data are omitted.
   app.get<{ Params: { slug: string } }>(
-    "/api/projects/:slug/chats/usage",
+    "/chats/usage",
     {
       schema: {
         tags: ["Chats"],
@@ -290,7 +299,7 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
   );
 
   app.post<{ Params: { slug: string } }>(
-    "/api/projects/:slug/chats",
+    "/chats",
     {
       schema: {
         tags: ["Chats"],
@@ -334,7 +343,7 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
 
   // Messages of a specific chat (session) within a project.
   app.get<{ Params: { slug: string; sessionId: string } }>(
-    "/api/projects/:slug/chats/:sessionId/messages",
+    "/chats/:sessionId/messages",
     {
       schema: {
         tags: ["Chats"],
@@ -417,7 +426,7 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
   // carried on the enriched tool call; it resolves to the sub-agent's own
   // transcript under `.chats/<sessionId>/subagents/`.
   app.get<{ Params: { slug: string; sessionId: string; toolUseId: string } }>(
-    "/api/projects/:slug/chats/:sessionId/subagents/:toolUseId/messages",
+    "/chats/:sessionId/subagents/:toolUseId/messages",
     {
       schema: {
         tags: ["Chats"],
@@ -462,7 +471,7 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
   // before any new turn streams a fresh usage value. `usage` is null when the
   // transcript has no usage data.
   app.get<{ Params: { slug: string; sessionId: string } }>(
-    "/api/projects/:slug/chats/:sessionId/context",
+    "/chats/:sessionId/context",
     {
       schema: {
         tags: ["Chats"],
@@ -505,7 +514,7 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
 
   // Delete a chat (session) within a project: removes its transcript JSONL.
   app.delete<{ Params: { slug: string; sessionId: string } }>(
-    "/api/projects/:slug/chats/:sessionId",
+    "/chats/:sessionId",
     {
       schema: {
         tags: ["Chats"],
@@ -551,7 +560,7 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
   // by @herdctl/core's fleet.setSessionName (issue #10). A null/empty name
   // clears any custom name.
   app.patch<{ Params: { slug: string; sessionId: string }; Body: { name?: string | null } }>(
-    "/api/projects/:slug/chats/:sessionId",
+    "/chats/:sessionId",
     {
       schema: {
         tags: ["Chats"],
@@ -604,7 +613,7 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
     Params: { slug: string; sessionId: string };
     Body: { name?: string; fromUuid?: string };
   }>(
-    "/api/projects/:slug/chats/:sessionId/fork",
+    "/chats/:sessionId/fork",
     {
       schema: {
         tags: ["Chats"],
@@ -674,7 +683,7 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
   // up (recoverable). Rolls back the CONVERSATION only — real side-effects of the
   // reverted turns are NOT undone (the UI warns). Returns the count dropped.
   app.post<{ Params: { slug: string; sessionId: string }; Body: { uuid?: string } }>(
-    "/api/projects/:slug/chats/:sessionId/revert",
+    "/chats/:sessionId/revert",
     {
       schema: {
         tags: ["Chats"],
@@ -722,7 +731,7 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
   // persisted per-chat flag — the transcript is untouched and the chat stays
   // openable/resumable/forkable; it just moves into the Archived section.
   app.post<{ Params: { slug: string; sessionId: string }; Body: { archived?: boolean } }>(
-    "/api/projects/:slug/chats/:sessionId/archive",
+    "/chats/:sessionId/archive",
     {
       schema: {
         tags: ["Chats"],
@@ -776,7 +785,7 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
   // persisted per-chat flag — orthogonal to archiving; a starred chat just sorts
   // to the top of its population (active or Archived). Fires no lifecycle event.
   app.post<{ Params: { slug: string; sessionId: string }; Body: { starred?: boolean } }>(
-    "/api/projects/:slug/chats/:sessionId/star",
+    "/chats/:sessionId/star",
     {
       schema: {
         tags: ["Chats"],
@@ -827,7 +836,7 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
   // to now. Mirrors the archive toggle's shape/validation. Monotonic in the
   // store (an older `when` is a no-op), so it never resurrects a stale unread.
   app.post<{ Params: { slug: string; sessionId: string }; Body: { when?: number } }>(
-    "/api/projects/:slug/chats/:sessionId/seen",
+    "/chats/:sessionId/seen",
     {
       schema: {
         tags: ["Chats"],
@@ -884,7 +893,7 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
   // shape (`{ unread?: boolean }`, defaults true). Clearing it is equivalent to
   // marking seen; the client's toggle uses `/seen` for read and this for unread.
   app.post<{ Params: { slug: string; sessionId: string }; Body: { unread?: boolean } }>(
-    "/api/projects/:slug/chats/:sessionId/unread",
+    "/chats/:sessionId/unread",
     {
       schema: {
         tags: ["Chats"],
@@ -941,7 +950,7 @@ export function registerChatRoutes(app: FastifyInstance, ctx: RouteCtx): void {
     Params: { slug: string; sessionId: string };
     Body: { name?: string; slug?: string; group?: string; summary?: string; domain?: string[] };
   }>(
-    "/api/projects/:slug/chats/:sessionId/promote",
+    "/chats/:sessionId/promote",
     {
       schema: {
         tags: ["Chats"],

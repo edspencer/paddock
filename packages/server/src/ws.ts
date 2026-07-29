@@ -197,7 +197,9 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
     // no chat to drive, so there is nothing to route. (Before #516 Phase 6 this
     // fell back to the scratch slug, which is no longer an addressable chat.)
     const slug = keeperSlugFromAgent(entry.agent);
-    if (!slug) return;
+    // `null` = not a keeper. `""` = the ROOT workspace's own key, so this must
+    // stay an explicit null check or every root chat's wake is dropped.
+    if (slug === null) return;
     let resolvedSession: string | null = entry.sessionId ?? null;
     const turn: TurnHandle = hub.startTurn(slug, null, entry.sessionId);
     // #353: DON'T stamp a creation origin here. A session wake is a *resume*, not
@@ -436,8 +438,9 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
      * keeper session to recover, so they're ignored.
      */
     const onChatContinue = async (msg: ChatContinueMessage): Promise<void> => {
+      // `""` addresses the ROOT workspace, so only a MISSING key is a no-op.
       const slug = msg.payload.projectSlug ?? msg.payload.target;
-      if (!slug) return;
+      if (slug === undefined || slug === null) return;
       const sessionId = msg.payload.sessionId;
       if (!sessionId) return;
       let project: Awaited<ReturnType<typeof deps.projects.get>>;
@@ -525,8 +528,9 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
 
     const onSetQueue = async (msg: ChatSetQueueMessage): Promise<void> => {
       if (!deps.queuedMessage) return; // feature disabled
+      // `""` addresses the ROOT workspace, so only a MISSING key is a no-op.
       const slug = (msg.payload.projectSlug ?? msg.payload.target) as string | undefined;
-      if (!slug) return;
+      if (slug === undefined || slug === null) return;
       const sessionId = msg.payload.sessionId ?? null;
       const text = msg.payload.text ?? null;
       // Every chat belongs to a project keeper (#516 Phase 6 retired scratch).

@@ -32,6 +32,7 @@ import {
   type TriggersResponse,
   type UpdateProjectInput,
 } from "./types";
+import { apiBase, ROOT_KEY } from "../routes/ProjectView/urls";
 
 const BASE = import.meta.env.VITE_API_BASE ?? "";
 
@@ -109,7 +110,7 @@ export const api = {
    * the server's now.
    */
   async markChatSeen(slug: string, sessionId: string, when?: number): Promise<void> {
-    const path = `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}/seen`;
+    const path = `${apiBase(slug)}/chats/${encodeURIComponent(sessionId)}/seen`;
     await req<{ ok: boolean; lastSeen: number }>(path, {
       method: "POST",
       body: JSON.stringify(when !== undefined ? { when } : {}),
@@ -122,7 +123,7 @@ export const api = {
    * `unread:false` is equivalent to marking it seen.
    */
   async markChatUnread(slug: string, sessionId: string, unread: boolean): Promise<void> {
-    const path = `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}/unread`;
+    const path = `${apiBase(slug)}/chats/${encodeURIComponent(sessionId)}/unread`;
     await req<{ ok: boolean; unread: boolean }>(path, {
       method: "POST",
       body: JSON.stringify({ unread }),
@@ -137,7 +138,7 @@ export const api = {
    */
   async projectRuns(slug: string, limit?: number): Promise<ProjectRuns> {
     const q = limit !== undefined ? `?limit=${encodeURIComponent(limit)}` : "";
-    return req<ProjectRuns>(`/api/projects/${encodeURIComponent(slug)}/runs${q}`);
+    return req<ProjectRuns>(`${apiBase(slug)}/runs${q}`);
   },
 
   /**
@@ -147,7 +148,7 @@ export const api = {
    */
   async markRunsSeen(slug: string, when?: number): Promise<void> {
     await req<{ ok: boolean; lastSeen: number }>(
-      `/api/projects/${encodeURIComponent(slug)}/runs/seen`,
+      `${apiBase(slug)}/runs/seen`,
       {
         method: "POST",
         body: JSON.stringify(when !== undefined ? { when } : {}),
@@ -237,7 +238,7 @@ export const api = {
     for (const f of files) form.append("files", f, f.name);
     // Must NOT set content-type here — the browser sets the multipart boundary.
     const res = await fetch(
-      `${BASE}/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}/upload`,
+      `${BASE}${apiBase(slug)}/chats/${encodeURIComponent(sessionId)}/upload`,
       { method: "POST", body: form },
     );
     if (!res.ok) {
@@ -260,7 +261,7 @@ export const api = {
    */
   async projectCommands(slug: string): Promise<SlashCommand[]> {
     const { commands } = await req<{ commands: SlashCommand[] }>(
-      `/api/projects/${encodeURIComponent(slug)}/commands`,
+      `${apiBase(slug)}/commands`,
     );
     return commands;
   },
@@ -271,27 +272,18 @@ export const api = {
   },
 
   /**
-   * The root project (issue #516), or `null` when this instance has none. Its
-   * own endpoint because `GET /api/projects` enumerates SUBdirectories of the
-   * projects root, and the root's record sits at the root itself.
+   * The ROOT workspace. Always exists — it is the instance's own directory — so
+   * this cannot be null and there is nothing to create. It has no entry in
+   * `GET /api/projects`, which enumerates the root's CHILDREN.
    */
-  async getRootProject(): Promise<Project | null> {
-    const { project } = await req<{ project: Project | null }>("/api/root-project");
+  async getRootWorkspace(): Promise<Project> {
+    const { project } = await req<ProjectDetail>(apiBase(ROOT_KEY));
     return project;
   },
 
-  /** Create the root project — the opt-in that turns `/` into root Home (#516). */
-  async createRootProject(input: { name?: string; summary?: string } = {}): Promise<Project> {
-    const { project } = await req<{ project: Project }>("/api/root-project", {
-      method: "POST",
-      body: JSON.stringify(input),
-    });
-    return project;
-  },
-
-  /** Enriched single-project payload: metadata + changelog + its chats. */
+  /** Enriched single-workspace payload: metadata + changelog + its chats. */
   async getProjectDetail(slug: string): Promise<ProjectDetail> {
-    return req<ProjectDetail>(`/api/projects/${encodeURIComponent(slug)}`);
+    return req<ProjectDetail>(`${apiBase(slug)}`);
   },
 
   async createProject(input: CreateProjectInput): Promise<Project> {
@@ -305,7 +297,7 @@ export const api = {
   /** Edit project metadata (status, summary, domain, name, visibility, model). */
   async updateProject(slug: string, patch: UpdateProjectInput): Promise<Project> {
     const { project } = await req<{ project: Project }>(
-      `/api/projects/${encodeURIComponent(slug)}`,
+      `${apiBase(slug)}`,
       { method: "PATCH", body: JSON.stringify(patch) },
     );
     return project;
@@ -319,7 +311,7 @@ export const api = {
    */
   async promoteProject(slug: string, repo: string): Promise<Project> {
     const { project } = await req<{ project: Project }>(
-      `/api/projects/${encodeURIComponent(slug)}/promote`,
+      `${apiBase(slug)}/promote`,
       { method: "POST", body: JSON.stringify({ repo }) },
     );
     return project;
@@ -327,7 +319,7 @@ export const api = {
 
   /** Delete a project (dir + keeper agent). */
   async deleteProject(slug: string): Promise<void> {
-    await req<{ ok: boolean }>(`/api/projects/${encodeURIComponent(slug)}`, {
+    await req<{ ok: boolean }>(`${apiBase(slug)}`, {
       method: "DELETE",
     });
   },
@@ -335,7 +327,7 @@ export const api = {
   /** Delete a project chat (session transcript). */
   async deleteProjectChat(slug: string, sessionId: string): Promise<void> {
     await req<{ ok: boolean }>(
-      `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}`,
+      `${apiBase(slug)}/chats/${encodeURIComponent(sessionId)}`,
       { method: "DELETE" },
     );
   },
@@ -343,7 +335,7 @@ export const api = {
   /** Rename a project chat (set/clear its custom display name). */
   async renameProjectChat(slug: string, sessionId: string, name: string | null): Promise<void> {
     await req<{ ok: boolean }>(
-      `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}`,
+      `${apiBase(slug)}/chats/${encodeURIComponent(sessionId)}`,
       { method: "PATCH", body: JSON.stringify({ name }) },
     );
   },
@@ -351,7 +343,7 @@ export const api = {
   /** Archive or unarchive a project chat (issue #95). Non-destructive toggle. */
   async archiveProjectChat(slug: string, sessionId: string, archived: boolean): Promise<void> {
     await req<{ ok: boolean }>(
-      `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}/archive`,
+      `${apiBase(slug)}/chats/${encodeURIComponent(sessionId)}/archive`,
       { method: "POST", body: JSON.stringify({ archived }) },
     );
   },
@@ -359,7 +351,7 @@ export const api = {
   /** Star or unstar a project chat (issue #373). Pins it to the top of its list. */
   async starProjectChat(slug: string, sessionId: string, starred: boolean): Promise<void> {
     await req<{ ok: boolean }>(
-      `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}/star`,
+      `${apiBase(slug)}/chats/${encodeURIComponent(sessionId)}/star`,
       { method: "POST", body: JSON.stringify({ starred }) },
     );
   },
@@ -379,7 +371,7 @@ export const api = {
     input: { name: string; group?: string; summary?: string; domain?: string[] },
   ): Promise<{ project: Project; promoted: boolean }> {
     return req<{ project: Project; promoted: boolean }>(
-      `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}/promote`,
+      `${apiBase(slug)}/chats/${encodeURIComponent(sessionId)}/promote`,
       { method: "POST", body: JSON.stringify(input) },
     );
   },
@@ -399,7 +391,7 @@ export const api = {
     fromUuid?: string,
   ): Promise<string> {
     const { sessionId: newId } = await req<{ sessionId: string }>(
-      `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}/fork`,
+      `${apiBase(slug)}/chats/${encodeURIComponent(sessionId)}/fork`,
       { method: "POST", body: JSON.stringify({ name, fromUuid }) },
     );
     return newId;
@@ -414,7 +406,7 @@ export const api = {
    */
   async revertChat(slug: string, sessionId: string, uuid: string): Promise<number> {
     const { removed } = await req<{ removed: number }>(
-      `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}/revert`,
+      `${apiBase(slug)}/chats/${encodeURIComponent(sessionId)}/revert`,
       { method: "POST", body: JSON.stringify({ uuid }) },
     );
     return removed;
@@ -428,7 +420,7 @@ export const api = {
    */
   async listProjectDir(slug: string, subpath = ""): Promise<DirListing> {
     const qs = subpath ? `?path=${encodeURIComponent(subpath)}` : "";
-    return req<DirListing>(`/api/projects/${encodeURIComponent(slug)}/files${qs}`);
+    return req<DirListing>(`${apiBase(slug)}/files${qs}`);
   },
 
   /**
@@ -444,7 +436,7 @@ export const api = {
   /** Fetch one project file + a render-kind hint (markdown | html | text | image). */
   async getProjectFile(slug: string, name: string): Promise<ProjectFile> {
     return req<ProjectFile>(
-      `/api/projects/${encodeURIComponent(slug)}/files/${encodeURIComponent(name)}`,
+      `${apiBase(slug)}/files/${encodeURIComponent(name)}`,
     );
   },
 
@@ -454,7 +446,7 @@ export const api = {
    * mangled by the JSON/UTF-8 path.
    */
   projectFileRawUrl(slug: string, name: string): string {
-    return `${BASE}/api/projects/${encodeURIComponent(slug)}/files/${encodeURIComponent(name)}?raw=1`;
+    return `${BASE}${apiBase(slug)}/files/${encodeURIComponent(name)}?raw=1`;
   },
 
   /**
@@ -469,7 +461,7 @@ export const api = {
   /** Pin a file as a sibling tab. Returns the updated project (with pinned[]). */
   async pinFile(slug: string, file: string): Promise<Project> {
     const { project } = await req<{ project: Project }>(
-      `/api/projects/${encodeURIComponent(slug)}/pins`,
+      `${apiBase(slug)}/pins`,
       { method: "PUT", body: JSON.stringify({ file }) },
     );
     return project;
@@ -478,7 +470,7 @@ export const api = {
   /** Unpin a file. Returns the updated project (with pinned[]). */
   async unpinFile(slug: string, file: string): Promise<Project> {
     const { project } = await req<{ project: Project }>(
-      `/api/projects/${encodeURIComponent(slug)}/pins/${encodeURIComponent(file)}`,
+      `${apiBase(slug)}/pins/${encodeURIComponent(file)}`,
       { method: "DELETE" },
     );
     return project;
@@ -486,7 +478,7 @@ export const api = {
 
   async listProjectChats(slug: string): Promise<Chat[]> {
     const { chats } = await req<{ chats: Chat[] }>(
-      `/api/projects/${encodeURIComponent(slug)}/chats`,
+      `${apiBase(slug)}/chats`,
     );
     return chats;
   },
@@ -501,14 +493,14 @@ export const api = {
   async chatUsage(slug: string): Promise<Record<string, ChatUsage>> {
     const { usage } = await req<{
       usage: Record<string, ChatUsage>;
-    }>(`/api/projects/${encodeURIComponent(slug)}/chats/usage`);
+    }>(`${apiBase(slug)}/chats/usage`);
     return usage;
   },
 
   /** Hydrate a project chat's transcript. */
   async projectChatMessages(slug: string, sessionId: string): Promise<HistoryMessage[]> {
     const { messages } = await req<{ messages: HistoryMessage[] }>(
-      `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}/messages`,
+      `${apiBase(slug)}/chats/${encodeURIComponent(sessionId)}/messages`,
     );
     return messages;
   },
@@ -523,7 +515,7 @@ export const api = {
     sessionId: string,
     toolUseId: string,
   ): Promise<HistoryMessage[]> {
-    const base = `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}`;
+    const base = `${apiBase(slug)}/chats/${encodeURIComponent(sessionId)}`;
     const { messages } = await req<{ messages: HistoryMessage[] }>(
       `${base}/subagents/${encodeURIComponent(toolUseId)}/messages`,
     );
@@ -536,7 +528,7 @@ export const api = {
    * fresh usage). Returns null when the transcript carries no usage data.
    */
   async chatContext(slug: string, sessionId: string): Promise<ChatUsage | null> {
-    const path = `/api/projects/${encodeURIComponent(slug)}/chats/${encodeURIComponent(sessionId)}/context`;
+    const path = `${apiBase(slug)}/chats/${encodeURIComponent(sessionId)}/context`;
     const { usage } = await req<{ usage: ChatUsage | null }>(path);
     return usage;
   },
@@ -550,7 +542,7 @@ export const api = {
    * single surface over both event and cron triggers (Epic T folds both in).
    */
   async listTriggers(slug: string): Promise<TriggersResponse> {
-    return req<TriggersResponse>(`/api/projects/${encodeURIComponent(slug)}/triggers`);
+    return req<TriggersResponse>(`${apiBase(slug)}/triggers`);
   },
 
   /**
@@ -560,7 +552,7 @@ export const api = {
    */
   async putTrigger(slug: string, name: string, input: TriggerInput): Promise<Trigger> {
     const { trigger } = await req<{ trigger: Trigger }>(
-      `/api/projects/${encodeURIComponent(slug)}/triggers/${encodeURIComponent(name)}`,
+      `${apiBase(slug)}/triggers/${encodeURIComponent(name)}`,
       { method: "PUT", body: JSON.stringify(input) },
     );
     return trigger;
@@ -569,7 +561,7 @@ export const api = {
   /** Delete one trigger (removes it from project.yaml + disarms its agent/schedule). */
   async deleteTrigger(slug: string, name: string): Promise<void> {
     await req<{ ok: boolean }>(
-      `/api/projects/${encodeURIComponent(slug)}/triggers/${encodeURIComponent(name)}`,
+      `${apiBase(slug)}/triggers/${encodeURIComponent(name)}`,
       { method: "DELETE" },
     );
   },
@@ -582,7 +574,7 @@ export const api = {
    */
   async triggerRuntime(slug: string): Promise<TriggerRuntimeResponse> {
     return req<TriggerRuntimeResponse>(
-      `/api/projects/${encodeURIComponent(slug)}/triggers/runtime`,
+      `${apiBase(slug)}/triggers/runtime`,
     );
   },
 
@@ -594,7 +586,7 @@ export const api = {
    */
   async runTrigger(slug: string, name: string): Promise<string> {
     const { sessionId } = await req<{ ok: boolean; sessionId: string }>(
-      `/api/projects/${encodeURIComponent(slug)}/triggers/${encodeURIComponent(name)}/run`,
+      `${apiBase(slug)}/triggers/${encodeURIComponent(name)}/run`,
       { method: "POST", body: "{}" },
     );
     return sessionId;
@@ -612,7 +604,7 @@ export const api = {
 
   /** A project's working-tree status (changed files, branch, clean flag). */
   async gitStatus(slug: string): Promise<GitProjectStatus> {
-    return req<GitProjectStatus>(`/api/projects/${encodeURIComponent(slug)}/git/status`);
+    return req<GitProjectStatus>(`${apiBase(slug)}/git/status`);
   },
 
   /**
@@ -622,7 +614,7 @@ export const api = {
    */
   async gitDiff(slug: string, file?: string): Promise<string> {
     const qs = file ? `?file=${encodeURIComponent(file)}` : "";
-    return reqText(`/api/projects/${encodeURIComponent(slug)}/git/diff${qs}`);
+    return reqText(`${apiBase(slug)}/git/diff${qs}`);
   },
 
   /**
@@ -631,7 +623,7 @@ export const api = {
    * commit the whole subtree (#258).
    */
   async gitCommit(slug: string, message: string, files?: string[]): Promise<GitCommitResult> {
-    return req<GitCommitResult>(`/api/projects/${encodeURIComponent(slug)}/git/commit`, {
+    return req<GitCommitResult>(`${apiBase(slug)}/git/commit`, {
       method: "POST",
       body: JSON.stringify(files ? { message, files } : { message }),
     });

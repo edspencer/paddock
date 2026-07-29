@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { ProjectStore, ROOT_SLUG } from "../../src/projects.js";
+import { ProjectStore, ROOT_KEY } from "../../src/projects.js";
 import { resolveInProject, listFiles } from "../../src/project-files.js";
 import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
 
@@ -13,8 +13,9 @@ import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
  * presentation: naming the path explicitly still resolved it, and the read
  * route's `:name` param decodes `%2F`, so a "single segment" accepts a whole
  * nested path. Together those made `…/files/.chats%2F<id>.jsonl` and
- * `…/files/.git%2Fconfig` readable. The root project (#516) widened that from
- * one project's subtree to the whole instance.
+ * `…/files/.git%2Fconfig` readable. The root workspace widened that from one
+ * project's subtree to the whole instance — and the root workspace always
+ * exists, so this guard is always live.
  *
  * Defense-in-depth rather than a privilege boundary (any caller who can reach
  * these routes can already run Bash via a keeper chat) — but "hidden in the
@@ -29,7 +30,9 @@ describe("project-files — hidden paths are refused, not just hidden", () => {
     store = new ProjectStore(root);
     await store.init();
     await store.create({ name: "Alpha" });
-    await store.createRoot({ name: "Root" });
+    // The root workspace needs no creation step — but give it a record so the
+    // listing assertion below covers a real file at the projects root.
+    await store.update(ROOT_KEY, { summary: "the instance root" });
     // The shapes that actually matter: a transcript store and a git config.
     await fs.mkdir(path.join(root, ".chats"), { recursive: true });
     await fs.writeFile(path.join(root, ".chats", "s1.jsonl"), '{"secret":"transcript"}\n');
@@ -41,9 +44,19 @@ describe("project-files — hidden paths are refused, not just hidden", () => {
   });
   afterEach(() => rmTmpDir(root));
 
+  it("resolves the root workspace's file surface AT the projects root", () => {
+    // The empty key is the whole seam: `dirFor` is `path.join(root, "")`. This
+    // file keeps its OWN copy of that resolution, and the previous design's
+    // branch was missed here — 404ing every root file route.
+    expect(resolveInProject(root, ROOT_KEY, "")).toBe(root);
+    expect(resolveInProject(root, ROOT_KEY, "project.yaml")).toBe(
+      path.join(root, "project.yaml"),
+    );
+  });
+
   it("refuses descending THROUGH a hidden directory — transcripts and .git alike", () => {
     for (const p of [".chats/s1.jsonl", ".git/config", ".git/refs/heads/main"]) {
-      expect(() => resolveInProject(root, ROOT_SLUG, p), p).toThrow(/Invalid file path/);
+      expect(() => resolveInProject(root, ROOT_KEY, p), p).toThrow(/Invalid file path/);
     }
   });
 
@@ -53,23 +66,25 @@ describe("project-files — hidden paths are refused, not just hidden", () => {
 
   it("refuses a hidden directory reached by normalisation, not just a literal one", () => {
     // The raw string contains no leading-dot segment; the RESOLVED path does.
-    expect(() => resolveInProject(root, ROOT_SLUG, "alpha/../.chats/s1.jsonl")).toThrow(
+    expect(() => resolveInProject(root, ROOT_KEY, "alpha/../.chats/s1.jsonl")).toThrow(
       /Invalid file path/,
     );
-    expect(() => resolveInProject(root, ROOT_SLUG, "./.git/config")).toThrow(/Invalid file path/);
+    expect(() => resolveInProject(root, ROOT_KEY, "./.git/config")).toThrow(/Invalid file path/);
   });
 
   it("STILL READS a dotfile leaf — the Changes pane depends on it", async () => {
-    // Regression guard. Refusing every dot segment was the first cut and it
-    // broke Changes: an untracked file has no diff, so the pane renders its
-    // CONTENT through this surface — and `.gitignore` is untracked in a fresh
-    // repo-backed project, because `ensureSidecarGitignore` writes it. Caught in
-    // live QA as a 400 on `/api/projects/__root/files/.gitignore`.
+    // Regression guard, and the other half of the pair above: refusing every dot
+    // segment was the first cut and it broke Changes. An untracked file has no
+    // diff, so the pane renders its CONTENT through this surface — and
+    // `.gitignore` is untracked in a fresh repo-backed project, because
+    // `ensureSidecarGitignore` writes it. Caught in live QA as a 400 on
+    // `/api/root/files/.gitignore`. Both directions must keep holding.
     await fs.writeFile(path.join(root, ".gitignore"), "/.chats/\n");
-    expect(resolveInProject(root, ROOT_SLUG, ".gitignore")).toBe(
-      path.join(root, ".gitignore"),
-    );
-    expect(await store.readFile(ROOT_SLUG, ".gitignore")).toContain(".chats");
+    expect(resolveInProject(root, ROOT_KEY, ".gitignore")).toBe(path.join(root, ".gitignore"));
+    expect(await store.readFile(ROOT_KEY, ".gitignore")).toContain(".chats");
+    // …and the same for an ordinary project's untracked dotfile.
+    await fs.writeFile(path.join(root, "alpha", ".gitignore"), "/.chats/\n");
+    expect(await store.readFile("alpha", ".gitignore")).toContain(".chats");
   });
 
   it("still refuses ordinary traversal out of the project dir", () => {
@@ -84,6 +99,13 @@ describe("project-files — hidden paths are refused, not just hidden", () => {
     );
   });
 
+  it("refuses an escape ABOVE the projects root from the root workspace itself", () => {
+    // The root's dir IS the projects root, so `..` from there leaves the
+    // instance entirely — the one traversal the root must never permit.
+    expect(() => resolveInProject(root, ROOT_KEY, "../elsewhere")).toThrow(/Invalid file path/);
+    expect(() => resolveInProject(root, ROOT_KEY, "/etc/passwd")).toThrow(/Invalid file path/);
+  });
+
   it("still allows the project root and ordinary nested files", () => {
     expect(resolveInProject(root, "alpha", "")).toBe(path.join(root, "alpha"));
     expect(resolveInProject(root, "alpha", "notes.md")).toBe(
@@ -91,7 +113,7 @@ describe("project-files — hidden paths are refused, not just hidden", () => {
     );
     // A project dir under a DOT-PREFIXED ancestor must still work: only the
     // path relative to the project dir is examined.
-    expect(resolveInProject(root, ROOT_SLUG, "alpha/notes.md")).toBe(
+    expect(resolveInProject(root, ROOT_KEY, "alpha/notes.md")).toBe(
       path.join(root, "alpha", "notes.md"),
     );
   });
@@ -99,24 +121,22 @@ describe("project-files — hidden paths are refused, not just hidden", () => {
   it("refuses to LIST a hidden directory that was previously enumerable", async () => {
     // `?path=.chats` used to enumerate every transcript filename. A listing
     // target IS a directory, so unlike a read its leaf gets no pass.
-    await expect(listFiles(root, ROOT_SLUG, ".chats")).rejects.toThrow(/Invalid file path/);
-    await expect(listFiles(root, ROOT_SLUG, ".git")).rejects.toThrow(/Invalid file path/);
+    await expect(listFiles(root, ROOT_KEY, ".chats")).rejects.toThrow(/Invalid file path/);
+    await expect(listFiles(root, ROOT_KEY, ".git")).rejects.toThrow(/Invalid file path/);
     // …while the ordinary listing still works and still omits dot entries.
-    const names = (await listFiles(root, ROOT_SLUG)).map((e) => e.name);
+    const names = (await listFiles(root, ROOT_KEY)).map((e) => e.name);
     expect(names).toContain("alpha");
     expect(names).toContain("project.yaml");
     expect(names.some((n) => n.startsWith("."))).toBe(false);
   });
 
   it("refuses the reads through the ProjectStore wrappers, not just the helper", async () => {
-    await expect(store.readFile(ROOT_SLUG, ".git/config")).rejects.toThrow(
+    await expect(store.readFile(ROOT_KEY, ".git/config")).rejects.toThrow(/Invalid file path/);
+    await expect(store.listFiles(ROOT_KEY, ".chats")).rejects.toThrow(/Invalid file path/);
+    await expect(store.readFileBytes(ROOT_KEY, ".chats/s1.jsonl")).rejects.toThrow(
       /Invalid file path/,
     );
-    await expect(store.listFiles(ROOT_SLUG, ".chats")).rejects.toThrow(/Invalid file path/);
-    await expect(store.readFileBytes(ROOT_SLUG, ".chats/s1.jsonl")).rejects.toThrow(
-      /Invalid file path/,
-    );
-    await expect(store.readFileWithKind(ROOT_SLUG, ".chats/s1.jsonl")).rejects.toThrow(
+    await expect(store.readFileWithKind(ROOT_KEY, ".chats/s1.jsonl")).rejects.toThrow(
       /Invalid file path/,
     );
   });

@@ -57,7 +57,7 @@ function renderShell(initial = "/") {
       <Routes>
         <Route path="/" element={<AppShell />}>
           <Route index element={<div>HOME</div>} />
-          <Route path="chat" element={<div>NEW ONE-OFF</div>} />
+          <Route path="chat" element={<div>ROOT CHAT</div>} />
           <Route path="projects/:slug/*" element={<div>PROJECT</div>} />
         </Route>
       </Routes>
@@ -83,9 +83,9 @@ describe("AppShell: sidebar shell", () => {
     // jsdom, which ignores the responsive `lg:hidden` media query).
     expect(screen.getAllByText("Paddock").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByRole("button", { name: /New Project/i })).toBeInTheDocument();
-    // The chat CTA only renders with a root project (#516 Phase 6 retired the
-    // scratch one-off it used to fall back to), and this shell has none.
-    expect(screen.queryByRole("button", { name: /New root chat/i })).toBeNull();
+    // The root chat CTA is unconditional: the root workspace is the instance's
+    // own directory, so it always exists and `/chat` is always a real chat.
+    expect(screen.getByRole("button", { name: /New root chat/i })).toBeInTheDocument();
     // Project count next to the "Projects" label.
     const nav = screen.getByText("Projects").closest("div")!;
     expect(within(nav).getByText("2")).toBeInTheDocument();
@@ -285,9 +285,10 @@ describe("AppShell: navigation", () => {
     expect(screen.getByTestId("new-project-modal")).toBeInTheDocument();
   });
 
-  it("offers no top-level chat CTA without a root project", () => {
+  it("the root chat CTA routes to `/chat`", () => {
     renderShell();
-    expect(screen.queryByRole("button", { name: /chat/i })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /New root chat/i }));
+    expect(screen.getByText("ROOT CHAT")).toBeInTheDocument();
   });
 
   it("a project nav link routes to that project", () => {

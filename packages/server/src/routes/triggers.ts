@@ -25,7 +25,12 @@ import {
 import { sendProjectError } from "../route-errors.js";
 import type { RouteCtx } from "../route-context.js";
 
-export function registerTriggerRoutes(app: FastifyInstance, ctx: RouteCtx): void {
+/**
+ * The workspace-scoped trigger surface: registered once per workspace mount
+ * (root and per project) — see `workspace-mount.ts`. Paths are relative to the
+ * mount.
+ */
+export function registerTriggerWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx): void {
   const { projects, herdctl, triggers, fireTrigger } = ctx;
 
   const triggersGuard = (reply: FastifyReply): boolean => {
@@ -41,7 +46,7 @@ export function registerTriggerRoutes(app: FastifyInstance, ctx: RouteCtx): void
   // renders a precise capability + type picker without hard-coding them client-side
   // (folds in the G4 `GRANTABLE_TOOLS` list).
   app.get<{ Params: { slug: string } }>(
-    "/api/projects/:slug/triggers",
+    "/triggers",
     {
       schema: {
         tags: ["Triggers"],
@@ -87,7 +92,7 @@ export function registerTriggerRoutes(app: FastifyInstance, ctx: RouteCtx): void
 
   // Get one trigger by name (404 when the project declares no such trigger).
   app.get<{ Params: { slug: string; name: string } }>(
-    "/api/projects/:slug/triggers/:name",
+    "/triggers/:name",
     {
       schema: {
         tags: ["Triggers"],
@@ -133,7 +138,7 @@ export function registerTriggerRoutes(app: FastifyInstance, ctx: RouteCtx): void
   // `enabled` flipped (GG-3). The body is the FULL record `{ trigger, run, enabled }`
   // — a full replace (unlike the self-MCP set_trigger, which patches partial edits).
   app.put<{ Params: { slug: string; name: string }; Body: unknown }>(
-    "/api/projects/:slug/triggers/:name",
+    "/triggers/:name",
     {
       schema: {
         tags: ["Triggers"],
@@ -203,7 +208,7 @@ export function registerTriggerRoutes(app: FastifyInstance, ctx: RouteCtx): void
   // Delete one trigger. Removes it from project.yaml AND disarms it (an event
   // trigger's agent is torn down; a schedule trigger's forwarded entry is dropped).
   app.delete<{ Params: { slug: string; name: string } }>(
-    "/api/projects/:slug/triggers/:name",
+    "/triggers/:name",
     {
       schema: {
         tags: ["Triggers"],
@@ -250,7 +255,7 @@ export function registerTriggerRoutes(app: FastifyInstance, ctx: RouteCtx): void
   // config list) so the tab can POLL it cheaply without re-fetching the config + picker
   // catalog. A static path segment — matched before `/:name` — so no trigger shadows it.
   app.get<{ Params: { slug: string } }>(
-    "/api/projects/:slug/triggers/runtime",
+    "/triggers/runtime",
     {
       schema: {
         tags: ["Triggers"],
@@ -303,7 +308,7 @@ export function registerTriggerRoutes(app: FastifyInstance, ctx: RouteCtx): void
   // 503 when the trigger fire entrypoint isn't wired (tests may omit it); 404 for an
   // unknown trigger; 502 if the fire started no chat. Responds 202 with the session id.
   app.post<{ Params: { slug: string; name: string } }>(
-    "/api/projects/:slug/triggers/:name/run",
+    "/triggers/:name/run",
     {
       schema: {
         tags: ["Triggers"],

@@ -22,7 +22,7 @@ import { areaBlurb, areaLabel, orderAreaSlugs } from "../lib/areas";
 import { gridUrl } from "./ProjectView/urls";
 
 /**
- * The projects grid. Two modes:
+ * The projects grid — the root workspace's CHILDREN. Two modes:
  *
  *  - **Full landing** (no `filterTag`): projects are grouped into collapsible
  *    sections by their `group` (area) — Homelab / House / Side Projects / …,
@@ -31,15 +31,25 @@ import { gridUrl } from "./ProjectView/urls";
  *  - **Tag filter** (`/tags/:tag`): a flat grid of just the projects carrying
  *    that domain tag, with a clearable filter chip. (No area sections here —
  *    the filter already narrows the set.)
+ *
+ * `embedded` is the layout seam, not a third mode: at `/projects` this renders
+ * INSIDE `ProjectView` as the root workspace's Projects tab, which already
+ * supplies the page chrome (workspace header + tab bar). Embedded therefore
+ * drops this component's own page header — the actions stay, only the
+ * duplicated `<h1>`/blurb goes. `/tags/:tag` is still a standalone page and
+ * renders unchanged.
  */
-export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
-  const { projects: allProjects, rootProject, loading, error, upsert, remove } = useProjects();
+export function ProjectsGrid({
+  filterTag,
+  embedded = false,
+}: { filterTag?: string; embedded?: boolean } = {}) {
+  const { projects: allProjects, loading, error, upsert, remove } = useProjects();
   const [modalOpen, setModalOpen] = useState(false);
   const [deleting, setDeleting] = useState<Project | null>(null);
   const navigate = useNavigate();
-  // Where "back to the grid" points: `/` on an instance with no root project
-  // (unchanged), `/projects` once the root owns `/` (#516).
-  const grid = gridUrl(Boolean(rootProject));
+  // Where "back to the grid" points. Always `/projects`: the root workspace owns
+  // `/`, so the grid has its own URL rather than sharing the front door (#516).
+  const grid = gridUrl();
   // "Edit" now deep-links to the project's Settings tab (issue #122) rather than
   // opening a modal — the tab is the single source of truth for project settings.
   const editProject = useCallback(
@@ -93,35 +103,42 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
     !loading && !error && !filterTag && allProjects.length === 0;
 
   return (
-    <div className="h-full overflow-y-auto">
+    <div className={embedded ? "min-h-0 flex-1 overflow-y-auto" : "h-full overflow-y-auto"}>
       <div className="mx-auto max-w-6xl px-3 py-5 sm:px-8 sm:py-10">
         <header className="mb-8 flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <h1 className="text-[28px] font-semibold tracking-tight">
+          {/* Page header — standalone only. Embedded, ProjectView's own header
+              is already saying where you are, so a second title would just be
+              "Projects" twice on one screen. The actions below survive both. */}
+          {!embedded && (
+            <div>
+              <h1 className="text-[28px] font-semibold tracking-tight">
+                {filterTag ? (
+                  <>
+                    Projects tagged <span className="text-accent">{filterTag}</span>
+                  </>
+                ) : (
+                  "Projects"
+                )}
+              </h1>
               {filterTag ? (
-                <>
-                  Projects tagged <span className="text-accent">{filterTag}</span>
-                </>
+                <p className="mt-1.5 max-w-xl text-sm text-paddock-500">
+                  {!loading &&
+                    `${projects.length} ${projects.length === 1 ? "project" : "projects"} tagged “${filterTag}”.`}{" "}
+                  <Link to={grid} className="text-accent underline-offset-2 hover:underline">
+                    View all projects
+                  </Link>
+                </p>
               ) : (
-                "Projects"
+                <p className="mt-1.5 max-w-xl text-sm text-paddock-500">
+                  Each project is a directory with its own keeper agent and persistent,
+                  resumable Claude Code sessions — your work, organized and always running.
+                </p>
               )}
-            </h1>
-            {filterTag ? (
-              <p className="mt-1.5 max-w-xl text-sm text-paddock-500">
-                {!loading &&
-                  `${projects.length} ${projects.length === 1 ? "project" : "projects"} tagged “${filterTag}”.`}{" "}
-                <Link to={grid} className="text-accent underline-offset-2 hover:underline">
-                  View all projects
-                </Link>
-              </p>
-            ) : (
-              <p className="mt-1.5 max-w-xl text-sm text-paddock-500">
-                Each project is a directory with its own keeper agent and persistent,
-                resumable Claude Code sessions — your work, organized and always running.
-              </p>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
+            </div>
+          )}
+          {/* `ml-auto` keeps the actions right-aligned when the header block above
+              is absent (embedded) and they are the row's only child. */}
+          <div className="ml-auto flex items-center gap-2">
             <button className="btn-ghost" onClick={() => navigate("/chat")}>
               <ChatIcon width={16} height={16} />
               New chat
@@ -132,11 +149,6 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
             </button>
           </div>
         </header>
-
-        {/* The root-project opt-in (#516). Shown only while this instance has no
-            root project, and only on the unfiltered grid. Creating it is what
-            turns `/` into root Home — until then everything here is unchanged. */}
-        {!filterTag && rootProject === null && <EnableRootCard />}
 
         {/* Active-filter chip — only on /tags/:tag. The "×" clears the filter. */}
         {filterTag && <FilterChip tag={filterTag} onClear={() => navigate(grid)} />}
@@ -453,59 +465,6 @@ function EmptyState({ onCreate, onChat }: { onCreate: () => void; onChat: () => 
         <button className="btn-ghost" onClick={onChat}>
           <ChatIcon width={16} height={16} />
           Just chat once
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/**
- * The root-project opt-in (issue #516).
- *
- * "The root is a project" ships gated on EXISTENCE: with no
- * `<projectsRoot>/project.yaml` there is no root project, `/` stays this grid,
- * and every existing instance is untouched. This card is the one action that
- * changes that — after it, `/` is root Home and `/chat` is a root chat, with an
- * ordinary keeper whose working directory is the projects root.
- *
- * Worth being blunt about the escalation: that keeper's cwd CONTAINS every
- * project, so root chats can read and edit any project's files. That is the
- * intent (the root is where you act across the instance), but it is a real step
- * up from a project keeper, which is confined to its own subtree.
- */
-function EnableRootCard() {
-  const { setRootProject } = useProjects();
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  const enable = async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      setRootProject(await api.createRootProject());
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : "Failed to create the root project");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="mb-6 rounded-2xl border border-paddock-200 bg-white/60 px-4 py-3 dark:border-paddock-800 dark:bg-paddock-900/50">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-sm font-medium">Make the root a project</p>
-          <p className="mt-0.5 max-w-2xl text-[13px] text-paddock-500">
-            Give this instance a keeper of its own, working in the projects root: root
-            chats at <span className="font-mono">/chat</span>, and this page moves to{" "}
-            <span className="font-mono">/projects</span>. The root keeper can read and
-            edit every project — that is the point, and a real escalation.
-          </p>
-          {err && <p className="mt-1 text-[13px] text-rose-600 dark:text-rose-400">{err}</p>}
-        </div>
-        <button className="btn-ghost shrink-0" onClick={() => void enable()} disabled={busy}>
-          <SparkIcon width={16} height={16} />
-          {busy ? "Creating…" : "Enable"}
         </button>
       </div>
     </div>

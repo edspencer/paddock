@@ -76,7 +76,10 @@ export async function lastTurnCompletedAtByProject(
   for (const { sessionId, finishedAt, agent } of await index.read()) {
     if (agent === null) continue;
     const slug = keeperSlugFromAgent(agent);
-    if (!slug) continue; // only keeper (project) chats — skip scratch/sweeper
+    // only keeper (workspace) chats — skip sweeper/hook/trigger agents.
+    // `""` is the ROOT workspace's key, so compare against null explicitly: a
+    // falsy check would drop every root chat from the unread badge.
+    if (slug === null) continue;
     let bySession = out.get(slug);
     if (!bySession) {
       bySession = new Map<string, string>();
