@@ -248,15 +248,6 @@ describe("ws: dispatch + routing", () => {
     sub.unsubscribe();
   });
 
-  it("accepts the legacy `target` alias as the routing slug", () => {
-    const h = handlers();
-    const sub = chatClient.subscribe("legacy", null, h);
-    last().open();
-    last().emit({ type: "chat:response", payload: { target: "legacy", sessionId: "s", jobId: "j", chunk: "hi" } } as unknown as ServerWsMessage);
-    expect(h.onResponse).toHaveBeenCalledWith("hi", expect.anything());
-    sub.unsubscribe();
-  });
-
   it("delivers chat:error to onError", () => {
     const h = handlers();
     const sub = chatClient.subscribe("errproj", null, h);

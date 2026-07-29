@@ -250,9 +250,12 @@ export function resolveTurnUsage(state: TurnUsageState): TurnUsage | null {
 export interface ChatSendMessage {
   type: "chat:send";
   payload: {
-    /** Project slug, or "scratch" for one-off chats. (`target` accepted as alias.) */
+    /**
+     * Project slug, or "scratch" for one-off chats. `""` is the ROOT workspace —
+     * a present empty string, not an absent value, so test it with
+     * `=== undefined`, never for falsiness.
+     */
     projectSlug?: string;
-    target?: string;
     /** Session to resume; null/omitted starts a new chat. */
     sessionId?: string | null;
     message: string;
@@ -297,7 +300,6 @@ export interface ChatCommandMessage {
   type: "chat:command";
   payload: {
     projectSlug?: string;
-    target?: string;
     /** Session the command runs against. Required (a command needs a chat). */
     sessionId?: string | null;
     /** The full command text, including the leading slash (e.g. "/compact"). */
@@ -319,7 +321,6 @@ export interface ChatSubscribeMessage {
   type: "chat:subscribe";
   payload: {
     projectSlug?: string;
-    target?: string;
     /** The session to attach to. Required. */
     sessionId: string;
     /** Replay the missed gap of a live turn (reconnect); false = future frames only. */
@@ -339,7 +340,6 @@ export interface ChatSetQueueMessage {
   type: "chat:set_queue";
   payload: {
     projectSlug?: string;
-    target?: string;
     sessionId?: string | null;
     /** The queued message text, or null/empty to clear. */
     text?: string | null;
@@ -367,7 +367,6 @@ export interface ChatContinueMessage {
   type: "chat:continue";
   payload: {
     projectSlug?: string;
-    target?: string;
     /** The hung keeper session to re-drive. Required (recovery needs a chat). */
     sessionId: string;
   };
@@ -391,8 +390,6 @@ export type ClientMessage =
 
 export interface Routing {
   projectSlug: string;
-  /** Alias for early frontends. */
-  target: string;
   sessionId: string | null;
   jobId: string | null;
   /**
@@ -489,7 +486,7 @@ export interface ChatCompleteMessage {
 
 export interface ChatErrorMessage {
   type: "chat:error";
-  payload: { projectSlug: string; target: string; error: string };
+  payload: { projectSlug: string; error: string };
 }
 
 /**
@@ -499,7 +496,7 @@ export interface ChatErrorMessage {
  */
 export interface ChatResyncMessage {
   type: "chat:resync";
-  payload: { projectSlug: string; target: string; sessionId: string };
+  payload: { projectSlug: string; sessionId: string };
 }
 
 /**
@@ -513,7 +510,6 @@ export interface ChatActiveMessage {
   type: "chat:active";
   payload: {
     projectSlug: string;
-    target: string;
     sessionId: string;
     /** The running turn's cancellable job id, when known. */
     jobId: string | null;
@@ -531,7 +527,6 @@ export interface ChatQueuedFlushedMessage {
   type: "chat:queued_flushed";
   payload: {
     projectSlug: string;
-    target: string;
     sessionId: string;
     /**
      * The queued text the server is now auto-sending as a turn (#245). Present
@@ -555,7 +550,6 @@ export interface ChatKilledTaskMessage {
   type: "chat:killed_task";
   payload: {
     projectSlug: string;
-    target: string;
     sessionId: string;
     /** The killed `<task-notification>`'s `<summary>`, or a generic fallback. */
     summary: string;
@@ -595,10 +589,6 @@ export type ServerMessage =
   | ChatNoticeMessage
   | PongMessage;
 
-export function readSlug(p: ChatSendMessage["payload"]): string | undefined {
-  return p.projectSlug ?? p.target;
-}
-
 export function isClientMessage(data: unknown): data is ClientMessage {
   if (typeof data !== "object" || data === null) return false;
   const m = data as Record<string, unknown>;
@@ -610,7 +600,7 @@ export function isClientMessage(data: unknown): data is ClientMessage {
   if (m.type === "chat:send") {
     const p = m.payload as Record<string, unknown> | undefined;
     if (!p || typeof p.message !== "string") return false;
-    const slug = p.projectSlug ?? p.target;
+    const slug = p.projectSlug;
     if (typeof slug !== "string") return false;
     if (p.preloadContext !== undefined && typeof p.preloadContext !== "boolean") return false;
     if (p.model !== undefined && typeof p.model !== "string") return false;
@@ -628,7 +618,7 @@ export function isClientMessage(data: unknown): data is ClientMessage {
   if (m.type === "chat:command") {
     const p = m.payload as Record<string, unknown> | undefined;
     if (!p || typeof p.command !== "string" || p.command.length === 0) return false;
-    const slug = p.projectSlug ?? p.target;
+    const slug = p.projectSlug;
     if (typeof slug !== "string") return false;
     return p.sessionId === undefined || p.sessionId === null || typeof p.sessionId === "string";
   }
@@ -642,7 +632,7 @@ export function isClientMessage(data: unknown): data is ClientMessage {
   if (m.type === "chat:continue") {
     const p = m.payload as Record<string, unknown> | undefined;
     if (!p || typeof p.sessionId !== "string" || p.sessionId.length === 0) return false;
-    const slug = p.projectSlug ?? p.target;
+    const slug = p.projectSlug;
     return typeof slug === "string";
   }
   if (m.type === "chat:set_queue") {
@@ -652,7 +642,7 @@ export function isClientMessage(data: unknown): data is ClientMessage {
     // was never armed. Validate leniently (all payload fields optional bar slug).
     const p = m.payload as Record<string, unknown> | undefined;
     if (!p) return false;
-    const slug = p.projectSlug ?? p.target;
+    const slug = p.projectSlug;
     if (typeof slug !== "string") return false;
     if (p.sessionId !== undefined && p.sessionId !== null && typeof p.sessionId !== "string")
       return false;

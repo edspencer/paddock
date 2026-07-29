@@ -610,7 +610,7 @@ class ChatClient {
     // A falsy test here silently dropped every root frame, which meant a root
     // chat sent fine and then never rendered a reply: the turn ran server-side,
     // the transcript was written, and the UI just span forever.
-    const slug = msg.payload.projectSlug ?? (msg.payload as { target?: string }).target;
+    const slug = msg.payload.projectSlug;
     if (slug === undefined || slug === null) return;
 
     if (msg.type === "chat:error") {

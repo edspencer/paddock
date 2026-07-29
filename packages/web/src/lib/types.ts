@@ -981,8 +981,6 @@ export interface PollResult {
 /** Routing fields present on every server->client chat event. */
 interface Routing {
   projectSlug: string;
-  /** Legacy alias for `projectSlug`; the server emits both. */
-  target?: string;
   sessionId: string | null;
   jobId: string | null;
   /**
@@ -1093,18 +1091,17 @@ export type ServerWsMessage =
         usage?: ChatCompleteUsage;
       };
     }
-  | { type: "chat:error"; payload: { projectSlug: string; target?: string; error: string } }
+  | { type: "chat:error"; payload: { projectSlug: string; error: string } }
   | {
       /** Re-attach fallback: the live turn's buffer aged out; re-hydrate from transcript (issue #54). */
       type: "chat:resync";
-      payload: { projectSlug: string; target?: string; sessionId: string };
+      payload: { projectSlug: string; sessionId: string };
     }
   | {
       /** A session's live-turn status changed — drives Stop restore + indicators (issues #52/#53). */
       type: "chat:active";
       payload: {
         projectSlug: string;
-        target?: string;
         sessionId: string;
         jobId: string | null;
         running: boolean;
@@ -1113,7 +1110,7 @@ export type ServerWsMessage =
   | {
       /** The server auto-sent the queued message, so clear localStorage (#197). */
       type: "chat:queued_flushed";
-      payload: { projectSlug: string; target?: string; sessionId: string };
+      payload: { projectSlug: string; sessionId: string };
     }
   | {
       /**
