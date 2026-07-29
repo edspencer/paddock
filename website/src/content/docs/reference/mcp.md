@@ -416,9 +416,15 @@ mutates state or starts a turn maps to `paddock:write`.
 
 ## Config schema
 
-The `managementApi` block is **file-only** — there is no `PADDOCK_MANAGEMENT_*`
-environment equivalent, because a client list doesn't express well as a scalar.
-It lives in [`paddock.config.yaml`](/configuration/config-file/).
+The `managementApi` block is **file-first**, because a client list — each entry
+with its own scope — doesn't express well as a scalar. It lives in
+[`paddock.config.yaml`](/configuration/config-file/).
+
+The **one exception** is [`trustedProxies`](#which-peers-are-believed): a flat
+list, and the thing a container deployment most often needs to set
+per-environment, so it also reads `PADDOCK_MANAGEMENT_TRUSTED_PROXIES` — and the
+environment variable wins over the file. That is the only `PADDOCK_MANAGEMENT_*`
+variable Paddock reads.
 
 ```yaml
 managementApi:
@@ -433,6 +439,12 @@ managementApi:
   # OAuth issuers, advertised in the RFC 9728 document. Leave empty (the
   # default) for a token-only deployment — no document is published.
   authorizationServers: []
+
+  # Whose `X-Forwarded-Proto: https` the plaintext guard believes. Name your TLS
+  # terminator's address; the default is the whole private address space, which
+  # keeps sidecars working but names nothing in particular. A comma-delimited
+  # string works too, and PADDOCK_MANAGEMENT_TRUSTED_PROXIES overrides this.
+  trustedProxies: [172.18.0.0/16]
 
   clients:
     my-laptop:
@@ -457,6 +469,7 @@ managementApi:
 | `instanceId` | — | Binds `pdk_<instanceId>_…` tokens to this instance. Absent ⇒ binding is not enforced. |
 | `publicUrl` | — | **Required whenever `clients` is set.** Canonical public origin, optionally with a path for a path-mounted deployment; `https` unless loopback; no query string or fragment; trailing slash stripped. |
 | `authorizationServers` | `[]` | OAuth issuer URLs. **Gates whether the discovery document is published at all.** |
+| `trustedProxies` | `loopback, linklocal, uniquelocal` | Peers whose `X-Forwarded-Proto: https` the [plaintext guard](#which-peers-are-believed) believes. IPs, CIDRs, the presets `loopback`/`linklocal`/`uniquelocal`, or `none`/`all`. A YAML array or a comma/newline-delimited string. **Overridden by `PADDOCK_MANAGEMENT_TRUSTED_PROXIES`.** An invalid entry is dropped with a logged error, not a startup failure. |
 | `clients.<id>.auth.type` | `token` | Credential type. Only `token` is supported. |
 | `clients.<id>.auth.ref` | — | **Required.** `env:VAR_NAME` holding the token. |
 | `clients.<id>.scope.*` | read-only | See [the scope fields](#the-scope-fields). |
