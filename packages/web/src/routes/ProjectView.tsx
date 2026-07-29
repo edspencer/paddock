@@ -366,10 +366,6 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
   // Home target is the only nav site that isn't a plain `${base}/…`.
   const goHome = useCallback(() => navigate(homeUrl(base)), [navigate, base]);
   const goChat = useCallback(() => navigate(`${base}/chat`), [navigate, base]);
-  // The root workspace's CHILDREN tab — the projects grid, which lives at its own
-  // top-level `/projects` URL. Only the root has children, so only the root
-  // renders the tab that navigates here (see the tab bar below).
-  const goProjects = useCallback(() => navigate(gridUrl()), [navigate]);
   const goFiles = useCallback(() => navigate(`${base}/files`), [navigate, base]);
   const goChanges = useCallback(() => navigate(`${base}/changes`), [navigate, base]);
   const goHistory = useCallback(() => navigate(`${base}/history`), [navigate, base]);
@@ -932,21 +928,25 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
               breadcrumb (name → Home) is the way back to the tabbed hub, so the
               chat gets the full height. Tabs stay visible on Home/Files/Changes
               and on lg+ everywhere. */}
+          {/* The tab bar is TWO elements on purpose (see TabButton). The outer
+              one draws the 1px rule under the tabs; the inner one is the
+              horizontal scroller. They cannot be the same element: `overflow-x:
+              auto` promotes `overflow-y: visible` to `auto` (CSS Overflow §3),
+              so the strip becomes a vertical scroll container too — and a
+              scroll container's scrollable area is the union of its
+              descendants' BORDER boxes, which negative margins do not shrink.
+              The tabs' active underline has to overlap that rule by 1px, so
+              with the rule on the scroller itself the overlap showed up as 1px
+              of scrollable overflow and a spurious vertical scrollbar. Hanging
+              the -1px off the scroller (whose parent is not a scroll container)
+              instead of off each tab gives the identical geometry with none of
+              the overflow. */}
           <div
-            className={`items-center gap-1 overflow-x-auto border-b border-paddock-200 px-4 dark:border-paddock-800 ${
-              view === "chat" ? "hidden lg:flex" : "flex"
+            className={`border-b border-paddock-200 dark:border-paddock-800 ${
+              view === "chat" ? "hidden lg:block" : "block"
             }`}
           >
-            {/* The root workspace's CHILDREN tab, first in the bar: the projects
-                grid is where you go from the instance's front door OUT to a
-                project, so it leads rather than trails the root's own tabs. Only
-                the root has children today, hence the `root` gate — when nesting
-                lands, every workspace with children gets this for free. */}
-            {root && (
-              <TabButton active={view === "projects"} onClick={goProjects}>
-                Projects
-              </TabButton>
-            )}
+          <div className="-mb-px flex items-center gap-1 overflow-x-auto px-4">
             <TabButton active={view === "home"} onClick={goHome}>
               Home
             </TabButton>
@@ -1030,12 +1030,8 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
               />
             ))}
           </div>
+          </div>
 
-          {/* The Projects tab: the root workspace's children, rendered by the
-              SAME grid component the `/tags/:tag` page uses. `embedded` drops the
-              grid's own page header — this view already supplies the page chrome
-              (header + tab bar) — and nothing else about it changes. */}
-          {view === "projects" && <ProjectsGrid embedded />}
           {/* The Changes tab (its own /changes[/:file] route). It owns
               refetching status post-commit and propagates it up so the tab badge
               stays in sync; the selected file is URL-driven so a specific diff is
@@ -1075,9 +1071,18 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
                   fused, because they are different things: `project.yaml` is
                   workspace config, hot-applied by agent re-registration, while
                   `paddock.config.yaml` is instance runtime config, frozen at boot
-                  and restart-required. Fusing them would hide that. */}
+                  and restart-required. Fusing them would hide that.
+
+                  This wrapper MUST be a shrinkable flex column. InstanceConfigForm
+                  returns a fragment — a save footer plus a `min-h-0 flex-1
+                  overflow-y-auto` body — that only works as the child of one. A
+                  plain `<div>` here made `flex-1`/`min-h-0` inert, so the body grew
+                  to its full content height; as a flex item with the default
+                  `min-height: auto` it then refused to shrink, ate the whole
+                  column, squashed SettingsPane's `flex: 1 1 0` sibling to ZERO
+                  height, and left nothing on the tab able to scroll. */}
               {root && (
-                <div className="border-t border-paddock-200 dark:border-paddock-800">
+                <div className="flex min-h-0 flex-1 flex-col border-t border-paddock-200 dark:border-paddock-800">
                   <InstanceConfigForm />
                 </div>
               )}
@@ -1100,6 +1105,13 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
               onOpenFile={goToFilesPath}
               onOpenFiles={goFiles}
               onEditDetails={goSettings}
+              // The workspace's CHILDREN, rendered by the SAME grid component the
+              // `/tags/:tag` page uses. It used to be a tab of its own; folding it
+              // into Home means the instance's front door shows the projects
+              // instead of merely linking to them. Only the root has children
+              // today, hence the `root` gate — when nesting lands, every workspace
+              // with children gets this for free.
+              projectsSection={root ? <ProjectsGrid embedded /> : undefined}
             />
           )}
           {view === "chat" && (

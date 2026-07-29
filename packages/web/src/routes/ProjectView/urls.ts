@@ -11,11 +11,7 @@ export type ProjectViewTab =
   | "changes"
   | "settings"
   | "history"
-  | "triggers"
-  // The root workspace's children — the projects grid. Only the root has
-  // children today, so only the root renders this tab; when nesting lands every
-  // workspace gets it for free.
-  | "projects";
+  | "triggers";
 
 /**
  * A **workspace key** — a workspace's path relative to the projects root, and
@@ -70,15 +66,18 @@ export function homeUrl(base: string): string {
 }
 
 /**
- * Where the projects grid lives: `/projects`, always.
+ * Where the projects grid lives: the root workspace's **Home**, `/`.
  *
- * The grid is the root workspace's **children** tab, not a top-level page — the
- * root workspace always exists, so `/` is always root Home and the grid always
- * has its own URL. (This used to take a `hasRootProject` flag, because the root
- * was optional and `/` belonged to whichever existed. Nothing is optional now.)
+ * The grid used to be the root's own `/projects` tab, one tab along from Home.
+ * That put the instance's two front doors side by side showing overlapping
+ * things, so the grid folded INTO Home — it is now the first section of the
+ * root's Home pane, and `/projects` is a permanent redirect here (see
+ * `main.tsx`). This helper is still the single answer to "where do I send
+ * someone to see the project list", which is why the redirect target and every
+ * "back to the grid" nav site both read it rather than hard-coding a path.
  */
 export function gridUrl(): string {
-  return "/projects";
+  return "/";
 }
 
 /**
@@ -95,10 +94,12 @@ export function gridUrl(): string {
  */
 export function deriveView(pathname: string, base: string): ProjectViewTab {
   const tail = pathname.startsWith(base) ? pathname.slice(base.length) : pathname;
-  // The root workspace's children tab. Matched EXACTLY, not by prefix: at the
-  // root `base` is "", so a prefix test would also swallow `/projects/foo/files`
-  // — a project's own URL — and render the grid instead of that project.
-  if (tail === "/projects" || tail === "/projects/") return "projects";
+  // There is deliberately NO `/projects` branch: the grid folded into Home, so
+  // `/projects` never reaches this view (it redirects to `/`). Note that if one
+  // is ever reintroduced it must match EXACTLY, not by prefix — at the root
+  // `base` is "", so a prefix test would also swallow `/projects/foo/files`, a
+  // project's own URL, and render the root's view instead of that project. The
+  // `/projects/paddock/files` case below is covered by a regression test.
   if (tail.startsWith("/files")) return "files";
   if (tail.startsWith("/changes")) return "changes";
   if (tail.startsWith("/history")) return "history";

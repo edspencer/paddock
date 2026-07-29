@@ -120,7 +120,7 @@ describe("ProjectsGrid: area sectioning", () => {
 
 });
 
-describe("ProjectsGrid: embedded as the root workspace's Projects tab", () => {
+describe("ProjectsGrid: embedded as the first section of root Home", () => {
   beforeEach(() => {
     listProjectChats.mockReset().mockResolvedValue([]);
     listScratchChats.mockReset().mockResolvedValue([]);
@@ -140,9 +140,37 @@ describe("ProjectsGrid: embedded as the root workspace's Projects tab", () => {
     expect(screen.getByText("Alpha")).toBeInTheDocument();
   });
 
-  it("keeps both header actions reachable when embedded", () => {
+  it("carries a section heading in Home's own visual language", () => {
+    // Home labels its sections with a small uppercase <h3> ("Chats", "Files",
+    // "CHANGELOG.md"). Embedded, this is one of those sections, so it gets a
+    // matching heading + count rather than the standalone page's <h1>.
+    renderEmbedded();
+    const heading = screen.getByRole("heading", { level: 2, name: /^Projects/ });
+    expect(heading).toHaveTextContent("1");
+  });
+
+  it("contributes no scroll container of its own when embedded", () => {
+    // The host pane owns the scrolling. A second scroller here would trap the
+    // wheel inside the projects section and strand the rest of Home below it.
+    const { container } = renderEmbedded();
+    const root = container.querySelector("div")!;
+    expect(root.className).not.toMatch(/overflow-y-auto/);
+    expect(root.className).not.toMatch(/h-full/);
+  });
+
+  it("keeps New Project when embedded — it is the app's only one", () => {
+    // Load-bearing: the sidebar CTA is gone, so losing this would leave no way
+    // to create a project at all.
     renderEmbedded();
     expect(screen.getByRole("button", { name: /New Project/i })).toBeInTheDocument();
+  });
+
+  it("drops its 'New chat' action when embedded — Home's Chats section owns it", () => {
+    // Both pointed at `/chat`, and embedded they land on the same screen. Two
+    // identical buttons is worse than one, so the host's wins.
+    renderEmbedded();
+    expect(screen.queryByRole("button", { name: /New chat/i })).not.toBeInTheDocument();
+    renderGrid();
     expect(screen.getByRole("button", { name: /New chat/i })).toBeInTheDocument();
   });
 

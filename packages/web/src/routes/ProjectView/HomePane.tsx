@@ -12,11 +12,16 @@ import {
 } from "../../components/icons";
 
 /**
- * The Home tab: the project's landing/overview. Gives `/projects/:slug` a real
+ * The Home tab: the workspace's landing page. Gives `/projects/:slug` a real
  * destination (instead of silently forwarding into a chat) and is the mobile
- * navigation hub — summary + metadata + edit, recent chats, recent files, and
- * the CHANGELOG, all deep-linkable via `/projects/:slug/home`.
+ * navigation hub — children, recent chats, recent files, the CHANGELOG, and
+ * summary + metadata + edit, all deep-linkable via `/projects/:slug/home`.
  * (Extracted from ProjectView.tsx, issue #403.)
+ *
+ * Section order is deliberate and reads top-down as "what can I DO here?" before
+ * "what IS this?": the workspace's children (root only), then its chats, then
+ * its files, then the curated CHANGELOG, and finally the Overview card. Overview
+ * used to lead; it is descriptive rather than actionable, so it now trails.
  */
 export function HomePane({
   project,
@@ -29,6 +34,7 @@ export function HomePane({
   onOpenFile,
   onOpenFiles,
   onEditDetails,
+  projectsSection,
 }: {
   project: Project;
   chats: Chat[];
@@ -43,66 +49,22 @@ export function HomePane({
   onOpenFile?: (name: string) => void;
   onOpenFiles?: () => void;
   onEditDetails?: () => void;
+  // This workspace's children (the projects grid), or undefined for a workspace
+  // that has none — which is every workspace but the root today. Passed in as a
+  // node rather than rendered here so Home stays independent of the grid (and of
+  // the projects context it fetches from), and so the "who has children?" call
+  // stays at the one call site that knows.
+  projectsSection?: React.ReactNode;
 }) {
   const recentChats = chats.slice(0, 6);
   const recentFiles = files.slice(0, 6);
   return (
     <div className="flex-1 overflow-y-auto overscroll-contain">
       <div className="mx-auto max-w-3xl px-6 py-6">
-        {/* Overview: summary + metadata + edit-details shortcut. */}
-        <section className="mb-8">
-          <div className="mb-2 flex items-center justify-between">
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-paddock-500">
-              Overview
-            </h3>
-            {onEditDetails && (
-              <button
-                onClick={onEditDetails}
-                className="btn-subtle -mr-1 gap-1.5 px-2 py-1 text-xs"
-              >
-                <PencilIcon width={13} height={13} />
-                Edit details
-              </button>
-            )}
-          </div>
-          <div className="card">
-            {project.summary ? (
-              <p className="text-sm text-paddock-700 dark:text-paddock-300">{project.summary}</p>
-            ) : (
-              <p className="text-sm italic text-paddock-400">No summary set yet.</p>
-            )}
-            <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-[13px] sm:grid-cols-3">
-              <Meta label="Status" value={project.status} />
-              <Meta label="Area" value={areaLabel(project.group)} />
-              <Meta label="Visibility" value={project.visibility} />
-              <Meta label="Model" value={project.model} />
-              <Meta label="Started" value={project.started} />
-              <Meta label="Updated" value={project.updated} />
-              {project.domain.length > 0 && (
-                <Meta label="Domains" value={project.domain.join(", ")} />
-              )}
-              {project.repoBacked && project.repo && (
-                <Meta label="Repo" value={project.repo} />
-              )}
-            </dl>
-            {project.links && project.links.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {project.links.map((l) => (
-                  <a
-                    key={l.url}
-                    href={l.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1 rounded-md bg-paddock-100 px-2 py-1 text-xs text-paddock-700 transition-colors hover:bg-paddock-200 dark:bg-paddock-900 dark:text-paddock-300 dark:hover:bg-paddock-800"
-                  >
-                    <LinkIcon width={12} height={12} />
-                    {l.label || l.url}
-                  </a>
-                ))}
-              </div>
-            )}
-          </div>
-        </section>
+        {/* Children lead: from the instance's front door, the first thing you
+            want is the way OUT to a project. Rendered in Home's own column so it
+            lines up with the sections below it. */}
+        {projectsSection && <section className="mb-8">{projectsSection}</section>}
 
         {/* Chats: recent sessions + a shortcut to start a new one. */}
         <section className="mb-8">
@@ -198,7 +160,7 @@ export function HomePane({
         )}
 
         {/* CHANGELOG.md — the curated project log. */}
-        <section>
+        <section className="mb-8">
           <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-paddock-500">
             CHANGELOG.md
           </h3>
@@ -207,6 +169,62 @@ export function HomePane({
               <Markdown>{changelog}</Markdown>
             ) : (
               <p className="text-sm italic text-paddock-400">No CHANGELOG.md yet.</p>
+            )}
+          </div>
+        </section>
+
+        {/* Overview: summary + metadata + edit-details shortcut. Last on the
+            page — it describes the workspace rather than offering a way into it. */}
+        <section>
+          <div className="mb-2 flex items-center justify-between">
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-paddock-500">
+              Overview
+            </h3>
+            {onEditDetails && (
+              <button
+                onClick={onEditDetails}
+                className="btn-subtle -mr-1 gap-1.5 px-2 py-1 text-xs"
+              >
+                <PencilIcon width={13} height={13} />
+                Edit details
+              </button>
+            )}
+          </div>
+          <div className="card">
+            {project.summary ? (
+              <p className="text-sm text-paddock-700 dark:text-paddock-300">{project.summary}</p>
+            ) : (
+              <p className="text-sm italic text-paddock-400">No summary set yet.</p>
+            )}
+            <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-[13px] sm:grid-cols-3">
+              <Meta label="Status" value={project.status} />
+              <Meta label="Area" value={areaLabel(project.group)} />
+              <Meta label="Visibility" value={project.visibility} />
+              <Meta label="Model" value={project.model} />
+              <Meta label="Started" value={project.started} />
+              <Meta label="Updated" value={project.updated} />
+              {project.domain.length > 0 && (
+                <Meta label="Domains" value={project.domain.join(", ")} />
+              )}
+              {project.repoBacked && project.repo && (
+                <Meta label="Repo" value={project.repo} />
+              )}
+            </dl>
+            {project.links && project.links.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {project.links.map((l) => (
+                  <a
+                    key={l.url}
+                    href={l.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 rounded-md bg-paddock-100 px-2 py-1 text-xs text-paddock-700 transition-colors hover:bg-paddock-200 dark:bg-paddock-900 dark:text-paddock-300 dark:hover:bg-paddock-800"
+                  >
+                    <LinkIcon width={12} height={12} />
+                    {l.label || l.url}
+                  </a>
+                ))}
+              </div>
             )}
           </div>
         </section>

@@ -17,7 +17,10 @@ export function PinnedTab({
   const label = file.includes("/") ? file.slice(file.lastIndexOf("/") + 1) : file;
   return (
     <div
-      className={`group/pin -mb-px flex items-center gap-1 border-b-2 pr-1 transition-colors ${
+      // No `-mb-px` here: the tab strip's -1px overlap lives on the scroller, not
+      // on each tab — a negative margin on a scroll container's child leaves 1px
+      // of phantom scrollable overflow behind. See TabButton.
+      className={`group/pin flex items-center gap-1 border-b-2 pr-1 transition-colors ${
         active
           ? "border-accent"
           : "border-transparent"

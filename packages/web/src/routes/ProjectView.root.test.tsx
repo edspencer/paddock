@@ -203,51 +203,66 @@ describe("ProjectView root (#516)", () => {
     expect(screen.getByTestId("here").textContent).toBe("/");
   });
 
-  it("shows the FULL tab bar — the root is an ordinary workspace, plus Projects", async () => {
+  it("shows the FULL tab bar — the root is an ordinary workspace", async () => {
     apiFns.gitStatus.mockResolvedValue({ repo: true, files: [], clean: true, branch: "main" });
     renderRootAt("/chat");
     await screen.findByTestId("chat-pane");
     // The end state #516 was aiming at: there is no tab a project gets and the
     // root doesn't. (Changes is conditional on the dir being a git repo, for the
-    // root exactly as for a project.) Projects is the one tab the root has that
-    // a project does not — its children.
-    for (const name of [
-      "Projects",
-      "Home",
-      "Chat",
-      "Files",
-      "Changes",
-      "History",
-      "Settings",
-      "Triggers",
-    ]) {
+    // root exactly as for a project.) The root's children are no longer a tab of
+    // their own — they are the first section of Home, asserted below.
+    for (const name of ["Home", "Chat", "Files", "Changes", "History", "Settings", "Triggers"]) {
       expect(screen.getByRole("button", { name }), name).toBeInTheDocument();
+    }
+    expect(screen.queryByRole("button", { name: "Projects" })).not.toBeInTheDocument();
+  });
+
+  it("puts Home FIRST in the tab bar", async () => {
+    apiFns.gitStatus.mockResolvedValue({ repo: true, files: [], clean: true, branch: "main" });
+    renderRootAt("/chat");
+    await screen.findByTestId("chat-pane");
+    const home = screen.getByRole("button", { name: "Home" });
+    // Node.DOCUMENT_POSITION_FOLLOWING — every other tab comes AFTER Home.
+    for (const name of ["Chat", "Files", "Changes", "History", "Settings", "Triggers"]) {
+      const tab = screen.getByRole("button", { name });
+      expect(home.compareDocumentPosition(tab) & 4, name).toBeTruthy();
     }
   });
 
-  it("puts Projects FIRST in the tab bar — out to a project leads the row", async () => {
-    renderRootAt("/chat");
-    await screen.findByTestId("chat-pane");
-    const projects = screen.getByRole("button", { name: "Projects" });
-    const home = screen.getByRole("button", { name: "Home" });
-    // Node.DOCUMENT_POSITION_FOLLOWING — Home comes after Projects.
-    expect(projects.compareDocumentPosition(home) & 4).toBeTruthy();
-  });
-
-  it("renders the projects grid as the root's children tab at `/projects`", async () => {
+  it("renders the projects grid as the FIRST section of root Home", async () => {
     mockProjects = [makeProject({ slug: "hushpod", name: "Hushpod", group: "homelab" })];
     renderRootAt("/chat");
     await screen.findByTestId("chat-pane");
-    fireEvent.click(screen.getByRole("button", { name: "Projects" }));
+    fireEvent.click(screen.getByRole("button", { name: "Home" }));
     expect(await screen.findByText("Hushpod")).toBeInTheDocument();
-    expect(screen.getByTestId("here").textContent).toBe("/projects");
+    // Home is `/` at the root — no `/projects`, no `/home`.
+    expect(screen.getByTestId("here").textContent).toBe("/");
     // Embedded: the grid drops its own page header, because this view's header
     // (the workspace name) is already the page title. The only <h1> is the
     // workspace's, never a second "Projects".
     const h1s = screen.getAllByRole("heading", { level: 1 }).map((h) => h.textContent);
     expect(h1s).toEqual(["Instance Root"]);
-    // …but its actions survive the embedding.
+    // …but its actions survive the embedding. This is now the ONLY New Project
+    // button in the app (the sidebar's was removed), so losing it would leave no
+    // way to create a project at all.
     expect(screen.getByRole("button", { name: /New Project/i })).toBeInTheDocument();
+    // Order: the children lead, then the workspace's own chats, then Overview.
+    const headings = screen
+      .getAllByRole("heading", { level: 2 })
+      .concat(screen.getAllByRole("heading", { level: 3 }))
+      .map((h) => h.textContent ?? "");
+    const idx = (re: RegExp) => headings.findIndex((h) => re.test(h));
+    expect(idx(/^Projects/)).toBeGreaterThanOrEqual(0);
+    expect(idx(/^Projects/)).toBeLessThan(idx(/^Chats/));
+    expect(idx(/^Chats/)).toBeLessThan(idx(/^Overview/));
+  });
+
+  it("shows the children on a direct load of `/`, not just after a tab click", async () => {
+    // `/` IS root Home, so the grid has to be there on arrival — the instance's
+    // front door is the one page nobody navigates TO.
+    mockProjects = [makeProject({ slug: "hushpod", name: "Hushpod", group: "homelab" })];
+    renderRootAt("/");
+    expect(await screen.findByText("Hushpod")).toBeInTheDocument();
   });
 
   it("renders the Files tab at the flat `/files`, against the empty root key", async () => {

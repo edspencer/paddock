@@ -1,5 +1,5 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useProjects } from "../lib/projects-context";
 import { useTheme } from "../lib/theme";
 import type { Project } from "../lib/types";
@@ -9,10 +9,10 @@ import { chatClient } from "../lib/ws";
 import { LAST_SEEN_EVENT, readLastSeen, setServerLastSeen } from "../lib/lastSeen";
 import { backfillLegacyLastSeen } from "../lib/lastSeenBackfill";
 import { TagPill } from "./TagPill";
-import { NewProjectModal } from "./NewProjectModal";
-import { ChatIcon, CogIcon, FolderIcon, LinkIcon, MenuIcon, MoonIcon, PlusIcon, SunIcon, XIcon } from "./icons";
+import { CogIcon, FolderIcon, HomeIcon, LinkIcon, MenuIcon, MoonIcon, SunIcon, XIcon } from "./icons";
 import { PaneResizer, usePaneWidth } from "./PaneResizer";
 import { SIDENAV_PANE } from "../lib/paneWidth";
+import { gridUrl } from "../routes/ProjectView/urls";
 
 /**
  * Context handed down to route elements via <Outlet> (#372). A route that hosts
@@ -125,11 +125,9 @@ function useProjectBadges(projects: Project[]): Map<string, ProjectBadge> {
 }
 
 export function AppShell() {
-  const { projects, loading, upsert } = useProjects();
+  const { projects, loading } = useProjects();
   const { dark, toggle: toggleTheme } = useTheme();
-  const [modalOpen, setModalOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
-  const navigate = useNavigate();
   const location = useLocation();
   const brand = getBrand();
   const openapi = getOpenApi();
@@ -141,9 +139,9 @@ export function AppShell() {
   // row is dropped there to avoid stacking two rows of chrome (#372). Other
   // routes (grid, tags) keep the shell's mobile brand bar.
   // The root workspace's flat top-level routes (#516) mount the SAME ProjectView,
-  // so they host their own header too. Unconditional now: the root workspace
-  // always exists, so `/` is always root Home — and `/projects` is its Projects
-  // TAB (inside ProjectView), not the standalone grid page it used to be.
+  // so they host their own header too. `/projects` is listed even though it only
+  // ever redirects to `/`: it still renders one frame on the way, and dropping
+  // it would flash the shell's mobile brand row before the redirect lands.
   const rootRoute =
     location.pathname === "/" ||
     location.pathname === "/projects" ||
@@ -176,15 +174,6 @@ export function AppShell() {
   }, [projects]);
 
   const badges = useProjectBadges(projects);
-
-  const onCreated = (p: Project) => {
-    upsert(p);
-    setModalOpen(false);
-    // A brand-new project has an empty Home (no chats/files/changelog yet), so
-    // drop the user straight into a new chat to start working. (Re-opening an
-    // existing project via the sidebar/grid lands on Home — see ProjectRedirect.)
-    navigate(`/projects/${p.slug}/chat`);
-  };
 
   return (
     <div className="flex h-[100dvh] flex-col overflow-hidden bg-canvas dark:bg-canvas-dark lg:flex-row">
@@ -249,30 +238,29 @@ export function AppShell() {
           </button>
         </div>
 
-        <div className="space-y-1.5 px-3 pb-1">
-          <button
-            className="btn-primary w-full"
-            onClick={() => {
-              setNavOpen(false);
-              setModalOpen(true);
-            }}
+        {/* One nav item, not two CTAs. "New Project" and "New root chat" both
+            lived here and both duplicated something the destination already
+            offers: root Home now carries the projects list (with its own New
+            Project action) and the New chat button. So the sidebar's job is to
+            get you to Home; Home's job is to start things. */}
+        <div className="px-3 pb-1">
+          <NavLink
+            to="/"
+            end
+            className={({ isActive }) =>
+              `btn-subtle w-full justify-start ${isActive ? "bg-paddock-200/80 dark:bg-paddock-800" : ""}`
+            }
+            title="The root workspace — every project, and the instance's own chats"
           >
-            <PlusIcon width={16} height={16} />
-            New Project
-          </button>
-          {/* `/chat` is a root chat. Always available: the root workspace is the
-              instance's own directory, so it always exists — there is nothing to
-              gate on. (Scratch one-offs were retired in #516 Phase 6.) */}
-          <button className="btn-subtle w-full justify-start" onClick={() => navigate("/chat")}>
-            <ChatIcon width={16} height={16} />
-            New root chat
-          </button>
+            <HomeIcon width={16} height={16} />
+            Home
+          </NavLink>
         </div>
 
         <div className="mt-5 mb-1 flex items-center justify-between pr-4">
-          {/* `/` is the root workspace's Home, so the grid lives at `/projects`
-              (the root's children tab) — the section label is the way back. */}
-          <NavLink to="/projects" className="section-label hover:text-accent">
+          {/* The list itself lives on root Home now, so the section label points
+              at `/` — the same place `gridUrl()` resolves to. */}
+          <NavLink to={gridUrl()} className="section-label hover:text-accent">
             Projects
           </NavLink>
           {projects.length > 0 && (
@@ -354,12 +342,6 @@ export function AppShell() {
           <Outlet context={{ openNav: () => setNavOpen(true) } satisfies ShellOutletContext} />
         </Suspense>
       </main>
-
-      <NewProjectModal
-        open={modalOpen}
-        onClose={() => setModalOpen(false)}
-        onCreated={onCreated}
-      />
     </div>
   );
 }

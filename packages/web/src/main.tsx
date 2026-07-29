@@ -1,6 +1,7 @@
 import React, { lazy } from "react";
 import ReactDOM from "react-dom/client";
-import { createBrowserRouter, RouterProvider, useParams } from "react-router-dom";
+import { createBrowserRouter, Navigate, RouterProvider, useParams } from "react-router-dom";
+import { gridUrl } from "./routes/ProjectView/urls";
 import "./index.css";
 import { AppShell } from "./components/AppShell";
 import { RouteError } from "./components/RouteError";
@@ -54,9 +55,12 @@ const router = createBrowserRouter([
       // nothing to wait for. No redirect and no sticky last tab: `/` is the
       // instance's front door and always renders the same thing.
       { index: true, element: <ProjectView root /> },
-      // The projects grid is the root workspace's CHILDREN tab, rendered inside
-      // ProjectView so it carries the same chrome as every other root tab.
-      { path: "projects", element: <ProjectView root /> },
+      // The projects grid folded INTO root Home, so `/projects` no longer has a
+      // pane of its own. Kept as a permanent redirect rather than deleted: it
+      // was the grid's URL for a whole release, so bookmarks, the docs, and any
+      // link out to "the project list" would otherwise 404 on the RouteError
+      // screen. `replace` keeps it out of the Back history.
+      { path: "projects", element: <Navigate to={gridUrl()} replace /> },
       // The projects grid, filtered to a single domain tag (click a tag pill).
       { path: "tags/:tag", element: <TaggedProjects /> },
       // Bare project URL redirects to the sticky last tab (defaults to home).
