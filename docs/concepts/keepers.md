@@ -7,9 +7,9 @@ agent you never chat with directly.
 
 > **This page used to be "Keeper vs. scratch agents".** Paddock had a second,
 > shared `scratch` agent for one-off chats that belonged to no project. #516
-> retired it: the root of the instance is now [a project like any
+> retired it: the root of the instance is now [a workspace like any
 > other](./projects.md), so a chat that belongs to no *particular* project is
-> simply a chat of the root project, run by an ordinary keeper. Every capability
+> simply a chat of the root workspace, run by an ordinary keeper. Every capability
 > scratch was deliberately denied — the self-management MCP, curation, triggers,
 > attachments, run history, a CLAUDE.md that actually reaches it, more than one
 > turn at a time — a root chat has for free.
@@ -40,8 +40,10 @@ per-trigger override is a herdctl follow-up.
 
 ## The root keeper
 
-The root project's keeper is `keeper-__root`, and its working directory is
-`projectsRoot` — the directory that *contains* every project. It is an ordinary
+The root workspace's keeper is `keeper-_root`, and its working directory is
+`projectsRoot` — the directory that *contains* every project. (The workspace's
+own key is `""`; `_root` is how that key is spelled in the agent namespace, which
+cannot hold an empty name.) It is an ordinary
 keeper in every mechanical respect, but worth calling out plainly: **its cwd
 contains every project, so a root chat can read and edit any project's files, and
 root's git status is the whole backing repo.** That is the intent — the root is

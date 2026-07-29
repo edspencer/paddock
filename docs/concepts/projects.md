@@ -94,37 +94,51 @@ See [`../DESIGN-backing-store.md`](../DESIGN-backing-store.md) for the durabilit
 model and [`../ARCHITECTURE.md`](../ARCHITECTURE.md) for how `dir`/`workingDir`
 flow through the system.
 
-## The root project
+## The root workspace
 
-An instance can also give a keeper to **the projects root itself** (#516). The
-framing is deliberately plain: *the root is the project whose directory is
-`projectsRoot` instead of a subdirectory of it.* It is a notebook project in
-every other respect — same `project.yaml`, same `OVERVIEW.md`/`CHANGELOG.md`
-curated by the same sweeper, same `.chats/`, same keeper agent config
-(`max_concurrent: 10`, self-MCP, per-chat model), same archive/star/unread/fork/
-nesting on its chats.
+A **workspace** is a directory with a keeper agent, chats, files, changes,
+history, settings, triggers and pinned files. The instance's own directory —
+`projectsRoot` — is the **root workspace**, and a *project* is a workspace nested
+inside it. So "project" keeps its ordinary meaning (a directory you created under
+the root); the root is not a project, it is the workspace that *contains* the
+projects.
 
 ```
-<projectsRoot>/
-├── CLAUDE.md         # already reaches every project keeper (the SDK's cwd walk-up)
-├── project.yaml      # the ROOT project's own record  ← the only new thing
-├── .chats/           # root-level chats (gitignored, like every project's)
-├── some-project/     # an ordinary project
-└── other-project/    # an ordinary project
+<projectsRoot>/          # ← the ROOT workspace (key "")
+├── CLAUDE.md            # reaches every keeper (the SDK's cwd walk-up)
+├── .chats/              # root-level chats (gitignored, like every workspace's)
+├── project.yaml         # optional — written only when a setting changes
+├── some-project/        # a child workspace (key "some-project")
+└── other-project/       # a child workspace
 ```
 
-It takes the reserved slug **`__root`**, which no user can create: `SLUG_RE`
-rejects underscores, so neither `create()` nor `slugify()` can produce it. (The
-trailing character is alphanumeric on purpose — herdctl's session store validates
-identifiers with a stricter pattern than `addAgent` does, and a name ending in
-`_` fails it on the first resume.) `ProjectStore.list()` only walks
-subdirectories, so the root never appears in enumeration; `dirFor()` resolves the
-sentinel and everything else follows.
+A workspace is identified by its **path relative to `projectsRoot`**, so the root
+workspace's key is the empty string. That is not a reserved name — it is the zero
+value already in the key space — and it is what keeps resolution branch-free:
+`path.join(root, "")` *is* the root. `list()` walks subdirectories, so it
+enumerates the root's children and never the root itself.
+
+**The root workspace always exists**, because its directory always does. There is
+nothing to create and nothing to enable: on a brand-new instance, `/` is already
+root Home and New chat already works. `project.yaml` is optional — absent, every
+field falls back to a default (the name is the directory's basename) and the file
+is written lazily on the first setting you change.
 
 Its URLs are flat and top-level rather than namespaced under `/projects/:slug`:
-`/` is root Home and `/chat[/:sessionId]` its chats, with the projects grid at
-`/projects`. `/` always renders Home — unlike a project, there is no redirect to
-a sticky last tab, so the instance's front door is predictable.
+`/` is root Home, `/chat[/:sessionId]` its chats, and the projects grid is its
+**children tab** at `/projects`. `/` always renders Home — unlike a project,
+there is no redirect to a sticky last tab, so the front door is predictable.
+
+Over HTTP the workspace-scoped routes are mounted twice — `/api/root` for the
+root and `/api/projects/:slug` for a project — from one set of handlers, because
+an empty key cannot ride in a URL path segment. Root and project therefore run
+literally the same code, rather than two implementations kept in step by hand.
+
+The one place the empty key cannot be used directly is the **herdctl agent
+namespace**, which requires non-empty names satisfying two different patterns.
+There the key is encoded as `_root` (so the root keeper is `keeper-_root`), which
+no project can collide with because `SLUG_RE` rejects underscores. That encoding
+is a name, applied at one boundary — not an identity.
 
 > **The root keeper is an omniscient admin, by design.** Its working directory
 > *contains* every project, so root chats can read and edit any project's files
@@ -133,8 +147,3 @@ a sticky last tab, so the instance's front door is predictable.
 > project keeper, which is confined to its own subtree. Two things follow from
 > it: `remove()` refuses the root (its directory is the entire store), and
 > `promote()` refuses it (that directory is already the instance's backing repo).
-
-**Nothing seeds it.** Existence of `<projectsRoot>/project.yaml` is the feature
-gate: without it there is no root project, `/` is the projects grid, and the
-instance behaves exactly as it did before. Creating it is the opt-in — an
-"Enable" card on the projects grid, or `POST /api/root-project`.
