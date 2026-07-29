@@ -121,8 +121,11 @@ fan-out reads as one foldable family instead of a wall of sibling rows. The
 [chat-list guide](/using/working-in-chats/#nested-chats--a-fan-out-reads-as-a-tree)
 covers what that looks like; this is where the edge comes from.
 
-Paddock resolves each chat's parent in two tiers, in this order:
+Paddock resolves each chat's parent in two tiers, behind one **override** — three
+checks in this order (`makeParentResolver` in `chat-dto.ts`):
 
+0. **An explicit detach.** If you detached the chat from its parent, it is a root,
+   full stop — checked *ahead of* both tiers.
 1. **The recorded edge.** `parentSessionId` + `parentProject` on the chat's own
    provenance marker, written when the chat was created. Authoritative.
 2. **An inferred edge.** Failing that, Paddock looks at the chat's message
@@ -130,21 +133,42 @@ Paddock resolves each chat's parent in two tiers, in this order:
    spawned chat's kickoff prompt is injected by whoever spawned it. This is a
    best guess, not a recorded fact.
 
+**Why detach needs its own override rather than just clearing the edge:** most live
+edges are *inferred* (tier 2), and inference re-derives the edge from message
+provenance on every load. Clearing a recorded edge would therefore accomplish nothing
+— the next list render would hand the chat straight back to its old parent. So detach
+is stored as a positive flag in its own sidecar (`parent-detach.json`) and consulted
+first. Nothing is destroyed: the recorded edge stays put, the override simply wins.
+
 Tier 2 exists because tier 1 is new. **There is no migration**: chats created
 before nesting shipped have no recorded parent and never will, so the inference
 is what recovers most of their lineage at read time. It recovers a lot, but not
 everything — a chat forked with no kickoff prompt injected nothing into its
 child, so there is no signal at all and that child stays a permanent root.
 
+One guard rides on top of tier 2: a chat with a **recorded root** marker is skipped
+outright rather than falling through to inference. It isn't missing an edge — it has
+none. Without that guard the documented report-back workflow re-parents your own chat:
+a manager spawns a child, the child `send_message`s its report home, the manager now
+carries a chat-injected turn and infers its own child as its parent. Both edges then
+point at each other and the tree builder's cycle guard decides, per render, which one
+gets promoted to a root.
+
 Which paths record a parent:
 
 | How the chat was created | Parent recorded? | Where it lands |
 |---|---|---|
 | A keeper forks a chat (`fork_chat`, or the UI's **Fork**) | **Yes** | Under the chat it was **forked from** — not under whoever ran the tool |
-| A keeper spawns a chat (`create_chat`) | Inferred | Under the chat that spawned it |
+| A keeper spawns a chat (`create_chat`) | **Yes** | Under the chat that spawned it |
 | You start a new chat | No | A root, correctly |
 | A schedule or an event hook fires one | No | A root — a trigger is its own origin, not a child |
 | An **external** MCP client calls `create_chat` over `/mcp` | No | A root — the caller isn't a chat, so there's nothing to nest under |
+
+`create_chat` used to rely on inference; since #509 it **records** the edge like
+`fork_chat` does, so inference is now purely a backfill for pre-nesting chats rather
+than the live mechanism for spawned ones. Both tools resolve the parent the same way —
+the chat the tool is *running in* — which is also why the external `/mcp` path records
+nothing: there is no current chat to name.
 
 :::caution[Forking now counts against spawn depth]
 A fork made from the UI used to record nothing at all. It now records a real
