@@ -1,6 +1,6 @@
 ---
 title: "Architecture overview"
-description: "Monorepo shape, the three storage classes, WebSocket/session flow, MCP injection, auth boundary, sweeper, and drive modes."
+description: "Monorepo shape, the three storage classes, WebSocket/session flow, MCP injection, auth boundary, sweeper, drive modes, the workspace double-mount, and the OpenAPI surface."
 ---
 
 > Canonical architecture overview for Paddock — the project layer over
@@ -12,8 +12,10 @@ description: "Monorepo shape, the three storage classes, WebSocket/session flow,
 > For the conceptual model (what a project, keeper, chat, or sweeper *is*), see
 > [`concepts/`](/concepts/).
 
-Everything here is grounded in the code under `packages/server/src` — file and
-symbol names are cited so you can jump straight to the source.
+Everything here is grounded in the code under `packages/server/src`. Citations name a
+**file and a symbol** (`buildApp()` in `app.ts`) and deliberately carry **no line
+numbers** — a symbol survives the refactor that moves it, a line number does not, and
+a stale line number is worse than none. `grep -n` the symbol.
 
 ---
 
@@ -28,14 +30,14 @@ tools**, an **auth boundary**, and a **git backing store** on top.
 ```mermaid
 flowchart LR
   subgraph Browser["packages/web — React + Vite SPA"]
-    UI["Chat / Files / Changes / Settings"]
+    UI["Home / Chat / Files / Changes / History / Triggers / Settings"]
   end
 
   subgraph Server["packages/server — Fastify + @fastify/websocket"]
     Auth["Auth boundary\n(auth.ts onRequest hook)"]
-    REST["REST routes\n(routes.ts)"]
-    WS["WS chat handler\n(ws.ts + session-hub.ts)"]
-    Stores["Project + sidecar stores\n(projects / archive / read-state / queued-message)"]
+    REST["REST routes\n(routes.ts → workspace-mount.ts, mounted twice)"]
+    WS["WS chat handler\n(ws.ts + ws-turn.ts + session-hub.ts)"]
+    Stores["Project + 11 sidecar stores\n(projects / archive / read-state / provenance / …)"]
     Sweep["SweepService\n(sweep.ts)"]
     Herd["HerdctlService\n(herdctl.ts)"]
   end
@@ -71,7 +73,7 @@ Two packages, versioned and released together (see [`RELEASING.md`](https://gith
 | Package | Stack | Role |
 |---|---|---|
 | `packages/server` | **Fastify 4** + **`@fastify/websocket`** (the `ws` library), `@fastify/static`, `@fastify/multipart` | The backend: wraps the `FleetManager`, the Project layer, the WS transport, and serves the built SPA in production. |
-| `packages/web` | **React + Vite + Tailwind** | A project-first SPA (Chat / Files / Changes / Settings). PWA with a versioned service worker. |
+| `packages/web` | **React + Vite + Tailwind** | A workspace-first SPA — seven tabs (Home / Chat / Files / Changes / History / Triggers / Settings, `ProjectView.tsx`) plus an instance-wide `/config` admin screen (`main.tsx`). PWA with a versioned service worker. |
 
 Both are `private` and `fixed` together in `.changeset/config.json`, so they
 always share one number — "the Paddock version." Paddock is shipped as a Docker
@@ -80,34 +82,42 @@ image + release tarball, **not** published to npm.
 ### Server bootstrap
 
 `index.ts` owns only the process lifecycle: `buildApp()` → register
-`SIGINT`/`SIGTERM` handlers → `app.listen({ port, host })`
-(`index.ts:12-21`). All wiring lives in `app.ts`'s `buildApp()` (`app.ts:74`),
-which never binds a port or installs signal handlers — a deliberate testability
-seam.
+`SIGINT`/`SIGTERM` handlers → `app.listen({ port, host })`. All wiring lives in
+`app.ts`'s `buildApp()`, which never binds a port or installs signal handlers — a
+deliberate testability seam.
 
 `buildApp()` constructs and dependency-injects the whole graph, in order:
 
-1. `cfg = loadPaddockConfig()` (`app.ts:75`).
-2. `Fastify({ logger })` (`app.ts:77`).
-3. **`registerAuth(app, cfg.auth)` first** (`app.ts:85`) so its `onRequest`
-   hook guards every REST + WS request.
-4. Stores + services: `ProjectStore`, `HerdctlService`, `GitService`,
-   `GithubAuth`, `ArchiveStore`, `ReadStateStore`, `QueuedMessageStore`,
-   `AttachmentStore`, the transcriber (`app.ts:88-103`).
-5. Fleet init: `await herdctl.init(projects)` then `herdctl.start()`, wrapped in
-   try/catch so a fleet failure still leaves project CRUD working
-   (`app.ts:108-115`).
-6. `SweepService({ herdctl, projects, dataDir, logger })` (`app.ts:118`).
-7. Transports: `app.register(websocket)`, `app.register(fastifyMultipart)`,
-   `registerRoutes(app, deps)` (REST), and `makeChatHandler(deps)` mounted at
-   `GET /ws` with `{ websocket: true }` (`app.ts:126-140`).
-8. In production, serve the built SPA from `cfg.webDist` with branding injected
-   into `index.html` and a SPA-aware not-found handler that serves the shell for
-   navigations but 404s missing hashed assets (`app.ts:150-191`, issue #220).
+1. `cfg = opts.config ?? loadPaddockConfig()`.
+2. `Fastify({ logger })`.
+3. **The bind-safety guard** (`evaluateBindSafety`, issue #435): a non-loopback
+   `cfg.host` combined with `auth.mode === "none"` **refuses to boot**, because that
+   would expose an unauthenticated Paddock — which runs code and spends tokens — on a
+   routable interface. `PADDOCK_DANGEROUSLY_ALLOW_OPEN` downgrades the refusal to a
+   boot warning.
+4. **`registerAuth(app, cfg.auth)` next** so its `onRequest` hook guards every REST +
+   WS request.
+5. Stores + services: `ProjectStore`, `HerdctlService`, `GitService`, `GithubAuth`,
+   the eleven sidecar stores ([§3](#3-data-model--the-three-storage-classes)),
+   `AttachmentStore`, `PaddockEventBus`, `TriggerService`, the transcriber.
+6. Fleet init: the root workspace is resolved explicitly and appended to
+   `projects.list()` — `list()` enumerates the root's *children*, so the root is never
+   in it — then `await herdctl.init(...)` and `herdctl.start()`, wrapped in try/catch
+   so a fleet failure still leaves project CRUD working.
+7. `new SweepService({ herdctl, projects, dataDir, minIntervalMs, budget, logger })`.
+8. Transports: `app.register(websocket)` and `app.register(fastifyMultipart)`.
+9. **OpenAPI**, when `cfg.openapi.enabled` — `@fastify/swagger` **must** register
+   *before* the routes, because it hooks `onRoute` to collect each route's schema into
+   the live document ([§12](#12-openapi-reference)).
+10. `makeChatHandler(deps)`, then `registerRoutes(app, deps)` (REST), then the
+    `GET /ws` mount with `{ websocket: true }`.
+11. In production, serve the built SPA from `cfg.webDist` with branding injected
+    into `index.html` and a SPA-aware not-found handler that serves the shell for
+    navigations but 404s missing hashed assets (issue #220).
 
 Configuration resolves once, at startup, into a frozen `PaddockConfig` via
-`loadPaddockConfig()` (`config.ts:669`) — from a **YAML instance file** layered
-under the `PADDOCK_*` environment (`loadConfigFile()`, `config.ts:543`, reading
+`loadPaddockConfig()` (`config.ts`) — from a **YAML instance file** layered
+under the `PADDOCK_*` environment (`loadConfigFile()`, same file, reading
 `PADDOCK_CONFIG` or `<dataDir>/paddock.config.yaml`). Env wins over file. See
 [§8](#8-configuration) for the catalog.
 
@@ -128,9 +138,9 @@ flowchart TB
     L["drafts · chat model · row heights · unread · queued · theme"]
   end
   subgraph C3["3 · Server JSON sidecars — durable app state"]
-    A["archive-state.json"]
-    R["read-state.json"]
-    Q["queued-message.json"]
+    A["archive-state · star-state\nread-state · unread-state"]
+    R["run-provenance · message-provenance\nparent-detach"]
+    Q["queued-message · schedule-sessions\ntrigger-sessions"]
     S["sweep-state.json"]
   end
   Claude["Claude Code CLI"] -->|writes| C1
@@ -145,12 +155,12 @@ The chat transcript is a JSONL file **written by the Claude Code CLI**, never by
 Paddock — Paddock only reads and renders it. Claude Code stores transcripts under
 `~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl`, where `<encoded-cwd>` is the
 agent's absolute working directory with every non-`[A-Za-z0-9]` char replaced by
-`-` (`transcripts.ts:28`). **The working directory *is* the session key** — no
+`-` (`encodeProjectDir()` in `transcripts.ts`). **The working directory *is* the session key** — no
 manual tagging.
 
 To make transcripts portable (so a project directory is self-contained and can be
 backed up / moved), Paddock replaces that encoded directory with a **symlink to
-`<projectDir>/.chats/`** via `ensureProjectChats()` (`transcripts.ts:51`). It is
+`<projectDir>/.chats/`** via `ensureProjectChats()` (`transcripts.ts`). It is
 idempotent and self-healing: it creates `.chats/`, then repoints a drifted
 symlink, migrates a pre-existing real transcript directory (EXDEV-safe `cp`+`rm`
 across mounts), or just creates the symlink — and never throws. For a repo-backed
@@ -164,7 +174,7 @@ Paddock reads transcripts two ways:
   enriched with `toolUseResult` sidecar metadata for per-tool renderers (Edit line
   numbers, Bash exit codes, Grep/Read counts — see the `tooldetails.ts` recovery
   pass).
-- **Preview** — `readFirstUserText()` (`transcripts.ts:108`) streams the JSONL
+- **Preview** — `readFirstUserText()` (`transcripts.ts`) streams the JSONL
   line-by-line and stops at the first user message, returning the *untruncated*
   first prompt (Claude Code's own preview is capped at 100 chars — issue #62).
 
@@ -182,26 +192,47 @@ losing it costs a draft or a scroll position, nothing more:
 | `paddock:draft:<sessionId \| "new:"+slug>` | Composer draft text |
 | `paddock:chatModel:<sessionId \| "new:"+slug>` | Per-chat model selection |
 | `paddock:queued:*` / `paddock:queuedts:*` | Optimistic queued-message mirror |
-| `paddock:lastSeen:*` | Optimistic unread mirror |
-| `paddock:itemHeight` (via `itemHeight.ts`) | Virtualized row heights |
-| `paddock:lastTab:*`, `paddock:area`, `paddock:theme`, `paddock:fork:*` | Open tab, area, theme, fork lineage |
+| `paddock:itemHeight`, `paddock:panewidth` | Virtualized row heights, sidebar width |
+| `paddock:lastTab:*`, `paddock:theme`, `paddock:fork:*`, `paddock:chatView`, `paddock:chatsCollapsed` | Open tab, theme, fork lineage, nested/flat chat list, collapsed subtrees |
+| `paddock:lastSeen:*` | **Legacy only** — see the caution below |
 
-Two of these — queued messages and read-state — have since been promoted to
-**server sidecars** (Class 3) so they follow a user across devices; the
-localStorage entries now act as an optimistic client mirror.
+Queued messages have since been promoted to a **server sidecar** (Class 3) so they
+follow a user across devices; the localStorage entries act as an optimistic mirror.
+
+:::caution[Read-state is *not* mirrored in localStorage any more]
+`paddock:lastSeen:*` was a **persistent** mirror combined with
+`readLastSeen = max(server, local)`. That made devices diverge permanently: a local
+value the server never received marked a chat read on that device only and never
+synced upward, so two devices on one account reported different unread counts
+indefinitely. #488 separated *persistence* from *optimism* — the optimistic instant
+clear now lives in the **same in-memory map** the server payload folds into
+(`lib/lastSeen.ts`), so every reload re-derives from server truth and divergence is
+structurally impossible rather than merely repaired. A failed `POST …/seen` rolls the
+bump back (`revertSeenLocally`) instead of silently sticking. The surviving
+localStorage touchpoints exist **only** for the one-time backfill of pre-#488 values
+(`lib/lastSeenBackfill.ts`) and go away once that migration drains.
+:::
 
 ### Class 3 — Server JSON sidecars (durable app state)
 
 State that Paddock owns but that isn't part of the transcript lives in small,
-write-through JSON sidecar files in `cfg.dataDir`. Three follow one shared
-pattern, plus the sweep watermark:
+write-through JSON sidecar files in `cfg.dataDir`. There are **eleven** — ten sharing
+one pattern, plus the sweep watermark. All ten are constructed in `buildApp()` and
+handed to the route + WS layers in the dep bag, so this is the complete set:
 
 | Store | File | Persists | Keying / authority |
 |---|---|---|---|
-| `ArchiveStore` (`archive.ts:29`) | `archive-state.json` | Per-chat archived flag (issue #95) | `keyOf(agent, sessionId)` NUL-separated; stored as a JSON **array** of archived keys only. Sole source of truth for the flag. |
-| `ReadStateStore` (`read-state.ts:45`) | `read-state.json` (mode `0o600`) | Per-chat last-seen timestamp / unread (issues #160/#161/#189) | `keyOf(username, agent, sessionId)`: real identity → user-scoped; anonymous/`none` mode → a **shared bucket** (`agent\0sessionId`). Stored as a JSON **object**. `setLastSeen` is monotonic (only advances). |
-| `QueuedMessageStore` (`queued-message.ts:37`) | `queued-message.json` | Per-chat queued follow-up message (issues #91/#197/#245) | `keyOf(agent, sessionId)`. `take()` is an **atomic read-and-delete** (no `await` between get and delete) so two concurrent drains can't double-send. Server-authoritative. |
-| `SweepService` watermark (`sweep.ts:64`) | `sweep-state.json` | Per-project last-swept session mtime + timestamp | Keyed by slug; drives the activity gate ([§6](#6-the-sweeper)). |
+| `ArchiveStore` (`archive.ts`) | `archive-state.json` | Per-chat archived flag (issue #95) | `keyOf(agent, sessionId)` NUL-separated; stored as a JSON **array** of archived keys only. Sole source of truth for the flag. |
+| `StarStore` (`star.ts`) | `star-state.json` | Per-chat starred/pinned flag (#373) | `keyOf(agent, sessionId)`. Orthogonal to archive — starred chats float to the top of *both* the active and Archived lists. |
+| `ReadStateStore` (`read-state.ts`) | `read-state.json` (mode `0o600`) | Per-chat last-seen timestamp (issues #160/#161/#189) | `keyOf(username, agent, sessionId)`: real identity → user-scoped; anonymous/`none` mode → a **shared bucket** (`agent\0sessionId`). Stored as a JSON **object**. `setLastSeen` is monotonic (only advances). |
+| `UnreadStore` (`unread.ts`) | `unread-state.json` | Per-user manual "unread" override (#458) | Layered *on top of* read-state so a chat can be re-flagged unread after its last turn was already seen. Cleared whenever the chat is marked seen. |
+| `ParentDetachStore` (`parent-detach.ts`) | `parent-detach.json` | Explicit "detached from its parent" flag (#508) | Checked **ahead of both** parent-resolution tiers. Detach cannot be expressed by clearing an edge — most live edges are *inferred* and would just be re-derived on the next load. See [Provenance](/concepts/provenance/). |
+| `RunProvenanceStore` (`run-provenance.ts`) | `run-provenance.json` | Per-chat creation provenance (#261) — origin, spawn depth, and the recorded parent edge (#485) | Keyed by `sessionId` alone. Feeds the depth gate ([§5](#5-mcp-injection)) and the nested chat list. |
+| `MessageProvenanceStore` (`message-provenance.ts`) | `message-provenance.json` | Per-**message** provenance (#290) — *who* injected each machine-added turn | The per-message analog of `runProvenance`; also the backfill source for an inferred parent edge. |
+| `QueuedMessageStore` (`queued-message.ts`) | `queued-message.json` | Per-chat queued follow-up message (issues #91/#197/#245) | `keyOf(agent, sessionId)`. `take()` is an **atomic read-and-delete** (no `await` between get and delete) so two concurrent drains can't double-send. Server-authoritative. |
+| `ScheduleSessionStore` (`schedule-session.ts`) | `schedule-sessions.json` | The one chat an accreting schedule resumes into (#265) | Maps a `resume_session: true` schedule to its owned chat across fires. |
+| `TriggerSessionStore` (`trigger-session.ts`) | `trigger-sessions.json` | The owned chat of a `run.session: "resume"` trigger (Epic T / T1) | Rebinds that trigger's chat after a restart. |
+| `SweepService` watermark (`sweep.ts`, `STATE_FILE`) | `sweep-state.json` | Per-project last-swept session mtime + timestamp | Keyed by slug; drives the activity gate ([§6](#6-the-sweeper)). |
 
 **Shared sidecar pattern.** Each is a lightweight, corruption-tolerant JSON
 sidecar: lazy single-load into an in-memory `Map`/`Set` via `ensureLoaded()`
@@ -211,16 +242,31 @@ interleave, and non-throwing reads that degrade to a default. New durable app
 state should follow this same shape.
 
 > Implementation note: `QueuedMessageStore`'s key separator is a space, not the
-> NUL byte the other two use (`queued-message.ts:24`) — a benign inconsistency,
-> but don't assume a uniform separator across all three.
+> NUL byte the others use (see its `keyOf`) — a benign inconsistency, but don't
+> assume a uniform separator across all of them.
+
+:::caution[A workspace key can be the empty string]
+Several of these are keyed by, or carry, a **workspace key** — and the root
+workspace's key is `""` ([Workspaces](/concepts/workspaces/)). So `if (!slug)` is a
+**bug** wherever a workspace key is being tested: it silently drops the root. Test
+`!== undefined` / `!== null` explicitly. `makeParentResolver` in `chat-dto.ts` carries
+a comment marking exactly this trap on the recorded-edge check.
+:::
 
 ---
 
 ## 4. WebSocket / session flow
 
-All live chat runs over a single `GET /ws` endpoint. The two files that matter
-are `ws.ts` (protocol + turn lifecycle) and `session-hub.ts` (fan-out, buffering,
-re-attach). The key design goal (issue #54): **a turn's stream is decoupled from
+All live chat runs over a single `GET /ws` endpoint. Four files matter:
+
+| File | Owns |
+|---|---|
+| `ws.ts` | The socket handler and the browser-driven turn lifecycle (`onChatSend`, `onChatCommand`). |
+| `ws-turn.ts` | The **server-initiated** turn engine — `startAgentTurn`, the path every autonomous, spawned, scheduled and trigger-fired turn takes (extracted from `ws.ts` in #424). It is also where a chat's provenance marker, including its recorded `parentSessionId`, is persisted. |
+| `ws-triggers.ts` | Trigger dispatch plus the shared `composePreloadedPrompt`. |
+| `session-hub.ts` | Fan-out, buffering, re-attach. |
+
+The key design goal (issue #54): **a turn's stream is decoupled from
 the single socket that started it**, so it survives socket death and can be
 replayed to reconnecting or additional clients.
 
@@ -257,7 +303,7 @@ Server → client (`ServerMessage` union, `ws-protocol.ts`):
 Every hub-routed frame carries a `Routing` payload (`ws-protocol.ts`): `projectSlug`,
 `target` (legacy alias), `sessionId`, `jobId`, and a hub-stamped monotonic `seq`.
 
-### Turn lifecycle (`onChatSend`, `ws.ts:1034`)
+### Turn lifecycle (`onChatSend`, `ws.ts`)
 
 ```mermaid
 sequenceDiagram
@@ -294,12 +340,12 @@ Step by step:
 3. **Resolve model + drive mode.** The `model` override wins if
    `isKnownModel`, else `project.model` (scratch → keeper default); the keeper is
    re-registered via `ensureKeeperModel` because there's no per-trigger model API
-   (`ws.ts:1119-1148`). Drive mode is `project.driveMode ?? cfg.keeperDriveMode`.
+   (`ws.ts`). Drive mode is `project.driveMode ?? cfg.keeperDriveMode`.
 4. **Preload (optional).** For a *new* chat with `preloadContext` and a non-empty
    `OVERVIEW.md`, the overview + changelog tail are wrapped and prepended to the
-   prompt (`ws.ts:1157`, CONTRACT-v2 §2).
+   prompt (`composePreloadedPrompt()` in `ws-triggers.ts`, CONTRACT-v2 §2).
 5. **Drive the turn.** `const drive = driveMode === "session" ? herdctl.chatSession
-   : herdctl.chat` (`ws.ts:1315`), called as `drive(agentName, { prompt, resume,
+   : herdctl.chat` (`ws.ts`), called as `drive(agentName, { prompt, resume,
    triggerType: "web", injectedMcpServers, onJobCreated, onMessage })`.
 6. **Capture ids mid-stream.** `onJobCreated` records the `jobId`
    (`turn.setJobId`). Inside `onMessage`, when `m.session_id` first appears, for a
@@ -318,9 +364,9 @@ Step by step:
 
 ### SessionHub — fan-out, buffering, re-attach
 
-`SessionHub` (`session-hub.ts:114`) is transport-agnostic (it depends only on a
+`SessionHub` (`session-hub.ts`) is transport-agnostic (it depends only on a
 minimal `HubSocket` interface). One shared hub is created per WS handler
-(`ws.ts:564`).
+(`ws.ts`).
 
 - **State:** `bySession: Map<sessionId, Turn>` and `subscribers: Map<sessionId,
   Set<HubSocket>>`, plus an `onActive` callback the WS layer wires to broadcast
@@ -362,7 +408,7 @@ trigger call; herdctl's CLI runtime stands up a localhost HTTP MCP bridge per
 injected server and auto-allowlists `mcp__<key>__*` (the keeper is a `claude -p`
 subprocess that can't reach an in-process SDK server directly).
 
-Two servers, both wired in `ws.ts` (`ws.ts:1173-1310`):
+Two servers, both wired into `injectedMcpServers` in `ws.ts`'s `onChatSend`:
 
 - **`send_file`** (server key `paddock`, tool `mcp__paddock__send_file`) —
   `sendFileServerDef()` in `send-file-mcp.ts`. Injected on **every** turn (keeper
@@ -382,6 +428,13 @@ Two servers, both wired in `ws.ts` (`ws.ts:1173-1310`):
   [self-management MCP reference](/reference/self-mcp/) is the authoritative
   per-tool list and [gating matrix](/reference/self-mcp/#the-gating-matrix) — this
   page deliberately doesn't restate it.
+
+A **third** MCP server can reach agents, but *not* by injection: the Playwright
+browser MCP (headless Chromium — navigate / click / snapshot / screenshot) is written
+into the **static herdctl agent config** by `browserMcpServers()` in
+`herdctl-agent-config.ts`, gated on `cfg.browserMcp` (`PADDOCK_BROWSER_MCP`, default
+off). It is scoped per *instance*, not per turn, so a box without the browser stack
+leaves it off and there are no failed spawns.
 
 **Anti-fork-bomb design:** recursion is bounded by a **depth gate**, not by
 withholding the toolset from every automated turn. Every server-initiated turn
@@ -409,7 +462,7 @@ later opens a spawned chat gets full tools again through the normal socket path.
 ## 6. The sweeper
 
 After every user chat turn in a real project, a **post-turn sweep** curates the
-project's `OVERVIEW.md` and `CHANGELOG.md`. `SweepService` (`sweep.ts:67`) is the
+project's `OVERVIEW.md` and `CHANGELOG.md`. `SweepService` (`sweep.ts`) is the
 engine; the agent that does the writing is a dedicated **tool-less** per-project
 `sweeper-<slug>` agent.
 
@@ -424,7 +477,7 @@ engine; the agent that does the writing is a dedicated **tool-less** per-project
   activity → no sweep). On success the watermark advances; on failure only the
   timestamp advances (not the mtime), so the next sweep retries the same activity.
 - **Digest.** `buildDigest()` summarizes the last ~40 messages of the 6 newest
-  sessions (`MAX_DIGEST_SESSIONS`, `sweep.ts:124`; tool calls compacted, text
+  sessions (`MAX_DIGEST_SESSIONS`; tool calls compacted, text
   trimmed) and `curationPrompt()` bundles
   that with the current `OVERVIEW.md`, `CHANGELOG.md` tail, and `CLAUDE.md`.
 - **Tool-less contract.** The sweeper is configured with `allowed_tools: []` and
@@ -438,7 +491,7 @@ engine; the agent that does the writing is a dedicated **tool-less** per-project
   <<<END>>>
   ```
 
-  `SweepService` parses the markers (`parseSweeperOutput`, `sweep.ts:727`) and
+  `SweepService` parses the markers (`parseSweeperOutput`) and
   writes the files itself: `writeOverview` and `writeChangelog` (both
   **wholesale replace** — the sweeper returns each file in full, so it can
   coalesce and prune as well as add) and `writeClaudeCurated`, which replaces
@@ -483,14 +536,14 @@ Three providers, selected by `PADDOCK_AUTH_MODE`:
   `createRemoteJWKSet` built once at registration). Fail-closed: missing
   `jwksUrl` throws at startup; a bad token → 401.
 
-**Exemptions** (`isExempt`, `auth.ts:137`) — three groups, not two:
+**Exemptions** (`isExempt` in `auth.ts`) — three groups, not two:
 
 1. **Health/readiness probes**, so a proxy can probe a locked-down instance.
 2. **Immutable static front-end assets** (`/assets/`, `/icons/`, `/fonts/`,
    `/sw.js`, `/manifest.webmanifest`, `/favicon.ico` — issue #223), so the SSO
    login flow and the PWA shell load cleanly.
 3. **The Management API** — the `/mcp` prefix and
-   `/.well-known/oauth-protected-resource` (`auth.ts:114-135`). This one is not
+   `/.well-known/oauth-protected-resource` (`isManagementApiPath` in `auth.ts`). This one is not
    a hole: `/mcp` runs its own per-client token authenticator, independent of
    `PADDOCK_AUTH_MODE`, and 404s until an operator configures it. It is exempt
    *because* the browser modes are actively wrong for it — `jwt` mode would
@@ -516,13 +569,27 @@ The main knobs:
 
 | Area | Vars (default) |
 |---|---|
-| **Server** | `PORT` (4000), `HOST` (**127.0.0.1** since v0.44 — see [Binding & exposure](/configuration/binding-and-exposure/)), `LOG_LEVEL` (info) |
+| **Server** | `PORT` (4000), `HOST` (or `PADDOCK_HOST`; **127.0.0.1** since v0.44 — see [Binding & exposure](/configuration/binding-and-exposure/)), `LOG_LEVEL` (info), `PADDOCK_DANGEROUSLY_ALLOW_OPEN` (false — downgrades the bind-safety refusal to a warning) |
 | **Paths** | `PADDOCK_DATA_DIR` (./data), `PADDOCK_PROJECTS_DIR`, `PADDOCK_STATE_DIR` (`.herdctl`), `PADDOCK_HERDCTL_CONFIG`, `PADDOCK_SCRATCH_DIR`, `PADDOCK_WEB_DIST`, `CLAUDE_HOME` (~/.claude) |
 | **Auth** | `PADDOCK_AUTH_MODE` (none), `PADDOCK_AUTH_USER_HEADER` (X-Forwarded-User), `..._EMAIL_HEADER`, `..._GROUPS_HEADER`, `..._JWT_HEADER` (Authorization), `..._JWKS_URL`, `..._JWT_ISSUER`, `..._JWT_AUDIENCE`, `..._USERNAME_CLAIM`, `..._GROUPS_CLAIM` (groups) |
-| **Keeper** | `PADDOCK_KEEPER_DRIVE_MODE` (session), `PADDOCK_KEEPER_NATIVE_PROMPT` (true), `PADDOCK_SELF_MCP` (false), `PADDOCK_SELF_MCP_WRITE` (false; implies read) |
+| **Keeper** | `PADDOCK_KEEPER_DRIVE_MODE` (session), `PADDOCK_KEEPER_NATIVE_PROMPT` (true) |
+| **Self-MCP + spawning** | `PADDOCK_SELF_MCP` (false), `PADDOCK_SELF_MCP_WRITE` (false; implies read), `PADDOCK_SELF_MCP_PROJECTS` (false; `create_project`, rides on write), `PADDOCK_HOOKS_MCP` (false; the trigger tools, per-project override), **`PADDOCK_MAX_SPAWN_DEPTH` (`1`, bounded `0`–`8`)** — see [§5](#5-mcp-injection) |
+| **Agent capabilities** | `PADDOCK_BROWSER_MCP` (false — Playwright/headless Chromium, via the static agent config, not injection) |
 | **Sweeper** | `PADDOCK_SWEEP_MIN_INTERVAL_MS` (300000) |
+| **Curation budgets** | `PADDOCK_CURATION_OVERVIEW_MAX_TOKENS` (2000), `PADDOCK_CURATION_CHANGELOG_MAX_TOKENS` (8000), `PADDOCK_CURATION_CLAUDEMD_MAX_TOKENS` (6000) — `curation.*` in YAML, per-project overridable (`curation-config.ts`) |
+| **Keeper recovery** | `PADDOCK_RECOVERY_SURFACE` (**true** — `surfaceKilledTask`, the `chat:killed_task` affordance), `PADDOCK_RECOVERY_AUTODRIVE` (false), `PADDOCK_RECOVERY_DEBOUNCE_MS` (5000), `PADDOCK_RECOVERY_MAX_RETRIES` (1), `PADDOCK_RECOVERY_LIMBO_MS` (0 = off) |
+| **Attachments** | `PADDOCK_ATTACHMENTS_ENABLED` (true), `PADDOCK_ATTACHMENTS_MAX_FILE_SIZE_MB` (25), `PADDOCK_ATTACHMENTS_MAX_FILES_PER_MESSAGE` (10), `PADDOCK_ATTACHMENTS_ALLOWED_TYPES` (`*` — a hygiene guardrail, **not** a security boundary) |
+| **OpenAPI** | `PADDOCK_OPENAPI_ENABLED` (false), `PADDOCK_OPENAPI_PATH` (`/open-api`) — see [§12](#12-openapi-reference) |
+| **Management API** | **YAML-only** `managementApi.*` — `clients[]`, `instanceId`, `trustedProxies` — plus the `PADDOCK_MCP_TOKEN_<CLIENT>` credentials and `PADDOCK_MANAGEMENT_TRUSTED_PROXIES`. See [Management API (MCP)](/reference/mcp/). |
 | **Whisper** | `PADDOCK_WHISPER_MODE` (off/local/remote), `PADDOCK_WHISPER_ENDPOINT`, `PADDOCK_WHISPER_MODEL` (base), `PADDOCK_WHISPER_API_KEY`, `PADDOCK_WHISPER_LANGUAGE`, `PADDOCK_WHISPER_MAX_UPLOAD_BYTES` (25 MB) |
+| **Git + GitHub** | `PADDOCK_GIT_AUTHOR_NAME`, `PADDOCK_GIT_AUTHOR_EMAIL`, `PADDOCK_GITHUB_CLIENT_ID` |
 | **Brand** | `PADDOCK_BRAND_NAME` (Paddock), `PADDOCK_BRAND_LOGO` (🐎), `PADDOCK_BRAND_ACCENT` (#c2603c) |
+
+This is the shape of the surface, not the full field-by-field reference —
+[Environment variables](/configuration/environment/) and
+[Config file (YAML)](/configuration/config-file/) are authoritative, and
+`instance-config.ts` carries the machine-readable field list the Config screen renders
+from.
 
 Running long-lived dev/preview servers is a capability of the **devbox image**
 (which ships the `pm` PM2 wrapper) advertised via an instance-wide `CLAUDE.md` on
@@ -567,6 +634,70 @@ Projects concept page).
 
 ---
 
+## 11. The REST surface — one plugin, mounted twice
+
+`routes.ts` is a 58-line registrar. Three groups are registered once, globally
+(`registerMetaRoutes`, `registerGitRoutes`, `registerProjectRoutes`). The rest — the
+**workspace-scoped** half of every group — is registered inside a single call to
+`mountWorkspaceRoutes()` (`routes/workspace-mount.ts`), and *that* is the load-bearing
+detail: the same plugin is mounted **twice**, at two prefixes.
+
+| Prefix | Workspace key |
+|---|---|
+| `/api/root` | `""` (the root workspace) |
+| `/api/projects/:slug` | `params.slug` |
+
+Both mounts run the **identical handlers**, so root/project parity is a property of the
+wiring rather than something contributors have to remember. Handler bodies needed no
+changes at all: an `onRequest` hook injects `slug: ""` for the root mount, and
+`onRequest` is the earliest lifecycle hook — it runs *before* schema validation, so
+every handler sees a normal `params.slug` either way.
+
+Why two mounts instead of one route with an optional segment: the root's key is the
+**empty string**, and an empty string cannot ride in a URL path segment —
+`/api/projects//chats` simply doesn't match. See
+[Workspaces](/concepts/workspaces/) for the model this implements.
+
+Routes worth knowing about that postdate the rest of this page, all workspace-scoped
+(so each exists under both prefixes), in `routes/chats.ts`:
+
+| Route | Notes |
+|---|---|
+| `POST …/chats/batch/archive` · `…/batch/unread` · `…/batch/delete` | Subtree bulk actions (#508). Capped at `BATCH_SESSIONS_MAX` (500) and **all-or-nothing** on validation: one malformed session id fails the whole request rather than silently applying to the rest. |
+| `POST …/chats/:sessionId/detach` | Writes the `ParentDetachStore` flag. Nothing is destroyed — the recorded edge stays, the override just wins ahead of it. |
+| `GET …/chats/usage?scope=active\|archived\|all` | Per-chat context-window usage for the list's usage rings. Defaults to **`active`**: usage is derived by streaming each transcript, and archived rings sit behind a collapsed group, so computing them by default is wasted work (#537). |
+
+## 12. OpenAPI reference
+
+Paddock derives an OpenAPI document from the route schemas themselves and serves it
+with a branded Swagger UI — so the REST surface is browsable rather than something you
+reconstruct from source. `@fastify/swagger` + `@fastify/swagger-ui`, wired in
+`openapi.ts` (`buildSwaggerOptions` / `buildSwaggerUiOptions`).
+
+- **Off by default.** Set `PADDOCK_OPENAPI_ENABLED=1` (or `openapi.enabled` in YAML).
+- **Mounts at `cfg.openapi.path`, default `/open-api`** (`PADDOCK_OPENAPI_PATH`),
+  normalized to a leading slash with no trailing slash. The UI's own raw spec is at
+  `<path>/json`, plus a stable tool-friendly alias at `<path>.json` that is itself
+  hidden from the spec.
+- **Registration order is a real constraint** — `@fastify/swagger` hooks `onRoute` to
+  collect schemas, so it must register *before* `registerRoutes`.
+- **No auth exemption.** The docs sit behind whatever `PADDOCK_AUTH_MODE` is
+  configured, gated exactly like the API they describe. The security schemes the spec
+  advertises reflect this instance's auth mode (`authDoc` in `openapi.ts`).
+- `GET /ws` is marked `hide: true` — it isn't a REST endpoint, so a Swagger "Try it
+  out" against it would only fail. The frame protocol is documented in
+  [§4](#4-websocket--session-flow) instead.
+
+:::caution[A stale comment in `app.ts` says `/docs`]
+The comment above the swagger registration block still claims the UI mounts at `/docs`
+with the raw spec at `/docs/json`. It does not — it mounts at `cfg.openapi.path`
+(default `/open-api`), as the adjacent `app.log.info({ path: cfg.openapi.path })` and
+the "set `PADDOCK_OPENAPI_ENABLED=1` to mount `/open-api`" branch both show. Trust the
+code, not that comment.
+:::
+
+---
+
 ## Source map
 
 | Concern | File(s) |
@@ -574,17 +705,19 @@ Projects concept page).
 | Bootstrap / DI | `app.ts`, `index.ts` |
 | Config | `config.ts`, `models.ts`, `instance-config.ts` |
 | Auth boundary | `auth.ts` |
-| REST | `routes.ts` (a 48-line registrar) → `routes/{chats,projects,triggers,meta,git,mcp}.ts` |
+| REST | `routes.ts` (a 58-line registrar) → `routes/workspace-mount.ts` → `routes/{chats,projects,triggers,meta,git,mcp}.ts` |
 | WS transport | `ws.ts`, `ws-protocol.ts`, `ws-turn.ts`, `ws-triggers.ts`, `session-hub.ts` |
 | Triggers (hooks + schedules) | `triggers.ts`, `trigger-config.ts`, `hook-config.ts` |
 | Management API (`/mcp`) | `management-{config,auth,policy,ops,metadata,mcp-server}.ts` |
 | Keeper recovery | `recovery-config.ts` |
 | herdctl wrapper | `herdctl.ts`, `spike.ts` |
 | Project layer | `projects.ts` |
-| Sidecar stores | `archive.ts`, `read-state.ts`, `queued-message.ts`, `attachments.ts` |
+| Sidecar stores | `archive.ts`, `star.ts`, `read-state.ts`, `unread.ts`, `parent-detach.ts`, `run-provenance.ts`, `message-provenance.ts`, `queued-message.ts`, `schedule-session.ts`, `trigger-session.ts`, `attachments.ts` |
+| Chat DTO / parent edge | `chat-dto.ts` (`makeParentResolver`, `buildProjectChats`) |
 | Transcripts | `transcripts.ts`, `tooldetails.ts`, `usage.ts`, `subagents.ts` |
-| Sweeper | `sweep.ts` |
-| MCP injection | `send-file-mcp.ts`, `self-mcp.ts` |
+| Sweeper | `sweep.ts`, `curation-config.ts` |
+| MCP injection | `send-file-mcp.ts`, `self-mcp*.ts`, `ws-self-mcp.ts`, `wake-injection.ts`, `spawn-capability.ts` |
+| OpenAPI | `openapi.ts` |
 | Git backing store | `git.ts`, `github-auth.ts` |
 
 For the conceptual model, continue to [`concepts/`](/concepts/).
