@@ -54,6 +54,11 @@ becoming less an app you visit and more a service your other tools talk to.
   workspace rather than offering a way into one. Only the root gets a Projects
   section, since it's the only workspace with children today. Old links and
   bookmarks still work — `/projects` now lands you straight on `/`.
+
+![The sidebar reduced to a single Home link above the Projects list, with the Config gear sitting at the bottom](../../assets/whats-new/root-sidebar.png)
+
+![Root Home with the projects grid embedded as a section below the Chats list, carrying its own New Project button](../../assets/whats-new/root-home.png)
+
 - **Instance Config and workspace Settings are two screens now, named for the
   files they write.** 0.51 stacked them: the instance-wide `paddock.config.yaml`
   form rendered as a second section *beneath* the root workspace's own settings
@@ -75,10 +80,16 @@ becoming less an app you visit and more a service your other tools talk to.
   search rather than fighting it, and because it's sticky it can outlive the work
   it was filtering for — so when the last turn ends the list says "No chats are
   running." and offers you **Show all chats**.
+
+![The Chats count badge split into a total of 8 and a highlighted running count of 4, with the list filtered to the four chats whose turns are live and rendered flat](../../assets/whats-new/running-chats-filter.png)
+
 - **Nesting itself is now optional.** A second button beside **+** toggles the
   list between the nested tree and a flat one. Both this and the running filter are
   remembered per browser and applied everywhere, not per project — how you like to
   read a list isn't a fact about one project.
+
+![The root workspace's tab bar leading with Home, and the chat-list toolbar where the nested-or-flat toggle sits beside the new-chat button](../../assets/whats-new/root-tab-bar.png)
+
 - **Hold Shift to act on a whole family of chats.** The nested list could only ever
   act on one chat at a time, which made archiving a parent quietly destructive to
   the *shape* of the list: the children lost their parent from the active set and
@@ -103,6 +114,9 @@ becoming less an app you visit and more a service your other tools talk to.
   the chat itself along with its descendants — shown only on the rows that
   actually have any. The same hint is in each button's accessible name, so the
   affordance reaches the keyboard too.
+
+![A nested parent row hovered to reveal its action strip, its archive button showing the tooltip 'Archive chat — file it away without deleting · Shift-click to archive all 4' above the row's three nested children](../../assets/whats-new/subtree-actions-tooltip.png)
+
 - **No more grey browser dialogs.** The last three `window.prompt()` /
   `window.confirm()` calls — renaming a chat, reverting a chat, deleting a
   trigger — are Paddock modals now. They were unthemed browser chrome sitting one
@@ -122,6 +136,9 @@ becoming less an app you visit and more a service your other tools talk to.
   prompt could only be discovered by accident — and the revert
   dialog refuses to dismiss on a backdrop click, because it carries text meant to
   be read.
+
+![The revert confirmation modal, with '6 messages' and '2 tool calls' emphasised in its summary line and the 'Those actions are not undone' warning set apart as its own callout](../../assets/whats-new/revert-modal.png)
+
 - **Opening a project is three times faster, and the archived half costs nothing
   until you look at it.** A project's context rings had no stored counter behind
   them: every ring was derived by streaming that chat's transcript, and its
