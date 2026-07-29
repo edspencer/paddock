@@ -7,7 +7,7 @@ import { ProvenanceBadge } from "../../components/ProvenanceBadge";
 import { PaneResizer, usePaneWidth } from "../../components/PaneResizer";
 import { relativeTime, sessionUsageOf } from "../../lib/format";
 import { ChatCountBadge } from "./ChatCountBadge";
-import { ChatViewOptionsButton, ChatViewOptionsPanel } from "./ChatViewOptions";
+import { ChatNestingToggle } from "./ChatNestingToggle";
 import type { ChatViewPrefs } from "./useChatViewPrefs";
 import {
   ArchiveIcon,
@@ -430,9 +430,10 @@ export function SessionSidebar({
               </button>
             )}
           </div>
-          <ChatViewOptionsButton
-            optionsOpen={viewPrefs.optionsOpen}
-            toggleOptionsOpen={viewPrefs.toggleOptionsOpen}
+          <ChatNestingToggle
+            nested={viewPrefs.nested}
+            setNested={viewPrefs.setNested}
+            runningOnly={viewPrefs.runningOnly}
           />
           <button
             type="button"
@@ -452,13 +453,6 @@ export function SessionSidebar({
             <XIcon width={16} height={16} />
           </button>
         </div>
-        {viewPrefs.optionsOpen && (
-          <ChatViewOptionsPanel
-            nested={viewPrefs.nested}
-            setNested={viewPrefs.setNested}
-            runningOnly={viewPrefs.runningOnly}
-          />
-        )}
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="mb-1 flex items-center justify-between pr-3">
             <span className="section-label">Chats</span>

@@ -919,38 +919,44 @@ describe("ProjectView: running filter + view options", () => {
     await screen.findByText("Manager");
     expect(twisty("Manager")).toBeInTheDocument();
 
-    // The options panel is a plain inline toggle, not a dropdown.
-    fireEvent.click(screen.getByRole("button", { name: /Chat list view options/i }));
-    fireEvent.click(screen.getByRole("radio", { name: "Flat" }));
+    // One button, labelled with the layout it will switch TO — the same
+    // convention as the theme toggle in AppShell.
+    fireEvent.click(screen.getByRole("button", { name: /Show chats as a flat list/i }));
 
     expect(twisty("Manager")).toBeNull();
     expect(screen.getByText("Spawned worker")).toBeInTheDocument();
     expect(localStorage.getItem("paddock:chatView:nested")).toBe("0");
+    // Now it offers the way back.
+    expect(screen.getByRole("button", { name: /Nest chats under/i })).toBeInTheDocument();
 
-    // Sticky across a remount, panel included.
+    // Sticky across a remount.
     first.unmount();
     renderAt("/projects/p/chat");
     await screen.findByText("Manager");
     expect(twisty("Manager")).toBeNull();
-    expect(screen.getByRole("radio", { name: "Flat" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("button", { name: /Nest chats under/i })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
   });
 
   it("forces flat while filtering to running, without clobbering the preference", async () => {
     threeChats();
     renderAt("/projects/p/chat");
     await screen.findByText("Manager");
-    fireEvent.click(screen.getByRole("button", { name: /Chat list view options/i }));
-    expect(screen.getByRole("radio", { name: "Nested" })).toHaveAttribute("aria-checked", "true");
 
     setRunning("parent", "child");
     fireEvent.click(runningToggle());
-    // The control says why it is inert rather than just looking broken...
-    expect(screen.getByRole("radio", { name: "Nested" })).toBeDisabled();
-    expect(screen.getByRole("radio", { name: "Nested" })).toHaveAttribute("aria-checked", "true");
+    // Disabled rather than silently disagreeing with the list: offering "switch
+    // to flat" while the list is ALREADY flat would misreport the state.
+    const layout = screen.getByRole("button", { name: /Show chats as a flat list/i });
+    expect(layout).toBeDisabled();
+    expect(layout).toHaveAttribute("aria-pressed", "true");
 
     // ...and the nesting comes straight back when the filter comes off.
     fireEvent.click(screen.getByRole("button", { name: /^Show all 3 chats$/i }));
     expect(twisty("Manager")).toBeInTheDocument();
+    expect(localStorage.getItem("paddock:chatView:nested")).toBeNull();
   });
 });
 

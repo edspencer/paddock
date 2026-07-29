@@ -42,13 +42,21 @@ export const SearchIcon = (p: IconProps) => (
   </svg>
 );
 
-/** Sliders — "view options". Deliberately not the cog, which reads as Settings. */
-export const SlidersIcon = (p: IconProps) => (
+/**
+ * The chat list's two layouts, drawn to read as a pair at 16px: same three rows,
+ * the only difference being whether rows 2 and 3 hang off an elbow.
+ */
+export const TreeIcon = (p: IconProps) => (
   <svg {...base(p)}>
-    <path d="M4 6h8M18 6h2M4 12h2M12 12h8M4 18h8M18 18h2" />
-    <circle cx="15" cy="6" r="2.5" />
-    <circle cx="9" cy="12" r="2.5" />
-    <circle cx="15" cy="18" r="2.5" />
+    <path d="M4 5h16" />
+    <path d="M8 5v6h12" />
+    <path d="M8 11v6h12" />
+  </svg>
+);
+
+export const ListIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M4 6h16M4 12h16M4 18h16" />
   </svg>
 );
 

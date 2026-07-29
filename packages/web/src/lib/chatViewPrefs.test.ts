@@ -2,20 +2,17 @@ import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import {
   readNestedChats,
   readRunningOnly,
-  readViewOptionsOpen,
   writeNestedChats,
   writeRunningOnly,
-  writeViewOptionsOpen,
 } from "./chatViewPrefs";
 
 describe("chatViewPrefs", () => {
   beforeEach(() => localStorage.clear());
   afterEach(() => vi.restoreAllMocks());
 
-  it("defaults to today's behaviour: nested on, no filter, panel closed", () => {
+  it("defaults to today's behaviour: nested on, no filter", () => {
     expect(readNestedChats()).toBe(true);
     expect(readRunningOnly()).toBe(false);
-    expect(readViewOptionsOpen()).toBe(false);
   });
 
   it("round-trips each flag independently", () => {
@@ -23,8 +20,6 @@ describe("chatViewPrefs", () => {
     writeRunningOnly(true);
     expect(readNestedChats()).toBe(false);
     expect(readRunningOnly()).toBe(true);
-    // Untouched flags keep their defaults.
-    expect(readViewOptionsOpen()).toBe(false);
 
     writeNestedChats(true);
     expect(readNestedChats()).toBe(true);
@@ -37,10 +32,8 @@ describe("chatViewPrefs", () => {
     // the slug never enters the key.
     writeNestedChats(false);
     writeRunningOnly(true);
-    writeViewOptionsOpen(true);
     expect(Object.keys(localStorage).sort()).toEqual([
       "paddock:chatView:nested",
-      "paddock:chatView:optionsOpen",
       "paddock:chatView:runningOnly",
     ]);
   });

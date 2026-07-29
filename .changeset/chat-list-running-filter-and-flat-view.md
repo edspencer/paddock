@@ -17,6 +17,7 @@ Filtering to running composes with search rather than fighting it, and when the
 last turn ends the list says "No chats are running" and offers the way back,
 because the filter is sticky and can outlive the work it was filtering for.
 
-Nesting itself is now optional: a view-options button next to "+" opens a small
-inline panel with a Nested / Flat choice. Both preferences are per-browser and
-global, not per-project — how you like to read a list is not a per-project fact.
+Nesting itself is now optional: a second toolbar button beside "+" toggles the
+list between the nested tree and a flat one. Both preferences are per-browser
+and global, not per-project — how you like to read a list is not a per-project
+fact.

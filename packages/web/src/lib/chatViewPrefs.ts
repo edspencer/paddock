@@ -1,6 +1,7 @@
 // How the chat list is rendered: nested vs flat, and whether it is filtered to
-// the chats running right now. Browser preferences (ARCHITECTURE §3, storage
-// class 2), same read/write + try-catch shape as `collapsedChats.ts`.
+// the chats running right now. Two booleans, one toolbar button each. Browser
+// preferences (ARCHITECTURE §3, storage class 2), same read/write + try-catch
+// shape as `collapsedChats.ts`.
 //
 // GLOBAL, not per-project — deliberately, for two reasons:
 //
@@ -16,7 +17,6 @@
 
 const NESTED_KEY = "paddock:chatView:nested";
 const RUNNING_ONLY_KEY = "paddock:chatView:runningOnly";
-const OPTIONS_OPEN_KEY = "paddock:chatView:optionsOpen";
 
 /** Read a stored boolean; `fallback` on unset, corrupt, or unavailable storage. */
 function readFlag(key: string, fallback: boolean): boolean {
@@ -61,13 +61,4 @@ export function readRunningOnly(): boolean {
 
 export function writeRunningOnly(value: boolean): void {
   writeFlag(RUNNING_ONLY_KEY, value, false);
-}
-
-/** Whether the view-options panel is expanded. Default closed. */
-export function readViewOptionsOpen(): boolean {
-  return readFlag(OPTIONS_OPEN_KEY, false);
-}
-
-export function writeViewOptionsOpen(value: boolean): void {
-  writeFlag(OPTIONS_OPEN_KEY, value, false);
 }
