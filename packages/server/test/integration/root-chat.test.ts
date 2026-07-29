@@ -168,4 +168,41 @@ describe("integration: root chats (#531)", () => {
     expect(chat.starred).toBe(true);
     expect(chat.archived).toBe(true);
   });
+
+  // Scoped usage (#537) has to work through the root mount too, and it is exactly
+  // the shape the empty-string root key breaks: the scope filter reads the archive
+  // sidecar under `keeperAgentName(slug)`, so anything that treats the root's `""`
+  // as absent rather than as a key would look under the wrong keeper and quietly
+  // return the wrong set — with no error to notice. By now the tests above have
+  // left the root with one archived chat and one active one, which is the split
+  // this needs.
+  it("scopes root usage by archived state, not by whether the slug is truthy (#537)", async () => {
+    const usage = async (scope?: string) =>
+      (
+        await t.app.inject({
+          method: "GET",
+          url: `/api/root/chats/usage${scope ? `?scope=${scope}` : ""}`,
+        })
+      ).json().usage as Record<string, { contextTokens: number }>;
+
+    const chats = (await t.app.inject({ method: "GET", url: "/api/root/chats" })).json()
+      .chats as Array<{ sessionId: string; archived: boolean }>;
+    const ids = (archived: boolean) =>
+      chats
+        .filter((c) => c.archived === archived)
+        .map((c) => c.sessionId)
+        .sort();
+    // Both populations are non-empty, or the split proves nothing.
+    expect(ids(true).length).toBeGreaterThan(0);
+    expect(ids(false).length).toBeGreaterThan(0);
+
+    expect(Object.keys(await usage()).sort()).toEqual(ids(false));
+    expect(Object.keys(await usage("archived")).sort()).toEqual(ids(true));
+    expect(Object.keys(await usage("all")).sort()).toEqual(
+      [...ids(false), ...ids(true)].sort(),
+    );
+    // Scoping picks which transcripts get streamed; it never changes the figures.
+    const all = await usage("all");
+    expect({ ...(await usage()), ...(await usage("archived")) }).toEqual(all);
+  });
 });
