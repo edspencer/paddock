@@ -411,9 +411,12 @@ export function SessionSidebar({
               type="text"
               value={chatSearch}
               onChange={(e) => setChatSearch(e.target.value)}
-              placeholder="Search chats"
+              // Short placeholder, full accessible name: the toolbar now carries
+              // three controls, and at the default 256px sidebar "Search chats"
+              // renders clipped mid-word.
+              placeholder="Search"
               aria-label="Search chats"
-              className="input py-1.5 pl-8 pr-8"
+              className={`input py-1.5 pl-8 ${searching ? "pr-8" : "pr-2"}`}
             />
             {searching && (
               <button

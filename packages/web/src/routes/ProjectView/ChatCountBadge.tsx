@@ -85,10 +85,14 @@ export function ChatCountBadge({
       >
         {/* The same stepped spinner the per-chat rings use, so "running" looks
             like one thing across the sidebar. `spin-eco` is already
-            prefers-reduced-motion aware (index.css). */}
+            prefers-reduced-motion aware (index.css). It STOPS at zero: the
+            badge survives an emptied filter so the user can get back out, and a
+            ring still spinning next to "0" would be claiming work that ended. */}
         <span
           aria-hidden="true"
-          className={`spin-eco h-2.5 w-2.5 rounded-full border-[1.5px] border-current border-t-transparent`}
+          className={`h-2.5 w-2.5 rounded-full border-[1.5px] border-current ${
+            runningCount > 0 ? "spin-eco border-t-transparent" : "opacity-60"
+          }`}
         />
         {runningCount}
       </button>
