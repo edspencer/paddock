@@ -710,7 +710,7 @@ code, not that comment.
 | Triggers (hooks + schedules) | `triggers.ts`, `trigger-config.ts`, `hook-config.ts` |
 | Management API (`/mcp`) | `management-{config,auth,policy,ops,metadata,mcp-server}.ts` |
 | Keeper recovery | `recovery-config.ts` |
-| herdctl wrapper | `herdctl.ts`, `spike.ts` |
+| herdctl wrapper | `herdctl.ts` |
 | Project layer | `projects.ts` |
 | Sidecar stores | `archive.ts`, `star.ts`, `read-state.ts`, `unread.ts`, `parent-detach.ts`, `run-provenance.ts`, `message-provenance.ts`, `queued-message.ts`, `schedule-session.ts`, `trigger-session.ts`, `attachments.ts` |
 | Chat DTO / parent edge | `chat-dto.ts` (`makeParentResolver`, `buildProjectChats`) |

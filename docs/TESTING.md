@@ -222,11 +222,10 @@ a port or installing signal handlers — a pure seam, no behavior change.
 - E2E covers the happy paths; error states (offline socket, failed turn,
   validation errors in-browser), model-picker, context-meter, file pins/tabs,
   and the git UI are not yet driven from the browser.
-- `index.ts` (the process bootstrap: bind a port + signal handlers) and
-  `spike.ts` (a dev-only `@herdctl/core` exploration script, excluded from the
-  production build) are intentionally left at 0% — neither is server logic worth
-  a test. Excluding them, the meaningful `src/**` coverage is ~93% stmts.
+- `index.ts` (the process bootstrap: bind a port + signal handlers) is
+  intentionally left at 0% — it isn't server logic worth a test. Excluding it,
+  the meaningful `src/**` coverage is ~93% stmts.
 - Server coverage is now ~90% stmts / 84% branch over all `src/**` (~93% / ~84%
-  excluding index/spike), up from ~72% / ~67%. Wiring a
+  excluding index), up from ~72% / ~67%. Wiring a
   `@vitest/coverage-v8` threshold gate (herdctl uses 85%) is the natural next
   step now that the suite is broad.

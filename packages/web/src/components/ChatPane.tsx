@@ -380,8 +380,8 @@ export function ChatPane({
         if (cancelled) return;
         setModels(res.models);
         setKeeperDefault(res.keeperDefault);
-        if (res.recoveryDefault) setRecoveryDefault(res.recoveryDefault);
-        if (res.attachmentsDefault) setAttachmentsDefault(res.attachmentsDefault);
+        setRecoveryDefault(res.recoveryDefault);
+        setAttachmentsDefault(res.attachmentsDefault);
       })
       .catch(() => {
         /* leave the picker empty; sends fall back to the server default */

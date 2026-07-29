@@ -557,7 +557,7 @@ Projects concept page).
 | Auth boundary | `auth.ts` |
 | REST | `routes.ts` |
 | WS transport | `ws.ts`, `session-hub.ts` |
-| herdctl wrapper | `herdctl.ts`, `spike.ts` |
+| herdctl wrapper | `herdctl.ts` |
 | Project layer | `projects.ts` |
 | Sidecar stores | `archive.ts`, `read-state.ts`, `queued-message.ts`, `attachments.ts` |
 | Transcripts | `transcripts.ts`, `tooldetails.ts`, `usage.ts`, `subagents.ts` |

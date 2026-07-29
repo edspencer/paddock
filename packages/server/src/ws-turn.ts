@@ -240,7 +240,6 @@ const makeBackgroundTurnSink = (
   const launches = new Map<string, SubagentLaunch>();
   const routing = (): Routing => ({
     projectSlug,
-    target: projectSlug,
     sessionId: resolvedSession,
     jobId: turn?.jobId ?? null,
   });
@@ -402,7 +401,6 @@ async function startAgentTurn(opts: StartAgentTurnOpts): Promise<string> {
 
   const routing = (): Routing => ({
     projectSlug,
-    target: projectSlug,
     sessionId: resolvedSession,
     jobId,
   });
@@ -425,7 +423,6 @@ async function startAgentTurn(opts: StartAgentTurnOpts): Promise<string> {
         type: "chat:injected",
         payload: {
           projectSlug,
-          target: projectSlug,
           sessionId: id,
           jobId,
           sender,
@@ -777,7 +774,6 @@ const recoveryEngine = new RecoveryEngine({
       type: "chat:killed_task",
       payload: {
         projectSlug: project.slug,
-        target: project.slug,
         sessionId,
         summary: summary ?? "A background task was terminated at the turn boundary.",
         timestamp: new Date().toISOString(),

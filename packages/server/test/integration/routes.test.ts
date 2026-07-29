@@ -61,10 +61,9 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
 
   // --- /api/models edge cases -------------------------------------------------
 
-  it("GET /api/models lists models with keeper + sweeper defaults", async () => {
+  it("GET /api/models lists models with the keeper default", async () => {
     const body = (await t.app.inject({ method: "GET", url: "/api/models" })).json();
     expect(body.keeperDefault).toBe("claude-opus-5");
-    expect(body.sweeperDefault).toBe("claude-haiku-4-5-20251001");
     const ids = body.models.map((m: { id: string }) => m.id);
     expect(ids).toContain("claude-opus-5");
     expect(ids).toContain("claude-opus-4-8");

@@ -314,12 +314,11 @@ HushPod's whisper config so both can share a backend. See [DEV.md](../DEV.md#voi
 | `PADDOCK_GIT_AUTHOR_EMAIL` | `paddock@localhost` | no | Author email for those commits. |
 | `PADDOCK_GITHUB_CLIENT_ID` | — | *(for GitHub auth)* | GitHub OAuth **client id** enabling the device-flow connect. Without it the GitHub-auth feature reports "not configured"; invoking a flow throws. |
 
-## Sweep / spike (advanced)
+## Sweep (advanced)
 
 | Variable | Default | Required | Purpose |
 |----------|---------|----------|---------|
 | `PADDOCK_SWEEP_MIN_INTERVAL_MS` | `300000` (5 min) | no | Minimum interval between post-turn per-project sweeps. Must parse to a finite number ≥ 0, else ignored (falls back to the 5-min default). |
-| `PADDOCK_SPIKE_TRIGGER` | *(off)* | no | Dev harness only (`spike.ts`): when `=1`, fire a real keeper trigger instead of a dry run. Not used by the running server. |
 
 ## Non-`PADDOCK_` runtime variables
 

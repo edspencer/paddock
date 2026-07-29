@@ -3,9 +3,10 @@
 > The public-npm API surface paddock depends on, verified against the
 > **installed** `@herdctl/core@5.10.1` (the public npm package — NOT the local
 > symlink). Every claim here was checked against the shipped `.d.ts`
-> declarations and proven by a real spike (`packages/server/src/spike.ts`,
-> which typechecks and runs against the package, constructing + initializing a
-> FleetManager and a SessionDiscoveryService).
+> declarations and proven at the time by a real integration spike that
+> constructed + initialized a FleetManager and a SessionDiscoveryService against
+> the package. (That spike has since been deleted — it pinned 5.10.1 and we are
+> on ^5.27; `test/e2e/` now covers this ground against the real server.)
 >
 > Pinned versions inspected: `@herdctl/core@5.10.1` (used),
 > `@herdctl/web@0.9.10` and `@herdctl/chat@0.3.14` (referenced for protocol
@@ -97,7 +98,7 @@ naive inline config 400s):
 - An agent yaml requires only `name`; everything else is optional and merged
   with `defaults`.
 
-Minimal working pair (what `spike.ts` writes):
+Minimal working pair:
 
 ```yaml
 # herdctl.yaml
@@ -372,6 +373,5 @@ workaround — but they're the candidates for an upstream local fix + PR.
 ## Files
 
 - Real wrapper: `packages/server/src/herdctl.ts` (`HerdctlService`).
-- Real spike (typechecks + runs vs public API): `packages/server/src/spike.ts`.
 - WS protocol + streaming: `packages/server/src/ws.ts`.
 - Project layer: `packages/server/src/projects.ts` (`ProjectStore`).

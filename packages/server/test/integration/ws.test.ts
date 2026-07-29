@@ -89,8 +89,6 @@ describe("integration: WS transport edge cases (real app, fake claude)", () => {
       { from: mark },
     );
     expect(String(err.payload?.error)).toMatch(/not found/i);
-    // It also carries the legacy `target` alias.
-    expect(err.payload?.target).toBe("no-such-project");
   });
 
   // --- happy path: usage on complete -----------------------------------------
@@ -284,18 +282,6 @@ describe("integration: WS transport edge cases (real app, fake claude)", () => {
     ws.send({ type: "chat:cancel", payload: { jobId: 123 } });
     const err = await ws.waitFor((e) => e.type === "chat:error", { from: mark });
     expect(err.payload?.error).toBe("Unknown message");
-  });
-
-  // --- the `target` alias (legacy clients) -----------------------------------
-
-  it("accepts the legacy `target` field as a projectSlug alias", async () => {
-    const mark = ws.mark();
-    ws.send({ type: "chat:send", payload: { target: "ws-proj", sessionId: null, message: "via target" } });
-    const complete = await ws.waitFor(
-      (e) => e.type === "chat:complete" && e.payload?.projectSlug === "ws-proj",
-      { from: mark },
-    );
-    expect(complete.payload?.success).toBe(true);
   });
 
   // --- #380: a dead-end notice is suppressed once a complete reply streamed -----

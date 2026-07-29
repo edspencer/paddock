@@ -19,11 +19,7 @@ import {
   InstanceConfigError,
 } from "../instance-config.js";
 import { TranscriptionError } from "../transcribe.js";
-import {
-  resolveModels,
-  resolveKeeperDefault,
-  SWEEPER_DEFAULT_MODEL,
-} from "../models.js";
+import { resolveModels, resolveKeeperDefault } from "../models.js";
 import { sendProjectError } from "../route-errors.js";
 import { cspFor, parseRangeHeader } from "../http-bytes.js";
 import { type RouteCtx, type MultipartRequest, type UploadedFile } from "../route-context.js";
@@ -260,7 +256,7 @@ export function registerMetaRoutes(app: FastifyInstance, ctx: RouteCtx): void {
         tags: ["System"],
         summary: "Selectable models and instance defaults",
         description:
-          "Returns the models this instance offers (the built-in catalog filtered to the `PADDOCK_MODELS` / YAML `models:` allow-list; unset ⇒ the whole catalog) plus the keeper/sweeper defaults and the box-wide defaults (drive mode, max spawn depth, recovery, attachments, curation) that projects fall back to when their own overrides are unset. `keeperDefault` is the effective default for the offered list. Returns a JSON object with `models`, `keeperDefault`, `sweeperDefault`, `keeperDriveModeDefault`, `maxSpawnDepthDefault`, `recoveryDefault`, `attachmentsDefault`, and `curationDefault`.",
+          "Returns the models this instance offers (the built-in catalog filtered to the `PADDOCK_MODELS` / YAML `models:` allow-list; unset ⇒ the whole catalog) plus the keeper default and the box-wide defaults (drive mode, max spawn depth, recovery, attachments, curation) that projects fall back to when their own overrides are unset. `keeperDefault` is the effective default for the offered list. Returns a JSON object with `models`, `keeperDefault`, `keeperDriveModeDefault`, `maxSpawnDepthDefault`, `recoveryDefault`, `attachmentsDefault`, and `curationDefault`.",
         response: {
           200: {
             description: "Model list and inherited defaults.",
@@ -275,7 +271,6 @@ export function registerMetaRoutes(app: FastifyInstance, ctx: RouteCtx): void {
     return {
       models,
       keeperDefault: resolveKeeperDefault(models),
-      sweeperDefault: SWEEPER_DEFAULT_MODEL,
       keeperDriveModeDefault: cfg.keeperDriveMode,
       // Box-wide max spawn depth (PADDOCK_MAX_SPAWN_DEPTH) a project inherits when
       // its own `maxSpawnDepth` is unset; shown as the effective value in Settings

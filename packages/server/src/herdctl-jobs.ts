@@ -195,9 +195,9 @@ export async function reattributeSession(
 
 /**
  * Write a herdctl job-metadata YAML mapping `sessionId -> keeper agent` so the
- * core attribution index lists the session under the project. Mirrors the
- * shape `scripts/migrate-chat.sh` writes (and the JobMetadataSchema: the id
- * must match `job-YYYY-MM-DD-[a-z0-9]{6}`).
+ * core attribution index lists the session under the project. Mirrors the shape
+ * of a real job record (and the JobMetadataSchema: the id must match
+ * `job-YYYY-MM-DD-[a-z0-9]{6}`).
  */
 export async function writeAdoptionJob(
   stateDir: string,
@@ -242,6 +242,6 @@ export async function writeAgentAdoptionJob(
   };
   await fs.writeFile(path.join(jobsDir, `${jobId}.yaml`), YAML.stringify(record), "utf8");
   // herdctl's listJobs tolerates a missing output file, but keep parity with
-  // a real job record (and migrate-chat.sh) by touching an empty one.
+  // a real job record by touching an empty one.
   await fs.writeFile(outputFile, "", "utf8").catch(() => undefined);
 }

@@ -49,10 +49,6 @@
  * prior `normalizeForTranslator` shim is gone). We compose it with a tiny wrapper
  * that also captures, from each raw SDK message, the session id and the per-turn
  * usage + model (the translator only exposes text/boundary/tool events).
- *
- * Field-name note: legacy clients may send `target` instead of `projectSlug`;
- * we accept both. Server events always carry both `projectSlug` and the legacy
- * `target` alias so existing/early frontends keep working.
  */
 import type { WebSocket } from "@fastify/websocket";
 import type {
@@ -115,7 +111,6 @@ import {
   initTurnUsage,
   foldTurnUsage,
   resolveTurnUsage,
-  readSlug,
   isClientMessage,
   type TurnUsageState,
   type ChatSendMessage,
@@ -165,7 +160,6 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
     type: "chat:active",
     payload: {
       projectSlug: info.projectSlug,
-      target: info.projectSlug,
       sessionId: info.sessionId,
       jobId: info.jobId,
       running: info.running,
@@ -215,7 +209,6 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
     // (the correct outcome for a human chat) instead of a wrong one.
     const routing = (): Routing => ({
       projectSlug: slug,
-      target: slug,
       sessionId: resolvedSession,
       jobId: turn.jobId,
     });
@@ -392,11 +385,11 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       try {
         parsed = JSON.parse(raw.toString());
       } catch {
-        send({ type: "chat:error", payload: { projectSlug: "?", target: "?", error: "Invalid JSON" } });
+        send({ type: "chat:error", payload: { projectSlug: "?", error: "Invalid JSON" } });
         return;
       }
       if (!isClientMessage(parsed)) {
-        send({ type: "chat:error", payload: { projectSlug: "?", target: "?", error: "Unknown message" } });
+        send({ type: "chat:error", payload: { projectSlug: "?", error: "Unknown message" } });
         return;
       }
       if (parsed.type === "ping") {
@@ -439,7 +432,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
      */
     const onChatContinue = async (msg: ChatContinueMessage): Promise<void> => {
       // `""` addresses the ROOT workspace, so only a MISSING key is a no-op.
-      const slug = msg.payload.projectSlug ?? msg.payload.target;
+      const slug = msg.payload.projectSlug;
       if (slug === undefined || slug === null) return;
       const sessionId = msg.payload.sessionId;
       if (!sessionId) return;
@@ -456,7 +449,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       await injectRecoveryNudge(project, sessionId).catch((err) => {
         send({
           type: "chat:error",
-          payload: { projectSlug: slug, target: slug, error: `Recovery failed: ${String(err)}` },
+          payload: { projectSlug: slug, error: `Recovery failed: ${String(err)}` },
         });
       });
     };
@@ -470,7 +463,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       if (result.status === "resync") {
         send({
           type: "chat:resync",
-          payload: { projectSlug: result.projectSlug, target: result.projectSlug, sessionId },
+          payload: { projectSlug: result.projectSlug, sessionId },
         });
       }
       // Tell a (re)attaching pane whether its session has a live turn, so a chat
@@ -502,7 +495,6 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
         type: "chat:queued_flushed",
         payload: {
           projectSlug: slug,
-          target: slug,
           sessionId,
           ...(already ? {} : { text: queued.text }),
         },
@@ -516,12 +508,12 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       if (queued.text.startsWith("/")) {
         void onChatCommand({
           type: "chat:command",
-          payload: { projectSlug: slug, target: slug, command: queued.text, sessionId },
+          payload: { projectSlug: slug, command: queued.text, sessionId },
         });
       } else {
         void onChatSend({
           type: "chat:send",
-          payload: { projectSlug: slug, target: slug, sessionId, message: queued.text },
+          payload: { projectSlug: slug, sessionId, message: queued.text },
         });
       }
     };
@@ -529,7 +521,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
     const onSetQueue = async (msg: ChatSetQueueMessage): Promise<void> => {
       if (!deps.queuedMessage) return; // feature disabled
       // `""` addresses the ROOT workspace, so only a MISSING key is a no-op.
-      const slug = (msg.payload.projectSlug ?? msg.payload.target) as string | undefined;
+      const slug = msg.payload.projectSlug as string | undefined;
       if (slug === undefined || slug === null) return;
       const sessionId = msg.payload.sessionId ?? null;
       const text = msg.payload.text ?? null;
@@ -555,7 +547,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
     };
 
     const onChatSend = async (msg: ChatSendMessage): Promise<void> => {
-      const slug = readSlug(msg.payload) as string;
+      const slug = msg.payload.projectSlug as string;
       const { message, sessionId, preloadContext, attachments: sentAttachments } = msg.payload;
       const isNewChat = sessionId === undefined || sessionId === null;
       // A genuine human message resets this session's Layer 3 recovery guard (issue
@@ -591,7 +583,6 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
 
       const routing = (): Routing => ({
         projectSlug: slug,
-        target: slug,
         sessionId: resolvedSession,
         jobId,
       });
@@ -938,7 +929,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
         // resolved a session, ALSO emit a terminal chat:complete through the hub
         // so a client that re-attached after a mid-turn socket drop stops showing
         // "streaming" instead of hanging with no terminal frame.
-        send({ type: "chat:error", payload: { projectSlug: slug, target: slug, error } });
+        send({ type: "chat:error", payload: { projectSlug: slug, error } });
         if (resolvedSession) {
           // #329: also surface the failure as an inline notice on the hub so a
           // re-attached client renders WHY the turn died (not just the origin
@@ -960,7 +951,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
      * shows a visible confirmation, and post-command usage refreshes the meter.
      */
     const onChatCommand = async (msg: ChatCommandMessage): Promise<void> => {
-      const slug = (msg.payload.projectSlug ?? msg.payload.target) as string;
+      const slug = msg.payload.projectSlug as string;
       const { command, sessionId } = msg.payload;
       let resolvedSession: string | null = sessionId ?? null;
       const seen: TurnUsageState = initTurnUsage();
@@ -971,7 +962,6 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
 
       const routing = (): Routing => ({
         projectSlug: slug,
-        target: slug,
         sessionId: resolvedSession,
         jobId: null,
       });
@@ -1098,7 +1088,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
         turn.end();
       } catch (err) {
         const error = err instanceof Error ? err.message : String(err);
-        send({ type: "chat:error", payload: { projectSlug: slug, target: slug, error } });
+        send({ type: "chat:error", payload: { projectSlug: slug, error } });
         if (resolvedSession) {
           turn.emit({ type: "chat:complete", payload: { ...routing(), success: false, error } });
         }

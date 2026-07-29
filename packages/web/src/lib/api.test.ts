@@ -36,7 +36,7 @@ function call(n = 0): [string, RequestInit | undefined] {
 describe("api: reads", () => {
   it("getModels unwraps the models payload", async () => {
     fetchMock.mockResolvedValue(
-      jsonResponse({ models: [{ id: "m", label: "M", contextLimit: 100 }], keeperDefault: "m", sweeperDefault: "m" }),
+      jsonResponse({ models: [{ id: "m", label: "M", contextLimit: 100 }], keeperDefault: "m" }),
     );
     const res = await api.getModels();
     expect(call()[0]).toBe("/api/models");

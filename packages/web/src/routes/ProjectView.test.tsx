@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within, act } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { ProjectView } from "./ProjectView";
-import { makeProject, makeChat } from "../test/factories";
+import { makeProject, makeChat, makeModelsResponse } from "../test/factories";
 import { resetLastSeenForTests } from "../lib/lastSeen";
 import type { FileEntry, Project, GitProjectStatus, ProjectDetail } from "../lib/types";
 import type { ChatPaneProps } from "../components/ChatPane";
@@ -153,12 +153,12 @@ beforeEach(() => {
   apiFns.markChatSeen.mockResolvedValue(undefined);
   apiFns.chatUsage.mockResolvedValue({});
   apiFns.projectChatMessages.mockResolvedValue([]);
-  apiFns.getModels.mockResolvedValue({
-    models: [{ id: "claude-opus-4-8", label: "Opus 4.8", contextLimit: 1_000_000 }],
-    keeperDefault: "claude-opus-4-8",
-    sweeperDefault: "claude-haiku-4-5-20251001",
-    keeperDriveModeDefault: "batch",
-  });
+  apiFns.getModels.mockResolvedValue(
+    makeModelsResponse({
+      models: [{ id: "claude-opus-4-8", label: "Opus 4.8", contextLimit: 1_000_000 }],
+      keeperDefault: "claude-opus-4-8",
+    }),
+  );
   apiFns.updateProject.mockImplementation((_slug: string, patch: Partial<Project>) =>
     Promise.resolve(makeProject({ slug: "p", ...patch })),
   );

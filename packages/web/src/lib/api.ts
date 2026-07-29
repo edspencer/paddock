@@ -157,42 +157,36 @@ export const api = {
     );
   },
 
-  /** Selectable models + the keeper/sweeper defaults (drives the model picker). */
+  /** Selectable models + the keeper default (drives the model picker). */
   async getModels(): Promise<{
     models: ModelInfo[];
     keeperDefault: string;
-    sweeperDefault: string;
     /** Box-wide default drive mode (PADDOCK_KEEPER_DRIVE_MODE) a project inherits
      *  when its own `driveMode` is unset; shown as the effective value in the
-     *  project Settings tab (issue #122). Optional for back-compat with older
-     *  servers / test mocks. */
-    keeperDriveModeDefault?: "batch" | "session";
+     *  project Settings tab (issue #122). */
+    keeperDriveModeDefault: "batch" | "session";
     /** Box-wide default max spawn depth (PADDOCK_MAX_SPAWN_DEPTH) a project
      *  inherits when its own `maxSpawnDepth` is unset; shown as the effective
-     *  value in Settings (issue #262). Optional for back-compat. */
-    maxSpawnDepthDefault?: number;
+     *  value in Settings (issue #262). */
+    maxSpawnDepthDefault: number;
     /** Box-wide keeper-chat recovery defaults (PADDOCK_RECOVERY_*) a project
-     *  inherits when its own `recovery` fields are unset (issue #301). Optional
-     *  for back-compat with older servers / test mocks. */
-    recoveryDefault?: RecoveryConfig;
+     *  inherits when its own `recovery` fields are unset (issue #301). */
+    recoveryDefault: RecoveryConfig;
     /** Box-wide inbound-attachment defaults (PADDOCK_ATTACHMENTS_*) a project
-     *  inherits when its own `attachments` fields are unset (issue #328). Optional
-     *  for back-compat with older servers / test mocks. */
-    attachmentsDefault?: AttachmentsConfig;
+     *  inherits when its own `attachments` fields are unset (issue #328). */
+    attachmentsDefault: AttachmentsConfig;
     /** Box-wide sweeper-curation budgets (PADDOCK_CURATION_*) a project inherits
-     *  when its own `curation` fields are unset (issue #384). Optional for
-     *  back-compat with older servers / test mocks. */
-    curationDefault?: CurationConfig;
+     *  when its own `curation` fields are unset (issue #384). */
+    curationDefault: CurationConfig;
   }> {
     return req<{
       models: ModelInfo[];
       keeperDefault: string;
-      sweeperDefault: string;
-      keeperDriveModeDefault?: "batch" | "session";
-      maxSpawnDepthDefault?: number;
-      recoveryDefault?: RecoveryConfig;
-      attachmentsDefault?: AttachmentsConfig;
-      curationDefault?: CurationConfig;
+      keeperDriveModeDefault: "batch" | "session";
+      maxSpawnDepthDefault: number;
+      recoveryDefault: RecoveryConfig;
+      attachmentsDefault: AttachmentsConfig;
+      curationDefault: CurationConfig;
     }>("/api/models");
   },
 

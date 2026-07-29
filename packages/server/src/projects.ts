@@ -970,7 +970,6 @@ export class ProjectStore {
       // cwd is the metadata dir itself. `repoBacked` is the presence of `repo`.
       workingDir: workingDirFor(dir, yaml.repo),
       repoBacked: Boolean(yaml.repo),
-      created: yaml.started,
       hasOverview,
     };
   }
@@ -980,7 +979,6 @@ export class ProjectStore {
       dir: _dir,
       workingDir: _workingDir,
       repoBacked: _repoBacked,
-      created: _created,
       hasOverview: _hasOverview,
       group,
       ...rest
@@ -988,7 +986,6 @@ export class ProjectStore {
     void _dir;
     void _workingDir;
     void _repoBacked;
-    void _created;
     void _hasOverview;
     // Keep an empty area off the yaml so it isn't persisted as `group: ""`.
     return group?.trim() ? { ...rest, group } : rest;
