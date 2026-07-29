@@ -42,6 +42,16 @@ export const SearchIcon = (p: IconProps) => (
   </svg>
 );
 
+/** Sliders — "view options". Deliberately not the cog, which reads as Settings. */
+export const SlidersIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M4 6h8M18 6h2M4 12h2M12 12h8M4 18h8M18 18h2" />
+    <circle cx="15" cy="6" r="2.5" />
+    <circle cx="9" cy="12" r="2.5" />
+    <circle cx="15" cy="18" r="2.5" />
+  </svg>
+);
+
 export const FolderIcon = (p: IconProps) => (
   <svg {...base(p)}>
     <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />

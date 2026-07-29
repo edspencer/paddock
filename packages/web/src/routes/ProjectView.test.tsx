@@ -747,6 +747,213 @@ describe("ProjectView: sidebar counts are chat counts, not root counts (#491)", 
   });
 });
 
+describe("ProjectView: running filter + view options", () => {
+  /** Drive the WS running-turn set, like `chat:active` frames arriving. */
+  const setRunning = (...ids: string[]) => act(() => activeCb!(new Set(ids)));
+
+  const runningToggle = () => screen.getByRole("button", { name: /Show only running chats/i });
+  const twisty = (name: string) =>
+    screen.queryByRole("button", { name: new RegExp(`(Collapse|Expand).*under ${name}`, "i") });
+
+  /** Parent + child + an unrelated idle chat. */
+  function threeChats() {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [
+          makeChat({ sessionId: "parent", name: "Manager" }),
+          makeChat({
+            sessionId: "child",
+            name: "Spawned worker",
+            parent: { project: "p", sessionId: "parent" },
+          }),
+          makeChat({ sessionId: "idle", name: "Idle chat" }),
+        ],
+      }),
+    );
+  }
+
+  it("stays a plain count while nothing is running", async () => {
+    threeChats();
+    renderAt("/projects/p/chat");
+    await screen.findByText("Manager");
+    expect(screen.getByTitle("3 chats")).toHaveTextContent("3");
+    // No split, so no filter control at all — an idle project sees no new UI.
+    expect(screen.queryByRole("button", { name: /Show only running chats/i })).toBeNull();
+  });
+
+  it("splits into total + running the moment a turn goes live", async () => {
+    threeChats();
+    renderAt("/projects/p/chat");
+    await screen.findByText("Manager");
+
+    setRunning("parent", "child");
+    const toggle = runningToggle();
+    expect(within(toggle).getByText("2")).toBeInTheDocument();
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    // The left half still carries the unfiltered total.
+    expect(screen.getByRole("button", { name: /^3 chats$/i })).toBeInTheDocument();
+  });
+
+  it("filters to the running chats, and renders them FLAT", async () => {
+    threeChats();
+    renderAt("/projects/p/chat");
+    await screen.findByText("Manager");
+
+    // Nested to begin with: the child sits under its parent behind a twisty.
+    expect(twisty("Manager")).toBeInTheDocument();
+
+    setRunning("parent", "child");
+    fireEvent.click(runningToggle());
+
+    // Both running chats survive; the idle one is gone.
+    expect(screen.getByText("Manager")).toBeInTheDocument();
+    expect(screen.getByText("Spawned worker")).toBeInTheDocument();
+    expect(screen.queryByText("Idle chat")).toBeNull();
+    // And they are SIBLINGS now. This is the case naive filtering gets wrong:
+    // both are running, so a tree build would still nest the child under the
+    // parent and re-introduce the indentation the filter exists to remove.
+    expect(twisty("Manager")).toBeNull();
+    expect(runningToggle()).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("keeps the OPEN chat pinned when its turn finishes", async () => {
+    threeChats();
+    renderAt("/projects/p/chat/idle");
+    await screen.findByText("Manager");
+
+    setRunning("parent", "idle");
+    fireEvent.click(runningToggle());
+    expect(screen.getByText("Idle chat")).toBeInTheDocument();
+
+    // `idle` stops running. Without the pin, the chat being read would vanish
+    // from the sidebar mid-read.
+    setRunning("parent");
+    expect(screen.getByText("Idle chat")).toBeInTheDocument();
+    expect(screen.queryByText("Spawned worker")).toBeNull();
+  });
+
+  it("explains an empty running view and offers the way back", async () => {
+    threeChats();
+    renderAt("/projects/p/chat");
+    await screen.findByText("Manager");
+
+    setRunning("parent");
+    fireEvent.click(runningToggle());
+    expect(screen.queryByText("Idle chat")).toBeNull();
+
+    // The last turn ends: the filter is still on, and the list is now empty.
+    setRunning();
+    expect(screen.getByText(/No chats are running/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Show all chats/i }));
+    expect(screen.getByText("Idle chat")).toBeInTheDocument();
+    expect(screen.queryByText(/No chats are running/i)).toBeNull();
+  });
+
+  it("hides the Archived accordion and lists a running archived chat inline", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [
+          makeChat({ sessionId: "live", name: "Live one" }),
+          // Deliberately NOT named "Archived …": the row button's accessible
+          // name is its title, which would collide with the accordion header.
+          makeChat({ sessionId: "old", name: "Filed away runner", archived: true }),
+        ],
+      }),
+    );
+    renderAt("/projects/p/chat");
+    await screen.findByText("Live one");
+    expect(screen.getByRole("button", { name: /^Archived/i })).toBeInTheDocument();
+
+    // An archived chat with a live turn is still running, so it belongs in the
+    // one flat list rather than folded away where the filter can't show it.
+    setRunning("live", "old");
+    fireEvent.click(runningToggle());
+    expect(screen.getByText("Filed away runner")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Archived/i })).toBeNull();
+  });
+
+  it("composes with search instead of fighting it", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [
+          makeChat({ sessionId: "parent", name: "Manager" }),
+          makeChat({
+            sessionId: "c1",
+            name: "Deploy alpha",
+            parent: { project: "p", sessionId: "parent" },
+          }),
+          makeChat({ sessionId: "c2", name: "Deploy bravo" }),
+        ],
+      }),
+    );
+    renderAt("/projects/p/chat");
+    await screen.findByText("Manager");
+
+    setRunning("c1", "c2");
+    fireEvent.click(runningToggle());
+    fireEvent.change(screen.getByRole("textbox", { name: /Search chats/i }), {
+      target: { value: "alpha" },
+    });
+
+    expect(screen.getByText("Deploy alpha")).toBeInTheDocument();
+    expect(screen.queryByText("Deploy bravo")).toBeNull();
+    // `Manager` is `Deploy alpha`'s parent, and search normally keeps ancestors
+    // as scaffolding. Here it must NOT — an idle parent dragged back in would
+    // defeat the running filter.
+    expect(screen.queryByText("Manager")).toBeNull();
+  });
+
+  it("remembers the filter globally, with no slug in the key", async () => {
+    threeChats();
+    renderAt("/projects/p/chat");
+    await screen.findByText("Manager");
+    setRunning("parent");
+    fireEvent.click(runningToggle());
+    expect(localStorage.getItem("paddock:chatView:runningOnly")).toBe("1");
+  });
+
+  it("toggles the chat tree between nested and flat, and remembers it", async () => {
+    threeChats();
+    const first = renderAt("/projects/p/chat");
+    await screen.findByText("Manager");
+    expect(twisty("Manager")).toBeInTheDocument();
+
+    // The options panel is a plain inline toggle, not a dropdown.
+    fireEvent.click(screen.getByRole("button", { name: /Chat list view options/i }));
+    fireEvent.click(screen.getByRole("radio", { name: "Flat" }));
+
+    expect(twisty("Manager")).toBeNull();
+    expect(screen.getByText("Spawned worker")).toBeInTheDocument();
+    expect(localStorage.getItem("paddock:chatView:nested")).toBe("0");
+
+    // Sticky across a remount, panel included.
+    first.unmount();
+    renderAt("/projects/p/chat");
+    await screen.findByText("Manager");
+    expect(twisty("Manager")).toBeNull();
+    expect(screen.getByRole("radio", { name: "Flat" })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("forces flat while filtering to running, without clobbering the preference", async () => {
+    threeChats();
+    renderAt("/projects/p/chat");
+    await screen.findByText("Manager");
+    fireEvent.click(screen.getByRole("button", { name: /Chat list view options/i }));
+    expect(screen.getByRole("radio", { name: "Nested" })).toHaveAttribute("aria-checked", "true");
+
+    setRunning("parent", "child");
+    fireEvent.click(runningToggle());
+    // The control says why it is inert rather than just looking broken...
+    expect(screen.getByRole("radio", { name: "Nested" })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: "Nested" })).toHaveAttribute("aria-checked", "true");
+
+    // ...and the nesting comes straight back when the filter comes off.
+    fireEvent.click(screen.getByRole("button", { name: /^Show all 3 chats$/i }));
+    expect(twisty("Manager")).toBeInTheDocument();
+  });
+});
+
 describe("ProjectView: star chats (#373)", () => {
   // True when `first`'s title appears before `second`'s in document order.
   const isBefore = (first: string, second: string) =>

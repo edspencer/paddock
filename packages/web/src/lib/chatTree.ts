@@ -92,6 +92,30 @@ export function buildChatTree(chats: readonly Chat[]): ChatNode[] {
   return roots;
 }
 
+/**
+ * The same population as a FLAT list: every chat its own root, nothing nested.
+ *
+ * Used by the flat view option and by the running-only filter, which must render
+ * flat — a running child sitting under its running parent would reintroduce the
+ * indentation the filter exists to strip away.
+ *
+ * Ordering comes from the same `sortGroup` the tree uses, which is the point: a
+ * forest with no children reduces it to "starred first, then newest first", i.e.
+ * exactly the global star float that was the flat list's rule before nesting
+ * arrived (rule 2 above describes what nesting had to change it to). Reusing the
+ * comparator rather than restating it is what keeps the two views consistent.
+ */
+export function flatForest(chats: readonly Chat[]): ChatNode[] {
+  const roots: ChatNode[] = chats.map((chat) => ({
+    chat,
+    children: [],
+    depth: 0,
+    descendantCount: 0,
+  }));
+  sortGroup(roots);
+  return roots;
+}
+
 /** Would linking `node` under `parent` close a loop? Walks parent's ancestry. */
 function createsCycle(node: ChatNode, parent: ChatNode, byId: Map<string, ChatNode>): boolean {
   const seen = new Set<string>([node.chat.sessionId]);

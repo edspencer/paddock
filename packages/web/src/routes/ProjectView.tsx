@@ -34,8 +34,9 @@ import {
 import { relativeTime } from "../lib/format";
 import { clearLastTab, toSubPath, writeLastTab } from "../lib/lastTab";
 import { readForkParent, writeForkParent } from "../lib/forkLineage";
-import { buildChatTree, withAncestors } from "../lib/chatTree";
+import { buildChatTree, flatForest, withAncestors } from "../lib/chatTree";
 import { readCollapsedChats, writeCollapsedChats } from "../lib/collapsedChats";
+import { useChatViewPrefs } from "./ProjectView/useChatViewPrefs";
 import type { GitProjectStatus } from "../lib/types";
 import {
   ROOT_KEY,
@@ -208,6 +209,11 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
     },
     [slug],
   );
+  // How the chat list renders: nested vs flat, and whether it is filtered to the
+  // chats running right now. Global browser prefs, not per-project — see
+  // `lib/chatViewPrefs.ts`. Owned here because the forest builder below has to
+  // know the mode; `SessionSidebar` gets the whole object as one prop.
+  const viewPrefs = useChatViewPrefs();
   // Desktop-only draggable width for the chat-list pane (#374), persisted per-browser.
   const chatList = usePaneWidth(CHATLIST_PANE);
   const autoExpandedFor = useRef<string | null>(null);
@@ -243,17 +249,30 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
   // The chats actually rendered in the sidebar, after applying the search
   // filter (issue #96). Empty query -> the full list unchanged.
   const visibleChats = useMemo(() => {
+    // The running-only filter narrows the population BEFORE the search
+    // runs, so the two compose: a query inside the filter searches the running
+    // chats. The open chat is pinned in regardless — otherwise the chat you are
+    // reading disappears from the sidebar the moment its turn finishes, which is
+    // the same "don't yank the open chat out of the list" concern the #154
+    // fallback row exists for.
+    const base = viewPrefs.runningOnly
+      ? chats.filter((c) => runningSessions.has(c.sessionId) || c.sessionId === activeSession)
+      : chats;
     const q = chatSearch.trim().toLowerCase();
-    if (!q) return chats;
-    const matches = chats.filter(
+    if (!q) return base;
+    const matches = base.filter(
       (c) =>
         c.name.toLowerCase().includes(q) ||
         (c.preview?.toLowerCase().includes(q) ?? false),
     );
     // Keep matched chats' ancestors too, so a hit nested under a non-matching
     // parent still renders in place instead of being reparented to the root.
-    return withAncestors(chats, matches);
-  }, [chats, chatSearch]);
+    // NOT while filtering to running chats: an ancestor is kept as scaffolding
+    // for the nesting, and an idle parent dragged back in would defeat the very
+    // filter the user just asked for (the view is flat, so there is no nesting
+    // to scaffold anyway).
+    return viewPrefs.runningOnly ? matches : withAncestors(chats, matches);
+  }, [chats, chatSearch, viewPrefs.runningOnly, runningSessions, activeSession]);
   const searching = chatSearch.trim().length > 0;
 
   // Fetch the project's git status; clears it (hiding the Changes tab) when the
@@ -703,15 +722,36 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
   // from under its parent) — see buildChatTree. Search (#96) still finds archived
   // chats, surfacing them in the Archived section. `activeTotal` is the unfiltered
   // non-archived count, for the "N/total" badge while searching.
+  //
+  // Two view prefs re-shape this. FLAT view swaps the tree builder for
+  // `flatForest`. RUNNING-ONLY additionally collapses the partition: a running
+  // chat that happens to be archived is still running, so it belongs in the one
+  // flat list rather than folded away behind the Archived accordion — which then
+  // hides itself, since it renders only when it has rows.
+  const forest = useCallback(
+    (population: Chat[]) =>
+      viewPrefs.runningOnly || !viewPrefs.nested
+        ? flatForest(population)
+        : buildChatTree(population),
+    [viewPrefs.runningOnly, viewPrefs.nested],
+  );
   const activeChats = useMemo(
-    () => buildChatTree(visibleChats.filter((c) => !c.archived)),
-    [visibleChats],
+    () => forest(viewPrefs.runningOnly ? visibleChats : visibleChats.filter((c) => !c.archived)),
+    [visibleChats, forest, viewPrefs.runningOnly],
   );
   const archivedChats = useMemo(
-    () => buildChatTree(visibleChats.filter((c) => c.archived)),
-    [visibleChats],
+    () => (viewPrefs.runningOnly ? [] : forest(visibleChats.filter((c) => c.archived))),
+    [visibleChats, forest, viewPrefs.runningOnly],
   );
   const activeTotal = chats.filter((c) => !c.archived).length;
+  // The split badge's right-hand number: this project's chats with a live turn.
+  // `runningSessions` is fleet-wide, so intersecting with `chats` (already
+  // project-scoped) is what scopes it. Counted over ALL chats, archived
+  // included, so the number always matches what the filter would show.
+  const runningCount = useMemo(
+    () => chats.filter((c) => runningSessions.has(c.sessionId)).length,
+    [chats, runningSessions],
+  );
   const activeIsArchived = chats.some((c) => c.archived && c.sessionId === activeSession);
 
   // Belt-and-suspenders for the open chat vanishing from the list (#154). The
@@ -909,6 +949,8 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
           activeChats={activeChats}
           archivedChats={archivedChats}
           activeTotal={activeTotal}
+          runningCount={runningCount}
+          viewPrefs={viewPrefs}
           archivedOpen={archivedOpen}
           setArchivedOpen={setArchivedOpen}
           collapsedChats={collapsedChats}
