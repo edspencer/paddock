@@ -81,7 +81,14 @@ export const HEALTH_PATHS: ReadonlySet<string> = new Set<string>([
   "/api/health", // paddock's own health route (routes/meta.ts)
 ]);
 
-/** Strip the query string and trailing slash so exemption matching is robust. */
+/**
+ * Strip the query string and trailing slash so exemption matching is robust.
+ *
+ * Note the trailing-slash half only affects the AUTH decision, not routing: Fastify
+ * is not configured with `ignoreTrailingSlash`, so `/api/health/` is exempt here yet
+ * still matches no route and answers a JSON 404. That is deliberate — an honest loud
+ * failure for a probe on the slashed form, never a false 200 (see #569).
+ */
 function normalizePath(url: string): string {
   const q = url.indexOf("?");
   let p = q === -1 ? url : url.slice(0, q);
