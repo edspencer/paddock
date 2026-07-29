@@ -129,7 +129,8 @@ in this order:
 | Status | When | Body / headers |
 |--------|------|----------------|
 | **404** | `managementApi.clients` is empty, or `publicUrl` is unset. | `{ "error": "not found" }` |
-| **403** | Plaintext request from a **non-loopback** client ([caveat](#plaintext-is-refused--as-defence-in-depth)). | `code: "insecure_transport"` |
+| **403** | Plaintext request from a **non-loopback** client, with no forwarded scheme (`via: "plaintext"`, [below](#plaintext-is-refused--as-defence-in-depth)). | `code: "insecure_transport"`; the message names the peer and says to terminate TLS or connect over loopback. |
+| **403** | `X-Forwarded-Proto: https` from a peer that is **not a [trusted proxy](#plaintext-is-refused--as-defence-in-depth)** — the header is ignored (`via: "spoofable"`). | `code: "insecure_transport"`; the message names the peer and points at `managementApi.trustedProxies` / `PADDOCK_MANAGEMENT_TRUSTED_PROXIES`. |
 | **401** | Credential missing, malformed, or matching no configured client. | `WWW-Authenticate: Bearer …`, `code: "auth_required"` |
 | **405** | `GET` or `DELETE` on `/mcp`, **after** the gate has passed. | `Allow: POST`, JSON-RPC error `-32000` |
 | **503** | The surface is configured but the route has no ops context (a wiring error, not a client error). | `code: "ops_unavailable"` |
@@ -161,34 +162,88 @@ worse than omitting the pointer.
 ### Plaintext is refused — as defence in depth
 
 A request counts as secure if it arrived over real TLS at the Paddock process, if
-a TLS-terminating proxy set `X-Forwarded-Proto: https`, or if the client is on
-loopback (nothing left the host, so there is no wire to sniff). Anything else is
-a bearer token readable in transit, and gets **`403 insecure_transport`**.
+the client is on loopback (nothing left the host, so there is no wire to sniff),
+or if `X-Forwarded-Proto: https` arrived **from a peer Paddock is configured to
+trust as a proxy**. Anything else is a bearer token readable in transit, and gets
+**`403 insecure_transport`**.
 
-:::caution[This guard is a footgun-preventer, not a guarantee — see [#474](https://github.com/edspencer/paddock/issues/474)]
-`X-Forwarded-Proto` is currently honoured from **any** peer. Paddock configures no
-trusted-proxy list, so *the client itself* can send `X-Forwarded-Proto: https`
-over a plaintext connection and satisfy the check.
+The decision rests on the **immediate peer's socket address**, which no client
+can set — never on `req.protocol`. Fastify's `trustProxy` deliberately isn't used
+here: in the pinned version (4.28) enabling it makes `req.protocol` return
+`x-forwarded-proto` whenever the header is *present*, consulting the trust
+function for `req.ip`/`req.ips` only. A guard built on it would reproduce the
+exact bug it is meant to close.
 
-That is **not** an authentication bypass — a valid bearer token is still
-required, and an attacker gains nothing they couldn't already do. The risk runs
-the other way: the guard exists to stop **the operator** leaking their own token
-over cleartext, and the operator is exactly who can switch it off by accident.
-A `403` here that gets "fixed" by adding the header is a copy-paste away from
-shipping a bearer token in the clear while believing the guard has your back.
+#### Which peers are believed
 
-So do not read a `200` as proof the token didn't cross the network readable.
-**Terminate TLS in front of `/mcp` and verify that yourself**; treat the bearer
-token as the real security boundary.
+Since **0.48.1** ([#505](https://github.com/edspencer/paddock/pull/505), closing
+[#474](https://github.com/edspencer/paddock/issues/474)) the trust list is
+configurable, as `managementApi.trustedProxies` in the config file or
+`PADDOCK_MANAGEMENT_TRUSTED_PROXIES` in the environment — **the environment wins
+over the file**. Entries are IP addresses, CIDRs, the presets `loopback` /
+`linklocal` / `uniquelocal`, or one of two words of Paddock's own:
+
+| Value | Meaning |
+|-------|---------|
+| *(unset)* | The default: `loopback, linklocal, uniquelocal` — loopback plus the private address space (RFC 1918, `fc00::/7`, `fe80::/10`). A **compatibility** posture: in every deployment recipe the TLS terminator sits on the host or on a private container/pod network, so this keeps sidecar and ingress deployments working across the upgrade. A peer with a **public** address is never believed — that case is now refused where it previously succeeded. |
+| Your proxy's IP or CIDR | **Recommended.** Name your TLS terminator (`172.18.0.5`, `10.42.0.0/16`, …) and only its forwarded scheme is believed. This is what upgrades the guard from a footgun-preventer into a control. |
+| `none` | Believe no peer at all. Reach `/mcp` over real TLS or over loopback. |
+| `all` (or `*`) | Believe every peer — the pre-#474 behaviour. Boots with a loud warning. |
+
+The value may be a YAML array **or** a comma- or newline-delimited string;
+entries are trimmed, lower-cased, and blanks dropped. An entry that is not a
+valid IP, CIDR or preset is **dropped with a logged error rather than failing
+startup** — one typo in a CIDR must not stop Paddock booting, and dropping an
+entry can only make the guard stricter, so the fail-safe direction is also the
+safe one.
+
+Believing a forwarded scheme under the *default* (non-explicit) list logs a
+warning naming the peer, **once per peer** (capped at 32 peers, so a hostile
+spread of source addresses can't grow the set). That warning marks the default's
+honest limit: it cannot tell your reverse proxy at `172.18.0.5` from a laptop at
+`192.168.1.50`, because nothing in an IP packet says which one is a proxy.
+
+:::caution[A trusted peer is still not proof TLS happened]
+The guard now rests on something the caller cannot set, and a client on a public
+address can no longer switch it off by sending a header. What it still does not
+prove is that your proxy actually terminated TLS — only that the peer claiming so
+is one you said to believe, and under the default list that claim amounts to
+"the peer is somewhere on a private network".
+
+So don't read a `200` as proof the token didn't cross a network readable.
+**Terminate TLS in front of `/mcp` and verify that yourself**, name your
+terminator in `trustedProxies` so the check means something, and treat the bearer
+token as the real security boundary. This was never an authentication control —
+a valid token is required either way, and the risk it addresses is **the
+operator** leaking their own token over cleartext.
 :::
 
 One case where this bites in normal operation: **a container's published port is
-not loopback from inside.** Docker publishing `127.0.0.1:4000` still NATs the
-peer address to something like the bridge gateway, so Paddock sees a non-loopback
-client and an in-container plaintext smoke test `403`s even though nothing left
-the host. Adding `-H "X-Forwarded-Proto: https"` is a legitimate workaround
-*there* — and precisely the habit that turns dangerous when copy-pasted onto a
-real network.
+not loopback from outside.** Reaching a published port from the host or another
+container NATs the peer address to something like the Docker bridge gateway
+(`172.17.0.1`), so Paddock sees a non-loopback client.
+
+That gateway is **deliberately not** treated as loopback-equivalent: a request
+from another host to a `0.0.0.0`-published port is SNAT'd to the very same
+address, so "the peer is the gateway" would not prove the traffic stayed on the
+box. Smoke-test from *inside* the container instead, where the peer really is
+loopback:
+
+```bash
+docker compose exec paddock \
+  curl -sS -X POST http://127.0.0.1:4000/mcp \
+    -H "Authorization: Bearer $PADDOCK_MCP_TOKEN_MY_LAPTOP" \
+    -H "Accept: application/json, text/event-stream" \
+    -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+Under the *default* trust list a `172.x` gateway does match `uniquelocal`, so
+adding `-H "X-Forwarded-Proto: https"` will still get you a `200` (plus the
+one-per-peer warning in the log). Don't reach for it as the fix: it is precisely
+the habit that turns dangerous when copy-pasted onto a real network, and it stops
+working the moment you tighten `trustedProxies` to name your actual proxy —
+which is the posture you want.
 
 There is a config-time half of the same rule, and it is not header-spoofable: a
 non-loopback `publicUrl` must be `https`, or the whole management API is disabled
