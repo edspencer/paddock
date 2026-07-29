@@ -10,7 +10,6 @@
  * `./herdctl.js` so external importers keep resolving via that path unchanged.
  */
 import type { Project } from "./projects.js";
-import { SWEEPER_DEFAULT_MODEL } from "./models.js";
 import { agentKeyFor, keyFromAgentKey } from "./project-paths.js";
 
 /**
@@ -232,14 +231,6 @@ export function browserMcpServers(enabled: boolean): Record<string, unknown> | u
     },
   };
 }
-
-/**
- * The model used by the sweeper agent (cheap curation/summarization).
- *
- * Re-exported alias of `SWEEPER_DEFAULT_MODEL` (the canonical constant lives in
- * models.ts now) so existing imports of `SWEEPER_MODEL` keep working.
- */
-export const SWEEPER_MODEL = SWEEPER_DEFAULT_MODEL;
 
 /**
  * How many chat turns a project's keeper may run at once. herdctl defaults an

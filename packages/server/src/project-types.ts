@@ -101,10 +101,7 @@ export function normalizeLinks(raw: unknown): ProjectLink[] {
 /**
  * The on-disk project.yaml shape.
  *
- * Note on dates: the documented standard uses `started` + `updated`. The
- * paddock spec referred to `created`/`updated`; we treat `started` as the
- * creation date and keep `updated` as last-touched. We surface both names on
- * the API DTO for convenience but persist the standard field names.
+ * Note on dates: `started` is the creation date and `updated` is last-touched.
  */
 export interface ProjectYaml {
   name: string;
@@ -275,8 +272,6 @@ export interface Project extends ProjectYaml {
   workingDir: string;
   /** Whether this project is backed by an external git repo (issue #187). */
   repoBacked: boolean;
-  /** Alias of `started` for callers that think in "created". */
-  created: string;
   /** Whether OVERVIEW.md exists in the project dir (sweep-curated context). */
   hasOverview: boolean;
   /** Always present in the DTO (defaults to []). */

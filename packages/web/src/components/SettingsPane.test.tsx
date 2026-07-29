@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SettingsPane } from "./SettingsPane";
-import { makeProject } from "../test/factories";
+import { makeProject, makeModelsResponse } from "../test/factories";
 
 const updateProject = vi.fn();
 const getModels = vi.fn();
@@ -29,17 +29,7 @@ describe("SettingsPane", () => {
     );
     promoteProject.mockReset();
     getModels.mockReset();
-    getModels.mockResolvedValue({
-      models: [
-        { id: "claude-opus-4-8", label: "Opus 4.8", contextLimit: 1_000_000 },
-        { id: "claude-sonnet-5", label: "Sonnet 5", contextLimit: 1_000_000 },
-        { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5", contextLimit: 200_000 },
-      ],
-      keeperDefault: "claude-opus-4-8",
-      sweeperDefault: "claude-haiku-4-5-20251001",
-      keeperDriveModeDefault: "batch",
-      curationDefault: { overviewMaxTokens: 2000, changelogMaxTokens: 8000, claudeMaxTokens: 6000 },
-    });
+    getModels.mockResolvedValue(makeModelsResponse());
   });
 
   it("prefills fields from the project", () => {
@@ -62,11 +52,10 @@ describe("SettingsPane", () => {
   });
 
   it("shows immutable fields read-only (slug + dates)", () => {
-    const project = makeProject({ slug: "p1", started: "2026-01-02", created: "2026-01-01" });
+    const project = makeProject({ slug: "p1", started: "2026-01-02" });
     render(<SettingsPane project={project} onSaved={() => {}} />);
     expect(screen.getByText("p1")).toBeInTheDocument();
     expect(screen.getByText("2026-01-02")).toBeInTheDocument();
-    expect(screen.getByText("2026-01-01")).toBeInTheDocument();
     // The slug is shown as text, not an editable input.
     expect(screen.queryByDisplayValue("p1")).not.toBeInTheDocument();
   });

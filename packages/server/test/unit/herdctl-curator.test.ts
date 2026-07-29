@@ -14,12 +14,8 @@
  *     the per-project sweeper agent carries it. Absent ⇒ the cheap curation default.
  */
 import { describe, it, expect, vi } from "vitest";
-import {
-  HerdctlService,
-  triggerAgentName,
-  sweeperAgentName,
-  SWEEPER_MODEL,
-} from "../../src/herdctl.js";
+import { HerdctlService, triggerAgentName, sweeperAgentName } from "../../src/herdctl.js";
+import { SWEEPER_DEFAULT_MODEL } from "../../src/models.js";
 import type { PaddockConfig } from "../../src/config.js";
 import type { Project } from "../../src/projects.js";
 
@@ -90,6 +86,6 @@ describe("HerdctlService: curator (afterTurn) trigger agent registration (T5)", 
     const cfg = (
       svc as unknown as { sweeperAgentConfig(p: Project): Record<string, unknown> }
     ).sweeperAgentConfig(project());
-    expect(cfg.model).toBe(SWEEPER_MODEL);
+    expect(cfg.model).toBe(SWEEPER_DEFAULT_MODEL);
   });
 });

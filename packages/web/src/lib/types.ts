@@ -108,7 +108,6 @@ export interface Project {
   visibility: "public" | "private";
   started: string;
   updated: string;
-  created: string;
   summary: string;
   links?: ProjectLink[];
   dir: string;

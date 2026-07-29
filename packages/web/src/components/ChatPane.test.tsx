@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { ChatPane } from "./ChatPane";
 import type { ChatHandlers } from "../lib/ws";
 import type { HistoryMessage } from "../lib/types";
+import { makeModelsResponse } from "../test/factories";
 
 // --- a thin fake chat socket --------------------------------------------------
 // We capture the handlers ChatPane subscribes with so a test can drive streamed
@@ -87,14 +88,13 @@ const COMMANDS = [
   { name: "review", description: "Review a pull request", argumentHint: "<pr>" },
 ];
 
-const MODELS = {
+const MODELS = makeModelsResponse({
   models: [
     { id: "claude-opus-4-8", label: "Opus 4.8", contextLimit: 1_000_000 },
     { id: "claude-sonnet-4", label: "Sonnet 4", contextLimit: 200_000 },
   ],
   keeperDefault: "claude-opus-4-8",
-  sweeperDefault: "claude-sonnet-4",
-};
+});
 
 const sub = () => subs[subs.length - 1];
 

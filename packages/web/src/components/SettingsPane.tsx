@@ -344,9 +344,9 @@ export function SettingsPane({
       .then((r) => {
         if (cancelled) return;
         setModels(r.models);
-        if (r.keeperDriveModeDefault) setDriveModeDefault(r.keeperDriveModeDefault);
-        if (typeof r.maxSpawnDepthDefault === "number") setMaxSpawnDepthDefault(r.maxSpawnDepthDefault);
-        if (r.curationDefault) setCurationDefault(r.curationDefault);
+        setDriveModeDefault(r.keeperDriveModeDefault);
+        setMaxSpawnDepthDefault(r.maxSpawnDepthDefault);
+        setCurationDefault(r.curationDefault);
       })
       .catch(() => {
         /* non-fatal: the current values are still selectable / shown */
@@ -669,7 +669,6 @@ export function SettingsPane({
             <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-paddock-200 pt-4 sm:grid-cols-3 dark:border-paddock-800">
               <ReadOnly label="Slug" value={<span className="font-mono">{project.slug}</span>} />
               <ReadOnly label="Started" value={project.started} />
-              <ReadOnly label="Created" value={project.created} />
             </dl>
           </Section>
 

@@ -177,7 +177,6 @@ describe("ProjectStore", () => {
     expect(p.status).toBe("active");
     expect(p.group).toBe(""); // unsorted by default
     expect(p.model).toBe(KEEPER_DEFAULT_MODEL); // DTO resolves the default
-    expect(p.created).toBe(p.started);
     expect(p.hasOverview).toBe(false);
     expect(p.pinned).toEqual([]);
 

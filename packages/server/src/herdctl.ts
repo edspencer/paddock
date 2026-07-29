@@ -137,7 +137,6 @@ export {
   BROWSER_MCP_TOOL,
   KEEPER_DENIED_TOOLS,
   browserMcpServers,
-  SWEEPER_MODEL,
   KEEPER_MAX_CONCURRENT,
   KEEPER_SESSION_TIMEOUT,
 } from "./herdctl-agent-names.js";
