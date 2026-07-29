@@ -948,9 +948,8 @@ export class HerdctlService {
    * project's `.chats/` (rewriting the embedded `cwd` so the transcript reports
    * the new project dir) and re-point the session's herdctl job records at the
    * new keeper. After this + the cache invalidations below the chat lists and
-   * resumes under the new project with NO restart — unlike
-   * `scripts/migrate-chat.sh`, which writes the same files from outside the
-   * process and therefore needs a restart to drop the attribution-index cache.
+   * resumes under the new project with NO restart — doing the same writes from
+   * outside the process would need one, to drop the attribution-index cache.
    *
    * Generalised from `promoteScratchSession` when #516 Phase 6 retired scratch.
    * The operation was never really about scratch — it moves one chat from one
@@ -970,9 +969,9 @@ export class HerdctlService {
 
     // Read the source transcript (throws ENOENT for an unknown/absent session).
     const raw = await fs.readFile(fromFile, "utf8");
-    // Rewrite ONLY the embedded `cwd` token. Claude Code writes compact JSON
-    // (`"cwd":"/abs/path"` — no spaces, no escaping for a plain abs path), the
-    // same assumption scripts/migrate-chat.sh relies on.
+    // Rewrite ONLY the embedded `cwd` token. This relies on Claude Code writing
+    // compact JSON (`"cwd":"/abs/path"` — no spaces, no escaping for a plain abs
+    // path).
     // Rewrite to the destination's KEEPER cwd. For a repo-backed project that's
     // the nested checkout (workingDir), not the metadata dir, so a promoted chat
     // resumes in the right place (issue #187).
@@ -1066,9 +1065,9 @@ export class HerdctlService {
     }
 
     const newId = randomUUID();
-    // Rewrite the embedded session id on every line. Claude Code writes compact
-    // JSON (`"sessionId":"<id>"` / `"session_id":"<id>"` — no spaces), the same
-    // assumption promoteScratchSession/migrate-chat.sh rely on for `cwd`.
+    // Rewrite the embedded session id on every line. Same compact-JSON
+    // assumption `promoteSession` makes for `cwd` (`"sessionId":"<id>"` /
+    // `"session_id":"<id>"` — no spaces).
     const rewritten = raw
       .split(`"sessionId":"${sourceSessionId}"`)
       .join(`"sessionId":"${newId}"`)

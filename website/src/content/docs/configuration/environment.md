@@ -237,12 +237,11 @@ per-project `curation` override in `project.yaml`, field by field.
 Each must parse to a **positive** integer; anything else (zero, negative,
 non-numeric, blank) falls back to the default rather than failing startup.
 
-## Sweep / spike (advanced)
+## Sweep (advanced)
 
 | Variable | Default | Required | Purpose |
 |----------|---------|----------|---------|
 | `PADDOCK_SWEEP_MIN_INTERVAL_MS` | `300000` (5 min) | no | Minimum interval between post-turn per-project sweeps. Must parse to a finite number ≥ 0, else ignored (falls back to the 5-min default). |
-| `PADDOCK_SPIKE_TRIGGER` | *(off)* | no | Dev harness only (`spike.ts`): when `=1`, fire a real keeper trigger instead of a dry run. Not used by the running server. |
 
 ## Non-`PADDOCK_` runtime variables
 

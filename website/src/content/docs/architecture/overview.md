@@ -579,7 +579,7 @@ Projects concept page).
 | Triggers (hooks + schedules) | `triggers.ts`, `trigger-config.ts`, `hook-config.ts` |
 | Management API (`/mcp`) | `management-{config,auth,policy,ops,metadata,mcp-server}.ts` |
 | Keeper recovery | `recovery-config.ts` |
-| herdctl wrapper | `herdctl.ts`, `spike.ts` |
+| herdctl wrapper | `herdctl.ts` |
 | Project layer | `projects.ts` |
 | Sidecar stores | `archive.ts`, `read-state.ts`, `queued-message.ts`, `attachments.ts` |
 | Transcripts | `transcripts.ts`, `tooldetails.ts`, `usage.ts`, `subagents.ts` |
