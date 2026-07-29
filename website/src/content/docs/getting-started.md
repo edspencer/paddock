@@ -46,17 +46,19 @@ Paddock publishes **two official images** from the same source — pick the tag 
 matches what your agents do:
 
 - **`ghcr.io/edspencer/paddock:latest`** — the **base** image (used above). The lean
-  runtime: the Paddock app plus `git`, `gh`, and the `claude` CLI. Everything a stock
-  instance needs to read, write, and reason over code.
+  runtime: the Paddock app plus `git`, `openssh-client`, `gh`, and the `claude` CLI.
+  Everything a stock instance needs to read, write, and reason over code.
 - **`ghcr.io/edspencer/paddock:devbox`** — the **devbox** image. Base *plus* the
   coding-agent toolbox: `pm`/PM2 preview servers, `ffmpeg`, a headless Playwright MCP
-  browser, and the Docker CLI. Reach for it when your keepers **build and run** apps,
-  not just edit them.
+  browser, the Docker CLI (with the `buildx` and `compose` plugins), `kubectl`, and a
+  scripting kit (`python3`, `uv`, `jq`, `rsync`). Reach for it when your keepers
+  **build and run** apps, not just edit them.
 
 The devbox only adds tools — same app, same `/data` layout — so you can swap tags
 against the same volume. It's a much bigger image (the Chromium layer alone is ~1 GB),
-so stay on base unless you need those tools. See
-[The Dev Box flavor](/guides/dev-box-flavor/) for the full breakdown.
+so stay on base unless you need those tools.
+[The Dev Box flavor](/guides/dev-box-flavor/) is the canonical breakdown of what each
+image carries, and why each tool is in the image it's in.
 
 ### docker-compose
 

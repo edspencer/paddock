@@ -242,8 +242,9 @@ with secrets or private data on it.
 ## Docker-in-Docker
 
 The devbox ships the Docker **client only** (CLI plus the `buildx` and `compose`
-plugins) — no daemon runs in the container, and no privilege is baked into the image. That's deliberate: *how* the CLI reaches a
-daemon is a security trade-off the deployment recipe makes, not the image.
+plugins) — no daemon runs in the container, and no privilege is baked into the
+image. That's deliberate: *how* the CLI reaches a daemon is a security trade-off the
+deployment recipe makes, not the image.
 
 There are two common shapes, and the
 [`docker/` recipe](https://github.com/edspencer/paddock-deploy/tree/main/docker)

@@ -41,8 +41,9 @@ the tools that make your work real.**
 This setup installs that toolbox onto the host by hand (via Ansible, below). The
 **[devbox image](/guides/dev-box-flavor/)** (`ghcr.io/edspencer/paddock:devbox`) now
 ships exactly this composition pre-baked — `pm`/PM2, `ffmpeg`, a headless Playwright
-browser, and the Docker CLI on top of `git`/`gh`/`claude` — so you get the same capable
-agents from a single image tag, no host provisioning required. The as-code narrative
+browser, the Docker CLI, `kubectl`, and a scripting kit (`python3`, `uv`, `jq`,
+`rsync`) on top of base's `git`/`openssh-client`/`gh`/`claude` — so you get the same
+capable agents from a single image tag, no host provisioning required. The as-code narrative
 below still holds; you just swap "Ansible installs the toolbox" for "run the devbox
 tag." The [`paddock-deploy`](https://github.com/edspencer/paddock-deploy) recipes cover
 both shapes.

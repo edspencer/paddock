@@ -58,9 +58,11 @@ docker-compose file (see [Getting started](/getting-started/)) is the tidy way t
 keep the config in version control.
 
 Two image tags are published from the same source: **`:latest`** (base — the app plus
-`git`/`gh`/`claude`) and **`:devbox`** (base plus `pm`, `ffmpeg`, a headless browser,
-and the Docker CLI, for keepers that build and run apps). See
-[The Dev Box flavor](/guides/dev-box-flavor/).
+`git`/`openssh-client`/`gh`/`claude`) and **`:devbox`** (base plus the coding-agent
+toolbox — `pm`, `ffmpeg`, a headless browser, the Docker CLI, `kubectl`, and a
+scripting kit — for keepers that build and run apps).
+[The Dev Box flavor](/guides/dev-box-flavor/) is the full, current breakdown of what
+each image carries.
 
 :::tip[Don't hand-roll it — use a recipe]
 The **[`edspencer/paddock-deploy`](https://github.com/edspencer/paddock-deploy)** repo

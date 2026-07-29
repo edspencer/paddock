@@ -126,12 +126,14 @@ valid token is only needed once a keeper actually runs a turn.
 ## Base vs. devbox image
 
 The Deployment uses the **base** image, `ghcr.io/edspencer/paddock:latest` — the
-app plus the `git` / `gh` / `claude` CLIs. That's enough for keepers that write
-code and open PRs.
+app plus the `git` / `openssh-client` / `gh` / `claude` CLIs. That's enough for
+keepers that write code and open PRs.
 
 For the full coding-agent toolbox — `pm` preview servers, `ffmpeg`, a headless
-Playwright browser, the Docker CLI, `kubectl` — switch to the **devbox** image by
-editing the tag in `kustomization.yaml`:
+Playwright browser, the Docker CLI, `kubectl`, and a scripting kit (`python3`, `uv`,
+`jq`, `rsync`) — switch to the **devbox** image by editing the tag in
+`kustomization.yaml` (see [The Dev Box flavor](/guides/dev-box-flavor/) for the full
+list):
 
 ```yaml
 images:

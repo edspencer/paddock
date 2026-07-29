@@ -56,8 +56,9 @@ pct create 200 local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst \
 
 ### Enable nesting + keyctl (needed for Docker / the devbox)
 
-If you're taking **Path A** (Docker inside the LXC), or you want the **devbox** tools
-(`pm`, headless Chromium, Docker CLI) inside an unprivileged container, the container
+If you're taking **Path A** (Docker inside the LXC), or you want the
+[**devbox** tools](/guides/dev-box-flavor/) (`pm`, headless Chromium, Docker CLI,
+`kubectl`, `python3`/`uv`/`jq`/`rsync`) inside an unprivileged container, the container
 needs two extra features so containerised and keyring-using workloads work:
 
 ```bash
@@ -98,9 +99,9 @@ cd paddock-deploy/docker
 cp .env.example .env
 $EDITOR .env                              # paste your CLAUDE_CODE_OAUTH_TOKEN
 
-docker compose --profile base   up -d     # app + git/gh/claude
+docker compose --profile base   up -d     # app + git/ssh/gh/claude
 # ...or the coding-agent toolbox image:
-docker compose --profile devbox up -d     # + pm, ffmpeg, headless Chromium, docker CLI
+docker compose --profile devbox up -d     # + pm, ffmpeg, Chromium, docker, kubectl, python
 
 curl -fsS http://127.0.0.1:4000/api/health   # -> {"ok":true}
 ```
@@ -108,8 +109,9 @@ curl -fsS http://127.0.0.1:4000/api/health   # -> {"ok":true}
 The recipe publishes to **loopback only** (`127.0.0.1:4000`) — reachable from inside
 the LXC, not from the LAN — which is the [safe posture](#the-bind-is-safe-by-default)
 you want until auth is in front. Pick the **base** or **devbox** image with the
-Compose profile; the split (and the docker-outside-of-docker socket mount for
-in-container builds) is documented in the recipe's README.
+Compose profile; the split is broken down in
+[The Dev Box flavor](/guides/dev-box-flavor/), and the docker-outside-of-docker
+socket mount for in-container builds is documented in the recipe's README.
 
 :::tip
 Path A is the concrete version of the `docker run` shown in
