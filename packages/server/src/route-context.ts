@@ -22,6 +22,7 @@ import type { ArchiveStore } from "./archive.js";
 import type { StarStore } from "./star.js";
 import type { ReadStateStore } from "./read-state.js";
 import type { UnreadStore } from "./unread.js";
+import type { ParentDetachStore } from "./parent-detach.js";
 import type { RunProvenanceStore } from "./run-provenance.js";
 import type { MessageProvenanceStore } from "./message-provenance.js";
 import type { PaddockConfig } from "./config.js";
@@ -76,6 +77,12 @@ export interface RouteDeps {
    * seen (opened / focused / marked read).
    */
   unread: UnreadStore;
+  /**
+   * Explicit "this chat was detached from its parent" sidecar (#508). Consulted
+   * by `makeParentResolver` AHEAD of the recorded and inferred parent tiers, so a
+   * detach can't be undone by the inference that re-derives an unrecorded edge.
+   */
+  parentDetach: ParentDetachStore;
   runProvenance: RunProvenanceStore;
   /**
    * Per-MESSAGE provenance sidecar (issue #290): who injected each machine-added

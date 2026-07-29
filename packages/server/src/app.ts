@@ -35,6 +35,7 @@ import { ArchiveStore } from "./archive.js";
 import { StarStore } from "./star.js";
 import { ReadStateStore } from "./read-state.js";
 import { UnreadStore } from "./unread.js";
+import { ParentDetachStore } from "./parent-detach.js";
 import { QueuedMessageStore } from "./queued-message.js";
 import { RunProvenanceStore } from "./run-provenance.js";
 import { MessageProvenanceStore } from "./message-provenance.js";
@@ -68,6 +69,10 @@ export interface BuiltApp {
   readState: ReadStateStore;
   /** Per-user manual "unread" override sidecar (#458). */
   unread: UnreadStore;
+  /** Explicit "detached from its parent" sidecar (#508) — beats both parent tiers. */
+  parentDetach: ParentDetachStore;
+  /** Per-chat creation provenance (#261), incl. the recorded parent edge (#485). */
+  runProvenance: RunProvenanceStore;
   queuedMessage: QueuedMessageStore;
   transcriber: Transcriber;
   /** In-process lifecycle event bus (Epic T) — commit sites emit lifecycle events. */
@@ -148,6 +153,10 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   // chat can be re-flagged unread after its last turn was seen ("look at it again
   // in the morning"). Cleared whenever the chat is marked seen.
   const unread = new UnreadStore(cfg.dataDir);
+  // Explicit "this chat was detached from its parent" sidecar (#508). Checked
+  // ahead of both parent-resolution tiers, so a detach survives the inference
+  // that would otherwise re-derive the old parent on the next list load.
+  const parentDetach = new ParentDetachStore(cfg.dataDir);
   // Per-chat queued message sidecar (#197) for server-side auto-send.
   const queuedMessage = new QueuedMessageStore(cfg.dataDir);
   // Per-chat provenance sidecar (issue #261): records how each chat was created
@@ -275,7 +284,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
     );
   }
 
-  await registerRoutes(app, { projects, herdctl, git, githubAuth, transcriber, archive, star, readState, unread, runProvenance, messageProvenance, attachments, fireTrigger: chatHandler.fireTrigger, managementOpsContext: chatHandler.managementOpsContext, events, triggers, cfg });
+  await registerRoutes(app, { projects, herdctl, git, githubAuth, transcriber, archive, star, readState, unread, parentDetach, runProvenance, messageProvenance, attachments, fireTrigger: chatHandler.fireTrigger, managementOpsContext: chatHandler.managementOpsContext, events, triggers, cfg });
 
   await app.register(async (scoped) => {
     // `hide: true` keeps the WS upgrade out of the OpenAPI doc — it's not a REST
@@ -366,5 +375,5 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
     await app.close().catch(() => undefined);
   };
 
-  return { app, cfg, projects, herdctl, git, githubAuth, sweep, archive, star, readState, unread, queuedMessage, transcriber, events, triggers, close };
+  return { app, cfg, projects, herdctl, git, githubAuth, sweep, archive, star, readState, unread, parentDetach, runProvenance, queuedMessage, transcriber, events, triggers, close };
 }

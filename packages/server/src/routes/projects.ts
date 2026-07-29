@@ -161,6 +161,7 @@ export function registerProjectWorkspaceRoutes(app: FastifyInstance, ctx: RouteC
     star,
     readState,
     unread,
+    parentDetach,
     runProvenance,
     messageProvenance,
     readStateUser,
@@ -220,9 +221,12 @@ export function registerProjectWorkspaceRoutes(app: FastifyInstance, ctx: RouteC
       // Trigger capability descriptor for trigger chats (Epic T / T4) — truthful from
       // the registered trigger agent config. A no-op for the keeper chats that dominate.
       const triggerOf = makeTriggerResolver(project);
-      // Parent edge for the nested chat list: the recorded RunProvenance edge, or a
-      // backfill from who injected the kickoff prompt. Both in-memory sidecar reads.
-      const parentOf = makeParentResolver(runProvenance, messageProvenance, project.slug);
+      // Parent edge for the nested chat list: an explicit detach (#508) wins, else
+      // the recorded RunProvenance edge, else a backfill from who injected the
+      // kickoff prompt. All three are in-memory sidecar reads.
+      const parentOf = makeParentResolver(runProvenance, messageProvenance, project.slug, (id) =>
+        parentDetach.isDetached(keeper, id),
+      );
       // Deliberately NO usage resolver here (issue #116): the per-chat context
       // ring requires streaming+parsing each session's full transcript, which is
       // O(chats × transcript size) and blocked the whole ProjectView from

@@ -141,6 +141,30 @@
   .btn-danger {
     @apply btn bg-rose-600 text-white shadow-sm hover:bg-rose-700 active:scale-[0.98];
   }
+  /*
+   * Chat-list row (#508). The hover action strip is absolutely positioned over
+   * row 2, which also carries the relative timestamp — so on a narrow sidebar
+   * the icons land on top of the text. Each row is its own SIZE CONTAINER and
+   * fades its timestamp out while hovered, but only when its own strip would
+   * actually cover it.
+   *
+   * Deliberately pure CSS: the container query tracks the row's real width, so
+   * there is no ResizeObserver and no resize listener, and it stays correct
+   * live while the sidebar is dragged (the pane resizes 220–520px).
+   *
+   * Thresholds are arithmetic, not taste: the strip is `n × 26 − 2` px wide
+   * (24px buttons, 2px gaps), the longest string `relativeTime` produces
+   * ("yesterday") needs ~64px, and an 8px gap keeps them apart. So 6 icons →
+   * 226px, 7 → 252px, 8 → 278px. Above its own threshold a row keeps its
+   * timestamp visible on hover, because there it genuinely fits.
+   */
+  .chat-row {
+    container-type: inline-size;
+  }
+  .chat-row-time {
+    transition: opacity 150ms ease-out;
+  }
+
   /* Small dropdown menu (project "…" actions). */
   .menu {
     @apply absolute z-50 min-w-[10rem] animate-scale-in overflow-hidden rounded-xl border border-paddock-200 bg-white py-1 shadow-xl dark:border-paddock-800 dark:bg-paddock-900;
@@ -174,6 +198,34 @@
   }
   .section-label {
     @apply px-3 text-[11px] font-semibold uppercase tracking-wider text-paddock-500;
+  }
+}
+
+/*
+ * The hide-the-timestamp half of `.chat-row` above. Outside `@layer components`
+ * because a `@container` block can't be nested in an `@apply`-bearing rule, and
+ * hover-gated for the same reason the `can-hover:` variant exists: a touch
+ * browser applies a STICKY :hover after a tap, which would otherwise leave the
+ * timestamp hidden until the next tap somewhere else.
+ *
+ * A browser without container-query support (pre-2023) simply ignores these and
+ * gets today's behaviour — icons overlapping the timestamp on a narrow sidebar.
+ */
+@media (hover: hover) {
+  @container (width < 226px) {
+    .chat-row--actions-6:hover .chat-row-time {
+      opacity: 0;
+    }
+  }
+  @container (width < 252px) {
+    .chat-row--actions-7:hover .chat-row-time {
+      opacity: 0;
+    }
+  }
+  @container (width < 278px) {
+    .chat-row--actions-8:hover .chat-row-time {
+      opacity: 0;
+    }
   }
 }
 
