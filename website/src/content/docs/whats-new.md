@@ -1,6 +1,6 @@
 ---
 title: What's New
-description: "The user-facing highlights of each Paddock release — a chat list that nests spawned chats under their parent, an external MCP endpoint, a generated API reference, per-message fork & revert, Claude Opus 5 by default, configurable model lists, official Docker images & deploy recipes, live nested sub-agent cards, surviving background work, an instance-wide settings screen, attachments, streaming, unified triggers, and more."
+description: "The user-facing highlights of each Paddock release — the instance's own root as a first-class workspace, subtree actions on the chat tree, a running-chats filter, instance Config split from workspace Settings, scratch retired, a much faster jobs index, a chat list that nests spawned chats under their parent, an external MCP endpoint, a generated API reference, per-message fork & revert, Claude Opus 5 by default, official Docker images & deploy recipes, attachments, streaming, unified triggers, and more."
 ---
 
 The headline changes in recent Paddock releases, newest first. These are the
@@ -10,12 +10,27 @@ detail see the changelogs on GitHub
 [web](https://github.com/edspencer/paddock/blob/main/packages/web/CHANGELOG.md)).
 
 :::note[Reading older entries]
-Each entry describes a release as it shipped. Some things were refined later — for
-example the separate `set_schedule` and `set_hook` self-management tools below were
-unified into a single `set_trigger` family in a subsequent release.
+Each entry describes a release as it shipped, and some things were refined later.
+The separate `set_schedule` and `set_hook` self-management tools below were unified
+into a single `set_trigger` family in a subsequent release. And 0.49's root
+*project* — reached through a reserved `__root` slug — was replaced two releases
+on by 0.51's root **workspace**, whose key is the empty string and whose routes
+live at `/api/root`; `__root` is no longer accepted anywhere. Where a superseded
+detail would otherwise send you to an address that no longer resolves, the entry
+says so inline.
 :::
 
-A theme runs through this stretch: Paddock grew from a place to *chat with*
+Two arcs run through the most recent stretch. The first is that Paddock's own
+**root** stopped being a hole in the model: the directory holding your projects is
+now a workspace in its own right — with a keeper, chats, files, changes, history,
+triggers and settings, exactly like a project — which retired the old
+second-class "scratch" chat and turned `/` into somewhere you work rather than a
+menu you pass through. The second is that the **chat list** grew up. A fan-out
+used to arrive as a flat pile of rows; it now nests under the chat that caused it,
+folds away, tells you which of its chats are working right now, and lets you
+archive or delete a whole family in one gesture.
+
+Before those, a longer arc: Paddock grew from a place to *chat with*
 agents into a place where agents **run on their own** — fired by events and
 schedules, spawning and reporting back to each other — with the UI making all
 that unattended work legible at a glance. With 0.46 the boundary opens the other
@@ -113,7 +128,9 @@ becoming less an app you visit and more a service your other tools talk to.
   raw spec at `/open-api.json` — reachable from a new **Swagger API** link in the
   sidebar, with an Authorize button that reflects your instance's auth mode. A
   static copy is published on this site too, as the [API reference](/api/). (The
-  sidebar's "Instance settings" is now just **Settings**.)
+  sidebar's "Instance settings" link became just **Settings** in this release; 0.52
+  renamed it again to **Config** when instance config and workspace settings split
+  into separate screens.)
 
 ![The generated Swagger UI reference mounted at /open-api, listing the System routes](../../assets/whats-new/swagger-api.png)
 
@@ -207,7 +224,8 @@ becoming less an app you visit and more a service your other tools talk to.
   more. Instance config is read once at boot and frozen, so a save writes the file
   and shows a **restart-to-apply** banner; a field already pinned by an environment
   variable renders read-only with an "overridden by `ENV`" note, so the precedence
-  is never a surprise.
+  is never a surprise. (This screen is **Config**, at `/config`, as of 0.52 —
+  "Settings" now means a *workspace's* own `project.yaml`.)
 
 ![The instance-wide Settings screen, editing paddock.config.yaml from the UI with a restart-to-apply banner](../../assets/whats-new/instance-settings.png)
 
