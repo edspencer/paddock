@@ -16,7 +16,6 @@ import type { AttachmentRef, AttachmentsConfig, AttachmentsOverride } from "../.
 /** Inputs the composer-attachments hook needs from {@link ChatPane} (issue #328). */
 export interface UseComposerAttachmentsParams {
   projectSlug: string;
-  isProjectChat: boolean;
   initialSessionId?: string;
   /** Instance-default inbound-attachment config (GET /api/models). Null until fetched. */
   attachmentsDefault: AttachmentsConfig | null;
@@ -59,7 +58,6 @@ export interface ComposerAttachments {
  */
 export function useComposerAttachments({
   projectSlug,
-  isProjectChat,
   initialSessionId,
   attachmentsDefault,
   projectAttachments,
@@ -109,9 +107,8 @@ export function useComposerAttachments({
       allowedTypes: o.allowedTypes ?? d.allowedTypes,
     };
   }, [attachmentsDefault, projectAttachments]);
-  // Attachments are project-chat-only (the upload endpoint is project-scoped) and
-  // gated by the effective `enabled` knob.
-  const attachEnabled = isProjectChat && attachConfig.enabled;
+  // Gated by the effective `enabled` knob.
+  const attachEnabled = attachConfig.enabled;
 
   // Client-side validate (UX guardrail; the server re-validates authoritatively),
   // then upload accepted files and append their refs to the tray.

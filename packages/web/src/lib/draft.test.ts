@@ -10,7 +10,7 @@ describe("draft persistence", () => {
 
   it("keys a brand-new chat (no session id) by new:<slug>", () => {
     expect(draftKey(null, "proj")).toBe("paddock:draft:new:proj");
-    expect(draftKey(undefined, "scratch")).toBe("paddock:draft:new:scratch");
+    expect(draftKey(undefined, "proj")).toBe("paddock:draft:new:proj");
   });
 
   it("round-trips a saved draft", () => {

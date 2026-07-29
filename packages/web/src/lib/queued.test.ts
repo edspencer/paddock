@@ -10,7 +10,7 @@ describe("queued-message persistence (#197)", () => {
 
   it("keys a brand-new chat by its slug", () => {
     expect(queuedKey(null, "proj")).toBe("paddock:queued:new:proj");
-    expect(queuedKey(undefined, "scratch")).toBe("paddock:queued:new:scratch");
+    expect(queuedKey(undefined, "proj")).toBe("paddock:queued:new:proj");
   });
 
   it("round-trips a queued message", () => {

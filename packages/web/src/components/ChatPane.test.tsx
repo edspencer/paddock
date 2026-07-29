@@ -128,7 +128,7 @@ describe("ChatPane: empty + send", () => {
   });
 
   it("sends the draft, renders the user bubble, and streams the assistant reply", async () => {
-    render(<ChatPane projectSlug="proj" projectModel="claude-opus-4-8" isProjectChat />);
+    render(<ChatPane projectSlug="proj" projectModel="claude-opus-4-8" />);
     await screen.findByRole("button", { name: /^Send$/ });
 
     await userEvent.type(screen.getByPlaceholderText(/Message Claude/i), "ping");
@@ -194,19 +194,19 @@ describe("ChatPane: composer auto-focus (#159)", () => {
   const composer = () => screen.getByPlaceholderText(/Message Claude/i);
 
   it("focuses the composer on mount for a session-less (New Chat) pane", async () => {
-    render(<ChatPane projectSlug="proj" isProjectChat />);
+    render(<ChatPane projectSlug="proj" />);
     await waitFor(() => expect(composer()).toHaveFocus());
   });
 
   it("focuses the composer on mount when autoFocus is set (fork)", async () => {
-    render(<ChatPane projectSlug="proj" isProjectChat autoFocus />);
+    render(<ChatPane projectSlug="proj" autoFocus />);
     await waitFor(() => expect(composer()).toHaveFocus());
   });
 
   it("does NOT focus the composer when opening an existing chat", async () => {
     const loadHistory = vi.fn().mockResolvedValue([]);
     render(
-      <ChatPane projectSlug="proj" initialSessionId="sess-1" loadHistory={loadHistory} isProjectChat />,
+      <ChatPane projectSlug="proj" initialSessionId="sess-1" loadHistory={loadHistory} />,
     );
     await waitFor(() => expect(loadHistory).toHaveBeenCalledWith("sess-1"));
     expect(composer()).not.toHaveFocus();
@@ -218,12 +218,12 @@ describe("ChatPane: slash-command autocomplete (#103)", () => {
   const menu = () => screen.queryByRole("menu", { name: /slash commands/i });
 
   it("fetches the project's commands for every chat", async () => {
-    render(<ChatPane projectSlug="proj" isProjectChat />);
+    render(<ChatPane projectSlug="proj" />);
     await waitFor(() => expect(projectCommands).toHaveBeenCalledWith("proj"));
   });
 
   it("opens the menu on a leading slash and filters as the query narrows", async () => {
-    render(<ChatPane projectSlug="proj" isProjectChat />);
+    render(<ChatPane projectSlug="proj" />);
     await waitFor(() => expect(projectCommands).toHaveBeenCalled());
     expect(menu()).toBeNull();
 
@@ -242,7 +242,7 @@ describe("ChatPane: slash-command autocomplete (#103)", () => {
   });
 
   it("does not open for a slash mid-text or once an argument is typed", async () => {
-    render(<ChatPane projectSlug="proj" isProjectChat />);
+    render(<ChatPane projectSlug="proj" />);
     await waitFor(() => expect(projectCommands).toHaveBeenCalled());
 
     // Slash not at the start → no menu.
@@ -256,7 +256,7 @@ describe("ChatPane: slash-command autocomplete (#103)", () => {
   });
 
   it("Enter accepts the highlighted command instead of sending", async () => {
-    render(<ChatPane projectSlug="proj" isProjectChat />);
+    render(<ChatPane projectSlug="proj" />);
     await waitFor(() => expect(projectCommands).toHaveBeenCalled());
 
     await userEvent.type(composer(), "/");
@@ -274,7 +274,7 @@ describe("ChatPane: slash-command autocomplete (#103)", () => {
   });
 
   it("Escape dismisses the menu without clearing the draft; Enter then sends the command", async () => {
-    render(<ChatPane projectSlug="proj" isProjectChat />);
+    render(<ChatPane projectSlug="proj" />);
     await waitFor(() => expect(projectCommands).toHaveBeenCalled());
 
     await userEvent.type(composer(), "/compact");
@@ -292,7 +292,7 @@ describe("ChatPane: slash-command autocomplete (#103)", () => {
   });
 
   it("clicking a row accepts it", async () => {
-    render(<ChatPane projectSlug="proj" isProjectChat />);
+    render(<ChatPane projectSlug="proj" />);
     await waitFor(() => expect(projectCommands).toHaveBeenCalled());
 
     await userEvent.type(composer(), "/rev");
@@ -624,7 +624,7 @@ describe("ChatPane: onSessionStarted (issue #36)", () => {
 
   it("keeps the picked model when the new chat's id is mirrored into the URL mid-stream", async () => {
     const { rerender } = render(
-      <ChatPane projectSlug="proj" projectModel="claude-opus-4-8" isProjectChat onSessionStarted={vi.fn()} />,
+      <ChatPane projectSlug="proj" projectModel="claude-opus-4-8" onSessionStarted={vi.fn()} />,
     );
     const select = (await screen.findByTitle(/Model for this chat/i)) as HTMLSelectElement;
     await waitFor(() => expect(select.value).toBe("claude-opus-4-8"));
@@ -641,7 +641,6 @@ describe("ChatPane: onSessionStarted (issue #36)", () => {
       <ChatPane
         projectSlug="proj"
         projectModel="claude-opus-4-8"
-        isProjectChat
         initialSessionId="sess-new"
         onSessionStarted={vi.fn()}
         loadHistory={vi.fn().mockResolvedValue([])}
@@ -707,7 +706,7 @@ describe("ChatPane: session isolation (issue #35)", () => {
 
 describe("ChatPane: model picker", () => {
   it("defaults the picker to the project's model and sends it", async () => {
-    render(<ChatPane projectSlug="proj" projectModel="claude-sonnet-4" isProjectChat />);
+    render(<ChatPane projectSlug="proj" projectModel="claude-sonnet-4" />);
     const select = (await screen.findByTitle(/Model for this chat/i)) as HTMLSelectElement;
     await waitFor(() => expect(select.value).toBe("claude-sonnet-4"));
 
@@ -717,7 +716,7 @@ describe("ChatPane: model picker", () => {
   });
 
   it("a picked model is sent and persisted per chat", async () => {
-    render(<ChatPane projectSlug="proj" projectModel="claude-opus-4-8" isProjectChat />);
+    render(<ChatPane projectSlug="proj" projectModel="claude-opus-4-8" />);
     const select = (await screen.findByTitle(/Model for this chat/i)) as HTMLSelectElement;
     await waitFor(() => expect(select.value).toBe("claude-opus-4-8"));
     fireEvent.change(select, { target: { value: "claude-sonnet-4" } });
@@ -727,12 +726,6 @@ describe("ChatPane: model picker", () => {
     expect((sends[0].opts as { model?: string }).model).toBe("claude-sonnet-4");
     // Persisted under the new-chat key (no session id yet).
     expect(localStorage.getItem("paddock:chatModel:new:proj")).toBe("claude-sonnet-4");
-  });
-
-  it("scratch chats default to the defaultModel", async () => {
-    render(<ChatPane projectSlug="scratch" />);
-    const select = (await screen.findByTitle(/Model for this chat/i)) as HTMLSelectElement;
-    await waitFor(() => expect(select.value).toBe("claude-opus-4-8"));
   });
 });
 
@@ -774,37 +767,29 @@ describe("ChatPane: context meter", () => {
 describe("ChatPane: preload toggle (issue #1)", () => {
   it("shows the preload checkbox only for a NEW project chat", async () => {
     const { rerender } = render(
-      <ChatPane projectSlug="proj" isProjectChat preloadAvailable />,
+      <ChatPane projectSlug="proj" preloadAvailable />,
     );
     expect(await screen.findByText(/Preload project context/i)).toBeInTheDocument();
 
     // Not shown for a resumed chat.
-    rerender(<ChatPane projectSlug="proj" isProjectChat preloadAvailable initialSessionId="s1" loadHistory={vi.fn().mockResolvedValue([])} />);
+    rerender(<ChatPane projectSlug="proj" preloadAvailable initialSessionId="s1" loadHistory={vi.fn().mockResolvedValue([])} />);
     await waitFor(() =>
       expect(screen.queryByText(/Preload project context/i)).not.toBeInTheDocument(),
     );
   });
 
   it("disables the checkbox when no overview is available", async () => {
-    render(<ChatPane projectSlug="proj" isProjectChat preloadAvailable={false} />);
+    render(<ChatPane projectSlug="proj" preloadAvailable={false} />);
     const cb = (await screen.findByRole("checkbox")) as HTMLInputElement;
     expect(cb).toBeDisabled();
   });
 
   it("sends preloadContext on the first turn of a new project chat when available + checked", async () => {
-    render(<ChatPane projectSlug="proj" isProjectChat preloadAvailable />);
+    render(<ChatPane projectSlug="proj" preloadAvailable />);
     await screen.findByRole("checkbox");
     await userEvent.type(screen.getByPlaceholderText(/Message Claude/i), "first");
     fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
     expect((sends[0].opts as { preloadContext?: boolean }).preloadContext).toBe(true);
-  });
-
-  it("does NOT preload for a scratch (non-project) chat", async () => {
-    render(<ChatPane projectSlug="scratch" />);
-    await screen.findByRole("button", { name: /^Send$/ });
-    await userEvent.type(screen.getByPlaceholderText(/Message Claude/i), "first");
-    fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
-    expect((sends[0].opts as { preloadContext?: boolean }).preloadContext).toBeFalsy();
   });
 });
 
@@ -862,7 +847,7 @@ describe("ChatPane: attachment persistence (#346)", () => {
 
   it("restores persisted attachment refs into the tray on mount (new chat)", async () => {
     localStorage.setItem("paddock:attachments:new:proj", STAGED);
-    render(<ChatPane projectSlug="proj" isProjectChat />);
+    render(<ChatPane projectSlug="proj" />);
     await screen.findByRole("button", { name: /^Send$/ });
     const tray = await screen.findByTestId("attachment-tray");
     expect(tray).toBeInTheDocument();
@@ -880,23 +865,14 @@ describe("ChatPane: attachment persistence (#346)", () => {
         projectSlug="proj"
         initialSessionId="sess-1"
         loadHistory={loadHistory}
-        isProjectChat
       />,
     );
     expect(await screen.findByText("diagram.png")).toBeInTheDocument();
   });
 
-  it("does not restore attachments for a scratch (non-project) chat", async () => {
-    localStorage.setItem("paddock:attachments:new:proj", STAGED);
-    render(<ChatPane projectSlug="proj" />);
-    await screen.findByRole("button", { name: /^Send$/ });
-    // The tray is project-chat-only (upload endpoint is project-scoped, #328).
-    expect(screen.queryByTestId("attachment-tray")).not.toBeInTheDocument();
-  });
-
   it("removing a staged attachment updates the persisted refs", async () => {
     localStorage.setItem("paddock:attachments:new:proj", STAGED);
-    render(<ChatPane projectSlug="proj" isProjectChat />);
+    render(<ChatPane projectSlug="proj" />);
     await screen.findByTestId("attachment-tray");
     const removeBtns = screen.getAllByTestId("attachment-remove");
     fireEvent.click(removeBtns[0]);
@@ -908,7 +884,7 @@ describe("ChatPane: attachment persistence (#346)", () => {
 
   it("sends restored attachments and clears the persisted refs on send", async () => {
     localStorage.setItem("paddock:attachments:new:proj", STAGED);
-    render(<ChatPane projectSlug="proj" isProjectChat />);
+    render(<ChatPane projectSlug="proj" />);
     const box = await screen.findByPlaceholderText(/Message Claude/i);
     await screen.findByTestId("attachment-tray");
     await userEvent.type(box, "here you go");
@@ -1173,7 +1149,7 @@ describe("ChatPane: message queue (issue #91)", () => {
   it("persists the queued message across a remount and hydrates it back (#197)", async () => {
     const loadHistory = vi.fn().mockResolvedValue([]);
     const { unmount } = render(
-      <ChatPane projectSlug="proj" isProjectChat initialSessionId="s1" loadHistory={loadHistory} />,
+      <ChatPane projectSlug="proj" initialSessionId="s1" loadHistory={loadHistory} />,
     );
     await screen.findByRole("button", { name: /^Send$/ });
     // Put a turn in flight, then queue a follow-up.
@@ -1189,7 +1165,7 @@ describe("ChatPane: message queue (issue #91)", () => {
     // Navigating away unmounts the pane — the queued message must NOT be lost.
     unmount();
     render(
-      <ChatPane projectSlug="proj" isProjectChat initialSessionId="s1" loadHistory={loadHistory} />,
+      <ChatPane projectSlug="proj" initialSessionId="s1" loadHistory={loadHistory} />,
     );
     // Re-opening the chat restores the queued toolbar + its text.
     expect(await screen.findByText("queued")).toBeInTheDocument();
@@ -1198,7 +1174,7 @@ describe("ChatPane: message queue (issue #91)", () => {
 
   it("clears the persisted queued message once it flushes (#197)", async () => {
     render(
-      <ChatPane projectSlug="proj" isProjectChat initialSessionId="s1" loadHistory={vi.fn().mockResolvedValue([])} />,
+      <ChatPane projectSlug="proj" initialSessionId="s1" loadHistory={vi.fn().mockResolvedValue([])} />,
     );
     await screen.findByRole("button", { name: /^Send$/ });
     await userEvent.type(box(), "first turn");
@@ -1424,7 +1400,7 @@ describe("ChatPane: killed background-task recovery (#301)", () => {
   it("renders the amber affordance + a Continue button (surface ON)", async () => {
     const loadHistory = vi.fn().mockResolvedValue(killedHistory);
     render(
-      <ChatPane projectSlug="proj" initialSessionId="sess-k" loadHistory={loadHistory} isProjectChat />,
+      <ChatPane projectSlug="proj" initialSessionId="sess-k" loadHistory={loadHistory} />,
     );
     const notice = await screen.findByText(/background task was terminated at the turn boundary/i);
     expect(notice).toBeInTheDocument();
@@ -1434,7 +1410,7 @@ describe("ChatPane: killed background-task recovery (#301)", () => {
   it("clicking Continue injects a re-drive via chatClient.continueChat", async () => {
     const loadHistory = vi.fn().mockResolvedValue(killedHistory);
     render(
-      <ChatPane projectSlug="proj" initialSessionId="sess-k" loadHistory={loadHistory} isProjectChat />,
+      <ChatPane projectSlug="proj" initialSessionId="sess-k" loadHistory={loadHistory} />,
     );
     const btn = await screen.findByRole("button", { name: /^continue$/i });
     await userEvent.click(btn);
@@ -1448,7 +1424,6 @@ describe("ChatPane: killed background-task recovery (#301)", () => {
         projectSlug="proj"
         initialSessionId="sess-k"
         loadHistory={loadHistory}
-        isProjectChat
         projectRecovery={{ surfaceKilledTask: false }}
       />,
     );
@@ -1470,7 +1445,7 @@ describe("ChatPane: killed background-task recovery (#301)", () => {
     });
     const loadHistory = vi.fn().mockResolvedValue(killedHistory);
     render(
-      <ChatPane projectSlug="proj" initialSessionId="sess-k" loadHistory={loadHistory} isProjectChat />,
+      <ChatPane projectSlug="proj" initialSessionId="sess-k" loadHistory={loadHistory} />,
     );
     await screen.findByText(/background task was terminated at the turn boundary/i);
     // Instance default OFF → no button (until a project override flips it back on).
@@ -1491,7 +1466,7 @@ describe("ChatPane: killed background-task recovery (#301)", () => {
       { role: "user", content: completed, timestamp: "2026-07-18T10:00:05Z" },
     ] as HistoryMessage[]);
     render(
-      <ChatPane projectSlug="proj" initialSessionId="sess-c" loadHistory={loadHistory} isProjectChat />,
+      <ChatPane projectSlug="proj" initialSessionId="sess-c" loadHistory={loadHistory} />,
     );
     await screen.findByText("Background command completed");
     expect(
@@ -1522,7 +1497,7 @@ describe("ChatPane: turn-notice surfacing (#329)", () => {
       },
     ] as HistoryMessage[]);
     render(
-      <ChatPane projectSlug="proj" initialSessionId="sess-u" loadHistory={loadHistory} isProjectChat />,
+      <ChatPane projectSlug="proj" initialSessionId="sess-u" loadHistory={loadHistory} />,
     );
     expect(await screen.findByText(/Session limit reached/i)).toBeInTheDocument();
     expect(screen.getByText(/after the quota resets/i)).toBeInTheDocument();
@@ -1533,7 +1508,7 @@ describe("ChatPane: turn-notice surfacing (#329)", () => {
   it("surfaces a LIVE error notice with a Retry button (recovery enabled)", async () => {
     const loadHistory = vi.fn().mockResolvedValue([] as HistoryMessage[]);
     render(
-      <ChatPane projectSlug="proj" initialSessionId="sess-e" loadHistory={loadHistory} isProjectChat />,
+      <ChatPane projectSlug="proj" initialSessionId="sess-e" loadHistory={loadHistory} />,
     );
     await waitFor(() => expect(sub()).toBeTruthy());
     act(() =>
@@ -1557,7 +1532,7 @@ describe("ChatPane: turn-notice surfacing (#329)", () => {
   it("surfaces a LIVE max-turns notice with a Continue button", async () => {
     const loadHistory = vi.fn().mockResolvedValue([] as HistoryMessage[]);
     render(
-      <ChatPane projectSlug="proj" initialSessionId="sess-m" loadHistory={loadHistory} isProjectChat />,
+      <ChatPane projectSlug="proj" initialSessionId="sess-m" loadHistory={loadHistory} />,
     );
     await waitFor(() => expect(sub()).toBeTruthy());
     act(() =>

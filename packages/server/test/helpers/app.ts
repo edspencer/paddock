@@ -93,7 +93,6 @@ export async function startTestApp(opts: StartOptions = {}): Promise<TestApp> {
     PADDOCK_PROJECTS_DIR: process.env.PADDOCK_PROJECTS_DIR,
     PADDOCK_STATE_DIR: process.env.PADDOCK_STATE_DIR,
     PADDOCK_HERDCTL_CONFIG: process.env.PADDOCK_HERDCTL_CONFIG,
-    PADDOCK_SCRATCH_DIR: process.env.PADDOCK_SCRATCH_DIR,
     PADDOCK_WEB_DIST: process.env.PADDOCK_WEB_DIST,
     CLAUDE_HOME: process.env.CLAUDE_HOME,
     PADDOCK_FAKE_SCRIPT: process.env.PADDOCK_FAKE_SCRIPT,

@@ -289,7 +289,7 @@ export class HerdctlService {
   private agentModels = new Map<string, string>();
 
   /**
-   * Each agent's working directory (the keeper's cwd / scratch dir), recorded at
+   * Each agent's working directory (the keeper's cwd), recorded at
    * registration. Used to resolve the `claude` CLI transcript for a resume so we
    * can measure its pending async-input-queue depth (the resume self-interrupt
    * fix's residue gate — see {@link residueDepthFor} + `./resume-drain.ts`).
@@ -325,8 +325,8 @@ export class HerdctlService {
   /**
    * Construct + initialize the FleetManager against a minimal zero-agent
    * config (fleet + defaults only). Agents are then registered programmatically
-   * via `fleet.addAgent(...)` — the scratch agent plus a keeper + sweeper for
-   * each existing project. No per-agent yaml files; no `reload()`.
+   * via `fleet.addAgent(...)` — a keeper + sweeper for each workspace, the root
+   * included. No per-agent yaml files; no `reload()`.
    */
   async init(projects: Project[]): Promise<void> {
     await this.ensureConfigFile();
@@ -1051,7 +1051,7 @@ export class HerdctlService {
    * the keeper PLUS every declared event-hook agent (`hook-<slug>-<name>`), so a
    * hook's chats show up in the sidebar alongside the keeper's. The sweeper is
    * deliberately excluded — it's the `hideChats` case (its curation chats stay
-   * hidden, unchanged) — and scratch is a separate global list. See
+   * hidden, unchanged). See
    * {@link visibleProjectAgentNames}.
    *
    * Sessions are keyed by working directory in core's discovery, and every one of
@@ -1120,10 +1120,8 @@ export class HerdctlService {
    * resumes under the new project with NO restart — doing the same writes from
    * outside the process would need one, to drop the attribution-index cache.
    *
-   * Generalised from `promoteScratchSession` when #516 Phase 6 retired scratch.
-   * The operation was never really about scratch — it moves one chat from one
-   * keeper's store to another's — and the root is a project like any other, so
-   * the root chats that inherited scratch's URL inherit its promote action too.
+   * Moves one chat from one keeper's store to another's. The root is a workspace
+   * like any other, so root chats carry the promote action too.
    *
    * The caller MUST have already created `to` and registered its keeper
    * (ensureProjectAgent), so its `.chats/` + transcript symlink exist. Throws if
@@ -1184,7 +1182,7 @@ export class HerdctlService {
    * materialized only when the user sends a first message. The source is left
    * untouched (this is a copy, not a move).
    *
-   * Same mechanics as {@link promoteScratchSession} (copy the JSONL, keep it
+   * Same mechanics as {@link promoteSession} (copy the JSONL, keep it
    * discoverable + attributed), with two differences: a NEW session id is minted
    * and rewritten onto every transcript line (so the copy is internally
    * consistent with its new filename — Claude Code stamps appended lines with the
@@ -1322,7 +1320,7 @@ export class HerdctlService {
    * record (same session id, same agent) the attribution is unchanged.
    *
    * @param sessionId - The freshly-resolved session id of the running turn
-   * @param agentName - The qualified agent the session belongs to (keeper or scratch)
+   * @param agentName - The qualified agent the session belongs to
    */
   async attributeRunningSession(sessionId: string, agentName: string): Promise<void> {
     if (!/^[A-Za-z0-9._-]+$/.test(sessionId)) return;

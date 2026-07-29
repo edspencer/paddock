@@ -45,8 +45,9 @@ reconnects, and devices. There are two kinds:
   so the repo's own `CLAUDE.md`, branches, and PR flow apply. The natural unit for
   doing real engineering.
 
-One-off "scratch" chats work too, and can be promoted into a project (keeping their
-history). The whole UI is responsive — the same launchpad works from a phone.
+The instance **root** is a workspace too, so a chat that belongs to no particular
+project just lives there — and can be promoted into a project later, keeping its
+history. The whole UI is responsive — the same launchpad works from a phone.
 
 It also runs without you watching. Turns are fired by schedules, lifecycle
 events and other chats; background work a chat starts survives the turn that
@@ -227,7 +228,7 @@ project's `project.yaml`.
 | `PORT` | `4000` | HTTP/WS port |
 | `HOST` | `127.0.0.1` | Bind address. Loopback by default so a fresh source/tarball run is network-closed; the container images bind `0.0.0.0` because the network namespace is their boundary. |
 | `PADDOCK_DANGEROUSLY_ALLOW_OPEN` | — | Required to bind a routable interface with `PADDOCK_AUTH_MODE=none`. Without it, Paddock refuses to start — it runs code and spends your Claude tokens. |
-| `PADDOCK_DATA_DIR` | `./data` | Data root — holds `projects/`, `scratch/`, `.herdctl/` state, the generated `herdctl.yaml`. Setting this cascades all derived paths. |
+| `PADDOCK_DATA_DIR` | `./data` | Data root — holds `projects/`, `.herdctl/` state, the generated `herdctl.yaml`. Setting this cascades all derived paths. |
 | `CLAUDE_CODE_OAUTH_TOKEN` | — | Claude auth — Max/Pro plan (OAuth). |
 | `ANTHROPIC_API_KEY` | — | Claude auth — API-key billing. |
 | `PADDOCK_DRIVE_MODE` | `session` | `session` (SDK runtime — token-by-token streaming + cross-turn autonomy) or `batch` (legacy one-shot CLI runtime). Per-project `driveMode` overrides it. |

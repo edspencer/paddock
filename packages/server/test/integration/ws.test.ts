@@ -7,7 +7,7 @@
  *   - unknown / malformed message → chat:error "Unknown message"
  *   - the onChatSend catch path → chat:error (unknown project slug throws)
  *   - preloadContext: a NEW project chat with an OVERVIEW.md prepends it
- *   - per-chat model override → ensureAgentModel / ensureScratchModel
+ *   - per-chat model override → ensureAgentModel
  *   - message_boundary emitted around the assistant turn
  *   - chat:cancel (best-effort; no crash, no response)
  *   - usage/model surfaced on chat:complete

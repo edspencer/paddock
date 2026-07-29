@@ -49,7 +49,7 @@ export const SubagentFocusContext = createContext<SubagentFocusValue | null>(nul
 
 /**
  * Builds a raw-file URL for an image `Read` rendered inline (issue #239). Bound to
- * the project slug; null for a scratch chat (no servable project-file endpoint), so
+ * the project slug; null when there is no servable project-file endpoint, so
  * ToolBlock falls back to the generic block there.
  */
 export const ToolImageUrlContext = createContext<((relPath: string) => string) | null>(null);
@@ -61,7 +61,7 @@ export const ToolImageUrlContext = createContext<((relPath: string) => string) |
  * `recovery.surfaceKilledTask` (project override else instance default); `onContinue`
  * re-drives the hung keeper via the WS `chat:continue` action; `busy` disables the
  * button while a turn is already streaming (or the session id isn't known yet).
- * Null for a scratch chat (no keeper session to recover).
+ * Null when there is no keeper session to recover.
  */
 export interface RecoveryContextValue {
   enabled: boolean;
@@ -74,8 +74,8 @@ export const RecoveryContext = createContext<RecoveryContextValue | null>(null);
  * Per-message fork/revert affordances (issue #451), provided per-chat and
  * consumed by the transcript's hover rail. `onFork`/`onRevert` receive the
  * anchor message's transcript `uuid`; `contextLimit` is the running model's
- * context window (for the hover fill %). Null outside a resumable project chat
- * (a scratch chat, or a brand-new chat with no session id yet).
+ * context window (for the hover fill %). Null outside a resumable chat (e.g. a
+ * brand-new chat with no session id yet).
  */
 export interface TurnActionsValue {
   onFork: (uuid: string) => void;

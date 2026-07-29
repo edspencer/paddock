@@ -15,9 +15,8 @@ describe("integration: project CRUD over REST (real fleet, fake claude)", () => 
     const res = await t.app.inject({ method: "GET", url: "/api/fleet" });
     expect(res.statusCode).toBe(200);
     const body = res.json();
-    // The fleet should have initialized. Since #516 Phase 6 there is no scratch
-    // agent, so a fresh instance with no projects registers nothing — the status
-    // object itself is the assertion.
+    // The fleet should have initialized. A fresh instance with no projects
+    // registers nothing, so the status object itself is the assertion.
     expect(body.status).toBeTruthy();
     expect(Array.isArray(body.agents)).toBe(true);
   });

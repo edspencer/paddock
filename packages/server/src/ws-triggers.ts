@@ -248,7 +248,8 @@ deps.events?.on("onArchive", (payload) => {
  * Signal a completed turn's post-turn CURATION (Epic T / T5) — the sweeper, folded in
  * as the default `curate-overview` (event/afterTurn) trigger. Emits the `afterTurn`
  * lifecycle event so the curator dispatches EXACTLY ONCE per turn (its enabled gate +
- * per-project prompt extension resolved inside SweepService). Scratch never curates.
+ * per-project prompt extension resolved inside SweepService). Fires for every
+ * workspace, the root included.
  * Falls back to a direct `sweep.enqueue` when the event bus isn't wired (older
  * callers / tests), so behaviour is identical with or without the bus. Called from
  * every post-turn commit site (a human chat turn, a session-mode wake, and every

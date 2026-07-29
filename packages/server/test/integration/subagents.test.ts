@@ -1,8 +1,8 @@
 /**
  * Sub-agent transcript endpoints (issue #37). Boots the real app and hits the
  * `/subagents/:toolUseId/messages` routes against crafted `.chats/` fixtures —
- * exercising route wiring + slug→projectDir resolution + the reader end to end,
- * for both a project chat and a scratch chat. No keeper turn is run: the reader
+ * exercising route wiring + slug→projectDir resolution + the reader end to end.
+ * No keeper turn is run: the reader
  * works straight off the on-disk transcript, which is the whole point of #37.
  *
  * Each test uses its own project so nothing races a curation sweep.

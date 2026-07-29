@@ -14,15 +14,10 @@ holds them before you send, what Claude actually does with them, and the limits
 you can tune. It's the practical companion to
 [Working in chats](/using/working-in-chats/).
 
-:::note[Project chats only]
-Attachments live in **project chats** — the upload is scoped to a project. A
-one-off (scratch) chat has no paperclip button. See
-[project vs one-off chats](/using/working-in-chats/#project-chats-vs-one-off-scratch-chats).
-:::
-
 ## Three ways to attach
 
-Every project chat's composer has a **paperclip** button. There are three ways to
+Every chat's composer has a **paperclip** button, shown whenever the instance has
+attachments enabled. There are three ways to
 add files, and they all feed the same tray:
 
 - **Pick.** Click the **paperclip** button (*"Attach files"*) to open your OS

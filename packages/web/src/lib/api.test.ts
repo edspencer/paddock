@@ -214,8 +214,7 @@ describe("api: writes build the right request", () => {
 
   it("promoteChat POSTs the build payload to the source workspace's promote endpoint", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ project: makeProject(), promoted: true }));
-    // The root workspace's key is "", which mounts at `/api/root` — where the
-    // chats that used to be scratch one-offs now live (#516 Phase 6).
+    // The root workspace's key is "", which mounts at `/api/root`.
     const res = await api.promoteChat("", "sess-9", { name: "X", group: "g" });
     const [url, init] = call();
     expect(url).toBe("/api/root/chats/sess-9/promote");

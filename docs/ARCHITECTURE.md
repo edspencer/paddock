@@ -40,7 +40,7 @@ flowchart LR
   end
 
   subgraph Herdctl["@herdctl/core FleetManager"]
-    Agents["keeper-{slug} · sweeper-{slug} · scratch"]
+    Agents["keeper-{slug} · sweeper-{slug}"]
   end
 
   Claude["Claude Code CLI / SDK session"]
@@ -263,7 +263,7 @@ sequenceDiagram
 
   Web->>WS: chat:send {slug, sessionId?, message, model?}
   WS->>Hub: startTurn(slug, socket, sessionId) → TurnHandle
-  WS->>Herd: ensureKeeperModel / ensureScratchModel
+  WS->>Herd: ensureKeeperModel
   WS->>Herd: drive(agent, {prompt, resume, injectedMcpServers, onMessage})
   Herd->>Claude: trigger / openChatSession
   Claude-->>Herd: SDKMessage (session_id first)
@@ -286,7 +286,7 @@ Step by step:
    `onToolStart`→`chat:tool_start`, `onToolCall`→`chat:tool_call`. Frames are
    emitted through `turn.emit(...)`, never written straight to the socket.
 3. **Resolve model + drive mode.** The `model` override wins if
-   `isKnownModel`, else `project.model` (scratch → the instance default); the
+   `isKnownModel`, else `project.model`, else the instance default; the
    agent is re-registered via `ensureKeeperModel` because there's no per-trigger
    model API (`ws.ts:1119-1148`). Drive mode is `project.driveMode ?? cfg.keeperDriveMode`.
 4. **Preload (optional).** For a *new* chat with `preloadContext` and a non-empty
@@ -303,7 +303,7 @@ Step by step:
    captured via `extractUsage` for the context meter.
 7. **Complete.** Build the `chat:complete` usage payload (context tokens vs. the
    model's limit), emit it through the hub, and `turn.end()`.
-8. **Post-turn.** A successful non-scratch turn `enqueue`s a sweep, calls
+8. **Post-turn.** A successful turn `enqueue`s a sweep, calls
    `invalidateSessions(agentName)` (so a brand-new chat surfaces before the 30s
    discovery cache TTL), and drains any queued follow-up message.
 9. **Error path.** Always send a plain `chat:error` to the origin socket; if a
@@ -366,14 +366,12 @@ Either way the tool handlers execute inside the Paddock server process.
 Two servers, both wired in `ws.ts` (`ws.ts:1173-1310`):
 
 - **`send_file`** (server key `paddock`, tool `mcp__paddock__send_file`) —
-  `sendFileServerDef()` in `send-file-mcp.ts`. Injected on **every** turn (project
-  and scratch). Lets the agent render a file inline in chat: either an inline
+  `sendFileServerDef()` in `send-file-mcp.ts`. Injected on **every** turn. Lets the agent render a file inline in chat: either an inline
   virtual file (content in the envelope) or a real file copied into the
   `AttachmentStore` as an immutable snapshot. The web renders off the tool call
   itself, so it survives live streaming and reload (issue #112/#113).
 - **Self-management** (server key `paddock_manage`) — `selfMcpServerDef()` in
-  `self-mcp.ts`. **Project-only and env-gated** (`PADDOCK_SELF_MCP`), never on
-  scratch. Read tools (`list_projects`, `list_chats`, `read_chat`) are always
+  `self-mcp.ts`. **Project-only and env-gated** (`PADDOCK_SELF_MCP`). Read tools (`list_projects`, `list_chats`, `read_chat`) are always
   present; write tools (`create_chat`, `fork_chat`, `send_message`,
   `fork_chat_batch` fan-out) are appended only when `PADDOCK_SELF_MCP_WRITE` is
   *also* on. Write tools spawn real turns via `startAgentTurn`, so spawned chats
@@ -404,13 +402,13 @@ cap from the client's `scope.maxSpawnDepth`.
 
 ## 6. The sweeper
 
-After every user chat turn in a real project, a **post-turn sweep** curates the
+After every user chat turn in a workspace, a **post-turn sweep** curates the
 project's `OVERVIEW.md` and `CHANGELOG.md`. `SweepService` (`sweep.ts:67`) is the
 engine; the agent that does the writing is a dedicated **tool-less** per-project
 `sweeper-<slug>` agent.
 
 - **Trigger + debounce.** `ws.ts` calls `enqueue(slug)` after a successful
-  non-scratch turn (fire-and-forget, never throws). At most one sweep per project
+  turn (fire-and-forget, never throws). At most one sweep per project
   per `minIntervalMs` (default **5 min**, env `PADDOCK_SWEEP_MIN_INTERVAL_MS`);
   overlapping turns fold into a single trailing timer, and an in-flight sweep for
   the same slug re-enqueues rather than running concurrently.
@@ -506,7 +504,7 @@ layer is documented in [CONFIGURATION.md](CONFIGURATION.md).) The main knobs:
 | Area | Vars (default) |
 |---|---|
 | **Server** | `PORT` (4000), `HOST` (127.0.0.1 — loopback by default; images set 0.0.0.0), `PADDOCK_DANGEROUSLY_ALLOW_OPEN` (unset; required to bind routable + `auth.mode: none`), `LOG_LEVEL` (info) |
-| **Paths** | `PADDOCK_DATA_DIR` (./data), `PADDOCK_PROJECTS_DIR`, `PADDOCK_STATE_DIR` (`.herdctl`), `PADDOCK_HERDCTL_CONFIG`, `PADDOCK_SCRATCH_DIR`, `PADDOCK_WEB_DIST`, `CLAUDE_HOME` (~/.claude — resolved once and threaded to BOTH paddock and the engine's `claudeHomePath`, #588) |
+| **Paths** | `PADDOCK_DATA_DIR` (./data), `PADDOCK_PROJECTS_DIR`, `PADDOCK_STATE_DIR` (`.herdctl`), `PADDOCK_HERDCTL_CONFIG`, `PADDOCK_WEB_DIST`, `CLAUDE_HOME` (~/.claude — resolved once and threaded to BOTH paddock and the engine's `claudeHomePath`, #588) |
 | **Auth** | `PADDOCK_AUTH_MODE` (none), `PADDOCK_AUTH_USER_HEADER` (X-Forwarded-User), `..._EMAIL_HEADER`, `..._GROUPS_HEADER`, `..._JWT_HEADER` (Authorization), `..._JWKS_URL`, `..._JWT_ISSUER`, `..._JWT_AUDIENCE`, `..._USERNAME_CLAIM`, `..._GROUPS_CLAIM` (groups) |
 | **Agent** | `PADDOCK_DRIVE_MODE` (session), `PADDOCK_NATIVE_PROMPT` (true), `PADDOCK_SELF_MCP` (false), `PADDOCK_SELF_MCP_WRITE` (false; implies read), `PADDOCK_SELF_MCP_PROJECTS` (false; implies write), `PADDOCK_HOOKS_MCP` (false), `PADDOCK_MAX_SPAWN_DEPTH` (1; range 0–8) |
 | **Models / API** | `PADDOCK_MODELS` (unset = whole catalog; default model `claude-opus-5`), `PADDOCK_OPENAPI_ENABLED` (off; mounts `/open-api`) |

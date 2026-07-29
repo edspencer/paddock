@@ -12,7 +12,7 @@ import { createProjectViaUI, uniq } from "./helpers";
  */
 
 test("empty grid shows the 'Create your first project' CTA", async ({ page }) => {
-  // The empty state only renders with zero projects AND zero inbox chats. The
+  // The empty state only renders with zero projects. The
   // shared server accumulates state across tests, so stub the list endpoints to
   // empty to exercise the EmptyState component deterministically.
   await page.route("**/api/projects", async (route) => {

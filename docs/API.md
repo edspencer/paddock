@@ -147,7 +147,7 @@ Server→client **chat events** carry a common **`Routing`** block in `payload`:
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `projectSlug` | `string` | Project slug, or `"scratch"` for one-off chats. |
+| `projectSlug` | `string` | Workspace key — a project slug, or `""` for the root workspace. |
 | `sessionId` | `string \| null` | Null until a brand-new chat's id first streams back. |
 | `jobId` | `string \| null` | The cancellable job id, when known. |
 | `seq` | `number?` | Per-turn monotonic sequence for reconnect/gap-replay. Absent on frames not routed through the hub (`chat:error`, `chat:resync`, `chat:active`, `chat:queued_flushed`, `pong`). |

@@ -48,8 +48,6 @@ Two consequences worth internalising:
   a JSON array. Chats run on the SDK runtime now, but the flat shape is kept — the
   same tools have to work from a `driveMode: batch` chat, which does not.
 
-Scratch turns never get this server, whatever the flags say.
-
 ## The gating matrix
 
 Four independent instance flags, each also settable as a YAML key in
@@ -470,8 +468,8 @@ every turn on the sweeper's agent and has no on-demand path.
 
 `paddock_manage` is not the only server Paddock injects. A separate one under the
 server key **`paddock`** provides **`mcp__paddock__send_file`**, which renders a
-file inline in the chat. It is injected on **every** turn — project *and* scratch,
-human *and* spawned — and is not affected by any flag on this page.
+file inline in the chat. It is injected on **every** turn — human *and* spawned —
+and is not affected by any flag on this page.
 
 It is documented in
 **[Sending files & images](/using/sending-files-and-images/)**; nothing about it

@@ -26,8 +26,7 @@ import { gridUrl } from "./ProjectView/urls";
  *
  *  - **Full landing** (no `filterTag`): projects are grouped into collapsible
  *    sections by their `group` (area) — Homelab / House / Side Projects / …,
- *    Unsorted last. (The **Inbox** section of one-off chats died with scratch
- *    they're findable. Collapse state per section persists in localStorage.
+ *    Unsorted last. Collapse state per section persists in localStorage.
  *  - **Tag filter** (`/tags/:tag`): a flat grid of just the projects carrying
  *    that domain tag, with a clearable filter chip. (No area sections here —
  *    the filter already narrows the set.)
@@ -182,7 +181,7 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
           </div>
         )}
 
-        {/* Full landing: collapsible area sections + the Inbox. */}
+        {/* Full landing: collapsible area sections. */}
         {!loading && !filterTag && !showEmpty && (
           <div className="space-y-2">
             {sections.map(([slug, ps]) => (
@@ -249,7 +248,7 @@ function useCollapsed(key: string): [boolean, () => void] {
   return [collapsed, toggle];
 }
 
-/** A collapsible section header (shared by area + Inbox sections). */
+/** A collapsible section header for an area section. */
 function SectionHeader({
   open,
   label,

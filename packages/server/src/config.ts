@@ -5,6 +5,17 @@
  *
  * Everything is resolved once at startup so the rest of the app can import a
  * frozen object. Paths are normalised to absolute.
+ *
+ * **Retired settings are IGNORED, never fatal** (#549). Config is pull-based on
+ * both layers: env vars are read by name via {@link envOr}, and the YAML file is
+ * parsed into a loose record whose keys are only ever read, never enumerated or
+ * validated against a schema. So a setting Paddock has since deleted is simply
+ * never looked at — boot succeeds and the value has no effect. This is a property
+ * of the resolution shape rather than a compatibility shim, so it needs no
+ * per-key upkeep as settings come and go. The cost is that a typo'd key is
+ * equally silent; that trade is deliberate — an operator should not be hard-failed
+ * out of a running instance by a stale line in an old env file. Pinned by
+ * `test/unit/config.test.ts`.
  */
 import path from "node:path";
 import os from "node:os";
@@ -124,8 +135,6 @@ export interface PaddockConfig {
   herdctlConfigPath: string;
   /** Absolute path to the built web SPA (served in production). */
   webDist: string;
-  /** Working directory for one-off / scratch chats. */
-  scratchDir: string;
   /**
    * Absolute path to the Claude home (`~/.claude`, unless `CLAUDE_HOME` says
    * otherwise) — the directory whose `projects/<encoded-cwd>/` folders hold
@@ -180,7 +189,7 @@ export interface PaddockConfig {
    */
   models?: string[];
   /**
-   * Whether keeper AND scratch agents use the native Claude Code system prompt +
+   * Whether keeper agents use the native Claude Code system prompt +
    * project CLAUDE.md hierarchy (true, the default) instead of a terse Paddock
    * "replace" system prompt (false). Driven by `PADDOCK_NATIVE_PROMPT`.
    *
@@ -195,23 +204,18 @@ export interface PaddockConfig {
    * (issue #512). `projectsRoot` IS the instance's backing repo, so that file is
    * version-controlled and pushed with everything else, whereas a
    * `<dataDir>/CLAUDE.md` would sit outside the repo. It reaches every project
-   * keeper by walk-up (a project dir is a child of `projectsRoot`) and, since
-   * #516, the ROOT keeper too — the root project's cwd IS `projectsRoot`.
-   *
-   * The exception was SCRATCH (retired in #516 Phase 6), whose cwd was
-   * `<dataDir>/scratch`, a *sibling* of
-   * `projects/`, so nothing above it is the instance CLAUDE.md and a scratch chat
-   * starts with zero instance context. That is #512's original complaint; #516
-   * fixes it by making the root an ordinary project rather than by patching
-   * scratch, and #516 Phase 6 retires scratch outright.
+   * keeper by walk-up (a project dir is a child of `projectsRoot`) and the ROOT
+   * keeper too — the root workspace's cwd IS `projectsRoot`. There is no longer
+   * any agent whose cwd sits outside that tree, so every keeper picks the
+   * instance CLAUDE.md up by walk-up. That closes #512.
    */
   nativeSystemPrompt: boolean;
   /**
    * Whether keeper turns are handed the read-only self-management MCP server
    * (issue #214 Phase 1) — the `mcp__paddock_manage__*` tools that let a keeper
    * enumerate projects/chats and read another chat's transcript. Driven by
-   * `PADDOCK_SELF_MCP`; default OFF (opt-in per instance). Never injected on
-   * scratch turns. The write tools (create/fork/message) are gated separately by
+   * `PADDOCK_SELF_MCP`; default OFF (opt-in per instance). The write tools
+   * (create/fork/message) are gated separately by
    * {@link selfMcpWriteEnabled}.
    */
   selfMcpEnabled: boolean;
@@ -326,7 +330,7 @@ export interface PaddockConfig {
    */
   logLevel: string;
   /**
-   * Whether keeper + scratch agents receive the Playwright browser MCP server
+   * Whether keeper agents receive the Playwright browser MCP server
    * (headless Chromium) so Claude Code can drive a browser (navigate / click /
    * snapshot / screenshot). Driven by `PADDOCK_BROWSER_MCP` (`1` enables);
    * default false. Scoped PER INSTANCE — a box without the browser stack leaves
@@ -373,7 +377,6 @@ export interface PaddockConfigFile {
   stateDir?: string;
   herdctlConfigPath?: string;
   webDist?: string;
-  scratchDir?: string;
   auth?: {
     mode?: string;
     userHeader?: string;
@@ -713,8 +716,8 @@ export function loadPaddockConfig(): PaddockConfig {
   } catch {
     /* best-effort; downstream mkdirs will surface real errors */
   }
-  // working_directory of keeper/scratch agents MUST be canonical so session
-  // discovery (which encodes the real path) can find Claude transcripts.
+  // working_directory of keeper agents MUST be canonical so session discovery
+  // (which encodes the real path) can find Claude transcripts.
   const dataDir = canonical(dataRoot);
   const projectsRoot = canonical(
     envOr("PADDOCK_PROJECTS_DIR", fileOr(file.projectsRoot, path.join(dataRoot, "projects"))),
@@ -724,9 +727,6 @@ export function loadPaddockConfig(): PaddockConfig {
   );
   const herdctlConfigPath = canonical(
     envOr("PADDOCK_HERDCTL_CONFIG", fileOr(file.herdctlConfigPath, path.join(dataRoot, "herdctl.yaml"))),
-  );
-  const scratchDir = canonical(
-    envOr("PADDOCK_SCRATCH_DIR", fileOr(file.scratchDir, path.join(dataRoot, "scratch"))),
   );
   // The ONE Claude home for this process (#588): paddock's transcript symlinks,
   // the engine's session discovery and session adoption all resolve against this
@@ -756,7 +756,6 @@ export function loadPaddockConfig(): PaddockConfig {
     stateDir,
     herdctlConfigPath,
     webDist: abs(envOr("PADDOCK_WEB_DIST", fileOr(file.webDist, defaultWebDist))),
-    scratchDir,
     claudeHome: resolvedClaudeHome,
     auth: loadAuthConfig(file.auth),
     transcription: loadTranscriptionConfig(file.transcription),
@@ -850,7 +849,7 @@ function loadSweepMinIntervalMs(file?: PaddockConfigFile["sweepMinIntervalMs"]):
 }
 
 /**
- * Resolve whether keeper + scratch agents receive the Playwright browser MCP
+ * Resolve whether keeper agents receive the Playwright browser MCP
  * (issue #269 fold). The env var keeps its exact literal-'1' semantics (any
  * other set value — including `true` — disables it, matching pre-loader
  * behaviour); only when the env var is UNSET does the config file provide the
@@ -1069,7 +1068,7 @@ function loadSelfMcpEnabled(file?: PaddockConfigFile["selfMcpEnabled"]): boolean
 }
 
 /**
- * Resolve whether keeper/scratch agents use the native system prompt + CLAUDE.md
+ * Resolve whether keeper agents use the native system prompt + CLAUDE.md
  * hierarchy (issue #176). Defaults to `true` (native) on every instance so a
  * seeded instance-wide + per-project `CLAUDE.md` is auto-loaded; set
  * `PADDOCK_NATIVE_PROMPT` to 0/false/no to fall back to the terse replace

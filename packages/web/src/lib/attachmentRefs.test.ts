@@ -23,7 +23,7 @@ describe("attachment-ref persistence (#346)", () => {
 
   it("keys a brand-new chat (no session id) by new:<slug>", () => {
     expect(attachmentRefsKey(null, "proj")).toBe("paddock:attachments:new:proj");
-    expect(attachmentRefsKey(undefined, "scratch")).toBe("paddock:attachments:new:scratch");
+    expect(attachmentRefsKey(undefined, "proj")).toBe("paddock:attachments:new:proj");
   });
 
   it("round-trips saved refs", () => {

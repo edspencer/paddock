@@ -11,12 +11,12 @@
  *
  * The route map, by group:
  *   meta     — /api/transcription, /api/transcribe, /api/me, /api/health,
- *              /api/instance-config, /api/models, /api/commands, /api/fleet,
+ *              /api/instance-config, /api/models, /api/fleet,
  *              /api/chat-files/:id, project chat upload
  *   git      — /api/git[/push|/github/*], project git status/diff/commit
  *   projects — projects CRUD + promote, pins, files/changelog/overview/commands
  *   triggers — project triggers CRUD + runtime + run-now
- *   chats    — project + scratch chat lifecycle (list/runs/usage/create/messages/
+ *   chats    — workspace chat lifecycle (list/runs/usage/create/messages/
  *              subagents/context/delete/rename/fork/archive/star/seen/promote)
  */
 import type { FastifyInstance } from "fastify";

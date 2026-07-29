@@ -223,7 +223,7 @@ describe("root workspace (#531) — the keeper is an ordinary keeper", () => {
     expect(keeperSlugFromAgent("sweeper-foo")).toBeNull();
     expect(keeperSlugFromAgent("sweeper-_root")).toBeNull();
     expect(keeperSlugFromAgent("trigger-_root-x")).toBeNull();
-    expect(keeperSlugFromAgent("scratch")).toBeNull();
+    expect(keeperSlugFromAgent("hook-_root-x")).toBeNull();
   });
 
   it("builds a keeper config rooted at projectsRoot with max_concurrent SET", async () => {

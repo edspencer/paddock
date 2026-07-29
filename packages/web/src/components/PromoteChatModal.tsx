@@ -11,9 +11,8 @@ import { XIcon } from "./icons";
  * creates the project AND re-homes this chat's transcript into it, then hands
  * the new project back so the caller can navigate into it.
  *
- * Was scratch-only until #516 Phase 6 retired scratch. It now takes the chat's
- * CURRENT project slug — in practice the root, which is where the chats that
- * used to be one-offs now live.
+ * Takes the chat's CURRENT workspace key — in practice the root, since that is
+ * the only place the action is offered.
  */
 export function PromoteChatModal({
   open,

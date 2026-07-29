@@ -142,7 +142,7 @@ export interface ChatHandlers {
 export type ConnectionState = "connecting" | "open" | "closed";
 
 interface Subscription {
-  /** The project slug (or "scratch") this chat addresses. */
+  /** The workspace key (a project slug, or `""` for the root) this chat addresses. */
   projectSlug: string;
   /** Known session id, if resuming or once the server reports it. May update. */
   sessionId: string | null;
@@ -352,7 +352,7 @@ class ChatClient {
     // Only meaningful on the first turn of a NEW chat; the server ignores it
     // otherwise. Omit when false to keep the wire clean.
     if (opts?.preloadContext) payload.preloadContext = true;
-    // The model the keeper/scratch agent should run this turn on. The server
+    // The model the keeper agent should run this turn on. The server
     // re-registers the agent with it (last-write-wins per project). Omit when
     // unset so the server falls back to the project/keeper default.
     if (opts?.model) payload.model = opts.model;

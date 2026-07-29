@@ -262,9 +262,12 @@ The `paddock.yaml` key `keeperDriveMode` → `driveMode` changed the same way.
 - **Nothing is migrated, on purpose.** Existing scratch transcripts stay exactly
   where they are on disk and simply stop being listed; the companion migration was
   dropped rather than shipped, since it meant a permanent boot-time code path
-  carrying a one-time, few-hundred-kilobyte move. `PADDOCK_SCRATCH_DIR` is kept as
-  a documented legacy setting so an existing config doesn't fail validation and the
-  old transcripts stay findable by hand.
+  carrying a one-time, few-hundred-kilobyte move. **0.50 kept
+  `PADDOCK_SCRATCH_DIR` as a documented legacy setting; it was removed outright in a
+  later release, since the install base it protected didn't exist. Setting it today
+  is simply ignored — an old env file or `paddock.config.yaml` still boots.** Your
+  old transcripts are untouched at `<dataDir>/scratch/.chats` and can be deleted by
+  hand whenever you like.
 - **The server got dramatically faster.** Two endpoints behind the unread badge
   used to `readdir` and YAML-parse **every** job record on every `/api/projects`,
   `/api/projects/:slug` and `/chats` request. On a real instance — 1,996 records,

@@ -7,8 +7,7 @@ import type { Project } from "../lib/types";
 
 // --- mocks -----------------------------------------------------------------
 // The grid reads the project list from context and lazily fetches per-project
-// chat counts + the scratch inbox. Mock both so the test is deterministic and
-// offline.
+// chat counts. Mock both so the test is deterministic and offline.
 let mockProjects: Project[] = [];
 vi.mock("../lib/projects-context", () => ({
   useProjects: () => ({
@@ -22,14 +21,12 @@ vi.mock("../lib/projects-context", () => ({
 }));
 
 const listProjectChats = vi.fn();
-const listScratchChats = vi.fn();
 vi.mock("../lib/api", async () => {
   const actual = await vi.importActual<typeof import("../lib/api")>("../lib/api");
   return {
     ...actual,
     api: {
       listProjectChats: (...a: unknown[]) => listProjectChats(...a),
-      listScratchChats: (...a: unknown[]) => listScratchChats(...a),
     },
   };
 });
@@ -45,7 +42,6 @@ function renderGrid(filterTag?: string) {
 describe("ProjectsGrid: area sectioning", () => {
   beforeEach(() => {
     listProjectChats.mockReset().mockResolvedValue([]);
-    listScratchChats.mockReset().mockResolvedValue([]);
   });
 
   it("groups projects into ordered area sections: canonical, custom, then Unsorted", async () => {
@@ -123,7 +119,6 @@ describe("ProjectsGrid: area sectioning", () => {
 describe("ProjectsGrid: the standalone page", () => {
   beforeEach(() => {
     listProjectChats.mockReset().mockResolvedValue([]);
-    listScratchChats.mockReset().mockResolvedValue([]);
     // Section collapse persists in localStorage — an earlier test collapses
     // Homelab, which would otherwise hide this suite's card.
     localStorage.clear();
@@ -148,7 +143,6 @@ describe("ProjectsGrid: the standalone page", () => {
 describe("ProjectsGrid: tag filter mode", () => {
   beforeEach(() => {
     listProjectChats.mockReset().mockResolvedValue([]);
-    listScratchChats.mockReset().mockResolvedValue([]);
   });
 
   it("shows a flat grid of only matching projects and no area headers", () => {
