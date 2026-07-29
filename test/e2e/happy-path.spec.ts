@@ -11,10 +11,10 @@ import { test, expect } from "@playwright/test";
  */
 
 // Create a project via the New Project modal, picking an area. Returns its slug.
-// The grid (and its "New Project" button) is the ROOT workspace's Projects tab at
-// `/projects`; `/` is root Home (#531).
+// The grid (and its "New Project" button) is the first section of ROOT HOME,
+// which is `/` (#531 + the nav cleanup that folded the Projects tab into Home).
 async function createProject(page: import("@playwright/test").Page, name: string, area?: string) {
-  await page.goto("/projects");
+  await page.goto("/");
   await page.getByRole("button", { name: /New Project/i }).first().click();
   const dialog = page.locator("form").filter({ hasText: "New project" });
   await dialog.getByPlaceholder(/Garage Water Heater/i).fill(name);
@@ -59,9 +59,9 @@ test("send a chat, watch it stream, reload and see history", async ({ page }) =>
 
 test("collapse an area section on the projects grid", async ({ page }) => {
   await createProject(page, "E2E Collapsible", "House");
-  // The grid moved to `/projects` (the root workspace's Projects tab) — `/` is
-  // root Home now. The area sections are still the thing under test.
-  await page.goto("/projects");
+  // The grid is a section of root Home at `/`. The area sections are still the
+  // thing under test.
+  await page.goto("/");
 
   // The House section header (a button with the area label). Ensure it starts
   // expanded (collapse state persists in localStorage across runs).
@@ -86,7 +86,7 @@ test("collapse an area section on the projects grid", async ({ page }) => {
 test("filter projects by a domain tag", async ({ page }) => {
   // Create a project carrying a unique tag via the API for determinism, then
   // verify the tag filter view shows it. (We use the UI tag click to navigate.)
-  await page.goto("/projects");
+  await page.goto("/");
   // Create a project with a domain tag through the modal.
   await page.getByRole("button", { name: /New Project/i }).first().click();
   const dialog = page.locator("form").filter({ hasText: "New project" });

@@ -29,6 +29,13 @@ export const PaperclipIcon = (p: IconProps) => (
   </svg>
 );
 
+export const HomeIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M3 10.5 12 3l9 7.5" />
+    <path d="M5 9.5V20a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9.5" />
+  </svg>
+);
+
 export const ChatIcon = (p: IconProps) => (
   <svg {...base(p)}>
     <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />

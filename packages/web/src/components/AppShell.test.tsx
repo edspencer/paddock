@@ -45,12 +45,6 @@ vi.mock("../lib/ws", () => ({
   },
 }));
 
-// NewProjectModal pulls /api/models; stub it so the modal mounts cleanly.
-vi.mock("./NewProjectModal", () => ({
-  NewProjectModal: ({ open }: { open: boolean }) =>
-    open ? <div data-testid="new-project-modal">New project modal</div> : null,
-}));
-
 function renderShell(initial = "/") {
   return render(
     <MemoryRouter initialEntries={[initial]}>
@@ -76,19 +70,45 @@ beforeEach(() => {
 });
 
 describe("AppShell: sidebar shell", () => {
-  it("renders the brand, the two CTAs, and the project count", () => {
+  it("renders the brand, the Home link, and the project count", () => {
     mockProjects = [makeProject({ slug: "a", group: "homelab" }), makeProject({ slug: "b", group: "homelab" })];
     renderShell();
     // "Paddock" appears twice: the mobile top bar + the sidebar (both render in
     // jsdom, which ignores the responsive `lg:hidden` media query).
     expect(screen.getAllByText("Paddock").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByRole("button", { name: /New Project/i })).toBeInTheDocument();
-    // The root chat CTA is unconditional: the root workspace is the instance's
-    // own directory, so it always exists and `/chat` is always a real chat.
-    expect(screen.getByRole("button", { name: /New root chat/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Home" })).toHaveAttribute("href", "/");
     // Project count next to the "Projects" label.
     const nav = screen.getByText("Projects").closest("div")!;
     expect(within(nav).getByText("2")).toBeInTheDocument();
+  });
+
+  it("has no New Project / New root chat CTAs — both live on root Home now", () => {
+    // Ported, not weakened: the assertions that these two actions EXIST moved
+    // to their new home. "New Project" is asserted on the embedded grid
+    // (ProjectsGrid.test.tsx, ProjectView.root.test.tsx) and starting a root
+    // chat via that grid's "New chat". What belongs HERE is the other half —
+    // that the sidebar no longer carries a second copy of either.
+    mockProjects = [makeProject({ slug: "a" })];
+    renderShell();
+    expect(screen.queryByRole("button", { name: /New Project/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /New root chat/i })).not.toBeInTheDocument();
+  });
+
+  it("points the Projects section label at root Home, where the list lives", () => {
+    mockProjects = [makeProject({ slug: "a" })];
+    renderShell();
+    expect(screen.getByRole("link", { name: "Projects" })).toHaveAttribute("href", "/");
+  });
+
+  it("links to instance Config at /config, not to /settings", () => {
+    // `/settings` is a WORKSPACE's own settings (the root's, here) and writes
+    // `project.yaml`; `/config` writes `paddock.config.yaml` and is
+    // restart-required. The sidebar link means the latter, and pointed at the
+    // former's URL until they were split.
+    renderShell();
+    const link = screen.getByRole("link", { name: "Config" });
+    expect(link).toHaveAttribute("href", "/config");
+    expect(screen.queryByRole("link", { name: "Settings" })).not.toBeInTheDocument();
   });
 
   it("shows the empty state when there are no projects", () => {
@@ -279,16 +299,21 @@ describe("AppShell: per-project badges (#161)", () => {
 });
 
 describe("AppShell: navigation", () => {
-  it("opens the New Project modal", () => {
-    renderShell();
-    fireEvent.click(screen.getByRole("button", { name: /New Project/i }));
-    expect(screen.getByTestId("new-project-modal")).toBeInTheDocument();
+  it("the Home link routes to `/`, the root workspace's Home", () => {
+    renderShell("/projects/alpha/chat");
+    expect(screen.getByText("PROJECT")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("link", { name: "Home" }));
+    expect(screen.getByText("HOME")).toBeInTheDocument();
   });
 
-  it("the root chat CTA routes to `/chat`", () => {
-    renderShell();
-    fireEvent.click(screen.getByRole("button", { name: /New root chat/i }));
-    expect(screen.getByText("ROOT CHAT")).toBeInTheDocument();
+  it("marks the Home link active on `/` only, not inside a project", () => {
+    // `end` on the NavLink: without it every route matches `/` as a prefix and
+    // the Home item reads as active on every page in the app.
+    const { unmount } = renderShell("/");
+    expect(screen.getByRole("link", { name: "Home" }).className).toMatch(/bg-paddock-200/);
+    unmount();
+    renderShell("/projects/alpha/chat");
+    expect(screen.getByRole("link", { name: "Home" }).className).not.toMatch(/bg-paddock-200/);
   });
 
   it("a project nav link routes to that project", () => {

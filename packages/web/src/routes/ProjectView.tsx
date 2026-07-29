@@ -14,7 +14,6 @@ import { useProjectRuns } from "../lib/useProjectRuns";
 import { FilesPane } from "../components/FilesPane";
 import { ProjectMenu } from "../components/ProjectMenu";
 import { SettingsPane } from "../components/SettingsPane";
-import { InstanceConfigForm } from "../components/InstanceConfigForm";
 import { TriggersPane } from "../components/TriggersPane";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ForkChatModal } from "../components/ForkChatModal";
@@ -69,9 +68,9 @@ import { useUnreadChats } from "./ProjectView/useUnreadChats";
  * Nothing about it is special-cased: its workspace key is the empty string and
  * it hits the same handlers, mounted at `/api/root` instead of
  * `/api/projects/:slug` (see `apiBase`). It differs only in its browser URLs,
- * which are flat and top-level (`/` is root Home, `/chat[/:sessionId]` its
- * chats, `/projects` its children) — and that difference is carried entirely by
- * `base` (see `viewBase`).
+ * which are flat and top-level (`/` is root Home — which also carries its
+ * children — and `/chat[/:sessionId]` its chats), and that difference is carried
+ * entirely by `base` (see `viewBase`).
  */
 export function ProjectView({ root = false }: { root?: boolean } = {}) {
   const params = useParams();
@@ -445,10 +444,6 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
   // Home target is the only nav site that isn't a plain `${base}/…`.
   const goHome = useCallback(() => navigate(homeUrl(base)), [navigate, base]);
   const goChat = useCallback(() => navigate(`${base}/chat`), [navigate, base]);
-  // The root workspace's CHILDREN tab — the projects grid, which lives at its own
-  // top-level `/projects` URL. Only the root has children, so only the root
-  // renders the tab that navigates here (see the tab bar below).
-  const goProjects = useCallback(() => navigate(gridUrl()), [navigate]);
   const goFiles = useCallback(() => navigate(`${base}/files`), [navigate, base]);
   const goChanges = useCallback(() => navigate(`${base}/changes`), [navigate, base]);
   const goHistory = useCallback(() => navigate(`${base}/history`), [navigate, base]);
@@ -1092,21 +1087,25 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
               breadcrumb (name → Home) is the way back to the tabbed hub, so the
               chat gets the full height. Tabs stay visible on Home/Files/Changes
               and on lg+ everywhere. */}
+          {/* The tab bar is TWO elements on purpose (see TabButton). The outer
+              one draws the 1px rule under the tabs; the inner one is the
+              horizontal scroller. They cannot be the same element: `overflow-x:
+              auto` promotes `overflow-y: visible` to `auto` (CSS Overflow §3),
+              so the strip becomes a vertical scroll container too — and a
+              scroll container's scrollable area is the union of its
+              descendants' BORDER boxes, which negative margins do not shrink.
+              The tabs' active underline has to overlap that rule by 1px, so
+              with the rule on the scroller itself the overlap showed up as 1px
+              of scrollable overflow and a spurious vertical scrollbar. Hanging
+              the -1px off the scroller (whose parent is not a scroll container)
+              instead of off each tab gives the identical geometry with none of
+              the overflow. */}
           <div
-            className={`items-center gap-1 overflow-x-auto border-b border-paddock-200 px-4 dark:border-paddock-800 ${
-              view === "chat" ? "hidden lg:flex" : "flex"
+            className={`border-b border-paddock-200 dark:border-paddock-800 ${
+              view === "chat" ? "hidden lg:block" : "block"
             }`}
           >
-            {/* The root workspace's CHILDREN tab, first in the bar: the projects
-                grid is where you go from the instance's front door OUT to a
-                project, so it leads rather than trails the root's own tabs. Only
-                the root has children today, hence the `root` gate — when nesting
-                lands, every workspace with children gets this for free. */}
-            {root && (
-              <TabButton active={view === "projects"} onClick={goProjects}>
-                Projects
-              </TabButton>
-            )}
+          <div className="-mb-px flex items-center gap-1 overflow-x-auto px-4">
             <TabButton active={view === "home"} onClick={goHome}>
               Home
             </TabButton>
@@ -1155,10 +1154,9 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
                 )}
               </span>
             </TabButton>
-            {/* At the ROOT this tab shows the root's OWN workspace settings AND
-                the instance-wide config, as two sections (#516 Phase 5) — which
-                is why `/settings` resolves here rather than to the standalone
-                InstanceSettings page once a root project exists. */}
+            {/* The workspace's own settings — its `project.yaml`. At the root
+                this is `/settings`; the instance-wide config it used to sit
+                above is its own screen at `/config`. */}
             <TabButton active={view === "settings"} onClick={goSettings}>
               <span className="inline-flex items-center gap-1.5">
                 <WrenchIcon width={13} height={13} />
@@ -1190,12 +1188,8 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
               />
             ))}
           </div>
+          </div>
 
-          {/* The Projects tab: the root workspace's children, rendered by the
-              SAME grid component the `/tags/:tag` page uses. `embedded` drops the
-              grid's own page header — this view already supplies the page chrome
-              (header + tab bar) — and nothing else about it changes. */}
-          {view === "projects" && <ProjectsGrid embedded />}
           {/* The Changes tab (its own /changes[/:file] route). It owns
               refetching status post-commit and propagates it up so the tab badge
               stays in sync; the selected file is URL-driven so a specific diff is
@@ -1220,28 +1214,25 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
               onOpenChat={openChat}
             />
           )}
+          {/* Settings: this workspace's own `project.yaml`, and nothing else.
+              ONE pane, at the root exactly as in a project — which is what makes
+              this tab scroll at all. It used to render the instance-wide
+              `paddock.config.yaml` form as a second root-only section (#516
+              Phase 5), and two panes in one tab is what broke it: that form is a
+              fragment whose `min-h-0 flex-1 overflow-y-auto` body only works as a
+              flex-column child, so wrapped in a plain <div> it grew to its full
+              content height, refused to shrink, squashed this pane's
+              `flex: 1 1 0` to ZERO height and left nothing able to scroll. The
+              instance config is its own screen at `/config` now, so the root's
+              Settings is an ordinary workspace tab again. */}
           {view === "settings" && (
-            <div className="flex min-h-0 flex-1 flex-col">
-              <SettingsPane
-                project={project}
-                onSaved={(p) => {
-                  setProject(p);
-                  upsert(p);
-                }}
-              />
-              {/* At the ROOT, instance-wide config joins the tab as a SECOND
-                  section (#516 Phase 5) — the same form `/settings` shows on an
-                  instance with no root project. Kept as two sections rather than
-                  fused, because they are different things: `project.yaml` is
-                  workspace config, hot-applied by agent re-registration, while
-                  `paddock.config.yaml` is instance runtime config, frozen at boot
-                  and restart-required. Fusing them would hide that. */}
-              {root && (
-                <div className="border-t border-paddock-200 dark:border-paddock-800">
-                  <InstanceConfigForm />
-                </div>
-              )}
-            </div>
+            <SettingsPane
+              project={project}
+              onSaved={(p) => {
+                setProject(p);
+                upsert(p);
+              }}
+            />
           )}
           {/* The Triggers tab (Epic T / T4): a self-contained CRUD surface for this
               project's unified triggers (schedules + events + reserved webhooks). Its
@@ -1260,6 +1251,13 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
               onOpenFile={goToFilesPath}
               onOpenFiles={goFiles}
               onEditDetails={goSettings}
+              // The workspace's CHILDREN, rendered by the SAME grid component the
+              // `/tags/:tag` page uses. It used to be a tab of its own; folding it
+              // into Home means the instance's front door shows the projects
+              // instead of merely linking to them. Only the root has children
+              // today, hence the `root` gate — when nesting lands, every workspace
+              // with children gets this for free.
+              projectsSection={root ? <ProjectsGrid embedded /> : undefined}
             />
           )}
           {view === "chat" && (

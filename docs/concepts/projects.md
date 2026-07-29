@@ -125,9 +125,17 @@ field falls back to a default (the name is the directory's basename) and the fil
 is written lazily on the first setting you change.
 
 Its URLs are flat and top-level rather than namespaced under `/projects/:slug`:
-`/` is root Home, `/chat[/:sessionId]` its chats, and the projects grid is its
-**children tab** at `/projects`. `/` always renders Home — unlike a project,
-there is no redirect to a sticky last tab, so the front door is predictable.
+`/` is root Home and `/chat[/:sessionId]` its chats. `/` always renders Home —
+unlike a project, there is no redirect to a sticky last tab, so the front door
+is predictable.
+
+The projects grid is the **first section of that Home pane**, not a tab and not
+a page: the root's children are the main thing you want from the instance's
+front door, so `/` shows them rather than linking to them. Root Home reads
+Projects → Chats → Files → CHANGELOG → Overview; a project's Home is the same
+minus the Projects section, since only the root has children today. (The grid
+briefly had its own `/projects` tab in v0.51.0; that URL is now a permanent
+redirect to `/`.)
 
 Over HTTP the workspace-scoped routes are mounted twice — `/api/root` for the
 root and `/api/projects/:slug` for a project — from one set of handlers, because

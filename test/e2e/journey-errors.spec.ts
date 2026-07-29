@@ -26,9 +26,9 @@ test("empty grid shows the 'Create your first project' CTA", async ({ page }) =>
     await route.fulfill({ json: { chats: [] } });
   });
 
-  // The grid is the root workspace's Projects tab at `/projects` (#531) — the
-  // empty state lives with the grid, so that's where it renders.
-  await page.goto("/projects");
+  // The grid is the first section of root Home at `/` — the empty state lives
+  // with the grid, so that is where it renders.
+  await page.goto("/");
   await expect(page.getByRole("heading", { name: /Create your first project/i })).toBeVisible();
   // The CTA offers both "New Project" and "Just chat once".
   await expect(page.getByRole("button", { name: /New Project/i }).last()).toBeVisible();

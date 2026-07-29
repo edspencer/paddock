@@ -132,9 +132,9 @@ function renderAt(path: string) {
         <Route path="/projects/:slug/settings" element={<ProjectView />} />
         <Route path="/projects/:slug/triggers" element={<ProjectView />} />
         <Route path="/projects/:slug/hooks" element={<ProjectView />} />
-        {/* Deleting a project returns to the grid — the root workspace's
-            children tab, which always lives at `/projects` (#516). */}
-        <Route path="/projects" element={<div>GRID</div>} />
+        {/* Deleting a project returns to the projects list, which is now the
+            first section of root Home at `/` (see `gridUrl`). */}
+        <Route path="/" element={<div>GRID</div>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -265,6 +265,43 @@ describe("ProjectView: tabs", () => {
     // session-list column, so match all occurrences).
     expect(screen.getAllByText("First chat").length).toBeGreaterThan(0);
     expect(screen.getByText("OVERVIEW.md")).toBeInTheDocument();
+  });
+
+  it("Home orders its sections Chats → Files → CHANGELOG → Overview", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p", summary: "blurb" }), {
+        changelog: "# Changes",
+        chats: [makeChat({ sessionId: "s1", name: "First chat" })],
+      }),
+    );
+    apiFns.listProjectFiles.mockResolvedValue(["OVERVIEW.md"]);
+    renderAt("/projects/p/home");
+    await screen.findByRole("button", { name: /Edit details/i });
+    const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent ?? "");
+    // Overview trails now: it describes the project rather than offering a way
+    // into it. Chats lead.
+    expect(headings).toEqual(["Chats1", "Files1", "CHANGELOG.md", "Overview"]);
+  });
+
+  it("a project's Home has NO projects section — only a workspace with children does", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
+    renderAt("/projects/p/home");
+    await screen.findByRole("button", { name: /Edit details/i });
+    const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent ?? "");
+    expect(headings.some((h) => /^Projects/.test(h))).toBe(false);
+    // …and no New Project button leaks in from the embedded grid.
+    expect(screen.queryByRole("button", { name: /New Project/i })).not.toBeInTheDocument();
+  });
+
+  it("has no Projects tab — that was the root's, and it folded into Home", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
+    renderAt("/projects/p/home");
+    await screen.findByRole("button", { name: /Edit details/i });
+    expect(screen.queryByRole("button", { name: "Projects" })).not.toBeInTheDocument();
+    // Home leads the row for a project too.
+    const home = screen.getByRole("button", { name: "Home" });
+    const chat = screen.getByRole("button", { name: "Chat" });
+    expect(home.compareDocumentPosition(chat) & 4).toBeTruthy();
   });
 
   it("the project name is a breadcrumb to the Home tab", async () => {

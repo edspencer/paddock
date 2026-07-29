@@ -10,8 +10,8 @@ import { seedProject, uniq } from "./helpers";
  * unknown tag.
  *
  * `/tags/:tag` is still the STANDALONE grid (its own `<h1>` + blurb). Clearing
- * the filter now returns to `/projects` — the root workspace's Projects tab —
- * rather than `/`, which is root Home (#531).
+ * the filter returns to `/` — root Home, whose first section is the unfiltered
+ * list (see `gridUrl`).
  */
 
 test("deep-link /tags/:tag filters to matching projects + shows the active chip", async ({
@@ -36,9 +36,9 @@ test("deep-link /tags/:tag filters to matching projects + shows the active chip"
   const clear = page.getByRole("button", { name: new RegExp(`Clear ${tag} filter`) });
   await expect(clear).toBeVisible();
 
-  // Clearing returns to the full grid at /projects (area sections, no chip).
+  // Clearing returns to the full list on root Home (area sections, no chip).
   await clear.click();
-  await expect(page).toHaveURL(/\/projects$/);
+  await expect(page).toHaveURL(/\/$/);
   await expect(page.getByText("Filtered by")).toHaveCount(0);
   await expect(page.getByRole("button", { name: /^Unsorted/ })).toBeVisible();
 });
@@ -51,7 +51,7 @@ test("unknown tag shows the empty 'No projects tagged' state with Clear filter",
   const clear = page.getByRole("button", { name: /Clear filter/i });
   await expect(clear).toBeVisible();
   await clear.click();
-  await expect(page).toHaveURL(/\/projects$/);
+  await expect(page).toHaveURL(/\/$/);
 });
 
 test("clicking a tag chip on a project card navigates to its tag filter (not the project)", async ({
@@ -63,7 +63,7 @@ test("clicking a tag chip on a project card navigates to its tag filter (not the
   const name = uniq("TG Chip");
   seedProject({ name, domain: [tag] });
 
-  await page.goto("/projects");
+  await page.goto("/");
   const card = page.locator("section a.card").filter({ hasText: name });
   await expect(card).toBeVisible();
 

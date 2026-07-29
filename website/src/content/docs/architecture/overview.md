@@ -508,7 +508,7 @@ Two layers, resolved in `config.ts`: a **YAML instance file**
 (`PADDOCK_CONFIG`, else `<dataDir>/paddock.config.yaml`) with the environment
 layered on top — env wins per key. An explicitly-set `PADDOCK_CONFIG` that
 doesn't exist is a hard startup error; an absent default file is fine. The file
-is also what the Settings screen edits (`instance-config.ts`), and it is the
+is also what the Config screen edits (`instance-config.ts`), and it is the
 *only* home for the `managementApi` block, which has no env equivalent. See
 [Config file (YAML)](/configuration/config-file/).
 

@@ -33,9 +33,9 @@ async function hOverflow(page: Page): Promise<number> {
 test("front door + projects grid: no horizontal overflow; nav drawer opens and closes", async ({
   page,
 }) => {
-  // `/` is the ROOT workspace's Home (#531). Kept here deliberately: this test is
-  // about what a phone user sees on ARRIVAL plus the global nav drawer, which is
-  // shell chrome. The grid's own overflow check follows, at its new URL.
+  // `/` is the ROOT workspace's Home (#531), and the projects grid is its first
+  // section — so arrival and the grid are the same screen now. This test is
+  // about what a phone user sees on ARRIVAL plus the global nav drawer.
   await page.goto("/");
   // Nothing spills past the right edge of the phone.
   expect(await hOverflow(page)).toBeLessThanOrEqual(1);
@@ -44,11 +44,13 @@ test("front door + projects grid: no horizontal overflow; nav drawer opens and c
   // are off-canvas (translated out of the viewport), not just visually hidden.
   const menu = page.getByRole("button", { name: /Open menu/i });
   await expect(menu).toBeVisible();
-  // Scope to the sidebar (`<aside>` = complementary role): the grid also renders
-  // its own "New Project" button, so target the drawer's own button.
+  // Scope to the sidebar (`<aside>` = complementary role). Its CTAs were removed
+  // (they live on root Home now), so the drawer's own "Home" nav link is what
+  // tracks the slide — and unlike the old "New Project" button it is unambiguous:
+  // there is exactly one of it, and it is only ever in the drawer.
   const navDrawerAction = page
     .getByRole("complementary")
-    .getByRole("button", { name: "New Project" });
+    .getByRole("link", { name: "Home", exact: true });
   await expect(navDrawerAction).not.toBeInViewport();
 
   // Tapping the hamburger slides the drawer in → its actions enter the viewport.
@@ -59,10 +61,10 @@ test("front door + projects grid: no horizontal overflow; nav drawer opens and c
   await page.getByRole("button", { name: /Close menu/i }).tap();
   await expect(navDrawerAction).not.toBeInViewport();
 
-  // The projects grid — the root workspace's Projects tab — must also fit the
-  // phone. (This is the assertion the original `/` check carried before the
-  // grid moved off the front door.)
-  await page.goto("/projects");
+  // The projects grid must also fit the phone. It is a section of root Home, so
+  // this is the same URL — but assert it with the grid actually rendered, which
+  // is what the arrival check above cannot guarantee on its own.
+  await page.goto("/");
   await expect(page.getByRole("button", { name: "New Project" }).last()).toBeVisible();
   expect(await hOverflow(page)).toBeLessThanOrEqual(1);
 });
@@ -92,9 +94,9 @@ test("project view: composer reachable; session list is a drawer; a turn sends",
 });
 
 test("New Project modal fits the phone (no overflow, Create reachable)", async ({ page }) => {
+  // Opened from the grid on root Home — the sidebar no longer carries a CTA.
   await page.goto("/");
-  await page.getByRole("button", { name: /Open menu/i }).tap();
-  await page.getByRole("complementary").getByRole("button", { name: "New Project" }).tap();
+  await page.getByRole("main").getByRole("button", { name: "New Project" }).first().tap();
   const form = page.locator("form").filter({ hasText: "New project" });
   await expect(form).toBeVisible();
   await expect(page.getByRole("button", { name: /Create project/i })).toBeInViewport();
@@ -161,17 +163,14 @@ test("Project Settings tab fits the phone", async ({ page }) => {
 test("mobile screenshots (visual capture)", async ({ page }) => {
   mkdirSync(SHOTS, { recursive: true });
 
-  // `/` = the root workspace's Home; the grid is its Projects tab at /projects.
+  // `/` = the root workspace's Home, with the projects grid as its first section.
   await page.goto("/");
   await page.screenshot({ path: `${SHOTS}01-root-home.png`, fullPage: true });
-  await page.goto("/projects");
-  await page.screenshot({ path: `${SHOTS}01b-projects-grid.png`, fullPage: true });
 
-  await page.goto("/");
   await page.getByRole("button", { name: /Open menu/i }).tap();
   // Let the 200ms slide-in settle so the capture isn't mid-transition.
   await expect(
-    page.getByRole("complementary").getByRole("button", { name: "New Project" }),
+    page.getByRole("complementary").getByRole("link", { name: "Home", exact: true }),
   ).toBeInViewport();
   await page.waitForTimeout(300);
   await page.screenshot({ path: `${SHOTS}02-nav-drawer.png` });

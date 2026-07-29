@@ -206,16 +206,13 @@ export async function createProjectViaUI(
   page: Page,
   opts: { name: string; area?: string; summary?: string; tags?: string; status?: string },
 ): Promise<string> {
-  // The projects grid is the ROOT workspace's Projects tab, at `/projects` —
-  // `/` is root Home now (#531). Creating from the grid is the flow this helper
-  // models, so it starts there.
-  await page.goto("/projects");
-  // Use the GRID's own "New Project" button (in <main>), not the sidebar's. The
-  // sidebar is an off-canvas drawer on mobile, and the hamburger that opens it is
-  // now rendered by ProjectView — which shows "Loading project…" until the root
-  // workspace's detail lands, so a non-waiting `isVisible()` check on it raced and
-  // left the drawer shut. The grid's button is always on-screen in both viewports,
-  // and `getByRole` auto-waits for the tab content to render.
+  // The projects grid is the first SECTION of root Home, which is `/`. Creating
+  // from the grid is the flow this helper models, so it starts there.
+  await page.goto("/");
+  // Scoped to <main>: this is the grid's own button (and, since the sidebar CTAs
+  // were removed, the app's only one). The scoping still earns its keep — it
+  // makes `getByRole` auto-wait for the Home pane's content instead of matching
+  // sidebar chrome that renders immediately.
   await page.getByRole("main").getByRole("button", { name: /New Project/i }).first().click();
   const dialog = page.locator("form").filter({ hasText: "New project" });
   await dialog.getByPlaceholder(/Garage Water Heater/i).fill(opts.name);
