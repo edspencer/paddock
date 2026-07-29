@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { useState } from "react";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { PromoteChatModal } from "./PromoteChatModal";
@@ -80,5 +81,61 @@ describe("PromoteChatModal", () => {
     fireEvent.click(screen.getByRole("button", { name: /promote to project/i }));
     await waitFor(() => expect(screen.getByText("boom")).toBeInTheDocument());
     expect(onPromoted).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Reset-on-open, and ONLY on open (#566).
+   *
+   * The reset used to share an effect with the Escape listener, so `busy` and
+   * `onClose` were in its dependency list and it re-ran on almost anything. Both
+   * of the tests below failed before that split, and neither failure was
+   * theoretical — `onClose` is an inline arrow at the only call site and
+   * `ProjectView` re-renders on every WS frame.
+   */
+  describe("does not reset itself on unrelated re-renders (#566)", () => {
+    /** A parent that re-renders on demand, handing down a FRESH `onClose` each time. */
+    function Parent({ onPromoted = () => {} }: { onPromoted?: () => void }) {
+      const [tick, bump] = useState(0);
+      return (
+        <>
+          <button onClick={() => bump(tick + 1)}>re-render parent</button>
+          <PromoteChatModal
+            open
+            slug=""
+            sessionId="s"
+            defaultName="Root chat"
+            onClose={() => {}}
+            onPromoted={onPromoted}
+          />
+        </>
+      );
+    }
+
+    it("keeps what the user typed when the parent re-renders", async () => {
+      render(<Parent />);
+      const name = screen.getByPlaceholderText(/Garage Water Heater/i);
+      fireEvent.change(name, { target: { value: "Garage Water Heater Replacement" } });
+      fireEvent.click(screen.getByRole("button", { name: "re-render parent" }));
+      // Reverting to the chat's name mid-sentence is what this used to do, and it
+      // looked like the field randomly undoing itself.
+      expect(screen.getByPlaceholderText(/Garage Water Heater/i)).toHaveValue(
+        "Garage Water Heater Replacement",
+      );
+    });
+
+    it("keeps the error on screen after a failed submit settles", async () => {
+      const { ApiError } = await vi.importActual<typeof import("../lib/api")>("../lib/api");
+      promoteChat.mockRejectedValueOnce(new ApiError("disk on fire", 500));
+      render(<Parent />);
+      fireEvent.click(screen.getByRole("button", { name: /promote to project/i }));
+      const err = await screen.findByText("disk on fire");
+      expect(err).toBeInTheDocument();
+      // The old effect's `setError(null)` re-ran the moment `busy` went back to
+      // false — i.e. one render after the catch set it. So the message existed
+      // for a single frame and the dialog looked like it had done nothing at all.
+      // A parent re-render must not clear it either.
+      fireEvent.click(screen.getByRole("button", { name: "re-render parent" }));
+      expect(screen.getByText("disk on fire")).toBeInTheDocument();
+    });
   });
 });

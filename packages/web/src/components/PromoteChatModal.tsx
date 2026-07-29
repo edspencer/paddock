@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, ApiError } from "../lib/api";
 import type { Project } from "../lib/types";
 import { AREAS } from "../lib/areas";
+import { useEscapeKey } from "../lib/useEscapeKey";
 import { XIcon } from "./icons";
 
 /**
@@ -36,20 +37,30 @@ export function PromoteChatModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Reset the form when the dialog OPENS — and only then.
+  //
+  // This used to share an effect with the Escape listener, which dragged `busy`
+  // and `onClose` into its dependency list and made it a reset-on-anything
+  // effect (#566). Two consequences, both real:
+  //  - `onClose` is an inline arrow at the call site, so it is a new reference
+  //    on every parent render — and `ProjectView` re-renders constantly (WS
+  //    frames, chat-list refetches). Every one of those silently reverted the
+  //    name the user was typing back to the chat's name.
+  //  - `busy` flips true→false around the submit, so the `setError(null)` here
+  //    ran immediately AFTER a failed promote and wiped the message the catch
+  //    below had just set. The error could never survive to be read.
   useEffect(() => {
-    if (open) {
-      setName(defaultName ?? "");
-      setSummary("");
-      setDomain("");
-      setGroup("");
-      setError(null);
-    }
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && open && !busy) onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, busy, onClose, defaultName]);
+    if (!open) return;
+    setName(defaultName ?? "");
+    setSummary("");
+    setDomain("");
+    setGroup("");
+    setError(null);
+  }, [open, defaultName]);
+
+  // Escape closes, but not out from under an in-flight promote — the request
+  // would still land and create the project. Same rule as `ConfirmDialog`.
+  useEscapeKey(open && !busy, onClose);
 
   if (!open) return null;
 
