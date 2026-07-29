@@ -180,7 +180,11 @@ describe("integration: auth health-path exemptions match the router (issue #569)
   it("treats a trailing-slash health path as exempt-but-unrouted: JSON 404, never the shell", async () => {
     h = await boot();
     for (const url of ["/api/health/", "/api/health/?probe=k8s"]) {
-      const res = await h.built.app.inject({ method: "GET", url, headers: { accept: "text/html" } });
+      const res = await h.built.app.inject({
+        method: "GET",
+        url,
+        headers: { accept: "text/html" },
+      });
       expect(res.statusCode, `${url} is exempt from auth but matches no route`).toBe(404);
       expect(res.headers["content-type"]).toMatch(/application\/json/);
       expect(res.body).not.toContain("paddock SPA");
