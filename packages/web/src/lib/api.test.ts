@@ -51,6 +51,16 @@ describe("api: reads", () => {
     expect(res[0].slug).toBe("a");
   });
 
+  it("getRootWorkspace hits the root mount, not a slug path", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ project: makeProject({ slug: "" }), changelog: "", chats: [] }),
+    );
+    await api.getRootWorkspace();
+    // An empty workspace key cannot ride in a URL path segment, so the same
+    // handlers are mounted twice — `/api/root` is the root's half of that seam.
+    expect(call()[0]).toBe("/api/root");
+  });
+
   it("getProjectDetail hits the encoded slug path", async () => {
     fetchMock.mockResolvedValue(
       jsonResponse({ project: makeProject(), changelog: "log", chats: [] }),
@@ -166,11 +176,13 @@ describe("api: writes build the right request", () => {
     expect(JSON.parse(init?.body as string)).toEqual({ starred: true });
   });
 
-  it("promoteChat POSTs the build payload to the source project's promote endpoint", async () => {
+  it("promoteChat POSTs the build payload to the source workspace's promote endpoint", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ project: makeProject(), promoted: true }));
-    const res = await api.promoteChat("__root", "sess-9", { name: "X", group: "g" });
+    // The root workspace's key is "", which mounts at `/api/root` — where the
+    // chats that used to be scratch one-offs now live (#516 Phase 6).
+    const res = await api.promoteChat("", "sess-9", { name: "X", group: "g" });
     const [url, init] = call();
-    expect(url).toBe("/api/projects/__root/chats/sess-9/promote");
+    expect(url).toBe("/api/root/chats/sess-9/promote");
     expect(init?.method).toBe("POST");
     expect(JSON.parse(init?.body as string)).toEqual({ name: "X", group: "g" });
     expect(res.promoted).toBe(true);

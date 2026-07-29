@@ -85,7 +85,11 @@ export function makeParentResolver(
 ): (s: DiscoveredSession) => Promise<ChatParentRef | null> {
   return async (s: DiscoveredSession) => {
     const p = await runProvenance.get(s.sessionId).catch(() => undefined);
-    if (p?.parentSessionId && p.parentProject)
+    // `parentProject` is a WORKSPACE KEY, and the root workspace's key is the
+    // empty string — a falsy test here would discard every edge whose parent is
+    // a root chat and silently fall through to the inference tier, rendering
+    // those chats as orphan roots. Only ABSENCE means "no recorded edge".
+    if (p?.parentSessionId && p.parentProject !== undefined)
       return { project: p.parentProject, sessionId: p.parentSessionId };
     // A recorded root never falls through to inference (#491).
     if (p && isRecordedRoot(p)) return null;

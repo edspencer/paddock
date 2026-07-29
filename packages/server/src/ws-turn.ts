@@ -168,7 +168,9 @@ const rebuildWakeInjection = async (
   entry: SessionWakeEntry,
 ): Promise<Record<string, InjectedMcpServerDef> | undefined> => {
   const slug = keeperSlugFromAgent(entry.agent);
-  if (!slug) return undefined;
+  // `null` = not a keeper agent. `""` = the ROOT workspace, which is a perfectly
+  // good key — a falsy check here would drop every root chat.
+  if (slug === null) return undefined;
   let project: Awaited<ReturnType<typeof deps.projects.get>>;
   try {
     project = await deps.projects.get(slug);
@@ -686,8 +688,11 @@ const injectingRecovery = new Set<string>();
  * autoReDrive); this helper is layer-agnostic.
  */
 const injectRecoveryNudge = async (project: Project, sessionId: string): Promise<void> => {
+  // Every workspace has a keeper, including the root — whose key is `""`. This
+  // guard used to read `if (!slug) return;` to skip scratch, which had no
+  // keeper; scratch is gone, so the only thing it still skipped was the root,
+  // silently killing both the "Continue" nudge and auto-re-drive for root chats.
   const slug = project.slug;
-  if (!slug) return;
   // Single-flight double-dispatch guard (issue #352). Two dispatches resuming the
   // SAME session at once is fatal under session-mode `chatSession(resume)`: the
   // second resume interrupts the first, so one nudge is swallowed ("first message

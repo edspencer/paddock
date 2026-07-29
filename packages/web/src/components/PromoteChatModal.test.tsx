@@ -20,7 +20,7 @@ describe("PromoteChatModal", () => {
     render(
       <PromoteChatModal
         open
-        slug="__root"
+        slug=""
         sessionId="sess-9"
         defaultName="Heater chat"
         onClose={() => {}}
@@ -45,7 +45,7 @@ describe("PromoteChatModal", () => {
     render(
       <PromoteChatModal
         open
-        slug="__root"
+        slug=""
         sessionId="sess-9"
         defaultName="Heater"
         onClose={() => {}}
@@ -59,7 +59,7 @@ describe("PromoteChatModal", () => {
     fireEvent.click(screen.getByRole("button", { name: /promote to project/i }));
 
     await waitFor(() => expect(promoteChat).toHaveBeenCalledTimes(1));
-    expect(promoteChat).toHaveBeenCalledWith("__root", "sess-9", {
+    expect(promoteChat).toHaveBeenCalledWith("", "sess-9", {
       name: "Heater",
       group: "side-projects",
       summary: "promoted project",

@@ -4,14 +4,14 @@ import { ProjectsProvider, useProjects } from "./projects-context";
 import { makeProject } from "../test/factories";
 
 const listProjects = vi.fn();
-const getRootProject = vi.fn();
+const getRootWorkspace = vi.fn();
 vi.mock("./api", async () => {
   const actual = await vi.importActual<typeof import("./api")>("./api");
   return {
     ...actual,
     api: {
       listProjects: (...a: unknown[]) => listProjects(...a),
-      getRootProject: (...a: unknown[]) => getRootProject(...a),
+      getRootWorkspace: (...a: unknown[]) => getRootWorkspace(...a),
     },
   };
 });
@@ -40,9 +40,10 @@ function ctx() {
 
 beforeEach(() => {
   listProjects.mockReset();
-  // Most instances have no root project (#516) — the default everywhere.
-  getRootProject.mockReset();
-  getRootProject.mockResolvedValue(null);
+  // The root workspace is the instance's own directory, so it ALWAYS resolves —
+  // that is the default everywhere (#516). Its key is the empty string.
+  getRootWorkspace.mockReset();
+  getRootWorkspace.mockResolvedValue(makeProject({ slug: "", name: "Instance Root" }));
 });
 
 describe("ProjectsProvider", () => {
@@ -125,46 +126,48 @@ describe("ProjectsProvider", () => {
   });
 });
 
-describe("ProjectsProvider — the root project (#516)", () => {
-  it("exposes the root project separately, never inside `projects`", async () => {
+describe("ProjectsProvider — the root workspace (#516)", () => {
+  it("exposes the root workspace separately, never inside `projects`", async () => {
     listProjects.mockResolvedValue([makeProject({ slug: "a" })]);
-    getRootProject.mockResolvedValue(makeProject({ slug: "__root", name: "Root" }));
+    getRootWorkspace.mockResolvedValue(makeProject({ slug: "", name: "Root" }));
     render(
       <ProjectsProvider>
         <Probe />
       </ProjectsProvider>,
     );
-    await waitFor(() => expect(ctx().rootProject).not.toBeUndefined());
-    expect(ctx().rootProject?.slug).toBe("__root");
-    // The root is invisible to `GET /api/projects` and must stay out of the
-    // sidebar + grid, both of which render `projects`.
+    await waitFor(() => expect(ctx().rootWorkspace).not.toBeNull());
+    expect(ctx().rootWorkspace?.slug).toBe("");
+    // `GET /api/projects` enumerates the root's CHILDREN, so the root itself is
+    // absent from it — and must stay out of the sidebar + grid, which render
+    // `projects`.
     expect(ctx().projects.map((p) => p.slug)).toEqual(["a"]);
   });
 
-  it("routes an upsert of the root project to `rootProject`, not the list", async () => {
+  it("routes an upsert of the root workspace to `rootWorkspace`, not the list", async () => {
     listProjects.mockResolvedValue([makeProject({ slug: "a" })]);
     render(
       <ProjectsProvider>
         <Probe />
       </ProjectsProvider>,
     );
-    await waitFor(() => expect(ctx().rootProject).toBeNull());
-    act(() => ctx().upsert(makeProject({ slug: "__root", name: "Root" })));
-    expect(ctx().rootProject?.name).toBe("Root");
+    await waitFor(() => expect(ctx().rootWorkspace?.name).toBe("Instance Root"));
+    act(() => ctx().upsert(makeProject({ slug: "", name: "Renamed Root" })));
+    expect(ctx().rootWorkspace?.name).toBe("Renamed Root");
     expect(ctx().projects.map((p) => p.slug)).toEqual(["a"]);
   });
 
-  it("resolves the root to null when the endpoint fails (an older server)", async () => {
+  it("leaves the root null when its fetch fails, without failing the page", async () => {
     listProjects.mockResolvedValue([]);
-    getRootProject.mockRejectedValue(new Error("404"));
+    getRootWorkspace.mockRejectedValue(new Error("boom"));
     render(
       <ProjectsProvider>
         <Probe />
       </ProjectsProvider>,
     );
-    await waitFor(() => expect(ctx().rootProject).toBeNull());
-    // A failed root lookup is NOT a page-level error: no root project is the
-    // normal state, and `/` must keep rendering the projects grid.
+    await waitFor(() => expect(ctx().loading).toBe(false));
+    expect(ctx().rootWorkspace).toBeNull();
+    // A failed root fetch is NOT a page-level error — the children list it rode
+    // along with is still good, so the grid and sidebar keep rendering.
     expect(ctx().error).toBeNull();
   });
 });

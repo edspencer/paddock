@@ -38,7 +38,7 @@ import { buildChatTree, withAncestors } from "../lib/chatTree";
 import { readCollapsedChats, writeCollapsedChats } from "../lib/collapsedChats";
 import type { GitProjectStatus } from "../lib/types";
 import {
-  ROOT_SLUG,
+  ROOT_KEY,
   decodeFilesSubpath,
   deriveView,
   gridUrl,
@@ -46,6 +46,7 @@ import {
   repoHref,
   viewBase,
 } from "./ProjectView/urls";
+import { ProjectsGrid } from "./ProjectsGrid";
 import { TabButton } from "./ProjectView/TabButton";
 import { PinnedTab } from "./ProjectView/PinnedTab";
 import { HomePane } from "./ProjectView/HomePane";
@@ -63,16 +64,18 @@ import { useUnreadChats } from "./ProjectView/useUnreadChats";
  *   /projects/:slug/changes[/:file]     -> Changes tab / a specific changed file
  *   /projects/:slug/settings            -> Settings tab (all per-project settings)
  *
- * With `root` (issue #516) the SAME component serves the ROOT project — the
- * project whose directory is the projects root itself. Nothing about it is
- * special-cased: it takes the reserved `__root` slug and hits the same
- * `/api/projects/:slug/…` endpoints. It differs only in its browser URLs, which
- * are flat and top-level (`/` is root Home, `/chat[/:sessionId]` its chats) —
- * and that difference is carried entirely by `base` (see `viewBase`).
+ * With `root` (issue #516) the SAME component serves the ROOT workspace — the
+ * instance's own directory, which always exists and contains every project.
+ * Nothing about it is special-cased: its workspace key is the empty string and
+ * it hits the same handlers, mounted at `/api/root` instead of
+ * `/api/projects/:slug` (see `apiBase`). It differs only in its browser URLs,
+ * which are flat and top-level (`/` is root Home, `/chat[/:sessionId]` its
+ * chats, `/projects` its children) — and that difference is carried entirely by
+ * `base` (see `viewBase`).
  */
 export function ProjectView({ root = false }: { root?: boolean } = {}) {
   const params = useParams();
-  const slug = root ? ROOT_SLUG : (params.slug ?? "");
+  const slug = root ? ROOT_KEY : (params.slug ?? "");
   // Every in-context URL hangs off this: "" at the root, `/projects/:slug`
   // otherwise. The ~20 navigation sites below are written against it, so both
   // contexts share one implementation (issue #516 Phase 3).
@@ -85,7 +88,7 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
   // falling back to a no-op.
   const shell = useOutletContext<ShellOutletContext | null>();
   const openNav = shell?.openNav ?? (() => {});
-  const { refresh: refreshProjects, upsert, remove, rootProject } = useProjects();
+  const { refresh: refreshProjects, upsert, remove } = useProjects();
 
   // Which sub-route are we on? Derived purely from the URL (see `deriveView`).
   const view = deriveView(location.pathname, base);
@@ -363,6 +366,10 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
   // Home target is the only nav site that isn't a plain `${base}/…`.
   const goHome = useCallback(() => navigate(homeUrl(base)), [navigate, base]);
   const goChat = useCallback(() => navigate(`${base}/chat`), [navigate, base]);
+  // The root workspace's CHILDREN tab — the projects grid, which lives at its own
+  // top-level `/projects` URL. Only the root has children, so only the root
+  // renders the tab that navigates here (see the tab bar below).
+  const goProjects = useCallback(() => navigate(gridUrl()), [navigate]);
   const goFiles = useCallback(() => navigate(`${base}/files`), [navigate, base]);
   const goChanges = useCallback(() => navigate(`${base}/changes`), [navigate, base]);
   const goHistory = useCallback(() => navigate(`${base}/history`), [navigate, base]);
@@ -930,6 +937,16 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
               view === "chat" ? "hidden lg:flex" : "flex"
             }`}
           >
+            {/* The root workspace's CHILDREN tab, first in the bar: the projects
+                grid is where you go from the instance's front door OUT to a
+                project, so it leads rather than trails the root's own tabs. Only
+                the root has children today, hence the `root` gate — when nesting
+                lands, every workspace with children gets this for free. */}
+            {root && (
+              <TabButton active={view === "projects"} onClick={goProjects}>
+                Projects
+              </TabButton>
+            )}
             <TabButton active={view === "home"} onClick={goHome}>
               Home
             </TabButton>
@@ -1014,6 +1031,11 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
             ))}
           </div>
 
+          {/* The Projects tab: the root workspace's children, rendered by the
+              SAME grid component the `/tags/:tag` page uses. `embedded` drops the
+              grid's own page header — this view already supplies the page chrome
+              (header + tab bar) — and nothing else about it changes. */}
+          {view === "projects" && <ProjectsGrid embedded />}
           {/* The Changes tab (its own /changes[/:file] route). It owns
               refetching status post-commit and propagates it up so the tab badge
               stays in sync; the selected file is URL-driven so a specific diff is
@@ -1152,9 +1174,8 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
           await api.deleteProject(project.slug);
           remove(project.slug);
           clearLastTab(project.slug);
-          // Back to the projects grid — `/` on an instance with no root project
-          // (unchanged), `/projects` once the root owns `/` (#516).
-          navigate(gridUrl(Boolean(rootProject)));
+          // Back to the projects grid — the root workspace's children tab.
+          navigate(gridUrl());
         }}
         onClose={() => setDeleteOpen(false)}
       />

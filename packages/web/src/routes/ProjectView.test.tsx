@@ -75,17 +75,16 @@ vi.mock("../lib/api", async () => {
 const upsert = vi.fn();
 const remove = vi.fn();
 vi.mock("../lib/projects-context", () => ({
-  // `rootProject: null` — the instance-with-no-root-project case, which is what
-  // every assertion in this file describes (#516).
+  // Every assertion in this file is about a PROJECT workspace (`/projects/:slug`),
+  // so the root workspace is only here to satisfy the context shape (#516).
   useProjects: () => ({
     projects: [],
-    rootProject: null,
+    rootWorkspace: null,
     loading: false,
     error: null,
     refresh: vi.fn(),
     upsert,
     remove,
-    setRootProject: vi.fn(),
   }),
 }));
 
@@ -123,9 +122,9 @@ function renderAt(path: string) {
         <Route path="/projects/:slug/settings" element={<ProjectView />} />
         <Route path="/projects/:slug/triggers" element={<ProjectView />} />
         <Route path="/projects/:slug/hooks" element={<ProjectView />} />
-        {/* Deleting a project returns to the grid, which stays at `/` on an
-            instance with no root project — the case this harness models (#516). */}
-        <Route path="/" element={<div>HOME</div>} />
+        {/* Deleting a project returns to the grid — the root workspace's
+            children tab, which always lives at `/projects` (#516). */}
+        <Route path="/projects" element={<div>GRID</div>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -899,7 +898,7 @@ describe("ProjectView: unread affordance (#160)", () => {
 });
 
 describe("ProjectView: delete project", () => {
-  it("deletes the project and navigates home", async () => {
+  it("deletes the project and navigates back to the grid", async () => {
     apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p", name: "Goner" })));
     apiFns.deleteProject.mockResolvedValue(undefined);
     renderAt("/projects/p/chat");
@@ -912,7 +911,7 @@ describe("ProjectView: delete project", () => {
     fireEvent.click(await screen.findByRole("button", { name: /^Delete project$/i }));
     await waitFor(() => expect(apiFns.deleteProject).toHaveBeenCalledWith("p"));
     await waitFor(() => expect(remove).toHaveBeenCalledWith("p"));
-    expect(await screen.findByText("HOME")).toBeInTheDocument();
+    expect(await screen.findByText("GRID")).toBeInTheDocument();
   });
 });
 

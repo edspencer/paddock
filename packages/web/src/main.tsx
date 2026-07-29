@@ -1,10 +1,10 @@
-import React, { lazy, type ReactElement } from "react";
+import React, { lazy } from "react";
 import ReactDOM from "react-dom/client";
 import { createBrowserRouter, RouterProvider, useParams } from "react-router-dom";
 import "./index.css";
 import { AppShell } from "./components/AppShell";
 import { RouteError } from "./components/RouteError";
-import { ProjectsProvider, useProjects } from "./lib/projects-context";
+import { ProjectsProvider } from "./lib/projects-context";
 import { registerServiceWorker } from "./lib/pwa";
 
 // Route components are code-split (issue #11): each becomes its own async chunk
@@ -19,9 +19,10 @@ const ProjectView = lazy(() =>
 const ProjectRedirect = lazy(() =>
   import("./routes/ProjectRedirect").then((m) => ({ default: m.ProjectRedirect })),
 );
-const InstanceSettings = lazy(() =>
-  import("./routes/InstanceSettings").then((m) => ({ default: m.InstanceSettings })),
-);
+// NOTE: the standalone InstanceSettings page no longer has a route. `/settings`
+// is the ROOT workspace's Settings tab, which renders the workspace settings and
+// the instance-wide config form as two sections (see ProjectView). The component
+// survives as the extracted `InstanceConfigForm` that tab embeds.
 
 // Reflect tab visibility onto <html data-tab-hidden> so CSS can pause the
 // continuous streaming animations (spinners, caret) while the tab is
@@ -38,30 +39,6 @@ function TaggedProjects() {
   return <ProjectsGrid filterTag={tag ? decodeURIComponent(tag) : undefined} />;
 }
 
-/**
- * The top-level routes whose meaning depends on whether this instance has a
- * ROOT PROJECT (issue #516). Migration is gated on EXISTENCE, so:
- *
- *   no root project  → `/` is the projects grid, exactly as before. Every
- *                      existing instance stays here.
- *   root project      → `/` is root Home.
- *
- * Creating `<projectsRoot>/project.yaml` is the whole opt-in. The route does not
- * render until `rootProject` resolves, so `/` never flashes the wrong page.
- */
-function RootGate({
-  withRoot,
-  without,
-}: {
-  withRoot: ReactElement;
-  without: ReactElement;
-}) {
-  const { rootProject } = useProjects();
-  if (rootProject === undefined) {
-    return <div className="p-8 text-sm text-paddock-500">Loading…</div>;
-  }
-  return rootProject ? withRoot : without;
-}
 
 const router = createBrowserRouter([
   {
@@ -72,17 +49,14 @@ const router = createBrowserRouter([
     // current build instead of dead-ending at the default error screen (#222).
     errorElement: <RouteError />,
     children: [
-      // `/` is root Home when a root project exists, the projects grid otherwise
-      // (#516). No redirect and no sticky last tab at the root: `/` is the
+      // `/` IS the root workspace's Home. The root workspace always exists — it
+      // is the instance's own directory — so there is nothing to gate on and
+      // nothing to wait for. No redirect and no sticky last tab: `/` is the
       // instance's front door and always renders the same thing.
-      {
-        index: true,
-        element: <RootGate withRoot={<ProjectView root />} without={<ProjectsGrid />} />,
-      },
-      // The projects grid keeps a real page of its own — it carries area
-      // sections, collapse state and tag filtering, so it can't just be a
-      // section of root Home (#516).
-      { path: "projects", element: <ProjectsGrid /> },
+      { index: true, element: <ProjectView root /> },
+      // The projects grid is the root workspace's CHILDREN tab, rendered inside
+      // ProjectView so it carries the same chrome as every other root tab.
+      { path: "projects", element: <ProjectView root /> },
       // The projects grid, filtered to a single domain tag (click a tag pill).
       { path: "tags/:tag", element: <TaggedProjects /> },
       // Bare project URL redirects to the sticky last tab (defaults to home).
@@ -132,10 +106,7 @@ const router = createBrowserRouter([
       // With a root project this resolves to the root's Settings TAB, which shows
       // the root's own workspace config and this same instance form as two
       // sections (#516 Phase 5); without one it stays the standalone page.
-      {
-        path: "settings",
-        element: <RootGate withRoot={<ProjectView root />} without={<InstanceSettings />} />,
-      },
+      { path: "settings", element: <ProjectView root /> },
     ],
   },
 ]);

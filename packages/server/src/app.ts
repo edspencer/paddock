@@ -19,7 +19,7 @@ import { createRequire } from "node:module";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { loadPaddockConfig, type PaddockConfig } from "./config.js";
-import { ProjectStore } from "./projects.js";
+import { ProjectStore, ROOT_KEY } from "./projects.js";
 import { AttachmentStore } from "./attachments.js";
 import { HerdctlService } from "./herdctl.js";
 import { GitService } from "./git.js";
@@ -179,16 +179,12 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
     { mode: cfg.transcription.mode, available: transcriber.available },
     "voice dictation capability",
   );
-  // The root project (issue #516) is invisible to `list()` — its `project.yaml`
-  // sits AT `projectsRoot`, and `list()` only walks subdirectories. Resolve it
-  // explicitly and register its keeper alongside every other project's, so the
-  // root keeper is an ordinary keeper in every respect. Absent (the default, and
-  // the state of every existing instance) ⇒ nothing extra is registered.
-  const rootProject = await projects.getRoot();
-  if (rootProject) {
-    app.log.info({ dir: rootProject.dir }, "root project present — registering root keeper");
-  }
-  const initialProjects = [...(await projects.list()), ...(rootProject ? [rootProject] : [])];
+  // `list()` enumerates the root's CHILDREN (it walks subdirectories), so the
+  // root workspace itself is never in it. It always exists — the instance's own
+  // directory — so resolve it explicitly and register its keeper alongside every
+  // child's. The root keeper is an ordinary keeper in every respect.
+  const rootWorkspace = await projects.get(ROOT_KEY);
+  const initialProjects = [...(await projects.list()), rootWorkspace];
   try {
     await herdctl.init(initialProjects);
     await herdctl.start();

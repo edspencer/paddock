@@ -56,7 +56,7 @@ import { useComposerAttachments } from "./chat/useComposerAttachments";
 export { historyToTurns };
 
 export interface ChatPaneProps {
-  /** The slug of the project this chat belongs to (`__root` for a root chat). */
+  /** The workspace key this chat belongs to (`""` — the root — for a root chat). */
   projectSlug: string;
   /** Existing session to resume, or undefined for a new chat. */
   initialSessionId?: string;
