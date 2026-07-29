@@ -272,9 +272,26 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
     // durably readable yet is omitted from this disk-derived map (the read
     // race). Merging preserves any live turn-complete seed (issue #164) so its
     // ring doesn't vanish when the same-instant disk re-read comes back empty;
-    // the disk figures overwrite the seed for sessions it does have.
+    // the disk figures overwrite the seed for sessions it does have. It also
+    // means the scoped fetches below compose: each one only ever ADDS rings.
     if (usage) setUsageBySession((prev) => ({ ...prev, ...usage }));
   }, [slug]);
+
+  // The archived half of the rings (issue #537). `loadUsage` above asks for the
+  // server's default `active` scope, because the Archived group is collapsed on
+  // open and its rings are never rendered — yet computing them meant streaming
+  // ~72% of the project's transcript bytes on every project open AND after every
+  // completed turn, per open tab. So archived usage is fetched lazily, the first
+  // time the group is actually expanded (see the effect below).
+  const loadArchivedUsage = useCallback(async () => {
+    const usage = await api.chatUsage(slug, "archived").catch(() => null);
+    if (usage) setUsageBySession((prev) => ({ ...prev, ...usage }));
+  }, [slug]);
+
+  // Whether this project's archived rings have been asked for yet — so a turn
+  // completing re-freshes them only for someone who has the group open, rather
+  // than quietly reinstating the full-corpus scan for everyone.
+  const archivedUsageWanted = useRef(false);
 
   const load = useCallback(async () => {
     setLoadErr(null);
@@ -297,8 +314,23 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
     setProject(null);
     setGitStatus(null);
     setUsageBySession({});
+    archivedUsageWanted.current = false;
     void load();
   }, [slug, load]);
+
+  // Lazy archived rings (issue #537). Keyed on the EXPANDED STATE rather than on
+  // the click handler, because three different things open this group: the user
+  // toggling it, archiving a chat (`archiveChat`), and deep-linking into an
+  // archived chat (the auto-expand effect below). Watching the state covers all
+  // of them by construction — hanging the fetch off the disclosure button would
+  // leave the rings blank in exactly the cases where a user went looking for an
+  // archived chat. `loadArchivedUsage` is slug-scoped, so switching projects with
+  // the group left open refetches for the new project.
+  useEffect(() => {
+    if (!archivedOpen) return;
+    archivedUsageWanted.current = true;
+    void loadArchivedUsage();
+  }, [archivedOpen, loadArchivedUsage]);
 
   // Sticky last tab: persist the current in-project sub-path for this project
   // whenever the URL (view / session / file) changes, so the bare
@@ -349,7 +381,9 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
     void refreshGit();
     // A completed turn changes the chat's context fill — refresh its ring (#116).
     void loadUsage();
-  }, [slug, refreshGit, loadUsage]);
+    // …and the archived ones too, but only if they are on screen (#537).
+    if (archivedUsageWanted.current) void loadArchivedUsage();
+  }, [slug, refreshGit, loadUsage, loadArchivedUsage]);
 
   const loadHistory = useCallback(
     (sessionId: string) => api.projectChatMessages(slug, sessionId),

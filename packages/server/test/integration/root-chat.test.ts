@@ -168,4 +168,51 @@ describe("integration: root chats (#531)", () => {
     expect(chat.starred).toBe(true);
     expect(chat.archived).toBe(true);
   });
+
+  // Scoped usage (#537) has to work through the root mount too, and it is exactly
+  // the shape the empty-string root key breaks: the scope filter reads the archive
+  // sidecar under `keeperAgentName(slug)`, so anything that treats the root's `""`
+  // as absent rather than as a key would look under the wrong keeper and quietly
+  // return the wrong set — with no error to notice.
+  //
+  // The split is CREATED here rather than inherited from the tests above. How
+  // many root chats those have left visible depends on herdctl's session
+  // discovery, which is cached and lags; reading whatever happens to be listed
+  // and hoping for one of each is a coin flip (it failed ~half the time).
+  it("scopes root usage by archived state, not by whether the slug is truthy (#537)", async () => {
+    const usage = async (scope?: string) =>
+      (
+        await t.app.inject({
+          method: "GET",
+          url: `/api/root/chats/usage${scope ? `?scope=${scope}` : ""}`,
+        })
+      ).json().usage as Record<string, { contextTokens: number }>;
+    const setArchived = (id: string, archived: boolean) =>
+      t.app.inject({
+        method: "POST",
+        url: `/api/root/chats/${id}/archive`,
+        payload: { archived },
+      });
+
+    const listed = (
+      (await t.app.inject({ method: "GET", url: "/api/root/chats" })).json()
+        .chats as Array<{ sessionId: string }>
+    ).map((c) => c.sessionId);
+    expect(listed.length).toBeGreaterThan(0);
+
+    // Archive the first, un-archive any others, so the split is known exactly.
+    await setArchived(listed[0], true);
+    for (const id of listed.slice(1)) await setArchived(id, false);
+
+    // A chat with no usage data is omitted from every scope, so compare against
+    // what `all` actually returned rather than against the raw id lists.
+    const all = await usage("all");
+    const present = (ids: string[]) => ids.filter((id) => id in all).sort();
+
+    expect(Object.keys(await usage("archived")).sort()).toEqual(present([listed[0]]));
+    expect(Object.keys(await usage()).sort()).toEqual(present(listed.slice(1)));
+    expect(Object.keys(all).sort()).toEqual(present(listed));
+    // Scoping picks which transcripts get streamed; it never changes the figures.
+    expect({ ...(await usage()), ...(await usage("archived")) }).toEqual(all);
+  });
 });

@@ -9,6 +9,7 @@ import {
   type Chat,
   type CurationConfig,
   type ChatUsage,
+  type ChatUsageScope,
   type CreateProjectInput,
   type DeviceFlowStart,
   type DirListing,
@@ -484,16 +485,22 @@ export const api = {
   },
 
   /**
-   * Bulk context-window usage for every chat in a project, keyed by session id
-   * (issue #116). Fetched separately from the chat list so the ProjectView can
-   * render immediately and fill in the per-chat usage rings (issue #77)
-   * afterwards — the per-session transcript parse this needs is what made project
-   * switching slow. Sessions with no usage data are absent from the map.
+   * Bulk context-window usage for a project's chats, keyed by session id (issue
+   * #116). Fetched separately from the chat list so the ProjectView can render
+   * immediately and fill in the per-chat usage rings (issue #77) afterwards — the
+   * per-session transcript parse this needs is what made project switching slow.
+   * Sessions with no usage data are absent from the map.
+   *
+   * `scope` picks WHICH chats to pay for (issue #537). The server defaults to
+   * `active`; archived rings live inside a collapsed group, so we only ask for
+   * them once it is expanded. On a live-scale project the archived chats are ~72%
+   * of the transcript bytes streamed.
    */
-  async chatUsage(slug: string): Promise<Record<string, ChatUsage>> {
+  async chatUsage(slug: string, scope?: ChatUsageScope): Promise<Record<string, ChatUsage>> {
+    const qs = scope ? `?scope=${scope}` : "";
     const { usage } = await req<{
       usage: Record<string, ChatUsage>;
-    }>(`${apiBase(slug)}/chats/usage`);
+    }>(`${apiBase(slug)}/chats/usage${qs}`);
     return usage;
   },
 

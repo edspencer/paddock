@@ -690,6 +690,77 @@ describe("ProjectView: archive chats (#95)", () => {
   });
 });
 
+// Issue #537: the server computes usage by streaming each transcript end to end,
+// so asking for rings the sidebar never shows is real I/O. Archived rings are
+// therefore fetched only once the (collapsed-by-default) Archived group opens.
+// The failure mode is INVISIBLE — a ring that silently never appears — and three
+// separate things open that group, so each one is pinned here.
+describe("ProjectView: archived usage rings are fetched lazily (#537)", () => {
+  /** Rings keyed by scope, so a test can prove WHICH request filled a ring. */
+  const byScope = (
+    active: Record<string, { contextTokens: number; contextLimit: number }>,
+    archived: Record<string, { contextTokens: number; contextLimit: number }>,
+  ) =>
+    apiFns.chatUsage.mockImplementation((_slug: unknown, scope?: unknown) =>
+      Promise.resolve(scope === "archived" ? archived : active),
+    );
+
+  const oneOfEach = () =>
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [
+          makeChat({ sessionId: "s1", name: "Current chat" }),
+          makeChat({ sessionId: "s2", name: "Archived chat", archived: true }),
+        ],
+      }),
+    );
+
+  it("skips the archived scope on load, then fetches it when the group is expanded", async () => {
+    oneOfEach();
+    byScope(
+      { s1: { contextTokens: 250_000, contextLimit: 1_000_000 } },
+      { s2: { contextTokens: 750_000, contextLimit: 1_000_000 } },
+    );
+    renderAt("/projects/p/chat");
+
+    // The active ring fills from the default (unscoped) request...
+    expect(await screen.findByLabelText(/Context 25% full/)).toBeInTheDocument();
+    // ...and nothing has asked for the archived half yet.
+    expect(apiFns.chatUsage).toHaveBeenCalledWith("p");
+    expect(apiFns.chatUsage).not.toHaveBeenCalledWith("p", "archived");
+
+    fireEvent.click(screen.getByRole("button", { name: /^Archived/i }));
+    expect(await screen.findByLabelText(/Context 75% full/)).toBeInTheDocument();
+    // Merge, not replace: the active ring must survive the archived fetch (#164).
+    expect(screen.getByLabelText(/Context 25% full/)).toBeInTheDocument();
+  });
+
+  it("fetches archived usage when a deep-link auto-expands the group", async () => {
+    oneOfEach();
+    byScope({}, { s2: { contextTokens: 750_000, contextLimit: 1_000_000 } });
+    // No click anywhere: the group opens because the OPEN chat is archived. This
+    // is precisely the case where a user went looking for an archived chat, so a
+    // blank ring here would be the worst version of the bug.
+    renderAt("/projects/p/chat/s2");
+    expect(await screen.findByLabelText(/Context 75% full/)).toBeInTheDocument();
+  });
+
+  it("fetches archived usage when archiving a chat opens the group", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), { chats: [makeChat({ sessionId: "s1", name: "Filed away" })] }),
+    );
+    apiFns.archiveProjectChat.mockResolvedValue(undefined);
+    byScope({}, { s1: { contextTokens: 500_000, contextLimit: 1_000_000 } });
+    renderAt("/projects/p/chat");
+    await screen.findByText("Filed away");
+
+    fireEvent.click(screen.getByRole("button", { name: /Archive chat Filed away/i }));
+    // archiveChat force-opens the group; the ring must follow it there.
+    await waitFor(() => expect(apiFns.chatUsage).toHaveBeenCalledWith("p", "archived"));
+    expect(await screen.findByLabelText(/Context 50% full/)).toBeInTheDocument();
+  });
+});
+
 describe("ProjectView: sidebar counts are chat counts, not root counts (#491)", () => {
   it("the search badge counts the chats shown, not the roots", async () => {
     // Two matches nested under one non-matching parent, plus an unrelated chat.

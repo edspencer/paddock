@@ -91,7 +91,7 @@ return `{ error, code }` with `404` (not found), `409` (exists), or `400`
 |--------|------|---------|------|
 | GET | `/api/projects/:slug/chats` | List the project's chats (no usage rings). | gated |
 | POST | `/api/projects/:slug/chats` | Thin: validate the project + return the WS target → `201`. The real chat is created lazily over `/ws`. | gated |
-| GET | `/api/projects/:slug/chats/usage` | Bulk context-window usage for all chats, keyed by session id. | gated |
+| GET | `/api/projects/:slug/chats/usage` | Bulk context-window usage keyed by session id. `?scope=` `active` (default) / `archived` / `all` — usage is derived by streaming each transcript, so the collapsed Archived group is not paid for until it is opened (#537). | gated |
 | GET | `/api/projects/:slug/chats/:sessionId/messages` | A chat's messages, enriched with tool details. | gated |
 | GET | `/api/projects/:slug/chats/:sessionId/context` | Context-window usage from the transcript's last turn. | gated |
 | GET | `/api/projects/:slug/chats/:sessionId/subagents/:toolUseId/messages` | Transcript of a sub-agent launched from a Task/Agent tool block. | gated |

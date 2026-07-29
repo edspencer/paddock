@@ -118,6 +118,16 @@ describe("api: reads", () => {
     expect(call()[0]).toBe("/api/projects/a%2Fb/chats/usage");
     expect(usage["sess-1"]).toEqual({ contextTokens: 5, contextLimit: 10 });
   });
+
+  // #537: omitting the scope must leave the URL bare, so the default ("active")
+  // lives in exactly one place — the server — rather than being restated here.
+  it("chatUsage appends ?scope only when one is asked for", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ usage: {} }));
+    await api.chatUsage("p");
+    expect(call()[0]).toBe("/api/projects/p/chats/usage");
+    await api.chatUsage("p", "archived");
+    expect(call(1)[0]).toBe("/api/projects/p/chats/usage?scope=archived");
+  });
 });
 
 describe("api: writes build the right request", () => {

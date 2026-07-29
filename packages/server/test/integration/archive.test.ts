@@ -102,6 +102,50 @@ describe("integration: archive chat (non-destructive flag)", () => {
     expect((await chatDto(slug, id))?.archived).toBe(true);
   });
 
+  // Issue #537: the bulk usage endpoint is scoped by archived state. Usage has no
+  // stored counter — it is derived by streaming the whole transcript — so on a
+  // real corpus computing rings for the collapsed Archived group was ~72% of the
+  // bytes read, for rows that are never rendered. The default had to become
+  // `active`, which is a behaviour change worth pinning down precisely.
+  it("scopes bulk usage by archived state (#537)", async () => {
+    const { slug, id } = await projectWithChat();
+    const usage = async (scope?: string) =>
+      (
+        await t.app.inject({
+          method: "GET",
+          url: `/api/projects/${slug}/chats/usage${scope ? `?scope=${scope}` : ""}`,
+        })
+      ).json().usage as Record<string, { contextTokens: number }>;
+
+    // While active: present by default and under `all`, absent under `archived`.
+    const before = await usage();
+    expect(before[id]?.contextTokens).toBeGreaterThan(0);
+    expect(await usage("archived")).toEqual({});
+    expect((await usage("all"))[id]).toEqual(before[id]);
+
+    await setArchived(slug, id, true);
+
+    // Archived: the default no longer pays for it, the other two scopes do — and
+    // the figures are IDENTICAL to the pre-archive ones. Scoping decides which
+    // transcripts get streamed; it must never change what streaming them yields.
+    expect(await usage()).toEqual({});
+    expect((await usage("archived"))[id]).toEqual(before[id]);
+    expect((await usage("all"))[id]).toEqual(before[id]);
+
+    // Unarchiving puts it back on the default path — the flag is the only input.
+    await setArchived(slug, id, false);
+    expect((await usage())[id]).toEqual(before[id]);
+  });
+
+  it("rejects an unknown usage scope rather than silently guessing one (#537)", async () => {
+    const { slug } = await projectWithChat();
+    const res = await t.app.inject({
+      method: "GET",
+      url: `/api/projects/${slug}/chats/usage?scope=everything`,
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
   it("clears the archived flag when the chat is deleted", async () => {
     const { slug, id } = await projectWithChat();
     await setArchived(slug, id, true);
