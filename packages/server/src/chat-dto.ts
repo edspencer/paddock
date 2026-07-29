@@ -58,8 +58,12 @@ export function isRecordedRoot(p: RunProvenance): boolean {
 
 /**
  * Build the `parentOf` resolver for {@link buildProjectChats} — the chat-list
- * parent edge, resolved in two tiers:
+ * parent edge, resolved in two tiers behind one override:
  *
+ *  0. `ParentDetachStore` — the user explicitly DETACHED this chat (#508). Checked
+ *     ahead of both tiers, because detach cannot be expressed by clearing an edge:
+ *     most live edges are INFERRED (tier 2), so a cleared edge is simply re-derived
+ *     on the next load. Detached ⇒ root, full stop.
  *  1. `RunProvenance.parentSessionId` — the RECORDED edge, stamped at creation.
  *  2. `MessageProvenanceStore.parentChat()` — a backfill for chats created before
  *     tier 1 existed, inferred from who injected the kickoff prompt.
@@ -82,8 +86,16 @@ export function makeParentResolver(
     parentChat(sessionId: string): Promise<{ project: string; sessionId: string; name?: string } | null>;
   },
   projectSlug: string,
+  /**
+   * Has the user detached this chat from its parent (#508)? Optional so the many
+   * call sites that predate detach — and the unit tests — stay correct without it;
+   * omitted means "nothing is detached".
+   */
+  isDetached?: (sessionId: string) => Promise<boolean>,
 ): (s: DiscoveredSession) => Promise<ChatParentRef | null> {
   return async (s: DiscoveredSession) => {
+    // Tier 0: an explicit detach beats everything, recorded or inferred.
+    if (isDetached && (await isDetached(s.sessionId).catch(() => false))) return null;
     const p = await runProvenance.get(s.sessionId).catch(() => undefined);
     // `parentProject` is a WORKSPACE KEY, and the root workspace's key is the
     // empty string — a falsy test here would discard every edge whose parent is
@@ -100,6 +112,33 @@ export function makeParentResolver(
     if (inferred.sessionId === s.sessionId) return null;
     return { ...inferred, project: inferred.project || projectSlug };
   };
+}
+
+/**
+ * Cap on how many chats one batch subtree operation may touch (#508). The client
+ * derives the set from a rendered subtree, so it is bounded by the chat list in
+ * practice; this is the "a hand-rolled request can't ask us to rewrite the whole
+ * sidecar" bound, not a UX limit.
+ */
+export const BATCH_SESSIONS_MAX = 500;
+
+/**
+ * Validate + normalise a batch route's `sessionIds` body field (#508).
+ *
+ * Returns the de-duplicated ids, or `null` when the body is unusable — which the
+ * routes turn into a 400. Deliberately ALL-OR-NOTHING: one malformed id fails the
+ * whole request rather than silently applying to the rest, because these
+ * operations are meant to keep a chat family in one state. Silently dropping an id
+ * would produce exactly the torn family the batch routes exist to prevent.
+ */
+export function normalizeBatchSessionIds(raw: unknown): string[] | null {
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > BATCH_SESSIONS_MAX) return null;
+  const seen = new Set<string>();
+  for (const v of raw) {
+    if (typeof v !== "string" || !SAFE_SESSION_ID.test(v)) return null;
+    seen.add(v);
+  }
+  return [...seen];
 }
 
 /** Claude Code's own preview cap (mirrors extractFirstMessagePreview). */
@@ -141,6 +180,18 @@ export type ChatUsage = {
   totalTokens: number;
   costUsd: number | null;
 };
+
+/**
+ * Which chats the bulk usage endpoint computes rings for (issue #537). Usage has
+ * no stored counter — it is derived by streaming each transcript end to end — so
+ * scoping the request to what the sidebar actually renders is the difference
+ * between a few MB and a few hundred. `active` is the default because the
+ * Archived group is collapsed on open.
+ */
+export const CHAT_USAGE_SCOPES = ["active", "archived", "all"] as const;
+
+/** One of {@link CHAT_USAGE_SCOPES}. */
+export type ChatUsageScope = (typeof CHAT_USAGE_SCOPES)[number];
 
 /**
  * Build the wire `ChatUsage` from a parsed {@link SessionTokenUsage} and the

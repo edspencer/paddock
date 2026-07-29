@@ -9,6 +9,7 @@ import {
   type Chat,
   type CurationConfig,
   type ChatUsage,
+  type ChatUsageScope,
   type CreateProjectInput,
   type DeviceFlowStart,
   type DirListing,
@@ -357,6 +358,66 @@ export const api = {
   },
 
   /**
+   * Archive or unarchive a WHOLE subtree in one call (#508) — the chat list's
+   * Shift-click archive. One request rather than N, so a parent and its
+   * descendants can't end up on different sides of the Archived divider when a
+   * call fails halfway.
+   */
+  async archiveProjectChats(
+    slug: string,
+    sessionIds: string[],
+    archived: boolean,
+  ): Promise<void> {
+    await req<{ ok: boolean; changed: string[] }>(
+      `${apiBase(slug)}/chats/batch/archive`,
+      { method: "POST", body: JSON.stringify({ sessionIds, archived }) },
+    );
+  },
+
+  /**
+   * Mark a WHOLE subtree read or unread in one call (#508). `unread: false` is
+   * "mark read" and does both halves server-side (clears the manual override AND
+   * advances last-seen), so the derived unread signal can't immediately re-raise
+   * the cue.
+   */
+  async markChatsUnread(slug: string, sessionIds: string[], unread: boolean): Promise<void> {
+    await req<{ ok: boolean; changed: string[] }>(
+      `${apiBase(slug)}/chats/batch/unread`,
+      { method: "POST", body: JSON.stringify({ sessionIds, unread }) },
+    );
+  },
+
+  /**
+   * Delete a WHOLE subtree in one call (#508). Filesystem deletes can't be
+   * atomic, so the server attempts every id and reports which ones it couldn't
+   * remove — the caller surfaces a partial failure rather than assuming the
+   * family is gone.
+   */
+  async deleteProjectChats(
+    slug: string,
+    sessionIds: string[],
+  ): Promise<{ removed: string[]; failed: string[] }> {
+    const res = await req<{ ok: boolean; removed: string[]; failed: string[] }>(
+      `${apiBase(slug)}/chats/batch/delete`,
+      { method: "POST", body: JSON.stringify({ sessionIds }) },
+    );
+    return { removed: res.removed ?? [], failed: res.failed ?? [] };
+  },
+
+  /**
+   * Detach a chat from its parent (#508), promoting it — with its own nested
+   * chats — to the top level of the chat tree. Persisted as an override that
+   * beats both parent-resolution tiers, so it survives a reload; `detached:false`
+   * re-attaches.
+   */
+  async detachProjectChat(slug: string, sessionId: string, detached: boolean): Promise<void> {
+    await req<{ ok: boolean; detached: boolean }>(
+      `${apiBase(slug)}/chats/${encodeURIComponent(sessionId)}/detach`,
+      { method: "POST", body: JSON.stringify({ detached }) },
+    );
+  },
+
+  /**
    * Promote a chat into a new project (issue #20). Creates the project and
    * re-homes the chat's transcript into it. `promoted:false` means the project
    * was created but the transcript couldn't be moved.
@@ -484,16 +545,22 @@ export const api = {
   },
 
   /**
-   * Bulk context-window usage for every chat in a project, keyed by session id
-   * (issue #116). Fetched separately from the chat list so the ProjectView can
-   * render immediately and fill in the per-chat usage rings (issue #77)
-   * afterwards — the per-session transcript parse this needs is what made project
-   * switching slow. Sessions with no usage data are absent from the map.
+   * Bulk context-window usage for a project's chats, keyed by session id (issue
+   * #116). Fetched separately from the chat list so the ProjectView can render
+   * immediately and fill in the per-chat usage rings (issue #77) afterwards — the
+   * per-session transcript parse this needs is what made project switching slow.
+   * Sessions with no usage data are absent from the map.
+   *
+   * `scope` picks WHICH chats to pay for (issue #537). The server defaults to
+   * `active`; archived rings live inside a collapsed group, so we only ask for
+   * them once it is expanded. On a live-scale project the archived chats are ~72%
+   * of the transcript bytes streamed.
    */
-  async chatUsage(slug: string): Promise<Record<string, ChatUsage>> {
+  async chatUsage(slug: string, scope?: ChatUsageScope): Promise<Record<string, ChatUsage>> {
+    const qs = scope ? `?scope=${scope}` : "";
     const { usage } = await req<{
       usage: Record<string, ChatUsage>;
-    }>(`${apiBase(slug)}/chats/usage`);
+    }>(`${apiBase(slug)}/chats/usage${qs}`);
     return usage;
   },
 

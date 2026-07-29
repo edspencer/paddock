@@ -34,7 +34,7 @@ import {
 import { relativeTime } from "../lib/format";
 import { clearLastTab, toSubPath, writeLastTab } from "../lib/lastTab";
 import { readForkParent, writeForkParent } from "../lib/forkLineage";
-import { buildChatTree, flatForest, withAncestors } from "../lib/chatTree";
+import { buildChatTree, descendantIds, flatForest, withAncestors } from "../lib/chatTree";
 import { readCollapsedChats, writeCollapsedChats } from "../lib/collapsedChats";
 import { useChatViewPrefs } from "./ProjectView/useChatViewPrefs";
 import type { GitProjectStatus } from "../lib/types";
@@ -180,7 +180,26 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
   const [sessionsOpen, setSessionsOpen] = useState(false);
 
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [deletingChat, setDeletingChat] = useState<Chat | null>(null);
+  /**
+   * The chat delete awaiting confirmation. `ids` is what will actually be
+   * removed — just the chat, or (on a Shift-click) the chat plus every
+   * descendant. Carried alongside the chat so the dialog can COUNT what it's
+   * about to destroy: shift-deleting a fan-out takes out chats that may not even
+   * be on screen (the parent can be collapsed), and there is no undo.
+   */
+  const [deletingChat, setDeletingChat] = useState<{
+    chat: Chat;
+    ids: string[];
+    /**
+     * Nested chats that will SURVIVE the delete and be promoted to the top level
+     * by it. Non-zero whenever the chat has descendants the action isn't taking:
+     * a plain click on a parent (which never took them), or a Shift-click while a
+     * search has narrowed the rendered tree to a couple of matching children.
+     * The dialog says so — orphaning twenty chats is not something an
+     * irreversible action should do without mentioning it.
+     */
+    orphanCount: number;
+  } | null>(null);
   // The chat awaiting a fork-name in the naming dialog (issue #279); null when
   // the dialog is closed.
   const [forkingChat, setForkingChat] = useState<Chat | null>(null);
@@ -237,13 +256,39 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
   // WS-owned `runningSessions` (kept owned here so the fleet-wide set doesn't
   // fragment) to flag chats that finish a turn while unfocused. `onSeen` clears
   // the manual unread override (#458) whenever a chat is marked seen.
-  const { unread, markSeen } = useUnreadChats({
+  /**
+   * The reversible bulk form of {@link clearManualUnread} (#508). A subtree
+   * "mark read" can fail, and when it does every optimistic change has to come
+   * back — including this mirror. Returns the undo rather than letting the hook
+   * guess: only this component knows which of those chats were actually flagged.
+   */
+  const clearManualUnreadMany = useCallback(
+    (ids: string[]) => {
+      const target = new Set(ids);
+      const wasFlagged = chats
+        .filter((c) => target.has(c.sessionId) && c.unread)
+        .map((c) => c.sessionId);
+      if (!wasFlagged.length) return () => {};
+      setChats((prev) =>
+        prev.map((c) => (target.has(c.sessionId) && c.unread ? { ...c, unread: false } : c)),
+      );
+      const restore = new Set(wasFlagged);
+      return () =>
+        setChats((prev) =>
+          prev.map((c) => (restore.has(c.sessionId) ? { ...c, unread: true } : c)),
+        );
+    },
+    [chats],
+  );
+
+  const { unread, markManySeen } = useUnreadChats({
     slug,
     chats,
     view,
     activeSession,
     runningSessions,
     onSeen: clearManualUnread,
+    onManySeen: clearManualUnreadMany,
   });
 
   // The chats actually rendered in the sidebar, after applying the search
@@ -291,9 +336,26 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
     // durably readable yet is omitted from this disk-derived map (the read
     // race). Merging preserves any live turn-complete seed (issue #164) so its
     // ring doesn't vanish when the same-instant disk re-read comes back empty;
-    // the disk figures overwrite the seed for sessions it does have.
+    // the disk figures overwrite the seed for sessions it does have. It also
+    // means the scoped fetches below compose: each one only ever ADDS rings.
     if (usage) setUsageBySession((prev) => ({ ...prev, ...usage }));
   }, [slug]);
+
+  // The archived half of the rings (issue #537). `loadUsage` above asks for the
+  // server's default `active` scope, because the Archived group is collapsed on
+  // open and its rings are never rendered — yet computing them meant streaming
+  // ~72% of the project's transcript bytes on every project open AND after every
+  // completed turn, per open tab. So archived usage is fetched lazily, the first
+  // time the group is actually expanded (see the effect below).
+  const loadArchivedUsage = useCallback(async () => {
+    const usage = await api.chatUsage(slug, "archived").catch(() => null);
+    if (usage) setUsageBySession((prev) => ({ ...prev, ...usage }));
+  }, [slug]);
+
+  // Whether this project's archived rings have been asked for yet — so a turn
+  // completing re-freshes them only for someone who has the group open, rather
+  // than quietly reinstating the full-corpus scan for everyone.
+  const archivedUsageWanted = useRef(false);
 
   const load = useCallback(async () => {
     setLoadErr(null);
@@ -316,8 +378,23 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
     setProject(null);
     setGitStatus(null);
     setUsageBySession({});
+    archivedUsageWanted.current = false;
     void load();
   }, [slug, load]);
+
+  // Lazy archived rings (issue #537). Keyed on the EXPANDED STATE rather than on
+  // the click handler, because three different things open this group: the user
+  // toggling it, archiving a chat (`archiveChat`), and deep-linking into an
+  // archived chat (the auto-expand effect below). Watching the state covers all
+  // of them by construction — hanging the fetch off the disclosure button would
+  // leave the rings blank in exactly the cases where a user went looking for an
+  // archived chat. `loadArchivedUsage` is slug-scoped, so switching projects with
+  // the group left open refetches for the new project.
+  useEffect(() => {
+    if (!archivedOpen) return;
+    archivedUsageWanted.current = true;
+    void loadArchivedUsage();
+  }, [archivedOpen, loadArchivedUsage]);
 
   // Sticky last tab: persist the current in-project sub-path for this project
   // whenever the URL (view / session / file) changes, so the bare
@@ -368,7 +445,9 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
     void refreshGit();
     // A completed turn changes the chat's context fill — refresh its ring (#116).
     void loadUsage();
-  }, [slug, refreshGit, loadUsage]);
+    // …and the archived ones too, but only if they are on screen (#537).
+    if (archivedUsageWanted.current) void loadArchivedUsage();
+  }, [slug, refreshGit, loadUsage, loadArchivedUsage]);
 
   const loadHistory = useCallback(
     (sessionId: string) => api.projectChatMessages(slug, sessionId),
@@ -616,13 +695,51 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
 
   const confirmDeleteChat = useCallback(async () => {
     if (!deletingChat) return;
-    const id = deletingChat.sessionId;
-    await api.deleteProjectChat(slug, id);
-    setChats((prev) => prev.filter((c) => c.sessionId !== id));
-    // If the deleted chat is the one open, drop back to a fresh "new chat".
-    if (activeSession === id) navigate(`${base}/chat`, { replace: true });
+    const { ids } = deletingChat;
+    // One chat keeps the plain route; a subtree goes through the batch route so a
+    // failure partway can't leave half a family deleted with nothing to report.
+    // Either way we only drop the ids the server says it actually REMOVED — a
+    // chat that failed to delete stays in the list rather than silently vanishing
+    // from the UI while its transcript is still on disk.
+    let removed: string[];
+    if (ids.length === 1) {
+      await api.deleteProjectChat(slug, ids[0]);
+      removed = ids;
+    } else {
+      const res = await api.deleteProjectChats(slug, ids);
+      removed = res.removed;
+      if (res.failed.length) {
+        setLoadErr(
+          `Deleted ${res.removed.length} of ${ids.length} chats — ${res.failed.length} could not be removed.`,
+        );
+      }
+    }
+    const gone = new Set(removed);
+    setChats((prev) => prev.filter((c) => !gone.has(c.sessionId)));
+    // If the open chat was among them, drop back to a fresh "new chat". `base`
+    // is "" at the root and `/projects/:slug` otherwise (#516).
+    if (activeSession && gone.has(activeSession)) {
+      navigate(`${base}/chat`, { replace: true });
+    }
     setDeletingChat(null);
   }, [deletingChat, slug, base, activeSession, navigate]);
+
+  /** Open the count-aware delete confirmation for a chat (or a whole subtree). */
+  const requestDeleteChat = useCallback(
+    (chat: Chat, ids: string[]) => {
+      // Descendants are counted against the UNFILTERED list, narrowed to this
+      // chat's own population (active or archived) because that's what the tree
+      // nests at. Anything attached but not being deleted gets orphaned to the
+      // root, and the dialog has to say so.
+      const population = chats.filter((c) => !!c.archived === !!chat.archived);
+      const taking = new Set(ids);
+      const orphanCount = descendantIds(population, chat.sessionId).filter(
+        (id) => !taking.has(id),
+      ).length;
+      setDeletingChat({ chat, ids, orphanCount });
+    },
+    [chats],
+  );
 
   const renameChat = useCallback(
     async (chat: Chat) => {
@@ -644,23 +761,55 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
   // Archive or unarchive a chat (#95): toggle the persisted flag and optimistically
   // move it between the current list and the Archived section. Non-destructive —
   // the transcript is untouched and the chat stays fully usable.
+  // `sessionIds` is the set to apply to (#508): the chat alone on a plain click,
+  // or the chat plus every descendant on a Shift-click. A subtree always lives in
+  // ONE population — the tree is built per population, so an active chat's
+  // descendants are all active too — which is why the rollback can restore every
+  // id to the clicked chat's previous `archived` value rather than snapshotting
+  // each one.
   const archiveChat = useCallback(
-    async (chat: Chat) => {
+    async (chat: Chat, sessionIds: string[]) => {
       const next = !chat.archived;
-      setChats((prev) =>
-        prev.map((c) => (c.sessionId === chat.sessionId ? { ...c, archived: next } : c)),
-      );
+      const ids = new Set(sessionIds);
+      setChats((prev) => prev.map((c) => (ids.has(c.sessionId) ? { ...c, archived: next } : c)));
       // When archiving the last one out of an expanded section, keep it open so
       // the user sees where it went; opening/closing is otherwise user-driven.
       if (next) setArchivedOpen(true);
       try {
-        await api.archiveProjectChat(slug, chat.sessionId, next);
+        if (sessionIds.length === 1) await api.archiveProjectChat(slug, sessionIds[0], next);
+        else await api.archiveProjectChats(slug, sessionIds, next);
       } catch (e) {
-        // Roll back the optimistic move on failure.
+        // Roll back the whole optimistic move on failure — one call, one undo.
         setChats((prev) =>
-          prev.map((c) => (c.sessionId === chat.sessionId ? { ...c, archived: chat.archived } : c)),
+          prev.map((c) => (ids.has(c.sessionId) ? { ...c, archived: chat.archived } : c)),
         );
         setLoadErr(e instanceof Error ? e.message : "Failed to archive chat");
+      }
+    },
+    [slug],
+  );
+
+  /**
+   * Detach a chat from its parent (#508): promote it — with its own nested chats
+   * — to the top level. Optimistically drop the local `parent` edge so the row
+   * jumps out immediately; the server override is what makes it stick across a
+   * reload (clearing an edge alone wouldn't: most edges are re-derived by
+   * inference, see the detach route).
+   */
+  const detachChat = useCallback(
+    async (chat: Chat) => {
+      const parent = chat.parent;
+      if (!parent) return;
+      setChats((prev) =>
+        prev.map((c) => (c.sessionId === chat.sessionId ? { ...c, parent: undefined } : c)),
+      );
+      try {
+        await api.detachProjectChat(slug, chat.sessionId, true);
+      } catch (e) {
+        setChats((prev) =>
+          prev.map((c) => (c.sessionId === chat.sessionId ? { ...c, parent } : c)),
+        );
+        setLoadErr(e instanceof Error ? e.message : "Failed to detach chat");
       }
     },
     [slug],
@@ -693,26 +842,36 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
   // a turn finished while away), mark it seen (clears the manual flag + advances
   // last-seen). Otherwise set the manual unread override so it resurfaces its cue
   // later ("look at it again in the morning"), optimistically with rollback.
+  // `sessionIds` is the subtree set (#508); the CLICKED chat decides the
+  // direction for the whole set, so a mixed family ends up uniformly read or
+  // uniformly unread rather than each row flipping its own way.
   const toggleUnread = useCallback(
-    async (chat: Chat) => {
+    async (chat: Chat, sessionIds: string[]) => {
       if (unread.has(chat.sessionId)) {
-        markSeen(chat.sessionId);
+        markManySeen(sessionIds);
         return;
       }
-      setChats((prev) =>
-        prev.map((c) => (c.sessionId === chat.sessionId ? { ...c, unread: true } : c)),
+      const ids = new Set(sessionIds);
+      // Unlike archive, a subtree's manual-unread flags are NOT uniform, so the
+      // rollback restores each chat's own prior value.
+      const before = new Map(
+        chats.filter((c) => ids.has(c.sessionId)).map((c) => [c.sessionId, c.unread]),
       );
+      setChats((prev) => prev.map((c) => (ids.has(c.sessionId) ? { ...c, unread: true } : c)));
       try {
-        await api.markChatUnread(slug, chat.sessionId, true);
+        if (sessionIds.length === 1) await api.markChatUnread(slug, sessionIds[0], true);
+        else await api.markChatsUnread(slug, sessionIds, true);
       } catch (e) {
-        // Roll back the optimistic flag on failure.
+        // Roll back the optimistic flags on failure.
         setChats((prev) =>
-          prev.map((c) => (c.sessionId === chat.sessionId ? { ...c, unread: false } : c)),
+          prev.map((c) =>
+            ids.has(c.sessionId) ? { ...c, unread: before.get(c.sessionId) } : c,
+          ),
         );
         setLoadErr(e instanceof Error ? e.message : "Failed to mark chat unread");
       }
     },
-    [unread, markSeen, slug],
+    [unread, markManySeen, slug, chats],
   );
 
   // Partition the (search-filtered) chat list into the current (top) and
@@ -963,9 +1122,10 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
           setPromotingChat={root ? setPromotingChat : undefined}
           renameChat={renameChat}
           archiveChat={archiveChat}
-          setDeletingChat={setDeletingChat}
+          requestDeleteChat={requestDeleteChat}
           starChat={starChat}
           toggleUnread={toggleUnread}
+          detachChat={detachChat}
         />
 
         {/* Main: tabs + content. The active tab is derived from the URL. */}
@@ -1221,11 +1381,54 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
         }}
         onClose={() => setDeleteOpen(false)}
       />
+      {/* Chat delete confirmation. The copy is COUNT-AWARE (#508): a Shift-click
+          on a parent deletes its whole subtree, and a collapsed parent means
+          those chats aren't even on screen — so the dialog names the number
+          rather than saying "this chat" and taking out twenty-one. */}
       <ConfirmDialog
         open={deletingChat !== null}
-        title="Delete chat?"
-        message="This chat's transcript will be permanently removed. This cannot be undone."
-        confirmLabel="Delete chat"
+        title={
+          deletingChat && deletingChat.ids.length > 1
+            ? `Delete ${deletingChat.ids.length} chats?`
+            : "Delete chat?"
+        }
+        message={
+          deletingChat && (
+            <>
+              {deletingChat.ids.length > 1 ? (
+                <>
+                  <span className="font-medium text-ink dark:text-ink-dark">
+                    {deletingChat.chat.name}
+                  </span>{" "}
+                  and its {deletingChat.ids.length - 1} nested chat
+                  {deletingChat.ids.length - 1 === 1 ? "" : "s"} will be permanently removed —
+                  their transcripts too.
+                </>
+              ) : (
+                "This chat's transcript will be permanently removed."
+              )}
+              {/* Survivors, named. Reachable two ways: a plain click on a parent
+                  (which never takes its children), and a Shift-click while a
+                  search has narrowed the tree to a few matching children. Either
+                  way the rest are re-homed to the top level by an action that
+                  can't be undone, so the dialog says it out loud. */}
+              {deletingChat.orphanCount > 0 && (
+                <>
+                  {" "}
+                  Its {deletingChat.orphanCount} other nested chat
+                  {deletingChat.orphanCount === 1 ? "" : "s"} will be kept and moved to the top
+                  level.
+                </>
+              )}{" "}
+              This cannot be undone.
+            </>
+          )
+        }
+        confirmLabel={
+          deletingChat && deletingChat.ids.length > 1
+            ? `Delete ${deletingChat.ids.length} chats`
+            : "Delete chat"
+        }
         onConfirm={confirmDeleteChat}
         onClose={() => setDeletingChat(null)}
       />

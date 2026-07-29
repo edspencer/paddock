@@ -91,7 +91,7 @@ return `{ error, code }` with `404` (not found), `409` (exists), or `400`
 |--------|------|---------|------|
 | GET | `/api/projects/:slug/chats` | List the project's chats (no usage rings). | gated |
 | POST | `/api/projects/:slug/chats` | Thin: validate the project + return the WS target → `201`. The real chat is created lazily over `/ws`. | gated |
-| GET | `/api/projects/:slug/chats/usage` | Bulk context-window usage for all chats, keyed by session id. | gated |
+| GET | `/api/projects/:slug/chats/usage` | Bulk context-window usage keyed by session id. `?scope=` `active` (default) / `archived` / `all` — usage is derived by streaming each transcript, so the collapsed Archived group is not paid for until it is opened (#537). | gated |
 | GET | `/api/projects/:slug/chats/:sessionId/messages` | A chat's messages, enriched with tool details. | gated |
 | GET | `/api/projects/:slug/chats/:sessionId/context` | Context-window usage from the transcript's last turn. | gated |
 | GET | `/api/projects/:slug/chats/:sessionId/subagents/:toolUseId/messages` | Transcript of a sub-agent launched from a Task/Agent tool block. | gated |
@@ -101,6 +101,10 @@ return `{ error, code }` with `404` (not found), `409` (exists), or `400`
 | POST | `/api/projects/:slug/chats/:sessionId/archive` | Archive/unarchive (non-destructive) — body `{ archived? }`. | gated |
 | POST | `/api/projects/:slug/chats/:sessionId/seen` | Mark seen (server-side read-state) — body `{ when? }`. | gated |
 | POST | `/api/projects/:slug/chats/:sessionId/promote` | Promote the chat into a NEW project (re-homes its transcript) — body `{ name, slug?, group?, summary?, domain? }` → `201 { project, promoted, sessionId }`. | gated |
+| POST | `/api/projects/:slug/chats/:sessionId/detach` | Detach a chat from its parent so it renders at the top level of the chat tree — body `{ detached? }`. An override checked AHEAD of both parent-resolution tiers (recorded + inferred); `false` re-attaches. | gated |
+| POST | `/api/projects/:slug/chats/batch/archive` | Archive/unarchive a SET of chats in one atomic sidecar write — body `{ sessionIds, archived? }` → `{ ok, archived, changed }`. | gated |
+| POST | `/api/projects/:slug/chats/batch/unread` | Mark a SET of chats read/unread — body `{ sessionIds, unread? }`. `unread:false` also advances each last-seen watermark. | gated |
+| POST | `/api/projects/:slug/chats/batch/delete` | Delete a SET of chats — body `{ sessionIds }` → `{ ok, removed, failed }`. Best-effort per chat: filesystem deletes can't be atomic, so the response names what it couldn't remove. | gated |
 
 ---
 

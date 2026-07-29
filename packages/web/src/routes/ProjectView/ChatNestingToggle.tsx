@@ -1,3 +1,4 @@
+import { Tooltip } from "../../components/Tooltip";
 import { ListIcon, TreeIcon } from "../../components/icons";
 import type { ChatViewPrefs } from "./useChatViewPrefs";
 
@@ -21,20 +22,24 @@ export function ChatNestingToggle({
 }: Pick<ChatViewPrefs, "nested" | "setNested" | "runningOnly">) {
   const label = nested ? "Show chats as a flat list" : "Nest chats under the chat that created them";
   return (
-    <button
-      type="button"
-      onClick={() => setNested(!nested)}
-      disabled={runningOnly}
-      aria-label={label}
-      aria-pressed={nested}
-      title={runningOnly ? "Running-only view is always flat" : label}
-      className="btn-subtle h-9 w-9 shrink-0 p-0 disabled:cursor-not-allowed disabled:opacity-40"
-    >
-      {nested ? (
-        <ListIcon width={16} height={16} className="mx-auto" />
-      ) : (
-        <TreeIcon width={16} height={16} className="mx-auto" />
-      )}
-    </button>
+    // Tooltip, not `title=` (#508 replaced the native ones). Note it wraps the
+    // button rather than living inside it: a disabled button fires no pointer
+    // events, and "why is this greyed out?" is exactly when the hint is needed.
+    <Tooltip content={runningOnly ? "Running-only view is always flat" : label}>
+      <button
+        type="button"
+        onClick={() => setNested(!nested)}
+        disabled={runningOnly}
+        aria-label={label}
+        aria-pressed={nested}
+        className="btn-subtle h-9 w-9 shrink-0 p-0 disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        {nested ? (
+          <ListIcon width={16} height={16} className="mx-auto" />
+        ) : (
+          <TreeIcon width={16} height={16} className="mx-auto" />
+        )}
+      </button>
+    </Tooltip>
   );
 }

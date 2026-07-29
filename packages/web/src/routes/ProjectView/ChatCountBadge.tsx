@@ -1,3 +1,5 @@
+import { Tooltip } from "../../components/Tooltip";
+
 /**
  * The chat-list header count — informational, and a filter.
  *
@@ -53,49 +55,54 @@ export function ChatCountBadge({
       aria-label="Chat count and running filter"
       className="flex items-stretch overflow-hidden rounded-full border border-paddock-300/70 text-[11px] leading-none dark:border-paddock-700"
     >
-      <button
-        type="button"
-        onClick={() => setRunningOnly(false)}
-        aria-pressed={!runningOnly}
-        title={runningOnly ? "Show all chats" : totalTitle}
-        aria-label={runningOnly ? `Show all ${activeTotal} chats` : `${activeTotal} chats`}
-        className={`px-1.5 py-0.5 transition-colors ${
-          runningOnly
-            ? "text-paddock-400 hover:bg-paddock-200/70 hover:text-paddock-700 dark:hover:bg-paddock-700 dark:hover:text-paddock-100"
-            : "bg-paddock-200/70 font-medium text-paddock-600 dark:bg-paddock-800 dark:text-paddock-200"
-        }`}
-      >
-        {totalLabel}
-      </button>
-      <button
-        type="button"
-        onClick={() => setRunningOnly(!runningOnly)}
-        aria-pressed={runningOnly}
-        title={
+      <Tooltip content={runningOnly ? "Show all chats" : totalTitle} className="items-stretch">
+        <button
+          type="button"
+          onClick={() => setRunningOnly(false)}
+          aria-pressed={!runningOnly}
+          aria-label={runningOnly ? `Show all ${activeTotal} chats` : `${activeTotal} chats`}
+          className={`h-full px-1.5 py-0.5 transition-colors ${
+            runningOnly
+              ? "text-paddock-400 hover:bg-paddock-200/70 hover:text-paddock-700 dark:hover:bg-paddock-700 dark:hover:text-paddock-100"
+              : "bg-paddock-200/70 font-medium text-paddock-600 dark:bg-paddock-800 dark:text-paddock-200"
+          }`}
+        >
+          {totalLabel}
+        </button>
+      </Tooltip>
+      <Tooltip
+        content={
           runningOnly
             ? "Showing only running chats — click to show all"
             : `Show only the ${runningCount} chat${runningCount === 1 ? "" : "s"} running now`
         }
-        aria-label={`Show only running chats (${runningCount} running)`}
-        className={`flex items-center gap-1 border-l border-paddock-300/70 px-1.5 py-0.5 transition-colors dark:border-paddock-700 ${
-          runningOnly
-            ? "bg-accent font-semibold text-white"
-            : "font-medium text-accent hover:bg-accent/10"
-        }`}
+        className="items-stretch"
       >
-        {/* The same stepped spinner the per-chat rings use, so "running" looks
-            like one thing across the sidebar. `spin-eco` is already
-            prefers-reduced-motion aware (index.css). It STOPS at zero: the
-            badge survives an emptied filter so the user can get back out, and a
-            ring still spinning next to "0" would be claiming work that ended. */}
-        <span
-          aria-hidden="true"
-          className={`h-2.5 w-2.5 rounded-full border-[1.5px] border-current ${
-            runningCount > 0 ? "spin-eco border-t-transparent" : "opacity-60"
+        <button
+          type="button"
+          onClick={() => setRunningOnly(!runningOnly)}
+          aria-pressed={runningOnly}
+          aria-label={`Show only running chats (${runningCount} running)`}
+          className={`flex h-full items-center gap-1 border-l border-paddock-300/70 px-1.5 py-0.5 transition-colors dark:border-paddock-700 ${
+            runningOnly
+              ? "bg-accent font-semibold text-white"
+              : "font-medium text-accent hover:bg-accent/10"
           }`}
-        />
-        {runningCount}
-      </button>
+        >
+          {/* The same stepped spinner the per-chat rings use, so "running" looks
+              like one thing across the sidebar. `spin-eco` is already
+              prefers-reduced-motion aware (index.css). It STOPS at zero: the
+              badge survives an emptied filter so the user can get back out, and
+              a ring still spinning next to "0" would claim work that ended. */}
+          <span
+            aria-hidden="true"
+            className={`h-2.5 w-2.5 rounded-full border-[1.5px] border-current ${
+              runningCount > 0 ? "spin-eco border-t-transparent" : "opacity-60"
+            }`}
+          />
+          {runningCount}
+        </button>
+      </Tooltip>
     </span>
   );
 }
