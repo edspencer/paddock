@@ -30,7 +30,12 @@ async function hOverflow(page: Page): Promise<number> {
   );
 }
 
-test("landing: no horizontal overflow; nav drawer opens and closes", async ({ page }) => {
+test("front door + projects grid: no horizontal overflow; nav drawer opens and closes", async ({
+  page,
+}) => {
+  // `/` is the ROOT workspace's Home (#531). Kept here deliberately: this test is
+  // about what a phone user sees on ARRIVAL plus the global nav drawer, which is
+  // shell chrome. The grid's own overflow check follows, at its new URL.
   await page.goto("/");
   // Nothing spills past the right edge of the phone.
   expect(await hOverflow(page)).toBeLessThanOrEqual(1);
@@ -39,8 +44,8 @@ test("landing: no horizontal overflow; nav drawer opens and closes", async ({ pa
   // are off-canvas (translated out of the viewport), not just visually hidden.
   const menu = page.getByRole("button", { name: /Open menu/i });
   await expect(menu).toBeVisible();
-  // Scope to the sidebar (`<aside>` = complementary role): the landing page also
-  // renders empty-state "New Project" CTAs, so target the drawer's own button.
+  // Scope to the sidebar (`<aside>` = complementary role): the grid also renders
+  // its own "New Project" button, so target the drawer's own button.
   const navDrawerAction = page
     .getByRole("complementary")
     .getByRole("button", { name: "New Project" });
@@ -53,6 +58,13 @@ test("landing: no horizontal overflow; nav drawer opens and closes", async ({ pa
   // Closing it (via the drawer's X) slides it back off-canvas.
   await page.getByRole("button", { name: /Close menu/i }).tap();
   await expect(navDrawerAction).not.toBeInViewport();
+
+  // The projects grid — the root workspace's Projects tab — must also fit the
+  // phone. (This is the assertion the original `/` check carried before the
+  // grid moved off the front door.)
+  await page.goto("/projects");
+  await expect(page.getByRole("button", { name: "New Project" }).last()).toBeVisible();
+  expect(await hOverflow(page)).toBeLessThanOrEqual(1);
 });
 
 test("project view: composer reachable; session list is a drawer; a turn sends", async ({
@@ -149,9 +161,13 @@ test("Project Settings tab fits the phone", async ({ page }) => {
 test("mobile screenshots (visual capture)", async ({ page }) => {
   mkdirSync(SHOTS, { recursive: true });
 
+  // `/` = the root workspace's Home; the grid is its Projects tab at /projects.
   await page.goto("/");
-  await page.screenshot({ path: `${SHOTS}01-landing.png`, fullPage: true });
+  await page.screenshot({ path: `${SHOTS}01-root-home.png`, fullPage: true });
+  await page.goto("/projects");
+  await page.screenshot({ path: `${SHOTS}01b-projects-grid.png`, fullPage: true });
 
+  await page.goto("/");
   await page.getByRole("button", { name: /Open menu/i }).tap();
   // Let the 200ms slide-in settle so the capture isn't mid-transition.
   await expect(

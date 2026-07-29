@@ -11,8 +11,10 @@ import { test, expect } from "@playwright/test";
  */
 
 // Create a project via the New Project modal, picking an area. Returns its slug.
+// The grid (and its "New Project" button) is the ROOT workspace's Projects tab at
+// `/projects`; `/` is root Home (#531).
 async function createProject(page: import("@playwright/test").Page, name: string, area?: string) {
-  await page.goto("/");
+  await page.goto("/projects");
   await page.getByRole("button", { name: /New Project/i }).first().click();
   const dialog = page.locator("form").filter({ hasText: "New project" });
   await dialog.getByPlaceholder(/Garage Water Heater/i).fill(name);
@@ -55,9 +57,11 @@ test("send a chat, watch it stream, reload and see history", async ({ page }) =>
   });
 });
 
-test("collapse an area section on the landing page", async ({ page }) => {
+test("collapse an area section on the projects grid", async ({ page }) => {
   await createProject(page, "E2E Collapsible", "House");
-  await page.goto("/");
+  // The grid moved to `/projects` (the root workspace's Projects tab) — `/` is
+  // root Home now. The area sections are still the thing under test.
+  await page.goto("/projects");
 
   // The House section header (a button with the area label). Ensure it starts
   // expanded (collapse state persists in localStorage across runs).
@@ -68,8 +72,8 @@ test("collapse an area section on the landing page", async ({ page }) => {
   }
   await expect(header).toHaveAttribute("aria-expanded", "true");
 
-  // The project CARD lives in the landing grid's <section> (a `.card` link) — as
-  // opposed to the always-visible AppShell sidebar link to the same project.
+  // The project CARD lives in the grid's <section> (a `.card` link) — as opposed
+  // to the always-visible AppShell sidebar link to the same project.
   const card = page.locator("section a.card").filter({ hasText: "E2E Collapsible" });
   await expect(card).toBeVisible();
 
@@ -82,7 +86,7 @@ test("collapse an area section on the landing page", async ({ page }) => {
 test("filter projects by a domain tag", async ({ page }) => {
   // Create a project carrying a unique tag via the API for determinism, then
   // verify the tag filter view shows it. (We use the UI tag click to navigate.)
-  await page.goto("/");
+  await page.goto("/projects");
   // Create a project with a domain tag through the modal.
   await page.getByRole("button", { name: /New Project/i }).first().click();
   const dialog = page.locator("form").filter({ hasText: "New project" });

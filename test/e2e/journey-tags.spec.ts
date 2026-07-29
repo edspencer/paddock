@@ -8,6 +8,10 @@ import { seedProject, uniq } from "./helpers";
  * navigate to /tags/:tag — a flat grid of only the projects carrying that tag,
  * with an active filter chip (clearable via ×) and an empty state for an
  * unknown tag.
+ *
+ * `/tags/:tag` is still the STANDALONE grid (its own `<h1>` + blurb). Clearing
+ * the filter now returns to `/projects` — the root workspace's Projects tab —
+ * rather than `/`, which is root Home (#531).
  */
 
 test("deep-link /tags/:tag filters to matching projects + shows the active chip", async ({
@@ -32,10 +36,11 @@ test("deep-link /tags/:tag filters to matching projects + shows the active chip"
   const clear = page.getByRole("button", { name: new RegExp(`Clear ${tag} filter`) });
   await expect(clear).toBeVisible();
 
-  // Clearing returns to the full landing (area sections, no filter chip).
+  // Clearing returns to the full grid at /projects (area sections, no chip).
   await clear.click();
-  await expect(page).toHaveURL(/\/$/);
+  await expect(page).toHaveURL(/\/projects$/);
   await expect(page.getByText("Filtered by")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Unsorted/ })).toBeVisible();
 });
 
 test("unknown tag shows the empty 'No projects tagged' state with Clear filter", async ({
@@ -46,7 +51,7 @@ test("unknown tag shows the empty 'No projects tagged' state with Clear filter",
   const clear = page.getByRole("button", { name: /Clear filter/i });
   await expect(clear).toBeVisible();
   await clear.click();
-  await expect(page).toHaveURL(/\/$/);
+  await expect(page).toHaveURL(/\/projects$/);
 });
 
 test("clicking a tag chip on a project card navigates to its tag filter (not the project)", async ({
@@ -58,7 +63,7 @@ test("clicking a tag chip on a project card navigates to its tag filter (not the
   const name = uniq("TG Chip");
   seedProject({ name, domain: [tag] });
 
-  await page.goto("/");
+  await page.goto("/projects");
   const card = page.locator("section a.card").filter({ hasText: name });
   await expect(card).toBeVisible();
 
