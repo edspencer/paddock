@@ -49,6 +49,24 @@ export const SearchIcon = (p: IconProps) => (
   </svg>
 );
 
+/**
+ * The chat list's two layouts, drawn to read as a pair at 16px: same three rows,
+ * the only difference being whether rows 2 and 3 hang off an elbow.
+ */
+export const TreeIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M4 5h16" />
+    <path d="M8 5v6h12" />
+    <path d="M8 11v6h12" />
+  </svg>
+);
+
+export const ListIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M4 6h16M4 12h16M4 18h16" />
+  </svg>
+);
+
 export const FolderIcon = (p: IconProps) => (
   <svg {...base(p)}>
     <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />

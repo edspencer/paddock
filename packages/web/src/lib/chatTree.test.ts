@@ -3,6 +3,7 @@ import {
   buildChatTree,
   countNodes,
   descendantIds,
+  flatForest,
   flattenTree,
   subtreeIds,
   withAncestors,
@@ -154,6 +155,51 @@ describe("countNodes (#491)", () => {
 
   it("is 0 for an empty forest", () => {
     expect(countNodes([])).toBe(0);
+  });
+});
+
+describe("flatForest", () => {
+  it("never nests, even when the parent edge is right there", () => {
+    // The case naive filtering gets wrong: a running child under its running
+    // parent. buildChatTree would indent it; the flat view must not.
+    const roots = flatForest([chat("parent", "10"), chat("child", "11", "parent")]);
+    expect(ids(roots)).toEqual(["child", "parent"]);
+    expect(roots.every((n) => n.children.length === 0)).toBe(true);
+    expect(roots.every((n) => n.depth === 0)).toBe(true);
+    expect(roots.every((n) => n.descendantCount === 0)).toBe(true);
+  });
+
+  it("floats stars GLOBALLY — the flat list's rule, not the tree's", () => {
+    // Nested, `child-starred` could only float within its sibling group. Flat,
+    // there are no groups, so it goes to the very top despite being oldest.
+    const roots = flatForest([
+      chat("parent", "12"),
+      chat("child-new", "13", "parent"),
+      chat("child-starred", "09", "parent", { starred: true }),
+    ]);
+    expect(ids(roots)).toEqual(["child-starred", "child-new", "parent"]);
+  });
+
+  it("orders by each chat's OWN mtime — no subtree roll-up", () => {
+    // `old` has the freshest descendant, which is what lifts it to the top of
+    // the tree. Flat, nothing rolls up and it sorts on its own 08:00.
+    const roots = flatForest([
+      chat("recent", "12"),
+      chat("old", "08"),
+      chat("busy-child", "14", "old"),
+    ]);
+    expect(ids(roots)).toEqual(["busy-child", "recent", "old"]);
+  });
+
+  it("counts every chat, and flattenTree passes it straight through", () => {
+    const roots = flatForest([chat("a", "10"), chat("b", "11", "a"), chat("c", "12", "b")]);
+    expect(countNodes(roots)).toBe(3);
+    // Collapse is inert with no children — a collapsed id hides nothing.
+    expect(ids(flattenTree(roots, new Set(["a"])))).toEqual(["c", "b", "a"]);
+  });
+
+  it("is empty for an empty list", () => {
+    expect(flatForest([])).toEqual([]);
   });
 });
 

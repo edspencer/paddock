@@ -7,6 +7,9 @@ import { ProvenanceBadge } from "../../components/ProvenanceBadge";
 import { PaneResizer, usePaneWidth } from "../../components/PaneResizer";
 import { Tooltip } from "../../components/Tooltip";
 import { relativeTime, sessionUsageOf } from "../../lib/format";
+import { ChatCountBadge } from "./ChatCountBadge";
+import { ChatNestingToggle } from "./ChatNestingToggle";
+import type { ChatViewPrefs } from "./useChatViewPrefs";
 import {
   ArchiveIcon,
   BranchIcon,
@@ -62,6 +65,8 @@ export function SessionSidebar({
   activeChats,
   archivedChats,
   activeTotal,
+  runningCount,
+  viewPrefs,
   archivedOpen,
   setArchivedOpen,
   collapsedChats,
@@ -95,6 +100,9 @@ export function SessionSidebar({
   activeChats: ChatNode[];
   archivedChats: ChatNode[];
   activeTotal: number;
+  /** Chats in this project with a live turn — the split badge's right half. */
+  runningCount: number;
+  viewPrefs: ChatViewPrefs;
   archivedOpen: boolean;
   setArchivedOpen: Dispatch<SetStateAction<boolean>>;
   collapsedChats: ReadonlySet<string>;
@@ -532,9 +540,12 @@ export function SessionSidebar({
               type="text"
               value={chatSearch}
               onChange={(e) => setChatSearch(e.target.value)}
-              placeholder="Search chats"
+              // Short placeholder, full accessible name: the toolbar now carries
+              // three controls, and at the default 256px sidebar "Search chats"
+              // renders clipped mid-word.
+              placeholder="Search"
               aria-label="Search chats"
-              className="input py-1.5 pl-8 pr-8"
+              className={`input py-1.5 pl-8 ${searching ? "pr-8" : "pr-2"}`}
             />
             {searching && (
               <Tooltip content="Clear search" className="absolute right-1.5 top-1/2 -translate-y-1/2">
@@ -549,6 +560,11 @@ export function SessionSidebar({
               </Tooltip>
             )}
           </div>
+          <ChatNestingToggle
+            nested={viewPrefs.nested}
+            setNested={viewPrefs.setNested}
+            runningOnly={viewPrefs.runningOnly}
+          />
           <Tooltip content="New chat">
             <button
               type="button"
@@ -571,10 +587,18 @@ export function SessionSidebar({
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="mb-1 flex items-center justify-between pr-3">
             <span className="section-label">Chats</span>
-            {activeTotal > 0 && (
-              <span className="text-[11px] text-paddock-400">
-                {searching ? `${activeCount}/${activeTotal}` : activeTotal}
-              </span>
+            {/* Also rendered while the running filter is ON with nothing left to
+                show — the badge is the way back out, so it must not vanish
+                along with the rows it was filtering. */}
+            {(activeTotal > 0 || viewPrefs.runningOnly) && (
+              <ChatCountBadge
+                activeTotal={activeTotal}
+                shownCount={activeCount}
+                searching={searching}
+                runningCount={runningCount}
+                runningOnly={viewPrefs.runningOnly}
+                setRunningOnly={viewPrefs.setRunningOnly}
+              />
             )}
           </div>
           {/* Current (non-archived) chats. When the Archived section is expanded
@@ -621,16 +645,42 @@ export function SessionSidebar({
                 No saved chats yet. Send a message to start one.
               </p>
             )}
-            {chats.length > 0 && searching && visibleChats.length === 0 && !fallbackChat && (
+            {/* The running filter is sticky and global, so you can switch to a
+                project where nothing is running and meet an empty sidebar with
+                no clue why. This says why, and offers the way out — without it,
+                a stuck filter is indistinguishable from a broken chat list.
+                Shown whenever the filter is on and nothing is running, even if
+                the pinned open chat keeps a row on screen. */}
+            {chats.length > 0 && viewPrefs.runningOnly && runningCount === 0 && (
               <p className="px-2 py-2 text-sm text-paddock-500">
-                No chats match “{chatSearch.trim()}”.
+                No chats are running.{" "}
+                <button
+                  type="button"
+                  onClick={() => viewPrefs.setRunningOnly(false)}
+                  className="text-accent underline underline-offset-2 hover:no-underline"
+                >
+                  Show all chats
+                </button>
               </p>
             )}
-            {chats.length > 0 && !searching && activeChats.length === 0 && !fallbackChat && (
-              <p className="px-2 py-2 text-sm text-paddock-500">
-                No active chats — see Archived below.
-              </p>
-            )}
+            {chats.length > 0 &&
+              (!viewPrefs.runningOnly || runningCount > 0) &&
+              searching &&
+              visibleChats.length === 0 &&
+              !fallbackChat && (
+                <p className="px-2 py-2 text-sm text-paddock-500">
+                  No chats match “{chatSearch.trim()}”.
+                </p>
+              )}
+            {chats.length > 0 &&
+              !viewPrefs.runningOnly &&
+              !searching &&
+              activeChats.length === 0 &&
+              !fallbackChat && (
+                <p className="px-2 py-2 text-sm text-paddock-500">
+                  No active chats — see Archived below.
+                </p>
+              )}
             {flattenTree(activeChats, effectiveCollapsed).map((n) => chatRow(n.chat, n))}
           </div>
           {/* Archived section (#95): a collapsible accordion pinned to the
