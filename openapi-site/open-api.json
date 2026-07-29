@@ -3,7 +3,7 @@
   "info": {
     "title": "Paddock HTTP API",
     "description": "HTTP API for Paddock — the keeper-agent platform (persistent chats, projects, unified triggers).\n\nThis document is **generated from the server's route schemas** via `@fastify/swagger`, so it\ntracks the code: a new or changed route with a schema shows up here automatically.\n\n**Live chat is WebSocket, not REST.** Sending a message, streaming the response, tool-call\nevents, cancel, slash-commands and the live queue all flow over `GET /ws`. This spec covers the\nHTTP surface: reads, project/chat/trigger/git management, instance config, and attachment\nupload/serve. The two-step attachment flow is: `POST .../chats/:sessionId/upload` (HTTP, here)\nthen reference the returned file ids in the `chat:send` WebSocket frame.\n\n## Authentication\n\nPaddock has no built-in login — authentication is provider-agnostic and handled at the edge (reverse proxy / IdP). **When these docs are served by the Paddock instance itself, behind your proxy, a `Try it out` request is a same-origin call that inherits your existing SSO session — it authenticates automatically, nothing to paste here.** Use the **Authorize** button only for the explicit-token path (a different origin, a programmatic client, or testing without the proxy).\n\nThis instance runs **jwt** mode: a signed token in the `Authorization` header, verified against the JWKS.",
-    "version": "0.51.0"
+    "version": "0.52.0"
   },
   "components": {
     "securitySchemes": {
@@ -1138,8 +1138,23 @@
         "tags": [
           "Chats"
         ],
-        "description": "Returns per-chat context-window usage keyed by session id, for all of a project's chats — the expensive data the chat list needs for its usage rings. Sessions with no usage data are omitted. Response: `{ usage: { <sessionId>: <usage> } }`.",
+        "description": "Returns per-chat context-window usage keyed by session id — the expensive data the chat list needs for its usage rings. Scoped by `scope`, which defaults to `active` (non-archived chats only): usage is derived by streaming each transcript, and archived rings are hidden behind a collapsed group, so computing them by default is wasted work (issue #537). Pass `scope=archived` when that group is expanded, or `scope=all` for the whole project. Sessions with no usage data are omitted. Response: `{ usage: { <sessionId>: <usage> } }`.",
         "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "archived",
+                "all"
+              ],
+              "default": "active"
+            },
+            "in": "query",
+            "name": "scope",
+            "required": false,
+            "description": "Which chats to compute usage for: `active` (non-archived, the default), `archived`, or `all`."
+          },
           {
             "schema": {
               "type": "string"
@@ -1770,6 +1785,245 @@
               "application/json": {
                 "schema": {
                   "description": "Object `{ ok, unread }` reflecting the stored flag.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/root/chats/{sessionId}/detach": {
+      "post": {
+        "summary": "Detach a project chat from its parent",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Promotes a nested chat to the top level of the chat tree, keeping its own descendants under it. Persisted as an explicit override that is checked AHEAD of both parent-resolution tiers (the recorded `RunProvenance.parentSessionId` and the inferred kickoff-message edge), so it survives a reload. Body `{ detached }` defaults to true; `false` re-attaches (the underlying edge was never destroyed). Responds 200 with `{ ok, detached }`.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": true,
+                "properties": {
+                  "detached": {
+                    "description": "Whether the chat should render as a root regardless of its parent edge. Defaults to true."
+                  }
+                },
+                "required": []
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "description": "Chat (session) id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ ok, detached }` with the resulting detached state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ ok, detached }` with the resulting detached state.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/root/chats/batch/archive": {
+      "post": {
+        "summary": "Archive or unarchive many project chats",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Applies a project chat's archived flag to a whole SET of chats (the nested chat list's shift-click subtree action, #508) in a single atomic sidecar write, so a parent and its descendants can't end up in different states. Body `{ sessionIds, archived }`; `archived` defaults to true. Each real transition into archived fires the project's onArchive triggers, exactly like the single-chat route. Responds 200 with `{ ok, archived, changed }` where `changed` lists the ids whose flag actually moved.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "properties": {
+                  "sessionIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Chat (session) ids to apply the flag to. 1–500 entries."
+                  },
+                  "archived": {
+                    "description": "Target archived state; defaults to true when omitted."
+                  }
+                },
+                "required": [
+                  "sessionIds"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ ok, archived, changed }`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ ok, archived, changed }`.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/root/chats/batch/unread": {
+      "post": {
+        "summary": "Mark many project chats read or unread",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Applies the read/unread action to a whole SET of chats (the nested chat list's shift-click subtree action, #508) in a single atomic sidecar write. Body `{ sessionIds, unread }`; `unread` defaults to true. `unread: false` means \"mark read\": it clears each chat's manual unread override AND advances its last-seen watermark (the derived unread signal would otherwise immediately re-raise the cue). Responds 200 with `{ ok, unread, changed }`.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "properties": {
+                  "sessionIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Chat (session) ids to apply the flag to. 1–500 entries."
+                  },
+                  "unread": {
+                    "description": "Whether to flag the chats unread. Defaults to true."
+                  }
+                },
+                "required": [
+                  "sessionIds"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ ok, unread, changed }`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ ok, unread, changed }`.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/root/chats/batch/delete": {
+      "post": {
+        "summary": "Delete many project chats",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Deletes a SET of project chats (the nested chat list's shift-click subtree delete, #508): removes each transcript JSONL and clears its archived/starred/unread/detached flags. Body `{ sessionIds }`. Filesystem deletes cannot be atomic, so this is best-effort per chat: every id is attempted and the response reports `{ ok, removed, failed }` — `removed` lists the ids whose transcript was deleted, `failed` the ids that errored.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "properties": {
+                  "sessionIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Chat (session) ids to delete. 1–500 entries."
+                  }
+                },
+                "required": [
+                  "sessionIds"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ ok, removed, failed }`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ ok, removed, failed }`.",
                   "type": "object",
                   "additionalProperties": true
                 }
@@ -2931,8 +3185,23 @@
         "tags": [
           "Chats"
         ],
-        "description": "Returns per-chat context-window usage keyed by session id, for all of a project's chats — the expensive data the chat list needs for its usage rings. Sessions with no usage data are omitted. Response: `{ usage: { <sessionId>: <usage> } }`.",
+        "description": "Returns per-chat context-window usage keyed by session id — the expensive data the chat list needs for its usage rings. Scoped by `scope`, which defaults to `active` (non-archived chats only): usage is derived by streaming each transcript, and archived rings are hidden behind a collapsed group, so computing them by default is wasted work (issue #537). Pass `scope=archived` when that group is expanded, or `scope=all` for the whole project. Sessions with no usage data are omitted. Response: `{ usage: { <sessionId>: <usage> } }`.",
         "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "archived",
+                "all"
+              ],
+              "default": "active"
+            },
+            "in": "query",
+            "name": "scope",
+            "required": false,
+            "description": "Which chats to compute usage for: `active` (non-archived, the default), `archived`, or `all`."
+          },
           {
             "schema": {
               "type": "string"
@@ -3563,6 +3832,245 @@
               "application/json": {
                 "schema": {
                   "description": "Object `{ ok, unread }` reflecting the stored flag.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/chats/{sessionId}/detach": {
+      "post": {
+        "summary": "Detach a project chat from its parent",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Promotes a nested chat to the top level of the chat tree, keeping its own descendants under it. Persisted as an explicit override that is checked AHEAD of both parent-resolution tiers (the recorded `RunProvenance.parentSessionId` and the inferred kickoff-message edge), so it survives a reload. Body `{ detached }` defaults to true; `false` re-attaches (the underlying edge was never destroyed). Responds 200 with `{ ok, detached }`.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": true,
+                "properties": {
+                  "detached": {
+                    "description": "Whether the chat should render as a root regardless of its parent edge. Defaults to true."
+                  }
+                },
+                "required": []
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "description": "Chat (session) id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ ok, detached }` with the resulting detached state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ ok, detached }` with the resulting detached state.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/chats/batch/archive": {
+      "post": {
+        "summary": "Archive or unarchive many project chats",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Applies a project chat's archived flag to a whole SET of chats (the nested chat list's shift-click subtree action, #508) in a single atomic sidecar write, so a parent and its descendants can't end up in different states. Body `{ sessionIds, archived }`; `archived` defaults to true. Each real transition into archived fires the project's onArchive triggers, exactly like the single-chat route. Responds 200 with `{ ok, archived, changed }` where `changed` lists the ids whose flag actually moved.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "properties": {
+                  "sessionIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Chat (session) ids to apply the flag to. 1–500 entries."
+                  },
+                  "archived": {
+                    "description": "Target archived state; defaults to true when omitted."
+                  }
+                },
+                "required": [
+                  "sessionIds"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ ok, archived, changed }`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ ok, archived, changed }`.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/chats/batch/unread": {
+      "post": {
+        "summary": "Mark many project chats read or unread",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Applies the read/unread action to a whole SET of chats (the nested chat list's shift-click subtree action, #508) in a single atomic sidecar write. Body `{ sessionIds, unread }`; `unread` defaults to true. `unread: false` means \"mark read\": it clears each chat's manual unread override AND advances its last-seen watermark (the derived unread signal would otherwise immediately re-raise the cue). Responds 200 with `{ ok, unread, changed }`.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "properties": {
+                  "sessionIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Chat (session) ids to apply the flag to. 1–500 entries."
+                  },
+                  "unread": {
+                    "description": "Whether to flag the chats unread. Defaults to true."
+                  }
+                },
+                "required": [
+                  "sessionIds"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ ok, unread, changed }`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ ok, unread, changed }`.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/chats/batch/delete": {
+      "post": {
+        "summary": "Delete many project chats",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Deletes a SET of project chats (the nested chat list's shift-click subtree delete, #508): removes each transcript JSONL and clears its archived/starred/unread/detached flags. Body `{ sessionIds }`. Filesystem deletes cannot be atomic, so this is best-effort per chat: every id is attempted and the response reports `{ ok, removed, failed }` — `removed` lists the ids whose transcript was deleted, `failed` the ids that errored.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "properties": {
+                  "sessionIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Chat (session) ids to delete. 1–500 entries."
+                  }
+                },
+                "required": [
+                  "sessionIds"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ ok, removed, failed }`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ ok, removed, failed }`.",
                   "type": "object",
                   "additionalProperties": true
                 }
