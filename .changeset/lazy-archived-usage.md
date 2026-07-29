@@ -30,7 +30,11 @@ sessions in the corpus through both cached paths and then forcing GC retained
 
 Measured on that corpus (v0.51.0 build vs. this one, same data, interleaved):
 project open 4.18 s → **1.23 s** cold and 0.40–0.54 s → **0.014–0.021 s** warm.
-Expanding Archived costs 3.05 s once, then 0.020 s. Behaviour is unchanged:
+Expanding Archived costs 3.05 s once, then 0.020 s. The two changes are not
+redundant: scoping alone takes the warm call to 0.047–0.095 s and is the only
+thing that moves cold; the cache cap takes it the rest of the way, and is worth
+15× on its own for a same-scope call (0.44 s → 0.029 s at `scope=all`).
+Behaviour is unchanged:
 `active ∪ archived` is exactly the old response — same 234 keys, zero differing
 fields — and the 234 rendered rings are byte-identical, in the same order,
 between the two builds.
