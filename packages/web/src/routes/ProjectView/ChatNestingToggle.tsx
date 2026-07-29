@@ -20,7 +20,11 @@ export function ChatNestingToggle({
   setNested,
   runningOnly,
 }: Pick<ChatViewPrefs, "nested" | "setNested" | "runningOnly">) {
-  const label = nested ? "Show chats as a flat list" : "Nest chats under the chat that created them";
+  // "Switch to a …" deliberately, not "Show chats as …": the mobile drawer's
+  // opener is labelled "Show chats", and any label starting that way is both an
+  // ambiguous accessible name and a locator collision (it broke the mobile E2E
+  // journey). It also matches the theme toggle's "Switch to light mode" exactly.
+  const label = nested ? "Switch to a flat chat list" : "Switch to a nested chat list";
   return (
     // Tooltip, not `title=` (#508 replaced the native ones). Note it wraps the
     // button rather than living inside it: a disabled button fires no pointer

@@ -994,6 +994,18 @@ describe("ProjectView: running filter + view options", () => {
     expect(localStorage.getItem("paddock:chatView:runningOnly")).toBe("1");
   });
 
+  it("does not collide with the mobile drawer's 'Show chats' button", async () => {
+    // The layout toggle was first labelled "Show chats as a flat list", which
+    // made `getByRole("button", { name: /Show chats/i })` ambiguous — the mobile
+    // journey taps that to open the session drawer, and it broke. Two controls
+    // whose accessible names start the same way is a real a11y problem, not just
+    // a locator one, so the guard lives here rather than in the E2E spec.
+    threeChats();
+    renderAt("/projects/p/chat");
+    await screen.findByText("Manager");
+    expect(screen.getAllByRole("button", { name: /Show chats/i })).toHaveLength(1);
+  });
+
   it("toggles the chat tree between nested and flat, and remembers it", async () => {
     threeChats();
     const first = renderAt("/projects/p/chat");
@@ -1002,20 +1014,20 @@ describe("ProjectView: running filter + view options", () => {
 
     // One button, labelled with the layout it will switch TO — the same
     // convention as the theme toggle in AppShell.
-    fireEvent.click(screen.getByRole("button", { name: /Show chats as a flat list/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Switch to a flat chat list/i }));
 
     expect(twisty("Manager")).toBeNull();
     expect(screen.getByText("Spawned worker")).toBeInTheDocument();
     expect(localStorage.getItem("paddock:chatView:nested")).toBe("0");
     // Now it offers the way back.
-    expect(screen.getByRole("button", { name: /Nest chats under/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Switch to a nested chat list/i })).toBeInTheDocument();
 
     // Sticky across a remount.
     first.unmount();
     renderAt("/projects/p/chat");
     await screen.findByText("Manager");
     expect(twisty("Manager")).toBeNull();
-    expect(screen.getByRole("button", { name: /Nest chats under/i })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: /Switch to a nested chat list/i })).toHaveAttribute(
       "aria-pressed",
       "false",
     );
@@ -1030,7 +1042,7 @@ describe("ProjectView: running filter + view options", () => {
     fireEvent.click(runningToggle());
     // Disabled rather than silently disagreeing with the list: offering "switch
     // to flat" while the list is ALREADY flat would misreport the state.
-    const layout = screen.getByRole("button", { name: /Show chats as a flat list/i });
+    const layout = screen.getByRole("button", { name: /Switch to a flat chat list/i });
     expect(layout).toBeDisabled();
     expect(layout).toHaveAttribute("aria-pressed", "true");
 
