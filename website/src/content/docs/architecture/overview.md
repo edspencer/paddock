@@ -138,9 +138,9 @@ flowchart TB
     L["drafts · chat model · row heights · unread · queued · theme"]
   end
   subgraph C3["3 · Server JSON sidecars — durable app state"]
-    A["archive-state.json"]
-    R["read-state.json"]
-    Q["queued-message.json"]
+    A["archive-state · star-state\nread-state · unread-state"]
+    R["run-provenance · message-provenance\nparent-detach"]
+    Q["queued-message · schedule-sessions\ntrigger-sessions"]
     S["sweep-state.json"]
   end
   Claude["Claude Code CLI"] -->|writes| C1
@@ -155,12 +155,12 @@ The chat transcript is a JSONL file **written by the Claude Code CLI**, never by
 Paddock — Paddock only reads and renders it. Claude Code stores transcripts under
 `~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl`, where `<encoded-cwd>` is the
 agent's absolute working directory with every non-`[A-Za-z0-9]` char replaced by
-`-` (`transcripts.ts:28`). **The working directory *is* the session key** — no
+`-` (`encodeProjectDir()` in `transcripts.ts`). **The working directory *is* the session key** — no
 manual tagging.
 
 To make transcripts portable (so a project directory is self-contained and can be
 backed up / moved), Paddock replaces that encoded directory with a **symlink to
-`<projectDir>/.chats/`** via `ensureProjectChats()` (`transcripts.ts:51`). It is
+`<projectDir>/.chats/`** via `ensureProjectChats()` (`transcripts.ts`). It is
 idempotent and self-healing: it creates `.chats/`, then repoints a drifted
 symlink, migrates a pre-existing real transcript directory (EXDEV-safe `cp`+`rm`
 across mounts), or just creates the symlink — and never throws. For a repo-backed
@@ -174,7 +174,7 @@ Paddock reads transcripts two ways:
   enriched with `toolUseResult` sidecar metadata for per-tool renderers (Edit line
   numbers, Bash exit codes, Grep/Read counts — see the `tooldetails.ts` recovery
   pass).
-- **Preview** — `readFirstUserText()` (`transcripts.ts:108`) streams the JSONL
+- **Preview** — `readFirstUserText()` (`transcripts.ts`) streams the JSONL
   line-by-line and stops at the first user message, returning the *untruncated*
   first prompt (Claude Code's own preview is capped at 100 chars — issue #62).
 
@@ -192,26 +192,47 @@ losing it costs a draft or a scroll position, nothing more:
 | `paddock:draft:<sessionId \| "new:"+slug>` | Composer draft text |
 | `paddock:chatModel:<sessionId \| "new:"+slug>` | Per-chat model selection |
 | `paddock:queued:*` / `paddock:queuedts:*` | Optimistic queued-message mirror |
-| `paddock:lastSeen:*` | Optimistic unread mirror |
-| `paddock:itemHeight` (via `itemHeight.ts`) | Virtualized row heights |
-| `paddock:lastTab:*`, `paddock:area`, `paddock:theme`, `paddock:fork:*` | Open tab, area, theme, fork lineage |
+| `paddock:itemHeight`, `paddock:panewidth` | Virtualized row heights, sidebar width |
+| `paddock:lastTab:*`, `paddock:theme`, `paddock:fork:*`, `paddock:chatView`, `paddock:chatsCollapsed` | Open tab, theme, fork lineage, nested/flat chat list, collapsed subtrees |
+| `paddock:lastSeen:*` | **Legacy only** — see the caution below |
 
-Two of these — queued messages and read-state — have since been promoted to
-**server sidecars** (Class 3) so they follow a user across devices; the
-localStorage entries now act as an optimistic client mirror.
+Queued messages have since been promoted to a **server sidecar** (Class 3) so they
+follow a user across devices; the localStorage entries act as an optimistic mirror.
+
+:::caution[Read-state is *not* mirrored in localStorage any more]
+`paddock:lastSeen:*` was a **persistent** mirror combined with
+`readLastSeen = max(server, local)`. That made devices diverge permanently: a local
+value the server never received marked a chat read on that device only and never
+synced upward, so two devices on one account reported different unread counts
+indefinitely. #488 separated *persistence* from *optimism* — the optimistic instant
+clear now lives in the **same in-memory map** the server payload folds into
+(`lib/lastSeen.ts`), so every reload re-derives from server truth and divergence is
+structurally impossible rather than merely repaired. A failed `POST …/seen` rolls the
+bump back (`revertSeenLocally`) instead of silently sticking. The surviving
+localStorage touchpoints exist **only** for the one-time backfill of pre-#488 values
+(`lib/lastSeenBackfill.ts`) and go away once that migration drains.
+:::
 
 ### Class 3 — Server JSON sidecars (durable app state)
 
 State that Paddock owns but that isn't part of the transcript lives in small,
-write-through JSON sidecar files in `cfg.dataDir`. Three follow one shared
-pattern, plus the sweep watermark:
+write-through JSON sidecar files in `cfg.dataDir`. There are **eleven** — ten sharing
+one pattern, plus the sweep watermark. All ten are constructed in `buildApp()` and
+handed to the route + WS layers in the dep bag, so this is the complete set:
 
 | Store | File | Persists | Keying / authority |
 |---|---|---|---|
-| `ArchiveStore` (`archive.ts:29`) | `archive-state.json` | Per-chat archived flag (issue #95) | `keyOf(agent, sessionId)` NUL-separated; stored as a JSON **array** of archived keys only. Sole source of truth for the flag. |
-| `ReadStateStore` (`read-state.ts:45`) | `read-state.json` (mode `0o600`) | Per-chat last-seen timestamp / unread (issues #160/#161/#189) | `keyOf(username, agent, sessionId)`: real identity → user-scoped; anonymous/`none` mode → a **shared bucket** (`agent\0sessionId`). Stored as a JSON **object**. `setLastSeen` is monotonic (only advances). |
-| `QueuedMessageStore` (`queued-message.ts:37`) | `queued-message.json` | Per-chat queued follow-up message (issues #91/#197/#245) | `keyOf(agent, sessionId)`. `take()` is an **atomic read-and-delete** (no `await` between get and delete) so two concurrent drains can't double-send. Server-authoritative. |
-| `SweepService` watermark (`sweep.ts:64`) | `sweep-state.json` | Per-project last-swept session mtime + timestamp | Keyed by slug; drives the activity gate ([§6](#6-the-sweeper)). |
+| `ArchiveStore` (`archive.ts`) | `archive-state.json` | Per-chat archived flag (issue #95) | `keyOf(agent, sessionId)` NUL-separated; stored as a JSON **array** of archived keys only. Sole source of truth for the flag. |
+| `StarStore` (`star.ts`) | `star-state.json` | Per-chat starred/pinned flag (#373) | `keyOf(agent, sessionId)`. Orthogonal to archive — starred chats float to the top of *both* the active and Archived lists. |
+| `ReadStateStore` (`read-state.ts`) | `read-state.json` (mode `0o600`) | Per-chat last-seen timestamp (issues #160/#161/#189) | `keyOf(username, agent, sessionId)`: real identity → user-scoped; anonymous/`none` mode → a **shared bucket** (`agent\0sessionId`). Stored as a JSON **object**. `setLastSeen` is monotonic (only advances). |
+| `UnreadStore` (`unread.ts`) | `unread-state.json` | Per-user manual "unread" override (#458) | Layered *on top of* read-state so a chat can be re-flagged unread after its last turn was already seen. Cleared whenever the chat is marked seen. |
+| `ParentDetachStore` (`parent-detach.ts`) | `parent-detach.json` | Explicit "detached from its parent" flag (#508) | Checked **ahead of both** parent-resolution tiers. Detach cannot be expressed by clearing an edge — most live edges are *inferred* and would just be re-derived on the next load. See [Provenance](/concepts/provenance/). |
+| `RunProvenanceStore` (`run-provenance.ts`) | `run-provenance.json` | Per-chat creation provenance (#261) — origin, spawn depth, and the recorded parent edge (#485) | Keyed by `sessionId` alone. Feeds the depth gate ([§5](#5-mcp-injection)) and the nested chat list. |
+| `MessageProvenanceStore` (`message-provenance.ts`) | `message-provenance.json` | Per-**message** provenance (#290) — *who* injected each machine-added turn | The per-message analog of `runProvenance`; also the backfill source for an inferred parent edge. |
+| `QueuedMessageStore` (`queued-message.ts`) | `queued-message.json` | Per-chat queued follow-up message (issues #91/#197/#245) | `keyOf(agent, sessionId)`. `take()` is an **atomic read-and-delete** (no `await` between get and delete) so two concurrent drains can't double-send. Server-authoritative. |
+| `ScheduleSessionStore` (`schedule-session.ts`) | `schedule-sessions.json` | The one chat an accreting schedule resumes into (#265) | Maps a `resume_session: true` schedule to its owned chat across fires. |
+| `TriggerSessionStore` (`trigger-session.ts`) | `trigger-sessions.json` | The owned chat of a `run.session: "resume"` trigger (Epic T / T1) | Rebinds that trigger's chat after a restart. |
+| `SweepService` watermark (`sweep.ts`, `STATE_FILE`) | `sweep-state.json` | Per-project last-swept session mtime + timestamp | Keyed by slug; drives the activity gate ([§6](#6-the-sweeper)). |
 
 **Shared sidecar pattern.** Each is a lightweight, corruption-tolerant JSON
 sidecar: lazy single-load into an in-memory `Map`/`Set` via `ensureLoaded()`
@@ -221,8 +242,16 @@ interleave, and non-throwing reads that degrade to a default. New durable app
 state should follow this same shape.
 
 > Implementation note: `QueuedMessageStore`'s key separator is a space, not the
-> NUL byte the other two use (`queued-message.ts:24`) — a benign inconsistency,
-> but don't assume a uniform separator across all three.
+> NUL byte the others use (see its `keyOf`) — a benign inconsistency, but don't
+> assume a uniform separator across all of them.
+
+:::caution[A workspace key can be the empty string]
+Several of these are keyed by, or carry, a **workspace key** — and the root
+workspace's key is `""` ([Workspaces](/concepts/workspaces/)). So `if (!slug)` is a
+**bug** wherever a workspace key is being tested: it silently drops the root. Test
+`!== undefined` / `!== null` explicitly. `makeParentResolver` in `chat-dto.ts` carries
+a comment marking exactly this trap on the recorded-edge check.
+:::
 
 ---
 
