@@ -9,6 +9,13 @@
  * thin public wrappers (`lastTurnCompletedAt`, `listProjectRuns`, …) that thread
  * `this.cfg.stateDir`, and its internal fork/promote/attribute methods call the
  * write helpers here directly.
+ *
+ * The two unread-badge reads take a {@link JobsDirIndex} instead of a `stateDir`
+ * (#529): they run on nearly every request, and re-parsing every record each time
+ * was 61% of all busy server CPU. The index owns the directory and keeps the parse
+ * incremental; these functions are pure folds over it. The write helpers below
+ * still take `stateDir` — they are rare, and the index self-heals from their
+ * mtime changes (`HerdctlService` also invalidates it explicitly at each site).
  */
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -16,11 +23,7 @@ import YAML from "yaml";
 import { listJobs, type JobMetadata } from "@herdctl/core";
 import type { Project } from "./projects.js";
 import { keeperAgentName, keeperSlugFromAgent } from "./herdctl-agent-names.js";
-
-/** The shared jobs directory herdctl writes `job-*.yaml` records into. */
-function jobsDirOf(stateDir: string): string {
-  return path.join(stateDir, "jobs");
-}
+import { jobsDirOf, type JobsDirIndex } from "./herdctl-jobs-index.js";
 
 /**
  * Map each chat session id to the ISO timestamp of its most recent COMPLETED
@@ -39,37 +42,17 @@ function jobsDirOf(stateDir: string): string {
  * real completion. Session-mode turns (`openChatSession`) write no job record,
  * so their chats have no server timestamp and rely on the client live event.
  *
- * One `readdir` + per-file parse of the shared jobs dir — the same access
- * pattern as {@link reattributeSession}, far cheaper than a transcript scan.
+ * Reads through {@link JobsDirIndex}, which keeps the parse incremental
+ * (mtime+size keyed, completed records only) — see there for why that is safe
+ * and what it is worth. This function itself is a pure fold over the index.
  */
-export async function lastTurnCompletedAt(stateDir: string): Promise<Map<string, string>> {
-  const jobsDir = jobsDirOf(stateDir);
+export async function lastTurnCompletedAt(index: JobsDirIndex): Promise<Map<string, string>> {
   const out = new Map<string, string>();
-  let entries: string[];
-  try {
-    entries = await fs.readdir(jobsDir);
-  } catch {
-    return out; // no jobs dir yet (fresh instance)
+  for (const { sessionId, finishedAt } of await index.read()) {
+    // ISO-8601 UTC strings sort lexicographically in chronological order.
+    const prev = out.get(sessionId);
+    if (!prev || finishedAt > prev) out.set(sessionId, finishedAt);
   }
-  await Promise.all(
-    entries.map(async (name) => {
-      if (!name.endsWith(".yaml")) return;
-      let parsed: Record<string, unknown> | null = null;
-      try {
-        parsed = YAML.parse(await fs.readFile(path.join(jobsDir, name), "utf8")) as
-          | Record<string, unknown>
-          | null;
-      } catch {
-        return; // skip an unreadable/half-written record
-      }
-      const sid = parsed?.session_id;
-      const finished = parsed?.finished_at;
-      if (typeof sid !== "string" || typeof finished !== "string") return;
-      // ISO-8601 UTC strings sort lexicographically in chronological order.
-      const prev = out.get(sid);
-      if (!prev || finished > prev) out.set(sid, finished);
-    }),
-  );
   return out;
 }
 
@@ -87,45 +70,25 @@ export async function lastTurnCompletedAt(stateDir: string): Promise<Map<string,
  * promoted from scratch is grouped under its keeper slug (its keeper record).
  */
 export async function lastTurnCompletedAtByProject(
-  stateDir: string,
+  index: JobsDirIndex,
 ): Promise<Map<string, Map<string, string>>> {
-  const jobsDir = jobsDirOf(stateDir);
   const out = new Map<string, Map<string, string>>();
-  let entries: string[];
-  try {
-    entries = await fs.readdir(jobsDir);
-  } catch {
-    return out; // no jobs dir yet (fresh instance)
+  for (const { sessionId, finishedAt, agent } of await index.read()) {
+    if (agent === null) continue;
+    const slug = keeperSlugFromAgent(agent);
+    // only keeper (workspace) chats — skip sweeper/hook/trigger agents.
+    // `""` is the ROOT workspace's key, so compare against null explicitly: a
+    // falsy check would drop every root chat from the unread badge.
+    if (slug === null) continue;
+    let bySession = out.get(slug);
+    if (!bySession) {
+      bySession = new Map<string, string>();
+      out.set(slug, bySession);
+    }
+    // ISO-8601 UTC strings sort lexicographically in chronological order.
+    const prev = bySession.get(sessionId);
+    if (!prev || finishedAt > prev) bySession.set(sessionId, finishedAt);
   }
-  await Promise.all(
-    entries.map(async (name) => {
-      if (!name.endsWith(".yaml")) return;
-      let parsed: Record<string, unknown> | null = null;
-      try {
-        parsed = YAML.parse(await fs.readFile(path.join(jobsDir, name), "utf8")) as
-          | Record<string, unknown>
-          | null;
-      } catch {
-        return; // skip an unreadable/half-written record
-      }
-      const sid = parsed?.session_id;
-      const finished = parsed?.finished_at;
-      const agent = parsed?.agent;
-      if (typeof sid !== "string" || typeof finished !== "string" || typeof agent !== "string") {
-        return;
-      }
-      const slug = keeperSlugFromAgent(agent);
-      if (!slug) return; // only keeper (project) chats — skip scratch/sweeper
-      let bySession = out.get(slug);
-      if (!bySession) {
-        bySession = new Map<string, string>();
-        out.set(slug, bySession);
-      }
-      // ISO-8601 UTC strings sort lexicographically in chronological order.
-      const prev = bySession.get(sid);
-      if (!prev || finished > prev) bySession.set(sid, finished);
-    }),
-  );
   return out;
 }
 

@@ -125,7 +125,7 @@ function useProjectBadges(projects: Project[]): Map<string, ProjectBadge> {
 }
 
 export function AppShell() {
-  const { projects, rootProject, loading, upsert } = useProjects();
+  const { projects, loading, upsert } = useProjects();
   const { dark, toggle: toggleTheme } = useTheme();
   const [modalOpen, setModalOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
@@ -140,12 +140,14 @@ export function AppShell() {
   // hamburger fed by the Outlet context below), so the shell's separate brand
   // row is dropped there to avoid stacking two rows of chrome (#372). Other
   // routes (grid, tags) keep the shell's mobile brand bar.
-  // The root's flat top-level routes (#516) mount the SAME ProjectView, so they
-  // host their own header too — but only when there IS a root project (without
-  // one, `/` is the grid, which wants the shell's brand row).
+  // The root workspace's flat top-level routes (#516) mount the SAME ProjectView,
+  // so they host their own header too. Unconditional now: the root workspace
+  // always exists, so `/` is always root Home — and `/projects` is its Projects
+  // TAB (inside ProjectView), not the standalone grid page it used to be.
   const rootRoute =
-    Boolean(rootProject) &&
-    (location.pathname === "/" || location.pathname.startsWith("/chat"));
+    location.pathname === "/" ||
+    location.pathname === "/projects" ||
+    location.pathname.startsWith("/chat");
   const routeOwnsMobileHeader = location.pathname.startsWith("/projects/") || rootRoute;
 
   // The mobile nav is an off-canvas drawer; close it on any navigation so a
@@ -258,19 +260,18 @@ export function AppShell() {
             <PlusIcon width={16} height={16} />
             New Project
           </button>
-          {/* `/chat` is a root chat, and only exists on an instance that has a
-              root project — scratch one-offs were retired in #516 Phase 6. */}
-          {rootProject && (
-            <button className="btn-subtle w-full justify-start" onClick={() => navigate("/chat")}>
-              <ChatIcon width={16} height={16} />
-              New root chat
-            </button>
-          )}
+          {/* `/chat` is a root chat. Always available: the root workspace is the
+              instance's own directory, so it always exists — there is nothing to
+              gate on. (Scratch one-offs were retired in #516 Phase 6.) */}
+          <button className="btn-subtle w-full justify-start" onClick={() => navigate("/chat")}>
+            <ChatIcon width={16} height={16} />
+            New root chat
+          </button>
         </div>
 
         <div className="mt-5 mb-1 flex items-center justify-between pr-4">
-          {/* The grid moved off `/` to `/projects` when the root became a
-              project (#516), so the section label is the way back to it. */}
+          {/* `/` is the root workspace's Home, so the grid lives at `/projects`
+              (the root's children tab) — the section label is the way back. */}
           <NavLink to="/projects" className="section-label hover:text-accent">
             Projects
           </NavLink>

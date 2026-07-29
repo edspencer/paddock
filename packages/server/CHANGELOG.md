@@ -1,5 +1,105 @@
 # @paddock/server
 
+## 0.51.0
+
+### Minor Changes
+
+- [#533](https://github.com/edspencer/paddock/pull/533) [`407a70e`](https://github.com/edspencer/paddock/commit/407a70e1f6fd2f5aa24b9a8a38933957899d188b) Thanks [@edspencer](https://github.com/edspencer)! - The root is a workspace, not a project with a magic slug
+
+  Replaces the `__root` sentinel with a **workspace** model keyed by the path
+  relative to `projectsRoot`. The root workspace's key is the empty string — the
+  zero value already in the key space, not a reserved name — so `path.join(root,
+"")` resolves it and the resolution seam stops branching. Both copies of
+  `dirFor` are now the same one-liner, which makes the class of bug that shipped in
+  v0.49 (one copy missing the branch, 404ing every root file route) structurally
+  impossible.
+
+  **The root workspace always exists.** No `project.yaml` gate, no creation
+  endpoint, no enable card, and no `Project not found: __root` when you click New
+  chat on a fresh instance. `GET`/`POST /api/root-project` are gone; the root's
+  defaults are derived (its name is the projects-root directory basename) and a
+  record is written lazily, only when a setting actually changes.
+
+  **Workspace-scoped routes are now mounted twice** — `/api/root` (key `""`) and
+  `/api/projects/:slug` — from a single Fastify plugin. Same handlers, same
+  schemas, same error paths, so "the root behaves like a project" holds by
+  construction rather than by discipline.
+
+  `/` is the root workspace's Home, and the projects grid is its children tab at
+  `/projects`.
+
+  Also fixes three latent bugs the empty key exposed, all the same falsy-vs-absent
+  mistake: a chat whose parent was a root chat had its recorded parent edge
+  discarded (falling through to the inference tier and rendering as an orphan);
+  root chats were skipped by the recovery nudge, silently disabling Continue and
+  auto-re-drive; and root chats were dropped from the per-workspace unread badge.
+
+## 0.50.1
+
+### Patch Changes
+
+- [#532](https://github.com/edspencer/paddock/pull/532) [`87e3118`](https://github.com/edspencer/paddock/commit/87e3118b9a3db0665abf8c339a39ffd86e7555a4) Thanks [@edspencer](https://github.com/edspencer)! - devbox image: add `kubectl`. A keeper asked "is the deploy healthy?" needs one
+  binary to make a cluster legible — describe a pod, tail logs, check a rollout —
+  and no amount of credentials substitutes for the client being absent. Same shape
+  as the Docker CLI already in the image: the **client only**, with **no kubeconfig
+  and no cluster credentials** baked in; those are per-deployment and belong to the
+  operator. It also can't be added downstream, because `kubectl` is in none of the
+  apt sources the image carries, so a derived `apt-get install kubectl` fails
+  outright. Shipped as a pinned static binary (`KUBECTL_VERSION`, currently
+  `1.36.3`) with the per-arch SHA-256 pinned in the Dockerfile and verified at
+  build time, selected by `TARGETARCH` so the arm64 image gets an arm64 binary. No
+  new apt repository or trust root. Base is untouched; devbox grows ~60 MB on
+  ~4.9 GB.
+
+- [#526](https://github.com/edspencer/paddock/pull/526) [`cc0702c`](https://github.com/edspencer/paddock/commit/cc0702cda0ee09a34fd75160c72869f59bb19356) Thanks [@edspencer](https://github.com/edspencer)! - devbox image: add `python3`, `python3-pip`, `python3-venv`, `uv`, `jq` and
+  `rsync`. Python is the default reach for a ten-line data transform whatever the
+  surrounding project is written in, and `python3: not found` turned that into
+  "rewrite it in Node" every time; `jq` and `rsync` were the same gap from the
+  other end. The rule this follows is **interpreters and small CLI utilities in
+  the image, libraries in the project** — so no AI/data libraries are baked in;
+  `uv` is there to make a per-project venv cheap enough that they don't need to
+  be. `python3-venv` comes along because Debian marks the interpreter
+  `EXTERNALLY-MANAGED` (PEP 668), so a global `pip install` refuses and a venv is
+  the supported path. Base is untouched; devbox grows ~124 MB on ~4.9 GB.
+
+- [#530](https://github.com/edspencer/paddock/pull/530) [`c7c5155`](https://github.com/edspencer/paddock/commit/c7c51557f8fcffe11c6472db4a220344995eea17) Thanks [@edspencer](https://github.com/edspencer)! - Require `@herdctl/core` >= 5.27.0, whose `listJobs` is index-backed
+  (herdctl#415/#416). Core previously read and Zod-validated every `job-*.yaml`
+  sequentially and applied `filter.agent` only afterwards; it now filters, sorts
+  and pages against an incremental mtime-keyed index and fully parses only the
+  records it returns.
+
+  Measured on this instance's 1,996-record jobs directory, warm:
+  `GET /api/projects/:slug/runs` **1.47 s -> 0.15 s** (10x).
+
+  Note `GET /api/projects/:slug/triggers/runtime` is NOT improved by this bump
+  (1.28 s -> 1.12 s): `listRunsForAgents` calls `listJobs` with no filter and no
+  limit, so nothing is pushed down for the index to exploit. Core exposes only a
+  single-`agent` filter, so that path needs a separate Paddock-side change.
+
+- [#530](https://github.com/edspencer/paddock/pull/530) [`c7c5155`](https://github.com/edspencer/paddock/commit/c7c51557f8fcffe11c6472db4a220344995eea17) Thanks [@edspencer](https://github.com/edspencer)! - Cache the jobs-dir scan behind the unread badge (#529). `lastTurnCompletedAt` /
+  `lastTurnCompletedAtByProject` used to `readdir` + `YAML.parse` **every**
+  `job-*.yaml` on every `/api/projects`, `/api/projects/:slug` and `/chats`
+  request. On a real instance (1,996 records, 46.6 MB) a CPU profile put **61% of
+  all busy server CPU** in that one parse; because it is synchronous work on the
+  single event loop it pinned throughput at ~1.1 req/s and made an unrelated 2 ms
+  endpoint take ~0.9 s while a scan was in flight.
+
+  Both now read through a new `JobsDirIndex`, which keeps one entry per record
+  keyed on `mtimeMs` + `size`, so a warm scan only parses files it has never seen —
+  and is warmed at boot so the first page load doesn't pay for the cold pass. A
+  record is only cached once it has a `finished_at`: that is the point at which it
+  becomes immutable, so a still-running turn can never be memoized as final.
+  Behaviour is unchanged — same `session_id → max(finished_at)` mapping, same
+  per-project grouping, same skip-never-throw on a corrupt record; verified by
+  diffing every one of 281 `chatTurns` rows and 284 per-chat timestamps against
+  the old build on the same corpus.
+
+  Measured on that corpus: `GET /api/projects` 0.86 s → **0.036 s**,
+  `/api/projects/:slug/chats` 0.92 s → **0.086 s**, the projects grid's seven
+  parallel `/chats` calls 6.19 s → **0.13 s**, throughput at 8 concurrent
+  1.06 → **18.5 req/s**, head-of-line blocking of `/overview` 0.89 s → **0.04 s**,
+  and in-browser LCP on a project page 2.31 s → **0.33 s**.
+
 ## 0.50.0
 
 ### Minor Changes

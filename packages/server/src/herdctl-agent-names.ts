@@ -11,23 +11,36 @@
  */
 import type { Project } from "./projects.js";
 import { SWEEPER_DEFAULT_MODEL } from "./models.js";
+import { agentKeyFor, keyFromAgentKey } from "./project-paths.js";
 
 /**
- * Maps a project slug to its keeper agent name. Kept deterministic so the
+ * Maps a workspace key to its keeper agent name. Kept deterministic so the
  * runtime registration and runtime lookups always agree.
+ *
+ * The key is encoded through {@link agentKeyFor}, because the root workspace's
+ * key is `""` and a bare `keeper-` is not a legal herdctl agent name. Every
+ * builder below goes through the same encoding, so none of them needs a root
+ * branch. See `project-paths.ts` for why the encoding lives at this boundary
+ * rather than in the identity.
  */
 export function keeperAgentName(slug: string): string {
-  return `keeper-${slug}`;
+  return `keeper-${agentKeyFor(slug)}`;
 }
 
 /**
- * Inverse of {@link keeperAgentName}: recover a project slug from a keeper agent
- * name (`keeper-<slug>` → `<slug>`). Returns `null` for a non-keeper agent (e.g.
- * a sweeper or a trigger agent), which is how a scheduler-fired wake tells "this
- * is a chat to route back to a project" from "this is not a chat at all".
+ * Inverse of {@link keeperAgentName}: recover a workspace key from a keeper
+ * agent name (`keeper-<agentKey>` → `<key>`). Returns `null` for a non-keeper
+ * agent (e.g. a sweeper or a trigger agent), which is how a scheduler-fired wake
+ * tells "this is a chat to route back to a workspace" from "this is not a chat
+ * at all".
+ *
+ * **Callers must distinguish `null` from `""`.** The root workspace's key IS the
+ * empty string, so a falsy check (`if (!key) return;`) silently drops every root
+ * chat from wake/turn/job routing. Compare against `null` explicitly.
  */
 export function keeperSlugFromAgent(agentName: string): string | null {
-  return agentName.startsWith("keeper-") ? agentName.slice("keeper-".length) : null;
+  if (!agentName.startsWith("keeper-")) return null;
+  return keyFromAgentKey(agentName.slice("keeper-".length));
 }
 
 /**
@@ -43,7 +56,7 @@ export const SWEEPER_PREFIX = "sweeper-";
 
 /** Maps a project slug to its sweeper agent name. */
 export function sweeperAgentName(slug: string): string {
-  return `${SWEEPER_PREFIX}${slug}`;
+  return `${SWEEPER_PREFIX}${agentKeyFor(slug)}`;
 }
 
 /**
@@ -61,7 +74,7 @@ export const HOOK_AGENT_PREFIX = "hook-";
  * from a project's declared hooks, not by parsing this string.)
  */
 export function hookAgentName(slug: string, hookName: string): string {
-  return `${HOOK_AGENT_PREFIX}${slug}-${hookName}`;
+  return `${HOOK_AGENT_PREFIX}${agentKeyFor(slug)}-${hookName}`;
 }
 
 /**
@@ -80,7 +93,7 @@ export const TRIGGER_AGENT_PREFIX = "trigger-";
  * string (a slug may contain hyphens). Mirrors {@link hookAgentName}.
  */
 export function triggerAgentName(slug: string, triggerName: string): string {
-  return `${TRIGGER_AGENT_PREFIX}${slug}-${triggerName}`;
+  return `${TRIGGER_AGENT_PREFIX}${agentKeyFor(slug)}-${triggerName}`;
 }
 
 /**

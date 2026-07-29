@@ -56,8 +56,8 @@ export { IMAGE_MIME, VIDEO_MIME, DOCUMENT_MIME, fileKind, contentTypeFor };
 
 import {
   SLUG_RE,
-  ROOT_SLUG,
-  isRootSlug,
+  ROOT_KEY,
+  isRootKey,
   isValidRepoUrl,
   repoCheckoutName,
   workingDirFor,
@@ -67,8 +67,8 @@ import {
   ProjectError,
 } from "./project-paths.js";
 export {
-  ROOT_SLUG,
-  isRootSlug,
+  ROOT_KEY,
+  isRootKey,
   isValidRepoUrl,
   repoCheckoutName,
   workingDirFor,
@@ -133,69 +133,27 @@ export class ProjectStore {
   /** Ensure the projects root exists. Call once at startup. */
   async init(): Promise<void> {
     await fs.mkdir(this.root, { recursive: true });
-  }
-
-  /**
-   * The on-disk directory backing a slug.
-   *
-   * This is the ONE resolution seam the root project needs (issue #516): the
-   * reserved {@link ROOT_SLUG} maps to `projectsRoot` itself instead of a
-   * subdirectory of it, so every other `ProjectStore` method — read, update,
-   * overview/changelog, file serving — works on the root unchanged. `list()`
-   * still only walks subdirectories, so the root stays out of enumeration.
-   */
-  private dirFor(slug: string): string {
-    if (isRootSlug(slug)) return this.root;
-    return path.join(this.root, slug);
-  }
-
-  /**
-   * The root project (issue #516), or `null` when this instance has none.
-   *
-   * Existence of `<projectsRoot>/project.yaml` IS the feature gate: absent, the
-   * instance behaves exactly as before (no root keeper, no root chats, `/` stays
-   * the projects grid). Nothing seeds this file — creating it is the opt-in.
-   */
-  async getRoot(): Promise<Project | null> {
-    return this.readSafe(ROOT_SLUG);
-  }
-
-  /**
-   * Create the root project record at `<projectsRoot>/project.yaml` (issue #516)
-   * — the explicit opt-in that turns the instance root into an ordinary project.
-   *
-   * Deliberately NOT routed through {@link create}: that one validates against
-   * `SLUG_RE` (which rejects `__root` by design) and mkdir's a new directory.
-   * Here the directory already exists and is the repo root, so this only writes
-   * the record and makes sure `.chats/` is ignored by the backing repo — exactly
-   * as a repo-backed project's sidecar `.gitignore` already does.
-   */
-  async createRoot(input: { name?: string; summary?: string } = {}): Promise<Project> {
-    if (await this.exists(ROOT_SLUG)) {
-      throw new ProjectError("Root project already exists", "exists");
-    }
-    const now = today();
-    const yaml: ProjectYaml = {
-      name: input.name?.trim() || path.basename(path.resolve(this.root)) || "Root",
-      slug: ROOT_SLUG,
-      status: "active",
-      domain: [],
-      visibility: "public",
-      started: now,
-      updated: now,
-      summary: input.summary ?? "",
-      links: [],
-      pinned: [],
-    };
-    await fs.mkdir(this.root, { recursive: true });
+    // The root workspace always exists, so its transcripts always need ignoring
+    // — this is housekeeping, not a feature gate. It writes at most once.
     await this.ensureRootGitignore();
-    await this.writeYaml(ROOT_SLUG, yaml);
-    return this.toDto(this.root, yaml, await this.overviewExists(ROOT_SLUG));
   }
 
   /**
-   * Keep the root's `.chats/` out of the backing repo (issue #516). Root chats
-   * are ordinary chats and get the same treatment project chats already do
+   * The on-disk directory backing a workspace key.
+   *
+   * A key is a path RELATIVE to `projectsRoot`, and the root workspace's key is
+   * `""` — so `path.join` resolves it with no special case at all. The previous
+   * design needed a branch here for a reserved slug, and that branch had to be
+   * duplicated in `project-files.ts` (where it was missed, 404ing every root
+   * file route). There is now no branch to forget.
+   */
+  private dirFor(key: string): string {
+    return path.join(this.root, key);
+  }
+
+  /**
+   * Keep the root's `.chats/` out of the backing repo. Root chats are ordinary
+   * chats and get the same treatment project chats already do
    * ({@link ensureSidecarGitignore}) — transcripts are append-heavy JSONL and are
    * not tracked anywhere today.
    */
@@ -240,14 +198,24 @@ export class ProjectStore {
     return projects;
   }
 
-  /** Get one project by slug. Throws ProjectError("not_found") if missing. */
+  /**
+   * Get one workspace by key. Throws `ProjectError("not_found")` if missing.
+   *
+   * The root key (`""`) always resolves — the instance's own directory is always
+   * there — so this never throws for the root.
+   */
   async get(slug: string): Promise<Project> {
     const p = await this.readSafe(slug);
     if (!p) throw new ProjectError(`Project not found: ${slug}`, "not_found");
     return p;
   }
 
+  /**
+   * Whether a workspace exists. For a project that means a `project.yaml`
+   * record; the root workspace always exists, record or not.
+   */
   async exists(slug: string): Promise<boolean> {
+    if (isRootKey(slug)) return true;
     try {
       await fs.access(path.join(this.dirFor(slug), PROJECT_FILE));
       return true;
@@ -390,10 +358,10 @@ export class ProjectStore {
    * `<repo-name>/` directory is already present (never clobber existing files).
    */
   async promote(slug: string, repoUrl: string): Promise<Project> {
-    // The root project's dir is `projectsRoot`, which is already the instance's
-    // own backing repo — cloning a second repo inside it is never what's meant.
-    if (isRootSlug(slug)) {
-      throw new ProjectError("The root project cannot be repo-backed", "invalid");
+    // The root workspace IS `projectsRoot`, already the instance's own backing
+    // repo — cloning a second repo inside it is never what's meant.
+    if (isRootKey(slug)) {
+      throw new ProjectError("The root workspace cannot be repo-backed", "invalid");
     }
     const current = await this.get(slug); // throws not_found
     if (current.repoBacked) {
@@ -705,11 +673,11 @@ export class ProjectStore {
    * herdctl.yaml + reloading the fleet — the inverse of the create flow.
    */
   async remove(slug: string): Promise<Project> {
-    // The root project's directory IS the projects root (issue #516) — deleting
+    // The root workspace's directory IS the projects root — deleting
     // it would take every project with it. The resolved-path guard below already
     // refuses, but say so explicitly rather than leaning on a coincidence.
-    if (isRootSlug(slug)) {
-      throw new ProjectError("Refusing to delete the root project", "invalid");
+    if (isRootKey(slug)) {
+      throw new ProjectError("Refusing to delete the root workspace", "invalid");
     }
     const project = await this.get(slug); // throws not_found
     const dir = this.dirFor(slug);
@@ -782,30 +750,49 @@ export class ProjectStore {
 
   // --- internals ---------------------------------------------------------
 
-  private async readSafe(slug: string): Promise<Project | null> {
-    const dir = this.dirFor(slug);
+  /**
+   * Read one workspace, or `null` if the key doesn't name one.
+   *
+   * **The root workspace always exists.** For a project, `project.yaml` IS the
+   * existence gate — no record, not a project. But the root is the instance
+   * itself: its directory is always there, so a missing record just means
+   * "nothing has been customised yet" and every field falls back to a default
+   * (see {@link normalize}). The record is written lazily, on the first setting
+   * that actually changes.
+   *
+   * This is what removes the whole opt-in apparatus the previous design needed —
+   * no `createRoot`, no enable card, and no `/chat` that 404s on a fresh box.
+   */
+  private async readSafe(key: string): Promise<Project | null> {
+    const dir = this.dirFor(key);
     let yaml: ProjectYaml;
     try {
       const raw = await fs.readFile(path.join(dir, PROJECT_FILE), "utf8");
       const parsed = YAML.parse(raw) as Partial<ProjectYaml> | null;
-      if (!parsed || typeof parsed !== "object") return null;
-      yaml = this.normalize(parsed, slug);
+      if (!parsed || typeof parsed !== "object") {
+        if (!isRootKey(key)) return null;
+        yaml = this.normalize({}, key);
+      } else {
+        yaml = this.normalize(parsed, key);
+      }
     } catch {
-      return null;
+      if (!isRootKey(key)) return null;
+      yaml = this.normalize({}, key);
     }
     // overviewExists is a cheap fs.access; do it after the yaml parse succeeds.
-    const hasOverview = await this.overviewExists(slug);
+    const hasOverview = await this.overviewExists(key);
     return this.toDto(dir, yaml, hasOverview);
   }
 
   /** Fill defaults / coerce a parsed project.yaml into a complete ProjectYaml. */
-  private normalize(p: Partial<ProjectYaml>, slug: string): ProjectYaml {
+  private normalize(p: Partial<ProjectYaml>, key: string): ProjectYaml {
     const started = p.started ?? today();
     return {
-      // A hand-written root project.yaml with no `name` reads better as the
-      // directory's own basename than as the reserved sentinel (issue #516).
-      name: p.name ?? (isRootSlug(slug) ? path.basename(path.resolve(this.root)) : slug),
-      slug: p.slug ?? slug,
+      // The root workspace has no slug to fall back to, so it reads as its own
+      // directory's basename. (No instance-name config field exists yet; when
+      // one lands, this is the single place it should feed.)
+      name: p.name ?? (isRootKey(key) ? path.basename(path.resolve(this.root)) : key),
+      slug: p.slug ?? key,
       status: (p.status as ProjectStatus) ?? "active",
       domain: Array.isArray(p.domain) ? p.domain : [],
       // Carry `group` through only when it's a non-empty string (an absent area

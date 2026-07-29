@@ -2,12 +2,17 @@ import { test, expect } from "@playwright/test";
 import { seedProject } from "./helpers";
 
 /**
- * Journey: Landing page + navigation.
+ * Journey: the projects grid + navigation.
  *
- * The landing page groups projects into collapsible area sections (Homelab /
- * House / Side Projects / Unsorted, in that order) with per-section counts, and
- * the sidebar mirrors the same grouping. Collapse state persists in
- * localStorage across reloads.
+ * The grid groups projects into collapsible area sections (Homelab / House /
+ * Side Projects / Unsorted, in that order) with per-section counts, and the
+ * sidebar mirrors the same grouping. Collapse state persists in localStorage
+ * across reloads.
+ *
+ * The grid now lives at `/projects` — the ROOT workspace's Projects tab (#531).
+ * `/` is the root workspace's Home, so these grid tests address `/projects`
+ * directly; the sidebar test below stays at `/` because the sidebar is shell
+ * chrome that must render on the instance's front door.
  *
  * Projects are seeded on disk (a project is just a dir + project.yaml), which is
  * faithful for the read-only grid/nav surface and keeps these tests fast and
@@ -15,7 +20,7 @@ import { seedProject } from "./helpers";
  * though the server's data dir is shared across the file.
  */
 
-test.describe("landing: area sections + counts", () => {
+test.describe("projects grid: area sections + counts", () => {
   test("renders Homelab / House / Side Projects / Unsorted sections in order with counts", async ({
     page,
   }) => {
@@ -26,7 +31,7 @@ test.describe("landing: area sections + counts", () => {
     seedProject({ name: "LN Side A", group: "side-projects" });
     seedProject({ name: "LN Unsorted A" }); // no group -> Unsorted
 
-    await page.goto("/");
+    await page.goto("/projects");
 
     // Each section header is a button whose accessible name starts with the area
     // label. They must appear in canonical order, Unsorted last.
@@ -52,14 +57,14 @@ test.describe("landing: area sections + counts", () => {
     const homelabCount = await homelab.locator("span").filter({ hasText: /^\d+$/ }).first().textContent();
     expect(Number(homelabCount)).toBeGreaterThanOrEqual(2);
 
-    // The seeded cards live in the landing grid (section a.card).
+    // The seeded cards live in the grid (section a.card).
     await expect(page.locator("section a.card").filter({ hasText: "LN Homelab A" })).toBeVisible();
     await expect(page.locator("section a.card").filter({ hasText: "LN Side A" })).toBeVisible();
   });
 
   test("collapse state persists across reload (per section, localStorage)", async ({ page }) => {
     seedProject({ name: "LN Persist House", group: "house" });
-    await page.goto("/");
+    await page.goto("/projects");
 
     const house = page.getByRole("button", { name: /^House/ });
     await expect(house).toBeVisible();
@@ -86,7 +91,7 @@ test.describe("landing: area sections + counts", () => {
   });
 });
 
-test.describe("landing: sidebar grouping", () => {
+test.describe("root home: sidebar grouping", () => {
   test("sidebar groups projects by area with subheaders", async ({ page }) => {
     seedProject({ name: "LN Sidebar Homelab", group: "homelab" });
     seedProject({ name: "LN Sidebar House", group: "house" });

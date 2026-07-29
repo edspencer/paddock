@@ -272,3 +272,84 @@ describe("integration: batch subtree chat actions + detach (#508)", () => {
     expect(await t.parentDetach.isDetached(keeper, family[1])).toBe(false);
   });
 });
+
+/**
+ * The same #508 routes through the ROOT mount (#533).
+ *
+ * These endpoints live in the workspace plugin that the composition root mounts
+ * TWICE — `/api/root` and `/api/projects/:slug` — so root parity is meant to be
+ * structural, not something each handler opts into. This test is here to catch
+ * the one way that guarantee can still be broken: a route declared with an
+ * absolute `/api/projects/:slug/...` path, which resolves under the project
+ * mount and is unreachable under the root one. (That is exactly what the #533
+ * merge produced, and the project-mounted tests above could not see it.)
+ */
+describe("integration: #508 batch + detach at the root mount (#533)", () => {
+  let t: TestApp;
+  let port: number;
+  let ws: WsClient;
+  const keeper = "keeper-_root";
+  let ids: string[] = [];
+
+  beforeAll(async () => {
+    t = await startTestApp({ script: { "hello root batch": "hi from the root keeper" } });
+    ({ port } = await listen(t.app));
+    ws = await connectWs(port);
+    // The root always exists — no creation step. Send a few chats and take the
+    // pool from what the list actually shows: @herdctl/core's attribution index
+    // is a process-wide 30s cache, so a just-created session can be briefly
+    // invisible (see the note on the project-mounted describe above).
+    for (let i = 0; i < 4; i++) {
+      const mark = ws.mark();
+      ws.send({
+        type: "chat:send",
+        payload: { projectSlug: "", sessionId: null, message: "hello root batch" },
+      });
+      await ws.waitFor(
+        (e: WsEvent) => e.type === "chat:complete" && e.payload?.projectSlug === "",
+        { from: mark },
+      );
+    }
+    const res = await t.app.inject({ method: "GET", url: "/api/root/chats" });
+    ids = (res.json().chats as { sessionId: string }[]).map((c) => c.sessionId);
+  }, 60_000);
+  afterAll(async () => {
+    ws?.close();
+    await t.teardown();
+  });
+
+  it("reaches batch archive and detach at /api/root, not just /api/projects/:slug", async () => {
+    expect(ids.length).toBeGreaterThanOrEqual(2);
+    const family = ids.slice(0, 2);
+
+    const archived = await t.app.inject({
+      method: "POST",
+      url: "/api/root/chats/batch/archive",
+      payload: { sessionIds: family, archived: true },
+    });
+    expect(archived.statusCode).toBe(200);
+    expect((archived.json().changed as string[]).sort()).toEqual([...family].sort());
+    for (const id of family) expect(await t.archive.isArchived(keeper, id)).toBe(true);
+
+    const detached = await t.app.inject({
+      method: "POST",
+      url: `/api/root/chats/${family[0]}/detach`,
+      payload: { detached: true },
+    });
+    expect(detached.statusCode).toBe(200);
+    expect(detached.json().detached).toBe(true);
+    expect(await t.parentDetach.isDetached(keeper, family[0])).toBe(true);
+
+    // Clean up so the root workspace is left as we found it.
+    await t.app.inject({
+      method: "POST",
+      url: "/api/root/chats/batch/archive",
+      payload: { sessionIds: family, archived: false },
+    });
+    await t.app.inject({
+      method: "POST",
+      url: `/api/root/chats/${family[0]}/detach`,
+      payload: { detached: false },
+    });
+  });
+});

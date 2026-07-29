@@ -29,7 +29,7 @@ import { cspFor, parseRangeHeader } from "../http-bytes.js";
 import { type RouteCtx, type MultipartRequest, type UploadedFile } from "../route-context.js";
 
 export function registerMetaRoutes(app: FastifyInstance, ctx: RouteCtx): void {
-  const { herdctl, transcriber, attachments, projects, cfg } = ctx;
+  const { herdctl, transcriber, attachments, cfg } = ctx;
 
   // --- voice dictation (#voice): capability probe + transcription -------
   // The composer polls this to decide whether to show a mic button. `available`
@@ -395,6 +395,15 @@ export function registerMetaRoutes(app: FastifyInstance, ctx: RouteCtx): void {
     return reply.send(bytes);
     },
   );
+}
+
+/**
+ * The workspace-scoped slice of this file: registered once per workspace mount
+ * (root and per project) — see `workspace-mount.ts`. Paths are relative to the
+ * mount.
+ */
+export function registerMetaWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx): void {
+  const { attachments, projects, cfg } = ctx;
 
   // Inbound composer upload (issue #328 Phase 1). Copies each posted file's bytes
   // into the attachment store (reusing the send_file store) and returns opaque
@@ -407,7 +416,7 @@ export function registerMetaRoutes(app: FastifyInstance, ctx: RouteCtx): void {
   // accepted for a not-yet-created chat too (a new chat has no id until its first
   // frame) — storage is flat and doesn't need it; it only scopes the request.
   app.post<{ Params: { slug: string; sessionId: string } }>(
-    "/api/projects/:slug/chats/:sessionId/upload",
+    "/chats/:sessionId/upload",
     {
       schema: {
         tags: ["Attachments"],

@@ -42,6 +42,14 @@ function renderGrid(filterTag?: string) {
   );
 }
 
+function renderEmbedded() {
+  return render(
+    <MemoryRouter>
+      <ProjectsGrid embedded />
+    </MemoryRouter>,
+  );
+}
+
 describe("ProjectsGrid: area sectioning", () => {
   beforeEach(() => {
     listProjectChats.mockReset().mockResolvedValue([]);
@@ -110,6 +118,39 @@ describe("ProjectsGrid: area sectioning", () => {
     expect(localStorage.getItem("paddock:area-collapsed:homelab")).toBe("1");
   });
 
+});
+
+describe("ProjectsGrid: embedded as the root workspace's Projects tab", () => {
+  beforeEach(() => {
+    listProjectChats.mockReset().mockResolvedValue([]);
+    listScratchChats.mockReset().mockResolvedValue([]);
+    // Section collapse persists in localStorage — an earlier test collapses
+    // Homelab, which would otherwise hide this suite's card.
+    localStorage.clear();
+    mockProjects = [makeProject({ slug: "a", name: "Alpha", group: "homelab" })];
+  });
+
+  it("drops its own page header — ProjectView already supplies the page chrome", () => {
+    renderEmbedded();
+    // No page title and no landing blurb: rendered inside ProjectView, the
+    // workspace header above it is the title, so this would be a second one.
+    expect(screen.queryByRole("heading", { level: 1 })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Each project is a directory/)).not.toBeInTheDocument();
+    // The grid itself is unchanged.
+    expect(screen.getByText("Alpha")).toBeInTheDocument();
+  });
+
+  it("keeps both header actions reachable when embedded", () => {
+    renderEmbedded();
+    expect(screen.getByRole("button", { name: /New Project/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /New chat/i })).toBeInTheDocument();
+  });
+
+  it("still renders the full page header when NOT embedded", () => {
+    renderGrid();
+    expect(screen.getByRole("heading", { level: 1, name: "Projects" })).toBeInTheDocument();
+    expect(screen.getByText(/Each project is a directory/)).toBeInTheDocument();
+  });
 });
 
 describe("ProjectsGrid: tag filter mode", () => {

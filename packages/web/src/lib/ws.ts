@@ -605,8 +605,13 @@ class ChatClient {
       return;
     }
 
+    // The workspace key of the frame's owner. `""` is the ROOT workspace — a
+    // real, routable key — so only an ABSENT key means "nothing to route to".
+    // A falsy test here silently dropped every root frame, which meant a root
+    // chat sent fine and then never rendered a reply: the turn ran server-side,
+    // the transcript was written, and the UI just span forever.
     const slug = msg.payload.projectSlug ?? (msg.payload as { target?: string }).target;
-    if (!slug) return;
+    if (slug === undefined || slug === null) return;
 
     if (msg.type === "chat:error") {
       const sub = this.route(slug, null);

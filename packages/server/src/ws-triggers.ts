@@ -80,7 +80,9 @@ deps.herdctl.onScheduleTrigger(async (info: TriggerInfo) => {
   const slug = keeperSlugFromAgent(info.agent.name);
   // Only keeper agents carry Paddock schedules; a non-keeper trigger (there are
   // none today) has nowhere sensible to route, so ignore it rather than guess.
-  if (!slug) return;
+  // `null` means "not a keeper"; `""` is the ROOT workspace's own key, so this
+  // must not be a falsy check.
+  if (slug === null) return;
   const project = await deps.projects.get(slug).catch(() => null);
   if (!project) return;
   // Every armed keeper schedule belongs to a SCHEDULE-type trigger (forwarded into

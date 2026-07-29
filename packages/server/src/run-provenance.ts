@@ -114,7 +114,12 @@ function coerce(value: unknown): RunProvenance | null {
   return {
     origin: o.origin,
     depth: Math.floor(depth),
-    ...(parentSessionId && parentProject ? { parentSessionId, parentProject } : {}),
+    // `parentProject` is a workspace key; `""` is the ROOT workspace, not
+    // "missing". Test for presence, not truthiness, or a root chat's children
+    // lose their recorded parent edge on every parse.
+    ...(parentSessionId && parentProject !== undefined
+      ? { parentSessionId, parentProject }
+      : {}),
   };
 }
 

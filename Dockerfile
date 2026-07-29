@@ -10,8 +10,8 @@
 #   - devbox (`--target devbox`) base + the coding-agent toolbox — PM2 + the `pm`
 #                                preview-server wrapper, ffmpeg, the Playwright
 #                                MCP browser (headless Chromium), the Docker CLI,
-#                                python3/pip/uv, jq and rsync — for keepers that
-#                                develop code in-container.
+#                                kubectl, python3/pip/uv, jq and rsync — for
+#                                keepers that develop code in-container.
 #
 # Runtime requirements (supplied at `docker run` time, NOT baked in):
 #   - CLAUDE_CODE_OAUTH_TOKEN   Claude Max auth (runtime: cli). Or ANTHROPIC_API_KEY for sdk.
@@ -174,3 +174,47 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN npm install -g @playwright/mcp \
     && node "$(npm root -g)/@playwright/mcp/node_modules/playwright/cli.js" install --with-deps chromium \
     && rm -rf /var/lib/apt/lists/*
+
+# kubectl — the same "client only, no credentials" shape as the Docker CLI above
+# (#531). An agent asked "is the deploy healthy?" needs one binary to make a
+# cluster legible: describe a pod, tail logs, check a rollout. It cannot be added
+# downstream either — kubectl is in NO apt source this image carries (verified:
+# `apt-cache policy kubectl` is empty against debian.sources + docker.list +
+# github-cli.list), so a derived `apt-get install kubectl` fails outright and the
+# alternatives are a new trust root or a forked image. Hence the static binary,
+# and hence no kubeconfig and no cluster credentials baked in: those are
+# per-deployment and belong to the operator. ~60 MB.
+#
+# THIS BLOCK IS LAST ON PURPOSE. `ARG`s are part of the cache key of every RUN
+# after them, so declaring KUBECTL_VERSION higher up put it in the cache key of
+# the 824 MB Chromium layer above — bumping kubectl would then rebuild Chromium
+# on all four release legs. At the end of the stage it invalidates nothing.
+#
+# TARGETARCH is what keeps this honest on the arm64 leg: hardcoding amd64 would
+# build cleanly and then fail confusingly at run time inside an arm64 container.
+# It is a BuildKit-provided arg; under the legacy builder it is empty and the
+# case below fails the build with a message rather than guessing.
+#
+# The digests are pinned HERE rather than fetched from the published
+# `kubectl.sha256` next to the binary: that file travels the same TLS connection
+# from the same host as the download, so checking it proves only that the
+# transfer wasn't truncated. An in-repo digest is the thing that actually pins,
+# and it keeps a rebuild of an old tag reproducible. Bumping the version means
+# bumping all three values:
+#   curl -fsSL https://dl.k8s.io/release/v<X.Y.Z>/bin/linux/<arch>/kubectl.sha256
+ARG KUBECTL_VERSION=1.36.3
+ARG KUBECTL_SHA256_AMD64=ebbd080e7c2e275093b55915722043257eb24004363e20acb3c4d71919f88336
+ARG KUBECTL_SHA256_ARM64=3d86f24401c41ae5a46ac50eef8865fe891d3647d324a0836f6c63757a126e62
+ARG TARGETARCH
+RUN set -eu; \
+    case "${TARGETARCH:-}" in \
+      amd64) sha="$KUBECTL_SHA256_AMD64" ;; \
+      arm64) sha="$KUBECTL_SHA256_ARM64" ;; \
+      "") echo "TARGETARCH is empty — build with BuildKit/buildx, not the legacy builder" >&2; exit 1 ;; \
+      *) echo "no pinned kubectl digest for TARGETARCH=$TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /usr/local/bin/kubectl \
+      "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/${TARGETARCH}/kubectl"; \
+    echo "${sha}  /usr/local/bin/kubectl" | sha256sum -c -; \
+    chmod 0755 /usr/local/bin/kubectl; \
+    kubectl version --client

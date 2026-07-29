@@ -9,12 +9,13 @@ import type { ChatPaneProps } from "../components/ChatPane";
 import { readLastTab } from "../lib/lastTab";
 
 /**
- * `ProjectView root` — the ROOT project's Home + Chat (issue #516 Phase 3).
+ * `ProjectView root` — the ROOT workspace (issue #516).
  *
  * The design's claim is that the root needs no separate view: the same
- * component, the same API calls, only flat top-level URLs. So these tests are
- * about the differences that ARE real — `/` is Home, `/chat` is the chat tab,
- * no sticky last tab, and no tabs for panes that don't exist yet.
+ * component, the same API calls, only flat top-level URLs and the empty
+ * workspace key. So these tests are about the differences that ARE real — `/` is
+ * Home, `/chat` is the chat tab, `/projects` is its CHILDREN tab, and there is
+ * no sticky last tab.
  */
 let chatPaneProps: ChatPaneProps | null = null;
 vi.mock("../components/ChatPane", () => ({
@@ -34,16 +35,26 @@ vi.mock("../components/SettingsPane", () => ({
 vi.mock("../components/InstanceConfigForm", () => ({
   InstanceConfigForm: () => <div data-testid="instance-config-form">instance config</div>,
 }));
+// The root's workspace key is the EMPTY string, so a marker that interpolates it
+// would render indistinguishably from a marker with no slug at all. These stubs
+// therefore capture the key they were handed and the tests assert on it
+// directly — `toBe("")` is the assertion that would otherwise be lost.
+let historySlug: string | null = null;
 vi.mock("../components/HistoryPane", () => ({
-  HistoryPane: ({ slug }: { slug: string }) => <div data-testid="history-pane">runs for {slug}</div>,
+  HistoryPane: ({ slug }: { slug: string }) => {
+    historySlug = slug;
+    return <div data-testid="history-pane">runs</div>;
+  },
 }));
 
-// ChangesPane is tested separately; stub it to a marker that echoes the slug it
+// ChangesPane is tested separately; stub it to a marker that captures the key it
 // was handed, so the root's Changes routing is what's asserted.
+let changesSlug: string | null = null;
 vi.mock("../components/ChangesPane", () => ({
-  ChangesPane: ({ slug }: { slug: string }) => (
-    <div data-testid="changes-pane">changes for {slug}</div>
-  ),
+  ChangesPane: ({ slug }: { slug: string }) => {
+    changesSlug = slug;
+    return <div data-testid="changes-pane">changes</div>;
+  },
 }));
 
 const apiFns = {
@@ -73,16 +84,18 @@ vi.mock("../lib/api", async () => {
   };
 });
 
+// The root workspace's CHILDREN — read by the embedded ProjectsGrid on the
+// Projects tab. Mutable so a test can put a project in the grid.
+let mockProjects: Project[] = [];
 vi.mock("../lib/projects-context", () => ({
   useProjects: () => ({
-    projects: [],
-    rootProject: null,
+    projects: mockProjects,
+    rootWorkspace: null,
     loading: false,
     error: null,
     refresh: vi.fn(),
     upsert: vi.fn(),
     remove: vi.fn(),
-    setRootProject: vi.fn(),
   }),
 }));
 
@@ -110,6 +123,7 @@ function renderRootAt(path: string) {
       <Here />
       <Routes>
         <Route path="/" element={<ProjectView root />} />
+        <Route path="/projects" element={<ProjectView root />} />
         <Route path="/chat" element={<ProjectView root />} />
         <Route path="/chat/:sessionId" element={<ProjectView root />} />
         <Route path="/files" element={<ProjectView root />} />
@@ -124,11 +138,15 @@ function renderRootAt(path: string) {
   );
 }
 
-const rootProject = () =>
-  makeProject({ slug: "__root", name: "Instance Root", summary: "everything, from the top" });
+/** The root workspace: the instance's own directory, keyed by the EMPTY string. */
+const rootWorkspace = () =>
+  makeProject({ slug: "", name: "Instance Root", summary: "everything, from the top" });
 
 beforeEach(() => {
   chatPaneProps = null;
+  historySlug = null;
+  changesSlug = null;
+  mockProjects = [];
   Object.values(apiFns).forEach((m) => m.mockReset());
   apiFns.listProjectFiles.mockResolvedValue([]);
   apiFns.listProjectDir.mockResolvedValue({ path: "", kind: "dir", entries: [] });
@@ -137,7 +155,7 @@ beforeEach(() => {
   apiFns.chatUsage.mockResolvedValue({});
   apiFns.markChatSeen.mockResolvedValue(undefined);
   apiFns.projectChatMessages.mockResolvedValue([]);
-  apiFns.getProjectDetail.mockResolvedValue(detail(rootProject()));
+  apiFns.getProjectDetail.mockResolvedValue(detail(rootWorkspace()));
   resetLastSeenForTests();
   localStorage.clear();
 });
@@ -145,7 +163,7 @@ beforeEach(() => {
 describe("ProjectView root (#516)", () => {
   it("renders Home at `/` — no redirect", async () => {
     apiFns.getProjectDetail.mockResolvedValue(
-      detail(rootProject(), { changelog: "# Changes\n- did a root thing" }),
+      detail(rootWorkspace(), { changelog: "# Changes\n- did a root thing" }),
     );
     renderRootAt("/");
     // The summary lands in both the header and the Home overview card.
@@ -154,21 +172,23 @@ describe("ProjectView root (#516)", () => {
     expect(screen.queryByTestId("chat-pane")).not.toBeInTheDocument();
   });
 
-  it("addresses the ordinary project API under the reserved slug", async () => {
+  it("addresses the ordinary workspace API under the empty root key", async () => {
     renderRootAt("/");
     await screen.findAllByText("everything, from the top");
-    expect(apiFns.getProjectDetail).toHaveBeenCalledWith("__root");
+    // No sentinel slug: the root's key is "", which `apiBase` turns into
+    // `/api/root` — the same handlers a project reaches at `/api/projects/:slug`.
+    expect(apiFns.getProjectDetail).toHaveBeenCalledWith("");
   });
 
   it("renders the chat tab at the flat `/chat`", async () => {
     renderRootAt("/chat");
     expect(await screen.findByTestId("chat-pane")).toBeInTheDocument();
-    expect(chatPaneProps?.projectSlug).toBe("__root");
+    expect(chatPaneProps?.projectSlug).toBe("");
   });
 
   it("opens a specific root chat at `/chat/:sessionId`", async () => {
     apiFns.getProjectDetail.mockResolvedValue(
-      detail(rootProject(), { chats: [makeChat({ sessionId: "s1", name: "Root chat" })] }),
+      detail(rootWorkspace(), { chats: [makeChat({ sessionId: "s1", name: "Root chat" })] }),
     );
     renderRootAt("/chat/s1");
     await screen.findByTestId("chat-pane");
@@ -183,19 +203,54 @@ describe("ProjectView root (#516)", () => {
     expect(screen.getByTestId("here").textContent).toBe("/");
   });
 
-  it("shows the FULL tab bar — the root is an ordinary project (Phase 5)", async () => {
+  it("shows the FULL tab bar — the root is an ordinary workspace, plus Projects", async () => {
     apiFns.gitStatus.mockResolvedValue({ repo: true, files: [], clean: true, branch: "main" });
     renderRootAt("/chat");
     await screen.findByTestId("chat-pane");
     // The end state #516 was aiming at: there is no tab a project gets and the
     // root doesn't. (Changes is conditional on the dir being a git repo, for the
-    // root exactly as for a project.)
-    for (const name of ["Home", "Chat", "Files", "Changes", "History", "Settings", "Triggers"]) {
+    // root exactly as for a project.) Projects is the one tab the root has that
+    // a project does not — its children.
+    for (const name of [
+      "Projects",
+      "Home",
+      "Chat",
+      "Files",
+      "Changes",
+      "History",
+      "Settings",
+      "Triggers",
+    ]) {
       expect(screen.getByRole("button", { name }), name).toBeInTheDocument();
     }
   });
 
-  it("renders the Files tab at the flat `/files`, against the reserved slug", async () => {
+  it("puts Projects FIRST in the tab bar — out to a project leads the row", async () => {
+    renderRootAt("/chat");
+    await screen.findByTestId("chat-pane");
+    const projects = screen.getByRole("button", { name: "Projects" });
+    const home = screen.getByRole("button", { name: "Home" });
+    // Node.DOCUMENT_POSITION_FOLLOWING — Home comes after Projects.
+    expect(projects.compareDocumentPosition(home) & 4).toBeTruthy();
+  });
+
+  it("renders the projects grid as the root's children tab at `/projects`", async () => {
+    mockProjects = [makeProject({ slug: "hushpod", name: "Hushpod", group: "homelab" })];
+    renderRootAt("/chat");
+    await screen.findByTestId("chat-pane");
+    fireEvent.click(screen.getByRole("button", { name: "Projects" }));
+    expect(await screen.findByText("Hushpod")).toBeInTheDocument();
+    expect(screen.getByTestId("here").textContent).toBe("/projects");
+    // Embedded: the grid drops its own page header, because this view's header
+    // (the workspace name) is already the page title. The only <h1> is the
+    // workspace's, never a second "Projects".
+    const h1s = screen.getAllByRole("heading", { level: 1 }).map((h) => h.textContent);
+    expect(h1s).toEqual(["Instance Root"]);
+    // …but its actions survive the embedding.
+    expect(screen.getByRole("button", { name: /New Project/i })).toBeInTheDocument();
+  });
+
+  it("renders the Files tab at the flat `/files`, against the empty root key", async () => {
     apiFns.listProjectDir.mockResolvedValue({
       path: "",
       kind: "dir",
@@ -209,13 +264,13 @@ describe("ProjectView root (#516)", () => {
     // The root's working dir contains every project — browsing into one is the
     // intended "omniscient admin" behaviour, not a leak (#516).
     expect(screen.getByText("some-project")).toBeInTheDocument();
-    expect(apiFns.listProjectDir).toHaveBeenCalledWith("__root", "");
+    expect(apiFns.listProjectDir).toHaveBeenCalledWith("", "");
   });
 
   it("nests the Files subpath in the flat URL", async () => {
     apiFns.listProjectDir.mockResolvedValue({ path: "docs", kind: "dir", entries: [] });
     renderRootAt("/files/docs");
-    await waitFor(() => expect(apiFns.listProjectDir).toHaveBeenCalledWith("__root", "docs"));
+    await waitFor(() => expect(apiFns.listProjectDir).toHaveBeenCalledWith("", "docs"));
   });
 
   it("renders the Changes tab at the flat `/changes` over the whole repo", async () => {
@@ -226,12 +281,14 @@ describe("ProjectView root (#516)", () => {
       branch: "main",
     });
     renderRootAt("/changes");
-    expect(await screen.findByTestId("changes-pane")).toHaveTextContent("changes for __root");
+    await screen.findByTestId("changes-pane");
+    // The whole backing repo, addressed by the root's own (empty) key.
+    expect(changesSlug).toBe("");
   });
 
   it("shows pinned file tabs at the root (pinning is driven from Files)", async () => {
     apiFns.getProjectDetail.mockResolvedValue(
-      detail(makeProject({ slug: "__root", name: "Root", pinned: ["NOTES.md"] })),
+      detail(makeProject({ slug: "", name: "Root", pinned: ["NOTES.md"] })),
     );
     renderRootAt("/chat");
     await screen.findByTestId("chat-pane");
@@ -243,7 +300,7 @@ describe("ProjectView root (#516)", () => {
     await screen.findByTestId("chat-pane");
     // `/` must always render Home; a sticky tab would make the instance's front
     // door sometimes land on Files.
-    expect(readLastTab("__root")).toBeNull();
+    expect(readLastTab("")).toBeNull();
   });
 
   it("offers the overflow menu WITHOUT Delete — the root cannot be deleted", async () => {
@@ -269,6 +326,7 @@ describe("ProjectView root (#516)", () => {
 
   it("renders History at the flat `/history`", async () => {
     renderRootAt("/history");
-    expect(await screen.findByTestId("history-pane")).toHaveTextContent("__root");
+    await screen.findByTestId("history-pane");
+    expect(historySlug).toBe("");
   });
 });

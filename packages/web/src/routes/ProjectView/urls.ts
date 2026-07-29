@@ -11,53 +11,74 @@ export type ProjectViewTab =
   | "changes"
   | "settings"
   | "history"
-  | "triggers";
+  | "triggers"
+  // The root workspace's children — the projects grid. Only the root has
+  // children today, so only the root renders this tab; when nesting lands every
+  // workspace gets it for free.
+  | "projects";
 
 /**
- * The reserved slug of the ROOT project (issue #516) — mirrors the server's
- * `ROOT_SLUG`. The root is an ordinary project whose directory is the projects
- * root itself, so it addresses the same `/api/projects/:slug/…` endpoints; only
- * its BROWSER urls differ (they're flat and top-level).
+ * A **workspace key** — a workspace's path relative to the projects root, and
+ * `""` for the ROOT workspace. Mirrors the server's `WorkspaceKey`/`ROOT_KEY`.
+ *
+ * There is no sentinel: the root's key is the empty string, which is also what
+ * makes {@link viewBase} a plain conditional on emptiness rather than a
+ * comparison against a magic value.
  */
-export const ROOT_SLUG = "__root";
+export type WorkspaceKey = string;
+
+/** The ROOT workspace's key. */
+export const ROOT_KEY: WorkspaceKey = "";
+
+/** Whether a key addresses the root workspace. */
+export function isRootKey(key: WorkspaceKey): boolean {
+  return key === ROOT_KEY;
+}
 
 /**
- * The URL prefix every one of a context's sub-routes hangs off (issue #516).
- * This is the seam that lets one `ProjectView` serve both:
+ * The API prefix a workspace's endpoints hang off.
+ *
+ * The server mounts the workspace-scoped routes twice — `/api/root` for the root
+ * workspace and `/api/projects/:slug` for a project — because an empty key
+ * cannot ride in a URL path segment. Same handlers on both mounts; this is the
+ * client half of that seam.
+ */
+export function apiBase(key: WorkspaceKey): string {
+  return isRootKey(key) ? "/api/root" : `/api/projects/${encodeURIComponent(key)}`;
+}
+
+/**
+ * The URL prefix every one of a workspace's sub-routes hangs off. The seam that
+ * lets one `ProjectView` serve both:
  *
  *   project → `/projects/:slug`  → `/projects/:slug/home`, `/projects/:slug/chat`, …
  *   root    → `""`               → `/`,                    `/chat`, …
  *
  * Everything downstream just does `${base}/chat` and stops caring which it is.
  */
-export function viewBase(slug: string): string {
-  return slug === ROOT_SLUG ? "" : `/projects/${slug}`;
+export function viewBase(key: WorkspaceKey): string {
+  return isRootKey(key) ? "" : `/projects/${key}`;
 }
 
 /**
- * The Home URL for a context — the one nav target that isn't a plain
+ * The Home URL for a workspace — the one nav target that isn't a plain
  * `${base}/<tab>`. A project's Home is `/projects/:slug/home`; the root's is the
- * bare `/`, because at the root `/` IS Home (no `/home`, no redirect — #516).
+ * bare `/`, because at the root `/` IS Home (no `/home`, no redirect).
  */
 export function homeUrl(base: string): string {
   return base === "" ? "/" : `${base}/home`;
 }
 
 /**
- * Where the projects GRID lives — which depends on whether this instance has a
- * root project, because that is what decides who owns `/` (#516).
+ * Where the projects grid lives: `/projects`, always.
  *
- * The grid always has a page at `/projects`. But on an instance with NO root
- * project, `/` renders the grid too, and that is the URL every existing link,
- * bookmark and test already uses. Sending those users to `/projects` would be a
- * gratuitous URL change for the identical page — and "an instance without a root
- * project behaves exactly as before" is the load-bearing promise of the whole
- * migration story. So: `/` until the root takes that slot, `/projects` after.
- *
- * Used by the post-delete return and the tag-filter "clear"/"view all" links.
+ * The grid is the root workspace's **children** tab, not a top-level page — the
+ * root workspace always exists, so `/` is always root Home and the grid always
+ * has its own URL. (This used to take a `hasRootProject` flag, because the root
+ * was optional and `/` belonged to whichever existed. Nothing is optional now.)
  */
-export function gridUrl(hasRootProject: boolean): string {
-  return hasRootProject ? "/projects" : "/";
+export function gridUrl(): string {
+  return "/projects";
 }
 
 /**
@@ -69,11 +90,15 @@ export function gridUrl(hasRootProject: boolean): string {
  *
  * `base` is {@link viewBase} — `""` at the root. The bare path means different
  * things in the two contexts, which is the ONLY asymmetry here: `/` **is** root
- * Home (no redirect, no sticky last tab — #516), whereas a bare
- * `/projects/:slug` still falls through to the chat tab exactly as before.
+ * Home (no redirect, no sticky last tab), whereas a bare `/projects/:slug` still
+ * falls through to the chat tab exactly as before.
  */
 export function deriveView(pathname: string, base: string): ProjectViewTab {
   const tail = pathname.startsWith(base) ? pathname.slice(base.length) : pathname;
+  // The root workspace's children tab. Matched EXACTLY, not by prefix: at the
+  // root `base` is "", so a prefix test would also swallow `/projects/foo/files`
+  // — a project's own URL — and render the grid instead of that project.
+  if (tail === "/projects" || tail === "/projects/") return "projects";
   if (tail.startsWith("/files")) return "files";
   if (tail.startsWith("/changes")) return "changes";
   if (tail.startsWith("/history")) return "history";

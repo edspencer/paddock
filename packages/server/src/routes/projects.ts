@@ -25,20 +25,7 @@ import { buildProjectChats, makeTriggerResolver, makeParentResolver } from "../c
 import type { RouteCtx } from "../route-context.js";
 
 export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void {
-  const {
-    projects,
-    herdctl,
-    git,
-    archive,
-    star,
-    readState,
-    unread,
-    parentDetach,
-    runProvenance,
-    messageProvenance,
-    readStateUser,
-    cfg,
-  } = ctx;
+  const { projects, herdctl, git, readState, unread, readStateUser } = ctx;
 
   app.get(
     "/api/projects",
@@ -102,74 +89,6 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
     return { projects: projectsOut };
   });
 
-  // --- the root project (issue #516) --------------------------------------
-  // The root project is the project whose directory IS `projectsRoot`. It is
-  // deliberately absent from `GET /api/projects` (which lists subdirectories), so
-  // it gets its own tiny pair of endpoints: one to ask whether this instance has
-  // one, and one to create it. Everything else about it — detail, chats, PATCH,
-  // triggers, files — goes through the ordinary `/api/projects/__root__/…`
-  // routes, because it IS an ordinary project.
-
-  app.get(
-    "/api/root-project",
-    {
-      schema: {
-        tags: ["Projects"],
-        summary: "Get the root project",
-        description:
-          "Returns `{ project }` for the root project (the project whose directory is the projects root), or `{ project: null }` when this instance has no root project. Existence gates the root Home/Chat UI; nothing seeds it.",
-        response: {
-          200: {
-            description: "Object with the root `project`, or `null`.",
-            type: "object",
-            additionalProperties: true,
-          },
-        },
-      },
-    },
-    async () => ({ project: await projects.getRoot() }),
-  );
-
-  app.post<{ Body: { name?: string; summary?: string } | null }>(
-    "/api/root-project",
-    {
-      schema: {
-        tags: ["Projects"],
-        summary: "Create the root project",
-        description:
-          "Writes `<projectsRoot>/project.yaml` and registers the root keeper + sweeper agents. This is the opt-in that turns the instance root into an ordinary project (root Home, root chats). Responds 201 with `{ project }`, or 409 if one already exists.",
-        body: {
-          type: ["object", "null"],
-          additionalProperties: true,
-          properties: {
-            name: { description: "Human-readable name (defaults to the root directory name)." },
-            summary: { description: "Short summary." },
-          },
-          required: [],
-        },
-        response: {
-          201: {
-            description: "Object with the created root `project`.",
-            type: "object",
-            additionalProperties: true,
-          },
-        },
-      },
-    },
-    async (req, reply) => {
-      try {
-        const project = await projects.createRoot(req.body ?? {});
-        try {
-          await herdctl.ensureProjectAgent(project);
-        } catch (err) {
-          req.log.warn({ err }, "root keeper registration failed (record still written)");
-        }
-        return reply.code(201).send({ project });
-      } catch (err) {
-        return sendProjectError(reply, err);
-      }
-    },
-  );
 
   app.post<{ Body: CreateProjectInput }>(
     "/api/projects",
@@ -224,9 +143,33 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
       return sendProjectError(reply, err);
     }
   });
+}
+
+/**
+ * The workspace-scoped project routes — everything addressed to ONE workspace.
+ *
+ * Registered twice by the composition root (see `workspace-mount.ts`): once at
+ * `/api/root` for the root workspace and once at `/api/projects/:slug` for a
+ * project. Paths here are relative to the workspace; handlers still read
+ * `req.params.slug`, which the root mount injects as `""`.
+ */
+export function registerProjectWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx): void {
+  const {
+    projects,
+    herdctl,
+    archive,
+    star,
+    readState,
+    unread,
+    parentDetach,
+    runProvenance,
+    messageProvenance,
+    readStateUser,
+    cfg,
+  } = ctx;
 
   app.get<{ Params: { slug: string } }>(
-    "/api/projects/:slug",
+    "/",
     {
       schema: {
         tags: ["Projects"],
@@ -313,7 +256,7 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
   });
 
   app.patch<{ Params: { slug: string }; Body: UpdateProjectInput }>(
-    "/api/projects/:slug",
+    "/",
     {
       schema: {
         tags: ["Projects"],
@@ -475,7 +418,7 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
   // Delete a project: remove its directory and unregister its keeper + sweeper
   // agents at runtime (fleet.removeAgent) — the inverse of the create flow.
   app.delete<{ Params: { slug: string } }>(
-    "/api/projects/:slug",
+    "/",
     {
       schema: {
         tags: ["Projects"],
@@ -523,7 +466,7 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
   // The project's chats + sidecar metadata (OVERVIEW/CHANGELOG/settings) are kept.
   // On clone failure the notebook is left wholly intact (rollback in `promote()`).
   app.post<{ Params: { slug: string }; Body: { repo?: string } }>(
-    "/api/projects/:slug/promote",
+    "/promote",
     {
       schema: {
         tags: ["Projects"],
@@ -586,7 +529,7 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
   // (200, not an error — so the client can drop straight into the viewer without
   // a noisy 409). Path-traversal guarded by ProjectStore.resolveInProject.
   app.get<{ Params: { slug: string }; Querystring: { path?: string } }>(
-    "/api/projects/:slug/files",
+    "/files",
     {
       schema: {
         tags: ["Projects"],
@@ -641,7 +584,7 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
   );
 
   app.get<{ Params: { slug: string } }>(
-    "/api/projects/:slug/changelog",
+    "/changelog",
     {
       schema: {
         tags: ["Projects"],
@@ -671,7 +614,7 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
   // Raw OVERVIEW.md (the sweep-curated current-state context). Returns "" if
   // the project has no overview yet (issue #2).
   app.get<{ Params: { slug: string } }>(
-    "/api/projects/:slug/overview",
+    "/overview",
     {
       schema: {
         tags: ["Projects"],
@@ -705,7 +648,7 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
   // underlying listAgentCommands spawns a short-lived `claude` subprocess, so the
   // service memoizes the result per agent (see HerdctlService.listCommands).
   app.get<{ Params: { slug: string } }>(
-    "/api/projects/:slug/commands",
+    "/commands",
     {
       schema: {
         tags: ["Projects"],
@@ -748,7 +691,7 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
   // down (CSP sandbox + nosniff + inline disposition) so a directly-opened SVG
   // or HTML file can't execute script in the app's origin.
   app.get<{ Params: { slug: string; name: string }; Querystring: { raw?: string } }>(
-    "/api/projects/:slug/files/:name",
+    "/files/:name",
     {
       schema: {
         tags: ["Projects"],
@@ -798,7 +741,7 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
 
   // Pin a file as a sibling tab (issue #4). Validates the file exists + dedupes.
   app.put<{ Params: { slug: string }; Body: { file?: string } }>(
-    "/api/projects/:slug/pins",
+    "/pins",
     {
       schema: {
         tags: ["Projects"],
@@ -841,7 +784,7 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
 
   // Unpin a file (URL-encoded name) (issue #4).
   app.delete<{ Params: { slug: string; file: string } }>(
-    "/api/projects/:slug/pins/:file",
+    "/pins/:file",
     {
       schema: {
         tags: ["Projects"],
