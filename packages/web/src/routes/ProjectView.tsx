@@ -1442,6 +1442,18 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
           onClose={() => setPromotingChat(null)}
           onPromoted={(project) => {
             setPromotingChat(null);
+            // Put the new project in the sidebar NOW (#566). Nothing else would:
+            // the project list has no push channel (`ws.ts` carries only
+            // `chat:*`), so without this it stays missing until a full reload or
+            // an unrelated `refreshProjects()` — which is why the row used to
+            // appear only after you sent a turn in the new project.
+            //
+            // `upsert` and not `refresh()`: refetching flips the context's
+            // `loading` flag, and AppShell swaps the whole project list for
+            // skeletons while it is set — so a round-trip would trade a missing
+            // row for a visible flash of the entire nav. This is the same local
+            // insert the New Project path already does (`ProjectsGrid`).
+            upsert(project);
             // The transcript moved, so the chat is gone from this list and lives
             // in the new project — land the user where it went.
             navigate(`/projects/${project.slug}/chat`);

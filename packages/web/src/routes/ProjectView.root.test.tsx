@@ -68,6 +68,7 @@ const apiFns = {
   chatUsage: vi.fn(),
   projectChatMessages: vi.fn(),
   markChatSeen: vi.fn(),
+  promoteChat: vi.fn(),
 };
 vi.mock("../lib/api", async () => {
   const actual = await vi.importActual<typeof import("../lib/api")>("../lib/api");
@@ -82,6 +83,7 @@ vi.mock("../lib/api", async () => {
       chatUsage: (...a: unknown[]) => apiFns.chatUsage(...a),
       projectChatMessages: (...a: unknown[]) => apiFns.projectChatMessages(...a),
       markChatSeen: (...a: unknown[]) => apiFns.markChatSeen(...a),
+      promoteChat: (...a: unknown[]) => apiFns.promoteChat(...a),
     },
   };
 });
@@ -89,15 +91,22 @@ vi.mock("../lib/api", async () => {
 // The root workspace's CHILDREN — read by the ProjectsGrid embedded in the Home
 // pane. Mutable so a test can put a project in the grid.
 let mockProjects: Project[] = [];
+// The context's mutators, as STABLE spies. They have to survive re-renders: the
+// promote tests assert the sidebar was told about the new project (#566), and a
+// `vi.fn()` created inside the hook body is a fresh spy on every render — so the
+// call would land on an object no assertion can reach.
+const projectsCtx = {
+  refresh: vi.fn(),
+  upsert: vi.fn(),
+  remove: vi.fn(),
+};
 vi.mock("../lib/projects-context", () => ({
   useProjects: () => ({
     projects: mockProjects,
     rootWorkspace: null,
     loading: false,
     error: null,
-    refresh: vi.fn(),
-    upsert: vi.fn(),
-    remove: vi.fn(),
+    ...projectsCtx,
   }),
 }));
 
@@ -149,6 +158,7 @@ beforeEach(() => {
   changesSlug = null;
   mockProjects = [];
   Object.values(apiFns).forEach((m) => m.mockReset());
+  Object.values(projectsCtx).forEach((m) => m.mockReset());
   apiFns.listProjectFiles.mockResolvedValue([]);
   apiFns.listProjectDir.mockResolvedValue({ path: "", kind: "dir", entries: [] });
   apiFns.gitStatus.mockResolvedValue({ repo: false, files: [], clean: true });
@@ -350,5 +360,83 @@ describe("ProjectView root (#516)", () => {
     renderRootAt("/history");
     await screen.findByTestId("history-pane");
     expect(historySlug).toBe("");
+  });
+
+  /**
+   * Promote-to-project (#566). The action itself always worked — the project got
+   * created and the transcript re-homed — but the handler only navigated, so the
+   * new project stayed missing from the sidebar until a reload. There is no push
+   * channel for the project list (`ws.ts` carries `chat:*` only), so the context
+   * has to be told locally, exactly as the New Project path already does.
+   *
+   * Asserted against the CONTEXT rather than a rendered nav because `ProjectView`
+   * doesn't render the sidebar — `AppShell` does, from this same context. So "the
+   * row appears" is, at this layer, "the context was updated".
+   */
+  describe("promote to project (#566)", () => {
+    const promotedProject = () =>
+      makeProject({ slug: "water-heater", name: "Garage Water Heater Replacement" });
+
+    /** Drive the promote modal from the chat row through to a submit. */
+    async function promoteRootChat() {
+      apiFns.getProjectDetail.mockResolvedValue(
+        detail(rootWorkspace(), { chats: [makeChat({ sessionId: "s1", name: "Root chat" })] }),
+      );
+      renderRootAt("/chat");
+      await screen.findByTestId("chat-pane");
+      fireEvent.click(
+        await screen.findByRole("button", { name: /promote chat Root chat into a project/i }),
+      );
+      await screen.findByRole("heading", { name: "Promote to project" });
+      fireEvent.click(screen.getByRole("button", { name: "Promote to project" }));
+    }
+
+    it("puts the new project in the sidebar without a reload", async () => {
+      apiFns.promoteChat.mockResolvedValue({ project: promotedProject(), promoted: true });
+      await promoteRootChat();
+      // THE REGRESSION. Without this the row is absent until the provider
+      // refetches for some unrelated reason — which is why the project used to
+      // show up only once you'd sent a turn in it, or reloaded.
+      await waitFor(() => expect(projectsCtx.upsert).toHaveBeenCalledTimes(1));
+      // The server's record, not a locally-guessed one: the sidebar row needs the
+      // real slug and name to link and label correctly.
+      expect(projectsCtx.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ slug: "water-heater", name: "Garage Water Heater Replacement" }),
+      );
+    });
+
+    it("updates the sidebar by insert, not by a refetch that blanks it", async () => {
+      apiFns.promoteChat.mockResolvedValue({ project: promotedProject(), promoted: true });
+      await promoteRootChat();
+      await waitFor(() => expect(projectsCtx.upsert).toHaveBeenCalled());
+      // `refresh()` flips the context's `loading` flag, and AppShell swaps the
+      // entire project list for skeletons while it is set — so refetching here
+      // would trade a missing row for a flash of the whole nav. Asserted rather
+      // than left to a comment, because "it works either way" is exactly how
+      // that regression gets in.
+      expect(projectsCtx.refresh).not.toHaveBeenCalled();
+    });
+
+    it("still lands the user in the new project", async () => {
+      apiFns.promoteChat.mockResolvedValue({ project: promotedProject(), promoted: true });
+      await promoteRootChat();
+      // Pre-existing behaviour, kept: the chat moved, so follow it.
+      await waitFor(() =>
+        expect(screen.getByTestId("here")).toHaveTextContent("/projects/water-heater/chat"),
+      );
+    });
+
+    it("leaves the sidebar alone when the promote FAILS", async () => {
+      const { ApiError } = await vi.importActual<typeof import("../lib/api")>("../lib/api");
+      apiFns.promoteChat.mockRejectedValue(new ApiError("disk on fire", 500));
+      await promoteRootChat();
+      // The modal reports the failure and stays put. Nothing was created, so
+      // nothing may be inserted — an optimistic row here would be a phantom
+      // project that outlives the error message. (Before #566 this assertion was
+      // unreachable: the modal wiped its own error on the way out of `busy`.)
+      expect(await screen.findByText("disk on fire")).toBeInTheDocument();
+      expect(projectsCtx.upsert).not.toHaveBeenCalled();
+      expect(screen.getByTestId("here").textContent).toBe("/chat");
+    });
   });
 });
