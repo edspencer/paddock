@@ -1,6 +1,6 @@
 ---
 title: What's New
-description: "The user-facing highlights of each Paddock release — a chat list that nests spawned chats under their parent, an external MCP endpoint, a generated API reference, per-message fork & revert, Claude Opus 5 by default, configurable model lists, official Docker images & deploy recipes, live nested sub-agent cards, surviving background work, an instance-wide settings screen, attachments, streaming, unified triggers, and more."
+description: "The user-facing highlights of each Paddock release — the instance's own root as a first-class workspace, subtree actions on the chat tree, a running-chats filter, instance Config split from workspace Settings, scratch retired, a much faster jobs index, a chat list that nests spawned chats under their parent, an external MCP endpoint, a generated API reference, per-message fork & revert, Claude Opus 5 by default, official Docker images & deploy recipes, attachments, streaming, unified triggers, and more."
 ---
 
 The headline changes in recent Paddock releases, newest first. These are the
@@ -10,12 +10,27 @@ detail see the changelogs on GitHub
 [web](https://github.com/edspencer/paddock/blob/main/packages/web/CHANGELOG.md)).
 
 :::note[Reading older entries]
-Each entry describes a release as it shipped. Some things were refined later — for
-example the separate `set_schedule` and `set_hook` self-management tools below were
-unified into a single `set_trigger` family in a subsequent release.
+Each entry describes a release as it shipped, and some things were refined later.
+The separate `set_schedule` and `set_hook` self-management tools below were unified
+into a single `set_trigger` family in a subsequent release. And 0.49's root
+*project* — reached through a reserved `__root` slug — was replaced two releases
+on by 0.51's root **workspace**, whose key is the empty string and whose routes
+live at `/api/root`; `__root` is no longer accepted anywhere. Where a superseded
+detail would otherwise send you to an address that no longer resolves, the entry
+says so inline.
 :::
 
-A theme runs through this stretch: Paddock grew from a place to *chat with*
+Two arcs run through the most recent stretch. The first is that Paddock's own
+**root** stopped being a hole in the model: the directory holding your projects is
+now a workspace in its own right — with a keeper, chats, files, changes, history,
+triggers and settings, exactly like a project — which retired the old
+second-class "scratch" chat and turned `/` into somewhere you work rather than a
+menu you pass through. The second is that the **chat list** grew up. A fan-out
+used to arrive as a flat pile of rows; it now nests under the chat that caused it,
+folds away, tells you which of its chats are working right now, and lets you
+archive or delete a whole family in one gesture.
+
+Before those, a longer arc: Paddock grew from a place to *chat with*
 agents into a place where agents **run on their own** — fired by events and
 schedules, spawning and reporting back to each other — with the UI making all
 that unattended work legible at a glance. With 0.46 the boundary opens the other
@@ -23,6 +38,313 @@ way as well: Paddock is now something you can **drive from outside**, over an MC
 endpoint and a published HTTP API, carrying its own credentials and its own
 read-only-by-default policy rather than borrowing your proxy's. An instance is
 becoming less an app you visit and more a service your other tools talk to.
+
+## 0.52 — Subtree actions & one front door
+
+- **The sidebar is one Home link, and the projects grid lives on it.** The two
+  buttons that used to sit in the sidebar — **New Project** and **New root chat** —
+  are gone, replaced by a single **Home** link to `/`. Both actions moved to where
+  the thing they create actually lives: the projects grid on root Home carries
+  **New Project**, and Home's Chats section carries **New chat**. The **Projects**
+  tab is gone too — the grid is now a *section* of the Home pane rather than a tab
+  of its own, so the instance's front door is one page instead of a choice between
+  two. Home's sections read Chats → Projects → Files → CHANGELOG.md → Overview:
+  chats lead because every workspace has them, so the page opens the same way
+  whether or not it has children, and the overview trails because it describes a
+  workspace rather than offering a way into one. Only the root gets a Projects
+  section, since it's the only workspace with children today. Old links and
+  bookmarks still work — `/projects` now lands you straight on `/`.
+
+![The sidebar reduced to a single Home link above the Projects list, with the Config gear sitting at the bottom](../../assets/whats-new/root-sidebar.png)
+
+![Root Home with the projects grid embedded as a section below the Chats list, carrying its own New Project button](../../assets/whats-new/root-home.png)
+
+- **Instance Config and workspace Settings are two screens now, named for the
+  files they write.** 0.51 stacked them: the instance-wide `paddock.config.yaml`
+  form rendered as a second section *beneath* the root workspace's own settings
+  form, two save bars and one page inside another — and in practice the stacking
+  squashed the workspace form to zero height, so the tab had nothing it could
+  scroll. They're now separate. **Config** (the sidebar gear, at `/config`) writes
+  `paddock.config.yaml`, which is frozen at boot and so needs a restart to apply.
+  **Settings** is a tab on each workspace, writes that workspace's `project.yaml`,
+  and applies on save. The root's Settings tab is now identical to any project's.
+- **Find the chats that are working right now.** The chat list's **Chats** count
+  badge splits the moment a turn goes live: the total on the left, the running
+  count on the right — and the right half is a button that filters the list down to
+  just the chats working right now. Running chats were always findable by hunting
+  down the sidebar for a spinning ring; now they're a target you can hit. The
+  filtered view deliberately renders **flat**, because a running child indented
+  under its running parent would put back exactly the nesting the filter exists to
+  strip away, and it keeps whatever chat you currently have open pinned in so it
+  can't vanish from under you the instant its turn lands. The filter composes with
+  search rather than fighting it, and because it's sticky it can outlive the work
+  it was filtering for — so when the last turn ends the list says "No chats are
+  running." and offers you **Show all chats**.
+
+![The Chats count badge split into a total of 8 and a highlighted running count of 4, with the list filtered to the four chats whose turns are live and rendered flat](../../assets/whats-new/running-chats-filter.png)
+
+- **Nesting itself is now optional.** A second button beside **+** toggles the
+  list between the nested tree and a flat one. Both this and the running filter are
+  remembered per browser and applied everywhere, not per project — how you like to
+  read a list isn't a fact about one project.
+
+![The root workspace's tab bar leading with Home, and the chat-list toolbar where the nested-or-flat toggle sits beside the new-chat button](../../assets/whats-new/root-tab-bar.png)
+
+- **Hold Shift to act on a whole family of chats.** The nested list could only ever
+  act on one chat at a time, which made archiving a parent quietly destructive to
+  the *shape* of the list: the children lost their parent from the active set and
+  scattered back into the top level. **Shift-click** on archive, delete, or
+  mark-read/unread now applies to a chat **and all of its descendants**,
+  recursively, however deep the family goes. A plain
+  click is unchanged. Deleting goes through a confirmation that counts what's
+  about to go ("Manager and its 3 nested chats will be permanently removed"),
+  because a collapsed parent means a shift-delete can destroy chats that aren't
+  even on screen and there is no undo. The dialog also names the nested chats it
+  will **keep**, since deleting a parent on its own re-homes its children to the
+  top level and an irreversible action shouldn't rearrange the list without
+  saying so.
+- **Detach a chat from its parent.** An unlink action on any nested row promotes
+  that chat to the top level with its own subtree intact — so you can archive a
+  whole family *except* one chat you're still using. Nothing is destroyed;
+  re-attaching is just clearing the override.
+- **Real tooltips, instead of whatever your browser did.** Every native `title=`
+  in the chat list is replaced by a themed tooltip that escapes the sidebar's
+  scroll container and is rich enough to carry the hint that makes the subtree
+  actions discoverable at all — "… · **Shift-click** to archive all 4", counting
+  the chat itself along with its descendants — shown only on the rows that
+  actually have any. The same hint is in each button's accessible name, so the
+  affordance reaches the keyboard too.
+
+![A nested parent row hovered to reveal its action strip, its archive button showing the tooltip 'Archive chat — file it away without deleting · Shift-click to archive all 4' above the row's three nested children](../../assets/whats-new/subtree-actions-tooltip.png)
+
+- **No more grey browser dialogs.** The last three `window.prompt()` /
+  `window.confirm()` calls — renaming a chat, reverting a chat, deleting a
+  trigger — are Paddock modals now. They were unthemed browser chrome sitting one
+  button away from a styled dialog, prefixed with "*⟨host⟩* says" in the installed
+  PWA, and they blocked the main thread (including the live transcript) until you
+  dismissed them. The revert dialog gains more than polish: its warning — that
+  tool calls made after the revert point are **not** undone, only the conversation
+  is — used to be glued into one undifferentiated paragraph, so the most important
+  sentence in the most destructive of the three actions read like boilerplate.
+  It's structured content now, with the message and tool-call counts emphasised
+  and the caveat as its own callout: "**Those actions are not undone.** Files
+  written, PRs opened and messages sent stay as they are — only the conversation is
+  rewound." Two small behaviours were kept rather than
+  lost in the move: clearing the rename field still resets a chat to its generated
+  name — the modal now says so out loud ("Clear the box to reset it to the
+  generated name.") and relabels its button to **Reset name**, where the old
+  prompt could only be discovered by accident — and the revert
+  dialog refuses to dismiss on a backdrop click, because it carries text meant to
+  be read.
+
+![The revert confirmation modal, with '6 messages' and '2 tool calls' emphasised in its summary line and the 'Those actions are not undone' warning set apart as its own callout](../../assets/whats-new/revert-modal.png)
+
+- **Opening a project is three times faster, and the archived half costs nothing
+  until you look at it.** A project's context rings had no stored counter behind
+  them: every ring was derived by streaming that chat's transcript, and its
+  sub-agents', end to end. The sidebar collapses the Archived group by default, so
+  most of that work produced rings nobody ever saw — on one real project, 182 of
+  234 chats and 349 MB of the 495 MB of transcript were archived. The rings are now
+  fetched by scope, and the archived half only once you actually expand the group.
+  Measured on that project: opening it went **4.18 s → 1.23 s** cold and
+  **0.40 s → 0.017 s** warm.
+
+## 0.51 — The root is a workspace
+
+- **The root is a workspace, not a project with a magic slug.** 0.49 made the
+  instance's root behave like a project by giving it a reserved `__root` slug;
+  0.51 replaces that with a **workspace** model keyed by each workspace's path
+  relative to your projects root. The root's key is therefore the empty string —
+  the zero value already in the key space rather than a reserved name — so
+  resolving it needs no special case at all. What you notice is that **the root
+  always exists**: no `project.yaml` to seed, no creation endpoint, no "Enable"
+  card on the grid, and no `Project not found: __root` when you click **New chat**
+  on a fresh instance. Its name defaults to your projects-root directory's own
+  name, and a record is only written when you actually change a setting. `/` is
+  the root workspace's Home, and the projects grid is its children tab.
+- **The root and a project run literally the same code.** The workspace-scoped
+  routes are one Fastify plugin **mounted twice** — at `/api/root` for the empty
+  key and at `/api/projects/:slug` for everything else. Same handlers, same
+  schemas, same error paths, so "the root behaves exactly like a project" is true
+  by construction instead of being a property someone has to remember to preserve.
+  That matters because the previous design had two resolution branches to keep in
+  step and one of them was missed, which 404'd every root file route in 0.49.
+- **Three quiet bugs around root chats, fixed.** All three were the same
+  falsy-versus-absent mistake, which an empty-string key is very good at exposing:
+  a chat whose parent was a *root* chat had its recorded parent edge thrown away
+  and rendered as an orphan; root chats were skipped by the recovery nudge, which
+  silently disabled **Continue** and automatic re-drive for them; and root chats
+  were dropped from the per-workspace unread badge.
+
+## 0.50 — Scratch retired, and a much faster server
+
+- **Scratch is retired — a one-off chat is a root chat now.** Scratch existed only
+  because a chat had to belong to *some* agent and there was no agent for "the
+  instance itself". Once the root had an ordinary keeper, scratch was redundant and
+  strictly worse: it had been deliberately denied self-management tools, curation,
+  triggers, attachments, run history, the `CLAUDE.md` walk-up from your projects
+  root, and more than one turn at a time. A root chat gets every one of those for
+  free. `/chat` is unconditionally a root chat, and the projects grid's Inbox
+  section is gone.
+- **Breaking: the one-off chat API is gone.** Every `/api/chats/*` endpoint went
+  with the scratch agent — eleven mirrored routes, along with roughly fourteen "is
+  this scratch?" branches that were the *only* reason several code paths had two of
+  them. The unscoped `GET /api/commands` went too; slash commands are
+  workspace-scoped now, so they live under a workspace like everything else. An
+  external client using the one-off chat API moves to the root workspace's chat
+  routes. **Note that 0.50's own migration advice named
+  `/api/projects/__root/chats/*`, which 0.51 invalidated one release later — the
+  address today is `/api/root/chats/*`, and `/api/root/commands` for commands.**
+- **Promoting a chat is generalised rather than deleted.** The old "promote this
+  scratch chat into a project" action was never really about scratch — it moves one
+  chat from one keeper's store to another's — so it's now a generic
+  workspace-to-workspace move, offered on root chats in the UI.
+- **Nothing is migrated, on purpose.** Existing scratch transcripts stay exactly
+  where they are on disk and simply stop being listed; the companion migration was
+  dropped rather than shipped, since it meant a permanent boot-time code path
+  carrying a one-time, few-hundred-kilobyte move. `PADDOCK_SCRATCH_DIR` is kept as
+  a documented legacy setting so an existing config doesn't fail validation and the
+  old transcripts stay findable by hand.
+- **The server got dramatically faster.** Two endpoints behind the unread badge
+  used to `readdir` and YAML-parse **every** job record on every `/api/projects`,
+  `/api/projects/:slug` and `/chats` request. On a real instance — 1,996 records,
+  46.6 MB — a CPU profile put **61% of all busy server CPU** in that one parse, and
+  because it's synchronous work on a single event loop it pinned throughput at
+  about 1.1 requests per second and made an unrelated 2 ms endpoint take nearly a
+  second whenever a scan was in flight. Both now read through an index keyed on
+  each file's mtime and size, warmed at boot so the first page load doesn't pay for
+  the cold pass, and a record is only cached once it has finished — so a running
+  turn can never be memoised as final. Measured on that same corpus:
+  `/api/projects` **0.86 s → 0.036 s**, the projects grid's seven parallel chat
+  calls **6.19 s → 0.13 s**, throughput at eight concurrent requests
+  **1.06 → 18.5 req/s**, and in-browser load of a project page 2.31 s → 0.33 s. A
+  companion bump to herdctl's own index-backed job listing took a project's
+  **History** tab from 1.47 s to 0.15 s.
+- **devbox gains Python, `uv`, `jq`, `rsync` and `kubectl`.** Python is the default
+  reach for a ten-line data transform whatever the surrounding project is written
+  in, and `python3: not found` turned that into "rewrite it in Node" every time;
+  `jq` and `rsync` were the same gap from the other end. `uv` is there to make a
+  per-project virtualenv cheap enough that libraries don't need baking into the
+  image — the rule being interpreters and small CLI utilities in the image,
+  libraries in the project. `kubectl` joins them because a keeper asked "is the
+  deploy healthy?" needs the client present before any amount of credentials
+  helps, and it can't be added downstream: it's in none of the apt sources the
+  image carries. As with the Docker CLI already there, it's the **client only** —
+  no kubeconfig and no cluster credentials are baked in.
+
+## 0.49 — The root becomes a project
+
+- **A Paddock instance can now be as capable at its root as inside any project.**
+  The framing is simply that the root is the project whose directory *is* your
+  projects root rather than a subdirectory of it — so its keeper is an ordinary
+  keeper, with the same self-management tools, the same chat tree, the same
+  per-chat model and the same sweeper. `/` is root Home and `/chat` its chats, with
+  the projects grid moving to `/projects`; `/` always renders Home, with no
+  redirect and no sticky last tab, so the instance's front door never lands you on
+  Files.
+- **Worth being blunt about the escalation this buys.** The root keeper's working
+  directory *contains* every project, so root chats can read and edit any
+  project's files. That's the intent — the root is where you act across the whole
+  instance — but it's a real step up from a project keeper, which is confined to
+  its own subtree.
+- **Opt-in, and nothing changes until you opt in.** An existing instance has no
+  root project until you create one from an **Enable** card on the projects grid;
+  without it, `/` is the grid and `/chat` is a scratch chat exactly as before.
+- **The full tab bar at the root.** History, Settings and Triggers arrive too, so
+  there's no tab a project gets and the root doesn't. At the root, **Settings**
+  showed the root's own workspace config above the instance-wide runtime config —
+  kept as two sections rather than fused, because one is hot-applied on save and
+  the other is frozen until you restart, and fusing them would hide that. (0.52
+  split them into separate screens instead.) The root's overflow menu has **Edit**
+  but deliberately no **Delete**: its directory *is* your projects root, so the
+  action could only ever produce an error.
+- **A spawned chat now records which chat created it.** The nested chat list has
+  always preferred a recorded parent edge and fallen back to inferring one from
+  who sent the opening prompt — but the dominant way children get made, the
+  `create_chat` tool, was dropping the parent when it stamped provenance. The
+  result was stark: **not one** of the 169 provenance records on the dogfood
+  instance carried the field, so every edge in the live tree came from inference —
+  which had already needed narrowing once after it re-parented human chats that a
+  child had reported back to. New chats now record the real edge. Inference is
+  unchanged and still backfills historical chats; this only stops manufacturing
+  new ones that need it.
+- **The file surface refuses hidden paths outright, rather than just omitting
+  them.** Listing had always dropped dot-prefixed entries from what it *returned*,
+  but that's presentation, not access control: naming the path explicitly still
+  resolved it, and because the read route decodes an escaped slash, a nominally
+  single-segment route accepted a whole nested path. Together that meant a request
+  could fetch a chat transcript out of `.chats`, or a `.git/config` — which carries
+  credentials when a remote embeds a token. Any dot-prefixed *segment* is now
+  rejected, checked against the resolved path so `./.git` and `a/../.git` are
+  caught alongside a literal one. **Honest severity: this is defense-in-depth, not
+  a privilege boundary.** Paddock has no per-user role model, and anyone who can
+  reach these routes can already start a keeper chat and run `Bash` — strictly more
+  capability than reading a file — and the read-only `/mcp` token surface exposes
+  no file verb at all, so it was never reachable there. It's worth closing because
+  "hidden from the listing" shouldn't be the only thing between an API and a
+  transcript. A dotfile *leaf* is still readable, deliberately: the Changes pane
+  renders an untracked file's contents through this same surface, and `.gitignore`
+  is untracked in a fresh repo-backed project.
+
+## 0.48 — A trustworthy plaintext guard & a tidier chat list
+
+- **`list_chats` hides archived chats by default, like the UI already did.** An
+  agent listing a project's chats was getting the whole pile, archived ones
+  included, which is not what the same list looks like on screen. Archived chats
+  are now withheld unless you pass `include_archived: true`, every chat reports its
+  own `archived` flag, and the result always carries an `omittedArchived` count —
+  so an archived chat's session id is never *silently* unreachable.
+- **The `/mcp` plaintext guard now only believes a proxy you've named.** The guard
+  refuses a bearer token sent over a plaintext non-loopback connection, but it
+  honoured `X-Forwarded-Proto: https` from **any** peer — so the guard could be
+  switched off by the caller, including by the operator it exists to protect,
+  copy-pasting a header out of a smoke-test recipe onto a real network. The
+  forwarded scheme is now believed only when the immediate socket peer — which no
+  client can set — is a trusted proxy. The new
+  `PADDOCK_MANAGEMENT_TRUSTED_PROXIES` takes IPs, CIDRs, or the presets
+  `loopback` / `linklocal` / `uniquelocal` / `none` / `all`. Its default is
+  loopback plus the private address space, so every sidecar deployment keeps
+  working while a **public** peer can no longer switch the guard off; name your TLS
+  terminator explicitly to turn it into a real control, and the server warns once
+  per peer while it's leaning on the default. This is not an authentication
+  change — `/mcp` still requires a valid token, and spoofing the header never
+  granted access.
+- **A keeper reporting back no longer re-parents the chat it reported to.** On the
+  documented report-back workflow — you start a manager, the manager spawns a
+  child, the child messages home when it's done — the manager ended up adopting
+  its own child *as its parent*. Both edges pointed at each other, so the tree
+  builder's cycle guard picked a winner per render and the manager visibly flipped
+  between sitting at the top level and sitting nested underneath its own child. A
+  chat whose provenance already marks it as a root is no longer put through parent
+  inference at all. Two sidebar counts are fixed alongside it: the search badge,
+  which read "1/40" for a search matching five chats under one parent, and the
+  Archived badge, which undercounted nested archived chats.
+- **Your unread count is the same on every device now.** The same account could
+  report genuinely different unread counts on different devices. Read state is
+  stored per user on the server, but the client layered a *persistent* local mirror
+  on top and took whichever of the two was further ahead — so a value the server
+  never received marked a chat read on that device only, and the mirror never
+  synced back up. The persistence is gone and the optimism stays: opening a chat
+  still clears its cue instantly, but that's session-scoped, so every reload
+  re-derives from the server and divergence is structurally impossible rather than
+  something that had to be repaired. A failed update now rolls its optimistic bump
+  back, so the cue reappears honestly instead of sticking, and a one-time migration
+  pushed any read state already sitting in a browser up to the server before
+  clearing it out.
+- **The sweeper stops occasionally replacing a whole changelog with one sentence.**
+  Post-turn curation has replaced whole files since 0.41, but the prompt registered
+  with the model still described the old append-only contract — asking for "exactly
+  ONE changelog bullet line" and calling `CLAUDE.md` amend-only. A model that
+  weighted that over the per-sweep instructions did the obvious thing and replaced
+  an entire `CHANGELOG.md` with a single sentence, which was observed in the wild
+  on Paddock's own changelog. The prompt now describes what the curator actually
+  does, and a test pins the contract so the two can't drift apart again silently.
+- **Two image gaps closed.** The base image shipped `git` with no ssh transport, so
+  every `git@` remote failed mid-turn with `cannot run ssh: No such file or
+  directory` — it now installs `openssh-client`. And devbox shipped the Docker CLI
+  with an empty plugin path, so `docker compose` and `docker buildx` were both
+  `unknown command`; both plugins are now installed. Each was a missing runtime
+  dependency of tooling the images already deliberately included.
 
 ## 0.47 — The chat list learns who spawned whom
 
@@ -113,7 +435,9 @@ becoming less an app you visit and more a service your other tools talk to.
   raw spec at `/open-api.json` — reachable from a new **Swagger API** link in the
   sidebar, with an Authorize button that reflects your instance's auth mode. A
   static copy is published on this site too, as the [API reference](/api/). (The
-  sidebar's "Instance settings" is now just **Settings**.)
+  sidebar's "Instance settings" link became just **Settings** in this release; 0.52
+  renamed it again to **Config** when instance config and workspace settings split
+  into separate screens.)
 
 ![The generated Swagger UI reference mounted at /open-api, listing the System routes](../../assets/whats-new/swagger-api.png)
 
@@ -207,7 +531,8 @@ becoming less an app you visit and more a service your other tools talk to.
   more. Instance config is read once at boot and frozen, so a save writes the file
   and shows a **restart-to-apply** banner; a field already pinned by an environment
   variable renders read-only with an "overridden by `ENV`" note, so the precedence
-  is never a surprise.
+  is never a surprise. (This screen is **Config**, at `/config`, as of 0.52 —
+  "Settings" now means a *workspace's* own `project.yaml`.)
 
 ![The instance-wide Settings screen, editing paddock.config.yaml from the UI with a restart-to-apply banner](../../assets/whats-new/instance-settings.png)
 

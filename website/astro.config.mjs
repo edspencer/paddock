@@ -105,7 +105,7 @@ export default defineConfig({
 					items: [
 						{ label: 'Environment variables', slug: 'configuration/environment' },
 						{ label: 'Config file (YAML)', slug: 'configuration/config-file' },
-						{ label: 'The Settings screen', slug: 'configuration/instance-settings' },
+						{ label: 'The Config screen', slug: 'configuration/instance-settings' },
 						{ label: 'Authentication', slug: 'configuration/authentication' },
 						{ label: 'Binding & network exposure', slug: 'configuration/binding-and-exposure' },
 						{ label: 'Model allow-lists', slug: 'configuration/models' },
