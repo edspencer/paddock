@@ -1,6 +1,6 @@
 ---
 title: "Architecture overview"
-description: "Monorepo shape, the three storage classes, WebSocket/session flow, MCP injection, auth boundary, sweeper, and drive modes."
+description: "Monorepo shape, the three storage classes, WebSocket/session flow, MCP injection, auth boundary, sweeper, drive modes, the workspace double-mount, and the OpenAPI surface."
 ---
 
 > Canonical architecture overview for Paddock — the project layer over
@@ -108,7 +108,7 @@ deliberate testability seam.
 8. Transports: `app.register(websocket)` and `app.register(fastifyMultipart)`.
 9. **OpenAPI**, when `cfg.openapi.enabled` — `@fastify/swagger` **must** register
    *before* the routes, because it hooks `onRoute` to collect each route's schema into
-   the live document ([§11](#11-openapi-reference)).
+   the live document ([§12](#12-openapi-reference)).
 10. `makeChatHandler(deps)`, then `registerRoutes(app, deps)` (REST), then the
     `GET /ws` mount with `{ websocket: true }`.
 11. In production, serve the built SPA from `cfg.webDist` with branding injected
@@ -579,7 +579,7 @@ The main knobs:
 | **Curation budgets** | `PADDOCK_CURATION_OVERVIEW_MAX_TOKENS` (2000), `PADDOCK_CURATION_CHANGELOG_MAX_TOKENS` (8000), `PADDOCK_CURATION_CLAUDEMD_MAX_TOKENS` (6000) — `curation.*` in YAML, per-project overridable (`curation-config.ts`) |
 | **Keeper recovery** | `PADDOCK_RECOVERY_SURFACE` (**true** — `surfaceKilledTask`, the `chat:killed_task` affordance), `PADDOCK_RECOVERY_AUTODRIVE` (false), `PADDOCK_RECOVERY_DEBOUNCE_MS` (5000), `PADDOCK_RECOVERY_MAX_RETRIES` (1), `PADDOCK_RECOVERY_LIMBO_MS` (0 = off) |
 | **Attachments** | `PADDOCK_ATTACHMENTS_ENABLED` (true), `PADDOCK_ATTACHMENTS_MAX_FILE_SIZE_MB` (25), `PADDOCK_ATTACHMENTS_MAX_FILES_PER_MESSAGE` (10), `PADDOCK_ATTACHMENTS_ALLOWED_TYPES` (`*` — a hygiene guardrail, **not** a security boundary) |
-| **OpenAPI** | `PADDOCK_OPENAPI_ENABLED` (false), `PADDOCK_OPENAPI_PATH` (`/open-api`) — see [§11](#11-openapi-reference) |
+| **OpenAPI** | `PADDOCK_OPENAPI_ENABLED` (false), `PADDOCK_OPENAPI_PATH` (`/open-api`) — see [§12](#12-openapi-reference) |
 | **Management API** | **YAML-only** `managementApi.*` — `clients[]`, `instanceId`, `trustedProxies` — plus the `PADDOCK_MCP_TOKEN_<CLIENT>` credentials and `PADDOCK_MANAGEMENT_TRUSTED_PROXIES`. See [Management API (MCP)](/reference/mcp/). |
 | **Whisper** | `PADDOCK_WHISPER_MODE` (off/local/remote), `PADDOCK_WHISPER_ENDPOINT`, `PADDOCK_WHISPER_MODEL` (base), `PADDOCK_WHISPER_API_KEY`, `PADDOCK_WHISPER_LANGUAGE`, `PADDOCK_WHISPER_MAX_UPLOAD_BYTES` (25 MB) |
 | **Git + GitHub** | `PADDOCK_GIT_AUTHOR_NAME`, `PADDOCK_GIT_AUTHOR_EMAIL`, `PADDOCK_GITHUB_CLIENT_ID` |
@@ -634,6 +634,70 @@ Projects concept page).
 
 ---
 
+## 11. The REST surface — one plugin, mounted twice
+
+`routes.ts` is a 58-line registrar. Three groups are registered once, globally
+(`registerMetaRoutes`, `registerGitRoutes`, `registerProjectRoutes`). The rest — the
+**workspace-scoped** half of every group — is registered inside a single call to
+`mountWorkspaceRoutes()` (`routes/workspace-mount.ts`), and *that* is the load-bearing
+detail: the same plugin is mounted **twice**, at two prefixes.
+
+| Prefix | Workspace key |
+|---|---|
+| `/api/root` | `""` (the root workspace) |
+| `/api/projects/:slug` | `params.slug` |
+
+Both mounts run the **identical handlers**, so root/project parity is a property of the
+wiring rather than something contributors have to remember. Handler bodies needed no
+changes at all: an `onRequest` hook injects `slug: ""` for the root mount, and
+`onRequest` is the earliest lifecycle hook — it runs *before* schema validation, so
+every handler sees a normal `params.slug` either way.
+
+Why two mounts instead of one route with an optional segment: the root's key is the
+**empty string**, and an empty string cannot ride in a URL path segment —
+`/api/projects//chats` simply doesn't match. See
+[Workspaces](/concepts/workspaces/) for the model this implements.
+
+Routes worth knowing about that postdate the rest of this page, all workspace-scoped
+(so each exists under both prefixes), in `routes/chats.ts`:
+
+| Route | Notes |
+|---|---|
+| `POST …/chats/batch/archive` · `…/batch/unread` · `…/batch/delete` | Subtree bulk actions (#508). Capped at `BATCH_SESSIONS_MAX` (500) and **all-or-nothing** on validation: one malformed session id fails the whole request rather than silently applying to the rest. |
+| `POST …/chats/:sessionId/detach` | Writes the `ParentDetachStore` flag. Nothing is destroyed — the recorded edge stays, the override just wins ahead of it. |
+| `GET …/chats/usage?scope=active\|archived\|all` | Per-chat context-window usage for the list's usage rings. Defaults to **`active`**: usage is derived by streaming each transcript, and archived rings sit behind a collapsed group, so computing them by default is wasted work (#537). |
+
+## 12. OpenAPI reference
+
+Paddock derives an OpenAPI document from the route schemas themselves and serves it
+with a branded Swagger UI — so the REST surface is browsable rather than something you
+reconstruct from source. `@fastify/swagger` + `@fastify/swagger-ui`, wired in
+`openapi.ts` (`buildSwaggerOptions` / `buildSwaggerUiOptions`).
+
+- **Off by default.** Set `PADDOCK_OPENAPI_ENABLED=1` (or `openapi.enabled` in YAML).
+- **Mounts at `cfg.openapi.path`, default `/open-api`** (`PADDOCK_OPENAPI_PATH`),
+  normalized to a leading slash with no trailing slash. The UI's own raw spec is at
+  `<path>/json`, plus a stable tool-friendly alias at `<path>.json` that is itself
+  hidden from the spec.
+- **Registration order is a real constraint** — `@fastify/swagger` hooks `onRoute` to
+  collect schemas, so it must register *before* `registerRoutes`.
+- **No auth exemption.** The docs sit behind whatever `PADDOCK_AUTH_MODE` is
+  configured, gated exactly like the API they describe. The security schemes the spec
+  advertises reflect this instance's auth mode (`authDoc` in `openapi.ts`).
+- `GET /ws` is marked `hide: true` — it isn't a REST endpoint, so a Swagger "Try it
+  out" against it would only fail. The frame protocol is documented in
+  [§4](#4-websocket--session-flow) instead.
+
+:::caution[A stale comment in `app.ts` says `/docs`]
+The comment above the swagger registration block still claims the UI mounts at `/docs`
+with the raw spec at `/docs/json`. It does not — it mounts at `cfg.openapi.path`
+(default `/open-api`), as the adjacent `app.log.info({ path: cfg.openapi.path })` and
+the "set `PADDOCK_OPENAPI_ENABLED=1` to mount `/open-api`" branch both show. Trust the
+code, not that comment.
+:::
+
+---
+
 ## Source map
 
 | Concern | File(s) |
@@ -648,10 +712,12 @@ Projects concept page).
 | Keeper recovery | `recovery-config.ts` |
 | herdctl wrapper | `herdctl.ts`, `spike.ts` |
 | Project layer | `projects.ts` |
-| Sidecar stores | `archive.ts`, `read-state.ts`, `queued-message.ts`, `attachments.ts` |
+| Sidecar stores | `archive.ts`, `star.ts`, `read-state.ts`, `unread.ts`, `parent-detach.ts`, `run-provenance.ts`, `message-provenance.ts`, `queued-message.ts`, `schedule-session.ts`, `trigger-session.ts`, `attachments.ts` |
+| Chat DTO / parent edge | `chat-dto.ts` (`makeParentResolver`, `buildProjectChats`) |
 | Transcripts | `transcripts.ts`, `tooldetails.ts`, `usage.ts`, `subagents.ts` |
-| Sweeper | `sweep.ts` |
-| MCP injection | `send-file-mcp.ts`, `self-mcp.ts` |
+| Sweeper | `sweep.ts`, `curation-config.ts` |
+| MCP injection | `send-file-mcp.ts`, `self-mcp*.ts`, `ws-self-mcp.ts`, `wake-injection.ts`, `spawn-capability.ts` |
+| OpenAPI | `openapi.ts` |
 | Git backing store | `git.ts`, `github-auth.ts` |
 
 For the conceptual model, continue to [`concepts/`](/concepts/).
