@@ -257,9 +257,16 @@ a comment marking exactly this trap on the recorded-edge check.
 
 ## 4. WebSocket / session flow
 
-All live chat runs over a single `GET /ws` endpoint. The two files that matter
-are `ws.ts` (protocol + turn lifecycle) and `session-hub.ts` (fan-out, buffering,
-re-attach). The key design goal (issue #54): **a turn's stream is decoupled from
+All live chat runs over a single `GET /ws` endpoint. Four files matter:
+
+| File | Owns |
+|---|---|
+| `ws.ts` | The socket handler and the browser-driven turn lifecycle (`onChatSend`, `onChatCommand`). |
+| `ws-turn.ts` | The **server-initiated** turn engine — `startAgentTurn`, the path every autonomous, spawned, scheduled and trigger-fired turn takes (extracted from `ws.ts` in #424). It is also where a chat's provenance marker, including its recorded `parentSessionId`, is persisted. |
+| `ws-triggers.ts` | Trigger dispatch plus the shared `composePreloadedPrompt`. |
+| `session-hub.ts` | Fan-out, buffering, re-attach. |
+
+The key design goal (issue #54): **a turn's stream is decoupled from
 the single socket that started it**, so it survives socket death and can be
 replayed to reconnecting or additional clients.
 
@@ -296,7 +303,7 @@ Server → client (`ServerMessage` union, `ws-protocol.ts`):
 Every hub-routed frame carries a `Routing` payload (`ws-protocol.ts`): `projectSlug`,
 `target` (legacy alias), `sessionId`, `jobId`, and a hub-stamped monotonic `seq`.
 
-### Turn lifecycle (`onChatSend`, `ws.ts:1034`)
+### Turn lifecycle (`onChatSend`, `ws.ts`)
 
 ```mermaid
 sequenceDiagram
@@ -333,12 +340,12 @@ Step by step:
 3. **Resolve model + drive mode.** The `model` override wins if
    `isKnownModel`, else `project.model` (scratch → keeper default); the keeper is
    re-registered via `ensureKeeperModel` because there's no per-trigger model API
-   (`ws.ts:1119-1148`). Drive mode is `project.driveMode ?? cfg.keeperDriveMode`.
+   (`ws.ts`). Drive mode is `project.driveMode ?? cfg.keeperDriveMode`.
 4. **Preload (optional).** For a *new* chat with `preloadContext` and a non-empty
    `OVERVIEW.md`, the overview + changelog tail are wrapped and prepended to the
-   prompt (`ws.ts:1157`, CONTRACT-v2 §2).
+   prompt (`composePreloadedPrompt()` in `ws-triggers.ts`, CONTRACT-v2 §2).
 5. **Drive the turn.** `const drive = driveMode === "session" ? herdctl.chatSession
-   : herdctl.chat` (`ws.ts:1315`), called as `drive(agentName, { prompt, resume,
+   : herdctl.chat` (`ws.ts`), called as `drive(agentName, { prompt, resume,
    triggerType: "web", injectedMcpServers, onJobCreated, onMessage })`.
 6. **Capture ids mid-stream.** `onJobCreated` records the `jobId`
    (`turn.setJobId`). Inside `onMessage`, when `m.session_id` first appears, for a
@@ -357,9 +364,9 @@ Step by step:
 
 ### SessionHub — fan-out, buffering, re-attach
 
-`SessionHub` (`session-hub.ts:114`) is transport-agnostic (it depends only on a
+`SessionHub` (`session-hub.ts`) is transport-agnostic (it depends only on a
 minimal `HubSocket` interface). One shared hub is created per WS handler
-(`ws.ts:564`).
+(`ws.ts`).
 
 - **State:** `bySession: Map<sessionId, Turn>` and `subscribers: Map<sessionId,
   Set<HubSocket>>`, plus an `onActive` callback the WS layer wires to broadcast
@@ -401,7 +408,7 @@ trigger call; herdctl's CLI runtime stands up a localhost HTTP MCP bridge per
 injected server and auto-allowlists `mcp__<key>__*` (the keeper is a `claude -p`
 subprocess that can't reach an in-process SDK server directly).
 
-Two servers, both wired in `ws.ts` (`ws.ts:1173-1310`):
+Two servers, both wired into `injectedMcpServers` in `ws.ts`'s `onChatSend`:
 
 - **`send_file`** (server key `paddock`, tool `mcp__paddock__send_file`) —
   `sendFileServerDef()` in `send-file-mcp.ts`. Injected on **every** turn (keeper
@@ -448,7 +455,7 @@ later opens a spawned chat gets full tools again through the normal socket path.
 ## 6. The sweeper
 
 After every user chat turn in a real project, a **post-turn sweep** curates the
-project's `OVERVIEW.md` and `CHANGELOG.md`. `SweepService` (`sweep.ts:67`) is the
+project's `OVERVIEW.md` and `CHANGELOG.md`. `SweepService` (`sweep.ts`) is the
 engine; the agent that does the writing is a dedicated **tool-less** per-project
 `sweeper-<slug>` agent.
 
@@ -463,7 +470,7 @@ engine; the agent that does the writing is a dedicated **tool-less** per-project
   activity → no sweep). On success the watermark advances; on failure only the
   timestamp advances (not the mtime), so the next sweep retries the same activity.
 - **Digest.** `buildDigest()` summarizes the last ~40 messages of the 6 newest
-  sessions (`MAX_DIGEST_SESSIONS`, `sweep.ts:124`; tool calls compacted, text
+  sessions (`MAX_DIGEST_SESSIONS`; tool calls compacted, text
   trimmed) and `curationPrompt()` bundles
   that with the current `OVERVIEW.md`, `CHANGELOG.md` tail, and `CLAUDE.md`.
 - **Tool-less contract.** The sweeper is configured with `allowed_tools: []` and
@@ -477,7 +484,7 @@ engine; the agent that does the writing is a dedicated **tool-less** per-project
   <<<END>>>
   ```
 
-  `SweepService` parses the markers (`parseSweeperOutput`, `sweep.ts:727`) and
+  `SweepService` parses the markers (`parseSweeperOutput`) and
   writes the files itself: `writeOverview` and `writeChangelog` (both
   **wholesale replace** — the sweeper returns each file in full, so it can
   coalesce and prune as well as add) and `writeClaudeCurated`, which replaces
@@ -522,14 +529,14 @@ Three providers, selected by `PADDOCK_AUTH_MODE`:
   `createRemoteJWKSet` built once at registration). Fail-closed: missing
   `jwksUrl` throws at startup; a bad token → 401.
 
-**Exemptions** (`isExempt`, `auth.ts:137`) — three groups, not two:
+**Exemptions** (`isExempt` in `auth.ts`) — three groups, not two:
 
 1. **Health/readiness probes**, so a proxy can probe a locked-down instance.
 2. **Immutable static front-end assets** (`/assets/`, `/icons/`, `/fonts/`,
    `/sw.js`, `/manifest.webmanifest`, `/favicon.ico` — issue #223), so the SSO
    login flow and the PWA shell load cleanly.
 3. **The Management API** — the `/mcp` prefix and
-   `/.well-known/oauth-protected-resource` (`auth.ts:114-135`). This one is not
+   `/.well-known/oauth-protected-resource` (`isManagementApiPath` in `auth.ts`). This one is not
    a hole: `/mcp` runs its own per-client token authenticator, independent of
    `PADDOCK_AUTH_MODE`, and 404s until an operator configures it. It is exempt
    *because* the browser modes are actively wrong for it — `jwt` mode would
@@ -613,7 +620,7 @@ Projects concept page).
 | Bootstrap / DI | `app.ts`, `index.ts` |
 | Config | `config.ts`, `models.ts`, `instance-config.ts` |
 | Auth boundary | `auth.ts` |
-| REST | `routes.ts` (a 48-line registrar) → `routes/{chats,projects,triggers,meta,git,mcp}.ts` |
+| REST | `routes.ts` (a 58-line registrar) → `routes/workspace-mount.ts` → `routes/{chats,projects,triggers,meta,git,mcp}.ts` |
 | WS transport | `ws.ts`, `ws-protocol.ts`, `ws-turn.ts`, `ws-triggers.ts`, `session-hub.ts` |
 | Triggers (hooks + schedules) | `triggers.ts`, `trigger-config.ts`, `hook-config.ts` |
 | Management API (`/mcp`) | `management-{config,auth,policy,ops,metadata,mcp-server}.ts` |
