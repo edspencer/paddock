@@ -12,8 +12,10 @@ description: "Monorepo shape, the three storage classes, WebSocket/session flow,
 > For the conceptual model (what a project, keeper, chat, or sweeper *is*), see
 > [`concepts/`](/concepts/).
 
-Everything here is grounded in the code under `packages/server/src` — file and
-symbol names are cited so you can jump straight to the source.
+Everything here is grounded in the code under `packages/server/src`. Citations name a
+**file and a symbol** (`buildApp()` in `app.ts`) and deliberately carry **no line
+numbers** — a symbol survives the refactor that moves it, a line number does not, and
+a stale line number is worse than none. `grep -n` the symbol.
 
 ---
 
@@ -28,14 +30,14 @@ tools**, an **auth boundary**, and a **git backing store** on top.
 ```mermaid
 flowchart LR
   subgraph Browser["packages/web — React + Vite SPA"]
-    UI["Chat / Files / Changes / Settings"]
+    UI["Home / Chat / Files / Changes / History / Triggers / Settings"]
   end
 
   subgraph Server["packages/server — Fastify + @fastify/websocket"]
     Auth["Auth boundary\n(auth.ts onRequest hook)"]
-    REST["REST routes\n(routes.ts)"]
-    WS["WS chat handler\n(ws.ts + session-hub.ts)"]
-    Stores["Project + sidecar stores\n(projects / archive / read-state / queued-message)"]
+    REST["REST routes\n(routes.ts → workspace-mount.ts, mounted twice)"]
+    WS["WS chat handler\n(ws.ts + ws-turn.ts + session-hub.ts)"]
+    Stores["Project + 11 sidecar stores\n(projects / archive / read-state / provenance / …)"]
     Sweep["SweepService\n(sweep.ts)"]
     Herd["HerdctlService\n(herdctl.ts)"]
   end
@@ -71,7 +73,7 @@ Two packages, versioned and released together (see [`RELEASING.md`](https://gith
 | Package | Stack | Role |
 |---|---|---|
 | `packages/server` | **Fastify 4** + **`@fastify/websocket`** (the `ws` library), `@fastify/static`, `@fastify/multipart` | The backend: wraps the `FleetManager`, the Project layer, the WS transport, and serves the built SPA in production. |
-| `packages/web` | **React + Vite + Tailwind** | A project-first SPA (Chat / Files / Changes / Settings). PWA with a versioned service worker. |
+| `packages/web` | **React + Vite + Tailwind** | A workspace-first SPA — seven tabs (Home / Chat / Files / Changes / History / Triggers / Settings, `ProjectView.tsx`) plus an instance-wide `/config` admin screen (`main.tsx`). PWA with a versioned service worker. |
 
 Both are `private` and `fixed` together in `.changeset/config.json`, so they
 always share one number — "the Paddock version." Paddock is shipped as a Docker
@@ -80,34 +82,42 @@ image + release tarball, **not** published to npm.
 ### Server bootstrap
 
 `index.ts` owns only the process lifecycle: `buildApp()` → register
-`SIGINT`/`SIGTERM` handlers → `app.listen({ port, host })`
-(`index.ts:12-21`). All wiring lives in `app.ts`'s `buildApp()` (`app.ts:74`),
-which never binds a port or installs signal handlers — a deliberate testability
-seam.
+`SIGINT`/`SIGTERM` handlers → `app.listen({ port, host })`. All wiring lives in
+`app.ts`'s `buildApp()`, which never binds a port or installs signal handlers — a
+deliberate testability seam.
 
 `buildApp()` constructs and dependency-injects the whole graph, in order:
 
-1. `cfg = loadPaddockConfig()` (`app.ts:75`).
-2. `Fastify({ logger })` (`app.ts:77`).
-3. **`registerAuth(app, cfg.auth)` first** (`app.ts:85`) so its `onRequest`
-   hook guards every REST + WS request.
-4. Stores + services: `ProjectStore`, `HerdctlService`, `GitService`,
-   `GithubAuth`, `ArchiveStore`, `ReadStateStore`, `QueuedMessageStore`,
-   `AttachmentStore`, the transcriber (`app.ts:88-103`).
-5. Fleet init: `await herdctl.init(projects)` then `herdctl.start()`, wrapped in
-   try/catch so a fleet failure still leaves project CRUD working
-   (`app.ts:108-115`).
-6. `SweepService({ herdctl, projects, dataDir, logger })` (`app.ts:118`).
-7. Transports: `app.register(websocket)`, `app.register(fastifyMultipart)`,
-   `registerRoutes(app, deps)` (REST), and `makeChatHandler(deps)` mounted at
-   `GET /ws` with `{ websocket: true }` (`app.ts:126-140`).
-8. In production, serve the built SPA from `cfg.webDist` with branding injected
-   into `index.html` and a SPA-aware not-found handler that serves the shell for
-   navigations but 404s missing hashed assets (`app.ts:150-191`, issue #220).
+1. `cfg = opts.config ?? loadPaddockConfig()`.
+2. `Fastify({ logger })`.
+3. **The bind-safety guard** (`evaluateBindSafety`, issue #435): a non-loopback
+   `cfg.host` combined with `auth.mode === "none"` **refuses to boot**, because that
+   would expose an unauthenticated Paddock — which runs code and spends tokens — on a
+   routable interface. `PADDOCK_DANGEROUSLY_ALLOW_OPEN` downgrades the refusal to a
+   boot warning.
+4. **`registerAuth(app, cfg.auth)` next** so its `onRequest` hook guards every REST +
+   WS request.
+5. Stores + services: `ProjectStore`, `HerdctlService`, `GitService`, `GithubAuth`,
+   the eleven sidecar stores ([§3](#3-data-model--the-three-storage-classes)),
+   `AttachmentStore`, `PaddockEventBus`, `TriggerService`, the transcriber.
+6. Fleet init: the root workspace is resolved explicitly and appended to
+   `projects.list()` — `list()` enumerates the root's *children*, so the root is never
+   in it — then `await herdctl.init(...)` and `herdctl.start()`, wrapped in try/catch
+   so a fleet failure still leaves project CRUD working.
+7. `new SweepService({ herdctl, projects, dataDir, minIntervalMs, budget, logger })`.
+8. Transports: `app.register(websocket)` and `app.register(fastifyMultipart)`.
+9. **OpenAPI**, when `cfg.openapi.enabled` — `@fastify/swagger` **must** register
+   *before* the routes, because it hooks `onRoute` to collect each route's schema into
+   the live document ([§11](#11-openapi-reference)).
+10. `makeChatHandler(deps)`, then `registerRoutes(app, deps)` (REST), then the
+    `GET /ws` mount with `{ websocket: true }`.
+11. In production, serve the built SPA from `cfg.webDist` with branding injected
+    into `index.html` and a SPA-aware not-found handler that serves the shell for
+    navigations but 404s missing hashed assets (issue #220).
 
 Configuration resolves once, at startup, into a frozen `PaddockConfig` via
-`loadPaddockConfig()` (`config.ts:669`) — from a **YAML instance file** layered
-under the `PADDOCK_*` environment (`loadConfigFile()`, `config.ts:543`, reading
+`loadPaddockConfig()` (`config.ts`) — from a **YAML instance file** layered
+under the `PADDOCK_*` environment (`loadConfigFile()`, same file, reading
 `PADDOCK_CONFIG` or `<dataDir>/paddock.config.yaml`). Env wins over file. See
 [§8](#8-configuration) for the catalog.
 
