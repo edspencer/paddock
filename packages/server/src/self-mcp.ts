@@ -126,7 +126,10 @@ function readTools(context: SelfMcpContext): ServerTools {
         properties: {
           project: {
             type: "string",
-            description: "Project slug to filter by. Omit to list chats across all projects.",
+            description:
+              "Workspace to filter by: a project slug, or the empty string \"\" for the " +
+              "ROOT workspace (the instance's own top-level directory — see list_projects' " +
+              "`root`). Omit entirely to list chats across ALL workspaces, root included.",
           },
           include_archived: {
             type: "boolean",
@@ -145,7 +148,12 @@ function readTools(context: SelfMcpContext): ServerTools {
       inputSchema: {
         type: "object",
         properties: {
-          project: { type: "string", description: "Project slug that owns the chat." },
+          project: {
+            type: "string",
+            description:
+              "Workspace that owns the chat — a project slug, or the empty string \"\" for " +
+              "the ROOT workspace. Use the `project` value list_chats reported, verbatim.",
+          },
           session_id: { type: "string", description: "The chat's sessionId (from list_chats)." },
           limit: {
             type: "number",

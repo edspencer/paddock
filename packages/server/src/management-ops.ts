@@ -31,6 +31,12 @@
  * denial: "show me what I can see" is a reasonable request, and erroring would
  * make a narrowly-scoped client useless. Operations that NAME a target are
  * asserted instead, so an out-of-scope slug is refused loudly.
+ *
+ * ── The root workspace is an ADDRESS, not an absence (#560) ──────────────────
+ * A workspace key is a path relative to `projectsRoot`, so the ROOT's key is the
+ * empty string. Every read here therefore branches on `!== undefined`, never on
+ * truthiness — `if (!projectSlug)` silently retargets a root request at "all
+ * projects", which is exactly the bug #560 reported.
  */
 import type { ChatHandlerContext } from "./ws-context.js";
 import { keeperAgentName } from "./herdctl.js";
@@ -40,7 +46,7 @@ import type {
   SelfMcpWriteContext,
   SelfMcpTrigger,
 } from "./self-mcp.js";
-import type { CreateProjectInput } from "./projects.js";
+import { ROOT_KEY, type CreateProjectInput } from "./projects.js";
 import { type RunProvenance, childOf } from "./run-provenance.js";
 import type { MessageSender } from "./message-provenance.js";
 import { resolveMaxSpawnDepth } from "./spawn-capability.js";
@@ -173,9 +179,32 @@ export function buildManagementOps(
   } = params;
   const { deps, hub, startAgentTurn, composePreloadedPrompt, fireTrigger } = ctx;
 
+  type WorkspaceRecord = Awaited<ReturnType<typeof deps.projects.get>>;
+  /**
+   * Every workspace an unfiltered enumeration should cover (#560): the ROOT plus
+   * its child projects.
+   *
+   * `ProjectStore.list()` deliberately returns children only — the root is
+   * reachable, never enumerated (pinned by `root-workspace.test.ts`) — so the
+   * root is fetched separately and prepended here, the same way
+   * `GET /api/projects` folds it into its response. Its read is tolerated rather
+   * than fatal: a root record that won't parse should not 500 the whole listing.
+   */
+  const allWorkspaces = async (): Promise<WorkspaceRecord[]> => {
+    const [root, children] = await Promise.all([
+      deps.projects.get(ROOT_KEY).catch(() => null),
+      deps.projects.list(),
+    ]);
+    return root ? [root, ...children] : children;
+  };
+
   const read: SelfMcpContext = {
     listProjects: async () => {
-      const projects = await deps.projects.list();
+      // The root rides along as an ordinary member here so the policy wrapper's
+      // `isProjectAllowed` filter covers it for free (a scoped client whose
+      // `projects` list doesn't match `""` never sees it). The MCP handler is what
+      // splits it back out into its own `root` field — it is not a project.
+      const projects = await allWorkspaces();
       return projects.map((p) => ({
         slug: p.slug,
         name: p.name,
@@ -184,9 +213,12 @@ export function buildManagementOps(
       }));
     },
     listChats: async (projectSlug) => {
-      const targets = projectSlug
-        ? [await deps.projects.get(projectSlug)]
-        : await deps.projects.list();
+      // ABSENT vs EMPTY (#560). `""` is the root workspace's key: an explicit
+      // address that must resolve to the root, not degrade into "every project".
+      const targets =
+        projectSlug !== undefined
+          ? [await deps.projects.get(projectSlug)]
+          : await allWorkspaces();
       const chats = [];
       for (const p of targets) {
         const sessions = await deps.herdctl.listSessions(p);
