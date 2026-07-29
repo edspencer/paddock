@@ -12,7 +12,7 @@ import { TagPill } from "./TagPill";
 import { CogIcon, FolderIcon, HomeIcon, LinkIcon, MenuIcon, MoonIcon, SunIcon, XIcon } from "./icons";
 import { PaneResizer, usePaneWidth } from "./PaneResizer";
 import { SIDENAV_PANE } from "../lib/paneWidth";
-import { gridUrl } from "../routes/ProjectView/urls";
+import { gridUrl, ROOT_KEY } from "../routes/ProjectView/urls";
 
 /**
  * Context handed down to route elements via <Outlet> (#372). A route that hosts
@@ -24,14 +24,14 @@ export interface ShellOutletContext {
   openNav: () => void;
 }
 
-/** Per-project sidebar counts (#161): unread replies + in-flight turns. */
+/** Per-workspace sidebar counts (#161): unread replies + in-flight turns. */
 interface ProjectBadge {
   unread: number;
   inflight: number;
 }
 
 /**
- * Compute per-project unread + in-flight counts for the sidebar (#161), with no
+ * Compute per-workspace unread + in-flight counts for the sidebar (#161), with no
  * new fetch or polling:
  *  - UNREAD rides the projects payload's `chatTurns` (`{ sessionId,
  *    lastTurnCompletedAt, lastSeen }`, folded in server-side) compared against
@@ -39,11 +39,17 @@ interface ProjectBadge {
  *    optimistic same-tab clears. Live turn-completions seen over the WS bump it
  *    too, so a reply landing counts without a reload.
  *  - IN-FLIGHT rides the existing WS `chat:active` set (now carrying
- *    `projectSlug`), grouped by project — near-real-time, zero polling.
+ *    `projectSlug`), grouped by workspace — near-real-time, zero polling.
  * Recomputes on projects refresh, WS active changes, and `lastSeen` writes.
+ *
+ * The argument is a list of WORKSPACES, not projects: the caller appends the
+ * ROOT workspace so Home gets the identical badge (#553). Every key in the
+ * returned map is a workspace key, and the root's is `""` — so callers must
+ * look it up with `badges.get(ROOT_KEY)` and never guard on its truthiness.
+ * Nothing in here branches on the key at all, which is the point.
  */
-function useProjectBadges(projects: Project[]): Map<string, ProjectBadge> {
-  // sessionId -> projectSlug for every currently-running turn (from the WS set).
+function useProjectBadges(workspaces: Project[]): Map<string, ProjectBadge> {
+  // sessionId -> workspace key for every currently-running turn (from the WS set).
   const [active, setActive] = useState<ReadonlyMap<string, string>>(new Map());
   // sessionId -> { slug, at(ms) } completion signals: seeded from the server
   // payload and augmented live when a turn stops. Kept in a ref (not state) so
@@ -57,7 +63,7 @@ function useProjectBadges(projects: Project[]): Map<string, ProjectBadge> {
   // changes (keeping the newest per session).
   useEffect(() => {
     const m = completionsRef.current;
-    for (const p of projects) {
+    for (const p of workspaces) {
       for (const t of p.chatTurns ?? []) {
         // Fold the server-backed read-state (#189) into the shared cache so the
         // unread count reads from the cross-device source of truth.
@@ -75,8 +81,8 @@ function useProjectBadges(projects: Project[]): Map<string, ProjectBadge> {
     // One-time (#488) migration: push any pre-existing localStorage read-state up
     // to the server, so removing the local mirror doesn't resurface chats the user
     // already read. Self-deleting and best-effort; needs the payload for the slug.
-    void backfillLegacyLastSeen(projects).catch(() => undefined);
-  }, [projects]);
+    void backfillLegacyLastSeen(workspaces).catch(() => undefined);
+  }, [workspaces]);
 
   // Live in-flight set + a completion signal each time a turn stops running.
   useEffect(() => {
@@ -125,7 +131,7 @@ function useProjectBadges(projects: Project[]): Map<string, ProjectBadge> {
 }
 
 export function AppShell() {
-  const { projects, loading } = useProjects();
+  const { projects, rootWorkspace, loading } = useProjects();
   const { dark, toggle: toggleTheme } = useTheme();
   const [navOpen, setNavOpen] = useState(false);
   const location = useLocation();
@@ -173,7 +179,19 @@ export function AppShell() {
     return orderAreaSlugs(map.keys()).map((slug) => [slug, map.get(slug) ?? []] as const);
   }, [projects]);
 
-  const badges = useProjectBadges(projects);
+  // Badges are computed over EVERY badge-bearing sidebar row — the project list
+  // plus Home — so the root is appended to the same array the hook already
+  // folded (#553). It stays out of `projects`/`sections`, which drive the list
+  // itself. Memoized: the hook's fold effect is keyed on this array's identity,
+  // so a fresh one per render would loop.
+  const badgeWorkspaces = useMemo(
+    () => (rootWorkspace ? [...projects, rootWorkspace] : projects),
+    [projects, rootWorkspace],
+  );
+  const badges = useProjectBadges(badgeWorkspaces);
+  // `""` is the ROOT workspace's key — a real key, and the reason this reads
+  // `ROOT_KEY` rather than a falsy-guarded lookup.
+  const rootBadge = badges.get(ROOT_KEY);
 
   return (
     <div className="flex h-[100dvh] flex-col overflow-hidden bg-canvas dark:bg-canvas-dark lg:flex-row">
@@ -242,7 +260,13 @@ export function AppShell() {
             lived here and both duplicated something the destination already
             offers: root Home now carries the projects list (with its own New
             Project action) and the New chat button. So the sidebar's job is to
-            get you to Home; Home's job is to start things. */}
+            get you to Home; Home's job is to start things.
+
+            Home is the ROOT workspace's row, so it carries the same unread /
+            in-flight counts a project row does — same component, same data,
+            same thresholds (#553). `ml-auto` is the only difference: a project
+            row is a `justify-between` flex, this one is a `justify-start`
+            button. */}
         <div className="px-3 pb-1">
           <NavLink
             to="/"
@@ -254,6 +278,7 @@ export function AppShell() {
           >
             <HomeIcon width={16} height={16} />
             Home
+            <ProjectBadges badge={rootBadge} className="ml-auto" />
           </NavLink>
         </div>
 
@@ -425,17 +450,23 @@ function ProjectNavLink({ project: p, badge }: { project: Project; badge?: Proje
 }
 
 /**
- * The two subtle per-project counts shown where the StatusPill used to live
+ * The two subtle per-workspace counts shown where the StatusPill used to live
  * (#161): a filled accent pill for UNREAD replies (primary) and a hollow
  * spinner + count for IN-FLIGHT turns (secondary). Each renders only when > 0;
- * nothing renders when the project is quiet, keeping the row calm.
+ * nothing renders when the workspace is quiet, keeping the row calm.
+ *
+ * Shared verbatim by the project rows and the ROOT workspace's Home link
+ * (#553) — `className` exists only so Home can push it right with `ml-auto`
+ * (its row is a `justify-start` button, not a `justify-between` flex). The
+ * "nothing at all when quiet" rule lives HERE, which is what keeps a zero-chat
+ * root from rendering an empty wrapper or a `0` pill.
  */
-function ProjectBadges({ badge }: { badge?: ProjectBadge }) {
+function ProjectBadges({ badge, className = "" }: { badge?: ProjectBadge; className?: string }) {
   const unread = badge?.unread ?? 0;
   const inflight = badge?.inflight ?? 0;
   if (unread === 0 && inflight === 0) return null;
   return (
-    <span className="flex shrink-0 items-center gap-1.5">
+    <span className={`flex shrink-0 items-center gap-1.5 ${className}`}>
       {inflight > 0 && (
         <span
           className="flex items-center gap-1 text-[11px] tabular-nums text-paddock-500 dark:text-paddock-400"

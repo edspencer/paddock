@@ -58,7 +58,7 @@ return `{ error, code }` with `404` (not found), `409` (exists), or `400`
 
 | Method | Path | Purpose | Auth |
 |--------|------|---------|------|
-| GET | `/api/projects` | List projects, each with a compact `chatTurns` unread signal. | gated |
+| GET | `/api/projects` | `{ projects, root }` — the root workspace's CHILDREN, each with a compact `chatTurns` unread signal, plus the `root` workspace itself carrying the same field (never a member of `projects`, so the sidebar's Home badge and a project row's badge fold one payload). `root` is `null` only if the record could not be read. | gated |
 | POST | `/api/projects` | Create a project (+ keeper & sweeper agents) → `201 { project }`. | gated |
 | GET | `/api/projects/:slug` | One project + its `changelog` + `chats`. | gated |
 | PATCH | `/api/projects/:slug` | Update project metadata (model, permissionMode, maxTurns, docker, driveMode, …); re-registers the keeper. `400` on invalid field. | gated |

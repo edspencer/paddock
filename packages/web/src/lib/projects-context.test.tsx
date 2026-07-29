@@ -2,19 +2,32 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, act } from "@testing-library/react";
 import { ProjectsProvider, useProjects } from "./projects-context";
 import { makeProject } from "../test/factories";
+import type { Project } from "./types";
+
+const ROOT_DEFAULT = makeProject({ slug: "", name: "Instance Root" });
 
 const listProjects = vi.fn();
-const getRootWorkspace = vi.fn();
 vi.mock("./api", async () => {
   const actual = await vi.importActual<typeof import("./api")>("./api");
   return {
     ...actual,
     api: {
       listProjects: (...a: unknown[]) => listProjects(...a),
-      getRootWorkspace: (...a: unknown[]) => getRootWorkspace(...a),
     },
   };
 });
+
+/**
+ * `GET /api/projects` carries the children AND the root in one payload (#553),
+ * so a single mock stands in for both. The root defaults to present, because
+ * the instance's own directory always resolves (#516).
+ */
+function mockList(projects: Project[], root: Project | null = ROOT_DEFAULT) {
+  listProjects.mockResolvedValue({ projects, root });
+}
+function mockListOnce(projects: Project[], root: Project | null = ROOT_DEFAULT) {
+  listProjects.mockResolvedValueOnce({ projects, root });
+}
 
 // A tiny probe component that surfaces the context for assertions + exposes the
 // mutators on window so tests can drive upsert/remove/refresh.
@@ -40,15 +53,11 @@ function ctx() {
 
 beforeEach(() => {
   listProjects.mockReset();
-  // The root workspace is the instance's own directory, so it ALWAYS resolves —
-  // that is the default everywhere (#516). Its key is the empty string.
-  getRootWorkspace.mockReset();
-  getRootWorkspace.mockResolvedValue(makeProject({ slug: "", name: "Instance Root" }));
 });
 
 describe("ProjectsProvider", () => {
   it("loads projects on mount and clears the loading flag", async () => {
-    listProjects.mockResolvedValue([makeProject({ slug: "a" }), makeProject({ slug: "b" })]);
+    mockList([makeProject({ slug: "a" }), makeProject({ slug: "b" })]);
     render(
       <ProjectsProvider>
         <Probe />
@@ -72,7 +81,7 @@ describe("ProjectsProvider", () => {
   });
 
   it("upsert inserts a new project at the front and replaces an existing one", async () => {
-    listProjects.mockResolvedValue([makeProject({ slug: "a", name: "A" })]);
+    mockList([makeProject({ slug: "a", name: "A" })]);
     render(
       <ProjectsProvider>
         <Probe />
@@ -91,7 +100,7 @@ describe("ProjectsProvider", () => {
   });
 
   it("remove drops a project locally", async () => {
-    listProjects.mockResolvedValue([makeProject({ slug: "a" }), makeProject({ slug: "b" })]);
+    mockList([makeProject({ slug: "a" }), makeProject({ slug: "b" })]);
     render(
       <ProjectsProvider>
         <Probe />
@@ -104,14 +113,14 @@ describe("ProjectsProvider", () => {
   });
 
   it("refresh re-fetches the list", async () => {
-    listProjects.mockResolvedValueOnce([makeProject({ slug: "a" })]);
+    mockListOnce([makeProject({ slug: "a" })]);
     render(
       <ProjectsProvider>
         <Probe />
       </ProjectsProvider>,
     );
     await waitFor(() => expect(screen.getByText("a")).toBeInTheDocument());
-    listProjects.mockResolvedValueOnce([makeProject({ slug: "c" })]);
+    mockListOnce([makeProject({ slug: "c" })]);
     await act(async () => {
       await ctx().refresh();
     });
@@ -128,8 +137,7 @@ describe("ProjectsProvider", () => {
 
 describe("ProjectsProvider — the root workspace (#516)", () => {
   it("exposes the root workspace separately, never inside `projects`", async () => {
-    listProjects.mockResolvedValue([makeProject({ slug: "a" })]);
-    getRootWorkspace.mockResolvedValue(makeProject({ slug: "", name: "Root" }));
+    mockList([makeProject({ slug: "a" })], makeProject({ slug: "", name: "Root" }));
     render(
       <ProjectsProvider>
         <Probe />
@@ -144,7 +152,7 @@ describe("ProjectsProvider — the root workspace (#516)", () => {
   });
 
   it("routes an upsert of the root workspace to `rootWorkspace`, not the list", async () => {
-    listProjects.mockResolvedValue([makeProject({ slug: "a" })]);
+    mockList([makeProject({ slug: "a" })]);
     render(
       <ProjectsProvider>
         <Probe />
@@ -156,9 +164,10 @@ describe("ProjectsProvider — the root workspace (#516)", () => {
     expect(ctx().projects.map((p) => p.slug)).toEqual(["a"]);
   });
 
-  it("leaves the root null when its fetch fails, without failing the page", async () => {
-    listProjects.mockResolvedValue([]);
-    getRootWorkspace.mockRejectedValue(new Error("boom"));
+  it("leaves the root null when the payload omits it, without failing the page", async () => {
+    // The server returns `root: null` only when it could not read the root
+    // record — a degraded case that must not take the children list with it.
+    mockList([], null);
     render(
       <ProjectsProvider>
         <Probe />
@@ -166,8 +175,8 @@ describe("ProjectsProvider — the root workspace (#516)", () => {
     );
     await waitFor(() => expect(ctx().loading).toBe(false));
     expect(ctx().rootWorkspace).toBeNull();
-    // A failed root fetch is NOT a page-level error — the children list it rode
-    // along with is still good, so the grid and sidebar keep rendering.
+    // An unreadable root record is NOT a page-level error — the children list it
+    // rode along with is still good, so the grid and sidebar keep rendering.
     expect(ctx().error).toBeNull();
   });
 });

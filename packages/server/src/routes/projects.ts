@@ -7,6 +7,7 @@
 import type { FastifyInstance } from "fastify";
 import {
   ProjectError,
+  ROOT_KEY,
   type CreateProjectInput,
   type UpdateProjectInput,
 } from "../projects.js";
@@ -24,6 +25,57 @@ import { sendProjectError } from "../route-errors.js";
 import { buildProjectChats, makeTriggerResolver, makeParentResolver } from "../chat-dto.js";
 import type { RouteCtx } from "../route-context.js";
 
+/** One entry of a workspace's compact `chatTurns` list (see {@link buildChatTurns}). */
+export interface ChatTurnSummary {
+  sessionId: string;
+  lastTurnCompletedAt: string;
+  lastSeen?: number;
+  unread?: boolean;
+}
+
+/**
+ * Build ONE workspace's compact `{ sessionId, lastTurnCompletedAt, lastSeen?,
+ * unread? }` list — the sidebar's UNREAD-badge feed (#161), server-backed (#189).
+ *
+ * Extracted so the root workspace and every project are literally the same fold
+ * (#553): the badge's semantics are "whatever this function returns", and there
+ * is no second implementation for the root to drift from. The completed-turn
+ * side comes from the cheap job-record scan (grouped by keeper agent), so this
+ * costs no `listSessions` fan-out and no transcript parse.
+ *
+ * `key` is a WORKSPACE key, so `""` (the root) is a perfectly ordinary argument:
+ * `turnsByProject` is already keyed that way (`lastTurnCompletedAtByProject`
+ * compares `keeperSlugFromAgent(...) === null`, not falsiness) and
+ * `keeperAgentName("")` encodes to `keeper-_root`. Nothing here may test `key`
+ * for truthiness.
+ */
+async function buildChatTurns(
+  key: string,
+  turnsByProject: Map<string, Map<string, string>>,
+  user: string | null,
+  readState: RouteCtx["readState"],
+  unread: RouteCtx["unread"],
+): Promise<ChatTurnSummary[]> {
+  const bySession = turnsByProject.get(key);
+  if (!bySession) return [];
+  const keeper = keeperAgentName(key);
+  return Promise.all(
+    [...bySession].map(async ([sessionId, lastTurnCompletedAt]) => {
+      const lastSeen = await readState.getLastSeen(user, keeper, sessionId).catch(() => 0);
+      // Manual unread override (#458): carry it so the sidebar's workspace
+      // unread badge counts a manually-flagged chat, staying in step with
+      // the per-chat unread dot (which folds the same flag in).
+      const isUnread = await unread.isUnread(user, keeper, sessionId).catch(() => false);
+      return {
+        sessionId,
+        lastTurnCompletedAt,
+        ...(lastSeen ? { lastSeen } : {}),
+        ...(isUnread ? { unread: true } : {}),
+      };
+    }),
+  );
+}
+
 export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void {
   const { projects, herdctl, git, readState, unread, readStateUser } = ctx;
 
@@ -34,11 +86,11 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
         tags: ["Projects"],
         summary: "List projects",
         description:
-          "Returns `{ projects }`, an array of project objects. Each entry carries the project metadata plus a compact `chatTurns` array (per-chat `{ sessionId, lastTurnCompletedAt, lastSeen? }` for the sidebar UNREAD count) and a `dirty` uncommitted-file count.",
+          "Returns `{ projects, root }`. `projects` is an array of the root workspace's CHILDREN; each entry carries the project metadata plus a compact `chatTurns` array (per-chat `{ sessionId, lastTurnCompletedAt, lastSeen? }` for the sidebar UNREAD count) and a `dirty` uncommitted-file count. `root` is the ROOT workspace itself, carrying the same `chatTurns` field so the sidebar's Home entry gets the identical badge; it is `null` only if the root record could not be read.",
         response: {
           200: {
             description:
-              "Object with a `projects` array; each item is a project object enriched with `chatTurns` and `dirty`.",
+              "Object with a `projects` array (each item a project enriched with `chatTurns` and `dirty`) and a `root` workspace object enriched with `chatTurns`.",
             type: "object",
             additionalProperties: true,
           },
@@ -46,14 +98,21 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
       },
     },
     async (req) => {
-    // Fold a compact per-project list of `{ sessionId, lastTurnCompletedAt,
-    // lastSeen }` into the payload so the sidebar can compute each project's
-    // UNREAD count (#161) server-backed (#189) — the completed-turn side comes
-    // from the SAME cheap job-record scan as the per-chat unread signal, grouped
-    // by keeper agent; `lastSeen` is the server-side read-state (in-memory after
-    // first load). No `listSessions` fan-out, no transcript parse.
-    const [list, turnsByProject, dirty] = await Promise.all([
+    // Fold a compact per-workspace list of `{ sessionId, lastTurnCompletedAt,
+    // lastSeen }` into the payload so the sidebar can compute each workspace's
+    // UNREAD count (#161) server-backed (#189) — see `buildChatTurns`.
+    //
+    // The ROOT workspace rides along here rather than on its own endpoint (#553).
+    // `GET /api/projects` enumerates the root's CHILDREN, so the root can't be an
+    // array member without turning up in the grid and the sidebar project list —
+    // but it IS the sidebar's other badge-bearing row, and `lastTurnCompletedAtByProject`
+    // already grouped its chats under the `""` key. Putting it in the same response,
+    // through the same fold, is what keeps Home and a project row on one code path.
+    const [list, root, turnsByProject, dirty] = await Promise.all([
       projects.list(),
+      // The root always exists; tolerate a read failure rather than 500 the
+      // whole list, exactly as the client's separate fetch used to.
+      projects.get(ROOT_KEY).catch(() => null),
       herdctl.lastTurnCompletedAtByProject().catch(() => new Map<string, Map<string, string>>()),
       // Uncommitted-file count per project subtree — one cheap `git status` over
       // the whole store, drives the projects-grid "N uncommitted" chip (#258).
@@ -61,32 +120,19 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
     ]);
     const user = readStateUser(req);
     const projectsOut = await Promise.all(
-      list.map(async (p) => {
-        const bySession = turnsByProject.get(p.slug);
-        const keeper = keeperAgentName(p.slug);
-        const chatTurns = bySession
-          ? await Promise.all(
-              [...bySession].map(async ([sessionId, lastTurnCompletedAt]) => {
-                const lastSeen = await readState
-                  .getLastSeen(user, keeper, sessionId)
-                  .catch(() => 0);
-                // Manual unread override (#458): carry it so the sidebar's project
-                // unread badge counts a manually-flagged chat, staying in step with
-                // the per-chat unread dot (which folds the same flag in).
-                const isUnread = await unread.isUnread(user, keeper, sessionId).catch(() => false);
-                return {
-                  sessionId,
-                  lastTurnCompletedAt,
-                  ...(lastSeen ? { lastSeen } : {}),
-                  ...(isUnread ? { unread: true } : {}),
-                };
-              }),
-            )
-          : [];
-        return { ...p, chatTurns, dirty: dirty[p.slug] ?? 0 };
-      }),
+      list.map(async (p) => ({
+        ...p,
+        chatTurns: await buildChatTurns(p.slug, turnsByProject, user, readState, unread),
+        dirty: dirty[p.slug] ?? 0,
+      })),
     );
-    return { projects: projectsOut };
+    // No `dirty` for the root: `dirtyCounts()` buckets by first path segment, so
+    // a file directly in the projects root has no bucket at all. Reporting 0
+    // would be a fabricated clean; the field is optional, so it stays absent.
+    const rootOut = root
+      ? { ...root, chatTurns: await buildChatTurns(ROOT_KEY, turnsByProject, user, readState, unread) }
+      : null;
+    return { projects: projectsOut, root: rootOut };
   });
 
 

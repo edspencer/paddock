@@ -100,4 +100,40 @@ describe("integration: chat DTO exposes lastTurnCompletedAt (issue #160)", () =>
       );
     expect(others).toEqual([]);
   });
+
+  it("carries the ROOT workspace's chatTurns on the same payload, outside `projects` (#553)", async () => {
+    // The root's key is `""`, and it rides the wire as itself. Its chats are
+    // attributed to `keeper-_root`, which `lastTurnCompletedAtByProject` groups
+    // under `""` — so the sidebar's Home badge folds the SAME field, from the
+    // SAME response, as every project row.
+    const mark = ws.mark();
+    ws.send({
+      type: "chat:send",
+      payload: { projectSlug: "", sessionId: null, message: "hello root badge" },
+    });
+    const complete = await ws.waitFor(isComplete(""), { from: mark });
+    const sessionId = complete.payload!.sessionId as string;
+
+    const body = (await t.app.inject({ method: "GET", url: "/api/projects" })).json() as {
+      projects: { slug: string; chatTurns?: { sessionId: string }[] }[];
+      root: {
+        slug: string;
+        chatTurns?: { sessionId: string; lastTurnCompletedAt: string }[];
+      } | null;
+    };
+
+    expect(body.root).not.toBeNull();
+    // The root's key is the empty string — asserted by value, never truthiness.
+    expect(body.root!.slug).toBe("");
+    const rootTurn = (body.root!.chatTurns ?? []).find((c) => c.sessionId === sessionId);
+    expect(rootTurn).toBeTruthy();
+    expect(Number.isFinite(Date.parse(rootTurn!.lastTurnCompletedAt))).toBe(true);
+
+    // `projects` still enumerates the root's CHILDREN only: the root is not a
+    // member of it, and its chat is attributed to no project.
+    expect(body.projects.some((p) => p.slug === "")).toBe(false);
+    expect(
+      body.projects.filter((p) => (p.chatTurns ?? []).some((c) => c.sessionId === sessionId)),
+    ).toEqual([]);
+  });
 });

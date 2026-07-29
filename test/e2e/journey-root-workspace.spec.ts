@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import path from "node:path";
-import { paths, seedProject, uniq } from "./helpers";
+import { createProjectViaUI, paths, seedProject, uniq } from "./helpers";
 
 /**
  * Journey: the ROOT WORKSPACE (#531).
@@ -116,8 +116,10 @@ test("the sidebar has a Home link and no New Project / New root chat CTAs", asyn
   await expect(sidebar.getByRole("button", { name: /New Project/i })).toHaveCount(0);
   await expect(sidebar.getByRole("button", { name: /New root chat/i })).toHaveCount(0);
 
-  // One nav item in their place, and it goes to `/`.
-  await sidebar.getByRole("link", { name: "Home", exact: true }).click();
+  // One nav item in their place, and it goes to `/`. Prefix-matched: Home is the
+  // root workspace's row, so its accessible name grows an unread/in-flight count
+  // when the root has one (#553) — just like a project row's.
+  await sidebar.getByRole("link", { name: /^Home/ }).click();
   await expect(page).toHaveURL(/\/$/);
   await expect(
     page.getByRole("main").getByRole("button", { name: "New Project", exact: true }),
@@ -324,4 +326,120 @@ test("a project's Settings tab still scrolls (the non-root path)", async ({ page
     return el.scrollTop;
   });
   expect(maxScroll).toBeGreaterThan(0);
+});
+
+/**
+ * The sidebar's Home link carries the ROOT workspace's unread badge (#553) —
+ * the same pill a project row shows, from the same data.
+ *
+ * Read state is SERVER-authoritative (#488): the client keeps only an in-memory
+ * optimistic cache, so every reload re-derives from the server. That is why each
+ * assertion here is repeated across a `reload()` — a client-only fix passes the
+ * first half of this test and fails the second.
+ */
+test("an unread root chat puts a count on the sidebar's Home link, and opening it clears it", async ({
+  page,
+}) => {
+  const sidebar = page.getByRole("complementary");
+  const homeLink = sidebar.getByRole("link", { name: /^Home/ });
+  const badge = homeLink.getByLabel(/unread repl/i);
+
+  // A real root chat with a real completed turn.
+  await page.goto("/chat");
+  await page.getByPlaceholder(/Message the keeper agent/i).fill("root badge please");
+  await page.getByRole("button", { name: /^Send$/ }).click();
+  // Match the fake keeper's reply loosely: with preload context on, the echo it
+  // acknowledges is the injected `<project-context>` block, not the raw message.
+  await expect(page.getByText(/^Acknowledged:/).first()).toBeVisible({ timeout: 15_000 });
+  await expect(page).toHaveURL(/\/chat\/[a-z0-9-]+$/, { timeout: 15_000 });
+  const sessionId = new URL(page.url()).pathname.split("/").pop()!;
+
+  // Read while open ⇒ nothing on Home. A `0` pill here would be the bug.
+  await expect(badge).toHaveCount(0);
+
+  // Flag it unread (#458) through the same endpoint the chat-row action posts to,
+  // at the ROOT mount — `/api/root/...`, because an empty key cannot ride in a
+  // path segment.
+  const res = await page.request.post(`/api/root/chats/${sessionId}/unread`, {
+    data: { unread: true },
+  });
+  expect(res.ok()).toBe(true);
+
+  // Off Home (a project route) so nothing auto-marks it seen, and reload so the
+  // count is derived from the server rather than from anything in this tab.
+  const slug = seedProject({ name: uniq("RW Badge Sibling") });
+  await page.goto(`/projects/${slug}/home`);
+  await expect(badge).toHaveText("1");
+
+  await page.reload();
+  await expect(badge).toHaveText("1");
+
+  // Opening the root chat marks it seen, which also spends the manual flag.
+  await page.goto(`/chat/${sessionId}`);
+  await expect(page.getByText(/^Acknowledged:/).first()).toBeVisible({ timeout: 15_000 });
+
+  // The clear STICKS across a reload from a different route — the check that a
+  // client-only fix fails. (A MANUAL flag is only re-read from the next projects
+  // payload, so the reload is what proves it; the timestamp case clears in-tab
+  // the moment the chat is opened — see AppShell.test.tsx.)
+  await page.goto(`/projects/${slug}/home`);
+  await page.reload();
+  await expect(homeLink).toHaveText("Home");
+  await expect(badge).toHaveCount(0);
+});
+
+test("the Home badge is the same component as a project row's, and projects keep theirs", async ({
+  page,
+}) => {
+  // One root chat + one project chat, both flagged unread, so the two badges are
+  // on screen together and can be compared directly.
+  await page.goto("/chat");
+  await page.getByPlaceholder(/Message the keeper agent/i).fill("root pill");
+  await page.getByRole("button", { name: /^Send$/ }).click();
+  await expect(page.getByText(/^Acknowledged:/).first()).toBeVisible({ timeout: 15_000 });
+  await expect(page).toHaveURL(/\/chat\/[a-z0-9-]+$/, { timeout: 15_000 });
+  const rootSession = new URL(page.url()).pathname.split("/").pop()!;
+
+  const name = uniq("RW Pill");
+  const slug = await createProjectViaUI(page, { name, area: "Homelab" });
+  await page.goto(`/projects/${slug}/chat`);
+  await page.getByPlaceholder(/Message the keeper agent/i).fill("project pill");
+  await page.getByRole("button", { name: /^Send$/ }).click();
+  await expect(page.getByText(/^Acknowledged:/).first()).toBeVisible({ timeout: 15_000 });
+  await page.waitForURL(new RegExp(`/projects/${slug}/chat/[a-z0-9-]+$`), { timeout: 15_000 });
+  const projectSession = new URL(page.url()).pathname.split("/").pop()!;
+
+  for (const [base, id] of [
+    ["/api/root", rootSession],
+    [`/api/projects/${slug}`, projectSession],
+  ] as const) {
+    expect((await page.request.post(`${base}/chats/${id}/unread`, { data: { unread: true } })).ok()).toBe(
+      true,
+    );
+  }
+
+  // Somewhere neither chat is open, so neither auto-clears.
+  await page.goto("/config");
+  const sidebar = page.getByRole("complementary");
+  const rootPill = sidebar.getByRole("link", { name: /^Home/ }).getByLabel(/unread repl/i);
+  const projectPill = sidebar.getByRole("link", { name: new RegExp(name) }).getByLabel(/unread repl/i);
+  await expect(rootPill).toHaveText("1");
+  // The project row's badge is untouched by any of this — the easiest regression.
+  await expect(projectPill).toHaveText("1");
+
+  // Same rendered pill, not a lookalike: identical classes and identical box.
+  expect(await rootPill.getAttribute("class")).toBe(await projectPill.getAttribute("class"));
+  const rootBox = (await rootPill.boundingBox())!;
+  const projectBox = (await projectPill.boundingBox())!;
+  expect(Math.round(rootBox.width)).toBe(Math.round(projectBox.width));
+  expect(Math.round(rootBox.height)).toBe(Math.round(projectBox.height));
+
+  // Clear both flags again: these specs share one long-lived server, and a root
+  // chat left permanently unread would leak a badge into every later test.
+  for (const [base, id] of [
+    ["/api/root", rootSession],
+    [`/api/projects/${slug}`, projectSession],
+  ] as const) {
+    await page.request.post(`${base}/chats/${id}/seen`, { data: {} });
+  }
 });
