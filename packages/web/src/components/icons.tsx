@@ -29,6 +29,13 @@ export const PaperclipIcon = (p: IconProps) => (
   </svg>
 );
 
+export const HomeIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M3 10.5 12 3l9 7.5" />
+    <path d="M5 9.5V20a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9.5" />
+  </svg>
+);
+
 export const ChatIcon = (p: IconProps) => (
   <svg {...base(p)}>
     <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
@@ -196,6 +203,19 @@ export const BranchIcon = (p: IconProps) => (
     <circle cx="6" cy="18" r="3" />
     <circle cx="18" cy="6" r="3" />
     <path d="M6 9v6M18 9a9 9 0 0 1-9 9" />
+  </svg>
+);
+
+/**
+ * A broken link — "detach this chat from its parent" (#508). Deliberately the
+ * link idiom snapped in half rather than a variant of {@link BranchIcon}:
+ * branching CREATES an edge and detaching removes one, so they shouldn't rhyme.
+ */
+export const UnlinkIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M9.5 14.5l-1.7 1.7a4 4 0 0 1-5.66-5.66l1.7-1.7" />
+    <path d="M14.5 9.5l1.7-1.7a4 4 0 0 1 5.66 5.66l-1.7 1.7" />
+    <path d="M8 3.5v2M3.5 8h2M16 20.5v-2M20.5 16h-2" />
   </svg>
 );
 

@@ -1,19 +1,31 @@
 ---
-title: "The Settings screen"
+title: "The Config screen"
 description: "Edit paddock.config.yaml from the UI: what's editable, why every change needs a restart, and why some fields are read-only."
 ---
 
-Paddock's instance settings live in
+Paddock's instance config lives in
 [`paddock.config.yaml`](/configuration/config-file/), with
 [environment variables](/configuration/environment/) layered on top. Since v0.42 you
-don't have to hand-edit that file: the **Settings** screen — the gear at the bottom of
-the sidebar — reads the resolved config and writes the editable parts back.
+don't have to hand-edit that file: the **Config** screen — the gear at the bottom of
+the sidebar, at `/config` — reads the resolved config and writes the editable parts
+back.
 
-:::note[It used to be called "Instance settings"]
-The sidebar link was labelled **Instance settings** from v0.42 until v0.46, when it was
-shortened to **Settings**. Same screen, same route (`/settings`). Don't confuse it with
-a *project's* Settings tab, which is a different thing entirely — that one edits one
-project's `project.yaml`.
+:::note[It used to be called "Settings"]
+This link was labelled **Instance settings** from v0.42, shortened to **Settings** in
+v0.46, and renamed **Config** — moving from `/settings` to `/config` — when the two
+were pulled apart. Same screen throughout.
+
+The rename is the point: **config** and **settings** are now different things, named
+for the files they write.
+
+| | Writes | Lifecycle | Where |
+|---|---|---|---|
+| **Config** | `paddock.config.yaml` | frozen at boot — **restart required** | `/config`, the sidebar gear |
+| **Settings** | a workspace's `project.yaml` | hot-applied on save | that workspace's **Settings** tab |
+
+Briefly, in v0.51.0, the root workspace's Settings tab rendered *both* — its own
+settings with this screen stacked underneath, two save bars and all. That is what the
+split fixed.
 :::
 
 ## Three things to know before you click Save

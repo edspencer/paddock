@@ -65,17 +65,23 @@ describe("deriveView — the root", () => {
     ["/settings", "settings"],
     ["/triggers", "triggers"],
     ["/hooks", "triggers"],
-    // The root's CHILDREN tab — the projects grid.
-    ["/projects", "projects"],
-    ["/projects/", "projects"],
   ])("%s -> %s", (pathname, expected) => {
     expect(deriveView(pathname, "")).toBe(expected);
   });
 
+  it("has no children tab — the projects list folded into Home", () => {
+    // `/projects` redirects to `/` at the router (see main.tsx), so it never
+    // reaches this view. Resolving it to Home means the two agree: the
+    // redirect's destination and this fallback are the same pane.
+    expect(deriveView("/projects", "")).toBe("home");
+    expect(deriveView("/projects/", "")).toBe("home");
+  });
+
   it("does not mistake a project URL for a root tab", () => {
     // With base "" every path is its own tail, so `/projects/...` must not
-    // accidentally match one of the root's prefixes — including the children
-    // tab, which is why `/projects` is matched EXACTLY and not by prefix.
+    // accidentally match one of the root's prefixes. This is the regression
+    // guard against reintroducing a `/projects` branch as a PREFIX test rather
+    // than an exact match — that would swallow a project's own URLs.
     expect(deriveView("/projects/paddock/files", "")).toBe("home");
     expect(deriveView("/projects/paddock", "")).toBe("home");
   });
@@ -97,10 +103,14 @@ describe("decodeFilesSubpath", () => {
 });
 
 describe("gridUrl", () => {
-  it("always points at `/projects` — the root workspace owns `/`", () => {
-    // The grid is the root's CHILDREN tab, not the front door. The root
-    // workspace always exists, so there is no longer a case where the grid
-    // takes over `/` and no flag to decide it on.
-    expect(gridUrl()).toBe("/projects");
+  it("points at root Home — the grid is a section of it, not a tab of its own", () => {
+    // The list folded into Home, so the front door and the project list are the
+    // same page again. Every "back to the grid" nav site plus the `/projects`
+    // redirect read this, so they cannot drift apart.
+    expect(gridUrl()).toBe("/");
+  });
+
+  it("agrees with homeUrl at the root", () => {
+    expect(gridUrl()).toBe(homeUrl(viewBase(ROOT_KEY)));
   });
 });

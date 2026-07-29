@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { InstanceSettings } from "./InstanceSettings";
+import { InstanceConfigPage } from "./InstanceConfigPage";
 import type { InstanceConfig } from "../lib/types";
 
 const getInstanceConfig = vi.fn();
@@ -77,11 +77,11 @@ function sampleConfig(overrides: Partial<InstanceConfig> = {}): InstanceConfig {
 const renderScreen = () =>
   render(
     <MemoryRouter>
-      <InstanceSettings />
+      <InstanceConfigPage />
     </MemoryRouter>,
   );
 
-describe("InstanceSettings (#385)", () => {
+describe("InstanceConfigPage (#385)", () => {
   beforeEach(() => {
     getInstanceConfig.mockReset();
     updateInstanceConfig.mockReset();

@@ -37,7 +37,7 @@ secret.
   SPA catch-all, so an unconfigured instance 404s honestly instead of answering
   a machine surface with the app shell and a `200`.
 - **Token material is referenced, never inlined.** `paddock.config.yaml` is
-  git-tracked (and editable from the instance Settings screen), so a literal
+  git-tracked (and editable from the instance Config screen), so a literal
   `token:` or `secret:` in it is a **hard config error**, not a warning.
 
 ## Endpoints

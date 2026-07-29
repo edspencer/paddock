@@ -44,6 +44,11 @@ const apiFns = {
   getModels: vi.fn(),
   updateProject: vi.fn(),
   listTriggers: vi.fn(),
+  archiveProjectChats: vi.fn(),
+  markChatsUnread: vi.fn(),
+  markChatUnread: vi.fn(),
+  deleteProjectChats: vi.fn(),
+  detachProjectChat: vi.fn(),
 };
 vi.mock("../lib/api", async () => {
   const actual = await vi.importActual<typeof import("../lib/api")>("../lib/api");
@@ -68,6 +73,11 @@ vi.mock("../lib/api", async () => {
       getModels: (...a: unknown[]) => apiFns.getModels(...a),
       updateProject: (...a: unknown[]) => apiFns.updateProject(...a),
       listTriggers: (...a: unknown[]) => apiFns.listTriggers(...a),
+      archiveProjectChats: (...a: unknown[]) => apiFns.archiveProjectChats(...a),
+      markChatsUnread: (...a: unknown[]) => apiFns.markChatsUnread(...a),
+      markChatUnread: (...a: unknown[]) => apiFns.markChatUnread(...a),
+      deleteProjectChats: (...a: unknown[]) => apiFns.deleteProjectChats(...a),
+      detachProjectChat: (...a: unknown[]) => apiFns.detachProjectChat(...a),
     },
   };
 });
@@ -122,9 +132,9 @@ function renderAt(path: string) {
         <Route path="/projects/:slug/settings" element={<ProjectView />} />
         <Route path="/projects/:slug/triggers" element={<ProjectView />} />
         <Route path="/projects/:slug/hooks" element={<ProjectView />} />
-        {/* Deleting a project returns to the grid — the root workspace's
-            children tab, which always lives at `/projects` (#516). */}
-        <Route path="/projects" element={<div>GRID</div>} />
+        {/* Deleting a project returns to the projects list, which is now the
+            first section of root Home at `/` (see `gridUrl`). */}
+        <Route path="/" element={<div>GRID</div>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -255,6 +265,43 @@ describe("ProjectView: tabs", () => {
     // session-list column, so match all occurrences).
     expect(screen.getAllByText("First chat").length).toBeGreaterThan(0);
     expect(screen.getByText("OVERVIEW.md")).toBeInTheDocument();
+  });
+
+  it("Home orders its sections Chats → Files → CHANGELOG → Overview", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p", summary: "blurb" }), {
+        changelog: "# Changes",
+        chats: [makeChat({ sessionId: "s1", name: "First chat" })],
+      }),
+    );
+    apiFns.listProjectFiles.mockResolvedValue(["OVERVIEW.md"]);
+    renderAt("/projects/p/home");
+    await screen.findByRole("button", { name: /Edit details/i });
+    const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent ?? "");
+    // Overview trails now: it describes the project rather than offering a way
+    // into it. Chats lead.
+    expect(headings).toEqual(["Chats1", "Files1", "CHANGELOG.md", "Overview"]);
+  });
+
+  it("a project's Home has NO projects section — only a workspace with children does", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
+    renderAt("/projects/p/home");
+    await screen.findByRole("button", { name: /Edit details/i });
+    const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent ?? "");
+    expect(headings.some((h) => /^Projects/.test(h))).toBe(false);
+    // …and no New Project button leaks in from the embedded grid.
+    expect(screen.queryByRole("button", { name: /New Project/i })).not.toBeInTheDocument();
+  });
+
+  it("has no Projects tab — that was the root's, and it folded into Home", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
+    renderAt("/projects/p/home");
+    await screen.findByRole("button", { name: /Edit details/i });
+    expect(screen.queryByRole("button", { name: "Projects" })).not.toBeInTheDocument();
+    // Home leads the row for a project too.
+    const home = screen.getByRole("button", { name: "Home" });
+    const chat = screen.getByRole("button", { name: "Chat" });
+    expect(home.compareDocumentPosition(chat) & 4).toBeTruthy();
   });
 
   it("the project name is a breadcrumb to the Home tab", async () => {
@@ -1121,5 +1168,426 @@ describe("ProjectView: in-flight chat visibility (#100)", () => {
       activeCb!(new Set(["s-known"]));
     });
     expect(apiFns.listProjectChats).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Subtree (Shift-click) chat actions + detach (#508).
+ *
+ * A family: Manager with two children, one of which has a child of its own — so
+ * every assertion here also proves the walk is RECURSIVE rather than one level
+ * deep, which is the failure mode nobody would notice until a grandchild
+ * survived a delete that promised to take it.
+ */
+describe("ProjectView: subtree chat actions (#508)", () => {
+  const family = () => [
+    makeChat({ sessionId: "mgr", name: "Manager" }),
+    makeChat({ sessionId: "c1", name: "Child one", parent: { project: "p", sessionId: "mgr" } }),
+    makeChat({ sessionId: "c2", name: "Child two", parent: { project: "p", sessionId: "mgr" } }),
+    makeChat({ sessionId: "g1", name: "Grandchild", parent: { project: "p", sessionId: "c1" } }),
+    makeChat({ sessionId: "solo", name: "Unrelated" }),
+  ];
+
+  const renderFamily = async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), { chats: family() }),
+    );
+    renderAt("/projects/p/chat");
+    await screen.findByText("Manager");
+  };
+
+  it("plain-clicking archive still affects only that chat", async () => {
+    await renderFamily();
+    apiFns.archiveProjectChat.mockResolvedValue(undefined);
+    fireEvent.click(screen.getByRole("button", { name: /Archive chat Manager/i }));
+    await waitFor(() => expect(apiFns.archiveProjectChat).toHaveBeenCalledWith("p", "mgr", true));
+    expect(apiFns.archiveProjectChats).not.toHaveBeenCalled();
+  });
+
+  it("shift-clicking archive takes the whole family, grandchild included", async () => {
+    await renderFamily();
+    apiFns.archiveProjectChats.mockResolvedValue(undefined);
+    fireEvent.click(screen.getByRole("button", { name: /Archive chat Manager/i }), {
+      shiftKey: true,
+    });
+    await waitFor(() => expect(apiFns.archiveProjectChats).toHaveBeenCalled());
+    const [slug, ids, archived] = apiFns.archiveProjectChats.mock.calls[0] as [
+      string,
+      string[],
+      boolean,
+    ];
+    expect(slug).toBe("p");
+    expect(archived).toBe(true);
+    expect([...ids].sort()).toEqual(["c1", "c2", "g1", "mgr"]);
+    // The unrelated chat is untouched, and all four moved together.
+    const archivedHeader = await screen.findByRole("button", { name: /^Archived/i });
+    expect(within(archivedHeader).getByText("4")).toBeInTheDocument();
+    expect(screen.getByText("Unrelated")).toBeInTheDocument();
+  });
+
+  it("rolls the whole family back when the batch archive fails", async () => {
+    await renderFamily();
+    apiFns.archiveProjectChats.mockRejectedValue(new Error("nope"));
+    fireEvent.click(screen.getByRole("button", { name: /Archive chat Manager/i }), {
+      shiftKey: true,
+    });
+    // One call, one undo: nothing is left archived, so the family can't be torn.
+    await screen.findByText("nope");
+    expect(screen.queryByRole("button", { name: /^Archived/i })).toBeNull();
+  });
+
+  it("shift-clicking a LEAF behaves exactly like a plain click", async () => {
+    await renderFamily();
+    apiFns.archiveProjectChat.mockResolvedValue(undefined);
+    fireEvent.click(screen.getByRole("button", { name: /Archive chat Unrelated/i }), {
+      shiftKey: true,
+    });
+    await waitFor(() => expect(apiFns.archiveProjectChat).toHaveBeenCalledWith("p", "solo", true));
+    expect(apiFns.archiveProjectChats).not.toHaveBeenCalled();
+  });
+
+  it("shift-clicking mark-unread flags the whole family", async () => {
+    await renderFamily();
+    apiFns.markChatsUnread.mockResolvedValue(undefined);
+    fireEvent.click(screen.getByRole("button", { name: /Mark chat Manager unread/i }), {
+      shiftKey: true,
+    });
+    await waitFor(() => expect(apiFns.markChatsUnread).toHaveBeenCalled());
+    const [, ids, unread] = apiFns.markChatsUnread.mock.calls[0] as [string, string[], boolean];
+    expect([...ids].sort()).toEqual(["c1", "c2", "g1", "mgr"]);
+    expect(unread).toBe(true);
+  });
+
+  it("announces the subtree in the tooltip and the accessible name", async () => {
+    await renderFamily();
+    // Shift-click is invisible otherwise. The count is the TOTAL the action
+    // affects (the chat plus its 3 descendants), not the descendant count alone —
+    // "archive all 3" while archiving four would be a lie.
+    const archive = screen.getByRole("button", { name: /Archive chat Manager/i });
+    expect(archive).toHaveAccessibleName(/Shift-click to archive all 4/i);
+    fireEvent.focus(archive);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Shift-click to archive all 4");
+    // The count sits mid-phrase for read/unread, which is why the hint is a
+    // completed phrase rather than a "<verb> all <n>" template.
+    expect(
+      screen.getByRole("button", { name: /Mark chat Manager unread/i }),
+    ).toHaveAccessibleName(/Shift-click to mark all 4 unread/i);
+    // A childless row promises nothing.
+    expect(screen.getByRole("button", { name: /Archive chat Unrelated/i })).toHaveAccessibleName(
+      "Archive chat Unrelated",
+    );
+  });
+
+  describe("count-aware delete confirmation", () => {
+    it("names the count and deletes the whole subtree", async () => {
+      await renderFamily();
+      apiFns.deleteProjectChats.mockResolvedValue({
+        removed: ["mgr", "c1", "c2", "g1"],
+        failed: [],
+      });
+      fireEvent.click(screen.getByRole("button", { name: /Delete chat Manager/i }), {
+        shiftKey: true,
+      });
+      // The dialog must say what it is about to destroy — those chats may not
+      // even be on screen (a collapsed parent hides them) and there is no undo.
+      expect(await screen.findByText("Delete 4 chats?")).toBeInTheDocument();
+      expect(screen.getByText(/and its 3 nested chats/i)).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: /^Delete 4 chats$/i }));
+      await waitFor(() => expect(apiFns.deleteProjectChats).toHaveBeenCalled());
+      const [slug, ids] = apiFns.deleteProjectChats.mock.calls[0] as [string, string[]];
+      expect(slug).toBe("p");
+      expect([...ids].sort()).toEqual(["c1", "c2", "g1", "mgr"]);
+      await waitFor(() => expect(screen.queryByText("Manager")).toBeNull());
+      expect(screen.getByText("Unrelated")).toBeInTheDocument();
+    });
+
+    it("keeps the single-chat copy for a plain click", async () => {
+      await renderFamily();
+      fireEvent.click(screen.getByRole("button", { name: /Delete chat Manager/i }));
+      expect(await screen.findByText("Delete chat?")).toBeInTheDocument();
+      // No subtree DELETION copy. (The dialog does still mention the nested
+      // chats — to say they survive and are moved to the top level — which is a
+      // different sentence and covered by its own test below.)
+      expect(screen.queryByText(/will be permanently removed — their transcripts/i)).toBeNull();
+      expect(screen.queryByRole("button", { name: /^Delete \d+ chats$/i })).toBeNull();
+    });
+
+    it("singularises for a one-child family", async () => {
+      apiFns.getProjectDetail.mockResolvedValue(
+        detail(makeProject({ slug: "p" }), {
+          chats: [
+            makeChat({ sessionId: "mgr", name: "Manager" }),
+            makeChat({
+              sessionId: "c1",
+              name: "Only child",
+              parent: { project: "p", sessionId: "mgr" },
+            }),
+          ],
+        }),
+      );
+      renderAt("/projects/p/chat");
+      await screen.findByText("Manager");
+      fireEvent.click(screen.getByRole("button", { name: /Delete chat Manager/i }), {
+        shiftKey: true,
+      });
+      expect(await screen.findByText("Delete 2 chats?")).toBeInTheDocument();
+      expect(screen.getByText(/and its 1 nested chat will be/i)).toBeInTheDocument();
+    });
+
+    it("keeps a chat the server could NOT delete in the list, and says so", async () => {
+      await renderFamily();
+      apiFns.deleteProjectChats.mockResolvedValue({
+        removed: ["mgr", "c1", "c2"],
+        failed: ["g1"],
+      });
+      fireEvent.click(screen.getByRole("button", { name: /Delete chat Manager/i }), {
+        shiftKey: true,
+      });
+      fireEvent.click(await screen.findByRole("button", { name: /^Delete 4 chats$/i }));
+      // A half-succeeded delete is reported rather than silently rendered as a
+      // clean sweep — the surviving transcript is still on disk.
+      expect(await screen.findByText(/Deleted 3 of 4 chats/i)).toBeInTheDocument();
+    });
+  });
+
+  describe("detach from parent", () => {
+    it("promotes a child to the top level, keeping its own subtree", async () => {
+      await renderFamily();
+      apiFns.detachProjectChat.mockResolvedValue(undefined);
+      // "Child one" renders nested and owns a grandchild.
+      fireEvent.click(screen.getByRole("button", { name: /Detach chat Child one/i }));
+      await waitFor(() =>
+        expect(apiFns.detachProjectChat).toHaveBeenCalledWith("p", "c1", true),
+      );
+      // It is a root now, so Manager's remaining family is smaller — but the
+      // grandchild travelled with it rather than scattering to the top level.
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("button", { name: /Detach chat Child one/i }),
+        ).toBeNull(),
+      );
+      expect(screen.getByRole("button", { name: /Detach chat Grandchild/i })).toBeInTheDocument();
+      expect(screen.getByText("Grandchild")).toBeInTheDocument();
+    });
+
+    it("offers no detach on a chat that already renders at the top level", async () => {
+      await renderFamily();
+      expect(screen.queryByRole("button", { name: /Detach chat Manager/i })).toBeNull();
+      expect(screen.queryByRole("button", { name: /Detach chat Unrelated/i })).toBeNull();
+    });
+
+    it("restores the nesting when the detach call fails", async () => {
+      await renderFamily();
+      apiFns.detachProjectChat.mockRejectedValue(new Error("detach failed"));
+      fireEvent.click(screen.getByRole("button", { name: /Detach chat Child one/i }));
+      await screen.findByText("detach failed");
+    });
+  });
+});
+
+/**
+ * Review follow-ups (#508): the two paths that weren't exercised live.
+ */
+describe("ProjectView: subtree mark-read rollback + delete disclosure (#508)", () => {
+  const family = () => [
+    makeChat({ sessionId: "mgr", name: "Manager", unread: true }),
+    makeChat({
+      sessionId: "c1",
+      name: "Child one",
+      unread: true,
+      parent: { project: "p", sessionId: "mgr" },
+    }),
+    makeChat({ sessionId: "c2", name: "Child two", parent: { project: "p", sessionId: "mgr" } }),
+    makeChat({ sessionId: "g1", name: "Grandchild", parent: { project: "p", sessionId: "c1" } }),
+  ];
+
+  const unreadCount = () => document.querySelectorAll('[data-unread="true"]').length;
+
+  it("restores every unread cue when the batch mark-read fails", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), { chats: family() }),
+    );
+    apiFns.markChatsUnread.mockRejectedValue(new Error("nope"));
+    renderAt("/projects/p/chat");
+    await screen.findByText("Manager");
+    expect(unreadCount()).toBe(2);
+
+    fireEvent.click(screen.getByRole("button", { name: /Mark chat Manager read/i }), {
+      shiftKey: true,
+    });
+    await waitFor(() => expect(apiFns.markChatsUnread).toHaveBeenCalled());
+
+    // The optimistic clear touched THREE things (lastSeen, the manual `unread`
+    // flag, and the live-unread set). Rolling back only lastSeen — the original
+    // bug — left the family reading as read forever, because nothing polls.
+    await waitFor(() => expect(unreadCount()).toBe(2));
+    expect(
+      screen.getByRole("button", { name: /Mark chat Manager read/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Mark chat Child one read/i })).toBeInTheDocument();
+    // The chat that was NOT flagged must not acquire a cue from the rollback.
+    expect(screen.getByRole("button", { name: /Mark chat Child two unread/i })).toBeInTheDocument();
+  });
+
+  it("keeps the cues cleared when the batch mark-read succeeds", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), { chats: family() }),
+    );
+    apiFns.markChatsUnread.mockResolvedValue(undefined);
+    renderAt("/projects/p/chat");
+    await screen.findByText("Manager");
+    expect(unreadCount()).toBe(2);
+
+    fireEvent.click(screen.getByRole("button", { name: /Mark chat Manager read/i }), {
+      shiftKey: true,
+    });
+    await waitFor(() => expect(unreadCount()).toBe(0));
+  });
+
+  describe("delete dialog discloses the chats it will ORPHAN", () => {
+    it("names them on a plain delete of a parent", async () => {
+      apiFns.getProjectDetail.mockResolvedValue(
+        detail(makeProject({ slug: "p" }), { chats: family() }),
+      );
+      renderAt("/projects/p/chat");
+      await screen.findByText("Manager");
+      fireEvent.click(screen.getByRole("button", { name: /Delete chat Manager/i }));
+      // Deleting Manager alone re-homes all three descendants to the top level.
+      // Silently, before this — an irreversible action restructuring the list.
+      expect(await screen.findByText(/3 other nested chats will be kept/i)).toBeInTheDocument();
+    });
+
+    it("says nothing when the subtree delete takes the whole family", async () => {
+      apiFns.getProjectDetail.mockResolvedValue(
+        detail(makeProject({ slug: "p" }), { chats: family() }),
+      );
+      renderAt("/projects/p/chat");
+      await screen.findByText("Manager");
+      fireEvent.click(screen.getByRole("button", { name: /Delete chat Manager/i }), {
+        shiftKey: true,
+      });
+      expect(await screen.findByText("Delete 4 chats?")).toBeInTheDocument();
+      expect(screen.queryByText(/will be kept and moved/i)).toBeNull();
+    });
+
+    it("counts the survivors when a SEARCH has narrowed the subtree", async () => {
+      // The reviewer's case: a query matches 1 of Manager's 3 descendants, so a
+      // shift-delete takes 2 chats and orphans the other 2. Accurate about what
+      // it deletes, but silent about the restructuring — until now.
+      apiFns.getProjectDetail.mockResolvedValue(
+        detail(makeProject({ slug: "p" }), { chats: family() }),
+      );
+      renderAt("/projects/p/chat");
+      await screen.findByText("Manager");
+      fireEvent.change(screen.getByRole("textbox", { name: /Search chats/i }), {
+        target: { value: "Child one" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: /Delete chat Manager/i }), {
+        shiftKey: true,
+      });
+      expect(await screen.findByText("Delete 2 chats?")).toBeInTheDocument();
+      expect(screen.getByText(/and its 1 nested chat will be/i)).toBeInTheDocument();
+      expect(screen.getByText(/2 other nested chats will be kept/i)).toBeInTheDocument();
+    });
+
+    it("ignores descendants in the OTHER population", async () => {
+      // An archived child of an active parent already renders as a root in the
+      // Archived tree, so deleting the parent doesn't re-home it — counting it
+      // as orphaned would be noise.
+      apiFns.getProjectDetail.mockResolvedValue(
+        detail(makeProject({ slug: "p" }), {
+          chats: [
+            makeChat({ sessionId: "mgr", name: "Manager" }),
+            makeChat({
+              sessionId: "c1",
+              name: "Archived child",
+              archived: true,
+              parent: { project: "p", sessionId: "mgr" },
+            }),
+          ],
+        }),
+      );
+      renderAt("/projects/p/chat");
+      await screen.findByText("Manager");
+      fireEvent.click(screen.getByRole("button", { name: /Delete chat Manager/i }));
+      expect(await screen.findByText("Delete chat?")).toBeInTheDocument();
+      expect(screen.queryByText(/will be kept and moved/i)).toBeNull();
+    });
+  });
+});
+
+/**
+ * Row action-count class (#508 review follow-up). The hover action strip is
+ * absolutely positioned over the timestamp, so a narrow sidebar has the icons
+ * land on top of it — measured at 44px of overlap on an 8-icon root row.
+ *
+ * The fix is a pure-CSS container query (see `.chat-row` in index.css), which
+ * jsdom can't evaluate. What IS testable, and what the stylesheet depends on, is
+ * that each row declares how many icons its strip holds — if that count drifts
+ * from the buttons actually rendered, the CSS silently picks the wrong
+ * threshold and the overlap comes back.
+ */
+describe("ProjectView: chat row declares its action count (#508)", () => {
+  const rowFor = (name: string) => {
+    const title = screen.getByText(name);
+    return title.closest(".chat-row") as HTMLElement;
+  };
+  /** The count the stylesheet will use, read off the row's class. */
+  const declaredCount = (row: HTMLElement) =>
+    Number(row.className.match(/chat-row--actions-(\d+)/)?.[1]);
+  /**
+   * The count actually rendered IN THE STRIP. Deliberately not every button in
+   * the row: a parent also renders a collapse twisty, which sits in the left
+   * gutter and has nothing to do with how wide the strip is.
+   */
+  const actualCount = (row: HTMLElement) =>
+    row.querySelector("div[class*=absolute]")!.querySelectorAll("button[aria-label]").length;
+
+  it("matches the buttons rendered on a plain row", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), { chats: [makeChat({ sessionId: "s1", name: "Solo" })] }),
+    );
+    renderAt("/projects/p/chat");
+    await screen.findByText("Solo");
+    const row = rowFor("Solo");
+    expect(declaredCount(row)).toBe(6);
+    expect(actualCount(row)).toBe(6);
+  });
+
+  it("counts the Detach action on a nested row", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [
+          makeChat({ sessionId: "mgr", name: "Manager" }),
+          makeChat({
+            sessionId: "c1",
+            name: "Child",
+            parent: { project: "p", sessionId: "mgr" },
+          }),
+        ],
+      }),
+    );
+    renderAt("/projects/p/chat");
+    await screen.findByText("Manager");
+    // The parent is a root — six actions in its strip (its collapse twisty is
+    // not one of them). The child renders nested, so it also has Detach, and its
+    // strip is one icon wider.
+    expect(declaredCount(rowFor("Manager"))).toBe(6);
+    expect(actualCount(rowFor("Manager"))).toBe(6);
+    expect(declaredCount(rowFor("Child"))).toBe(7);
+    expect(actualCount(rowFor("Child"))).toBe(7);
+  });
+
+  it("marks every row as a size container", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), { chats: [makeChat({ sessionId: "s1", name: "Solo" })] }),
+    );
+    renderAt("/projects/p/chat");
+    await screen.findByText("Solo");
+    // Without `.chat-row` there is no container for the query to resolve against
+    // and the timestamp would never hide.
+    expect(rowFor("Solo")).toHaveClass("chat-row");
+    expect(rowFor("Solo").querySelector(".chat-row-time")).toBeInTheDocument();
   });
 });

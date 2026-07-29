@@ -32,12 +32,14 @@ import { gridUrl } from "./ProjectView/urls";
  *    that domain tag, with a clearable filter chip. (No area sections here —
  *    the filter already narrows the set.)
  *
- * `embedded` is the layout seam, not a third mode: at `/projects` this renders
- * INSIDE `ProjectView` as the root workspace's Projects tab, which already
- * supplies the page chrome (workspace header + tab bar). Embedded therefore
- * drops this component's own page header — the actions stay, only the
- * duplicated `<h1>`/blurb goes. `/tags/:tag` is still a standalone page and
- * renders unchanged.
+ * `embedded` is the layout seam, not a third mode: it renders this list as the
+ * first SECTION of the root workspace's Home pane, which already supplies the
+ * page chrome (workspace header + tab bar) and, crucially, already owns the
+ * scrolling. Embedded therefore contributes no scroll container and no height of
+ * its own — it is ordinary flow content — and swaps the standalone `<h1>`/blurb
+ * for a section heading in Home's own visual language. The actions survive both
+ * ways, which matters more than it used to: this is now the ONLY New Project
+ * button in the app. `/tags/:tag` is still a standalone page, unchanged.
  */
 export function ProjectsGrid({
   filterTag,
@@ -47,8 +49,8 @@ export function ProjectsGrid({
   const [modalOpen, setModalOpen] = useState(false);
   const [deleting, setDeleting] = useState<Project | null>(null);
   const navigate = useNavigate();
-  // Where "back to the grid" points. Always `/projects`: the root workspace owns
-  // `/`, so the grid has its own URL rather than sharing the front door (#516).
+  // Where "back to the grid" points — root Home, which is where the unfiltered
+  // list lives now that it is a section of that pane rather than a tab.
   const grid = gridUrl();
   // "Edit" now deep-links to the project's Settings tab (issue #122) rather than
   // opening a modal — the tab is the single source of truth for project settings.
@@ -103,12 +105,27 @@ export function ProjectsGrid({
     !loading && !error && !filterTag && allProjects.length === 0;
 
   return (
-    <div className={embedded ? "min-h-0 flex-1 overflow-y-auto" : "h-full overflow-y-auto"}>
-      <div className="mx-auto max-w-6xl px-3 py-5 sm:px-8 sm:py-10">
-        <header className="mb-8 flex flex-wrap items-end justify-between gap-4">
-          {/* Page header — standalone only. Embedded, ProjectView's own header
-              is already saying where you are, so a second title would just be
-              "Projects" twice on one screen. The actions below survive both. */}
+    <div className={embedded ? undefined : "h-full overflow-y-auto"}>
+      {/* Embedded, the host pane owns the scrolling, the measure AND the
+          gutters, so this contributes none of them — otherwise the section
+          would be centred on a different axis to the rest of Home and read as
+          bolted on top of the page rather than part of it. */}
+      <div className={embedded ? undefined : "mx-auto max-w-6xl px-3 py-5 sm:px-8 sm:py-10"}>
+        <header
+          className={`flex flex-wrap items-end justify-between gap-4 ${embedded ? "mb-2" : "mb-8"}`}
+        >
+          {/* Embedded, the workspace header above is already saying where you
+              are, so the standalone `<h1>` + blurb would just be "Projects"
+              twice on one screen. It becomes a section heading matching Home's
+              other sections (Chats / Files / CHANGELOG.md) instead. */}
+          {embedded && (
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-paddock-500">
+              Projects
+              {projects.length > 0 && (
+                <span className="ml-1.5 text-paddock-400">{projects.length}</span>
+              )}
+            </h2>
+          )}
           {!embedded && (
             <div>
               <h1 className="text-[28px] font-semibold tracking-tight">
@@ -136,13 +153,20 @@ export function ProjectsGrid({
               )}
             </div>
           )}
-          {/* `ml-auto` keeps the actions right-aligned when the header block above
-              is absent (embedded) and they are the row's only child. */}
+          {/* `ml-auto` keeps the actions right-aligned whichever heading the row
+              carries — and when it carries none at all. */}
           <div className="ml-auto flex items-center gap-2">
-            <button className="btn-ghost" onClick={() => navigate("/chat")}>
-              <ChatIcon width={16} height={16} />
-              New chat
-            </button>
+            {/* Standalone only. Embedded, this sits on root Home, whose Chats
+                section already has a "New chat" button pointing at the very same
+                `/chat` — two identical buttons on one screen. Home's is the one
+                that keeps its meaning ("start a chat in THIS workspace"), so
+                this copy stands down. */}
+            {!embedded && (
+              <button className="btn-ghost" onClick={() => navigate("/chat")}>
+                <ChatIcon width={16} height={16} />
+                New chat
+              </button>
+            )}
             <button className="btn-primary" onClick={() => setModalOpen(true)}>
               <PlusIcon width={16} height={16} />
               New Project

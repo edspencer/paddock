@@ -114,6 +114,30 @@ export class ReadStateStore {
     await this.persist(map);
   }
 
+  /**
+   * Advance MANY chats' last-seen times to `whenMs` in ONE write (#508) — the
+   * subtree "mark read" action. Per-key monotonic exactly like
+   * {@link setLastSeen}, so a chat already seen later than `whenMs` is skipped
+   * rather than moved backwards. Returns the ids that actually advanced.
+   */
+  async setManyLastSeen(
+    username: string | null,
+    agent: string,
+    sessionIds: readonly string[],
+    whenMs: number,
+  ): Promise<string[]> {
+    const map = await this.ensureLoaded();
+    const advanced: string[] = [];
+    for (const sessionId of sessionIds) {
+      const key = keyOf(username, agent, sessionId);
+      if (whenMs <= (map.get(key) ?? 0)) continue; // monotonic — no-op
+      map.set(key, whenMs);
+      advanced.push(sessionId);
+    }
+    if (advanced.length) await this.persist(map);
+    return advanced;
+  }
+
   /** Write-through, serialised so overlapping marks can't corrupt the file. */
   private persist(map: Map<string, number>): Promise<void> {
     this.writing = this.writing.then(async () => {

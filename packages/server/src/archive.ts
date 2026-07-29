@@ -87,6 +87,36 @@ export class ArchiveStore {
     return true;
   }
 
+  /**
+   * Set (or clear) the archived flag for MANY chats in ONE write (#508).
+   *
+   * The subtree actions apply an archive to a parent and every descendant. Looped
+   * one-at-a-time that's N round trips, and a failure partway leaves a torn family
+   * (parent archived, half the children not) that the user has to unpick by hand.
+   * Here the whole set lands in the in-memory set first and persists once, so the
+   * sidecar only ever holds the before or the after state.
+   *
+   * Returns the ids whose flag actually CHANGED, so the caller can fire one
+   * `onArchive` per real transition — the same contract as {@link setArchived}.
+   */
+  async setManyArchived(
+    agent: string,
+    sessionIds: readonly string[],
+    archived: boolean,
+  ): Promise<string[]> {
+    const set = await this.ensureLoaded();
+    const changed: string[] = [];
+    for (const sessionId of sessionIds) {
+      const key = keyOf(agent, sessionId);
+      if (archived === set.has(key)) continue; // already in the target state
+      if (archived) set.add(key);
+      else set.delete(key);
+      changed.push(sessionId);
+    }
+    if (changed.length) await this.persist(set);
+    return changed;
+  }
+
   /** Write-through, serialised so overlapping toggles can't corrupt the file. */
   private persist(set: Set<string>): Promise<void> {
     this.writing = this.writing.then(async () => {

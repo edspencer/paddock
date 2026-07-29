@@ -94,6 +94,32 @@ export class UnreadStore {
     return true;
   }
 
+  /**
+   * Set (or clear) this user's manual-unread flag for MANY chats in ONE write
+   * (#508) — the subtree "mark read / mark unread" action. Same single-persist
+   * rationale as `ArchiveStore.setManyArchived`: a client-side loop over a
+   * 21-chat family can half-succeed and leave the family in two different states.
+   * Returns the ids whose flag actually changed.
+   */
+  async setManyUnread(
+    username: string | null,
+    agent: string,
+    sessionIds: readonly string[],
+    unread: boolean,
+  ): Promise<string[]> {
+    const set = await this.ensureLoaded();
+    const changed: string[] = [];
+    for (const sessionId of sessionIds) {
+      const key = keyOf(username, agent, sessionId);
+      if (unread === set.has(key)) continue; // already in the target state
+      if (unread) set.add(key);
+      else set.delete(key);
+      changed.push(sessionId);
+    }
+    if (changed.length) await this.persist(set);
+    return changed;
+  }
+
   /** Write-through, serialised so overlapping toggles can't corrupt the file. */
   private persist(set: Set<string>): Promise<void> {
     this.writing = this.writing.then(async () => {

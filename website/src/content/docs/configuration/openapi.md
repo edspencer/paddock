@@ -51,7 +51,7 @@ Restart, and the surface appears:
 - **`/open-api/json`** — the raw OpenAPI 3.0 document.
 - **`/open-api.json`** — an alias for the same document, because that's the path people
   reach for first. Both follow `PADDOCK_OPENAPI_PATH` if you move the prefix.
-- **A "Swagger API" link in the sidebar**, below Settings, opening in a new tab. It only
+- **A "Swagger API" link in the sidebar**, below Config, opening in a new tab. It only
   renders when the surface is enabled, so the sidebar of a plain instance is unchanged.
 
 The document is *derived from the code*: every REST route attaches a Fastify `schema`

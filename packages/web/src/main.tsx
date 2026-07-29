@@ -1,6 +1,7 @@
 import React, { lazy } from "react";
 import ReactDOM from "react-dom/client";
-import { createBrowserRouter, RouterProvider, useParams } from "react-router-dom";
+import { createBrowserRouter, Navigate, RouterProvider, useParams } from "react-router-dom";
+import { gridUrl } from "./routes/ProjectView/urls";
 import "./index.css";
 import { AppShell } from "./components/AppShell";
 import { RouteError } from "./components/RouteError";
@@ -19,10 +20,9 @@ const ProjectView = lazy(() =>
 const ProjectRedirect = lazy(() =>
   import("./routes/ProjectRedirect").then((m) => ({ default: m.ProjectRedirect })),
 );
-// NOTE: the standalone InstanceSettings page no longer has a route. `/settings`
-// is the ROOT workspace's Settings tab, which renders the workspace settings and
-// the instance-wide config form as two sections (see ProjectView). The component
-// survives as the extracted `InstanceConfigForm` that tab embeds.
+const InstanceConfigPage = lazy(() =>
+  import("./routes/InstanceConfigPage").then((m) => ({ default: m.InstanceConfigPage })),
+);
 
 // Reflect tab visibility onto <html data-tab-hidden> so CSS can pause the
 // continuous streaming animations (spinners, caret) while the tab is
@@ -54,9 +54,12 @@ const router = createBrowserRouter([
       // nothing to wait for. No redirect and no sticky last tab: `/` is the
       // instance's front door and always renders the same thing.
       { index: true, element: <ProjectView root /> },
-      // The projects grid is the root workspace's CHILDREN tab, rendered inside
-      // ProjectView so it carries the same chrome as every other root tab.
-      { path: "projects", element: <ProjectView root /> },
+      // The projects grid folded INTO root Home, so `/projects` no longer has a
+      // pane of its own. Kept as a permanent redirect rather than deleted: it
+      // was the grid's URL for a whole release, so bookmarks, the docs, and any
+      // link out to "the project list" would otherwise 404 on the RouteError
+      // screen. `replace` keeps it out of the Back history.
+      { path: "projects", element: <Navigate to={gridUrl()} replace /> },
       // The projects grid, filtered to a single domain tag (click a tag pill).
       { path: "tags/:tag", element: <TaggedProjects /> },
       // Bare project URL redirects to the sticky last tab (defaults to home).
@@ -102,11 +105,15 @@ const router = createBrowserRouter([
       // `projects.get()` — so these are routes plus un-hidden tabs, nothing more.
       { path: "history", element: <ProjectView root /> },
       { path: "triggers", element: <ProjectView root /> },
-      // Instance-wide admin settings (edits paddock.config.yaml) — #385.
-      // With a root project this resolves to the root's Settings TAB, which shows
-      // the root's own workspace config and this same instance form as two
-      // sections (#516 Phase 5); without one it stays the standalone page.
+      // The ROOT workspace's Settings tab — its `project.yaml`, exactly like any
+      // project's. It used to ALSO render the instance-wide config beneath it as
+      // a second section, which read as two pages in one; that lives at `/config`
+      // now (below), so this is the plain workspace tab it should always have been.
       { path: "settings", element: <ProjectView root /> },
+      // Instance-wide admin config (edits `paddock.config.yaml`) — #385. Named
+      // for the file it writes, and separate from `/settings` because its
+      // lifecycle is different: frozen at boot, so every save is restart-required.
+      { path: "config", element: <InstanceConfigPage /> },
     ],
   },
 ]);
