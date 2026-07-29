@@ -17,6 +17,7 @@ import { SettingsPane } from "../components/SettingsPane";
 import { TriggersPane } from "../components/TriggersPane";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ForkChatModal } from "../components/ForkChatModal";
+import { RenameChatModal } from "../components/RenameChatModal";
 import { PromoteChatModal } from "../components/PromoteChatModal";
 import { usePaneWidth } from "../components/PaneResizer";
 import { CHATLIST_PANE } from "../lib/paneWidth";
@@ -179,6 +180,8 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
   const [sessionsOpen, setSessionsOpen] = useState(false);
 
   const [deleteOpen, setDeleteOpen] = useState(false);
+  // The chat awaiting a new name in the rename dialog (#541); null when closed.
+  const [renamingChat, setRenamingChat] = useState<Chat | null>(null);
   /**
    * The chat delete awaiting confirmation. `ids` is what will actually be
    * removed — just the chat, or (on a Shift-click) the chat plus every
@@ -736,12 +739,12 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
     [chats],
   );
 
-  const renameChat = useCallback(
-    async (chat: Chat) => {
-      const next = window.prompt("Rename chat", chat.name);
-      if (next === null) return; // cancelled
-      const name = next.trim();
-      await api.renameProjectChat(slug, chat.sessionId, name || null);
+  // Commit a rename from the modal. `name === null` is the deliberate "clear it"
+  // case, which resets the chat to its generated preview name — the modal keeps
+  // that distinct from cancelling, which never reaches here at all (#541).
+  const commitRename = useCallback(
+    async (chat: Chat, name: string | null) => {
+      await api.renameProjectChat(slug, chat.sessionId, name);
       setChats((prev) =>
         prev.map((c) =>
           c.sessionId === chat.sessionId
@@ -1115,7 +1118,7 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
           runningSessions={runningSessions}
           setForkingChat={setForkingChat}
           setPromotingChat={root ? setPromotingChat : undefined}
-          renameChat={renameChat}
+          renameChat={setRenamingChat}
           archiveChat={archiveChat}
           requestDeleteChat={requestDeleteChat}
           starChat={starChat}
@@ -1442,6 +1445,19 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
             // The transcript moved, so the chat is gone from this list and lives
             // in the new project — land the user where it went.
             navigate(`/projects/${project.slug}/chat`);
+          }}
+        />
+      )}
+      {renamingChat && (
+        <RenameChatModal
+          open
+          chatName={renamingChat.name}
+          resetName={renamingChat.preview}
+          onClose={() => setRenamingChat(null)}
+          onRename={(name) => {
+            const chat = renamingChat;
+            setRenamingChat(null);
+            void commitRename(chat, name);
           }}
         />
       )}

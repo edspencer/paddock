@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { XIcon } from "./icons";
+import { useEscapeKey } from "../lib/useEscapeKey";
 
 /**
  * Name a fork before creating it (issue #279). Forking used to fire eagerly on
@@ -35,14 +36,11 @@ export function ForkChatModal({
         input.select();
       }
     }
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && open) onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
     // defaultName is derived from chatName, so chatName covers it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, chatName, onClose]);
+  }, [open, chatName]);
+
+  useEscapeKey(open, onClose);
 
   if (!open) return null;
 

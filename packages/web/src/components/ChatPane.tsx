@@ -28,6 +28,7 @@ import type {
 import { acceptAttribute } from "../lib/attachments";
 import { AttachmentTrayItem } from "./MessageAttachments";
 import { TriggerCapabilityBanner } from "./TriggerCapabilityBanner";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { PaddockManageProjectContext } from "./PaddockManageBlock";
 // --- extracted chat modules (issue #403) -------------------------------------
 import { type Turn, historyToTurns, nextId, sealStreaming } from "./chat/turnModel";
@@ -181,6 +182,14 @@ export function ChatPane({
   const [hydrating, setHydrating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [conn, setConn] = useState<ConnectionState>(chatClient.state);
+  // A measured-but-not-yet-confirmed revert (#541): what the click would remove,
+  // held while the confirmation dialog is up. null when the dialog is closed.
+  const [revertPlan, setRevertPlan] = useState<{
+    uuid: string;
+    count: number;
+    toolCount: number;
+    anchorIsUser: boolean;
+  } | null>(null);
 
   // Issue #91: a single message queued to auto-send when the current turn
   // finishes. `queued` drives the toolbar above the composer; `queuedRef` mirrors
@@ -549,8 +558,13 @@ export function ChatPane({
 
   // Revert with a confirmation that counts the lost turns — and warns that tool
   // actions after this point are NOT undone (only the conversation is).
+  //
+  // #541: this used to build one long `\n\n`-delimited string for `window.confirm`,
+  // which flattened the tool-call caveat — the most important sentence here — into
+  // the middle of a plain-text paragraph. Now the click only *measures* the revert
+  // and parks the result; the dialog renders it as structured content.
   const handleRevert = useCallback(
-    async (uuid: string) => {
+    (uuid: string) => {
       if (!onRevertToMessage) return;
       const idx = turns.findIndex((t) => t.id.split("#")[0] === uuid);
       const anchorIsUser = idx >= 0 && turns[idx].kind === "user";
@@ -571,32 +585,31 @@ export function ChatPane({
       }
       const after = idx >= 0 ? turns.slice(start) : [];
       const toolCount = after.filter((t) => t.kind === "tool").length;
-      const msg =
-        `Revert this chat back to here?\n\n` +
-        (anchorIsUser ? `This rewinds to the assistant's previous reply. ` : ``) +
-        `${after.length} message${after.length === 1 ? "" : "s"} will be removed` +
-        (toolCount > 0
-          ? `, including ${toolCount} tool call${toolCount === 1 ? "" : "s"}. Those actions ` +
-            `(files written, PRs opened, messages sent) are NOT undone — only the conversation.`
-          : ".") +
-        `\n\nThe removed messages are backed up, and this chat keeps its id.`;
-      if (!window.confirm(msg)) return;
-      try {
-        await onRevertToMessage(uuid);
-        await reloadHistory();
-      } catch {
-        setError("Could not revert this chat.");
-      }
+      setRevertPlan({ uuid, count: after.length, toolCount, anchorIsUser });
     },
-    [onRevertToMessage, reloadHistory, turns],
+    [onRevertToMessage, turns],
   );
+
+  const confirmRevert = useCallback(async () => {
+    if (!revertPlan) return;
+    try {
+      await onRevertToMessage?.(revertPlan.uuid);
+      await reloadHistory();
+    } catch {
+      // Thrown rather than banner-set: ConfirmDialog catches it, shows it in
+      // place and leaves the dialog open, so a failed revert is retryable
+      // instead of silently closing and pointing at a banner elsewhere.
+      throw new Error("Could not revert this chat.");
+    }
+    setRevertPlan(null);
+  }, [revertPlan, onRevertToMessage, reloadHistory]);
 
   const turnActions = useMemo<TurnActionsValue | null>(
     () =>
       onForkFromMessage && onRevertToMessage
         ? {
             onFork: onForkFromMessage,
-            onRevert: (uuid: string) => void handleRevert(uuid),
+            onRevert: handleRevert,
             contextLimit: usage?.contextLimit,
           }
         : null,
@@ -1188,6 +1201,54 @@ export function ChatPane({
           </div>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={revertPlan !== null}
+        wide
+        // Long warning text + a big box makes the backdrop an easy mis-click,
+        // and dropping the decision silently is worse than asking for a button.
+        dismissOnBackdrop={false}
+        title="Revert this chat back to here?"
+        confirmLabel="Revert chat"
+        message={
+          revertPlan && (
+            <>
+              {revertPlan.anchorIsUser && (
+                <p className="mb-2">This rewinds to the assistant&apos;s previous reply.</p>
+              )}
+              <p>
+                <span className="font-medium text-ink dark:text-ink-dark">
+                  {revertPlan.count} message{revertPlan.count === 1 ? "" : "s"}
+                </span>{" "}
+                will be removed
+                {revertPlan.toolCount > 0 ? (
+                  <>
+                    , including{" "}
+                    <span className="font-medium text-ink dark:text-ink-dark">
+                      {revertPlan.toolCount} tool call
+                      {revertPlan.toolCount === 1 ? "" : "s"}
+                    </span>
+                    .
+                  </>
+                ) : (
+                  "."
+                )}
+              </p>
+              {revertPlan.toolCount > 0 && (
+                <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+                  <span className="font-medium">Those actions are not undone.</span> Files written,
+                  PRs opened and messages sent stay as they are — only the conversation is rewound.
+                </p>
+              )}
+              <p className="mt-3">
+                The removed messages are backed up, and this chat keeps its id.
+              </p>
+            </>
+          )
+        }
+        onConfirm={confirmRevert}
+        onClose={() => setRevertPlan(null)}
+      />
     </div>
   );
 }

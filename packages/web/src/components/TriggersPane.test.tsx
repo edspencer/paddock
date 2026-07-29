@@ -182,12 +182,26 @@ describe("TriggersPane (Epic T / T4)", () => {
   });
 
   it("deletes a trigger after confirmation", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<TriggersPane project={project} />);
     await screen.findByTestId("triggers-pane");
     const sched = await screen.findByRole("row", { name: /daily-manager/ });
     fireEvent.click(within(sched).getByRole("button", { name: /delete daily-manager/i }));
+    // The row button only opens the dialog — the delete needs the confirm.
+    expect(deleteTrigger).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole("button", { name: /^delete trigger$/i }));
     await waitFor(() => expect(deleteTrigger).toHaveBeenCalledWith("p", "daily-manager"));
+  });
+
+  it("does not delete a trigger when the dialog is cancelled", async () => {
+    render(<TriggersPane project={project} />);
+    await screen.findByTestId("triggers-pane");
+    const sched = await screen.findByRole("row", { name: /daily-manager/ });
+    fireEvent.click(within(sched).getByRole("button", { name: /delete daily-manager/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /^cancel$/i }));
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /^delete trigger$/i })).not.toBeInTheDocument(),
+    );
+    expect(deleteTrigger).not.toHaveBeenCalled();
   });
 
   // --- Run-now + runtime status (#327) ------------------------------------------

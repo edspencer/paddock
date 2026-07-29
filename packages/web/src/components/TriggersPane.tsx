@@ -22,6 +22,7 @@ import {
   TrashIcon,
   XIcon,
 } from "./icons";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 /** A valid trigger name / herdctl key segment (mirrors the server's `isValidTriggerName`). */
 const NAME_RE = /^[A-Za-z0-9._-]+$/;
@@ -220,6 +221,8 @@ export function TriggersPane({ project }: { project: Project }) {
   const [editing, setEditing] = useState<{ isNew: boolean; draft: Draft } | null>(null);
   // The trigger name a per-row action is in flight for (disables that row's buttons).
   const [busy, setBusy] = useState<string | null>(null);
+  // The trigger awaiting delete-confirmation (#541); null when the dialog is closed.
+  const [deletingTrigger, setDeletingTrigger] = useState<Trigger | null>(null);
   // Live runtime state (last-run / next-run / running), keyed by trigger name (#327).
   // Polled independently of the config list so status refreshes without re-fetching the
   // picker catalog. Best-effort — a runtime fetch failure never blocks the config view.
@@ -341,15 +344,21 @@ export function TriggersPane({ project }: { project: Project }) {
     }
   };
 
-  const remove = async (t: Trigger) => {
-    if (!window.confirm(`Delete trigger “${t.name}”? This can’t be undone.`)) return;
+  // The row's delete button only opens the dialog (#541); this is what actually
+  // deletes. The error is re-thrown rather than pushed to the pane-level banner
+  // so ConfirmDialog can surface it in place and stay open — a failed delete is
+  // then retryable from where the user already is.
+  const confirmRemove = async () => {
+    const t = deletingTrigger;
+    if (!t) return;
     setBusy(t.name);
     try {
       await api.deleteTrigger(slug, t.name);
       setTriggers((prev) => prev.filter((x) => x.name !== t.name));
       setNotice(`Deleted “${t.name}”.`);
+      setDeletingTrigger(null);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to delete trigger");
+      throw new Error(err instanceof ApiError ? err.message : "Failed to delete trigger");
     } finally {
       setBusy(null);
     }
@@ -510,7 +519,7 @@ export function TriggersPane({ project }: { project: Project }) {
                             </button>
                             <button
                               type="button"
-                              onClick={() => remove(t)}
+                              onClick={() => setDeletingTrigger(t)}
                               disabled={busy === t.name}
                               title="Delete"
                               aria-label={`Delete ${t.name}`}
@@ -918,6 +927,24 @@ export function TriggersPane({ project }: { project: Project }) {
           </div>
         </section>
       </div>
+
+      <ConfirmDialog
+        open={deletingTrigger !== null}
+        title="Delete trigger?"
+        confirmLabel="Delete trigger"
+        message={
+          deletingTrigger && (
+            <>
+              <span className="font-medium text-ink dark:text-ink-dark">
+                {deletingTrigger.name}
+              </span>{" "}
+              will be removed from this project. This can&apos;t be undone.
+            </>
+          )
+        }
+        onConfirm={confirmRemove}
+        onClose={() => setDeletingTrigger(null)}
+      />
     </div>
   );
 }

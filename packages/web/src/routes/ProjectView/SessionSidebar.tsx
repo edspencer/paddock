@@ -120,7 +120,8 @@ export function SessionSidebar({
    * which is a different feature and not what this ever meant.
    */
   setPromotingChat?: Dispatch<SetStateAction<Chat | null>>;
-  renameChat: (chat: Chat) => Promise<void>;
+  /** Opens the rename dialog for this chat; ProjectView owns the commit (#541). */
+  renameChat: (chat: Chat) => void;
   /**
    * The three subtree-capable actions (#508). `sessionIds` is the set to apply
    * to — `[chat.sessionId]` on a plain click, the whole subtree on Shift-click.
@@ -396,7 +397,7 @@ export function SessionSidebar({
             aria-label={`Rename chat ${c.name}`}
             onClick={(e) => {
               e.stopPropagation();
-              void renameChat(c);
+              renameChat(c);
             }}
             className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-paddock-200 hover:text-paddock-700 focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-paddock-700 dark:hover:text-paddock-100"
           >

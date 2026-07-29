@@ -520,28 +520,51 @@ describe("ProjectView: chat list (delete + rename)", () => {
     await waitFor(() => expect(screen.queryByText("Doomed chat")).not.toBeInTheDocument());
   });
 
-  it("renames a chat via window.prompt", async () => {
+  it("renames a chat via the rename dialog", async () => {
     apiFns.getProjectDetail.mockResolvedValue(
       detail(makeProject({ slug: "p" }), { chats: [makeChat({ sessionId: "s1", name: "Old name" })] }),
     );
     apiFns.renameProjectChat.mockResolvedValue(undefined);
-    vi.spyOn(window, "prompt").mockReturnValue("New name");
     renderAt("/projects/p/chat");
     await screen.findByText("Old name");
     fireEvent.click(screen.getByRole("button", { name: /Rename chat Old name/i }));
+    const input = await screen.findByDisplayValue("Old name");
+    fireEvent.change(input, { target: { value: "New name" } });
+    fireEvent.submit(input.closest("form")!);
     await waitFor(() => expect(apiFns.renameProjectChat).toHaveBeenCalledWith("p", "s1", "New name"));
     expect(await screen.findByText("New name")).toBeInTheDocument();
   });
 
-  it("rename is a no-op when prompt is cancelled", async () => {
+  it("rename is a no-op when the dialog is cancelled", async () => {
     apiFns.getProjectDetail.mockResolvedValue(
       detail(makeProject({ slug: "p" }), { chats: [makeChat({ sessionId: "s1", name: "Keep me" })] }),
     );
-    vi.spyOn(window, "prompt").mockReturnValue(null);
     renderAt("/projects/p/chat");
     await screen.findByText("Keep me");
     fireEvent.click(screen.getByRole("button", { name: /Rename chat Keep me/i }));
+    await screen.findByDisplayValue("Keep me");
+    fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
     await waitFor(() => expect(apiFns.renameProjectChat).not.toHaveBeenCalled());
+  });
+
+  // What `window.prompt`'s null-vs-"" return used to carry: clearing the box is
+  // a deliberate reset to the generated preview name, and it must still reach
+  // the API as `null` rather than being mistaken for a cancel.
+  it("clearing the name resets the chat to its preview name", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [makeChat({ sessionId: "s1", name: "Custom name", preview: "Fix the loop" })],
+      }),
+    );
+    apiFns.renameProjectChat.mockResolvedValue(undefined);
+    renderAt("/projects/p/chat");
+    await screen.findByText("Custom name");
+    fireEvent.click(screen.getByRole("button", { name: /Rename chat Custom name/i }));
+    const input = await screen.findByDisplayValue("Custom name");
+    fireEvent.change(input, { target: { value: "" } });
+    fireEvent.submit(input.closest("form")!);
+    await waitFor(() => expect(apiFns.renameProjectChat).toHaveBeenCalledWith("p", "s1", null));
+    expect(await screen.findByText("Fix the loop")).toBeInTheDocument();
   });
 });
 
