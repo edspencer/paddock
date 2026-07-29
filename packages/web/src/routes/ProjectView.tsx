@@ -14,7 +14,6 @@ import { useProjectRuns } from "../lib/useProjectRuns";
 import { FilesPane } from "../components/FilesPane";
 import { ProjectMenu } from "../components/ProjectMenu";
 import { SettingsPane } from "../components/SettingsPane";
-import { InstanceConfigForm } from "../components/InstanceConfigForm";
 import { TriggersPane } from "../components/TriggersPane";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ForkChatModal } from "../components/ForkChatModal";
@@ -69,9 +68,9 @@ import { useUnreadChats } from "./ProjectView/useUnreadChats";
  * Nothing about it is special-cased: its workspace key is the empty string and
  * it hits the same handlers, mounted at `/api/root` instead of
  * `/api/projects/:slug` (see `apiBase`). It differs only in its browser URLs,
- * which are flat and top-level (`/` is root Home, `/chat[/:sessionId]` its
- * chats, `/projects` its children) — and that difference is carried entirely by
- * `base` (see `viewBase`).
+ * which are flat and top-level (`/` is root Home — which also carries its
+ * children — and `/chat[/:sessionId]` its chats), and that difference is carried
+ * entirely by `base` (see `viewBase`).
  */
 export function ProjectView({ root = false }: { root?: boolean } = {}) {
   const params = useParams();
@@ -995,10 +994,9 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
                 )}
               </span>
             </TabButton>
-            {/* At the ROOT this tab shows the root's OWN workspace settings AND
-                the instance-wide config, as two sections (#516 Phase 5) — which
-                is why `/settings` resolves here rather than to the standalone
-                InstanceSettings page once a root project exists. */}
+            {/* The workspace's own settings — its `project.yaml`. At the root
+                this is `/settings`; the instance-wide config it used to sit
+                above is its own screen at `/config`. */}
             <TabButton active={view === "settings"} onClick={goSettings}>
               <span className="inline-flex items-center gap-1.5">
                 <WrenchIcon width={13} height={13} />
@@ -1056,37 +1054,25 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
               onOpenChat={openChat}
             />
           )}
+          {/* Settings: this workspace's own `project.yaml`, and nothing else.
+              ONE pane, at the root exactly as in a project — which is what makes
+              this tab scroll at all. It used to render the instance-wide
+              `paddock.config.yaml` form as a second root-only section (#516
+              Phase 5), and two panes in one tab is what broke it: that form is a
+              fragment whose `min-h-0 flex-1 overflow-y-auto` body only works as a
+              flex-column child, so wrapped in a plain <div> it grew to its full
+              content height, refused to shrink, squashed this pane's
+              `flex: 1 1 0` to ZERO height and left nothing able to scroll. The
+              instance config is its own screen at `/config` now, so the root's
+              Settings is an ordinary workspace tab again. */}
           {view === "settings" && (
-            <div className="flex min-h-0 flex-1 flex-col">
-              <SettingsPane
-                project={project}
-                onSaved={(p) => {
-                  setProject(p);
-                  upsert(p);
-                }}
-              />
-              {/* At the ROOT, instance-wide config joins the tab as a SECOND
-                  section (#516 Phase 5) — the same form `/settings` shows on an
-                  instance with no root project. Kept as two sections rather than
-                  fused, because they are different things: `project.yaml` is
-                  workspace config, hot-applied by agent re-registration, while
-                  `paddock.config.yaml` is instance runtime config, frozen at boot
-                  and restart-required. Fusing them would hide that.
-
-                  This wrapper MUST be a shrinkable flex column. InstanceConfigForm
-                  returns a fragment — a save footer plus a `min-h-0 flex-1
-                  overflow-y-auto` body — that only works as the child of one. A
-                  plain `<div>` here made `flex-1`/`min-h-0` inert, so the body grew
-                  to its full content height; as a flex item with the default
-                  `min-height: auto` it then refused to shrink, ate the whole
-                  column, squashed SettingsPane's `flex: 1 1 0` sibling to ZERO
-                  height, and left nothing on the tab able to scroll. */}
-              {root && (
-                <div className="flex min-h-0 flex-1 flex-col border-t border-paddock-200 dark:border-paddock-800">
-                  <InstanceConfigForm />
-                </div>
-              )}
-            </div>
+            <SettingsPane
+              project={project}
+              onSaved={(p) => {
+                setProject(p);
+                upsert(p);
+              }}
+            />
           )}
           {/* The Triggers tab (Epic T / T4): a self-contained CRUD surface for this
               project's unified triggers (schedules + events + reserved webhooks). Its

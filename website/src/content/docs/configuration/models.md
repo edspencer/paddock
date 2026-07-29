@@ -33,7 +33,7 @@ models:
   - claude-sonnet-5
 ```
 
-…or the **Offered models** field in the [Settings screen](/configuration/instance-settings/)
+…or the **Offered models** field in the [Config screen](/configuration/instance-settings/)
 (under Capabilities), which writes that same YAML key.
 
 Precedence is the usual `PADDOCK_MODELS` → `models:` → default. Leave all of them unset
@@ -87,7 +87,7 @@ This is worth knowing, because the two paths are deliberately not the same:
 - **In `PADDOCK_MODELS` or `models:`** — unknown, blank and duplicate ids are **dropped
   silently**, and if nothing survives you get the whole catalog (above). Config loading
   never fails startup over a model list.
-- **In the Settings screen, or a project `PATCH`** — an unknown id is **rejected** with
+- **In the Config screen, or a project `PATCH`** — an unknown id is **rejected** with
   a `400` naming it, and so is an empty list. You're picking from a known catalog
   through a UI, so a typo should surface rather than quietly do nothing.
 
@@ -97,5 +97,5 @@ first: check the ids against `GET /api/models`.
 ## See also
 
 - [Environment variables](/configuration/environment/#keeper--agents) — the `PADDOCK_MODELS` row.
-- [The Settings screen](/configuration/instance-settings/) — the instance-level UI.
+- [The Config screen](/configuration/instance-settings/) — the instance-level UI.
 - [Creating & organizing projects](/using/creating-and-organizing-projects/) — the per-project Settings tab.

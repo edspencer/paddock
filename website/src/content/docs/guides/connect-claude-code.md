@@ -144,7 +144,7 @@ recoverable from Paddock afterwards.
 ## 2. Put the token in the instance's environment
 
 **Not in the YAML.** `paddock.config.yaml` is git-tracked and editable from the
-instance Settings screen, so a literal `token:` or `secret:` in it is a **hard
+instance Config screen, so a literal `token:` or `secret:` in it is a **hard
 config error** — Paddock rejects the client rather than accepting a secret
 you're about to commit. The config only ever holds the *name* of an environment
 variable.

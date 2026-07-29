@@ -166,7 +166,7 @@ is no `PADDOCK_MANAGEMENT_*` environment equivalent, because a list of clients
 each with its own scope doesn't express well as a scalar.
 
 The one thing that never goes in this file is the **token itself**. This file is
-git-tracked (and editable from the instance Settings screen), so a client's
+git-tracked (and editable from the instance Config screen), so a client's
 credential is given as an environment *reference* — `auth: { ref: "env:VAR" }` —
 and an inline `token:`/`secret:` is a **hard config error**, not a warning.
 

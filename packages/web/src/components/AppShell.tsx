@@ -299,15 +299,21 @@ export function AppShell() {
         </nav>
 
         <div className="border-t border-paddock-200 px-3 py-3 dark:border-paddock-800">
+          {/* INSTANCE config, not workspace settings — it writes
+              `paddock.config.yaml` (branding, capabilities, limits) and every
+              save is restart-required. A workspace's own settings are its
+              Settings TAB, at `/settings` for the root. The two were one screen
+              until they were split; naming this after the file it writes is what
+              keeps them apart. */}
           <NavLink
-            to="/settings"
+            to="/config"
             className={({ isActive }) =>
               `btn-subtle w-full justify-start ${isActive ? "bg-paddock-200/80 dark:bg-paddock-800" : ""}`
             }
-            title="Settings"
+            title="Instance config — paddock.config.yaml (restart required)"
           >
             <CogIcon width={15} height={15} />
-            Settings
+            Config
           </NavLink>
           {openapi.enabled && (
             <a

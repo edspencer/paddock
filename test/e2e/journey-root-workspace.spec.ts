@@ -11,12 +11,16 @@ import { paths, seedProject, uniq } from "./helpers";
  *
  *   `/`          → the root workspace's HOME (a project-like Home pane, with the
  *                  full ProjectView chrome: workspace name heading + tab bar).
- *                  The projects GRID is its FIRST SECTION — embedded, so no
- *                  standalone `<h1>`/blurb, but the "New Project" / "New chat"
- *                  actions survive, and are now the only ones in the app.
+ *                  The projects GRID is a SECTION of it, under the root's own
+ *                  Chats — embedded, so no standalone `<h1>`/blurb, but its
+ *                  "New Project" survives and is the only one in the app.
  *   `/projects`  → a permanent redirect to `/`. It was the grid's own URL for a
  *                  release, so it stays reachable instead of dead-ending.
  *   `/chat`      → a root chat.
+ *   `/settings`  → the root workspace's Settings tab — its `project.yaml`, and
+ *                  nothing else. Instance-wide config is `/config`, a separate
+ *                  screen, because it writes `paddock.config.yaml` and is frozen
+ *                  at boot. The two were one stacked tab until they were split.
  *
  * The last one is the regression that shipped in v0.50.0: "New chat" from the
  * front door dead-ended on `Project not found: __root`. It is asserted here as
@@ -49,7 +53,7 @@ test("/ renders the root workspace Home, with the workspace tab bar", async ({ p
   await expect(page.getByText(/Project not found/i)).toHaveCount(0);
 });
 
-test("root Home leads with the projects grid, embedded as its first section", async ({ page }) => {
+test("root Home carries the projects grid as a section under its own Chats", async ({ page }) => {
   const name = uniq("RW Child");
   seedProject({ name, group: "homelab" });
 
@@ -78,12 +82,14 @@ test("root Home leads with the projects grid, embedded as its first section", as
   // doing the same thing in the same place.
   await expect(main.getByRole("button", { name: "New chat", exact: true })).toHaveCount(1);
 
-  // Section order on the root's Home: Projects → Chats → … → Overview.
+  // Section order on the root's Home: Chats → Projects → … → Overview. Read in
+  // DOM order (the grid's heading is an <h2>, Home's are <h3>, so anything that
+  // sorts by heading rank would report the wrong answer).
   const headings = await main.locator("h2, h3").allTextContents();
   const idx = (re: RegExp) => headings.findIndex((h) => re.test(h.trim()));
-  expect(idx(/^Projects/)).toBeGreaterThanOrEqual(0);
-  expect(idx(/^Projects/)).toBeLessThan(idx(/^Chats/));
-  expect(idx(/^Chats/)).toBeLessThan(idx(/^Overview/));
+  expect(idx(/^Chats/)).toBeGreaterThanOrEqual(0);
+  expect(idx(/^Chats/)).toBeLessThan(idx(/^Projects/));
+  expect(idx(/^Projects/)).toBeLessThan(idx(/^Overview/));
 });
 
 test("/projects redirects to root Home, where the list now lives", async ({ page }) => {
@@ -225,38 +231,78 @@ test("the tab strip fits its own box — no phantom vertical scrollbar", async (
   expect(narrow.scrollH).toBeLessThanOrEqual(narrow.clientH);
 });
 
-test("the root's Settings tab shows BOTH sections and both scroll", async ({ page }) => {
+test("the root's Settings tab is an ordinary workspace tab — one pane, and it scrolls", async ({
+  page,
+}) => {
   await page.goto("/settings");
 
-  // Section 1: the root's own workspace settings. It used to be squashed to
-  // ZERO height by its sibling, so the form was on the page but unreachable —
-  // asserting the heading exists would have passed throughout.
+  // The root's own project.yaml settings, and ONLY those. The instance-wide
+  // paddock.config.yaml form used to render beneath this as a second section —
+  // two save bars, one page inside another — and, being a fragment that only
+  // works as a flex-column child, it was also what stopped this tab scrolling:
+  // it grew to full content height, refused to shrink, and squashed the
+  // workspace form to ZERO height.
   const workspaceForm = page.getByRole("main").locator("form").first();
   await expect(workspaceForm).toBeVisible();
   expect((await workspaceForm.boundingBox())!.height).toBeGreaterThan(100);
+  await expect(page.getByText(/paddock\.config\.yaml/i)).toHaveCount(0);
 
-  // Section 2: the instance-wide config, below the divider.
+  // Exactly one save bar on the tab, not two.
+  await expect(page.getByRole("button", { name: /Save changes/i })).toHaveCount(1);
+
+  // And the pane scrolls.
+  const maxScroll = await page.evaluate(() => {
+    const el = [...document.querySelectorAll("main *")].find((e) => {
+      const oy = getComputedStyle(e).overflowY;
+      return (oy === "auto" || oy === "scroll") && e.scrollHeight > e.clientHeight + 50;
+    });
+    if (!el) return 0;
+    el.scrollTop = 1e6;
+    return el.scrollTop;
+  });
+  expect(maxScroll).toBeGreaterThan(0);
+});
+
+test("/config is the instance config screen, separate from any workspace's settings", async ({
+  page,
+}) => {
+  await page.goto("/config");
+
+  // Its own page, titled for the file it writes.
+  await expect(page.getByRole("heading", { name: "Config", level: 1 })).toBeVisible();
   await expect(page.getByText(/paddock\.config\.yaml/i).first()).toBeVisible();
+  // Instance config is frozen at boot, so the restart notice is always up.
+  await expect(page.getByText(/take effect only after the server restarts/i)).toBeVisible();
+  // Branding lives here — the thing you actually come to this screen for.
+  await expect(page.getByText("Accent color")).toBeVisible();
 
-  // Both are taller than their viewports, and both actually scroll. Nothing on
-  // this tab scrolled at all before: the instance form's `min-h-0 flex-1`
-  // scroller was inert inside a plain <div> wrapper, so it grew to its full
-  // content height and no ancestor could scroll it.
-  const scrollable = await page.evaluate(() =>
-    [...document.querySelectorAll("main *")]
-      .filter((el) => {
-        const oy = getComputedStyle(el).overflowY;
-        return (oy === "auto" || oy === "scroll") && el.clientHeight > 100;
-      })
-      .map((el) => {
-        el.scrollTop = 1e6;
-        const max = el.scrollTop;
-        el.scrollTop = 0;
-        return max;
-      })
-      .filter((max) => max > 0),
+  // It is NOT a workspace: no tab bar, no chat sidebar.
+  await expect(page.getByRole("main").getByRole("button", { name: "Chat", exact: true })).toHaveCount(
+    0,
   );
-  expect(scrollable.length).toBeGreaterThanOrEqual(2);
+
+  // It scrolls.
+  const maxScroll = await page.evaluate(() => {
+    const el = [...document.querySelectorAll("main *")].find((e) => {
+      const oy = getComputedStyle(e).overflowY;
+      return (oy === "auto" || oy === "scroll") && e.scrollHeight > e.clientHeight + 50;
+    });
+    if (!el) return 0;
+    el.scrollTop = 1e6;
+    return el.scrollTop;
+  });
+  expect(maxScroll).toBeGreaterThan(0);
+});
+
+test("the sidebar's Config link goes to /config, and Settings is not in the sidebar", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const sidebar = page.getByRole("complementary");
+  await expect(sidebar.getByRole("link", { name: "Settings", exact: true })).toHaveCount(0);
+  await sidebar.getByRole("link", { name: "Config", exact: true }).click();
+  await expect(page).toHaveURL(/\/config$/);
+  await expect(page.getByRole("heading", { name: "Config", level: 1 })).toBeVisible();
 });
 
 test("a project's Settings tab still scrolls (the non-root path)", async ({ page }) => {

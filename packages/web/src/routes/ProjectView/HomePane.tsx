@@ -19,9 +19,12 @@ import {
  * (Extracted from ProjectView.tsx, issue #403.)
  *
  * Section order is deliberate and reads top-down as "what can I DO here?" before
- * "what IS this?": the workspace's children (root only), then its chats, then
- * its files, then the curated CHANGELOG, and finally the Overview card. Overview
- * used to lead; it is descriptive rather than actionable, so it now trails.
+ * "what IS this?": this workspace's own chats first, then its children (root
+ * only), then its files, then the curated CHANGELOG, and finally the Overview
+ * card. Chats lead because they are the live work and the same section appears
+ * on EVERY workspace's Home — so the page opens the same way whether or not the
+ * workspace has children. Overview used to lead; it is descriptive rather than
+ * actionable, so it trails.
  */
 export function HomePane({
   project,
@@ -61,11 +64,6 @@ export function HomePane({
   return (
     <div className="flex-1 overflow-y-auto overscroll-contain">
       <div className="mx-auto max-w-3xl px-6 py-6">
-        {/* Children lead: from the instance's front door, the first thing you
-            want is the way OUT to a project. Rendered in Home's own column so it
-            lines up with the sections below it. */}
-        {projectsSection && <section className="mb-8">{projectsSection}</section>}
-
         {/* Chats: recent sessions + a shortcut to start a new one. */}
         <section className="mb-8">
           <div className="mb-2 flex items-center justify-between">
@@ -112,6 +110,11 @@ export function HomePane({
             </div>
           )}
         </section>
+
+        {/* This workspace's children, under its own chats: the root's Home opens
+            on the instance's live work, and the way OUT to a project follows.
+            Rendered in Home's own column so it lines up with its neighbours. */}
+        {projectsSection && <section className="mb-8">{projectsSection}</section>}
 
         {/* Files: a preview of the file index; "View all" jumps to the Files tab.
             Omitted entirely where there is no Files tab to jump TO (the root, until

@@ -100,6 +100,17 @@ describe("AppShell: sidebar shell", () => {
     expect(screen.getByRole("link", { name: "Projects" })).toHaveAttribute("href", "/");
   });
 
+  it("links to instance Config at /config, not to /settings", () => {
+    // `/settings` is a WORKSPACE's own settings (the root's, here) and writes
+    // `project.yaml`; `/config` writes `paddock.config.yaml` and is
+    // restart-required. The sidebar link means the latter, and pointed at the
+    // former's URL until they were split.
+    renderShell();
+    const link = screen.getByRole("link", { name: "Config" });
+    expect(link).toHaveAttribute("href", "/config");
+    expect(screen.queryByRole("link", { name: "Settings" })).not.toBeInTheDocument();
+  });
+
   it("shows the empty state when there are no projects", () => {
     renderShell();
     expect(screen.getByText(/No projects yet/i)).toBeInTheDocument();

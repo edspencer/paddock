@@ -14,8 +14,8 @@ import { readLastTab } from "../lib/lastTab";
  * The design's claim is that the root needs no separate view: the same
  * component, the same API calls, only flat top-level URLs and the empty
  * workspace key. So these tests are about the differences that ARE real — `/` is
- * Home, `/chat` is the chat tab, `/projects` is its CHILDREN tab, and there is
- * no sticky last tab.
+ * Home (and carries the root's CHILDREN as a section), `/chat` is the chat tab,
+ * and there is no sticky last tab.
  */
 let chatPaneProps: ChatPaneProps | null = null;
 vi.mock("../components/ChatPane", () => ({
@@ -25,8 +25,10 @@ vi.mock("../components/ChatPane", () => ({
   },
 }));
 
-// SettingsPane / InstanceConfigForm / HistoryPane are tested separately; stub
-// them to markers so the ROOT tab routing is what is asserted.
+// SettingsPane / HistoryPane are tested separately; stub them to markers so the
+// ROOT tab routing is what is asserted. InstanceConfigForm is stubbed too, but
+// only so its ABSENCE from the Settings tab is a meaningful assertion — it lives
+// on its own `/config` screen now (see InstanceConfigPage.test.tsx).
 vi.mock("../components/SettingsPane", () => ({
   SettingsPane: ({ project }: { project: { slug: string } }) => (
     <div data-testid="settings-pane">settings for {project.slug}</div>
@@ -84,8 +86,8 @@ vi.mock("../lib/api", async () => {
   };
 });
 
-// The root workspace's CHILDREN — read by the embedded ProjectsGrid on the
-// Projects tab. Mutable so a test can put a project in the grid.
+// The root workspace's CHILDREN — read by the ProjectsGrid embedded in the Home
+// pane. Mutable so a test can put a project in the grid.
 let mockProjects: Project[] = [];
 vi.mock("../lib/projects-context", () => ({
   useProjects: () => ({
@@ -123,7 +125,6 @@ function renderRootAt(path: string) {
       <Here />
       <Routes>
         <Route path="/" element={<ProjectView root />} />
-        <Route path="/projects" element={<ProjectView root />} />
         <Route path="/chat" element={<ProjectView root />} />
         <Route path="/chat/:sessionId" element={<ProjectView root />} />
         <Route path="/files" element={<ProjectView root />} />
@@ -229,7 +230,7 @@ describe("ProjectView root (#516)", () => {
     }
   });
 
-  it("renders the projects grid as the FIRST section of root Home", async () => {
+  it("renders the projects grid as a section of root Home, under its own Chats", async () => {
     mockProjects = [makeProject({ slug: "hushpod", name: "Hushpod", group: "homelab" })];
     renderRootAt("/chat");
     await screen.findByTestId("chat-pane");
@@ -246,15 +247,19 @@ describe("ProjectView root (#516)", () => {
     // button in the app (the sidebar's was removed), so losing it would leave no
     // way to create a project at all.
     expect(screen.getByRole("button", { name: /New Project/i })).toBeInTheDocument();
-    // Order: the children lead, then the workspace's own chats, then Overview.
-    const headings = screen
-      .getAllByRole("heading", { level: 2 })
-      .concat(screen.getAllByRole("heading", { level: 3 }))
-      .map((h) => h.textContent ?? "");
+    // Order: the workspace's own chats lead, then its children, then Overview
+    // last. Chats lead because that section is on EVERY workspace's Home, so the
+    // page opens the same way whether or not there are children.
+    //
+    // Queried via the DOM, not getAllByRole per level: the grid's heading is an
+    // <h2> and Home's are <h3>, so collecting by level and concatenating sorts by
+    // heading RANK rather than position — it would report "Projects first" no
+    // matter where the section actually sits.
+    const headings = [...document.querySelectorAll("h2, h3")].map((h) => h.textContent ?? "");
     const idx = (re: RegExp) => headings.findIndex((h) => re.test(h));
-    expect(idx(/^Projects/)).toBeGreaterThanOrEqual(0);
-    expect(idx(/^Projects/)).toBeLessThan(idx(/^Chats/));
-    expect(idx(/^Chats/)).toBeLessThan(idx(/^Overview/));
+    expect(idx(/^Chats/)).toBeGreaterThanOrEqual(0);
+    expect(idx(/^Chats/)).toBeLessThan(idx(/^Projects/));
+    expect(idx(/^Projects/)).toBeLessThan(idx(/^Overview/));
   });
 
   it("shows the children on a direct load of `/`, not just after a tab click", async () => {
@@ -330,13 +335,15 @@ describe("ProjectView root (#516)", () => {
     expect(screen.queryByRole("menuitem", { name: /delete project/i })).not.toBeInTheDocument();
   });
 
-  it("renders BOTH settings sections at the root: workspace + instance", async () => {
+  it("renders ONLY the workspace settings at the root — instance config moved to /config", async () => {
     renderRootAt("/settings");
-    // The root's own project.yaml settings…
+    // The root's own project.yaml settings, exactly as a project's tab renders.
     expect(await screen.findByTestId("settings-pane")).toBeInTheDocument();
-    // …and the instance-wide paddock.config.yaml form beneath it. They stay two
-    // sections because their lifecycles differ (hot-applied vs restart-required).
-    expect(await screen.findByTestId("instance-config-form")).toBeInTheDocument();
+    // The instance-wide paddock.config.yaml form used to sit beneath it as a
+    // second section, which read as two pages in one — and, because it is a
+    // fragment that only works as a flex-column child, was what stopped the tab
+    // scrolling at all. It is its own screen now.
+    expect(screen.queryByTestId("instance-config-form")).not.toBeInTheDocument();
   });
 
   it("renders History at the flat `/history`", async () => {

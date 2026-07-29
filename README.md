@@ -69,7 +69,7 @@ you visit, more a service your other tools talk to.
 - 🧩 **Two project types** — notebook (data-repo subdir) or repo-backed (clone an external repo as cwd)
 - 📱 **Works from your phone** — the same launchpad, fully responsive
 - 🔀 **Chat ergonomics** — star to pin, mark unread, fork or rewind from any message, queue-while-streaming, stop, search, archive; spawned chats nest under the chat that created them
-- 🎛️ **Settings, per project and per instance** — model, permission mode, curation budgets and more per project; an instance-wide screen edits `paddock.config.yaml` from the UI
+- 🎛️ **Settings, per project and per instance** — model, permission mode, curation budgets and more per project; an instance-wide **Config** screen edits `paddock.config.yaml` from the UI
 - 🧠 **Claude Opus 5 by default** — with Opus 4.8, Fable 5, Sonnet 5 and Haiku 4.5 selectable, and an allow-list if you'd rather offer fewer
 - 📈 **Token & cost tracking** — per-chat context meter and estimated API cost, live
 - 🎙️ **Voice dictation & slash commands** — mic-to-text in the composer, `/`-autocomplete for skills
