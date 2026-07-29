@@ -89,6 +89,7 @@ export default defineConfig({
 					collapsed: false,
 					items: [
 						{ label: 'Overview', slug: 'concepts' },
+						{ label: 'Workspaces', slug: 'concepts/workspaces' },
 						{ label: 'Projects', slug: 'concepts/projects' },
 						{ label: 'Keeper agents', slug: 'concepts/keepers' },
 						{ label: 'Chats are sessions', slug: 'concepts/chats' },
