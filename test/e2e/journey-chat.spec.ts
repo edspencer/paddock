@@ -129,20 +129,56 @@ test("Stop button appears while a turn is in flight (cancel affordance)", async 
   await expect(page.getByRole("button", { name: /^Send$/ })).toBeVisible({ timeout: 15_000 });
 });
 
-test("rename a project chat from the session list (window.prompt)", async ({ page }) => {
+test("rename a project chat from the session list (rename dialog)", async ({ page }) => {
   const slug = await createProjectViaUI(page, { name: uniq("CH Rename") });
   await sendChatTurn(page, "renamable chat message");
   await expect(page).toHaveURL(new RegExp(`/projects/${slug}/chat/[a-z0-9-]+`), { timeout: 15_000 });
 
-  // The rename uses window.prompt — auto-answer it with a new name.
-  page.once("dialog", (d) => void d.accept("My Renamed Chat"));
+  // A native `dialog` event now means a REGRESSION, not the happy path (#541):
+  // this used to be answered with `d.accept(...)`. Fail loudly if one appears.
+  page.on("dialog", (d) => {
+    throw new Error(`unexpected native ${d.type()} dialog: ${d.message()}`);
+  });
 
   const entry = page.locator(".group\\/chat").filter({ hasText: /renamable chat message/ }).first();
   await entry.hover();
   await entry.getByRole("button", { name: /Rename chat/i }).click();
 
+  const dialog = page.getByRole("dialog", { name: "Rename chat" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("textbox", { name: "Chat name" }).fill("My Renamed Chat");
+  await dialog.getByRole("button", { name: /^Rename$/ }).click();
+
   // The list entry now shows the new name.
   await expect(page.getByRole("button").filter({ hasText: /My Renamed Chat/ }).first()).toBeVisible();
+});
+
+// The reset path `window.prompt`'s empty-string return used to carry: clearing
+// the name falls back to the chat's generated preview rather than cancelling.
+test("clearing a chat's name in the rename dialog resets it", async ({ page }) => {
+  const slug = await createProjectViaUI(page, { name: uniq("CH RenameReset") });
+  await sendChatTurn(page, "resettable chat message");
+  await expect(page).toHaveURL(new RegExp(`/projects/${slug}/chat/[a-z0-9-]+`), { timeout: 15_000 });
+
+  const entry = page.locator(".group\\/chat").filter({ hasText: /resettable chat message/ }).first();
+  await entry.hover();
+  await entry.getByRole("button", { name: /Rename chat/i }).click();
+
+  const dialog = page.getByRole("dialog", { name: "Rename chat" });
+  await dialog.getByRole("textbox", { name: "Chat name" }).fill("Temporary name");
+  await dialog.getByRole("button", { name: /^Rename$/ }).click();
+  await expect(page.getByRole("button").filter({ hasText: /Temporary name/ }).first()).toBeVisible();
+
+  // Re-open and clear it: the button relabels, and the preview name comes back.
+  const renamed = page.locator(".group\\/chat").filter({ hasText: /Temporary name/ }).first();
+  await renamed.hover();
+  await renamed.getByRole("button", { name: /Rename chat/i }).click();
+  const reopened = page.getByRole("dialog", { name: "Rename chat" });
+  await reopened.getByRole("textbox", { name: "Chat name" }).fill("");
+  await reopened.getByRole("button", { name: /^Reset name$/ }).click();
+
+  await expect(page.getByRole("button").filter({ hasText: /resettable chat message/ }).first()).toBeVisible();
+  await expect(page.getByRole("button").filter({ hasText: /Temporary name/ })).toHaveCount(0);
 });
 
 test("delete a project chat from the session list (confirm dialog)", async ({ page }) => {

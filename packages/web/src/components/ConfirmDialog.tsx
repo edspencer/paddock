@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { AlertIcon } from "./icons";
+import { useEscapeKey } from "../lib/useEscapeKey";
 
 /**
  * A small, focused confirmation modal. Used for destructive actions like
@@ -13,6 +14,8 @@ export function ConfirmDialog({
   confirmLabel = "Delete",
   cancelLabel = "Cancel",
   danger = true,
+  wide = false,
+  dismissOnBackdrop = true,
   onConfirm,
   onClose,
 }: {
@@ -22,6 +25,16 @@ export function ConfirmDialog({
   confirmLabel?: string;
   cancelLabel?: string;
   danger?: boolean;
+  /** Roomier box for dialogs whose message is structured content, not one line. */
+  wide?: boolean;
+  /**
+   * Whether clicking the backdrop cancels. The default suits short, one-line
+   * confirmations. Set `false` where the dialog carries warning text the user
+   * is meant to actually read (reverting a chat, #541): there the box is large,
+   * so the backdrop is an easy mis-click, and discarding the decision silently
+   * is worse than making the user pick a button.
+   */
+  dismissOnBackdrop?: boolean;
   onConfirm: () => void | Promise<void>;
   onClose: () => void;
 }) {
@@ -30,12 +43,11 @@ export function ConfirmDialog({
 
   useEffect(() => {
     if (open) setError(null);
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && open && !busy) onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, busy, onClose]);
+  }, [open]);
+
+  // Escape is ignored mid-flight, so the dialog can't be dismissed out from
+  // under a request that has already gone to the server.
+  useEscapeKey(open && !busy, onClose);
 
   if (!open) return null;
 
@@ -53,10 +65,10 @@ export function ConfirmDialog({
   return (
     <div
       className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
-      onClick={() => !busy && onClose()}
+      onClick={() => dismissOnBackdrop && !busy && onClose()}
     >
       <div
-        className="w-full max-w-sm animate-scale-in rounded-2xl border border-paddock-200 bg-white p-6 shadow-2xl dark:border-paddock-800 dark:bg-paddock-900"
+        className={`w-full ${wide ? "max-w-md" : "max-w-sm"} animate-scale-in rounded-2xl border border-paddock-200 bg-white p-6 shadow-2xl dark:border-paddock-800 dark:bg-paddock-900`}
         onClick={(e) => e.stopPropagation()}
         role="alertdialog"
         aria-modal="true"
