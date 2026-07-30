@@ -143,8 +143,17 @@ function readStdin() {
 }
 
 // ── session path (mirrors @herdctl/core cli-session-path.encodePathForCli) ──
+// Replace EVERY non-alphanumeric character with a hyphen, exactly as Claude Code
+// (and herdctl's encodePathForCli, and paddock's encodeProjectDir) do. Replacing
+// only the separators — as this did until #548 — happens to agree for a path made
+// of letters, digits, `/` and `-`, which every path in the suite was. It silently
+// disagreed for anything containing `_` or `.`: herdctl would then watch a
+// different directory than the one we write to, and the turn dies on
+// "Timeout waiting for new session file" 60s later.
+// (Claude Code additionally truncates + hashes paths over 200 chars; temp paths
+// here are far shorter, so that branch is deliberately not mirrored.)
 function encodePathForCli(absolutePath) {
-  return absolutePath.replace(/[/\\]/g, "-");
+  return absolutePath.replace(/[^A-Za-z0-9]/g, "-");
 }
 function sessionDirFor(cwd) {
   return path.join(os.homedir(), ".claude", "projects", encodePathForCli(cwd));
