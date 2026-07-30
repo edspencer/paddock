@@ -1,5 +1,95 @@
 # @paddock/web
 
+## 0.53.0
+
+### Minor Changes
+
+- [#559](https://github.com/edspencer/paddock/pull/559) [`5011e64`](https://github.com/edspencer/paddock/commit/5011e64ea347426ba47be649518e5a47432a4a53) Thanks [@edspencer](https://github.com/edspencer)! - Give the sidebar's **Home** link the unread / in-flight badge every project row
+  already has.
+
+  The root is a workspace with its own chats, so its sidebar row should say what
+  every other workspace's row says: an accent pill for unread replies, a spinner +
+  count for turns in flight, and **nothing at all** when it is quiet. It is the
+  same `ProjectBadges` component with the same thresholds and the same accessible
+  labels — not a root-shaped lookalike.
+
+  **The data plumbing is the actual change.** The badge is folded from each
+  workspace's compact `chatTurns` list, which arrives on `GET /api/projects` — and
+  that route enumerates the root's _children_, so the root's own signal never
+  reached the client. It does now, as a sibling `root` field on the same response,
+  built by the same `buildChatTurns` fold as every child. The root stays out of the
+  `projects` array (it belongs in neither the grid nor the sidebar list), but its
+  counts land in the same badge map under the empty key, so `useProjectBadges`
+  computes Home and a project row in one pass with no branch on which is which.
+
+  This also removes a round-trip: the projects context used to follow every list
+  fetch with a full `GET /api/root` workspace-detail request — `changelog` and
+  `chats` included — and throw everything but the metadata away. One call now
+  serves both.
+
+  `""` is a real, routable workspace key, so the lookup is `badges.get(ROOT_KEY)`
+  and the server's fold takes the key as an ordinary argument; a falsy guard
+  anywhere on that path silently drops the root, which is the failure mode the new
+  tests are pointed at.
+
+### Patch Changes
+
+- [#577](https://github.com/edspencer/paddock/pull/577) [`1d52811`](https://github.com/edspencer/paddock/commit/1d5281178fe750e780c4b6e16edceb03c498cfe3) Thanks [@edspencer](https://github.com/edspencer)! - Drop four back-compat shims that no longer have anything to be compatible with
+  (#553). Two of them change the wire.
+
+  The project DTO no longer carries `created`. It was a dual-emit alias of
+  `started` — populated with the identical value, stripped again on write, and
+  documented as a reconciliation between two old specs. Its one consumer rendered
+  it as a read-only row _next to_ `started`, so the project Settings tab showed
+  **"Started" and "Created" as two adjacent rows containing the same date**. That
+  duplicated row is gone; `started` remains, unchanged, as the creation date.
+
+  `GET /api/models` no longer returns `sweeperDefault`. Nothing read it — the
+  sweeper's model is resolved server-side and was never selectable in the UI, so
+  the field only ever described a decision the client couldn't influence.
+
+  The two internal shims: the `SWEEPER_MODEL` alias of `SWEEPER_DEFAULT_MODEL` is
+  gone (the one importer now uses the canonical constant), and the five instance
+  defaults on `getModels()` — `keeperDriveModeDefault`, `maxSpawnDepthDefault`,
+  `recoveryDefault`, `attachmentsDefault`, `curationDefault` — are now **required**
+  rather than optional "for back-compat with older servers". There is no older
+  server; the server sends all five unconditionally. The `??`/`if` guards that
+  existed to tolerate their absence are gone with them, which also means a fixture
+  can no longer omit one and silently exercise a shape the server never sends.
+
+- [#571](https://github.com/edspencer/paddock/pull/571) [`4e78c30`](https://github.com/edspencer/paddock/commit/4e78c301d0aa13934d54edee6542ed8ad713c522) Thanks [@edspencer](https://github.com/edspencer)! - Promoting a chat to a project now adds it to the sidebar immediately (#566)
+
+  The promote action always did the right thing server-side — the project was
+  created and the chat's transcript re-homed — but the client only navigated, so
+  the new project was missing from the left nav until you reloaded. The project
+  list has no push channel, so the handler now inserts the returned project into
+  the projects context, exactly as the New Project path already does.
+
+  Two further bugs in the promote dialog, both from one over-subscribed effect
+  that reset the form on almost any re-render rather than only on open:
+
+  - The project name you typed was silently reverted to the chat's name whenever
+    the parent re-rendered — which, in a live chat view, is often.
+  - A failed promote could never show its error: the reset ran again as the submit
+    left its busy state and wiped the message one render after it was set.
+
+- [#577](https://github.com/edspencer/paddock/pull/577) [`1d52811`](https://github.com/edspencer/paddock/commit/1d5281178fe750e780c4b6e16edceb03c498cfe3) Thanks [@edspencer](https://github.com/edspencer)! - Remove the legacy `target` WebSocket alias for `projectSlug` (#551). Every
+  server→client frame carried `target` as a byte-for-byte duplicate of
+  `projectSlug`, and five client→server message types accepted it as an alias — a
+  compatibility surface for "early frontends" that do not exist, since the server
+  and the SPA ship as one artifact from one repo.
+
+  Frames now carry `projectSlug` only. Nothing read the alias: the web client sent
+  `projectSlug` at every send site, and the single server→client fallback was
+  unreachable because `projectSlug` is required on every emitted payload type and
+  every emit site sets it — including the root workspace's `""` (a _present_ empty
+  string) and `"?"` on the invalid-frame path.
+
+  The `chat:send` payload documentation now also records that `""` is the legal
+  ROOT workspace key, and that it must be tested with `=== undefined` rather than
+  for falsiness — the fact most likely to be re-broken, and the one the comment
+  omitted.
+
 ## 0.52.0
 
 ### Minor Changes
