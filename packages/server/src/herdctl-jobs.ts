@@ -28,11 +28,13 @@ import { jobsDirOf, type JobsDirIndex } from "./herdctl-jobs-index.js";
 /**
  * Map each chat session id to the ISO timestamp of its most recent COMPLETED
  * turn, read cheaply from herdctl's job-metadata records (NOT by parsing
- * transcripts). In the default batch drive mode every keeper turn runs via
- * `trigger()`, which writes a `job-*.yaml` whose `finished_at` is stamped when
- * the turn finishes and whose `session_id` is filled in on completion — so the
- * latest `finished_at` across a session's records is exactly "the agent last
- * finished a turn." This is the server signal for the unread affordance (#160,
+ * transcripts). In `batch` drive mode every keeper turn runs via `trigger()`,
+ * which writes a `job-*.yaml` whose `finished_at` is stamped when the turn
+ * finishes and whose `session_id` is filled in on completion — so the latest
+ * `finished_at` across a session's records is exactly "the agent last finished a
+ * turn." NOTE the default drive mode is `session`, whose turns write NO job
+ * record (see the caveat on {@link listProjectRuns}); on that path this map is
+ * fed only by paddock's synthetic adoption records. This is the server signal for the unread affordance (#160,
  * reused per-project by #161): unlike the transcript mtime (`DiscoveredSession.
  * mtime`) it does NOT tick on the user's own sends.
  *

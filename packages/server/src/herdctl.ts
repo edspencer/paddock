@@ -1139,7 +1139,7 @@ export class HerdctlService {
   /**
    * Attribute an *in-flight* session to its agent the moment its id is known —
    * mid first turn — so a brand-new chat lists in the sidebar immediately
-   * instead of only after the turn's `claude -p` process exits (issue #100).
+   * instead of only after the first turn finishes (issue #100).
    *
    * The core attribution index is built from herdctl job records, and herdctl
    * writes the resolved `session_id` into a run's own job record only on

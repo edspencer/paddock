@@ -11,14 +11,14 @@
  *
  * Context limits (verified against the Models API): Opus 5, Fable 5, Opus 4.8
  * and Sonnet 5 all have a 1,000,000-token context window; Haiku 4.5 is 200,000.
- * On the Max/CLI runtime the keeper agents run Opus 5 at its full 1M window, so
+ * On the Max plan the keeper agents run Opus 5 at its full 1M window, so
  * the context meter must use 1M for it — otherwise a long chat reads >100%.
  */
 
 /**
  * Public first-party API list price per 1M tokens, used only to put a
  * ballpark dollar figure on a chat's cumulative token consumption (issue #152).
- * On the Max/CLI runtime the keeper agents don't draw against a per-token
+ * On the Max plan the keeper agents don't draw against a per-token
  * quota, so this is an "at API rates" estimate for comparison, not real spend —
  * the token counts are the honest metric. Cache-write / cache-read rates are the
  * standard multiples of the input rate (5-minute ephemeral write = 1.25×, read =

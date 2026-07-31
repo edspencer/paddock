@@ -649,7 +649,7 @@ export interface ProjectRuns {
  * last-turn context fill (`contextTokens` / `contextLimit`, issue #77) plus the
  * chat's cumulative lifetime token totals and a ballpark dollar estimate at
  * first-party API rates. `costUsd` is null for a model with no known pricing.
- * On the Max/CLI runtime this cost is informational (no per-token quota) — the
+ * On the Max plan this cost is informational (no per-token quota) — the
  * token counts are the honest figure.
  */
 export interface ChatUsage {

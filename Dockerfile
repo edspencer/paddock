@@ -2,7 +2,9 @@
 #
 # Paddock is an APP (server + built web SPA), not a library — this image is the
 # unit of deployment. It bundles the Fastify server, the built React SPA, and the
-# `claude` CLI that Paddock shells out to via @herdctl/core's cli runtime.
+# `claude` CLI. Both @herdctl/core runtimes need that binary on PATH: the SDK
+# runtime (chats) spawns it in stream-json mode via the Claude Agent SDK, and the
+# CLI runtime (the sweeper, triggers) shells out to `claude -p`.
 #
 # This Dockerfile produces TWO images from shared stages (build once, publish
 # both — pick with `--target`):
@@ -14,7 +16,8 @@
 #                                keepers that develop code in-container.
 #
 # Runtime requirements (supplied at `docker run` time, NOT baked in):
-#   - CLAUDE_CODE_OAUTH_TOKEN   Claude Max auth (runtime: cli). Or ANTHROPIC_API_KEY for sdk.
+#   - CLAUDE_CODE_OAUTH_TOKEN   Claude Max plan auth. Or ANTHROPIC_API_KEY for API
+#                               pricing. Either works on either runtime.
 #   - a volume mounted at /data  Persistent project store + Claude session transcripts.
 #                                (HOME=/data so ~/.claude/projects survives restarts → resume works.)
 #   - GITHUB_TOKEN (optional)    Enables git push to the backing repo (configured by entrypoint).
@@ -53,7 +56,7 @@ ENV NODE_ENV=production \
     PADDOCK_DATA_DIR=/data \
     HOME=/data
 
-# System deps + GitHub CLI + the Claude CLI that Paddock spawns (runtime: cli).
+# System deps + GitHub CLI + the Claude CLI (both herdctl runtimes spawn it).
 # openssh-client belongs here, next to git rather than in devbox: without it git
 # has no ssh transport at all, so every `git@` remote dies mid-turn with
 # "cannot run ssh: No such file or directory" (#487). The entrypoint's

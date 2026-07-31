@@ -27,11 +27,14 @@ which is exactly why it is a separate flag from the read tier, and why
 ## How it reaches the agent
 
 Paddock builds an `InjectedMcpServerDef` per turn and hands it to herdctl as
-`injectedMcpServers`. The keeper is a `claude -p` subprocess, so it cannot reach
-an in-process SDK server directly — herdctl stands up a localhost HTTP MCP bridge
-for each injected server and auto-allowlists its `mcp__<key>__*` tools. Nothing
-crosses the network, nothing is authenticated, and no static `allowedTools`
-change is needed.
+`injectedMcpServers`, and herdctl auto-allowlists the server's `mcp__<key>__*`
+tools. How the def reaches the agent depends on the runtime: a chat runs on the
+Claude Agent SDK (the `session` drive-mode default), where the def becomes an
+**in-process SDK MCP server**; the sweeper, triggers, and `driveMode: batch`
+chats run as a separate `claude -p` process that can't reach an in-process server,
+so herdctl stands up a **localhost HTTP MCP bridge** per injected server instead.
+Either way nothing crosses the network, nothing is authenticated, and no static
+`allowedTools` change is needed.
 
 Two consequences worth internalising:
 
@@ -39,10 +42,11 @@ Two consequences worth internalising:
   decided when the turn is dispatched, from the flags below plus the project the
   chat lives in. A gate that is off means the tool is **absent** from
   `tools/list` — never present-and-refusing.
-- **Arguments are flat scalars.** The CLI-runtime MCP transport has proven
-  unreliable at carrying array-typed arguments, so list-shaped inputs
-  (`prompts`, `tools`) are declared as **strings** and accept either a
-  newline/comma-separated list or a JSON array.
+- **Arguments are flat scalars.** The CLI-runtime MCP transport proved unreliable
+  at carrying array-typed arguments, so list-shaped inputs (`prompts`, `tools`)
+  are declared as **strings** and accept either a newline/comma-separated list or
+  a JSON array. Chats run on the SDK runtime now, but the flat shape is kept — the
+  same tools have to work from a `driveMode: batch` chat, which does not.
 
 Scratch turns never get this server, whatever the flags say.
 

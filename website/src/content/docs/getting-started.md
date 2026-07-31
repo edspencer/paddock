@@ -12,7 +12,7 @@ Run the published image, point it at a data volume, and give it a Claude token:
 
 ```bash
 docker run -d --name paddock -p 127.0.0.1:4000:4000 \
-  -e CLAUDE_CODE_OAUTH_TOKEN=…       `# Max plan (CLI runtime)` \
+  -e CLAUDE_CODE_OAUTH_TOKEN=…       `# Max plan auth (or ANTHROPIC_API_KEY)` \
   -e PADDOCK_DATA_DIR=/data \
   -e PADDOCK_DANGEROUSLY_ALLOW_OPEN=1 `# required in a container — see below` \
   -v paddock-data:/data \
@@ -70,7 +70,7 @@ services:
       # Loopback only. Do NOT use "4000:4000" without an auth mode in front.
       - "127.0.0.1:4000:4000"
     environment:
-      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN} # or ANTHROPIC_API_KEY for the SDK runtime
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN} # or ANTHROPIC_API_KEY for API pricing
       PADDOCK_DATA_DIR: /data
       # Required in a container — see the caution above.
       PADDOCK_DANGEROUSLY_ALLOW_OPEN: "1"
@@ -101,8 +101,11 @@ secrets itself.
 
 Paddock passes your Claude credentials through to the keeper agents. Provide **one**:
 
-- `CLAUDE_CODE_OAUTH_TOKEN` — Claude **Max plan** auth for the CLI runtime.
-- `ANTHROPIC_API_KEY` — API-pricing auth for the SDK runtime.
+- `CLAUDE_CODE_OAUTH_TOKEN` — Claude **Max plan** auth.
+- `ANTHROPIC_API_KEY` — **API-pricing** auth.
+
+Either works on either runtime — the choice of credential is independent of how a
+turn is driven.
 
 The token is passed through the process environment; it is never written to disk by
 Paddock.

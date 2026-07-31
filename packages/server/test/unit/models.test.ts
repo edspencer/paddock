@@ -38,7 +38,7 @@ describe("models", () => {
   });
 
   it("getContextLimit returns the model's limit, 200k fallback for unknown", () => {
-    // Opus 5 runs a 1M context window on the Max/CLI runtime.
+    // Opus 5 runs a 1M context window on the Max plan.
     expect(getContextLimit("claude-opus-5")).toBe(1_000_000);
     expect(getContextLimit("claude-opus-4-8")).toBe(1_000_000);
     expect(getContextLimit("claude-haiku-4-5-20251001")).toBe(200_000);
