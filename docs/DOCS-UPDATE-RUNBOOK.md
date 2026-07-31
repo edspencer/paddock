@@ -342,7 +342,9 @@ up in the screenshots.
 
 ### Capture
 
-Use Playwright MCP against `https://<port>.dev.projects.valfenda.net/`.
+Use Playwright MCP against the rig's own URL — on a box with per-port dev
+subdomains that is `https://<port>.<your-dev-domain>/`. Take the port and host
+from `pm status`, never from a hard-coded value in a document.
 
 - Write captures to `.playwright-mcp/` (gitignored). **`qa/` is NOT gitignored**
   despite what the box `CLAUDE.md` says — files written there are tracked forever.
@@ -359,8 +361,8 @@ Use Playwright MCP against `https://<port>.dev.projects.valfenda.net/`.
   It is a bare `<span>`, so a naive text match misses it; match the element
   whose children don't also match, and set `visibility: hidden` before shooting.
 - **Check every screenshot for leaks before committing**: rig URLs, `127.0.0.1`,
-  LAN IPs, `valfenda`, real project names. Hide an offending element with
-  `browser_evaluate` and re-shoot rather than cropping.
+  LAN IPs, your instance's own hostname or branding, real project names. Hide an
+  offending element with `browser_evaluate` and re-shoot rather than cropping.
 - **`strings foo.png` is NOT a leak check.** Rendered text is pixel data, not
   bytes — a PNG showing a live token greps clean. Scan the *page's text nodes*
   before shooting, and then **actually look at the committed image**. Both, every
@@ -415,8 +417,14 @@ Check all four:
 1. **Build exits 0** and the page count matches expectation.
 2. **No orphans** — every page file appears in the sidebar.
 3. **No dangling** — every sidebar entry resolves to a real page.
-4. **No leaks** — grep the built site and `website/` for `valfenda`, LAN IPs,
-   `dev.projects`, `127.0.0.1`, and any rig hostname.
+4. **No leaks** — grep the built site, `website/`, and anything else in the diff
+   for your instance's hostname and dev-subdomain suffix, LAN IPs, `127.0.0.1`,
+   and any rig hostname. **This applies to prose you are adding as well as to
+   screenshots.** This runbook itself failed that check on its first commit: it
+   is written on a private box and named that box's dev domain in three places,
+   which is fine in a scratch clone and not fine in a public repo. Write
+   box-specific values as placeholders and tell the reader where to look the real
+   one up.
 
 Also confirm internal links resolve. Starlight will build happily with a broken
 relative link.
