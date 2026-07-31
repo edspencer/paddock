@@ -15,8 +15,8 @@ jobs:
     name: Typecheck + Unit/Integration
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -36,20 +36,20 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # `website/` is deliberately outside the root npm workspaces and Cloudflare
       # Pages builds it on its own, so nothing else here would catch a sidebar
       # `slug` that doesn't resolve or a relative image path that doesn't exist.
       # Only worth the runner time when the docs actually change — `openapi-site/**`
       # counts because website's `prebuild` copies it into `public/api/`.
-      - uses: dorny/paths-filter@v3
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
             docs:
               - 'website/**'
               - 'openapi-site/**'
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         if: steps.filter.outputs.docs == 'true'
         with:
           node-version: 22
@@ -72,8 +72,8 @@ jobs:
     name: E2E (Playwright, fake-claude)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -88,7 +88,7 @@ jobs:
         run: npm run test:e2e
       - name: Upload Playwright report on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-report
           path: test/e2e/playwright-report/
