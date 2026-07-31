@@ -1,6 +1,6 @@
 ---
 title: What's New
-description: "The user-facing highlights of each Paddock release — the instance's own root as a first-class workspace, subtree actions on the chat tree, a running-chats filter, instance Config split from workspace Settings, scratch retired, a much faster jobs index, a chat list that nests spawned chats under their parent, an external MCP endpoint, a generated API reference, per-message fork & revert, Claude Opus 5 by default, official Docker images & deploy recipes, attachments, streaming, unified triggers, and more."
+description: "The user-facing highlights of each Paddock release — an unread badge on the sidebar's Home link, the instance's own root as a first-class workspace, subtree actions on the chat tree, a running-chats filter, instance Config split from workspace Settings, scratch retired, a much faster jobs index, a chat list that nests spawned chats under their parent, an external MCP endpoint, a generated API reference, per-message fork & revert, Claude Opus 5 by default, official Docker images & deploy recipes, attachments, streaming, unified triggers, and more."
 ---
 
 The headline changes in recent Paddock releases, newest first. These are the
@@ -38,6 +38,48 @@ way as well: Paddock is now something you can **drive from outside**, over an MC
 endpoint and a published HTTP API, carrying its own credentials and its own
 read-only-by-default policy rather than borrowing your proxy's. An instance is
 becoming less an app you visit and more a service your other tools talk to.
+
+## 0.53 — Home says what it's holding
+
+- **The sidebar's Home link now carries the same unread badge as every project
+  row.** 0.52 reduced the sidebar to a single **Home** link, and that link stayed
+  mute: the root is a workspace with chats of its own, yet it was the one row in
+  the sidebar that could never tell you something had come back. Now it says
+  exactly what every other workspace row says — an accent pill counting unread
+  replies, a spinner and count for turns in flight, and *nothing at all* when it
+  is quiet. It is the same badge component with the same accessible labels ("2
+  unread replies", "1 chat in flight"), rather than a root-shaped lookalike, so
+  Home and a project row read the same way at a glance instead of each needing
+  its own interpretation. **The in-flight half rides the live chat socket, and
+  today nothing opens that socket until you open a chat — so on a Home you have
+  only just loaded you will see the unread pill but not yet the spinner.** That
+  is a known gap rather than the intended design; the unread count is derived
+  from the ordinary project-list request and is correct on first paint.
+- **Home also costs one request less.** The project list used to be followed by a
+  second, full fetch of the root workspace — its changelog and its whole chat
+  list included — from which everything but a few metadata fields was thrown
+  away. The root's counts now arrive alongside the projects on the request that
+  was already being made.
+- **Promoting a chat into a project puts it in the sidebar straight away.** The
+  action always did the right thing on the server — the project was created and
+  the chat's transcript re-homed — but the new project simply wasn't in the left
+  nav until you reloaded, which made a working action look like a failed one. Two
+  further faults in that dialog are fixed with it: a project name you had typed
+  was silently reverted to the chat's name whenever the view behind it
+  re-rendered, which in a live chat is often; and a promote that failed could
+  never show you why, because the error was wiped one render after it appeared.
+- **The project Settings tab no longer prints the same date twice.** It showed
+  **Started** and **Created** as two adjacent rows carrying an identical value —
+  the second was an alias of the first, kept to reconcile two old specs. Only
+  **Started** remains, and it still means the date the project was created.
+- **Some long-dead compatibility surface is gone, which external clients should
+  know about.** Three things left the wire: `created` on the project object (the
+  duplicate above), `sweeperDefault` on `GET /api/models` (the sweeper's model is
+  resolved on the server and was never selectable, so the field only ever
+  described a decision a client couldn't make), and the `target` field on
+  WebSocket frames, which was a byte-for-byte duplicate of `projectSlug` kept for
+  early frontends that never existed. If you built against `projectSlug` — as
+  Paddock's own client always has — nothing changes.
 
 ## 0.52 — Subtree actions & one front door
 
