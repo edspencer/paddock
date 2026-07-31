@@ -2,8 +2,9 @@
  * HerdctlService — REAL wrapper around @herdctl/core's FleetManager.
  *
  * This module is NOT a stub: it imports and constructs the public
- * @herdctl/core (5.11.0) API. It is the single seam between paddock and
- * herdctl, so that any remaining gaps in the public API are isolated here.
+ * @herdctl/core API (paddock depends on ^5.27.0). It is the single seam between
+ * paddock and herdctl, so that any remaining gaps in the public API are isolated
+ * here. See docs/INTEGRATION.md for the verified call-by-call contract.
  *
  * As of @herdctl/core 5.11.0 the four prior app-layer workarounds are GONE —
  * paddock now uses the first-class APIs:
@@ -25,7 +26,9 @@
  *  - **Streaming:** `trigger(agent, schedule?, { onMessage, prompt, resume })`.
  *    `onMessage(msg: SDKMessage)` fires per SDK message; the returned
  *    TriggerResult carries the final `sessionId`. New chat = `resume: null`;
- *    resume = `resume: <sessionId>`.
+ *    resume = `resume: <sessionId>`. This is the `batch` drive-mode path; the
+ *    default `session` mode instead drives `openChatSession`, which ALWAYS runs
+ *    the SDK runtime regardless of the agent's `runtime` field (see #585).
  *
  *  - **Delete / rename a chat:** `fleet.deleteSession(name, sessionId)` removes
  *    the transcript (and invalidates the discovery cache), and
@@ -40,8 +43,8 @@
  * the cache internally. The one nuance vs. the prior code: a *second* new chat
  * created in an already-listed project within 30s may take up to the cache TTL
  * to appear (the prior code invalidated a private cache we can no longer reach).
- * Acceptable for the POC; a public post-turn invalidation hook is a herdctl
- * follow-up candidate.
+ * That last nuance is now closed too: core exposes `fleet.invalidateSessions(name)`
+ * and paddock calls it after each turn (`ws-turn.ts`) and around fork/promote.
  */
 import {
   FleetManager,
