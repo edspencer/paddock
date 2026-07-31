@@ -1,0 +1,27 @@
+# Nothing this harness produces belongs in git.
+#
+# Renders and source clips already default OUTSIDE the repo (see lib/paths.mjs
+# and PADDOCK_VIDEO_OUT). These rules are belt-and-braces for the case where
+# someone points the output dir here, plus the one build artefact that does
+# land in-tree by default.
+
+# Static TTFs cut from packages/web/public/fonts by lib/build-fonts.mjs.
+# Derived from files already in this repo — rebuild, don't commit.
+# One-time:  env -u NODE_ENV node video/lib/build-fonts.mjs
+fonts/
+**/fonts/
+
+# Any local render dir, if PADDOCK_VIDEO_OUT is pointed inside the tree.
+out/
+**/out/
+tmp/
+**/tmp/
+
+# Footage and deliverables, wherever they land.
+*.webm
+*.mp4
+*.gif
+*.mov
+*.ttf
+*.otf
+*.woff2

@@ -1,0 +1,14 @@
+{
+  "name": "@paddock/video",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Scripted video-production harness: record the Paddock UI, caption it, assemble a cut.",
+  "scripts": {
+    "fonts": "node lib/build-fonts.mjs",
+    "test": "node test/test-caption.mjs",
+    "verify": "node test/verify.mjs",
+    "testclips": "node test/make-test-clips.mjs",
+    "intro-90s": "node lib/assemble.mjs videos/intro-90s/manifest.mjs --name final --target 90"
+  }
+}
