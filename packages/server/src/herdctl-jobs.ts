@@ -34,9 +34,10 @@ import { jobsDirOf, type JobsDirIndex } from "./herdctl-jobs-index.js";
  * `finished_at` across a session's records is exactly "the agent last finished a
  * turn." NOTE the default drive mode is `session`, whose turns write NO job
  * record (see the caveat on {@link listProjectRuns}); on that path this map is
- * fed only by paddock's synthetic adoption records. This is the server signal for the unread affordance (#160,
- * reused per-project by #161): unlike the transcript mtime (`DiscoveredSession.
- * mtime`) it does NOT tick on the user's own sends.
+ * fed only by paddock's synthetic adoption records. This is the server signal
+ * for the unread affordance (#160, reused per-project by #161): unlike the
+ * transcript mtime (`DiscoveredSession.mtime`) it does NOT tick on the user's
+ * own sends.
  *
  * Records still running (no `finished_at`) or not yet session-resolved (no
  * `session_id`) are skipped. The synthetic adoption records paddock writes

@@ -20,10 +20,10 @@ import { ok, fail, errText, coerceToolList } from "./self-mcp-util.js";
  * (create-or-update patch semantics) — the classic being an `enabled`-only flip.
  * Flat MCP args are the portable transport: the CLI runtime was observed dropping
  * nested/array args, so the discriminant is rebuilt here from scalar args. Chats now
- * run on the SDK runtime, but the flat shape is kept — it also has to survive the
- * CLI runtime a `driveMode: batch` project (or a trigger) still uses. Returns a string error
- * message instead of a partial when a supplied `type`'s required WHEN field is
- * missing; `null` on none.
+ * run on the SDK runtime, but the flat shape is kept — it also has to survive
+ * the CLI runtime that a `driveMode: batch` project (or a trigger) still uses.
+ * Returns a string error message instead of a partial when a supplied `type`'s
+ * required WHEN field is missing; `null` on none.
  */
 export function buildTriggerUpdate(args: Record<string, unknown>): Record<string, unknown> | string {
   const incoming: Record<string, unknown> = {};

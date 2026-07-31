@@ -50,8 +50,9 @@ import {
  * System prompt: by default (`nativeSystemPrompt`, issue #176) we set NO
  * `system_prompt`, so Claude Code's full default coding prompt applies — the SDK
  * runtime falls back to the `claude_code` preset and the CLI runtime passes no
- * `--system-prompt`, which amount to the same thing. It applies together with the project's
- * CLAUDE.md hierarchy — the canonical instance-wide `<projectsRoot>/CLAUDE.md`
+ * `--system-prompt`, which amount to the same thing. It applies together with
+ * the project's CLAUDE.md hierarchy — the canonical instance-wide
+ * `<projectsRoot>/CLAUDE.md`
  * (auto-loaded via the cwd walk-up, since a project dir is a child of the
  * projects root) plus a per-project CLAUDE.md. This is its own decision (issue
  * #176): an instance with no CLAUDE.md files can opt back into the terse replace

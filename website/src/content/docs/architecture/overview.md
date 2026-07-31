@@ -24,9 +24,10 @@ a stale line number is worse than none. `grep -n` the symbol.
 Paddock is a thin, opinionated layer on top of the public `@herdctl/core`
 `FleetManager`. herdctl runs the actual Claude Code agents — chats as managed
 **Claude Agent SDK** sessions, the sweeper and triggers as one-shot `claude -p`
-CLI subprocesses (see [§9](#9-keeper-drive-mode--session-vs-batch)) — and owns session discovery; Paddock wires
-**projects**, **chats**, a **WebSocket streaming transport**, **in-process MCP
-tools**, an **auth boundary**, and a **git backing store** on top.
+CLI subprocesses (see [§9](#9-keeper-drive-mode--session-vs-batch)) — and owns
+session discovery; Paddock wires **projects**, **chats**, a **WebSocket streaming
+transport**, **in-process MCP tools**, an **auth boundary**, and a **git backing
+store** on top.
 
 ```mermaid
 flowchart LR

@@ -93,9 +93,6 @@ temp data dir, with the fake `claude` first on `PATH`. Files:
 
 ### The fake-claude harness (`test/bin/claude`)
 
-herdctl's CLI runtime spawns `claude` from `PATH` and then **watches the session
-JSONL file** it writes (it does *not* read the process's stdout). So the fake:
-
 > **The harness pins `batch` on purpose.** A fake `claude` on `PATH` is only
 > reachable from the **CLI** runtime, and Paddock's default drive mode is
 > `session` — which routes turns through `openChatSession` → the **SDK** runtime,
@@ -104,6 +101,8 @@ JSONL file** it writes (it does *not* read the process's stdout). So the fake:
 > (live mode leaves the default alone). The E2E suite therefore exercises the CLI
 > runtime, **not** the runtime a real chat uses.
 
+herdctl's CLI runtime spawns `claude` from `PATH` and then **watches the session
+JSONL file** it writes (it does *not* read the process's stdout). So the fake:
 
 1. Parses the flags herdctl passes (`-p`, `--permission-mode`, `--model`,
    `--system-prompt`, `--allowedTools`, `--resume <id>`, …) and reads the prompt

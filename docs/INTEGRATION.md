@@ -151,20 +151,30 @@ Throws `InvalidStateError` if the fleet isn't initialized, `ConfigurationError`
 on validation failure or a name collision — hence paddock's `{ replace: true }`
 on every call, which makes re-registration idempotent.
 
-Paddock's actual usage (`herdctl.ts:337,412,443,486` / `:469,514`): the
-FleetManager boots from a **minimal zero-agent config** (fleet + defaults only)
-and every agent — scratch, `keeper-<slug>`, `sweeper-<slug>`,
-`trigger-<slug>-<name>` — is registered programmatically at init and on project
-create/update. Nothing writes per-agent yaml, and `reload()` is never called.
+Paddock's actual usage (`herdctl.ts`, `ensureProjectAgent` /
+`removeProjectAgent` and friends): the FleetManager boots from a **minimal
+zero-agent config** (fleet + defaults only) and every agent — scratch,
+`keeper-<slug>`, `sweeper-<slug>`, `trigger-<slug>-<name>` — is registered
+programmatically at init and on project create/update. Nothing writes per-agent
+yaml, and `reload()` is never called.
 
 > **Superseded — the 5.10.1 answer.** There was NO programmatic registration API
 > then: no `addAgent` / `registerAgent` / `removeAgent`. Agents came only from
 > config files on disk, so the supported way to add one at runtime was
 > (1) write a per-agent yaml file (`working_directory` = the project dir),
-> (2) regenerate `herdctl.yaml` to reference it, (3) call `await fleet.reload()`.
-> Paddock did exactly that until 5.11.0. The `reload()` contract below still holds
-> and still matters — paddock owns the on-disk `herdctl.yaml` (fleet block +
-> `defaults`) even though it no longer lists agents there.
+> (2) regenerate `herdctl.yaml` to reference it, (3) call `await fleet.reload()`:
+>
+> ```ts
+> // paddock's HerdctlService.ensureProjectAgent(), as it was until 5.11.0.
+> // NEITHER of these exists in packages/ any more.
+> await regenerateConfigFiles(allProjects); // wrote agents/<name>.yaml + herdctl.yaml
+> const payload = await fleet.reload();     // hot-reload; no restart
+> // payload.changes => [{type:"added", category:"agent", name:"keeper-foo"}, ...]
+> ```
+>
+> The `reload()` contract below still holds and still matters — the API exists,
+> and paddock owns the on-disk `herdctl.yaml` (fleet block + `defaults`) even
+> though it no longer lists agents there.
 
 `reload()` (from `config-reload.d.ts`):
 - Re-reads + re-validates the config from `configPath`.
@@ -173,13 +183,6 @@ create/update. Nothing writes per-agent yaml, and `reload()` is never called.
 - Updates the scheduler with new agents/schedules.
 - Emits `config:reloaded` with a `ConfigChange[]` diff (added/removed/modified ×
   agent/schedule/defaults).
-
-```ts
-// paddock's HerdctlService.ensureProjectAgent()
-await regenerateConfigFiles(allProjects); // writes agents/<name>.yaml + herdctl.yaml
-const payload = await fleet.reload();      // hot-reload; no restart
-// payload.changes => [{type:"added", category:"agent", name:"keeper-foo"}, ...]
-```
 
 Config-dir layout paddock owns (generated, never hand-edited):
 ```
@@ -457,11 +460,13 @@ Core ships no chat HTTP/WS server. It exposes the `IChatManager` interface plus
 server in core is `runner/runtime/mcp-http-bridge`, the CLI-runtime MCP bridge
 from §5 of ARCHITECTURE.md. It isn't re-exported, and isn't a chat transport.)
 
-**Paddock builds its own transport** (`packages/server/src/ws.ts`) — the
+**Paddock builds its own transport** (`packages/server/src/ws.ts`). The
 `chat:send` / `chat:response` / `chat:tool_call` / `chat:message_boundary` /
-`chat:complete` / `chat:injected` / `chat:error` protocol is paddock's own. It
-does **not** depend on `@herdctl/web` (React/Fastify dashboard weight paddock
-doesn't need; paddock's UI is its own SPA), and `@herdctl/web` is not installed.
+`chat:complete` / `chat:injected` / `chat:error` protocol is paddock's, though
+its message shapes were originally modeled on `@herdctl/web`'s `ws/types.ts` for
+familiarity — reading that file was the only "reuse". Paddock does **not** depend
+on `@herdctl/web` (React/Fastify dashboard weight it doesn't need; paddock's UI is
+its own SPA), and the package is not installed.
 
 **But paddock no longer hand-rolls the SDKMessage→chat-event translation.**
 `@herdctl/chat@^0.8.0` is a real runtime dependency now, and its
