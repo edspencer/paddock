@@ -34,7 +34,7 @@ return `{ error, code }` with `404` (not found), `409` (exists), or `400`
 |--------|------|---------|------|
 | GET | `/api/health` | Liveness probe → `{ ok: true }`. | exempt |
 | GET | `/api/me` | The authenticated principal (`req.user`); anonymous `{ username: "anonymous", anonymous: true }` in `none` mode. | gated |
-| GET | `/api/models` | Selectable models + keeper/sweeper defaults + `keeperDriveModeDefault`. | gated |
+| GET | `/api/models` | Selectable models + agent/sweeper defaults + `driveModeDefault`. | gated |
 | GET | `/api/fleet` | Fleet status + agents (`{ status, agents }`; `error` on failure). | gated |
 
 ### Git backing store & GitHub

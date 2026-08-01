@@ -143,7 +143,7 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
         tags: ["Projects"],
         summary: "Create a project",
         description:
-          "Creates a project from `CreateProjectInput` and registers its keeper/sweeper agents. Set `repo` to create a repo-backed project (cloned checkout as the keeper cwd); omit it for a notebook project. Responds 201 with `{ project }`.",
+          "Creates a project from `CreateProjectInput` and registers its agent and its sweeper. Set `repo` to create a repo-backed project (the cloned checkout becomes the agent's working directory); omit it for a notebook project. Responds 201 with `{ project }`.",
         body: {
           type: ["object", "null"],
           additionalProperties: true,
@@ -308,7 +308,7 @@ export function registerProjectWorkspaceRoutes(app: FastifyInstance, ctx: RouteC
         tags: ["Projects"],
         summary: "Update a project",
         description:
-          "Applies an `UpdateProjectInput` partial and re-registers the keeper. Keeper overrides (`model`, `permissionMode`, `maxTurns`, `docker`, `driveMode`, `maxSpawnDepth`, `hooksMcpEnabled`) are validated at runtime — an invalid value returns 400. Tri-state override fields accept `null` to clear the override. Responds with `{ project }`.",
+          "Applies an `UpdateProjectInput` partial and re-registers the project's agent. Agent overrides (`model`, `permissionMode`, `maxTurns`, `docker`, `driveMode`, `maxSpawnDepth`, `hooksMcpEnabled`) are validated at runtime — an invalid value returns 400. Tri-state override fields accept `null` to clear the override. Responds with `{ project }`.",
         params: {
           type: "object",
           properties: {
@@ -331,16 +331,16 @@ export function registerProjectWorkspaceRoutes(app: FastifyInstance, ctx: RouteC
             links: {
               description: "Related links.",
             },
-            model: { description: "Keeper model override (validated at runtime)." },
+            model: { description: "Agent model override (validated at runtime)." },
             permissionMode: {
-              description: "Keeper permission mode override (validated at runtime).",
+              description: "Agent permission mode override (validated at runtime).",
             },
             maxTurns: {
-              description: "Keeper max-turns override (validated at runtime).",
+              description: "Agent max-turns override (validated at runtime).",
             },
-            docker: { description: "Whether the keeper runs in Docker." },
+            docker: { description: "Whether the agent runs in Docker." },
             driveMode: {
-              description: "Keeper drive-mode override; `null` clears it.",
+              description: "Drive-mode override; `null` clears it.",
             },
             maxSpawnDepth: {
               description: "Max spawn-depth override; `null` clears it.",
@@ -349,7 +349,7 @@ export function registerProjectWorkspaceRoutes(app: FastifyInstance, ctx: RouteC
               description: "Hook-management MCP override; `null` clears it.",
             },
             recovery: {
-              description: "Keeper-chat recovery override object; `null` clears it.",
+              description: "Chat-recovery override object; `null` clears it.",
             },
             attachments: {
               description: "Inbound-attachment override object; `null` clears it.",
@@ -470,7 +470,7 @@ export function registerProjectWorkspaceRoutes(app: FastifyInstance, ctx: RouteC
         tags: ["Projects"],
         summary: "Delete a project",
         description:
-          "Removes the project directory and unregisters its keeper + sweeper agents (the inverse of create). Responds with `{ ok: true, slug }`.",
+          "Removes the project directory and unregisters its agent and its sweeper (the inverse of create). Responds with `{ ok: true, slug }`.",
         params: {
           type: "object",
           properties: {
@@ -518,7 +518,7 @@ export function registerProjectWorkspaceRoutes(app: FastifyInstance, ctx: RouteC
         tags: ["Projects"],
         summary: "Promote a notebook project to repo-backed",
         description:
-          "Clones `repo` into the project's nested checkout, flips the keeper cwd to it, and re-registers the keeper (keeping existing chats + metadata). A missing/blank `repo` returns 400; clone failure rolls back to the intact notebook. Responds with `{ project }`.",
+          "Clones `repo` into the project's nested checkout, flips the agent's working directory to it, and re-registers the agent (keeping existing chats + metadata). A missing/blank `repo` returns 400; clone failure rolls back to the intact notebook. Responds with `{ project }`.",
         params: {
           type: "object",
           properties: {
@@ -698,9 +698,9 @@ export function registerProjectWorkspaceRoutes(app: FastifyInstance, ctx: RouteC
     {
       schema: {
         tags: ["Projects"],
-        summary: "List a project's keeper slash commands",
+        summary: "List a project's slash commands",
         description:
-          "Returns `{ commands }` — the slash commands available to the project's keeper agent (built-ins plus the project's `.claude/commands` and MCP-provided commands) for composer autocomplete. Result is memoized per agent.",
+          "Returns `{ commands }` — the slash commands available to the project's agent (built-ins plus the project's `.claude/commands` and MCP-provided commands) for composer autocomplete. Result is memoized per agent.",
         params: {
           type: "object",
           properties: {

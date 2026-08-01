@@ -41,7 +41,7 @@ export const OPENAPI_TAGS = [
 ] as const;
 
 const BASE_DESCRIPTION = [
-  "HTTP API for Paddock — the keeper-agent platform (persistent chats, projects, unified triggers).",
+  "HTTP API for Paddock — the Claude Code workspace platform (persistent chats, projects, unified triggers).",
   "",
   "This document is **generated from the server's route schemas** via `@fastify/swagger`, so it",
   "tracks the code: a new or changed route with a schema shows up here automatically.",
