@@ -71,7 +71,7 @@ import { consumeResumedTurn } from "./resume-drain.js";
 import {
   isKnownModel,
   getContextLimit,
-  KEEPER_DEFAULT_MODEL,
+  DEFAULT_MODEL,
   isKnownDriveMode,
   type DriveMode,
 } from "./models.js";
@@ -488,7 +488,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       const agent = keeperAgentName(slug);
       const queued = await deps.queuedMessage.take(agent, sessionId).catch(() => null);
       if (!queued?.text) return;
-      const markerKey = `${agent} ${sessionId}`;
+      const markerKey = `${agent}\u0000${sessionId}`;
       const already = (lastFlushedTs.get(markerKey) ?? 0) >= queued.createdAtMs;
       // Tell every attached client (origin + reconnected sockets) to clear its copy
       // of this message. When we're really sending it, carry the text so the client
@@ -574,11 +574,11 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       // the streaming callback are visible to control-flow analysis afterwards.
       const seen: TurnUsageState = initTurnUsage();
       // The model the turn will run on; resolved below once we know the target.
-      let effectiveModel: string = KEEPER_DEFAULT_MODEL;
+      let effectiveModel: string = DEFAULT_MODEL;
       // How this turn is driven (Paddock#111): the global default unless the
       // project overrides it (resolved in the project branch below). Scratch
       // chats have no project, so they always take the global default.
-      let driveMode: DriveMode = deps.cfg.keeperDriveMode;
+      let driveMode: DriveMode = deps.cfg.driveMode;
       // The agent's working directory, so the send_file tool can resolve a real
       // `file_path` (and sandbox it). Resolved alongside the agent below.
       let sendFileWorkingDir: string | undefined;
@@ -677,14 +677,14 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
           // trigger. NOTE single-user last-write-wins caveat (see herdctl.ts).
           effectiveModel =
             requested && isKnownModel(requested) ? requested : project.model;
-          await deps.herdctl.ensureKeeperModel(project, effectiveModel);
+          await deps.herdctl.ensureAgentModel(project, effectiveModel);
 
           // Per-project driveMode override wins over the global default
           // (Paddock#111). An absent/invalid value inherits the global.
           driveMode =
             project.driveMode && isKnownDriveMode(project.driveMode)
               ? project.driveMode
-              : deps.cfg.keeperDriveMode;
+              : deps.cfg.driveMode;
 
           // T3 trigger-management gate (REUSES the hooks-MCP gate): the per-project
           // override wins, else the instance default. Only takes effect when the
@@ -1075,7 +1075,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
           /* non-fatal */
         }
 
-        const completeModel = seen.model ?? KEEPER_DEFAULT_MODEL;
+        const completeModel = seen.model ?? DEFAULT_MODEL;
         const seenUsage = resolveTurnUsage(seen);
         const completeUsage: ChatCompleteUsage | undefined = seenUsage
           ? {

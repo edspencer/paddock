@@ -4,7 +4,7 @@ description: The schedule trigger schema, the legacy schedules block, the self-M
 ---
 
 The declarative reference for schedules: the trigger schema, the older standalone
-`schedules` block, the self-MCP tools a keeper uses to manage its own schedules,
+`schedules` block, the self-MCP tools Claude uses to manage a project's schedules,
 and the REST surface behind the [Triggers tab](/using/scheduling-recurring-work/).
 
 ## The trigger schema (schedule)
@@ -25,7 +25,7 @@ triggers:
       prompt: Triage overnight issues and post a summary.
       # promptFile: triage.md      # …or a .md file under .paddock/triggers/; exactly ONE
       session: new                 # "new" (default) | "resume"
-      tools: [Read, Grep]          # allow-list = capability; [] = run as the keeper
+      tools: [Read, Grep]          # allow-list = capability; [] = the project's own agent
       model: ""                    # optional model override
       permissionMode: acceptEdits  # default | acceptEdits | bypassPermissions | plan
       maxTurns: 30                 # optional cap (default 30)
@@ -43,7 +43,7 @@ The fields:
 | `run.prompt` | string | The instruction the firing runs. |
 | `run.promptFile` | `*.md` name | Read fresh at firing from `.paddock/triggers/`; traversal and non-`.md` are rejected. |
 | `run.session` | `new` \| `resume` | `new` (default) = a fresh chat each firing; `resume` = one owned accreting session. |
-| `run.tools` | string array | The fired agent's allow-list. Empty (default) = runs as the keeper with full tools; non-empty = its own scoped `trigger-<slug>-<name>` agent with exactly those tools. |
+| `run.tools` | string array | The fired agent's allow-list. Empty (default) = runs as the project's own agent with full tools; non-empty = its own scoped `trigger-<slug>-<name>` agent with exactly those tools. |
 | `run.model` | string | Optional per-trigger model override. |
 | `run.permissionMode` | `default` \| `acceptEdits` \| `bypassPermissions` \| `plan` | Permission mode the fired turns run under. |
 | `run.maxTurns` | integer | Upper bound on agent turns (default 30). |
@@ -54,7 +54,7 @@ The fields:
 A schedule needs **exactly one** of `cron` / `interval`, and its `run` needs
 **exactly one** of `prompt` / `promptFile`. A malformed entry in a hand-edited
 `triggers` map is dropped (rather than bricking the project), so a bad edit can't
-take the keeper down.
+take the project down.
 :::
 
 The schedule editor maps one-to-one onto this schema:
@@ -88,7 +88,7 @@ read and write), but existing `schedules` blocks keep working.
 
 When the [trigger-management MCP is enabled](/configuration/schedules/#self-scheduling-from-a-chat)
 — the self-MCP write layer (`PADDOCK_SELF_MCP` + `PADDOCK_SELF_MCP_WRITE`) **plus**
-`PADDOCK_HOOKS_MCP` (or a per-project `hooksMcpEnabled`) — the keeper is given four
+`PADDOCK_HOOKS_MCP` (or a per-project `hooksMcpEnabled`) — Claude is given four
 tools. They manage every trigger type; for a schedule, use `type: "schedule"`.
 
 ### `set_trigger`
@@ -105,7 +105,7 @@ toggle). Parameters (note the **snake_case** MCP argument names):
 | `prompt` | string | Inline instruction. Provide this **or** `prompt_file`. |
 | `prompt_file` | string | A `.md` file under `.paddock/triggers/`, read at firing. |
 | `session` | `new` \| `resume` | `new` (default) = fresh chat each firing; `resume` = one owned session. |
-| `tools` | string / array | Allow-list (one per line, comma-separated, or a JSON array). Empty = tool-less/keeper. |
+| `tools` | string / array | Allow-list (one per line, comma-separated, or a JSON array). Empty = the project's own agent. |
 | `model` | string | Model override for the fired agent. |
 | `permission_mode` | `default` \| `acceptEdits` \| `bypassPermissions` \| `plan` | |
 | `max_spawn_depth` | number | `0` = may not spawn. |

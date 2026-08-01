@@ -78,7 +78,7 @@ test("project view: composer reachable; session list is a drawer; a turn sends",
   await createProjectViaUI(page, { name: uniq("MOB Proj") });
 
   // The chat composer is usable with NO drawer open (main pane is full-width).
-  const composer = page.getByPlaceholder(/Message the keeper agent/i);
+  const composer = page.getByPlaceholder(/Message Claude/i);
   await expect(composer).toBeInViewport();
   expect(await hOverflow(page)).toBeLessThanOrEqual(1);
 

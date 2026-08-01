@@ -19,7 +19,7 @@ import {
   InstanceConfigError,
 } from "../instance-config.js";
 import { TranscriptionError } from "../transcribe.js";
-import { resolveModels, resolveKeeperDefault } from "../models.js";
+import { resolveModels, resolveDefaultModel } from "../models.js";
 import { sendProjectError } from "../route-errors.js";
 import { cspFor, parseRangeHeader } from "../http-bytes.js";
 import { type RouteCtx, type MultipartRequest, type UploadedFile } from "../route-context.js";
@@ -243,10 +243,10 @@ export function registerMetaRoutes(app: FastifyInstance, ctx: RouteCtx): void {
   // models are the instance ALLOW-LIST (issue #457 Step 2): the built-in catalog
   // filtered to `cfg.models` (env `PADDOCK_MODELS` / YAML `models:`), so an
   // operator can narrow the picker without touching the catalog's metadata. Unset
-  // ⇒ the full catalog (unchanged behaviour). `keeperDefault` is the EFFECTIVE
-  // default for that list (the keeper default if still offered, else the first
-  // offered model). `keeperDriveModeDefault` is the box-wide
-  // `PADDOCK_KEEPER_DRIVE_MODE` (per instance, not static): the Settings tab shows
+  // ⇒ the full catalog (unchanged behaviour). `defaultModel` is the EFFECTIVE
+  // default for that list (DEFAULT_MODEL if still offered, else the first
+  // offered model). `driveModeDefault` is the box-wide
+  // `PADDOCK_DRIVE_MODE` (per instance, not static): the Settings tab shows
   // it as the effective value a project inherits when its own `driveMode` is left
   // on "Global default".
   app.get(
@@ -256,7 +256,7 @@ export function registerMetaRoutes(app: FastifyInstance, ctx: RouteCtx): void {
         tags: ["System"],
         summary: "Selectable models and instance defaults",
         description:
-          "Returns the models this instance offers (the built-in catalog filtered to the `PADDOCK_MODELS` / YAML `models:` allow-list; unset ⇒ the whole catalog) plus the keeper default and the box-wide defaults (drive mode, max spawn depth, recovery, attachments, curation) that projects fall back to when their own overrides are unset. `keeperDefault` is the effective default for the offered list. Returns a JSON object with `models`, `keeperDefault`, `keeperDriveModeDefault`, `maxSpawnDepthDefault`, `recoveryDefault`, `attachmentsDefault`, and `curationDefault`.",
+          "Returns the models this instance offers (the built-in catalog filtered to the `PADDOCK_MODELS` / YAML `models:` allow-list; unset ⇒ the whole catalog) plus the default model and the box-wide defaults (drive mode, max spawn depth, recovery, attachments, curation) that projects fall back to when their own overrides are unset. `defaultModel` is the effective default for the offered list. Returns a JSON object with `models`, `defaultModel`, `driveModeDefault`, `maxSpawnDepthDefault`, `recoveryDefault`, `attachmentsDefault`, and `curationDefault`.",
         response: {
           200: {
             description: "Model list and inherited defaults.",
@@ -270,8 +270,8 @@ export function registerMetaRoutes(app: FastifyInstance, ctx: RouteCtx): void {
       const models = resolveModels(cfg.models);
     return {
       models,
-      keeperDefault: resolveKeeperDefault(models),
-      keeperDriveModeDefault: cfg.keeperDriveMode,
+      defaultModel: resolveDefaultModel(models),
+      driveModeDefault: cfg.driveMode,
       // Box-wide max spawn depth (PADDOCK_MAX_SPAWN_DEPTH) a project inherits when
       // its own `maxSpawnDepth` is unset; shown as the effective value in Settings
       // and used to label "Instance default" (issue #262).

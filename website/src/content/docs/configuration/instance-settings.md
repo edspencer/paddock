@@ -76,8 +76,8 @@ without a browser.
 |---|---|
 | **Curation** | The three [sweeper token budgets](/configuration/environment/#curation-sweeper-token-budgets) for `OVERVIEW.md`, `CHANGELOG.md` and `CLAUDE.md`. |
 | **Sweeper** | Minimum interval between post-turn sweeps. Blank falls back to the 5-minute default. |
-| **Capabilities** | Keeper drive mode, the [offered-model list](/configuration/models/), native system prompt, the three self-MCP gates, max spawn depth, schedule mutation, the hooks MCP, and the browser MCP. Most default off. |
-| **Recovery** | The [keeper-chat recovery](/configuration/keeper-recovery/) layers and their guards. |
+| **Capabilities** | Drive mode, the [offered-model list](/configuration/models/), native system prompt, the three self-MCP gates, max spawn depth, schedule mutation, the hooks MCP, and the browser MCP. Most default off. |
+| **Recovery** | The [chat recovery](/configuration/chat-recovery/) layers and their guards. |
 | **Attachments** | Inbound upload master switch, size and count caps, allowed types. |
 | **Branding** | Name, logo, accent colour. |
 | **Transcription** | Voice-dictation mode, model, endpoint. |

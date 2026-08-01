@@ -24,7 +24,7 @@ triggers:
       # promptFile: tidy-up.md   # XOR prompt; a .md under .paddock/triggers/, read fresh each fire
       tools: [Read, Write]   # the capability (herdctl allowed_tools); [] or omitted = tool-less
       permissionMode: acceptEdits   # default | acceptEdits | bypassPermissions | plan
-      model: claude-haiku-4-5-20251001   # optional; omit to inherit the keeper default
+      model: claude-haiku-4-5-20251001   # optional; omit to inherit the project default
       maxTurns: 30           # optional; default 30
       maxSpawnDepth: 0       # optional; 0 = may not spawn sub-agents
       session: new           # new (fresh chat each fire) | resume (accrete into one)
@@ -37,10 +37,10 @@ Field notes:
 | --- | --- |
 | `trigger.type` | `event` for a hook. (`schedule` is a time-driven trigger; `webhook` is reserved and not yet fireable.) |
 | `trigger.on` | The lifecycle event. **`onArchive`** (a chat is archived) is the event that fires a normal hook agent. The enum also accepts `afterTurn` (a user turn completed), but an `afterTurn` event trigger defines/customizes the post-turn **curator** (the [sweeper](/concepts/sweeper/)) rather than a general hook. |
-| `run.prompt` / `run.promptFile` | **Exactly one is required.** `promptFile` is a `.md` path under `.paddock/triggers/`, read fresh at fire time (git-tracked, keeper-editable). Declaring *both* is a validation error and the whole trigger entry is dropped; via `set_trigger`, supplying one side clears the other. |
+| `run.prompt` / `run.promptFile` | **Exactly one is required.** `promptFile` is a `.md` path under `.paddock/triggers/`, read fresh at fire time (git-tracked, agent-editable). Declaring *both* is a validation error and the whole trigger entry is dropped; via `set_trigger`, supplying one side clears the other. |
 | `run.tools` | The hook agent's allow-list — its **whole capability**. Empty/omitted ⇒ a tool-less hook (reasoning only). The picker's tool names come from Paddock's grantable-tool catalog (`GRANTABLE_TOOLS`): `Read`, `Glob`, `Grep`, `Edit`, `Write`, `NotebookEdit`, `Bash`, `WebFetch`, `WebSearch`, `Task`, and more. |
 | `run.permissionMode` | Claude Code permission mode for the hook's turns. |
-| `run.model` | Model override; absent inherits the keeper default. |
+| `run.model` | Model override; absent inherits the project default. |
 | `run.maxTurns` | Upper bound on agent turns in one fire. Default **30**. |
 | `run.maxSpawnDepth` | Bounds the hook's own spawning of sub-chats. |
 | `run.session` | `new` starts a fresh chat each fire; `resume` accretes into one owned session. |
@@ -71,8 +71,8 @@ The Triggers tab drives these; they're here for completeness.
 
 ## Hook-management MCP tools
 
-A keeper agent with the opt-in enabled (see `PADDOCK_HOOKS_MCP` in
-[Environment variables](/configuration/environment/)) gets four
+With the opt-in enabled (see `PADDOCK_HOOKS_MCP` in
+[Environment variables](/configuration/environment/)), Claude gets four
 `mcp__paddock_manage__*` tools. They manage all triggers — this reference covers
 the **event** (hook) shape. The three below shape a trigger; the fourth,
 [`run_trigger`](/reference/self-mcp/), fires one immediately.

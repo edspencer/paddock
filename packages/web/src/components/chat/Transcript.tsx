@@ -372,8 +372,8 @@ function KilledTaskNotice({ summary }: { summary: string }) {
             ⚠
           </span>
           <span className="leading-snug">
-            A background task was terminated at the turn boundary — the keeper is
-            idle and will not continue on its own.
+            A background task was terminated at the turn boundary — Claude is idle
+            and will not continue on its own.
             <span className="mt-0.5 block text-[11px] text-amber-800/80 dark:text-amber-300/70">
               {summary}
             </span>
@@ -444,7 +444,7 @@ function NoticeBlock({ notice }: { notice: TurnNotice }) {
             {notice.message}
             {notice.kind === "usage_limit" && notice.resetTime && (
               <span className={`mt-0.5 block text-[11px] ${detailTone}`}>
-                Resets {notice.resetTime}. The keeper will respond again after the quota resets.
+                Resets {notice.resetTime}. Claude will respond again after the quota resets.
               </span>
             )}
             {isError && notice.detail && (

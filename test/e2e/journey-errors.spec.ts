@@ -82,7 +82,7 @@ test("WS drop + reconnect: the dot leaves 'connected' on a drop, then auto-recon
 
   // And the chat works over the reconnected socket.
   await page.goto(`/projects/${slug}/chat`);
-  const composer = page.getByPlaceholder(/Message the keeper agent/i);
+  const composer = page.getByPlaceholder(/Message Claude/i);
   await composer.fill("after reconnect");
   await page.getByRole("button", { name: /^Send$/ }).click();
   await expect(page.getByText(/Acknowledged: after reconnect/).first()).toBeVisible({

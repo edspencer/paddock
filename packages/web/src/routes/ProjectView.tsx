@@ -1051,7 +1051,7 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
               href={repoHref(project.repo)}
               target="_blank"
               rel="noreferrer"
-              title={`Repo-backed project — the keeper works in a clone of ${project.repo}`}
+              title={`Repo-backed project — Claude works in a clone of ${project.repo}`}
               className="hidden items-center gap-1 rounded-md bg-sky-100 px-1.5 py-0.5 text-[11px] font-medium text-sky-700 lg:inline-flex dark:bg-sky-950/50 dark:text-sky-400"
             >
               <BranchIcon width={11} height={11} />

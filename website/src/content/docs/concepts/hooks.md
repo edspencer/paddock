@@ -27,8 +27,8 @@ describe, and the tools you grant it **are** its entire capability:
 
 There is no hook "kind", "profile", or "curator" concept to choose from: the
 capability *is* the tool list. Under the hood the hook runs as its own agent
-(`trigger-<slug>-<name>`) registered exactly like the project's keeper, so the
-tools you pick are enforced by the runtime, not merely suggested. A hook's
+(`trigger-<slug>-<name>`) registered exactly like the project's own agent, so
+the tools you pick are enforced by the runtime, not merely suggested. A hook's
 capability also includes its permission mode, an optional model override, and a
 `max_turns` bound (default **30**) so a runaway hook can't loop forever.
 
@@ -78,8 +78,8 @@ its permission mode, model, and `max_turns`, and the agent enforcing them:
 The banner is projected from the *same* registered agent config the runtime
 enforces, so it can't claim a capability the hook doesn't actually have — it's
 truthful by construction. If you type a reply in a hook chat, your turn runs at
-**the hook's** capability, not the keeper's full toolset — the banner is there so
-that's never a surprise.
+**the hook's** capability, not the project's full toolset — the banner is there
+so that's never a surprise.
 
 ## The events a hook can fire on
 
@@ -104,12 +104,12 @@ else:
 
 - Its definition — the event, the granted tools, the enabled flag — lives in the
   project's `project.yaml`.
-- Its prompt can be inline, or kept in a git-tracked, keeper-editable
+- Its prompt can be inline, or kept in a git-tracked, agent-editable
   `.md` file under `.paddock/triggers/` and read fresh each time the hook fires.
 
 You rarely edit that by hand — the **[Triggers tab](/using/automating-with-hooks/)**
-writes it for you, and the [hook-management MCP tools](/reference/hooks/) let a
-keeper agent manage its own hooks.
+writes it for you, and the [hook-management MCP tools](/reference/hooks/) let
+Claude manage its own hooks.
 
 :::note[Event hooks are managed as *event triggers*]
 Event hooks first shipped as a standalone feature and were then folded into

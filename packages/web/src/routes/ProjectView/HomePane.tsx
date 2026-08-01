@@ -79,7 +79,7 @@ export function HomePane({
           {recentChats.length === 0 ? (
             <div className="card">
               <p className="text-sm italic text-paddock-400">
-                No chats yet. Start one to begin working with the keeper agent.
+                No chats yet. Start one to begin working with Claude.
               </p>
             </div>
           ) : (
@@ -135,7 +135,7 @@ export function HomePane({
           {recentFiles.length === 0 ? (
             <div className="card">
               <p className="text-sm italic text-paddock-400">
-                No files yet. Files the keeper agent writes appear here.
+                No files yet. Files Claude writes appear here.
               </p>
             </div>
           ) : (

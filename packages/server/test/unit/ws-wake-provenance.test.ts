@@ -52,7 +52,7 @@ describe("ws onSessionWake — provenance (issue #353)", () => {
       projects: {} as unknown as ProjectStore,
       attachments: {} as unknown as AttachmentStore,
       archive: {} as unknown as ArchiveStore,
-      cfg: { maxSpawnDepth: 1, keeperDriveMode: "batch" } as unknown as PaddockConfig,
+      cfg: { maxSpawnDepth: 1, driveMode: "batch" } as unknown as PaddockConfig,
       runProvenance: store,
     });
   });

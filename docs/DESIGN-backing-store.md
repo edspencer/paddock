@@ -23,7 +23,7 @@ Three consequences we want to fix: (a) lose the LXC → lose everything; (b) pro
 
 ## 3. Decisions (locked)
 
-- **The store is a filesystem directory.** Keeper/sweeper agents are Claude Code processes that need a real working dir, so the live representation is always a directory. Git / NAS / remotes are durability+sync *layers* on top of that dir.
+- **The store is a filesystem directory.** The project and sweeper agents are Claude Code processes that need a real working dir, so the live representation is always a directory. Git / NAS / remotes are durability+sync *layers* on top of that dir.
 - **Working-tree location = Option B.** The working tree stays on the LXC's **local disk** (fast, safe git). The **NAS hosts a bare repo** that is `origin`; paddock pushes to it continuously. Rebuild the LXC = `git clone` from the NAS. We never run live git over a network filesystem.
 - **Transcripts relocate into each project** at `<project>/.chats/` so the project dir is self-contained and rides the same backup. (Mechanism: SPIKE in §5.)
 - **Claude auth stays in env** (systemd `EnvironmentFile`), never a NAS mount.

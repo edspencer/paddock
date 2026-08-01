@@ -28,7 +28,7 @@ test("create with name/area/summary/tags → lands + appears under its area + si
 
   // Landed in the project chat view.
   await expect(page).toHaveURL(new RegExp(`/projects/${slug}`));
-  await expect(page.getByPlaceholder(/Message the keeper agent/i)).toBeVisible();
+  await expect(page.getByPlaceholder(/Message Claude/i)).toBeVisible();
   // Header reflects name, summary, and tags.
   await expect(page.getByRole("heading", { name, level: 1 })).toBeVisible();
   await expect(page.getByText("A homelab thing")).toBeVisible();

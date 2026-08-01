@@ -1,6 +1,6 @@
 ---
 title: "Scheduling & the schedule gates"
-description: The per-deployment gates that govern programmatic schedule mutation (the REST API) and keeper self-scheduling (the MCP tools) — both off by default, while statically-declared schedules always arm.
+description: The per-deployment gates that govern programmatic schedule mutation (the REST API) and self-scheduling from a chat (the MCP tools) — both off by default, while statically-declared schedules always arm.
 ---
 
 Schedules are powerful precisely because they run unattended, so a deployment gets
@@ -60,7 +60,7 @@ firing, and the per-project Triggers tab keeps working, regardless.
 
 ## Self-scheduling from a chat
 
-For a keeper to **schedule itself** from a conversation (the
+For Claude to **schedule itself** from a conversation (the
 [manager-agent pattern](/using/scheduling-recurring-work/#schedule-from-a-chat-the-manager-agent-pattern)),
 it needs the schedule-management MCP tools — `set_trigger`, `list_triggers`,
 `remove_trigger`, `run_trigger`. These ride on Paddock's self-management MCP layer, so they only
@@ -68,15 +68,15 @@ appear when **all** of the following are on — and each is **off by default**:
 
 | Setting | Env var | Default | What it does |
 | --- | --- | --- | --- |
-| `selfMcpEnabled` | `PADDOCK_SELF_MCP` | `false` (OFF) | Hand keepers the self-management MCP (read tools). The base layer everything else rides on. |
+| `selfMcpEnabled` | `PADDOCK_SELF_MCP` | `false` (OFF) | Hand Claude the self-management MCP (read tools). The base layer everything else rides on. |
 | `selfMcpWriteEnabled` | `PADDOCK_SELF_MCP_WRITE` | `false` (OFF) | Add the **write** tools (create/fork/message — the ones that start real turns). Only honored when `PADDOCK_SELF_MCP` is also on. |
 | `hooksMcpEnabled` | `PADDOCK_HOOKS_MCP` | `false` (OFF) | On top of the write layer, include the trigger-management tools (`set_trigger` / `list_triggers` / `remove_trigger` / `run_trigger`), which manage schedules **and** event hooks. A per-project `hooksMcpEnabled` override wins over the instance default. |
 
 All three accept `1` / `true` / `yes`. Because the trigger tools live on the
 self-MCP **write** server, `PADDOCK_HOOKS_MCP` on its own does nothing unless the
 self-MCP write layer is also enabled. When any prerequisite is off, the tools are
-simply **absent** from the keeper — not present-but-refusing — so a keeper on a
-plain deployment can't self-schedule at all.
+simply **absent** — not present-but-refusing — so a chat on a plain deployment
+can't self-schedule at all.
 
 ```bash
 # instance-wide: the self-MCP write layer + the trigger tools on top of it
@@ -91,7 +91,7 @@ hooksMcpEnabled: true
 ```
 
 :::caution[Grant self-scheduling deliberately]
-A keeper with these tools can create schedules that fire unattended and grant
+With these tools Claude can create schedules that fire unattended and grant
 their own tool capabilities. Enable it for projects you trust to manage their own
 routine, and lean on per-trigger tool allow-lists (see the
 [reference](/reference/schedules/#the-trigger-schema-schedule)) to keep each fired

@@ -10,12 +10,12 @@ be almost anything.
 
 ## It's a launchpad, not an IDE
 
-A **project** is just a directory with an agent attached. That agent (the *keeper*)
-can read and write files, run commands, use tools, and hold a long, resumable
+A **project** is just a directory with **Claude Code** attached. Claude can read
+and write files, run commands, use tools, and hold a long, resumable
 conversation about the work. What the work *is* is up to you:
 
-- **Code** — a repo-backed project where the keeper builds, tests, and opens PRs.
-- **Research & notes** — a notebook project where the keeper gathers, summarizes, and drafts.
+- **Code** — a repo-backed project where Claude builds, tests, and opens PRs.
+- **Research & notes** — a notebook project where Claude gathers, summarizes, and drafts.
 - **Writing** — outlines, edits, and long-running document work that survives across sessions.
 - **Home & ops** — runbooks, scripted chores, "check on X and tell me," scheduled tasks.
 

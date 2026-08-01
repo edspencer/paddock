@@ -81,7 +81,7 @@ port: 4000
 host: 0.0.0.0
 logLevel: info
 
-# --- Keeper behaviour ---
+# --- Agent behaviour ---
 keeperDriveMode: session      # session enables cross-turn autonomy (ScheduleWakeup / /loop)
 nativeSystemPrompt: true      # use the native Claude Code prompt + CLAUDE.md hierarchy
 
@@ -98,7 +98,7 @@ brand:
   accent: "#3c6ec2"
 
 # --- Capabilities & safety gates (default OFF; maxSpawnDepth defaults to 1) ---
-selfMcpEnabled: true          # read-only self-management MCP for keepers
+selfMcpEnabled: true          # read-only self-management MCP for Claude
 selfMcpWriteEnabled: true     # + the write tools (create/fork/send/archive/fan-out)
 selfMcpProjectsEnabled: false # + create_project (provisions a project, clones a repo)
 maxSpawnDepth: 1              # how deep spawned children may themselves spawn
@@ -146,16 +146,15 @@ prime candidates for the config file because they rarely change between runs.
 Each is settable **either** in the YAML **or** via its env var (env wins), and
 several also take a per-project override that wins at dispatch time.
 
-The first four rows decide which of the fourteen `mcp__paddock_manage__*` tools a
-keeper is handed; the
-[self-management MCP reference](/reference/self-mcp/) lists every tool, its
-arguments and the exact gating matrix.
+The first four rows decide which of the fourteen `mcp__paddock_manage__*` tools
+Claude is handed; the [self-management MCP reference](/reference/self-mcp/) lists
+every tool, its arguments and the exact gating matrix.
 
 | YAML key | Env var | Default | What it gates |
 |----------|---------|---------|---------------|
-| `selfMcpEnabled` | `PADDOCK_SELF_MCP` | `false` | Give keepers the read-only [self-management MCP](/reference/self-mcp/) (`mcp__paddock_manage__*`): `list_projects`, `list_chats`, `read_chat`. |
+| `selfMcpEnabled` | `PADDOCK_SELF_MCP` | `false` | Give Claude the read-only [self-management MCP](/reference/self-mcp/) (`mcp__paddock_manage__*`): `list_projects`, `list_chats`, `read_chat`. |
 | `selfMcpWriteEnabled` | `PADDOCK_SELF_MCP_WRITE` | `false` | Add the self-management **write** tools: `create_chat`, `fork_chat`, `send_message`, `archive_chat`, `unarchive_chat`, `fork_chat_batch`. **Only honoured when `selfMcpEnabled` is also on** — write implies read. (The trigger tools are gated separately, by `hooksMcpEnabled` below.) |
-| `selfMcpProjectsEnabled` | `PADDOCK_SELF_MCP_PROJECTS` | `false` | Add the self-management **project** tool (`create_project`) — a keeper provisioning a whole new project, cloning a repo when repo-backed. **Only honoured when `selfMcpWriteEnabled` (and so `selfMcpEnabled`) is also on.** Its own flag because it creates instance-level state and clones a caller-supplied URL; when off the tool is **absent**, not present-but-refusing. |
+| `selfMcpProjectsEnabled` | `PADDOCK_SELF_MCP_PROJECTS` | `false` | Add the self-management **project** tool (`create_project`) — provisioning a whole new project, cloning a repo when repo-backed. **Only honoured when `selfMcpWriteEnabled` (and so `selfMcpEnabled`) is also on.** Its own flag because it creates instance-level state and clones a caller-supplied URL; when off the tool is **absent**, not present-but-refusing. |
 | `maxSpawnDepth` | `PADDOCK_MAX_SPAWN_DEPTH` | `1` | How deep a spawned chat may itself spawn: a **server-initiated** turn at depth `d` gets the self-MCP only if `d ≤ maxSpawnDepth`. `0` restores "no spawned child gets it"; valid values are `0`–`8`. A human turn is the depth-0 root and is never depth-gated. A per-project override wins at dispatch. |
 | `scheduleMutationEnabled` | `PADDOCK_SCHEDULE_MUTATION` | `false` | Construct herdctl's fleet manager with `allowScheduleMutation`, permitting its runtime schedule add/remove APIs; off (the default) makes them throw. It is **not** what gates the self-MCP trigger tools (that's `hooksMcpEnabled`), and triggers declared in `project.yaml` are armed regardless. |
 | `hooksMcpEnabled` | `PADDOCK_HOOKS_MCP` | `false` | Advertise the unified trigger-management MCP tools — `list_triggers`, `set_trigger`, `remove_trigger`, `run_trigger`. (There are no `list_hooks`/`set_hook`/`remove_hook` tools; Epic T collapsed the separate hook and schedule verbs into this one family, and kept this flag as their gate.) Only honoured alongside the self-MCP write tools; a per-project `hooksMcpEnabled` override wins at dispatch. |
@@ -210,7 +209,7 @@ The block fails closed in both directions: `/mcp` returns `404` until both
 `clients` and `publicUrl` are set, and a client whose referenced variable is
 unset, blank, or under 24 characters is dropped with a warning rather than
 weakening the gate. A client with no `scope` gets **read-only** — any write scope
-can start keeper turns, and a keeper has `Bash`. The
+can start turns, and Claude has `Bash`. The
 [Management API reference](/reference/mcp/#config-schema) has the full schema,
 the scope grammar and a worked example.
 
@@ -226,12 +225,12 @@ web-build variables are read straight from the environment and have no file key.
 The YAML file sets **instance-wide** defaults. A handful of settings can then be
 overridden **per project** from that project's **Settings** tab (persisted in its
 `project.yaml`), which wins at dispatch time — for example `driveMode`,
-`maxSpawnDepth`, `hooksMcpEnabled`, the keeper-chat `recovery` knobs, and the
+`maxSpawnDepth`, `hooksMcpEnabled`, the chat `recovery` knobs, and the
 `attachments` group (a project can raise/lower its upload caps or disable uploads
 entirely). So the layering is: built-in default → instance YAML/env → per-project
 override.
 
-![A project's Settings tab, where keeper behaviour set instance-wide in the config file can be overridden for this one project](../../../assets/config/project-settings.png)
+![A project's Settings tab, where agent behaviour set instance-wide in the config file can be overridden for this one project](../../../assets/config/project-settings.png)
 
 ## See also
 
@@ -239,5 +238,5 @@ override.
   of every setting, with defaults, that this file mirrors.
 - **[Authentication](/configuration/authentication/)** — auth modes and the
   `auth` section in detail.
-- **[Keeper-chat recovery](/configuration/keeper-recovery/)** — the `recovery`
-  section and its per-project override.
+- **[Chat recovery](/configuration/chat-recovery/)** — the `recovery` section and
+  its per-project override.
