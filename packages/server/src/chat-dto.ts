@@ -333,26 +333,42 @@ export async function buildProjectChats(
       const starred = starredOf ? await starredOf(s).catch(() => false) : false;
       const unread = unreadOf ? await unreadOf(s).catch(() => false) : false;
       const parent = parentOf ? await parentOf(s).catch(() => null) : null;
-      // A preview polluted by a machine-prepended wrapper: the preload context
-      // block (#1) and/or the composer-attachment block (#328). Either makes the
-      // raw first message a poor display name, so recover the real request below.
+      // A name polluted by a machine-prepended wrapper: the preload context block
+      // (#1) and/or the composer-attachment block (#328). Either makes the raw
+      // first message a poor display name, so recover the real request below.
+      //
+      // `autoName` has to be tested, not merely checked for absence. @herdctl/core
+      // used to leave it undefined for a transcript with no title entry — which is
+      // nearly every CLI transcript — so "no autoName" was a reliable proxy for
+      // "the preview is all we have". It now falls back to the first user message
+      // itself (custom-title → ai-title → summary → preview), so a preload chat
+      // arrives with `autoName` ALREADY set to the `<project-context>` block. Kept
+      // as an absence check, this whole branch became unreachable and every
+      // preload chat was titled with the injected overview.
+      const isWrapped = (v: string | undefined) =>
+        v !== undefined && (v.startsWith(PRELOAD_CONTEXT_OPEN) || v.startsWith(ATTACHMENTS_OPEN));
+      // A polluted autoName is worse than none: it would beat the cleaned preview
+      // in `toChatDto`'s name precedence, so drop it rather than compete with it.
+      const session = isWrapped(s.autoName) ? { ...s, autoName: undefined } : s;
       const pollutedPreview =
-        !s.customName &&
-        !s.autoName &&
-        (s.preview?.startsWith(PRELOAD_CONTEXT_OPEN) || s.preview?.startsWith(ATTACHMENTS_OPEN));
+        !session.customName &&
+        !session.autoName &&
+        (isWrapped(s.preview) || isWrapped(s.autoName));
       if (!pollutedPreview)
-        return toChatDto(s, undefined, usage, archived, turnAt, lastSeen, provenance, trigger, starred, unread, parent);
+        return toChatDto(session, undefined, usage, archived, turnAt, lastSeen, provenance, trigger, starred, unread, parent);
 
       const full = await readFirstUserText(projectDir, s.sessionId).catch(() => undefined);
       // Strip preload FIRST (it wraps the whole thing), then the attachment block
       // nested inside it, leaving just the user's typed request.
-      const cleaned = stripAttachmentsWrapper(stripPreloadWrapper(full ?? s.preview ?? "")).trim();
+      const cleaned = stripAttachmentsWrapper(
+        stripPreloadWrapper(full ?? s.preview ?? s.autoName ?? ""),
+      ).trim();
       // couldn't recover
       if (!cleaned)
-        return toChatDto(s, undefined, usage, archived, turnAt, lastSeen, provenance, trigger, starred, unread, parent);
+        return toChatDto(session, undefined, usage, archived, turnAt, lastSeen, provenance, trigger, starred, unread, parent);
       const preview =
         cleaned.length > PREVIEW_MAX ? `${cleaned.slice(0, PREVIEW_MAX)}...` : cleaned;
-      return toChatDto(s, preview, usage, archived, turnAt, lastSeen, provenance, trigger, starred, unread, parent);
+      return toChatDto(session, preview, usage, archived, turnAt, lastSeen, provenance, trigger, starred, unread, parent);
     }),
   );
 }
