@@ -103,7 +103,7 @@ import type { ChatHandlerDeps } from "./ws-context.js";
 // forkKickoffPrompt so external importers (and its test) resolve it via ws.js.
 export { forkKickoffPrompt } from "./ws-self-mcp.js";
 import { buildSelfMcpServerDef } from "./ws-self-mcp.js";
-import { makeTurnEngine } from "./ws-turn.js";
+import { makeTurnEngine, isSidechainMessage } from "./ws-turn.js";
 // RECOVERY_NUDGE now lives in ws-turn.ts; re-export so its test resolves via ws.js.
 export { RECOVERY_NUDGE } from "./ws-turn.js";
 import {
@@ -275,6 +275,8 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       // handler. A resume must never write a creation origin.
     };
     const onWakeMessage = async (m: SDKMessage): Promise<void> => {
+      // A sub-agent's nested steps never render top-level ({@link isSidechainMessage}).
+      if (isSidechainMessage(m)) return;
       if (messageProducedReply(m as Parameters<typeof messageProducedReply>[0]))
         wakeProducedReply = true;
       const notice = noticeFromMessage(m as Parameters<typeof noticeFromMessage>[0]);
@@ -788,6 +790,14 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
             turn.setJobId(id);
           },
           onMessage: async (m: SDKMessage) => {
+            // A FOREGROUND sub-agent streams its nested steps INLINE on this very
+            // stream, tagged `parent_tool_use_id`. They belong inside the sub-agent
+            // card (served by the subagents endpoint), never as top-level rows of
+            // the parent transcript — see {@link isSidechainMessage}. This is the
+            // human `chat:send` path, so it is where the duplication was actually
+            // seen. Skipping also keeps a sub-agent's context out of the parent's
+            // live meter (`foldTurnUsage` below would latch its max — the #398 shape).
+            if (isSidechainMessage(m)) return;
             // Capture the session id as it arrives mid-stream (the translator
             // only surfaces text/boundary/tool events, not routing metadata).
             // Registering it with the hub makes the turn re-attachable by session.
@@ -1016,6 +1026,9 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
           command,
           resume: resolvedSession,
           onMessage: async (m: SDKMessage) => {
+            // A slash-command turn can spawn a Task too; its nested steps never
+            // render top-level ({@link isSidechainMessage}).
+            if (isSidechainMessage(m)) return;
             if (m.session_id) {
               resolvedSession = m.session_id;
               turn.setSession(m.session_id);
