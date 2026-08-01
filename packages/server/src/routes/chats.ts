@@ -22,6 +22,7 @@ import { enrichWithToolDetails } from "../tooldetails.js";
 import { scanTranscriptNotice } from "../turn-notice.js";
 import { type RunProvenance, childOf, HUMAN_ROOT } from "../run-provenance.js";
 import { sendProjectError } from "../route-errors.js";
+import { mapWithConcurrency, FILE_FANOUT_CONCURRENCY } from "../concurrency.js";
 import {
   type ChatUsage,
   type ChatUsageScope,
@@ -325,8 +326,13 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
         const scope = req.query.scope ?? "active";
         const keeper = keeperAgentName(project.slug);
         const usageOf = chatUsageResolver(project.dir, project.model ?? DEFAULT_MODEL);
-        const entries = await Promise.all(
-          sessions.map(async (s) => {
+        // Bounded, NOT `Promise.all` (#544): one transcript read per chat, so an
+        // unbounded map opens 1,515 concurrent streams on a real project and
+        // peaks at 706 MB for no speed — 16 measured faster AND 4× smaller.
+        const entries = await mapWithConcurrency(
+          sessions,
+          FILE_FANOUT_CONCURRENCY,
+          async (s) => {
             // `all` skips the archive lookup entirely; the other two split on it.
             // The lookup is an in-memory sidecar read, so it is free next to the
             // transcript stream it is deciding whether to skip.
@@ -338,7 +344,7 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
             }
             const u = await usageOf(s).catch(() => null);
             return u ? ([s.sessionId, u] as const) : null;
-          }),
+          },
         );
         const usage: Record<string, ChatUsage> = {};
         for (const e of entries) if (e) usage[e[0]] = e[1];
