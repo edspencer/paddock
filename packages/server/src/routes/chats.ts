@@ -10,7 +10,7 @@
  */
 import path from "node:path";
 import type { FastifyInstance, FastifyReply } from "fastify";
-import type { DiscoveredSession } from "@herdctl/core";
+import { PathTraversalError, type DiscoveredSession } from "@herdctl/core";
 import { keeperAgentName } from "../herdctl.js";
 import { applyMessageProvenance } from "../message-provenance.js";
 import { buildProjectRuns } from "../runs.js";
@@ -20,7 +20,7 @@ import { readSubagentMessages, readSessionTokenUsageWithSubagents } from "../sub
 import { readContextSeries } from "../usage.js";
 import { enrichWithToolDetails } from "../tooldetails.js";
 import { scanTranscriptNotice } from "../turn-notice.js";
-import { type RunProvenance, childOf, HUMAN_ROOT } from "../run-provenance.js";
+import { type RunProvenance, childOf, HUMAN_ROOT, ADOPTED_ROOT } from "../run-provenance.js";
 import { sendProjectError } from "../route-errors.js";
 import {
   type ChatUsage,
@@ -1353,6 +1353,130 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
         }
         return reply.code(201).send({ project, promoted, sessionId: req.params.sessionId });
       } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  // --- importing native Claude Code chats (#588) -------------------------
+  //
+  // A workspace is backed by a working directory, and the user very often
+  // already has terminal `claude` history for it — or for their own checkout of
+  // the same repo elsewhere on disk. These two routes surface that history and
+  // pull it in. Detection lives in `../adoptable.ts`; the actual adoption is the
+  // engine's primitive, threaded through `herdctl.adoptChats`.
+  //
+  // Both are workspace-scoped like everything else in this file, so the ROOT
+  // workspace (key "") gets them from the same mount, unchanged.
+
+  app.get<{ Params: { slug: string } }>(
+    "/adoptable-chats",
+    {
+      schema: {
+        tags: ["Chats"],
+        summary: "Count the native Claude Code chats this project could import",
+        description:
+          "Returns the terminal `claude` sessions that could be imported into this project but are not yet visible in it: the project's own working directory, plus any Claude transcript folder whose recorded working directory matches the project (by checkout name for a repo-backed project, by exact path for a notebook project). Sidechains, already-imported sessions and sessions belonging to a real Paddock run are excluded by the engine; empty and slash-command-only transcripts are additionally withheld as noise and reported under `filtered`, so a count lower than the raw total always has an explanation. Response: `{ count, sources: [{ sourceCwd, sessionIds }], filtered: [{ sessionId, sourceCwd, reason }] }`. The count is LIVE — re-read it after an import rather than remembering a dismissal.",
+        params: {
+          type: "object",
+          properties: {
+            slug: { type: "string", description: "Project slug." },
+          },
+          required: ["slug"],
+        },
+        response: {
+          200: {
+            description:
+              "Object `{ count, sources, filtered }` describing what this project could import.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
+    async (req, reply) => {
+      try {
+        const project = await projects.get(req.params.slug);
+        return await herdctl.listAdoptable(project);
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  app.post<{ Params: { slug: string }; Body: { sourceCwd?: string } | null }>(
+    "/adopt-chats",
+    {
+      schema: {
+        tags: ["Chats"],
+        summary: "Import native Claude Code chats into this project",
+        description:
+          "Imports the terminal `claude` sessions reported by GET …/adoptable-chats. With no body (or no `sourceCwd`) every detected source is imported; with `sourceCwd` only that source is, and it must be one this project actually offers — an unrecognised path is a 400 rather than an invitation to scan arbitrary directories. Transcripts are COPIED, never moved: the user's own `~/.claude` history is left intact and the copies keep their original mtimes, so imported chats sort by when they really happened. Afterwards the session, run-record and detection caches are dropped, so the chats appear on the very next list request with no restart. Response: `{ adopted, skipped }` — `skipped` carries the engine's reason per session (`sidechain`, `already-adopted`, `destination-exists`, `attributed-to-run`, `unreadable`, `placement-failed`, `record-failed`).",
+        params: {
+          type: "object",
+          properties: {
+            slug: { type: "string", description: "Project slug." },
+          },
+          required: ["slug"],
+        },
+        body: {
+          type: ["object", "null"],
+          additionalProperties: true,
+          properties: {
+            sourceCwd: {
+              description:
+                "Optional single source working directory to import from. Must be one of the `sourceCwd` values reported by GET …/adoptable-chats (or the project's own working directory); anything else is rejected with 400.",
+            },
+          },
+          required: [],
+        },
+        response: {
+          200: {
+            description: "Object `{ adopted, skipped }` describing what was imported.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
+    async (req, reply) => {
+      try {
+        const project = await projects.get(req.params.slug);
+        const sourceCwd = req.body?.sourceCwd;
+        // `=== undefined`, never truthiness: a caller could legitimately post an
+        // empty body, and the workspace key itself may be "" — falsiness tests
+        // are how the root workspace gets silently dropped (#531).
+        if (sourceCwd !== undefined) {
+          const { sources } = await herdctl.listAdoptable(project);
+          const known =
+            sourceCwd === project.workingDir || sources.some((s) => s.sourceCwd === sourceCwd);
+          if (!known) {
+            return reply
+              .code(400)
+              .send({ error: `Not an importable source: ${sourceCwd}`, code: "invalid" });
+          }
+        }
+        const result = await herdctl.adoptChats(project, { sourceCwd });
+        // Stamp each imported chat's provenance so the list can badge it as
+        // imported rather than as an ordinary human chat. `stampIfAbsent`, not
+        // `stamp`: provenance describes how a chat came to exist and is never
+        // clobbered — if a marker is somehow already there, it knows more than
+        // the import does. Best-effort; a sidecar write must not fail an import
+        // that already succeeded on disk.
+        await Promise.all(
+          result.adopted.map((sessionId) =>
+            runProvenance.stampIfAbsent(sessionId, ADOPTED_ROOT).catch(() => undefined),
+          ),
+        );
+        return result;
+      } catch (err) {
+        // A session id that isn't path-safe is bad INPUT, not a server fault:
+        // the engine refuses to build a state-file path from it and throws
+        // PathTraversalError. Map it to 400 so it reads as "that id is not
+        // importable" rather than an internal error.
+        if (err instanceof PathTraversalError) {
+          return reply.code(400).send({ error: err.message, code: "invalid" });
+        }
         return sendProjectError(reply, err);
       }
     },

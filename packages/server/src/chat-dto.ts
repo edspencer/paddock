@@ -10,7 +10,7 @@ import type { Project } from "./projects.js";
 import { TRIGGER_AGENT_PREFIX, triggerAgentName } from "./herdctl.js";
 import { getContextLimit, estimateCostUsdByModel } from "./models.js";
 import { type SessionTokenUsage } from "./usage.js";
-import type { RunProvenance } from "./run-provenance.js";
+import type { RunProvenance, TurnOrigin } from "./run-provenance.js";
 import { toTriggerDto } from "./triggers.js";
 import { toChatTriggerInfo, type ChatTriggerInfo } from "./trigger-config.js";
 import { readFirstUserText } from "./transcripts.js";
@@ -34,15 +34,30 @@ export interface ChatParentRef {
 }
 
 /**
- * Origins that are, by definition, the ROOT of a chat tree — a human typed it, a
- * schedule fired it, or an event hook did. None of them is created BY another
- * chat, so none can acquire a parent.
+ * Which origins are, by definition, the ROOT of a chat tree. `spawned` is the
+ * only one that isn't: a human typed it, a schedule fired it, an event hook did,
+ * or it was IMPORTED from the user's own terminal history (#588) — none of those
+ * is created BY another chat, so none can acquire a parent.
+ *
+ * `adopted` belongs here for a stronger reason than the rest: the session ran
+ * OUTSIDE Paddock entirely, so there is no chat here that COULD be its parent.
+ * It is named explicitly rather than left to the `depth === 0` arm of
+ * {@link isRecordedRoot}, because depth is a value the import happens to stamp
+ * as 0 — if that ever changed, or a legacy marker carried a depth, the inference
+ * tier would go looking for a parent that cannot exist and file the chat under
+ * whichever chat happened to inject a prompt near it.
+ *
+ * A total `Record`, not a `Set`: a set of strings silently accepts a union that
+ * has grown past it, whereas a missing key here is a compile error — so adding
+ * an origin forces a deliberate root/child decision.
  */
-const ROOT_ORIGINS: ReadonlySet<RunProvenance["origin"]> = new Set([
-  "human",
-  "scheduled",
-  "hook",
-]);
+const ORIGIN_IS_ROOT: Record<TurnOrigin, boolean> = {
+  human: true,
+  scheduled: true,
+  hook: true,
+  adopted: true,
+  spawned: false,
+};
 
 /**
  * Does this recorded provenance describe a chat that is a root by construction?
@@ -53,7 +68,7 @@ const ROOT_ORIGINS: ReadonlySet<RunProvenance["origin"]> = new Set([
  * never recorded", which is the only case the inference tier exists to cover.
  */
 export function isRecordedRoot(p: RunProvenance): boolean {
-  return p.depth === 0 || ROOT_ORIGINS.has(p.origin);
+  return p.depth === 0 || ORIGIN_IS_ROOT[p.origin] === true;
 }
 
 /**

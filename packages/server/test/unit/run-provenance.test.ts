@@ -6,6 +6,8 @@ import {
   childOf,
   HUMAN_ROOT,
   SCHEDULED_ROOT,
+  ADOPTED_ROOT,
+  ORIGINS,
   type RunProvenance,
 } from "../../src/run-provenance.js";
 import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
@@ -19,9 +21,19 @@ import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
  * missing/corrupt/malformed file.
  */
 describe("run provenance — pure markers", () => {
-  it("HUMAN_ROOT / SCHEDULED_ROOT are depth-0 roots with the right origin", () => {
+  it("HUMAN_ROOT / SCHEDULED_ROOT / ADOPTED_ROOT are depth-0 roots with the right origin", () => {
     expect(HUMAN_ROOT).toEqual({ origin: "human", depth: 0 });
     expect(SCHEDULED_ROOT).toEqual({ origin: "scheduled", depth: 0 });
+    expect(ADOPTED_ROOT).toEqual({ origin: "adopted", depth: 0 });
+  });
+
+  it("the runtime allowlist covers EVERY origin in the union (#588)", () => {
+    // The type is derived from ORIGINS, so this cannot drift — but assert the
+    // property anyway, because the failure it guards against is silent: an
+    // origin missing from the allowlist makes `coerce()` reject every marker
+    // carrying it, and the chat loses both its badge and its parent edge on
+    // read with no error anywhere.
+    expect([...ORIGINS]).toEqual(["human", "scheduled", "spawned", "hook", "adopted"]);
   });
 
   it("childOf: a spawned child is origin=spawned, depth = parent.depth + 1", () => {
@@ -120,6 +132,19 @@ describe("RunProvenanceStore", () => {
     expect(await reopened.get("pre")).toEqual({ origin: "human", depth: 0 });
     expect(await reopened.get("a")).toEqual({ origin: "spawned", depth: 1 });
     expect(await reopened.get("b")).toEqual({ origin: "spawned", depth: 2 });
+  });
+
+  it("reads back a persisted ADOPTED marker (#588)", async () => {
+    // The silent failure this guards: an origin the runtime allowlist doesn't
+    // know is rejected by `coerce()`, so `get()` returns undefined and the chat
+    // reads as an ordinary un-badged, un-parented human chat. No error, no type
+    // failure — the marker just evaporates on the way back off disk.
+    await fs.writeFile(
+      stateFile(),
+      JSON.stringify({ imported: { origin: "adopted", depth: 0 } }),
+      "utf8",
+    );
+    expect(await new RunProvenanceStore(dir).get("imported")).toEqual(ADOPTED_ROOT);
   });
 
   it("survives a reload (a fresh store reads the persisted map)", async () => {

@@ -21,7 +21,17 @@ describe("integration: the root workspace (#531)", () => {
   let t: TestApp;
 
   /** The workspace-scoped suffixes that must answer identically at both mounts. */
-  const SCOPED = ["", "/chats", "/files", "/git/status", "/triggers"] as const;
+  const SCOPED = [
+    "",
+    "/chats",
+    "/files",
+    "/git/status",
+    "/triggers",
+    // #588: the root's working dir IS `projectsRoot`, which a user may well have
+    // used with the terminal CLI, so it needs the native-chat import surface as
+    // much as any project — and gets it from the same mount, for free.
+    "/adoptable-chats",
+  ] as const;
 
   beforeAll(async () => {
     t = await startTestApp();

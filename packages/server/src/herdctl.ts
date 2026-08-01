@@ -61,6 +61,8 @@ import {
   type ScheduleTriggerHandler,
   type ScheduleInfo,
   type JobMetadata,
+  type AdoptionPlacementMode,
+  type AdoptSkippedSession,
 } from "@herdctl/core";
 import { consumeResumedTurn, consumeBackgroundTurns } from "./resume-drain.js";
 import { createSDKMessageHandler, type SDKMessage as ChatSDKMessage } from "@herdctl/chat";
@@ -84,6 +86,7 @@ import {
 } from "./herdctl-agent-config.js";
 import * as jobs from "./herdctl-jobs.js";
 import { JobsDirIndex } from "./herdctl-jobs-index.js";
+import { AdoptableIndex, type AdoptableSummary } from "./adoptable.js";
 
 /** Options passed through to a streamed trigger. */
 export interface ChatTurnOptions {
@@ -503,6 +506,93 @@ export class HerdctlService {
   invalidateSessions(agentName: string): void {
     if (!this.fleet) return;
     this.fleet.invalidateSessions(agentName);
+  }
+
+  // --- native-chat adoption (#588) ---------------------------------------
+
+  /**
+   * Detector for a project's importable native Claude Code chats, with its own
+   * mtime-keyed cache. Lazy for the same reason {@link jobsIndex} is: unit tests
+   * construct this service against a partial config.
+   */
+  private adoptableIndexOrNull: AdoptableIndex | null = null;
+  private get adoptableIndex(): AdoptableIndex {
+    return (this.adoptableIndexOrNull ??= new AdoptableIndex(
+      this.cfg.claudeHome,
+      this.cfg.stateDir,
+    ));
+  }
+
+  /** What `project` could import right now (see `./adoptable.ts`). */
+  async listAdoptable(project: Project): Promise<AdoptableSummary> {
+    return this.adoptableIndex.adoptableFor(
+      this.manager,
+      project,
+      keeperAgentName(project.slug),
+    );
+  }
+
+  /**
+   * Drop the cached adoptable summary for a workspace (or all of them).
+   *
+   * The workspace key may be `""` (the root), so this forwards the argument
+   * as-is — `if (!slug)` here would silently clear the WRONG thing.
+   */
+  invalidateAdoptable(projectKey?: string): void {
+    this.adoptableIndexOrNull?.invalidate(projectKey);
+  }
+
+  /**
+   * Import a project's native Claude Code chats.
+   *
+   * With `sourceCwd`, imports that one source; without, imports every source
+   * detection currently OFFERS — i.e. a source whose sessions were all withheld
+   * by the noise filter is not visited at all. Within a visited source the
+   * engine adopts everything it considers adoptable, which can exceed what was
+   * offered by exactly the filtered candidates (see `./adoptable.ts`); the
+   * engine's own `skipped` reasons are returned verbatim.
+   *
+   * `mode` defaults to `copy`, which never mutates the user's original
+   * `~/.claude` transcripts and preserves their mtimes. `move` and `link` exist
+   * for the CLI; nothing in the web UI should reach them.
+   *
+   * Afterwards the herdctl session cache, the jobs index and the adoptable cache
+   * are all dropped, so the imported chats list on the very next request — the
+   * same trio {@link promoteSession} invalidates for the same reason.
+   */
+  async adoptChats(
+    project: Project,
+    opts: { sourceCwd?: string; mode?: AdoptionPlacementMode; dryRun?: boolean } = {},
+  ): Promise<{ adopted: string[]; skipped: AdoptSkippedSession[] }> {
+    const agent = keeperAgentName(project.slug);
+    const sources =
+      opts.sourceCwd !== undefined
+        ? [opts.sourceCwd]
+        : (await this.listAdoptable(project)).sources.map((s) => s.sourceCwd);
+
+    const adopted: string[] = [];
+    const skipped: AdoptSkippedSession[] = [];
+    for (const fromWorkingDir of sources) {
+      // Sequential, not parallel: each source re-scans the adoption store, so a
+      // session offered by two sources is adopted by the first and reported
+      // `already-adopted` by the second instead of racing to place the same file.
+      const result = await this.manager.adoptSessionsFrom(agent, {
+        fromWorkingDir,
+        mode: opts.mode ?? "copy",
+        dryRun: opts.dryRun ?? false,
+      });
+      adopted.push(...result.adopted);
+      skipped.push(...result.skipped);
+    }
+
+    // A dry run wrote nothing, so there is nothing to invalidate — and dropping
+    // caches would misrepresent it as a state change.
+    if (opts.dryRun !== true && adopted.length > 0) {
+      this.invalidateSessions(agent);
+      this.jobsIndexOrNull?.invalidate();
+      this.invalidateAdoptable(project.slug);
+    }
+    return { adopted, skipped };
   }
 
   /**

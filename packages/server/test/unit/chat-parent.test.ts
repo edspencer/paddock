@@ -39,6 +39,14 @@ describe("isRecordedRoot (#491)", () => {
   it("does not treat a spawned chat as a root — its edge may need backfilling", () => {
     expect(isRecordedRoot({ origin: "spawned", depth: 1 })).toBe(false);
   });
+
+  it("treats an IMPORTED chat as a root at ANY depth (#588)", () => {
+    // An adopted session ran outside Paddock entirely, so no chat here could be
+    // its parent. Asserted at depth > 0 deliberately: depth 0 would pass through
+    // the depth arm and prove nothing about the origin being recognised.
+    expect(isRecordedRoot({ origin: "adopted", depth: 0 })).toBe(true);
+    expect(isRecordedRoot({ origin: "adopted", depth: 3 })).toBe(true);
+  });
 });
 
 describe("makeParentResolver", () => {
