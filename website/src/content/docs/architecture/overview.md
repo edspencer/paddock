@@ -30,7 +30,10 @@ transport**, **in-process MCP tools**, an **auth boundary**, and a **git backing
 store** on top.
 
 ```mermaid
-flowchart LR
+%% TB, not LR: laid out left-to-right this graph is 2915px wide and gets scaled
+%% ~4.4x down into the ~692px prose column, which renders its labels at ~3px.
+%% Top-to-bottom it is 696px — i.e. 1:1. Vertical space is free; horizontal is not.
+flowchart TB
   subgraph Browser["packages/web — React + Vite SPA"]
     UI["Home / Chat / Files / Changes / History / Triggers / Settings"]
   end
@@ -45,7 +48,7 @@ flowchart LR
   end
 
   subgraph Herdctl["@herdctl/core FleetManager"]
-    Agents["keeper-{slug} · sweeper-{slug} · scratch"]
+    Agents["keeper-{slug} · sweeper-{slug} · trigger-{slug}-{name}"]
   end
 
   Claude["Claude Code CLI / SDK session"]
@@ -149,6 +152,11 @@ flowchart TB
   Paddock["Paddock server"] -->|reads only| C1
   Web["Web SPA"] --> C2
   Paddock --> C3
+  %% The three classes are unconnected, so mermaid ranks them SIDE BY SIDE (1123px
+  %% wide, scaled 1.7x down). `~~~` is an invisible link: it forces a vertical
+  %% stack without drawing an edge, bringing this to 673px — 1:1 in the column.
+  C1 ~~~ C2
+  C2 ~~~ C3
 ```
 
 ### Class 1 — Transcript JSONL (read-render; owned by Claude Code)
@@ -315,19 +323,18 @@ sequenceDiagram
   participant Herd as HerdctlService
   participant Claude as Claude Code
 
-  Web->>WS: chat:send {slug, sessionId?, message, model?}
-  WS->>Hub: startTurn(slug, socket, sessionId) → TurnHandle
-  WS->>Herd: ensureKeeperModel / ensureScratchModel
-  WS->>Herd: drive(agent, {prompt, resume, injectedMcpServers, onMessage})
+  Web->>WS: chat:send {slug, sessionId?, message}
+  WS->>Hub: startTurn() → TurnHandle
+  WS->>Herd: ensureAgentModel
+  WS->>Herd: drive(agent, {prompt, resume, onMessage})
   Herd->>Claude: trigger / openChatSession
   Claude-->>Herd: SDKMessage (session_id first)
-  Herd-->>WS: onJobCreated(jobId) → turn.setJobId
-  Herd-->>WS: onMessage(m) → translate → turn.emit(frame)
-  Hub-->>Web: chat:response / chat:tool_call / chat:active (fan-out)
+  Herd-->>WS: onJobCreated(jobId)
+  Herd-->>WS: onMessage(m) → translate → emit
+  Hub-->>Web: chat:response / tool_call / active
   Claude-->>Herd: terminal result
-  Herd-->>WS: resolve
-  WS->>Hub: turn.end() + emit chat:complete
-  WS->>WS: enqueue sweep · invalidateSessions · drain queue
+  WS->>Hub: turn.end() + chat:complete
+  WS->>WS: sweep · invalidateSessions · drain
 ```
 
 Step by step:
