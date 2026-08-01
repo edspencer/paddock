@@ -75,9 +75,28 @@ export const RECOVERY_NUDGE =
  * Whether an SDK message is a sub-agent (sidechain) step — `parent_tool_use_id`
  * points at the spawning `Task` tool_use. Present on the top-level SDK message
  * and/or its nested `message` (assistant/user shapes differ). Sidechain steps are
- * the sub-agent's own nested work; the main turn stream never renders them (they
- * surface via the subagents endpoint on card-expand), so the background sink skips
- * them to avoid scattering the sub-agent's work into phantom top-level rows.
+ * the sub-agent's own nested work, surfaced only via the subagents endpoint on
+ * card-expand — so no live stream renders them top-level, or the sub-agent's work
+ * scatters into phantom rows of the parent transcript.
+ *
+ * EVERY live turn path must call this. There are FIVE, each with its own
+ * `createSDKMessageHandler` translator, and for a long time only the first
+ * filtered:
+ *   1. {@link makeBackgroundTurnSink}           — a backgrounded `Task`
+ *   2. this module's `startAgentTurn` onMessage — triggers / spawns / recovery
+ *   3. `ws.ts` onWakeMessage                    — a scheduled wake turn
+ *   4. `ws.ts` `chat:send` onMessage            — a human turn (where it was seen)
+ *   5. `ws.ts` slash-command onMessage          — `/foo` turns
+ *
+ * The gap survived because of a false premise recorded on {@link
+ * makeBackgroundTurnSink}: that only a BACKGROUND Task streams sidechain steps
+ * inline, a foreground one being routed to a separate session. It is not — under
+ * SDK streaming mode a foreground `Task` streams its steps inline on whichever
+ * turn stream launched it, so any unfiltered path duplicates them.
+ *
+ * Skipping is safe for session bookkeeping: a sidechain message carries the SAME
+ * `session_id` as the main chat (verified against on-disk transcripts), and the
+ * launching `tool_use` is itself main-lane, so the id always resolves first.
  */
 export function isSidechainMessage(m: SDKMessage): boolean {
   const anym = m as unknown as {
@@ -211,9 +230,15 @@ deps.herdctl.setResolveInjectedMcpServers((entry) => wakeInjection.resolve(entry
 // without a refresh.
 //
 // Grouping (the sub-agent fix): a background *sub-agent* (`Task` run_in_background)
-// streams for minutes and, unlike a foreground synchronous Task (whose nested steps
-// herdctl routes to a SEPARATE sidechain session, never the main turn stream), its
-// nested `isSidechain` steps arrive INLINE on this re-invocation stream. So we:
+// streams for minutes and its nested `isSidechain` steps arrive INLINE on this
+// re-invocation stream. So we:
+//
+// CORRECTION: this comment used to claim a foreground synchronous Task was
+// different — that herdctl routed its nested steps to "a SEPARATE sidechain
+// session, never the main turn stream". That is FALSE under SDK streaming mode,
+// and the belief is exactly why only this sink filtered sidechain steps: a
+// foreground Task duplicated all of its steps into the parent transcript live.
+// The primary handler now filters too (see its `isSidechainMessage` guard).
 //   1. SKIP sidechain messages (`parent_tool_use_id` set) from RENDERING — matching
 //      the foreground/history path, which never draws them top-level (they surface
 //      only via the subagents endpoint on card-expand). We still CONSUME them
@@ -528,6 +553,23 @@ async function startAgentTurn(opts: StartAgentTurnOpts): Promise<string> {
       turn.setJobId(id);
     },
     onMessage: async (m: SDKMessage) => {
+      // A FOREGROUND sub-agent's nested steps arrive INLINE on this primary turn
+      // stream (SDK streaming mode), tagged with `parent_tool_use_id`. Rendering
+      // them here scattered every step of a `Task`/`Agent` run into top-level rows
+      // of the PARENT transcript — duplicating the very steps the sub-agent card
+      // already shows on expand, and polluting the live context meter (a sidechain
+      // assistant block's `contextTokens` is the SUB-AGENT's window, which
+      // `foldTurnUsage`'s max-snapshot would latch onto — the #398 failure mode).
+      //
+      // Both were live-only: a reload re-derives from history, which has always
+      // filtered sidechain steps, so the transcript "healed" on refresh and the
+      // duplication read as a streaming glitch.
+      //
+      // Skipping is safe for session bookkeeping: a sidechain message carries the
+      // SAME `session_id` as the main chat (verified against on-disk transcripts),
+      // and the launching `tool_use` message is itself main-stream, so it always
+      // resolves the id before any sidechain step arrives.
+      if (isSidechainMessage(m)) return;
       if (m.session_id) {
         resolvedSession = m.session_id;
         // #390: remember this turn's injected servers so a later wake of this

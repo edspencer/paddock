@@ -35,12 +35,17 @@ import { type Turn, historyToTurns, nextId, sealStreaming } from "./chat/turnMod
 import {
   RecoveryContext,
   type RecoveryContextValue,
+  SubagentActivityContext,
   SubagentFetchContext,
+  SubagentFocusContext,
+  type SubagentFocusValue,
   SubagentLiveContext,
   ToolImageUrlContext,
   TurnActionsContext,
   type TurnActionsValue,
 } from "./chat/chatContexts";
+import { RunningSubagents } from "./chat/RunningSubagents";
+import { useRunningSubagents, useSubagentActivity } from "./chat/useSubagentActivity";
 import {
   ConnDot,
   PreloadToggle,
@@ -326,6 +331,23 @@ export function ChatPane({
         : Promise.resolve([]),
     [projectSlug],
   );
+  // Which sub-agents are working right now, and what each is doing — derived from
+  // the SAME turn list the transcript renders, then polled once per sub-agent so a
+  // collapsed card still reports progress to the running-sub-agents bar.
+  const runningSubagents = useRunningSubagents(turns, streaming);
+  const subagentActivity = useSubagentActivity(runningSubagents, fetchSubagent);
+  // Reveal request from the bar → the matching card expands/scrolls/flashes. The
+  // nonce makes a repeat tap on the same sub-agent a NEW request (see the context).
+  const [focusedSubagent, setFocusedSubagent] = useState<SubagentFocusValue["focused"]>(null);
+  const subagentFocus = useMemo<SubagentFocusValue>(
+    () => ({
+      focused: focusedSubagent,
+      focus: (toolUseId: string) =>
+        setFocusedSubagent((prev) => ({ toolUseId, nonce: (prev?.nonce ?? 0) + 1 })),
+    }),
+    [focusedSubagent],
+  );
+
   // Raw-file URL builder for inline image reads (issue #239).
   const toolImageUrl = useMemo(
     () => (projectSlug ? (relPath: string) => api.projectFileRawUrl(projectSlug, relPath) : null),
@@ -986,6 +1008,8 @@ export function ChatPane({
 
           <SubagentFetchContext.Provider value={fetchSubagent}>
             <SubagentLiveContext.Provider value={streaming}>
+              <SubagentActivityContext.Provider value={subagentActivity}>
+                <SubagentFocusContext.Provider value={subagentFocus}>
               <ToolImageUrlContext.Provider value={toolImageUrl}>
                 <PaddockManageProjectContext.Provider value={projectSlug}>
                   <RecoveryContext.Provider value={recoveryCtx}>
@@ -999,6 +1023,8 @@ export function ChatPane({
                   </RecoveryContext.Provider>
                 </PaddockManageProjectContext.Provider>
               </ToolImageUrlContext.Provider>
+                </SubagentFocusContext.Provider>
+              </SubagentActivityContext.Provider>
             </SubagentLiveContext.Provider>
           </SubagentFetchContext.Provider>
         </div>
@@ -1008,6 +1034,15 @@ export function ChatPane({
           (#53) — independent of whether a bubble is currently painting, so it
           shows during the initial thinking gap and between tool calls, and lights
           up the instant you return to a still-streaming chat. */}
+      {/* One live line per RUNNING sub-agent, so long nested work is visible
+          without hunting for (and expanding) its card. Tapping a row reveals the
+          card in the transcript. Renders nothing when none is running. */}
+      <RunningSubagents
+        running={runningSubagents}
+        activity={subagentActivity}
+        onReveal={subagentFocus.focus}
+      />
+
       {streaming && <WorkingIndicator />}
 
       {error && (

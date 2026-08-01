@@ -1,4 +1,4 @@
-import { memo, useContext, useEffect, useMemo, useState } from "react";
+import { memo, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { type ToolCall } from "../../lib/ws";
 import {
@@ -36,7 +36,9 @@ import {
 import { type Turn, historyToTurns } from "./turnModel";
 import {
   RecoveryContext,
+  SubagentActivityContext,
   SubagentFetchContext,
+  SubagentFocusContext,
   SubagentLiveContext,
   ToolImageUrlContext,
   TurnActionsContext,
@@ -46,6 +48,7 @@ import {
   diffLineClass,
   gutter,
   isBackgroundTool,
+  isSubagentRunning,
   paddockMcpIcon,
   readRangeLabel,
   searchCountLabel,
@@ -487,6 +490,26 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
       paddockManage.tool === "fork_chat_batch");
   const [open, setOpen] = useState(pmActionDefaultOpen);
   const toolImageUrl = useContext(ToolImageUrlContext);
+  // Reveal-from-the-bar wiring: tapping a running sub-agent in the bar expands
+  // THIS card, scrolls it into view, and flashes it. `focused` carries a nonce so
+  // re-tapping the same sub-agent replays the flash (see SubagentFocusContext).
+  const focusCtx = useContext(SubagentFocusContext);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [revealing, setRevealing] = useState(false);
+  const focusedNonce =
+    focusCtx?.focused && focusCtx.focused.toolUseId === tool.toolUseId
+      ? focusCtx.focused.nonce
+      : null;
+  useEffect(() => {
+    if (focusedNonce == null) return;
+    setOpen(true);
+    cardRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    setRevealing(true);
+    // Matches the .subagent-reveal keyframes (1.6s × 2) so the class is removed
+    // once the flash is done and a later reveal can re-trigger it.
+    const t = setTimeout(() => setRevealing(false), 3200);
+    return () => clearTimeout(t);
+  }, [focusedNonce]);
   // #429: whether this chat has a live turn in flight. Drives the sub-agent
   // running indicator + nested-step polling while the sub-agent works (incl. a
   // background sub-agent whose launch-ack tool_call already completed).
@@ -525,12 +548,9 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
   const searchCount = search ? searchCountLabel(search) : null;
   const readRange = readInfo ? readRangeLabel(readInfo) : null;
   // A sub-agent is still working when the chat is live and we don't yet have its
-  // final metrics (subagentDurationMs is filled by the history subagent-join once
-  // its transcript is complete) (#429). Covers BOTH a pending synchronous Task and
-  // a background Task whose launch-ack tool_call already completed but whose run
-  // continues on the still-active session. A reloaded/finished card has a duration
-  // → never shows as running.
-  const subagentRunning = isSubagent && chatLive && tool.subagentDurationMs == null;
+  // final metrics (#429). Shared with the running-sub-agents bar via ONE exported
+  // predicate so the two can never disagree about what is running.
+  const subagentRunning = isSubagentRunning(tool, chatLive);
   // Expandable-into-steps once the launch is known (live) or its transcript is on
   // disk (history). #429 relaxes the old `!pending` guard for sub-agents: the
   // launching card is now expandable the instant it starts, and NestedSteps polls
@@ -560,7 +580,10 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
   return (
     <div className="flex justify-start">
       <div
+        ref={cardRef}
         className={`w-full max-w-[92%] overflow-hidden rounded-xl border text-xs transition-colors ${
+          revealing ? "subagent-reveal " : ""
+        }${
           tool.isError
             ? "border-rose-300/70 bg-rose-50/60 dark:border-rose-900/60 dark:bg-rose-950/30"
             : isSubagent
@@ -921,6 +944,11 @@ function NestedSteps({ toolUseId, live = false }: { toolUseId: string; live?: bo
   const fetchSubagent = useContext(SubagentFetchContext);
   const [msgs, setMsgs] = useState<HistoryMessage[] | null>(null);
   const [error, setError] = useState(false);
+  // A RUNNING sub-agent is already being polled once per tick by the chat (to feed
+  // the running-sub-agents bar), so read its steps from that shared result rather
+  // than opening a second poll for the same file. Absent for a finished sub-agent,
+  // which nothing polls — that still lazy-loads below.
+  const shared = useContext(SubagentActivityContext)?.get(toolUseId)?.messages;
 
   // Reset only when the sub-agent changes — NOT when `live` flips off, so the
   // finished steps don't flash back to the loading spinner as the turn settles.
@@ -930,6 +958,8 @@ function NestedSteps({ toolUseId, live = false }: { toolUseId: string; live?: bo
   }, [toolUseId]);
 
   useEffect(() => {
+    // Shared polling is covering this sub-agent — don't open a duplicate poll.
+    if (shared) return;
     if (!fetchSubagent) {
       setError(true);
       return;
@@ -956,15 +986,19 @@ function NestedSteps({ toolUseId, live = false }: { toolUseId: string; live?: bo
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [fetchSubagent, toolUseId, live]);
+  }, [fetchSubagent, toolUseId, live, Boolean(shared)]);
 
-  const turns = useMemo(() => historyToTurns(msgs ?? []), [msgs]);
+  // Prefer the shared live steps; fall back to this card's own lazy fetch. Keeping
+  // the last-known list on either side means a card never flashes back to a spinner
+  // as the turn settles and shared polling stops.
+  const effective = shared ?? msgs;
+  const turns = useMemo(() => historyToTurns(effective ?? []), [effective]);
 
   return (
     <div className="border-t border-paddock-200/70 bg-paddock-50/60 px-3 py-3 dark:border-paddock-800 dark:bg-paddock-950/40">
       {error ? (
         <div className="text-[11.5px] text-rose-500">couldn't load sub-agent steps</div>
-      ) : msgs === null ? (
+      ) : effective == null ? (
         <div className="flex items-center gap-1.5 text-[11.5px] text-paddock-400">
           <Dot /> <Dot delay="150ms" /> <Dot delay="300ms" />
           <span className="ml-1">loading sub-agent steps…</span>

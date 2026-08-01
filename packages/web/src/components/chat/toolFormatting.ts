@@ -6,6 +6,23 @@ import type { ReadInfo, SearchInfo, SentFile, SentFileEnvelope } from "../../lib
 /** Tool names that launch a sub-agent: `Task` (classic Claude Code), `Agent` (SDK). */
 export const SUBAGENT_TOOLS = new Set(["Task", "Agent"]);
 
+/**
+ * Whether a tool card is a sub-agent that is STILL WORKING.
+ *
+ * `subagentDurationMs` is filled by the history subagent-join once the sub-agent's
+ * transcript is complete, so "chat is live AND no final duration yet" covers both
+ * shapes: a pending synchronous `Task`, and a BACKGROUND `Task` whose launch-ack
+ * `tool_call` already completed while its run continues on the still-active
+ * session. A reloaded/finished card has a duration, so it never reads as running.
+ *
+ * Exported as ONE predicate because two places need it — the card itself and the
+ * running-sub-agents bar — and they must agree, or the bar lists a sub-agent the
+ * card shows as finished (or vice versa).
+ */
+export function isSubagentRunning(tool: ToolCall, chatLive: boolean): boolean {
+  return SUBAGENT_TOOLS.has(tool.toolName) && chatLive && tool.subagentDurationMs == null;
+}
+
 /** The send_file MCP tool; its payload renders as a rich `file` turn (issue #112). */
 export const SEND_FILE_TOOL_NAME = "mcp__paddock__send_file";
 
