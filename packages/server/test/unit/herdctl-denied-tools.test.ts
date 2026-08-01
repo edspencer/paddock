@@ -15,14 +15,14 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import YAML from "yaml";
-import { HerdctlService, KEEPER_DENIED_TOOLS } from "../../src/herdctl.js";
+import { HerdctlService, DENIED_TOOLS } from "../../src/herdctl.js";
 import type { PaddockConfig } from "../../src/config.js";
 
 /**
  * A faithful-enough model of Claude Code's Bash permission matching for our
  * patterns: `Bash(body)` where a trailing `*` in `body` is a prefix wildcard
  * (matches any command starting with the text before the `*`), and a `body`
- * without a `*` is an exact-command match. Every pattern in KEEPER_DENIED_TOOLS
+ * without a `*` is an exact-command match. Every pattern in DENIED_TOOLS
  * uses only a trailing `*`, so this captures the real semantics for this set.
  */
 function bashPatternMatches(pattern: string, command: string): boolean {
@@ -34,9 +34,9 @@ function bashPatternMatches(pattern: string, command: string): boolean {
 }
 
 const isDenied = (command: string): boolean =>
-  KEEPER_DENIED_TOOLS.some((p) => bashPatternMatches(p, command));
+  DENIED_TOOLS.some((p) => bashPatternMatches(p, command));
 
-describe("KEEPER_DENIED_TOOLS — catastrophic wipes denied (#179)", () => {
+describe("DENIED_TOOLS — catastrophic wipes denied (#179)", () => {
   const CATASTROPHIC = [
     "rm -rf /",
     "rm -rf / --no-preserve-root",
@@ -67,7 +67,7 @@ describe("KEEPER_DENIED_TOOLS — catastrophic wipes denied (#179)", () => {
   });
 });
 
-describe("KEEPER_DENIED_TOOLS — legitimate absolute-path cleanup NOT denied (#179)", () => {
+describe("DENIED_TOOLS — legitimate absolute-path cleanup NOT denied (#179)", () => {
   // Exactly the real cleanups the over-broad rule used to block (issue evidence).
   const LEGITIMATE = [
     "rm -rf /tmp/foo",
@@ -85,18 +85,18 @@ describe("KEEPER_DENIED_TOOLS — legitimate absolute-path cleanup NOT denied (#
   });
 });
 
-describe("KEEPER_DENIED_TOOLS — shape/regression guards (#179)", () => {
+describe("DENIED_TOOLS — shape/regression guards (#179)", () => {
   it("no longer contains the over-broad `Bash(rm -rf /*)` prefix rule", () => {
-    expect(KEEPER_DENIED_TOOLS).not.toContain("Bash(rm -rf /*)");
+    expect(DENIED_TOOLS).not.toContain("Bash(rm -rf /*)");
   });
 
   it("keeps the sudo and chmod-777 rules unchanged", () => {
-    expect(KEEPER_DENIED_TOOLS).toContain("Bash(sudo *)");
-    expect(KEEPER_DENIED_TOOLS).toContain("Bash(chmod 777 *)");
+    expect(DENIED_TOOLS).toContain("Bash(sudo *)");
+    expect(DENIED_TOOLS).toContain("Bash(chmod 777 *)");
   });
 
   it("no pattern is a bare `rm -rf /<x>` trailing-wildcard prefix that would re-block subpath deletes", () => {
-    const leaky = KEEPER_DENIED_TOOLS.filter((p) => {
+    const leaky = DENIED_TOOLS.filter((p) => {
       const m = /^Bash\((.*)\)$/.exec(p);
       if (!m) return false;
       const body = m[1];
@@ -117,7 +117,7 @@ describe("generated herdctl.yaml emits the narrowed denied_tools end-to-end (#17
     await fs.rm(dir, { recursive: true, force: true });
   });
 
-  it("writes defaults.denied_tools == KEEPER_DENIED_TOOLS (and not the old rule)", async () => {
+  it("writes defaults.denied_tools == DENIED_TOOLS (and not the old rule)", async () => {
     const herdctlConfigPath = path.join(dir, "herdctl.yaml");
     const scratchDir = path.join(dir, "scratch");
     const svc = new HerdctlService({ herdctlConfigPath, scratchDir } as PaddockConfig);
@@ -128,7 +128,7 @@ describe("generated herdctl.yaml emits the narrowed denied_tools end-to-end (#17
     const doc = YAML.parse(await fs.readFile(herdctlConfigPath, "utf8")) as {
       defaults: { denied_tools: string[] };
     };
-    expect(doc.defaults.denied_tools).toEqual([...KEEPER_DENIED_TOOLS]);
+    expect(doc.defaults.denied_tools).toEqual([...DENIED_TOOLS]);
     expect(doc.defaults.denied_tools).not.toContain("Bash(rm -rf /*)");
     // Spot-check the real-world cases from the issue against the emitted set.
     const emitted = doc.defaults.denied_tools;

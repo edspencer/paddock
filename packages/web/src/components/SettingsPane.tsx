@@ -250,7 +250,7 @@ function looksLikeRepoUrl(url: string): boolean {
  * route (which re-registers the keeper server-side).
  *
  * `driveMode` (Paddock#111) is the inherit-vs-override case: an empty override
- * inherits the box-wide global default (`PADDOCK_KEEPER_DRIVE_MODE`), and the UI
+ * inherits the box-wide global default (`PADDOCK_DRIVE_MODE`), and the UI
  * surfaces that effective value so "Global default" isn't opaque.
  */
 export function SettingsPane({
@@ -344,7 +344,7 @@ export function SettingsPane({
       .then((r) => {
         if (cancelled) return;
         setModels(r.models);
-        setDriveModeDefault(r.keeperDriveModeDefault);
+        setDriveModeDefault(r.driveModeDefault);
         setMaxSpawnDepthDefault(r.maxSpawnDepthDefault);
         setCurationDefault(r.curationDefault);
       })

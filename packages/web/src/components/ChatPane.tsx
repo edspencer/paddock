@@ -83,9 +83,9 @@ export interface ChatPaneProps {
   /** Whether the project has an OVERVIEW.md to preload (issue #1). */
   preloadAvailable?: boolean;
   /**
-   * The project's configured keeper model — the default model for this chat's
+   * The project's configured model — the default model for this chat's
    * picker (CONTRACT-v3 §8). Undefined for scratch chats, where the default
-   * falls back to the models response's `keeperDefault`.
+   * falls back to the models response's `defaultModel`.
    */
   projectModel?: string;
   /**
@@ -229,10 +229,10 @@ export function ChatPane({
 
   // --- model picker + context meter (CONTRACT-v3 §8) -------------------------
   // The selectable models + defaults (fetched once, app-wide static). The
-  // picker's default is the project's model (project chats) or `keeperDefault`
+  // picker's default is the project's model (project chats) or the instance default
   // (scratch); a per-chat localStorage override takes precedence when present.
   const [models, setModels] = useState<ModelInfo[]>([]);
-  const [keeperDefault, setKeeperDefault] = useState<string | null>(null);
+  const [instanceDefaultModel, setInstanceDefaultModel] = useState<string | null>(null);
   const [model, setModel] = useState<string | null>(null);
   // Instance-default recovery config (issue #301), fetched once with the models.
   // Combined with the per-project `projectRecovery` override to gate the killed-
@@ -265,8 +265,8 @@ export function ChatPane({
   // the live ws chat:complete frame only knows the current turn.
   const [sessionUsage, setSessionUsage] = useState<ChatUsage | null>(null);
 
-  // The chat's default model: project model for project chats, else keeperDefault.
-  const defaultModel = (isProjectChat ? projectModel : keeperDefault) ?? keeperDefault;
+  // The chat's default model: project model for project chats, else instanceDefaultModel.
+  const defaultModel = (isProjectChat ? projectModel : instanceDefaultModel) ?? instanceDefaultModel;
 
   // The models OFFERED in this chat's picker (issue #457 Step 2): the instance list
   // narrowed to the project's allow-list when it sets one, else the full instance
@@ -379,7 +379,7 @@ export function ChatPane({
       .then((res) => {
         if (cancelled) return;
         setModels(res.models);
-        setKeeperDefault(res.keeperDefault);
+        setInstanceDefaultModel(res.defaultModel);
         setRecoveryDefault(res.recoveryDefault);
         setAttachmentsDefault(res.attachmentsDefault);
       })

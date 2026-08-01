@@ -156,7 +156,7 @@ beforeEach(() => {
   apiFns.getModels.mockResolvedValue(
     makeModelsResponse({
       models: [{ id: "claude-opus-4-8", label: "Opus 4.8", contextLimit: 1_000_000 }],
-      keeperDefault: "claude-opus-4-8",
+      defaultModel: "claude-opus-4-8",
     }),
   );
   apiFns.updateProject.mockImplementation((_slug: string, patch: Partial<Project>) =>

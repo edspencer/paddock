@@ -12,7 +12,7 @@ import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
 
 const ENV_KEYS = [
   "PADDOCK_DATA_DIR",
-  "PADDOCK_KEEPER_NATIVE_PROMPT",
+  "PADDOCK_NATIVE_PROMPT",
   "PADDOCK_MAX_SPAWN_DEPTH",
 ];
 
@@ -36,7 +36,7 @@ describe("loadPaddockConfig: nativeSystemPrompt (#176)", () => {
     saved = {};
     for (const k of ENV_KEYS) saved[k] = process.env[k];
     process.env.PADDOCK_DATA_DIR = dataDir;
-    delete process.env.PADDOCK_KEEPER_NATIVE_PROMPT;
+    delete process.env.PADDOCK_NATIVE_PROMPT;
     delete process.env.PADDOCK_MAX_SPAWN_DEPTH;
   });
   afterEach(async () => {
@@ -54,7 +54,7 @@ describe("loadPaddockConfig: nativeSystemPrompt (#176)", () => {
   it.each(["0", "false", "no", "FALSE", "No"])(
     "opts into the replace prompt when set to %s",
     (val) => {
-      process.env.PADDOCK_KEEPER_NATIVE_PROMPT = val;
+      process.env.PADDOCK_NATIVE_PROMPT = val;
       expect(loadPaddockConfig().nativeSystemPrompt).toBe(false);
     },
   );
@@ -62,7 +62,7 @@ describe("loadPaddockConfig: nativeSystemPrompt (#176)", () => {
   it.each(["1", "true", "yes", "anything-else"])(
     "stays native when set to %s",
     (val) => {
-      process.env.PADDOCK_KEEPER_NATIVE_PROMPT = val;
+      process.env.PADDOCK_NATIVE_PROMPT = val;
       expect(loadPaddockConfig().nativeSystemPrompt).toBe(true);
     },
   );
@@ -340,7 +340,7 @@ describe("loadPaddockConfig: YAML instance-config file (#270)", () => {
     "PADDOCK_AUTH_MODE",
     "PADDOCK_AUTH_JWKS_URL",
     "PADDOCK_BRAND_NAME",
-    "PADDOCK_KEEPER_DRIVE_MODE",
+    "PADDOCK_DRIVE_MODE",
     "PADDOCK_MAX_SPAWN_DEPTH",
     "PADDOCK_SELF_MCP",
     "PADDOCK_SELF_MCP_WRITE",
@@ -388,7 +388,7 @@ describe("loadPaddockConfig: YAML instance-config file (#270)", () => {
     expect(cfg.auth.mode).toBe("none");
     expect(cfg.brand.name).toBe("Paddock");
     // Built-in default flipped to session (#316); env + file still override.
-    expect(cfg.keeperDriveMode).toBe("session");
+    expect(cfg.driveMode).toBe("session");
     expect(cfg.maxSpawnDepth).toBe(1);
     expect(cfg.gitAuthor).toEqual({ name: "Paddock", email: "paddock@localhost" });
   });
@@ -404,7 +404,7 @@ describe("loadPaddockConfig: YAML instance-config file (#270)", () => {
         "port: 5123",
         "host: 127.0.0.1",
         "logLevel: debug",
-        "keeperDriveMode: session",
+        "driveMode: session",
         "maxSpawnDepth: 2",
         "browserMcp: true",
         "sweepMinIntervalMs: 250",
@@ -431,7 +431,7 @@ describe("loadPaddockConfig: YAML instance-config file (#270)", () => {
     expect(cfg.port).toBe(5123);
     expect(cfg.host).toBe("127.0.0.1");
     expect(cfg.logLevel).toBe("debug");
-    expect(cfg.keeperDriveMode).toBe("session");
+    expect(cfg.driveMode).toBe("session");
     expect(cfg.maxSpawnDepth).toBe(2);
     expect(cfg.browserMcp).toBe(true);
     expect(cfg.sweepMinIntervalMs).toBe(250);

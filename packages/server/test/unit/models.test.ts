@@ -1,15 +1,15 @@
 import { describe, it, expect } from "vitest";
 import {
   MODELS,
-  KEEPER_DEFAULT_MODEL,
+  DEFAULT_MODEL,
   SWEEPER_DEFAULT_MODEL,
   isKnownModel,
   getContextLimit,
   getModelInfo,
   resolveModels,
-  resolveKeeperDefault,
+  resolveDefaultModel,
   DRIVE_MODES,
-  KEEPER_DEFAULT_DRIVE_MODE,
+  DEFAULT_DRIVE_MODE,
   isKnownDriveMode,
 } from "../../src/models.js";
 
@@ -22,13 +22,13 @@ describe("models", () => {
       "claude-sonnet-5",
       "claude-haiku-4-5-20251001",
     ]);
-    expect(MODELS[0].id).toBe(KEEPER_DEFAULT_MODEL);
+    expect(MODELS[0].id).toBe(DEFAULT_MODEL);
   });
 
   it("defaults: keeper = Opus, sweeper = Haiku", () => {
-    expect(KEEPER_DEFAULT_MODEL).toBe("claude-opus-5");
+    expect(DEFAULT_MODEL).toBe("claude-opus-5");
     expect(SWEEPER_DEFAULT_MODEL).toBe("claude-haiku-4-5-20251001");
-    expect(isKnownModel(KEEPER_DEFAULT_MODEL)).toBe(true);
+    expect(isKnownModel(DEFAULT_MODEL)).toBe(true);
     expect(isKnownModel(SWEEPER_DEFAULT_MODEL)).toBe(true);
   });
 
@@ -75,24 +75,24 @@ describe("models", () => {
     expect(resolveModels(["gpt-4", "nope"])).toEqual([]);
   });
 
-  it("resolveKeeperDefault: keeper default when offered, else the first offered model", () => {
+  it("resolveDefaultModel: keeper default when offered, else the first offered model", () => {
     // Keeper default present → it wins regardless of position.
-    expect(resolveKeeperDefault(resolveModels(["claude-sonnet-5", "claude-opus-5"]))).toBe(
+    expect(resolveDefaultModel(resolveModels(["claude-sonnet-5", "claude-opus-5"]))).toBe(
       "claude-opus-5",
     );
     // Keeper default NOT offered → first entry (catalog order) is the default.
-    expect(resolveKeeperDefault(resolveModels(["claude-sonnet-5", "claude-haiku-4-5-20251001"]))).toBe(
+    expect(resolveDefaultModel(resolveModels(["claude-sonnet-5", "claude-haiku-4-5-20251001"]))).toBe(
       "claude-sonnet-5",
     );
     // Empty list → fall back to the keeper default id (never undefined).
-    expect(resolveKeeperDefault([])).toBe(KEEPER_DEFAULT_MODEL);
+    expect(resolveDefaultModel([])).toBe(DEFAULT_MODEL);
     // Full catalog → the keeper default.
-    expect(resolveKeeperDefault(MODELS)).toBe(KEEPER_DEFAULT_MODEL);
+    expect(resolveDefaultModel(MODELS)).toBe(DEFAULT_MODEL);
   });
 
   it("driveMode: batch/session are known, default is session (#316)", () => {
     expect(DRIVE_MODES).toEqual(["batch", "session"]);
-    expect(KEEPER_DEFAULT_DRIVE_MODE).toBe("session");
+    expect(DEFAULT_DRIVE_MODE).toBe("session");
     expect(isKnownDriveMode("batch")).toBe(true);
     expect(isKnownDriveMode("session")).toBe(true);
     expect(isKnownDriveMode("turbo")).toBe(false);

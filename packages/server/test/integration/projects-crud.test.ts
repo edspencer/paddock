@@ -26,7 +26,7 @@ describe("integration: project CRUD over REST (real fleet, fake claude)", () => 
     const res = await t.app.inject({ method: "GET", url: "/api/models" });
     expect(res.statusCode).toBe(200);
     const body = res.json();
-    expect(body.keeperDefault).toBe("claude-opus-5");
+    expect(body.defaultModel).toBe("claude-opus-5");
     expect(body.models.length).toBeGreaterThanOrEqual(3);
   });
 
@@ -255,7 +255,7 @@ describe("integration: instance models allow-list (#457)", () => {
       "claude-haiku-4-5-20251001",
     ]);
     // Keeper default (opus-5) isn't offered → the first offered model wins.
-    expect(body.keeperDefault).toBe("claude-sonnet-5");
+    expect(body.defaultModel).toBe("claude-sonnet-5");
   });
 
   it("accepts a per-project subset but rejects an id the instance hides (#457)", async () => {

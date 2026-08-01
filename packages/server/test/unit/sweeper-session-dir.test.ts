@@ -18,7 +18,7 @@
  */
 import { describe, it, expect } from "vitest";
 import path from "node:path";
-import { buildKeeperConfig, buildSweeperConfig } from "../../src/herdctl-agent-config.js";
+import { buildAgentConfig, buildSweeperConfig } from "../../src/herdctl-agent-config.js";
 import type { PaddockConfig } from "../../src/config.js";
 import type { Project } from "../../src/projects.js";
 
@@ -59,7 +59,7 @@ describe("sweeper CLI-session-dir separation (#548)", () => {
     const label = project.slug === "" ? "<root>" : project.slug;
 
     it(`${label}: the sweeper's cwd is neither the keeper's cwd nor the project dir`, () => {
-      const keeperCwd = cwdOf(buildKeeperConfig(cfg, project));
+      const keeperCwd = cwdOf(buildAgentConfig(cfg, project));
       const sweeperCwd = cwdOf(buildSweeperConfig(cfg, project));
 
       expect(sweeperCwd).not.toBe(keeperCwd);

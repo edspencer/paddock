@@ -171,7 +171,7 @@ export const BROWSER_MCP_TOOL = "mcp__playwright__*";
  * legitimate absolute-path deletes we exist to allow. Narrow-and-honest beats
  * broad-and-leaky; the sandbox (#7) is the real fix.
  */
-export const KEEPER_DENIED_TOOLS: readonly string[] = [
+export const DENIED_TOOLS: readonly string[] = [
   // Privilege / permission footguns (unchanged from the original list).
   "Bash(sudo *)",
   "Bash(chmod 777 *)",

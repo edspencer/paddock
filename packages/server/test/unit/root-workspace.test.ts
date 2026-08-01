@@ -11,7 +11,7 @@ import {
   hookAgentName,
   triggerAgentName,
 } from "../../src/herdctl-agent-names.js";
-import { buildKeeperConfig } from "../../src/herdctl-agent-config.js";
+import { buildAgentConfig } from "../../src/herdctl-agent-config.js";
 import { AGENT_NAME_PATTERN } from "@herdctl/core";
 import { childOf, HUMAN_ROOT } from "../../src/run-provenance.js";
 import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
@@ -229,7 +229,7 @@ describe("root workspace (#531) — the keeper is an ordinary keeper", () => {
   it("builds a keeper config rooted at projectsRoot with max_concurrent SET", async () => {
     const project = await store.get(ROOT_KEY);
     const cfg = { nativeSystemPrompt: true, browserMcp: false } as unknown as PaddockConfig;
-    const config = buildKeeperConfig(cfg, project);
+    const config = buildAgentConfig(cfg, project);
     expect(config.name).toBe("keeper-_root");
     expect(config.working_directory).toBe(root);
     // An agent that omits `instances` gets serialized at 1 concurrent turn. The

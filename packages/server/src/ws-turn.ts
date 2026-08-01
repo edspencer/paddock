@@ -708,7 +708,7 @@ const injectRecoveryNudge = async (project: Project, sessionId: string): Promise
     const driveMode =
       project.driveMode && isKnownDriveMode(project.driveMode)
         ? project.driveMode
-        : deps.cfg.keeperDriveMode;
+        : deps.cfg.driveMode;
     await startAgentTurn({
       projectSlug: slug,
       agentName: keeperAgentName(slug),
