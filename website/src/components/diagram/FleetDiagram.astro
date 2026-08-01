@@ -1,0 +1,100 @@
+---
+/**
+ * Anatomy of a herdctl fleet — what herdctl is on its own, before Paddock exists.
+ * One process, one registry/scheduler/runner, N agents, each mapped to a Claude session.
+ */
+---
+
+<svg viewBox="0 0 920 452" role="img" aria-labelledby="fleet-t fleet-d">
+	<title id="fleet-t">Anatomy of a herdctl fleet</title>
+	<desc id="fleet-d">
+		Five surfaces can reach a fleet: the herdctl CLI, a Discord bot, Slack, the web dashboard, and
+		a host application such as Paddock. They all talk to a single herdctl process, which holds one
+		FleetManager providing one agent registry, one scheduler and one runner. The FleetManager runs
+		several agents, each of which is a name, a working directory, a schedule and a tool allow-list.
+		Each agent maps to a Claude Code session, stored as a resumable JSONL transcript.
+	</desc>
+
+	<defs>
+		<marker id="flt-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+			<path d="M 0 0 L 10 5 L 0 10 z" fill="var(--dg-line)"></path>
+		</marker>
+	</defs>
+
+	<!-- ======================================================== ways in -->
+	<text class="t-band" x="20" y="14" style="fill: var(--dg-text-muted)">Ways to reach a fleet</text>
+
+	<rect class="node" x="20" y="24" width="160" height="44" rx="8"></rect>
+	<text class="t-node" x="100" y="43" text-anchor="middle">herdctl CLI</text>
+	<text class="t-sub" x="100" y="59" text-anchor="middle">start · trigger · logs</text>
+
+	<rect class="node" x="200" y="24" width="160" height="44" rx="8"></rect>
+	<text class="t-node" x="280" y="43" text-anchor="middle">Discord</text>
+	<text class="t-sub" x="280" y="59" text-anchor="middle">bot per agent</text>
+
+	<rect class="node" x="380" y="24" width="160" height="44" rx="8"></rect>
+	<text class="t-node" x="460" y="43" text-anchor="middle">Slack</text>
+	<text class="t-sub" x="460" y="59" text-anchor="middle">one app, routed</text>
+
+	<rect class="node" x="560" y="24" width="160" height="44" rx="8"></rect>
+	<text class="t-node" x="640" y="43" text-anchor="middle">Web dashboard</text>
+	<text class="t-sub" x="640" y="59" text-anchor="middle">@herdctl/web</text>
+
+	<rect class="node is-paddock" x="740" y="24" width="160" height="44" rx="8"></rect>
+	<text class="t-node" x="820" y="43" text-anchor="middle">A host app</text>
+	<text class="t-sub" x="820" y="59" text-anchor="middle">Paddock lives here</text>
+
+	<path class="edge" d="M 460 68 L 460 92" marker-end="url(#flt-arrow)"></path>
+
+	<!-- =================================================== the process -->
+	<rect class="band is-herdctl" x="16" y="96" width="888" height="256" rx="10"></rect>
+	<text class="t-band is-herdctl" x="32" y="116">One herdctl process</text>
+
+	<rect class="node is-herdctl" x="33" y="128" width="854" height="46" rx="8"></rect>
+	<text class="t-node" x="460" y="147" text-anchor="middle">FleetManager</text>
+	<text class="t-sub" x="460" y="163" text-anchor="middle">one agent registry · one scheduler loop · one runner · durable state in .herdctl/</text>
+
+	<path class="edge" d="M 170 174 L 170 196" marker-end="url(#flt-arrow)"></path>
+	<path class="edge" d="M 460 174 L 460 196" marker-end="url(#flt-arrow)"></path>
+	<path class="edge" d="M 750 174 L 750 196" marker-end="url(#flt-arrow)"></path>
+
+	<!-- agents -->
+	<rect class="node is-herdctl" x="33" y="200" width="274" height="136" rx="8"></rect>
+	<text class="t-node" x="49" y="222">security-auditor</text>
+	<text class="t-mono" x="49" y="244">working_directory: ~/herdctl</text>
+	<text class="t-mono" x="49" y="264">schedules: cron 0 6 * * *</text>
+	<text class="t-mono" x="49" y="284">allowed_tools: Read, Bash…</text>
+	<text class="t-mono" x="49" y="304">runtime: sdk</text>
+	<text class="t-sub" x="49" y="325">Wakes itself every morning.</text>
+
+	<rect class="node is-herdctl" x="323" y="200" width="274" height="136" rx="8"></rect>
+	<text class="t-node" x="339" y="222">price-checker</text>
+	<text class="t-mono" x="339" y="244">working_directory: ~/prices</text>
+	<text class="t-mono" x="339" y="264">schedules: interval 4h</text>
+	<text class="t-mono" x="339" y="284">hooks.after_run: discord</text>
+	<text class="t-mono" x="339" y="304">runtime: cli</text>
+	<text class="t-sub" x="339" y="325">Pings you only if something moved.</text>
+
+	<rect class="node is-herdctl" x="613" y="200" width="274" height="136" rx="8"></rect>
+	<text class="t-node" x="629" y="222">…one per job to be done</text>
+	<text class="t-sub" x="629" y="244">Agents are declared in YAML —</text>
+	<text class="t-sub" x="629" y="262">or, when a host app is driving,</text>
+	<text class="t-sub" x="629" y="280">registered in memory at runtime</text>
+	<text class="t-mono" x="629" y="302">fleet.addAgent(config)</text>
+	<text class="t-sub" x="629" y="325">This is the door Paddock walks through.</text>
+
+	<path class="edge" d="M 170 336 L 170 374" marker-end="url(#flt-arrow)"></path>
+	<path class="edge" d="M 460 336 L 460 374" marker-end="url(#flt-arrow)"></path>
+
+	<!-- ==================================================== claude code -->
+	<rect class="node is-claude" x="33" y="378" width="274" height="52" rx="8"></rect>
+	<text class="t-node" x="170" y="398" text-anchor="middle">Claude Code session</text>
+	<text class="t-sub" x="170" y="415" text-anchor="middle">resumable JSONL transcript</text>
+
+	<rect class="node is-claude" x="323" y="378" width="274" height="52" rx="8"></rect>
+	<text class="t-node" x="460" y="398" text-anchor="middle">Claude Code session</text>
+	<text class="t-sub" x="460" y="415" text-anchor="middle">resumable JSONL transcript</text>
+
+	<rect class="node is-claude" x="613" y="378" width="274" height="52" rx="8"></rect>
+	<text class="t-sub" x="750" y="404" text-anchor="middle">…and one job record per run, in .herdctl/jobs/</text>
+</svg>
