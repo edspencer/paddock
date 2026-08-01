@@ -189,9 +189,19 @@ await this.fleet.addAgent(this.keeperAgentConfig(project), { replace: true });
 | `sweeper-<slug>` | Tool-less curator that updates `OVERVIEW.md` / `CHANGELOG.md` after a turn. |
 | `trigger-<slug>-<name>` | One per trigger; the trigger's granted tools *are* the agent's tool config. |
 
+:::note[Why `keeper-`?]
+"Keeper" was Paddock's old word for a project's agent, since retired from the
+product vocabulary. The **agent-name prefix deliberately survived the rename**:
+it is persisted in hundreds of job records, in `state.yaml`, in session directory
+names, and as a key in six sidecar stores. Renaming it would have meant migrating
+all of that for no user-visible gain. Treat `keeper-<slug>` as an internal
+identifier, not as a concept you need to learn.
+:::
+
 :::caution[The sweeper does not live in the project directory]
-It would be natural to give the sweeper the same working directory as the keeper.
-Paddock deliberately does not. Two agents sharing a working directory share one
+It would be natural to give the sweeper the same working directory as the
+project's own agent. Paddock deliberately does not. Two agents sharing a working
+directory share one
 Claude transcript directory, and herdctl identifies a freshly created session by
 set-difference against a pre-spawn directory snapshot — so a sweeper starting up
 could "steal" the session a user's chat just created. The sweeper gets its own
