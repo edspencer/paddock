@@ -201,12 +201,33 @@ export class JobsDirIndex {
 }
 
 /**
+ * Return a standalone copy of a string.
+ *
+ * The `yaml` parser produces scalars by slicing the whole document text, and V8
+ * represents those as SlicedStrings that keep the entire ~24 KB source alive. So
+ * caching a scalar verbatim retains the record body this index exists to avoid
+ * holding — the ~100-byte tuple promised above is really 24.5 KB.
+ *
+ * Measured over this instance's 2,016 records: **95.6 MB retained verbatim
+ * versus 1.8 MB detached**, a 53× overhead for identical data (issue #543).
+ * Core's own job index hit this and fixed it the same way
+ * (`state/job-index.ts` `detachString`, measured there at 99 MB → 2.1 MB); this
+ * matches that implementation deliberately rather than inventing a variant.
+ */
+function detachString(value: string): string {
+  return JSON.parse(JSON.stringify(value)) as string;
+}
+
+/**
  * Parse one `job-*.yaml` down to the three fields the index keeps.
  *
  * Returns `null` — meaning "nothing to index, and nothing to cache" — for a
  * record that is unreadable, half-written, still running (`finished_at` unset),
  * or not yet session-resolved. That is the same skip the un-indexed scan applied;
  * it never throws.
+ *
+ * Every retained string is {@link detachString}'d: these three scalars outlive
+ * the parse, and holding them verbatim pins the whole source document.
  */
 async function parseJobFile(file: string): Promise<JobIndexEntry | null> {
   let parsedYaml: Record<string, unknown> | null = null;
@@ -219,5 +240,9 @@ async function parseJobFile(file: string): Promise<JobIndexEntry | null> {
   const finished = parsedYaml?.finished_at;
   if (typeof sid !== "string" || typeof finished !== "string") return null;
   const agent = parsedYaml?.agent;
-  return { sessionId: sid, finishedAt: finished, agent: typeof agent === "string" ? agent : null };
+  return {
+    sessionId: detachString(sid),
+    finishedAt: detachString(finished),
+    agent: typeof agent === "string" ? detachString(agent) : null,
+  };
 }
