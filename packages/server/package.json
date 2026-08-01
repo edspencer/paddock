@@ -22,7 +22,7 @@
     "@fastify/swagger-ui": "^4.2.0",
     "@fastify/websocket": "10.0.1",
     "@herdctl/chat": "^0.8.0",
-    "@herdctl/core": "^5.27.0",
+    "@herdctl/core": "file:/data/projects/clones/adopt-herdctl/packages/core",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "fastify": "4.28.1",
     "jose": "^6.2.3",

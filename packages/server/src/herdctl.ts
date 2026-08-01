@@ -321,6 +321,13 @@ export class HerdctlService {
       // before herdctl's runtime schedule-mutation APIs can add or remove a
       // schedule at runtime. Declaring schedules in project.yaml is unaffected.
       allowScheduleMutation: this.cfg.scheduleMutationEnabled,
+      // Hand the engine the SAME Claude home paddock resolved (#588). Omitting
+      // it makes the engine fall back to `os.homedir()/.claude` while paddock
+      // honours `CLAUDE_HOME`, so discovery, adoption and paddock's `.chats/`
+      // symlinks would resolve against different directories — sessions list
+      // from one home and open empty from the other. Masked whenever the two
+      // coincide, which is why it must be explicit.
+      claudeHomePath: this.cfg.claudeHome,
     });
     await this.fleet.initialize();
 
@@ -333,7 +340,7 @@ export class HerdctlService {
       // at the .chats store in the metadata dir — so repo-backed transcripts stay
       // out of the external checkout's working tree (issue #187). For a notebook
       // project workingDir === dir, so this is the classic behavior.
-      await ensureProjectChats(project.workingDir, project.dir);
+      await ensureProjectChats(project.workingDir, project.dir, this.cfg.claudeHome);
       await this.fleet.addAgent(this.keeperAgentConfig(project), { replace: true });
       await this.fleet.addAgent(this.sweeperAgentConfig(project), { replace: true });
       // Register each EVENT trigger as its own agent `trigger-<slug>-<name>` (Epic T /
@@ -408,7 +415,7 @@ export class HerdctlService {
    */
   async ensureProjectAgent(project: Project): Promise<void> {
     if (!this.fleet) return;
-    await ensureProjectChats(project.workingDir, project.dir);
+    await ensureProjectChats(project.workingDir, project.dir, this.cfg.claudeHome);
     await this.fleet.addAgent(this.keeperAgentConfig(project), { replace: true });
     await this.fleet.addAgent(this.sweeperAgentConfig(project), { replace: true });
     // Re-register the project's EVENT-trigger agents (Epic T / T1) from the live
