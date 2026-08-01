@@ -134,9 +134,11 @@ function renderAt(path: string) {
         <Route path="/projects/:slug/settings" element={<ProjectView />} />
         <Route path="/projects/:slug/triggers" element={<ProjectView />} />
         <Route path="/projects/:slug/hooks" element={<ProjectView />} />
-        {/* Deleting a project returns to the projects list, which is now the
-            first section of root Home at `/` (see `gridUrl`). */}
-        <Route path="/" element={<div>GRID</div>} />
+        {/* Deleting a project returns to the projects list, which #599 put back
+            on its own page at `/projects` (see `gridUrl`). Mounted at that path
+            rather than `/` so this stub can only be reached by navigating where
+            `gridUrl()` actually points. */}
+        <Route path="/projects" element={<div>GRID</div>} />
       </Routes>
     </MemoryRouter>,
   );

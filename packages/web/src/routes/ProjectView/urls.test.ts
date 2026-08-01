@@ -103,14 +103,17 @@ describe("decodeFilesSubpath", () => {
 });
 
 describe("gridUrl", () => {
-  it("points at root Home — the grid is a section of it, not a tab of its own", () => {
-    // The list folded into Home, so the front door and the project list are the
-    // same page again. Every "back to the grid" nav site plus the `/projects`
-    // redirect read this, so they cannot drift apart.
-    expect(gridUrl()).toBe("/");
+  it("points at the grid's own page, not root Home (#599)", () => {
+    // The grid spent a release as a section of root Home; #599 gave that space
+    // to the running/unread feeds and put the grid back on `/projects`. Every
+    // "back to the grid" nav site reads this, so they cannot drift apart.
+    expect(gridUrl()).toBe("/projects");
   });
 
-  it("agrees with homeUrl at the root", () => {
-    expect(gridUrl()).toBe(homeUrl(viewBase(ROOT_KEY)));
+  it("is NOT root Home — the two are separate destinations again", () => {
+    // The regression this guards: while the grid WAS a Home section these two
+    // were the same URL, so a nav site could hard-code `/` and stay green. Root
+    // Home no longer lists projects, so that would now be a dead end.
+    expect(gridUrl()).not.toBe(homeUrl(viewBase(ROOT_KEY)));
   });
 });

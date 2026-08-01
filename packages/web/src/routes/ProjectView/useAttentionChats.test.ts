@@ -21,6 +21,30 @@ vi.mock("../../lib/api", async () => {
 });
 
 const REFETCH_DEBOUNCE_MS = 250;
+const REFETCH_SETTLE_MS = 2500;
+const POLL_MS = 30_000;
+
+/** Set `visibilityState` without announcing it — the quiet half of the pair. */
+function stubVisibility(state: DocumentVisibilityState) {
+  Object.defineProperty(document, "visibilityState", { value: state, configurable: true });
+}
+
+/**
+ * Drive `document.visibilityState` AND fire the event the hook listens for. The
+ * dispatch is wrapped in `act` because the listener kicks a fetch whose state
+ * belongs to the component under test.
+ *
+ * Restoring the default between tests uses {@link stubVisibility} instead:
+ * dispatching in an `afterEach` would fire the listener on a hook that is still
+ * mounted, kicking a fetch whose `.then` lands after the test has finished — an
+ * unavoidable act() warning for a state change nothing is asserting on.
+ */
+function setVisibility(state: DocumentVisibilityState) {
+  stubVisibility(state);
+  act(() => {
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+}
 
 function row(sessionId: string, name: string): AttentionChat {
   return { ...makeChat({ sessionId, name }), projectSlug: "p", projectName: "Test Project" };
@@ -154,6 +178,38 @@ describe("useAttentionChats: refetching on the running set", () => {
     expect(attentionChats).toHaveBeenCalledTimes(2);
   });
 
+  it("refetches AGAIN once the turn boundary has settled", async () => {
+    // The bug this exists for: a turn boundary settles in two places at
+    // different times. The hub flips `running` false the instant the turn stops
+    // — that IS the signal this hook reacts to — but the chat only becomes
+    // UNREAD once its finished job record has been indexed. The debounced
+    // sample lands inside that window, sees the chat in neither list, and,
+    // because the running set has finished moving, nothing would ever ask
+    // again: the row stuck under Running until the pane remounted.
+    const { rerender } = mount();
+    await flush();
+    rerender({ s: "p", r: new Set(["s1"]) });
+
+    act(() => vi.advanceTimersByTime(REFETCH_DEBOUNCE_MS));
+    await flush();
+    expect(attentionChats).toHaveBeenCalledTimes(2); // the first look
+
+    act(() => vi.advanceTimersByTime(REFETCH_SETTLE_MS - REFETCH_DEBOUNCE_MS));
+    await flush();
+    expect(attentionChats).toHaveBeenCalledTimes(3); // the confirming one
+  });
+
+  it("arms exactly TWO refetches per boundary, not a runaway chain", async () => {
+    // Each refetch must not itself re-arm the pair, or one turn boundary would
+    // poll forever.
+    const { rerender } = mount();
+    await flush();
+    rerender({ s: "p", r: new Set(["s1"]) });
+    act(() => vi.advanceTimersByTime(REFETCH_SETTLE_MS * 3));
+    await flush();
+    expect(attentionChats).toHaveBeenCalledTimes(3); // mount + quick + settle
+  });
+
   it("keeps the current rows visible across a refetch (no skeleton flash)", async () => {
     attentionChats.mockResolvedValue({ running: [row("r1", "Streaming now")], unread: [] });
     const { result, rerender } = mount();
@@ -167,6 +223,58 @@ describe("useAttentionChats: refetching on the running set", () => {
     expect(result.current.loading).toBe(false);
     expect(result.current.running.map((c) => c.name)).toEqual(["Streaming now"]);
     await flush();
+  });
+});
+
+describe("useAttentionChats: the backstop poll", () => {
+  afterEach(() => stubVisibility("visible"));
+
+  it("refetches on a slow timer while the tab is visible", async () => {
+    // Both live triggers ride the WebSocket, so a dropped frame would otherwise
+    // strand the feed with no path back. This is the path back.
+    mount();
+    await flush();
+    expect(attentionChats).toHaveBeenCalledTimes(1);
+
+    act(() => vi.advanceTimersByTime(POLL_MS));
+    await flush();
+    expect(attentionChats).toHaveBeenCalledTimes(2);
+  });
+
+  it("does NOT poll while the tab is hidden", async () => {
+    mount();
+    await flush();
+    setVisibility("hidden");
+    await flush();
+    const afterHide = attentionChats.mock.calls.length;
+
+    act(() => vi.advanceTimersByTime(POLL_MS * 3));
+    await flush();
+    expect(attentionChats).toHaveBeenCalledTimes(afterHide);
+  });
+
+  it("refetches immediately when the tab becomes visible again", async () => {
+    // Coming back is exactly when the accumulated staleness matters — waiting
+    // out the rest of the interval would show a stale feed on the screen the
+    // user is actively looking at.
+    mount();
+    await flush();
+    setVisibility("hidden");
+    await flush();
+    const afterHide = attentionChats.mock.calls.length;
+
+    setVisibility("visible");
+    await flush();
+    expect(attentionChats).toHaveBeenCalledTimes(afterHide + 1);
+  });
+
+  it("stops polling once unmounted", async () => {
+    const { unmount } = mount();
+    await flush();
+    unmount();
+    act(() => vi.advanceTimersByTime(POLL_MS * 3));
+    await flush();
+    expect(attentionChats).toHaveBeenCalledTimes(1);
   });
 });
 

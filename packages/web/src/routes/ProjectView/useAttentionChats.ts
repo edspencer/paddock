@@ -12,6 +12,31 @@ import type { AttentionChat } from "../../lib/types";
 const REFETCH_DEBOUNCE_MS = 250;
 
 /**
+ * A SECOND refetch, later, after the same running-set change.
+ *
+ * A turn boundary settles in two places at different times: the session hub
+ * flips `running` to false the instant the turn stops (that's what raised the
+ * WS signal), but the chat only becomes UNREAD once its finished job record has
+ * been written and picked up by the jobs-dir index. Sample once inside that
+ * window and the chat is neither running nor unread, and — because the running
+ * set has already finished moving — nothing would ever ask again. The row then
+ * sits in whichever state it was last seen in until the pane remounts.
+ *
+ * So the debounced refetch is a first look, and this is the confirming one. Two
+ * cheap requests per turn boundary is the right trade against a feed that is
+ * silently wrong about half the time.
+ */
+const REFETCH_SETTLE_MS = 2500;
+
+/**
+ * Backstop poll while the tab is visible. Nothing observed in testing needs it —
+ * it exists because both live triggers ride a WebSocket, and a dropped or
+ * mistimed frame would otherwise leave Home confidently stale with no path back.
+ * Slow enough to be free; fast enough that "stale" is measured in seconds.
+ */
+const POLL_MS = 30_000;
+
+/**
  * Home's attention feed (#599): the chats in this workspace's SUBTREE that are
  * running right now, and the ones holding an unread reply.
  *
@@ -97,9 +122,32 @@ export function useAttentionChats(
       seenFirstRunning.current = true;
       return;
     }
-    const t = setTimeout(() => void loadRef.current(), REFETCH_DEBOUNCE_MS);
-    return () => clearTimeout(t);
+    // Two samples, not one — see REFETCH_SETTLE_MS. The first catches the change
+    // itself; the second catches the job record that lands just after it.
+    const quick = setTimeout(() => void loadRef.current(), REFETCH_DEBOUNCE_MS);
+    const settle = setTimeout(() => void loadRef.current(), REFETCH_SETTLE_MS);
+    return () => {
+      clearTimeout(quick);
+      clearTimeout(settle);
+    };
   }, [runningSessions]);
+
+  // Backstop poll: both live triggers ride the socket, so a dropped frame would
+  // otherwise strand the feed. Paused while the tab is hidden — a background tab
+  // has nobody reading it, and browsers throttle its timers anyway — and it
+  // refetches immediately on becoming visible again, which is exactly when the
+  // accumulated staleness matters.
+  useEffect(() => {
+    const tick = () => {
+      if (document.visibilityState === "visible") void loadRef.current();
+    };
+    const id = setInterval(tick, POLL_MS);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", tick);
+    };
+  }, []);
 
   return { running, unread, loading, error, refresh: () => void load() };
 }

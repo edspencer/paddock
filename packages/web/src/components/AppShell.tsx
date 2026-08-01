@@ -13,7 +13,7 @@ import { CogIcon, FolderIcon, HomeIcon, LinkIcon, MenuIcon, MoonIcon, PlusIcon, 
 import { NewProjectModal } from "./NewProjectModal";
 import { PaneResizer, usePaneWidth } from "./PaneResizer";
 import { SIDENAV_PANE } from "../lib/paneWidth";
-import { ROOT_KEY } from "../routes/ProjectView/urls";
+import { gridUrl, ROOT_KEY } from "../routes/ProjectView/urls";
 
 /**
  * Context handed down to route elements via <Outlet> (#372). A route that hosts
@@ -290,11 +290,13 @@ export function AppShell() {
         </div>
 
         <div className="mt-5 mb-1 flex items-center justify-between pr-3">
-          {/* A plain label, not a link. It used to point at `/`, where root
-              Home rendered the projects grid — #599 replaced that grid with the
-              running/unread feeds, so the link would now lead somewhere that
-              doesn't list projects. The list it labels is directly below it. */}
-          <span className="section-label">Projects</span>
+          {/* Points at the grid page, which `gridUrl()` moved back to
+              `/projects` when #599 took the grid off root Home. The sidebar
+              list below is the fast path; the grid is the one that shows
+              summaries, tags and per-area grouping. */}
+          <NavLink to={gridUrl()} className="section-label hover:text-accent">
+            Projects
+          </NavLink>
           {/* Where the project COUNT used to sit (#599). The count answered a
               question nobody asks — the list is right underneath — while the
               one genuinely useful action here had no home at all: New Project

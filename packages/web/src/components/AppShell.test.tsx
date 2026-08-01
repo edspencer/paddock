@@ -4,6 +4,7 @@ import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { AppShell } from "./AppShell";
 import { makeProject } from "../test/factories";
 import { markSeenLocally, resetLastSeenForTests } from "../lib/lastSeen";
+import { gridUrl } from "../routes/ProjectView/urls";
 import type { Project } from "../lib/types";
 
 let mockProjects: Project[] = [];
@@ -124,14 +125,15 @@ describe("AppShell: sidebar shell", () => {
     expect(screen.queryByRole("button", { name: /New root chat/i })).not.toBeInTheDocument();
   });
 
-  it("labels the Projects section with a plain span, not a link (#599)", () => {
-    // It used to point at `/`, where root Home rendered the projects grid. That
-    // grid is gone, so the link would now lead somewhere that doesn't list
-    // projects — the list it labels is immediately below it instead.
+  it("points the Projects section label at the grid's own page (#599)", () => {
+    // It used to point at `/`, back when root Home rendered the projects grid.
+    // #599 gave Home's opening screen to the running/unread feeds and put the
+    // grid back on `/projects`, so the label follows it there. Asserted through
+    // `gridUrl()` rather than a literal, so the label and the route it targets
+    // cannot drift apart.
     mockProjects = [makeProject({ slug: "a" })];
     renderShell();
-    expect(screen.queryByRole("link", { name: "Projects" })).not.toBeInTheDocument();
-    expect(screen.getByText("Projects").tagName).toBe("SPAN");
+    expect(screen.getByRole("link", { name: "Projects" })).toHaveAttribute("href", gridUrl());
   });
 
   it("links to instance Config at /config, not to /settings", () => {
