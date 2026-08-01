@@ -8,6 +8,15 @@ import tailwindcss from '@tailwindcss/vite';
 // https://astro.build/config
 export default defineConfig({
 	site: 'https://paddock.edspencer.net',
+	// #585 retired "keeper" as a user-facing word, which moved three published
+	// pages. Cloudflare Pages serves this site statically, so these emit
+	// meta-refresh stubs at the old paths rather than real 3xx — good enough to
+	// keep existing links and search results off a 404.
+	redirects: {
+		'/concepts/keepers': '/concepts/agents/',
+		'/configuration/keeper-recovery': '/configuration/chat-recovery/',
+		'/using/reading-a-keepers-work': '/using/reading-claudes-work/',
+	},
 	vite: {
 		plugins: [tailwindcss()],
 	},
@@ -67,7 +76,7 @@ export default defineConfig({
 						{ label: 'Automating with hooks', slug: 'using/automating-with-hooks' },
 						{ label: 'Sending files & images', slug: 'using/sending-files-and-images' },
 						{ label: 'Scheduling recurring work', slug: 'using/scheduling-recurring-work' },
-						{ label: "Reading a keeper's work", slug: 'using/reading-a-keepers-work' },
+						{ label: "Reading Claude's work", slug: 'using/reading-claudes-work' },
 					],
 				},
 				{
@@ -91,7 +100,7 @@ export default defineConfig({
 						{ label: 'Overview', slug: 'concepts' },
 						{ label: 'Workspaces', slug: 'concepts/workspaces' },
 						{ label: 'Projects', slug: 'concepts/projects' },
-						{ label: 'Keeper agents', slug: 'concepts/keepers' },
+						{ label: 'Agents', slug: 'concepts/agents' },
 						{ label: 'Chats are sessions', slug: 'concepts/chats' },
 						{ label: 'Schedules', slug: 'concepts/schedules' },
 						{ label: 'Provenance: who did what', slug: 'concepts/provenance' },
@@ -110,7 +119,7 @@ export default defineConfig({
 						{ label: 'Binding & network exposure', slug: 'configuration/binding-and-exposure' },
 						{ label: 'Model allow-lists', slug: 'configuration/models' },
 						{ label: 'OpenAPI & Swagger', slug: 'configuration/openapi' },
-						{ label: 'Keeper-chat recovery', slug: 'configuration/keeper-recovery' },
+						{ label: 'Chat recovery', slug: 'configuration/chat-recovery' },
 						{ label: 'Scheduling & the schedule gates', slug: 'configuration/schedules' },
 					],
 				},

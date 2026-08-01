@@ -8,7 +8,7 @@ built SPA) and a **hot-reload dev** mode (Vite dev server + watched backend).
 
 - **Node 22+** and the **`claude` CLI** on your `PATH` (`claude --version`).
 - A **Claude Max OAuth token** in `~/herds/.env` as `CLAUDE_CODE_OAUTH_TOKEN`.
-  The server passes it through the process environment to the keeper agents;
+  The server passes it through the process environment to the agents;
   it is never written to any file. (Deployed: the LXC has the same token in env.)
 - Dependencies installed: `npm install` (from the repo root).
 
@@ -90,7 +90,7 @@ rm -rf /tmp/paddock-dev.*
 
 | Var | Default | Purpose |
 |-----|---------|---------|
-| `CLAUDE_CODE_OAUTH_TOKEN` | — | **Required.** Max auth, passed to keeper agents. |
+| `CLAUDE_CODE_OAUTH_TOKEN` | — | **Required.** Max auth, passed to the agents. |
 | `PORT` | `4000` | HTTP/WS listen port. |
 | `HOST` | `127.0.0.1` | Bind host — loopback by default. Binding a routable interface while `PADDOCK_AUTH_MODE=none` refuses to start unless `PADDOCK_DANGEROUSLY_ALLOW_OPEN` is set. |
 | `PADDOCK_DATA_DIR` | `./data` | Root for projects, scratch, herdctl config + state. |

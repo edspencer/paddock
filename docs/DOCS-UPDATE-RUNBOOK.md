@@ -317,7 +317,7 @@ tr '\0' '\n' < /proc/<pid>/environ | grep PADDOCK_DATA_DIR
 
 ### Seed data
 
-**Disable curation before you seed, not after.** The rig runs a real keeper, so
+**Disable curation before you seed, not after.** The rig runs a real agent, so
 a completed turn enqueues a sweep — and the sweeper replaces `OVERVIEW.md` and
 `CHANGELOG.md` wholesale. With a fake `claude` behind it, that means your
 carefully written demo `OVERVIEW.md` gets overwritten with a generic stub

@@ -1,6 +1,6 @@
 ---
 title: "Concepts"
-description: "The core ideas behind Paddock: projects, keeper and scratch agents, chats-as-sessions, schedules, hooks, provenance, and the sweeper."
+description: "The core ideas behind Paddock: workspaces, projects, agents, chats-as-sessions, schedules, hooks, provenance, and the sweeper."
 ---
 
 Short, canonical explanations of Paddock's core ideas. Read these to understand
@@ -9,8 +9,8 @@ Short, canonical explanations of Paddock's core ideas. Read these to understand
 
 - **[Projects](/concepts/projects)** — a directory + `project.yaml`; the two types,
   **notebook** and **repo-backed**.
-- **[Keeper agents](/concepts/keepers)** — one keeper per
-  project, one shared scratch, and how a scratch chat is promoted into a project.
+- **[Agents](/concepts/agents)** — one agent per project (the root included), and
+  how a chat is promoted into a project of its own.
 - **[Chats are Claude Code sessions](/concepts/chats)** — persisted on disk,
   resumable across reloads, reconnects, and devices.
 - **[Schedules](/concepts/schedules)** — durable cron/interval turns that fire when
@@ -23,7 +23,7 @@ Short, canonical explanations of Paddock's core ideas. Read these to understand
 - **[The sweeper](/concepts/sweeper)** — the per-project, post-turn, tool-less agent
   that curates `OVERVIEW.md` and `CHANGELOG.md`.
 
-The one-sentence version: **a _project_ is a directory; its _keeper_ is one
+The one-sentence version: **a _project_ is a directory; Paddock runs one
 Claude Code agent whose working directory is that directory; a _chat_ is one
 resumable Claude Code session belonging to a project; _schedules_ and _hooks_ start
 those sessions without you; _provenance_ records who did; and after each turn a

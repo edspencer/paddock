@@ -60,7 +60,7 @@ keep the config in version control.
 Two image tags are published from the same source: **`:latest`** (base — the app plus
 `git`/`openssh-client`/`gh`/`claude`) and **`:devbox`** (base plus the coding-agent
 toolbox — `pm`, `ffmpeg`, a headless browser, the Docker CLI, `kubectl`, and a
-scripting kit — for keepers that build and run apps).
+scripting kit — for projects that build and run apps).
 [The Dev Box flavor](/guides/dev-box-flavor/) is the full, current breakdown of what
 each image carries.
 

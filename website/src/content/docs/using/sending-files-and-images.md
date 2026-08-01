@@ -1,23 +1,23 @@
 ---
-title: Sending files & images to a keeper
-description: Attach files and images to a message — pick, drag-drop, or paste them into the composer — so the keeper can read a screenshot, a PDF, a CSV, or a source file directly.
+title: Sending files & images
+description: Attach files and images to a message — pick, drag-drop, or paste them into the composer — so Claude can read a screenshot, a PDF, a CSV, or a source file directly.
 ---
 
 Sometimes the fastest way to explain something is to *show* it: a screenshot of a
 broken layout, the PDF spec you're working from, a CSV to summarise, a log file
 to trace. Since **v0.38** you can attach files and images to a message right in
-the composer, and the keeper reads them directly — native vision on images and
-PDFs, plain-text reads on everything else.
+the composer, and Claude reads them directly — native vision on images and PDFs,
+plain-text reads on everything else.
 
 This guide covers the day-to-day: the three ways to attach a file, the tray that
-holds them before you send, what the keeper actually does with them, and the
-limits you can tune. It's the practical companion to
+holds them before you send, what Claude actually does with them, and the limits
+you can tune. It's the practical companion to
 [Working in chats](/using/working-in-chats/).
 
 :::note[Project chats only]
-Attachments live in **keeper (project) chats** — the upload is scoped to a
-project. A one-off (scratch) chat has no paperclip button. See
-[keeper vs one-off chats](/using/working-in-chats/#keeper-chats-vs-one-off-scratch-chats).
+Attachments live in **project chats** — the upload is scoped to a project. A
+one-off (scratch) chat has no paperclip button. See
+[project vs one-off chats](/using/working-in-chats/#project-chats-vs-one-off-scratch-chats).
 :::
 
 ## Three ways to attach
@@ -41,7 +41,7 @@ Staged files appear as a row of removable items above the message box: **images
 show as thumbnails**, and every other kind shows as a compact **chip** (icon ·
 filename · size). Hover an item and click the **✕** to drop it before sending.
 
-![The composer attachment tray with a queued image thumbnail and a file chip, ready to send to the keeper](../../../assets/using/attachment-tray.png)
+![The composer attachment tray with a queued image thumbnail and a file chip, ready to send](../../../assets/using/attachment-tray.png)
 
 Attachments ride along with your **next** message. Type your prompt and press
 **Enter** — the files send with it and the tray clears. You can also send with
@@ -50,15 +50,15 @@ screenshot, take a look"). Everything you've read about the composer and the
 [message queue](/using/working-in-chats/#type-while-a-turn-is-running-the-queue)
 still applies; attachments simply travel with the turn.
 
-## What the keeper does with them
+## What Claude does with them
 
 When your message sends, Paddock copies each file into its attachment store and
-points the keeper's **`Read`** tool at the stored copies. What the keeper sees
-depends on the file:
+points Claude's **`Read`** tool at the stored copies. What it sees depends on the
+file:
 
 - **Images** (`.png`, `.jpg`, `.gif`, `.webp`, …) — read with **native vision**.
-  The keeper genuinely *sees* the picture: a UI screenshot, a diagram, a photo.
-- **PDFs** — read natively too; the keeper reads the rendered document, not just
+  Claude genuinely *sees* the picture: a UI screenshot, a diagram, a photo.
+- **PDFs** — read natively too; Claude reads the rendered document, not just
   extracted text.
 - **Text, code, Markdown, CSV, and the like** — read as text through the same
   `Read` tool.

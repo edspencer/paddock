@@ -20,10 +20,10 @@ A small VM, a mini PC, or a Pi would serve the same role — see
 ## Composition: give the agents their tools
 
 The reason this setup is productive is **what lives alongside Paddock in that
-container.** Paddock's keeper agents are Claude Code sessions, and they're only as
+container.** Paddock's chats are Claude Code sessions, and they are only as
 capable as the tools on the box. The author's container provisions:
 
-- **Node.js and the `claude` CLI** on the `PATH` — keeper agents spawn `claude` per
+- **Node.js and the `claude` CLI** on the `PATH` — agents spawn `claude` per
   job, so the binary must be present (without it, jobs fail instantly with
   `spawn claude ENOENT`).
 - **The `gh` GitHub CLI, authenticated with a scoped token** — so agents can open PRs

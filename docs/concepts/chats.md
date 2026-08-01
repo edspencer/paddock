@@ -33,7 +33,7 @@ Starting a chat sends `chat:send` with `sessionId: null`; the session id is
 minted by Claude Code and arrives mid-stream (Paddock captures it and attributes
 the running session to the project so the chat appears in the sidebar *before*
 the turn finishes — issue #100). Every later turn on that chat sends the same
-`sessionId`, and the keeper resumes the existing session (`resume: <sessionId>`).
+`sessionId`, and Claude resumes the existing session (`resume: <sessionId>`).
 
 Resumption is robust to interruptions at several layers:
 
@@ -53,9 +53,8 @@ Resumption is robust to interruptions at several layers:
 A chat can be **forked** into a parallel child: `forkSession` *copies* the
 transcript and mints a new session id, so the child diverges without touching the
 parent. (Contrast with promotion, which *moves* a chat into a project of its
-own — see [Keepers](./keepers.md).) Forked children run under the
-same keeper (up to `KEEPER_MAX_CONCURRENT` in parallel) and appear as their own
-chats in the sidebar.
+own — see [Agents](./agents.md).) Forked children run under the same agent (up to
+10 in parallel) and appear as their own chats in the sidebar.
 
 ## In one line
 

@@ -520,7 +520,7 @@ the "workaround in use" lines explain shapes still visible in the codebase.
 1. ~~**Programmatic dynamic agents (primary).**~~ **CLOSED** (5.11.0) —
    `fleet.addAgent(config, {replace})` / `removeAgent(name)`
    (`fleet-manager.d.ts:175,188`). Paddock calls them directly; see section b.
-   *Original ask:* register a keeper in-memory instead of writing yaml +
+   *Original ask:* register a project's agent in-memory instead of writing yaml +
    `reload()`, which coupled paddock to herdctl's on-disk config format and
    forced a full re-read on every project create.
 
@@ -565,4 +565,4 @@ the "workaround in use" lines explain shapes still visible in the codebase.
 - WS protocol + streaming: `packages/server/src/ws.ts`, `ws-turn.ts`,
   `ws-protocol.ts`.
 - Project layer: `packages/server/src/projects.ts` (`ProjectStore`).
-- Runtime/drive-mode split: [architecture overview §9](/architecture/overview#9-keeper-drive-mode--session-vs-batch).
+- Runtime/drive-mode split: [architecture overview §9](/architecture/overview#9-drive-mode--session-vs-batch).

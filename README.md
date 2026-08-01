@@ -25,7 +25,7 @@
 ---
 
 <p align="center">
-  <img src="docs/demo/paddock-demo.gif" width="760" alt="Paddock — the real dev stack, a project's chats, and a keeper streaming live tool calls">
+  <img src="docs/demo/paddock-demo.gif" width="760" alt="Paddock — the real dev stack, a project's chats, and Claude streaming live tool calls">
 </p>
 
 ## Why Paddock
@@ -35,35 +35,35 @@ It turns Claude Code into something you run on a server and reach from a browser
 long-lived agents, one per project, whose chats persist and resume — instead of a
 laptop full of terminal tabs you can't get back to from your phone.
 
-A **project** is just a directory. Each one gets a herdctl **keeper agent** whose
-working directory *is* that project, and the chats you see in the UI are that
-agent's Claude Code sessions — persisted on disk and resumable across reloads,
+A **project** is just a directory. Paddock runs **Claude Code** in it — a herdctl
+agent whose working directory *is* that project — and the chats you see in the UI
+are that agent's sessions, persisted on disk and resumable across reloads,
 reconnects, and devices. There are two kinds:
 
 - **Notebook** — a directory in your data repo for planning, notes, and light work.
-- **Repo-backed** — an external git repo cloned as the keeper's working directory,
+- **Repo-backed** — an external git repo cloned as the agent's working directory,
   so the repo's own `CLAUDE.md`, branches, and PR flow apply. The natural unit for
   doing real engineering.
 
 One-off "scratch" chats work too, and can be promoted into a project (keeping their
 history). The whole UI is responsive — the same launchpad works from a phone.
 
-It also runs without you watching. Keepers are fired by schedules, lifecycle
-events and each other; background work a keeper starts survives the turn that
-started it and wakes the keeper when it lands. And the boundary now opens the
+It also runs without you watching. Turns are fired by schedules, lifecycle
+events and other chats; background work a chat starts survives the turn that
+started it and wakes Claude when it lands. And the boundary now opens the
 other way: an instance **exposes itself as an MCP server**, so Claude Code on
 your laptop — or CI, or a peer Paddock — can drive it from outside. Less an app
 you visit, more a service your other tools talk to.
 
 ## Highlights
 
-- 🗂️ **Project-first** — every project has its own keeper agent, files, and changelog
+- 🗂️ **Project-first** — every project has its own agent, files, and changelog
 - 💬 **Persistent, resumable chats** — server-hosted sessions survive reloads, reconnects, and devices
 - ⌨️ **Token-by-token streaming** — replies, real tool calls, and subagents render live as they run, with rich tool cards (Edit diffs, Bash exit codes, Grep counts)
 - 🛰️ **Drive it from outside** — an [external Management API](#drive-it-from-outside) serves the management tools as MCP at `/mcp`, so Claude Code on your laptop, CI, or a peer Paddock can list projects, read chats, and (with the scope for it) start turns
-- ⏰ **Triggers & automation** — run a keeper turn on a schedule, on a lifecycle event, or on demand; each trigger can carry its own scoped toolset
-- 🤖 **Self-driving keepers** — an opt-in, depth-gated in-process MCP lets a keeper list projects, read chats, spawn and fork chats to fan work out across parallel keepers, manage its own triggers, and — behind a further flag — provision new projects
-- ⏳ **Background work outlives the turn** — a build, deploy, or sub-agent a keeper backgrounds keeps running after the turn ends and wakes the keeper with its result
+- ⏰ **Triggers & automation** — run a turn on a schedule, on a lifecycle event, or on demand; each trigger can carry its own scoped toolset
+- 🤖 **Self-driving** — an opt-in, depth-gated in-process MCP lets Claude list projects, read chats, spawn and fork chats to fan work out across parallel sessions, manage a project's triggers, and — behind a further flag — provision new projects
+- ⏳ **Background work outlives the turn** — a build, deploy, or sub-agent Claude backgrounds keeps running after the turn ends and wakes it with the result
 - 📎 **Send files & images** — pick, drag-drop, or paste into the composer; Claude reads images and PDFs natively
 - 📁 **Files & Changes** — browse rendered project files and review the agent's work as git diffs
 - 🧩 **Two project types** — notebook (data-repo subdir) or repo-backed (clone an external repo as cwd)
@@ -130,30 +130,30 @@ volumes:
 
 _These are real screenshots — Paddock is dogfooded on its own dev stack: **Paddock**, **herdctl** (the engine underneath it), and **Warren** (an agentic PR reviewer) all live here as projects that build one another._
 
-**Every project gets a keeper agent, organized on one page.**
+**Every project gets its own agent, organized on one page.**
 
-<p align="center"><img src="docs/demo/grid.png" width="720" alt="Projects grid — Paddock, herdctl, Warren, and more, each a project with its own keeper agent"></p>
+<p align="center"><img src="docs/demo/grid.png" width="720" alt="Projects grid — Paddock, herdctl, Warren, and more, each a project with its own agent"></p>
 
 **Each project keeps dozens of persistent, resumable chats — searchable, forkable, archivable.**
 
 <p align="center"><img src="docs/demo/chat-list.png" width="720" alt="A project's chat list with dozens of real, resumable chats"></p>
 
-**Chat with the keeper — real tool calls and subagents stream in, with a live context + cost meter.**
+**Chat with Claude — real tool calls and subagents stream in, with a live context + cost meter.**
 
-<p align="center"><img src="docs/demo/chat-tools.png" width="720" alt="A keeper chat with Read and Grep tool blocks and a context/cost meter"></p>
+<p align="center"><img src="docs/demo/chat-tools.png" width="720" alt="A chat with Read and Grep tool blocks and a context/cost meter"></p>
 
 **Built for real, long-running work** — persistent sessions track their own context window and estimated cost as they grow (this one's 42% of a 1M-token window):
 
-<p align="center"><img src="docs/demo/chat-scale.png" width="720" alt="A long keeper session showing a 42% context-window fill and running API cost"></p>
+<p align="center"><img src="docs/demo/chat-scale.png" width="720" alt="A long session showing a 42% context-window fill and running API cost"></p>
 
 <table>
 <tr>
-<td width="50%"><b>Repo-backed projects</b><br/>Clone an external repo as the keeper's working directory — its own <code>CLAUDE.md</code>, branches, and PR flow apply.<br/><br/><img src="docs/demo/repo-backed.png" alt="New Project modal with a Git repository URL field"></td>
+<td width="50%"><b>Repo-backed projects</b><br/>Clone an external repo as the agent's working directory — its own <code>CLAUDE.md</code>, branches, and PR flow apply.<br/><br/><img src="docs/demo/repo-backed.png" alt="New Project modal with a Git repository URL field"></td>
 <td width="50%"><b>Rendered project files</b><br/>Markdown, Mermaid, code, images, PDF and video render inline; pin files as tabs.<br/><br/><img src="docs/demo/files.png" alt="A markdown file rendered in the Files tab"></td>
 </tr>
 <tr>
 <td width="50%"><b>Slash-command autocomplete</b><br/>Type <code>/</code> to discover and run the agent's skills.<br/><br/><img src="docs/demo/slash-commands.png" alt="Slash-command autocomplete menu"></td>
-<td width="50%"><b>Per-project settings</b><br/>Identity, model, permission mode, links, curation budgets, and keeper config — deep-linkable.<br/><br/><img src="docs/demo/settings.png" alt="The per-project Settings tab"></td>
+<td width="50%"><b>Per-project settings</b><br/>Identity, model, permission mode, links, curation budgets, and agent config — deep-linkable.<br/><br/><img src="docs/demo/settings.png" alt="The per-project Settings tab"></td>
 </tr>
 </table>
 
@@ -166,7 +166,7 @@ Paddock isn't only something you open in a browser. An instance can expose its
 **Management API** as an MCP server over streamable HTTP at **`/mcp`** — so a
 Claude Code session on your laptop, a CI job, or a peer Paddock can list
 projects, read chats, and, if you grant it, start turns. External callers get
-the *same* toolset a keeper receives in-process, so the two surfaces can't
+the *same* toolset Claude receives in-process, so the two surfaces can't
 drift.
 
 Clients are declared in `paddock.config.yaml`, and their tokens are
@@ -195,7 +195,7 @@ A few things worth knowing before you widen that scope:
 - **Read-only is the default, and it should usually stay that way.** A client
   configured without an explicit scope gets `list_projects`, `list_chats`,
   `list_triggers` and `read_chat` — nothing else. This is not timidity: any
-  write scope can start a keeper turn, and a keeper has `Bash`. **Granting write
+  write scope can start a turn, and Claude has `Bash`. **Granting write
   access to the Management API is equivalent to granting remote code execution
   on the host.** Treat such a token like an SSH key, scope it to specific
   projects, and expect the boot log to warn you by name when a client holds one.
@@ -257,7 +257,7 @@ Paddock is a thin project layer over the public `@herdctl/core` FleetManager. It
 wires **projects**, **chats**, and a **git backing store** on top; anything the
 herdctl CLI/dashboard can do, the library can too.
 
-Keeper turns run through herdctl's **session runtime** (persistent
+Chat turns run through herdctl's **session runtime** (persistent
 `openChatSession`) by default — that's what lets chats resume across reloads,
 stream token-by-token, and carry autonomous work (`ScheduleWakeup`, `/loop`)
 across turn boundaries. **Triggers** (schedules, lifecycle events, and
@@ -285,7 +285,7 @@ repo:
   MCP injection, auth boundary, the sweeper, drive modes).
 - **[docs/concepts/](docs/concepts/)** — short explanations of the core ideas:
   [projects](docs/concepts/projects.md) (notebook vs. repo-backed),
-  [keeper agents](docs/concepts/keepers.md),
+  [agents](docs/concepts/agents.md),
   [chats are Claude Code sessions](docs/concepts/chats.md), and
   [the sweeper](docs/concepts/sweeper.md).
 - **[docs/API.md](docs/API.md)** — Paddock's own REST + WebSocket API reference.

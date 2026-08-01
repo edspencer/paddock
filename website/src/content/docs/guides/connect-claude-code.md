@@ -12,7 +12,7 @@ and it's the one you should set up first.
 
 :::danger[Any write scope is remote code execution on the host]
 `create_chat`, `send_message`, `fork_chat`, `fork_chat_batch`, `run_trigger` and
-`set_trigger` **start keeper turns** — and a keeper runs with `Bash` and `Write`.
+`set_trigger` **start real turns** — and Claude runs with `Bash` and `Write`.
 `create_project` clones a git URL the caller supplies. Granting any of them to a
 client is granting code execution on the machine Paddock runs on.
 
@@ -352,7 +352,7 @@ to feed it to `jq`.
   matrix, scope semantics, discovery document, token binding.
 - **[Securing Paddock](/guides/securing/#the-mcp-management-api)** — the edge
   exemption, and the deploy-ordering hazard.
-- **[Self-management MCP](/reference/self-mcp/)** — the same tools as a keeper
-  sees them from *inside* an instance.
+- **[Self-management MCP](/reference/self-mcp/)** — the same tools as Claude sees
+  them from *inside* an instance.
 - **[`paddock-deploy`](https://github.com/edspencer/paddock-deploy)** — Docker,
   Proxmox, Kubernetes and Basic-Auth recipes, all carrying the `/mcp` exemption.

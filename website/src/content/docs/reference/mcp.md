@@ -5,17 +5,17 @@ description: "The external /mcp endpoint: how it authenticates itself, its scope
 
 Paddock can expose itself as an **MCP server** at **`/mcp`**, so a caller
 *outside* the instance — a Claude Code session on your laptop, a CI job, or a
-peer Paddock — can drive the same operations a keeper reaches through its
+peer Paddock — can drive the same operations Claude reaches through its
 in-process `paddock_manage` tools.
 
-External callers get the **same toolset a keeper receives**, minus whatever their
+External callers get the **same toolset Claude receives**, minus whatever their
 credential's scope hides. Nothing is redefined for the external surface, so a
 tool added to the self-management MCP appears over `/mcp` for free and the two
 can't drift.
 
 :::danger[Any write scope is remote code execution on the host]
 `create_chat`, `send_message`, `fork_chat`, `fork_chat_batch`, `run_trigger` and
-`set_trigger` **start keeper turns**, and a keeper runs with `Bash` and `Write`.
+`set_trigger` **start real turns**, and Claude runs with `Bash` and `Write`.
 `create_project` clones a caller-supplied git URL. Granting any of those to a
 client is granting code execution on the machine Paddock runs on.
 
@@ -365,7 +365,7 @@ A call must satisfy **both** dimensions: the operation *and* the project.
 ### The operation names
 
 `allow`/`deny` entries are the self-MCP tool names, one for one — writing
-`allow: [read_chat]` names the same thing a keeper sees as
+`allow: [read_chat]` names the same thing Claude sees as
 `mcp__paddock_manage__read_chat`.
 
 | Class | Operations |
@@ -394,9 +394,9 @@ Some consequences worth knowing:
 - **`fork_chat_batch` needs `fork_chat`.** The batch fan-out executes through
   `fork_chat`, so it is hidden without that grant rather than offered and denied
   on every call.
-- **The keeper-side capability gates do not apply here.** `PADDOCK_SELF_MCP`,
+- **The in-process capability gates do not apply here.** `PADDOCK_SELF_MCP`,
   `PADDOCK_SELF_MCP_WRITE`, `PADDOCK_SELF_MCP_PROJECTS` and `PADDOCK_HOOKS_MCP`
-  bound what a **keeper** may reach in-process. An external client is bounded by
+  bound what **Claude** may reach in-process. An external client is bounded by
   its **credential** instead: it gets `create_project` (or any other verb) only
   by naming it in `allow`, and the read-only default excludes them all.
 
