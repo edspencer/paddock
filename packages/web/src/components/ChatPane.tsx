@@ -336,18 +336,6 @@ export function ChatPane({
   // collapsed card still reports progress to the running-sub-agents bar.
   const runningSubagents = useRunningSubagents(turns, streaming);
   const subagentActivity = useSubagentActivity(runningSubagents, fetchSubagent);
-  // Reveal request from the bar → the matching card expands/scrolls/flashes. The
-  // nonce makes a repeat tap on the same sub-agent a NEW request (see the context).
-  const [focusedSubagent, setFocusedSubagent] = useState<SubagentFocusValue["focused"]>(null);
-  const subagentFocus = useMemo<SubagentFocusValue>(
-    () => ({
-      focused: focusedSubagent,
-      focus: (toolUseId: string) =>
-        setFocusedSubagent((prev) => ({ toolUseId, nonce: (prev?.nonce ?? 0) + 1 })),
-    }),
-    [focusedSubagent],
-  );
-
   // Raw-file URL builder for inline image reads (issue #239).
   const toolImageUrl = useMemo(
     () => (projectSlug ? (relPath: string) => api.projectFileRawUrl(projectSlug, relPath) : null),
@@ -389,6 +377,28 @@ export function ChatPane({
     const el = scrollRef.current;
     if (el && pinnedRef.current) el.scrollTop = el.scrollHeight;
   }, [turns]);
+
+  // Reveal request from the running-sub-agents bar → the matching card expands,
+  // scrolls itself into view and flashes. The nonce makes a repeat tap on the SAME
+  // sub-agent a new request (see SubagentFocusContext).
+  //
+  // Unpinning is load-bearing, not a nicety. During a live turn `turns` changes
+  // constantly, and the layout effect above re-snaps to the bottom on every one of
+  // those updates — which silently overrode the smooth scroll and yanked the view
+  // back down, so revealing anything but the LAST card appeared to do nothing.
+  // An explicit reveal is a deliberate scroll away from the bottom, so it unpins
+  // exactly as a manual scroll-up would; the next send re-pins (see send()).
+  const [focusedSubagent, setFocusedSubagent] = useState<SubagentFocusValue["focused"]>(null);
+  const subagentFocus = useMemo<SubagentFocusValue>(
+    () => ({
+      focused: focusedSubagent,
+      focus: (toolUseId: string) => {
+        pinnedRef.current = false;
+        setFocusedSubagent((prev) => ({ toolUseId, nonce: (prev?.nonce ?? 0) + 1 }));
+      },
+    }),
+    [focusedSubagent],
+  );
 
   // --- connection state ------------------------------------------------------
   useEffect(() => chatClient.onState(setConn), []);
