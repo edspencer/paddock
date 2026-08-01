@@ -125,6 +125,39 @@ export function buildKeeperConfig(
 }
 
 /**
+ * The sweeper's working directory: a dedicated per-project dir under the data
+ * root, deliberately NOT the project dir (issue #548).
+ *
+ * A CLI agent's working directory is what Claude Code encodes into its
+ * transcript path, so two agents sharing a cwd share ONE session directory. The
+ * sweeper's cwd used to be `project.dir`, which for a notebook project equals the
+ * keeper's `project.workingDir` — so keeper and sweeper wrote their transcripts
+ * into the same `.chats/`. herdctl identifies a freshly-spawned session by
+ * set-difference against a pre-spawn directory snapshot, which is immune to a
+ * co-located agent *appending* to its own session but NOT to one *creating* a new
+ * file: whichever brand-new `*.jsonl` appears first is claimed as "ours". A sweep
+ * is scheduled after every keeper turn, so the sweeper's spawn raced the next
+ * keeper turn and a user's chat could be bound to the sweeper's hidden curation
+ * transcript (wrong reply streamed, wrong transcript resumed, chat missing from
+ * the project's list).
+ *
+ * The sweeper is TOOL-LESS, so its cwd is inert — nothing about curation depends
+ * on it (SweepService reads the project's files itself and inlines them in the
+ * prompt, then writes the results itself). Giving it its own directory removes
+ * the shared directory, and with it the whole class of collisions, structurally.
+ *
+ * Kept OUTSIDE `projectsRoot` on purpose: core's discovery unions every
+ * `~/.claude/projects/*` bucket whose decoded path is a strict *descendant* of an
+ * agent's cwd, and the root workspace's cwd IS `projectsRoot`.
+ */
+export function sweeperWorkingDir(cfg: PaddockConfig, slug: string): string {
+  // The root workspace's key is "" (see project-paths.ts); reuse the same
+  // `_root` spelling the agent namespace uses so every sweeper dir is non-empty.
+  // Any other slug is SLUG_RE-validated upstream, so it holds no separators.
+  return path.join(cfg.dataDir, "sweepers", slug === "" ? "_root" : slug);
+}
+
+/**
  * A project's sweeper (curator) agent config. TOOL-LESS: the sweeper has NO
  * tools (`allowed_tools: []`) — it never reads or writes files. Instead it
  * RETURNS the curated content as plain assistant text in marked sections
@@ -136,6 +169,7 @@ export function buildKeeperConfig(
  * denied_tools to reason about (all irrelevant with zero tools).
  */
 export function buildSweeperConfig(
+  cfg: PaddockConfig,
   project: Project,
 ): Record<string, unknown> & { name: string } {
   // T5: the sweeper IS the default `curate-overview` (event/afterTurn) trigger. When a
@@ -147,7 +181,8 @@ export function buildSweeperConfig(
   return {
     name: sweeperAgentName(project.slug),
     description: `Overview/changelog curator (sweeper) for project ${project.name}.`,
-    working_directory: project.dir,
+    // NOT project.dir — see sweeperWorkingDir (issue #548).
+    working_directory: sweeperWorkingDir(cfg, project.slug),
     // Explicit CLI runtime (Max plan) — see the scratch agent note.
     runtime: "cli",
     model: curatorModel ?? SWEEPER_DEFAULT_MODEL,
