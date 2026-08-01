@@ -141,8 +141,8 @@ export function FilesPane({
         {entries.length === 0 && path === "" ? (
           <div className="card">
             <p className="text-sm italic text-paddock-400">
-              No files yet. Files the keeper agent writes (and sweep-curated
-              OVERVIEW.md) will appear here.
+              No files yet. Files Claude writes (and sweep-curated OVERVIEW.md)
+              will appear here.
             </p>
           </div>
         ) : (

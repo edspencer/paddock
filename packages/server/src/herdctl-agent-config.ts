@@ -70,7 +70,7 @@ export function buildAgentConfig(
 ): Record<string, unknown> & { name: string } {
   const config: Record<string, unknown> & { name: string } = {
     name: keeperAgentName(project.slug),
-    description: project.summary || `Keeper agent for project ${project.name}.`,
+    description: project.summary || `Claude Code agent for project ${project.name}.`,
     // Repo-backed projects (issue #187): the keeper runs INSIDE the cloned
     // checkout (project.workingDir), so the repo's own CLAUDE.md + git tooling
     // apply. For a notebook project workingDir === dir, so this is unchanged.
@@ -113,7 +113,7 @@ export function buildAgentConfig(
   // (PADDOCK_NATIVE_PROMPT=false) gets the terse replace prompt.
   if (!cfg.nativeSystemPrompt) {
     config.system_prompt =
-      "You are a Claude Code keeper agent for this project directory. " +
+      "You are a Claude Code agent for this project directory. " +
       "Honor any CLAUDE.md present. Keep CHANGELOG.md current. " +
       "Create branches for significant changes; never force-push.";
   }
@@ -309,7 +309,7 @@ export async function ensureConfigFile(cfg: PaddockConfig): Promise<void> {
     version: 1,
     fleet: {
       name: "paddock",
-      description: "Paddock keeper-agent fleet (agents registered at runtime).",
+      description: "Paddock agent fleet (agents registered at runtime).",
     },
     defaults: {
       // Currently INERT: core's `DefaultsSchema` has no `runtime` key, so this is

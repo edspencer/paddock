@@ -237,7 +237,7 @@ export async function sendChatTurn(
   message: string,
   opts: { placeholder?: RegExp; expectReply?: RegExp } = {},
 ): Promise<void> {
-  const composer = page.getByPlaceholder(opts.placeholder ?? /Message the keeper agent/i);
+  const composer = page.getByPlaceholder(opts.placeholder ?? /Message Claude/i);
   await composer.fill(message);
   await page.getByRole("button", { name: /^Send$/ }).click();
   const reply = opts.expectReply ?? new RegExp(`Acknowledged: ${escapeRe(message)}`);

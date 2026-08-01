@@ -185,7 +185,7 @@ const WORKING_PHRASES = [
   "working",
   "thinking",
   "reticulating splines",
-  "consulting the keeper",
+  "consulting Claude",
   "herding electrons",
   "tending the paddock",
 ];

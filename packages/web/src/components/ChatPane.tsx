@@ -979,7 +979,7 @@ export function ChatPane({
               </div>
               <p className="max-w-sm text-sm text-paddock-500">
                 {emptyHint ??
-                  "Start the conversation. Messages stream live from the keeper agent and persist as a resumable session."}
+                  "Start the conversation. Messages stream live from Claude and persist as a resumable session."}
               </p>
             </div>
           )}
@@ -1121,7 +1121,7 @@ export function ChatPane({
               placeholder={
                 streaming
                   ? "Queue a message to send next…"
-                  : (placeholder ?? "Message the keeper agent…")
+                  : (placeholder ?? "Message Claude…")
               }
               onChange={(e) => {
                 setDraft(e.target.value);

@@ -69,10 +69,10 @@ describe("TriggerCapabilityBanner (Epic T / T4)", () => {
     expect(banner).toHaveTextContent(/no tools|reasoning only|can only read/i);
   });
 
-  it("describes a tool-less SCHEDULE trigger as running as the keeper", () => {
+  it("describes a tool-less SCHEDULE trigger as running as Claude", () => {
     renderBanner({ ...nightly, allowedTools: [] });
     const banner = screen.getByTestId("trigger-capability-banner");
-    expect(banner).toHaveTextContent(/keeper/i);
+    expect(banner).toHaveTextContent(/runs as Claude/i);
   });
 
   it("flags a disabled trigger", () => {

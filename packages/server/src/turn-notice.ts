@@ -106,12 +106,12 @@ function errorMessageForSubtype(subtype: string | undefined): { kind: TurnNotice
   if (subtype === "error_max_turns") {
     return {
       kind: "max_turns",
-      message: "The keeper reached its turn limit before finishing this turn.",
+      message: "Claude reached its turn limit before finishing this turn.",
     };
   }
   return {
     kind: "error",
-    message: "The keeper turn failed before producing a reply.",
+    message: "Claude's turn failed before producing a reply.",
   };
 }
 
@@ -165,7 +165,7 @@ export function errorNotice(message: string | undefined): TurnNotice {
   const detail = message?.trim();
   return {
     kind: "error",
-    message: "The keeper turn failed before producing a reply.",
+    message: "Claude's turn failed before producing a reply.",
     ...(detail ? { detail } : {}),
     retryable: true,
   };

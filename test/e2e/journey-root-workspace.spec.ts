@@ -73,7 +73,7 @@ test("root Home carries the projects grid as a section under its own Chats", asy
   // Embedded ⇒ the grid drops its OWN page header (the duplicate "Projects"
   // `<h1>` + blurb) and its duplicate "New chat" — but keeps New Project, which
   // with the sidebar CTA gone is the only one in the app.
-  await expect(page.getByText(/Each project is a directory with its own keeper agent/i)).toHaveCount(
+  await expect(page.getByText(/Each project is a directory with persistent, resumable/i)).toHaveCount(
     0,
   );
   await expect(main.getByRole("button", { name: "New Project", exact: true })).toBeVisible();
@@ -151,7 +151,7 @@ test("'New chat' from the root Home opens a root chat composer (no 'Project not 
   await expect(page.getByText(/not found/i)).toHaveCount(0);
 
   // A real, usable composer (not an error box, not an "enable the root" card).
-  const composer = page.getByPlaceholder(/Message the keeper agent/i);
+  const composer = page.getByPlaceholder(/Message Claude/i);
   await expect(composer).toBeVisible();
   await expect(composer).toBeEditable();
   await expect(main.getByRole("button", { name: /^New Chat$/ })).toBeVisible();
@@ -181,7 +181,7 @@ test("'New chat' from the root Home opens a root chat composer (no 'Project not 
  */
 test("a root chat turn streams its reply back into the pane", async ({ page }) => {
   await page.goto("/chat");
-  const composer = page.getByPlaceholder(/Message the keeper agent/i);
+  const composer = page.getByPlaceholder(/Message Claude/i);
   await expect(composer).toBeVisible();
 
   await composer.fill("hello from the root workspace");
@@ -346,7 +346,7 @@ test("an unread root chat puts a count on the sidebar's Home link, and opening i
 
   // A real root chat with a real completed turn.
   await page.goto("/chat");
-  await page.getByPlaceholder(/Message the keeper agent/i).fill("root badge please");
+  await page.getByPlaceholder(/Message Claude/i).fill("root badge please");
   await page.getByRole("button", { name: /^Send$/ }).click();
   // Match the fake keeper's reply loosely: with preload context on, the echo it
   // acknowledges is the injected `<project-context>` block, not the raw message.
@@ -394,7 +394,7 @@ test("the Home badge is the same component as a project row's, and projects keep
   // One root chat + one project chat, both flagged unread, so the two badges are
   // on screen together and can be compared directly.
   await page.goto("/chat");
-  await page.getByPlaceholder(/Message the keeper agent/i).fill("root pill");
+  await page.getByPlaceholder(/Message Claude/i).fill("root pill");
   await page.getByRole("button", { name: /^Send$/ }).click();
   await expect(page.getByText(/^Acknowledged:/).first()).toBeVisible({ timeout: 15_000 });
   await expect(page).toHaveURL(/\/chat\/[a-z0-9-]+$/, { timeout: 15_000 });
@@ -403,7 +403,7 @@ test("the Home badge is the same component as a project row's, and projects keep
   const name = uniq("RW Pill");
   const slug = await createProjectViaUI(page, { name, area: "Homelab" });
   await page.goto(`/projects/${slug}/chat`);
-  await page.getByPlaceholder(/Message the keeper agent/i).fill("project pill");
+  await page.getByPlaceholder(/Message Claude/i).fill("project pill");
   await page.getByRole("button", { name: /^Send$/ }).click();
   await expect(page.getByText(/^Acknowledged:/).first()).toBeVisible({ timeout: 15_000 });
   await page.waitForURL(new RegExp(`/projects/${slug}/chat/[a-z0-9-]+$`), { timeout: 15_000 });

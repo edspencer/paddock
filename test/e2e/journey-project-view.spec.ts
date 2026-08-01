@@ -33,7 +33,7 @@ test("Chat and Files tabs switch via the URL; deep-links highlight the right tab
   // Switch to Chat via the tab; URL updates and the composer shows.
   await page.getByRole("button", { name: /^Chat$/ }).click();
   await expect(page).toHaveURL(new RegExp(`/projects/${slug}/chat`));
-  await expect(page.getByPlaceholder(/Message the keeper agent/i)).toBeVisible();
+  await expect(page.getByPlaceholder(/Message Claude/i)).toBeVisible();
 
   // The Changes tab is absent on a non-git server.
   await expect(page.getByRole("button", { name: /^Changes/ })).toHaveCount(0);

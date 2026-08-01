@@ -40,7 +40,7 @@ test("preload checkbox: disabled with no overview, enabled + default-on once OVE
   // <project-context> block (the seeded OVERVIEW.md), so the fake echoes the
   // whole augmented prompt. Assert the streamed reply contains BOTH the injected
   // overview marker and the user's message tail — proving preload reached the agent.
-  const composer = page.getByPlaceholder(/Message the keeper agent/i);
+  const composer = page.getByPlaceholder(/Message Claude/i);
   await composer.fill("kick off with context");
   await page.getByRole("button", { name: /^Send$/ }).click();
   await expect(page.getByText(/Seeded project state/i).first()).toBeVisible({ timeout: 30_000 });
