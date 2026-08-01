@@ -120,7 +120,7 @@ function RepoBackingSection({
     return (
       <Section
         title="Repository backing"
-        description="This project is backed by an external git repo — the keeper works in a checkout of it."
+        description="This project is backed by an external git repo — Claude works in a checkout of it."
       >
         <dl className="grid grid-cols-1 gap-y-3">
           <ReadOnly
@@ -181,7 +181,7 @@ function RepoBackingSection({
           </Hint>
         ) : (
           <Hint>
-            Paddock clones this repo into a nested checkout and points the keeper at it. The repo’s
+            Paddock clones this repo into a nested checkout and points Claude at it. The repo’s
             own <code>CLAUDE.md</code> and git tooling take over.
           </Hint>
         )}
@@ -208,7 +208,7 @@ function RepoBackingSection({
             <AlertIcon width={14} height={14} className="mt-0.5 shrink-0" />
             <span>
               Promote <span className="font-semibold">{project.name}</span> to repo-backed? This
-              clones <span className="break-all font-mono">{trimmed}</span>, moves the keeper into
+              clones <span className="break-all font-mono">{trimmed}</span>, moves Claude into
               that checkout, and stops curating this project’s <code>CLAUDE.md</code> (the repo’s own
               takes over). Your <span className="font-medium">chats and notes are kept</span>. This
               is <span className="font-medium">one-way</span>.
@@ -673,8 +673,8 @@ export function SettingsPane({
           </Section>
 
           <Section
-            title="Keeper agent"
-            description="How this project's keeper agent runs. Changes re-register the keeper."
+            title="Claude"
+            description="How Claude runs in this workspace. Changes take effect on the next turn."
           >
             <div className="grid grid-cols-2 gap-x-3 gap-y-4">
               {/* Each field keeps its Hint/Caution as a SIBLING of the <label>
@@ -719,11 +719,11 @@ export function SettingsPane({
                 </label>
                 {permissionMode === "bypassPermissions" ? (
                   <Caution>
-                    The keeper runs every tool without asking — it can edit files and run commands
+                    Claude runs every tool without asking — it can edit files and run commands
                     unprompted.
                   </Caution>
                 ) : (
-                  <Hint>How much the keeper asks before acting.</Hint>
+                  <Hint>How much Claude asks before acting.</Hint>
                 )}
               </div>
               <div className="block">
@@ -745,7 +745,7 @@ export function SettingsPane({
                     <span className="text-rose-600 dark:text-rose-400">Must be a whole number 1–1000.</span>
                   </Hint>
                 ) : (
-                  <Hint>Upper bound on agent turns in a single keeper run.</Hint>
+                  <Hint>Upper bound on agent turns in a single run.</Hint>
                 )}
               </div>
               <div className="block">
@@ -758,13 +758,13 @@ export function SettingsPane({
                     onChange={(e) => setDocker(e.target.checked)}
                   />
                   <span className="text-sm text-paddock-700 dark:text-paddock-200">
-                    Run the keeper in a Docker sandbox
+                    Run Claude in a Docker sandbox
                   </span>
                 </label>
                 {docker ? (
-                  <Caution>Requires a working Docker daemon on the box, or the keeper won’t start.</Caution>
+                  <Caution>Requires a working Docker daemon on the box, or Claude won’t start.</Caution>
                 ) : (
-                  <Hint>Isolate the keeper's tool calls in a container.</Hint>
+                  <Hint>Isolate Claude's tool calls in a container.</Hint>
                 )}
               </div>
               <div className="col-span-2 block">
@@ -994,7 +994,7 @@ export function SettingsPane({
 
           <Section
             title="Derived"
-            description="Read-only state the keeper and sweeps maintain."
+            description="Read-only state Claude and sweeps maintain."
           >
             <dl className="grid grid-cols-1 gap-y-3 sm:grid-cols-2">
               <ReadOnly

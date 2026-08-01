@@ -38,11 +38,11 @@ export function TriggerCapabilityBanner({
 }) {
   const tools = trigger.allowedTools ?? [];
   const toolLess = tools.length === 0;
-  // A tool-less SCHEDULE trigger runs as the keeper (full tools); a tool-less EVENT
+  // A tool-less SCHEDULE trigger runs as Claude (full tools); a tool-less EVENT
   // trigger is a deliberately tool-less curator (design §2.3 — the one asymmetry).
   const grantSummary = toolLess
     ? trigger.type === "schedule"
-      ? "runs as the keeper (full tools)"
+      ? "runs as Claude (full tools)"
       : "no tools — reasoning only"
     : `${tools.length} tool${tools.length === 1 ? "" : "s"} granted`;
   const Icon = trigger.type === "schedule" ? ClockIcon : BoltIcon;
@@ -82,7 +82,7 @@ export function TriggerCapabilityBanner({
           </div>
           <p className="mt-0.5 text-xs text-sky-800/90 dark:text-sky-200/80">
             Fired by <span className="font-medium">{whenLine(trigger)}</span> · {grantSummary}. A
-            reply you type here runs at this trigger's capability, not the keeper's.
+            reply you type here runs at this trigger's capability, not Claude's.
           </p>
 
           {/* Clickable for the EXACT tool list + the rest of the enforced config. */}
@@ -99,7 +99,7 @@ export function TriggerCapabilityBanner({
                 {toolLess ? (
                   <p className="text-sky-800/80 dark:text-sky-200/70">
                     {trigger.type === "schedule"
-                      ? "None declared — this schedule runs as the keeper with its full toolset."
+                      ? "None declared — this schedule runs as Claude with its full toolset."
                       : "None — this trigger can only read its prompt and respond (no file, shell, or MCP access)."}
                   </p>
                 ) : (

@@ -147,8 +147,8 @@ export function ProjectsGrid({
                 </p>
               ) : (
                 <p className="mt-1.5 max-w-xl text-sm text-paddock-500">
-                  Each project is a directory with its own keeper agent and persistent,
-                  resumable Claude Code sessions — your work, organized and always running.
+                  Each project is a directory with persistent, resumable Claude Code
+                  sessions — your work, organized and always running.
                 </p>
               )}
             </div>
@@ -478,8 +478,8 @@ function EmptyState({ onCreate, onChat }: { onCreate: () => void; onChat: () => 
       </div>
       <h2 className="text-lg font-semibold">Create your first project</h2>
       <p className="mx-auto mt-2 max-w-sm text-sm text-paddock-500">
-        A project gives your work a home — a directory, a dedicated keeper agent, and
-        chat sessions that persist and resume. Start one, then chat your way through it.
+        A project gives your work a home — a directory and chat sessions that persist
+        and resume. Start one, then chat your way through it.
       </p>
       <div className="mt-6 flex items-center justify-center gap-2">
         <button className="btn-primary" onClick={onCreate}>

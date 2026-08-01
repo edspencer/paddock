@@ -30,12 +30,12 @@ async function createProject(page: import("@playwright/test").Page, name: string
 test("create a project (pick an area) and land in it", async ({ page }) => {
   await createProject(page, "E2E Reactor", "Homelab");
   // The project's chat composer is present.
-  await expect(page.getByPlaceholder(/Message the keeper agent/i)).toBeVisible();
+  await expect(page.getByPlaceholder(/Message Claude/i)).toBeVisible();
 });
 
 test("send a chat, watch it stream, reload and see history", async ({ page }) => {
   await createProject(page, "E2E Streamer");
-  const composer = page.getByPlaceholder(/Message the keeper agent/i);
+  const composer = page.getByPlaceholder(/Message Claude/i);
   await composer.fill("ping from e2e");
   await page.getByRole("button", { name: /^Send$/ }).click();
 
