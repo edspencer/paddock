@@ -82,6 +82,7 @@ import {
 import {
   buildKeeperConfig,
   buildSweeperConfig,
+  sweeperWorkingDir,
   buildTriggerConfig,
   ensureConfigFile as writeBootConfigFile,
 } from "./herdctl-agent-config.js";
@@ -337,6 +338,7 @@ export class HerdctlService {
       // out of the external checkout's working tree (issue #187). For a notebook
       // project workingDir === dir, so this is the classic behavior.
       await ensureProjectChats(project.workingDir, project.dir);
+      await this.ensureSweeperHome(project);
       await this.fleet.addAgent(this.keeperAgentConfig(project), { replace: true });
       await this.fleet.addAgent(this.sweeperAgentConfig(project), { replace: true });
       // Register each EVENT trigger as its own agent `trigger-<slug>-<name>` (Epic T /
@@ -412,6 +414,7 @@ export class HerdctlService {
   async ensureProjectAgent(project: Project): Promise<void> {
     if (!this.fleet) return;
     await ensureProjectChats(project.workingDir, project.dir);
+    await this.ensureSweeperHome(project);
     await this.fleet.addAgent(this.keeperAgentConfig(project), { replace: true });
     await this.fleet.addAgent(this.sweeperAgentConfig(project), { replace: true });
     // Re-register the project's EVENT-trigger agents (Epic T / T1) from the live
@@ -1221,7 +1224,20 @@ export class HerdctlService {
   }
 
   private sweeperAgentConfig(project: Project): Record<string, unknown> & { name: string } {
-    return buildSweeperConfig(project);
+    return buildSweeperConfig(this.cfg, project);
+  }
+
+  /**
+   * Create the sweeper's own working directory (+ symlink its encoded transcript
+   * path at a `.chats/` inside it), so the tool-less curator never shares a CLI
+   * session directory with the project's keeper (issue #548). Reuses
+   * `ensureProjectChats` with the sweeper dir as both cwd and chats host, which
+   * also mkdir's the dir itself. Never throws — the helper swallows its own
+   * errors, and a missing symlink only means Claude keeps its default location.
+   */
+  private async ensureSweeperHome(project: Project): Promise<void> {
+    const dir = sweeperWorkingDir(this.cfg, project.slug);
+    await ensureProjectChats(dir, dir);
   }
 
   private triggerAgentConfig(
