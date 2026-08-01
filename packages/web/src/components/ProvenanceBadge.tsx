@@ -1,5 +1,5 @@
 import type { ChatProvenance } from "../lib/types";
-import { BoltIcon, BranchIcon, ClockIcon } from "./icons";
+import { BoltIcon, BranchIcon, ClockIcon, TerminalIcon } from "./icons";
 
 /**
  * A small, subtle badge marking HOW a chat was created (issue #267), reading
@@ -12,6 +12,12 @@ import { BoltIcon, BranchIcon, ClockIcon } from "./icons";
  *  - `hook`      — an event hook fired it, e.g. an `onArchive` cleanup
  *                  (lightning-bolt icon); the hook name rides in the tooltip
  *                  when known (Epic G / G3, GG-5).
+ *  - `adopted`   — imported from the user's own Claude Code CLI history
+ *                  (terminal icon), #588. The odd one out: it is not a "ran
+ *                  without me" case at all — the human ran it, just somewhere
+ *                  else. It is badged because imported history is otherwise
+ *                  indistinguishable from a chat started here, and "was this
+ *                  mine or paddock's?" cannot be answered from the transcript.
  *
  * `human` (the default — a chat you started yourself) renders nothing, so the
  * list stays quiet and only the unattended runs stand out. Following DD-6, the
@@ -32,7 +38,27 @@ export function ProvenanceBadge({
   className?: string;
 }) {
   const origin = provenance?.origin;
-  if (origin !== "scheduled" && origin !== "spawned" && origin !== "hook") return null;
+  if (
+    origin !== "scheduled" &&
+    origin !== "spawned" &&
+    origin !== "hook" &&
+    origin !== "adopted"
+  ) {
+    return null;
+  }
+
+  if (origin === "adopted") {
+    return (
+      <span
+        data-provenance="adopted"
+        aria-label="Imported chat"
+        title="Imported — this chat came from your Claude Code CLI history"
+        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded text-emerald-600 dark:text-emerald-400 ${className}`}
+      >
+        <TerminalIcon width={12} height={12} />
+      </span>
+    );
+  }
 
   if (origin === "hook") {
     const label = hookName ? `Hook — the “${hookName}” event hook fired this chat` : "Hook — an event hook fired this chat";

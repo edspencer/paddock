@@ -69,6 +69,8 @@ const apiFns = {
   projectChatMessages: vi.fn(),
   markChatSeen: vi.fn(),
   promoteChat: vi.fn(),
+  getAdoptableChats: vi.fn(),
+  adoptChats: vi.fn(),
 };
 vi.mock("../lib/api", async () => {
   const actual = await vi.importActual<typeof import("../lib/api")>("../lib/api");
@@ -84,6 +86,8 @@ vi.mock("../lib/api", async () => {
       projectChatMessages: (...a: unknown[]) => apiFns.projectChatMessages(...a),
       markChatSeen: (...a: unknown[]) => apiFns.markChatSeen(...a),
       promoteChat: (...a: unknown[]) => apiFns.promoteChat(...a),
+      getAdoptableChats: (...a: unknown[]) => apiFns.getAdoptableChats(...a),
+      adoptChats: (...a: unknown[]) => apiFns.adoptChats(...a),
     },
   };
 });
@@ -166,6 +170,10 @@ beforeEach(() => {
   apiFns.chatUsage.mockResolvedValue({});
   apiFns.markChatSeen.mockResolvedValue(undefined);
   apiFns.projectChatMessages.mockResolvedValue([]);
+  // #588: nothing to import by default, so the sidebar's import row is absent
+  // from every test that isn't about it.
+  apiFns.getAdoptableChats.mockResolvedValue({ count: 0, sources: [] });
+  apiFns.adoptChats.mockResolvedValue({ adopted: [], skipped: [] });
   apiFns.getProjectDetail.mockResolvedValue(detail(rootWorkspace()));
   resetLastSeenForTests();
   localStorage.clear();

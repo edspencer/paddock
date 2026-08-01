@@ -4,6 +4,8 @@
 // which is correct both behind the dev proxy and in production where the server
 // serves the built SPA).
 import {
+  type AdoptChatsResult,
+  type AdoptableChats,
   type AttachmentRef,
   type AttachmentsConfig,
   type Chat,
@@ -539,6 +541,40 @@ export const api = {
       `${apiBase(slug)}/chats`,
     );
     return chats;
+  },
+
+  /**
+   * How many native Claude Code CLI chats this workspace could import right now
+   * (#588) — the sessions the user ran in a terminal against the same working
+   * directory, which paddock cannot see until they are adopted.
+   *
+   * Cheap enough to call after every import, and that is the point: the button it
+   * drives is gated on a LIVE count rather than a dismissed flag, so it vanishes
+   * only when there is genuinely nothing left and reappears by itself once the
+   * user accrues more terminal history.
+   */
+  async getAdoptableChats(slug: string): Promise<AdoptableChats> {
+    return req<AdoptableChats>(`${apiBase(slug)}/adoptable-chats`);
+  },
+
+  /**
+   * Import the workspace's adoptable native CLI chats (#588). Copies the source
+   * transcripts in — the user's own `~/.claude` is never mutated — so the imported
+   * chats become real, resumable chats in this workspace.
+   *
+   * With no `sourceCwd` this takes EVERYTHING on offer, which is what the one-click
+   * sidebar button sends; passing one narrows the import to a single source
+   * directory (the CLI's `--from`). A partly-skipped import still resolves: the
+   * caller reports `adopted` and `skipped` rather than treating it as a failure.
+   */
+  async adoptChats(slug: string, opts?: { sourceCwd?: string }): Promise<AdoptChatsResult> {
+    return req<AdoptChatsResult>(`${apiBase(slug)}/adopt-chats`, {
+      method: "POST",
+      // `{}` rather than no body at all: the contract accepts an empty object or
+      // null, and every other POST here sends JSON, so the content-type header
+      // `req` always sets stays honest.
+      body: JSON.stringify(opts ?? {}),
+    });
   },
 
   /**

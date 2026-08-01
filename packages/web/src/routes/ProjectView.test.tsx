@@ -49,6 +49,8 @@ const apiFns = {
   markChatUnread: vi.fn(),
   deleteProjectChats: vi.fn(),
   detachProjectChat: vi.fn(),
+  getAdoptableChats: vi.fn(),
+  adoptChats: vi.fn(),
 };
 vi.mock("../lib/api", async () => {
   const actual = await vi.importActual<typeof import("../lib/api")>("../lib/api");
@@ -78,6 +80,8 @@ vi.mock("../lib/api", async () => {
       markChatUnread: (...a: unknown[]) => apiFns.markChatUnread(...a),
       deleteProjectChats: (...a: unknown[]) => apiFns.deleteProjectChats(...a),
       detachProjectChat: (...a: unknown[]) => apiFns.detachProjectChat(...a),
+      getAdoptableChats: (...a: unknown[]) => apiFns.getAdoptableChats(...a),
+      adoptChats: (...a: unknown[]) => apiFns.adoptChats(...a),
     },
   };
 });
@@ -153,6 +157,10 @@ beforeEach(() => {
   apiFns.markChatSeen.mockResolvedValue(undefined);
   apiFns.chatUsage.mockResolvedValue({});
   apiFns.projectChatMessages.mockResolvedValue([]);
+  // #588: nothing to import unless a test says otherwise, so the sidebar's
+  // "Import N native chats" row stays absent from every unrelated assertion.
+  apiFns.getAdoptableChats.mockResolvedValue({ count: 0, sources: [] });
+  apiFns.adoptChats.mockResolvedValue({ adopted: [], skipped: [] });
   apiFns.getModels.mockResolvedValue(
     makeModelsResponse({
       models: [{ id: "claude-opus-4-8", label: "Opus 4.8", contextLimit: 1_000_000 }],

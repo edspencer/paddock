@@ -244,6 +244,19 @@ export const UploadIcon = (p: IconProps) => (
   </svg>
 );
 
+/**
+ * A terminal prompt (`> _`), #588. Marks the things that came from the user's own
+ * command line rather than from paddock: the "Import N native chats" action and
+ * the `adopted` provenance badge that action produces. Deliberately the SAME icon
+ * in both places, so the badge on an imported row reads as the visible outcome of
+ * the button rather than as an unrelated new marker.
+ */
+export const TerminalIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M4 17l6-5-6-5M12 19h8" />
+  </svg>
+);
+
 export const GithubIcon = (p: IconProps) => (
   <svg {...base(p)}>
     <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.9a3.4 3.4 0 0 0-1-2.6c3-.3 6.2-1.5 6.2-6.6a5.2 5.2 0 0 0-1.4-3.6 4.8 4.8 0 0 0-.1-3.6s-1.1-.3-3.7 1.4a12.6 12.6 0 0 0-6.6 0C6.5 1.3 5.4 1.6 5.4 1.6a4.8 4.8 0 0 0-.1 3.6 5.2 5.2 0 0 0-1.4 3.6c0 5.1 3.2 6.3 6.2 6.6a3.4 3.4 0 0 0-1 2.6V22" />
