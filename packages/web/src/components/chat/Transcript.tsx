@@ -514,6 +514,9 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
   // running indicator + nested-step polling while the sub-agent works (incl. a
   // background sub-agent whose launch-ack tool_call already completed).
   const chatLive = useContext(SubagentLiveContext);
+  // Live per-sub-agent steps, polled once by the chat (see useSubagentActivity).
+  // Drives both this card's running subtitle and its nested-step body.
+  const subagentActivity = useContext(SubagentActivityContext);
   // In-flight tool (#175): rendered before it completes — no output/duration
   // yet, just a "running…" affordance so a slow tool/subagent is visibly alive.
   const pending = Boolean(tool.pending);
@@ -557,6 +560,20 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
   // the (growing) transcript live — showing a "waiting…" placeholder until the
   // sidecar appears. Non-sub-agent tools are unaffected.
   const expandable = Boolean(isSubagent && tool.hasSubagent && tool.toolUseId);
+  // WHILE a sub-agent works, its header reports what it is doing RIGHT NOW rather
+  // than the static description it was launched with — the same latest-step the
+  // running-sub-agents bar shows, read from the same shared poll. A collapsed card
+  // is the common case, so this is where the progress is actually wanted.
+  //
+  // Falls back to the description whenever there is no step to show: before the
+  // first poll returns, and for a nested sub-agent (only top-level ones are
+  // polled). The description returns as the subtitle the moment the sub-agent
+  // finishes — `subagentRunning` goes false — and stays reachable on hover
+  // meanwhile, so replacing it costs nothing.
+  const liveStep =
+    subagentRunning && tool.toolUseId
+      ? subagentActivity?.get(tool.toolUseId)?.latestStep
+      : undefined;
   // Sub-agent header reads as "<type> — <description>"; the detail-bearing tools show
   // a friendlier subtitle; others keep the classic "<toolName> <inputSummary>".
   const label = isSubagent
@@ -565,7 +582,7 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
       ? mcp.display
       : tool.toolName;
   const subtitle = isSubagent
-    ? tool.description
+    ? (liveStep ?? tool.description)
     : paddockManage
       ? paddockManageSummary(paddockManage)
       : isEdit
@@ -576,7 +593,14 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
             ? taskCreate.subject
             : tool.inputSummary;
   // Full path/text on hover — fixes the long-path header cutoff for Read (#237).
-  const subtitleTitle = readInfo?.filePath ?? taskCreate?.description ?? subtitle ?? undefined;
+  // While a live step has taken the subtitle's place, hover surfaces the sub-agent's
+  // description instead, so what it was ASKED to do is never actually lost.
+  const subtitleTitle =
+    readInfo?.filePath ??
+    taskCreate?.description ??
+    (liveStep ? tool.description : undefined) ??
+    subtitle ??
+    undefined;
   return (
     <div className="flex justify-start">
       <div
@@ -702,7 +726,13 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
           ) : (
             subtitle && (
               <span
-                className="min-w-0 truncate font-mono text-paddock-500 dark:text-paddock-400"
+                className={`min-w-0 truncate font-mono ${
+                  // A live step is activity, not a title — tint it so the header
+                  // doesn't read as though the sub-agent were renamed mid-run.
+                  liveStep
+                    ? "text-accent/90"
+                    : "text-paddock-500 dark:text-paddock-400"
+                }`}
                 title={subtitleTitle}
               >
                 {subtitle}
