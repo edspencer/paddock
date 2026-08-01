@@ -876,7 +876,36 @@ export interface HistoryMessage {
 export interface ProjectDetail {
   project: Project;
   changelog: string;
+  /**
+   * Raw OVERVIEW.md text — the sweep-curated current-state notes, rendered on
+   * Home as the sibling of the changelog (#599). `""` when the workspace has no
+   * overview yet, same as `changelog`. Optional on the wire so a client running
+   * against an older server degrades to "no overview" rather than crashing.
+   */
+  overview?: string;
   chats: Chat[];
+}
+
+/**
+ * One row of the Home attention feed (#599): a chat, plus which workspace it
+ * belongs to. The workspace fields are what let the ROOT's fleet-wide list stay
+ * attributable — the same chat name can exist in three projects, and "which one
+ * is this?" has to be answerable from the row itself.
+ */
+export interface AttentionChat extends Chat {
+  projectSlug: string;
+  projectName: string;
+}
+
+/**
+ * `GET <base>/chats/attention` — the chats in a workspace's SUBTREE that are
+ * running or unread. On the root mount the subtree is the whole fleet; on a
+ * project mount it is that project alone. A chat appears in at most one list: a
+ * live turn hasn't landed a reply yet, so `running` wins.
+ */
+export interface AttentionChats {
+  running: AttentionChat[];
+  unread: AttentionChat[];
 }
 
 // --- Git backing store (GET /api/git, .../git/status, GitHub device flow) ---

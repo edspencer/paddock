@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, within, act } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within, act } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { AppShell } from "./AppShell";
 import { makeProject } from "../test/factories";
@@ -26,6 +26,21 @@ vi.mock("../lib/projects-context", () => ({
     remove: vi.fn(),
   }),
 }));
+
+// The sidebar hosts the New Project modal now (#599), and that modal POSTs.
+// Stub the one call it makes so the flow is drivable offline; everything else in
+// the module (ApiError, apiBase, …) stays real.
+const createProject = vi.fn();
+vi.mock("../lib/api", async () => {
+  const actual = await vi.importActual<typeof import("../lib/api")>("../lib/api");
+  return {
+    ...actual,
+    api: {
+      ...actual.api,
+      createProject: (...a: unknown[]) => createProject(...a),
+    },
+  };
+});
 
 // The sidebar badges (#161) subscribe to the WS active-session set for the
 // in-flight count. Mock the client so a test can drive `onActiveInfos`
@@ -71,6 +86,7 @@ beforeEach(() => {
   mockRoot = null;
   mockLoading = false;
   upsert.mockReset();
+  createProject.mockReset();
   activeInfos = new Map();
   activeInfoCbs.clear();
   localStorage.clear();
@@ -78,34 +94,44 @@ beforeEach(() => {
 });
 
 describe("AppShell: sidebar shell", () => {
-  it("renders the brand, the Home link, and the project count", () => {
+  it("renders the brand and the Home link", () => {
     mockProjects = [makeProject({ slug: "a", group: "homelab" }), makeProject({ slug: "b", group: "homelab" })];
     renderShell();
     // "Paddock" appears twice: the mobile top bar + the sidebar (both render in
     // jsdom, which ignores the responsive `lg:hidden` media query).
     expect(screen.getAllByText("Paddock").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByRole("link", { name: "Home" })).toHaveAttribute("href", "/");
-    // Project count next to the "Projects" label.
-    const nav = screen.getByText("Projects").closest("div")!;
-    expect(within(nav).getByText("2")).toBeInTheDocument();
   });
 
-  it("has no New Project / New root chat CTAs — both live on root Home now", () => {
-    // Ported, not weakened: the assertions that these two actions EXIST moved
-    // to their new home. "New Project" is asserted on the embedded grid
-    // (ProjectsGrid.test.tsx, ProjectView.root.test.tsx) and starting a root
-    // chat via that grid's "New chat". What belongs HERE is the other half —
-    // that the sidebar no longer carries a second copy of either.
+  it("shows NO project count beside the Projects header (#599)", () => {
+    // The count answered a question nobody asks — the list is directly beneath
+    // it — and the slot is now the New Project button's. Asserted on the header
+    // row specifically: a stray "2" elsewhere in the sidebar (a badge) is fine.
+    mockProjects = [makeProject({ slug: "a", group: "homelab" }), makeProject({ slug: "b", group: "homelab" })];
+    renderShell();
+    const header = screen.getByText("Projects").closest("div")!;
+    expect(within(header).queryByText("2")).not.toBeInTheDocument();
+    expect(within(header).queryByText(/^\d+$/)).not.toBeInTheDocument();
+  });
+
+  it("has no New root chat CTA — that one lives on root Home", () => {
+    // Ported, not weakened: starting a root chat is Home's "New chat" button.
+    // What belongs HERE is the other half — the sidebar carries no second copy.
+    // (New Project is the opposite case: #599 moved it INTO this sidebar, and
+    // it is asserted below.)
     mockProjects = [makeProject({ slug: "a" })];
     renderShell();
-    expect(screen.queryByRole("button", { name: /New Project/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /New root chat/i })).not.toBeInTheDocument();
   });
 
-  it("points the Projects section label at root Home, where the list lives", () => {
+  it("labels the Projects section with a plain span, not a link (#599)", () => {
+    // It used to point at `/`, where root Home rendered the projects grid. That
+    // grid is gone, so the link would now lead somewhere that doesn't list
+    // projects — the list it labels is immediately below it instead.
     mockProjects = [makeProject({ slug: "a" })];
     renderShell();
-    expect(screen.getByRole("link", { name: "Projects" })).toHaveAttribute("href", "/");
+    expect(screen.queryByRole("link", { name: "Projects" })).not.toBeInTheDocument();
+    expect(screen.getByText("Projects").tagName).toBe("SPAN");
   });
 
   it("links to instance Config at /config, not to /settings", () => {
@@ -423,7 +449,7 @@ describe("AppShell: the root workspace's Home badge (#553)", () => {
     expect(within(alpha).getByLabelText(/1 chat in flight/i)).toHaveTextContent("1");
   });
 
-  it("does not put the root workspace into the sidebar project list or its count", () => {
+  it("does not put the root workspace into the sidebar project list", () => {
     mockRoot = makeProject({
       slug: "",
       name: "Instance Root",
@@ -431,11 +457,55 @@ describe("AppShell: the root workspace's Home badge (#553)", () => {
     });
     mockProjects = [makeProject({ slug: "a", name: "Alpha", group: "homelab" })];
     renderShell("/projects/alpha/chat");
-    // The badge is on Home; the root is still not a row in the list, and the
-    // "PROJECTS n" count still counts children only.
+    // The badge is on Home; the root is still not a row in the list below it.
     expect(screen.queryByRole("link", { name: /Instance Root/ })).not.toBeInTheDocument();
-    const count = screen.getByRole("link", { name: "Projects" }).parentElement?.lastElementChild;
-    expect(count).toHaveTextContent("1");
+    expect(screen.getByRole("link", { name: /Alpha/ })).toBeInTheDocument();
+  });
+});
+
+/**
+ * New Project moved into the sidebar (#599). It used to live ONLY inside the
+ * projects grid on root Home — the section that issue deleted — so without this
+ * button there would be no way to create a project at all. That makes these
+ * assertions load-bearing rather than cosmetic.
+ */
+describe("AppShell: New Project (#599)", () => {
+  const openModal = () => fireEvent.click(screen.getByRole("button", { name: "New Project" }));
+
+  it("puts a New Project button in the Projects header", () => {
+    mockProjects = [makeProject({ slug: "a" })];
+    renderShell();
+    const btn = screen.getByRole("button", { name: "New Project" });
+    expect(btn).toBeInTheDocument();
+    // In the header row, where the count used to be — not floating elsewhere.
+    expect(screen.getByText("Projects").closest("div")).toContainElement(btn);
+  });
+
+  it("opens the New Project modal, closed until asked", () => {
+    renderShell();
+    expect(screen.queryByRole("heading", { name: "New project" })).not.toBeInTheDocument();
+    openModal();
+    expect(screen.getByRole("heading", { name: "New project" })).toBeInTheDocument();
+  });
+
+  it("on create, folds the project into the sidebar context and lands in its chat", async () => {
+    createProject.mockResolvedValue(makeProject({ slug: "kiln", name: "Kiln" }));
+    renderShell();
+    openModal();
+    fireEvent.change(screen.getByPlaceholderText(/Garage Water Heater/), {
+      target: { value: "Kiln" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Create project/i }));
+
+    // THE REGRESSION GUARD: there is no push channel for the project list, so a
+    // navigate alone would leave the new project missing from the sidebar until
+    // a reload. The context has to be told locally.
+    await waitFor(() =>
+      expect(upsert).toHaveBeenCalledWith(expect.objectContaining({ slug: "kiln" })),
+    );
+    // …and the user lands in the new project rather than staring at the modal.
+    expect(await screen.findByText("PROJECT")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "New project" })).not.toBeInTheDocument();
   });
 });
 

@@ -1,5 +1,5 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useProjects } from "../lib/projects-context";
 import { useTheme } from "../lib/theme";
 import type { Project } from "../lib/types";
@@ -9,10 +9,11 @@ import { chatClient } from "../lib/ws";
 import { LAST_SEEN_EVENT, readLastSeen, setServerLastSeen } from "../lib/lastSeen";
 import { backfillLegacyLastSeen } from "../lib/lastSeenBackfill";
 import { TagPill } from "./TagPill";
-import { CogIcon, FolderIcon, HomeIcon, LinkIcon, MenuIcon, MoonIcon, SunIcon, XIcon } from "./icons";
+import { CogIcon, FolderIcon, HomeIcon, LinkIcon, MenuIcon, MoonIcon, PlusIcon, SunIcon, XIcon } from "./icons";
+import { NewProjectModal } from "./NewProjectModal";
 import { PaneResizer, usePaneWidth } from "./PaneResizer";
 import { SIDENAV_PANE } from "../lib/paneWidth";
-import { gridUrl, ROOT_KEY } from "../routes/ProjectView/urls";
+import { ROOT_KEY } from "../routes/ProjectView/urls";
 
 /**
  * Context handed down to route elements via <Outlet> (#372). A route that hosts
@@ -131,9 +132,15 @@ function useProjectBadges(workspaces: Project[]): Map<string, ProjectBadge> {
 }
 
 export function AppShell() {
-  const { projects, rootWorkspace, loading } = useProjects();
+  const { projects, rootWorkspace, loading, upsert } = useProjects();
   const { dark, toggle: toggleTheme } = useTheme();
   const [navOpen, setNavOpen] = useState(false);
+  // The New Project modal now hangs off the sidebar (#599). It used to live in
+  // the projects grid on root Home, which was the app's ONLY way to make a
+  // project; deleting that section without moving this would have removed the
+  // ability entirely.
+  const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const navigate = useNavigate();
   const location = useLocation();
   const brand = getBrand();
   const openapi = getOpenApi();
@@ -282,15 +289,27 @@ export function AppShell() {
           </NavLink>
         </div>
 
-        <div className="mt-5 mb-1 flex items-center justify-between pr-4">
-          {/* The list itself lives on root Home now, so the section label points
-              at `/` — the same place `gridUrl()` resolves to. */}
-          <NavLink to={gridUrl()} className="section-label hover:text-accent">
-            Projects
-          </NavLink>
-          {projects.length > 0 && (
-            <span className="text-[11px] text-paddock-400">{projects.length}</span>
-          )}
+        <div className="mt-5 mb-1 flex items-center justify-between pr-3">
+          {/* A plain label, not a link. It used to point at `/`, where root
+              Home rendered the projects grid — #599 replaced that grid with the
+              running/unread feeds, so the link would now lead somewhere that
+              doesn't list projects. The list it labels is directly below it. */}
+          <span className="section-label">Projects</span>
+          {/* Where the project COUNT used to sit (#599). The count answered a
+              question nobody asks — the list is right underneath — while the
+              one genuinely useful action here had no home at all: New Project
+              lived only inside root Home's projects grid, which #599 deleted.
+              Same `+` affordance as the chat sidebar's New chat, in the same
+              place relative to its list. */}
+          <button
+            type="button"
+            onClick={() => setNewProjectOpen(true)}
+            aria-label="New Project"
+            title="New Project"
+            className="btn-subtle -mr-1 px-1.5 py-1 text-paddock-400 hover:text-accent"
+          >
+            <PlusIcon width={14} height={14} />
+          </button>
         </div>
 
         <nav className="flex-1 overflow-y-auto px-2 pb-4">
@@ -373,6 +392,22 @@ export function AppShell() {
           <Outlet context={{ openNav: () => setNavOpen(true) } satisfies ShellOutletContext} />
         </Suspense>
       </main>
+
+      {/* Mounted at the SHELL, not in a route, because the sidebar that opens it
+          outlives every route. `onCreated` mirrors what the projects grid did:
+          fold the new project into the shared context so the sidebar shows it
+          immediately, then land the user in a chat — a brand-new project's Home
+          has nothing running and nothing unread, so there is nothing to look at
+          there yet. */}
+      <NewProjectModal
+        open={newProjectOpen}
+        onClose={() => setNewProjectOpen(false)}
+        onCreated={(p: Project) => {
+          upsert(p);
+          setNewProjectOpen(false);
+          navigate(`/projects/${p.slug}/chat`);
+        }}
+      />
     </div>
   );
 }
