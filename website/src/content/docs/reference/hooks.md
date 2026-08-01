@@ -94,7 +94,7 @@ enable/disable verb; flip `enabled`). A brand-new trigger defaults to
 | `type` | `event` for a hook. |
 | `event` | The lifecycle event, e.g. `onArchive`. |
 | `prompt` **or** `prompt_file` | The turn's prompt inline, or a `.md` under `.paddock/triggers/`. |
-| `tools` | The capability allow-list. Accepts a JSON array or a comma/newline-separated string (the CLI-runtime MCP transport can flatten arrays); empty ⇒ tool-less. |
+| `tools` | The capability allow-list. Accepts a JSON array or a comma/newline-separated string (the CLI-runtime MCP transport, which a hook fire uses, can flatten arrays); empty ⇒ tool-less. |
 | `permission_mode` | `default` \| `acceptEdits` \| `bypassPermissions` \| `plan`. |
 | `model` | Model override. |
 | `max_turns` | Turn bound (default 30). |

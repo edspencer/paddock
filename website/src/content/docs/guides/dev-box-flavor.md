@@ -166,8 +166,8 @@ docker run -d --name paddock -p 127.0.0.1:4000:4000 \
   so `~/.claude/projects` (session transcripts) survives restarts, which is what
   makes resume work. Use a named volume or a real disk you back up.
 - **Claude auth** comes in at run time, never baked into the image: set
-  `CLAUDE_CODE_OAUTH_TOKEN` for Claude Max/Pro (the `cli` runtime), or
-  `ANTHROPIC_API_KEY` to use the API (the `sdk` runtime). Get an OAuth token with
+  `CLAUDE_CODE_OAUTH_TOKEN` for Claude Max/Pro, or `ANTHROPIC_API_KEY` to use the
+  API (API pricing) — either works on either runtime. Get an OAuth token with
   `claude setup-token` on a machine where you're already logged in.
 - **`PADDOCK_DANGEROUSLY_ALLOW_OPEN=1`** is required for *any* containerized
   Paddock, base or devbox: inside a container the app always binds `0.0.0.0`

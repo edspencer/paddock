@@ -324,13 +324,15 @@ HushPod's whisper config so both can share a backend. See [DEV.md](../DEV.md#voi
 
 | Variable | Default | Required | Purpose |
 |----------|---------|----------|---------|
-| `CLAUDE_CODE_OAUTH_TOKEN` | — | conditional | Claude **Max** auth for the CLI runtime (the default). Read from the server's environment and passed through to the spawned `claude` CLI; never written to config. Provide this **or** `ANTHROPIC_API_KEY`. |
-| `ANTHROPIC_API_KEY` | — | conditional | Claude auth for the **SDK** runtime (API pricing). Alternative to `CLAUDE_CODE_OAUTH_TOKEN`. |
+| `CLAUDE_CODE_OAUTH_TOKEN` | — | conditional | Claude **Max plan** auth. Read from the server's environment and passed through to the `claude` process the runtime spawns; never written to config. Provide this **or** `ANTHROPIC_API_KEY`. |
+| `ANTHROPIC_API_KEY` | — | conditional | Claude **API-key** auth (API pricing). Alternative to `CLAUDE_CODE_OAUTH_TOKEN`. |
 | `LOG_LEVEL` | `info` | no | Fastify/pino log level (`fatal`…`trace`). |
 
-> Claude credentials are consumed by the runtime (the `claude` CLI subprocess or
-> the SDK), not read directly by Paddock server code — but the server process must
-> have one in its environment for keeper turns to run.
+> Which auth you use is **independent of the runtime** — either credential works
+> on both the SDK runtime (chats) and the CLI runtime (the sweeper, triggers,
+> `driveMode: batch`). Credentials are consumed by the runtime, not read directly
+> by Paddock server code — but the server process must have one in its environment
+> for keeper turns to run.
 
 ## Web build / dev-proxy variables
 

@@ -48,9 +48,11 @@ import {
  * project's persisted `model`, else the keeper default (Opus).
  *
  * System prompt: by default (`nativeSystemPrompt`, issue #176) we set NO
- * `system_prompt`, so herdctl's CLI runtime passes no `--system-prompt` and
- * Claude Code's full default coding prompt applies together with the project's
- * CLAUDE.md hierarchy — the canonical instance-wide `<projectsRoot>/CLAUDE.md`
+ * `system_prompt`, so Claude Code's full default coding prompt applies — the SDK
+ * runtime falls back to the `claude_code` preset and the CLI runtime passes no
+ * `--system-prompt`, which amount to the same thing. It applies together with
+ * the project's CLAUDE.md hierarchy — the canonical instance-wide
+ * `<projectsRoot>/CLAUDE.md`
  * (auto-loaded via the cwd walk-up, since a project dir is a child of the
  * projects root) plus a per-project CLAUDE.md. This is its own decision (issue
  * #176): an instance with no CLAUDE.md files can opt back into the terse replace
@@ -73,8 +75,13 @@ export function buildKeeperConfig(
     // checkout (project.workingDir), so the repo's own CLAUDE.md + git tooling
     // apply. For a notebook project workingDir === dir, so this is unchanged.
     working_directory: project.workingDir,
-    // Explicit CLI runtime (Max plan) — see the scratch agent note: the fleet
-    // `defaults.runtime` is dropped by the core config loader, so set it here.
+    // `runtime` governs the ONE-SHOT `trigger()` path only — it does NOT decide
+    // how chats run. `openChatSession` (session drive-mode, the default) hard-codes
+    // `new SDKRuntime()` and never reads this field, so a normal chat runs on the
+    // Claude Agent SDK regardless. This value bites only when a project is set to
+    // `driveMode: batch`, whose turns go through `RuntimeFactory.create`. Set
+    // explicitly because the fleet `defaults.runtime` is dropped by the core config
+    // loader (same reason as the sweeper/trigger/fleet-defaults copies below).
     runtime: "cli",
     model: modelOverride ?? project.model ?? KEEPER_DEFAULT_MODEL,
     // Per-project keeper settings (issue #12). The project DTO always carries
@@ -183,7 +190,10 @@ export function buildSweeperConfig(
     description: `Overview/changelog curator (sweeper) for project ${project.name}.`,
     // NOT project.dir — see sweeperWorkingDir (issue #548).
     working_directory: sweeperWorkingDir(cfg, project.slug),
-    // Explicit CLI runtime (Max plan) — see the scratch agent note.
+    // The sweeper only ever runs via the one-shot `trigger()` path, so unlike the
+    // keeper's copy this one really does take effect on every sweep: a `claude -p`
+    // CLI subprocess. Set explicitly because the fleet `defaults.runtime` is
+    // dropped by the core config loader.
     runtime: "cli",
     model: curatorModel ?? SWEEPER_DEFAULT_MODEL,
     // Tool-less: a handful of turns is plenty since there are no tool loops.
@@ -255,8 +265,10 @@ export function buildTriggerConfig(
     name: triggerAgentName(project.slug, triggerName),
     description: `Trigger "${triggerName}" (${trigger.trigger.type}) for project ${project.name}.`,
     working_directory: project.workingDir,
-    // Explicit CLI runtime (Max plan) — the fleet `defaults.runtime` is dropped by
-    // the core config loader, so set it here (as keeper/sweeper/hook agents do).
+    // Triggers fire through the one-shot `trigger()` path, so this takes effect on
+    // every fire: a `claude -p` CLI subprocess. Set explicitly because the fleet
+    // `defaults.runtime` is dropped by the core config loader (as the
+    // keeper/sweeper/hook agents do).
     runtime: "cli",
     // Model defaults to the keeper default unless the run pins one;
     // triggerToAgentToolConfig sets `model` only when the run specifies it, so
@@ -293,6 +305,11 @@ export async function ensureConfigFile(cfg: PaddockConfig): Promise<void> {
       description: "Paddock keeper-agent fleet (agents registered at runtime).",
     },
     defaults: {
+      // Inherited by any agent that doesn't set its own (in practice the scratch
+      // agent). Applies to the one-shot `trigger()` path only — chats opened via
+      // `openChatSession` always run the SDK runtime, which never reads this.
+      // NOTE: the core config loader drops `defaults.runtime`, which is why every
+      // agent above repeats it explicitly.
       runtime: "cli",
       // Keeper default (Opus) so the scratch agent and any default-inheriting
       // agent run on it; each keeper sets its own model explicitly anyway.
@@ -307,9 +324,9 @@ export async function ensureConfigFile(cfg: PaddockConfig): Promise<void> {
       // isolation or a different permission mode per-project (issue #12).
       permission_mode: KEEPER_DEFAULT_PERMISSION_MODE,
       // `Skill` MUST be in the allowlist or every skill invocation is
-      // permission-denied in `-p` (non-interactive) mode — the CLI is spawned
-      // with an explicit `--allowedTools` list (cli-runtime), and any tool not
-      // on it is auto-denied with no prompt. Built-in skills (claude-api,
+      // permission-denied — both runtimes pass this list through verbatim (CLI:
+      // `--allowedTools`; SDK: `options.allowedTools`) and auto-deny any tool not
+      // on it, with no prompt. Built-in skills (claude-api,
       // code-review, deep-research, ...) ship inside the CLI binary and are
       // registered/visible regardless of setting-sources, so the ONLY thing
       // blocking them was this missing tool. Skills routinely fan out to

@@ -112,8 +112,9 @@ The recipe doesn't back anything up. Snapshot the volume (or schedule a copy of
 Paddock needs a Claude credential to run keepers, delivered via a `Secret` that
 the Deployment reads with `envFrom`:
 
-- **`CLAUDE_CODE_OAUTH_TOKEN`** — a Claude Max token for the `cli` runtime — **or**
-  **`ANTHROPIC_API_KEY`** for the `sdk` runtime (API pricing). Provide one.
+- **`CLAUDE_CODE_OAUTH_TOKEN`** — a Claude Max plan token — **or**
+  **`ANTHROPIC_API_KEY`** for API pricing. Provide one; either works on either
+  runtime.
 - **`GITHUB_TOKEN`** *(optional)* — enables keepers to `git push` to backing repos.
   Scope it to just the repos this instance should touch.
 

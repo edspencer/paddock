@@ -2,7 +2,19 @@
 #
 # Paddock is an APP (server + built web SPA), not a library — this image is the
 # unit of deployment. It bundles the Fastify server, the built React SPA, and the
-# `claude` CLI that Paddock shells out to via @herdctl/core's cli runtime.
+# `claude` CLI.
+#
+# Only the CLI runtime uses the PATH binary (`execa("claude", …)` in
+# @herdctl/core's cli-runtime) — i.e. the sweeper, triggers, and `driveMode:
+# batch` turns. Chats run the SDK runtime, and the Claude Agent SDK resolves its
+# own executable from its pinned platform optional-dependency
+# (`@anthropic-ai/claude-agent-sdk-<platform>`) via require.resolve; it never
+# consults PATH, and nothing here overrides `pathToClaudeCodeExecutable`.
+#
+# So the two runtimes can be running DIFFERENT `claude` versions: the image's
+# PATH binary (installed unpinned below) for CLI-runtime turns, and the SDK's
+# pinned binary for chats. Worth knowing before debugging a version-skew bug —
+# `claude --version` tells you only half the story.
 #
 # This Dockerfile produces TWO images from shared stages (build once, publish
 # both — pick with `--target`):
@@ -14,7 +26,8 @@
 #                                keepers that develop code in-container.
 #
 # Runtime requirements (supplied at `docker run` time, NOT baked in):
-#   - CLAUDE_CODE_OAUTH_TOKEN   Claude Max auth (runtime: cli). Or ANTHROPIC_API_KEY for sdk.
+#   - CLAUDE_CODE_OAUTH_TOKEN   Claude Max plan auth. Or ANTHROPIC_API_KEY for API
+#                               pricing. Either works on either runtime.
 #   - a volume mounted at /data  Persistent project store + Claude session transcripts.
 #                                (HOME=/data so ~/.claude/projects survives restarts → resume works.)
 #   - GITHUB_TOKEN (optional)    Enables git push to the backing repo (configured by entrypoint).
@@ -53,7 +66,8 @@ ENV NODE_ENV=production \
     PADDOCK_DATA_DIR=/data \
     HOME=/data
 
-# System deps + GitHub CLI + the Claude CLI that Paddock spawns (runtime: cli).
+# System deps + GitHub CLI + the Claude CLI (the CLI runtime's PATH binary; the
+# SDK runtime ships its own — see the header).
 # openssh-client belongs here, next to git rather than in devbox: without it git
 # has no ssh transport at all, so every `git@` remote dies mid-turn with
 # "cannot run ssh: No such file or directory" (#487). The entrypoint's

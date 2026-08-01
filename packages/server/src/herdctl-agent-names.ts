@@ -130,8 +130,9 @@ export function visibleProjectAgentNames(project: Project): string[] {
 
 /**
  * The Claude Code tool pattern for the Playwright browser MCP. Must live on the
- * agent allowlist (the CLI runtime auto-denies any tool not on `--allowedTools`,
- * same reason `Skill` is listed) — so it is added to `defaults.allowed_tools`,
+ * agent allowlist (both runtimes auto-deny any tool not on the allow-list —
+ * `--allowedTools` on the CLI, `options.allowedTools` on the SDK — same reason
+ * `Skill` is listed) — so it is added to `defaults.allowed_tools`,
  * which the keeper + scratch agents inherit and the tool-less sweeper overrides
  * away. Harmless when the server isn't enabled: an allowed-but-absent tool is a
  * no-op.

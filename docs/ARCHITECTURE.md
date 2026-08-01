@@ -17,10 +17,12 @@ symbol names are cited so you can jump straight to the source.
 ## 1. The big picture
 
 Paddock is a thin, opinionated layer on top of the public `@herdctl/core`
-`FleetManager`. herdctl runs the actual Claude Code agents (as `claude -p` CLI
-subprocesses or managed SDK sessions) and owns session discovery; Paddock wires
-**projects**, **chats**, a **WebSocket streaming transport**, **in-process MCP
-tools**, an **auth boundary**, and a **git backing store** on top.
+`FleetManager`. herdctl runs the actual Claude Code agents — chats as managed
+**Claude Agent SDK** sessions, the sweeper and triggers as one-shot `claude -p`
+CLI subprocesses (see [§9](#9-keeper-drive-mode--session-vs-batch)) — and owns
+session discovery; Paddock wires **projects**, **chats**, a **WebSocket streaming
+transport**, **in-process MCP tools**, an **auth boundary**, and a **git backing
+store** on top.
 
 ```mermaid
 flowchart LR
@@ -350,9 +352,16 @@ output streams to whoever is attached to that session.
 Keepers receive extra tools via **in-process MCP injection** — no network, no
 auth, no static `allowed_tools` change. Paddock builds herdctl
 `InjectedMcpServerDef` objects and passes them as `injectedMcpServers` on the
-trigger call; herdctl's CLI runtime stands up a localhost HTTP MCP bridge per
-injected server and auto-allowlists `mcp__<key>__*` (the keeper is a `claude -p`
-subprocess that can't reach an in-process SDK server directly).
+trigger call; herdctl auto-allowlists `mcp__<key>__*` and carries the def to the
+agent by whichever route its runtime needs:
+
+- **SDK runtime** (chats, the `session` default) — the def becomes an
+  **in-process SDK MCP server** (`createSdkMcpServer`). No bridge, no socket.
+- **CLI runtime** (the sweeper, triggers, `driveMode: batch` chats) — the agent
+  is a separate `claude -p` process that can't reach an in-process SDK server, so
+  herdctl stands up a **localhost HTTP MCP bridge** per injected server.
+
+Either way the tool handlers execute inside the Paddock server process.
 
 Two servers, both wired in `ws.ts` (`ws.ts:1173-1310`):
 
@@ -519,13 +528,25 @@ dispatch in `ws.ts`):
 
 - **`batch`** — `HerdctlService.chat()` wraps `manager.trigger()`, a one-shot job
   that streams via `onMessage` and resolves when the turn ends. Simple and
-  stateless between turns.
+  stateless between turns. This is the only chat path that goes through
+  `RuntimeFactory.create`, and so the only one where the agent's `runtime` field
+  is read — Paddock sets `runtime: "cli"`, so a batch turn is a `claude -p`
+  subprocess.
 - **`session`** — `HerdctlService.chatSession()` drives a persistent
   `openChatSession({ manageLifecycle: true })`, registered in `liveSessions`. The
   session is kept alive by herdctl's reaper across turn boundaries, so
   **background tasks and scheduled wake-ups survive the turn** — the basis for
   cross-turn keeper autonomy. `cancel()` maps to `session.interrupt()` in session
   mode and `manager.cancelJob()` in batch mode.
+
+> **The runtime follows the drive mode, not the agent config.** `openChatSession`
+> hard-codes `new SDKRuntime()` and never consults the agent's `runtime` field, so
+> a `session` turn always runs the **Claude Agent SDK** streaming runtime. Since
+> `session` is the default, **chats do not run as `claude -p`** — despite Paddock
+> setting `runtime: "cli"` on every agent. That field only reaches
+> `RuntimeFactory.create` on the one-shot `trigger()` path, i.e. the sweeper,
+> triggers/schedules, and `batch` chats. It is not dead config: flip a project to
+> `driveMode: batch` and its chats do become CLI subprocesses.
 
 See [`concepts/keepers.md`](./concepts/keepers.md) for the
 agent model and [`INTEGRATION.md`](./INTEGRATION.md) for the underlying herdctl
