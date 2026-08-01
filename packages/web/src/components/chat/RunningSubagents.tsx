@@ -27,7 +27,7 @@ export function RunningSubagents({
   if (running.length === 0) return null;
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4">
+    <div className="mx-auto w-full max-w-3xl px-4" data-testid="running-subagents">
       <div className="mb-2 overflow-hidden rounded-lg border border-accent/30 bg-accent/[0.06] dark:bg-accent/10">
         <div className="flex items-center gap-1.5 border-b border-accent/20 px-3 py-1.5">
           <span
@@ -45,6 +45,7 @@ export function RunningSubagents({
               <li key={r.toolUseId}>
                 <button
                   type="button"
+                  data-testid="running-subagent-row"
                   onClick={() => onReveal(r.toolUseId)}
                   title="Show this sub-agent in the transcript"
                   className="flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors hover:bg-accent/10"
