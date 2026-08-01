@@ -54,7 +54,7 @@ A chat can be **forked** into a parallel child: `forkSession` *copies* the
 transcript and mints a new session id, so the child diverges without touching the
 parent. (Contrast with promotion, which *moves* a chat into a project of its
 own — see [Agents](./agents.md).) Forked children run under the same agent (up to
-10 in parallel) and appear as their own chats in the sidebar.
+`KEEPER_MAX_CONCURRENT` in parallel) and appear as their own chats in the sidebar.
 
 ## In one line
 

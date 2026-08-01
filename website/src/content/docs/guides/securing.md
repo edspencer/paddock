@@ -242,7 +242,7 @@ Three more rules that stay yours even with the exemption in place:
   invariant "this proxy is the only source of that header" should hold on every
   route, not only the challenged ones.
 - **Treat a write-scoped token like a production secret.** The read-only default
-  exists because any write scope starts real turns. Full detail in the
+  exists because any write scope starts turns. Full detail in the
   [Management API reference](/reference/mcp/).
 
 :::danger[nginx: `auth_basic off` does **not** clear `$remote_user`]

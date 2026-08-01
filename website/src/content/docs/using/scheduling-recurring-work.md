@@ -60,10 +60,10 @@ schedule that just reads and summarises needs no write or execute tools at all.
 
 ## Schedule from a chat (the manager-agent pattern)
 
-You don't have to open the Triggers tab yourself — on deployments that opt in, a
-chat can **schedule itself** straight from a conversation. Ask it in plain
-language ("schedule yourself to triage new issues every morning at 9"), and it
-uses Paddock's schedule-management MCP tools to write the trigger:
+You don't have to open the Triggers tab yourself — on deployments that opt in,
+Claude can **schedule itself** straight from a chat. Ask in plain language
+("schedule yourself to triage new issues every morning at 9"), and it uses
+Paddock's schedule-management MCP tools to write the trigger:
 
 - **`set_trigger`** — create or update a trigger. For a schedule, pass
   `type: "schedule"` with either `cron` or `interval`, a `prompt` (or
@@ -71,8 +71,8 @@ uses Paddock's schedule-management MCP tools to write the trigger:
 - **`list_triggers`** — see what's already declared.
 - **`remove_trigger`** — delete one.
 
-This is the *manager-agent* pattern: a chat you can talk to about its own
-routine, that then keeps that routine running without you. See the
+This is the *manager-agent* pattern: a chat you can talk to about its own routine,
+which then keeps that routine running without you. See the
 [Schedules reference](/reference/schedules/#self-mcp-tools) for the exact tool
 parameters.
 

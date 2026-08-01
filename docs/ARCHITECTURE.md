@@ -486,7 +486,7 @@ challenge rather than a login redirect no MCP client could follow. Authorization
 is enforced once at the **operations layer** (`management-policy.ts`,
 `management-ops.ts`) rather than per-transport, so the in-process path and
 the external HTTP path share one policy implementation. Clients default to
-read-only: any write scope can start a real turn and Claude has `Bash`, so a
+read-only: any write scope can start a turn and Claude has `Bash`, so a
 write grant is equivalent to code execution on the host, and the config loader
 logs a named warning when one is configured. Only static bearer tokens are
 implemented — `auth.type: "token"`; there is no OAuth authenticator yet, so RFC

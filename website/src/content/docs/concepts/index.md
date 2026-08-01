@@ -1,6 +1,6 @@
 ---
 title: "Concepts"
-description: "The core ideas behind Paddock: workspaces, projects, agents, chats-as-sessions, schedules, hooks, provenance, and the sweeper."
+description: "The core ideas behind Paddock: projects, agents, chats-as-sessions, schedules, hooks, provenance, and the sweeper."
 ---
 
 Short, canonical explanations of Paddock's core ideas. Read these to understand

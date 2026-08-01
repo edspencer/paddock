@@ -15,7 +15,7 @@ can't drift.
 
 :::danger[Any write scope is remote code execution on the host]
 `create_chat`, `send_message`, `fork_chat`, `fork_chat_batch`, `run_trigger` and
-`set_trigger` **start real turns**, and Claude runs with `Bash` and `Write`.
+`set_trigger` **start turns**, and Claude runs with `Bash` and `Write`.
 `create_project` clones a caller-supplied git URL. Granting any of those to a
 client is granting code execution on the machine Paddock runs on.
 

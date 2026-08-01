@@ -75,8 +75,8 @@ A chat can be **forked** into a parallel child: `forkSession` *copies* the
 transcript and mints a new session id, so the child diverges without touching the
 parent. (Contrast with promotion, which *moves* a scratch chat into a project —
 see [Agents](/concepts/agents).) Forked children run under the same agent (up to
-10 in parallel) and are full chats in their own right — resumable, forkable,
-archivable.
+`KEEPER_MAX_CONCURRENT` in parallel) and are full chats in their own right —
+resumable, forkable, archivable.
 
 In the sidebar a fork is **filed underneath the chat it was forked from**, so
 splitting a conversation three ways gives you one foldable family rather than

@@ -61,8 +61,8 @@ navigate, click, fill forms, and take screenshots — for example, to QA the ver
 preview server it just started with `pm`.
 
 This is **on by default** in devbox: the image sets `PADDOCK_BROWSER_MCP=1`, which
-tells Paddock to attach the browser MCP tools at launch. (On base, the browser
-tools simply aren't present.) The browser runs headless and sandboxed by
+tells Paddock to attach the browser MCP tools to Claude at launch. (On base, the
+browser tools simply aren't present.) The browser runs headless and sandboxed by
 the container — Paddock launches it `--no-sandbox --isolated`, because the
 container itself is the sandbox.
 

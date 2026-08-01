@@ -184,7 +184,7 @@ Practical consequences:
   an OIDC flow, MCP clients will fail before reaching Paddock.
 - **Read-only is the default, and widening it is a serious grant.** A client
   configured without an explicit scope gets `list_projects`, `list_chats`,
-  `list_triggers` and `read_chat`. Any *write* scope can start a real turn,
+  `list_triggers` and `read_chat`. Any *write* scope can start a turn,
   and Claude has `Bash` — **granting write on the Management API is
   equivalent to granting remote code execution on the host.** Scope such tokens
   to specific projects, treat them like SSH keys, and watch for the named
