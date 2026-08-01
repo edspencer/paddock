@@ -128,6 +128,7 @@ export default defineConfig({
 					collapsed: true,
 					items: [
 						{ label: 'Overview', slug: 'architecture/overview' },
+						{ label: 'herdctl and Paddock', slug: 'architecture/herdctl-and-paddock' },
 						{ label: 'herdctl integration', slug: 'architecture/herdctl-integration' },
 					],
 				},

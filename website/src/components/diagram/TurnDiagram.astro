@@ -1,0 +1,93 @@
+---
+/**
+ * One chat turn, end to end — the sequence that ties all four layers together.
+ * Lifelines: browser, Paddock server, @herdctl/core, Claude Code.
+ */
+---
+
+<svg viewBox="0 0 920 556" role="img" aria-labelledby="turn-t turn-d">
+	<title id="turn-t">One chat turn, end to end</title>
+	<desc id="turn-d">
+		A sequence across four lifelines. The browser sends chat:send to the Paddock server. Paddock
+		resolves the project, composes the prompt and builds its injected MCP servers, then calls
+		openChatSession on the herdctl FleetManager. herdctl resumes the Claude Code session and drives
+		the Agent SDK. Claude streams SDK messages back through herdctl to Paddock, which drops
+		sub-agent sidechain steps, translates each message and stamps provenance, then emits
+		sequence-stamped WebSocket frames to the browser. This middle part repeats per message. On the
+		terminal result Paddock sends chat:complete with usage, and fires the after-turn sweep.
+	</desc>
+
+	<defs>
+		<marker id="trn-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+			<path d="M 0 0 L 10 5 L 0 10 z" fill="var(--dg-line)"></path>
+		</marker>
+	</defs>
+
+	<!-- ======================================================= lifelines -->
+	<rect class="node is-paddock" x="20" y="14" width="180" height="46" rx="8"></rect>
+	<text class="t-node" x="110" y="35" text-anchor="middle">Browser</text>
+	<text class="t-sub" x="110" y="51" text-anchor="middle">Paddock SPA</text>
+
+	<rect class="node is-paddock" x="250" y="14" width="200" height="46" rx="8"></rect>
+	<text class="t-node" x="350" y="35" text-anchor="middle">Paddock server</text>
+	<text class="t-mono" x="350" y="51" text-anchor="middle">ws.ts · HerdctlService</text>
+
+	<rect class="node is-herdctl" x="500" y="14" width="180" height="46" rx="8"></rect>
+	<text class="t-node" x="590" y="35" text-anchor="middle">@herdctl/core</text>
+	<text class="t-mono" x="590" y="51" text-anchor="middle">FleetManager</text>
+
+	<rect class="node is-claude" x="730" y="14" width="170" height="46" rx="8"></rect>
+	<text class="t-node" x="815" y="35" text-anchor="middle">Claude Code</text>
+	<text class="t-sub" x="815" y="51" text-anchor="middle">Agent SDK</text>
+
+	<path class="edge is-dashed" d="M 110 60 L 110 528"></path>
+	<path class="edge is-dashed" d="M 350 60 L 350 528"></path>
+	<path class="edge is-dashed" d="M 590 60 L 590 528"></path>
+	<path class="edge is-dashed" d="M 815 60 L 815 528"></path>
+
+	<!-- ============================================================ 1 -->
+	<text class="t-edge" x="230" y="90" text-anchor="middle">1 — chat:send &#123; message, sessionId &#125;</text>
+	<path class="edge is-strong" d="M 110 98 L 344 98" marker-end="url(#trn-arrow)"></path>
+
+	<!-- ============================================================ 2 -->
+	<rect class="node is-paddock" x="360" y="112" width="288" height="52" rx="8"></rect>
+	<text class="t-sub" x="374" y="131">2 — resolve project · compose prompt</text>
+	<text class="t-sub" x="374" y="150">(attachments, preload) · build MCP tools</text>
+
+	<!-- ============================================================ 3 -->
+	<text class="t-edge" x="470" y="184" text-anchor="middle">3 — openChatSession(keeper-&lt;slug&gt;, &#123; resume, prompt &#125;)</text>
+	<path class="edge is-strong" d="M 350 192 L 584 192" marker-end="url(#trn-arrow)"></path>
+
+	<!-- ============================================================ 4 -->
+	<text class="t-edge" x="702" y="220" text-anchor="middle">4 — resume session, drive the SDK</text>
+	<path class="edge" d="M 590 228 L 809 228" marker-end="url(#trn-arrow)"></path>
+
+	<!-- ================================================== repeat block -->
+	<rect class="loop" x="60" y="248" width="800" height="172" rx="8"></rect>
+	<text class="t-band" x="74" y="266" style="fill: var(--dg-text-muted)">repeats per message</text>
+
+	<!-- 5 -->
+	<text class="t-edge" x="702" y="288" text-anchor="middle">5 — SDKMessage stream</text>
+	<path class="edge" d="M 815 296 L 596 296" marker-end="url(#trn-arrow)"></path>
+
+	<!-- 6 -->
+	<text class="t-edge" x="470" y="320" text-anchor="middle">6 — RuntimeSession.messages (async iterable)</text>
+	<path class="edge" d="M 590 328 L 356 328" marker-end="url(#trn-arrow)"></path>
+
+	<!-- 7 -->
+	<rect class="node is-paddock" x="360" y="342" width="288" height="52" rx="8"></rect>
+	<text class="t-sub" x="374" y="361">7 — drop sidechain steps · translate</text>
+	<text class="t-sub" x="374" y="380">via @herdctl/chat · stamp provenance</text>
+
+	<!-- 8 -->
+	<text class="t-edge" x="230" y="404" text-anchor="middle">8 — chat:response · tool_start · tool_call</text>
+	<path class="edge is-strong" d="M 350 412 L 116 412" marker-end="url(#trn-arrow)"></path>
+
+	<!-- ============================================================ 9 -->
+	<text class="t-edge" x="230" y="452" text-anchor="middle">9 — chat:complete &#123; success, usage &#125;</text>
+	<path class="edge is-strong" d="M 350 460 L 116 460" marker-end="url(#trn-arrow)"></path>
+
+	<!-- =========================================================== 10 -->
+	<text class="t-edge" x="470" y="500" text-anchor="middle">10 — afterTurn → the sweeper curates the project's notes</text>
+	<path class="edge is-dashed" d="M 350 508 L 584 508" marker-end="url(#trn-arrow)"></path>
+</svg>
