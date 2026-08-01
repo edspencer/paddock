@@ -178,10 +178,15 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
    * intermediate workspace work for free.
    *
    * `running` is authoritative (the live hub), not inferred from timestamps.
-   * `unread` is deliberately the SAME derivation the sidebar badge uses — the
-   * manual override (#458) or a completed turn newer than the read watermark
-   * (#189) — so the count on a sidebar row and the rows listed here cannot
-   * disagree.
+   * `unread` reuses the sidebar badge's derivation — the manual override (#458)
+   * or a completed turn newer than the read watermark (#189) — with ONE
+   * deliberate difference: archived chats are filed away on purpose, so they
+   * are excluded here. That means an archived chat with an unread turn still
+   * counts toward the sidebar's badge (`buildChatTurns` never consults
+   * `ArchiveStore`) while not appearing in this list. The two can therefore
+   * disagree by exactly that set; making them agree means teaching the badge
+   * about archiving, which is a behaviour change to the badge, not to this
+   * route.
    */
   app.get<{ Params: { slug: string } }>(
     "/chats/attention",
