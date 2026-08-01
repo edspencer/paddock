@@ -1292,7 +1292,7 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
         tags: ["Chats"],
         summary: "Promote a chat into a new project",
         description:
-          "Promotes a chat into a NEW project: creates the project + keeper, then re-homes the chat's transcript into it so it lists and resumes under the new project. `name` is required (validated at runtime; a missing/blank name returns 400). Responds 201 with `{ project, promoted, sessionId }` — `promoted:false` means the project was created but the transcript couldn't be moved (e.g. an unknown session id); the project is still usable.",
+          "Promotes a chat into a NEW project: creates the project + its agent, then re-homes the chat's transcript into it so it lists and resumes under the new project. `name` is required (validated at runtime; a missing/blank name returns 400). Responds 201 with `{ project, promoted, sessionId }` — `promoted:false` means the project was created but the transcript couldn't be moved (e.g. an unknown session id); the project is still usable.",
         params: {
           type: "object",
           properties: {
