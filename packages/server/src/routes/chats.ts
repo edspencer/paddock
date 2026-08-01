@@ -14,7 +14,7 @@ import type { DiscoveredSession } from "@herdctl/core";
 import { keeperAgentName } from "../herdctl.js";
 import { applyMessageProvenance } from "../message-provenance.js";
 import { buildProjectRuns } from "../runs.js";
-import { KEEPER_DEFAULT_MODEL } from "../models.js";
+import { DEFAULT_MODEL } from "../models.js";
 import { projectChatsDir } from "../transcripts.js";
 import { readSubagentMessages, readSessionTokenUsageWithSubagents } from "../subagents.js";
 import { readContextSeries } from "../usage.js";
@@ -324,7 +324,7 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
         const sessions = await herdctl.listSessions(project).catch(() => []);
         const scope = req.query.scope ?? "active";
         const keeper = keeperAgentName(project.slug);
-        const usageOf = chatUsageResolver(project.dir, project.model ?? KEEPER_DEFAULT_MODEL);
+        const usageOf = chatUsageResolver(project.dir, project.model ?? DEFAULT_MODEL);
         const entries = await Promise.all(
           sessions.map(async (s) => {
             // `all` skips the archive lookup entirely; the other two split on it.
@@ -552,7 +552,7 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
         // Every slug here addresses a project now that scratch is gone (#516
         // Phase 6), so the per-project model override always applies.
         const p = await projects.get(req.params.slug).catch(() => null);
-        const model = p?.model ?? KEEPER_DEFAULT_MODEL;
+        const model = p?.model ?? DEFAULT_MODEL;
         const u = await readSessionTokenUsageWithSubagents(projectDir, req.params.sessionId).catch(
           () => null,
         );

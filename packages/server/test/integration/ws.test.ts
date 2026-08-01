@@ -7,7 +7,7 @@
  *   - unknown / malformed message → chat:error "Unknown message"
  *   - the onChatSend catch path → chat:error (unknown project slug throws)
  *   - preloadContext: a NEW project chat with an OVERVIEW.md prepends it
- *   - per-chat model override → ensureKeeperModel / ensureScratchModel
+ *   - per-chat model override → ensureAgentModel / ensureScratchModel
  *   - message_boundary emitted around the assistant turn
  *   - chat:cancel (best-effort; no crash, no response)
  *   - usage/model surfaced on chat:complete
@@ -223,7 +223,7 @@ describe("integration: WS transport edge cases (real app, fake claude)", () => {
   // --- per-chat model override -----------------------------------------------
 
   it("a valid project model override re-registers the keeper at that model", async () => {
-    const spy = vi.spyOn(t.herdctl, "ensureKeeperModel");
+    const spy = vi.spyOn(t.herdctl, "ensureAgentModel");
     const mark = ws.mark();
     ws.send({
       type: "chat:send",
@@ -236,7 +236,7 @@ describe("integration: WS transport edge cases (real app, fake claude)", () => {
     });
     const complete = await ws.waitFor(isComplete("ws-proj"), { from: mark });
     expect(complete.payload?.success).toBe(true);
-    // ensureKeeperModel was called with the requested (valid) model.
+    // ensureAgentModel was called with the requested (valid) model.
     expect(spy).toHaveBeenCalled();
     const lastCall = spy.mock.calls.at(-1);
     expect(lastCall?.[1]).toBe("claude-sonnet-5");
@@ -244,7 +244,7 @@ describe("integration: WS transport edge cases (real app, fake claude)", () => {
   });
 
   it("an UNKNOWN project model override falls back to the project's model", async () => {
-    const spy = vi.spyOn(t.herdctl, "ensureKeeperModel");
+    const spy = vi.spyOn(t.herdctl, "ensureAgentModel");
     const mark = ws.mark();
     ws.send({
       type: "chat:send",

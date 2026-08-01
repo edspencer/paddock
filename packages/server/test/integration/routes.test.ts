@@ -63,7 +63,7 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
 
   it("GET /api/models lists models with the keeper default", async () => {
     const body = (await t.app.inject({ method: "GET", url: "/api/models" })).json();
-    expect(body.keeperDefault).toBe("claude-opus-5");
+    expect(body.defaultModel).toBe("claude-opus-5");
     const ids = body.models.map((m: { id: string }) => m.id);
     expect(ids).toContain("claude-opus-5");
     expect(ids).toContain("claude-opus-4-8");
@@ -73,7 +73,7 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
     for (const m of body.models) expect(m.contextLimit).toBeGreaterThan(0);
     // The box-wide keeper drive-mode default (issue #122): the Settings tab reads
     // it to show the effective inherited value. Defaults to session (#316).
-    expect(["batch", "session"]).toContain(body.keeperDriveModeDefault);
+    expect(["batch", "session"]).toContain(body.driveModeDefault);
     // The instance-wide max spawn depth default (issue #262). Defaults to 1.
     expect(body.maxSpawnDepthDefault).toBe(1);
     // The instance-wide keeper-chat recovery defaults (issue #301): Layer 2 ON,
@@ -89,7 +89,7 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
     // With no PADDOCK_MODELS set, the full catalog is offered (unchanged behaviour):
     // every catalog id is present + the keeper default is the real default (#457).
     expect(ids).toContain("claude-haiku-4-5-20251001");
-    expect(body.keeperDefault).toBe("claude-opus-5");
+    expect(body.defaultModel).toBe("claude-opus-5");
   });
 
   // --- overview + changelog + files ------------------------------------------

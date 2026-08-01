@@ -16,8 +16,8 @@ export function makeModelsResponse(over: Partial<ModelsResponse> = {}): ModelsRe
       { id: "claude-sonnet-5", label: "Sonnet 5", contextLimit: 1_000_000 },
       { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5", contextLimit: 200_000 },
     ],
-    keeperDefault: "claude-opus-4-8",
-    keeperDriveModeDefault: "batch",
+    defaultModel: "claude-opus-4-8",
+    driveModeDefault: "batch",
     maxSpawnDepthDefault: 1,
     // Mirrors the server's DEFAULT_RECOVERY / DEFAULT_ATTACHMENTS / DEFAULT_CURATION
     // so a test that doesn't care about these gets the same effective config the

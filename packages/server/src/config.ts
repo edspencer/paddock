@@ -12,7 +12,7 @@ import fs from "node:fs";
 import YAML from "yaml";
 import {
   type DriveMode,
-  KEEPER_DEFAULT_DRIVE_MODE,
+  DEFAULT_DRIVE_MODE,
   isKnownDriveMode,
   isKnownModel,
 } from "./models.js";
@@ -145,9 +145,9 @@ export interface PaddockConfig {
    * a project doesn't override `driveMode`. `session` by default (#316) — the
    * persistent `openChatSession` path, so cross-turn autonomy (ScheduleWakeup /
    * `/loop`) and SDK streaming work out of the box; set
-   * `PADDOCK_KEEPER_DRIVE_MODE=batch` for the legacy one-shot `trigger()` path.
+   * `PADDOCK_DRIVE_MODE=batch` for the legacy one-shot `trigger()` path.
    */
-  keeperDriveMode: DriveMode;
+  driveMode: DriveMode;
   /**
    * The instance ALLOW-LIST of offered models (issue #457 Step 2), by catalog id
    * — which of the built-in {@link import("./models.js").MODELS} catalog the model
@@ -165,13 +165,13 @@ export interface PaddockConfig {
   /**
    * Whether keeper AND scratch agents use the native Claude Code system prompt +
    * project CLAUDE.md hierarchy (true, the default) instead of a terse Paddock
-   * "replace" system prompt (false). Driven by `PADDOCK_KEEPER_NATIVE_PROMPT`.
+   * "replace" system prompt (false). Driven by `PADDOCK_NATIVE_PROMPT`.
    *
    * This is its own decision (issue #176) governing only which system prompt an
    * agent gets. When native (the default on every instance) Paddock sets NO
    * `system_prompt`, so 100% of an agent's standing instructions come from
    * Claude Code's own `CLAUDE.md` walk-up from its cwd — which is what makes the
-   * cwd load-bearing. Set `PADDOCK_KEEPER_NATIVE_PROMPT=false` to fall back to
+   * cwd load-bearing. Set `PADDOCK_NATIVE_PROMPT=false` to fall back to
    * the terse replace prompt (e.g. an instance with no CLAUDE.md files).
    *
    * **The canonical instance-wide `CLAUDE.md` is `<projectsRoot>/CLAUDE.md`**
@@ -386,7 +386,7 @@ export interface PaddockConfigFile {
    * Absent ⇒ every catalog model is offered (unchanged behaviour).
    */
   models?: string[] | string;
-  keeperDriveMode?: string;
+  driveMode?: string;
   nativeSystemPrompt?: boolean | string;
   selfMcpEnabled?: boolean | string;
   selfMcpWriteEnabled?: boolean | string;
@@ -738,7 +738,7 @@ export function loadPaddockConfig(): PaddockConfig {
     transcription: loadTranscriptionConfig(file.transcription),
     brand: loadBrandConfig(file.brand),
     models: loadModels(file.models),
-    keeperDriveMode: loadKeeperDriveMode(file.keeperDriveMode),
+    driveMode: loadDriveMode(file.driveMode),
     nativeSystemPrompt: loadNativeSystemPrompt(file.nativeSystemPrompt),
     selfMcpEnabled: loadSelfMcpEnabled(file.selfMcpEnabled),
     selfMcpWriteEnabled:
@@ -1048,11 +1048,11 @@ function loadSelfMcpEnabled(file?: PaddockConfigFile["selfMcpEnabled"]): boolean
  * Resolve whether keeper/scratch agents use the native system prompt + CLAUDE.md
  * hierarchy (issue #176). Defaults to `true` (native) on every instance so a
  * seeded instance-wide + per-project `CLAUDE.md` is auto-loaded; set
- * `PADDOCK_KEEPER_NATIVE_PROMPT` to 0/false/no to fall back to the terse replace
+ * `PADDOCK_NATIVE_PROMPT` to 0/false/no to fall back to the terse replace
  * prompt.
  */
 function loadNativeSystemPrompt(file?: PaddockConfigFile["nativeSystemPrompt"]): boolean {
-  const raw = envOr("PADDOCK_KEEPER_NATIVE_PROMPT", fileOr(file, "true")).toLowerCase();
+  const raw = envOr("PADDOCK_NATIVE_PROMPT", fileOr(file, "true")).toLowerCase();
   return !(raw === "0" || raw === "false" || raw === "no");
 }
 
@@ -1090,14 +1090,14 @@ function loadModels(file?: PaddockConfigFile["models"]): string[] | undefined {
 }
 
 /**
- * Resolve the global keeper drive mode from `PADDOCK_KEEPER_DRIVE_MODE`. Defaults
- * to `session` (KEEPER_DEFAULT_DRIVE_MODE, #316); an unrecognized value falls back
+ * Resolve the global keeper drive mode from `PADDOCK_DRIVE_MODE`. Defaults
+ * to `session` (DEFAULT_DRIVE_MODE, #316); an unrecognized value falls back
  * to the default rather than failing startup. A per-project `driveMode` still
  * overrides this at dispatch.
  */
-function loadKeeperDriveMode(file?: PaddockConfigFile["keeperDriveMode"]): DriveMode {
-  const raw = (envOpt("PADDOCK_KEEPER_DRIVE_MODE") ?? fileOpt(file))?.toLowerCase();
-  return raw && isKnownDriveMode(raw) ? raw : KEEPER_DEFAULT_DRIVE_MODE;
+function loadDriveMode(file?: PaddockConfigFile["driveMode"]): DriveMode {
+  const raw = (envOpt("PADDOCK_DRIVE_MODE") ?? fileOpt(file))?.toLowerCase();
+  return raw && isKnownDriveMode(raw) ? raw : DEFAULT_DRIVE_MODE;
 }
 
 /** Default Claude home, used for session discovery. */

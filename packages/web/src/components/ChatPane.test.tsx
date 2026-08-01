@@ -93,7 +93,7 @@ const MODELS = makeModelsResponse({
     { id: "claude-opus-4-8", label: "Opus 4.8", contextLimit: 1_000_000 },
     { id: "claude-sonnet-4", label: "Sonnet 4", contextLimit: 200_000 },
   ],
-  keeperDefault: "claude-opus-4-8",
+  defaultModel: "claude-opus-4-8",
 });
 
 const sub = () => subs[subs.length - 1];
@@ -729,7 +729,7 @@ describe("ChatPane: model picker", () => {
     expect(localStorage.getItem("paddock:chatModel:new:proj")).toBe("claude-sonnet-4");
   });
 
-  it("scratch chats default to the keeperDefault", async () => {
+  it("scratch chats default to the defaultModel", async () => {
     render(<ChatPane projectSlug="scratch" />);
     const select = (await screen.findByTitle(/Model for this chat/i)) as HTMLSelectElement;
     await waitFor(() => expect(select.value).toBe("claude-opus-4-8"));

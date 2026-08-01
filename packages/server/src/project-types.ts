@@ -128,7 +128,7 @@ export interface ProjectYaml {
   pinned?: string[];
   /**
    * The Claude model the project's keeper agent runs on. Optional on disk: an
-   * absent value resolves to KEEPER_DEFAULT_MODEL in the DTO. (CONTRACT-v3 §4.)
+   * absent value resolves to DEFAULT_MODEL in the DTO. (CONTRACT-v3 §4.)
    */
   model?: string;
   /**
@@ -155,7 +155,7 @@ export interface ProjectYaml {
    * How the keeper's chat turns are driven — `batch` (one-shot trigger) or
    * `session` (persistent managed openChatSession, enabling cross-turn autonomy;
    * Paddock#111). Optional on disk: absent inherits the global default
-   * (`PADDOCK_KEEPER_DRIVE_MODE`, else KEEPER_DEFAULT_DRIVE_MODE).
+   * (`PADDOCK_DRIVE_MODE`, else DEFAULT_DRIVE_MODE).
    */
   driveMode?: string;
   /**
@@ -278,7 +278,7 @@ export interface Project extends ProjectYaml {
   pinned: string[];
   /**
    * The keeper agent's model — ALWAYS concrete in the DTO (`yaml.model ??
-   * KEEPER_DEFAULT_MODEL`), even though it's optional on disk.
+   * DEFAULT_MODEL`), even though it's optional on disk.
    */
   model: string;
   /** Keeper permission mode — ALWAYS concrete in the DTO (issue #12). */

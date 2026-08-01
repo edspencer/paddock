@@ -114,9 +114,9 @@ if (live) {
   // runtime. The built-in default drive mode is now `session` (#316), which
   // would route turns through openChatSession → the SDK runtime (needs a real
   // login → no streamed reply → the chat E2E journeys time out). Pin `batch`
-  // explicitly (also overriding any leaked PADDOCK_KEEPER_DRIVE_MODE from the
+  // explicitly (also overriding any leaked PADDOCK_DRIVE_MODE from the
   // host env). Live mode (real claude) leaves the default in place.
-  env.PADDOCK_KEEPER_DRIVE_MODE = "batch";
+  env.PADDOCK_DRIVE_MODE = "batch";
 }
 
 const child = spawn("node", [serverEntry], { env, stdio: "inherit" });

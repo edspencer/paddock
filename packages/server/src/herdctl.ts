@@ -72,7 +72,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { PaddockConfig } from "./config.js";
 import type { Project } from "./projects.js";
-import { KEEPER_DEFAULT_MODEL } from "./models.js";
+import { DEFAULT_MODEL } from "./models.js";
 import { ensureProjectChats, projectChatsDir } from "./transcripts.js";
 import {
   triggerRunsOnOwnAgent,
@@ -80,7 +80,7 @@ import {
   type PaddockTrigger,
 } from "./trigger-config.js";
 import {
-  buildKeeperConfig,
+  buildAgentConfig,
   buildSweeperConfig,
   sweeperWorkingDir,
   buildTriggerConfig,
@@ -139,7 +139,7 @@ export {
   triggerAgentName,
   visibleProjectAgentNames,
   BROWSER_MCP_TOOL,
-  KEEPER_DENIED_TOOLS,
+  DENIED_TOOLS,
   browserMcpServers,
   KEEPER_MAX_CONCURRENT,
   KEEPER_SESSION_TIMEOUT,
@@ -263,7 +263,7 @@ export class HerdctlService {
 
   /**
    * The model currently registered for each agent (keyed by agent name). Lets
-   * `ensureKeeperModel` skips a re-registration when the
+   * `ensureAgentModel` skips a re-registration when the
    * requested model already matches the live agent config.
    *
    * SINGLE-USER CAVEAT: the keeper is one shared agent per project, so the
@@ -345,7 +345,7 @@ export class HerdctlService {
       // T1). Schedule triggers ride the keeper's forwarded `schedules` block (above);
       // webhook triggers are reserved.
       await this.registerTriggerAgents(project);
-      this.agentModels.set(keeperAgentName(project.slug), project.model ?? KEEPER_DEFAULT_MODEL);
+      this.agentModels.set(keeperAgentName(project.slug), project.model ?? DEFAULT_MODEL);
       this.agentWorkingDirs.set(keeperAgentName(project.slug), project.workingDir);
     }
   }
@@ -424,7 +424,7 @@ export class HerdctlService {
     // Record the keeper's resolved model so per-chat overrides can detect a
     // no-op. ensureProjectAgent re-registers at project.model (the persisted
     // default), so a model change via PATCH takes effect here too.
-    this.agentModels.set(keeperAgentName(project.slug), project.model ?? KEEPER_DEFAULT_MODEL);
+    this.agentModels.set(keeperAgentName(project.slug), project.model ?? DEFAULT_MODEL);
     this.agentWorkingDirs.set(keeperAgentName(project.slug), project.workingDir);
   }
 
@@ -485,7 +485,7 @@ export class HerdctlService {
    * single-user caveat: this is last-write-wins across concurrent chats of the
    * same project.
    */
-  async ensureKeeperModel(project: Project, model: string): Promise<void> {
+  async ensureAgentModel(project: Project, model: string): Promise<void> {
     if (!this.fleet) return;
     const name = keeperAgentName(project.slug);
     if (this.agentModels.get(name) === model) return;
@@ -1220,7 +1220,7 @@ export class HerdctlService {
     project: Project,
     modelOverride?: string,
   ): Record<string, unknown> & { name: string } {
-    return buildKeeperConfig(this.cfg, project, modelOverride);
+    return buildAgentConfig(this.cfg, project, modelOverride);
   }
 
   private sweeperAgentConfig(project: Project): Record<string, unknown> & { name: string } {

@@ -70,7 +70,7 @@ export function makeTriggerCluster(
 function resolveDriveMode(project: Awaited<ReturnType<typeof deps.projects.get>>): DriveMode {
   return project.driveMode && isKnownDriveMode(project.driveMode)
     ? project.driveMode
-    : deps.cfg.keeperDriveMode;
+    : deps.cfg.driveMode;
 }
 
 // Drive scheduler-fired chats onto the hub (issue #265 / DD-1, DD-2). herdctl's
