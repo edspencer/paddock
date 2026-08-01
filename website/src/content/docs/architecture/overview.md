@@ -9,7 +9,7 @@ description: "Monorepo shape, the three storage classes, WebSocket/session flow,
 > together" map; the exact public `@herdctl/core` API contract Paddock depends on
 > lives in [`INTEGRATION.md`](/architecture/herdctl-integration), and the feature-level wire
 > contracts in [`CONTRACT-v2.md`](https://github.com/edspencer/paddock/blob/main/docs/archive/CONTRACT-v2.md) / [`CONTRACT-v3.md`](https://github.com/edspencer/paddock/blob/main/docs/archive/CONTRACT-v3.md).
-> For the conceptual model (what a project, keeper, chat, or sweeper *is*), see
+> For the conceptual model (what a project, agent, chat, or sweeper *is*), see
 > [`concepts/`](/concepts/).
 
 Everything here is grounded in the code under `packages/server/src`. Citations name a
@@ -24,7 +24,7 @@ a stale line number is worse than none. `grep -n` the symbol.
 Paddock is a thin, opinionated layer on top of the public `@herdctl/core`
 `FleetManager`. herdctl runs the actual Claude Code agents — chats as managed
 **Claude Agent SDK** sessions, the sweeper and triggers as one-shot `claude -p`
-CLI subprocesses (see [§9](#9-keeper-drive-mode--session-vs-batch)) — and owns
+CLI subprocesses (see [§9](#9-drive-mode--session-vs-batch)) — and owns
 session discovery; Paddock wires **projects**, **chats**, a **WebSocket streaming
 transport**, **in-process MCP tools**, an **auth boundary**, and a **git backing
 store** on top.
@@ -283,7 +283,7 @@ Client → server (`ClientMessage` union, `ws-protocol.ts`):
 | `chat:cancel` | Stop a running turn (`jobId`). |
 | `chat:subscribe` | Re-attach to a session (`sessionId`, `wantReplay?`, `lastSeq?`). |
 | `chat:set_queue` | Set/clear the queued follow-up message. |
-| `chat:continue` | Re-drive a hung keeper from a killed-task notice (`sessionId`); gated on `recovery.surfaceKilledTask`. |
+| `chat:continue` | Re-drive a hung chat from a killed-task notice (`sessionId`); gated on `recovery.surfaceKilledTask`. |
 | `ping` | Keepalive. |
 
 Server → client (`ServerMessage` union, `ws-protocol.ts`):
@@ -298,7 +298,7 @@ Server → client (`ServerMessage` union, `ws-protocol.ts`):
 | `chat:error` | Turn error to the origin socket. |
 | `chat:resync` | Buffer aged out — client should re-hydrate from the REST transcript. |
 | `chat:queued_flushed` | A queued message was auto-sent. |
-| `chat:killed_task` | A background task the keeper awaited was killed — broadcast live by the recovery engine so the Continue affordance appears without a refresh. |
+| `chat:killed_task` | A background task the chat awaited was killed — broadcast live by the recovery engine so the Continue affordance appears without a refresh. |
 | `chat:notice` | The turn dead-ended (usage limit, max-turns, error) — rendered inline so the chat says why it stopped. |
 | `pong` | Keepalive reply. |
 
@@ -340,9 +340,9 @@ Step by step:
    `onToolStart`→`chat:tool_start`, `onToolCall`→`chat:tool_call`. Frames are
    emitted through `turn.emit(...)`, never written straight to the socket.
 3. **Resolve model + drive mode.** The `model` override wins if
-   `isKnownModel`, else `project.model` (scratch → keeper default); the keeper is
-   re-registered via `ensureKeeperModel` because there's no per-trigger model API
-   (`ws.ts`). Drive mode is `project.driveMode ?? cfg.keeperDriveMode`.
+   `isKnownModel`, else `project.model` (scratch → the instance default); the
+   agent is re-registered via `ensureKeeperModel` because there's no per-trigger
+   model API (`ws.ts`). Drive mode is `project.driveMode ?? cfg.keeperDriveMode`.
 4. **Preload (optional).** For a *new* chat with `preloadContext` and a non-empty
    `OVERVIEW.md`, the overview + changelog tail are wrapped and prepended to the
    prompt (`composePreloadedPrompt()` in `ws-triggers.ts`, CONTRACT-v2 §2).
@@ -403,7 +403,7 @@ output streams to whoever is attached to that session.
 
 ## 5. MCP injection
 
-Keepers receive extra tools via **in-process MCP injection** — no network, no
+Agents receive extra tools via **in-process MCP injection** — no network, no
 auth, no static `allowed_tools` change. Paddock builds herdctl
 `InjectedMcpServerDef` objects and passes them as `injectedMcpServers` on the
 trigger call; herdctl auto-allowlists `mcp__<key>__*` and carries the def to the
@@ -420,20 +420,20 @@ Either way the tool handlers execute inside the Paddock server process.
 Two servers, both wired into `injectedMcpServers` in `ws.ts`'s `onChatSend`:
 
 - **`send_file`** (server key `paddock`, tool `mcp__paddock__send_file`) —
-  `sendFileServerDef()` in `send-file-mcp.ts`. Injected on **every** turn (keeper
+  `sendFileServerDef()` in `send-file-mcp.ts`. Injected on **every** turn (project
   and scratch). Lets the agent render a file inline in chat: either an inline
   virtual file (content in the envelope) or a real file copied into the
   `AttachmentStore` as an immutable snapshot. The web renders off the tool call
   itself, so it survives live streaming and reload (issue #112/#113).
 - **Self-management** (server key `paddock_manage`) — `selfMcpServerDef()` in
-  `self-mcp.ts`. **Keeper-only and env-gated**, never on scratch. Its 14 tools sit
+  `self-mcp.ts`. **Project-only and env-gated**, never on scratch. Its 14 tools sit
   in four tiers, each behind its own flag on top of the one below it: **read**
   (`PADDOCK_SELF_MCP`), **write** (`PADDOCK_SELF_MCP_WRITE` — the chat-mutating
   tools, including `archive_chat` / `unarchive_chat`), **project**
   (`PADDOCK_SELF_MCP_PROJECTS`, `create_project` only), and **triggers**
   (`PADDOCK_HOOKS_MCP`, with a per-project override). Several of them spawn real
-  keeper turns via `startAgentTurn`, so spawned chats appear in the sidebar, stream
-  live, and are re-attachable (issue #214). The
+  turns via `startAgentTurn`, so spawned chats appear in the sidebar, stream live,
+  and are re-attachable (issue #214). The
   [self-management MCP reference](/reference/self-mcp/) is the authoritative
   per-tool list and [gating matrix](/reference/self-mcp/#the-gating-matrix) — this
   page deliberately doesn't restate it.
@@ -581,12 +581,12 @@ The main knobs:
 | **Server** | `PORT` (4000), `HOST` (or `PADDOCK_HOST`; **127.0.0.1** since v0.44 — see [Binding & exposure](/configuration/binding-and-exposure/)), `LOG_LEVEL` (info), `PADDOCK_DANGEROUSLY_ALLOW_OPEN` (false — downgrades the bind-safety refusal to a warning) |
 | **Paths** | `PADDOCK_DATA_DIR` (./data), `PADDOCK_PROJECTS_DIR`, `PADDOCK_STATE_DIR` (`.herdctl`), `PADDOCK_HERDCTL_CONFIG`, `PADDOCK_SCRATCH_DIR`, `PADDOCK_WEB_DIST`, `CLAUDE_HOME` (~/.claude) |
 | **Auth** | `PADDOCK_AUTH_MODE` (none), `PADDOCK_AUTH_USER_HEADER` (X-Forwarded-User), `..._EMAIL_HEADER`, `..._GROUPS_HEADER`, `..._JWT_HEADER` (Authorization), `..._JWKS_URL`, `..._JWT_ISSUER`, `..._JWT_AUDIENCE`, `..._USERNAME_CLAIM`, `..._GROUPS_CLAIM` (groups) |
-| **Keeper** | `PADDOCK_KEEPER_DRIVE_MODE` (session), `PADDOCK_KEEPER_NATIVE_PROMPT` (true) |
+| **Agent** | `PADDOCK_KEEPER_DRIVE_MODE` (session), `PADDOCK_KEEPER_NATIVE_PROMPT` (true) |
 | **Self-MCP + spawning** | `PADDOCK_SELF_MCP` (false), `PADDOCK_SELF_MCP_WRITE` (false; implies read), `PADDOCK_SELF_MCP_PROJECTS` (false; `create_project`, rides on write), `PADDOCK_HOOKS_MCP` (false; the trigger tools, per-project override), **`PADDOCK_MAX_SPAWN_DEPTH` (`1`, bounded `0`–`8`)** — see [§5](#5-mcp-injection) |
 | **Agent capabilities** | `PADDOCK_BROWSER_MCP` (false — Playwright/headless Chromium, via the static agent config, not injection) |
 | **Sweeper** | `PADDOCK_SWEEP_MIN_INTERVAL_MS` (300000) |
 | **Curation budgets** | `PADDOCK_CURATION_OVERVIEW_MAX_TOKENS` (2000), `PADDOCK_CURATION_CHANGELOG_MAX_TOKENS` (8000), `PADDOCK_CURATION_CLAUDEMD_MAX_TOKENS` (6000) — `curation.*` in YAML, per-project overridable (`curation-config.ts`) |
-| **Keeper recovery** | `PADDOCK_RECOVERY_SURFACE` (**true** — `surfaceKilledTask`, the `chat:killed_task` affordance), `PADDOCK_RECOVERY_AUTODRIVE` (false), `PADDOCK_RECOVERY_DEBOUNCE_MS` (5000), `PADDOCK_RECOVERY_MAX_RETRIES` (1), `PADDOCK_RECOVERY_LIMBO_MS` (0 = off) |
+| **Chat recovery** | `PADDOCK_RECOVERY_SURFACE` (**true** — `surfaceKilledTask`, the `chat:killed_task` affordance), `PADDOCK_RECOVERY_AUTODRIVE` (false), `PADDOCK_RECOVERY_DEBOUNCE_MS` (5000), `PADDOCK_RECOVERY_MAX_RETRIES` (1), `PADDOCK_RECOVERY_LIMBO_MS` (0 = off) |
 | **Attachments** | `PADDOCK_ATTACHMENTS_ENABLED` (true), `PADDOCK_ATTACHMENTS_MAX_FILE_SIZE_MB` (25), `PADDOCK_ATTACHMENTS_MAX_FILES_PER_MESSAGE` (10), `PADDOCK_ATTACHMENTS_ALLOWED_TYPES` (`*` — a hygiene guardrail, **not** a security boundary) |
 | **OpenAPI** | `PADDOCK_OPENAPI_ENABLED` (false), `PADDOCK_OPENAPI_PATH` (`/open-api`) — see [§12](#12-openapi-reference) |
 | **Management API** | **YAML-only** `managementApi.*` — `clients[]`, `instanceId`, `trustedProxies` — plus the `PADDOCK_MCP_TOKEN_<CLIENT>` credentials and `PADDOCK_MANAGEMENT_TRUSTED_PROXIES`. See [Management API (MCP)](/reference/mcp/). |
@@ -606,9 +606,9 @@ the data volume — not a Paddock config flag.
 
 ---
 
-## 9. Keeper drive mode — session vs. batch
+## 9. Drive mode — session vs. batch
 
-Each keeper turn runs in one of two modes (`PADDOCK_KEEPER_DRIVE_MODE`, default
+Each turn runs in one of two modes (`PADDOCK_KEEPER_DRIVE_MODE`, default
 `session` since v0.36, overridable per project via `project.driveMode`, resolved at dispatch in
 `ws.ts`):
 
@@ -622,7 +622,7 @@ Each keeper turn runs in one of two modes (`PADDOCK_KEEPER_DRIVE_MODE`, default
   `openChatSession({ manageLifecycle: true })`, registered in `liveSessions`. The
   session is kept alive by herdctl's reaper across turn boundaries, so
   **background tasks and scheduled wake-ups survive the turn** — the basis for
-  cross-turn keeper autonomy. `cancel()` maps to `session.interrupt()` in session
+  cross-turn autonomy. `cancel()` maps to `session.interrupt()` in session
   mode and `manager.cancelJob()` in batch mode.
 
 :::note[The runtime follows the drive mode, not the agent config]
@@ -635,7 +635,7 @@ the sweeper, triggers/schedules, and `batch` chats. It is not dead config: flip 
 project to `driveMode: batch` and its chats do become CLI subprocesses.
 :::
 
-See [`concepts/keepers.md`](/concepts/keepers) for the
+See [`concepts/agents.md`](/concepts/agents) for the
 agent model and [`INTEGRATION.md`](/architecture/herdctl-integration) for the underlying herdctl
 trigger API.
 
@@ -731,7 +731,7 @@ code, not that comment.
 | WS transport | `ws.ts`, `ws-protocol.ts`, `ws-turn.ts`, `ws-triggers.ts`, `session-hub.ts` |
 | Triggers (hooks + schedules) | `triggers.ts`, `trigger-config.ts`, `hook-config.ts` |
 | Management API (`/mcp`) | `management-{config,auth,policy,ops,metadata,mcp-server}.ts` |
-| Keeper recovery | `recovery-config.ts` |
+| Chat recovery | `recovery-config.ts` |
 | herdctl wrapper | `herdctl.ts` |
 | Project layer | `projects.ts` |
 | Sidecar stores | `archive.ts`, `star.ts`, `read-state.ts`, `unread.ts`, `parent-detach.ts`, `run-provenance.ts`, `message-provenance.ts`, `queued-message.ts`, `schedule-session.ts`, `trigger-session.ts`, `attachments.ts` |

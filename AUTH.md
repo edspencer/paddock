@@ -184,8 +184,8 @@ Practical consequences:
   an OIDC flow, MCP clients will fail before reaching Paddock.
 - **Read-only is the default, and widening it is a serious grant.** A client
   configured without an explicit scope gets `list_projects`, `list_chats`,
-  `list_triggers` and `read_chat`. Any *write* scope can start a keeper turn,
-  and a keeper has `Bash` — **granting write on the Management API is
+  `list_triggers` and `read_chat`. Any *write* scope can start a turn,
+  and Claude has `Bash` — **granting write on the Management API is
   equivalent to granting remote code execution on the host.** Scope such tokens
   to specific projects, treat them like SSH keys, and watch for the named
   warning the config loader logs at boot when a client holds one.
@@ -212,7 +212,7 @@ and on the [documentation site](https://paddock.edspencer.net/reference/mcp/).
   `packages/server/src/management-auth.ts` (credential check) and
   `packages/server/src/management-policy.ts` (scope enforcement), with the
   transport in `packages/server/src/routes/mcp.ts`. Policy is enforced at the
-  operations layer, so the in-process keeper path and the external HTTP path
+  operations layer, so the in-process path and the external HTTP path
   share one implementation rather than two.
 - Wiring lives in `packages/server/src/auth.ts`; config in
   `packages/server/src/config.ts` (`cfg.auth`). It is registered in

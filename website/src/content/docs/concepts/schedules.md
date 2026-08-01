@@ -80,8 +80,8 @@ The `session` field decides what a firing *lands in*:
 A schedule's granted **tools** *are* its capability, and they decide how the turn
 runs:
 
-- **No tools** → the firing runs as the project's **keeper**, with the keeper's
-  full toolset. This is the simplest case: "just do the thing, as me."
+- **No tools** → the firing runs as the project's own agent, with its full
+  toolset. This is the simplest case: "just do the thing, as me."
 - **A tools allow-list** → the firing runs on its **own scoped agent**
   (`trigger-<slug>-<name>`) that can use *exactly* those tools and nothing else —
   the grant is enforced by construction. Use it to hand a recurring job a small,
@@ -89,13 +89,13 @@ runs:
 
 ## Schedules vs. `ScheduleWakeup`
 
-Don't confuse a **schedule** with the keeper tool **`ScheduleWakeup`**:
+Don't confuse a **schedule** with Claude's **`ScheduleWakeup`** tool:
 
 - A **schedule** is **durable configuration**. It lives in `project.yaml`, fires
   on its clock forever, and is completely independent of whether any chat is
   currently alive.
 - **`ScheduleWakeup`** is an **ephemeral, session-scoped** autonomy tool a
-  session-mode keeper can call *from within its own live turn* to wake *itself*
+  session-mode chat can call *from within its own live turn* to wake *itself*
   a bit later. It's a one-shot follow-up inside one conversation, not a standing
   recurring job, and it vanishes with the session.
 

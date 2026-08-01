@@ -56,7 +56,7 @@ FleetManager + CLI runtime, the **real** transcript/session machinery — agains
 temp data dir, with the fake `claude` first on `PATH`. Files:
 `packages/server/test/integration/`.
 
-- `projects-crud.test.ts` — REST CRUD, keeper registration in fleet status,
+- `projects-crud.test.ts` — REST CRUD, agent registration in fleet status,
   pins, 404/409/400 paths.
 - `chat.test.ts` — a chat turn streamed over **WebSocket**, transcript written +
   discovered, history hydration on reload, context-usage readback, and **resume
@@ -210,7 +210,7 @@ a port or installing signal handlers — a pure seam, no behavior change.
   intended). After promoting a one-off chat into a project it used to fork a
   fresh session on resume (codeword lost). Root cause was in herdctl's
   JobExecutor: it dropped an explicit `--resume` when the agent had no stored
-  session-info file, so a keeper resuming an adopted session started fresh. Fixed
+  session-info file, so an agent resuming an adopted session started fresh. Fixed
   upstream in **@herdctl/core 5.13.1 (herdctl#263)** — the executor now adopts a
   caller-provided resume when the transcript exists in the agent's working dir.
   `promote.test.ts` now asserts the resumed turn continues the **same** session

@@ -1,6 +1,6 @@
 ---
 title: Creating & organizing projects
-description: A hands-on walkthrough — make a new project (notebook or repo-backed), promote a notebook to repo-backed in place, fill in its project.yaml, group projects into areas, tune the keeper in Settings (models, curation budgets), and promote a scratch chat into a project.
+description: A hands-on walkthrough — make a new project (notebook or repo-backed), promote a notebook to repo-backed in place, fill in its project.yaml, group projects into areas, tune the agent in Settings (models, curation budgets), and promote a scratch chat into a project.
 ---
 
 Everything you do in Paddock lives inside a **project**. This guide is the
@@ -9,7 +9,7 @@ that page explains *what* a project is; this one walks through *how* to create
 one, organize a growing collection, and tune it to your taste.
 
 By the end you'll know how to create both kinds of project, sort them into
-**areas**, set per-project metadata and keeper behaviour, and rescue a one-off
+**areas**, set per-project metadata and agent behaviour, and rescue a one-off
 scratch chat by promoting it into a real project.
 
 ## Create a new project
@@ -42,7 +42,7 @@ chat, ready to start working.
 :::note[No slug or visibility field here]
 The dialog keeps creation to the essentials. The **slug** is generated from the
 name, and **visibility** defaults to `public`. Both — plus everything above —
-are editable afterwards from the project's [Settings tab](#tune-the-keeper-the-settings-tab).
+are editable afterwards from the project's [Settings tab](#tune-the-agent-the-settings-tab).
 :::
 
 ## Choose the project type: notebook vs repo-backed
@@ -56,21 +56,21 @@ to being a notebook.
 
 ### Notebook — for notes, plans, and ops
 
-Leave the git field blank. The project directory itself becomes the keeper's
-working directory, and Paddock seeds it with a starter `CLAUDE.md`. This is the
-right choice for research, planning, home-lab runbooks, or anything that isn't
-itself a code repository. The keeper works with Markdown notes, docs, and its
-chat history — all curated inside Paddock.
+Leave the git field blank. The project directory itself becomes the working
+directory, and Paddock seeds it with a starter `CLAUDE.md`. This is the right
+choice for research, planning, home-lab runbooks, or anything that isn't itself a
+code repository. Claude works with Markdown notes, docs, and the chat history —
+all curated inside Paddock.
 
-### Repo-backed — for a codebase you want the keeper to build
+### Repo-backed — for a codebase you want Claude to build
 
 Paste an external git URL and Paddock **clones that repo into a checkout inside
-the project**, then points the keeper's working directory at the clone. HTTPS,
-SSH (`git@host:owner/repo`), `git://`, and local paths all work.
+the project**, then points the working directory at the clone. HTTPS, SSH
+(`git@host:owner/repo`), `git://`, and local paths all work.
 
-Because the keeper now lives inside a real checkout, **the repo's own `CLAUDE.md`,
-branches, and PR workflow all apply** — the keeper can branch, commit, and open
-pull requests against the upstream just like you would. Paddock keeps its own
+Because Claude now works inside a real checkout, **the repo's own `CLAUDE.md`,
+branches, and PR workflow all apply** — it can branch, commit, and open pull
+requests against the upstream just like you would. Paddock keeps its own
 metadata (`project.yaml`, `OVERVIEW.md`, `CHANGELOG.md`, and the chat transcripts)
 in the enclosing project directory, safely outside the checkout via a sidecar
 `.gitignore`.
@@ -99,7 +99,7 @@ Paste the git URL, click **Promote to repo-backed…**, and confirm:
 
 Paddock **clones first**, so a clone that fails leaves the notebook completely
 untouched. Once the clone lands, `repo:` is written to `project.yaml` and the
-keeper's working directory **flips to the checkout** — from then on the repo's own
+working directory **flips to the checkout** — from then on the repo's own
 `CLAUDE.md`, branches, and PR workflow apply, exactly as for a project created
 repo-backed.
 
@@ -126,7 +126,7 @@ conversation into a project in the first place.
 ## What a project.yaml holds
 
 A project is just **a directory plus a `project.yaml`** under your data root. You
-rarely edit it by hand — the [Settings tab](#tune-the-keeper-the-settings-tab)
+rarely edit it by hand — the [Settings tab](#tune-the-agent-the-settings-tab)
 writes it for you — but knowing the shape helps. A fuller example:
 
 ```yaml
@@ -158,15 +158,15 @@ The fields:
 | `started`, `updated` | Creation date (immutable) and last-touched date (auto-bumped). |
 | `links` | Optional `{label, url}` bookmarks. |
 | `repo` | Present only for repo-backed projects. Absent on a notebook, and set **once** — at creation, or by [promoting](#promote-a-notebook-to-repo-backed). Once set it never changes. |
-| `model`, `permissionMode`, `driveMode`, `maxTurns`, `docker` | Per-project keeper overrides — see below. Absent means *inherit the box default*. |
+| `model`, `permissionMode`, `driveMode`, `maxTurns`, `docker` | Per-project agent overrides — see below. Absent means *inherit the box default*. |
 | `models` | Optional allow-list narrowing which models this project offers — see [Restrict the offered models](#restrict-the-offered-models). |
 | `curation` | Optional per-file sweeper token budgets — see [Curation budgets](#curation-budgets). |
-| `maxSpawnDepth` | How deep this project's keeper may spawn tool-carrying children. |
+| `maxSpawnDepth` | How deep this project may spawn tool-carrying children. |
 | `pinned` | The files pinned as tabs in the project header. Paddock maintains this for you. |
 
-Paddock writes only the fields it needs: on a freshly created project, keeper
+Paddock writes only the fields it needs: on a freshly created project, agent
 overrides you didn't set are absent from the file and resolve to the box-wide
-defaults at run time. (Saving the [Settings tab](#tune-the-keeper-the-settings-tab)
+defaults at run time. (Saving the [Settings tab](#tune-the-agent-the-settings-tab)
 changes this for some of them — see the caveat there.)
 
 ## Organize projects into areas
@@ -198,20 +198,20 @@ lives* and tags for *themes that cut across areas* (e.g. `networking`,
 `urgent`).
 :::
 
-## Tune the keeper: the Settings tab
+## Tune the agent: the Settings tab
 
 Open any project and go to its **Settings** tab (`/projects/<slug>/settings`) to
-edit everything the creation dialog left out, plus how the project's **keeper
-agent** behaves. Changes are staged and applied with **Save changes**.
+edit everything the creation dialog left out, plus how Claude runs in that
+project. Changes are staged and applied with **Save changes**.
 
 **Identity & metadata** — Name, Summary, Status, Area, Visibility, Domain tags,
 and Links, all editable here. (Slug, Started, and Created are shown read-only.)
 
-**Keeper agent** — the knobs that shape how the agent runs:
+**Claude** — the knobs that shape how the agent runs:
 
-- **Model** — which Claude model the keeper uses. Larger context windows
+- **Model** — which Claude model the project uses. Larger context windows
   (Opus/Fable/Sonnet: 1M; Haiku: 200K) fit longer chats.
-- **Permission mode** — how much the keeper asks before acting:
+- **Permission mode** — how much Claude asks before acting:
   - **Default (ask each time)**
   - **Accept edits** *(the default)* — applies file edits without asking
   - **Plan only**
@@ -223,9 +223,9 @@ and Links, all editable here. (Slug, Started, and Created are shown read-only.)
   box-wide `PADDOCK_KEEPER_DRIVE_MODE`; a **Reset to global default** button clears
   an override.
 - **Max turns** — an upper bound (1–1000) on agent turns in a single run.
-- **Docker sandbox** — run the keeper inside a Docker container (needs a working
+- **Docker sandbox** — run Claude inside a Docker container (needs a working
   Docker daemon on the box).
-- **Max spawn depth** — how deep this keeper's spawned children may themselves
+- **Max spawn depth** — how deep this project's spawned children may themselves
   carry Paddock's tools. Leave it on **Instance default** to inherit.
 
 :::note[What "inherit" really means once you Save]
@@ -240,11 +240,11 @@ changes), are **Drive mode** (left on **Global default**), **Max spawn depth**,
 **Offered models**, and the three **Curation budgets**.
 :::
 
-Below the keeper block the tab carries three more sections:
+Below that block the tab carries three more sections:
 **[Offered models](#restrict-the-offered-models)**,
 **[Curation budgets](#curation-budgets)**, and — for a notebook —
 **[Repository backing](#promote-a-notebook-to-repo-backed)**. A final **Derived**
-section shows read-only state the keeper and sweeps maintain.
+section shows read-only state the agent and sweeps maintain.
 
 See [Environment variables](/configuration/environment/) for the defaults a fresh
 project starts from.
@@ -282,9 +282,9 @@ budget is moot for it.)
 
 ### Preload project context (in the composer, not Settings)
 
-One keeper-related toggle lives on the **chat composer**, not the Settings tab:
+One agent-related toggle lives on the **chat composer**, not the Settings tab:
 **Preload project context**. On the **first turn of a new project chat**, it
-injects the project's curated `OVERVIEW.md` + `CHANGELOG.md` so the keeper starts
+injects the project's curated `OVERVIEW.md` + `CHANGELOG.md` so Claude starts
 already knowing the project's current state and history. It's on by default. On a
 brand-new project the toggle still appears but is **disabled** (labelled "no
 overview yet") until the [sweeper](/concepts/sweeper/) has written an
@@ -301,7 +301,7 @@ From a one-off chat, click **Promote to project**. Give it a **Project name**
 
 Paddock then creates a real project **and moves the chat's full history into it**
 — transcript and all — so the conversation stays resumable under the new
-project's keeper. Nothing is lost; the scratch chat simply becomes the project's
+project's agent. Nothing is lost; the scratch chat simply becomes the project's
 first chat.
 
 :::tip[Start loose, organize later]
@@ -314,8 +314,7 @@ have to decide up front.
 
 - [Projects](/concepts/projects/) — the concept behind notebook vs repo-backed,
   and what a project directory contains.
-- [Keeper agents](/concepts/keepers/) — the agents that do
-  the work in each project.
+- [Agents](/concepts/agents/) — the agents that do the work in each project.
 - [The sweeper](/concepts/sweeper/) — how `OVERVIEW.md` and `CHANGELOG.md` stay
   curated (and what "Preload project context" injects).
 - [Environment variables](/configuration/environment/) — the box-wide defaults

@@ -51,8 +51,8 @@ matches what your agents do:
 - **`ghcr.io/edspencer/paddock:devbox`** — the **devbox** image. Base *plus* the
   coding-agent toolbox: `pm`/PM2 preview servers, `ffmpeg`, a headless Playwright MCP
   browser, the Docker CLI (with the `buildx` and `compose` plugins), `kubectl`, and a
-  scripting kit (`python3`, `uv`, `jq`, `rsync`). Reach for it when your keepers
-  **build and run** apps, not just edit them.
+  scripting kit (`python3`, `uv`, `jq`, `rsync`). Reach for it when Claude needs
+  to **build and run** apps, not just edit them.
 
 The devbox only adds tools — same app, same `/data` layout — so you can swap tags
 against the same volume. It's a much bigger image (the Chromium layer alone is ~1 GB),
@@ -99,7 +99,7 @@ secrets itself.
 
 ## Claude authentication
 
-Paddock passes your Claude credentials through to the keeper agents. Provide **one**:
+Paddock passes your Claude credentials through to the agents. Provide **one**:
 
 - `CLAUDE_CODE_OAUTH_TOKEN` — Claude **Max plan** auth.
 - `ANTHROPIC_API_KEY` — **API-pricing** auth.
@@ -156,6 +156,6 @@ the full local-development guide.
 
 ## Next steps
 
-- [Concepts](/concepts/) — how projects, keeper agents, chats, and the sweeper fit together.
+- [Concepts](/concepts/) — how projects, agents, chats, and the sweeper fit together.
 - [Environment variables](/configuration/environment/) — the complete `PADDOCK_*` reference.
 - [Architecture](/architecture/overview/) — what's happening under the hood.

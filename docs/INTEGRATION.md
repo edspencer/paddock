@@ -513,7 +513,7 @@ the "workaround in use" lines explain shapes still visible in the codebase.
 1. ~~**Programmatic dynamic agents (primary).**~~ **CLOSED** (5.11.0) —
    `fleet.addAgent(config, {replace})` / `removeAgent(name)`
    (`fleet-manager.d.ts:175,188`). Paddock calls them directly; see section b.
-   *Original ask:* register a keeper in-memory instead of writing yaml +
+   *Original ask:* register a project's agent in-memory instead of writing yaml +
    `reload()`, which coupled paddock to herdctl's on-disk config format and
    forced a full re-read on every project create.
 

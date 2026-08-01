@@ -3,16 +3,16 @@ title: "Workspaces"
 description: "The workspace is Paddock's unit of work. The instance itself is one; a project is a workspace nested inside it."
 ---
 
-A **workspace** is a directory with a [keeper agent](/concepts/keepers) attached, plus
+A **workspace** is a directory with [an agent](/concepts/agents) attached, plus
 everything that hangs off that pairing: chats, files, changes, history, settings, and
 triggers. It is the unit Paddock actually operates on.
 
-The instance itself **is** a workspace — the projects root, with its own keeper. A
+The instance itself **is** a workspace — the projects root, with its own agent. A
 [**project**](/concepts/projects) is a workspace nested inside it. So "project" is not the
 general case any more; it is the special case with a non-empty name.
 
 ```
-<projectsRoot>/          ← the ROOT workspace (keeper cwd = this directory)
+<projectsRoot>/          ← the ROOT workspace (agent cwd = this directory)
 ├── paddock/             ← a project = a workspace nested inside the root
 ├── herdctl/             ← another
 └── notes.md             ← the root's own files
@@ -75,7 +75,7 @@ with a 200 on the first boot. Its metadata is **derived** (the name defaults to 
 projects-root directory's basename), and a record is written to disk **lazily**, only once
 you change a setting.
 
-Its keeper and sweeper are registered at boot like any workspace's, and its transcripts
+Its agent and sweeper are registered at boot like any workspace's, and its transcripts
 are gitignored like any workspace's.
 
 ## The one surviving sentinel
@@ -83,7 +83,7 @@ are gitignored like any workspace's.
 herdctl agent names must be non-empty, so the empty key genuinely cannot be represented in
 that namespace. It is encoded there — and only there — as `_root`:
 
-| Workspace     | Keeper agent    | Sweeper agent    |
+| Workspace     | Agent           | Sweeper agent    |
 | ------------- | --------------- | ---------------- |
 | the root      | `keeper-_root`  | `sweeper-_root`  |
 | `paddock`     | `keeper-paddock`| `sweeper-paddock`|
@@ -92,6 +92,10 @@ That is **one** leading underscore. The same encoding applies to `hook-_root-<na
 `trigger-_root-<name>`. It can never collide with a project, because project slugs are
 lowercase alphanumerics and dashes — the slug pattern rejects underscores outright, so no
 slug can ever equal `_root`.
+
+The `keeper-` prefix is legacy in the same way: it predates the retirement of "keeper" as
+a concept, and stays because that literal string is persisted in job records, `state.yaml`
+and the session directories. Read it as an opaque prefix, like `_root` itself.
 
 This is a *name*, not an identity. A workspace is identified by its key everywhere else;
 the encoding is applied in a single function at the herdctl boundary, which keeps all four
@@ -112,15 +116,15 @@ if (!slug) { … }                // ❌ also matches the root
 ```
 :::
 
-## Scope: what the root keeper can reach
+## Scope: what the root agent can reach
 
-A project keeper's working directory is its own project directory, so its file surface,
+A project agent's working directory is its own project directory, so its file surface,
 its Changes pane, and its Bash calls are confined to that subtree.
 
-**The root keeper's working directory contains every project.** It can read and edit any
+**The root agent's working directory contains every project.** It can read and edit any
 project's files, and its Changes tab is the *whole* backing repo — which is exactly the
 intent: the root is where you commit across the instance and do cross-project work. But it
-is a real step up in reach from a project keeper, and worth knowing before you hand a root
+is a real step up in reach from a project agent, and worth knowing before you hand a root
 chat a broad instruction.
 
 The file surface applies its usual guard at the root: paths are resolved and refused if
@@ -161,6 +165,6 @@ different — it is frozen at boot, so every save is restart-required. See
 
 - [**Projects**](/concepts/projects) — the nested case: notebook vs. repo-backed, and what
   a project directory contains.
-- [**Keeper agents**](/concepts/keepers) — the agent attached to each workspace.
+- [**Agents**](/concepts/agents) — the agent attached to each workspace.
 - [**Chats are sessions**](/concepts/chats) — what lives inside a workspace's Chat tab.
 - [**API reference**](/reference/api) — the workspace-scoped routes, at both mounts.

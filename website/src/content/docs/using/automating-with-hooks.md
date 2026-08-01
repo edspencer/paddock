@@ -7,7 +7,7 @@ An [event hook](/concepts/hooks/) runs an agent turn **when a lifecycle event
 fires**. This guide is the practical companion to that concept page: it walks
 through creating an `onArchive` hook — *"when I archive a chat, tidy up after
 it"* — granting it exactly the tools it needs, enabling it, and reading the run
-it produces. By the end you'll also know how to let a keeper agent manage its own
+it produces. By the end you'll also know how to let Claude manage a project's own
 hooks, and how to steer the built-in curator.
 
 Event hooks are managed as **triggers**, so everything below happens on a
@@ -35,7 +35,7 @@ Click **Add trigger** to open the editor, then:
 4. Write a **Prompt** — what the hook should do when it fires. Choose **Inline
    text** for a short instruction, or **Prompt file** to keep it in a git-tracked
    `.md` file under `.paddock/triggers/` that Paddock reads fresh on each fire
-   (handy for a longer runbook the keeper can edit over time).
+   (handy for a longer runbook Claude can edit over time).
 
 ![The Triggers tab editor for an event hook: Type set to Event, Event set to On archive, and an inline prompt](../../../assets/using/event-trigger-definition.png)
 
@@ -62,8 +62,8 @@ fresh chat each fire.
 
 :::caution[The tool list is the capability — pick the minimum]
 Grant the narrowest set that does the job. A hook you type a reply into later
-runs at *its* capability, not the keeper's, and the same tools are what it can do
-unattended. A tool-less hook is the safest starting point.
+runs at *its* capability, not the project's, and the same tools are what it can
+do unattended. A tool-less hook is the safest starting point.
 :::
 
 ## Enable it
@@ -81,7 +81,7 @@ Click **Create trigger** and the hook is live. It now shows in the list as an
 ## Watch it fire
 
 Trigger it: **archive a chat** in this project (the archive action in the chat
-list, or a keeper's own `archive_chat`). The archive completes immediately, and
+list, or Claude's own `archive_chat`). The archive completes immediately, and
 just after it commits your hook fires as its own agent turn. A new chat appears in
 the sidebar with a ⚡ lightning badge, and opening it floats a read-only
 **capability banner** at the top — what fired it, and the exact tools it was
@@ -102,7 +102,7 @@ for the same archive.
 
 ## Manage hooks from an agent (the manager pattern)
 
-You don't have to use the tab. A keeper agent can declare, edit, and delete its
+You don't have to use the tab. Claude can declare, edit, and delete a project's
 own hooks through the **hook-management MCP tools** — the agent twin of the
 Triggers tab:
 
@@ -115,7 +115,7 @@ Triggers tab:
 - **`remove_trigger`** — delete one.
 
 This is what makes *"set yourself up to tidy the project whenever I archive a
-chat"* a thing you can ask a keeper to do directly.
+chat"* a thing you can ask Claude to do directly.
 
 :::caution[Off by default — a per-project opt-in]
 The hook-management tools are **not** injected unless the project opts in. They're

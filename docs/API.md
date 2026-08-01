@@ -59,9 +59,9 @@ return `{ error, code }` with `404` (not found), `409` (exists), or `400`
 | Method | Path | Purpose | Auth |
 |--------|------|---------|------|
 | GET | `/api/projects` | `{ projects, root }` — the root workspace's CHILDREN, each with a compact `chatTurns` unread signal, plus the `root` workspace itself carrying the same field (never a member of `projects`, so the sidebar's Home badge and a project row's badge fold one payload). `root` is `null` only if the record could not be read. | gated |
-| POST | `/api/projects` | Create a project (+ keeper & sweeper agents) → `201 { project }`. | gated |
+| POST | `/api/projects` | Create a project (+ its agent & sweeper) → `201 { project }`. | gated |
 | GET | `/api/projects/:slug` | One project + its `changelog` + `chats`. | gated |
-| PATCH | `/api/projects/:slug` | Update project metadata (model, permissionMode, maxTurns, docker, driveMode, …); re-registers the keeper. `400` on invalid field. | gated |
+| PATCH | `/api/projects/:slug` | Update project metadata (model, permissionMode, maxTurns, docker, driveMode, …); re-registers the agent. `400` on invalid field. | gated |
 | DELETE | `/api/projects/:slug` | Delete the project dir + unregister its agents → `{ ok, slug }`. | gated |
 
 ### Project files & pins
@@ -72,7 +72,7 @@ return `{ error, code }` with `404` (not found), `409` (exists), or `400`
 | GET | `/api/projects/:slug/files/:name` | One file + render-kind hint (`markdown`/`html`/`text`/`image`). `?raw=1` streams raw bytes (locked-down CSP). | gated |
 | GET | `/api/projects/:slug/changelog` | Raw `CHANGELOG.md` (`text/markdown`). | gated |
 | GET | `/api/projects/:slug/overview` | Raw `OVERVIEW.md` (sweep-curated; `""` if none). | gated |
-| GET | `/api/projects/:slug/commands` | Slash commands for the project's keeper agent. | gated |
+| GET | `/api/projects/:slug/commands` | Slash commands for the project's agent. | gated |
 | PUT | `/api/projects/:slug/pins` | Pin a file as a sibling tab — body `{ file }`. | gated |
 | DELETE | `/api/projects/:slug/pins/:file` | Unpin a file (URL-encoded name). | gated |
 | GET | `/api/chat-files/:id` | Raw bytes of a file an agent shared via `mcp__paddock__send_file`; honors HTTP `Range` (`206`). | gated |

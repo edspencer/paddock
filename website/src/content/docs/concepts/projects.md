@@ -8,8 +8,8 @@ instance's own directory is itself a workspace, and a project is one living bene
 so a project is not the top-level unit any more, it is the *nested* case. Concretely it is
 **a directory plus a `project.yaml`**: a slug-named directory under the data root
 (`PADDOCK_PROJECTS_DIR`) that holds the project's metadata, curated notes, and its
-chat transcripts. One project → one long-lived Claude Code agent (its
-[keeper](/concepts/keepers)) whose working directory is tied to that project.
+chat transcripts. One project → one long-lived [Claude Code
+agent](/concepts/agents) whose working directory is tied to that project.
 
 What distinguishes a project is only that its
 [workspace key](/concepts/workspaces#identity-a-workspace-is-its-path) — its path relative
@@ -38,12 +38,12 @@ The **optional** ones fall into groups:
 | Group                 | Fields                                                             |
 | --------------------- | ------------------------------------------------------------------ |
 | Presentation          | `group` (the project's single "area"), `links`, `pinned`           |
-| Keeper overrides      | `model`, `models`, `permissionMode`, `maxTurns`, `docker`, `driveMode`, `maxSpawnDepth`, `hooksMcpEnabled` |
+| Agent overrides       | `model`, `models`, `permissionMode`, `maxTurns`, `docker`, `driveMode`, `maxSpawnDepth`, `hooksMcpEnabled` |
 | Inherited sub-configs | `recovery`, `attachments`, `curation`                              |
 | Backing repo          | `repo`                                                             |
 | Automation            | `schedules`, `hooks`, `triggers`                                    |
 
-Every keeper override and sub-config follows the same inherit/override discipline: absent
+Every agent override and sub-config follows the same inherit/override discipline: absent
 on disk means "inherit the instance default", resolved at dispatch rather than baked
 concrete into the file. The three automation blocks are keyed records —
 [`triggers`](/concepts/hooks) is the unified successor that collapses the older separate
@@ -76,7 +76,7 @@ Two deliberate carve-outs are worth knowing:
   an untracked `.gitignore`.
 
 Honest severity: this is defence-in-depth, not a privilege boundary. Anyone who can reach
-these routes can already start a keeper chat and run Bash, which is strictly more
+these routes can already start a chat and run Bash, which is strictly more
 capability than reading a file. It is worth closing because "hidden in the listing" should
 not be the only thing standing between an API and a transcript.
 
@@ -91,28 +91,28 @@ never changes.
 
 ### Notebook (the classic type)
 
-No `repo` field. The project directory itself is the keeper's working directory
-— the keeper's cwd **is** `dir`. A notebook project is pure Paddock-managed
+No `repo` field. The project directory itself is the agent's working directory
+— the agent's cwd **is** `dir`. A notebook project is pure Paddock-managed
 content: notes, docs, plans, and its chats, all living in the data repo. This is
 the right type for research, planning, ops notes, or any work that isn't itself a
 code repository.
 
 ```
-workingDir === dir           # keeper runs directly in the project dir
+workingDir === dir           # Claude runs directly in the project dir
 ```
 
-### Repo-backed (an external git repo as the keeper's cwd)
+### Repo-backed (an external git repo as the agent's cwd)
 
 `repo` is set to an external git URL (https, ssh, `git@host:owner/repo`, git://,
 or a local path). At creation Paddock **clones that repo into a nested checkout**
-inside the project directory, and the keeper's working directory becomes that
+inside the project directory, and the agent's working directory becomes that
 checkout — so the repo's own `CLAUDE.md`, git history, branches, and PR workflow
 all work natively. This is the right type when the project *is* a codebase you
-want the keeper to build, branch, and open PRs against.
+want Claude to build, branch, and open PRs against.
 
 ```
 dir         = <projectsRoot>/<slug>            # metadata dir (Paddock-owned)
-workingDir  = <dir>/<repo-name>                # nested checkout (keeper's cwd)
+workingDir  = <dir>/<repo-name>                # nested checkout (agent's cwd)
 ```
 
 The checkout name is derived deterministically from the repo URL's basename
@@ -128,11 +128,11 @@ repo-backed project.
 ```mermaid
 flowchart TB
   subgraph Notebook["Notebook project"]
-    N["{slug}/  ← keeper cwd\n project.yaml · OVERVIEW · CHANGELOG · CLAUDE · .chats/"]
+    N["{slug}/  ← agent cwd\n project.yaml · OVERVIEW · CHANGELOG · CLAUDE · .chats/"]
   end
   subgraph Repo["Repo-backed project"]
     D["{slug}/  (metadata dir)\n project.yaml · OVERVIEW · CHANGELOG · .chats/ · .gitignore"]
-    Ck["{slug}/{repo-name}/  ← keeper cwd\n the external repo checkout (own .git, own CLAUDE.md)"]
+    Ck["{slug}/{repo-name}/  ← agent cwd\n the external repo checkout (own .git, own CLAUDE.md)"]
     D --> Ck
   end
 ```
@@ -142,7 +142,7 @@ flowchart TB
 Keeping metadata in `dir` and the working tree in `workingDir` is what lets a
 project be **self-contained and portable**: the whole project directory (notes +
 chats + attribution) can be backed up or moved as a unit, while a repo-backed
-project still gives the keeper a first-class checkout to do real engineering in.
+project still gives Claude a first-class checkout to do real engineering in.
 See [`../DESIGN-backing-store.md`](https://github.com/edspencer/paddock/blob/main/docs/DESIGN-backing-store.md) for the durability
 model and [`../ARCHITECTURE.md`](/architecture/overview) for how `dir`/`workingDir`
 flow through the system.

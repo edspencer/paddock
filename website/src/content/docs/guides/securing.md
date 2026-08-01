@@ -13,7 +13,7 @@ leaves your home network.**
 
 ## The threat model, briefly
 
-A Paddock keeper is a real Claude Code session with tools. Someone who reaches an
+A Paddock chat is a real Claude Code session with tools. Someone who reaches an
 unprotected instance can make it execute code, spend your Anthropic budget, exfiltrate
 whatever the box can see, and push to any repo its token allows. "It's only on my LAN"
 is not a defense — other devices, guests, and compromised IoT gadgets share that LAN.
@@ -202,8 +202,8 @@ Before that release there is no management-API auth behind your proxy at all.
 
 On a pre-v0.46 instance, exempting `/mcp` **removes the only gate in front of it**
 and publishes an unauthenticated, turn-spawning endpoint to anyone who can reach
-the proxy. A keeper turn runs with `Bash`. That is remote code execution on the
-host, reachable without a credential.
+the proxy. A turn runs with `Bash`. That is remote code execution on the host,
+reachable without a credential.
 
 **Upgrade Paddock to v0.46.0 or later first, then change the proxy config.**
 Never the other way round, and never "prepare" the exemption ahead of a rollout.
@@ -242,7 +242,7 @@ Three more rules that stay yours even with the exemption in place:
   invariant "this proxy is the only source of that header" should hold on every
   route, not only the challenged ones.
 - **Treat a write-scoped token like a production secret.** The read-only default
-  exists because any write scope starts keeper turns. Full detail in the
+  exists because any write scope starts turns. Full detail in the
   [Management API reference](/reference/mcp/).
 
 :::danger[nginx: `auth_basic off` does **not** clear `$remote_user`]

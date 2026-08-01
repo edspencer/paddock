@@ -3,8 +3,8 @@
 A **project** is the top-level unit of organization in Paddock. Concretely, it is
 **a directory plus a `project.yaml`** — a slug-named directory under the data root
 (`PADDOCK_PROJECTS_DIR`) that holds the project's metadata, curated notes, and its
-chat transcripts. One project → one long-lived Claude Code agent (its
-[keeper](./keepers.md)) whose working directory is tied to that project.
+chat transcripts. One project → one long-lived [Claude Code
+agent](./agents.md) whose working directory is tied to that project.
 
 ## What's in a project directory
 
@@ -39,28 +39,28 @@ Boolean(yaml.repo)`). The type is set at creation and **immutable** thereafter.
 
 ### Notebook (the classic type)
 
-No `repo` field. The project directory itself is the keeper's working directory
-— the keeper's cwd **is** `dir`. A notebook project is pure Paddock-managed
+No `repo` field. The project directory itself is the agent's working directory
+— the agent's cwd **is** `dir`. A notebook project is pure Paddock-managed
 content: notes, docs, plans, and its chats, all living in the data repo. This is
 the right type for research, planning, ops notes, or any work that isn't itself a
 code repository.
 
 ```
-workingDir === dir           # keeper runs directly in the project dir
+workingDir === dir           # Claude runs directly in the project dir
 ```
 
-### Repo-backed (an external git repo as the keeper's cwd)
+### Repo-backed (an external git repo as the agent's cwd)
 
 `repo` is set to an external git URL (https, ssh, `git@host:owner/repo`, git://,
 or a local path). At creation Paddock **clones that repo into a nested checkout**
-inside the project directory, and the keeper's working directory becomes that
+inside the project directory, and the agent's working directory becomes that
 checkout — so the repo's own `CLAUDE.md`, git history, branches, and PR workflow
 all work natively. This is the right type when the project *is* a codebase you
-want the keeper to build, branch, and open PRs against.
+want Claude to build, branch, and open PRs against.
 
 ```
 dir         = <projectsRoot>/<slug>            # metadata dir (Paddock-owned)
-workingDir  = <dir>/<repo-name>                # nested checkout (keeper's cwd)
+workingDir  = <dir>/<repo-name>                # nested checkout (agent's cwd)
 ```
 
 The checkout name is derived deterministically from the repo URL's basename
@@ -75,11 +75,11 @@ repo-backed project.
 ```mermaid
 flowchart TB
   subgraph Notebook["Notebook project"]
-    N["{slug}/  ← keeper cwd\n project.yaml · OVERVIEW · CHANGELOG · CLAUDE · .chats/"]
+    N["{slug}/  ← agent cwd\n project.yaml · OVERVIEW · CHANGELOG · CLAUDE · .chats/"]
   end
   subgraph Repo["Repo-backed project"]
     D["{slug}/  (metadata dir)\n project.yaml · OVERVIEW · CHANGELOG · .chats/ · .gitignore"]
-    Ck["{slug}/{repo-name}/  ← keeper cwd\n the external repo checkout (own .git, own CLAUDE.md)"]
+    Ck["{slug}/{repo-name}/  ← agent cwd\n the external repo checkout (own .git, own CLAUDE.md)"]
     D --> Ck
   end
 ```
@@ -89,14 +89,14 @@ flowchart TB
 Keeping metadata in `dir` and the working tree in `workingDir` is what lets a
 project be **self-contained and portable**: the whole project directory (notes +
 chats + attribution) can be backed up or moved as a unit, while a repo-backed
-project still gives the keeper a first-class checkout to do real engineering in.
+project still gives Claude a first-class checkout to do real engineering in.
 See [`../DESIGN-backing-store.md`](../DESIGN-backing-store.md) for the durability
 model and [`../ARCHITECTURE.md`](../ARCHITECTURE.md) for how `dir`/`workingDir`
 flow through the system.
 
 ## The root workspace
 
-A **workspace** is a directory with a keeper agent, chats, files, changes,
+A **workspace** is a directory with an agent, chats, files, changes,
 history, settings, triggers and pinned files. The instance's own directory —
 `projectsRoot` — is the **root workspace**, and a *project* is a workspace nested
 inside it. So "project" keeps its ordinary meaning (a directory you created under
@@ -105,7 +105,7 @@ projects.
 
 ```
 <projectsRoot>/          # ← the ROOT workspace (key "")
-├── CLAUDE.md            # reaches every keeper (the SDK's cwd walk-up)
+├── CLAUDE.md            # reaches every agent (the SDK's cwd walk-up)
 ├── .chats/              # root-level chats (gitignored, like every workspace's)
 ├── project.yaml         # optional — written only when a setting changes
 ├── some-project/        # a child workspace (key "some-project")
@@ -152,14 +152,14 @@ same map rather than computed by a parallel root-only path.
 
 The one place the empty key cannot be used directly is the **herdctl agent
 namespace**, which requires non-empty names satisfying two different patterns.
-There the key is encoded as `_root` (so the root keeper is `keeper-_root`), which
+There the key is encoded as `_root` (so the root agent is `keeper-_root`), which
 no project can collide with because `SLUG_RE` rejects underscores. That encoding
 is a name, applied at one boundary — not an identity.
 
-> **The root keeper is an omniscient admin, by design.** Its working directory
+> **The root agent is an omniscient admin, by design.** Its working directory
 > *contains* every project, so root chats can read and edit any project's files
 > and the root's git status is the whole repo. That is the point — the root is
 > where you act across the instance — but it is a meaningful escalation over a
-> project keeper, which is confined to its own subtree. Two things follow from
+> project agent, which is confined to its own subtree. Two things follow from
 > it: `remove()` refuses the root (its directory is the entire store), and
 > `promote()` refuses it (that directory is already the instance's backing repo).
