@@ -97,3 +97,13 @@ npm run test:e2e            # Playwright vs real server + a fake `claude` on PAT
 | Auth modes & secrets | [`AUTH.md`](AUTH.md) |
 | Release pipeline | [`RELEASING.md`](RELEASING.md) |
 | herdctl API contract Paddock depends on | [`docs/INTEGRATION.md`](docs/INTEGRATION.md) |
+| Regenerating the README/docs demo reel | [`scripts/demo-gif/README.md`](scripts/demo-gif/README.md) |
+
+**The demo reel is generated, not hand-made.** `docs/demo/paddock-demo.gif` (and
+its copy under `website/public/demo/`) comes out of `npm run demo:gif` — a
+committed seed/shoot/build pipeline that stages a synthetic instance, drives it,
+and photographs it. Never edit or hand-replace those files; change
+`scripts/demo-gif/beats.mjs` (the storyboard) or `fixtures.mjs` (the content) and
+re-run. It went 26 minor versions stale once because the original was ad-hoc and
+undiscoverable — worth refreshing whenever a release changes what the UI looks
+like.

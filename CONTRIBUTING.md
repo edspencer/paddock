@@ -48,6 +48,22 @@ npm run test:e2e            # Playwright journeys against the real server + a fa
   into a real-Claude run with `npm run test:e2e:live`.
 - More on the test layers: [docs/TESTING.md](docs/TESTING.md).
 
+## The demo reel
+
+The GIF at the top of the README (and on the docs homepage) is **generated**, not
+hand-made. If a change of yours alters what the UI looks like, it may be worth
+refreshing:
+
+```bash
+npm run demo:gif            # ~4 min; writes both committed copies of the GIF
+```
+
+It stages a wholly synthetic instance, drives it, photographs eleven beats with
+Playwright and encodes GIF + MP4/WebM. Change the storyboard in
+`scripts/demo-gif/beats.mjs` or the content in `fixtures.mjs` — never edit the
+GIF itself. Full notes, and the list of things that fail silently:
+[scripts/demo-gif/README.md](scripts/demo-gif/README.md).
+
 ## Environment gotchas
 
 These bite everyone at least once:
