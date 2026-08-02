@@ -334,8 +334,24 @@ export function ChatPane({
   // Which sub-agents are working right now, and what each is doing — derived from
   // the SAME turn list the transcript renders, then polled once per sub-agent so a
   // collapsed card still reports progress to the running-sub-agents bar.
-  const runningSubagents = useRunningSubagents(turns, streaming);
-  const subagentActivity = useSubagentActivity(runningSubagents, fetchSubagent);
+  //
+  // `streaming` is passed to the poller only to decide when a quiet sub-agent may
+  // be declared finished — NOT to gate the list. A sub-agent outlives its parent's
+  // turn (the SDK backgrounds them by default), so gating on `streaming` emptied
+  // the bar the instant the parent replied, while the work carried on.
+  const subagentCandidates = useRunningSubagents(turns);
+  const subagentActivity = useSubagentActivity(subagentCandidates, fetchSubagent, streaming);
+  // The bar lists only those still working. Once a sub-agent has been polled its
+  // own transcript decides; BEFORE the first poll lands we fall back to whether
+  // the chat is streaming — so a just-launched sub-agent appears immediately,
+  // while a finished chat reopened from history (never polled) lists nothing.
+  const runningSubagents = useMemo(
+    () =>
+      subagentCandidates.filter(
+        (c) => subagentActivity.get(c.toolUseId)?.running ?? streaming,
+      ),
+    [subagentCandidates, subagentActivity, streaming],
+  );
   // Raw-file URL builder for inline image reads (issue #239).
   const toolImageUrl = useMemo(
     () => (projectSlug ? (relPath: string) => api.projectFileRawUrl(projectSlug, relPath) : null),

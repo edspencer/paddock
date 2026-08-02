@@ -520,13 +520,23 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
   // In-flight tool (#175): rendered before it completes — no output/duration
   // yet, just a "running…" affordance so a slow tool/subagent is visibly alive.
   const pending = Boolean(tool.pending);
-  // For a sub-agent, show its actual run time (from its transcript) rather than
-  // the near-instant launch time the Task/Agent tool_call itself records.
-  const dur = formatDuration(tool.subagentDurationMs ?? tool.durationMs);
+  const isSubagent = SUBAGENT_TOOLS.has(tool.toolName);
+  const liveActivity = tool.toolUseId ? subagentActivity?.get(tool.toolUseId) : undefined;
+  // A sub-agent's duration must NEVER fall back to its launching tool_call's own
+  // `durationMs`. The SDK backgrounds sub-agents by default, so that call returns
+  // as soon as the sub-agent is spawned — a four-minute research run advertised
+  // itself as "38ms", which is not a rounding error but a different quantity.
+  //
+  // Preference order: the server's final figure (history join on reload), else
+  // the first→last span of the transcript we are already polling, else nothing.
+  // Showing NOTHING is the correct third option: an honest gap beats a wrong
+  // number. Non-sub-agent tools are unaffected and still use their own duration.
+  const dur = isSubagent
+    ? formatDuration(tool.subagentDurationMs ?? liveActivity?.elapsedMs)
+    : formatDuration(tool.durationMs);
   // A sub-agent's estimated API-rate cost, priced server-side per-model (issue
   // #166). Rendered next to the duration; null when its model has no pricing.
   const cost = tool.subagentCostUsd != null ? `~${formatUsd(tool.subagentCostUsd)}` : null;
-  const isSubagent = SUBAGENT_TOOLS.has(tool.toolName);
   // A detached tool (Monitor / bg Bash / background-task op) — a first-class class
   // distinct from a sub-agent, with a "background" badge + status chip (issue #230).
   const isBg = !isSubagent && isBackgroundTool(tool);
@@ -550,10 +560,15 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
   const bashSplit = Boolean(bash && bash.stderr);
   const searchCount = search ? searchCountLabel(search) : null;
   const readRange = readInfo ? readRangeLabel(readInfo) : null;
-  // A sub-agent is still working when the chat is live and we don't yet have its
-  // final metrics (#429). Shared with the running-sub-agents bar via ONE exported
-  // predicate so the two can never disagree about what is running.
-  const subagentRunning = isSubagentRunning(tool, chatLive);
+  // Is this sub-agent still working? Its OWN transcript is the authority, because
+  // a sub-agent outlives its parent's turn: the SDK backgrounds sub-agents by
+  // default, so the parent finishes its reply — and the chat stops streaming —
+  // while they keep going. Judging by `chatLive` alone made every card snap to
+  // "finished" the moment the parent replied. Falls back to the old predicate
+  // before the first poll lands, and for a nested sub-agent (only top-level ones
+  // are polled).
+  const subagentRunning =
+    liveActivity != null ? liveActivity.running : isSubagentRunning(tool, chatLive);
   // Expandable-into-steps once the launch is known (live) or its transcript is on
   // disk (history). #429 relaxes the old `!pending` guard for sub-agents: the
   // launching card is now expandable the instant it starts, and NestedSteps polls
