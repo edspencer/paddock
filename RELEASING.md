@@ -2,11 +2,49 @@
 
 Paddock is an **application**, not a set of published libraries. We use
 [changesets](https://github.com/changesets/changesets) for versioning and
-changelogs (like herdctl), but we do **not** publish the packages to npm.
-Instead every release produces two artifacts:
+changelogs (like herdctl). The workspace packages (`@paddock/server`,
+`@paddock/web`) stay `private` and are never published under their own names.
+Every release produces three artifacts:
 
 - a multi-arch Docker image → `ghcr.io/edspencer/paddock:<version>` (+ `:latest`)
 - a self-contained release tarball → attached to the GitHub Release `v<version>`
+- an npm package → **`@edspencer/paddock`**, the `npx` entry point
+
+### The npm package is synthesized, not a workspace package
+
+`scripts/make-npm-package.mjs` stages a single public package from the built
+output into `dist-npm/`. The workspace manifests are left alone — flipping their
+`private` flag would make every future `npm publish` in the repo a loaded gun
+pointed at an internal-named package.
+
+Two deliberate divergences from the repo, both in that script:
+
+- **Sourcemaps are stripped** (files *and* `sourceMappingURL` comments): 15 MB of
+  the 19 MB web dist, for something an end user of a packaged app never opens.
+  2.0 MB packed / 6.0 MB unpacked, versus ~22 MB with maps. The Docker image and
+  the GitHub release tarball keep theirs.
+- **Dependencies are pinned** to the exact versions in `package-lock.json`. A
+  lockfile does not travel with a published package — consumers re-resolve
+  against the declared ranges, so a caret would hand `npx` users a
+  `@herdctl/core` minor that paddock's CI never saw.
+
+### npm auth: OIDC trusted publishing, no token
+
+The `publish-npm` job authenticates via **OIDC trusted publishing**. There is no
+`NPM_TOKEN` secret and there should never be one. This needs `id-token: write`,
+npm ≥ 11.5.1 (Node 22 ships npm 10, so the job upgrades it), `registry-url` on
+`setup-node`, and a trusted publisher configured for this repo + workflow at
+`npmjs.com/package/@edspencer/paddock/access`.
+
+Provenance is attested automatically; the job verifies it landed and fails the
+release if it did not.
+
+> **Bootstrapping a brand-new package cannot use OIDC** — npm has no settings
+> page for a package that does not exist yet ([npm/cli#8544](https://github.com/npm/cli/issues/8544)).
+> The first version was published by hand (`npm login`, which issues a 2-hour
+> session with 2FA, then `npm publish`) purely to create the package so a trusted
+> publisher could be attached. Manual publishes cannot carry provenance, which is
+> why the bootstrap version is unattested and every release since comes from CI.
 
 ## Versioning model
 

@@ -14,6 +14,7 @@
     "build": "npm run build -w packages/server && npm run build -w packages/web",
     "build:server": "npm run build -w packages/server",
     "build:web": "npm run build -w packages/web",
+    "pack:npm": "npm run build && node scripts/make-npm-package.mjs",
     "dev": "npm run dev -w packages/server",
     "dev:web": "npm run dev -w packages/web",
     "typecheck": "npm run typecheck -w packages/server && npm run typecheck -w packages/web",
