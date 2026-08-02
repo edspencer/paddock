@@ -41,10 +41,22 @@ release if it did not.
 
 > **Bootstrapping a brand-new package cannot use OIDC** — npm has no settings
 > page for a package that does not exist yet ([npm/cli#8544](https://github.com/npm/cli/issues/8544)).
-> The first version was published by hand (`npm login`, which issues a 2-hour
-> session with 2FA, then `npm publish`) purely to create the package so a trusted
-> publisher could be attached. Manual publishes cannot carry provenance, which is
-> why the bootstrap version is unattested and every release since comes from CI.
+> The first version was published by hand purely to create the package so a
+> trusted publisher could be attached:
+>
+> ```sh
+> npm login                                    # 2-hour session, 2FA; nothing stored
+> npm run pack:npm
+> cd dist-npm
+> npm publish --no-provenance --access public
+> ```
+>
+> **`--no-provenance` is required, not optional.** The synthesized manifest sets
+> `publishConfig.provenance: true`, and npm refuses a provenance publish outside
+> a supported CI with *"Automatic provenance generation not supported outside of
+> GitHub Actions"*. The flag overrides the manifest for that one publish. This is
+> also why the bootstrap version is permanently unattested, and every release
+> after it — coming from CI — is not.
 
 ## Versioning model
 
