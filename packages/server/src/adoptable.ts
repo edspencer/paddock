@@ -303,8 +303,13 @@ export class AdoptableIndex {
     const folders = await this.scanFolders();
     const sources = await this.candidateSources(project, folders);
 
+    // Sentinel for "this folder recorded no cwd": it must be a string no real
+    // source can equal, and `""` will not do — the root workspace's key is `""`,
+    // so an empty cwd is a value that genuinely occurs here. Written as the
+    // escape, never a raw NUL byte: a raw NUL makes ripgrep classify the whole
+    // file as binary and skip it, so the file vanishes from code search (#570).
     const matchedKeys = folders
-      .filter((f) => sources.includes(f.cwd ?? " "))
+      .filter((f) => sources.includes(f.cwd ?? "\u0000"))
       .map((f) => `${f.name}=${f.key}`)
       .sort();
     const key = [
