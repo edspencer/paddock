@@ -1,6 +1,6 @@
 ---
 title: What's New
-description: "The user-facing highlights of each Paddock release — an unread badge on the sidebar's Home link, the instance's own root as a first-class workspace, subtree actions on the chat tree, a running-chats filter, instance Config split from workspace Settings, scratch retired, a much faster jobs index, a chat list that nests spawned chats under their parent, an external MCP endpoint, a generated API reference, per-message fork & revert, Claude Opus 5 by default, official Docker images & deploy recipes, attachments, streaming, unified triggers, and more."
+description: "The user-facing highlights of each Paddock release — importing your existing Claude Code CLI chats, a Home that leads with running and unread work, the keeper persona retired in favour of Claude, an unread badge on the sidebar's Home link, the instance's own root as a first-class workspace, subtree actions on the chat tree, a running-chats filter, instance Config split from workspace Settings, scratch retired, a much faster jobs index, a chat list that nests spawned chats under their parent, an external MCP endpoint, a generated API reference, per-message fork & revert, Claude Opus 5 by default, official Docker images & deploy recipes, attachments, streaming, unified triggers, and more."
 ---
 
 The headline changes in recent Paddock releases, newest first. These are the
@@ -20,7 +20,16 @@ detail would otherwise send you to an address that no longer resolves, the entry
 says so inline.
 :::
 
-Two arcs run through the most recent stretch. The first is that Paddock's own
+The newest arc is that Paddock stopped being a **walled garden**. It used to be
+that work only counted if it started here; the `claude` history already on your
+laptop was invisible, and the persona in the UI implied some other agent was
+doing the work. 0.55 imports that history into the project it belongs to, and
+0.54 dropped the persona — it says **Claude**, because that is who you were
+talking to. In the same stretch the front door stopped being a directory and
+started being a to-do list: Home now opens on what is **running** and what is
+**unread**, rather than on a list the sidebar was already showing you.
+
+Two arcs run through the stretch before that. The first is that Paddock's own
 **root** stopped being a hole in the model: the directory holding your projects is
 now a workspace in its own right — with a keeper, chats, files, changes, history,
 triggers and settings, exactly like a project — which retired the old
@@ -38,6 +47,132 @@ way as well: Paddock is now something you can **drive from outside**, over an MC
 endpoint and a published HTTP API, carrying its own credentials and its own
 read-only-by-default policy rather than borrowing your proxy's. An instance is
 becoming less an app you visit and more a service your other tools talk to.
+
+## 0.55 — Bring your terminal history with you
+
+- **Import the Claude Code chats you already have.** A project is backed by a
+  working directory, and you very often already have months of terminal `claude`
+  history for it — or for your own checkout of the same repo, somewhere else
+  entirely. Until now none of that was visible here. When a workspace has
+  importable sessions, an **Import _N_ native chats** button appears at the top of
+  its chat list; one click, no confirmation dialog, and they arrive. Imported
+  chats carry an **Imported** badge so you can tell them from chats started here,
+  and they keep their original timestamps, so a conversation from three weeks ago
+  sorts where it actually belongs rather than collapsing to "today". **Your
+  `~/.claude` history is copied, never moved** — nothing you have in the terminal
+  is disturbed. The count is live rather than a dismissable prompt, so it comes
+  back if you accrue new terminal sessions later, and it reaches zero only when
+  there is genuinely nothing left to bring over. There is a headless equivalent,
+  `npm run import-chats`, for when the transcripts and the server don't share a
+  filesystem — a containerised instance only sees what you have mounted.
+- **Detection is deliberately forgiving about where your checkout lives.** A
+  repo-backed project matches any transcript folder whose recorded working
+  directory has the same checkout name, so history from a clone at a completely
+  different path still comes over; a notebook project matches its exact path. The
+  working directory is read out of the transcript itself rather than decoded from
+  the folder name, because that encoding is lossy — `/a/b-c`, `/a-b/c` and
+  `/a/b/c` all collapse to the same folder. Empty and slash-command-only
+  transcripts are held back as noise and reported separately, so a lower count
+  always has an explanation rather than looking like something went missing.
+- **Operator action: point your health probes at `/api/health`.** Five paths
+  (`/healthz`, `/-/health`, `/health`, `/readyz`, `/livez`) were exempt from
+  authentication but served by no route at all, so they fell through to the
+  front-end catch-all and answered `200` with the app shell — to *anyone*, signed
+  in or not. A monitoring check aimed at `/healthz` therefore reported healthy
+  whatever the instance was actually doing. They are now gated like any other
+  unknown path. `/api/health` is the real one, returns `{"ok":true}`, and is what
+  the shipped Dockerfile and Kubernetes manifests already use.
+- **Two measured memory fixes on the paths you hit constantly.** The jobs index
+  was retaining every record body it exists specifically to avoid retaining — the
+  YAML parser hands back string slices that pin the whole source document alive,
+  so caching three small fields per record kept all of it. Measured against this
+  instance's own jobs directory: **95.7 MB retained before, 1.9 MB after.**
+  Separately, the per-chat usage endpoint fanned out one file read per chat
+  simultaneously — 1,515 chats meant 1,515 concurrent reads — and bounding it
+  **halves peak memory** with no measurable latency cost. Neither changes a single
+  byte of what the endpoints return.
+- **The running sub-agents bar survives leaving a chat and coming back.**
+  Re-opening a chat rehydrates it from history, and a sub-agent that was still
+  working had no completed tool result to join against, so the bar emptied for the
+  rest of its run and its cards stopped expanding — healing only once the
+  sub-agent finished, which is exactly when you no longer needed it.
+- **The self-management tools stop lying by omission.** `read_chat` now says
+  outright that tool entries come back empty and still count against your limit,
+  that thinking blocks and sub-agent transcripts are dropped, and where the
+  lossless transcript actually lives — so it is no longer mistaken for an audit
+  tool. It also flags that an unknown session id returns an empty result rather
+  than an error, which had already produced one confident report about a chat that
+  was never opened. And the whole surface can finally see the **root workspace**:
+  root chats were previously unlistable and unreadable, with two of the three
+  failure modes silent.
+
+## 0.54 — Claude, not "the keeper"
+
+- **The UI says Claude now.** Paddock is a thin layer over Claude Code, and the
+  "keeper" persona was inventing a second actor that does not exist — you were
+  messaging Claude the whole time. So the composer says **Message Claude…**,
+  Settings has a **Claude** section rather than *Keeper agent*, and the turn
+  notices say *Claude reached its turn limit*. Where a sentence didn't need an
+  actor at all, the word is simply gone rather than swapped: "a dedicated keeper
+  agent" drops out of the empty-projects copy entirely.
+- **Breaking: the `keeper` names are gone from config, env and the API, with no
+  aliases.** Pre-1.0, a minor release may break the one before it. If you set
+  either of these, rename them:
+
+  | before | after |
+  | --- | --- |
+  | `PADDOCK_KEEPER_DRIVE_MODE` | `PADDOCK_DRIVE_MODE` |
+  | `PADDOCK_KEEPER_NATIVE_PROMPT` | `PADDOCK_NATIVE_PROMPT` |
+
+  In `paddock.yaml` and instance settings, `keeperDriveMode` → `driveMode`. An
+  instance still setting the old key falls back to the built-in default rather
+  than failing to boot — quietly, so check yours. On `GET /api/models`,
+  `keeperDefault` → `defaultModel` and `keeperDriveModeDefault` →
+  `driveModeDefault`. The `keeper-` prefix on agent *names* is deliberately
+  untouched: it is persisted in job records and session directories, and renaming
+  it would orphan all of them.
+- **Home leads with what needs you: running chats first, then unread.** Home used
+  to open on a list of recent chats — the same list the sidebar already shows in
+  full — so the front door duplicated the furniture and buried the signal. It now
+  opens on the two states that actually want a decision from you. The root's Home
+  is fleet-wide, covering every project's live work as well as its own, while a
+  project's Home is scoped to itself; both run through one component that never
+  learns which it is rendering. Running state is read from the live session hub
+  rather than guessed from timestamps, so it can't disagree with the streaming
+  dots, and a chat is never in both lists at once. **This is also what fixed the
+  in-flight badge**: watching the running set is now itself a reason to hold a
+  socket open, so landing on Home is correct on first paint instead of looking
+  like a quiet instance.
+- **`OVERVIEW.md` now renders on Home beside `CHANGELOG.md`**, both collapsible
+  with the choice remembered per workspace. The old Overview card at the bottom —
+  a summary plus a metadata table — is gone; it described the workspace rather
+  than offering a way into it, and Settings already owns editing that. The
+  **Projects** section left Home too, taking the New Project button to the
+  sidebar's Projects header, where it sits directly above the list it adds to.
+- **Foreground sub-agents stopped duplicating themselves into the transcript.**
+  Launching a sub-agent in the foreground printed every one of its steps twice —
+  once inside its card, correctly, and once as top-level rows of the parent chat
+  next to the card that already contained them. The filter that prevents this
+  existed but ran on only one of the five paths that stream a turn. It runs on all
+  five now, which also keeps a sub-agent's context out of the parent's context
+  meter. The bug was live-only — a reload always "healed" it — which is why it
+  read as a streaming glitch and survived so long.
+- **A live bar above the composer shows what running sub-agents are doing.** A
+  sub-agent could work for minutes behind a collapsed card showing only a cost,
+  usually scrolled well out of view. Each running sub-agent now lists its latest
+  step and step count as it works; tapping one scrolls its card into view, expands
+  it and flashes it so your eye lands on the right place. Liveness and duration
+  come from the sub-agent's own transcript rather than the parent's — the parent
+  finishing its turn no longer makes a sub-agent that is still working look idle.
+- **A chat can no longer be bound to the curator's transcript.** For a notebook
+  project the curation sweeper shared a working directory with Claude, and since a
+  sweep is scheduled after every turn, the two raced for the same session
+  directory. When the sweeper's transcript landed first, your turn was handed the
+  sweeper's session id — so the curation text streamed back as the reply, resuming
+  the chat resumed the *curation* transcript with no memory of your conversation,
+  and the chat could disappear from the project's list entirely. The sweeper now
+  has its own directory, which removes the shared-directory collision structurally
+  rather than by timing.
 
 ## 0.53 — Home says what it's holding
 
