@@ -1462,7 +1462,6 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
               onForkFromMessage={forkFromMessage}
               onRevertToMessage={revertToMessage}
               autoFocus={justForked}
-              isProjectChat
               // For a trigger chat (Epic T / T4): the owning trigger's truthful-from-
               // config capability descriptor, drives the read-only capability banner.
               // Prefers the live list DTO, falling back to the last-seen DTO so the

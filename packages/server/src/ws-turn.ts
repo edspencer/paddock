@@ -544,8 +544,7 @@ async function startAgentTurn(opts: StartAgentTurnOpts): Promise<string> {
     resume,
     injectedMcpServers,
     // Gap B: deliver autonomous background-completion turns live (session mode
-    // only; batch `chat` ignores this). Scratch has no keeper worth streaming
-    // background turns for, so skip it. See makeBackgroundTurnSink above.
+    // only; batch `chat` ignores this). See makeBackgroundTurnSink above.
     onBackgroundMessage: bgSink?.onMessage,
     onBackgroundDone: bgSink?.onDone,
     onJobCreated: (id) => {
@@ -722,15 +721,14 @@ const injectingRecovery = new Set<string>();
  * and the Layer 3 automatic re-drive ({@link RecoveryEngine}). Re-drives the
  * hung keeper via {@link startAgentTurn} with the {@link RECOVERY_NUDGE} and a
  * `recovery` sender, exactly the message a human sends by hand to unstick it.
- * No-op for scratch (no keeper) or a session that no longer exists. The gate on
+ * No-op for a session that no longer exists. The gate on
  * WHICH layer may call this lives in each caller (surfaceKilledTask vs
  * autoReDrive); this helper is layer-agnostic.
  */
 const injectRecoveryNudge = async (project: Project, sessionId: string): Promise<void> => {
   // Every workspace has a keeper, including the root — whose key is `""`. This
-  // guard used to read `if (!slug) return;` to skip scratch, which had no
-  // keeper; scratch is gone, so the only thing it still skipped was the root,
-  // silently killing both the "Continue" nudge and auto-re-drive for root chats.
+  // guard used to read `if (!slug) return;`, which silently killed both the
+  // "Continue" nudge and auto-re-drive for every root chat.
   const slug = project.slug;
   // Single-flight double-dispatch guard (issue #352). Two dispatches resuming the
   // SAME session at once is fatal under session-mode `chatSession(resume)`: the

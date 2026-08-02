@@ -1,6 +1,6 @@
 ---
 title: Working in chats
-description: A hands-on walkthrough — start a chat, import your existing terminal claude history, understand project vs one-off/scratch chats, resume from anywhere, use the composer and message queue, Stop a turn, rewind or fork from any message, and keep a growing chat list legible with unread dots, stars, search, and archive.
+description: A hands-on walkthrough — start a chat, import your existing terminal claude history, understand project chats vs root chats, resume from anywhere, use the composer and message queue, Stop a turn, rewind or fork from any message, and keep a growing chat list legible with unread dots, stars, search, and archive.
 ---
 
 A **chat** is where you actually work in Paddock — one conversation with an
@@ -9,8 +9,8 @@ the [Chats are sessions concept](/concepts/chats/): that page explains *what* a
 chat is (a persisted, resumable Claude Code session); this one walks through
 *how* you work in one day to day.
 
-By the end you'll know how to start a chat, tell **project** chats from **one-off
-(scratch)** ones, pick a conversation back up from any device, drive the composer
+By the end you'll know how to start a chat, tell **project** chats from **root**
+ones, pick a conversation back up from any device, drive the composer
 and its message **queue**, **Stop** a running turn, **fork or rewind** from any
 message, and keep a growing sidebar legible with **unread** dots, **stars**, the
 per-chat **context + cost** meter, **search**, and **archive**.
@@ -66,32 +66,38 @@ run the headless importer (`npm run import-chats -w @paddock/server`) on the hos
 against the data dir.
 :::
 
-## Project chats vs one-off (scratch) chats
+## Project chats vs root chats
 
-Paddock has two kinds of chat, and the difference is *where the agent works*:
+Every chat belongs to a **workspace**, and every workspace has a **keeper agent**
+that runs its chats. The only difference is *which* workspace:
 
 - A **project chat** belongs to a project. It runs under that project's own agent,
   whose working directory is the project directory (or, for a repo-backed
   project, the checkout inside it). Everything Claude does — notes, edits,
-  commits — happens in that project. After a successful turn, a
-  [sweep](/concepts/sweeper/) keeps the project's `OVERVIEW.md` and
-  `CHANGELOG.md` curated — and on instances where the operator has enabled it,
-  Claude is also given Paddock's self-management tools.
-- A **one-off (scratch) chat** is deliberately *not* tied to a project — a quick
-  place to think out loud. It runs under a single global **scratch agent** whose
-  working directory is a separate scratch folder, not any project. Scratch chats
-  skip those project-only extras — no curation sweep runs after them, and the
-  self-management tools are never injected.
+  commits — happens in that project.
+- A **root chat** belongs to the instance **root** — the workspace that *contains*
+  every project. It's the natural home for a quick thought that isn't about any
+  one project yet. Because the root agent's working directory is the whole
+  projects root, a root chat can read and edit across every project, which is
+  both the point and a real escalation over a project agent.
 
-Both kinds are ordinary Claude Code sessions with the same default model and the
-same resumability — the split is scope, not power.
+Both are ordinary workspace chats, so both get the same treatment: after a
+successful turn a [sweep](/concepts/sweeper/) keeps that workspace's
+`OVERVIEW.md` and `CHANGELOG.md` curated, and on instances where the operator has
+enabled it, Claude is given Paddock's self-management tools.
+
+Otherwise they are the same thing. Both are ordinary Claude Code sessions with
+the same default model and the same resumability; both get a
+[sweep](/concepts/sweeper/) after a successful turn, and both get the
+self-management tools on instances where the operator has enabled them. The split
+is scope, not power.
 
 :::tip[Start loose, promote later]
-If a scratch chat turns into something you'll return to, don't copy-paste it —
-**Promote to project** from the one-off chat. Paddock creates a real project and
-*moves the whole transcript into it*, so the conversation continues under the new
-project's agent with nothing lost. See
-[Creating & organizing projects](/using/creating-and-organizing-projects/#promote-a-scratch-chat-into-a-project).
+If a root chat turns into something you'll return to, don't copy-paste it —
+**Promote to project**. Paddock creates a real project and *moves the whole
+transcript into it*, so the conversation continues under the new project's agent
+with nothing lost. See
+[Creating & organizing projects](/using/creating-and-organizing-projects/#promote-a-root-chat-into-a-project).
 :::
 
 ## Resume from anywhere
@@ -350,8 +356,8 @@ the handles don't apply.)
 
 - [Chats are sessions](/concepts/chats/) — the concept behind persistence,
   resume, and forking.
-- [Agents](/concepts/agents/) — the agents behind project and one-off chats.
+- [Agents](/concepts/agents/) — the agents behind project and root chats.
 - [Creating & organizing projects](/using/creating-and-organizing-projects/) —
-  where project chats live, and how to promote a scratch chat.
-- [The sweeper](/concepts/sweeper/) — the post-turn curation that runs after
-  project chats (and not scratch ones).
+  where project chats live, and how to promote a root chat.
+- [The sweeper](/concepts/sweeper/) — the post-turn curation that keeps
+  `OVERVIEW.md` and `CHANGELOG.md` up to date.

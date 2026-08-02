@@ -31,7 +31,7 @@ extra prompt) or turns it **off** — see [Customise or disable it](#customise-o
 
 ## When it runs
 
-1. Every completed, **non-scratch** turn — a human chat turn, a session-mode
+1. Every completed turn — a human chat turn, a session-mode
    wake, or a server-initiated agent turn — emits **one** `afterTurn` lifecycle
    event, and its sole consumer enqueues the curation sweep. So the sweeper
    dispatches **exactly once per turn** (no double-curation), whatever drove it.

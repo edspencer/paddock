@@ -83,21 +83,18 @@ export interface ChatPaneProps {
    * context ring immediately instead of waiting on a disk re-read (issue #164).
    */
   onTurnComplete?: (live?: { sessionId: string; usage: ChatCompleteUsage }) => void;
-  /** True for a project chat (vs. a one-off scratch chat). Gates the preload checkbox. */
-  isProjectChat?: boolean;
   /** Whether the project has an OVERVIEW.md to preload (issue #1). */
   preloadAvailable?: boolean;
   /**
    * The project's configured model — the default model for this chat's
-   * picker (CONTRACT-v3 §8). Undefined for scratch chats, where the default
-   * falls back to the models response's `defaultModel`.
+   * picker (CONTRACT-v3 §8). Undefined until the project DTO loads, where the
+   * default falls back to the models response's `defaultModel`.
    */
   projectModel?: string;
   /**
    * The project's per-project offered-models allow-list (issue #457 Step 2), from
    * the Project DTO. When non-empty it NARROWS this chat's model picker to that
-   * subset of the instance list; undefined/empty ⇒ the full instance list. Absent
-   * for scratch chats.
+   * subset of the instance list; undefined/empty ⇒ the full instance list.
    */
   projectModels?: string[];
   /**
@@ -128,21 +125,21 @@ export interface ChatPaneProps {
    * The project's per-project keeper-chat recovery override (issue #301), from the
    * Project DTO. Combined with the instance default (GET /api/models
    * `recoveryDefault`) to resolve whether the killed-task Continue affordance is
-   * shown. Undefined for scratch chats / when the project sets no override.
+   * shown. Undefined when the project sets no override.
    */
   projectRecovery?: RecoveryOverride;
   /**
    * The project's per-project inbound-attachment override (issue #328), from the
    * Project DTO. Combined with the instance default (GET /api/models
    * `attachmentsDefault`) to resolve the composer's effective attachment config
-   * (enabled + size/count/type caps). Undefined for scratch / when unset.
+   * (enabled + size/count/type caps). Undefined when unset.
    */
   projectAttachments?: AttachmentsOverride;
   /**
    * Fork a NEW chat branched at an earlier message (issue #451): given the anchor
    * message's transcript uuid, the parent forks this session's PREFIX up to that
    * turn and navigates to the new chat. Undefined ⇒ the per-message fork
-   * affordance is hidden (scratch / new chats with no session id yet).
+   * affordance is hidden (a new chat with no session id yet).
    */
   onForkFromMessage?: (uuid: string) => void;
   /**
@@ -161,7 +158,6 @@ export function ChatPane({
   onSessionEstablished,
   onSessionStarted,
   onTurnComplete,
-  isProjectChat = false,
   preloadAvailable = false,
   projectModel,
   projectModels,
@@ -228,14 +224,14 @@ export function ChatPane({
   // chats. Only sent on the
   // first message of a never-resumed session (the server ignores it otherwise).
   const [preloadContext, setPreloadContext] = useState(true);
-  const showPreload = isProjectChat && !initialSessionId;
+  const showPreload = !initialSessionId;
   // The checkbox only has an effect once a turn has been sent on a brand-new chat.
   const firstTurnSentRef = useRef(false);
 
   // --- model picker + context meter (CONTRACT-v3 §8) -------------------------
   // The selectable models + defaults (fetched once, app-wide static). The
-  // picker's default is the project's model (project chats) or the instance default
-  // (scratch); a per-chat localStorage override takes precedence when present.
+  // picker's default is the project's model, else the instance default; a
+  // per-chat localStorage override takes precedence when present.
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [instanceDefaultModel, setInstanceDefaultModel] = useState<string | null>(null);
   const [model, setModel] = useState<string | null>(null);
@@ -270,12 +266,12 @@ export function ChatPane({
   // the live ws chat:complete frame only knows the current turn.
   const [sessionUsage, setSessionUsage] = useState<ChatUsage | null>(null);
 
-  // The chat's default model: project model for project chats, else instanceDefaultModel.
-  const defaultModel = (isProjectChat ? projectModel : instanceDefaultModel) ?? instanceDefaultModel;
+  // The chat's default model: the project's model, else instanceDefaultModel.
+  const defaultModel = projectModel ?? instanceDefaultModel;
 
   // The models OFFERED in this chat's picker (issue #457 Step 2): the instance list
   // narrowed to the project's allow-list when it sets one, else the full instance
-  // list. Scratch chats (no `projectModels`) always get the full list.
+  // list. A project that sets no allow-list gets the full list.
   const pickerModels = useMemo(
     () =>
       projectModels && projectModels.length > 0
@@ -313,7 +309,6 @@ export function ChatPane({
     onPickFiles,
   } = useComposerAttachments({
     projectSlug,
-    isProjectChat,
     initialSessionId,
     attachmentsDefault,
     projectAttachments,
@@ -442,7 +437,7 @@ export function ChatPane({
   // --- slash commands (fetched once per chat) --------------------------------
   useEffect(() => {
     let cancelled = false;
-    // Every chat queries its project keeper (#516 Phase 6 retired the scratch agent).
+    // Every chat queries its workspace keeper.
     void api
       .projectCommands(projectSlug)
       .then((cmds) => {
@@ -454,7 +449,7 @@ export function ChatPane({
     return () => {
       cancelled = true;
     };
-  }, [projectSlug, isProjectChat]);
+  }, [projectSlug]);
 
   // The active slash query: the text after a leading "/", but only while the
   // draft is still the bare command name (no whitespace yet). `null` means the
@@ -783,8 +778,8 @@ export function ChatPane({
       setError(null);
       pinnedRef.current = true;
       // Consume any composer attachments (#328): they ride WITH this turn and the
-      // tray clears. Only for a plain (non-slash-command) project-chat send.
-      const atts = text.startsWith("/") || !isProjectChat ? [] : attachRef.current;
+      // tray clears. Only for a plain (non-slash-command) send.
+      const atts = text.startsWith("/") ? [] : attachRef.current;
       setTurns((prev) => [
         ...sealStreaming(prev),
         {
@@ -830,7 +825,7 @@ export function ChatPane({
 
       // Preload only applies to the very first turn of a never-resumed chat.
       const isFirstTurnOfNewChat = isNewSessionRef.current && !firstTurnSentRef.current;
-      const preload = isProjectChat && isFirstTurnOfNewChat && preloadContext;
+      const preload = isFirstTurnOfNewChat && preloadContext;
       firstTurnSentRef.current = true;
       chatClient.send(projectSlug, text, sessionRef.current, {
         preloadContext: preload,
@@ -842,14 +837,14 @@ export function ChatPane({
         attachments: atts.map((a) => ({ id: a.id, filename: a.filename, kind: a.kind })),
       });
     },
-    [projectSlug, isProjectChat, preloadContext],
+    [projectSlug, preloadContext],
   );
 
   const send = useCallback(() => {
     const text = draft.trim();
-    // A send needs SOMETHING: text, or (project chat) at least one attachment
+    // A send needs SOMETHING: text, or at least one attachment
     // (#328 — an image-only message is valid, ChatGPT-style).
-    if (!text && !(isProjectChat && attachRef.current.length > 0)) return;
+    if (!text && attachRef.current.length === 0) return;
     // While a turn is in flight we can't send in parallel — queue the message
     // instead of no-opping (issue #91). Append to any already-queued message so
     // the slot stays single (Claude Code's model). The composer clears either
@@ -869,7 +864,7 @@ export function ChatPane({
     }
     setDraft("");
     sendText(text);
-  }, [draft, streaming, sendText, isProjectChat]);
+  }, [draft, streaming, sendText]);
 
 
 

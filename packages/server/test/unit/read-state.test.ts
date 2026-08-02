@@ -72,11 +72,11 @@ describe("ReadStateStore", () => {
     expect(await store.getLastSeen("carol", "keeper-a", "s1")).toBe(0);
   });
 
-  it("keys by agent so a project chat and a scratch chat can't collide", async () => {
+  it("keys by agent so chats under different agents can't collide", async () => {
     const store = new ReadStateStore(dir);
     await store.setLastSeen(null, "keeper-a", "same", 111);
     expect(await store.getLastSeen(null, "keeper-a", "same")).toBe(111);
-    expect(await store.getLastSeen(null, "scratch", "same")).toBe(0);
+    expect(await store.getLastSeen(null, "keeper-other", "same")).toBe(0);
   });
 
   it("does not lose an entry when concurrent marks race before the first load resolves", async () => {

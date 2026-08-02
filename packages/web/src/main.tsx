@@ -82,11 +82,8 @@ const router = createBrowserRouter([
       // ProjectView redirects this to /triggers so old links/bookmarks don't 404.
       { path: "projects/:slug/hooks", element: <ProjectView /> },
       // Root chats (#516). `/chat` IS root chats — never a redirect to them.
-      // It used to fall back to a one-off "scratch" chat without a root project;
-      // Phase 6 retired scratch, so it now joins Files/Changes/History/Triggers
-      // in 404ing through the shell's error boundary instead. Nothing links here
-      // without a root project, and the chats that used to live at this URL were
-      // re-homed onto the root keeper by the Phase 6 migration.
+      // With no root project it 404s through the shell's error boundary, the same
+      // as Files/Changes/History/Triggers.
       { path: "chat", element: <ProjectView root /> },
       { path: "chat/:sessionId", element: <ProjectView root /> },
       // Root Files + Changes (#516 Phase 4). These paths have no pre-#516

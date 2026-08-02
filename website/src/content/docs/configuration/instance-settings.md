@@ -61,7 +61,7 @@ knob in the environment. Pick one layer.
 ### 3. Some fields are display-only
 
 The **Advanced** group is read-only by design: port, bind host, the data / projects /
-state / scratch / web-dist paths, the herdctl config path, the auth mode, and the
+state / web-dist paths, the herdctl config path, the auth mode, and the
 GitHub client id. These are process and filesystem bindings — you change them by
 changing how the process is *launched*, not from inside the running app.
 

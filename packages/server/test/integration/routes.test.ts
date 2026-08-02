@@ -3,9 +3,9 @@
  * `app.inject` (no socket needed for these — they're pure reads/metadata ops).
  *
  * Covers the endpoints the chat/promote/git/crud suites don't already exercise:
- *   - rename + delete chat (project + scratch variants), incl. unknown-slug 404s
+ *   - rename + delete chat, incl. unknown-slug 404s
  *   - pins: pin/unpin and the path-traversal guard (escaping the project dir)
- *   - the /context endpoints (project + scratch), with and without usage data
+ *   - the /context endpoints, with and without usage data
  *   - GET /overview (curated + empty), GET /changelog, GET /files/:name + kinds
  *   - the GitHub device-flow endpoints (connect/poll/disconnect) with mocked fetch
  *   - /api/models shape + the /api/git/github status block
@@ -398,7 +398,7 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
     ).json();
     expect(ctx.usage).toBeTruthy();
     expect(ctx.usage.contextTokens).toBeGreaterThan(0);
-    // Default keeper/scratch model is Opus 5 → 1M context window.
+    // Default keeper model is Opus 5 → 1M context window.
     expect(ctx.usage.contextLimit).toBe(1_000_000);
 
     const none = (
@@ -522,8 +522,6 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
     expect(res.statusCode).toBe(404);
   });
 
-  // --- rename + delete chat (scratch) ----------------------------------------
-
   // --- messages listings ------------------------------------------------------
 
   it("GET project chat messages 404s for an unknown project slug", async () => {
@@ -541,8 +539,6 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
     expect(body.status).toBeTruthy();
     const names = (body.agents as Array<{ name: string }>).map((a) => a.name);
     expect(names).toContain("keeper-routes-proj");
-    // No scratch agent since #516 Phase 6.
-    expect(names).not.toContain("scratch");
   });
 
   it("GET /api/health is ok", async () => {

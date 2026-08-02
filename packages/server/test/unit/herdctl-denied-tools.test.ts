@@ -119,10 +119,9 @@ describe("generated herdctl.yaml emits the narrowed denied_tools end-to-end (#17
 
   it("writes defaults.denied_tools == DENIED_TOOLS (and not the old rule)", async () => {
     const herdctlConfigPath = path.join(dir, "herdctl.yaml");
-    const scratchDir = path.join(dir, "scratch");
-    const svc = new HerdctlService({ herdctlConfigPath, scratchDir } as PaddockConfig);
+    const svc = new HerdctlService({ herdctlConfigPath } as PaddockConfig);
 
-    // ensureConfigFile is private; it only touches these two cfg fields.
+    // ensureConfigFile is private; it only touches this cfg field.
     await (svc as unknown as { ensureConfigFile(): Promise<void> }).ensureConfigFile();
 
     const doc = YAML.parse(await fs.readFile(herdctlConfigPath, "utf8")) as {

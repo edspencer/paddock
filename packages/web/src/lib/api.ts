@@ -438,10 +438,6 @@ export const api = {
    * Promote a chat into a new project (issue #20). Creates the project and
    * re-homes the chat's transcript into it. `promoted:false` means the project
    * was created but the transcript couldn't be moved.
-   *
-   * Took a bare `sessionId` while it was a scratch-only action; #516 Phase 6
-   * retired scratch and moved it onto the source project's chat routes, so the
-   * chat's current slug is now part of the address.
    */
   async promoteChat(
     slug: string,

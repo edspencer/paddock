@@ -1,7 +1,7 @@
 /**
  * Instance/identity/metadata routes + the attachment byte surface: voice
- * transcription, `/api/me`, health, `/api/models`, `/api/fleet`, scratch-chat
- * slash commands, instance-wide settings (issue #385), the inbound composer
+ * transcription, `/api/me`, health, `/api/models`, `/api/fleet`,
+ * instance-wide settings (issue #385), the inbound composer
  * upload (#328), and the range-serving `/api/chat-files/:id` endpoint (#112/#126).
  */
 import type { FastifyInstance } from "fastify";

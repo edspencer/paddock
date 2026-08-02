@@ -1,7 +1,7 @@
 /**
  * Slash-command listing endpoints (issue #103):
  *   GET /api/projects/:slug/commands  → a project keeper's commands
- *   GET /api/commands                 → the scratch agent's commands
+ *   GET /api/root/commands            → the root keeper's commands
  *
  * The underlying `FleetManager.listAgentCommands` opens an SDK-runtime streaming
  * session and calls `supportedCommands()` — a live `claude` subprocess the fake

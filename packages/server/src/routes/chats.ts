@@ -4,9 +4,9 @@
  * unread / promote). Chat SENDING happens over WS; these are the REST reads +
  * lifecycle mutations.
  *
- * The mirrored one-off "scratch" cluster that used to live at the end of this
- * file was deleted by #516 Phase 6 — the root is a project, so root chats are
- * ordinary project chats served by the routes above.
+ * Every route here is workspace-scoped and mounted twice (`/api/root` and
+ * `/api/projects/:slug`), so the root — whose key is `""` — is served by these
+ * same handlers with no special-casing.
  */
 import path from "node:path";
 import type { FastifyInstance, FastifyReply } from "fastify";
@@ -690,8 +690,8 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
     async (req, reply) => {
       try {
         const projectDir = await projectDirForSlug(req.params.slug);
-        // Every slug here addresses a project now that scratch is gone (#516
-        // Phase 6), so the per-project model override always applies.
+        // Every key here addresses a workspace, so the per-workspace model
+        // override always applies.
         const p = await projects.get(req.params.slug).catch(() => null);
         const model = p?.model ?? DEFAULT_MODEL;
         const u = await readSessionTokenUsageWithSubagents(projectDir, req.params.sessionId).catch(
@@ -1419,10 +1419,8 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
   // project was created but the transcript couldn't be moved (e.g. an unknown
   // session id); the project is still usable.
   //
-  // Lived at `POST /api/chats/:sessionId/promote` until #516 Phase 6, when
-  // scratch was retired and the action followed the chats onto the root keeper.
-  // Nothing about it is root-specific: it takes a source project like every
-  // other route in this file, and the root is a project.
+  // Nothing about it is root-specific: it takes a source workspace like every
+  // other route in this file, and the root is a workspace.
   app.post<{
     Params: { slug: string; sessionId: string };
     Body: { name?: string; slug?: string; group?: string; summary?: string; domain?: string[] };

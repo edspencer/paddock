@@ -12,12 +12,9 @@ import { listen, connectWs, type WsClient, type WsEvent } from "../helpers/ws.js
  * the old one), with its history intact — the exact saga the design doc calls
  * out.
  *
- * This was a scratch-only action until #516 Phase 6 retired scratch. The route
- * moved onto the source project's chat cluster and the operation was
- * generalised to project → project, so this test now promotes an ordinary
- * project chat. The UI only offers it at the ROOT (where the chats that used to
- * be one-offs live), but nothing in the server is root-specific, and testing the
- * generic path is what actually covers it.
+ * The operation is workspace → workspace, so this test promotes an ordinary
+ * project chat. The UI only offers it at the ROOT, but nothing in the server is
+ * root-specific, and testing the generic path is what actually covers it.
  */
 describe("integration: promote a chat → new project (real fleet, fake claude)", () => {
   let t: TestApp;

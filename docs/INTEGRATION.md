@@ -101,7 +101,7 @@ fix without which **resuming** an adopted session fails.
 
 There is also `initializeWebOnly({port?, host?})` — a zero-agent mode that serves
 session data from `~/.claude/` without a `herdctl.yaml`. Paddock does not use it
-(we always have at least the scratch agent), but it's available.
+(we always have at least the root workspace's keeper), but it's available.
 
 **Config-file requirements discovered the hard way** (the spike caught these — a
 naive inline config 400s):
@@ -128,11 +128,11 @@ Minimal working pair:
 version: 1
 fleet: { name: paddock-spike, description: spike fleet }
 agents:
-  - path: /abs/scratch.agent.yaml
+  - path: /abs/spike.agent.yaml
 ```
 ```yaml
-# scratch.agent.yaml
-name: scratch
+# spike.agent.yaml
+name: spike
 working_directory: /abs/dir
 runtime: cli
 max_turns: 3
@@ -167,7 +167,7 @@ on every call, which makes re-registration idempotent.
 
 Paddock's actual usage (`herdctl.ts`, `ensureProjectAgent` /
 `removeProjectAgent` and friends): the FleetManager boots from a **minimal
-zero-agent config** (fleet + defaults only) and every agent — scratch,
+zero-agent config** (fleet + defaults only) and every agent —
 `keeper-<slug>`, `sweeper-<slug>`, `trigger-<slug>-<name>` — is registered
 programmatically at init and on project create/update. Nothing writes per-agent
 yaml, and `reload()` is never called.
@@ -203,7 +203,6 @@ Config-dir layout paddock owns (generated, never hand-edited):
 <PADDOCK_DATA_DIR>/
   herdctl.yaml                 # fleet block + defaults ONLY — zero agent refs
   .herdctl/                    # state dir (state.yaml, jobs/, sessions/, …)
-  scratch/                     # scratch agent working dir
   projects/<slug>/             # project dirs (project.yaml, CHANGELOG.md, …)
 ```
 

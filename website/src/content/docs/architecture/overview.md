@@ -347,7 +347,7 @@ Step by step:
    `onToolStart`→`chat:tool_start`, `onToolCall`→`chat:tool_call`. Frames are
    emitted through `turn.emit(...)`, never written straight to the socket.
 3. **Resolve model + drive mode.** The `model` override wins if
-   `isKnownModel`, else `project.model` (scratch → the instance default); the
+   `isKnownModel`, else `project.model`, else the instance default; the
    agent is re-registered via `ensureKeeperModel` because there's no per-trigger
    model API (`ws.ts`). Drive mode is `project.driveMode ?? cfg.keeperDriveMode`.
 4. **Preload (optional).** For a *new* chat with `preloadContext` and a non-empty
@@ -364,7 +364,7 @@ Step by step:
    captured via `extractUsage` for the context meter.
 7. **Complete.** Build the `chat:complete` usage payload (context tokens vs. the
    model's limit), emit it through the hub, and `turn.end()`.
-8. **Post-turn.** A successful non-scratch turn `enqueue`s a sweep, calls
+8. **Post-turn.** A successful turn `enqueue`s a sweep, calls
    `invalidateSessions(agentName)` (so a brand-new chat surfaces before the 30s
    discovery cache TTL), and drains any queued follow-up message.
 9. **Error path.** Always send a plain `chat:error` to the origin socket; if a
@@ -427,13 +427,12 @@ Either way the tool handlers execute inside the Paddock server process.
 Two servers, both wired into `injectedMcpServers` in `ws.ts`'s `onChatSend`:
 
 - **`send_file`** (server key `paddock`, tool `mcp__paddock__send_file`) —
-  `sendFileServerDef()` in `send-file-mcp.ts`. Injected on **every** turn (project
-  and scratch). Lets the agent render a file inline in chat: either an inline
+  `sendFileServerDef()` in `send-file-mcp.ts`. Injected on **every** turn. Lets the agent render a file inline in chat: either an inline
   virtual file (content in the envelope) or a real file copied into the
   `AttachmentStore` as an immutable snapshot. The web renders off the tool call
   itself, so it survives live streaming and reload (issue #112/#113).
 - **Self-management** (server key `paddock_manage`) — `selfMcpServerDef()` in
-  `self-mcp.ts`. **Project-only and env-gated**, never on scratch. Its 14 tools sit
+  `self-mcp.ts`. **Project-only and env-gated.** Its 14 tools sit
   in four tiers, each behind its own flag on top of the one below it: **read**
   (`PADDOCK_SELF_MCP`), **write** (`PADDOCK_SELF_MCP_WRITE` — the chat-mutating
   tools, including `archive_chat` / `unarchive_chat`), **project**
@@ -477,13 +476,13 @@ later opens a spawned chat gets full tools again through the normal socket path.
 
 ## 6. The sweeper
 
-After every user chat turn in a real project, a **post-turn sweep** curates the
+After every user chat turn in a workspace, a **post-turn sweep** curates the
 project's `OVERVIEW.md` and `CHANGELOG.md`. `SweepService` (`sweep.ts`) is the
 engine; the agent that does the writing is a dedicated **tool-less** per-project
 `sweeper-<slug>` agent.
 
 - **Trigger + debounce.** `ws.ts` calls `enqueue(slug)` after a successful
-  non-scratch turn (fire-and-forget, never throws). At most one sweep per project
+  turn (fire-and-forget, never throws). At most one sweep per project
   per `minIntervalMs` (default **5 min**, env `PADDOCK_SWEEP_MIN_INTERVAL_MS`);
   overlapping turns fold into a single trailing timer, and an in-flight sweep for
   the same slug re-enqueues rather than running concurrently.
@@ -586,7 +585,7 @@ The main knobs:
 | Area | Vars (default) |
 |---|---|
 | **Server** | `PORT` (4000), `HOST` (or `PADDOCK_HOST`; **127.0.0.1** since v0.44 — see [Binding & exposure](/configuration/binding-and-exposure/)), `LOG_LEVEL` (info), `PADDOCK_DANGEROUSLY_ALLOW_OPEN` (false — downgrades the bind-safety refusal to a warning) |
-| **Paths** | `PADDOCK_DATA_DIR` (./data), `PADDOCK_PROJECTS_DIR`, `PADDOCK_STATE_DIR` (`.herdctl`), `PADDOCK_HERDCTL_CONFIG`, `PADDOCK_SCRATCH_DIR`, `PADDOCK_WEB_DIST`, `CLAUDE_HOME` (~/.claude — resolved once by `claudeHome()` in `config.ts` and threaded to BOTH paddock's transcript paths and the engine's `claudeHomePath`) |
+| **Paths** | `PADDOCK_DATA_DIR` (./data), `PADDOCK_PROJECTS_DIR`, `PADDOCK_STATE_DIR` (`.herdctl`), `PADDOCK_HERDCTL_CONFIG`, `PADDOCK_WEB_DIST`, `CLAUDE_HOME` (~/.claude — resolved once by `claudeHome()` in `config.ts` and threaded to BOTH paddock's transcript paths and the engine's `claudeHomePath`) |
 | **Auth** | `PADDOCK_AUTH_MODE` (none), `PADDOCK_AUTH_USER_HEADER` (X-Forwarded-User), `..._EMAIL_HEADER`, `..._GROUPS_HEADER`, `..._JWT_HEADER` (Authorization), `..._JWKS_URL`, `..._JWT_ISSUER`, `..._JWT_AUDIENCE`, `..._USERNAME_CLAIM`, `..._GROUPS_CLAIM` (groups) |
 | **Agent** | `PADDOCK_DRIVE_MODE` (session), `PADDOCK_NATIVE_PROMPT` (true) |
 | **Self-MCP + spawning** | `PADDOCK_SELF_MCP` (false), `PADDOCK_SELF_MCP_WRITE` (false; implies read), `PADDOCK_SELF_MCP_PROJECTS` (false; `create_project`, rides on write), `PADDOCK_HOOKS_MCP` (false; the trigger tools, per-project override), **`PADDOCK_MAX_SPAWN_DEPTH` (`1`, bounded `0`–`8`)** — see [§5](#5-mcp-injection) |

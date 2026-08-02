@@ -1,7 +1,7 @@
 /**
  * Paddock-native "send file" MCP tool.
  *
- * Exposes a single `paddock_send_file` tool to keeper/scratch agents via
+ * Exposes a single `paddock_send_file` tool to keeper agents via
  * herdctl's `injectedMcpServers` mechanism. herdctl carries the def to the agent
  * differently per runtime, and both auto-allowlist the server's `mcp__<name>__*`
  * tools:

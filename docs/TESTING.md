@@ -37,7 +37,8 @@ Pure-logic + component tests. No server, no fleet, no claude.
   - `lib/areas.test.ts`, `lib/format.test.ts`.
   - `components/StatusPill`, `components/TagPill`.
   - `routes/ProjectsGrid.test.tsx` — area-section grouping/order/counts,
-    collapse + localStorage, Inbox, tag-filter mode.
+    collapse + localStorage, embedding as the first section of root Home,
+    tag-filter mode.
   - The New / Edit / Promote modals — validation + the exact request payload they
     build (api client mocked).
 
@@ -63,21 +64,21 @@ temp data dir, with the fake `claude` first on `PATH`. Files:
   continuity** (set a codeword, resume, recall it).
 - `ws.test.ts` — WS transport edge cases: ping/pong, invalid-JSON + unknown +
   malformed messages → `chat:error`, the `onChatSend` catch path (unknown
-  project), `preloadContext` (OVERVIEW.md injection for a new chat, no-op for
-  scratch / no-overview), per-chat **model override** (valid → ensureKeeper/
-  ScratchModel; unknown → fallback), `chat:tool_call` + `chat:message_boundary`
+  project), `preloadContext` (OVERVIEW.md injection for a new chat, no-op when
+  there is no overview), per-chat **model override** (valid →
+  `ensureKeeperModel`; unknown → fallback), `chat:tool_call` + `chat:message_boundary`
   (via the fake's `[[TOOL]]` / `[[BOUNDARY]]` directives), `chat:cancel`, the
   usage/model surfaced on `chat:complete`, and the legacy `target` alias.
-- `routes.test.ts` — REST coverage gaps: rename + delete chat (project +
-  scratch), pins (missing-file / traversal-guard / dedupe), the `/context`
-  endpoints (project + scratch, with + without usage), GET `/overview` +
+- `routes.test.ts` — REST coverage gaps: rename + delete chat (incl.
+  unknown-slug 404s), pins (missing-file / traversal-guard / dedupe), the
+  `/context` endpoints (with + without usage), GET `/overview` +
   `/changelog` + `/files/:name`, the thin `POST …/chats` echo, `/api/fleet`,
   `/api/git/push`, git-route 404s, and the **GitHub device-flow endpoints**
   (`connect`/`poll`/`disconnect`) driven with a mocked `fetch`.
 - `sweep.test.ts` — the post-turn curation sweep runs end-to-end: a project turn
   enqueues a sweep, the (tool-less) sweeper returns marker-shaped text (via the
   fake), `SweepService` parses it and writes `OVERVIEW.md` + appends a
-  `CHANGELOG.md` bullet; scratch turns are NOT swept. Uses
+  `CHANGELOG.md` bullet. Uses
   `startTestApp({ sweepIntervalMs: 0 })` so the trailing sweep fires immediately.
 - `app-static.test.ts` — `buildApp({ serveStatic:true })`: serving `index.html`
   at `/` + the SPA fallback, the JSON 404 for unknown `/api` paths, and the
@@ -192,7 +193,7 @@ fake.
 `defaults`** (it's only an agent-level field there). paddock relied on
 `defaults.runtime: cli`, so without a fix every agent silently fell back to the
 **SDK** runtime. We now set `runtime: "cli"` **explicitly on each agent**
-(keeper/sweeper/scratch) in `herdctl.ts`, which is what makes the fake-claude/CLI
+(keeper/sweeper) in `herdctl.ts`, which is what makes the fake-claude/CLI
 path actually run.
 
 > **Scope note (2026-07).** `runtime` is read only on the one-shot `trigger()`

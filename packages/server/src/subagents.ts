@@ -307,7 +307,7 @@ export interface ReadInfo {
    * The read target's path relative to the project dir, set only when it's an
    * image that resolves INSIDE the project dir so the web can render it inline via
    * the raw file endpoint (issue #239). Absent for a non-image read, an image
-   * outside the project dir, or a scratch chat (no servable file endpoint).
+   * outside the project dir.
    */
   projectRelPath?: string;
 }

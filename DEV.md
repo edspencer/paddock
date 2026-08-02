@@ -93,7 +93,7 @@ rm -rf /tmp/paddock-dev.*
 | `CLAUDE_CODE_OAUTH_TOKEN` | — | **Required.** Max auth, passed to the agents. |
 | `PORT` | `4000` | HTTP/WS listen port. |
 | `HOST` | `127.0.0.1` | Bind host — loopback by default. Binding a routable interface while `PADDOCK_AUTH_MODE=none` refuses to start unless `PADDOCK_DANGEROUSLY_ALLOW_OPEN` is set. |
-| `PADDOCK_DATA_DIR` | `./data` | Root for projects, scratch, herdctl config + state. |
+| `PADDOCK_DATA_DIR` | `./data` | Root for projects, herdctl config + state. |
 | `PADDOCK_WEB_DIST` | `packages/web/dist` | Built SPA served in production. |
 | `VITE_API_BASE` *(web build)* | same-origin | Point the SPA at a non-default API origin. |
 | `VITE_WS_BASE` *(web build)* | same-origin | Point the SPA at a non-default WS origin. |
@@ -151,4 +151,5 @@ it to decide whether to show the button.
    markdown with a live caret; tool calls appear as collapsible blocks; the chat
    becomes a resumable session in the left list once it completes.
 4. Reload the page, reopen the chat → its transcript hydrates from history.
-5. **New one-off chat** (sidebar) → same chat pane against the `scratch` agent.
+5. **New chat** from the root Home page → same chat pane against the root
+   workspace's keeper.

@@ -357,7 +357,7 @@ function SenderAttribution({ sender }: { sender: MessageSender }) {
  * when its background task was terminated at the turn boundary, plus a one-click
  * "Continue" that re-drives it. The button is gated on the resolved
  * `recovery.surfaceKilledTask` (via {@link RecoveryContext}) — when Layer 2 is off,
- * or on a scratch chat (no keeper to recover), only the explanatory notice shows.
+ * or there is no keeper session to recover, only the explanatory notice shows.
  * `busy` disables the button while a turn is already streaming.
  */
 function KilledTaskNotice({ summary }: { summary: string }) {

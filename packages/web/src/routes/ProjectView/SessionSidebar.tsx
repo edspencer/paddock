@@ -118,8 +118,7 @@ export function SessionSidebar({
   setForkingChat: Dispatch<SetStateAction<Chat | null>>;
   /**
    * Open the "promote this chat into a new project" dialog (issue #20).
-   * Undefined hides the action — it is only offered at the ROOT, where the
-   * chats that used to be scratch one-offs now live (#516 Phase 6). Promoting a
+   * Undefined hides the action — it is only offered at the ROOT. Promoting a
    * chat that already belongs to a project would be a move between projects,
    * which is a different feature and not what this ever meant.
    */
@@ -393,8 +392,7 @@ export function SessionSidebar({
             <BranchIcon width={13} height={13} />
           </button>
         </Tooltip>
-        {/* Promote into a new project (#20). Offered only at the root, where the
-            chats that used to be scratch one-offs now live (#516 Phase 6). */}
+        {/* Promote into a new project (#20). Offered only at the root. */}
         {setPromotingChat && (
           <Tooltip content="Promote into a new project — give this chat a home of its own">
             <button

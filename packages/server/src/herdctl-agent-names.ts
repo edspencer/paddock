@@ -103,8 +103,7 @@ export function triggerAgentName(slug: string, triggerName: string): string {
  *
  * The **sweeper** (`sweeper-<slug>`) is the one hidden agent: it is deliberately
  * omitted here so its post-turn curation chats never surface (the `hideChats` case),
- * exactly as before. Scratch is a separate, global one-off list and never a project
- * agent. Disabled hooks are still included — a hook chat that already ran should stay
+ * exactly as before. Disabled hooks are still included — a hook chat that already ran should stay
  * visible regardless of whether the hook is currently armed.
  *
  * Kept pure + exported so the listing filter is unit-testable in isolation (the
@@ -133,7 +132,7 @@ export function visibleProjectAgentNames(project: Project): string[] {
  * agent allowlist (both runtimes auto-deny any tool not on the allow-list —
  * `--allowedTools` on the CLI, `options.allowedTools` on the SDK — same reason
  * `Skill` is listed) — so it is added to `defaults.allowed_tools`,
- * which the keeper + scratch agents inherit and the tool-less sweeper overrides
+ * which the keeper agents inherit and the tool-less sweeper overrides
  * away. Harmless when the server isn't enabled: an allowed-but-absent tool is a
  * no-op.
  */
@@ -205,7 +204,7 @@ export const DENIED_TOOLS: readonly string[] = [
 ];
 
 /**
- * The Playwright browser MCP server given to the keeper + scratch agents so
+ * The Playwright browser MCP server given to the keeper agents so
  * Claude Code can drive a headless Chromium (navigate / click / fill / snapshot
  * / screenshot). Returns `undefined` when `enabled` is false (sourced from
  * `cfg.browserMcp`, i.e. `PADDOCK_BROWSER_MCP=1` — issue #269), so a box WITHOUT

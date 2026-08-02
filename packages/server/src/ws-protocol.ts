@@ -251,9 +251,9 @@ export interface ChatSendMessage {
   type: "chat:send";
   payload: {
     /**
-     * Project slug, or "scratch" for one-off chats. `""` is the ROOT workspace —
-     * a present empty string, not an absent value, so test it with
-     * `=== undefined`, never for falsiness.
+     * Workspace key: a project slug. `""` is the ROOT workspace — a present
+     * empty string, not an absent value, so test it with `=== undefined`,
+     * never for falsiness.
      */
     projectSlug?: string;
     /** Session to resume; null/omitted starts a new chat. */
@@ -262,13 +262,13 @@ export interface ChatSendMessage {
     /**
      * When true AND this is a NEW chat (sessionId null/omitted) AND the project
      * has an OVERVIEW.md, prepend that overview to the prompt as a delimited
-     * context block (issue #1). No-op for scratch or when no overview exists.
+     * context block (issue #1). No-op when no overview exists.
      */
     preloadContext?: boolean;
     /**
      * Optional per-chat model override (a known model id). Unknown/absent ->
-     * the project's persisted model (scratch -> keeper default). The keeper /
-     * scratch agent is re-registered at this model before triggering. (§7.)
+     * the workspace's persisted model, else the keeper default. The keeper agent
+     * is re-registered at this model before triggering. (§7.)
      */
     model?: string;
     /**
