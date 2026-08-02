@@ -49,6 +49,7 @@ const apiFns = {
   markChatUnread: vi.fn(),
   deleteProjectChats: vi.fn(),
   detachProjectChat: vi.fn(),
+  attentionChats: vi.fn(),
 };
 vi.mock("../lib/api", async () => {
   const actual = await vi.importActual<typeof import("../lib/api")>("../lib/api");
@@ -78,6 +79,7 @@ vi.mock("../lib/api", async () => {
       markChatUnread: (...a: unknown[]) => apiFns.markChatUnread(...a),
       deleteProjectChats: (...a: unknown[]) => apiFns.deleteProjectChats(...a),
       detachProjectChat: (...a: unknown[]) => apiFns.detachProjectChat(...a),
+      attentionChats: (...a: unknown[]) => apiFns.attentionChats(...a),
     },
   };
 });
@@ -132,9 +134,11 @@ function renderAt(path: string) {
         <Route path="/projects/:slug/settings" element={<ProjectView />} />
         <Route path="/projects/:slug/triggers" element={<ProjectView />} />
         <Route path="/projects/:slug/hooks" element={<ProjectView />} />
-        {/* Deleting a project returns to the projects list, which is now the
-            first section of root Home at `/` (see `gridUrl`). */}
-        <Route path="/" element={<div>GRID</div>} />
+        {/* Deleting a project returns to the projects list, which #599 put back
+            on its own page at `/projects` (see `gridUrl`). Mounted at that path
+            rather than `/` so this stub can only be reached by navigating where
+            `gridUrl()` actually points. */}
+        <Route path="/projects" element={<div>GRID</div>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -153,6 +157,9 @@ beforeEach(() => {
   apiFns.markChatSeen.mockResolvedValue(undefined);
   apiFns.chatUsage.mockResolvedValue({});
   apiFns.projectChatMessages.mockResolvedValue([]);
+  // Home's attention feed (#599). Default to a quiet workspace; a test that
+  // cares about the rows themselves overrides this.
+  apiFns.attentionChats.mockResolvedValue({ running: [], unread: [] });
   apiFns.getModels.mockResolvedValue(
     makeModelsResponse({
       models: [{ id: "claude-opus-4-8", label: "Opus 4.8", contextLimit: 1_000_000 }],
@@ -249,54 +256,53 @@ describe("ProjectView: tabs", () => {
     expect(screen.queryByText(/did a thing/)).not.toBeInTheDocument();
   });
 
-  it("Home tab shows the project overview (summary) and the changelog", async () => {
+  it("Home tab shows OVERVIEW.md and CHANGELOG.md, plus the files", async () => {
     apiFns.getProjectDetail.mockResolvedValue(
       detail(makeProject({ slug: "p", summary: "the overview blurb" }), {
         changelog: "# Changes\n- did a thing",
-        chats: [makeChat({ sessionId: "s1", name: "First chat" })],
+        overview: "# Overview\n- what this is",
       }),
     );
-    apiFns.listProjectFiles.mockResolvedValue(["OVERVIEW.md"]);
+    apiFns.listProjectFiles.mockResolvedValue(["NOTES.md"]);
     renderAt("/projects/p/home");
-    // Summary appears both in the header and the Home overview card.
-    expect(await screen.findAllByText("the overview blurb")).not.toHaveLength(0);
+    // Both curated files render, expanded by default (#599). OVERVIEW.md leads:
+    // what the workspace IS, before the log of how it got there.
+    expect(await screen.findByText(/what this is/)).toBeInTheDocument();
     expect(screen.getByText(/did a thing/)).toBeInTheDocument();
-    // Recent chats + files are surfaced on Home (the chat also appears in the
-    // session-list column, so match all occurrences).
-    expect(screen.getAllByText("First chat").length).toBeGreaterThan(0);
-    expect(screen.getByText("OVERVIEW.md")).toBeInTheDocument();
+    expect(screen.getByText("NOTES.md")).toBeInTheDocument();
+    // The summary is the header's job now — Home no longer restates it in a
+    // card of its own, so it appears exactly once.
+    expect(screen.getAllByText("the overview blurb")).toHaveLength(1);
   });
 
-  it("Home orders its sections Chats → Files → CHANGELOG → Overview", async () => {
+  it("Home orders its sections Running → Unread → Files → OVERVIEW.md → CHANGELOG.md", async () => {
     apiFns.getProjectDetail.mockResolvedValue(
-      detail(makeProject({ slug: "p", summary: "blurb" }), {
-        changelog: "# Changes",
-        chats: [makeChat({ sessionId: "s1", name: "First chat" })],
-      }),
+      detail(makeProject({ slug: "p", summary: "blurb" }), { changelog: "# Changes" }),
     );
-    apiFns.listProjectFiles.mockResolvedValue(["OVERVIEW.md"]);
+    apiFns.listProjectFiles.mockResolvedValue(["NOTES.md"]);
     renderAt("/projects/p/home");
-    await screen.findByRole("button", { name: /Edit details/i });
+    await screen.findByRole("heading", { name: /^Running/ });
     const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent ?? "");
-    // Overview trails now: it describes the project rather than offering a way
-    // into it. Chats lead.
-    expect(headings).toEqual(["Chats1", "Files1", "CHANGELOG.md", "Overview"]);
+    // "What needs me?" before "what is this?" (#599): the two decision feeds
+    // lead, the curated prose trails.
+    expect(headings).toEqual(["Running", "Unread", "Files1", "OVERVIEW.md", "CHANGELOG.md"]);
   });
 
-  it("a project's Home has NO projects section — only a workspace with children does", async () => {
+  it("a project's Home has NO projects section — the grid moved off Home entirely", async () => {
     apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
     renderAt("/projects/p/home");
-    await screen.findByRole("button", { name: /Edit details/i });
-    const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent ?? "");
+    await screen.findByRole("heading", { name: /^Running/ });
+    const headings = screen.getAllByRole("heading").map((h) => h.textContent ?? "");
     expect(headings.some((h) => /^Projects/.test(h))).toBe(false);
-    // …and no New Project button leaks in from the embedded grid.
+    // New Project lives on the sidebar's Projects header now (#599), which
+    // ProjectView doesn't render — so nothing here should offer it.
     expect(screen.queryByRole("button", { name: /New Project/i })).not.toBeInTheDocument();
   });
 
   it("has no Projects tab — that was the root's, and it folded into Home", async () => {
     apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
     renderAt("/projects/p/home");
-    await screen.findByRole("button", { name: /Edit details/i });
+    await screen.findByRole("heading", { name: /^Running/ });
     expect(screen.queryByRole("button", { name: "Projects" })).not.toBeInTheDocument();
     // Home leads the row for a project too.
     const home = screen.getByRole("button", { name: "Home" });
@@ -312,8 +318,8 @@ describe("ProjectView: tabs", () => {
     await screen.findByTestId("chat-pane");
     // The name in the header is a button that navigates up to Home.
     fireEvent.click(screen.getByRole("button", { name: "Reactor" }));
-    // Home renders — its "Edit details" overview action is present.
-    expect(await screen.findByRole("button", { name: /Edit details/i })).toBeInTheDocument();
+    // Home renders — its leading Running section is present.
+    expect(await screen.findByRole("heading", { name: /^Running/ })).toBeInTheDocument();
   });
 
   it("the Settings tab opens the SettingsPane and deep-links (issue #122)", async () => {

@@ -21,7 +21,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
-import type { Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 
 export interface E2EPaths {
   tmp: string;
@@ -206,14 +206,28 @@ export async function createProjectViaUI(
   page: Page,
   opts: { name: string; area?: string; summary?: string; tags?: string; status?: string },
 ): Promise<string> {
-  // The projects grid is the first SECTION of root Home, which is `/`. Creating
-  // from the grid is the flow this helper models, so it starts there.
+  // New Project lives on the SIDEBAR's Projects header now (#599): the projects
+  // grid that used to host the app's only "New Project" was deleted from root
+  // Home, and the button moved to where the project list actually is. The modal
+  // hangs off AppShell, so it opens from anywhere — `/` is just a stable start.
   await page.goto("/");
-  // Scoped to <main>: this is the grid's own button (and, since the sidebar CTAs
-  // were removed, the app's only one). The scoping still earns its keep — it
-  // makes `getByRole` auto-wait for the Home pane's content instead of matching
-  // sidebar chrome that renders immediately.
-  await page.getByRole("main").getByRole("button", { name: /New Project/i }).first().click();
+  const plus = page.getByRole("complementary").getByRole("button", { name: "New Project" });
+  // On a phone the sidebar is OFF-CANVAS: the button is rendered and "visible"
+  // in Playwright's sense, just translated outside the viewport, so a click on
+  // it spins until the test times out. The hamburger slides the drawer in.
+  //
+  // Keyed on the button's own box rather than on whether a hamburger is showing:
+  // the hamburger is `md:hidden`, so a one-shot visibility read taken before the
+  // shell has laid out answers "no" on a phone and skips the drawer. Waiting for
+  // this button to render first makes the measurement meaningful on both.
+  await expect(plus).toBeVisible();
+  const box = await plus.boundingBox();
+  const width = page.viewportSize()?.width ?? 0;
+  if (!box || box.x < 0 || box.x + box.width > width) {
+    await page.getByRole("button", { name: /Open menu/i }).click();
+    await expect(plus).toBeInViewport();
+  }
+  await plus.click();
   const dialog = page.locator("form").filter({ hasText: "New project" });
   await dialog.getByPlaceholder(/Garage Water Heater/i).fill(opts.name);
   if (opts.summary) await dialog.getByPlaceholder(/One line on what/i).fill(opts.summary);

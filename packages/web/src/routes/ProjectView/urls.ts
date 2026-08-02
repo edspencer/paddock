@@ -66,18 +66,22 @@ export function homeUrl(base: string): string {
 }
 
 /**
- * Where the projects grid lives: the root workspace's **Home**, `/`.
+ * Where the projects grid lives: its own page, `/projects`.
  *
- * The grid used to be the root's own `/projects` tab, one tab along from Home.
- * That put the instance's two front doors side by side showing overlapping
- * things, so the grid folded INTO Home — it is now the first section of the
- * root's Home pane, and `/projects` is a permanent redirect here (see
- * `main.tsx`). This helper is still the single answer to "where do I send
- * someone to see the project list", which is why the redirect target and every
- * "back to the grid" nav site both read it rather than hard-coding a path.
+ * The grid was the root's own `/projects` tab, then briefly a section of root
+ * Home, and is a page again. #599 gave Home's opening screen to the
+ * running/unread feeds, so the grid needs somewhere of its own to live: without
+ * it the only way in would be `/tags/:tag`, which ALWAYS filters, leaving the
+ * entire unfiltered landing (area sections, the first-project empty state)
+ * unreachable — and leaving this helper pointing at a page that no longer lists
+ * projects.
+ *
+ * This is still the single answer to "where do I send someone to see the
+ * project list", which is why every "back to the grid" nav site reads it rather
+ * than hard-coding a path.
  */
 export function gridUrl(): string {
-  return "/";
+  return "/projects";
 }
 
 /**

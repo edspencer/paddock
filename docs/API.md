@@ -60,7 +60,7 @@ return `{ error, code }` with `404` (not found), `409` (exists), or `400`
 |--------|------|---------|------|
 | GET | `/api/projects` | `{ projects, root }` — the root workspace's CHILDREN, each with a compact `chatTurns` unread signal, plus the `root` workspace itself carrying the same field (never a member of `projects`, so the sidebar's Home badge and a project row's badge fold one payload). `root` is `null` only if the record could not be read. | gated |
 | POST | `/api/projects` | Create a project (+ its agent & sweeper) → `201 { project }`. | gated |
-| GET | `/api/projects/:slug` | One project + its `changelog` + `chats`. | gated |
+| GET | `/api/projects/:slug` | One project + its `changelog` + `overview` (raw `CHANGELOG.md` / `OVERVIEW.md` text, `""` when absent) + `chats`. | gated |
 | PATCH | `/api/projects/:slug` | Update project metadata (model, permissionMode, maxTurns, docker, driveMode, …); re-registers the agent. `400` on invalid field. | gated |
 | DELETE | `/api/projects/:slug` | Delete the project dir + unregister its agents → `{ ok, slug }`. | gated |
 
@@ -91,6 +91,7 @@ return `{ error, code }` with `404` (not found), `409` (exists), or `400`
 |--------|------|---------|------|
 | GET | `/api/projects/:slug/chats` | List the project's chats (no usage rings). | gated |
 | POST | `/api/projects/:slug/chats` | Thin: validate the project + return the WS target → `201`. The real chat is created lazily over `/ws`. | gated |
+| GET | `/api/projects/:slug/chats/attention` | `{ running, unread }` — the chats in this workspace's **subtree** with a live turn, or holding an unread reply; each row is a chat DTO plus `projectSlug`/`projectName`. Drives the Home tab's two feeds (#599). Because the root's key (`""`) prefixes every workspace key, `/api/root/chats/attention` is fleet-wide while a project's is scoped to itself — one handler, no branch. `running` is read from the live session hub; a chat is never in both lists. Archived chats are excluded from `unread` but a running one still lists. | gated |
 | GET | `/api/projects/:slug/chats/usage` | Bulk context-window usage keyed by session id. `?scope=` `active` (default) / `archived` / `all` — usage is derived by streaming each transcript, so the collapsed Archived group is not paid for until it is opened (#537). | gated |
 | GET | `/api/projects/:slug/chats/:sessionId/messages` | A chat's messages, enriched with tool details. | gated |
 | GET | `/api/projects/:slug/chats/:sessionId/context` | Context-window usage from the transcript's last turn. | gated |

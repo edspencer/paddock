@@ -47,12 +47,12 @@ import {
   repoHref,
   viewBase,
 } from "./ProjectView/urls";
-import { ProjectsGrid } from "./ProjectsGrid";
 import { TabButton } from "./ProjectView/TabButton";
 import { PinnedTab } from "./ProjectView/PinnedTab";
 import { HomePane } from "./ProjectView/HomePane";
 import { SessionSidebar } from "./ProjectView/SessionSidebar";
 import { useUnreadChats } from "./ProjectView/useUnreadChats";
+import { useAttentionChats } from "./ProjectView/useAttentionChats";
 
 /**
  * The active view ("home" | "chat" | "files") and the selected chat/file are
@@ -163,6 +163,9 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
   const [runningSessions, setRunningSessions] = useState<ReadonlySet<string>>(new Set());
   useEffect(() => chatClient.onActiveSessions(setRunningSessions), []);
   const [changelog, setChangelog] = useState("");
+  // Raw OVERVIEW.md, rendered on Home beside the changelog (#599). Rides the
+  // same workspace payload, so the two can never render a beat apart.
+  const [overview, setOverview] = useState("");
   const [files, setFiles] = useState<string[]>([]);
   const [loadErr, setLoadErr] = useState<string | null>(null);
 
@@ -293,6 +296,11 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
     onManySeen: clearManualUnreadMany,
   });
 
+  // Home's two feeds (#599), server-derived over this workspace's SUBTREE — so
+  // the root's Home is fleet-wide and a project's is its own, with no branch
+  // here. `runningSessions` is the staleness signal, not the data.
+  const attention = useAttentionChats(slug, runningSessions);
+
   // The chats actually rendered in the sidebar, after applying the search
   // filter (issue #96). Empty query -> the full list unchanged.
   const visibleChats = useMemo(() => {
@@ -366,6 +374,7 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
       setProject(detail.project);
       setChats(detail.chats);
       setChangelog(detail.changelog);
+      setOverview(detail.overview ?? "");
       const fileList = await api.listProjectFiles(slug).catch(() => []);
       setFiles(fileList);
     } catch (e) {
@@ -439,6 +448,7 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
       setProject(detail.project);
       setChats(detail.chats);
       setChangelog(detail.changelog);
+      setOverview(detail.overview ?? "");
     }
     const fileList = await api.listProjectFiles(slug).catch(() => null);
     if (fileList) setFiles(fileList);
@@ -502,6 +512,19 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
     (sessionId: string) =>
       navigate(`${base}/chat/${encodeURIComponent(sessionId)}`),
     [navigate, base],
+  );
+  /**
+   * Open a chat that may live in ANOTHER workspace (#599). Home's running and
+   * unread feeds are subtree-wide, so on the root's Home most rows belong to a
+   * project and have to navigate into that project's own base, not this one's.
+   *
+   * `viewBase` is what resolves the key, so the root (`""`) lands on the bare
+   * top-level routes and a project on `/projects/:slug` — no branch here.
+   */
+  const openChatIn = useCallback(
+    (sessionId: string, projectSlug: string) =>
+      navigate(`${viewBase(projectSlug)}/chat/${encodeURIComponent(sessionId)}`),
+    [navigate],
   );
   // Fork a chat with a chosen name: duplicate it server-side into a NEW session
   // in the same project, then jump straight to it. The fork exists immediately —
@@ -1287,22 +1310,23 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
           {view === "home" && (
             <HomePane
               project={project}
-              chats={chats}
+              // Both feeds are subtree-scoped server-side, so the ROOT's Home
+              // lists every project's live/unread work and a project's lists
+              // only its own — same props, same component, no `root` gate. The
+              // projects GRID that used to sit here is gone with it (#599): the
+              // sidebar owns navigating to a project, and its Projects header
+              // now carries the New Project button the grid used to host.
+              running={attention.running}
+              unread={attention.unread}
+              attentionLoading={attention.loading}
+              attentionError={attention.error}
               changelog={changelog}
+              overview={overview}
               files={files}
-              runningSessions={runningSessions}
-              onOpenChat={openChat}
+              onOpenChat={openChatIn}
               onNewChat={newChat}
               onOpenFile={goToFilesPath}
               onOpenFiles={goFiles}
-              onEditDetails={goSettings}
-              // The workspace's CHILDREN, rendered by the SAME grid component the
-              // `/tags/:tag` page uses. It used to be a tab of its own; folding it
-              // into Home means the instance's front door shows the projects
-              // instead of merely linking to them. Only the root has children
-              // today, hence the `root` gate — when nesting lands, every workspace
-              // with children gets this for free.
-              projectsSection={root ? <ProjectsGrid embedded /> : undefined}
             />
           )}
           {view === "chat" && (

@@ -221,7 +221,7 @@ export function registerProjectWorkspaceRoutes(app: FastifyInstance, ctx: RouteC
         tags: ["Projects"],
         summary: "Get a project",
         description:
-          "Returns `{ project, changelog, chats }` — the project metadata, its raw CHANGELOG.md text, and its chats (sessions) enriched with archived/starred/last-seen/provenance/trigger flags. Per-chat usage rings are filled separately by the client.",
+          "Returns `{ project, changelog, overview, chats }` — the project metadata, its raw CHANGELOG.md and OVERVIEW.md text (empty strings when absent), and its chats (sessions) enriched with archived/starred/last-seen/provenance/trigger flags. Per-chat usage rings are filled separately by the client.",
         params: {
           type: "object",
           properties: {
@@ -231,7 +231,8 @@ export function registerProjectWorkspaceRoutes(app: FastifyInstance, ctx: RouteC
         },
         response: {
           200: {
-            description: "Object with `project`, `changelog` text, and a `chats` array.",
+            description:
+              "Object with `project`, `changelog` text, `overview` text, and a `chats` array.",
             type: "object",
             additionalProperties: true,
           },
@@ -242,8 +243,14 @@ export function registerProjectWorkspaceRoutes(app: FastifyInstance, ctx: RouteC
     try {
       const project = await projects.get(req.params.slug);
       // Enrich with changelog text + the project's chats (sessions).
-      const [changelog, sessions, lastTurnAt] = await Promise.all([
+      const [changelog, overview, sessions, lastTurnAt] = await Promise.all([
         projects.readFile(project.slug, "CHANGELOG.md").catch(() => ""),
+        // OVERVIEW.md rides along with CHANGELOG.md (#599): Home renders both as
+        // sibling collapsible cards, so fetching them together is one request
+        // instead of two and they can never render a beat apart. `""` when the
+        // workspace has no overview yet — the same "absent reads as empty"
+        // contract the changelog above has always had.
+        projects.readOverview(project.slug).catch(() => ""),
         herdctl.listSessions(project).catch(() => []),
         herdctl.lastTurnCompletedAt().catch(() => new Map<string, string>()),
       ]);
@@ -282,6 +289,7 @@ export function registerProjectWorkspaceRoutes(app: FastifyInstance, ctx: RouteC
       return {
         project,
         changelog,
+        overview,
         chats: await buildProjectChats(
           project.dir,
           sessions,

@@ -9,9 +9,11 @@ import { seedProject } from "./helpers";
  * sidebar mirrors the same grouping. Collapse state persists in localStorage
  * across reloads.
  *
- * The grid lives on `/` — it is the first SECTION of the ROOT workspace's Home
- * pane, not a page or a tab of its own. So these grid tests and the sidebar test
- * below all address `/`: the instance's front door renders both.
+ * The grid lives on `/projects` — its own page again. It spent a release as the
+ * first SECTION of the root workspace's Home pane, but #599 gave Home's opening
+ * screen to the running/unread feeds, so the grid moved back out (see `gridUrl`).
+ * The SIDEBAR is chrome and renders on every route, so the sidebar test below
+ * still addresses `/`.
  *
  * Projects are seeded on disk (a project is just a dir + project.yaml), which is
  * faithful for the read-only grid/nav surface and keeps these tests fast and
@@ -30,7 +32,7 @@ test.describe("projects grid: area sections + counts", () => {
     seedProject({ name: "LN Side A", group: "side-projects" });
     seedProject({ name: "LN Unsorted A" }); // no group -> Unsorted
 
-    await page.goto("/");
+    await page.goto("/projects");
 
     // Each section header is a button whose accessible name starts with the area
     // label. They must appear in canonical order, Unsorted last.
@@ -63,7 +65,7 @@ test.describe("projects grid: area sections + counts", () => {
 
   test("collapse state persists across reload (per section, localStorage)", async ({ page }) => {
     seedProject({ name: "LN Persist House", group: "house" });
-    await page.goto("/");
+    await page.goto("/projects");
 
     const house = page.getByRole("button", { name: /^House/ });
     await expect(house).toBeVisible();
