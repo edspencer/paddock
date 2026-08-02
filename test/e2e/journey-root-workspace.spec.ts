@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import path from "node:path";
-import { createProjectViaUI, paths, seedProject, uniq } from "./helpers";
+import { clearRootUnread, createProjectViaUI, paths, seedProject, uniq } from "./helpers";
 
 /**
  * Journey: the ROOT WORKSPACE (#531).
@@ -364,10 +364,15 @@ test("a project's Settings tab still scrolls (the non-root path)", async ({ page
  * optimistic cache, so every reload re-derives from the server. That is why each
  * assertion here is repeated across a `reload()` — a client-only fix passes the
  * first half of this test and fails the second.
+ *
+ * The counts asserted here are the WHOLE root workspace's, so the test owns its
+ * starting point rather than inheriting one — see `clearRootUnread` (#612).
  */
 test("an unread root chat puts a count on the sidebar's Home link, and opening it clears it", async ({
   page,
 }) => {
+  await clearRootUnread(page);
+
   const sidebar = page.getByRole("complementary");
   const homeLink = sidebar.getByRole("link", { name: /^Home/ });
   const badge = homeLink.getByLabel(/unread repl/i);
@@ -385,6 +390,12 @@ test("an unread root chat puts a count on the sidebar's Home link, and opening i
   // Read while open ⇒ nothing on Home. A `0` pill here would be the bug.
   await expect(badge).toHaveCount(0);
 
+  // Off Home (a project route) BEFORE flagging, not after: an OPEN chat is
+  // continuously marked seen, and `/seen` also spends the manual flag (#458), so
+  // a flag set while the chat is still on screen can be wiped moments later.
+  const slug = seedProject({ name: uniq("RW Badge Sibling") });
+  await page.goto(`/projects/${slug}/home`);
+
   // Flag it unread (#458) through the same endpoint the chat-row action posts to,
   // at the ROOT mount — `/api/root/...`, because an empty key cannot ride in a
   // path segment.
@@ -393,10 +404,10 @@ test("an unread root chat puts a count on the sidebar's Home link, and opening i
   });
   expect(res.ok()).toBe(true);
 
-  // Off Home (a project route) so nothing auto-marks it seen, and reload so the
-  // count is derived from the server rather than from anything in this tab.
-  const slug = seedProject({ name: uniq("RW Badge Sibling") });
-  await page.goto(`/projects/${slug}/home`);
+  // Each count is read on a freshly-loaded page, so it is derived from the server
+  // rather than from anything this tab did — and asserted TWICE across a reload,
+  // which is the half a client-only fix fails.
+  await page.reload();
   await expect(badge).toHaveText("1");
 
   await page.reload();
@@ -416,9 +427,20 @@ test("an unread root chat puts a count on the sidebar's Home link, and opening i
   await expect(badge).toHaveCount(0);
 });
 
+/**
+ * The two badges are ONE component: same classes, same box, and a project row's
+ * is untouched by anything the root's does.
+ *
+ * Both sides are asserted as a count of `1`, and the root's count is workspace-
+ * wide — so the test starts by zeroing it (#612). Without that it asserts a
+ * global aggregate every other spec is free to move: any earlier root chat left
+ * unread renders `2` here, which is how this failed on a docs-only PR.
+ */
 test("the Home badge is the same component as a project row's, and projects keep theirs", async ({
   page,
 }) => {
+  await clearRootUnread(page);
+
   // One root chat + one project chat, both flagged unread, so the two badges are
   // on screen together and can be compared directly.
   await page.goto("/chat");
@@ -437,6 +459,12 @@ test("the Home badge is the same component as a project row's, and projects keep
   await page.waitForURL(new RegExp(`/projects/${slug}/chat/[a-z0-9-]+$`), { timeout: 15_000 });
   const projectSession = new URL(page.url()).pathname.split("/").pop()!;
 
+  // Somewhere neither chat is open, so neither auto-clears — and get there BEFORE
+  // flagging, not after. An OPEN chat is continuously marked seen, and `/seen`
+  // also spends the manual flag (#458), so the project chat's own turn landing
+  // can wipe a flag set while it is still on screen.
+  await page.goto("/config");
+
   for (const [base, id] of [
     ["/api/root", rootSession],
     [`/api/projects/${slug}`, projectSession],
@@ -446,8 +474,9 @@ test("the Home badge is the same component as a project row's, and projects keep
     );
   }
 
-  // Somewhere neither chat is open, so neither auto-clears.
-  await page.goto("/config");
+  // Re-derive from the server: `/config` was loaded before the flags existed, and
+  // a MANUAL flag only reaches the sidebar with the next projects payload.
+  await page.reload();
   const sidebar = page.getByRole("complementary");
   const rootPill = sidebar.getByRole("link", { name: /^Home/ }).getByLabel(/unread repl/i);
   const projectPill = sidebar.getByRole("link", { name: new RegExp(name) }).getByLabel(/unread repl/i);
