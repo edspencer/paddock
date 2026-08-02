@@ -25,7 +25,7 @@
 ---
 
 <p align="center">
-  <img src="docs/demo/paddock-demo.gif" width="760" alt="Paddock — the real dev stack, a project's chats, and Claude streaming live tool calls">
+  <img src="docs/demo/paddock-demo.gif" width="900" alt="Paddock — the root Home feed of running and unread chats, the projects grid, a chat with expanded tool calls, a sub-agent's nested steps, an inline diff, the triggers table, and the git Changes tab">
 </p>
 
 ## Why Paddock
