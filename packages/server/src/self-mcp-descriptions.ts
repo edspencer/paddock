@@ -39,14 +39,28 @@ export const LIST_CHATS_DESC =
   "`include_archived: true` to get them back. You MUST do that to obtain the " +
   "session_id of an archived chat: this tool is the only source of session ids, " +
   "so an archived chat is otherwise unreachable by `read_chat`/`unarchive_chat`. " +
+  "`name` falls back to an 8-character sessionId prefix when the chat has no " +
+  "stored title — read that as \"untitled\", NOT as a meaningful name, and do not " +
+  "pass it anywhere a full session_id is wanted. " +
   "Cheap — does not read full transcripts; use `read_chat` for content.";
 
 export const READ_CHAT_DESC =
   "Read a trimmed tail of a chat's transcript. Pass `project` (slug) and " +
   "`session_id` (from `list_chats`). Returns the last `limit` messages (default " +
   `${READ_CHAT_DEFAULT_LIMIT}, max ${READ_CHAT_MAX_LIMIT}) as {role, text, timestamp}; each ` +
-  `message's text is capped at ${READ_CHAT_MAX_TEXT} chars. Use this to see what ` +
-  "another chat is about or what was decided there.";
+  `message's text is capped at ${READ_CHAT_MAX_TEXT} chars. ` +
+  "Use it to see what another chat is about or what was decided there. " +
+  "LOSSY — know what you are NOT getting. Tool calls come back as `role: \"tool\"` " +
+  "entries with EMPTY text (no tool name, no input, no output) and they still " +
+  "count against `limit`, so on a tool-heavy chat most of the reply is blank " +
+  "padding; thinking blocks, attachments and sub-agent transcripts are dropped " +
+  "outright. So this tool CANNOT show you how a chat went — errors, tool " +
+  "failures, stalls, cost. For that, read the transcript yourself: it is JSONL " +
+  "(one JSON object per line) at " +
+  "`<paddock-data-dir>/projects/<slug>/.chats/<sessionId>.jsonl`, with any " +
+  "sub-agents alongside it under `<sessionId>/subagents/agent-*.jsonl`. " +
+  "Also note an unknown session_id returns `total: 0` and no error — that means " +
+  "NOT FOUND, not \"empty chat\"; re-check the id before concluding anything.";
 
 // ── Write tools (Phase 2) ───────────────────────────────────────────────────
 

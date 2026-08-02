@@ -157,6 +157,33 @@ describe("self-management MCP (Phase 1, read-only)", () => {
     expect(schema.properties.include_archived?.type).toBe("boolean");
   });
 
+  it("read_chat/list_chats descriptions disclose what they drop and point at the JSONL (#615)", () => {
+    const ctx = fakeContext();
+    const readChat = toolByName(ctx, "read_chat").description ?? "";
+    const listChats = toolByName(ctx, "list_chats").description ?? "";
+
+    // The blank-tool-entry behaviour is the single biggest surprise in this
+    // payload (#613): tool calls come back with empty text AND still spend the
+    // caller's `limit`. A caller that doesn't know this reads a mostly-blank
+    // reply as a faithful transcript.
+    expect(readChat).toMatch(/empty/i);
+    expect(readChat).toMatch(/tool/i);
+    expect(readChat).toMatch(/limit/i);
+
+    // An unknown session_id resolves to total:0 with no error, which reads as
+    // "empty chat" unless the description says otherwise.
+    expect(readChat).toMatch(/not found/i);
+
+    // Escape hatch: the lossless transcript is a file the caller can read.
+    expect(readChat).toContain(".chats/");
+    expect(readChat).toContain(".jsonl");
+    expect(readChat).toMatch(/subagents/);
+
+    // #614: `name` degrades to a sessionId prefix, which looks like an id.
+    expect(listChats).toMatch(/8-character sessionId prefix/);
+    expect(listChats).toMatch(/untitled/i);
+  });
+
   it("read_chat returns the trimmed tail with total/returned counts", async () => {
     const messages: SelfMcpMessage[] = Array.from({ length: 100 }, (_, i) => ({
       role: i % 2 === 0 ? "user" : "assistant",
