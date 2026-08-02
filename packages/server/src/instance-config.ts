@@ -35,6 +35,7 @@ import { DEFAULT_MAX_SPAWN_DEPTH, isValidMaxSpawnDepth } from "./spawn-capabilit
 import { DEFAULT_RECOVERY } from "./recovery-config.js";
 import { DEFAULT_ATTACHMENTS, sanitizeAllowedTypes } from "./attachments-config.js";
 import { DEFAULT_CURATION } from "./curation-config.js";
+import { DEFAULT_ENVIRONMENT_PROMPT } from "./environment-prompt.js";
 import { type PaddockConfig } from "./config.js";
 
 /** Groups the Settings screen renders, in display order. */
@@ -51,7 +52,12 @@ export const GROUPS: { id: string; label: string; description?: string }[] = [
   { id: "advanced", label: "Advanced (read-only)", description: "Process / filesystem bindings. Change these via env/redeploy, not the UI." },
 ];
 
-type FieldType = "number" | "boolean" | "string" | "enum" | "string-list";
+/**
+ * How the Settings screen renders a field. `text` is `string` with a multi-line
+ * control (a `<textarea>`) — same wire shape, same coercion contract; the only
+ * difference is that the UI stops squashing paragraphs into one line.
+ */
+type FieldType = "number" | "boolean" | "string" | "text" | "enum" | "string-list";
 
 /** Outcome of coercing a raw patch value into a persistable one. */
 type Coerced = { ok: true; value: unknown } | { ok: false; error: string };
@@ -74,10 +80,13 @@ interface FieldSpec {
   envVars: readonly string[];
   /**
    * Env-shadow semantics. Default (`false`) = the var shadows only when set to a
-   * non-blank value, matching `envOr`/`envOpt` in config.ts. Set `true` for
-   * `browserMcp`, whose loader (`loadBrowserMcp`) treats ANY defined value —
-   * including blank — as authoritative (`env !== undefined`), so a defined-but-
-   * blank `PADDOCK_BROWSER_MCP` forces `false` and must render read-only here too.
+   * non-blank value, matching `envOr`/`envOpt` in config.ts. Set `true` for the
+   * fields whose loaders key on `env !== undefined` instead, so a defined-but-
+   * blank var is still authoritative and must render read-only here too:
+   *  - `browserMcp` (`loadBrowserMcp`) — a blank `PADDOCK_BROWSER_MCP` forces
+   *    `false`;
+   *  - `environmentPrompt` (`loadEnvironmentPrompt`, #635) — a blank
+   *    `PADDOCK_ENVIRONMENT_PROMPT` IS the opt-out.
    */
   envShadowWhenDefined?: boolean;
   /** Built-in default (what you get with neither env nor file). `null` ⇒ unset. */
@@ -130,6 +139,38 @@ const nonEmptyString = (raw: unknown): Coerced =>
 /** A string that may be blank (blank clears the override → falls back to default). */
 const optString = (raw: unknown): Coerced =>
   typeof raw === "string" ? { ok: true, value: raw.trim() } : { ok: false, error: "must be a string" };
+
+/**
+ * Upper bound on a prompt-shaped field, in characters. Nothing enforces a limit
+ * downstream — the text is concatenated into the system prompt of every single
+ * turn — so an accidental paste of a whole file would quietly tax every request
+ * on the instance forever. 32 KiB is ~50× the built-in default and far more than
+ * any deliberate environment note; past that, a 400 is kinder than silence.
+ */
+const MAX_PROMPT_CHARS = 32 * 1024;
+
+/**
+ * A free-text prompt body. Unlike {@link optString} this is **verbatim**: no
+ * trimming, because leading/trailing whitespace is content in a prompt and the
+ * operator's text must round-trip through YAML byte-for-byte.
+ *
+ * The three authoring states map onto the wire like this:
+ *  - `null` → delete the key → fall back to Paddock's built-in default,
+ *  - `""` → written as an empty string → append nothing (opt out),
+ *  - any other string → written verbatim → appended instead of the default.
+ *
+ * Rejects a NUL byte: it survives neither the repo's no-NUL invariant
+ * (`scripts/check-no-nul-bytes.mjs`) nor any useful reading of "a prompt".
+ */
+const promptText = (raw: unknown): Coerced => {
+  if (raw === null || raw === undefined) return { ok: true, value: null };
+  if (typeof raw !== "string") return { ok: false, error: "must be a string (or null to restore the default)" };
+  if (raw.length > MAX_PROMPT_CHARS) {
+    return { ok: false, error: `must be at most ${MAX_PROMPT_CHARS} characters (got ${raw.length})` };
+  }
+  if (raw.includes("\0")) return { ok: false, error: "must not contain NUL bytes" };
+  return { ok: true, value: raw };
+};
 
 const oneOf =
   (values: readonly string[]) =>
@@ -203,6 +244,12 @@ export const FIELDS: readonly FieldSpec[] = [
   { key: "driveMode", group: "capabilities", label: "Keeper drive mode", help: "session = persistent (streaming + cross-turn autonomy); batch = legacy one-shot.", type: "enum", enumValues: DRIVE_MODES, envVars: ["PADDOCK_DRIVE_MODE"], default: DEFAULT_DRIVE_MODE, editable: true, coerce: oneOf(DRIVE_MODES) },
   { key: "models", group: "capabilities", label: "Offered models", help: "Which built-in catalog models the picker offers, by id (e.g. claude-opus-5, claude-sonnet-5). Blank = offer all catalog models.", type: "string-list", envVars: ["PADDOCK_MODELS"], default: MODELS.map((m) => m.id), editable: true, coerce: modelList },
   { key: "nativeSystemPrompt", group: "capabilities", label: "Native system prompt", help: "Use Claude Code's native prompt + CLAUDE.md hierarchy (recommended).", type: "boolean", envVars: ["PADDOCK_NATIVE_PROMPT"], default: true, editable: true, coerce: asBool },
+  // Issue #635. `envShadowWhenDefined` because loadEnvironmentPrompt keys on
+  // definedness, not emptiness — a defined-but-empty PADDOCK_ENVIRONMENT_PROMPT
+  // IS the env-level opt-out, so it genuinely shadows the file and must render
+  // read-only. `default` carries the built-in text so the UI can offer a
+  // one-click restore (a `null` PUT deletes the key) without duplicating it.
+  { key: "environmentPrompt", group: "capabilities", label: "Environment prompt", help: "Appended to every keeper turn's system prompt: what the agent should know about rendering into Paddock rather than a terminal. Clear it to append nothing.", type: "text", envVars: ["PADDOCK_ENVIRONMENT_PROMPT"], envShadowWhenDefined: true, default: DEFAULT_ENVIRONMENT_PROMPT, editable: true, coerce: promptText },
   { key: "selfMcpEnabled", group: "capabilities", label: "Self-management MCP (read)", help: "Let keepers list/read projects and other chats.", type: "boolean", envVars: ["PADDOCK_SELF_MCP"], default: false, editable: true, coerce: asBool },
   { key: "selfMcpWriteEnabled", group: "capabilities", label: "Self-management MCP (write)", help: "Let keepers create/fork/message chats (needs read enabled too).", type: "boolean", envVars: ["PADDOCK_SELF_MCP_WRITE"], default: false, editable: true, coerce: asBool },
   { key: "selfMcpProjectsEnabled", group: "capabilities", label: "Self-management MCP (projects)", help: "Let keepers create whole new projects, cloning a repo when repo-backed (needs self-MCP write).", type: "boolean", envVars: ["PADDOCK_SELF_MCP_PROJECTS"], default: false, editable: true, coerce: asBool },
