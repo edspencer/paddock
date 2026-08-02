@@ -1,5 +1,215 @@
 # @paddock/server
 
+## 0.55.0
+
+### Minor Changes
+
+- [#621](https://github.com/edspencer/paddock/pull/621) [`28f4305`](https://github.com/edspencer/paddock/commit/28f4305c0fd6cb1d0b837ebbf1d115d855ba72f4) Thanks [@edspencer](https://github.com/edspencer)! - Import the Claude Code CLI chats you already have into a project.
+
+  A project is backed by a working directory, and you very often already have
+  terminal `claude` history for it — or for your own checkout of the same repo,
+  somewhere else entirely. Until now that history was invisible here.
+
+  When a workspace has importable sessions, an **Import _N_ native chats** button
+  appears at the top of its chat list. One click, no confirmation dialog: the
+  chats are imported, the list refreshes, and a toast reports how many arrived.
+  The count is live rather than a dismissable prompt, so it returns if you accrue
+  new terminal sessions later. Imported chats carry an **Imported** badge so they
+  are distinguishable from chats started here.
+
+  Underneath are two new workspace-scoped routes:
+
+  - `GET …/adoptable-chats` → `{ count, sources, filtered }` — what this project
+    could import, per source working directory. Recomputed on every call, so the
+    count reaches 0 only because there is genuinely nothing left.
+  - `POST …/adopt-chats` → `{ adopted, skipped }` — imports every detected source,
+    or just the one you name.
+
+  Both are on the same dual-mounted plugin as the rest of the chat routes, so the
+  **root workspace** gets them for free. `npm run import-chats -w @paddock/server`
+  is the headless equivalent, for when the transcripts and the server do not share
+  a filesystem view — a containerised instance only sees what is mounted.
+
+  This requires **`@herdctl/core@5.29.0`**, which is where the session-adoption
+  primitives live, along with the `CLAUDE_CONFIG_DIR` fix without which _resuming_
+  an imported chat fails outright.
+
+  Detection looks at the project's own working directory plus any Claude
+  transcript folder whose _recorded_ working directory matches the project — by
+  checkout name for a repo-backed project, by exact path for a notebook one. The
+  recorded cwd is read out of the transcript rather than derived from the folder
+  name, because that encoding is lossy and non-invertible: `/a/b-c`, `/a-b/c` and
+  `/a/b/c` all share one folder. That same lossiness is why sources are
+  de-duplicated by resolved folder and sessions by id — otherwise a colliding pair
+  of directories offers every session twice. Empty and slash-command-only
+  transcripts are withheld as noise and listed under `filtered`, so a lower count
+  always has an explanation. Results are cached on transcript-directory mtimes and
+  dropped after every import.
+
+  Transcripts are **copied**, never moved: your `~/.claude` history stays intact,
+  and the copies keep their original timestamps so imported chats sort by when
+  they actually happened.
+
+  Two fixes ride along, both about timestamps and homes being taken for granted:
+
+  - The configured `CLAUDE_HOME` is now resolved once and handed to the engine.
+    It previously honoured the variable for its own paths while the engine fell
+    back to `~/.claude`, so with a non-default home chats could list from one
+    directory and open empty from another. Invisible whenever the two happen to
+    be the same directory, which is most deployments.
+  - Relocating an existing transcript directory into a project now preserves file
+    timestamps. It didn't, and mtime is both the chat-list sort key and the cache
+    key for titles and previews — so a months-old archive collapsed to "today".
+    Note the narrow scope: registering an agent still **moves** a matching
+    `~/.claude` transcript directory into the project. This stops that move
+    mangling the dates; it does not stop the move. Paddock owning its own Claude
+    home is filed separately as #620.
+
+  Imported chats are marked with a new `adopted` provenance origin. It counts as a
+  root (nothing here created it) and as _attended_ (you ran it yourself), so
+  importing 22 sessions never claims 22 things ran while you were away.
+
+### Patch Changes
+
+- [#579](https://github.com/edspencer/paddock/pull/579) [`21e4c95`](https://github.com/edspencer/paddock/commit/21e4c9500c5f0043e1a799dc650c8fb4be452584) Thanks [@edspencer](https://github.com/edspencer)! - Auth no longer exempts five unregistered health paths (`/healthz`, `/-/health`, `/health`, `/readyz`, `/livez`)
+
+  Only `/api/health` was ever a registered route. The other five were exempt from
+  authentication but served by nothing, so with the SPA mounted they fell through to
+  the front-end catch-all and answered `200 text/html` — the app shell — to an
+  unauthenticated probe. A monitoring check pointed at `/healthz` therefore reported
+  healthy regardless of the instance's actual state, and in `trusted-header`/`jwt`
+  mode the exemption inverted the truthful answer (an unknown path 401s; these did
+  not).
+
+  **Operator action:** point every liveness/readiness probe at **`/api/health`**,
+  which returns `200 {"ok":true}` as `application/json`. The shipped `Dockerfile`
+  HEALTHCHECK and the Kubernetes manifests already use it, so no in-tree deployment
+  changes. The five retired paths are now gated like any other unknown path. `AUTH.md`
+  and the website's authentication page previously documented all six as exempt and
+  have been corrected.
+
+- [#602](https://github.com/edspencer/paddock/pull/602) [`d8f8764`](https://github.com/edspencer/paddock/commit/d8f8764b1dd1d66542f55871323f47f091812729) Thanks [@edspencer](https://github.com/edspencer)! - Two measured memory fixes on the hot read paths: the jobs index stops retaining
+  whole YAML documents, and `/chats/usage` stops opening a file per chat at once.
+
+  **The jobs index was holding every record body it exists to avoid holding
+  (#543).** `JobsDirIndex` keeps three small fields per `job-*.yaml` —
+  `session_id`, `finished_at`, `agent` — and its own docs promise "one ~100-byte
+  tuple per record, never the 24.5 KB average record body". That promise was
+  false. The `yaml` parser builds scalars by slicing the document text, and V8
+  represents those slices as SlicedStrings that pin the ENTIRE source string
+  alive, so caching a scalar verbatim retained the whole record.
+
+  Measured against this instance's jobs dir (2,016 records, 2,012 indexed),
+  driving the real index rather than a replica: **95.7 MB retained before, 1.9 MB
+  after** — ~94 MB off RSS for three `detachString` calls. Cold scan (1,175 vs
+  1,187 ms) and warm scan (38 vs 29 ms) are unchanged; this is a pure copy with
+  no semantic surface. Core hit the identical bug in its own job index and fixed
+  it the same way, so this matches that implementation rather than inventing a
+  variant.
+
+  **`/chats/usage` fanned out unbounded (#544).** The route mapped over every
+  session with `Promise.all`, so a project with 1,515 chats started 1,515
+  transcript reads at the same moment. The work is identical either way — the
+  reads just all land in memory at once instead of a few at a time. Bounded at
+  16, measured on that corpus against the real usage path, one cold process per
+  setting:
+
+  | concurrency       | peak RSS |
+  | ----------------- | -------- |
+  | unbounded (1,515) | 1,025 MB |
+  | 64                | 646 MB   |
+  | 32                | 555 MB   |
+  | 16                | 522 MB   |
+  | 8                 | 375 MB   |
+
+  **Peak RSS halves.** The results do not change: the bounded and unbounded maps
+  were diffed over all 1,515 chats and produce the same order and the same 460 KB
+  of serialised usage, which is the property the endpoint actually depends on
+  (callers index the result positionally).
+
+  Two figures in the design note behind this work did not reproduce and are
+  corrected here rather than repeated: the win is 2×, not the 4× estimated
+  against a standalone replica (the real path also reads each chat's sub-agent
+  transcripts, lifting both floor and ceiling), and "16 is _faster_ than
+  unbounded" is not supportable — wall time varies 6.5–14.9 s for both settings
+  on this box, so the honest claim is no measurable latency cost.
+
+  The bound is a named constant in a new `concurrency.ts` because the planned
+  boot-warm sweep needs the same one. It is a local copy only because
+  `@herdctl/core` defines this helper twice and exports neither from its package
+  root; when herdctl#421 lands, this module should be deleted and the import
+  repointed at core.
+
+- [#623](https://github.com/edspencer/paddock/pull/623) [`8480cb6`](https://github.com/edspencer/paddock/commit/8480cb60fe45986aedea4905f695d84640744e0d) Thanks [@edspencer](https://github.com/edspencer)! - Keep the running sub-agents bar alive when you navigate away from a chat and back (#622).
+
+  Re-opening a chat rehydrates it from history, and the history join left a
+  still-running `Task`/`Agent` launch unenriched — no `toolUseId`, no
+  `hasSubagent` — because it has no `tool_result` yet. The bar's candidates need
+  both, so it emptied for the rest of the sub-agent's run and its cards stopped
+  being expandable, self-healing only once the sub-agent finished. In-flight
+  launches are now joined off their own cursor, so they enrich like the live
+  `chat:tool_start` path does while completed sub-agents keep their exact
+  positional alignment.
+
+- [#625](https://github.com/edspencer/paddock/pull/625) [`a18ceb2`](https://github.com/edspencer/paddock/commit/a18ceb2b048693523c7c263371903d97f2b765fa) Thanks [@edspencer](https://github.com/edspencer)! - Make the self-MCP read tools honest about what they drop, and point callers at the raw transcript (#615).
+
+  `read_chat`'s description now states the thing that surprises every caller:
+  `role: "tool"` entries come back with **empty** text — no tool name, input or
+  output — and they still count against `limit`, so on a tool-heavy chat most of
+  the reply is blank padding. Thinking blocks, attachments and sub-agent
+  transcripts are dropped outright. It also says what the tool is therefore _not_
+  for (auditing how a chat went) and where the lossless data lives:
+  `<data-dir>/projects/<slug>/.chats/<sessionId>.jsonl`, sub-agents under
+  `<sessionId>/subagents/agent-*.jsonl`.
+
+  It also flags a silent footgun: an unknown `session_id` returns `total: 0` with
+  no error. A nightly reviewer hit exactly this, mistyped one id, and published
+  "empty chat" about a conversation it had never opened.
+
+  `list_chats` now says that `name` falls back to an 8-character `sessionId`
+  prefix when a chat has no stored title — that it means _untitled_, and is not a
+  usable id.
+
+  Descriptions and docs only; no behaviour change.
+
+- [#580](https://github.com/edspencer/paddock/pull/580) [`a8c37d8`](https://github.com/edspencer/paddock/commit/a8c37d852ccf8aa0d970ff3407890de391fd4e6d) Thanks [@edspencer](https://github.com/edspencer)! - The self-management MCP surface can now see and reach the **root workspace**
+  (#560). Root chats were unlistable and unreadable — a keeper (or an external
+  `/mcp` client) could not reach a single one.
+
+  A workspace key is a path relative to `projectsRoot`, so the root's key is the
+  empty string, and every workspace key on this surface was tested for
+  _truthiness_. Two of the three failures were silent:
+
+  - `list_chats {"project": ""}` named an explicit target and got a **different**
+    target's answer — the empty key collapsed into "no filter", so it listed every
+    _project's_ chats (and then reported zero, since no project owns a root chat).
+  - `read_chat {"project": "", …}` answered `` `project` … is required `` for an
+    argument that **was** supplied.
+  - `list_projects` gave a caller no way to learn the root existed at all.
+
+  Fixed the way REST already solves it — reach the root by key, never by widening
+  enumeration. `ProjectStore.list()` is unchanged: it still walks children only.
+
+  Three behaviour changes to the tools:
+
+  - **`list_chats` with no `project` now covers the root as well as every
+    project.** It is the only source of session ids, so omitting the root made
+    root chats undiscoverable. Root chats report `project: ""` — pass that value
+    back to `read_chat` verbatim.
+  - **`list_chats {"project": ""}` and `read_chat {"project": ""}` now address the
+    root workspace** instead of misfiring. An _absent_ `project` still means "all
+    workspaces" for `list_chats` and is still a hard error for `read_chat`.
+  - **`list_projects` gained a `root` field** — the root workspace, mirroring the
+    `{ projects, root }` shape `GET /api/projects` settled on. It is deliberately
+    **not** in `projects` or `count`: the root is not a project. `root` is `null`
+    for a client whose scope doesn't reach it.
+
+  The `project` descriptions/schemas on `list_chats`/`read_chat` now name the
+  empty key, replacing text ("Omit to list chats across all projects") that was
+  itself part of the confusion. Scoping is unaffected: a client's `projects`
+  patterns are matched against `""` like any other key, so a narrowly-scoped
+  client still sees no root chats.
+
 ## 0.54.2
 
 ## 0.54.1
