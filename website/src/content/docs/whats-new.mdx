@@ -3,6 +3,8 @@ title: What's New
 description: "The user-facing highlights of each Paddock release — importing your existing Claude Code CLI chats, a Home that leads with running and unread work, the keeper persona retired in favour of Claude, an unread badge on the sidebar's Home link, the instance's own root as a first-class workspace, subtree actions on the chat tree, a running-chats filter, instance Config split from workspace Settings, scratch retired, a much faster jobs index, a chat list that nests spawned chats under their parent, an external MCP endpoint, a generated API reference, per-message fork & revert, Claude Opus 5 by default, official Docker images & deploy recipes, attachments, streaming, unified triggers, and more."
 ---
 
+import DemoVideo from '../../components/DemoVideo.astro';
+
 The headline changes in recent Paddock releases, newest first. These are the
 things you'll *notice* — not an exhaustive changeset. For the full, per-package
 detail see the changelogs on GitHub
@@ -65,6 +67,14 @@ becoming less an app you visit and more a service your other tools talk to.
   there is genuinely nothing left to bring over. There is a headless equivalent,
   `npm run import-chats`, for when the transcripts and the server don't share a
   filesystem — a containerised instance only sees what you have mounted.
+
+<DemoVideo
+	src="/demo/import-chats.mp4"
+	poster="/demo/import-chats-poster.jpg"
+	alt="A newly added project called Acme API has no chats yet. Above its empty chat list sits a button reading 'Import 7 native chats'. Clicking it fills the list with seven conversations from the terminal — 'Rate limiting for /payments', 'Webhook retry backoff', 'Idempotency keys on charges' and four more — each with a small terminal icon marking it as imported, and each dated when it actually happened: 2 days ago through to 2 weeks ago. A toast confirms 'Imported 7 chats' and the button disappears, because there is nothing left to bring over."
+	caption="Seven terminal sessions adopted into a project in one click. The dates are the original ones — imported chats sort by when the conversation really happened, not when you imported it."
+/>
+
 - **Detection is deliberately forgiving about where your checkout lives.** A
   repo-backed project matches any transcript folder whose recorded working
   directory has the same checkout name, so history from a clone at a completely
@@ -74,6 +84,8 @@ becoming less an app you visit and more a service your other tools talk to.
   `/a/b/c` all collapse to the same folder. Empty and slash-command-only
   transcripts are held back as noise and reported separately, so a lower count
   always has an explanation rather than looking like something went missing.
+
+![An imported chat open in Paddock. Every row in the chat list carries a small terminal icon marking it as imported, and the message box below reads "Message Claude…"](../../assets/whats-new/imported-chat.png)
 - **Operator action: point your health probes at `/api/health`.** Five paths
   (`/healthz`, `/-/health`, `/health`, `/readyz`, `/livez`) were exempt from
   authentication but served by no route at all, so they fell through to the
@@ -143,6 +155,8 @@ becoming less an app you visit and more a service your other tools talk to.
   in-flight badge**: watching the running set is now itself a reason to hold a
   socket open, so landing on Home is correct on first paint instead of looking
   like a quiet instance.
+
+![The root workspace's Home, leading with a Running section and then an Unread section listing 88 chats from across every project, each tagged with the project it belongs to and how long ago it replied](../../assets/whats-new/home-attention.png)
 - **`OVERVIEW.md` now renders on Home beside `CHANGELOG.md`**, both collapsible
   with the choice remembered per workspace. The old Overview card at the bottom —
   a summary plus a metadata table — is gone; it described the workspace rather
