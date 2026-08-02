@@ -1,0 +1,100 @@
+---
+/**
+ * DemoVideo — a screen-recorded product demo embedded in a docs page.
+ *
+ * Why a <video> and not the animated GIF the rest of the world reaches for:
+ * these recordings are full-window UI at 1280px, and the thing a reader needs to
+ * actually READ is small text — tool names, step counts, durations. GIF is capped
+ * at 256 colours with no interframe motion compensation, so it loses that text to
+ * dithering *and* costs far more to ship. Measured on this clip (35s, 1280x720):
+ *
+ *   MP4  h264 1280w 30fps ... 1.1 MB   <- what we ship
+ *   GIF       800w 12fps ...  6.1 MB   (already too soft to read)
+ *   GIF      1280w 30fps ... 18   MB
+ *
+ * So: MP4, but configured to BEHAVE like a GIF — muted + autoplay + loop +
+ * playsinline means it starts on its own and never asks the reader for a click.
+ * `controls` stays on so it can be paused and scrubbed, which a GIF cannot do.
+ *
+ * Accessibility: an autoplaying loop is exactly what `prefers-reduced-motion`
+ * exists to suppress, and CSS cannot stop a video. The inline script below is the
+ * only way to honour it — it pauses the clip and rewinds to the poster frame, so
+ * a reduced-motion reader gets a still image plus a play button. Test it with
+ * DevTools → Rendering → "Emulate prefers-reduced-motion".
+ */
+interface Props {
+	/** Path under `public/`, e.g. `/demo/subagent-bar.mp4`. */
+	src: string;
+	/** Still frame shown before playback and to reduced-motion readers. */
+	poster: string;
+	/**
+	 * What the clip shows. Required, and it carries real weight: an autoplaying
+	 * muted video is unnarrated, so for anyone who can't watch it this is the
+	 * only description of what happened.
+	 */
+	alt: string;
+	/** Optional prose caption rendered under the frame. Supports <slot name="caption" />. */
+	caption?: string;
+}
+
+const { src, poster, alt, caption } = Astro.props;
+---
+
+<figure class="dv">
+	<video
+		class="dv-video"
+		src={src}
+		poster={poster}
+		aria-label={alt}
+		autoplay
+		muted
+		loop
+		playsinline
+		controls
+		preload="metadata"></video>
+	{
+		(caption || Astro.slots.has('caption')) && (
+			<figcaption class="dv-caption">
+				{caption}
+				<slot name="caption" />
+			</figcaption>
+		)
+	}
+</figure>
+
+<script>
+	// See the reduced-motion note in the component doc comment above.
+	if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+		for (const v of document.querySelectorAll<HTMLVideoElement>('video.dv-video')) {
+			v.autoplay = false;
+			v.loop = false;
+			v.pause();
+			v.currentTime = 0;
+		}
+	}
+</script>
+
+<style>
+	.dv {
+		margin: 1.75rem 0;
+	}
+
+	.dv-video {
+		display: block;
+		width: 100%;
+		height: auto;
+		border-radius: 12px;
+		/* The recording's own chrome is dark; a hairline keeps it from bleeding
+		   into the page background in dark mode. */
+		border: 1px solid var(--sl-color-gray-5);
+		box-shadow: 0 8px 30px rgb(0 0 0 / 0.28);
+		background: #000;
+	}
+
+	.dv-caption {
+		margin-top: 0.6rem;
+		font-size: 0.8125rem;
+		line-height: 1.5;
+		color: var(--sl-color-gray-3);
+	}
+</style>
