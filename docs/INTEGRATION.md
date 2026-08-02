@@ -6,7 +6,7 @@
 > declarations and proven at the time by a real integration spike that
 > constructed + initialized a FleetManager and a SessionDiscoveryService against
 > the package. (That spike has since been deleted — it pinned 5.10.1 and we are
-> on ^5.27; `test/e2e/` now covers this ground against the real server.)
+> on ^5.29.0; `test/e2e/` now covers this ground against the real server.)
 >
 > Pinned versions inspected: `@herdctl/core@5.10.1` (used),
 > `@herdctl/web@0.9.10` and `@herdctl/chat@0.3.14` (referenced for protocol
@@ -80,6 +80,20 @@ interface FleetManagerOptions {
   configOverrides?: FleetConfigOverrides; // only overrides fleet.web {enabled,port,host}
 }
 ```
+
+Two more options exist and paddock passes both. They were added after this page
+was written, so they fall outside its "verified against 5.10.1" claim:
+`allowScheduleMutation`, and — since **5.29.0** — **`claudeHomePath`**, the
+Claude home the engine's session discovery, its adoption primitives, and Claude
+Code itself resolve transcripts under. Paddock passes `cfg.claudeHome` so the two
+sides cannot disagree about which home is real; see `HerdctlService` in
+`herdctl.ts` and the `CLAUDE_HOME` row in [CONFIGURATION.md](CONFIGURATION.md).
+
+5.29.0 is also where the session-adoption primitives the chat import is built on
+arrived — `listAdoptableSessions`, `adoptSessionsFrom` and `unadoptSession` on
+the FleetManager (used by `AdoptableIndex` in `adoptable.ts` and
+`HerdctlService.adoptChats` in `herdctl.ts`) — along with the `CLAUDE_CONFIG_DIR`
+fix without which **resuming** an adopted session fails.
 
 There is also `initializeWebOnly({port?, host?})` — a zero-agent mode that serves
 session data from `~/.claude/` without a `herdctl.yaml`. Paddock does not use it

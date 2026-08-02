@@ -1,23 +1,37 @@
 ---
 "@paddock/server": minor
+"@paddock/web": minor
 ---
 
 Import the Claude Code CLI chats you already have into a project.
 
 A project is backed by a working directory, and you very often already have
 terminal `claude` history for it — or for your own checkout of the same repo,
-somewhere else entirely. Until now that history was invisible here. Two new
-workspace-scoped routes surface it and pull it in:
+somewhere else entirely. Until now that history was invisible here.
+
+When a workspace has importable sessions, an **Import _N_ native chats** button
+appears at the top of its chat list. One click, no confirmation dialog: the
+chats are imported, the list refreshes, and a toast reports how many arrived.
+The count is live rather than a dismissable prompt, so it returns if you accrue
+new terminal sessions later. Imported chats carry an **Imported** badge so they
+are distinguishable from chats started here.
+
+Underneath are two new workspace-scoped routes:
 
 - `GET …/adoptable-chats` → `{ count, sources, filtered }` — what this project
-  could import, per source working directory. The count is LIVE, so it comes
-  back if you accrue new terminal sessions later and reaches 0 only because
-  there is genuinely nothing left.
+  could import, per source working directory. Recomputed on every call, so the
+  count reaches 0 only because there is genuinely nothing left.
 - `POST …/adopt-chats` → `{ adopted, skipped }` — imports every detected source,
   or just the one you name.
 
 Both are on the same dual-mounted plugin as the rest of the chat routes, so the
-**root workspace** gets them for free.
+**root workspace** gets them for free. `npm run import-chats -w @paddock/server`
+is the headless equivalent, for when the transcripts and the server do not share
+a filesystem view — a containerised instance only sees what is mounted.
+
+This requires **`@herdctl/core@5.29.0`**, which is where the session-adoption
+primitives live, along with the `CLAUDE_CONFIG_DIR` fix without which *resuming*
+an imported chat fails outright.
 
 Detection looks at the project's own working directory plus any Claude
 transcript folder whose *recorded* working directory matches the project — by
@@ -45,6 +59,10 @@ Two fixes ride along, both about timestamps and homes being taken for granted:
 - Relocating an existing transcript directory into a project now preserves file
   timestamps. It didn't, and mtime is both the chat-list sort key and the cache
   key for titles and previews — so a months-old archive collapsed to "today".
+  Note the narrow scope: registering an agent still **moves** a matching
+  `~/.claude` transcript directory into the project. This stops that move
+  mangling the dates; it does not stop the move. Paddock owning its own Claude
+  home is filed separately as #620.
 
 Imported chats are marked with a new `adopted` provenance origin. It counts as a
 root (nothing here created it) and as *attended* (you ran it yourself), so

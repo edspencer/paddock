@@ -92,12 +92,17 @@ opening every chat:
 
 ![The History view: a banner reading '4 new runs ran while you were away' above a list of scheduled runs](../../../assets/schedules/history-while-away.png)
 
-It lists recent runs, each with its origin — **Scheduled** (⏰), **Spawned**, or
-**You** — a status chip, when it ran, and how long it took. The details:
+It lists recent runs, each with its origin — **Scheduled** (⏰), **Spawned**,
+**Imported**, or **You** — a status chip, when it ran, and how long it took. The
+details:
 
 - **The "Unattended" filter is the default.** It shows only the runs a schedule
   or another chat produced — the ones you didn't drive — so the noise of your own
-  turns is out of the way. Switch to **All** to see everything.
+  turns is out of the way. Switch to **All** to see everything. Runs
+  [imported](/using/working-in-chats/#import-your-terminal-claude-history) from
+  your terminal `claude` history count as **attended**: you drove them, just
+  elsewhere, so importing never fills this view (or the banner below) with your
+  own back-catalogue.
 - **A "while you were away" banner** counts the unattended runs that arrived since
   your last visit, and a dot marks each new row. Opening the tab clears the badge.
 - **Click a run** to jump straight into its chat and read what the keeper did.

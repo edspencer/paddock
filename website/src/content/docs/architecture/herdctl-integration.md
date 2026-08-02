@@ -10,12 +10,12 @@ description: "The exact public @herdctl/core API surface Paddock depends on."
 > deleted — it pinned an old core version; `test/e2e/` now covers this ground
 > against the real server.)
 >
-> Paddock currently depends on **`@herdctl/core@^5.26.1`** and
+> Paddock currently depends on **`@herdctl/core@^5.29.0`** and
 > `@herdctl/chat@^0.8.0` (see `packages/server/package.json`).
 
 :::caution[This page is a snapshot, and core has moved on]
 The contract below was written against `@herdctl/core@5.10.1` and has **not**
-been re-verified end to end against 5.26.1. Two of its headline findings are now
+been re-verified end to end against 5.29.0. Two of its headline findings are now
 out of date, because herdctl closed the gaps this page asked for:
 
 - **`FleetManager.addAgent()` / `removeAgent()` now exist** — programmatic,
@@ -28,7 +28,7 @@ out of date, because herdctl closed the gaps this page asked for:
 
 Treat the sections below as historical background on *why* the integration is
 shaped the way it is, not as the current call-by-call contract. A full re-verify
-against 5.26.1 is tracked as follow-up work; `packages/server/src/herdctl.ts` is
+against 5.29.0 is tracked as follow-up work; `packages/server/src/herdctl.ts` is
 the authoritative description of what paddock actually calls.
 :::
 
@@ -101,6 +101,23 @@ interface FleetManagerOptions {
   configOverrides?: FleetConfigOverrides; // only overrides fleet.web {enabled,port,host}
 }
 ```
+
+Two more options exist and paddock passes both. They were added after this page
+was written, so they fall outside its "verified against 5.10.1" claim:
+`allowScheduleMutation`, and — since **5.29.0** — **`claudeHomePath`**, the
+Claude home the engine's session discovery, its adoption primitives, and Claude
+Code itself resolve transcripts under. Paddock passes its one resolved
+`claudeHome` so the two sides cannot disagree about which home is real; see
+`HerdctlService` in `herdctl.ts` and the `CLAUDE_HOME` row in
+[Environment variables](/configuration/environment/).
+
+5.29.0 is also where the session-adoption primitives behind
+[importing your terminal `claude`
+history](/using/working-in-chats/#import-your-terminal-claude-history) arrived —
+`listAdoptableSessions`, `adoptSessionsFrom` and `unadoptSession` on the
+FleetManager (used by `AdoptableIndex` in `adoptable.ts` and
+`HerdctlService.adoptChats` in `herdctl.ts`) — along with the `CLAUDE_CONFIG_DIR`
+fix without which **resuming** an adopted session fails.
 
 There is also `initializeWebOnly({port?, host?})` — a zero-agent mode that serves
 session data from `~/.claude/` without a `herdctl.yaml`. Paddock does not use it
@@ -364,7 +381,7 @@ protocol contract — that's the only "reuse."
 These were the points where the 5.10.1 public API couldn't do what paddock's
 project model wanted cleanly. **Gaps 1 and 2 have since been closed upstream**
 and paddock uses the new APIs; they're kept here for the rationale. Gaps 3 and 4
-have not been re-checked against 5.26.1.
+have not been re-checked against 5.29.0.
 
 1. ~~**Programmatic dynamic agents (primary).**~~ **CLOSED** — core ships
    `addAgent()`/`removeAgent()`; paddock calls them directly. Original ask:

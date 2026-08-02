@@ -106,6 +106,28 @@ return `{ error, code }` with `404` (not found), `409` (exists), or `400`
 | POST | `/api/projects/:slug/chats/batch/unread` | Mark a SET of chats read/unread — body `{ sessionIds, unread? }`. `unread:false` also advances each last-seen watermark. | gated |
 | POST | `/api/projects/:slug/chats/batch/delete` | Delete a SET of chats — body `{ sessionIds }` → `{ ok, removed, failed }`. Best-effort per chat: filesystem deletes can't be atomic, so the response names what it couldn't remove. | gated |
 
+### Importing native Claude Code chats
+
+The terminal `claude` sessions a user already has for a workspace's working
+directory can be imported so they list and resume like any other chat
+(`AdoptableIndex` in `adoptable.ts`, `HerdctlService.adoptChats` in
+`herdctl.ts`). Transcripts are **copied** — the user's `~/.claude` history is
+never mutated — and keep their original mtimes, which are both the chat-list
+sort key and the metadata cache key. Imported chats carry the `adopted`
+provenance origin.
+
+| Method | Path | Purpose | Auth |
+|--------|------|---------|------|
+| GET | `/api/projects/:slug/adoptable-chats` | What this workspace could import → `{ count, sources: [{ sourceCwd, sessionIds }], filtered }`. The count is LIVE (recomputed, cached on transcript-dir mtimes, dropped after every import), so it returns if new terminal sessions accrue and reaches `0` only when there is genuinely nothing left. Empty and slash-command-only transcripts are withheld as noise and explained under `filtered`. | gated |
+| POST | `/api/projects/:slug/adopt-chats` | Import every detected source, or just one — body `{ sourceCwd? }` → `{ adopted, skipped }`. Invalidates the workspace's session cache. | gated |
+
+> Like the rest of the chat routes these live in the dual-mounted plugin
+> (`registerChatWorkspaceRoutes` in `routes/chats.ts`), so the **root workspace**
+> gets them at `/api/root/adoptable-chats` and `/api/root/adopt-chats` with no
+> extra handler. `packages/server/src/cli/import-chats.ts` is the headless
+> equivalent (`npm run import-chats -w @paddock/server`), for when the
+> transcripts and the server do not share a filesystem view.
+
 ---
 
 ## WebSocket protocol (`/ws`)
