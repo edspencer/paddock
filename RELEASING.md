@@ -39,24 +39,42 @@ npm ≥ 11.5.1 (Node 22 ships npm 10, so the job upgrades it), `registry-url` on
 Provenance is attested automatically; the job verifies it landed and fails the
 release if it did not.
 
-> **Bootstrapping a brand-new package cannot use OIDC** — npm has no settings
-> page for a package that does not exist yet ([npm/cli#8544](https://github.com/npm/cli/issues/8544)).
-> The first version was published by hand purely to create the package so a
-> trusted publisher could be attached:
->
-> ```sh
-> npm login                                    # 2-hour session, 2FA; nothing stored
-> npm run pack:npm
-> cd dist-npm
-> npm publish --no-provenance --access public
-> ```
->
-> **`--no-provenance` is required, not optional.** The synthesized manifest sets
-> `publishConfig.provenance: true`, and npm refuses a provenance publish outside
-> a supported CI with *"Automatic provenance generation not supported outside of
-> GitHub Actions"*. The flag overrides the manifest for that one publish. This is
-> also why the bootstrap version is permanently unattested, and every release
-> after it — coming from CI — is not.
+### How this package was bootstrapped (one-time, already done)
+
+A brand-new package **cannot** be created by OIDC: npm has no settings page for a
+package that does not exist, so there is nowhere to attach a trusted publisher
+([npm/cli#8544](https://github.com/npm/cli/issues/8544)). The chicken-and-egg is
+broken with a **placeholder release containing no code** — enough to create the
+package and unlock its settings page, and nothing more.
+
+```sh
+mkdir /tmp/paddock-bootstrap && cd /tmp/paddock-bootstrap
+# package.json: name + version 0.0.1 + repository + publishConfig.access=public.
+# Deliberately NO bin, NO dependencies, NO preinstall, and NO
+# publishConfig.provenance — see the two traps below.
+npm login                                   # 2-hour session, 2FA; nothing stored
+npm publish --tag bootstrap
+```
+
+Then at `npmjs.com/package/@edspencer/paddock/access` → **Trusted Publisher**:
+repository `edspencer/paddock`, workflow `release.yml`, environment blank. From
+that point the `publish-npm` job publishes every release with provenance and no
+credential exists anywhere.
+
+Two traps this recipe avoids:
+
+- **Never set `publishConfig.provenance` on a manual publish.** npm refuses it
+  outside a supported CI — *"Automatic provenance generation not supported
+  outside of GitHub Actions"*. The real manifest sets it, which is exactly why
+  the placeholder is a separate hand-written file rather than `npm run pack:npm`
+  output. (If you ever must publish the real package by hand, override with
+  `--no-provenance`.)
+- **`--tag bootstrap`, not `latest`.** A placeholder on `latest` means
+  `npx @edspencer/paddock` resolves a package with no `bin` and fails with a
+  confusing "could not determine executable to run". Keeping it off `latest`
+  means npx says "no matching version" until the first CI release, which is at
+  least honest. The placeholder is permanently unattested — that is unavoidable
+  and is why it holds no code.
 
 ## Versioning model
 
