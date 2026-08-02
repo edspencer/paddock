@@ -75,7 +75,7 @@ import path from "node:path";
 import type { PaddockConfig } from "./config.js";
 import type { Project } from "./projects.js";
 import { DEFAULT_MODEL } from "./models.js";
-import { ensureProjectChats, projectChatsDir } from "./transcripts.js";
+import { ensureProjectChats, projectChatsDir, type ClaudeHomeTarget } from "./transcripts.js";
 import {
   triggerRunsOnOwnAgent,
   isCuratorTrigger,
@@ -323,6 +323,17 @@ export class HerdctlService {
   constructor(private readonly cfg: PaddockConfig) {}
 
   /**
+   * The Claude home every transcript symlink is planted in, plus whether paddock
+   * owns it (#620). One accessor, so no call site can quietly take a default and
+   * land in a different home than the FleetManager was built with — the bug
+   * `ensureSweeperHome` had, which put the sweeper's symlink in `~/.claude` while
+   * every other agent's went to the configured home.
+   */
+  private get claudeHomeTarget(): ClaudeHomeTarget {
+    return { path: this.cfg.claudeHome, owned: this.cfg.ownsClaudeHome };
+  }
+
+  /**
    * Construct + initialize the FleetManager against a minimal zero-agent
    * config (fleet + defaults only). Agents are then registered programmatically
    * via `fleet.addAgent(...)` — a keeper + sweeper for each workspace, the root
@@ -358,7 +369,7 @@ export class HerdctlService {
       // at the .chats store in the metadata dir — so repo-backed transcripts stay
       // out of the external checkout's working tree (issue #187). For a notebook
       // project workingDir === dir, so this is the classic behavior.
-      await ensureProjectChats(project.workingDir, project.dir, this.cfg.claudeHome);
+      await ensureProjectChats(project.workingDir, project.dir, this.claudeHomeTarget);
       await this.ensureSweeperHome(project);
       await this.fleet.addAgent(this.keeperAgentConfig(project), { replace: true });
       await this.fleet.addAgent(this.sweeperAgentConfig(project), { replace: true });
@@ -434,7 +445,7 @@ export class HerdctlService {
    */
   async ensureProjectAgent(project: Project): Promise<void> {
     if (!this.fleet) return;
-    await ensureProjectChats(project.workingDir, project.dir, this.cfg.claudeHome);
+    await ensureProjectChats(project.workingDir, project.dir, this.claudeHomeTarget);
     await this.ensureSweeperHome(project);
     await this.fleet.addAgent(this.keeperAgentConfig(project), { replace: true });
     await this.fleet.addAgent(this.sweeperAgentConfig(project), { replace: true });
@@ -537,6 +548,7 @@ export class HerdctlService {
     return (this.adoptableIndexOrNull ??= new AdoptableIndex(
       this.cfg.claudeHome,
       this.cfg.stateDir,
+      this.cfg.legacyClaudeHome,
     ));
   }
 
@@ -598,10 +610,27 @@ export class HerdctlService {
     const mode = opts.mode ?? "copy";
     const dryRun = opts.dryRun ?? false;
     const summary = await this.listAdoptable(project);
+    // Translate the DISPLAY path a caller sends back into the path the engine
+    // actually reads that source through (#620). They differ for the user's own
+    // `~/.claude` history, which is reached via a mirror named for a synthetic
+    // path — handing the engine the recorded cwd would send it to the project's
+    // OWN transcript folder and import nothing.
+    //
+    // Filter rather than find: post-#620 the user's `~/.claude` folder for a cwd
+    // and the project's own `.chats/` are two different directories that both
+    // display as that cwd, so one display path can legitimately name two sources.
+    const engineDirs = (displayCwd: string): string[] => {
+      const matched = summary.sources
+        .filter((s) => s.sourceCwd === displayCwd)
+        .map((s) => s.importFrom ?? s.sourceCwd);
+      // An unmatched path is one the route already validated as the project's own
+      // working directory; pass it straight through, as before.
+      return matched.length > 0 ? matched : [displayCwd];
+    };
     const sources =
       opts.sourceCwd !== undefined
-        ? [opts.sourceCwd]
-        : summary.sources.map((s) => s.sourceCwd);
+        ? engineDirs(opts.sourceCwd)
+        : summary.sources.map((s) => s.importFrom ?? s.sourceCwd);
     // sessionId -> why detection withheld it.
     const withheld = new Map(summary.filtered.map((f) => [f.sessionId, f.reason] as const));
 
@@ -1398,7 +1427,7 @@ export class HerdctlService {
    */
   private async ensureSweeperHome(project: Project): Promise<void> {
     const dir = sweeperWorkingDir(this.cfg, project.slug);
-    await ensureProjectChats(dir, dir);
+    await ensureProjectChats(dir, dir, this.claudeHomeTarget);
   }
 
   private triggerAgentConfig(

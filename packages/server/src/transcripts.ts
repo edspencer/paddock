@@ -1,8 +1,9 @@
 /**
  * Transcript relocation (backing-store Phase 3).
  *
- * Claude Code writes a session transcript to `~/.claude/projects/<encoded-cwd>/`,
- * where `<encoded-cwd>` is the agent's absolute working directory with every
+ * Claude Code writes a session transcript to `<claudeHome>/projects/<encoded-cwd>/`,
+ * where `<claudeHome>` is `CLAUDE_CONFIG_DIR` (paddock's own `<dataDir>/claude-home`
+ * since #620) and `<encoded-cwd>` is the agent's absolute working directory with every
  * non-[A-Za-z0-9] char replaced by '-'. That makes transcripts path-coupled and
  * not portable. We relocate them INTO the project by making the encoded path a
  * **symlink to `<projectDir>/.chats/`** — Claude then writes through the symlink
@@ -17,7 +18,6 @@
 import { promises as fs, createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
 import path from "node:path";
-import { claudeHome } from "./config.js";
 
 /**
  * Encode a working directory the way Claude Code names its transcript dir.
@@ -48,17 +48,38 @@ export function projectChatsDir(projectDir: string): string {
  * store stays in the project's metadata dir (the data repo) — so transcripts
  * never pollute the external repo's working tree — hence the two are split.
  *
- * `claudeHomePath` is the Claude home to plant the symlink in. Callers holding a
- * config MUST pass `cfg.claudeHome` (#588): the engine is constructed with that
- * same resolved value, and a symlink planted in a different home than the one
- * the engine reads is exactly the "chats list but open empty" failure. The
- * env-derived default is kept only for callers with no config (unit tests).
+ * `home.path` is the Claude home to plant the symlink in, and it is REQUIRED —
+ * no default (#620). Callers must pass `cfg.claudeHome`: the engine is
+ * constructed with that same resolved value, and a symlink planted in a
+ * different home than the one the engine reads is exactly the "chats list but
+ * open empty" failure (#588). It used to default to the env-derived home for
+ * callers with no config, and `ensureSweeperHome` silently took that default —
+ * so the sweeper's symlink landed in a different home than every other agent's.
+ * Making the parameter required is what stops that class of bug at the type
+ * level.
+ *
+ * `home.owned` gates the one destructive branch (#620): migrating an existing
+ * real transcript directory into `.chats/` copies the files and then REMOVES the
+ * originals. That is correct self-healing inside a home paddock owns, where such
+ * a directory can only be paddock's own doing. Inside the user's `~/.claude` it
+ * is somebody else's data — a `claude` CLI session run in a directory paddock
+ * happens to also manage — so we leave it strictly alone and let the SDK keep
+ * writing there. Those transcripts stay importable through adoption (#588),
+ * which is the deliberate, user-driven version of the same move.
  */
+export interface ClaudeHomeTarget {
+  /** Absolute path to the Claude home to plant the redirect symlink in. */
+  path: string;
+  /** Whether paddock owns this home — see `PaddockConfig.ownsClaudeHome`. */
+  owned: boolean;
+}
+
 export async function ensureProjectChats(
   workingDir: string,
-  chatsHostDir: string = workingDir,
-  claudeHomePath: string = claudeHome(),
+  chatsHostDir: string,
+  home: ClaudeHomeTarget,
 ): Promise<void> {
+  const claudeHomePath = home.path;
   try {
     const chatsDir = projectChatsDir(chatsHostDir);
     await fs.mkdir(chatsDir, { recursive: true });
@@ -78,6 +99,13 @@ export async function ensureProjectChats(
       }
       return;
     }
+
+    // A real directory of existing transcripts. In a home paddock does NOT own
+    // these are the user's own CLI transcripts (#620) — leave them exactly where
+    // they are. The SDK keeps reading and appending to them, and adoption is how
+    // the user pulls them into the project if they want to. Bailing here also
+    // means we never plant a symlink over them.
+    if (st?.isDirectory() && !home.owned) return;
 
     // A real directory of existing transcripts — migrate into .chats, then link.
     if (st?.isDirectory()) {

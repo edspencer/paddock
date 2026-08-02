@@ -54,11 +54,26 @@ import path from "node:path";
 import { encodePathForCli, readSessionCwd, type AdoptableSession } from "@herdctl/core";
 import type { Project } from "./projects.js";
 import { repoCheckoutName } from "./project-paths.js";
+import { mirrorLegacyTranscriptFolders } from "./claude-home.js";
 
 /** One working directory that has adoptable sessions, and which ones. */
 export interface AdoptableSource {
-  /** The working directory whose transcript folder holds these sessions. */
+  /**
+   * The working directory whose transcript folder holds these sessions — the
+   * DISPLAY identity, and the value a client round-trips back to import one
+   * source. Always a directory the user would recognise.
+   */
   sourceCwd: string;
+  /**
+   * The path the ENGINE must be handed to read this source, when that differs
+   * from {@link sourceCwd} (#620).
+   *
+   * It differs for the user's own `~/.claude` history, which paddock reaches
+   * through a mirror named for a synthetic path — see
+   * `mirrorLegacyTranscriptFolders`. Server-internal: absent means "same as
+   * sourceCwd", and clients neither send it nor need to know it exists.
+   */
+  importFrom?: string;
   /** Adoptable session ids, newest transcript first. */
   sessionIds: string[];
 }
@@ -163,6 +178,20 @@ interface FolderEntry {
   key: string;
   /** The cwd recorded inside one of its transcripts, or `null` if unknowable. */
   cwd: string | null;
+  /**
+   * The path to hand the engine to read THIS folder. Equal to {@link cwd} for an
+   * ordinary folder (whose name IS the encoded cwd); the synthetic mirror path
+   * for one of the user's own folders (#620).
+   */
+  engineCwd: string | null;
+}
+
+/** A candidate source: what to show the user, and what to tell the engine. */
+interface CandidateSource {
+  /** The recognisable working directory, reported as `sourceCwd`. */
+  display: string;
+  /** What the engine is actually handed. Differs only for legacy mirrors. */
+  engine: string;
 }
 
 /**
@@ -200,6 +229,16 @@ export class AdoptableIndex {
   constructor(
     private readonly claudeHomePath: string,
     private readonly stateDir: string,
+    /**
+     * The user's own `~/.claude` (#620). Now that paddock owns its Claude home,
+     * the user's CLI history — the entire point of adoption — is no longer under
+     * `claudeHomePath`, and the engine resolves every adoption path against the
+     * one home the FleetManager was built with, with no per-call override.
+     * {@link scanFolders} therefore mirrors the legacy folders in first,
+     * read-only. Defaults to `claudeHomePath` (i.e. no mirroring at all) for
+     * callers still running in the user's own home.
+     */
+    private readonly legacyClaudeHomePath: string = claudeHomePath,
   ) {}
 
   /**
@@ -221,6 +260,15 @@ export class AdoptableIndex {
    * folders whose file set changed since last time.
    */
   private async scanFolders(): Promise<FolderEntry[]> {
+    // Bring the user's own transcript folders into view first (#620). Idempotent,
+    // and it must happen BEFORE the readdir below rather than once at boot: a
+    // directory the user `claude`s in for the first time today should become
+    // adoptable without restarting paddock.
+    const mirrors = await mirrorLegacyTranscriptFolders(
+      this.claudeHomePath,
+      this.legacyClaudeHomePath,
+    );
+    const mirrorCwds = new Map(mirrors.map((m) => [m.name, m.engineCwd]));
     const root = path.join(this.claudeHomePath, "projects");
     const names = await fs.readdir(root).catch(() => [] as string[]);
     const out: FolderEntry[] = [];
@@ -234,11 +282,16 @@ export class AdoptableIndex {
         out.push(cached);
         continue;
       }
+      const cwd = await recordedCwd(dir);
       const entry: FolderEntry = {
         name,
         realPath: await fs.realpath(dir).catch(() => dir),
         key,
-        cwd: await recordedCwd(dir),
+        cwd,
+        // A mirror is reachable ONLY under its synthetic path: its folder name is
+        // not `encodePathForCli(cwd)`, so handing the engine the recorded cwd
+        // would send it to the project's own folder instead (#620).
+        engineCwd: mirrorCwds.get(name) ?? cwd,
       };
       this.folders.set(name, entry);
       out.push(entry);
@@ -256,7 +309,10 @@ export class AdoptableIndex {
    * ORIGIN-FIRST ordering (see {@link adoptableFor}'s session de-dup): matched
    * external checkouts come first, the project's own working directory last.
    */
-  private async candidateSources(project: Project, folders: FolderEntry[]): Promise<string[]> {
+  private async candidateSources(
+    project: Project,
+    folders: FolderEntry[],
+  ): Promise<CandidateSource[]> {
     const own = project.workingDir;
     const ownFolder = path.join(this.claudeHomePath, "projects", encodePathForCli(own));
     const ownReal = await fs.realpath(ownFolder).catch(() => ownFolder);
@@ -273,18 +329,24 @@ export class AdoptableIndex {
     };
 
     const seen = new Set<string>([ownReal]);
-    const sources: string[] = [];
+    const sources: CandidateSource[] = [];
     for (const folder of folders) {
-      if (folder.cwd === null || !matches(folder.cwd)) continue;
+      if (folder.cwd === null || folder.engineCwd === null || !matches(folder.cwd)) continue;
       if (seen.has(folder.realPath)) continue;
       seen.add(folder.realPath);
-      sources.push(folder.cwd);
+      // Display the cwd the user recognises; hand the engine whatever actually
+      // reaches this folder (#620). For everything but a legacy mirror the two
+      // are the same string.
+      sources.push({ display: folder.cwd, engine: folder.engineCwd });
     }
     // The project's own working directory goes LAST so that a session offered by
     // both it and an external checkout is attributed to the external one — the
     // origin, where the transcript actually lives, so a copy has something to
-    // copy (#588 gotcha 2).
-    sources.push(own);
+    // copy (#588 gotcha 2). Post-#620 that ordering earns its keep again: the
+    // user's `~/.claude` folder for this very cwd and the project's own `.chats/`
+    // are now two DIFFERENT directories that both display as `own`, and the
+    // user's is the one a copy can be taken from.
+    sources.push({ display: own, engine: own });
     return sources;
   }
 
@@ -308,8 +370,9 @@ export class AdoptableIndex {
     // so an empty cwd is a value that genuinely occurs here. Written as the
     // escape, never a raw NUL byte: a raw NUL makes ripgrep classify the whole
     // file as binary and skip it, so the file vanishes from code search (#570).
+    const matchedEngineCwds = new Set(sources.map((s) => s.engine));
     const matchedKeys = folders
-      .filter((f) => sources.includes(f.cwd ?? "\u0000"))
+      .filter((f) => matchedEngineCwds.has(f.engineCwd ?? "\u0000"))
       .map((f) => `${f.name}=${f.key}`)
       .sort();
     const key = [
@@ -326,10 +389,13 @@ export class AdoptableIndex {
     const out: AdoptableSource[] = [];
     const filtered: FilteredSession[] = [];
     let count = 0;
-    for (const sourceCwd of sources) {
+    for (const source of sources) {
+      const sourceCwd = source.display;
       // Fault-isolated per source: an unreadable folder costs its own sessions,
       // not the whole count.
-      const sessions = await fleet.listAdoptableSessions(agentName, sourceCwd).catch(() => []);
+      const sessions = await fleet
+        .listAdoptableSessions(agentName, source.engine)
+        .catch(() => []);
       const ids: string[] = [];
       for (const session of sessions) {
         // De-dup by session id. Two candidate cwds can collide onto one folder
@@ -345,7 +411,13 @@ export class AdoptableIndex {
         ids.push(session.sessionId);
       }
       if (ids.length > 0) {
-        out.push({ sourceCwd, sessionIds: ids });
+        // `importFrom` is carried only when it actually differs, so an ordinary
+        // source's DTO is byte-identical to what it was before #620.
+        out.push({
+          sourceCwd,
+          ...(source.engine === sourceCwd ? {} : { importFrom: source.engine }),
+          sessionIds: ids,
+        });
         count += ids.length;
       }
     }

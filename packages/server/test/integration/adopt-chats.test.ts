@@ -19,8 +19,21 @@ const run = promisify(execFile);
  */
 describe("integration: import native Claude Code chats (#588)", () => {
   let t: TestApp;
-  /** The Claude home the app resolved (startTestApp pins it to $HOME/.claude). */
-  let claudeHome: string;
+  /**
+   * The USER's own Claude home (`$HOME/.claude`) — where their terminal history
+   * lives, and the read-only SOURCE adoption imports out of (#620).
+   */
+  let userHome: string;
+  /**
+   * Paddock's OWN Claude home (`<dataDir>/claude-home`) — the DESTINATION a copy
+   * is placed in, which resolves through the project's `.chats/` symlink.
+   *
+   * These being two different directories is the point: post-#620 an import has
+   * to cross from one home into the other, and it can only do that because
+   * `mirrorLegacyTranscriptFolders` makes the user's folders readable through
+   * paddock's home. If that mirror regresses, every count here goes to zero.
+   */
+  let ownHome: string;
   /** The user's own clone of `acme-api`, nothing to do with the project dir. */
   let laptopCheckout: string;
 
@@ -30,7 +43,7 @@ describe("integration: import native Claude Code chats (#588)", () => {
     sessionId: string,
     opts: { firstUserText?: string; mtime?: Date; lines?: number } = {},
   ): Promise<string> {
-    const dir = path.join(claudeHome, "projects", encodePathForCli(cwd));
+    const dir = path.join(userHome, "projects", encodePathForCli(cwd));
     await fs.mkdir(dir, { recursive: true });
     const body: string[] = [
       JSON.stringify({
@@ -66,8 +79,13 @@ describe("integration: import native Claude Code chats (#588)", () => {
 
   beforeAll(async () => {
     t = await startTestApp();
-    claudeHome = t.cfg.claudeHome;
-    expect(claudeHome).toBe(path.join(t.home, ".claude"));
+    userHome = t.cfg.legacyClaudeHome;
+    ownHome = t.cfg.claudeHome;
+    expect(userHome).toBe(path.join(t.home, ".claude"));
+    // A real discriminator: without this the two homes coincide and every
+    // cross-home assertion below passes vacuously.
+    expect(ownHome).not.toBe(userHome);
+    expect(t.cfg.ownsClaudeHome).toBe(true);
 
     // A local git repo to back the project (no network).
     const src = path.join(t.tmp, "_src", "acme-api");
@@ -113,7 +131,7 @@ describe("integration: import native Claude Code chats (#588)", () => {
     });
     await fs.writeFile(
       path.join(
-        claudeHome,
+        userHome,
         "projects",
         encodePathForCli(laptopCheckout),
         "dddddddd-4444-4444-8444-444444444444.jsonl",
@@ -169,7 +187,7 @@ describe("integration: import native Claude Code chats (#588)", () => {
     expect(await fs.readdir(path.join(stateDir, "adopted-sessions")).catch(() => [])).toEqual(
       before,
     );
-    const destDir = path.join(claudeHome, "projects", encodePathForCli(project.workingDir));
+    const destDir = path.join(ownHome, "projects", encodePathForCli(project.workingDir));
     expect(await fs.readdir(destDir).catch(() => [])).toEqual([]);
     // …and the project still offers exactly what it did before.
     expect((await adoptable("/api/projects/acme-api")).count).toBe(2);
@@ -181,7 +199,7 @@ describe("integration: import native Claude Code chats (#588)", () => {
     // the user's history into a single day.
     const old = new Date("2026-01-31T09:00:00Z");
     const source = path.join(
-      claudeHome,
+      userHome,
       "projects",
       encodePathForCli(laptopCheckout),
       "aaaaaaaa-1111-4111-8111-111111111111.jsonl",
@@ -230,7 +248,7 @@ describe("integration: import native Claude Code chats (#588)", () => {
     const project = (await t.app.inject({ method: "GET", url: "/api/projects/acme-api" })).json()
       .project as { workingDir: string };
     const copy = path.join(
-      claudeHome,
+      ownHome,
       "projects",
       encodePathForCli(project.workingDir),
       "aaaaaaaa-1111-4111-8111-111111111111.jsonl",
@@ -239,13 +257,13 @@ describe("integration: import native Claude Code chats (#588)", () => {
 
     // A withheld session left NO trace in the project: no copy placed, and the
     // user's own file untouched where it always was.
-    const destDir = path.join(claudeHome, "projects", encodePathForCli(project.workingDir));
+    const destDir = path.join(ownHome, "projects", encodePathForCli(project.workingDir));
     expect((await fs.readdir(destDir)).sort()).toEqual([
       "aaaaaaaa-1111-4111-8111-111111111111.jsonl",
       "bbbbbbbb-2222-4222-8222-222222222222.jsonl",
     ]);
     const junk = path.join(
-      claudeHome,
+      userHome,
       "projects",
       encodePathForCli(laptopCheckout),
       "cccccccc-3333-4333-8333-333333333333.jsonl",
@@ -277,7 +295,7 @@ describe("integration: import native Claude Code chats (#588)", () => {
     // treat `..evil.jsonl` as a session at all, so a traversal-shaped id cannot
     // reach the adoption record that would throw on it. Asserted so that a future
     // change loosening that filter shows up here rather than as a 500.
-    const dir = path.join(claudeHome, "projects", encodePathForCli(laptopCheckout));
+    const dir = path.join(userHome, "projects", encodePathForCli(laptopCheckout));
     for (const name of ["..evil", "..", "a..b"]) {
       await fs.writeFile(
         path.join(dir, `${name}.jsonl`),
@@ -325,15 +343,72 @@ describe("integration: import native Claude Code chats (#588)", () => {
     }
   });
 
+  /**
+   * The headline case, and the one #620 had to build new machinery for: the user
+   * already has terminal history for the very directory the workspace is backed
+   * by. The root workspace IS that case by construction — its working dir is
+   * `projectsRoot`, whose encoded folder name paddock's own `.chats/` symlink
+   * already occupies.
+   *
+   * Pre-#620 this "worked" only because `ensureProjectChats` had already moved
+   * those transcripts out of `~/.claude` and deleted the originals at
+   * registration. With that gone the import has to genuinely COPY between two
+   * different Claude homes, which is what the mirror's synthetic naming exists
+   * to make possible.
+   */
   it("serves the ROOT workspace too, whose working dir is projectsRoot", async () => {
-    await transcript(t.projectsRoot, "eeeeeeee-5555-4555-8555-555555555555");
+    const sessionId = "eeeeeeee-5555-4555-8555-555555555555";
+    const source = await transcript(t.projectsRoot, sessionId);
     const body = await adoptable("/api/root");
     expect(body.count).toBe(1);
+    // Displayed as the directory the user recognises, never as the synthetic
+    // path the engine was actually handed.
     expect(body.sources[0].sourceCwd).toBe(t.projectsRoot);
 
     const res = await t.app.inject({ method: "POST", url: "/api/root/adopt-chats", payload: {} });
     expect(res.statusCode).toBe(200);
-    expect(res.json().adopted).toEqual(["eeeeeeee-5555-4555-8555-555555555555"]);
+    expect(res.json().adopted).toEqual([sessionId]);
     expect((await adoptable("/api/root")).count).toBe(0);
+
+    // COPY, across two homes: the user's original is exactly where it was, and a
+    // copy now sits in the workspace's own transcript folder.
+    expect((await fs.stat(source)).isFile()).toBe(true);
+    const placed = path.join(
+      ownHome,
+      "projects",
+      encodePathForCli(t.projectsRoot),
+      `${sessionId}.jsonl`,
+    );
+    expect((await fs.stat(placed)).isFile()).toBe(true);
+  });
+
+  /**
+   * The regression #620 exists to prevent. `ensureProjectChats` used to `fs.cp`
+   * the user's transcripts into `.chats/` and then `fs.rm` the originals — on
+   * every agent registration, unprompted, inside a bare `catch {}`. It fired in
+   * exactly this situation: a project pointed at a directory the user already had
+   * terminal `claude` history for.
+   */
+  it("registering an agent never moves anything out of the user's home", async () => {
+    const cwd = path.join(t.tmp, "laptop", "code", "untouched-repo");
+    await fs.mkdir(cwd, { recursive: true });
+    const source = await transcript(cwd, "ffffffff-6666-4666-8666-666666666666");
+    const folder = path.dirname(source);
+    const before = await fs.stat(source);
+
+    await t.app.inject({ method: "POST", url: "/api/projects", payload: { name: "Untouched" } });
+    const project = (await t.app.inject({ method: "GET", url: "/api/projects/untouched" })).json()
+      .project as Record<string, unknown>;
+    // Re-register with the user's directory as the working dir — the exact moment
+    // the old code destroyed the originals.
+    await t.herdctl.ensureProjectAgent({ ...project, workingDir: cwd } as never);
+
+    // Still a REAL directory in the user's home, still holding the transcript,
+    // with mtime and size intact (mtime is the chat-list sort key AND the cache
+    // key for auto-name / preview / sidechain detection).
+    expect((await fs.lstat(folder)).isDirectory()).toBe(true);
+    expect((await fs.lstat(folder)).isSymbolicLink()).toBe(false);
+    expect((await fs.stat(source)).mtimeMs).toBe(before.mtimeMs);
+    expect((await fs.stat(source)).size).toBe(before.size);
   });
 });

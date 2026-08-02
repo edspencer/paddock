@@ -23,7 +23,8 @@ Pure-logic + component tests. No server, no fleet, no claude.
     traversal guard, overview, remove.
   - `models.test.ts` — the model list, defaults, lookups.
   - `transcripts.test.ts` — `encodeProjectDir`, `ensureProjectChats` incl. the
-    symlink-healing + real-dir-migration branches (against a temp `CLAUDE_HOME`).
+    symlink-healing + real-dir-migration branches, and the #620 guard that
+    refuses to migrate out of a Claude home paddock does not own.
   - `github-auth.test.ts` — the GitHub OAuth **device flow** with a mocked
     global `fetch`: `clientId`/`status`, `startDeviceFlow` (happy + non-ok +
     malformed), `pollDeviceFlow` (pending / slow_down / authorized / error /

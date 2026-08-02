@@ -160,8 +160,18 @@ function readStdin() {
 function encodePathForCli(absolutePath) {
   return absolutePath.replace(/[^A-Za-z0-9]/g, "-");
 }
+// The real Claude Code resolves its home from `CLAUDE_CONFIG_DIR`, falling back
+// to `~/.claude`. Mirror that exactly (#620): paddock now runs against its own
+// home under the data dir, and herdctl injects the variable into the process it
+// spawns. Hard-coding `~/.claude` here wrote every transcript somewhere herdctl
+// was not watching, and the turn then died 60s later on "Timeout waiting for new
+// session file" — which is precisely how the real binary would fail too.
+function claudeHome() {
+  const configured = (process.env.CLAUDE_CONFIG_DIR ?? "").trim();
+  return configured.length > 0 ? configured : path.join(os.homedir(), ".claude");
+}
 function sessionDirFor(cwd) {
-  return path.join(os.homedir(), ".claude", "projects", encodePathForCli(cwd));
+  return path.join(claudeHome(), "projects", encodePathForCli(cwd));
 }
 
 // ── scripted replies ────────────────────────────────────────────────────────

@@ -19,6 +19,7 @@ import { createRequire } from "node:module";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { loadPaddockConfig, type PaddockConfig } from "./config.js";
+import { ensureClaudeHome, countLegacyTranscriptLinks } from "./claude-home.js";
 import { ProjectStore, ROOT_KEY } from "./projects.js";
 import { AttachmentStore } from "./attachments.js";
 import { HerdctlService } from "./herdctl.js";
@@ -192,6 +193,23 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   // root workspace itself is never in it. It always exists — the instance's own
   // directory — so resolve it explicitly and register its keeper alongside every
   // child's. The root keeper is an ordinary keeper in every respect.
+  // Paddock's own Claude home (#620) — created and bridged BEFORE the fleet
+  // starts, because `herdctl.init` immediately plants every project's transcript
+  // symlink inside it and hands the same path to the FleetManager.
+  for (const notice of (await ensureClaudeHome(cfg)).notices) {
+    app.log[notice.level](notice.message);
+  }
+  if (cfg.ownsClaudeHome) {
+    const stale = await countLegacyTranscriptLinks(cfg.legacyClaudeHome, cfg.dataDir);
+    if (stale > 0) {
+      app.log.info(
+        `${stale} transcript symlink(s) from a previous layout still point into ${cfg.dataDir} ` +
+          `from ${path.join(cfg.legacyClaudeHome, "projects")}. Nothing reads them any more; ` +
+          `paddock leaves them alone because it does not write to ~/.claude. Safe to delete.`,
+      );
+    }
+  }
+
   const rootWorkspace = await projects.get(ROOT_KEY);
   const initialProjects = [...(await projects.list()), rootWorkspace];
   try {

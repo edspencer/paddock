@@ -119,7 +119,7 @@ internalize about the backend.
 ```mermaid
 flowchart TB
   subgraph C1["1 · Transcript JSONL — read-render"]
-    T["~/.claude/projects/{enc-cwd}/*.jsonl\n(symlinked → {project}/.chats/)"]
+    T["{dataDir}/claude-home/projects/{enc-cwd}/*.jsonl\n(symlinked → {project}/.chats/)"]
   end
   subgraph C2["2 · Browser localStorage — client prefs"]
     L["drafts · chat model · row heights · unread · queued · theme"]
@@ -140,19 +140,57 @@ flowchart TB
 
 The chat transcript is a JSONL file **written by the Claude Code CLI**, never by
 Paddock — Paddock only reads and renders it. Claude Code stores transcripts under
-`~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl`, where `<encoded-cwd>` is the
-agent's absolute working directory with every non-`[A-Za-z0-9]` char replaced by
-`-` (`transcripts.ts:28`). **The working directory *is* the session key** — no
+`<claudeHome>/projects/<encoded-cwd>/<sessionId>.jsonl`, where `<encoded-cwd>` is
+the agent's absolute working directory with every non-`[A-Za-z0-9]` char replaced
+by `-` (`transcripts.ts:28`). **The working directory *is* the session key** — no
 manual tagging.
 
 To make transcripts portable (so a project directory is self-contained and can be
 backed up / moved), Paddock replaces that encoded directory with a **symlink to
-`<projectDir>/.chats/`** via `ensureProjectChats()` (`transcripts.ts:51`). It is
-idempotent and self-healing: it creates `.chats/`, then repoints a drifted
-symlink, migrates a pre-existing real transcript directory (EXDEV-safe `cp`+`rm`
-across mounts), or just creates the symlink — and never throws. For a repo-backed
-project the transcripts land in the **metadata dir**, not the external checkout
-(the `chatsHostDir` split, issue #187).
+`<projectDir>/.chats/`** via `ensureProjectChats()`. It is idempotent and
+self-healing: it creates `.chats/`, then repoints a drifted symlink, migrates a
+pre-existing real transcript directory (EXDEV-safe `cp`+`rm` across mounts), or
+just creates the symlink — and never throws. For a repo-backed project the
+transcripts land in the **metadata dir**, not the external checkout (the
+`chatsHostDir` split, issue #187).
+
+#### Paddock owns its Claude home (#620)
+
+`<claudeHome>` is `<dataDir>/claude-home`, not the user's `~/.claude`. Paddock
+already nests herdctl's whole state dir, the projects tree and the generated
+`herdctl.yaml` under its data dir; transcripts were the one exception, reached by
+planting symlinks in the user's home. That was a constraint, not a decision —
+until herdctl#423 nothing set `CLAUDE_CONFIG_DIR`, so the SDK wrote to `~/.claude`
+whatever home Paddock configured. Owning the home makes the data dir movable,
+backable and wipeable as a unit, and removes the `.claude` path component that the
+agent harness refuses to write through (so per-project agent memory works).
+
+`.chats/` does **not** move: anchoring it to the *project* dir rather than the
+*working* dir is what keeps transcripts out of a repo-backed project's checkout,
+and what makes notebook→repo-backed promotion free (`ProjectStore.promote`
+re-points one symlink). Only where the symlink is planted changed.
+
+Two rules follow, both in `claude-home.ts`:
+
+- **`~/.claude` is a read-only source.** Paddock never moves, deletes or
+  overwrites anything under it. `ensureProjectChats`'s migrate branch — which
+  copies transcripts into `.chats/` and then removes the originals — is gated on
+  `PaddockConfig.ownsClaudeHome`, so inside the user's home it does nothing at
+  all. What lives there stays there, importable via adoption (#588) if the user
+  wants it.
+- **Adoption still reads it.** The engine resolves adoption against the one home
+  the FleetManager was built with, so `mirrorLegacyTranscriptFolders` symlinks the
+  user's transcript folders into Paddock's home. They are named for a *synthetic*
+  path, not the recorded cwd, because a project backed by a directory the user has
+  history for wants the same encoded name that Paddock's own `.chats/` symlink
+  already occupies. `AdoptableSource.importFrom` carries that path server-side
+  while `sourceCwd` keeps displaying the directory the user recognises.
+
+User-level config (`.credentials.json`, `settings.json`, `CLAUDE.md`, `agents/`,
+`commands/`, `plugins/`) is symlinked in from `~/.claude` when Paddock's home does
+not already have its own, so relocating the home does not silently drop the user's
+memory, permissions or login. `CLAUDE_HOME=$HOME/.claude` restores the pre-#620
+layout exactly.
 
 Paddock reads transcripts two ways:
 
@@ -504,7 +542,7 @@ layer is documented in [CONFIGURATION.md](CONFIGURATION.md).) The main knobs:
 | Area | Vars (default) |
 |---|---|
 | **Server** | `PORT` (4000), `HOST` (127.0.0.1 — loopback by default; images set 0.0.0.0), `PADDOCK_DANGEROUSLY_ALLOW_OPEN` (unset; required to bind routable + `auth.mode: none`), `LOG_LEVEL` (info) |
-| **Paths** | `PADDOCK_DATA_DIR` (./data), `PADDOCK_PROJECTS_DIR`, `PADDOCK_STATE_DIR` (`.herdctl`), `PADDOCK_HERDCTL_CONFIG`, `PADDOCK_WEB_DIST`, `CLAUDE_HOME` (~/.claude — resolved once and threaded to BOTH paddock and the engine's `claudeHomePath`, #588) |
+| **Paths** | `PADDOCK_DATA_DIR` (./data), `PADDOCK_PROJECTS_DIR`, `PADDOCK_STATE_DIR` (`.herdctl`), `PADDOCK_HERDCTL_CONFIG`, `PADDOCK_WEB_DIST`, `CLAUDE_HOME` / `CLAUDE_CONFIG_DIR` (`<dataDir>/claude-home` — paddock owns its Claude home (#620); resolved once and threaded to BOTH paddock and the engine's `claudeHomePath`, #588) |
 | **Auth** | `PADDOCK_AUTH_MODE` (none), `PADDOCK_AUTH_USER_HEADER` (X-Forwarded-User), `..._EMAIL_HEADER`, `..._GROUPS_HEADER`, `..._JWT_HEADER` (Authorization), `..._JWKS_URL`, `..._JWT_ISSUER`, `..._JWT_AUDIENCE`, `..._USERNAME_CLAIM`, `..._GROUPS_CLAIM` (groups) |
 | **Agent** | `PADDOCK_DRIVE_MODE` (session), `PADDOCK_NATIVE_PROMPT` (true), `PADDOCK_SELF_MCP` (false), `PADDOCK_SELF_MCP_WRITE` (false; implies read), `PADDOCK_SELF_MCP_PROJECTS` (false; implies write), `PADDOCK_HOOKS_MCP` (false), `PADDOCK_MAX_SPAWN_DEPTH` (1; range 0–8) |
 | **Models / API** | `PADDOCK_MODELS` (unset = whole catalog; default model `claude-opus-5`), `PADDOCK_OPENAPI_ENABLED` (off; mounts `/open-api`) |
