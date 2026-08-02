@@ -20,6 +20,7 @@
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 import YAML from "yaml";
 import {
   type DriveMode,
@@ -700,6 +701,29 @@ function loadBrandConfig(file: PaddockConfigFile["brand"] = {}): BrandConfig {
   };
 }
 
+/**
+ * Default location of the built web SPA, resolved RELATIVE TO THIS MODULE:
+ * `packages/server/{src,dist}/config.js` -> `packages/web/dist`. The same hop
+ * works from both the `tsx src/` and `node dist/` layouts, so neither needs a
+ * `PADDOCK_WEB_DIST` override.
+ *
+ * Takes the module URL as a parameter purely so a test can exercise install
+ * paths this repo's own checkout does not have.
+ *
+ * **`fileURLToPath`, NOT `new URL(url).pathname`.** The raw pathname is
+ * percent-ENCODED, so an install path containing a space or any non-ASCII
+ * character (`/opt/my paddock/`, `~/Développement/`) yields a literal `%20`
+ * that resolves to a directory which does not exist. The failure is SILENT:
+ * `app.ts` degrades to API-only mode with only a log warning, so the user gets
+ * a blank page and no explanation of why. `fileURLToPath` also decodes the
+ * `/C:/...` drive-letter form on Windows. This is irrelevant when the path is
+ * the Docker image's fixed `/app`, and load-bearing the moment the package is
+ * installed under an arbitrary user directory (`npx`, global install).
+ */
+export function resolveDefaultWebDist(moduleUrl: string): string {
+  return path.resolve(path.dirname(fileURLToPath(moduleUrl)), "../../web/dist");
+}
+
 export function loadPaddockConfig(): PaddockConfig {
   // The optional YAML instance-config file provides the BASE layer; env vars
   // override it (precedence file < env). The file is located under the data dir,
@@ -735,11 +759,7 @@ export function loadPaddockConfig(): PaddockConfig {
   // the literal path they encode into `<home>/projects/<encoded-cwd>`.
   const resolvedClaudeHome = claudeHome();
 
-  // packages/server/src/config.ts -> packages/web/dist
-  const defaultWebDist = path.resolve(
-    path.dirname(new URL(import.meta.url).pathname),
-    "../../web/dist",
-  );
+  const defaultWebDist = resolveDefaultWebDist(import.meta.url);
 
   return Object.freeze({
     port: Number(envOr("PORT", fileOr(file.port, "4000"))),

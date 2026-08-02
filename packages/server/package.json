@@ -5,6 +5,9 @@
   "description": "Paddock backend: Fastify + WebSocket wrapping @herdctl/core FleetManager and a project layer.",
   "type": "module",
   "main": "dist/index.js",
+  "bin": {
+    "paddock": "dist/cli/paddock.js"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx watch src/index.ts",
