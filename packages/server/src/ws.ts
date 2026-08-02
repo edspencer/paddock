@@ -136,6 +136,12 @@ import {
 // See issue #46.
 const SERVER_PING_INTERVAL_MS = 30_000;
 
+// Separator in a composite in-memory key; a NUL can't occur in an agent name or
+// a UUID. Spelled as an escape, never a raw 0x00 byte — a literal NUL makes
+// ripgrep/grep treat this file as binary and skip it during directory traversal
+// (silently, exit 1, indistinguishable from "no matches"). See issue #570.
+const KEY_SEP = "\u0000";
+
 
 export function makeChatHandler(deps: ChatHandlerDeps) {
   // ONE hub shared across every socket this handler serves: it tracks each
@@ -488,7 +494,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       const agent = keeperAgentName(slug);
       const queued = await deps.queuedMessage.take(agent, sessionId).catch(() => null);
       if (!queued?.text) return;
-      const markerKey = `${agent}\u0000${sessionId}`;
+      const markerKey = `${agent}${KEY_SEP}${sessionId}`;
       const already = (lastFlushedTs.get(markerKey) ?? 0) >= queued.createdAtMs;
       // Tell every attached client (origin + reconnected sockets) to clear its copy
       // of this message. When we're really sending it, carry the text so the client
