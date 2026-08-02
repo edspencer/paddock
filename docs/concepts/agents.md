@@ -1,26 +1,25 @@
-# Keeper agents
+# Agents
 
 Every chat in Paddock is run by a Claude Code **agent** registered with herdctl's
-`FleetManager`. There is one kind you interact with — the **keeper**, one per
-project — plus the [sweeper](./sweeper.md), which is an internal per-project
-agent you never chat with directly.
+`FleetManager`. There is one kind you interact with — the per-project agent that
+runs Claude in the project's directory — plus the [sweeper](./sweeper.md), which
+is an internal per-project agent you never chat with directly.
 
 > **This page used to be "Keeper vs. scratch agents".** Paddock had a second,
 > shared `scratch` agent for one-off chats that belonged to no project. #516
 > retired it: the root of the instance is now [a workspace like any
 > other](./projects.md), so a chat that belongs to no *particular* project is
-> simply a chat of the root workspace, run by an ordinary keeper. Every capability
+> simply a chat of the root workspace, run by an ordinary agent. Every capability
 > scratch was deliberately denied — the self-management MCP, curation, triggers,
 > attachments, run history, a CLAUDE.md that actually reaches it, more than one
 > turn at a time — a root chat has for free.
 
-## Keeper — one per project
+## One agent per project
 
-A **keeper** is the long-lived agent that owns a [project](./projects.md). It is
-registered as `keeper-<slug>`, and its working directory is the project's
-`workingDir` — the project dir for a notebook project, or the nested checkout for
-a repo-backed one. Because Claude Code keys transcripts by working directory, **the
-keeper's cwd is what ties a project's chats to that project.**
+Each [project](./projects.md) has one long-lived agent, and its working directory
+is the project's `workingDir` — the project dir for a notebook project, or the
+nested checkout for a repo-backed one. Because Claude Code keys transcripts by
+working directory, **that cwd is what ties a project's chats to that project.**
 
 - Registered programmatically at startup and on project create/update via
   `HerdctlService.ensureProjectAgent()` (`fleet.addAgent(config, { replace: true })`
@@ -33,29 +32,37 @@ keeper's cwd is what ties a project's chats to that project.**
 - Can receive the [self-management MCP](../ARCHITECTURE.md#5-mcp-injection)
   tools (env-gated).
 
-Because a keeper is **one shared agent per project**, a per-chat model override is
-applied by re-registering the keeper (`ensureKeeperModel`) — last-write-wins
+Because it is **one shared agent per project**, a per-chat model override is
+applied by re-registering that agent (`ensureKeeperModel`) — last-write-wins
 across concurrent chats of the same project. Acceptable for single-user; a clean
 per-trigger override is a herdctl follow-up.
 
-## The root keeper
+> **The `keeper-` name prefix.** A project's agent is registered as
+> `keeper-<slug>` — a legacy encoding from before "keeper" was retired as a
+> concept. That exact string is persisted in herdctl job records, `state.yaml`,
+> session directories and Paddock's sidecar stores, so renaming it would orphan
+> all of them; it stays. Read it the way you read `_root` below: an opaque
+> identifier in the herdctl agent namespace, not a name for anything you interact
+> with.
 
-The root workspace's keeper is `keeper-_root`, and its working directory is
+## The root agent
+
+The root workspace's agent is `keeper-_root`, and its working directory is
 `projectsRoot` — the directory that *contains* every project. (The workspace's
 own key is `""`; `_root` is how that key is spelled in the agent namespace, which
-cannot hold an empty name.) It is an ordinary
-keeper in every mechanical respect, but worth calling out plainly: **its cwd
+cannot hold an empty name.) It is an ordinary agent in every mechanical respect,
+but worth calling out plainly: **its cwd
 contains every project, so a root chat can read and edit any project's files, and
 root's git status is the whole backing repo.** That is the intent — the root is
 where you act across the instance — but it is a real escalation over a project
-keeper, which is confined to its own subtree.
+agent, which is confined to its own subtree.
 
 Its chats live at `/chat` and in `<projectsRoot>/.chats/`.
 
 ## Promotion: giving a chat its own project
 
 A chat that turns out to matter can be **promoted** into a project of its own,
-re-homing it under that project's keeper.
+re-homing it under that project's agent.
 `HerdctlService.promoteSession(sessionId, from, to)` (`herdctl.ts`, wired at
 `POST /api/projects/:slug/chats/:sessionId/promote`):
 

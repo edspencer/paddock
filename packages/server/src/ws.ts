@@ -71,7 +71,7 @@ import { consumeResumedTurn } from "./resume-drain.js";
 import {
   isKnownModel,
   getContextLimit,
-  KEEPER_DEFAULT_MODEL,
+  DEFAULT_MODEL,
   isKnownDriveMode,
   type DriveMode,
 } from "./models.js";
@@ -103,7 +103,7 @@ import type { ChatHandlerDeps } from "./ws-context.js";
 // forkKickoffPrompt so external importers (and its test) resolve it via ws.js.
 export { forkKickoffPrompt } from "./ws-self-mcp.js";
 import { buildSelfMcpServerDef } from "./ws-self-mcp.js";
-import { makeTurnEngine } from "./ws-turn.js";
+import { makeTurnEngine, isSidechainMessage } from "./ws-turn.js";
 // RECOVERY_NUDGE now lives in ws-turn.ts; re-export so its test resolves via ws.js.
 export { RECOVERY_NUDGE } from "./ws-turn.js";
 import {
@@ -275,6 +275,8 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       // handler. A resume must never write a creation origin.
     };
     const onWakeMessage = async (m: SDKMessage): Promise<void> => {
+      // A sub-agent's nested steps never render top-level ({@link isSidechainMessage}).
+      if (isSidechainMessage(m)) return;
       if (messageProducedReply(m as Parameters<typeof messageProducedReply>[0]))
         wakeProducedReply = true;
       const notice = noticeFromMessage(m as Parameters<typeof noticeFromMessage>[0]);
@@ -486,7 +488,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       const agent = keeperAgentName(slug);
       const queued = await deps.queuedMessage.take(agent, sessionId).catch(() => null);
       if (!queued?.text) return;
-      const markerKey = `${agent} ${sessionId}`;
+      const markerKey = `${agent}\u0000${sessionId}`;
       const already = (lastFlushedTs.get(markerKey) ?? 0) >= queued.createdAtMs;
       // Tell every attached client (origin + reconnected sockets) to clear its copy
       // of this message. When we're really sending it, carry the text so the client
@@ -572,11 +574,11 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       // the streaming callback are visible to control-flow analysis afterwards.
       const seen: TurnUsageState = initTurnUsage();
       // The model the turn will run on; resolved below once we know the target.
-      let effectiveModel: string = KEEPER_DEFAULT_MODEL;
+      let effectiveModel: string = DEFAULT_MODEL;
       // How this turn is driven (Paddock#111): the global default unless the
       // project overrides it (resolved in the project branch below). Scratch
       // chats have no project, so they always take the global default.
-      let driveMode: DriveMode = deps.cfg.keeperDriveMode;
+      let driveMode: DriveMode = deps.cfg.driveMode;
       // The agent's working directory, so the send_file tool can resolve a real
       // `file_path` (and sandbox it). Resolved alongside the agent below.
       let sendFileWorkingDir: string | undefined;
@@ -675,14 +677,14 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
           // trigger. NOTE single-user last-write-wins caveat (see herdctl.ts).
           effectiveModel =
             requested && isKnownModel(requested) ? requested : project.model;
-          await deps.herdctl.ensureKeeperModel(project, effectiveModel);
+          await deps.herdctl.ensureAgentModel(project, effectiveModel);
 
           // Per-project driveMode override wins over the global default
           // (Paddock#111). An absent/invalid value inherits the global.
           driveMode =
             project.driveMode && isKnownDriveMode(project.driveMode)
               ? project.driveMode
-              : deps.cfg.keeperDriveMode;
+              : deps.cfg.driveMode;
 
           // T3 trigger-management gate (REUSES the hooks-MCP gate): the per-project
           // override wins, else the instance default. Only takes effect when the
@@ -788,6 +790,14 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
             turn.setJobId(id);
           },
           onMessage: async (m: SDKMessage) => {
+            // A FOREGROUND sub-agent streams its nested steps INLINE on this very
+            // stream, tagged `parent_tool_use_id`. They belong inside the sub-agent
+            // card (served by the subagents endpoint), never as top-level rows of
+            // the parent transcript — see {@link isSidechainMessage}. This is the
+            // human `chat:send` path, so it is where the duplication was actually
+            // seen. Skipping also keeps a sub-agent's context out of the parent's
+            // live meter (`foldTurnUsage` below would latch its max — the #398 shape).
+            if (isSidechainMessage(m)) return;
             // Capture the session id as it arrives mid-stream (the translator
             // only surfaces text/boundary/tool events, not routing metadata).
             // Registering it with the hub makes the turn re-attachable by session.
@@ -1016,6 +1026,9 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
           command,
           resume: resolvedSession,
           onMessage: async (m: SDKMessage) => {
+            // A slash-command turn can spawn a Task too; its nested steps never
+            // render top-level ({@link isSidechainMessage}).
+            if (isSidechainMessage(m)) return;
             if (m.session_id) {
               resolvedSession = m.session_id;
               turn.setSession(m.session_id);
@@ -1062,7 +1075,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
           /* non-fatal */
         }
 
-        const completeModel = seen.model ?? KEEPER_DEFAULT_MODEL;
+        const completeModel = seen.model ?? DEFAULT_MODEL;
         const seenUsage = resolveTurnUsage(seen);
         const completeUsage: ChatCompleteUsage | undefined = seenUsage
           ? {

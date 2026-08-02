@@ -15,7 +15,7 @@ import {
   isValidRepoUrl,
   normalizeLinks,
 } from "../../src/projects.js";
-import { KEEPER_DEFAULT_MODEL } from "../../src/models.js";
+import { DEFAULT_MODEL } from "../../src/models.js";
 import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
 
 const run = promisify(execFile);
@@ -176,7 +176,7 @@ describe("ProjectStore", () => {
     expect(p.name).toBe("Water Heater");
     expect(p.status).toBe("active");
     expect(p.group).toBe(""); // unsorted by default
-    expect(p.model).toBe(KEEPER_DEFAULT_MODEL); // DTO resolves the default
+    expect(p.model).toBe(DEFAULT_MODEL); // DTO resolves the default
     expect(p.hasOverview).toBe(false);
     expect(p.pinned).toEqual([]);
 
@@ -322,7 +322,7 @@ describe("ProjectStore", () => {
   it("model round-trips through the DTO default", async () => {
     await store.create({ name: "M" });
     const got = await store.get("m");
-    expect(got.model).toBe(KEEPER_DEFAULT_MODEL);
+    expect(got.model).toBe(DEFAULT_MODEL);
     const updated = await store.update("m", { model: "claude-sonnet-5" });
     expect(updated.model).toBe("claude-sonnet-5");
     const parsed = YAML.parse(await fs.readFile(path.join(root, "m", "project.yaml"), "utf8"));

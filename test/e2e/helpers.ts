@@ -21,7 +21,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
-import type { Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 
 export interface E2EPaths {
   tmp: string;
@@ -199,6 +199,93 @@ function yamlScalar(v: unknown): string {
   return JSON.stringify(s);
 }
 
+// ── root-workspace read state ────────────────────────────────────────────────
+
+/**
+ * One entry of the sidebar badge's feed: `root.chatTurns` from `GET
+ * /api/projects` (see `buildChatTurns` in the server's projects route).
+ */
+interface ChatTurn {
+  sessionId: string;
+  lastTurnCompletedAt: string;
+  lastSeen?: number;
+  unread?: boolean;
+}
+
+/** The ROOT workspace's badge feed — the exact input the Home pill counts. */
+async function rootChatTurns(page: Page): Promise<ChatTurn[]> {
+  const res = await page.request.get("/api/projects");
+  expect(res.ok()).toBe(true);
+  const body = (await res.json()) as { root?: { chatTurns?: ChatTurn[] } | null };
+  return body.root?.chatTurns ?? [];
+}
+
+/**
+ * The badge's own rule, mirrored: a chat counts as unread if the user manually
+ * flagged it (#458) or a reply landed since they last saw it (#189). Same
+ * expression as `useProjectBadges` in AppShell.tsx.
+ */
+function countsAsUnread(t: ChatTurn): boolean {
+  return t.unread === true || Date.parse(t.lastTurnCompletedAt) > (t.lastSeen ?? 0);
+}
+
+/**
+ * Zero the ROOT workspace's unread badge, and don't return until the server
+ * agrees (#612).
+ *
+ * Home's pill is a GLOBAL count over every root chat, and these specs share one
+ * long-lived server (workers: 1), so any earlier spec that left a root chat
+ * unread — manually flagged, or merely holding a completed turn it navigated
+ * away from before the pane could mark it seen — is added to it. A spec that
+ * asserts an exact count therefore has to establish its own starting point
+ * rather than inherit one; re-running until the surrounding suite happens not to
+ * pollute it is not a fix.
+ *
+ * Two things have to be true, in this order:
+ *
+ *  1. **Nothing root-side is mid-turn.** A running chat is deliberately NOT
+ *     counted as unread (it hasn't landed a reply yet), so sweeping it now
+ *     achieves nothing: it lands a turn moments later with a completion newer
+ *     than the `lastSeen` we just wrote, and re-dirties the badge behind us.
+ *     Home has held a WebSocket even with no chat open since #599/#607, so such
+ *     a late completion now reaches the pill live, without a reload.
+ *  2. **Every chat the badge can see has been marked seen.** `/seen` also spends
+ *     the manual unread flag, so one sweep covers both halves of the rule.
+ *
+ * Read back through the same feed the badge reads, so "clean" means clean by the
+ * component's own definition and not by ours.
+ */
+export async function clearRootUnread(page: Page): Promise<void> {
+  // (1) `projectSlug === ""` — the root's key IS the empty string, so a
+  // truthiness test here would match every root chat and wait forever.
+  await expect
+    .poll(
+      async () => {
+        const res = await page.request.get("/api/root/chats/attention");
+        expect(res.ok()).toBe(true);
+        const att = (await res.json()) as { running: { projectSlug: string }[] };
+        return att.running.filter((c) => c.projectSlug === "").length;
+      },
+      { timeout: 45_000, intervals: [500] },
+    )
+    .toBe(0);
+
+  // (2) Sweep, then re-derive. Looped because a turn can still land between the
+  // read and the POST; it converges as soon as a whole pass finds nothing.
+  await expect
+    .poll(
+      async () => {
+        for (const t of (await rootChatTurns(page)).filter(countsAsUnread)) {
+          const res = await page.request.post(`/api/root/chats/${t.sessionId}/seen`, { data: {} });
+          expect(res.ok()).toBe(true);
+        }
+        return (await rootChatTurns(page)).filter(countsAsUnread).length;
+      },
+      { timeout: 30_000, intervals: [250] },
+    )
+    .toBe(0);
+}
+
 // ── UI helpers ───────────────────────────────────────────────────────────────
 
 /** Create a project via the New Project modal, picking an optional area + tags. */
@@ -206,14 +293,28 @@ export async function createProjectViaUI(
   page: Page,
   opts: { name: string; area?: string; summary?: string; tags?: string; status?: string },
 ): Promise<string> {
-  // The projects grid is the first SECTION of root Home, which is `/`. Creating
-  // from the grid is the flow this helper models, so it starts there.
+  // New Project lives on the SIDEBAR's Projects header now (#599): the projects
+  // grid that used to host the app's only "New Project" was deleted from root
+  // Home, and the button moved to where the project list actually is. The modal
+  // hangs off AppShell, so it opens from anywhere — `/` is just a stable start.
   await page.goto("/");
-  // Scoped to <main>: this is the grid's own button (and, since the sidebar CTAs
-  // were removed, the app's only one). The scoping still earns its keep — it
-  // makes `getByRole` auto-wait for the Home pane's content instead of matching
-  // sidebar chrome that renders immediately.
-  await page.getByRole("main").getByRole("button", { name: /New Project/i }).first().click();
+  const plus = page.getByRole("complementary").getByRole("button", { name: "New Project" });
+  // On a phone the sidebar is OFF-CANVAS: the button is rendered and "visible"
+  // in Playwright's sense, just translated outside the viewport, so a click on
+  // it spins until the test times out. The hamburger slides the drawer in.
+  //
+  // Keyed on the button's own box rather than on whether a hamburger is showing:
+  // the hamburger is `md:hidden`, so a one-shot visibility read taken before the
+  // shell has laid out answers "no" on a phone and skips the drawer. Waiting for
+  // this button to render first makes the measurement meaningful on both.
+  await expect(plus).toBeVisible();
+  const box = await plus.boundingBox();
+  const width = page.viewportSize()?.width ?? 0;
+  if (!box || box.x < 0 || box.x + box.width > width) {
+    await page.getByRole("button", { name: /Open menu/i }).click();
+    await expect(plus).toBeInViewport();
+  }
+  await plus.click();
   const dialog = page.locator("form").filter({ hasText: "New project" });
   await dialog.getByPlaceholder(/Garage Water Heater/i).fill(opts.name);
   if (opts.summary) await dialog.getByPlaceholder(/One line on what/i).fill(opts.summary);
@@ -237,7 +338,7 @@ export async function sendChatTurn(
   message: string,
   opts: { placeholder?: RegExp; expectReply?: RegExp } = {},
 ): Promise<void> {
-  const composer = page.getByPlaceholder(opts.placeholder ?? /Message the keeper agent/i);
+  const composer = page.getByPlaceholder(opts.placeholder ?? /Message Claude/i);
   await composer.fill(message);
   await page.getByRole("button", { name: /^Send$/ }).click();
   const reply = opts.expectReply ?? new RegExp(`Acknowledged: ${escapeRe(message)}`);

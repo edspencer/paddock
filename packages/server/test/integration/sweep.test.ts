@@ -102,4 +102,28 @@ describe("integration: post-turn sweep curates OVERVIEW + CHANGELOG", () => {
     enqueueSpy.mockRestore();
   });
 
+  it("curates the ROOT workspace too — its sweeper's own transcript dir works (#548)", async () => {
+    // The root's sweeper is the one whose directory name is not a slug (the root's
+    // key is `""`, spelled `_root`), so it is the only sweeper whose encoded
+    // transcript path contains a character outside `[A-Za-z0-9-]`. Every other
+    // sweeper dir is slug-named and encodes identically under any of the three
+    // encoders in play, which is why a project-only sweep test cannot catch a
+    // disagreement between them — and one did slip through: the turn died on
+    // "Timeout waiting for new session file" 60s later, with the sweep silently
+    // never curating. Drive a root turn end-to-end so the root's sweep is covered.
+    const mark = ws.mark();
+    ws.send({
+      type: "chat:send",
+      payload: { projectSlug: "", sessionId: null, message: "get the instance going" },
+    });
+    await ws.waitFor(isComplete(""), { from: mark });
+
+    await vi.waitFor(
+      async () => {
+        const overview = (await t.app.inject({ method: "GET", url: "/api/root/overview" })).body;
+        expect(overview).toContain("# Project Overview");
+      },
+      { timeout: 20_000, interval: 200 },
+    );
+  });
 });

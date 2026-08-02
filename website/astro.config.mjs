@@ -8,6 +8,15 @@ import tailwindcss from '@tailwindcss/vite';
 // https://astro.build/config
 export default defineConfig({
 	site: 'https://paddock.edspencer.net',
+	// #585 retired "keeper" as a user-facing word, which moved three published
+	// pages. Cloudflare Pages serves this site statically, so these emit
+	// meta-refresh stubs at the old paths rather than real 3xx — good enough to
+	// keep existing links and search results off a 404.
+	redirects: {
+		'/concepts/keepers': '/concepts/agents/',
+		'/configuration/keeper-recovery': '/configuration/chat-recovery/',
+		'/using/reading-a-keepers-work': '/using/reading-claudes-work/',
+	},
 	vite: {
 		plugins: [tailwindcss()],
 	},
@@ -27,12 +36,11 @@ export default defineConfig({
 			},
 			favicon: '/favicon.ico',
 			head: [
-				// Mermaid client-side rendering (dark theme to match the default site theme).
-				{
-					tag: 'script',
-					attrs: { type: 'module' },
-					content: `import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs'; mermaid.initialize({ startOnLoad: true, theme: 'dark' });`,
-				},
+				// Mermaid: themed from Starlight, and kept legible rather than scaled
+				// down to fit. Lives in public/mermaid-init.js — it has real logic now
+				// (theme re-render, sequence spacing, fit-vs-scroll), and that does not
+				// belong in a template string inside this config.
+				{ tag: 'script', attrs: { type: 'module', src: '/mermaid-init.js' } },
 				// Social-share image. Starlight already emits PER-PAGE og:title,
 				// og:description, og:url (canonical) and twitter:card=summary_large_image
 				// (see @astrojs/starlight/utils/head.ts), and a user `head` entry
@@ -67,7 +75,7 @@ export default defineConfig({
 						{ label: 'Automating with hooks', slug: 'using/automating-with-hooks' },
 						{ label: 'Sending files & images', slug: 'using/sending-files-and-images' },
 						{ label: 'Scheduling recurring work', slug: 'using/scheduling-recurring-work' },
-						{ label: "Reading a keeper's work", slug: 'using/reading-a-keepers-work' },
+						{ label: "Reading Claude's work", slug: 'using/reading-claudes-work' },
 					],
 				},
 				{
@@ -91,7 +99,7 @@ export default defineConfig({
 						{ label: 'Overview', slug: 'concepts' },
 						{ label: 'Workspaces', slug: 'concepts/workspaces' },
 						{ label: 'Projects', slug: 'concepts/projects' },
-						{ label: 'Keeper agents', slug: 'concepts/keepers' },
+						{ label: 'Agents', slug: 'concepts/agents' },
 						{ label: 'Chats are sessions', slug: 'concepts/chats' },
 						{ label: 'Schedules', slug: 'concepts/schedules' },
 						{ label: 'Provenance: who did what', slug: 'concepts/provenance' },
@@ -110,7 +118,7 @@ export default defineConfig({
 						{ label: 'Binding & network exposure', slug: 'configuration/binding-and-exposure' },
 						{ label: 'Model allow-lists', slug: 'configuration/models' },
 						{ label: 'OpenAPI & Swagger', slug: 'configuration/openapi' },
-						{ label: 'Keeper-chat recovery', slug: 'configuration/keeper-recovery' },
+						{ label: 'Chat recovery', slug: 'configuration/chat-recovery' },
 						{ label: 'Scheduling & the schedule gates', slug: 'configuration/schedules' },
 					],
 				},
@@ -119,6 +127,7 @@ export default defineConfig({
 					collapsed: true,
 					items: [
 						{ label: 'Overview', slug: 'architecture/overview' },
+						{ label: 'herdctl and Paddock', slug: 'architecture/herdctl-and-paddock' },
 						{ label: 'herdctl integration', slug: 'architecture/herdctl-integration' },
 					],
 				},

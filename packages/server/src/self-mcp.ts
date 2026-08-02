@@ -17,9 +17,12 @@
  *
  * ── How it reaches the keeper ───────────────────────────────────────────────
  * Injected via herdctl's `injectedMcpServers` mechanism, exactly like the
- * send_file tool (see send-file-mcp.ts): the CLI-runtime keeper can't reach an
- * in-process SDK MCP server, so herdctl stands up a localhost HTTP MCP bridge for
- * each injected server and auto-allowlists its `mcp__<name>__*` tools. The tools
+ * send_file tool (see send-file-mcp.ts, which documents both routes): on the SDK
+ * runtime — how chats run by default — the def becomes an in-process SDK MCP
+ * server; on the CLI runtime (the sweeper, triggers, `driveMode: batch`) the
+ * agent is a separate `claude -p` process that can't reach one, so herdctl stands
+ * up a localhost HTTP MCP bridge instead. Either way herdctl auto-allowlists the
+ * server's `mcp__<name>__*` tools. The tools
  * surface to the agent as `mcp__paddock_manage__{list_projects,list_chats,…}`.
  *
  * The module stays pure: it takes narrow bags of async callbacks (wired to

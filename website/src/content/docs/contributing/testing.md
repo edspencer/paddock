@@ -59,7 +59,7 @@ FleetManager + CLI runtime, the **real** transcript/session machinery — agains
 temp data dir, with the fake `claude` first on `PATH`. Files:
 `packages/server/test/integration/`.
 
-- `projects-crud.test.ts` — REST CRUD, keeper registration in fleet status,
+- `projects-crud.test.ts` — REST CRUD, agent registration in fleet status,
   pins, 404/409/400 paths.
 - `chat.test.ts` — a chat turn streamed over **WebSocket**, transcript written +
   discovered, history hydration on reload, context-usage readback, and **resume
@@ -92,6 +92,14 @@ temp data dir, with the fake `claude` first on `PATH`. Files:
   `repo:false` path when the store isn't a repo.
 
 ### The fake-claude harness (`test/bin/claude`)
+
+> **The harness pins `batch` on purpose.** A fake `claude` on `PATH` is only
+> reachable from the **CLI** runtime, and Paddock's default drive mode is
+> `session` — which routes turns through `openChatSession` → the **SDK** runtime,
+> which spawns the SDK's own bundled `claude` and would never see the stub. So
+> `test/e2e/server.mjs:119` sets `PADDOCK_DRIVE_MODE=batch` in fake mode
+> (live mode leaves the default alone). The E2E suite therefore exercises the CLI
+> runtime, **not** the runtime a real chat uses.
 
 herdctl's CLI runtime spawns `claude` from `PATH` and then **watches the session
 JSONL file** it writes (it does *not* read the process's stdout). So the fake:
@@ -186,10 +194,16 @@ fake.
 `@herdctl/core` 5.13's config loader **drops `runtime` from fleet-level
 `defaults`** (it's only an agent-level field there). paddock relied on
 `defaults.runtime: cli`, so without a fix every agent silently fell back to the
-**SDK** runtime (which needs an API key) instead of the CLI/Max runtime. We now
-set `runtime: "cli"` **explicitly on each agent** (keeper/sweeper/scratch) in
-`herdctl.ts`. This both (a) makes the fake-claude/CLI path actually run and (b)
-matches paddock's documented "CLI (Max plan)" intent. `index.ts` was also split
+**SDK** runtime. We now set `runtime: "cli"` **explicitly on each agent**
+(keeper/sweeper/scratch) in `herdctl.ts`, which is what makes the fake-claude/CLI
+path actually run.
+
+> **Scope note (2026-07).** `runtime` is read only on the one-shot `trigger()`
+> path — `openChatSession` hard-codes the SDK runtime — so these lines govern the
+> sweeper, triggers, and `driveMode: batch` turns. They do **not** make a real
+> chat a `claude -p` subprocess; the default `session` mode does that on the SDK.
+> The original note here also framed this as a Max-vs-API-key choice, which was
+> wrong: either credential works on either runtime. `index.ts` was also split
 into a `buildApp()` factory (`app.ts`) so tests can boot the app without binding
 a port or installing signal handlers — a pure seam, no behavior change.
 
@@ -199,7 +213,7 @@ a port or installing signal handlers — a pure seam, no behavior change.
   intended). After promoting a one-off chat into a project it used to fork a
   fresh session on resume (codeword lost). Root cause was in herdctl's
   JobExecutor: it dropped an explicit `--resume` when the agent had no stored
-  session-info file, so a keeper resuming an adopted session started fresh. Fixed
+  session-info file, so an agent resuming an adopted session started fresh. Fixed
   upstream in **@herdctl/core 5.13.1 (herdctl#263)** — the executor now adopts a
   caller-provided resume when the transcript exists in the agent's working dir.
   `promote.test.ts` now asserts the resumed turn continues the **same** session

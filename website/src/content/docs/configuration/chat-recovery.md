@@ -1,19 +1,19 @@
 ---
-title: "Keeper-chat recovery"
-description: "Why a keeper can hang silently when a background task is killed at the turn boundary, and how Paddock's configurable recovery surfaces and re-drives it."
+title: "Chat recovery"
+description: "Why a chat can hang silently when a background task is killed at the turn boundary, and how Paddock's configurable recovery surfaces and re-drives it."
 ---
 
-Sometimes a keeper chat just… stops. The keeper kicked off some background work,
+Sometimes a chat just… stops. Claude Code kicked off some background work,
 its turn ended, and then nothing — no reply, no error, no obvious reason. The chat
 sits there until someone types a message to nudge it back to life.
 
 This page explains **why that happens**, what Paddock does about it, and how to
 configure it.
 
-## The backstory — why a keeper hangs
+## The backstory — why a chat hangs
 
-Keepers run in a persistent session (see [Chats are sessions](/concepts/chats)).
-Within a turn, a keeper can launch **background work** — a background `Bash`
+Chats run in a persistent session (see [Chats are sessions](/concepts/chats)).
+Within a turn, Claude can launch **background work** — a background `Bash`
 command, or a background `Task`/`Agent` sub-agent — and then finish its turn while
 that work is still running. That is a normal, useful pattern: start a long build,
 end the turn, get woken when it completes.
@@ -26,7 +26,7 @@ The problem is a race at the **turn boundary**:
 2. But the underlying Claude Agent SDK / native CLI **kills the still-running
    background child anyway**, a couple of seconds after the turn ends.
 3. Here's the crucial asymmetry. A task that **completes** emits a follow-up
-   notification that *wakes the keeper* — it gets another turn and carries on. A
+   notification that *wakes the session* — it gets another turn and carries on. A
    task that is **killed** writes a `killed`/`stopped` `<task-notification>` to the
    transcript but **wakes nothing**. Nobody is listening.
 4. The session is still alive — but idle, forever. It only recovers when a **human
@@ -39,7 +39,7 @@ user did anything — so the chat looks like it silently died for no reason.
 This is an upstream limitation, not a Paddock bug — the root-cause analysis lives in
 [herdctl#374](https://github.com/edspencer/herdctl/issues/374). Paddock ships a
 pragmatic **app-side workaround**, because the one thing we *can* rely on is that
-**the session stays alive and injectable**. Recovering a hung keeper is therefore
+**the session stays alive and injectable**. Recovering a hung chat is therefore
 exactly "automate the nudge a human already sends by hand."
 
 :::note[What changed in 0.43 — and what didn't]
@@ -55,9 +55,9 @@ What 0.43 did **not** change is the upstream kill described above: the Claude
 Agent SDK / native CLI still terminates a still-running background child a couple
 of seconds after a turn ends, and that killed task still wakes nothing. So the
 hang this page describes is **rarer than it was, not gone** — recovery is still
-armed after every session-mode keeper turn in current releases, and everything
-below still applies. (Recovery is session-mode only; batch-mode keepers don't arm
-a watch at all.)
+armed after every session-mode turn in current releases, and everything below
+still applies. (Recovery is session-mode only; batch-mode projects don't arm a
+watch at all.)
 :::
 
 ## What the fix is — two layers
@@ -66,10 +66,10 @@ Recovery is delivered in two independently-toggleable layers:
 
 - **Layer 2 — visibility + manual recovery (default ON).** The killed/stopped
   notification is surfaced as a clear affordance in the chat, with a one-click
-  **Continue** button that re-drives the keeper. Pure visibility plus a manual
+  **Continue** button that re-drives the chat. Pure visibility plus a manual
   button is low-risk, so it's on by default.
 - **Layer 3 — automatic recovery (default OFF).** Paddock detects the killed task
-  and injects the re-drive nudge on its own, so the keeper wakes without anyone
+  and injects the re-drive nudge on its own, so the chat wakes without anyone
   watching. Because it acts automatically and costs a turn (and tokens), it's
   opt-in. This is now **live** — see [Layer 3 — automatic recovery](#layer-3--automatic-recovery-now-live)
   below.
@@ -80,15 +80,15 @@ per-project override, exactly like [`driveMode` and
 
 ## Layer 2 in the chat — the Continue button
 
-When a keeper's background task is killed at the turn boundary, its chat now shows
-an amber notice instead of silently stopping:
+When a background task is killed at the turn boundary, the chat now shows an amber
+notice instead of silently stopping:
 
-> ⚠ A background task was terminated at the turn boundary — the keeper is idle and
+> ⚠ A background task was terminated at the turn boundary — Claude is idle and
 > will not continue on its own.
 
 If Layer 2 is enabled (it is by default), the notice carries a **Continue** button.
 Clicking it injects a recovery nudge into the still-alive session. The nudge tells
-the keeper the truth — that its background task was **killed at the turn boundary**
+Claude the truth — that the background task was **killed at the turn boundary**
 (a runtime limitation, *not* a user cancellation) — so it reacts sensibly: it
 re-runs the work in the **foreground** this turn, or summarises what happened and
 carries on. The re-drive streams back live and is recorded in the transcript,
@@ -102,20 +102,20 @@ project.
 ## Layer 3 — automatic recovery (now live)
 
 With Layer 3 enabled, no one has to be watching the chat. Paddock notices the hung
-keeper and sends the same nudge the Continue button does — on its own.
+chat and sends the same nudge the Continue button does — on its own.
 
 ### How it detects a hang
 
 Layer 3 rides on the one fact we can rely on: the session stays alive and its
-transcript is the source of truth. After **every session-mode keeper turn**, Paddock
-arms a short **post-turn watch** on that chat's transcript:
+transcript is the source of truth. After **every session-mode turn**, Paddock arms
+a short **post-turn watch** on that chat's transcript:
 
-1. A background task that **completes** wakes the keeper — new assistant activity
+1. A background task that **completes** wakes the session — new assistant activity
    appends to the transcript. A task that is **killed** writes a terminated
    `<task-notification>` that wakes nothing, and no assistant activity follows.
 2. So the hung signature is simple: the transcript ends with a **terminated
-   task-notification and no keeper reply after it**. If instead the keeper wakes on
-   its own inside the watch window, the watch sees that reply and stands down.
+   task-notification and no reply after it**. If instead Claude wakes on its own
+   inside the watch window, the watch sees that reply and stands down.
 3. The kill lands a couple of seconds *after* the turn ends, so the watch keeps
    polling for a short grace period, and only acts once the notification has sat
    un-answered for the full **debounce** window.
@@ -123,7 +123,7 @@ arms a short **post-turn watch** on that chat's transcript:
 When that signature holds and Layer 3 is on, Paddock injects the recovery nudge into
 the still-alive session — the identical re-drive the manual **Continue** button
 performs (attributed to Paddock recovery, streamed live, recorded in the transcript).
-The keeper wakes, sees its task was killed at the turn boundary, and carries on.
+Claude wakes, sees the task was killed at the turn boundary, and carries on.
 
 ### The guards (so it can't misfire or loop)
 
@@ -133,10 +133,10 @@ Auto-recovery is deliberately cautious:
   override, else the instance default). With Layer 3 off, the watch is never even
   armed.
 - **Debounce.** It never fires until the killed notification has been quiet for
-  `debounceMs` (default 5s). A keeper that's genuinely finishing — or that wakes
+  `debounceMs` (default 5s). A chat that's genuinely finishing — or that wakes
   itself — inside that window is left alone.
 - **Retry cap.** Each session may be auto re-driven at most `maxRetries` times
-  (default 1). A permanently-wedged keeper (one that hangs again the same way after a
+  (default 1). A permanently-wedged chat (one that hangs again the same way after a
   re-drive) is nudged up to the cap and then left alone — no poke-loop.
 - **Human reset.** When a human next sends a message to the chat, the retry
   bookkeeping resets, so a genuinely-new hang later on is recovered fresh. (The cap
@@ -184,9 +184,9 @@ Set these in the environment (or the YAML instance-config file under a top-level
 | Setting | Env var | Default | Layer | What it does |
 | --- | --- | --- | --- | --- |
 | `surfaceKilledTask` | `PADDOCK_RECOVERY_SURFACE` | `true` (ON) | 2 | Surface the killed-task notice + the manual **Continue** button. |
-| `autoReDrive` | `PADDOCK_RECOVERY_AUTODRIVE` | `false` (OFF) | 3 | Automatically re-drive a hung keeper (detect the killed task + inject the nudge on its own). |
-| `debounceMs` | `PADDOCK_RECOVERY_DEBOUNCE_MS` | `5000` | 3 | Quiet window (ms) after a killed task before auto re-drive fires, so a keeper that's genuinely finishing isn't poked. |
-| `maxRetries` | `PADDOCK_RECOVERY_MAX_RETRIES` | `1` | 3 | Per-session cap on auto re-drives, so a wedged keeper isn't poked in a loop. |
+| `autoReDrive` | `PADDOCK_RECOVERY_AUTODRIVE` | `false` (OFF) | 3 | Automatically re-drive a hung chat (detect the killed task + inject the nudge on its own). |
+| `debounceMs` | `PADDOCK_RECOVERY_DEBOUNCE_MS` | `5000` | 3 | Quiet window (ms) after a killed task before auto re-drive fires, so a chat that's genuinely finishing isn't poked. |
+| `maxRetries` | `PADDOCK_RECOVERY_MAX_RETRIES` | `1` | 3 | Per-session cap on auto re-drives, so a wedged chat isn't poked in a loop. |
 | `limboTimeoutMs` | `PADDOCK_RECOVERY_LIMBO_MS` | `0` (off) | 2 | If set, surface a kept-alive session as stuck after this many ms of silence following a killed task. `0` disables it. *(Backstop timer ships in a follow-up.)* |
 
 Booleans accept `1`/`true`/`yes` (case-insensitive) for on and anything else for
@@ -232,5 +232,5 @@ Layer 2 — see it, click to fix it — is the safe default.
 
 **What about the "stopped by user" wording?** That canned summary can appear even
 when no user acted; it's the same underlying turn-boundary kill. The recovery nudge
-explicitly tells the keeper it was a runtime kill, not a cancellation, so it doesn't
-draw the wrong conclusion.
+explicitly says it was a runtime kill, not a cancellation, so Claude doesn't draw
+the wrong conclusion.

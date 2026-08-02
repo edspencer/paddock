@@ -45,7 +45,7 @@ composer, or `GET /api/models` — they come from one catalog constant in the se
 the picker and the API can't disagree.
 
 :::caution[The default model can move]
-The keeper default (Opus) is used whenever a project doesn't pick one. If your
+The instance default (Opus) is used whenever a project doesn't pick one. If your
 allow-list doesn't *include* the default, projects fall back to the **first offered
 model in catalog order** instead. Narrowing the list can therefore change which model
 your existing projects run on. Check the picker after a restart.
@@ -96,6 +96,6 @@ first: check the ids against `GET /api/models`.
 
 ## See also
 
-- [Environment variables](/configuration/environment/#keeper--agents) — the `PADDOCK_MODELS` row.
+- [Environment variables](/configuration/environment/#agents) — the `PADDOCK_MODELS` row.
 - [The Config screen](/configuration/instance-settings/) — the instance-level UI.
 - [Creating & organizing projects](/using/creating-and-organizing-projects/) — the per-project Settings tab.

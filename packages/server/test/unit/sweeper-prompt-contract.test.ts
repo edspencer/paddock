@@ -15,7 +15,12 @@
  */
 import { describe, it, expect } from "vitest";
 import { buildSweeperConfig } from "../../src/herdctl-agent-config.js";
+import type { PaddockConfig } from "../../src/config.js";
 import type { Project } from "../../src/projects.js";
+
+// `dataDir` is load-bearing: the sweeper's working directory derives from it, so
+// that it never shares a CLI session dir with the keeper (issue #548).
+const cfg = { dataDir: "/tmp/data" } as PaddockConfig;
 
 const project = {
   slug: "demo",
@@ -23,7 +28,7 @@ const project = {
   dir: "/tmp/demo",
 } as unknown as Project;
 
-const systemPrompt = () => String(buildSweeperConfig(project).system_prompt);
+const systemPrompt = () => String(buildSweeperConfig(cfg, project).system_prompt);
 
 describe("sweeper system_prompt ↔ writer contract (#480)", () => {
   it("does not ask for a single bare bullet as the whole CHANGELOG", () => {
@@ -67,7 +72,6 @@ describe("sweeper system_prompt ↔ writer contract (#480)", () => {
   });
 
   it("keeps the sweeper tool-less, so the writer stays the only file mutator", () => {
-    const cfg = buildSweeperConfig(project);
-    expect(cfg.allowed_tools).toEqual([]);
+    expect(buildSweeperConfig(cfg, project).allowed_tools).toEqual([]);
   });
 });

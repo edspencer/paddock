@@ -3,8 +3,11 @@ name: CI
 on:
   push:
     branches: [main]
+  # `chore/**` covers long-lived integration branches (e.g. chore/retire-keeper):
+  # without it, child PRs targeting one get only the external checks (Cloudflare,
+  # GitGuardian) and NO typecheck/tests/E2E — a green tick that proves nothing.
   pull_request:
-    branches: [main]
+    branches: [main, "chore/**"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

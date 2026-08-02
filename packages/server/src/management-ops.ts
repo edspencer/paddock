@@ -226,7 +226,7 @@ export function buildManagementOps(
   if (!includeWrite) return { read };
 
   const driveModeFor = (p: Awaited<ReturnType<typeof deps.projects.get>>): DriveMode =>
-    p.driveMode && isKnownDriveMode(p.driveMode) ? p.driveMode : deps.cfg.keeperDriveMode;
+    p.driveMode && isKnownDriveMode(p.driveMode) ? p.driveMode : deps.cfg.driveMode;
   // The child runs in its TARGET project, so its spawn bound comes from THAT
   // project's override (else the instance default), not the parent's (#262) —
   // then narrowed by any caller-scoped cap (never widened).
@@ -276,7 +276,7 @@ export function buildManagementOps(
         ? await composePreloadedPrompt(projectSlug, kickoff)
         : kickoff;
       const overrideModel = o?.model && isKnownModel(o.model) ? o.model : undefined;
-      if (overrideModel) await deps.herdctl.ensureKeeperModel(p, overrideModel);
+      if (overrideModel) await deps.herdctl.ensureAgentModel(p, overrideModel);
       const newId = await startAgentTurn({
         projectSlug,
         agentName: keeperAgentName(projectSlug),
@@ -317,7 +317,7 @@ export function buildManagementOps(
         .catch(() => undefined);
       if (kickoff && kickoff.trim().length > 0) {
         const overrideModel = model && isKnownModel(model) ? model : undefined;
-        if (overrideModel) await deps.herdctl.ensureKeeperModel(p, overrideModel);
+        if (overrideModel) await deps.herdctl.ensureAgentModel(p, overrideModel);
         await startAgentTurn({
           projectSlug,
           agentName: keeperAgentName(projectSlug),
@@ -387,11 +387,11 @@ export function buildManagementOps(
       // registering its keeper/sweeper agents fails. Unlike the route (which only
       // logs) we report it, since the agent's very next step is usually a
       // `create_chat` into this project, which needs a live keeper.
-      let keeperRegistered = true;
+      let agentRegistered = true;
       try {
         await deps.herdctl.ensureProjectAgent(project);
       } catch {
-        keeperRegistered = false;
+        agentRegistered = false;
       }
       return {
         slug: project.slug,
@@ -400,7 +400,7 @@ export function buildManagementOps(
         workingDir: project.workingDir,
         repoBacked: project.repoBacked === true,
         ...(project.repo ? { repo: project.repo } : {}),
-        keeperRegistered,
+        agentRegistered,
       };
     },
     triggersMcpEnabled: includeTriggers,

@@ -2,8 +2,9 @@
  * HerdctlService — REAL wrapper around @herdctl/core's FleetManager.
  *
  * This module is NOT a stub: it imports and constructs the public
- * @herdctl/core (5.11.0) API. It is the single seam between paddock and
- * herdctl, so that any remaining gaps in the public API are isolated here.
+ * @herdctl/core API (paddock depends on ^5.27.0). It is the single seam between
+ * paddock and herdctl, so that any remaining gaps in the public API are isolated
+ * here. See docs/INTEGRATION.md for the verified call-by-call contract.
  *
  * As of @herdctl/core 5.11.0 the four prior app-layer workarounds are GONE —
  * paddock now uses the first-class APIs:
@@ -25,7 +26,9 @@
  *  - **Streaming:** `trigger(agent, schedule?, { onMessage, prompt, resume })`.
  *    `onMessage(msg: SDKMessage)` fires per SDK message; the returned
  *    TriggerResult carries the final `sessionId`. New chat = `resume: null`;
- *    resume = `resume: <sessionId>`.
+ *    resume = `resume: <sessionId>`. This is the `batch` drive-mode path; the
+ *    default `session` mode instead drives `openChatSession`, which ALWAYS runs
+ *    the SDK runtime regardless of the agent's `runtime` field (see #585).
  *
  *  - **Delete / rename a chat:** `fleet.deleteSession(name, sessionId)` removes
  *    the transcript (and invalidates the discovery cache), and
@@ -40,8 +43,8 @@
  * the cache internally. The one nuance vs. the prior code: a *second* new chat
  * created in an already-listed project within 30s may take up to the cache TTL
  * to appear (the prior code invalidated a private cache we can no longer reach).
- * Acceptable for the POC; a public post-turn invalidation hook is a herdctl
- * follow-up candidate.
+ * That last nuance is now closed too: core exposes `fleet.invalidateSessions(name)`
+ * and paddock calls it after each turn (`ws-turn.ts`) and around fork/promote.
  */
 import {
   FleetManager,
@@ -71,7 +74,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { PaddockConfig } from "./config.js";
 import type { Project } from "./projects.js";
-import { KEEPER_DEFAULT_MODEL } from "./models.js";
+import { DEFAULT_MODEL } from "./models.js";
 import { ensureProjectChats, projectChatsDir } from "./transcripts.js";
 import {
   triggerRunsOnOwnAgent,
@@ -79,8 +82,9 @@ import {
   type PaddockTrigger,
 } from "./trigger-config.js";
 import {
-  buildKeeperConfig,
+  buildAgentConfig,
   buildSweeperConfig,
+  sweeperWorkingDir,
   buildTriggerConfig,
   ensureConfigFile as writeBootConfigFile,
 } from "./herdctl-agent-config.js";
@@ -149,7 +153,7 @@ export {
   triggerAgentName,
   visibleProjectAgentNames,
   BROWSER_MCP_TOOL,
-  KEEPER_DENIED_TOOLS,
+  DENIED_TOOLS,
   browserMcpServers,
   KEEPER_MAX_CONCURRENT,
   KEEPER_SESSION_TIMEOUT,
@@ -273,7 +277,7 @@ export class HerdctlService {
 
   /**
    * The model currently registered for each agent (keyed by agent name). Lets
-   * `ensureKeeperModel` skips a re-registration when the
+   * `ensureAgentModel` skips a re-registration when the
    * requested model already matches the live agent config.
    *
    * SINGLE-USER CAVEAT: the keeper is one shared agent per project, so the
@@ -355,13 +359,14 @@ export class HerdctlService {
       // out of the external checkout's working tree (issue #187). For a notebook
       // project workingDir === dir, so this is the classic behavior.
       await ensureProjectChats(project.workingDir, project.dir, this.cfg.claudeHome);
+      await this.ensureSweeperHome(project);
       await this.fleet.addAgent(this.keeperAgentConfig(project), { replace: true });
       await this.fleet.addAgent(this.sweeperAgentConfig(project), { replace: true });
       // Register each EVENT trigger as its own agent `trigger-<slug>-<name>` (Epic T /
       // T1). Schedule triggers ride the keeper's forwarded `schedules` block (above);
       // webhook triggers are reserved.
       await this.registerTriggerAgents(project);
-      this.agentModels.set(keeperAgentName(project.slug), project.model ?? KEEPER_DEFAULT_MODEL);
+      this.agentModels.set(keeperAgentName(project.slug), project.model ?? DEFAULT_MODEL);
       this.agentWorkingDirs.set(keeperAgentName(project.slug), project.workingDir);
     }
   }
@@ -430,6 +435,7 @@ export class HerdctlService {
   async ensureProjectAgent(project: Project): Promise<void> {
     if (!this.fleet) return;
     await ensureProjectChats(project.workingDir, project.dir, this.cfg.claudeHome);
+    await this.ensureSweeperHome(project);
     await this.fleet.addAgent(this.keeperAgentConfig(project), { replace: true });
     await this.fleet.addAgent(this.sweeperAgentConfig(project), { replace: true });
     // Re-register the project's EVENT-trigger agents (Epic T / T1) from the live
@@ -439,7 +445,7 @@ export class HerdctlService {
     // Record the keeper's resolved model so per-chat overrides can detect a
     // no-op. ensureProjectAgent re-registers at project.model (the persisted
     // default), so a model change via PATCH takes effect here too.
-    this.agentModels.set(keeperAgentName(project.slug), project.model ?? KEEPER_DEFAULT_MODEL);
+    this.agentModels.set(keeperAgentName(project.slug), project.model ?? DEFAULT_MODEL);
     this.agentWorkingDirs.set(keeperAgentName(project.slug), project.workingDir);
   }
 
@@ -500,7 +506,7 @@ export class HerdctlService {
    * single-user caveat: this is last-write-wins across concurrent chats of the
    * same project.
    */
-  async ensureKeeperModel(project: Project, model: string): Promise<void> {
+  async ensureAgentModel(project: Project, model: string): Promise<void> {
     if (!this.fleet) return;
     const name = keeperAgentName(project.slug);
     if (this.agentModels.get(name) === model) return;
@@ -1302,7 +1308,7 @@ export class HerdctlService {
   /**
    * Attribute an *in-flight* session to its agent the moment its id is known —
    * mid first turn — so a brand-new chat lists in the sidebar immediately
-   * instead of only after the turn's `claude -p` process exits (issue #100).
+   * instead of only after the first turn finishes (issue #100).
    *
    * The core attribution index is built from herdctl job records, and herdctl
    * writes the resolved `session_id` into a run's own job record only on
@@ -1377,11 +1383,24 @@ export class HerdctlService {
     project: Project,
     modelOverride?: string,
   ): Record<string, unknown> & { name: string } {
-    return buildKeeperConfig(this.cfg, project, modelOverride);
+    return buildAgentConfig(this.cfg, project, modelOverride);
   }
 
   private sweeperAgentConfig(project: Project): Record<string, unknown> & { name: string } {
-    return buildSweeperConfig(project);
+    return buildSweeperConfig(this.cfg, project);
+  }
+
+  /**
+   * Create the sweeper's own working directory (+ symlink its encoded transcript
+   * path at a `.chats/` inside it), so the tool-less curator never shares a CLI
+   * session directory with the project's keeper (issue #548). Reuses
+   * `ensureProjectChats` with the sweeper dir as both cwd and chats host, which
+   * also mkdir's the dir itself. Never throws — the helper swallows its own
+   * errors, and a missing symlink only means Claude keeps its default location.
+   */
+  private async ensureSweeperHome(project: Project): Promise<void> {
+    const dir = sweeperWorkingDir(this.cfg, project.slug);
+    await ensureProjectChats(dir, dir);
   }
 
   private triggerAgentConfig(

@@ -3,11 +3,14 @@
 Paddock is a **project-first launchpad** on top of [`@herdctl/core`](https://github.com/edspencer/herdctl):
 server-hosted, persistent, resumable **Claude Code sessions organized by project**.
 A *project* is a directory + `project.yaml`; each project has one long-lived
-**keeper** agent whose working directory *is* that directory; a *chat* is one
+agent whose working directory *is* that directory; a *chat* is one
 resumable Claude Code session belonging to a project; after each of your turns a
 tool-less **sweeper** quietly curates the project's `OVERVIEW.md`/`CHANGELOG.md`.
-herdctl runs the actual agents (as `claude -p` CLI subprocesses or SDK sessions)
-and owns session discovery — Paddock is the thin, opinionated layer on top.
+herdctl runs the actual agents and owns session discovery — Paddock is the thin,
+opinionated layer on top. Chats run on herdctl's **Claude Agent SDK** streaming
+runtime by default; only the sweeper, triggers, and `driveMode: batch` projects
+shell out to a one-shot `claude -p` CLI subprocess (see the drive-mode note
+below).
 
 ## Monorepo layout
 
@@ -36,17 +39,20 @@ is cited to `packages/server/src`). The essentials:
 - **WS / session-hub flow** (§4) — all live chat runs over `GET /ws`. `ws.ts` drives
   the turn lifecycle; `session-hub.ts` fans out, buffers, and replays frames so a
   turn's stream survives socket death and re-attaches.
-- **MCP injection** (§5) — keepers get extra tools via in-process MCP injection
+- **MCP injection** (§5) — agents get extra tools via in-process MCP injection
   (`injectedMcpServers`), no network/auth: `send_file` on every turn, env-gated
-  keeper-only self-management (`PADDOCK_SELF_MCP`). Automated/spawned turns get
+  project-only self-management (`PADDOCK_SELF_MCP`). Automated/spawned turns get
   `send_file` only (anti-fork-bomb).
 - **Auth boundary** (§7) — no native login; `auth.ts` `onRequest` hook turns
   upstream identity into `req.user` (`PADDOCK_AUTH_MODE`: `none` / `trusted-header`
   / `jwt`). See [`AUTH.md`](AUTH.md).
 - **Sweeper + drive mode** (§6, §9) — post-turn tool-less `sweeper-<slug>` curates
-  notes out of band. Keeper turns run `batch` (one-shot `trigger()`) or `session`
-  (persistent `openChatSession`; background tasks / wake-ups survive the turn),
-  per `PADDOCK_KEEPER_DRIVE_MODE` / `project.driveMode`.
+  notes out of band (always a one-shot `trigger()`, so always the CLI runtime).
+  Chat turns run `batch` (one-shot `trigger()`, CLI runtime) or `session`
+  (persistent `openChatSession`, which hard-codes the SDK runtime; background
+  tasks / wake-ups survive the turn), per `PADDOCK_DRIVE_MODE` /
+  `project.driveMode`. `session` is the default, so **chats normally run on the
+  SDK, not `claude -p`**.
 
 Config is **entirely env-based** (`config.ts`, no config files) — see
 [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md).
@@ -82,7 +88,7 @@ npm run test:e2e            # Playwright vs real server + a fake `claude` on PAT
 | For… | Read |
 |---|---|
 | How the code fits together | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
-| What a project/keeper/chat/sweeper *is* | [`docs/concepts/`](docs/concepts/) |
+| What a project/agent/chat/sweeper *is* | [`docs/concepts/`](docs/concepts/) |
 | Running the full stack locally | [`DEV.md`](DEV.md) |
 | Contributing, tests, gotchas | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 | Every `PADDOCK_*` env var | [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) |

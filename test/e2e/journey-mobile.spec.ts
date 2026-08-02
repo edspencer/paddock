@@ -33,9 +33,9 @@ async function hOverflow(page: Page): Promise<number> {
 test("front door + projects grid: no horizontal overflow; nav drawer opens and closes", async ({
   page,
 }) => {
-  // `/` is the ROOT workspace's Home (#531), and the projects grid is its first
-  // section — so arrival and the grid are the same screen now. This test is
-  // about what a phone user sees on ARRIVAL plus the global nav drawer.
+  // `/` is the ROOT workspace's Home (#531); since #599 it opens on the
+  // running/unread feeds and the projects grid has its own page again. This test
+  // covers both screens plus the global nav drawer.
   await page.goto("/");
   // Nothing spills past the right edge of the phone.
   expect(await hOverflow(page)).toBeLessThanOrEqual(1);
@@ -64,11 +64,14 @@ test("front door + projects grid: no horizontal overflow; nav drawer opens and c
   await page.getByRole("button", { name: /Close menu/i }).tap();
   await expect(navDrawerAction).not.toBeInViewport();
 
-  // The projects grid must also fit the phone. It is a section of root Home, so
-  // this is the same URL — but assert it with the grid actually rendered, which
-  // is what the arrival check above cannot guarantee on its own.
-  await page.goto("/");
-  await expect(page.getByRole("button", { name: "New Project" }).last()).toBeVisible();
+  // The projects grid must also fit the phone. It is its OWN page again (#599),
+  // so this is a different URL — and the wait is scoped to <main> for the grid's
+  // own header button, because the sidebar's `+` carries the same accessible
+  // name and is present on every route, grid or not.
+  await page.goto("/projects");
+  await expect(
+    page.getByRole("main").getByRole("button", { name: "New Project", exact: true }),
+  ).toBeVisible();
   expect(await hOverflow(page)).toBeLessThanOrEqual(1);
 });
 
@@ -78,7 +81,7 @@ test("project view: composer reachable; session list is a drawer; a turn sends",
   await createProjectViaUI(page, { name: uniq("MOB Proj") });
 
   // The chat composer is usable with NO drawer open (main pane is full-width).
-  const composer = page.getByPlaceholder(/Message the keeper agent/i);
+  const composer = page.getByPlaceholder(/Message Claude/i);
   await expect(composer).toBeInViewport();
   expect(await hOverflow(page)).toBeLessThanOrEqual(1);
 
@@ -97,9 +100,16 @@ test("project view: composer reachable; session list is a drawer; a turn sends",
 });
 
 test("New Project modal fits the phone (no overflow, Create reachable)", async ({ page }) => {
-  // Opened from the grid on root Home — the sidebar no longer carries a CTA.
+  // Opened the way a phone user reaches it: the sidebar's Projects-header `+`
+  // (#599 made it the app's canonical New Project CTA), which on a phone means
+  // sliding the off-canvas nav drawer in first — the button is rendered the
+  // whole time, just translated outside the viewport, so tapping it without the
+  // drawer would spin until the test timed out.
   await page.goto("/");
-  await page.getByRole("main").getByRole("button", { name: "New Project" }).first().tap();
+  const plus = page.getByRole("complementary").getByRole("button", { name: "New Project" });
+  await page.getByRole("button", { name: /Open menu/i }).tap();
+  await expect(plus).toBeInViewport();
+  await plus.tap();
   const form = page.locator("form").filter({ hasText: "New project" });
   await expect(form).toBeVisible();
   await expect(page.getByRole("button", { name: /Create project/i })).toBeInViewport();
@@ -166,7 +176,7 @@ test("Project Settings tab fits the phone", async ({ page }) => {
 test("mobile screenshots (visual capture)", async ({ page }) => {
   mkdirSync(SHOTS, { recursive: true });
 
-  // `/` = the root workspace's Home, with the projects grid as its first section.
+  // `/` = the root workspace's Home, leading with its running/unread feeds (#599).
   await page.goto("/");
   await page.screenshot({ path: `${SHOTS}01-root-home.png`, fullPage: true });
 

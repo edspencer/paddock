@@ -10,9 +10,9 @@ sibling chat reporting back. In the UI these look identical to something you did
 yourself — so Paddock records **provenance**: who or what caused each chat, and
 each machine-added turn, to exist.
 
-This page explains the model. To see the tool-level detail of what a keeper did
+This page explains the model. To see the tool-level detail of what Claude did
 once a chat is running, see
-[Reading a keeper's work](/using/reading-a-keepers-work/).
+[Reading Claude's work](/using/reading-claudes-work/).
 
 ## The provenance marker: origin + depth
 
@@ -32,7 +32,7 @@ that's what lets the sidebar draw the tree
 ([below](#from-badge-to-structure)).
 
 So a human-started chat is `{ origin: human, depth: 0 }` — the root of any
-fan-out tree. A chat a keeper creates with a self-management tool becomes
+fan-out tree. A chat Claude creates with a self-management tool becomes
 `{ origin: spawned, depth: parent.depth + 1 }`, and a cron-fired chat is
 `{ origin: scheduled, depth: 0 }` — a schedule is a root trigger, just like a
 human. A chat [imported from your terminal `claude`
@@ -112,7 +112,7 @@ The wording names the source:
 - **↩ sent by ⟨chat⟩** — another chat sent it; the chat name is a link straight
   to the sender.
 - **⚡ triggered by hook ⟨name⟩** — an event hook fired it.
-- **⚠ continued after a background task was terminated** — Paddock's keeper-chat
+- **⚠ continued after a background task was terminated** — Paddock's chat
   recovery nudged the turn.
 
 Under the hood this is a separate sidecar (`MessageProvenanceStore`) that records,
@@ -132,8 +132,8 @@ the reply showing up and having to refresh to learn where it came from.
 ## From badge to structure
 
 Provenance used to only *decorate* the chat list. It now **shapes** it: a chat
-with a recorded parent is drawn nested underneath that parent, so a keeper's
-fan-out reads as one foldable family instead of a wall of sibling rows. The
+with a recorded parent is drawn nested underneath that parent, so a fan-out reads
+as one foldable family instead of a wall of sibling rows. The
 [chat-list guide](/using/working-in-chats/#nested-chats--a-fan-out-reads-as-a-tree)
 covers what that looks like; this is where the edge comes from.
 
@@ -174,8 +174,8 @@ Which paths record a parent:
 
 | How the chat was created | Parent recorded? | Where it lands |
 |---|---|---|
-| A keeper forks a chat (`fork_chat`, or the UI's **Fork**) | **Yes** | Under the chat it was **forked from** — not under whoever ran the tool |
-| A keeper spawns a chat (`create_chat`) | **Yes** | Under the chat that spawned it |
+| Claude forks a chat (`fork_chat`, or the UI's **Fork**) | **Yes** | Under the chat it was **forked from** — not under whoever ran the tool |
+| Claude spawns a chat (`create_chat`) | **Yes** | Under the chat that spawned it |
 | You start a new chat | No | A root, correctly |
 | A schedule or an event hook fires one | No | A root — a trigger is its own origin, not a child |
 | An **external** MCP client calls `create_chat` over `/mcp` | No | A root — the caller isn't a chat, so there's nothing to nest under |
@@ -197,7 +197,7 @@ this is why.
 
 ## Why it matters
 
-As keepers do more unattended work — scheduled triage, a manager chat fanning out
+As Claude does more unattended work — scheduled triage, a manager chat fanning out
 sub-tasks, hooks reacting to events — a project's chat list stops being purely
 "conversations I had." Provenance keeps it legible: at a glance you can tell your
 own threads from the ones that ran on a timer or were spawned by another chat, and
@@ -206,8 +206,8 @@ that makes autonomous work reviewable instead of mysterious.
 
 ## Next steps
 
-- [Reading a keeper's work](/using/reading-a-keepers-work/) — the tool-level view
-  of what a chat actually did.
+- [Reading Claude's work](/using/reading-claudes-work/) — the tool-level view of
+  what a chat actually did.
 - [Chats are sessions](/concepts/chats/) — what a chat is, and how forking copies
   one.
 - [The sweeper](/concepts/sweeper/) — the post-turn curation agent, itself a

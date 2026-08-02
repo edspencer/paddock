@@ -9,9 +9,10 @@ import { seedProject, uniq } from "./helpers";
  * with an active filter chip (clearable via ×) and an empty state for an
  * unknown tag.
  *
- * `/tags/:tag` is still the STANDALONE grid (its own `<h1>` + blurb). Clearing
- * the filter returns to `/` — root Home, whose first section is the unfiltered
- * list (see `gridUrl`).
+ * `/tags/:tag` is the SAME grid component, filtered. Clearing the filter returns
+ * to `/projects` — the unfiltered grid page (see `gridUrl`). That pairing is the
+ * point: `/tags/:tag` ALWAYS filters, so `/projects` is the only route that
+ * renders the grid's unfiltered landing at all.
  */
 
 test("deep-link /tags/:tag filters to matching projects + shows the active chip", async ({
@@ -36,9 +37,9 @@ test("deep-link /tags/:tag filters to matching projects + shows the active chip"
   const clear = page.getByRole("button", { name: new RegExp(`Clear ${tag} filter`) });
   await expect(clear).toBeVisible();
 
-  // Clearing returns to the full list on root Home (area sections, no chip).
+  // Clearing returns to the unfiltered grid page (area sections, no chip).
   await clear.click();
-  await expect(page).toHaveURL(/\/$/);
+  await expect(page).toHaveURL(/\/projects$/);
   await expect(page.getByText("Filtered by")).toHaveCount(0);
   await expect(page.getByRole("button", { name: /^Unsorted/ })).toBeVisible();
 });
@@ -51,7 +52,7 @@ test("unknown tag shows the empty 'No projects tagged' state with Clear filter",
   const clear = page.getByRole("button", { name: /Clear filter/i });
   await expect(clear).toBeVisible();
   await clear.click();
-  await expect(page).toHaveURL(/\/$/);
+  await expect(page).toHaveURL(/\/projects$/);
 });
 
 test("clicking a tag chip on a project card navigates to its tag filter (not the project)", async ({
@@ -63,7 +64,7 @@ test("clicking a tag chip on a project card navigates to its tag filter (not the
   const name = uniq("TG Chip");
   seedProject({ name, domain: [tag] });
 
-  await page.goto("/");
+  await page.goto("/projects");
   const card = page.locator("section a.card").filter({ hasText: name });
   await expect(card).toBeVisible();
 

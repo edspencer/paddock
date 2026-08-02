@@ -11,14 +11,14 @@
  *
  * Context limits (verified against the Models API): Opus 5, Fable 5, Opus 4.8
  * and Sonnet 5 all have a 1,000,000-token context window; Haiku 4.5 is 200,000.
- * On the Max/CLI runtime the keeper agents run Opus 5 at its full 1M window, so
+ * On the Max plan the keeper agents run Opus 5 at its full 1M window, so
  * the context meter must use 1M for it — otherwise a long chat reads >100%.
  */
 
 /**
  * Public first-party API list price per 1M tokens, used only to put a
  * ballpark dollar figure on a chat's cumulative token consumption (issue #152).
- * On the Max/CLI runtime the keeper agents don't draw against a per-token
+ * On the Max plan the keeper agents don't draw against a per-token
  * quota, so this is an "at API rates" estimate for comparison, not real spend —
  * the token counts are the honest metric. Cache-write / cache-read rates are the
  * standard multiples of the input rate (5-minute ephemeral write = 1.25×, read =
@@ -81,8 +81,8 @@ export const MODELS: ModelInfo[] = [
   },
 ];
 
-/** The model a project's keeper agent uses unless the project overrides it. */
-export const KEEPER_DEFAULT_MODEL = "claude-opus-5";
+/** The model a project runs on unless the project overrides it. */
+export const DEFAULT_MODEL = "claude-opus-5";
 
 /**
  * Resolve the models OFFERED (the picker/allow-list) from an optional list of
@@ -108,15 +108,15 @@ export function resolveModels(allowIds?: string[]): ModelInfo[] {
 }
 
 /**
- * The effective keeper default for a resolved model list: {@link KEEPER_DEFAULT_MODEL}
+ * The effective default model for a resolved model list: {@link DEFAULT_MODEL}
  * when it's still offered, else the first offered model's id (the list is in
  * picker order, so the first entry is the natural default). Falls back to
- * {@link KEEPER_DEFAULT_MODEL} when the list is empty, so callers always get a
+ * {@link DEFAULT_MODEL} when the list is empty, so callers always get a
  * concrete id.
  */
-export function resolveKeeperDefault(models: ModelInfo[]): string {
-  if (models.length === 0) return KEEPER_DEFAULT_MODEL;
-  return models.some((m) => m.id === KEEPER_DEFAULT_MODEL) ? KEEPER_DEFAULT_MODEL : models[0].id;
+export function resolveDefaultModel(models: ModelInfo[]): string {
+  if (models.length === 0) return DEFAULT_MODEL;
+  return models.some((m) => m.id === DEFAULT_MODEL) ? DEFAULT_MODEL : models[0].id;
 }
 
 /**
@@ -135,10 +135,10 @@ export function resolveKeeperDefault(models: ModelInfo[]): string {
 export const PERMISSION_MODES = ["default", "acceptEdits", "plan", "bypassPermissions"] as const;
 export type PermissionMode = (typeof PERMISSION_MODES)[number];
 
-/** Keeper defaults (inherited when a project doesn't override the field). */
-export const KEEPER_DEFAULT_PERMISSION_MODE: PermissionMode = "acceptEdits";
-export const KEEPER_DEFAULT_MAX_TURNS = 200;
-export const KEEPER_DEFAULT_DOCKER = false;
+/** Defaults inherited when a project doesn't override the field. */
+export const DEFAULT_PERMISSION_MODE: PermissionMode = "acceptEdits";
+export const DEFAULT_MAX_TURNS = 200;
+export const DEFAULT_DOCKER = false;
 
 /** Upper bound on a project's `max_turns` (guards the UI + PATCH validation). */
 export const MAX_TURNS_LIMIT = 1000;
@@ -158,14 +158,14 @@ export const DRIVE_MODES = ["batch", "session"] as const;
 export type DriveMode = (typeof DRIVE_MODES)[number];
 
 /**
- * Default keeper drive mode. `session` (#316): a fresh/un-configured instance
+ * Default drive mode. `session` (#316): a fresh/un-configured instance
  * gets cross-turn autonomy (`ScheduleWakeup`, `/loop`, reaper-backed background
  * work) and the SDK streaming runtime by default, instead of only when an
- * operator sets `PADDOCK_KEEPER_DRIVE_MODE=session`. The env var and per-project
+ * operator sets `PADDOCK_DRIVE_MODE=session`. The env var and per-project
  * `driveMode` override still take precedence; this only moves the built-in
  * default off the legacy one-shot `batch` path.
  */
-export const KEEPER_DEFAULT_DRIVE_MODE: DriveMode = "session";
+export const DEFAULT_DRIVE_MODE: DriveMode = "session";
 
 /** Whether `m` is one of the offered keeper permission modes. */
 export function isKnownPermissionMode(m: string): m is PermissionMode {

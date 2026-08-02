@@ -1,0 +1,100 @@
+---
+/**
+ * The stack: browser → Paddock server → @herdctl/core → Claude Code.
+ * Bands are coloured by owner; the vertical spine is the path a turn takes down.
+ */
+---
+
+<svg viewBox="0 0 920 528" role="img" aria-labelledby="stack-t stack-d">
+	<title id="stack-t">The Paddock stack</title>
+	<desc id="stack-d">
+		Four layers, top to bottom. Your browser runs the Paddock single-page app. It talks to the
+		Paddock server, which owns HTTP routes, the WebSocket transport and session hub, the project
+		and git layer, and auth plus in-process MCP tools. The Paddock server calls into the
+		@herdctl/core FleetManager, which owns the agent registry, the scheduler, the runner and the
+		session discovery and reaper. herdctl in turn drives Claude Code, either through the Claude
+		Agent SDK or by spawning a claude CLI subprocess.
+	</desc>
+
+	<defs>
+		<marker id="stk-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+			<path d="M 0 0 L 10 5 L 0 10 z" fill="var(--dg-line)"></path>
+		</marker>
+	</defs>
+
+	<!-- ============================================================ browser -->
+	<rect class="band is-paddock" x="16" y="14" width="888" height="88" rx="10"></rect>
+	<text class="t-band is-paddock" x="32" y="34">Your browser</text>
+
+	<rect class="node is-paddock" x="290" y="46" width="340" height="48" rx="8"></rect>
+	<text class="t-node" x="460" y="66" text-anchor="middle">Paddock SPA</text>
+	<text class="t-sub" x="460" y="83" text-anchor="middle">React + Vite — chats, files, changes, settings</text>
+
+	<path class="edge" d="M 460 94 L 460 118" marker-end="url(#stk-arrow)"></path>
+	<text class="t-edge" x="470" y="112">WebSocket /ws + REST</text>
+
+	<!-- ===================================================== paddock server -->
+	<rect class="band is-paddock" x="16" y="122" width="888" height="132" rx="10"></rect>
+	<text class="t-band is-paddock" x="32" y="142">Paddock server — @paddock/server (Fastify)</text>
+
+	<rect class="node is-paddock" x="33" y="154" width="203" height="84" rx="8"></rect>
+	<text class="t-node" x="134.5" y="180" text-anchor="middle">HTTP + REST</text>
+	<text class="t-sub" x="134.5" y="199" text-anchor="middle">one plugin, mounted</text>
+	<text class="t-sub" x="134.5" y="215" text-anchor="middle">at /api/root + /api/projects</text>
+
+	<rect class="node is-paddock" x="250" y="154" width="203" height="84" rx="8"></rect>
+	<text class="t-node" x="351.5" y="180" text-anchor="middle">Streaming transport</text>
+	<text class="t-sub" x="351.5" y="199" text-anchor="middle">ws.ts + SessionHub —</text>
+	<text class="t-sub" x="351.5" y="215" text-anchor="middle">buffer, replay, fan-out</text>
+
+	<rect class="node is-paddock" x="467" y="154" width="203" height="84" rx="8"></rect>
+	<text class="t-node" x="568.5" y="180" text-anchor="middle">Projects + git</text>
+	<text class="t-sub" x="568.5" y="199" text-anchor="middle">ProjectStore, GitService,</text>
+	<text class="t-sub" x="568.5" y="215" text-anchor="middle">JSON sidecars</text>
+
+	<rect class="node is-paddock" x="684" y="154" width="203" height="84" rx="8"></rect>
+	<text class="t-node" x="785.5" y="180" text-anchor="middle">Auth + MCP tools</text>
+	<text class="t-sub" x="785.5" y="199" text-anchor="middle">req.user boundary,</text>
+	<text class="t-sub" x="785.5" y="215" text-anchor="middle">self-MCP, send_file</text>
+
+	<path class="edge is-strong" d="M 460 238 L 460 270" marker-end="url(#stk-arrow)"></path>
+	<text class="t-edge" x="470" y="262">HerdctlService — the single seam</text>
+
+	<!-- ======================================================= herdctl core -->
+	<rect class="band is-herdctl" x="16" y="274" width="888" height="132" rx="10"></rect>
+	<text class="t-band is-herdctl" x="32" y="294">@herdctl/core — FleetManager</text>
+
+	<rect class="node is-herdctl" x="33" y="306" width="203" height="84" rx="8"></rect>
+	<text class="t-node" x="134.5" y="332" text-anchor="middle">Agent registry</text>
+	<text class="t-sub" x="134.5" y="351" text-anchor="middle">addAgent / removeAgent,</text>
+	<text class="t-sub" x="134.5" y="367" text-anchor="middle">config validation</text>
+
+	<rect class="node is-herdctl" x="250" y="306" width="203" height="84" rx="8"></rect>
+	<text class="t-node" x="351.5" y="332" text-anchor="middle">Scheduler</text>
+	<text class="t-sub" x="351.5" y="351" text-anchor="middle">one polling loop —</text>
+	<text class="t-sub" x="351.5" y="367" text-anchor="middle">cron, interval, session wakes</text>
+
+	<rect class="node is-herdctl" x="467" y="306" width="203" height="84" rx="8"></rect>
+	<text class="t-node" x="568.5" y="332" text-anchor="middle">Runner + jobs</text>
+	<text class="t-sub" x="568.5" y="351" text-anchor="middle">SDK or CLI, optionally</text>
+	<text class="t-sub" x="568.5" y="367" text-anchor="middle">in Docker; cancel, fork</text>
+
+	<rect class="node is-herdctl" x="684" y="306" width="203" height="84" rx="8"></rect>
+	<text class="t-node" x="785.5" y="332" text-anchor="middle">Sessions</text>
+	<text class="t-sub" x="785.5" y="351" text-anchor="middle">discovery, resume,</text>
+	<text class="t-sub" x="785.5" y="367" text-anchor="middle">the reaper</text>
+
+	<path class="edge" d="M 460 390 L 460 422" marker-end="url(#stk-arrow)"></path>
+
+	<!-- ========================================================= claude code -->
+	<rect class="band is-claude" x="16" y="426" width="888" height="88" rx="10"></rect>
+	<text class="t-band is-claude" x="32" y="446">Claude Code</text>
+
+	<rect class="node is-claude" x="150" y="458" width="300" height="48" rx="8"></rect>
+	<text class="t-node" x="300" y="478" text-anchor="middle">Claude Agent SDK</text>
+	<text class="t-sub" x="300" y="495" text-anchor="middle">in-process — Paddock's default</text>
+
+	<rect class="node is-claude" x="470" y="458" width="300" height="48" rx="8"></rect>
+	<text class="t-node" x="620" y="478" text-anchor="middle">claude CLI subprocess</text>
+	<text class="t-sub" x="620" y="495" text-anchor="middle">spawned per job — Max-plan pricing</text>
+</svg>

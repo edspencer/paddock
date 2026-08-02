@@ -25,6 +25,7 @@ import {
   type PollResult,
   type Project,
   type ProjectDetail,
+  type AttentionChats,
   type ProjectFile,
   type ProjectRuns,
   type RecoveryConfig,
@@ -159,14 +160,14 @@ export const api = {
     );
   },
 
-  /** Selectable models + the keeper default (drives the model picker). */
+  /** Selectable models + the instance default model (drives the model picker). */
   async getModels(): Promise<{
     models: ModelInfo[];
-    keeperDefault: string;
-    /** Box-wide default drive mode (PADDOCK_KEEPER_DRIVE_MODE) a project inherits
+    defaultModel: string;
+    /** Box-wide default drive mode (PADDOCK_DRIVE_MODE) a project inherits
      *  when its own `driveMode` is unset; shown as the effective value in the
      *  project Settings tab (issue #122). */
-    keeperDriveModeDefault: "batch" | "session";
+    driveModeDefault: "batch" | "session";
     /** Box-wide default max spawn depth (PADDOCK_MAX_SPAWN_DEPTH) a project
      *  inherits when its own `maxSpawnDepth` is unset; shown as the effective
      *  value in Settings (issue #262). */
@@ -183,8 +184,8 @@ export const api = {
   }> {
     return req<{
       models: ModelInfo[];
-      keeperDefault: string;
-      keeperDriveModeDefault: "batch" | "session";
+      defaultModel: string;
+      driveModeDefault: "batch" | "session";
       maxSpawnDepthDefault: number;
       recoveryDefault: RecoveryConfig;
       attachmentsDefault: AttachmentsConfig;
@@ -281,9 +282,26 @@ export const api = {
     return { projects, root: root ?? null };
   },
 
-  /** Enriched single-workspace payload: metadata + changelog + its chats. */
+  /**
+   * Enriched single-workspace payload: metadata + CHANGELOG.md + OVERVIEW.md +
+   * its chats.
+   */
   async getProjectDetail(slug: string): Promise<ProjectDetail> {
     return req<ProjectDetail>(`${apiBase(slug)}`);
+  },
+
+  /**
+   * The Home attention feed (#599): the chats in this workspace's SUBTREE that
+   * are running or unread.
+   *
+   * Called with the ROOT key (`""`) it is fleet-wide, because the root's key
+   * prefixes every workspace key; called with a project slug it is that project
+   * alone. Home does not branch on which — it asks its own workspace and
+   * renders what comes back — so the two views cannot drift apart.
+   */
+  async attentionChats(slug: string): Promise<AttentionChats> {
+    const res = await req<Partial<AttentionChats>>(`${apiBase(slug)}/chats/attention`);
+    return { running: res.running ?? [], unread: res.unread ?? [] };
   },
 
   async createProject(input: CreateProjectInput): Promise<Project> {

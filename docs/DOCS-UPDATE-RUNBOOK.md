@@ -287,8 +287,8 @@ export PATH="$CLONE/test/bin:$PATH"       # the fake `claude` stub
 # The fake claude is a CLI stub, so turns MUST run on the batch runtime.
 # The default is `session` (SDK runtime + its own bundled claude), which
 # ignores PATH and dead-ends on "Not logged in". This box also EXPORTS
-# PADDOCK_KEEPER_DRIVE_MODE=session, so pin it explicitly.
-export PADDOCK_KEEPER_DRIVE_MODE=batch
+# PADDOCK_DRIVE_MODE=session, so pin it explicitly.
+export PADDOCK_DRIVE_MODE=batch
 
 # SCRUB INHERITED CREDENTIALS AND BRANDING. `pm` copies the whole host env and
 # deletes only five data-path vars — see the comment in scripts/pm, which says
@@ -317,7 +317,7 @@ tr '\0' '\n' < /proc/<pid>/environ | grep PADDOCK_DATA_DIR
 
 ### Seed data
 
-**Disable curation before you seed, not after.** The rig runs a real keeper, so
+**Disable curation before you seed, not after.** The rig runs a real agent, so
 a completed turn enqueues a sweep — and the sweeper replaces `OVERVIEW.md` and
 `CHANGELOG.md` wholesale. With a fake `claude` behind it, that means your
 carefully written demo `OVERVIEW.md` gets overwritten with a generic stub

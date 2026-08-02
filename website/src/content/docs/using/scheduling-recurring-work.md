@@ -10,7 +10,7 @@ is; this one walks through *how* to create one, self-schedule from a chat, and
 catch up on what ran while you weren't watching.
 
 By the end you'll know how to add a schedule from the **Triggers tab**, tune what
-it does, let a keeper **schedule itself**, and read the **History** view to see
+it does, let Claude **schedule itself**, and read the **History** view to see
 everything that fired unattended.
 
 ## Add a schedule from the Triggers tab
@@ -38,8 +38,8 @@ Fill in:
   instruction from a git-tracked `.md` file under `.paddock/triggers/` instead
   (handy for long, evolving prompts).
 - **Tools** — the firing's capability. Leave everything unchecked for a schedule
-  that runs as the **keeper** with its full toolset; check specific tools to run
-  it on its own **scoped agent** with *only* those tools.
+  that runs as the project's own agent with its full toolset; check specific
+  tools to run it on its own **scoped agent** with *only* those tools.
 - **Accrete into one session** — off (the default) starts a **fresh chat** each
   firing; on **resumes one owned session** so a "manager" builds up context.
 - **Enabled** — whether it's armed.
@@ -60,10 +60,10 @@ schedule that just reads and summarises needs no write or execute tools at all.
 
 ## Schedule from a chat (the manager-agent pattern)
 
-You don't have to open the Triggers tab yourself — on deployments that opt in, a
-keeper can **schedule itself** straight from a conversation. Ask it in plain
-language ("schedule yourself to triage new issues every morning at 9"), and it
-uses Paddock's schedule-management MCP tools to write the trigger:
+You don't have to open the Triggers tab yourself — on deployments that opt in,
+Claude can **schedule itself** straight from a chat. Ask in plain language
+("schedule yourself to triage new issues every morning at 9"), and it uses
+Paddock's schedule-management MCP tools to write the trigger:
 
 - **`set_trigger`** — create or update a trigger. For a schedule, pass
   `type: "schedule"` with either `cron` or `interval`, a `prompt` (or
@@ -71,16 +71,16 @@ uses Paddock's schedule-management MCP tools to write the trigger:
 - **`list_triggers`** — see what's already declared.
 - **`remove_trigger`** — delete one.
 
-This is the *manager-agent* pattern: a keeper you can talk to about its own
-routine, that then keeps that routine running without you. See the
+This is the *manager-agent* pattern: a chat you can talk to about its own routine,
+which then keeps that routine running without you. See the
 [Schedules reference](/reference/schedules/#self-mcp-tools) for the exact tool
 parameters.
 
 :::caution[Self-scheduling is opt-in per deployment]
 The schedule-management MCP tools are only injected when the operator has enabled
 them — they ride on Paddock's self-MCP **write** layer, so it takes
-`PADDOCK_SELF_MCP` + `PADDOCK_SELF_MCP_WRITE` **and** `PADDOCK_HOOKS_MCP`. If your
-keeper says it can't schedule things, one of those is off — see
+`PADDOCK_SELF_MCP` + `PADDOCK_SELF_MCP_WRITE` **and** `PADDOCK_HOOKS_MCP`. If
+Claude says it can't schedule things, one of those is off — see
 [Scheduling configuration](/configuration/schedules/#self-scheduling-from-a-chat).
 :::
 
@@ -105,13 +105,13 @@ details:
   own back-catalogue.
 - **A "while you were away" banner** counts the unattended runs that arrived since
   your last visit, and a dot marks each new row. Opening the tab clears the badge.
-- **Click a run** to jump straight into its chat and read what the keeper did.
+- **Click a run** to jump straight into its chat and read what Claude did.
 
 :::note[What shows up here]
-The History view is built from the keeper's **batch run records** — one is written
-per turn that runs through Paddock's batch execution path. A turn that runs under a
-**session-mode** keeper doesn't write a run record, so on a session-mode deployment
-some (or all) scheduled runs won't appear in this list even though they fired; the
+The History view is built from **batch run records** — one is written per turn
+that runs through Paddock's batch execution path. A **session-mode** turn doesn't
+write a run record, so on a session-mode deployment some (or all) scheduled runs
+won't appear in this list even though they fired; the
 scheduled chats themselves still show up in the chat list with their ⏰ badge.
 Where run records exist, History is the fastest way to answer "what fired
 overnight?" at a glance, then drill into any chat that needs your attention.

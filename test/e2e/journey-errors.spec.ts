@@ -26,13 +26,16 @@ test("empty grid shows the 'Create your first project' CTA", async ({ page }) =>
     await route.fulfill({ json: { chats: [] } });
   });
 
-  // The grid is the first section of root Home at `/` — the empty state lives
-  // with the grid, so that is where it renders.
-  await page.goto("/");
+  // The grid is its own page at `/projects` (#599 took it off root Home) — the
+  // empty state lives with the grid, so that is where it renders.
+  await page.goto("/projects");
   await expect(page.getByRole("heading", { name: /Create your first project/i })).toBeVisible();
-  // The CTA offers both "New Project" and "Just chat once".
-  await expect(page.getByRole("button", { name: /New Project/i }).last()).toBeVisible();
-  await expect(page.getByRole("button", { name: /Just chat once/i })).toBeVisible();
+  // The CTA offers both "New Project" and "Just chat once". Scoped to <main>:
+  // the sidebar's Projects header carries a "New Project" `+` of its own now, so
+  // an unscoped match would no longer prove the EMPTY STATE rendered one.
+  const empty = page.getByRole("main");
+  await expect(empty.getByRole("button", { name: /New Project/i }).last()).toBeVisible();
+  await expect(empty.getByRole("button", { name: /Just chat once/i })).toBeVisible();
 });
 
 test("a project with no chats shows the 'No saved chats yet' hint", async ({ page }) => {
@@ -82,7 +85,7 @@ test("WS drop + reconnect: the dot leaves 'connected' on a drop, then auto-recon
 
   // And the chat works over the reconnected socket.
   await page.goto(`/projects/${slug}/chat`);
-  const composer = page.getByPlaceholder(/Message the keeper agent/i);
+  const composer = page.getByPlaceholder(/Message Claude/i);
   await composer.fill("after reconnect");
   await page.getByRole("button", { name: /^Send$/ }).click();
   await expect(page.getByText(/Acknowledged: after reconnect/).first()).toBeVisible({

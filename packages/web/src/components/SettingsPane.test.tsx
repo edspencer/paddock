@@ -149,7 +149,7 @@ describe("SettingsPane", () => {
     fireEvent.change(screen.getByLabelText("Model"), { target: { value: "claude-sonnet-5" } });
     fireEvent.change(screen.getByLabelText("Permission mode"), { target: { value: "plan" } });
     fireEvent.change(screen.getByLabelText("Max turns"), { target: { value: "50" } });
-    fireEvent.click(screen.getByLabelText(/Run the keeper in a Docker sandbox/i));
+    fireEvent.click(screen.getByLabelText(/Run Claude in a Docker sandbox/i));
 
     fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
 

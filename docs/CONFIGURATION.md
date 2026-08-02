@@ -66,7 +66,7 @@ Consequences worth knowing:
 - **Blank is unset.** A whitespace-only value (`PADDOCK_X=""`) yields the default,
   not an empty string.
 - **Booleans** accept `1` / `true` / `yes` (case-insensitive) as true — *except*
-  `PADDOCK_KEEPER_NATIVE_PROMPT`, which is on by default and only `0` / `false` /
+  `PADDOCK_NATIVE_PROMPT`, which is on by default and only `0` / `false` /
   `no` turns it off.
 - **Unknown enum values fall back to the default** rather than failing startup
   (e.g. an unrecognised `PADDOCK_AUTH_MODE` becomes `none`).
@@ -81,7 +81,7 @@ Consequences worth knowing:
 |----------|---------|----------|---------|
 | `PADDOCK_CONFIG` | `<data>/paddock.config.yaml` | no | Path to the optional [YAML instance-config file](#instance-config-file-yaml) (base layer; env overrides it). When set explicitly, a missing file fails startup; unset, an absent default file is a no-op. |
 | `PADDOCK_DATA_DIR` | `./data` | no | Data root. **All paths below default to subdirectories of this** — set it and everything cascades. Holds projects, generated herdctl config, and state. |
-| `PADDOCK_PROJECTS_DIR` | `<data>/projects` | no | Root that contains per-project directories (each is a keeper's working dir). |
+| `PADDOCK_PROJECTS_DIR` | `<data>/projects` | no | Root that contains per-project directories (each is an agent's working dir). |
 | `PADDOCK_SCRATCH_DIR` | `<data>/scratch` | no | **Legacy.** Where one-off ("scratch") chats lived before #516 Phase 6 retired them. No agent runs here and nothing reads it any more; the setting survives so an existing env/config file doesn't fail validation, and so any old transcripts stay findable by hand at `<scratchDir>/.chats`. They are **not** migrated and no longer listed. |
 | `PADDOCK_STATE_DIR` | `<data>/.herdctl` | no | herdctl state directory. |
 | `PADDOCK_HERDCTL_CONFIG` | `<data>/herdctl.yaml` | no | Path to the generated `herdctl.yaml` the FleetManager loads (Paddock owns/regenerates it). |
@@ -120,15 +120,15 @@ for modes, provider examples, and secret handling — this table is only the kno
 ## Management API (`/mcp`, external callers)
 
 The Management API lets a caller **outside** this instance — a laptop Claude Code
-session, or a peer Paddock — drive the same operations a keeper reaches through
+session, or a peer Paddock — drive the same operations Claude reaches through
 its in-process `paddock_manage` tools. It is **file-first** configuration, because
 a client list doesn't express well as a scalar — the one exception is
 `trustedProxies`, which also reads `PADDOCK_MANAGEMENT_TRUSTED_PROXIES` (a flat
 list, and the thing a container deployment most often needs to set per-environment).
 
 > **Any write scope is effectively remote code execution on this host.**
-> `create_chat`, `send_message`, `fork_chat*` and `run_trigger` start keeper
-> turns, and a keeper runs with `Bash`. Read-only is the default for a reason;
+> `create_chat`, `send_message`, `fork_chat*` and `run_trigger` start real
+> turns, and Claude runs with `Bash`. Read-only is the default for a reason;
 > grant writes only to a client whose token you treat as a production secret.
 
 Three properties are worth stating plainly:
@@ -289,23 +289,23 @@ HushPod's whisper config so both can share a backend. See [DEV.md](../DEV.md#voi
 | `PADDOCK_WHISPER_LANGUAGE` | — | no | Optional spoken-language hint (e.g. `en`); unset ⇒ auto-detect. |
 | `PADDOCK_WHISPER_MAX_UPLOAD_BYTES` | `26214400` (25 MiB) | no | Max accepted dictation upload size. |
 
-## Keeper / agents
+## Agents
 
 | Variable | Default | Required | Purpose |
 |----------|---------|----------|---------|
-| `PADDOCK_KEEPER_DRIVE_MODE` | `session` | no | Box-wide default for how keeper turns are driven. `session` (the default, #316) runs the persistent `openChatSession` path, enabling cross-turn autonomy (`ScheduleWakeup` / `/loop`) and SDK streaming; set `batch` for the legacy one-shot `trigger()` path. A per-project `driveMode` overrides this at dispatch. Unknown → default. |
+| `PADDOCK_DRIVE_MODE` | `session` | no | Box-wide default for how turns are driven. `session` (the default, #316) runs the persistent `openChatSession` path, enabling cross-turn autonomy (`ScheduleWakeup` / `/loop`) and SDK streaming; set `batch` for the legacy one-shot `trigger()` path. A per-project `driveMode` overrides this at dispatch. Unknown → default. |
 | `PADDOCK_MODELS` | *(all)* | no | Comma-separated allow-list of which built-in catalog models the picker offers (e.g. `claude-opus-5,claude-sonnet-5`). Unset ⇒ every catalog model is offered. Unknown ids are dropped; if nothing valid remains the full catalog is offered (never zero). The catalog stays the source of each model's label/context-limit/pricing — this only narrows what's offered. Also settable as a YAML `models:` array, and a per-project `models` override may further subset it. |
-| `PADDOCK_KEEPER_NATIVE_PROMPT` | `true` | no | Keeper agents use the native Claude Code system prompt + `CLAUDE.md` hierarchy. Set `0`/`false`/`no` for the terse Paddock "replace" prompt (e.g. an instance with no `CLAUDE.md`). |
-| `PADDOCK_SELF_MCP` | `false` | no | Give keepers the read-only self-management MCP (`mcp__paddock_manage__*`: enumerate projects/chats, read another chat's transcript). |
-| `PADDOCK_SELF_MCP_WRITE` | `false` | no | Additionally give keepers the self-management **write** tools (`create_chat`, `fork_chat`, `send_message`, `fork_chat_batch`). Only honored when `PADDOCK_SELF_MCP` is also on (write implies read). |
-| `PADDOCK_SELF_MCP_PROJECTS` | `false` | no | Additionally give keepers the self-management **project** tool (`create_project`) — provisioning a whole new project, cloning a repo when repo-backed. Gated separately from the other write tools because it creates instance-level state and clones a caller-supplied git URL. Only honored when `PADDOCK_SELF_MCP` and `PADDOCK_SELF_MCP_WRITE` are also on. |
-| `PADDOCK_BROWSER_MCP` | *(off)* | no | When `=1`, inject a headless-Chromium Playwright MCP into keepers (browse/screenshot). |
+| `PADDOCK_NATIVE_PROMPT` | `true` | no | Agents use the native Claude Code system prompt + `CLAUDE.md` hierarchy. Set `0`/`false`/`no` for the terse Paddock "replace" prompt (e.g. an instance with no `CLAUDE.md`). |
+| `PADDOCK_SELF_MCP` | `false` | no | Give Claude the read-only self-management MCP (`mcp__paddock_manage__*`: enumerate projects/chats, read another chat's transcript). |
+| `PADDOCK_SELF_MCP_WRITE` | `false` | no | Additionally give Claude the self-management **write** tools (`create_chat`, `fork_chat`, `send_message`, `fork_chat_batch`). Only honored when `PADDOCK_SELF_MCP` is also on (write implies read). |
+| `PADDOCK_SELF_MCP_PROJECTS` | `false` | no | Additionally give Claude the self-management **project** tool (`create_project`) — provisioning a whole new project, cloning a repo when repo-backed. Gated separately from the other write tools because it creates instance-level state and clones a caller-supplied git URL. Only honored when `PADDOCK_SELF_MCP` and `PADDOCK_SELF_MCP_WRITE` are also on. |
+| `PADDOCK_BROWSER_MCP` | *(off)* | no | When `=1`, inject a headless-Chromium Playwright MCP into the agent (browse/screenshot). |
 
 ## Git / GitHub
 
 > **Preview servers (`pm`).** Running long-lived dev/preview servers is a
 > capability of the **devbox image** (which ships the `pm` PM2 wrapper), advertised
-> to keepers by an instance-wide `CLAUDE.md` on the mounted data volume — not a
+> to Claude by an instance-wide `CLAUDE.md` on the mounted data volume — not a
 > Paddock config flag. There is no `PADDOCK_DEV_SERVERS_*` variable.
 
 | Variable | Default | Required | Purpose |
@@ -324,13 +324,15 @@ HushPod's whisper config so both can share a backend. See [DEV.md](../DEV.md#voi
 
 | Variable | Default | Required | Purpose |
 |----------|---------|----------|---------|
-| `CLAUDE_CODE_OAUTH_TOKEN` | — | conditional | Claude **Max** auth for the CLI runtime (the default). Read from the server's environment and passed through to the spawned `claude` CLI; never written to config. Provide this **or** `ANTHROPIC_API_KEY`. |
-| `ANTHROPIC_API_KEY` | — | conditional | Claude auth for the **SDK** runtime (API pricing). Alternative to `CLAUDE_CODE_OAUTH_TOKEN`. |
+| `CLAUDE_CODE_OAUTH_TOKEN` | — | conditional | Claude **Max plan** auth. Read from the server's environment and passed through to the `claude` process the runtime spawns; never written to config. Provide this **or** `ANTHROPIC_API_KEY`. |
+| `ANTHROPIC_API_KEY` | — | conditional | Claude **API-key** auth (API pricing). Alternative to `CLAUDE_CODE_OAUTH_TOKEN`. |
 | `LOG_LEVEL` | `info` | no | Fastify/pino log level (`fatal`…`trace`). |
 
-> Claude credentials are consumed by the runtime (the `claude` CLI subprocess or
-> the SDK), not read directly by Paddock server code — but the server process must
-> have one in its environment for keeper turns to run.
+> Which auth you use is **independent of the runtime** — either credential works
+> on both the SDK runtime (chats) and the CLI runtime (the sweeper, triggers,
+> `driveMode: batch`). Credentials are consumed by the runtime, not read directly
+> by Paddock server code — but the server process must have one in its environment
+> for turns to run.
 
 ## Web build / dev-proxy variables
 

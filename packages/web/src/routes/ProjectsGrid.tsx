@@ -32,19 +32,13 @@ import { gridUrl } from "./ProjectView/urls";
  *    that domain tag, with a clearable filter chip. (No area sections here —
  *    the filter already narrows the set.)
  *
- * `embedded` is the layout seam, not a third mode: it renders this list as the
- * first SECTION of the root workspace's Home pane, which already supplies the
- * page chrome (workspace header + tab bar) and, crucially, already owns the
- * scrolling. Embedded therefore contributes no scroll container and no height of
- * its own — it is ordinary flow content — and swaps the standalone `<h1>`/blurb
- * for a section heading in Home's own visual language. The actions survive both
- * ways, which matters more than it used to: this is now the ONLY New Project
- * button in the app. `/tags/:tag` is still a standalone page, unchanged.
+ * There used to be a third, `embedded` mode that rendered this list as the first
+ * section of the root workspace's Home. #599 replaced that section with Home's
+ * running/unread feeds, so the mode is gone and the New Project button it hosted
+ * moved to the sidebar's Projects header — which is now the app's canonical
+ * entry point for creating a project.
  */
-export function ProjectsGrid({
-  filterTag,
-  embedded = false,
-}: { filterTag?: string; embedded?: boolean } = {}) {
+export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
   const { projects: allProjects, loading, error, upsert, remove } = useProjects();
   const [modalOpen, setModalOpen] = useState(false);
   const [deleting, setDeleting] = useState<Project | null>(null);
@@ -105,68 +99,39 @@ export function ProjectsGrid({
     !loading && !error && !filterTag && allProjects.length === 0;
 
   return (
-    <div className={embedded ? undefined : "h-full overflow-y-auto"}>
-      {/* Embedded, the host pane owns the scrolling, the measure AND the
-          gutters, so this contributes none of them — otherwise the section
-          would be centred on a different axis to the rest of Home and read as
-          bolted on top of the page rather than part of it. */}
-      <div className={embedded ? undefined : "mx-auto max-w-6xl px-3 py-5 sm:px-8 sm:py-10"}>
-        <header
-          className={`flex flex-wrap items-end justify-between gap-4 ${embedded ? "mb-2" : "mb-8"}`}
-        >
-          {/* Embedded, the workspace header above is already saying where you
-              are, so the standalone `<h1>` + blurb would just be "Projects"
-              twice on one screen. It becomes a section heading matching Home's
-              other sections (Chats / Files / CHANGELOG.md) instead. */}
-          {embedded && (
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-paddock-500">
-              Projects
-              {projects.length > 0 && (
-                <span className="ml-1.5 text-paddock-400">{projects.length}</span>
-              )}
-            </h2>
-          )}
-          {!embedded && (
-            <div>
-              <h1 className="text-[28px] font-semibold tracking-tight">
-                {filterTag ? (
-                  <>
-                    Projects tagged <span className="text-accent">{filterTag}</span>
-                  </>
-                ) : (
-                  "Projects"
-                )}
-              </h1>
+    <div className="h-full overflow-y-auto">
+      <div className="mx-auto max-w-6xl px-3 py-5 sm:px-8 sm:py-10">
+        <header className="mb-8 flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <h1 className="text-[28px] font-semibold tracking-tight">
               {filterTag ? (
-                <p className="mt-1.5 max-w-xl text-sm text-paddock-500">
-                  {!loading &&
-                    `${projects.length} ${projects.length === 1 ? "project" : "projects"} tagged “${filterTag}”.`}{" "}
-                  <Link to={grid} className="text-accent underline-offset-2 hover:underline">
-                    View all projects
-                  </Link>
-                </p>
+                <>
+                  Projects tagged <span className="text-accent">{filterTag}</span>
+                </>
               ) : (
-                <p className="mt-1.5 max-w-xl text-sm text-paddock-500">
-                  Each project is a directory with its own keeper agent and persistent,
-                  resumable Claude Code sessions — your work, organized and always running.
-                </p>
+                "Projects"
               )}
-            </div>
-          )}
-          {/* `ml-auto` keeps the actions right-aligned whichever heading the row
-              carries — and when it carries none at all. */}
-          <div className="ml-auto flex items-center gap-2">
-            {/* Standalone only. Embedded, this sits on root Home, whose Chats
-                section already has a "New chat" button pointing at the very same
-                `/chat` — two identical buttons on one screen. Home's is the one
-                that keeps its meaning ("start a chat in THIS workspace"), so
-                this copy stands down. */}
-            {!embedded && (
-              <button className="btn-ghost" onClick={() => navigate("/chat")}>
-                <ChatIcon width={16} height={16} />
-                New chat
-              </button>
+            </h1>
+            {filterTag ? (
+              <p className="mt-1.5 max-w-xl text-sm text-paddock-500">
+                {!loading &&
+                  `${projects.length} ${projects.length === 1 ? "project" : "projects"} tagged “${filterTag}”.`}{" "}
+                <Link to={grid} className="text-accent underline-offset-2 hover:underline">
+                  View all projects
+                </Link>
+              </p>
+            ) : (
+              <p className="mt-1.5 max-w-xl text-sm text-paddock-500">
+                Each project is a directory with persistent, resumable Claude Code
+                sessions — your work, organized and always running.
+              </p>
             )}
+          </div>
+          <div className="ml-auto flex items-center gap-2">
+            <button className="btn-ghost" onClick={() => navigate("/chat")}>
+              <ChatIcon width={16} height={16} />
+              New chat
+            </button>
             <button className="btn-primary" onClick={() => setModalOpen(true)}>
               <PlusIcon width={16} height={16} />
               New Project
@@ -478,8 +443,8 @@ function EmptyState({ onCreate, onChat }: { onCreate: () => void; onChat: () => 
       </div>
       <h2 className="text-lg font-semibold">Create your first project</h2>
       <p className="mx-auto mt-2 max-w-sm text-sm text-paddock-500">
-        A project gives your work a home — a directory, a dedicated keeper agent, and
-        chat sessions that persist and resume. Start one, then chat your way through it.
+        A project gives your work a home — a directory and chat sessions that persist
+        and resume. Start one, then chat your way through it.
       </p>
       <div className="mt-6 flex items-center justify-center gap-2">
         <button className="btn-primary" onClick={onCreate}>

@@ -73,6 +73,8 @@ function resetChatClient() {
     awaitingPong: boolean;
     lastPongAt: number;
     subs: Map<symbol, unknown>;
+    activeListeners: Set<unknown>;
+    activeInfoListeners: Set<unknown>;
     outbox: string[];
     reconnectAttempts: number;
     _state: string;
@@ -104,6 +106,11 @@ function resetChatClient() {
   c.awaitingPong = false;
   c.lastPongAt = 0;
   c.subs.clear();
+  // Active-set watchers are a reason to HAVE a socket now (#573), so a leaked
+  // one from a previous test would keep the singleton reconnecting under the
+  // next test's feet.
+  c.activeListeners.clear();
+  c.activeInfoListeners.clear();
   c.outbox = [];
   c.reconnectAttempts = 0;
   c._state = "closed";
@@ -622,5 +629,94 @@ describe("ws: active-turn signal (issues #52/#53)", () => {
     expect(seen.at(-1)).toEqual(["sess-2"]);
     off();
     sub.unsubscribe();
+  });
+});
+
+/**
+ * Watching the running set is, by itself, a reason to have a socket (#573).
+ *
+ * `connect()` used to be reachable only from `subscribe()`, and `ensureLive()`
+ * gated on `subs.size` alone — so landing on a screen that mounts NO chat pane
+ * (Home's running list, the sidebar's in-flight badges) opened no socket at all,
+ * received no `chat:active` broadcasts, and sat permanently empty. The failure
+ * was silent, because "nothing running" and "not listening" render identically.
+ */
+describe("ws: an active-set watcher wants the socket (#573)", () => {
+  const subscribes = (ws: FakeWebSocket) =>
+    ws.sent.map((s) => JSON.parse(s)).filter((m) => m.type === "chat:subscribe");
+
+  it("onActiveSessions opens a socket with NO chat subscription", () => {
+    const off = chatClient.onActiveSessions(() => {});
+    // THE REGRESSION: before the fix there was no socket here at all.
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    expect(last().url).toMatch(/\/ws$/);
+    last().open();
+    // …and it stays a bare socket: no chat was mounted, so nothing may be
+    // subscribed on its behalf.
+    expect(subscribes(last())).toHaveLength(0);
+    off();
+  });
+
+  it("onActiveInfos opens a socket with NO chat subscription", () => {
+    const off = chatClient.onActiveInfos(() => {});
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    last().open();
+    expect(subscribes(last())).toHaveLength(0);
+    off();
+  });
+
+  it("applies chat:active frames with no pane mounted anywhere", () => {
+    // The server replays its whole running snapshot on connect, so this is what
+    // makes Home correct on a first paint that opens no chat.
+    const seen: string[][] = [];
+    const off = chatClient.onActiveSessions((s) => seen.push([...s].sort()));
+    last().open();
+    last().emit({
+      type: "chat:active",
+      payload: { projectSlug: "p", sessionId: "sess-1", jobId: "j1", running: true },
+    } as unknown as ServerWsMessage);
+    last().emit({
+      type: "chat:active",
+      payload: { projectSlug: "", sessionId: "root-1", jobId: "j2", running: true },
+    } as unknown as ServerWsMessage);
+    expect(seen.at(-1)).toEqual(["root-1", "sess-1"]);
+    off();
+  });
+
+  it("carries each running chat's workspace key, the root's `\"\"` included", () => {
+    // `onActiveInfos` feeds the per-workspace in-flight badges, which key on the
+    // slug — and the root's is the empty string, a real key.
+    const seen: [string, string][][] = [];
+    const off = chatClient.onActiveInfos((m) => seen.push([...m].sort()));
+    last().open();
+    last().emit({
+      type: "chat:active",
+      payload: { projectSlug: "", sessionId: "root-1", jobId: "j1", running: true },
+    } as unknown as ServerWsMessage);
+    expect(seen.at(-1)).toEqual([["root-1", ""]]);
+    off();
+  });
+
+  it("revives a dropped socket for a watcher with no chat subscribed", () => {
+    // `ensureLive` gated on `subs.size` too, so an active-only listener's socket
+    // would drop and never come back.
+    const off = chatClient.onActiveSessions(() => {});
+    last().open();
+    last().close();
+    const before = FakeWebSocket.instances.length;
+
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+
+    expect(FakeWebSocket.instances.length).toBeGreaterThan(before);
+    off();
+  });
+
+  it("leaves the socket alone when nothing is listening at all", () => {
+    // The other half of `wantsSocket()`: no subs and no watchers means no
+    // reconnect churn on a page that doesn't need one.
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(FakeWebSocket.instances).toHaveLength(0);
   });
 });

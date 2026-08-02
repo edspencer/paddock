@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Paddock HTTP API",
-    "description": "HTTP API for Paddock — the keeper-agent platform (persistent chats, projects, unified triggers).\n\nThis document is **generated from the server's route schemas** via `@fastify/swagger`, so it\ntracks the code: a new or changed route with a schema shows up here automatically.\n\n**Live chat is WebSocket, not REST.** Sending a message, streaming the response, tool-call\nevents, cancel, slash-commands and the live queue all flow over `GET /ws`. This spec covers the\nHTTP surface: reads, project/chat/trigger/git management, instance config, and attachment\nupload/serve. The two-step attachment flow is: `POST .../chats/:sessionId/upload` (HTTP, here)\nthen reference the returned file ids in the `chat:send` WebSocket frame.\n\n## Authentication\n\nPaddock has no built-in login — authentication is provider-agnostic and handled at the edge (reverse proxy / IdP). **When these docs are served by the Paddock instance itself, behind your proxy, a `Try it out` request is a same-origin call that inherits your existing SSO session — it authenticates automatically, nothing to paste here.** Use the **Authorize** button only for the explicit-token path (a different origin, a programmatic client, or testing without the proxy).\n\nThis instance runs **jwt** mode: a signed token in the `Authorization` header, verified against the JWKS.",
-    "version": "0.53.0"
+    "description": "HTTP API for Paddock — the Claude Code workspace platform (persistent chats, projects, unified triggers).\n\nThis document is **generated from the server's route schemas** via `@fastify/swagger`, so it\ntracks the code: a new or changed route with a schema shows up here automatically.\n\n**Live chat is WebSocket, not REST.** Sending a message, streaming the response, tool-call\nevents, cancel, slash-commands and the live queue all flow over `GET /ws`. This spec covers the\nHTTP surface: reads, project/chat/trigger/git management, instance config, and attachment\nupload/serve. The two-step attachment flow is: `POST .../chats/:sessionId/upload` (HTTP, here)\nthen reference the returned file ids in the `chat:send` WebSocket frame.\n\n## Authentication\n\nPaddock has no built-in login — authentication is provider-agnostic and handled at the edge (reverse proxy / IdP). **When these docs are served by the Paddock instance itself, behind your proxy, a `Try it out` request is a same-origin call that inherits your existing SSO session — it authenticates automatically, nothing to paste here.** Use the **Authorize** button only for the explicit-token path (a different origin, a programmatic client, or testing without the proxy).\n\nThis instance runs **jwt** mode: a signed token in the `Authorization` header, verified against the JWKS.",
+    "version": "0.54.2"
   },
   "components": {
     "securitySchemes": {
@@ -177,7 +177,7 @@
         "tags": [
           "System"
         ],
-        "description": "Returns the models this instance offers (the built-in catalog filtered to the `PADDOCK_MODELS` / YAML `models:` allow-list; unset ⇒ the whole catalog) plus the keeper default and the box-wide defaults (drive mode, max spawn depth, recovery, attachments, curation) that projects fall back to when their own overrides are unset. `keeperDefault` is the effective default for the offered list. Returns a JSON object with `models`, `keeperDefault`, `keeperDriveModeDefault`, `maxSpawnDepthDefault`, `recoveryDefault`, `attachmentsDefault`, and `curationDefault`.",
+        "description": "Returns the models this instance offers (the built-in catalog filtered to the `PADDOCK_MODELS` / YAML `models:` allow-list; unset ⇒ the whole catalog) plus the default model and the box-wide defaults (drive mode, max spawn depth, recovery, attachments, curation) that projects fall back to when their own overrides are unset. `defaultModel` is the effective default for the offered list. Returns a JSON object with `models`, `defaultModel`, `driveModeDefault`, `maxSpawnDepthDefault`, `recoveryDefault`, `attachmentsDefault`, and `curationDefault`.",
         "responses": {
           "200": {
             "description": "Model list and inherited defaults.",
@@ -426,7 +426,7 @@
         "tags": [
           "Projects"
         ],
-        "description": "Creates a project from `CreateProjectInput` and registers its keeper/sweeper agents. Set `repo` to create a repo-backed project (cloned checkout as the keeper cwd); omit it for a notebook project. Responds 201 with `{ project }`.",
+        "description": "Creates a project from `CreateProjectInput` and registers its agent and its sweeper. Set `repo` to create a repo-backed project (the cloned checkout becomes the agent's working directory); omit it for a notebook project. Responds 201 with `{ project }`.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -492,7 +492,7 @@
         "tags": [
           "Projects"
         ],
-        "description": "Returns `{ project, changelog, chats }` — the project metadata, its raw CHANGELOG.md text, and its chats (sessions) enriched with archived/starred/last-seen/provenance/trigger flags. Per-chat usage rings are filled separately by the client.",
+        "description": "Returns `{ project, changelog, overview, chats }` — the project metadata, its raw CHANGELOG.md and OVERVIEW.md text (empty strings when absent), and its chats (sessions) enriched with archived/starred/last-seen/provenance/trigger flags. Per-chat usage rings are filled separately by the client.",
         "parameters": [
           {
             "schema": {
@@ -506,11 +506,11 @@
         ],
         "responses": {
           "200": {
-            "description": "Object with `project`, `changelog` text, and a `chats` array.",
+            "description": "Object with `project`, `changelog` text, `overview` text, and a `chats` array.",
             "content": {
               "application/json": {
                 "schema": {
-                  "description": "Object with `project`, `changelog` text, and a `chats` array.",
+                  "description": "Object with `project`, `changelog` text, `overview` text, and a `chats` array.",
                   "type": "object",
                   "additionalProperties": true
                 }
@@ -524,7 +524,7 @@
         "tags": [
           "Projects"
         ],
-        "description": "Applies an `UpdateProjectInput` partial and re-registers the keeper. Keeper overrides (`model`, `permissionMode`, `maxTurns`, `docker`, `driveMode`, `maxSpawnDepth`, `hooksMcpEnabled`) are validated at runtime — an invalid value returns 400. Tri-state override fields accept `null` to clear the override. Responds with `{ project }`.",
+        "description": "Applies an `UpdateProjectInput` partial and re-registers the project's agent. Agent overrides (`model`, `permissionMode`, `maxTurns`, `docker`, `driveMode`, `maxSpawnDepth`, `hooksMcpEnabled`) are validated at runtime — an invalid value returns 400. Tri-state override fields accept `null` to clear the override. Responds with `{ project }`.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -557,19 +557,19 @@
                     "description": "Related links."
                   },
                   "model": {
-                    "description": "Keeper model override (validated at runtime)."
+                    "description": "Agent model override (validated at runtime)."
                   },
                   "permissionMode": {
-                    "description": "Keeper permission mode override (validated at runtime)."
+                    "description": "Agent permission mode override (validated at runtime)."
                   },
                   "maxTurns": {
-                    "description": "Keeper max-turns override (validated at runtime)."
+                    "description": "Agent max-turns override (validated at runtime)."
                   },
                   "docker": {
-                    "description": "Whether the keeper runs in Docker."
+                    "description": "Whether the agent runs in Docker."
                   },
                   "driveMode": {
-                    "description": "Keeper drive-mode override; `null` clears it."
+                    "description": "Drive-mode override; `null` clears it."
                   },
                   "maxSpawnDepth": {
                     "description": "Max spawn-depth override; `null` clears it."
@@ -578,7 +578,7 @@
                     "description": "Hook-management MCP override; `null` clears it."
                   },
                   "recovery": {
-                    "description": "Keeper-chat recovery override object; `null` clears it."
+                    "description": "Chat-recovery override object; `null` clears it."
                   },
                   "attachments": {
                     "description": "Inbound-attachment override object; `null` clears it."
@@ -623,7 +623,7 @@
         "tags": [
           "Projects"
         ],
-        "description": "Removes the project directory and unregisters its keeper + sweeper agents (the inverse of create). Responds with `{ ok: true, slug }`.",
+        "description": "Removes the project directory and unregisters its agent and its sweeper (the inverse of create). Responds with `{ ok: true, slug }`.",
         "parameters": [
           {
             "schema": {
@@ -657,7 +657,7 @@
         "tags": [
           "Projects"
         ],
-        "description": "Clones `repo` into the project's nested checkout, flips the keeper cwd to it, and re-registers the keeper (keeping existing chats + metadata). A missing/blank `repo` returns 400; clone failure rolls back to the intact notebook. Responds with `{ project }`.",
+        "description": "Clones `repo` into the project's nested checkout, flips the agent's working directory to it, and re-registers the agent (keeping existing chats + metadata). A missing/blank `repo` returns 400; clone failure rolls back to the intact notebook. Responds with `{ project }`.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -799,11 +799,11 @@
     },
     "/api/root/commands": {
       "get": {
-        "summary": "List a project's keeper slash commands",
+        "summary": "List a project's slash commands",
         "tags": [
           "Projects"
         ],
-        "description": "Returns `{ commands }` — the slash commands available to the project's keeper agent (built-ins plus the project's `.claude/commands` and MCP-provided commands) for composer autocomplete. Result is memoized per agent.",
+        "description": "Returns `{ commands }` — the slash commands available to the project's agent (built-ins plus the project's `.claude/commands` and MCP-provided commands) for composer autocomplete. Result is memoized per agent.",
         "parameters": [
           {
             "schema": {
@@ -1027,6 +1027,40 @@
               "application/json": {
                 "schema": {
                   "description": "Object `{ projectSlug, sessionId, ws, note }` giving the WS target `/ws`.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/root/chats/attention": {
+      "get": {
+        "summary": "List the chats in this workspace's subtree that are running or unread",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Returns `{ running, unread }` — the chats in this workspace AND its descendants that currently have a live turn (`running`) or hold an unread reply (`unread`). Each row is a chat DTO plus the `projectSlug`/`projectName` it belongs to, so a fleet-wide list stays attributable. On the root mount (`/api/root/chats/attention`) the subtree is the whole instance, because the root workspace's key (`\"\"`) prefixes every workspace key; on a project mount it is that project alone. A chat is never in both lists: a live turn hasn't landed a reply yet, so running wins.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ running, unread }`, each an array of chat DTOs enriched with `projectSlug` and `projectName`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ running, unread }`, each an array of chat DTOs enriched with `projectSlug` and `projectName`.",
                   "type": "object",
                   "additionalProperties": true
                 }
@@ -2039,7 +2073,7 @@
         "tags": [
           "Chats"
         ],
-        "description": "Promotes a chat into a NEW project: creates the project + keeper, then re-homes the chat's transcript into it so it lists and resumes under the new project. `name` is required (validated at runtime; a missing/blank name returns 400). Responds 201 with `{ project, promoted, sessionId }` — `promoted:false` means the project was created but the transcript couldn't be moved (e.g. an unknown session id); the project is still usable.",
+        "description": "Promotes a chat into a NEW project: creates the project + its agent, then re-homes the chat's transcript into it so it lists and resumes under the new project. `name` is required (validated at runtime; a missing/blank name returns 400). Responds 201 with `{ project, promoted, sessionId }` — `promoted:false` means the project was created but the transcript couldn't be moved (e.g. an unknown session id); the project is still usable.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -2539,7 +2573,7 @@
         "tags": [
           "Projects"
         ],
-        "description": "Returns `{ project, changelog, chats }` — the project metadata, its raw CHANGELOG.md text, and its chats (sessions) enriched with archived/starred/last-seen/provenance/trigger flags. Per-chat usage rings are filled separately by the client.",
+        "description": "Returns `{ project, changelog, overview, chats }` — the project metadata, its raw CHANGELOG.md and OVERVIEW.md text (empty strings when absent), and its chats (sessions) enriched with archived/starred/last-seen/provenance/trigger flags. Per-chat usage rings are filled separately by the client.",
         "parameters": [
           {
             "schema": {
@@ -2553,11 +2587,11 @@
         ],
         "responses": {
           "200": {
-            "description": "Object with `project`, `changelog` text, and a `chats` array.",
+            "description": "Object with `project`, `changelog` text, `overview` text, and a `chats` array.",
             "content": {
               "application/json": {
                 "schema": {
-                  "description": "Object with `project`, `changelog` text, and a `chats` array.",
+                  "description": "Object with `project`, `changelog` text, `overview` text, and a `chats` array.",
                   "type": "object",
                   "additionalProperties": true
                 }
@@ -2571,7 +2605,7 @@
         "tags": [
           "Projects"
         ],
-        "description": "Applies an `UpdateProjectInput` partial and re-registers the keeper. Keeper overrides (`model`, `permissionMode`, `maxTurns`, `docker`, `driveMode`, `maxSpawnDepth`, `hooksMcpEnabled`) are validated at runtime — an invalid value returns 400. Tri-state override fields accept `null` to clear the override. Responds with `{ project }`.",
+        "description": "Applies an `UpdateProjectInput` partial and re-registers the project's agent. Agent overrides (`model`, `permissionMode`, `maxTurns`, `docker`, `driveMode`, `maxSpawnDepth`, `hooksMcpEnabled`) are validated at runtime — an invalid value returns 400. Tri-state override fields accept `null` to clear the override. Responds with `{ project }`.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -2604,19 +2638,19 @@
                     "description": "Related links."
                   },
                   "model": {
-                    "description": "Keeper model override (validated at runtime)."
+                    "description": "Agent model override (validated at runtime)."
                   },
                   "permissionMode": {
-                    "description": "Keeper permission mode override (validated at runtime)."
+                    "description": "Agent permission mode override (validated at runtime)."
                   },
                   "maxTurns": {
-                    "description": "Keeper max-turns override (validated at runtime)."
+                    "description": "Agent max-turns override (validated at runtime)."
                   },
                   "docker": {
-                    "description": "Whether the keeper runs in Docker."
+                    "description": "Whether the agent runs in Docker."
                   },
                   "driveMode": {
-                    "description": "Keeper drive-mode override; `null` clears it."
+                    "description": "Drive-mode override; `null` clears it."
                   },
                   "maxSpawnDepth": {
                     "description": "Max spawn-depth override; `null` clears it."
@@ -2625,7 +2659,7 @@
                     "description": "Hook-management MCP override; `null` clears it."
                   },
                   "recovery": {
-                    "description": "Keeper-chat recovery override object; `null` clears it."
+                    "description": "Chat-recovery override object; `null` clears it."
                   },
                   "attachments": {
                     "description": "Inbound-attachment override object; `null` clears it."
@@ -2670,7 +2704,7 @@
         "tags": [
           "Projects"
         ],
-        "description": "Removes the project directory and unregisters its keeper + sweeper agents (the inverse of create). Responds with `{ ok: true, slug }`.",
+        "description": "Removes the project directory and unregisters its agent and its sweeper (the inverse of create). Responds with `{ ok: true, slug }`.",
         "parameters": [
           {
             "schema": {
@@ -2704,7 +2738,7 @@
         "tags": [
           "Projects"
         ],
-        "description": "Clones `repo` into the project's nested checkout, flips the keeper cwd to it, and re-registers the keeper (keeping existing chats + metadata). A missing/blank `repo` returns 400; clone failure rolls back to the intact notebook. Responds with `{ project }`.",
+        "description": "Clones `repo` into the project's nested checkout, flips the agent's working directory to it, and re-registers the agent (keeping existing chats + metadata). A missing/blank `repo` returns 400; clone failure rolls back to the intact notebook. Responds with `{ project }`.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -2846,11 +2880,11 @@
     },
     "/api/projects/{slug}/commands": {
       "get": {
-        "summary": "List a project's keeper slash commands",
+        "summary": "List a project's slash commands",
         "tags": [
           "Projects"
         ],
-        "description": "Returns `{ commands }` — the slash commands available to the project's keeper agent (built-ins plus the project's `.claude/commands` and MCP-provided commands) for composer autocomplete. Result is memoized per agent.",
+        "description": "Returns `{ commands }` — the slash commands available to the project's agent (built-ins plus the project's `.claude/commands` and MCP-provided commands) for composer autocomplete. Result is memoized per agent.",
         "parameters": [
           {
             "schema": {
@@ -3074,6 +3108,40 @@
               "application/json": {
                 "schema": {
                   "description": "Object `{ projectSlug, sessionId, ws, note }` giving the WS target `/ws`.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/chats/attention": {
+      "get": {
+        "summary": "List the chats in this workspace's subtree that are running or unread",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Returns `{ running, unread }` — the chats in this workspace AND its descendants that currently have a live turn (`running`) or hold an unread reply (`unread`). Each row is a chat DTO plus the `projectSlug`/`projectName` it belongs to, so a fleet-wide list stays attributable. On the root mount (`/api/root/chats/attention`) the subtree is the whole instance, because the root workspace's key (`\"\"`) prefixes every workspace key; on a project mount it is that project alone. A chat is never in both lists: a live turn hasn't landed a reply yet, so running wins.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ running, unread }`, each an array of chat DTOs enriched with `projectSlug` and `projectName`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ running, unread }`, each an array of chat DTOs enriched with `projectSlug` and `projectName`.",
                   "type": "object",
                   "additionalProperties": true
                 }
@@ -4086,7 +4154,7 @@
         "tags": [
           "Chats"
         ],
-        "description": "Promotes a chat into a NEW project: creates the project + keeper, then re-homes the chat's transcript into it so it lists and resumes under the new project. `name` is required (validated at runtime; a missing/blank name returns 400). Responds 201 with `{ project, promoted, sessionId }` — `promoted:false` means the project was created but the transcript couldn't be moved (e.g. an unknown session id); the project is still usable.",
+        "description": "Promotes a chat into a NEW project: creates the project + its agent, then re-homes the chat's transcript into it so it lists and resumes under the new project. `name` is required (validated at runtime; a missing/blank name returns 400). Responds 201 with `{ project, promoted, sessionId }` — `promoted:false` means the project was created but the transcript couldn't be moved (e.g. an unknown session id); the project is still usable.",
         "requestBody": {
           "content": {
             "application/json": {

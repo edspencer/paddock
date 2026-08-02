@@ -2,10 +2,16 @@
  * Paddock-native "send file" MCP tool.
  *
  * Exposes a single `paddock_send_file` tool to keeper/scratch agents via
- * herdctl's `injectedMcpServers` mechanism. The keeper runs as a `claude -p`
- * subprocess (CLI runtime), which can't reach an in-process SDK MCP server
- * directly — so herdctl's CLI runtime stands up a localhost HTTP MCP bridge for
- * each injected server and auto-allowlists its `mcp__<name>__*` tools.
+ * herdctl's `injectedMcpServers` mechanism. herdctl carries the def to the agent
+ * differently per runtime, and both auto-allowlist the server's `mcp__<name>__*`
+ * tools:
+ *   - SDK runtime (chats, the `session` drive-mode default) — the def becomes an
+ *     IN-PROCESS SDK MCP server via `createSdkMcpServer`; no bridge, no socket.
+ *   - CLI runtime (the sweeper, triggers, and `driveMode: batch` chats) — the
+ *     agent is a separate `claude -p` process that can't reach an in-process SDK
+ *     server, so herdctl stands up a localhost HTTP MCP bridge per injected
+ *     server instead.
+ * Either way this tool's handler runs inside the Paddock server process.
  *
  * ── How the rendered file reaches (and persists in) the chat ────────────────
  * The tool returns a small JSON ENVELOPE as its result `output`. That output is

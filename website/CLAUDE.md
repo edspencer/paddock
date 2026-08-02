@@ -15,9 +15,15 @@ npm install
 npm run build && npm run preview   # preview the built site (Mermaid renders here)
 ```
 
-Prefer `npm run build && npm run preview` for visual verification. `npm run dev`
-(`astro dev`) is fine for fast iteration but Mermaid diagrams are configured via
-`rehype-mermaid` and render most reliably in the built output.
+Either `npm run dev` or `npm run build && npm run preview` is fine for visual
+verification, including for Mermaid. `rehype-mermaid` runs with
+`strategy: 'pre-mermaid'`, which only tags the `<pre>` — all rendering happens
+client-side from the CDN, identically in dev and in the built output. (The
+"Mermaid only renders in the build" rule applies to the `img-svg` strategy that
+herdctl's docs site uses, not to this one.)
+
+Do check diagrams in **both** colour themes: Mermaid is re-rendered on every
+change to `<html data-theme>`, so the theme toggle is a real code path.
 
 Note: the projects box exports `NODE_ENV=production`. The build deps (astro,
 starlight, tailwind) are intentionally in `dependencies` (not `devDependencies`)

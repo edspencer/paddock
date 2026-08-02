@@ -39,9 +39,9 @@ function ctxWithRecordedTurn() {
           { sessionId: "parent-session", customName: "Manager", autoName: null },
         ],
         renameSession: async () => undefined,
-        ensureKeeperModel: async () => undefined,
+        ensureAgentModel: async () => undefined,
       },
-      cfg: { keeperDriveMode: "session", maxSpawnDepth: 1 },
+      cfg: { driveMode: "session", maxSpawnDepth: 1 },
     },
     hub: {},
     startAgentTurn: async (opts: StartAgentTurnOpts) => {

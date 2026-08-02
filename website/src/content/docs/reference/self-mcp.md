@@ -1,24 +1,24 @@
 ---
 title: "Self-management MCP (`paddock_manage`)"
-description: "The in-process toolset a keeper uses to drive Paddock itself: all 14 paddock_manage tools with their arguments and return shapes, and the four instance flags plus maxSpawnDepth that decide which of them exist."
+description: "The in-process toolset Claude uses to drive Paddock itself: all 14 paddock_manage tools with their arguments and return shapes, and the four instance flags plus maxSpawnDepth that decide which of them exist."
 ---
 
-A keeper agent can drive **Paddock itself** — enumerate projects, read another
-chat's transcript, spawn and fan out new chats, provision a project, manage a
-project's triggers — through an MCP server Paddock injects into the keeper's own
-turn. The server key is **`paddock_manage`**, so the agent sees each tool as:
+Claude can drive **Paddock itself** — enumerate projects, read another chat's
+transcript, spawn and fan out new chats, provision a project, manage a project's
+triggers — through an MCP server Paddock injects into Claude's own turn. The
+server key is **`paddock_manage`**, so the agent sees each tool as:
 
 ```
 mcp__paddock_manage__<tool>
 ```
 
 There are **14 tools** across four capability tiers. Every tier past the first is
-**off by default**; a stock instance gives keepers nothing here at all.
+**off by default**; a stock instance grants nothing here at all.
 
 :::caution[These tools are a capability grant, not a convenience]
 Six of them (`create_chat`, `fork_chat`, `fork_chat_batch`, `send_message`,
-`run_trigger`, `set_trigger`) **start real keeper turns**, and a keeper runs with
-`Bash` and `Write`. `create_project` runs `git clone` on a URL the *agent*
+`run_trigger`, `set_trigger`) **start real turns**, and Claude runs with `Bash`
+and `Write`. `create_project` runs `git clone` on a URL the *agent*
 chose. Turning on the write tier is a deliberate decision about blast radius —
 which is exactly why it is a separate flag from the read tier, and why
 `create_project` has a flag of its own on top of that.
@@ -27,11 +27,14 @@ which is exactly why it is a separate flag from the read tier, and why
 ## How it reaches the agent
 
 Paddock builds an `InjectedMcpServerDef` per turn and hands it to herdctl as
-`injectedMcpServers`. The keeper is a `claude -p` subprocess, so it cannot reach
-an in-process SDK server directly — herdctl stands up a localhost HTTP MCP bridge
-for each injected server and auto-allowlists its `mcp__<key>__*` tools. Nothing
-crosses the network, nothing is authenticated, and no static `allowedTools`
-change is needed.
+`injectedMcpServers`, and herdctl auto-allowlists the server's `mcp__<key>__*`
+tools. How the def reaches the agent depends on the runtime: a chat runs on the
+Claude Agent SDK (the `session` drive-mode default), where the def becomes an
+**in-process SDK MCP server**; the sweeper, triggers, and `driveMode: batch`
+chats run as a separate `claude -p` process that can't reach an in-process server,
+so herdctl stands up a **localhost HTTP MCP bridge** per injected server instead.
+Either way nothing crosses the network, nothing is authenticated, and no static
+`allowedTools` change is needed.
 
 Two consequences worth internalising:
 
@@ -39,10 +42,11 @@ Two consequences worth internalising:
   decided when the turn is dispatched, from the flags below plus the project the
   chat lives in. A gate that is off means the tool is **absent** from
   `tools/list` — never present-and-refusing.
-- **Arguments are flat scalars.** The CLI-runtime MCP transport has proven
-  unreliable at carrying array-typed arguments, so list-shaped inputs
-  (`prompts`, `tools`) are declared as **strings** and accept either a
-  newline/comma-separated list or a JSON array.
+- **Arguments are flat scalars.** The CLI-runtime MCP transport proved unreliable
+  at carrying array-typed arguments, so list-shaped inputs (`prompts`, `tools`)
+  are declared as **strings** and accept either a newline/comma-separated list or
+  a JSON array. Chats run on the SDK runtime now, but the flat shape is kept — the
+  same tools have to work from a `driveMode: batch` chat, which does not.
 
 Scratch turns never get this server, whatever the flags say.
 
@@ -69,7 +73,7 @@ Three details that are easy to get wrong:
   *within* an existing project. This one mutates **instance-level** state (a new
   directory in the projects root, new long-lived agents) and runs `git clone` on
   a caller-supplied URL. It is an operator-intent boundary rather than a hard
-  security one — a keeper with `Bash` in a write-enabled project can already
+  security one — Claude with `Bash` in a write-enabled project can already
   clone whatever it likes — but provisioning infrastructure should be opt-in.
 - **The trigger gate is the *hooks* flag, reused.** There is no
   `PADDOCK_TRIGGERS_MCP`. Epic T collapsed the separate schedule and hook verbs
@@ -83,8 +87,8 @@ Three details that are easy to get wrong:
 
 `scheduleMutationEnabled` / `PADDOCK_SCHEDULE_MUTATION` is **not** part of this
 matrix. It only constructs herdctl's fleet manager with `allowScheduleMutation`;
-Paddock arms a schedule trigger by re-registering the project's keeper agent, and
-nothing in the self-MCP tool-gating path reads that flag.
+Paddock arms a schedule trigger by re-registering the project's agent, and nothing
+in the self-MCP tool-gating path reads that flag.
 
 ### `maxSpawnDepth` — whether a *spawned* child gets the server at all
 
@@ -184,8 +188,8 @@ can tell it is looking at a window. `role` is `user`, `assistant` or `tool`; eac
 ## Write tools
 
 Present when `PADDOCK_SELF_MCP_WRITE` is on **and** the read tier is on. These
-start real keeper turns through the same engine the web UI drives, so a spawned
-chat appears in the sidebar, streams live, and is re-attachable.
+start real turns through the same engine the web UI drives, so a spawned chat
+appears in the sidebar, streams live, and is re-attachable.
 
 Every write tool takes an optional **`project`** slug that defaults to the
 project the calling chat lives in.
@@ -295,26 +299,26 @@ Present only when `PADDOCK_SELF_MCP_PROJECTS` is on, on top of write and read.
 ### `create_project`
 
 Provision a whole new project — its directory, `project.yaml`, seeded notes files
-and, when repo-backed, a cloned nested checkout — and register its keeper agent.
+and, when repo-backed, a cloned nested checkout — and register its agent.
 
 | Argument | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `name` | string | **yes** | Display name. |
 | `slug` | string | no | Kebab-case (lowercase `a-z`, `0-9`, single hyphens). Omit to derive it from `name`. |
-| `repo` | string | no | A git URL (`https://`, `git://`, `ssh://`, or `git@host:owner/repo`). Supplying it makes the project **repo-backed**: the repo is cloned into a nested checkout that becomes the keeper's working directory. Omit for a **notebook** project. |
+| `repo` | string | no | A git URL (`https://`, `git://`, `ssh://`, or `git@host:owner/repo`). Supplying it makes the project **repo-backed**: the repo is cloned into a nested checkout that becomes the agent's working directory. Omit for a **notebook** project. |
 | `summary` | string | no | One-line description. |
 | `area` | string | no | The grouping shown in the sidebar. |
 | `status` | enum | no | One of `idea`, `active`, `paused`, `blocked`, `done`, `abandoned`. Default `active`. |
 
 **Returns**
 `{ created: true, slug, name, dir, workingDir, repoBacked, repo?, keeperRegistered }`.
-`dir` is the project's metadata directory; `workingDir` is the keeper's cwd (the
+`dir` is the project's metadata directory; `workingDir` is the agent's cwd (the
 nested checkout when repo-backed, otherwise `dir`).
 
 Two things this tool guarantees, and one it doesn't:
 
 - **It is the same code path as `POST /api/projects`** — the same store `create`
-  followed by the same keeper registration, in the same order, so the REST and
+  followed by the same agent registration, in the same order, so the REST and
   MCP paths cannot drift. All validation, the clone, and its rollback live in the
   store.
 - **A bad or unreachable repo URL leaves nothing behind.** The whole project
@@ -323,7 +327,7 @@ Two things this tool guarantees, and one it doesn't:
   agent sees it (a `git clone` failure otherwise surfaces the entire argv).
 - **`keeperRegistered: false` is not a failure.** Mirroring the REST route, the
   project *is* created even if agent registration fails — but it is reported,
-  because a project with no live keeper cannot accept a `create_chat` yet.
+  because a project with no live agent cannot accept a `create_chat` yet.
 
 ## Trigger tools
 
@@ -424,23 +428,23 @@ every turn on the sweeper's agent and has no on-demand path.
 
 `paddock_manage` is not the only server Paddock injects. A separate one under the
 server key **`paddock`** provides **`mcp__paddock__send_file`**, which renders a
-file inline in the chat. It is injected on **every** turn — keeper *and* scratch,
+file inline in the chat. It is injected on **every** turn — project *and* scratch,
 human *and* spawned — and is not affected by any flag on this page.
 
 It is documented in
 **[Sending files & images](/using/sending-files-and-images/)**; nothing about it
 is restated here.
 
-## Keeper surface vs. the external `/mcp` API
+## The in-process surface vs. the external `/mcp` API
 
 Paddock exposes the *same underlying operations* two ways, and it is worth being
 precise about how they differ, because the intuition runs backwards.
 
-| | **In-process keeper** (`paddock_manage`) | **External** ([`/mcp`](/reference/mcp/)) |
+| | **In-process** (`paddock_manage`) | **External** ([`/mcp`](/reference/mcp/)) |
 | --- | --- | --- |
-| Who calls it | A keeper agent inside this instance | A caller outside it — a laptop Claude Code session, CI, a peer Paddock |
+| Who calls it | Claude inside this instance | A caller outside it — a laptop Claude Code session, CI, a peer Paddock |
 | Transport | Injected server over a localhost bridge | Authenticated streamable-HTTP JSON-RPC |
-| Authentication | **None** — it runs full-trust as the keeper | A bearer token per configured client |
+| Authentication | **None** — it runs full-trust inside the instance | A bearer token per configured client |
 | What bounds it | The instance flags on this page, plus `maxSpawnDepth` | The credential's **scope** (`projects` / `allow` / `deny`) |
 | Default posture | Everything off | Read-only |
 
@@ -453,12 +457,12 @@ This is the natural assumption and it is **wrong**. The `/mcp` route builds its
 operations with the write, trigger and project capabilities **all opened
 unconditionally**, and then narrows the result by the calling client's scope.
 `PADDOCK_SELF_MCP`, `PADDOCK_SELF_MCP_WRITE`, `PADDOCK_SELF_MCP_PROJECTS` and
-`PADDOCK_HOOKS_MCP` bound what a **keeper** may reach in-process — they are not a
+`PADDOCK_HOOKS_MCP` bound what **Claude** may reach in-process — they are not a
 kill-switch for the external surface.
 
 That is the right split (an external client should be bounded by its credential,
-not by a per-project keeper gate), but it means **leaving these flags off does
-not make a configured `/mcp` client read-only.** What makes it read-only is
+not by a per-project gate), but it means **leaving these flags off does not make
+a configured `/mcp` client read-only.** What makes it read-only is
 giving it no write `allow` — which is the default. If you want the external
 surface off entirely, remove its `clients` (then `/mcp` `404`s).
 :::

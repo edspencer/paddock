@@ -301,7 +301,7 @@ function EmptyState({ filter, hasAny }: { filter: OriginFilter; hasAny: boolean 
           ? hasAny
             ? "Scheduled and spawned runs will show up here. Switch to All to see your own runs."
             : "Scheduled and spawned runs — the ones that happen while you're not watching — will show up here."
-          : "Runs appear here once the keeper starts finishing turns."}
+          : "Runs appear here once Claude starts finishing turns."}
       </p>
     </div>
   );

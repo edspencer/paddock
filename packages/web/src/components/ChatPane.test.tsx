@@ -93,7 +93,7 @@ const MODELS = makeModelsResponse({
     { id: "claude-opus-4-8", label: "Opus 4.8", contextLimit: 1_000_000 },
     { id: "claude-sonnet-4", label: "Sonnet 4", contextLimit: 200_000 },
   ],
-  keeperDefault: "claude-opus-4-8",
+  defaultModel: "claude-opus-4-8",
 });
 
 const sub = () => subs[subs.length - 1];
@@ -123,7 +123,7 @@ describe("ChatPane: empty + send", () => {
     expect(await screen.findByText("nothing here yet")).toBeInTheDocument();
     const send = screen.getByRole("button", { name: /^Send$/ });
     expect(send).toBeDisabled();
-    await userEvent.type(screen.getByPlaceholderText(/Message the keeper agent/i), "hi");
+    await userEvent.type(screen.getByPlaceholderText(/Message Claude/i), "hi");
     expect(send).toBeEnabled();
   });
 
@@ -131,7 +131,7 @@ describe("ChatPane: empty + send", () => {
     render(<ChatPane projectSlug="proj" projectModel="claude-opus-4-8" isProjectChat />);
     await screen.findByRole("button", { name: /^Send$/ });
 
-    await userEvent.type(screen.getByPlaceholderText(/Message the keeper agent/i), "ping");
+    await userEvent.type(screen.getByPlaceholderText(/Message Claude/i), "ping");
     fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
 
     // The user bubble shows; the composer cleared; a send went out.
@@ -158,7 +158,7 @@ describe("ChatPane: empty + send", () => {
 
   it("Enter sends, Shift+Enter does not", async () => {
     render(<ChatPane projectSlug="proj" />);
-    const box = screen.getByPlaceholderText(/Message the keeper agent/i);
+    const box = screen.getByPlaceholderText(/Message Claude/i);
     await userEvent.type(box, "line one");
     fireEvent.keyDown(box, { key: "Enter", shiftKey: true });
     expect(sends).toHaveLength(0);
@@ -171,7 +171,7 @@ describe("ChatPane: empty + send", () => {
     const onEstablished = vi.fn();
     render(<ChatPane projectSlug="proj" onSessionEstablished={onEstablished} />);
     await screen.findByRole("button", { name: /^Send$/ });
-    await userEvent.type(screen.getByPlaceholderText(/Message the keeper agent/i), "go");
+    await userEvent.type(screen.getByPlaceholderText(/Message Claude/i), "go");
     fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
     act(() => {
       sub().handlers.onComplete?.({ sessionId: "new-sess", jobId: "j", success: true });
@@ -183,7 +183,7 @@ describe("ChatPane: empty + send", () => {
     const onTurnComplete = vi.fn();
     render(<ChatPane projectSlug="proj" onTurnComplete={onTurnComplete} />);
     await screen.findByRole("button", { name: /^Send$/ });
-    await userEvent.type(screen.getByPlaceholderText(/Message the keeper agent/i), "go");
+    await userEvent.type(screen.getByPlaceholderText(/Message Claude/i), "go");
     fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
     act(() => sub().handlers.onComplete?.({ sessionId: "s", jobId: "j", success: true }));
     await waitFor(() => expect(onTurnComplete).toHaveBeenCalled());
@@ -191,7 +191,7 @@ describe("ChatPane: empty + send", () => {
 });
 
 describe("ChatPane: composer auto-focus (#159)", () => {
-  const composer = () => screen.getByPlaceholderText(/Message the keeper agent/i);
+  const composer = () => screen.getByPlaceholderText(/Message Claude/i);
 
   it("focuses the composer on mount for a session-less (New Chat) pane", async () => {
     render(<ChatPane projectSlug="proj" isProjectChat />);
@@ -214,7 +214,7 @@ describe("ChatPane: composer auto-focus (#159)", () => {
 });
 
 describe("ChatPane: slash-command autocomplete (#103)", () => {
-  const composer = () => screen.getByPlaceholderText(/Message the keeper agent/i);
+  const composer = () => screen.getByPlaceholderText(/Message Claude/i);
   const menu = () => screen.queryByRole("menu", { name: /slash commands/i });
 
   it("fetches the project's commands for every chat", async () => {
@@ -308,7 +308,7 @@ describe("ChatPane: cancel + errors", () => {
   it("Stop cancels the in-flight job by id", async () => {
     render(<ChatPane projectSlug="proj" />);
     await screen.findByRole("button", { name: /^Send$/ });
-    await userEvent.type(screen.getByPlaceholderText(/Message the keeper agent/i), "go");
+    await userEvent.type(screen.getByPlaceholderText(/Message Claude/i), "go");
     fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
     // The job id arrives on the first streamed event.
     act(() => sub().handlers.onResponse?.("…", { sessionId: "s", jobId: "job-42" }));
@@ -319,7 +319,7 @@ describe("ChatPane: cancel + errors", () => {
   it("Stop in the pre-arm window defers the cancel, then fires it when the jobId arrives (#196)", async () => {
     render(<ChatPane projectSlug="proj" />);
     await screen.findByRole("button", { name: /^Send$/ });
-    await userEvent.type(screen.getByPlaceholderText(/Message the keeper agent/i), "go");
+    await userEvent.type(screen.getByPlaceholderText(/Message Claude/i), "go");
     fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
     // Pre-arm window: the turn is streaming (Stop shows) but no frame has carried
     // a jobId yet. Clicking Stop must NOT silently no-op...
@@ -334,14 +334,14 @@ describe("ChatPane: cancel + errors", () => {
     render(<ChatPane projectSlug="proj" />);
     await screen.findByRole("button", { name: /^Send$/ });
     // Turn 1: send, arm job-1, complete.
-    await userEvent.type(screen.getByPlaceholderText(/Message the keeper agent/i), "one");
+    await userEvent.type(screen.getByPlaceholderText(/Message Claude/i), "one");
     fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
     act(() => sub().handlers.onResponse?.("…", { sessionId: "s", jobId: "job-1" }));
     act(() => sub().handlers.onComplete?.({ sessionId: "s", jobId: "job-1", success: true }));
     await screen.findByRole("button", { name: /^Send$/ });
     // Turn 2: send, then Stop before any frame carries the new jobId. The stale
     // job-1 must NOT be cancelled; the deferred cancel resolves to job-2.
-    await userEvent.type(screen.getByPlaceholderText(/Message the keeper agent/i), "two");
+    await userEvent.type(screen.getByPlaceholderText(/Message Claude/i), "two");
     fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
     fireEvent.click(screen.getByRole("button", { name: /Stop/ }));
     expect(cancels).toEqual([]);
@@ -352,7 +352,7 @@ describe("ChatPane: cancel + errors", () => {
   it("renders a streamed error and re-enables Send", async () => {
     render(<ChatPane projectSlug="proj" />);
     await screen.findByRole("button", { name: /^Send$/ });
-    await userEvent.type(screen.getByPlaceholderText(/Message the keeper agent/i), "go");
+    await userEvent.type(screen.getByPlaceholderText(/Message Claude/i), "go");
     fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
     act(() => sub().handlers.onError?.("the keeper exploded"));
     expect(await screen.findByText("the keeper exploded")).toBeInTheDocument();
@@ -362,7 +362,7 @@ describe("ChatPane: cancel + errors", () => {
   it("surfaces a failed completion's error message", async () => {
     render(<ChatPane projectSlug="proj" />);
     await screen.findByRole("button", { name: /^Send$/ });
-    await userEvent.type(screen.getByPlaceholderText(/Message the keeper agent/i), "go");
+    await userEvent.type(screen.getByPlaceholderText(/Message Claude/i), "go");
     fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
     act(() =>
       sub().handlers.onComplete?.({ sessionId: "s", jobId: "j", success: false, error: "turn failed" }),
@@ -592,7 +592,7 @@ describe("ChatPane: onSessionStarted (issue #36)", () => {
     const onStarted = vi.fn();
     render(<ChatPane projectSlug="proj" onSessionStarted={onStarted} />);
     await screen.findByRole("button", { name: /^Send$/ });
-    await userEvent.type(screen.getByPlaceholderText(/Message the keeper agent/i), "go");
+    await userEvent.type(screen.getByPlaceholderText(/Message Claude/i), "go");
     fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
 
     act(() => sub().handlers.onResponse?.("streaming…", { sessionId: "sess-9", jobId: "j" }));
@@ -613,7 +613,7 @@ describe("ChatPane: onSessionStarted (issue #36)", () => {
       <ChatPane projectSlug="proj" initialSessionId="sess-existing" onSessionStarted={onStarted} loadHistory={loadHistory} />,
     );
     await screen.findByRole("button", { name: /^Send$/ });
-    await userEvent.type(screen.getByPlaceholderText(/Message the keeper agent/i), "go");
+    await userEvent.type(screen.getByPlaceholderText(/Message Claude/i), "go");
     fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
     act(() => {
       sub().handlers.onResponse?.("reply", { sessionId: "sess-existing", jobId: "j" });
@@ -630,7 +630,7 @@ describe("ChatPane: onSessionStarted (issue #36)", () => {
     await waitFor(() => expect(select.value).toBe("claude-opus-4-8"));
     fireEvent.change(select, { target: { value: "claude-sonnet-4" } });
 
-    await userEvent.type(screen.getByPlaceholderText(/Message the keeper agent/i), "go");
+    await userEvent.type(screen.getByPlaceholderText(/Message Claude/i), "go");
     fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
 
     // First streamed frame carries the new session id → onSessionStarted fires
@@ -690,7 +690,7 @@ describe("ChatPane: session isolation (issue #35)", () => {
     const onEstablished = vi.fn();
     render(<ChatPane projectSlug="proj" onSessionEstablished={onEstablished} />);
     await screen.findByRole("button", { name: /^Send$/ });
-    await userEvent.type(screen.getByPlaceholderText(/Message the keeper agent/i), "hello");
+    await userEvent.type(screen.getByPlaceholderText(/Message Claude/i), "hello");
     fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
 
     // Once we've sent, the turn's first frames (even before the id is known)
@@ -711,7 +711,7 @@ describe("ChatPane: model picker", () => {
     const select = (await screen.findByTitle(/Model for this chat/i)) as HTMLSelectElement;
     await waitFor(() => expect(select.value).toBe("claude-sonnet-4"));
 
-    await userEvent.type(screen.getByPlaceholderText(/Message the keeper agent/i), "x");
+    await userEvent.type(screen.getByPlaceholderText(/Message Claude/i), "x");
     fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
     expect((sends[0].opts as { model?: string }).model).toBe("claude-sonnet-4");
   });
@@ -722,14 +722,14 @@ describe("ChatPane: model picker", () => {
     await waitFor(() => expect(select.value).toBe("claude-opus-4-8"));
     fireEvent.change(select, { target: { value: "claude-sonnet-4" } });
 
-    await userEvent.type(screen.getByPlaceholderText(/Message the keeper agent/i), "x");
+    await userEvent.type(screen.getByPlaceholderText(/Message Claude/i), "x");
     fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
     expect((sends[0].opts as { model?: string }).model).toBe("claude-sonnet-4");
     // Persisted under the new-chat key (no session id yet).
     expect(localStorage.getItem("paddock:chatModel:new:proj")).toBe("claude-sonnet-4");
   });
 
-  it("scratch chats default to the keeperDefault", async () => {
+  it("scratch chats default to the defaultModel", async () => {
     render(<ChatPane projectSlug="scratch" />);
     const select = (await screen.findByTitle(/Model for this chat/i)) as HTMLSelectElement;
     await waitFor(() => expect(select.value).toBe("claude-opus-4-8"));
@@ -741,7 +741,7 @@ describe("ChatPane: context meter", () => {
     render(<ChatPane projectSlug="proj" />);
     expect(await screen.findByText("context: —")).toBeInTheDocument();
 
-    await userEvent.type(screen.getByPlaceholderText(/Message the keeper agent/i), "x");
+    await userEvent.type(screen.getByPlaceholderText(/Message Claude/i), "x");
     fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
     act(() =>
       sub().handlers.onComplete?.({
@@ -794,7 +794,7 @@ describe("ChatPane: preload toggle (issue #1)", () => {
   it("sends preloadContext on the first turn of a new project chat when available + checked", async () => {
     render(<ChatPane projectSlug="proj" isProjectChat preloadAvailable />);
     await screen.findByRole("checkbox");
-    await userEvent.type(screen.getByPlaceholderText(/Message the keeper agent/i), "first");
+    await userEvent.type(screen.getByPlaceholderText(/Message Claude/i), "first");
     fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
     expect((sends[0].opts as { preloadContext?: boolean }).preloadContext).toBe(true);
   });
@@ -802,7 +802,7 @@ describe("ChatPane: preload toggle (issue #1)", () => {
   it("does NOT preload for a scratch (non-project) chat", async () => {
     render(<ChatPane projectSlug="scratch" />);
     await screen.findByRole("button", { name: /^Send$/ });
-    await userEvent.type(screen.getByPlaceholderText(/Message the keeper agent/i), "first");
+    await userEvent.type(screen.getByPlaceholderText(/Message Claude/i), "first");
     fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
     expect((sends[0].opts as { preloadContext?: boolean }).preloadContext).toBeFalsy();
   });
@@ -813,7 +813,7 @@ describe("ChatPane: draft persistence", () => {
     localStorage.setItem("paddock:draft:new:proj", "half-typed thought");
     render(<ChatPane projectSlug="proj" />);
     const box = (await screen.findByPlaceholderText(
-      /Message the keeper agent/i,
+      /Message Claude/i,
     )) as HTMLTextAreaElement;
     expect(box.value).toBe("half-typed thought");
     // A restored draft enables Send.
@@ -825,7 +825,7 @@ describe("ChatPane: draft persistence", () => {
     const loadHistory = vi.fn().mockResolvedValue([]);
     render(<ChatPane projectSlug="proj" initialSessionId="sess-1" loadHistory={loadHistory} />);
     const box = (await screen.findByPlaceholderText(
-      /Message the keeper agent/i,
+      /Message Claude/i,
     )) as HTMLTextAreaElement;
     expect(box.value).toBe("resume this");
   });
@@ -833,7 +833,7 @@ describe("ChatPane: draft persistence", () => {
   it("persists the typed draft to localStorage as the user types", async () => {
     render(<ChatPane projectSlug="proj" />);
     await screen.findByRole("button", { name: /^Send$/ });
-    await userEvent.type(screen.getByPlaceholderText(/Message the keeper agent/i), "keep me");
+    await userEvent.type(screen.getByPlaceholderText(/Message Claude/i), "keep me");
     await waitFor(() =>
       expect(localStorage.getItem("paddock:draft:new:proj")).toBe("keep me"),
     );
@@ -842,7 +842,7 @@ describe("ChatPane: draft persistence", () => {
   it("clears the persisted draft on send", async () => {
     localStorage.setItem("paddock:draft:new:proj", "about to send");
     render(<ChatPane projectSlug="proj" />);
-    const box = await screen.findByPlaceholderText(/Message the keeper agent/i);
+    const box = await screen.findByPlaceholderText(/Message Claude/i);
     await waitFor(() => expect((box as HTMLTextAreaElement).value).toBe("about to send"));
     fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
     expect(sends).toHaveLength(1);
@@ -909,7 +909,7 @@ describe("ChatPane: attachment persistence (#346)", () => {
   it("sends restored attachments and clears the persisted refs on send", async () => {
     localStorage.setItem("paddock:attachments:new:proj", STAGED);
     render(<ChatPane projectSlug="proj" isProjectChat />);
-    const box = await screen.findByPlaceholderText(/Message the keeper agent/i);
+    const box = await screen.findByPlaceholderText(/Message Claude/i);
     await screen.findByTestId("attachment-tray");
     await userEvent.type(box, "here you go");
     fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
@@ -952,7 +952,7 @@ describe("ChatPane: fork", () => {
         loadHistory={vi.fn().mockResolvedValue([])}
       />,
     );
-    const box = await screen.findByPlaceholderText(/Message the keeper agent/i);
+    const box = await screen.findByPlaceholderText(/Message Claude/i);
     await waitFor(() => expect(box).toHaveFocus());
   });
 });
@@ -961,7 +961,7 @@ describe("ChatPane: message boundaries", () => {
   it("splits the streamed text into separate assistant bubbles on a boundary", async () => {
     render(<ChatPane projectSlug="proj" />);
     await screen.findByRole("button", { name: /^Send$/ });
-    await userEvent.type(screen.getByPlaceholderText(/Message the keeper agent/i), "go");
+    await userEvent.type(screen.getByPlaceholderText(/Message Claude/i), "go");
     fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
     act(() => {
       sub().handlers.onResponse?.("first message", { sessionId: "s", jobId: "j" });
@@ -979,7 +979,7 @@ describe("ChatPane: message boundaries", () => {
   it("keeps at most one caret across tool-separated text and clears all on complete", async () => {
     const { container } = render(<ChatPane projectSlug="proj" />);
     await screen.findByRole("button", { name: /^Send$/ });
-    await userEvent.type(screen.getByPlaceholderText(/Message the keeper agent/i), "go");
+    await userEvent.type(screen.getByPlaceholderText(/Message Claude/i), "go");
     fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
 
     const meta = { sessionId: "s", jobId: "j" };
@@ -1015,7 +1015,7 @@ describe("ChatPane: message boundaries", () => {
 // starts (chat:tool_start), reconciled in place to the finished call when its
 // chat:tool_call completion lands — never duplicated.
 describe("ChatPane: in-flight tool calls (#175)", () => {
-  const box = () => screen.getByPlaceholderText(/Message the keeper agent/i);
+  const box = () => screen.getByPlaceholderText(/Message Claude/i);
 
   // Send a first message so the pane is streaming and adopts our frames.
   async function startTurn() {
@@ -1119,7 +1119,7 @@ describe("ChatPane: in-flight tool calls (#175)", () => {
 // current turn completes. Mirrors Claude Code's one-slot, append-on-resubmit
 // model.
 describe("ChatPane: message queue (issue #91)", () => {
-  const box = () => screen.getByPlaceholderText(/Message the keeper agent|Queue a message/i);
+  const box = () => screen.getByPlaceholderText(/Message Claude|Queue a message/i);
 
   // Send a first message and drive the turn into the streaming state.
   async function startTurn() {
@@ -1328,7 +1328,7 @@ describe("ChatPane: message queue (issue #91)", () => {
 // the turn) — rather than being locked out precisely when hands-free queuing is
 // most useful.
 describe("ChatPane: voice-dictation while streaming (issue #365)", () => {
-  const box = () => screen.getByPlaceholderText(/Message the keeper agent|Queue a message/i);
+  const box = () => screen.getByPlaceholderText(/Message Claude|Queue a message/i);
 
   /** A controllable fake MediaRecorder whose stop() emits a chunk + fires onstop. */
   class FakeMediaRecorder {
@@ -1540,7 +1540,7 @@ describe("ChatPane: turn-notice surfacing (#329)", () => {
       sub().handlers.onNotice?.(
         {
           kind: "error",
-          message: "The keeper turn failed before producing a reply.",
+          message: "Claude's turn failed before producing a reply.",
           detail: "error_during_execution",
           retryable: true,
         },
@@ -1564,7 +1564,7 @@ describe("ChatPane: turn-notice surfacing (#329)", () => {
       sub().handlers.onNotice?.(
         {
           kind: "max_turns",
-          message: "The keeper reached its turn limit before finishing this turn.",
+          message: "Claude reached its turn limit before finishing this turn.",
           detail: "error_max_turns",
           retryable: true,
         },

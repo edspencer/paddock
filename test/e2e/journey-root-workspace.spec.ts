@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import path from "node:path";
-import { createProjectViaUI, paths, seedProject, uniq } from "./helpers";
+import { clearRootUnread, createProjectViaUI, paths, seedProject, uniq } from "./helpers";
 
 /**
  * Journey: the ROOT WORKSPACE (#531).
@@ -11,11 +11,11 @@ import { createProjectViaUI, paths, seedProject, uniq } from "./helpers";
  *
  *   `/`          → the root workspace's HOME (a project-like Home pane, with the
  *                  full ProjectView chrome: workspace name heading + tab bar).
- *                  The projects GRID is a SECTION of it, under the root's own
- *                  Chats — embedded, so no standalone `<h1>`/blurb, but its
- *                  "New Project" survives and is the only one in the app.
- *   `/projects`  → a permanent redirect to `/`. It was the grid's own URL for a
- *                  release, so it stays reachable instead of dead-ending.
+ *                  Since #599 it opens on the RUNNING and UNREAD feeds — see
+ *                  journey-home-attention.spec.ts for what they mean.
+ *   `/projects`  → the projects GRID, its own page. It was briefly a section of
+ *                  root Home; #599 gave Home's opening screen to the feeds and
+ *                  the grid moved back out (see `gridUrl`).
  *   `/chat`      → a root chat.
  *   `/settings`  → the root workspace's Settings tab — its `project.yaml`, and
  *                  nothing else. Instance-wide config is `/config`, a separate
@@ -40,98 +40,126 @@ test("/ renders the root workspace Home, with the workspace tab bar", async ({ p
   await expect(page.getByRole("heading", { name: rootName(), level: 1 })).toBeVisible();
 
   // The full ProjectView tab bar, LED BY Home. There is no Projects tab: the
-  // children moved into the Home pane below.
+  // grid is a page of its own (`/projects`), reached from the sidebar, not a
+  // workspace sub-route.
   const main = page.getByRole("main");
   for (const tab of ["Home", "Chat", "Files", "History", "Settings", "Triggers"]) {
     await expect(main.getByRole("button", { name: tab, exact: true })).toBeVisible();
   }
   await expect(main.getByRole("button", { name: "Projects", exact: true })).toHaveCount(0);
 
-  // The Home PANE is what's rendered (its Overview section), and nothing 404s:
-  // the root workspace always exists, so there is no "Project not found" path.
-  await expect(main.getByRole("heading", { name: "Overview" })).toBeVisible();
+  // The Home PANE is what's rendered — the two attention feeds it leads with
+  // (#599), which is the one thing only Home renders. (This used to assert an
+  // "Overview" heading, from a summary/metadata card #599 deleted; the assertion
+  // outlived the card by accidentally matching the `<h1>` of a synthesised
+  // OVERVIEW.md, so it would have gone on passing with Home's pane replaced by
+  // anything at all that rendered that file.)
+  await expect(main.getByRole("heading", { name: /^Running/ })).toBeVisible();
+  await expect(main.getByRole("heading", { name: /^Unread/ })).toBeVisible();
+
+  // …and nothing 404s: the root workspace always exists, so there is no
+  // "Project not found" path.
   await expect(page.getByText(/Project not found/i)).toHaveCount(0);
 });
 
-test("root Home carries the projects grid as a section under its own Chats", async ({ page }) => {
+test("root Home is NOT the projects grid — it leads with the attention feeds", async ({ page }) => {
   const name = uniq("RW Child");
   seedProject({ name, group: "homelab" });
 
   await page.goto("/");
   const main = page.getByRole("main");
 
-  // The grid renders on the front door itself — no navigation, no tab click.
-  const homelab = page.getByRole("button", { name: /^Homelab/ });
-  if ((await homelab.getAttribute("aria-expanded")) === "false") await homelab.click();
-  await expect(page.locator("section a.card").filter({ hasText: name })).toBeVisible();
-
-  // It renders INSIDE ProjectView: the workspace heading + tab bar are still
-  // there, with Home the active tab.
+  // Home opens on Running + Unread (#599), inside the full ProjectView chrome:
+  // workspace heading + tab bar, with Home the active tab.
+  await expect(main.getByRole("heading", { name: /^Running/ })).toBeVisible();
   await expect(page.getByRole("heading", { name: rootName(), level: 1 })).toBeVisible();
   await expect(main.getByRole("button", { name: "Home", exact: true })).toBeVisible();
 
-  // Embedded ⇒ the grid drops its OWN page header (the duplicate "Projects"
-  // `<h1>` + blurb) and its duplicate "New chat" — but keeps New Project, which
-  // with the sidebar CTA gone is the only one in the app.
-  await expect(page.getByText(/Each project is a directory with its own keeper agent/i)).toHaveCount(
-    0,
-  );
-  await expect(main.getByRole("button", { name: "New Project", exact: true })).toBeVisible();
-  // Exactly ONE "New chat" on this screen: Home's Chats-section action. The
-  // grid's copy pointed at the same `/chat` and would have been a second button
-  // doing the same thing in the same place.
-  await expect(main.getByRole("button", { name: "New chat", exact: true })).toHaveCount(1);
+  // The grid is NOT here any more — not its cards, not its area sections, not
+  // its page header. It has its own page (asserted next); root Home duplicating
+  // the sidebar's project list is exactly what #599 removed.
+  await expect(main.locator("section a.card").filter({ hasText: name })).toHaveCount(0);
+  await expect(main.getByRole("button", { name: /^Homelab/ })).toHaveCount(0);
+  await expect(
+    page.getByText(/Each project is a directory with persistent, resumable/i),
+  ).toHaveCount(0);
 
-  // Section order on the root's Home: Chats → Projects → … → Overview. Read in
-  // DOM order (the grid's heading is an <h2>, Home's are <h3>, so anything that
-  // sorts by heading rank would report the wrong answer).
-  const headings = await main.locator("h2, h3").allTextContents();
-  const idx = (re: RegExp) => headings.findIndex((h) => re.test(h.trim()));
-  expect(idx(/^Chats/)).toBeGreaterThanOrEqual(0);
-  expect(idx(/^Chats/)).toBeLessThan(idx(/^Projects/));
-  expect(idx(/^Projects/)).toBeLessThan(idx(/^Overview/));
+  // Exactly ONE "New chat" on this screen: the Running header's action.
+  await expect(main.getByRole("button", { name: "New chat", exact: true })).toHaveCount(1);
 });
 
-test("/projects redirects to root Home, where the list now lives", async ({ page }) => {
-  const name = uniq("RW Redirect");
+test("/projects is the projects grid's own page, with its own header and CTAs", async ({ page }) => {
+  const name = uniq("RW Grid");
   seedProject({ name, group: "homelab" });
 
-  // The grid's URL for a whole release — bookmarks and old links must still land
-  // on the list rather than the route-error screen.
+  // Not a redirect any more: `/projects` renders the grid. It is the ONLY route
+  // that renders it UNFILTERED — `/tags/:tag` always narrows — so the area
+  // sections and the first-project empty state have nowhere else to live.
   await page.goto("/projects");
-  await expect(page).toHaveURL(/\/$/);
+  await expect(page).toHaveURL(/\/projects$/);
+  const main = page.getByRole("main");
+
+  // Its own page header: the standalone `<h1>` + blurb the embedded mode dropped.
+  await expect(main.getByRole("heading", { name: "Projects", level: 1 })).toBeVisible();
+  await expect(
+    page.getByText(/Each project is a directory with persistent, resumable/i),
+  ).toBeVisible();
+
+  // The list itself, in collapsible area sections.
   const homelab = page.getByRole("button", { name: /^Homelab/ });
   if ((await homelab.getAttribute("aria-expanded")) === "false") await homelab.click();
   await expect(page.locator("section a.card").filter({ hasText: name })).toBeVisible();
+
+  // A page, not a workspace tab: no ProjectView tab bar wrapped around it.
+  await expect(main.getByRole("button", { name: "Home", exact: true })).toHaveCount(0);
+  await expect(main.getByRole("button", { name: "Triggers", exact: true })).toHaveCount(0);
+
+  // Both of the grid's own header actions are back, now that neither collides
+  // with a Home section rendering the same thing beside it.
+  await expect(main.getByRole("button", { name: "New Project", exact: true })).toBeVisible();
+  await expect(main.getByRole("button", { name: "New chat", exact: true })).toBeVisible();
 });
 
-test("the sidebar has a Home link and no New Project / New root chat CTAs", async ({ page }) => {
+test("the sidebar has a Home link and a New Project CTA, but no New root chat", async ({ page }) => {
   const name = uniq("RW Sidebar");
   seedProject({ name });
   // Start somewhere that is NOT `/`, so clicking Home is a real navigation.
   await page.goto("/chat");
   const sidebar = page.getByRole("complementary");
 
-  // The two CTAs are gone; both actions live on root Home now.
-  await expect(sidebar.getByRole("button", { name: /New Project/i })).toHaveCount(0);
+  // New Project is BACK in the sidebar, on the Projects header, and is now the
+  // app's canonical entry point for creating one: #599 deleted the root-Home
+  // grid that used to host the app's only copy of this button. It is the `+`
+  // beside the list it adds to — icon-only, so `aria-label` is its whole name.
+  const newProject = sidebar.getByRole("button", { name: "New Project" });
+  await expect(newProject).toBeVisible();
+  await newProject.click();
+  const dialog = page.locator("form").filter({ hasText: "New project" });
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+
+  // "New root chat" is still gone — the root's own Home carries that action.
   await expect(sidebar.getByRole("button", { name: /New root chat/i })).toHaveCount(0);
 
-  // One nav item in their place, and it goes to `/`. Prefix-matched: Home is the
-  // root workspace's row, so its accessible name grows an unread/in-flight count
-  // when the root has one (#553) — just like a project row's.
+  // The Home nav item goes to `/`. Prefix-matched: Home is the root workspace's
+  // row, so its accessible name grows an unread/in-flight count when the root
+  // has one (#553) — just like a project row's.
   await sidebar.getByRole("link", { name: /^Home/ }).click();
   await expect(page).toHaveURL(/\/$/);
-  await expect(
-    page.getByRole("main").getByRole("button", { name: "New Project", exact: true }),
-  ).toBeVisible();
+  await expect(page.getByRole("main").getByRole("heading", { name: /^Running/ })).toBeVisible();
 });
 
-test("the sidebar 'Projects' label links to root Home", async ({ page }) => {
+test("the sidebar 'Projects' label links to the projects grid", async ({ page }) => {
+  const name = uniq("RW Label");
+  seedProject({ name, group: "homelab" });
   await page.goto("/chat");
   await page.getByRole("complementary").getByRole("link", { name: "Projects", exact: true }).click();
-  await expect(page).toHaveURL(/\/$/);
+  // It labels the sidebar's project list, and points at the fuller view of the
+  // same thing — the grid page, NOT root Home (which no longer lists projects).
+  await expect(page).toHaveURL(/\/projects$/);
   await expect(
-    page.getByRole("main").getByRole("button", { name: "New Project", exact: true }),
+    page.getByRole("main").getByRole("heading", { name: "Projects", level: 1 }),
   ).toBeVisible();
 });
 
@@ -151,7 +179,7 @@ test("'New chat' from the root Home opens a root chat composer (no 'Project not 
   await expect(page.getByText(/not found/i)).toHaveCount(0);
 
   // A real, usable composer (not an error box, not an "enable the root" card).
-  const composer = page.getByPlaceholder(/Message the keeper agent/i);
+  const composer = page.getByPlaceholder(/Message Claude/i);
   await expect(composer).toBeVisible();
   await expect(composer).toBeEditable();
   await expect(main.getByRole("button", { name: /^New Chat$/ })).toBeVisible();
@@ -181,7 +209,7 @@ test("'New chat' from the root Home opens a root chat composer (no 'Project not 
  */
 test("a root chat turn streams its reply back into the pane", async ({ page }) => {
   await page.goto("/chat");
-  const composer = page.getByPlaceholder(/Message the keeper agent/i);
+  const composer = page.getByPlaceholder(/Message Claude/i);
   await expect(composer).toBeVisible();
 
   await composer.fill("hello from the root workspace");
@@ -336,17 +364,22 @@ test("a project's Settings tab still scrolls (the non-root path)", async ({ page
  * optimistic cache, so every reload re-derives from the server. That is why each
  * assertion here is repeated across a `reload()` — a client-only fix passes the
  * first half of this test and fails the second.
+ *
+ * The counts asserted here are the WHOLE root workspace's, so the test owns its
+ * starting point rather than inheriting one — see `clearRootUnread` (#612).
  */
 test("an unread root chat puts a count on the sidebar's Home link, and opening it clears it", async ({
   page,
 }) => {
+  await clearRootUnread(page);
+
   const sidebar = page.getByRole("complementary");
   const homeLink = sidebar.getByRole("link", { name: /^Home/ });
   const badge = homeLink.getByLabel(/unread repl/i);
 
   // A real root chat with a real completed turn.
   await page.goto("/chat");
-  await page.getByPlaceholder(/Message the keeper agent/i).fill("root badge please");
+  await page.getByPlaceholder(/Message Claude/i).fill("root badge please");
   await page.getByRole("button", { name: /^Send$/ }).click();
   // Match the fake keeper's reply loosely: with preload context on, the echo it
   // acknowledges is the injected `<project-context>` block, not the raw message.
@@ -357,6 +390,12 @@ test("an unread root chat puts a count on the sidebar's Home link, and opening i
   // Read while open ⇒ nothing on Home. A `0` pill here would be the bug.
   await expect(badge).toHaveCount(0);
 
+  // Off Home (a project route) BEFORE flagging, not after: an OPEN chat is
+  // continuously marked seen, and `/seen` also spends the manual flag (#458), so
+  // a flag set while the chat is still on screen can be wiped moments later.
+  const slug = seedProject({ name: uniq("RW Badge Sibling") });
+  await page.goto(`/projects/${slug}/home`);
+
   // Flag it unread (#458) through the same endpoint the chat-row action posts to,
   // at the ROOT mount — `/api/root/...`, because an empty key cannot ride in a
   // path segment.
@@ -365,10 +404,10 @@ test("an unread root chat puts a count on the sidebar's Home link, and opening i
   });
   expect(res.ok()).toBe(true);
 
-  // Off Home (a project route) so nothing auto-marks it seen, and reload so the
-  // count is derived from the server rather than from anything in this tab.
-  const slug = seedProject({ name: uniq("RW Badge Sibling") });
-  await page.goto(`/projects/${slug}/home`);
+  // Each count is read on a freshly-loaded page, so it is derived from the server
+  // rather than from anything this tab did — and asserted TWICE across a reload,
+  // which is the half a client-only fix fails.
+  await page.reload();
   await expect(badge).toHaveText("1");
 
   await page.reload();
@@ -388,13 +427,24 @@ test("an unread root chat puts a count on the sidebar's Home link, and opening i
   await expect(badge).toHaveCount(0);
 });
 
+/**
+ * The two badges are ONE component: same classes, same box, and a project row's
+ * is untouched by anything the root's does.
+ *
+ * Both sides are asserted as a count of `1`, and the root's count is workspace-
+ * wide — so the test starts by zeroing it (#612). Without that it asserts a
+ * global aggregate every other spec is free to move: any earlier root chat left
+ * unread renders `2` here, which is how this failed on a docs-only PR.
+ */
 test("the Home badge is the same component as a project row's, and projects keep theirs", async ({
   page,
 }) => {
+  await clearRootUnread(page);
+
   // One root chat + one project chat, both flagged unread, so the two badges are
   // on screen together and can be compared directly.
   await page.goto("/chat");
-  await page.getByPlaceholder(/Message the keeper agent/i).fill("root pill");
+  await page.getByPlaceholder(/Message Claude/i).fill("root pill");
   await page.getByRole("button", { name: /^Send$/ }).click();
   await expect(page.getByText(/^Acknowledged:/).first()).toBeVisible({ timeout: 15_000 });
   await expect(page).toHaveURL(/\/chat\/[a-z0-9-]+$/, { timeout: 15_000 });
@@ -403,11 +453,17 @@ test("the Home badge is the same component as a project row's, and projects keep
   const name = uniq("RW Pill");
   const slug = await createProjectViaUI(page, { name, area: "Homelab" });
   await page.goto(`/projects/${slug}/chat`);
-  await page.getByPlaceholder(/Message the keeper agent/i).fill("project pill");
+  await page.getByPlaceholder(/Message Claude/i).fill("project pill");
   await page.getByRole("button", { name: /^Send$/ }).click();
   await expect(page.getByText(/^Acknowledged:/).first()).toBeVisible({ timeout: 15_000 });
   await page.waitForURL(new RegExp(`/projects/${slug}/chat/[a-z0-9-]+$`), { timeout: 15_000 });
   const projectSession = new URL(page.url()).pathname.split("/").pop()!;
+
+  // Somewhere neither chat is open, so neither auto-clears — and get there BEFORE
+  // flagging, not after. An OPEN chat is continuously marked seen, and `/seen`
+  // also spends the manual flag (#458), so the project chat's own turn landing
+  // can wipe a flag set while it is still on screen.
+  await page.goto("/config");
 
   for (const [base, id] of [
     ["/api/root", rootSession],
@@ -418,8 +474,9 @@ test("the Home badge is the same component as a project row's, and projects keep
     );
   }
 
-  // Somewhere neither chat is open, so neither auto-clears.
-  await page.goto("/config");
+  // Re-derive from the server: `/config` was loaded before the flags existed, and
+  // a MANUAL flag only reaches the sidebar with the next projects payload.
+  await page.reload();
   const sidebar = page.getByRole("complementary");
   const rootPill = sidebar.getByRole("link", { name: /^Home/ }).getByLabel(/unread repl/i);
   const projectPill = sidebar.getByRole("link", { name: new RegExp(name) }).getByLabel(/unread repl/i);

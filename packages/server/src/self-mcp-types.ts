@@ -53,7 +53,7 @@ export interface SelfMcpCreatedProject {
    * failure as non-fatal (the project IS created), so this mirrors it — but reports
    * it, because a project with no live keeper can't take a `create_chat` yet.
    */
-  keeperRegistered: boolean;
+  agentRegistered: boolean;
 }
 
 /** A chat as surfaced to the agent. */
@@ -201,7 +201,7 @@ export interface SelfMcpWriteContext {
    * (slug/repo validation, `project.yaml`, seeded CHANGELOG/CLAUDE.md, the #187
    * repo-backed clone into a nested `.gitignore`d checkout WITH rollback on failure)
    * stays in the store. Throws on a create failure; a keeper-registration failure is
-   * non-fatal (mirroring the route) and reported via `keeperRegistered`.
+   * non-fatal (mirroring the route) and reported via `agentRegistered`.
    */
   createProject: (input: SelfMcpCreateProjectInput) => Promise<SelfMcpCreatedProject>;
   /**

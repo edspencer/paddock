@@ -1,6 +1,6 @@
 ---
 title: Working in chats
-description: A hands-on walkthrough — start a chat, import your existing terminal claude history, understand keeper vs one-off/scratch chats, resume from anywhere, use the composer and message queue, Stop a turn, rewind or fork from any message, and keep a growing chat list legible with unread dots, stars, search, and archive.
+description: A hands-on walkthrough — start a chat, import your existing terminal claude history, understand project vs one-off/scratch chats, resume from anywhere, use the composer and message queue, Stop a turn, rewind or fork from any message, and keep a growing chat list legible with unread dots, stars, search, and archive.
 ---
 
 A **chat** is where you actually work in Paddock — one conversation with an
@@ -9,7 +9,7 @@ the [Chats are sessions concept](/concepts/chats/): that page explains *what* a
 chat is (a persisted, resumable Claude Code session); this one walks through
 *how* you work in one day to day.
 
-By the end you'll know how to start a chat, tell **keeper** chats from **one-off
+By the end you'll know how to start a chat, tell **project** chats from **one-off
 (scratch)** ones, pick a conversation back up from any device, drive the composer
 and its message **queue**, **Stop** a running turn, **fork or rewind** from any
 message, and keep a growing sidebar legible with **unread** dots, **stars**, the
@@ -66,17 +66,17 @@ run the headless importer (`npm run import-chats -w @paddock/server`) on the hos
 against the data dir.
 :::
 
-## Keeper chats vs one-off (scratch) chats
+## Project chats vs one-off (scratch) chats
 
 Paddock has two kinds of chat, and the difference is *where the agent works*:
 
-- A **keeper chat** belongs to a project. It runs under that project's **keeper
-  agent**, whose working directory is the project directory (or, for a
-  repo-backed project, the checkout inside it). Everything the keeper does —
-  notes, edits, commits — happens in that project. After a successful keeper
-  turn, a [sweep](/concepts/sweeper/) keeps the project's `OVERVIEW.md` and
+- A **project chat** belongs to a project. It runs under that project's own agent,
+  whose working directory is the project directory (or, for a repo-backed
+  project, the checkout inside it). Everything Claude does — notes, edits,
+  commits — happens in that project. After a successful turn, a
+  [sweep](/concepts/sweeper/) keeps the project's `OVERVIEW.md` and
   `CHANGELOG.md` curated — and on instances where the operator has enabled it,
-  the keeper is also given Paddock's self-management tools.
+  Claude is also given Paddock's self-management tools.
 - A **one-off (scratch) chat** is deliberately *not* tied to a project — a quick
   place to think out loud. It runs under a single global **scratch agent** whose
   working directory is a separate scratch folder, not any project. Scratch chats
@@ -90,7 +90,7 @@ same resumability — the split is scope, not power.
 If a scratch chat turns into something you'll return to, don't copy-paste it —
 **Promote to project** from the one-off chat. Paddock creates a real project and
 *moves the whole transcript into it*, so the conversation continues under the new
-project's keeper with nothing lost. See
+project's agent with nothing lost. See
 [Creating & organizing projects](/using/creating-and-organizing-projects/#promote-a-scratch-chat-into-a-project).
 :::
 
@@ -133,7 +133,7 @@ The composer is the box at the bottom of every chat. A few things worth knowing:
   the tab, or come back tomorrow and your unsent draft is still there; sending
   clears it. Each chat keeps its own draft — including a not-yet-started new chat.
 - **Attach files and images.** The paperclip button (project chats only) lets you
-  send files and images to the keeper — pick, drag-drop, or paste them in. See
+  send files and images to Claude — pick, drag-drop, or paste them in. See
   [Sending files & images](/using/sending-files-and-images/).
 
 :::note[Draft persistence is per-browser]
@@ -204,13 +204,13 @@ It carries two readouts and two actions:
   than destroyed.
 
 :::caution[Reverting rewinds the conversation, not the world]
-Files the keeper wrote, PRs it opened, messages it sent — none of that is undone
-by a revert. You're only rolling back the transcript. Reverting to one of *your
+Files Claude wrote, PRs it opened, messages it sent — none of that is undone by a
+revert. You're only rolling back the transcript. Reverting to one of *your
 own* messages rewinds to the assistant's previous reply, so the prompt you clicked
 is itself removed.
 :::
 
-The rail appears on your and the keeper's messages once a turn has settled — not
+The rail appears on your and Claude's messages once a turn has settled — not
 on tool blocks, notices, or the turn currently streaming — and it's a project-chat
 feature; one-off chats don't have it.
 
@@ -247,9 +247,9 @@ user alongside your read state.
 ### Nested chats — a fan-out reads as a tree
 
 A chat that another chat created is **filed underneath it** in the sidebar,
-indented, with a twisty on the parent to fold the whole family away. A keeper
-that spawns eight children no longer buries your other work under eight
-top-level rows; it takes up one, with an `8` count pill when you collapse it.
+indented, with a twisty on the parent to fold the whole family away. A chat that
+spawns eight children no longer buries your other work under eight top-level
+rows; it takes up one, with an `8` count pill when you collapse it.
 
 - **Everything is expanded by default.** Nothing is hidden from you until you
   choose to fold it.
@@ -265,7 +265,7 @@ top-level rows; it takes up one, with an `8` count pill when you collapse it.
 
 Which chats nest and which stay flat comes down to whether Paddock recorded a
 parent for them; [Provenance](/concepts/provenance/#from-badge-to-structure) has
-the full picture. The short version: chats a keeper spawned or forked nest;
+the full picture. The short version: chats Claude spawned or forked nest;
 chats *you* started, chats a schedule or an event hook fired, and chats created
 by an **external** MCP client are roots.
 
@@ -305,8 +305,8 @@ Each chat carries a small **context ring** in the sidebar, and a fuller
   as you approach the top of the window. Before a chat's first turn finishes
   there's nothing to measure, so it reads `context: —`.
 - **Cost** shows the chat's cumulative token usage and an estimated dollar cost so
-  far, including tokens spent by any sub-agents the keeper spawned. The dollar
-  figure is a **ballpark at standard API list prices** — a rough sense of scale,
+  far, including tokens spent by any sub-agents Claude spawned. The dollar figure
+  is a **ballpark at standard API list prices** — a rough sense of scale,
   not a bill; if you run the agent on a Claude subscription it won't match what
   you're actually charged.
 
@@ -350,9 +350,8 @@ the handles don't apply.)
 
 - [Chats are sessions](/concepts/chats/) — the concept behind persistence,
   resume, and forking.
-- [Keeper agents](/concepts/keepers/) — the agents
-  behind keeper and one-off chats.
+- [Agents](/concepts/agents/) — the agents behind project and one-off chats.
 - [Creating & organizing projects](/using/creating-and-organizing-projects/) —
-  where keeper chats live, and how to promote a scratch chat.
+  where project chats live, and how to promote a scratch chat.
 - [The sweeper](/concepts/sweeper/) — the post-turn curation that runs after
-  keeper chats (and not scratch ones).
+  project chats (and not scratch ones).

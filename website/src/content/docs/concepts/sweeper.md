@@ -137,8 +137,8 @@ is newest-first, that means the curator always sees the most recent history.
 
 The sweeper is the default **`curate-overview`** trigger, so you shape it the same
 way you shape any trigger — by declaring one in the project's `project.yaml` (or
-from a keeper chat with the trigger-management tools). A project that declares
-nothing behaves exactly as above; a declared `curate-overview` trigger only
+from a chat with the trigger-management tools). A project that declares nothing
+behaves exactly as above; a declared `curate-overview` trigger only
 *customises* the default via its `run`:
 
 - **A different model.** `run.model` overrides the sweeper's model for this

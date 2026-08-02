@@ -8,8 +8,9 @@ import { createProjectViaUI, uniq } from "./helpers";
  * and it appears under its area on the grid + in the sidebar. Edit
  * (area/status/summary/tags) via the Settings tab → reflected on the project
  * header, the grid, and the sidebar. Delete (confirm dialog) → removed
- * everywhere and we return to the projects list, which is the first section of
- * root Home at `/`.
+ * everywhere and we return to the projects grid, which is its own page at
+ * `/projects` again (#599 gave root Home's opening screen to the running/unread
+ * feeds — see `gridUrl`).
  *
  * Created via the UI (not disk-seeded) so the keeper agent is registered and the
  * project is fully real.
@@ -28,13 +29,13 @@ test("create with name/area/summary/tags → lands + appears under its area + si
 
   // Landed in the project chat view.
   await expect(page).toHaveURL(new RegExp(`/projects/${slug}`));
-  await expect(page.getByPlaceholder(/Message the keeper agent/i)).toBeVisible();
+  await expect(page.getByPlaceholder(/Message Claude/i)).toBeVisible();
   // Header reflects name, summary, and tags.
   await expect(page.getByRole("heading", { name, level: 1 })).toBeVisible();
   await expect(page.getByText("A homelab thing")).toBeVisible();
 
   // On the projects grid it shows under Homelab, and the sidebar lists it.
-  await page.goto("/");
+  await page.goto("/projects");
   const homelab = page.getByRole("button", { name: /^Homelab/ });
   if ((await homelab.getAttribute("aria-expanded")) === "false") await homelab.click();
   await expect(page.locator("section a.card").filter({ hasText: name })).toBeVisible();
@@ -68,7 +69,7 @@ test("edit area/status/summary/tags → reflected on the project header + grid +
   await expect(page.getByRole("button", { name: "editedtag", exact: true }).first()).toBeVisible();
 
   // On the grid the project now lives under House (not Homelab).
-  await page.goto("/");
+  await page.goto("/projects");
   const house = page.getByRole("button", { name: /^House/ });
   if ((await house.getAttribute("aria-expanded")) === "false") await house.click();
   await expect(page.locator("section a.card").filter({ hasText: name })).toBeVisible();
@@ -99,7 +100,7 @@ test("edit a project's keeper model from the UI → reflected on the chat picker
   await expect(chatModel).toHaveValue("claude-sonnet-5");
 });
 
-test("delete (confirm dialog) → removed from grid + sidebar, returns to root Home", async ({
+test("delete (confirm dialog) → removed from grid + sidebar, returns to the projects grid", async ({
   page,
 }) => {
   const name = uniq("LC Delete");
@@ -112,13 +113,15 @@ test("delete (confirm dialog) → removed from grid + sidebar, returns to root H
   await page.getByRole("menuitem", { name: /Delete project/i }).click();
 
   // The confirm dialog names the project; confirming deletes + navigates back to
-  // the projects list on root Home (`/` — see `gridUrl`).
+  // the projects grid (`/projects` — see `gridUrl`).
   const confirm = page.getByRole("alertdialog");
   await expect(confirm).toBeVisible();
   await expect(confirm.getByText(name)).toBeVisible();
   await confirm.getByRole("button", { name: /Delete project/i }).click();
 
-  await expect(page).toHaveURL(/\/$/);
+  await expect(page).toHaveURL(/\/projects$/);
+  // …and it really is the grid, not a route-error screen: its own page header.
+  await expect(page.getByRole("heading", { name: "Projects", level: 1 })).toBeVisible();
   // Gone from the grid + sidebar (both auto-retry until the context refresh lands).
   await expect(page.locator("a.card").filter({ hasText: name })).toHaveCount(0);
   await expect(page.locator("aside").getByRole("link", { name: new RegExp(name) })).toHaveCount(0);
