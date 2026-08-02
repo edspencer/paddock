@@ -67,6 +67,40 @@ export function demoEnv({ dataDir, port, home, fakeScript }) {
   return env;
 }
 
+/**
+ * Refuse to proceed if anything already holds the port.
+ *
+ * This guard is load-bearing, not defensive tidiness. `startServer` decides it
+ * is up by polling `/api/health` — but ANY Paddock on that port answers that,
+ * including a stale one left over from an earlier run pointed at different data.
+ * Without this check the symptom is a shoot that silently photographs the wrong
+ * instance while our own child dies of EADDRINUSE in a log nobody reads.
+ *
+ * Note the fix is to fail loudly here, NOT to hunt down and kill whatever holds
+ * the port: this box runs many Paddock instances (production included), and
+ * pattern-matching `node .../server/dist/index.js` to kill "strays" will take
+ * them all out.
+ */
+async function assertPortFree(port) {
+  const { createServer } = await import("node:net");
+  await new Promise((resolve, reject) => {
+    const probe = createServer();
+    probe.once("error", (err) =>
+      reject(
+        err.code === "EADDRINUSE"
+          ? new Error(
+              `Port ${port} is already in use. Something else is listening there — ` +
+                `pass a different --port rather than killing the holder (other ` +
+                `Paddock instances, including production, run on this machine).`,
+            )
+          : err,
+      ),
+    );
+    probe.once("listening", () => probe.close(resolve));
+    probe.listen(port, "127.0.0.1");
+  });
+}
+
 /** Spawn the server and resolve once /api/health answers. */
 export async function startServer({ dataDir, port, home, fakeScript, logFile }) {
   const entry = path.join(REPO_ROOT, "packages", "server", "dist", "index.js");
@@ -75,6 +109,7 @@ export async function startServer({ dataDir, port, home, fakeScript, logFile }) 
       `Server build missing at ${entry}\nRun:  env -u NODE_ENV npm run build`,
     );
   }
+  await assertPortFree(port);
 
   const log = logFile ? fs.openSync(logFile, "w") : "ignore";
   const child = spawn(process.execPath, [entry], {
@@ -114,13 +149,26 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const home = path.resolve(arg("home", path.join(path.dirname(dataDir), "home")));
   const fakeScript = arg("fake-script", path.join(path.dirname(dataDir), "fake-script.json"));
 
-  const { base } = await startServer({
+  const { base, stop } = await startServer({
     dataDir,
     port,
     home,
     fakeScript: fs.existsSync(fakeScript) ? fakeScript : undefined,
     logFile: path.join(path.dirname(dataDir), "server.log"),
   });
+  // Take the child down with us. Without this, killing this wrapper orphans a
+  // server still holding the port — and because the next run's health check is
+  // answered by that orphan, it looks like a successful boot while quietly
+  // serving stale data. (Recovering from that means hunting the process by its
+  // PADDOCK_DATA_DIR in /proc; never by pattern-matching the node command line,
+  // which matches every other Paddock on the box.)
+  for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+    process.on(sig, () => {
+      stop();
+      process.exit(0);
+    });
+  }
+  process.on("exit", stop);
   console.log(`Paddock demo server up: ${base}`);
   console.log("Ctrl-C to stop.");
 }
