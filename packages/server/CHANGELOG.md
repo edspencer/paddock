@@ -1,5 +1,89 @@
 # @paddock/server
 
+## 0.54.1
+
+### Patch Changes
+
+- [#600](https://github.com/edspencer/paddock/pull/600) [`b047b9c`](https://github.com/edspencer/paddock/commit/b047b9c0bbe409fce8c64935db61e03fba54f182) Thanks [@edspencer](https://github.com/edspencer)! - Bump `@herdctl/core` to **5.27.1**, which carries two data-integrity fixes to the
+  session layer Paddock reads on every listing.
+
+  **herdctl#419 — a failed metadata _read_ no longer destroys the file.**
+  `SessionMetadataStore.loadMetadata()` collapsed three outcomes into one `null`:
+  the file was absent (legitimate — storage is sparse), it could not be read
+  (EACCES/EIO/truncated), or it failed schema validation. All seven setters then
+  treated `null` as "start fresh" and `atomicWriteJson`'d an empty file over the
+  top, silently wiping every `customName`, `preview`, `autoName`, `isSidechain`
+  and `usage` entry for that agent. Nothing surfaced an error — the write
+  succeeded, so it looked clean.
+
+  This was reachable in normal operation, not just under exotic disk faults: a
+  routine listing warms the enrichment cache, which is exactly the read-then-write
+  that triggers it. On this instance the blast radius was ~1,500 sessions of
+  user-authored chat names per agent file. 5.27.1 distinguishes _absent_ from
+  _unreadable_ — absent still creates an empty file, unreadable now throws
+  `SessionMetadataUnreadableError` **without writing**, leaving the bytes on disk
+  and recoverable.
+
+  **herdctl#424 — one unreadable transcript entry no longer blanks a listing.**
+  An entry that `stat()`s as a valid `.jsonl` but is actually a directory (Linux
+  `open(2)` succeeds, `read(2)` throws `EISDIR`) threw out of per-session
+  enrichment and took down the whole result: `getAgentSessions` lost the agent's
+  entire list and `getAllSessions` lost _every_ agent's. Enrichment is now
+  isolated per entry — the bad one is skipped and warned, the rest still list.
+
+  The two fixes were verified to **compose**, not merely to co-exist: an
+  integration test upstream drives both failure modes simultaneously (a real
+  poison directory _and_ a real corrupt metadata file) and asserts the good
+  sessions still list, `sessionCount` stays in sync, and the corrupt file survives
+  byte-for-byte. Each fix was also shown to be load-bearing by reverting it and
+  confirming the _right_ assertion fails.
+
+  No Paddock code changes — `^5.27.0` already admitted this range; this pins the
+  floor so the lockfile resolves to a build containing the fixes.
+
+- [#607](https://github.com/edspencer/paddock/pull/607) [`c456b3e`](https://github.com/edspencer/paddock/commit/c456b3e0e66f7914646fa2eb32f7ac9b78ba8a5e) Thanks [@edspencer](https://github.com/edspencer)! - Lead the Home tab with what needs you: running chats, then unread chats.
+
+  **The feeds.** Home used to open on a list of recent chats — the same list the
+  sidebar already shows in full, so the front door duplicated the furniture and
+  buried the signal. It now opens on the two states that actually want a decision:
+  chats with a **live turn**, then chats holding an **unread reply**. Everything
+  else (files, notes) follows.
+
+  Both feeds come from one new route, `GET <base>/chats/attention`, scoped to the
+  workspace's **subtree**. A workspace's key is its path relative to the projects
+  root, so its descendants are exactly the workspaces it prefixes — and the root's
+  key is `""`, which prefixes every key there is. The root's Home is therefore
+  fleet-wide (every project's live work plus its own) and a project's Home is
+  scoped to itself, through one handler and one component that never learn which
+  they are rendering. No `root` flag, no second implementation to drift. Nesting,
+  when it lands, gives an intermediate workspace the same behaviour for free.
+
+  `running` is read from the live session hub rather than inferred from
+  timestamps, so it cannot disagree with the streaming dots. A chat is never in
+  both lists — a live turn hasn't landed a reply yet, so running wins.
+
+  **Why this could not have worked before.** The client only ever opened its
+  WebSocket from `subscribe()`, so landing on Home with no chat pane mounted
+  opened _no socket at all_ and the running set stayed permanently empty — and an
+  empty running set is indistinguishable from a quiet instance, which is why the
+  in-flight badge appeared merely unreliable rather than dead (#573). Watching the
+  active set is now itself a reason to hold a socket, and the server already
+  replays its whole running snapshot to every socket on connect, so the first
+  paint is correct.
+
+  **The Projects section is gone from Home.** It hosted the app's ONLY New Project
+  button, so that moved to the sidebar's Projects header — replacing the project
+  count, which answered a question nobody asks while the list sits directly
+  beneath it. Same `+` affordance as the chat sidebar's New chat, in the same
+  place relative to its list.
+
+  **Notes.** `OVERVIEW.md` now renders on Home beside `CHANGELOG.md`, both
+  collapsible with the choice remembered per workspace. It rides the workspace
+  payload next to `changelog`, so the two can never render a beat apart. The old
+  bottom "Overview" card (a summary plus a metadata table) is deleted — it
+  described the workspace rather than offering a way into it, and Settings already
+  owns editing that.
+
 ## 0.54.0
 
 ### Minor Changes
