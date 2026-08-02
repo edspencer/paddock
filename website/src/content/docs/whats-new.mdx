@@ -5,51 +5,6 @@ description: "The user-facing highlights of each Paddock release — importing y
 
 import DemoVideo from '../../components/DemoVideo.astro';
 
-The headline changes in recent Paddock releases, newest first. These are the
-things you'll *notice* — not an exhaustive changeset. For the full, per-package
-detail see the changelogs on GitHub
-([server](https://github.com/edspencer/paddock/blob/main/packages/server/CHANGELOG.md),
-[web](https://github.com/edspencer/paddock/blob/main/packages/web/CHANGELOG.md)).
-
-:::note[Reading older entries]
-Each entry describes a release as it shipped, and some things were refined later.
-The separate `set_schedule` and `set_hook` self-management tools below were unified
-into a single `set_trigger` family in a subsequent release. And 0.49's root
-*project* — reached through a reserved `__root` slug — was replaced two releases
-on by 0.51's root **workspace**, whose key is the empty string and whose routes
-live at `/api/root`; `__root` is no longer accepted anywhere. Where a superseded
-detail would otherwise send you to an address that no longer resolves, the entry
-says so inline.
-:::
-
-The newest arc is that Paddock stopped being a **walled garden**. It used to be
-that work only counted if it started here; the `claude` history already on your
-laptop was invisible, and the persona in the UI implied some other agent was
-doing the work. 0.55 imports that history into the project it belongs to, and
-0.54 dropped the persona — it says **Claude**, because that is who you were
-talking to. In the same stretch the front door stopped being a directory and
-started being a to-do list: Home now opens on what is **running** and what is
-**unread**, rather than on a list the sidebar was already showing you.
-
-Two arcs run through the stretch before that. The first is that Paddock's own
-**root** stopped being a hole in the model: the directory holding your projects is
-now a workspace in its own right — with a keeper, chats, files, changes, history,
-triggers and settings, exactly like a project — which retired the old
-second-class "scratch" chat and turned `/` into somewhere you work rather than a
-menu you pass through. The second is that the **chat list** grew up. A fan-out
-used to arrive as a flat pile of rows; it now nests under the chat that caused it,
-folds away, tells you which of its chats are working right now, and lets you
-archive or delete a whole family in one gesture.
-
-Before those, a longer arc: Paddock grew from a place to *chat with*
-agents into a place where agents **run on their own** — fired by events and
-schedules, spawning and reporting back to each other — with the UI making all
-that unattended work legible at a glance. With 0.46 the boundary opens the other
-way as well: Paddock is now something you can **drive from outside**, over an MCP
-endpoint and a published HTTP API, carrying its own credentials and its own
-read-only-by-default policy rather than borrowing your proxy's. An instance is
-becoming less an app you visit and more a service your other tools talk to.
-
 ## 0.55 — Bring your terminal history with you
 
 - **Import the Claude Code chats you already have.** A project is backed by a
