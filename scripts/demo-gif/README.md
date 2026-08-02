@@ -12,23 +12,33 @@ site. Keep it that way if you extend the fixtures.
 ## Re-running it
 
 ```bash
-# once per checkout
-NODE_ENV=development npm install --include=dev
-env -u NODE_ENV npm run build          # the shoot runs the built server + SPA
-env -u NODE_ENV npx playwright install chromium
-
-# seed → boot → drive → capture → encode → copy into the repo
-env -u NODE_ENV npm run demo:gif
+npm run demo:gif
 ```
 
-That is the whole thing. It takes about three minutes, and it is safe to re-run:
-it re-seeds a throwaway data dir under `/tmp/paddock-demo` every time and never
-touches your real Paddock state.
+That is the whole thing: seed → boot → drive → capture → encode → copy both
+committed copies into place. About four minutes.
 
-To iterate on the encode without re-shooting (much faster):
+It **preflights** first and refuses to start if anything is missing, naming the
+command that fixes it — so you find out in a second rather than four minutes in.
+The three prerequisites, if you'd rather set them up ahead of time:
 
 ```bash
-node scripts/demo-gif/build.mjs --out /tmp/paddock-demo --colors 128
+NODE_ENV=development npm install --include=dev   # the box exports NODE_ENV=production
+env -u NODE_ENV npm run build                    # the shoot runs the built server + SPA
+npx playwright install chromium
+```
+
+(You don't need `env -u NODE_ENV` on `demo:gif` itself — it scrubs the variable
+for everything it spawns.)
+
+It is safe to re-run: it re-seeds a throwaway data dir under `/tmp/paddock-demo`
+every time and never touches your real Paddock state.
+
+To iterate on the encode without re-shooting (seconds, not minutes):
+
+```bash
+node scripts/demo-gif/make.mjs --skip-shoot        # re-encode + reinstall
+node scripts/demo-gif/build.mjs --out /tmp/paddock-demo --colors 128   # just try a setting
 ```
 
 Stills land in `/tmp/paddock-demo/stills/`, output in `/tmp/paddock-demo/dist/`.

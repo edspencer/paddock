@@ -102,6 +102,20 @@ docker build -t paddock:dev .                # builds the image locally
 npx changeset status --since origin/main     # what would the next bump be
 ```
 
+## Keeping the demo reel current
+
+The README and docs homepage lead with a generated reel of the UI
+(`docs/demo/paddock-demo.gif`). It is **not** part of the release pipeline — it
+is regenerated on demand:
+
+```sh
+npm run demo:gif      # ~4 minutes; see scripts/demo-gif/README.md
+```
+
+Worth a thought whenever a release visibly changes the UI: a new tab, a redesigned
+pane, a renamed concept. The reel went **26 minor versions stale** once, largely
+because nothing pointed at it — a minute's check here is the cheap fix.
+
 ## What this pipeline does NOT do (yet)
 
 It **publishes** artifacts; it does not **deploy** them to the running instances
