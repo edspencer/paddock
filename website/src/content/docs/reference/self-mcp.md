@@ -182,6 +182,10 @@ which is the root), `updatedAt` is the last transcript write and `running` says
 whether a turn is in flight. A root chat reports `project: ""`; pass that value
 back to `read_chat` verbatim.
 
+`name` falls back to an **8-character `sessionId` prefix** when the chat has no
+stored title. Read that as *untitled* — it is not a meaningful name, and it is
+not a usable id, so don't pass it anywhere a full `session_id` is wanted.
+
 **Archived chats are hidden by default.** The web UI files them into a collapsed
 "Archived" section, and this tool now agrees — on an instance with a few hundred
 chats the archived ones would otherwise dominate the response. `omittedArchived`
@@ -206,6 +210,22 @@ A trimmed **tail** of a chat's transcript.
 `total` is the full transcript length and `returned` the tail size, so the agent
 can tell it is looking at a window. `role` is `user`, `assistant` or `tool`; each
 `text` is capped at 2 000 characters.
+
+:::caution[A lossy view — know what it drops]
+`role: "tool"` entries always have **empty `text`**. The tool's name, input and
+output are not included, and those blank entries still count against `limit`, so
+on a tool-heavy chat most of the response is padding. Thinking blocks,
+attachments and sub-agent transcripts are dropped entirely.
+
+So `read_chat` answers *"what is this chat about, what was decided"*. It cannot
+answer *"how did this chat go"* — errors, tool failures, stalls, cost. For that,
+read the transcript directly: it is JSONL, one object per line, at
+`<data-dir>/projects/<slug>/.chats/<sessionId>.jsonl`, with any sub-agents under
+`<sessionId>/subagents/agent-*.jsonl`.
+
+An unknown `session_id` returns `total: 0` with **no error**. That means *not
+found*, not *empty chat* — re-check the id before concluding anything from it.
+:::
 
 ## Write tools
 
