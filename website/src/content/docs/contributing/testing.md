@@ -97,7 +97,7 @@ temp data dir, with the fake `claude` first on `PATH`. Files:
 > reachable from the **CLI** runtime, and Paddock's default drive mode is
 > `session` — which routes turns through `openChatSession` → the **SDK** runtime,
 > which spawns the SDK's own bundled `claude` and would never see the stub. So
-> `test/e2e/server.mjs:119` sets `PADDOCK_KEEPER_DRIVE_MODE=batch` in fake mode
+> `test/e2e/server.mjs:119` sets `PADDOCK_DRIVE_MODE=batch` in fake mode
 > (live mode leaves the default alone). The E2E suite therefore exercises the CLI
 > runtime, **not** the runtime a real chat uses.
 

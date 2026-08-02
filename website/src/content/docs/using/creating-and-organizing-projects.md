@@ -220,7 +220,7 @@ and Links, all editable here. (Slug, Started, and Created are shown read-only.)
 - **Drive mode** — **Batch (one-shot per turn)** is the classic path; **Session
   (cross-turn autonomy)** keeps the agent alive across turns so features like
   `ScheduleWakeup` and `/loop` work. Leave it on **Global default** to inherit the
-  box-wide `PADDOCK_KEEPER_DRIVE_MODE`; a **Reset to global default** button clears
+  box-wide `PADDOCK_DRIVE_MODE`; a **Reset to global default** button clears
   an override.
 - **Max turns** — an upper bound (1–1000) on agent turns in a single run.
 - **Docker sandbox** — run Claude inside a Docker container (needs a working

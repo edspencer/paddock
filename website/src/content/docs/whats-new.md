@@ -50,11 +50,12 @@ becoming less an app you visit and more a service your other tools talk to.
   is quiet. It is the same badge component with the same accessible labels ("2
   unread replies", "1 chat in flight"), rather than a root-shaped lookalike, so
   Home and a project row read the same way at a glance instead of each needing
-  its own interpretation. **The in-flight half rides the live chat socket, and
-  today nothing opens that socket until you open a chat — so on a Home you have
-  only just loaded you will see the unread pill but not yet the spinner.** That
-  is a known gap rather than the intended design; the unread count is derived
-  from the ordinary project-list request and is correct on first paint.
+  its own interpretation. **The in-flight half rides the live chat socket, and in
+  0.53 nothing opened that socket until you opened a chat — so on a Home you had
+  only just loaded you saw the unread pill but not yet the spinner.** That was a
+  known gap rather than the intended design, and it is fixed in the next release:
+  watching the running set is now itself a reason to hold a socket, so the
+  spinner is correct on first paint too.
 - **Home also costs one request less.** The project list used to be followed by a
   second, full fetch of the root workspace — its changelog and its whole chat
   list included — from which everything but a few metadata fields was thrown
@@ -80,6 +81,23 @@ becoming less an app you visit and more a service your other tools talk to.
   WebSocket frames, which was a byte-for-byte duplicate of `projectSlug` kept for
   early frontends that never existed. If you built against `projectSlug` — as
   Paddock's own client always has — nothing changes.
+
+:::danger[Breaking: two environment variables were renamed, with no aliases]
+Retiring "keeper" as a user-facing word also renamed the env vars carrying it:
+
+| before | after |
+|---|---|
+| `PADDOCK_KEEPER_DRIVE_MODE` | `PADDOCK_DRIVE_MODE` |
+| `PADDOCK_KEEPER_NATIVE_PROMPT` | `PADDOCK_NATIVE_PROMPT` |
+
+**An old name is not an error — it is ignored**, so an instance still setting one
+falls back to the built-in default instead of failing to start. For drive mode
+that default is `session`, so anyone who had pinned
+`PADDOCK_KEEPER_DRIVE_MODE=batch` is now on the SDK runtime without being told.
+Check your environment for the old names.
+
+The `paddock.yaml` key `keeperDriveMode` → `driveMode` changed the same way.
+:::
 
 ## 0.52 — Subtree actions & one front door
 
@@ -690,7 +708,7 @@ Triggers form but is **not yet fireable** (there's no inbound webhook ingress ye
 - **Session mode is the default.** A fresh instance now drives keeper turns through
   the persistent session (SDK) runtime by default, so cross-turn autonomy
   (`ScheduleWakeup`, `/loop`) and streaming work out of the box.
-  `PADDOCK_KEEPER_DRIVE_MODE=batch` (and the per-project `driveMode`) still switch
+  `PADDOCK_DRIVE_MODE=batch` (and the per-project `driveMode`) still switch
   back to the one-shot path.
 - **The trigger foundation.** Under the hood, hooks and schedules were unified onto
   one discriminated **trigger** model (`schedule` / `event` / `webhook`) over a

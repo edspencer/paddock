@@ -63,7 +63,7 @@ property of the **runtime**, not the transport:
 - **Batch mode (CLI runtime)** renders each assistant message **whole** when it
   completes; there's no intra-message streaming.
 
-The drive mode is set by `PADDOCK_KEEPER_DRIVE_MODE` (with a per-project
+The drive mode is set by `PADDOCK_DRIVE_MODE` (with a per-project
 `driveMode` override) — see
 [Agents](/configuration/environment/#agents). Everything else about a chat is
 identical either way: the transport was already delta-shaped, so

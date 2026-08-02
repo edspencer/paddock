@@ -50,7 +50,7 @@ is cited to `packages/server/src`). The essentials:
   notes out of band (always a one-shot `trigger()`, so always the CLI runtime).
   Chat turns run `batch` (one-shot `trigger()`, CLI runtime) or `session`
   (persistent `openChatSession`, which hard-codes the SDK runtime; background
-  tasks / wake-ups survive the turn), per `PADDOCK_KEEPER_DRIVE_MODE` /
+  tasks / wake-ups survive the turn), per `PADDOCK_DRIVE_MODE` /
   `project.driveMode`. `session` is the default, so **chats normally run on the
   SDK, not `claude -p`**.
 
