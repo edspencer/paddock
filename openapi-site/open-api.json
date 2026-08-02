@@ -3,7 +3,7 @@
   "info": {
     "title": "Paddock HTTP API",
     "description": "HTTP API for Paddock — the Claude Code workspace platform (persistent chats, projects, unified triggers).\n\nThis document is **generated from the server's route schemas** via `@fastify/swagger`, so it\ntracks the code: a new or changed route with a schema shows up here automatically.\n\n**Live chat is WebSocket, not REST.** Sending a message, streaming the response, tool-call\nevents, cancel, slash-commands and the live queue all flow over `GET /ws`. This spec covers the\nHTTP surface: reads, project/chat/trigger/git management, instance config, and attachment\nupload/serve. The two-step attachment flow is: `POST .../chats/:sessionId/upload` (HTTP, here)\nthen reference the returned file ids in the `chat:send` WebSocket frame.\n\n## Authentication\n\nPaddock has no built-in login — authentication is provider-agnostic and handled at the edge (reverse proxy / IdP). **When these docs are served by the Paddock instance itself, behind your proxy, a `Try it out` request is a same-origin call that inherits your existing SSO session — it authenticates automatically, nothing to paste here.** Use the **Authorize** button only for the explicit-token path (a different origin, a programmatic client, or testing without the proxy).\n\nThis instance runs **jwt** mode: a signed token in the `Authorization` header, verified against the JWKS.",
-    "version": "0.54.0"
+    "version": "0.54.1"
   },
   "components": {
     "securitySchemes": {
@@ -492,7 +492,7 @@
         "tags": [
           "Projects"
         ],
-        "description": "Returns `{ project, changelog, chats }` — the project metadata, its raw CHANGELOG.md text, and its chats (sessions) enriched with archived/starred/last-seen/provenance/trigger flags. Per-chat usage rings are filled separately by the client.",
+        "description": "Returns `{ project, changelog, overview, chats }` — the project metadata, its raw CHANGELOG.md and OVERVIEW.md text (empty strings when absent), and its chats (sessions) enriched with archived/starred/last-seen/provenance/trigger flags. Per-chat usage rings are filled separately by the client.",
         "parameters": [
           {
             "schema": {
@@ -506,11 +506,11 @@
         ],
         "responses": {
           "200": {
-            "description": "Object with `project`, `changelog` text, and a `chats` array.",
+            "description": "Object with `project`, `changelog` text, `overview` text, and a `chats` array.",
             "content": {
               "application/json": {
                 "schema": {
-                  "description": "Object with `project`, `changelog` text, and a `chats` array.",
+                  "description": "Object with `project`, `changelog` text, `overview` text, and a `chats` array.",
                   "type": "object",
                   "additionalProperties": true
                 }
@@ -1027,6 +1027,40 @@
               "application/json": {
                 "schema": {
                   "description": "Object `{ projectSlug, sessionId, ws, note }` giving the WS target `/ws`.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/root/chats/attention": {
+      "get": {
+        "summary": "List the chats in this workspace's subtree that are running or unread",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Returns `{ running, unread }` — the chats in this workspace AND its descendants that currently have a live turn (`running`) or hold an unread reply (`unread`). Each row is a chat DTO plus the `projectSlug`/`projectName` it belongs to, so a fleet-wide list stays attributable. On the root mount (`/api/root/chats/attention`) the subtree is the whole instance, because the root workspace's key (`\"\"`) prefixes every workspace key; on a project mount it is that project alone. A chat is never in both lists: a live turn hasn't landed a reply yet, so running wins.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ running, unread }`, each an array of chat DTOs enriched with `projectSlug` and `projectName`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ running, unread }`, each an array of chat DTOs enriched with `projectSlug` and `projectName`.",
                   "type": "object",
                   "additionalProperties": true
                 }
@@ -2539,7 +2573,7 @@
         "tags": [
           "Projects"
         ],
-        "description": "Returns `{ project, changelog, chats }` — the project metadata, its raw CHANGELOG.md text, and its chats (sessions) enriched with archived/starred/last-seen/provenance/trigger flags. Per-chat usage rings are filled separately by the client.",
+        "description": "Returns `{ project, changelog, overview, chats }` — the project metadata, its raw CHANGELOG.md and OVERVIEW.md text (empty strings when absent), and its chats (sessions) enriched with archived/starred/last-seen/provenance/trigger flags. Per-chat usage rings are filled separately by the client.",
         "parameters": [
           {
             "schema": {
@@ -2553,11 +2587,11 @@
         ],
         "responses": {
           "200": {
-            "description": "Object with `project`, `changelog` text, and a `chats` array.",
+            "description": "Object with `project`, `changelog` text, `overview` text, and a `chats` array.",
             "content": {
               "application/json": {
                 "schema": {
-                  "description": "Object with `project`, `changelog` text, and a `chats` array.",
+                  "description": "Object with `project`, `changelog` text, `overview` text, and a `chats` array.",
                   "type": "object",
                   "additionalProperties": true
                 }
@@ -3074,6 +3108,40 @@
               "application/json": {
                 "schema": {
                   "description": "Object `{ projectSlug, sessionId, ws, note }` giving the WS target `/ws`.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/chats/attention": {
+      "get": {
+        "summary": "List the chats in this workspace's subtree that are running or unread",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Returns `{ running, unread }` — the chats in this workspace AND its descendants that currently have a live turn (`running`) or hold an unread reply (`unread`). Each row is a chat DTO plus the `projectSlug`/`projectName` it belongs to, so a fleet-wide list stays attributable. On the root mount (`/api/root/chats/attention`) the subtree is the whole instance, because the root workspace's key (`\"\"`) prefixes every workspace key; on a project mount it is that project alone. A chat is never in both lists: a live turn hasn't landed a reply yet, so running wins.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ running, unread }`, each an array of chat DTOs enriched with `projectSlug` and `projectName`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ running, unread }`, each an array of chat DTOs enriched with `projectSlug` and `projectName`.",
                   "type": "object",
                   "additionalProperties": true
                 }
