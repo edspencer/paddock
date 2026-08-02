@@ -286,6 +286,38 @@ export function toChatDto(
 }
 
 /**
+ * Recover a usable preview when the raw one is a machine-prepended wrapper: the
+ * preload context block (#1/#62) and/or the composer-attachment block (#328).
+ * Either makes the first message a poor display name, so we read the untruncated
+ * first user message and strip the wrapper back to the user's actual request.
+ *
+ * Returns `undefined` when there is nothing better than `s.preview` — either the
+ * preview was never polluted, or nothing survived the strip. Only polluted chats
+ * pay for the extra (head-of-file) read; everything else returns without I/O.
+ *
+ * Shared by the REST DTO and the MCP `list_chats` projection (#614) so the two
+ * surfaces cannot drift on what a chat is called. They did: the MCP list omitted
+ * the preview step entirely and fell straight through to an 8-char sessionId.
+ */
+export async function recoverPreview(
+  projectDir: string,
+  s: DiscoveredSession,
+): Promise<string | undefined> {
+  const polluted =
+    !s.customName &&
+    !s.autoName &&
+    (s.preview?.startsWith(PRELOAD_CONTEXT_OPEN) || s.preview?.startsWith(ATTACHMENTS_OPEN));
+  if (!polluted) return undefined;
+
+  const full = await readFirstUserText(projectDir, s.sessionId).catch(() => undefined);
+  // Strip preload FIRST (it wraps the whole thing), then the attachment block
+  // nested inside it, leaving just the user's typed request.
+  const cleaned = stripAttachmentsWrapper(stripPreloadWrapper(full ?? s.preview ?? "")).trim();
+  if (!cleaned) return undefined; // couldn't recover
+  return cleaned.length > PREVIEW_MAX ? `${cleaned.slice(0, PREVIEW_MAX)}...` : cleaned;
+}
+
+/**
  * Build the chat DTOs for a PROJECT's sessions, cleaning names polluted by the
  * preload wrapper (issue #62). When a chat has no better name (no user rename,
  * no Claude-generated summary) AND its preview is the injected `<project-context>`
@@ -318,25 +350,9 @@ export async function buildProjectChats(
       const starred = starredOf ? await starredOf(s).catch(() => false) : false;
       const unread = unreadOf ? await unreadOf(s).catch(() => false) : false;
       const parent = parentOf ? await parentOf(s).catch(() => null) : null;
-      // A preview polluted by a machine-prepended wrapper: the preload context
-      // block (#1) and/or the composer-attachment block (#328). Either makes the
-      // raw first message a poor display name, so recover the real request below.
-      const pollutedPreview =
-        !s.customName &&
-        !s.autoName &&
-        (s.preview?.startsWith(PRELOAD_CONTEXT_OPEN) || s.preview?.startsWith(ATTACHMENTS_OPEN));
-      if (!pollutedPreview)
-        return toChatDto(s, undefined, usage, archived, turnAt, lastSeen, provenance, trigger, starred, unread, parent);
-
-      const full = await readFirstUserText(projectDir, s.sessionId).catch(() => undefined);
-      // Strip preload FIRST (it wraps the whole thing), then the attachment block
-      // nested inside it, leaving just the user's typed request.
-      const cleaned = stripAttachmentsWrapper(stripPreloadWrapper(full ?? s.preview ?? "")).trim();
-      // couldn't recover
-      if (!cleaned)
-        return toChatDto(s, undefined, usage, archived, turnAt, lastSeen, provenance, trigger, starred, unread, parent);
-      const preview =
-        cleaned.length > PREVIEW_MAX ? `${cleaned.slice(0, PREVIEW_MAX)}...` : cleaned;
+      // A preview polluted by a machine-prepended wrapper is recovered back to
+      // the user's real request; anything else maps straight through.
+      const preview = await recoverPreview(projectDir, s);
       return toChatDto(s, preview, usage, archived, turnAt, lastSeen, provenance, trigger, starred, unread, parent);
     }),
   );
