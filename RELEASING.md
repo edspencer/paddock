@@ -38,7 +38,8 @@ page (`website/src/content/docs/whats-new.md`) so the docs site stays current.
 1. Merge feature PRs (each carrying its changeset) into `main`.
 2. The **Release** workflow opens/updates a **"chore: version packages"** PR that
    bumps the version, updates `CHANGELOG.md`, and refreshes the lockfile.
-3. **Merge that PR.** On the merge, the same workflow run:
+3. **Merge that PR.** On the merge, the same workflow run first **waits for CI
+   to pass on the merge commit** (the `verify-ci` job) and then:
    - builds & pushes `ghcr.io/edspencer/paddock:<version>` and `:latest`
      (linux/amd64 + linux/arm64);
    - builds `paddock-<version>.tgz` (+ `.sha256`);
@@ -49,6 +50,31 @@ page (`website/src/content/docs/whats-new.md`) so the docs site stays current.
      newest release.
 
 `workflow_dispatch` is available to re-run the pipeline manually.
+
+### The version PR's own checks are not enough
+
+The version PR is opened by `github-actions[bot]`, and GitHub parks workflow runs
+from bot-authored PRs at **`action_required`** pending manual approval. Nothing
+surfaces this: the PR sits there looking green because the *external* checks
+(Cloudflare Pages, GitGuardian) do run, while **typecheck, unit/integration and
+E2E never ran at all**.
+
+It is not a local quirk — every run on `changeset-release/main` in this repo and
+in `edspencer/herdctl` has been parked that way. **v0.54.2 shipped like this.**
+
+Two things follow:
+
+- **Approve the run** if you want to see real CI before merging: on the version
+  PR, Actions → the pending CI run → *Approve and run*. Optional, but it is the
+  only way to get a verdict pre-merge.
+- **You cannot ship unverified regardless.** CI on `main` is *not* gated (a human
+  pushes the merge), and the `verify-ci` job now blocks on it: no image is pushed
+  to GHCR, no tarball is built, and no GitHub Release is created unless CI
+  concluded `success` on that exact commit.
+
+If CI is red for a reason you judge unrelated — a flake — fix or re-run CI until
+it is green, then re-run the pipeline via **Actions → Release → Run workflow**.
+Overriding is deliberately a conscious act rather than the default path.
 
 ## Running an artifact
 
