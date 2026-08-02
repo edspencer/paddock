@@ -435,7 +435,7 @@ data directory; hide it before the first frame, and assert from the page that
 nothing else leaks:
 
 ```js
-document.body.innerText.match(/valfenda|127\.0\.0\.1|\/data\/scratch|sk-ant/g)
+document.body.innerText.match(/<your-domain>|127\.0\.0\.1|\/data\/scratch|sk-ant/g)
 ```
 
 #### Staging a feature that has no data yet
