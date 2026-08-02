@@ -6,6 +6,25 @@ not part of the app build (the `packages/*` workspaces are) — most are `.mjs`
 this directory carries its own `package.json` (`"type": "commonjs"`) so it does
 not inherit the repo root's `"type": "module"`.
 
+## `check-no-nul-bytes.mjs` — CI guard against raw NUL bytes
+
+`npm run check:nul` walks every `.ts`/`.tsx` under `packages/` (skipping
+`node_modules` and build output) and fails if any contains a literal `0x00`
+byte, reporting `file:line:col`.
+
+A raw NUL inside a string literal is identical at runtime to the `\u0000`
+escape, so nothing about the program's behaviour betrays it — but ripgrep and
+grep classify the containing file as **binary** and skip it during directory
+traversal, silently, with exit code 1, indistinguishable from an honest "no
+matches". Two such bytes once hid 1,249 lines of `packages/server/src` —
+including `ws.ts`, the busiest file in the server — from every recursive
+search. Because the byte renders as nothing in a terminal, it is also invisible
+in diffs, so neither review, typecheck, nor the test suite catches it. Hence a
+dedicated check, wired into CI ahead of `npm ci` (issue #570).
+
+The fix is always to spell the character as an escape rather than paste the raw
+byte — see the `KEY_SEP` constants in `packages/server/src`.
+
 ## `pm` — stable-port preview servers for agents
 
 `pm` is a thin wrapper over [PM2](https://pm2.keymetrics.io/) plus a small shared
