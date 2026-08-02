@@ -340,9 +340,12 @@ function Control({
     // So a pending `null` renders as the default text (that IS what would be in
     // force), while `""` renders genuinely empty. Collapsing the two would make
     // "restore the default" look identical to "turn it off".
-    const isDefaulted = value === null || value === undefined;
-    const shown = isDefaulted ? String(f.default ?? "") : String(value);
-    const canRestore = typeof f.default === "string" && !isDefaulted && value !== f.default;
+    // Unset OR byte-identical to the built-in: either way what's in force IS the
+    // default, and saying "646 characters" instead would imply an override the
+    // operator never made.
+    const isDefaulted = value === null || value === undefined || value === f.default;
+    const shown = value === null || value === undefined ? String(f.default ?? "") : String(value);
+    const canRestore = typeof f.default === "string" && !isDefaulted;
     return (
       <div className="mt-1.5">
         <textarea
