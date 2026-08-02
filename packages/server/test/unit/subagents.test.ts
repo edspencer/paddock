@@ -259,12 +259,12 @@ describe("subagents (issue #37)", () => {
       expect(enriched[2].toolCall).not.toHaveProperty("toolUseId");
     });
 
-    it("skips an in-flight (pending) tool message so it doesn't steal a completed sibling's fields (herdctl#399)", async () => {
+    it("enriches an in-flight (pending) tool message without stealing a completed sibling's fields (herdctl#399, #622)", async () => {
       // Core@5.24.0 injects the unpaired (still-running) tool_use into the parsed
-      // stream as a `pending:true` message so it's visible on rehydration. But
-      // `readTaskToolUses` is paired-only, so the pending message must NOT consume a
-      // `taskUses` slot — else a parallel completed sub-agent would render with the
-      // wrong `toolUseId`/`hasSubagent` (and become wrongly expandable).
+      // stream as a `pending:true` message so it's visible on rehydration. It is
+      // joined off its own in-flight cursor, so it must NOT consume a *paired*
+      // slot — else a parallel completed sub-agent would render with the wrong
+      // `toolUseId`/`hasSubagent` (and become wrongly expandable).
       await writeMain("s-pending", [
         // Two Agents launched; only toolu_B has come back so far.
         toolUse("Agent", "toolu_A", { subagent_type: "Explore", description: "still running" }),
@@ -291,17 +291,90 @@ describe("subagents (issue #37)", () => {
         toolMsg("Agent", "done B"),
       ]);
 
-      // Pending A is left generic (no paired data) — never inherits B's fields, so
-      // it stays a plain running box, not an expandable one.
-      expect(enriched[0].toolCall).not.toHaveProperty("toolUseId");
-      expect(enriched[0].toolCall?.hasSubagent).toBeUndefined();
-      expect(enriched[0].toolCall?.pending).toBe(true);
+      // Pending A gets its OWN launch fields — recovered from the launch input, not
+      // inherited from B. Without these the running-sub-agents bar has no candidate
+      // after a re-mount and stays empty for the rest of the run (#622).
+      expect(enriched[0].toolCall).toMatchObject({
+        toolUseId: "toolu_A",
+        subagentType: "Explore",
+        description: "still running",
+        hasSubagent: true,
+        pending: true,
+      });
+      // Still running, so it must NOT carry a duration: that would freeze a
+      // part-way value on the card and mark it finished in the bar's eyes.
+      expect(enriched[0].toolCall?.subagentDurationMs).toBeUndefined();
       // Completed B gets its OWN recovered fields — alignment preserved.
       expect(enriched[1].toolCall).toMatchObject({
         toolUseId: "toolu_B",
         subagentType: "general",
         hasSubagent: true,
       });
+    });
+
+    it("keeps a lone running sub-agent enriched on re-mount, so the bar survives (#622)", async () => {
+      // The exact reported repro: ONE sub-agent still working, and the user
+      // navigates to another chat and back. The chat re-hydrates from /messages,
+      // so whatever this join returns is all the running-sub-agents bar gets — the
+      // live `chat:tool_start` frame that first populated it is long gone.
+      await writeMain("s-live", [
+        toolUse("Agent", "toolu_L", { subagent_type: "general-purpose", description: "still working" }),
+        // No toolResult: the sub-agent has not come back.
+      ]);
+      await writeSubagent(
+        "s-live",
+        "lll",
+        { agentType: "general-purpose", description: "still working", toolUseId: "toolu_L" },
+        [{ type: "user", message: { content: "go" } }],
+      );
+
+      const pendingAgent: ChatMessage = {
+        role: "tool",
+        content: "",
+        timestamp: "2026-01-01T00:00:00Z",
+        toolCall: { toolName: "Agent", inputSummary: undefined, output: "", isError: false, pending: true },
+      };
+      const enriched = await enrichWithSubagents(projectDir, "s-live", [pendingAgent]);
+
+      // `useRunningSubagents` requires BOTH of these; either one missing drops the
+      // sub-agent from the bar entirely and nothing is ever polled.
+      expect(enriched[0].toolCall?.toolUseId).toBe("toolu_L");
+      expect(enriched[0].toolCall?.hasSubagent).toBe(true);
+      expect(enriched[0].toolCall?.subagentType).toBe("general-purpose");
+      expect(enriched[0].toolCall?.subagentDurationMs).toBeUndefined();
+    });
+
+    it("aligns MULTIPLE in-flight sub-agents to their own launches, in order", async () => {
+      await writeMain("s-multi", [
+        toolUse("Agent", "toolu_P1", { subagent_type: "Explore", description: "first" }),
+        toolUse("Agent", "toolu_P2", { subagent_type: "general", description: "second" }),
+        toolUse("Agent", "toolu_D", { subagent_type: "Plan", description: "done" }),
+        toolResult("toolu_D", "done D"),
+      ]);
+      await writeSubagent(
+        "s-multi",
+        "ddd",
+        { agentType: "Plan", description: "done", toolUseId: "toolu_D" },
+        [{ type: "user", message: { content: "hi" } }],
+      );
+
+      const pend = (): ChatMessage => ({
+        role: "tool",
+        content: "",
+        timestamp: "2026-01-01T00:00:00Z",
+        toolCall: { toolName: "Agent", inputSummary: undefined, output: "", isError: false, pending: true },
+      });
+      const enriched = await enrichWithSubagents(projectDir, "s-multi", [
+        pend(),
+        pend(),
+        toolMsg("Agent", "done D"),
+      ]);
+
+      expect(enriched[0].toolCall?.toolUseId).toBe("toolu_P1");
+      expect(enriched[1].toolCall?.toolUseId).toBe("toolu_P2");
+      // The completed one is still joined off the paired cursor — two in-flight
+      // launches ahead of it must not shift it.
+      expect(enriched[2].toolCall).toMatchObject({ toolUseId: "toolu_D", hasSubagent: true });
     });
 
     it("reports the sub-agent's RUN time (first→last transcript timestamp), not the launch", async () => {
