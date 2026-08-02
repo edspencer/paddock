@@ -140,25 +140,47 @@ silent:
 
 Present whenever `PADDOCK_SELF_MCP` is on.
 
+### The root workspace's key is `""`
+
+Every `project` argument below is really a **workspace key** — a path relative to
+the projects root. The **root workspace** (the instance's own top-level
+directory, "Home" in the sidebar) is a workspace like any other, and its key is
+the **empty string**. So `project: ""` addresses the root, and an *absent*
+`project` is what means "unspecified".
+
+That distinction is load-bearing, because `""` is falsy. Until #560 these tools
+tested it for truthiness, which made every root chat unreachable — `list_chats
+{"project": ""}` silently answered for *all projects*, and `read_chat` reported
+`project` missing when it had been supplied.
+
 ### `list_projects`
 
 Every project on the instance, across all areas. No arguments.
 
-**Returns** `{ count, projects: [{ slug, name, area?, status }] }`. `area` is
-omitted when the project has none. Use `slug` to target the other tools.
+**Returns** `{ count, projects: [{ slug, name, area?, status }], root }`. `area`
+is omitted when the project has none. Use `slug` to target the other tools.
+
+`root` is the **root workspace** in the same `{ slug, name, area?, status }`
+shape, with `slug: ""` — or `null` when the caller's scope doesn't reach it. It
+is deliberately **not** a member of `projects`, and not counted in `count`: the
+root is not a project, and enumeration walks the projects root's *children*
+only. It rides alongside instead, exactly as `GET /api/projects` returns
+`{ projects, root }`. This is how a caller learns the root exists at all.
 
 ### `list_chats`
 
 | Argument | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `project` | string | no | Project slug to filter by. **Omit to list chats across all projects.** |
+| `project` | string | no | Workspace key to filter by: a project slug, or `""` for the **root workspace**. **Omit to list chats across all workspaces** — every project *and* the root. |
 | `include_archived` | boolean | no | Include archived chats. **Defaults to `false`**, matching the web UI. |
 
 Cheap — it does not read transcripts.
 
 **Returns** `{ count, omittedArchived, project, chats: [{ project, sessionId, name, updatedAt, running, archived }] }`,
-where `project` echoes the filter (`null` when unfiltered), `updatedAt` is the
-last transcript write and `running` says whether a turn is in flight.
+where `project` echoes the filter (`null` when unfiltered — distinct from `""`,
+which is the root), `updatedAt` is the last transcript write and `running` says
+whether a turn is in flight. A root chat reports `project: ""`; pass that value
+back to `read_chat` verbatim.
 
 **Archived chats are hidden by default.** The web UI files them into a collapsed
 "Archived" section, and this tool now agrees — on an instance with a few hundred
@@ -176,7 +198,7 @@ A trimmed **tail** of a chat's transcript.
 
 | Argument | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `project` | string | **yes** | Project slug that owns the chat. |
+| `project` | string | **yes** | Workspace that owns the chat: a project slug, or `""` for the root workspace. Use whatever `list_chats` reported, verbatim. Required means *present* — `""` is a valid value, an absent argument is the error. |
 | `session_id` | string | **yes** | From `list_chats`. |
 | `limit` | number | no | Trailing messages to return. Default **30**, max **200**; out-of-range values are clamped, not rejected. |
 

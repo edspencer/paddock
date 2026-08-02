@@ -27,11 +27,18 @@ export const MODEL_ARG_DESC =
 
 export const LIST_PROJECTS_DESC =
   "List all Paddock projects (across every area). Returns each project's slug, " +
-  "display name, area, and status. Use the slug to target `list_chats`/`read_chat`.";
+  "display name, area, and status. Use the slug to target `list_chats`/`read_chat`. " +
+  "Also returns `root`: the ROOT WORKSPACE — the instance's own top-level " +
+  "directory, which has chats of its own but is NOT a project and so is not in " +
+  '`projects`/`count`. Its key is the EMPTY STRING: pass `project: ""` to ' +
+  "`list_chats`/`read_chat` to target it.";
 
 export const LIST_CHATS_DESC =
-  "List chats. Pass `project` (a slug) to list only that project's chats, or omit " +
-  "it to list chats across ALL projects. Returns each chat's owning project, " +
+  "List chats. Pass `project` (a workspace key) to list only that workspace's " +
+  "chats, or omit it to list chats across ALL workspaces — every project AND the " +
+  'root workspace. The ROOT workspace\'s key is the EMPTY STRING (`project: ""`), ' +
+  "and its chats are reported with `project: \"\"`; pass that same value back to " +
+  "`read_chat`. Returns each chat's owning project, " +
   "sessionId, display name, last-updated time, whether a turn is currently " +
   "running, and whether it is archived. ARCHIVED chats are EXCLUDED by default " +
   "(matching the web UI, which files them away in a collapsed section); the " +
@@ -42,8 +49,10 @@ export const LIST_CHATS_DESC =
   "Cheap — does not read full transcripts; use `read_chat` for content.";
 
 export const READ_CHAT_DESC =
-  "Read a trimmed tail of a chat's transcript. Pass `project` (slug) and " +
-  "`session_id` (from `list_chats`). Returns the last `limit` messages (default " +
+  "Read a trimmed tail of a chat's transcript. Pass `project` (a workspace key: a " +
+  'project slug, or the empty string `""` for the ROOT workspace) and ' +
+  "`session_id` (from `list_chats`) — use whichever `project` value `list_chats` " +
+  "reported for the chat, verbatim. Returns the last `limit` messages (default " +
   `${READ_CHAT_DEFAULT_LIMIT}, max ${READ_CHAT_MAX_LIMIT}) as {role, text, timestamp}; each ` +
   `message's text is capped at ${READ_CHAT_MAX_TEXT} chars. Use this to see what ` +
   "another chat is about or what was decided there.";

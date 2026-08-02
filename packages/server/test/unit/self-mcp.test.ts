@@ -70,7 +70,10 @@ const CHATS: SelfMcpChat[] = [
 function fakeContext(over: Partial<SelfMcpContext> = {}): SelfMcpContext {
   return {
     listProjects: async () => PROJECTS,
-    listChats: async (slug) => (slug ? CHATS.filter((c) => c.project === slug) : CHATS),
+    // `!== undefined`, not truthiness: the op's contract is that ABSENT means
+    // "every workspace" while `""` ADDRESSES the root one (#560). A fake that
+    // tested `slug ?` here would hide the very bug these tests pin.
+    listChats: async (slug) => (slug !== undefined ? CHATS.filter((c) => c.project === slug) : CHATS),
     readChat: async () => [],
     ...over,
   };
@@ -238,6 +241,133 @@ describe("self-management MCP (Phase 1, read-only)", () => {
     expect(clampLimit(15)).toBe(15);
     expect(truncateText("short")).toBe("short");
     expect(truncateText("y".repeat(READ_CHAT_MAX_TEXT + 1))).toContain("[truncated 1 chars]");
+  });
+});
+
+// ── #560: the ROOT workspace is an address, not an absence ───────────────────
+// A workspace key is a path relative to `projectsRoot`, so the root's key is the
+// EMPTY STRING. Every read here used to test it for truthiness, which made the
+// root's chats unlistable and unreadable — and did it silently: `project: ""`
+// got another target's answer, and `read_chat` called a supplied arg missing.
+
+/** The root workspace as `list_projects`' op reports it (an ordinary member). */
+const ROOT_PROJECT: SelfMcpProject = { slug: "", name: "projects", status: "active" };
+
+/** One chat in the root workspace, alongside the project chats in CHATS. */
+const ROOT_CHAT: SelfMcpChat = {
+  project: "",
+  sessionId: "rrr",
+  name: "Root chat",
+  updatedAt: "2026-07-15T00:00:00Z",
+  running: false,
+  archived: false,
+};
+
+const ALL_CHATS = [ROOT_CHAT, ...CHATS];
+
+/** A context whose store holds the root workspace as well as two projects. */
+function rootAwareContext(over: Partial<SelfMcpContext> = {}): SelfMcpContext {
+  return fakeContext({
+    listProjects: async () => [ROOT_PROJECT, ...PROJECTS],
+    listChats: async (slug) =>
+      slug !== undefined ? ALL_CHATS.filter((c) => c.project === slug) : ALL_CHATS,
+    ...over,
+  });
+}
+
+describe("#560: the root workspace is reachable through the MCP surface", () => {
+  it("list_projects reports the root as its OWN field, outside projects/count", async () => {
+    const { json } = await call(rootAwareContext(), "list_projects");
+    // The root is NOT a project: `ProjectStore.list()` enumerates children only,
+    // and that exclusion is deliberate (root-workspace.test.ts). So it must not
+    // leak into the array or the count…
+    expect(json.projects.map((p: SelfMcpProject) => p.slug)).toEqual(["paddock", "herdctl"]);
+    expect(json.count).toBe(2);
+    // …but a caller still has to be able to LEARN it exists, or it can never
+    // reach the root's chats.
+    expect(json.root).toEqual({ slug: "", name: "projects", status: "active" });
+  });
+
+  it("list_projects reports root: null when the store has no root to offer", async () => {
+    // e.g. a scoped external principal whose `projects` list doesn't match `""`;
+    // the policy wrapper filters it out before the handler ever sees it.
+    const { json } = await call(fakeContext(), "list_projects");
+    expect(json.root).toBeNull();
+    expect(json.count).toBe(2);
+  });
+
+  it('list_chats {"project":""} returns the ROOT\'s chats, not every project\'s', async () => {
+    const { json } = await call(rootAwareContext(), "list_chats", { project: "" });
+    // The bug: this silently answered with all 3 project chats.
+    expect(json.chats.map((c: SelfMcpChat) => c.sessionId)).toEqual(["rrr"]);
+    expect(json.count).toBe(1);
+    // …and the echoed target stays `""`, distinguishable from the unfiltered null.
+    expect(json.project).toBe("");
+  });
+
+  it("passes the empty key THROUGH to the op rather than collapsing it", async () => {
+    const seen: Array<string | undefined> = [];
+    const ctx = rootAwareContext({
+      listChats: async (slug) => {
+        seen.push(slug);
+        return [];
+      },
+    });
+    await call(ctx, "list_chats", { project: "" });
+    await call(ctx, "list_chats", {});
+    expect(seen).toEqual(["", undefined]);
+  });
+
+  it("list_chats with no project covers the root as well as every project", async () => {
+    const { json } = await call(rootAwareContext(), "list_chats");
+    expect(json.project).toBeNull();
+    // Design call (#560): unfiltered means EVERY workspace. Omitting the root
+    // here is what made its chats undiscoverable — list_chats is the only source
+    // of session ids, so a root chat was unreachable even once `""` worked.
+    expect(json.chats.map((c: SelfMcpChat) => c.sessionId)).toEqual(["rrr", "aaa", "bbb"]);
+    expect(json.count).toBe(3);
+    expect(json.omittedArchived).toBe(1);
+  });
+
+  it("read_chat accepts the root's empty key and echoes it back", async () => {
+    const seen: Array<[string, string]> = [];
+    const ctx = rootAwareContext({
+      readChat: async (slug, sessionId) => {
+        seen.push([slug, sessionId]);
+        return [{ role: "assistant", text: "from the root keeper", timestamp: "t" }];
+      },
+    });
+    const { result, json } = await call(ctx, "read_chat", { project: "", session_id: "rrr" });
+    expect(result.isError).toBeUndefined();
+    expect(seen).toEqual([["", "rrr"]]);
+    expect(json.project).toBe("");
+    expect(json.messages[0].text).toBe("from the root keeper");
+  });
+
+  it("read_chat still refuses a genuinely ABSENT project (the guard must survive)", async () => {
+    const ctx = rootAwareContext({
+      readChat: async () => {
+        throw new Error("must not be reached");
+      },
+    });
+    for (const args of [{ session_id: "rrr" }, { project: 7, session_id: "rrr" }]) {
+      const { result } = await call(ctx, "read_chat", args as Record<string, unknown>);
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("`project`");
+    }
+  });
+
+  it("tells the agent about the empty key in the schema it reads", () => {
+    const props = (name: string) =>
+      (toolByName(rootAwareContext(), name).inputSchema as {
+        properties: Record<string, { description: string }>;
+      }).properties;
+    // The old text ("Omit to list chats across all projects") is a large part of
+    // why `project: ""` looked like "omit it"; the schema has to name the key.
+    for (const tool of ["list_chats", "read_chat"]) {
+      expect(props(tool).project.description).toMatch(/root/i);
+      expect(props(tool).project.description).toContain('""');
+    }
   });
 });
 
