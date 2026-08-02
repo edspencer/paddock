@@ -53,6 +53,27 @@ import { HomePane } from "./ProjectView/HomePane";
 import { SessionSidebar } from "./ProjectView/SessionSidebar";
 import { useUnreadChats } from "./ProjectView/useUnreadChats";
 import { useAttentionChats } from "./ProjectView/useAttentionChats";
+import { Toast } from "../components/Toast";
+import type { AdoptChatsResult } from "../lib/types";
+
+/**
+ * What an import actually did (#588), in one line.
+ *
+ * Reports skips rather than rounding them away: "Imported 7 chats" when two were
+ * refused is a lie the user only discovers by counting rows. When every skip
+ * shares a reason the reason is named — it is usually the whole explanation ("no
+ * transcript on disk") and it is what turns a confusing number into an
+ * actionable one.
+ */
+export function importSummary({ adopted, skipped }: AdoptChatsResult): string {
+  const n = adopted.length;
+  if (n === 0 && skipped.length === 0) return "Nothing to import — no native chats were found.";
+  const head = n === 0 ? "Imported nothing" : `Imported ${n} chat${n === 1 ? "" : "s"}`;
+  if (skipped.length === 0) return head;
+  const reasons = [...new Set(skipped.map((s) => s.reason).filter(Boolean))];
+  const why = reasons.length === 1 ? ` (${reasons[0]})` : "";
+  return `${head} — skipped ${skipped.length}${why}`;
+}
 
 /**
  * The active view ("home" | "chat" | "files") and the selected chat/file are
@@ -168,6 +189,21 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
   const [overview, setOverview] = useState("");
   const [files, setFiles] = useState<string[]>([]);
   const [loadErr, setLoadErr] = useState<string | null>(null);
+
+  // --- Import native Claude Code CLI chats (#588) ----------------------------
+  // How many terminal-run sessions this workspace could adopt right now. A LIVE
+  // count, not a "has the user dismissed the offer?" flag: it is re-read after
+  // every import, so the sidebar button vanishes only because there is genuinely
+  // nothing left to take — and comes back on its own when the user accrues more
+  // CLI history. 0 both before the first fetch and when there is nothing on
+  // offer, which is the same thing as far as the UI is concerned.
+  const [adoptableCount, setAdoptableCount] = useState(0);
+  const [importing, setImporting] = useState(false);
+  // The one transient outcome message this route raises. Distinct from `loadErr`,
+  // which is an early return that replaces the entire page — correct for "this
+  // project failed to load", far too violent for "imported 7 chats".
+  const [toast, setToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
+  const dismissToast = useCallback(() => setToast(null), []);
 
   // Git backing store: the project's working-tree status. null = not yet loaded
   // or not a git repo (`status.repo === false`) — either way the Changes tab is
@@ -439,6 +475,72 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
     const list = await api.listProjectChats(slug).catch(() => null);
     if (list) setChats(list);
   }, [slug]);
+
+  // Re-read the adoptable-chat count (#588). Called on workspace open and again
+  // after an import — never on render, and never on a timer: the set of native
+  // sessions only changes when the user runs `claude` in a terminal, which no
+  // amount of polling here would make more timely.
+  //
+  // A failure zeroes the count rather than leaving the previous one standing: the
+  // endpoint is new and an older server 404s it, and a button offering to import
+  // N chats that then fails to import anything is worse than no button. The
+  // offer costs nothing to make again on the next open.
+  const refreshAdoptable = useCallback(async () => {
+    const res = await api.getAdoptableChats(slug).catch(() => null);
+    setAdoptableCount(res?.count ?? 0);
+  }, [slug]);
+
+  /**
+   * Import every adoptable native CLI chat into this workspace (#588).
+   *
+   * One click, no confirmation: the server COPIES the source transcripts, so the
+   * user's own `~/.claude` is untouched and there is nothing to warn about. An
+   * empty body means "take everything matched" — the per-source `sourceCwd`
+   * narrowing exists for the CLI, not for this button.
+   *
+   * Both the chat list AND the count are re-read afterwards, in that order of
+   * importance: the list is what the user came for, the count is what makes the
+   * button disappear. Neither is inferred from the response — the count in
+   * particular must come from the server, or the button's visibility would drift
+   * away from what is actually still importable.
+   */
+  const importChats = useCallback(async () => {
+    if (importing) return;
+    setImporting(true);
+    try {
+      const res = await api.adoptChats(slug);
+      await refreshChats();
+      await refreshAdoptable();
+      setToast({
+        message: importSummary(res),
+        // Nothing imported AND something refused is the one shape that reads as a
+        // failure to the user, whatever the HTTP status said.
+        tone: res.adopted.length === 0 && res.skipped.length > 0 ? "error" : "success",
+      });
+    } catch (e) {
+      // Deliberately NOT `setLoadErr` (which would blank the whole project view
+      // over a failed side-action) and deliberately no count refresh — the offer
+      // stands, so the button stays clickable for a retry.
+      setToast({
+        message: e instanceof Error ? e.message : "Failed to import native chats",
+        tone: "error",
+      });
+    } finally {
+      // In `finally` so a throw can never strand the button in "Importing…".
+      setImporting(false);
+    }
+  }, [importing, slug, refreshChats, refreshAdoptable]);
+
+  // Fetch the adoptable count once per workspace open. `refreshAdoptable` is
+  // slug-scoped and otherwise stable, so this is the whole "on open, not on every
+  // render" story — the deps array does the gating, no ref needed. The count and
+  // any leftover toast reset FIRST so switching workspaces can't briefly offer to
+  // import the previous one's chats.
+  useEffect(() => {
+    setAdoptableCount(0);
+    setToast(null);
+    void refreshAdoptable();
+  }, [refreshAdoptable]);
 
   // After a turn completes, re-fetch the project + files (pull model): a fresh
   // sweep may have written OVERVIEW.md / appended to CHANGELOG / added files.
@@ -1147,6 +1249,9 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
           starChat={starChat}
           toggleUnread={toggleUnread}
           detachChat={detachChat}
+          adoptableCount={adoptableCount}
+          importing={importing}
+          importChats={() => void importChats()}
         />
 
         {/* Main: tabs + content. The active tab is derived from the URL. */}
@@ -1509,6 +1614,11 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
           }}
         />
       )}
+      {/* Transient outcome of the native-chat import (#588). Rendered
+          unconditionally — `Toast` is a no-op while there is no message — and at
+          the route level rather than inside the sidebar so it is not clipped by
+          the sidebar's own scroll containers. */}
+      <Toast message={toast?.message ?? null} tone={toast?.tone} onDismiss={dismissToast} />
     </div>
   );
 }

@@ -64,6 +64,8 @@ import {
   type ScheduleTriggerHandler,
   type ScheduleInfo,
   type JobMetadata,
+  type AdoptionPlacementMode,
+  type AdoptSkippedSession,
 } from "@herdctl/core";
 import { consumeResumedTurn, consumeBackgroundTurns } from "./resume-drain.js";
 import { createSDKMessageHandler, type SDKMessage as ChatSDKMessage } from "@herdctl/chat";
@@ -88,6 +90,18 @@ import {
 } from "./herdctl-agent-config.js";
 import * as jobs from "./herdctl-jobs.js";
 import { JobsDirIndex } from "./herdctl-jobs-index.js";
+import { AdoptableIndex, type AdoptableSummary, type FilterReason } from "./adoptable.js";
+
+/**
+ * One session an import did NOT bring in, with a reason a UI can show verbatim.
+ *
+ * A superset of the engine's own `AdoptSkippedSession`: paddock's noise filter
+ * (`./adoptable.ts`) contributes its own reasons on top of the engine's, and a
+ * caller renders the string either way rather than switching on it.
+ */
+export type AdoptSkipped =
+  | AdoptSkippedSession
+  | { sessionId: string; reason: FilterReason; detail?: string };
 
 /** Options passed through to a streamed trigger. */
 export interface ChatTurnOptions {
@@ -325,6 +339,13 @@ export class HerdctlService {
       // before herdctl's runtime schedule-mutation APIs can add or remove a
       // schedule at runtime. Declaring schedules in project.yaml is unaffected.
       allowScheduleMutation: this.cfg.scheduleMutationEnabled,
+      // Hand the engine the SAME Claude home paddock resolved (#588). Omitting
+      // it makes the engine fall back to `os.homedir()/.claude` while paddock
+      // honours `CLAUDE_HOME`, so discovery, adoption and paddock's `.chats/`
+      // symlinks would resolve against different directories — sessions list
+      // from one home and open empty from the other. Masked whenever the two
+      // coincide, which is why it must be explicit.
+      claudeHomePath: this.cfg.claudeHome,
     });
     await this.fleet.initialize();
 
@@ -337,7 +358,7 @@ export class HerdctlService {
       // at the .chats store in the metadata dir — so repo-backed transcripts stay
       // out of the external checkout's working tree (issue #187). For a notebook
       // project workingDir === dir, so this is the classic behavior.
-      await ensureProjectChats(project.workingDir, project.dir);
+      await ensureProjectChats(project.workingDir, project.dir, this.cfg.claudeHome);
       await this.ensureSweeperHome(project);
       await this.fleet.addAgent(this.keeperAgentConfig(project), { replace: true });
       await this.fleet.addAgent(this.sweeperAgentConfig(project), { replace: true });
@@ -413,7 +434,7 @@ export class HerdctlService {
    */
   async ensureProjectAgent(project: Project): Promise<void> {
     if (!this.fleet) return;
-    await ensureProjectChats(project.workingDir, project.dir);
+    await ensureProjectChats(project.workingDir, project.dir, this.cfg.claudeHome);
     await this.ensureSweeperHome(project);
     await this.fleet.addAgent(this.keeperAgentConfig(project), { replace: true });
     await this.fleet.addAgent(this.sweeperAgentConfig(project), { replace: true });
@@ -502,6 +523,148 @@ export class HerdctlService {
   invalidateSessions(agentName: string): void {
     if (!this.fleet) return;
     this.fleet.invalidateSessions(agentName);
+  }
+
+  // --- native-chat adoption (#588) ---------------------------------------
+
+  /**
+   * Detector for a project's importable native Claude Code chats, with its own
+   * mtime-keyed cache. Lazy for the same reason {@link jobsIndex} is: unit tests
+   * construct this service against a partial config.
+   */
+  private adoptableIndexOrNull: AdoptableIndex | null = null;
+  private get adoptableIndex(): AdoptableIndex {
+    return (this.adoptableIndexOrNull ??= new AdoptableIndex(
+      this.cfg.claudeHome,
+      this.cfg.stateDir,
+    ));
+  }
+
+  /** What `project` could import right now (see `./adoptable.ts`). */
+  async listAdoptable(project: Project): Promise<AdoptableSummary> {
+    return this.adoptableIndex.adoptableFor(
+      this.manager,
+      project,
+      keeperAgentName(project.slug),
+    );
+  }
+
+  /**
+   * Drop the cached adoptable summary for a workspace (or all of them).
+   *
+   * The workspace key may be `""` (the root), so this forwards the argument
+   * as-is — `if (!slug)` here would silently clear the WRONG thing.
+   */
+  invalidateAdoptable(projectKey?: string): void {
+    this.adoptableIndexOrNull?.invalidate(projectKey);
+  }
+
+  /**
+   * Import a project's native Claude Code chats.
+   *
+   * With `sourceCwd`, imports that one source; without, every source detection
+   * currently offers. `mode` defaults to `copy`, which never mutates the user's
+   * original `~/.claude` transcripts and preserves their mtimes; `move` and
+   * `link` exist for the CLI and nothing in the web UI should reach them.
+   *
+   * ## Honouring the noise filter
+   *
+   * Detection withholds empty and slash-command-only transcripts, but the engine
+   * adopts a whole SOURCE — it has no "adopt these ids" call. Left alone, that
+   * means the header offers 2 chats and the import brings in 4, including a
+   * zero-byte stub. So anything the engine adopted that detection had withheld is
+   * released again ({@link FleetManager.unadoptSession}) and reported in
+   * `skipped` under the filter's own reason, and — in `copy` mode only — the copy
+   * this call just placed is removed.
+   *
+   * That deletion is deliberately narrow. It happens only when all of: the mode
+   * is `copy` (in `move` the original is GONE, so the copy is the user's only
+   * remaining copy and must never be touched); the engine reported the id as
+   * newly `adopted` in THIS call, so it placed the file here and did not find one
+   * (`destination-exists` is a skip, not an adopt); and the destination path
+   * differs from the source, so an in-place adoption can never delete an
+   * original. The result is that a withheld session is left exactly as it was
+   * before the import.
+   *
+   * Afterwards the herdctl session cache, the jobs index and the adoptable cache
+   * are all dropped, so the imported chats list on the very next request — the
+   * same trio {@link promoteSession} invalidates for the same reason.
+   */
+  async adoptChats(
+    project: Project,
+    opts: { sourceCwd?: string; mode?: AdoptionPlacementMode; dryRun?: boolean } = {},
+  ): Promise<{ adopted: string[]; skipped: AdoptSkipped[] }> {
+    const agent = keeperAgentName(project.slug);
+    const mode = opts.mode ?? "copy";
+    const dryRun = opts.dryRun ?? false;
+    const summary = await this.listAdoptable(project);
+    const sources =
+      opts.sourceCwd !== undefined
+        ? [opts.sourceCwd]
+        : summary.sources.map((s) => s.sourceCwd);
+    // sessionId -> why detection withheld it.
+    const withheld = new Map(summary.filtered.map((f) => [f.sessionId, f.reason] as const));
+
+    const adopted: string[] = [];
+    const skipped: AdoptSkipped[] = [];
+    for (const fromWorkingDir of sources) {
+      // Sequential, not parallel: each source re-scans the adoption store, so a
+      // session offered by two sources is adopted by the first and reported
+      // `already-adopted` by the second instead of racing to place the same file.
+      const result = await this.manager.adoptSessionsFrom(agent, {
+        fromWorkingDir,
+        mode,
+        dryRun,
+      });
+      skipped.push(...result.skipped);
+      for (const sessionId of result.adopted) {
+        const reason = withheld.get(sessionId);
+        if (reason === undefined) {
+          adopted.push(sessionId);
+          continue;
+        }
+        skipped.push({ sessionId, reason });
+        if (dryRun) continue;
+        await this.releaseWithheld(agent, project, fromWorkingDir, sessionId, mode);
+      }
+    }
+
+    // A dry run wrote nothing, so there is nothing to invalidate — and dropping
+    // caches would misrepresent it as a state change.
+    if (!dryRun && adopted.length > 0) {
+      this.invalidateSessions(agent);
+      this.jobsIndexOrNull?.invalidate();
+      this.invalidateAdoptable(project.slug);
+    }
+    // A session adopted from one source and then met again in the NEXT source
+    // (its fresh copy now sits in the project's own transcript folder) comes back
+    // as `already-adopted`. That is true per-source, but as a RESULT it reads as
+    // "imported 7, skipped 5" for an import of 7. A session this call imported is
+    // never also reported as skipped by it.
+    const done = new Set(adopted);
+    return { adopted, skipped: skipped.filter((s) => !done.has(s.sessionId)) };
+  }
+
+  /**
+   * Undo the adoption of a session detection had withheld, restoring the state
+   * that existed before this import. See {@link adoptChats} for why the file
+   * removal is safe and why it is limited to `copy` mode.
+   */
+  private async releaseWithheld(
+    agent: string,
+    project: Project,
+    fromWorkingDir: string,
+    sessionId: string,
+    mode: AdoptionPlacementMode,
+  ): Promise<void> {
+    await this.manager.unadoptSession(agent, sessionId).catch(() => undefined);
+    if (mode !== "copy") return;
+    const home = this.cfg.claudeHome;
+    const placed = getCliSessionFile(project.workingDir, sessionId, home);
+    const origin = getCliSessionFile(fromWorkingDir, sessionId, home);
+    // In-place adoption placed nothing; `origin` IS the user's file.
+    if (path.resolve(placed) === path.resolve(origin)) return;
+    await fs.rm(placed, { force: true }).catch(() => undefined);
   }
 
   /**

@@ -506,7 +506,7 @@ layer is documented in [CONFIGURATION.md](CONFIGURATION.md).) The main knobs:
 | Area | Vars (default) |
 |---|---|
 | **Server** | `PORT` (4000), `HOST` (127.0.0.1 — loopback by default; images set 0.0.0.0), `PADDOCK_DANGEROUSLY_ALLOW_OPEN` (unset; required to bind routable + `auth.mode: none`), `LOG_LEVEL` (info) |
-| **Paths** | `PADDOCK_DATA_DIR` (./data), `PADDOCK_PROJECTS_DIR`, `PADDOCK_STATE_DIR` (`.herdctl`), `PADDOCK_HERDCTL_CONFIG`, `PADDOCK_SCRATCH_DIR`, `PADDOCK_WEB_DIST`, `CLAUDE_HOME` (~/.claude) |
+| **Paths** | `PADDOCK_DATA_DIR` (./data), `PADDOCK_PROJECTS_DIR`, `PADDOCK_STATE_DIR` (`.herdctl`), `PADDOCK_HERDCTL_CONFIG`, `PADDOCK_SCRATCH_DIR`, `PADDOCK_WEB_DIST`, `CLAUDE_HOME` (~/.claude — resolved once and threaded to BOTH paddock and the engine's `claudeHomePath`, #588) |
 | **Auth** | `PADDOCK_AUTH_MODE` (none), `PADDOCK_AUTH_USER_HEADER` (X-Forwarded-User), `..._EMAIL_HEADER`, `..._GROUPS_HEADER`, `..._JWT_HEADER` (Authorization), `..._JWKS_URL`, `..._JWT_ISSUER`, `..._JWT_AUDIENCE`, `..._USERNAME_CLAIM`, `..._GROUPS_CLAIM` (groups) |
 | **Agent** | `PADDOCK_DRIVE_MODE` (session), `PADDOCK_NATIVE_PROMPT` (true), `PADDOCK_SELF_MCP` (false), `PADDOCK_SELF_MCP_WRITE` (false; implies read), `PADDOCK_SELF_MCP_PROJECTS` (false; implies write), `PADDOCK_HOOKS_MCP` (false), `PADDOCK_MAX_SPAWN_DEPTH` (1; range 0–8) |
 | **Models / API** | `PADDOCK_MODELS` (unset = whole catalog; default model `claude-opus-5`), `PADDOCK_OPENAPI_ENABLED` (off; mounts `/open-api`) |
@@ -582,6 +582,7 @@ Projects concept page).
 | Project layer | `projects.ts` |
 | Sidecar stores | `archive.ts`, `read-state.ts`, `queued-message.ts`, `attachments.ts` |
 | Transcripts | `transcripts.ts`, `tooldetails.ts`, `usage.ts`, `subagents.ts` |
+| Native-chat import | `adoptable.ts` (detection), `cli/import-chats.ts` (headless) |
 | Sweeper | `sweep.ts` |
 | MCP injection | `send-file-mcp.ts`, `self-mcp.ts` |
 | Git backing store | `git.ts`, `github-auth.ts` |

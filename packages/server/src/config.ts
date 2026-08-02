@@ -126,6 +126,23 @@ export interface PaddockConfig {
   webDist: string;
   /** Working directory for one-off / scratch chats. */
   scratchDir: string;
+  /**
+   * Absolute path to the Claude home (`~/.claude`, unless `CLAUDE_HOME` says
+   * otherwise) — the directory whose `projects/<encoded-cwd>/` folders hold
+   * Claude Code's session transcripts.
+   *
+   * Resolved ONCE here (#588) rather than re-read from `process.env` at each call
+   * site, because it must be the SAME value everywhere: paddock's transcript
+   * relocation (`ensureProjectChats`) symlinks `<claudeHome>/projects/<encoded>`
+   * at the project's `.chats/`, and the engine's session discovery / adoption
+   * resolves transcripts under `FleetManagerOptions.claudeHomePath`. If paddock
+   * honoured `CLAUDE_HOME` while the engine fell back to `os.homedir()/.claude`,
+   * detection would scan one home while reads came from another — chats LIST but
+   * open EMPTY (herdctl#423 / #588 gotcha 1). The divergence is invisible
+   * whenever `CLAUDE_HOME` equals `$HOME/.claude`, which is exactly why it is
+   * threaded explicitly instead of being left to a shared default.
+   */
+  claudeHome: string;
   /** Provider-agnostic user-authentication config (see AUTH.md). */
   auth: AuthConfig;
   /** Voice-dictation (Whisper) capability (per-instance; default off). */
@@ -711,6 +728,12 @@ export function loadPaddockConfig(): PaddockConfig {
   const scratchDir = canonical(
     envOr("PADDOCK_SCRATCH_DIR", fileOr(file.scratchDir, path.join(dataRoot, "scratch"))),
   );
+  // The ONE Claude home for this process (#588): paddock's transcript symlinks,
+  // the engine's session discovery and session adoption all resolve against this
+  // exact value. NOT canonical()-ed: `claudeHome()` is also what the CLI runtime
+  // and Claude Code itself see, and canonicalising would silently diverge from
+  // the literal path they encode into `<home>/projects/<encoded-cwd>`.
+  const resolvedClaudeHome = claudeHome();
 
   // packages/server/src/config.ts -> packages/web/dist
   const defaultWebDist = path.resolve(
@@ -734,6 +757,7 @@ export function loadPaddockConfig(): PaddockConfig {
     herdctlConfigPath,
     webDist: abs(envOr("PADDOCK_WEB_DIST", fileOr(file.webDist, defaultWebDist))),
     scratchDir,
+    claudeHome: resolvedClaudeHome,
     auth: loadAuthConfig(file.auth),
     transcription: loadTranscriptionConfig(file.transcription),
     brand: loadBrandConfig(file.brand),
@@ -1100,7 +1124,17 @@ function loadDriveMode(file?: PaddockConfigFile["driveMode"]): DriveMode {
   return raw && isKnownDriveMode(raw) ? raw : DEFAULT_DRIVE_MODE;
 }
 
-/** Default Claude home, used for session discovery. */
+/**
+ * Resolve the Claude home from the environment — `CLAUDE_HOME`, else
+ * `~/.claude`.
+ *
+ * This is the RESOLVER, not the accessor. It is read once by
+ * {@link loadPaddockConfig} into {@link PaddockConfig.claudeHome}; runtime code
+ * should thread `cfg.claudeHome` rather than call this again, so paddock and the
+ * engine can never end up resolving two different homes (#588). It stays a
+ * function (not a constant) because `os.homedir()` must be read at call time —
+ * tests and processes that mutate `HOME` depend on that.
+ */
 export function claudeHome(): string {
   return process.env.CLAUDE_HOME ?? path.join(os.homedir(), ".claude");
 }

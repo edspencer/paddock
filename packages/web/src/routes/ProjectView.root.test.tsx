@@ -70,6 +70,8 @@ const apiFns = {
   markChatSeen: vi.fn(),
   promoteChat: vi.fn(),
   attentionChats: vi.fn(),
+  getAdoptableChats: vi.fn(),
+  adoptChats: vi.fn(),
 };
 vi.mock("../lib/api", async () => {
   const actual = await vi.importActual<typeof import("../lib/api")>("../lib/api");
@@ -86,6 +88,8 @@ vi.mock("../lib/api", async () => {
       markChatSeen: (...a: unknown[]) => apiFns.markChatSeen(...a),
       promoteChat: (...a: unknown[]) => apiFns.promoteChat(...a),
       attentionChats: (...a: unknown[]) => apiFns.attentionChats(...a),
+      getAdoptableChats: (...a: unknown[]) => apiFns.getAdoptableChats(...a),
+      adoptChats: (...a: unknown[]) => apiFns.adoptChats(...a),
     },
   };
 });
@@ -178,6 +182,10 @@ beforeEach(() => {
   apiFns.markChatSeen.mockResolvedValue(undefined);
   apiFns.projectChatMessages.mockResolvedValue([]);
   apiFns.attentionChats.mockResolvedValue({ running: [], unread: [] });
+  // #588: nothing to import by default, so the sidebar's import row is absent
+  // from every test that isn't about it.
+  apiFns.getAdoptableChats.mockResolvedValue({ count: 0, sources: [] });
+  apiFns.adoptChats.mockResolvedValue({ adopted: [], skipped: [] });
   apiFns.getProjectDetail.mockResolvedValue(detail(rootWorkspace()));
   resetLastSeenForTests();
   localStorage.clear();
@@ -474,6 +482,48 @@ describe("ProjectView root (#516)", () => {
       expect(await screen.findByText("disk on fire")).toBeInTheDocument();
       expect(projectsCtx.upsert).not.toHaveBeenCalled();
       expect(screen.getByTestId("here").textContent).toBe("/chat");
+    });
+  });
+
+  /**
+   * Importing native CLI chats at the ROOT (#588).
+   *
+   * The root's workspace key is the EMPTY STRING, so anything that hand-builds a
+   * URL or gates on `if (slug)` silently drops it — the import would either 404 or
+   * never be offered at all. These assert the key actually travels: `apiBase("")`
+   * resolves to `/api/root`, and the calls are made with `""`, not with some
+   * sentinel or with the project route's slug.
+   */
+  describe("import native CLI chats (#588)", () => {
+    it("offers the import at the root, addressed by the empty key", async () => {
+      apiFns.getAdoptableChats.mockResolvedValue({
+        count: 4,
+        sources: [{ sourceCwd: "/data/projects", sessionIds: ["n1", "n2", "n3", "n4"] }],
+      });
+      renderRootAt("/chat");
+      expect(
+        await screen.findByRole("button", { name: /Import 4 native/i }),
+      ).toBeInTheDocument();
+      // `toHaveBeenCalledWith("")` and not merely "was called": a truthiness gate
+      // on the key would skip the fetch entirely and this is what catches it.
+      expect(apiFns.getAdoptableChats).toHaveBeenCalledWith("");
+    });
+
+    it("imports and re-reads both the list and the count under the empty key", async () => {
+      apiFns.getAdoptableChats
+        .mockResolvedValueOnce({ count: 2, sources: [{ sourceCwd: "/w", sessionIds: ["n1", "n2"] }] })
+        .mockResolvedValue({ count: 0, sources: [] });
+      apiFns.adoptChats.mockResolvedValue({ adopted: ["n1", "n2"], skipped: [] });
+      renderRootAt("/chat");
+      fireEvent.click(await screen.findByRole("button", { name: /Import 2 native/i }));
+
+      await waitFor(() => expect(apiFns.adoptChats).toHaveBeenCalledWith(""));
+      await waitFor(() => expect(apiFns.listProjectChats).toHaveBeenCalledWith(""));
+      expect(await screen.findByRole("status")).toHaveTextContent("Imported 2 chats");
+      // Gone because the live count came back 0 — the same property as a project.
+      await waitFor(() =>
+        expect(screen.queryByRole("button", { name: /Import \d+ native/i })).toBeNull(),
+      );
     });
   });
 });

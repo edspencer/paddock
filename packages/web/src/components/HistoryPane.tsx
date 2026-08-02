@@ -12,7 +12,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { Chat, RunSummary } from "../lib/types";
 import type { ProjectRunsState } from "../lib/useProjectRuns";
 import { relativeTime, formatDuration } from "../lib/format";
-import { BranchIcon, ClockIcon, ChatIcon } from "./icons";
+import { BranchIcon, ClockIcon, ChatIcon, TerminalIcon } from "./icons";
 
 export interface HistoryPaneProps {
   slug: string;
@@ -43,6 +43,16 @@ function originMeta(origin: RunSummary["origin"]): {
       label: "Spawned",
       icon: <BranchIcon width={12} height={12} />,
       cls: "bg-violet-100 text-violet-700 dark:bg-violet-950/50 dark:text-violet-400",
+    };
+  // Imported from the user's Claude Code CLI history (#588). Still a run the
+  // human drove — just not here — so it gets its own chip rather than the "You"
+  // fallback, which would claim the turn happened in paddock. Matches the
+  // emerald/terminal language of the sidebar's `adopted` ProvenanceBadge.
+  if (origin === "adopted")
+    return {
+      label: "Imported",
+      icon: <TerminalIcon width={12} height={12} />,
+      cls: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400",
     };
   return {
     label: "You",
@@ -79,11 +89,25 @@ function runDuration(run: RunSummary): string {
   return "—";
 }
 
+/**
+ * Did this run happen WITHOUT the user — the "while you were away" population.
+ *
+ * Written as an exclusion list rather than `origin !== "human"` because #588 added
+ * a second attended origin: an `adopted` run is a turn the human drove personally,
+ * just in a terminal before the import. Counting it as unattended would put the
+ * user's own back-catalogue in the "ran while you were away" banner the first time
+ * they import, which is the opposite of what that banner is for.
+ */
+function unattended(run: RunSummary): boolean {
+  return run.origin !== "human" && run.origin !== "adopted";
+}
+
 /** What triggered the run, secondary line: schedule name / parent / trigger. */
 function triggerNote(run: RunSummary): string {
   if (run.origin === "scheduled") return run.schedule ? `schedule · ${run.schedule}` : "schedule";
   if (run.origin === "spawned")
     return run.depth > 1 ? `spawned · ${run.depth} levels deep` : "spawned by another chat";
+  if (run.origin === "adopted") return "imported from the Claude Code CLI";
   return "you";
 }
 
@@ -171,19 +195,13 @@ export function HistoryPane({ slug, state, chats, onOpenChat }: HistoryPaneProps
   }, [chats]);
 
   const runs = data?.runs ?? [];
-  const unattendedCount = useMemo(
-    () => runs.filter((r) => r.origin !== "human").length,
-    [runs],
-  );
+  const unattendedCount = useMemo(() => runs.filter(unattended).length, [runs]);
   const shown = useMemo(
-    () => (filter === "unattended" ? runs.filter((r) => r.origin !== "human") : runs),
+    () => (filter === "unattended" ? runs.filter(unattended) : runs),
     [runs, filter],
   );
   // New-since-last-visit banner: count the unattended runs that arrived while away.
-  const newAway = useMemo(
-    () => runs.filter((r) => r.isNew && r.origin !== "human").length,
-    [runs],
-  );
+  const newAway = useMemo(() => runs.filter((r) => r.isNew && unattended(r)).length, [runs]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">

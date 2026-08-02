@@ -1,6 +1,6 @@
 ---
 title: Working in chats
-description: A hands-on walkthrough — start a chat, understand project vs one-off/scratch chats, resume from anywhere, use the composer and message queue, Stop a turn, rewind or fork from any message, and keep a growing chat list legible with unread dots, stars, search, and archive.
+description: A hands-on walkthrough — start a chat, import your existing terminal claude history, understand project vs one-off/scratch chats, resume from anywhere, use the composer and message queue, Stop a turn, rewind or fork from any message, and keep a growing chat list legible with unread dots, stars, search, and archive.
 ---
 
 A **chat** is where you actually work in Paddock — one conversation with an
@@ -28,6 +28,43 @@ and Paddock attributes that running session to the project the instant the id
 streams back — so the new chat shows up in the sidebar **while the first turn is
 still running**, not only after it finishes. You never wait for a round-trip to
 see your chat appear.
+
+## Import your terminal `claude` history
+
+If you already ran `claude` in a terminal against this workspace's working
+directory, those conversations can be brought in. When there are any, an
+**Import N native chats** button appears at the top of the chat list, just above
+the **Chats** label. One click, no confirmation: the transcripts are imported,
+the list refreshes, and a toast reports how many arrived.
+
+The count is **live**, not a dismissable prompt. It is recomputed from disk, so
+it comes back if you accrue new terminal sessions later, and it reaches zero only
+because there is genuinely nothing left to import. Empty and slash-command-only
+transcripts are withheld as noise, so the number is what you'd actually want.
+
+What gets offered is the workspace's own working directory plus any Claude
+transcript folder whose *recorded* working directory matches it — by checkout
+name for a repo-backed project, by exact path for a notebook one — so history
+from your own checkout of the same repo, somewhere else on disk, is found too.
+
+Two things are deliberate about how it runs:
+
+- **Transcripts are copied, never moved.** Your `~/.claude` history is left
+  exactly as it was. Import is not a migration you can't undo.
+- **Original timestamps are kept**, so a months-old archive sorts by when those
+  conversations actually happened rather than collapsing to today.
+
+Imported chats resume like any other, and carry an **Imported** badge (an emerald
+terminal icon) so you can tell them from chats started here — see
+[Provenance](/concepts/provenance/). They are *not* counted as unattended runs:
+you had those conversations, just somewhere else.
+
+:::note[When Paddock can't see your `~/.claude`]
+A containerised instance only sees what is mounted. Point
+[`CLAUDE_HOME`](/configuration/environment/) at a mounted copy of the history, or
+run the headless importer (`npm run import-chats -w @paddock/server`) on the host
+against the data dir.
+:::
 
 ## Project chats vs one-off (scratch) chats
 

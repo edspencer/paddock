@@ -20,6 +20,7 @@ import {
   PlusIcon,
   SearchIcon,
   StarIcon,
+  TerminalIcon,
   TrashIcon,
   UnlinkIcon,
   XIcon,
@@ -83,6 +84,9 @@ export function SessionSidebar({
   starChat,
   toggleUnread,
   detachChat,
+  adoptableCount,
+  importing,
+  importChats,
 }: {
   chatList: ReturnType<typeof usePaneWidth>;
   sessionsOpen: boolean;
@@ -134,6 +138,21 @@ export function SessionSidebar({
   starChat: (chat: Chat) => Promise<void>;
   /** Promote a nested chat (with its own subtree) to the top level (#508). */
   detachChat: (chat: Chat) => Promise<void>;
+  /**
+   * How many native Claude Code CLI chats this workspace could import (#588) —
+   * the sessions the user ran in a terminal against the same working directory.
+   *
+   * A LIVE count, re-read after every import, not a "have they dismissed it yet?"
+   * flag: `0` hides the button because there is genuinely nothing left to take, so
+   * it comes back on its own once the user accrues more terminal history. That is
+   * the whole reason this is a number rather than a boolean.
+   */
+  adoptableCount: number;
+  /** True while an import is in flight — the button says so and refuses clicks. */
+  importing: boolean;
+  /** Import everything on offer. One click, no confirmation: copy-only, and the
+   *  user's own `~/.claude` is never touched, so there is nothing to warn about. */
+  importChats: () => void;
 }) {
   // While searching, ignore the collapsed set. A query filters to matches and
   // their ancestors, so honouring collapse would let a folded-up parent hide the
@@ -586,6 +605,35 @@ export function SessionSidebar({
           </button>
         </div>
         <div className="flex min-h-0 flex-1 flex-col">
+          {/* Import native CLI chats (#588). A full-width row of its own ABOVE the
+              "Chats" header rather than a fourth icon in the toolbar: it is a
+              one-off migration affordance that needs a readable count in its
+              label, and the toolbar is already three controls wide at a 256px
+              sidebar. Sitting above the header also puts it directly over the list
+              it is about to fill.
+
+              Rendered only while the count is non-zero, and the count is re-read
+              after every import — so this disappears because there is nothing left
+              to import, and reappears by itself if the user later runs more
+              terminal sessions. There is deliberately no dismiss state. */}
+          {adoptableCount > 0 && (
+            <div className="px-2 pb-2">
+              <button
+                type="button"
+                onClick={importChats}
+                disabled={importing}
+                aria-label={`Import ${adoptableCount} native Claude Code chat${adoptableCount === 1 ? "" : "s"} into this workspace`}
+                className="btn-ghost w-full justify-start py-1.5 text-xs"
+              >
+                <TerminalIcon width={13} height={13} className="shrink-0" />
+                <span className="truncate">
+                  {importing
+                    ? "Importing…"
+                    : `Import ${adoptableCount} native chat${adoptableCount === 1 ? "" : "s"}`}
+                </span>
+              </button>
+            </div>
+          )}
           <div className="mb-1 flex items-center justify-between pr-3">
             <span className="section-label">Chats</span>
             {/* Also rendered while the running filter is ON with nothing left to

@@ -84,9 +84,29 @@ export interface ProjectRuns {
   newUnattended: number;
 }
 
+/**
+ * Which origins ran WITHOUT the user watching — the "while you were away"
+ * digest's whole basis.
+ *
+ * A total `Record`, not a predicate with an `||` chain: a missing key is a
+ * compile error, so adding an origin forces a decision here instead of quietly
+ * defaulting. It must never become `origin !== "human"`, which reads the same
+ * today and is wrong tomorrow — `adopted` (#588) is a session the user ran
+ * themselves in a terminal and later imported, so one import of 22 sessions
+ * would announce "22 runs happened while you were away", the exact opposite of
+ * the truth.
+ */
+const ORIGIN_IS_UNATTENDED: Record<TurnOrigin, boolean> = {
+  human: false,
+  scheduled: true,
+  spawned: true,
+  hook: false,
+  adopted: false,
+};
+
 /** A run is "unattended" when a schedule or another chat — not a human — ran it. */
 export function isUnattended(origin: TurnOrigin): boolean {
-  return origin === "scheduled" || origin === "spawned";
+  return ORIGIN_IS_UNATTENDED[origin] === true;
 }
 
 /**

@@ -125,4 +125,23 @@ describe("HistoryPane (#268)", () => {
     render(<HistoryPane slug="p" state={state} chats={chats} onOpenChat={vi.fn()} />);
     expect(screen.getByText(/schedule · nightly-triage/)).toBeInTheDocument();
   });
+
+  // #588. `originMeta` is an if-chain, not an exhaustive switch, so a new origin
+  // falls through to the "You" chip — which would claim an imported terminal turn
+  // happened here in paddock. Nothing in the type system says otherwise, so this
+  // is the only thing standing between a new origin and a silently wrong label.
+  it("labels an imported (CLI-adopted) run as Imported, not as You", () => {
+    const { state } = makeState([
+      run({ jobId: "j-adopt", sessionId: "s-adopt", origin: "adopted", prompt: "ran in a terminal" }),
+    ]);
+    render(<HistoryPane slug="p" state={state} chats={chats} onOpenChat={vi.fn()} />);
+    // Attended, so it sits behind the "All" filter alongside the user's own runs
+    // — importing a back-catalogue must not fill the "ran while you were away"
+    // view with turns the user personally typed.
+    expect(screen.getByText(/No unattended runs/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^All$/ }));
+    expect(screen.getByText("Imported")).toBeInTheDocument();
+    expect(screen.queryByText("You")).not.toBeInTheDocument();
+    expect(screen.getByText(/imported from the Claude Code CLI/i)).toBeInTheDocument();
+  });
 });

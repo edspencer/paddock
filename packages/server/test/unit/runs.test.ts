@@ -30,6 +30,15 @@ describe("isUnattended", () => {
     expect(isUnattended("scheduled")).toBe(true);
     expect(isUnattended("spawned")).toBe(true);
     expect(isUnattended("human")).toBe(false);
+    expect(isUnattended("hook")).toBe(false);
+  });
+
+  it("an IMPORTED chat is ATTENDED — the user ran it themselves (#588)", () => {
+    // The whole point of the allow-list. Were this `origin !== "human"`, a single
+    // import of 22 terminal sessions would report 22 runs that "happened while
+    // you were away" — sessions the user personally typed, in their own terminal,
+    // before Paddock ever saw them.
+    expect(isUnattended("adopted")).toBe(false);
   });
 });
 

@@ -1,6 +1,6 @@
 ---
 title: "Provenance: who did what"
-description: "How Paddock records and surfaces the origin of non-human work — the per-chat origin + spawn-depth marker, the chat-list badges for scheduled and spawned chats, and per-message attribution for machine-injected turns."
+description: "How Paddock records and surfaces the origin of non-human work — the per-chat origin + spawn-depth marker, the chat-list badges for scheduled, spawned and imported chats, and per-message attribution for machine-injected turns."
 ---
 
 Not every turn in Paddock is typed by a human. A chat can be started by a
@@ -19,8 +19,8 @@ once a chat is running, see
 Every server-initiated turn carries a small marker. Two fields are always
 present:
 
-- **`origin`** — how the chat came to exist: `human`, `scheduled`, `spawned`, or
-  `hook`.
+- **`origin`** — how the chat came to exist: `human`, `scheduled`, `spawned`,
+  `hook`, or `adopted`.
 - **`depth`** — how many spawn hops it is from the human (or scheduled) root of
   its tree. A human-started chat is `depth: 0`; a chat it spawns is `depth: 1`;
   that child's own children are `depth: 2`; and so on.
@@ -35,7 +35,9 @@ So a human-started chat is `{ origin: human, depth: 0 }` — the root of any
 fan-out tree. A chat Claude creates with a self-management tool becomes
 `{ origin: spawned, depth: parent.depth + 1 }`, and a cron-fired chat is
 `{ origin: scheduled, depth: 0 }` — a schedule is a root trigger, just like a
-human.
+human. A chat [imported from your terminal `claude`
+history](/using/working-in-chats/#import-your-terminal-claude-history) is
+`{ origin: adopted, depth: 0 }`: nothing here created it, so it is a root too.
 
 The marker is stamped **once, at chat creation**, and is **never overwritten by a
 later turn**. Resuming, waking, or sending a message into an existing chat leaves
@@ -65,8 +67,22 @@ unadorned:
 - **Spawned** chats — another chat created them — show a **violet branch** icon
   (with a note of how many levels deep, when it's more than one).
 - **Hook** chats — an event hook fired them — show a **sky bolt**.
-- **Human** chats — the default — show **no badge**, so only the unattended runs
-  draw the eye.
+- **Imported** chats — brought in from your Claude Code CLI history — show an
+  **emerald terminal**.
+- **Human** chats — the default — show **no badge**, so only the chats you did
+  not start *here* draw the eye.
+
+:::note[`adopted` is badged, but it is not an unattended run]
+The other three badges all mean "this ran without you". `adopted` doesn't — you
+ran it personally, just in a terminal rather than here. It is badged only because
+imported history is otherwise indistinguishable from a chat started in Paddock.
+So the History tab's **Unattended** filter and its "while you were away" banner
+exclude it by name (`unattended()` in `HistoryPane.tsx` is written as an
+exclusion list, not `origin !== "human"`) — otherwise your first import would
+report your entire back-catalogue as work that happened while you weren't
+watching. Imported runs get their own **Imported** chip instead of the
+**You** fallback, which would wrongly claim the turn happened here.
+:::
 
 :::note[A nested chat hides its `spawned` badge]
 Now that spawned chats sit **underneath** the chat that created them, the violet
@@ -77,8 +93,8 @@ the case where nothing else would tell you.
 :::
 
 The same origin colors reappear in the project's **History** tab, which lists
-recent runs (You / Scheduled / Spawned) so the work that happened while you were
-away is easy to find and open.
+recent runs (You / Scheduled / Spawned / Hook / Imported) so the work that
+happened while you were away is easy to find and open.
 
 ## Per-message attribution
 
