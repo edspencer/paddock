@@ -81,6 +81,23 @@ becoming less an app you visit and more a service your other tools talk to.
   early frontends that never existed. If you built against `projectSlug` — as
   Paddock's own client always has — nothing changes.
 
+:::danger[Breaking: two environment variables were renamed, with no aliases]
+Retiring "keeper" as a user-facing word also renamed the env vars carrying it:
+
+| before | after |
+|---|---|
+| `PADDOCK_KEEPER_DRIVE_MODE` | `PADDOCK_DRIVE_MODE` |
+| `PADDOCK_KEEPER_NATIVE_PROMPT` | `PADDOCK_NATIVE_PROMPT` |
+
+**An old name is not an error — it is ignored**, so an instance still setting one
+falls back to the built-in default instead of failing to start. For drive mode
+that default is `session`, so anyone who had pinned
+`PADDOCK_KEEPER_DRIVE_MODE=batch` is now on the SDK runtime without being told.
+Check your environment for the old names.
+
+The `paddock.yaml` key `keeperDriveMode` → `driveMode` changed the same way.
+:::
+
 ## 0.52 — Subtree actions & one front door
 
 - **The sidebar is one Home link, and the projects grid lives on it.** The two
@@ -690,7 +707,7 @@ Triggers form but is **not yet fireable** (there's no inbound webhook ingress ye
 - **Session mode is the default.** A fresh instance now drives keeper turns through
   the persistent session (SDK) runtime by default, so cross-turn autonomy
   (`ScheduleWakeup`, `/loop`) and streaming work out of the box.
-  `PADDOCK_KEEPER_DRIVE_MODE=batch` (and the per-project `driveMode`) still switch
+  `PADDOCK_DRIVE_MODE=batch` (and the per-project `driveMode`) still switch
   back to the one-shot path.
 - **The trigger foundation.** Under the hood, hooks and schedules were unified onto
   one discriminated **trigger** model (`schedule` / `event` / `webhook`) over a

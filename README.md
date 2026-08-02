@@ -230,7 +230,7 @@ project's `project.yaml`.
 | `PADDOCK_DATA_DIR` | `./data` | Data root — holds `projects/`, `scratch/`, `.herdctl/` state, the generated `herdctl.yaml`. Setting this cascades all derived paths. |
 | `CLAUDE_CODE_OAUTH_TOKEN` | — | Claude auth — Max/Pro plan (OAuth). |
 | `ANTHROPIC_API_KEY` | — | Claude auth — API-key billing. |
-| `PADDOCK_KEEPER_DRIVE_MODE` | `session` | `session` (SDK runtime — token-by-token streaming + cross-turn autonomy) or `batch` (legacy one-shot CLI runtime). Per-project `driveMode` overrides it. |
+| `PADDOCK_DRIVE_MODE` | `session` | `session` (SDK runtime — token-by-token streaming + cross-turn autonomy) or `batch` (legacy one-shot CLI runtime). Per-project `driveMode` overrides it. |
 | `PADDOCK_MODELS` | — | Comma-separated allow-list of model ids to offer. Unset offers the whole catalog. |
 | `PADDOCK_OPENAPI_ENABLED` | off | Mounts a Swagger UI at `/open-api` (raw spec at `/open-api.json`) generated from the route schemas. |
 
