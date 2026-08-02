@@ -39,9 +39,19 @@ token is rejected even if it arrives directly. Paddock holds **no key material**
 — only the JWKS URL. Key rotation is handled automatically (`jose`'s
 `createRemoteJWKSet` fetches + caches the JWKS).
 
-Either way, **health/readiness endpoints are always exempt** so the proxy and
-monitoring can probe a locked-down server: `/api/health` (Paddock's own),
-`/healthz`, `/-/health`, `/health`, `/readyz`, `/livez`.
+Either way, **Paddock's health endpoint is always exempt** so the proxy and
+monitoring can probe a locked-down server: **`/api/health`**, which answers
+`200 {"ok":true}` as `application/json`. It is the only exempt health path — point
+every liveness/readiness probe at it (the shipped `Dockerfile` HEALTHCHECK and the
+Kubernetes probes both do).
+
+> **No `/healthz` alias.** Paddock does not serve `/healthz`, `/-/health`,
+> `/health`, `/readyz` or `/livez`. Earlier versions of this document listed them
+> as exempt, but no route was ever registered — so with the SPA mounted they were
+> answered by the front-end catch-all with `200 text/html`, and a probe pointed at
+> one reported healthy no matter what state the app was in. They are now gated like
+> any other unknown path (`401` in `trusted-header`/`jwt` mode). If you have a probe
+> on one of them, repoint it at `/api/health` (issue #569).
 
 ### Safe-by-default binding
 
