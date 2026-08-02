@@ -348,6 +348,38 @@ export class HerdctlService {
   }
 
   /**
+   * The same value for the **CLI** runtime (`driveMode: batch`), where it is NOT
+   * always safe to send.
+   *
+   * herdctl's CLI runtime has no `--append-system-prompt`; it folds
+   * `systemPromptAppend` into the single `--system-prompt` flag
+   * (`cli-runtime.ts`), and `--system-prompt` REPLACES Claude Code's preset:
+   *
+   *     agent.system_prompt && append  →  --system-prompt "<agent>\n\n<append>"   ✅ appends
+   *     append only                    →  --system-prompt "<append>"              ❌ REPLACES
+   *
+   * Paddock sets `agent.system_prompt` only when `nativeSystemPrompt` is false
+   * (herdctl-agent-config.ts), so on a DEFAULT batch instance the second branch
+   * fires and a two-rule environment note would silently become the agent's
+   * entire system prompt — the whole coding preset gone. That is the same
+   * replace-vs-append trap #635 warns about, one layer down.
+   *
+   * So: on the CLI path we send the append only when it will genuinely be
+   * appended. A default (native) batch instance is left byte-identical to
+   * pre-#635 and simply doesn't get the environment prompt — a missing hint is
+   * survivable; a missing coding prompt is not. The SDK runtime has no such
+   * problem (it folds the text into the preset's `append` field), and the SDK
+   * runtime is what every chat actually uses: `openChatSession` hard-codes it,
+   * and `session` is the default drive mode. Batch is the legacy path.
+   *
+   * Lifting this needs `--append-system-prompt` support in core's CLI runtime;
+   * tracked upstream in edspencer/herdctl.
+   */
+  private get environmentPromptAppendForCli(): string | undefined {
+    return this.cfg.nativeSystemPrompt ? undefined : this.environmentPromptAppend;
+  }
+
+  /**
    * Construct + initialize the FleetManager against a minimal zero-agent
    * config (fleet + defaults only). Agents are then registered programmatically
    * via `fleet.addAgent(...)` — a keeper + sweeper for each workspace, the root
@@ -750,7 +782,8 @@ export class HerdctlService {
       onMessage: opts.onMessage,
       onJobCreated: opts.onJobCreated,
       injectedMcpServers: opts.injectedMcpServers,
-      systemPromptAppend: this.environmentPromptAppend,
+      // CLI runtime — see the getter: only safe when it will append, not replace.
+      systemPromptAppend: this.environmentPromptAppendForCli,
     });
   }
 

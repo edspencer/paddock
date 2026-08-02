@@ -329,6 +329,51 @@ function Control({
       />
     );
   }
+  if (f.type === "text") {
+    // A prompt-sized string (issue #635). Three states are reachable here, and
+    // they are NOT the same thing:
+    //   `null`  — no override in the file; Paddock's built-in default applies.
+    //             Only ever a *pending* value (Restore default below); the
+    //             server always reports the resolved text, never null.
+    //   `""`    — an explicit empty override: append nothing, opt out.
+    //   text    — that text instead of the default.
+    // So a pending `null` renders as the default text (that IS what would be in
+    // force), while `""` renders genuinely empty. Collapsing the two would make
+    // "restore the default" look identical to "turn it off".
+    const isDefaulted = value === null || value === undefined;
+    const shown = isDefaulted ? String(f.default ?? "") : String(value);
+    const canRestore = typeof f.default === "string" && !isDefaulted && value !== f.default;
+    return (
+      <div className="mt-1.5">
+        <textarea
+          id={inputId}
+          className="input min-h-[9rem] resize-y font-mono text-[12px] leading-relaxed"
+          rows={10}
+          spellCheck={false}
+          value={shown}
+          onChange={(e) => onChange(e.target.value)}
+        />
+        <div className="mt-1 flex items-center justify-between gap-3 text-[12px] text-paddock-500">
+          <span>
+            {isDefaulted
+              ? "Using the built-in default."
+              : value === ""
+                ? "Empty — nothing will be appended."
+                : `${shown.length.toLocaleString()} characters.`}
+          </span>
+          {canRestore && (
+            <button
+              type="button"
+              className="shrink-0 underline underline-offset-2 hover:text-paddock-700 dark:hover:text-paddock-300"
+              onClick={() => onChange(null)}
+            >
+              Restore default
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
   if (f.type === "string-list") {
     const asText = Array.isArray(value) ? value.join(", ") : String(value ?? "");
     return (
@@ -368,7 +413,17 @@ function LockedValue({ field: f, value }: { field: InstanceConfigField; value: u
       {f.type === "boolean" ? (
         <span className="font-mono">{value ? "true" : "false"}</span>
       ) : value === null || value === undefined || value === "" ? (
-        <span className="italic text-paddock-400">(not set)</span>
+        // For a `text` field an empty value is a deliberate opt-out, not an
+        // absence — say so rather than the generic "(not set)" (#635).
+        <span className="italic text-paddock-400">
+          {f.type === "text" && value === "" ? "(empty — nothing appended)" : "(not set)"}
+        </span>
+      ) : f.type === "text" ? (
+        // Multi-line: preserve the operator's line breaks instead of collapsing
+        // a whole prompt onto one `break-all` line.
+        <span className="block max-h-64 overflow-y-auto whitespace-pre-wrap font-mono text-[12px] leading-relaxed">
+          {String(value)}
+        </span>
       ) : (
         <span className="break-all font-mono">
           {Array.isArray(value) ? value.join(", ") : String(value)}
