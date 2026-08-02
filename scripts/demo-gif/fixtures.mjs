@@ -335,8 +335,62 @@ export const RENDER_TS_HUNKS = [
  * than whatever a real model would say.
  */
 export const FAKE_SCRIPT = {
+  // Typed on camera in the motion beat. The key must match the prompt
+  // `shoot.mjs` types EXACTLY — the fake binary looks replies up by whole-prompt
+  // equality, and a miss makes it echo the prompt back instead.
+  "Add a --no-truecolor flag for the tests.":
+    "Added. `--no-truecolor` sets the same internal flag `COLORTERM` detection would, so the 256-colour path is exercised end to end rather than stubbed.\n\nIt's deliberately not the inverse of a `--truecolor` flag — forcing truecolor ON in a terminal that can't render it produces garbage, and there's no test worth writing for that.",
   "Why is the follow reconnect storming?":
     "It's a fixed retry with no jitter.\n\n`--follow` reconnects on a flat 1s timer, so when the log endpoint drops every client comes back in the same tick and the server sees a synchronised thundering herd. Under a rolling restart that's ~200 reconnects landing inside the same second.\n\nThe fix is exponential backoff with full jitter — `min(cap, base * 2^n)` multiplied by a random factor in [0,1). That spreads the retries and costs nothing when the endpoint is healthy, since the first retry still fires at ~1s.",
   "Pack a tile bundle for the north corridor and tell me how big it comes out.":
     "Packed — 54.8 MB for the north corridor.\n\nThat's zoom 10–14 over a 40-mile strip, 3,812 tiles, WebP at quality 82. Zoom 15 would add another 190 MB, which isn't worth it for a trail map: at z14 the path is already legible and the elevation overlay carries the detail that matters.",
 };
+
+/**
+ * The two files Claude hands over in the send_file beat.
+ *
+ * Deliberately a diagram and a document rather than the fuller set of renderers
+ * (code / PDF / video) that also exist: dark-mode syntax highlighting is very
+ * low-contrast and reads as monochrome once quantised to a GIF palette, a PDF
+ * renders as Chromium's grey viewer chrome, and a video is a black rectangle in
+ * a still frame. These two photograph well and carry the same point.
+ */
+export const SENT_DIAGRAM = [
+  // Sized on purpose. A tall top-down chart renders at natural size and
+  // overflows the card; a long left-right one scales down to fit the width
+  // and takes its labels with it. This shape lands around 900x400, which
+  // fills the card at full size and still leaves the document below visible.
+  "flowchart LR",
+  "  A[seed colour] --> B[buildPalette]",
+  "  B --> C{clears AA?}",
+  "  C -->|no| D[nudge lightness]",
+  "  D --> B",
+  "  C -->|yes| E[emitColor]",
+  "  E --> F{{truecolor?}}",
+  "  F -->|yes| G[24-bit escape]",
+  "  F -->|no| H[nearest cube entry]",
+].join("\n");
+
+export const SENT_DOC = [
+  "# How a seed colour becomes a theme",
+  "",
+  "One colour in, sixteen out. The pipeline is deliberately linear so any step",
+  "can be replaced without touching the others.",
+  "",
+  "## The rules that never bend",
+  "",
+  "1. **Contrast wins over fidelity.** If a generated pair misses WCAG AA the",
+  "   lightness is nudged and the palette is rebuilt — the hue is never changed",
+  "   to fix contrast, because that is what makes a theme stop looking like the",
+  "   colour you asked for.",
+  "2. **The fallback is a rendering concern, not a palette one.** Quantising to",
+  "   the 6x6x6 cube happens in `emitColor`, after contrast has been verified,",
+  "   so both colour paths are guaranteed to have cleared the same checks.",
+  "3. **Order is stable.** Swatches are always emitted in ANSI order, so a theme",
+  "   regenerated from the same seed is byte-identical.",
+  "",
+  "## What is still open",
+  "",
+  "- A `--format tmux` writer.",
+  "- Whether AAA should be opt-in or the default for the bright variants.",
+].join("\n");

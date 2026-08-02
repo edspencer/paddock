@@ -25,7 +25,7 @@
 ---
 
 <p align="center">
-  <img src="docs/demo/paddock-demo.gif" width="900" alt="Paddock — the root Home feed of running and unread chats, the projects grid, a chat with expanded tool calls, a sub-agent's nested steps, an inline diff, the triggers table, and the git Changes tab">
+  <img src="docs/demo/paddock-demo.gif" width="900" alt="Paddock — running and unread chats across every project, a live turn, a sub-agent's nested steps, an inline diff, Claude opening its own chats, files rendered in the conversation, fork and rewind, triggers, run history, the git Changes tab, and the same instance on a phone">
 </p>
 
 ## Why Paddock

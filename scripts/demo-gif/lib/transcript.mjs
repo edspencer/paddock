@@ -35,17 +35,31 @@ export function makeIds(namespace) {
   let n = 0;
   const h = (label) =>
     crypto.createHash("sha256").update(`${namespace}:${label}:${n++}`).digest("hex");
+  /** Shape 32 hex chars as an RFC-4122 v4 uuid. */
+  const asUuid = (x) =>
+    [
+      x.slice(0, 8),
+      x.slice(8, 12),
+      `4${x.slice(13, 16)}`,
+      ((parseInt(x[16], 16) & 0x3) | 0x8).toString(16) + x.slice(17, 20),
+      x.slice(20, 32),
+    ].join("-");
+
   return {
+    /**
+     * A session id derived from its label ALONE — no call counter — so it is
+     * stable no matter what order things are generated in. That matters because
+     * a parent chat and the chats it spawns reference each other: the parent's
+     * `create_chat` card names the child's session id, and the child's
+     * provenance names the parent's. With a counter-based id neither could be
+     * computed before the other existed.
+     */
+    stableUuid(label) {
+      return asUuid(crypto.createHash("sha256").update(`${namespace}:stable:${label}`).digest("hex"));
+    },
     /** RFC-4122-shaped v4 uuid, deterministic. Used for session ids. */
     uuid(label = "") {
-      const x = h(`uuid:${label}`);
-      return [
-        x.slice(0, 8),
-        x.slice(8, 12),
-        `4${x.slice(13, 16)}`,
-        ((parseInt(x[16], 16) & 0x3) | 0x8).toString(16) + x.slice(17, 20),
-        x.slice(20, 32),
-      ].join("-");
+      return asUuid(h(`uuid:${label}`));
     },
     toolId(label = "") {
       return `toolu_${h(`tool:${label}`).slice(0, 16)}`;
@@ -213,6 +227,40 @@ export const grepResult = (numFiles, numLines, filenames = []) => ({
   numLines,
   filenames,
 });
+
+/**
+ * `send_file` — Claude handing you a rendered file in the conversation.
+ *
+ * Unlike every other tool here it carries NO `toolUseResult` sidecar: the whole
+ * card is driven by the tool_result's *content*, which must be exactly this
+ * envelope JSON and nothing else (the renderer does `JSON.parse(output)`).
+ *
+ *  • `paddockSendFile: 1` is the discriminator — any other value falls back to a
+ *    generic tool card.
+ *  • `kind` selects the renderer and is authoritative when you write the
+ *    envelope yourself (the server's kind-inference only runs at real send time).
+ *  • `language` is consulted ONLY for `kind: "code"`; without it the body renders
+ *    as plain monospace.
+ *  • `source: "file"` needs a real file in `<dataDir>/attachments/` named
+ *    `<lowercase-uuid><ext>` — the id IS the filename, and the extension is the
+ *    only source of Content-Type.
+ *
+ * Note a ```mermaid fence inside a `kind: "markdown"` send is NOT equivalent to
+ * `kind: "mermaid"`: in a long markdown body the diagram renders as a blank box
+ * (the resize wrapper remounts mid-render and the async draw is never retried).
+ * Send diagrams as their own `kind: "mermaid"` file.
+ */
+export const sendFileEnvelope = ({ filename, kind, content, language, message, attachmentId }) =>
+  JSON.stringify({
+    paddockSendFile: 1,
+    filename,
+    kind,
+    ...(language ? { language } : {}),
+    ...(message ? { message } : {}),
+    ...(attachmentId
+      ? { source: "file", attachmentId }
+      : { source: "inline", content }),
+  });
 
 /** Bash → the rich stdout/stderr body. Needs at least one of stderr /
  *  interrupted / returnCodeInterpretation / gitOperation, otherwise it degrades

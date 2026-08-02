@@ -143,7 +143,112 @@ const frameCard = async (locator, offset = 24) => {
   await page.waitForTimeout(400);
 };
 
+/**
+ * Record a short screen capture as a beat.
+ *
+ * This runs in its OWN browser context, for one reason: it is the only beat that
+ * wants motion, so it is the only one that turns `reducedMotion` off (giving a
+ * blinking caret, a live spinner, and the cycling "working" pill). Every still
+ * beat keeps reduced motion on and stays frame-for-frame reproducible — the
+ * non-determinism is quarantined to this clip.
+ *
+ * `recordVideo.size` is set to the FINAL output size, not the capture size. The
+ * page still renders at deviceScaleFactor 2, and Playwright downsamples device
+ * pixels into that frame — so the clip is supersampled exactly like the stills
+ * and cuts together with them without a visible drop in sharpness. Setting the
+ * size to 2400x1500 instead does NOT upscale; it pads the 1200x750 render into a
+ * larger frame with grey.
+ */
+async function recordClip(id, seconds, drive) {
+  const raw = path.join(SHOTS, "raw");
+  fs.mkdirSync(raw, { recursive: true });
+  const vctx = await browser.newContext({
+    viewport: { width: WIDTH, height: HEIGHT },
+    deviceScaleFactor: SCALE,
+    colorScheme: "dark",
+    recordVideo: { dir: raw, size: { width: WIDTH, height: HEIGHT } },
+  });
+  const vpage = await vctx.newPage();
+  // The GIF uses a single frame in place of this clip (see below), and `drive`
+  // takes it at the one moment it knows is right, rather than build.mjs guessing
+  // a timestamp that drifts whenever the turn's timing changes.
+  const poster = () => vpage.screenshot({ path: path.join(SHOTS, `${id}.png`) });
+  const startedAt = await drive(vpage, poster);
+  await vctx.close(); // finalises the .webm
+  const file = fs
+    .readdirSync(raw)
+    .map((f) => path.join(raw, f))
+    .filter((f) => f.endsWith(".webm"))
+    .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
+  // Trim to the interesting window and re-encode, so build.mjs gets a clip whose
+  // timestamps start at zero and whose length is exactly the beat's hold.
+  const out = path.join(SHOTS, `${id}.webm`);
+  execFileSync("ffmpeg", [
+    "-y", "-hide_banner", "-loglevel", "error",
+    "-ss", String(startedAt), "-t", String(seconds),
+    "-i", file, "-c:v", "libvpx-vp9", "-crf", "18", "-b:v", "0", "-an", out,
+  ]);
+  // Motion is close to free in H.264/VP9 and ruinous in GIF: every frame of a
+  // moving beat changes every pixel, and this one clip took the GIF from 1.6 MB
+  // to 6.5 MB (4.4 MB even at 6fps, by which point the crossfades stutter). So
+  // the video outputs get the motion and the GIF holds the poster `drive` took.
+  if (!fs.existsSync(path.join(SHOTS, `${id}.png`))) {
+    throw new Error(`clip "${id}" recorded no poster frame — call poster() inside drive()`);
+  }
+  log("recorded", id, `(${seconds}s from +${startedAt}s)`);
+}
+
+/**
+ * A phone-shaped beat. Captured at a real mobile viewport (so the app takes its
+ * own off-canvas-drawer layout rather than a squashed desktop one), then centred
+ * on the app's own canvas colour to fill the 16:10 frame the rest of the reel
+ * uses.
+ */
+async function shotMobile(id) {
+  const mctx = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    deviceScaleFactor: SCALE,
+    reducedMotion: "reduce",
+    colorScheme: "dark",
+    isMobile: true,
+    hasTouch: true,
+  });
+  const mpage = await mctx.newPage();
+  const shotPath = path.join(SHOTS, "raw", `${id}-phone.png`);
+  fs.mkdirSync(path.dirname(shotPath), { recursive: true });
+  await mpage.goto(chatUrl("lumen-cli", star), { waitUntil: "networkidle" });
+  await mpage.getByPlaceholder(/Message Claude/i).waitFor({ timeout: 15_000 });
+  await mpage.waitForTimeout(1_500);
+  await mpage.screenshot({ path: shotPath });
+  await mctx.close();
+  const W = WIDTH * SCALE;
+  const H = HEIGHT * SCALE;
+  // Fit the phone to most of the frame height, centre it on the canvas colour
+  // the app itself uses, and outline it. The outline matters: the padding is the
+  // same colour as the app's own background, so without an edge the shot reads
+  // as a narrow crop of the desktop UI rather than a phone.
+  const phoneH = Math.round(H * 0.94);
+  const phoneW = Math.round((390 / 844) * phoneH);
+  const x = Math.round((W - phoneW) / 2);
+  const y = Math.round((H - phoneH) / 2);
+  execFileSync("ffmpeg", [
+    "-y", "-hide_banner", "-loglevel", "error",
+    "-i", shotPath,
+    "-vf",
+    [
+      `scale=${phoneW}:${phoneH}`,
+      `pad=${W}:${H}:${x}:${y}:color=0x141210`,
+      `drawbox=x=${x - 3}:y=${y - 3}:w=${phoneW + 6}:h=${phoneH + 6}:color=0x4a423a:t=3`,
+    ].join(","),
+    path.join(SHOTS, `${id}.png`),
+  ]);
+  log("captured", id, "(mobile)");
+}
+
 const star = manifest.chats["lumen-cli:star"];
+/** Typed on camera in the motion beat; its reply is scripted in fixtures.mjs. */
+const MOTION_PROMPT = "Add a --no-truecolor flag for the tests.";
+
 const chatUrl = (slug, id) => `${BASE}/projects/${slug}/chat/${id}`;
 
 try {
@@ -189,21 +294,9 @@ try {
   await page.waitForTimeout(1_200);
   await shot("home");
 
-  // BEAT: the projects grid.
-  await page.goto(`${BASE}/projects`, { waitUntil: "networkidle" });
-  // `exact` matters: without it this also matches the "Side Projects" group
-  // heading and Playwright fails the whole run on a strict-mode violation.
-  await page.getByRole("heading", { name: "Projects", exact: true }).waitFor({ timeout: 15_000 });
-  await page.waitForTimeout(1_200);
-  await shot("projects");
-
-  // BEAT: the chat, scrolled so the sub-agent card and the first tool calls show.
+  // BEAT: the sub-agent card expanded into its own nested steps.
   await page.goto(chatUrl("lumen-cli", star), { waitUntil: "networkidle" });
   await toolCard(/sub-agent/i).waitFor({ timeout: 15_000 });
-  await scrollTranscript(0);
-  await shot("chat");
-
-  // BEAT: the sub-agent card expanded into its own nested steps.
   await toolCard(/sub-agent/i).click();
   await page.waitForTimeout(1_200);
   await frameCard(toolCard(/sub-agent/i));
@@ -218,15 +311,61 @@ try {
   await frameCard(toolCard(/render\.ts/));
   await shot("diff");
 
-  // BEAT: the Read block expanded to the inline image.
+  // BEAT: Claude opening its own chats. One frame carries the whole story — the
+  // `create_chat` cards (expanded by default) AND the resulting children nested
+  // under their parent in the sidebar.
   await page.goto(chatUrl("lumen-cli", star), { waitUntil: "networkidle" });
-  await toolCard(/palette-preview\.png/).waitFor({ timeout: 15_000 });
-  await toolCard(/palette-preview\.png/).click();
-  // The <img> is fetched from the project's raw-file endpoint — wait for it to
-  // decode, or the frame catches an empty box.
-  await page.waitForTimeout(1_500);
-  await frameCard(toolCard(/palette-preview\.png/));
-  await shot("image");
+  const createCard = page.locator("button").filter({ hasText: /Create chat/i }).first();
+  await createCard.waitFor({ timeout: 15_000 });
+  await frameCard(createCard);
+  await shot("spawn");
+
+  // BEAT: files rendered in the conversation. Mermaid draws client-side, and the
+  // library is code-split across several chunks — so the diagram appears a beat
+  // after the page is otherwise idle. Wait for the actual <svg>, not the card.
+  await page.goto(chatUrl("lumen-cli", manifest.chats["lumen-cli:handoff"]), {
+    waitUntil: "networkidle",
+  });
+  // Match the HOST element, not the svg id: mermaid stamps its own ids
+  // (`mmd-r24-svg`), so `svg[id^="mermaid"]` never matches and the wait times
+  // out even though the diagram drew fine.
+  const diagram = page.locator(".mermaid-host svg").first();
+  await diagram.waitFor({ timeout: 25_000 });
+  await page.waitForTimeout(1_200);
+  // Frame on the diagram's card so the drawing leads and the document below it
+  // is visible underneath.
+  await frameCard(page.locator("button").filter({ hasText: /pipeline\.mmd/ }).first());
+  await shot("sendfile");
+
+  // BEAT: fork / rewind. We shoot the REVERT CONFIRMATION rather than the hover
+  // rail itself: the rail is a pair of 16px icons that all but disappear at GIF
+  // scale, whereas the dialog states in words how much is about to be discarded
+  // and that the side effects are NOT undone.
+  //
+  // Two preconditions: the rail only renders for turns with a real UUID id (so
+  // the chat must be loaded from history, not just sent), and it is revealed by
+  // CSS :hover — a direct click fails Playwright's actionability check.
+  await page.goto(chatUrl("lumen-cli", star), { waitUntil: "networkidle" });
+  const anchorMsg = page
+    .locator("div.group.relative")
+    .filter({ hasText: "Fallback is in. Running the suite" })
+    .first();
+  await anchorMsg.waitFor({ timeout: 15_000 });
+  await anchorMsg.scrollIntoViewIfNeeded();
+  await anchorMsg.hover();
+  // Focus rather than click. The rail floats on `-top-3`, so it overlaps the
+  // bubble above it and a real click is intercepted by that bubble; the rail is
+  // revealed by `group-focus-within` just as much as by `group-hover`, so
+  // focusing the button both shows it and lets Enter activate it.
+  const revertBtn = page
+    .getByRole("button", { name: "Revert conversation back to here" })
+    .first();
+  await revertBtn.focus();
+  await page.waitForTimeout(200);
+  await revertBtn.press("Enter");
+  await page.getByRole("alertdialog").waitFor({ timeout: 10_000 });
+  await page.waitForTimeout(700);
+  await shot("fork");
 
   // BEAT: the Triggers tab.
   await page.goto(`${BASE}/projects/lumen-cli/triggers`, { waitUntil: "networkidle" });
@@ -244,8 +383,55 @@ try {
   await page.waitForTimeout(1_200);
   await shot("changes");
 
+  // BEAT: History — what ran unattended while you were away.
+  await page.goto(`${BASE}/projects/lumen-cli/history`, { waitUntil: "networkidle" });
+  await page.getByText(/new runs ran while you were away/).waitFor({ timeout: 15_000 });
+  await page.waitForTimeout(1_000);
+  await shot("history");
+
+  // BEAT: the same instance from a phone.
+  await shotMobile("mobile");
+
+  // Captured LAST on purpose: it sends a real message, which appends a turn to
+  // the star chat. Every still that photographs that chat has to be taken while
+  // it is still exactly as seeded.
+  // BEAT (clip): a turn, live.
+  // The deterministic fake `claude` writes each reply as ONE transcript line, so
+  // there is no token-by-token typing to film — the honest motion available here
+  // is the interaction loop: a message being typed, sent, the turn going busy,
+  // and the answer landing. `pressSequentially` is what makes the typing legible;
+  // the reply itself comes from the seeded fake-script, so the words are ours.
+  await recordClip("motion", 4.0, async (vpage, poster) => {
+    // Recording starts when the context is created, so the trim offset is
+    // MEASURED from here rather than guessed. A hard-coded offset drifts the
+    // moment the page takes longer to settle, and the clip silently ends up all
+    // typing with the reply cut off the end.
+    const t0 = Date.now();
+    await vpage.goto(chatUrl("lumen-cli", star), { waitUntil: "networkidle" });
+    const box = vpage.getByPlaceholder(/Message Claude/i);
+    await box.waitFor({ timeout: 15_000 });
+    await vpage.waitForTimeout(900);
+    await box.click();
+    const typingStart = Date.now();
+    await box.pressSequentially(MOTION_PROMPT, { delay: 45 });
+    await box.press("Enter");
+    // Wait for the reply itself, not a fixed delay — then a moment more for its
+    // fade-in to finish, or the poster catches the text half-transparent.
+    await vpage.getByText(/^Added\./).first().waitFor({ timeout: 20_000 });
+    await vpage.waitForTimeout(900);
+    // The GIF's frame for this beat: the question asked and answered, which
+    // reads as a complete exchange. An in-flight frame would be more dramatic
+    // but a frozen "working…" pill just looks like a stalled UI in a still.
+    await poster();
+    await vpage.waitForTimeout(1_200);
+    // Start a beat before the first keystroke.
+    return Math.max(0, (typingStart - t0) / 1000 - 0.4);
+  });
+
   // ── 5. sanity-check ───────────────────────────────────────────────────────
-  const missing = BEATS.filter((b) => !fs.existsSync(path.join(SHOTS, `${b.id}.png`)));
+  const missing = BEATS.filter(
+    (b) => !fs.existsSync(path.join(SHOTS, `${b.id}.${b.kind === "clip" ? "webm" : "png"}`)),
+  );
   if (missing.length) {
     throw new Error(`beats not captured: ${missing.map((b) => b.id).join(", ")}`);
   }

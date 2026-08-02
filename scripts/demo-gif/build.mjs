@@ -19,10 +19,15 @@
  *     0.4s → 2.6 MB, 0.3s → 1.9 MB, 0.25s → 1.6 MB. Shorten this before
  *     anything else.
  *  2. `--fps` — for the same reason: it multiplies the transition frame count.
- *     10fps is smooth enough for a cross-dissolve between static screens.
+ *     8fps is enough for a cross-dissolve between static screens, and it only
+ *     applies to the GIF: `--video-fps` (25) drives the MP4/WebM, where frames
+ *     are nearly free and the recorded clip needs the smoothness.
  *  3. `--colors` — a dark, flat UI needs nowhere near 256, but do not starve it:
- *     at 64 the palette swatches in the Read beat visibly shift hue (green went
- *     grey). 200 is accurate and costs little once dithering is off.
+ *     at 64 the palette colours visibly shift hue (green went grey). 160 is
+ *     indistinguishable from 200 here and costs less.
+ *  3b. Downscaling the GIF is a weaker lever than it looks: 1200 → 960 saved
+ *     only ~25%, because LZW on flat UI colour does not scale with pixel count
+ *     the way a photographic codec would.
  *  4. `--dither` — set to `none`, which is both SMALLER and better here. Bayer
  *     dithering exists to hide banding in gradients; this footage is flat UI
  *     colour, so all it adds is per-pixel noise that defeats inter-frame
@@ -47,8 +52,8 @@ const has = (name) => argv.includes(`--${name}`);
 const OUT = path.resolve(arg("out", "/tmp/paddock-demo"));
 const WIDTH = Number(arg("width", "1200"));
 const HEIGHT = Number(arg("height", "750"));
-const FPS = Number(arg("fps", "10"));
-const COLORS = Number(arg("colors", "200"));
+const FPS = Number(arg("fps", "8"));
+const COLORS = Number(arg("colors", "160"));
 const DITHER = arg("dither", "none");
 const SHOTS = path.join(OUT, "stills");
 const DIST = path.join(OUT, "dist");
@@ -58,13 +63,27 @@ const ff = (args) => execFileSync("ffmpeg", ["-y", "-hide_banner", "-loglevel", 
 const sizeOf = (f) => fs.statSync(f).size;
 const human = (n) => `${(n / 1024 / 1024).toFixed(2)} MB`;
 
-const stills = BEATS.map((b) => {
-  const f = path.join(SHOTS, `${b.id}.png`);
-  if (!fs.existsSync(f)) {
-    throw new Error(`missing still for beat "${b.id}" (${f})\nRun: node scripts/demo-gif/shoot.mjs`);
-  }
-  return f;
-});
+/**
+ * Resolve each beat to its source file for a given output format.
+ *
+ * A `clip` beat has two sources, and which one is used depends on the format.
+ * Motion costs almost nothing in H.264/VP9 and is ruinous in GIF — the one
+ * 4-second clip here takes the GIF from 1.6 MB to 6.5 MB — so the video outputs
+ * play the clip while the GIF holds its poster frame. Same storyboard, same
+ * length; the GIF just doesn't move during that beat.
+ */
+function sourcesFor(format) {
+  return BEATS.map((b) => {
+    const ext = b.kind === "clip" && format === "video" ? "webm" : "png";
+    const f = path.join(SHOTS, `${b.id}.${ext}`);
+    if (!fs.existsSync(f)) {
+      throw new Error(
+        `missing ${ext} for beat "${b.id}" (${f})\nRun: node scripts/demo-gif/shoot.mjs`,
+      );
+    }
+    return f;
+  });
+}
 fs.mkdirSync(DIST, { recursive: true });
 
 /**
@@ -73,9 +92,13 @@ fs.mkdirSync(DIST, { recursive: true });
  * hold minus one crossfade — not `n * hold`, because every fade overlaps two
  * beats and so removes `XFADE` seconds from the running total.
  */
-function filterChain() {
+function filterChain(fps) {
+  // `setpts=PTS-STARTPTS` normalises the recorded clip's timestamps to start at
+  // zero; without it a clip trimmed from a non-zero offset carries its original
+  // PTS into the chain and xfade computes the wrong overlap.
   const parts = BEATS.map(
-    (_, i) => `[${i}:v]setsar=1,scale=${WIDTH}:${HEIGHT}:flags=lanczos,fps=${FPS}[v${i}]`,
+    (_, i) =>
+      `[${i}:v]setpts=PTS-STARTPTS,setsar=1,scale=${WIDTH}:${HEIGHT}:flags=lanczos,fps=${fps}[v${i}]`,
   );
   let prev = "v0";
   let offset = 0;
@@ -90,8 +113,24 @@ function filterChain() {
   return parts;
 }
 
-const inputs = BEATS.flatMap((b, i) => ["-loop", "1", "-t", String(b.hold), "-i", stills[i]]);
-const chain = filterChain();
+/** `-loop 1` is image-only; a clip would otherwise repeat for the whole hold. */
+function inputsFor(format) {
+  const src = sourcesFor(format);
+  return BEATS.flatMap((b, i) => [
+    ...(b.kind === "clip" && format === "video" ? [] : ["-loop", "1"]),
+    "-t",
+    String(b.hold),
+    "-i",
+    src[i],
+  ]);
+}
+// The GIF is frame-rate constrained (see the size notes above); the video is
+// not — H.264/VP9 encode a static beat at 25fps for almost nothing, and the
+// recorded clip was captured at 25, so dropping the video to the GIF's rate
+// would throw away smoothness for no saving.
+const VIDEO_FPS = Number(arg("video-fps", "25"));
+const gifChain = filterChain(FPS);
+const videoChain = filterChain(VIDEO_FPS);
 
 // ── GIF ─────────────────────────────────────────────────────────────────────
 // `stats_mode=diff` weights the palette toward the pixels that actually CHANGE
@@ -101,10 +140,10 @@ const chain = filterChain();
 const gif = path.join(DIST, "paddock-demo.gif");
 log(`assembling ${BEATS.length} beats → ${WIDTH}x${HEIGHT} @ ${FPS}fps, ${COLORS} colours`);
 ff([
-  ...inputs,
+  ...inputsFor("gif"),
   "-filter_complex",
   [
-    ...chain,
+    ...gifChain,
     "[faded]split[a][b]",
     `[a]palettegen=stats_mode=diff:max_colors=${COLORS}[p]`,
     `[b][p]paletteuse=dither=${DITHER}:diff_mode=rectangle[out]`,
@@ -121,10 +160,10 @@ log(`GIF   ${human(sizeOf(gif))}  ${gif}`);
 if (!has("no-video")) {
   const mp4 = path.join(DIST, "paddock-demo.mp4");
   ff([
-    ...inputs,
+    ...inputsFor("video"),
     "-filter_complex",
     // yuv420p + even dimensions: required for the file to play in Safari/iOS.
-    [...chain, "[faded]format=yuv420p[out]"].join(";"),
+    [...videoChain, "[faded]format=yuv420p[out]"].join(";"),
     "-map",
     "[out]",
     "-c:v",
@@ -138,7 +177,7 @@ if (!has("no-video")) {
     // Start with a keyframe and keep them frequent, so a looping <video> does
     // not flash a smeared frame on wrap.
     "-g",
-    String(FPS * 2),
+    String(VIDEO_FPS * 2),
     "-movflags",
     "+faststart",
     "-pix_fmt",
@@ -149,9 +188,9 @@ if (!has("no-video")) {
 
   const webm = path.join(DIST, "paddock-demo.webm");
   ff([
-    ...inputs,
+    ...inputsFor("video"),
     "-filter_complex",
-    [...chain, "[faded]format=yuv420p[out]"].join(";"),
+    [...videoChain, "[faded]format=yuv420p[out]"].join(";"),
     "-map",
     "[out]",
     "-c:v",

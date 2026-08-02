@@ -2,7 +2,7 @@
 
 Regenerates `docs/demo/paddock-demo.gif` (and the byte-identical copy at
 `website/public/demo/paddock-demo.gif`), plus MP4/WebM versions of the same
-timeline.
+timeline. Eleven beats, about 22 seconds.
 
 Everything it shows is **synthetic** — invented projects, invented chats, an
 invented git repo. No production data, no real repositories, no credentials.
@@ -40,11 +40,11 @@ Stills land in `/tmp/paddock-demo/stills/`, output in `/tmp/paddock-demo/dist/`.
 | `fixtures.mjs` | The synthetic world: projects, summaries, the file contents behind the git diff, the trigger definitions. **Edit this to change what the demo is about.** |
 | `beats.mjs` | The storyboard — which beats, in what order, held for how long. Read by both the shoot and the build, so they cannot drift apart. |
 | `seed.mjs` | Writes a complete `PADDOCK_DATA_DIR`: chats with rich tool blocks, a finished sub-agent, job records, read state, triggers, and a real git repo. |
-| `shoot.mjs` | Boots a server on the seeded dir, drives two live turns, and captures one PNG per beat with Playwright. |
+| `shoot.mjs` | Boots a server on the seeded dir, drives live turns, and captures one PNG per beat with Playwright — plus one recorded screen capture. |
 | `build.mjs` | Crossfades the stills with ffmpeg and encodes GIF + MP4 + WebM. |
 | `serve.mjs` | Launches the demo server with a scrubbed environment. Also runnable standalone to eyeball the rig. |
 | `lib/transcript.mjs` | Builders for Claude Code transcript JSONL lines, annotated with the rules that make each tool block render. |
-| `lib/png.mjs` | A tiny dependency-free PNG writer, used to draw the palette image the demo's `Read` beat renders inline. |
+| `lib/png.mjs` | A tiny dependency-free PNG writer, used to draw the palette image the demo's `Read` block renders inline. |
 
 ## Changing the demo
 
@@ -128,21 +128,76 @@ written down rather than left to be rediscovered.
   follow-up into chats whose *name* — taken from their seeded first message — is
   what the feed row displays.
 
+- **Mermaid renders client-side, and its `<svg>` id is its own.** Wait on
+  `.mermaid-host svg`, not `svg[id^="mermaid"]` — mermaid stamps ids like
+  `mmd-r24-svg`, so the obvious selector never matches and the wait times out
+  even though the diagram drew fine. Allow a couple of seconds: the library is
+  code-split across several chunks and draws after the page is otherwise idle.
+
+- **Send a diagram as its own `kind: "mermaid"` file, not a ```mermaid fence
+  inside a markdown send.** In a long markdown body the diagram renders as a
+  blank bordered box (the resize wrapper remounts mid-render and the async draw
+  is never retried — filed as #644).
+
+- **Size a Mermaid diagram deliberately.** A tall top-down chart renders at its
+  natural size and overflows the card; a long left-right one scales down to fit
+  the width and takes its labels with it. Aim for roughly 2:1.
+
+- **The message hover-rail only exists for turns with a real UUID id**, so the
+  chat must be loaded from history — a message you just sent has an ephemeral
+  id and no rail. And the rail floats on `-top-3`, overlapping the bubble above
+  it, so a click gets intercepted: `focus()` the button instead (the rail is
+  revealed by `group-focus-within` too) and press Enter.
+
+- **A nested chat row suppresses its own "spawned" badge.** The sidebar guards
+  on `depth > 0 && origin === "spawned"`, so a chat shows the indent or the chip,
+  never both.
+
+- **`trigger_type` in a job record does not make a run "unattended".** Only
+  `origin` in `run-provenance.json` does (`scheduled`/`spawned`). A scheduled
+  chat without a provenance entry renders as origin "You" and is filtered out of
+  History's default view.
+
+## The motion beat, and why the GIF differs from the video
+
+One beat (`motion`) is a real Playwright screen recording rather than a still: a
+message being typed, sent, the turn going busy, and the answer landing.
+
+Two things about it are worth knowing.
+
+**It is the only beat shot without `reducedMotion`**, so it gets the blinking
+caret, the live spinner and the cycling "working…" pill. It runs in its own
+browser context precisely so that turning motion on there cannot affect the
+determinism of any other beat.
+
+**The GIF does not use it.** Motion is nearly free in H.264/VP9 and ruinous in
+GIF — every frame of a moving beat changes every pixel. This one 4-second clip
+took the GIF from 1.6 MB to **6.5 MB**, and still cost 4.4 MB at 6fps, by which
+point the crossfades stutter. So the video outputs play the clip and the GIF
+holds a poster frame taken from the same moment. Same storyboard, same length;
+the GIF simply doesn't move during that beat.
+
+There is no token-by-token typing to film, incidentally. The deterministic fake
+`claude` writes each reply as a single transcript line, so the streaming you'd
+see against a real model isn't available here — and making the pipeline depend
+on real API credentials would mean nobody else could re-run it.
+
 ## Format notes
 
 The build emits three files:
 
 | File | Size | For |
 | --- | --- | --- |
-| `paddock-demo.gif` | ~1.7 MB | The README, where GitHub will not play a committed video inline. |
-| `paddock-demo.mp4` | ~0.8 MB | A web page, via `<video autoplay muted loop playsinline>`. |
-| `paddock-demo.webm` | ~0.6 MB | Ditto, as the first `<source>`. |
+| `paddock-demo.gif` | ~1.9 MB | The README, where GitHub will not play a committed video inline. |
+| `paddock-demo.mp4` | ~1.5 MB | A web page, via `<video autoplay muted loop playsinline>`. |
+| `paddock-demo.webm` | ~1.5 MB | Ditto, as the first `<source>`. |
 
-**Prefer the video on the web.** It is roughly half the bytes at visibly better
-quality — no palette quantisation, so the colours are exact — and it does not
-force the browser to hold a 150-frame uncompressed animation in memory. The GIF
-exists because GitHub's README renderer needs it.
+**Prefer the video on the web.** It has the motion beat, no palette
+quantisation, and it does not force the browser to hold a 177-frame
+uncompressed animation in memory. The GIF exists because GitHub's README
+renderer needs it.
 
 See the header comment in `build.mjs` for the size levers, measured. The short
 version: crossfade duration dominates, then frame rate; colour count barely
 matters once dithering is off, and dithering should stay off for flat UI colour.
+Downscaling the GIF is a weaker lever than it looks.

@@ -38,6 +38,8 @@ import {
   RENDER_TS_WORKING,
   RENDER_TS_HUNKS,
   FAKE_SCRIPT,
+  SENT_DIAGRAM,
+  SENT_DOC,
 } from "./fixtures.mjs";
 import { palettePreviewPNG } from "./lib/png.mjs";
 import {
@@ -51,6 +53,7 @@ import {
   readImageResult,
   grepResult,
   bashResult,
+  sendFileEnvelope,
 } from "./lib/transcript.mjs";
 
 // ── args ────────────────────────────────────────────────────────────────────
@@ -120,19 +123,35 @@ function projectYaml(p, updated) {
 }
 
 // ── job records (attribution — without these a chat is invisible) ────────────
+// They do double duty: attribution (making the chat visible at all) and the
+// History tab's run list.
 const jobs = [];
-function recordJob({ sessionId, slug, startedAt, finishedAt, triggerType = "web" }) {
+function recordJob({
+  sessionId,
+  slug,
+  startedAt,
+  finishedAt,
+  triggerType = "web",
+  // A chat can have run more than once, and the id suffix is derived from the
+  // session id — so a second run needs a salt or the two records collide on one
+  // filename and the earlier run vanishes.
+  salt = "",
+  schedule = null,
+  prompt,
+  summary,
+}) {
   const date = iso(startedAt).slice(0, 10);
-  // The `id` is zod-validated as job-YYYY-MM-DD-[a-z0-9]{6}; a bad id is
-  // dropped as a corrupt record and the chat vanishes with no error.
-  const suffix = sessionId.replace(/-/g, "").slice(0, 6).toLowerCase();
+  // The `id` is zod-validated as job-YYYY-MM-DD-[a-z0-9]{6} — LOWERCASE, exactly
+  // six chars; a bad id is dropped as a corrupt record and the run (and the
+  // chat) vanishes with no error.
+  const suffix = `${sessionId.replace(/-/g, "")}${salt}`.slice(0, 6).toLowerCase();
   const id = `job-${date}-${suffix}`;
   const outputFile = path.join(JOBS_DIR, `${id}.jsonl`);
   const agent = slug === "" ? "keeper-_root" : `keeper-${slug}`;
   const lines = [
     `id: ${id}`,
     `agent: ${agent}`,
-    "schedule: null",
+    schedule === null ? "schedule: null" : `schedule: ${yamlStr(schedule)}`,
     `trigger_type: ${triggerType}`,
     "status: completed",
     "exit_reason: success",
@@ -141,6 +160,8 @@ function recordJob({ sessionId, slug, startedAt, finishedAt, triggerType = "web"
     `started_at: ${iso(startedAt)}`,
     `finished_at: ${iso(finishedAt)}`,
     `duration_seconds: ${Math.max(1, Math.round((finishedAt - startedAt) / 1000))}`,
+    ...(prompt ? [`prompt: ${yamlStr(prompt)}`] : []),
+    ...(summary ? [`summary: ${yamlStr(summary)}`] : []),
     `output_file: ${outputFile}`,
     "",
   ];
@@ -149,13 +170,34 @@ function recordJob({ sessionId, slug, startedAt, finishedAt, triggerType = "web"
   jobs.push({ sessionId, agent, finishedAt });
 }
 
+// ── run provenance ──────────────────────────────────────────────────────────
+// `<dataDir>/run-provenance.json` is one file that buys three separate features:
+// the sidebar's parent→child nesting, the ⏰/⑂ origin badges, and the History
+// tab's notion of an "unattended" run. Note `trigger_type` in the job record is
+// NOT what makes a run unattended — only `origin` here is.
+//
+// Two traps:
+//  • A nested row SUPPRESSES its own ⑂ badge (SessionSidebar guards on
+//    `depth > 0 && origin === "spawned"`), so a chat can show the indent or the
+//    chip, never both. We take the indent — the nesting is the story.
+//  • The parent edge is only honoured when BOTH `parentSessionId` and
+//    `parentProject` are present, and `parentProject` is a workspace KEY, so the
+//    root workspace's value is the empty string.
+const runProvenance = {};
+const setProvenance = (sessionId, prov) => {
+  runProvenance[sessionId] = prov;
+};
+
 // ── chat helpers ────────────────────────────────────────────────────────────
 const chats = [];
 
+/** A chat's session id, addressable before the chat is created (see stableUuid). */
+const chatId = (slug, label) => ids.stableUuid(`chat:${slug || "_root"}:${label}`);
+
 /** Register a chat: write its transcript, its job record, and remember whether
  *  it should read as unread (unread = simply having no read-state entry). */
-function addChat({ slug, dir, label, body, startedAt, durationMin = 4, unread = false, triggerType }) {
-  const sessionId = ids.uuid(`chat:${slug}:${label}`);
+function addChat({ slug, dir, label, body, startedAt, durationMin = 4, unread = false, triggerType, schedule }) {
+  const sessionId = chatId(slug, label);
   const finishedAt = new Date(startedAt.getTime() + durationMin * 60_000);
   const ctx = {
     sessionId,
@@ -167,13 +209,31 @@ function addChat({ slug, dir, label, body, startedAt, durationMin = 4, unread = 
   };
   const text = body(ctx, sessionId);
   write(path.join(dir, ".chats", `${sessionId}.jsonl`), text);
-  recordJob({ sessionId, slug, startedAt, finishedAt, triggerType });
+  recordJob({ sessionId, slug, startedAt, finishedAt, triggerType, schedule });
   chats.push({ sessionId, slug, label, unread, finishedAt });
   // Chat-list ordering is by transcript mtime, not by the timestamps inside it.
   const t = finishedAt;
   fs.utimesSync(path.join(dir, ".chats", `${sessionId}.jsonl`), t, t);
   return sessionId;
 }
+
+/**
+ * The chats the star chat opens for itself. `label` doubles as the id key, so
+ * the parent's `create_chat` card and the child's provenance agree without
+ * either having to be created first.
+ */
+const SPAWNED_CHILDREN = [
+  [
+    "audit",
+    "Audit the palette against AAA",
+    "Re-check every foreground/background pair against WCAG AAA (7:1) and report which ones only clear AA.",
+  ],
+  [
+    "bench",
+    "Benchmark the cube quantiser",
+    "Measure emitColor throughput on the 256-colour path against the truecolor path over 100k conversions.",
+  ],
+];
 
 /** A short two-turn chat — enough to populate a list and carry an unread cue. */
 const simpleChat = (prompt, reply) => (ctx) =>
@@ -304,6 +364,37 @@ function starChat(projectDir) {
       use: usage(31_200, 90, 108_400, 0),
       durationMs: 1_800,
     });
+
+    // ── Claude opening its own chats ────────────────────────────────────────
+    // `mcp__paddock_manage__create_chat` — the self-management MCP tool. Unlike
+    // ordinary tools these cards are EXPANDED BY DEFAULT, and the whole card is
+    // rendered from the tool_result's JSON *output* (no toolUseResult sidecar):
+    // `sessionId` is required, and supplying BOTH `name` and `prompt` is what
+    // adds the "KICKOFF" block under the "open chat" link.
+    //
+    // The `sessionId` here must match a chat that actually exists, or the card's
+    // link 404s — hence the order-independent `chatId()`.
+    out += assistantText(
+      ctx,
+      "Two things I shouldn't fold into this change — I've opened a chat for each so they don't get lost:",
+      usage(32_400, 210, 114_000, 2_800),
+    );
+    for (const [label, name, prompt] of SPAWNED_CHILDREN) {
+      out += toolCall(ctx, {
+        name: "mcp__paddock_manage__create_chat",
+        id: ids.toolId(`star:create:${label}`),
+        input: { project: "lumen-cli", name, prompt },
+        content: JSON.stringify({
+          created: true,
+          project: "lumen-cli",
+          sessionId: chatId("lumen-cli", label),
+          name,
+          prompt,
+        }),
+        use: usage(32_600, 140, 114_600, 0),
+        durationMs: 1_100,
+      });
+    }
 
     out += assistantText(
       ctx,
@@ -552,6 +643,7 @@ addChat({
   startedAt: hoursAgo(9),
   durationMin: 2,
   triggerType: "schedule",
+  schedule: "nightly-triage",
 });
 // Driven live by shoot.mjs to populate the Running feed — the name here is what
 // the feed row shows, so it has to read like a real piece of work.
@@ -661,6 +753,139 @@ addChat({
   unread: true,
 });
 
+// ── the send_file beat: Claude handing over rendered files ──────────────────
+// A `send_file` card carries NO toolUseResult sidecar — the tool_result's
+// content IS the envelope JSON, and the renderer parses it directly.
+addChat({
+  slug: "lumen-cli",
+  dir: lumenDir,
+  label: "handoff",
+  startedAt: hoursAgo(4.4),
+  durationMin: 5,
+  body: (ctx) => {
+    let out = userLine(
+      ctx,
+      "Write up how a seed colour becomes a theme, and draw me the pipeline so I can put it in the README.",
+    );
+    out += assistantText(
+      ctx,
+      "Here's the pipeline as a diagram, and the write-up underneath it.",
+      usage(12_800, 190, 38_000, 2_600),
+    );
+    out += toolCall(ctx, {
+      name: "mcp__paddock__send_file",
+      id: ids.toolId("handoff:diagram"),
+      input: { filename: "pipeline.mmd", kind: "mermaid" },
+      content: sendFileEnvelope({
+        filename: "pipeline.mmd",
+        kind: "mermaid",
+        content: SENT_DIAGRAM,
+      }),
+      use: usage(13_000, 420, 38_400, 0),
+      durationMs: 900,
+    });
+    out += toolCall(ctx, {
+      name: "mcp__paddock__send_file",
+      id: ids.toolId("handoff:doc"),
+      input: { filename: "pipeline.md", kind: "markdown" },
+      content: sendFileEnvelope({
+        filename: "pipeline.md",
+        kind: "markdown",
+        content: SENT_DOC,
+        message: "Drop this straight into docs/ if it reads right.",
+      }),
+      use: usage(15_600, 880, 44_200, 3_100),
+      durationMs: 1_200,
+    });
+    out += assistantText(
+      ctx,
+      "The one thing worth arguing about is rule 1 — nudging lightness rather than hue keeps the theme recognisably the colour you asked for, but it does mean a very dark seed can't produce a light theme without help.",
+      usage(18_900, 260, 52_000, 0),
+    );
+    return out;
+  },
+});
+
+// ── the chats Claude opened for itself ──────────────────────────────────────
+// These nest under the star chat in the sidebar. Note they will NOT also show a
+// "spawned" chip: a nested row suppresses it (see the run-provenance note).
+addChat({
+  slug: "lumen-cli",
+  dir: lumenDir,
+  label: "audit",
+  body: simpleChat(
+    SPAWNED_CHILDREN[0][2],
+    "Nine of the sixteen pairs clear AAA (7:1); the other seven clear AA but not AAA.\n\nThe gap is entirely in the mid-tone accents — the terracotta on the default background lands at 5.9:1. Lifting its lightness by 6% takes it to 7.1:1 without changing the hue enough to notice, and it's the only pair that needs moving to make the whole set AAA.",
+  ),
+  startedAt: hoursAgo(2.6),
+  durationMin: 3,
+});
+addChat({
+  slug: "lumen-cli",
+  dir: lumenDir,
+  label: "bench",
+  body: simpleChat(
+    SPAWNED_CHILDREN[1][2],
+    "The 256-colour path is *faster*: 100k conversions in 41ms vs 96ms for truecolor.\n\nThat's not the quantiser being clever — it's the escape strings being shorter, so there's less string building. Neither number matters at real palette sizes (16 colours), but it does mean the fallback costs nothing.",
+  ),
+  startedAt: hoursAgo(3.1),
+  durationMin: 4,
+  unread: true,
+});
+
+// ── provenance: origins, parent edges, and what counts as "unattended" ───────
+setProvenance(chatId("lumen-cli", "star"), { origin: "human", depth: 0 });
+for (const [label] of SPAWNED_CHILDREN) {
+  setProvenance(chatId("lumen-cli", label), {
+    origin: "spawned",
+    depth: 1,
+    parentSessionId: chatId("lumen-cli", "star"),
+    parentProject: "lumen-cli",
+  });
+}
+// The nightly-triage chat is fired by a schedule. Without this it renders as
+// origin "You" and is filtered OUT of History's default Unattended view — the
+// job record's `trigger_type` is not what decides that.
+setProvenance(chatId("lumen-cli", "triage"), { origin: "scheduled", depth: 0 });
+
+// ── extra History rows ──────────────────────────────────────────────────────
+// A schedule that has been firing for days reads as a real habit; one run reads
+// as a screenshot. Each earlier run reuses the triage chat's session with a
+// distinct `salt`, because the job id is derived from the session id and two
+// runs would otherwise collide on one filename.
+for (const [salt, hours, summary] of [
+  ["b", 33, "Two issues triaged, one duplicate closed."],
+  ["c", 57, "Four issues triaged; #214 looks like a real regression in the quantiser."],
+  ["d", 81, "Nothing new overnight."],
+]) {
+  recordJob({
+    sessionId: chatId("lumen-cli", "triage"),
+    slug: "lumen-cli",
+    startedAt: hoursAgo(hours),
+    finishedAt: hoursAgo(hours - 0.1),
+    triggerType: "schedule",
+    schedule: "nightly-triage",
+    salt,
+    prompt: "Check for issues opened in the last 24 hours and label them by area.",
+    summary,
+  });
+}
+// The weekly digest, from the project's other enabled trigger.
+addChat({
+  slug: "lumen-cli",
+  dir: lumenDir,
+  label: "digest",
+  body: simpleChat(
+    "Summarise the last 7 days of CHANGELOG.md into a short digest for the release notes.",
+    "**This week in Lumen**\n\n- Terminals without truecolor now get a proper 256-colour theme instead of a washed-out approximation.\n- A rounding bug that let a 4.497 contrast ratio pass as 4.5 is fixed — one pair in the default palette correctly fails now.\n- The flaky snapshot test on CI was an ordering bug, not a timing one, and is deterministic across Node 22 and 24.",
+  ),
+  startedAt: hoursAgo(26),
+  durationMin: 3,
+  triggerType: "schedule",
+  schedule: "release-digest",
+});
+setProvenance(chatId("lumen-cli", "digest"), { origin: "scheduled", depth: 0 });
+
 // ── read state ──────────────────────────────────────────────────────────────
 // A chat reads as unread when its last completed turn is newer than the user's
 // lastSeen. So "mark as read" = write a lastSeen after the turn; "unread" =
@@ -673,7 +898,14 @@ for (const c of chats) {
   const agent = c.slug === "" ? "keeper-_root" : `keeper-${c.slug}`;
   readState[`${agent}\u0000${c.sessionId}`] = c.finishedAt.getTime() + 60_000;
 }
+// `__runs__` is a reserved sentinel session id: the per-project watermark for
+// "runs I've already seen". A run whose `finished_at` is newer than this counts
+// toward the History tab's badge and the "N new runs ran while you were away"
+// banner. Set between the older triage run and the three recent ones, so the
+// badge reads 3 rather than 4. Omit the key entirely and every run is new.
+readState["keeper-lumen-cli\u0000__runs__"] = hoursAgo(20).getTime();
 write(path.join(DATA, "read-state.json"), `${JSON.stringify(readState, null, 2)}\n`);
+write(path.join(DATA, "run-provenance.json"), `${JSON.stringify(runProvenance, null, 2)}\n`);
 
 // The fake `claude` binary's reply book, for the live turns shoot.mjs drives.
 write(path.join(OUT, "fake-script.json"), `${JSON.stringify(FAKE_SCRIPT, null, 2)}\n`);
