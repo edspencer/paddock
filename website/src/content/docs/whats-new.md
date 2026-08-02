@@ -50,11 +50,12 @@ becoming less an app you visit and more a service your other tools talk to.
   is quiet. It is the same badge component with the same accessible labels ("2
   unread replies", "1 chat in flight"), rather than a root-shaped lookalike, so
   Home and a project row read the same way at a glance instead of each needing
-  its own interpretation. **The in-flight half rides the live chat socket, and
-  today nothing opens that socket until you open a chat — so on a Home you have
-  only just loaded you will see the unread pill but not yet the spinner.** That
-  is a known gap rather than the intended design; the unread count is derived
-  from the ordinary project-list request and is correct on first paint.
+  its own interpretation. **The in-flight half rides the live chat socket, and in
+  0.53 nothing opened that socket until you opened a chat — so on a Home you had
+  only just loaded you saw the unread pill but not yet the spinner.** That was a
+  known gap rather than the intended design, and it is fixed in the next release:
+  watching the running set is now itself a reason to hold a socket, so the
+  spinner is correct on first paint too.
 - **Home also costs one request less.** The project list used to be followed by a
   second, full fetch of the root workspace — its changelog and its whole chat
   list included — from which everything but a few metadata fields was thrown
