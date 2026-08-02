@@ -17,6 +17,7 @@
     "dev": "npm run dev -w packages/server",
     "dev:web": "npm run dev -w packages/web",
     "typecheck": "npm run typecheck -w packages/server && npm run typecheck -w packages/web",
+    "check:nul": "node scripts/check-no-nul-bytes.mjs",
     "start": "npm run start -w packages/server",
     "test": "npm run test -w packages/server && npm run test -w packages/web",
     "test:server": "npm run test -w packages/server",
