@@ -12,7 +12,7 @@ Run the published image, point it at a data volume, and give it a Claude token:
 
 ```bash
 docker run -d --name paddock -p 127.0.0.1:4000:4000 \
-  -e CLAUDE_CODE_OAUTH_TOKEN=…       `# Max plan (CLI runtime)` \
+  -e CLAUDE_CODE_OAUTH_TOKEN=…       `# Max plan auth (or ANTHROPIC_API_KEY)` \
   -e PADDOCK_DATA_DIR=/data \
   -e PADDOCK_DANGEROUSLY_ALLOW_OPEN=1 `# required in a container — see below` \
   -v paddock-data:/data \
@@ -51,8 +51,8 @@ matches what your agents do:
 - **`ghcr.io/edspencer/paddock:devbox`** — the **devbox** image. Base *plus* the
   coding-agent toolbox: `pm`/PM2 preview servers, `ffmpeg`, a headless Playwright MCP
   browser, the Docker CLI (with the `buildx` and `compose` plugins), `kubectl`, and a
-  scripting kit (`python3`, `uv`, `jq`, `rsync`). Reach for it when your keepers
-  **build and run** apps, not just edit them.
+  scripting kit (`python3`, `uv`, `jq`, `rsync`). Reach for it when Claude needs
+  to **build and run** apps, not just edit them.
 
 The devbox only adds tools — same app, same `/data` layout — so you can swap tags
 against the same volume. It's a much bigger image (the Chromium layer alone is ~1 GB),
@@ -70,7 +70,7 @@ services:
       # Loopback only. Do NOT use "4000:4000" without an auth mode in front.
       - "127.0.0.1:4000:4000"
     environment:
-      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN} # or ANTHROPIC_API_KEY for the SDK runtime
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN} # or ANTHROPIC_API_KEY for API pricing
       PADDOCK_DATA_DIR: /data
       # Required in a container — see the caution above.
       PADDOCK_DANGEROUSLY_ALLOW_OPEN: "1"
@@ -99,10 +99,13 @@ secrets itself.
 
 ## Claude authentication
 
-Paddock passes your Claude credentials through to the keeper agents. Provide **one**:
+Paddock passes your Claude credentials through to the agents. Provide **one**:
 
-- `CLAUDE_CODE_OAUTH_TOKEN` — Claude **Max plan** auth for the CLI runtime.
-- `ANTHROPIC_API_KEY` — API-pricing auth for the SDK runtime.
+- `CLAUDE_CODE_OAUTH_TOKEN` — Claude **Max plan** auth.
+- `ANTHROPIC_API_KEY` — **API-pricing** auth.
+
+Either works on either runtime — the choice of credential is independent of how a
+turn is driven.
 
 The token is passed through the process environment; it is never written to disk by
 Paddock.
@@ -153,6 +156,6 @@ the full local-development guide.
 
 ## Next steps
 
-- [Concepts](/concepts/) — how projects, keeper agents, chats, and the sweeper fit together.
+- [Concepts](/concepts/) — how projects, agents, chats, and the sweeper fit together.
 - [Environment variables](/configuration/environment/) — the complete `PADDOCK_*` reference.
 - [Architecture](/architecture/overview/) — what's happening under the hood.

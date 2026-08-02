@@ -249,6 +249,14 @@ class ChatClient {
   onActiveSessions(cb: (running: ReadonlySet<string>) => void): () => void {
     this.activeListeners.add(cb);
     cb(new Set(this.activeSessions.keys()));
+    // Watching the running set is a reason to HAVE a socket (#573/#599). The
+    // server replays its whole running snapshot to every socket the moment it
+    // connects, so this is also what makes the set correct on a first paint
+    // that mounts no chat pane at all — Home listing running chats, or the
+    // sidebar's in-flight badges. Before this, `connect()` was reachable only
+    // from `subscribe()`, so landing on Home opened no socket and every one of
+    // those surfaces sat empty until the user opened a chat.
+    this.connect();
     return () => this.activeListeners.delete(cb);
   }
 
@@ -261,6 +269,9 @@ class ChatClient {
   onActiveInfos(cb: (running: ReadonlyMap<string, string>) => void): () => void {
     this.activeInfoListeners.add(cb);
     cb(new Map(this.activeSessions));
+    // Same reason as {@link onActiveSessions}: an active-set watcher wants a
+    // socket even with no chat mounted.
+    this.connect();
     return () => this.activeInfoListeners.delete(cb);
   }
 
@@ -437,13 +448,30 @@ class ChatClient {
   }
 
   /**
+   * Does anything in the app still need this socket? A mounted chat does, and so
+   * does anyone watching the running set — the sidebar's in-flight badges and
+   * Home's running-chats list both render with no chat pane in sight, and both
+   * are fed exclusively by `chat:active` broadcasts.
+   *
+   * Counting ONLY chat subscriptions here is what made a fresh Home load show
+   * nothing running (#573): no pane, so no subscription, so no socket, so no
+   * broadcasts — and the failure was silent, because an empty running set is
+   * indistinguishable from a quiet instance.
+   */
+  private wantsSocket(): boolean {
+    return (
+      this.subs.size > 0 || this.activeListeners.size > 0 || this.activeInfoListeners.size > 0
+    );
+  }
+
+  /**
    * Ensure we have a live socket: reconnect if it's closed (cancelling any
    * backoff wait so the user doesn't sit offline), or fire an immediate ping
    * probe if it's open-but-unverified so a half-open drop is detected within
    * `PONG_TIMEOUT_MS`.
    */
   private ensureLive(): void {
-    if (this.subs.size === 0) return; // no chat wants the socket
+    if (!this.wantsSocket()) return; // nothing wants the socket
     const rs = this.ws?.readyState;
     if (rs === WebSocket.OPEN) {
       this.sendPing();

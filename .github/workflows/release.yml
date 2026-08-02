@@ -33,11 +33,11 @@ jobs:
       should_release: ${{ steps.detect.outputs.should_release }}
       version: ${{ steps.detect.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -72,6 +72,74 @@ jobs:
             echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           fi
 
+  # A release must be impossible to publish unless CI actually passed on the
+  # very commit being released.
+  #
+  # Why this is needed. The changesets "version packages" PR is opened by
+  # `github-actions[bot]`, and GitHub parks workflow runs from bot-authored PRs
+  # at `action_required` pending manual approval. Nothing surfaces that, so the
+  # PR merges showing only the external checks (Cloudflare, GitGuardian) green
+  # while typecheck / unit / E2E never ran at all. This is not hypothetical and
+  # not local to us: every run on `changeset-release/main` in BOTH this repo and
+  # edspencer/herdctl has been parked that way. v0.54.2 shipped like it.
+  #
+  # CI on `main` is NOT gated — a human pushes the merge, so it runs normally.
+  # The trustworthy signal already existed; it simply had no consumer. This job
+  # is that consumer, and it sits ahead of `build-image` so a red CI blocks the
+  # GHCR pushes too, not just the tarball and the GitHub Release.
+  #
+  # If CI is red for a reason you judge unrelated (a flake), fix or re-run CI
+  # until it is green, then re-run this workflow via Actions → Release → Run
+  # workflow. Overriding is deliberately a conscious act, not the default path.
+  verify-ci:
+    name: Require CI green on this commit
+    needs: release
+    if: needs.release.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - name: Wait for CI on this commit, and require success
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          deadline=$(( SECONDS + 1800 ))   # 30 minutes; E2E alone runs ~3-4 min
+          while :; do
+            # `// empty` so an as-yet-uncreated run prints nothing rather than
+            # failing jq on null — the Release and CI runs start concurrently.
+            line="$(gh api \
+              "repos/${REPO}/actions/workflows/ci.yml/runs?head_sha=${SHA}&event=push&per_page=1" \
+              --jq '.workflow_runs[0] // empty | "\(.status)\t\(.conclusion // "-")\t\(.html_url)"' \
+              2>/dev/null || true)"
+
+            if [ -n "${line}" ]; then
+              status="$(printf '%s' "${line}" | cut -f1)"
+              conclusion="$(printf '%s' "${line}" | cut -f2)"
+              url="$(printf '%s' "${line}" | cut -f3)"
+
+              if [ "${status}" = "completed" ]; then
+                if [ "${conclusion}" = "success" ]; then
+                  echo "CI passed on ${SHA} — ${url}"
+                  exit 0
+                fi
+                echo "::error::CI concluded '${conclusion}' on ${SHA}. Refusing to publish a release from a commit whose CI did not pass. See ${url}"
+                exit 1
+              fi
+              echo "CI is ${status} on ${SHA} — waiting. ${url}"
+            else
+              echo "No CI run found for ${SHA} yet — waiting."
+            fi
+
+            if [ "${SECONDS}" -ge "${deadline}" ]; then
+              echo "::error::Timed out after 30m waiting for CI to complete on ${SHA}. Refusing to publish."
+              exit 1
+            fi
+            sleep 20
+          done
+
   # Build each (target × arch) on a NATIVE runner (amd64 on x86, arm64 on
   # GitHub's free arm runners) instead of emulating arm64 under QEMU on one x86
   # runner — emulation made this step take ~9-10 min; native runners take
@@ -81,7 +149,7 @@ jobs:
   # combination that shares their `platform`.
   build-image:
     name: Build image (${{ matrix.target }} · ${{ matrix.platform }})
-    needs: release
+    needs: [release, verify-ci]
     if: needs.release.outputs.should_release == 'true'
     runs-on: ${{ matrix.runner }}
     permissions:
@@ -100,12 +168,12 @@ jobs:
             arch: arm64
             runner: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -113,7 +181,7 @@ jobs:
 
       - name: Build & push by digest
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           target: ${{ matrix.target }}
@@ -131,7 +199,7 @@ jobs:
           touch "/tmp/digests/${digest#sha256:}"
 
       - name: Upload digest
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: digests-${{ matrix.target }}-${{ matrix.arch }}
           path: /tmp/digests/*
@@ -153,11 +221,11 @@ jobs:
       # Full history: the final step commits the regenerated OpenAPI spec back to
       # main, and `git rebase origin/main` cannot graft onto a depth-1 shallow
       # clone if main moved while the images were building.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -175,15 +243,15 @@ jobs:
       # Keep each artifact in its own subdir (no merge-multiple) so the base and
       # devbox digests stay separable: digests-<target>-<arch>/<digest>.
       - name: Download digests
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: /tmp/digests
           pattern: digests-*
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

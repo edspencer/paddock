@@ -12,9 +12,10 @@ import path from "node:path";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { DiscoveredSession } from "@herdctl/core";
 import { keeperAgentName } from "../herdctl.js";
+import { ROOT_KEY } from "../projects.js";
 import { applyMessageProvenance } from "../message-provenance.js";
 import { buildProjectRuns } from "../runs.js";
-import { KEEPER_DEFAULT_MODEL } from "../models.js";
+import { DEFAULT_MODEL } from "../models.js";
 import { projectChatsDir } from "../transcripts.js";
 import { readSubagentMessages, readSessionTokenUsageWithSubagents } from "../subagents.js";
 import { readContextSeries } from "../usage.js";
@@ -77,6 +78,19 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
       error: `sessionIds must be an array of 1-${BATCH_SESSIONS_MAX} valid session ids`,
       code: "bad_request",
     });
+
+  /**
+   * Does this session have a live turn right now? The session hub is the only
+   * thing that knows (a running turn is in-memory state, not something any
+   * sidecar or job record has yet), and REST reaches it through the same
+   * context the MCP surface's `list_chats` uses.
+   *
+   * The context is optional in the dep bag, so a server built without the WS
+   * layer reports "nothing is running" rather than throwing — the attention
+   * feed then degrades to its unread half instead of 500ing.
+   */
+  const isRunning = (sessionId: string): boolean =>
+    ctx.managementOpsContext?.hub.isRunning(sessionId) ?? false;
 
   // --- chats (sessions) --------------------------------------------------
 
@@ -147,6 +161,127 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
       return sendProjectError(reply, err);
     }
   });
+
+  // --- the Home tab's attention feed (#599) ----------------------------------
+
+  /**
+   * The chats in this workspace's SUBTREE that want the user's attention right
+   * now: the ones with a live turn, and the ones holding an unread reply.
+   *
+   * Subtree, not workspace, is what makes root Home fleet-wide and a project's
+   * Home project-scoped through ONE handler. A workspace's key is its path
+   * relative to `projectsRoot`, so its descendants are exactly the workspaces
+   * whose key it prefixes — and the root's key is `""`, which prefixes every
+   * key there is. The root therefore sweeps the whole fleet and a (leaf)
+   * project sweeps only itself, with no branch on the key and no second
+   * implementation for the root to drift from. Nesting, when it lands, makes an
+   * intermediate workspace work for free.
+   *
+   * `running` is authoritative (the live hub), not inferred from timestamps.
+   * `unread` reuses the sidebar badge's derivation — the manual override (#458)
+   * or a completed turn newer than the read watermark (#189) — with ONE
+   * deliberate difference: archived chats are filed away on purpose, so they
+   * are excluded here. That means an archived chat with an unread turn still
+   * counts toward the sidebar's badge (`buildChatTurns` never consults
+   * `ArchiveStore`) while not appearing in this list. The two can therefore
+   * disagree by exactly that set; making them agree means teaching the badge
+   * about archiving, which is a behaviour change to the badge, not to this
+   * route.
+   */
+  app.get<{ Params: { slug: string } }>(
+    "/chats/attention",
+    {
+      schema: {
+        tags: ["Chats"],
+        summary: "List the chats in this workspace's subtree that are running or unread",
+        description:
+          "Returns `{ running, unread }` — the chats in this workspace AND its descendants that currently have a live turn (`running`) or hold an unread reply (`unread`). Each row is a chat DTO plus the `projectSlug`/`projectName` it belongs to, so a fleet-wide list stays attributable. On the root mount (`/api/root/chats/attention`) the subtree is the whole instance, because the root workspace's key (`\"\"`) prefixes every workspace key; on a project mount it is that project alone. A chat is never in both lists: a live turn hasn't landed a reply yet, so running wins.",
+        params: {
+          type: "object",
+          properties: {
+            slug: { type: "string", description: "Project slug." },
+          },
+          required: ["slug"],
+        },
+        response: {
+          200: {
+            description:
+              "Object `{ running, unread }`, each an array of chat DTOs enriched with `projectSlug` and `projectName`.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
+    async (req, reply) => {
+      try {
+        const self = await projects.get(req.params.slug);
+        // Descendants = every workspace this one's key prefixes. The root's key
+        // is `""`, so its prefix is `""` and the filter admits everything; a
+        // project's prefix is `"<slug>/"`. The `=== ROOT_KEY` test is explicit
+        // on purpose — `self.slug ? ... : ...` would take the root down the
+        // project branch and silently return an empty fleet.
+        const prefix = self.slug === ROOT_KEY ? "" : `${self.slug}/`;
+        const all = await projects.list().catch(() => []);
+        const subtree = [self, ...all.filter((p) => p.slug !== self.slug && p.slug.startsWith(prefix))];
+
+        const user = readStateUser(req);
+        // One shared job-record scan for the whole subtree rather than one per
+        // workspace: `lastTurnCompletedAt()` is the cached jobs-dir index, and
+        // re-reading it per project is what made the old N-request client
+        // fan-out expensive.
+        const lastTurnAt = await herdctl.lastTurnCompletedAt().catch(() => new Map<string, string>());
+
+        const running: unknown[] = [];
+        const unreadRows: unknown[] = [];
+        for (const p of subtree) {
+          const sessions = await herdctl.listSessions(p).catch(() => []);
+          if (sessions.length === 0) continue;
+          const keeper = keeperAgentName(p.slug);
+          const archivedOf = (s: DiscoveredSession) => archive.isArchived(keeper, s.sessionId);
+          const starredOf = (s: DiscoveredSession) => star.isStarred(keeper, s.sessionId);
+          const lastSeenOf = (s: DiscoveredSession) =>
+            readState.getLastSeen(user, keeper, s.sessionId);
+          const unreadOf = (s: DiscoveredSession) => unread.isUnread(user, keeper, s.sessionId);
+          const provenanceOf = (s: DiscoveredSession) => runProvenance.get(s.sessionId);
+          const triggerOf = makeTriggerResolver(p);
+          const parentOf = makeParentResolver(runProvenance, messageProvenance, p.slug, (id) =>
+            parentDetach.isDetached(keeper, id),
+          );
+          const chats = await buildProjectChats(
+            p.dir,
+            sessions,
+            undefined,
+            archivedOf,
+            lastTurnAt,
+            lastSeenOf,
+            provenanceOf,
+            triggerOf,
+            starredOf,
+            unreadOf,
+            parentOf,
+          );
+          for (const c of chats) {
+            const row = { ...c, projectSlug: p.slug, projectName: p.name };
+            if (isRunning(c.sessionId)) {
+              running.push(row);
+              continue;
+            }
+            // Archived chats are filed away on purpose; they stay out of the
+            // unread feed so archiving is a real way to silence a chat. A
+            // RUNNING archived chat still shows — it is live work either way.
+            if (c.archived) continue;
+            const completed = c.lastTurnCompletedAt ? Date.parse(c.lastTurnCompletedAt) : NaN;
+            const seen = c.lastSeen ?? 0;
+            if (c.unread || (Number.isFinite(completed) && completed > seen)) unreadRows.push(row);
+          }
+        }
+        return { running, unread: unreadRows };
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
 
   // --- run history: "while you were away" (E3 / #268 / DD-6) ------------------
   // A project-level view of what ran unattended (scheduled + spawned) plus human
@@ -324,7 +459,7 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
         const sessions = await herdctl.listSessions(project).catch(() => []);
         const scope = req.query.scope ?? "active";
         const keeper = keeperAgentName(project.slug);
-        const usageOf = chatUsageResolver(project.dir, project.model ?? KEEPER_DEFAULT_MODEL);
+        const usageOf = chatUsageResolver(project.dir, project.model ?? DEFAULT_MODEL);
         const entries = await Promise.all(
           sessions.map(async (s) => {
             // `all` skips the archive lookup entirely; the other two split on it.
@@ -552,7 +687,7 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
         // Every slug here addresses a project now that scratch is gone (#516
         // Phase 6), so the per-project model override always applies.
         const p = await projects.get(req.params.slug).catch(() => null);
-        const model = p?.model ?? KEEPER_DEFAULT_MODEL;
+        const model = p?.model ?? DEFAULT_MODEL;
         const u = await readSessionTokenUsageWithSubagents(projectDir, req.params.sessionId).catch(
           () => null,
         );
@@ -1292,7 +1427,7 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
         tags: ["Chats"],
         summary: "Promote a chat into a new project",
         description:
-          "Promotes a chat into a NEW project: creates the project + keeper, then re-homes the chat's transcript into it so it lists and resumes under the new project. `name` is required (validated at runtime; a missing/blank name returns 400). Responds 201 with `{ project, promoted, sessionId }` — `promoted:false` means the project was created but the transcript couldn't be moved (e.g. an unknown session id); the project is still usable.",
+          "Promotes a chat into a NEW project: creates the project + its agent, then re-homes the chat's transcript into it so it lists and resumes under the new project. `name` is required (validated at runtime; a missing/blank name returns 400). Responds 201 with `{ project, promoted, sessionId }` — `promoted:false` means the project was created but the transcript couldn't be moved (e.g. an unknown session id); the project is still usable.",
         params: {
           type: "object",
           properties: {

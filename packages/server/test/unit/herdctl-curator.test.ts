@@ -21,7 +21,9 @@ import type { Project } from "../../src/projects.js";
 
 function svcWithFakeFleet() {
   const added: Array<Record<string, unknown>> = [];
-  const svc = new HerdctlService({} as PaddockConfig);
+  // `dataDir` is load-bearing: the sweeper's working directory is derived from it
+  // (issue #548), so it can't be left off the config bag.
+  const svc = new HerdctlService({ dataDir: "/tmp/data" } as PaddockConfig);
   (svc as unknown as { fleet: unknown }).fleet = {
     addAgent: vi.fn(async (cfg: Record<string, unknown>) => {
       added.push(cfg);

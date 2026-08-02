@@ -125,15 +125,15 @@ describe("instance-config (#385)", () => {
       expect(validatePatch({ "curation.overviewMaxTokens": 2500 })).toEqual([
         { key: "curation.overviewMaxTokens", value: 2500 },
       ]);
-      expect(validatePatch({ keeperDriveMode: "batch" })).toEqual([
-        { key: "keeperDriveMode", value: "batch" },
+      expect(validatePatch({ driveMode: "batch" })).toEqual([
+        { key: "driveMode", value: "batch" },
       ]);
       expect(validatePatch({ "brand.accent": "#abcdef" })).toEqual([
         { key: "brand.accent", value: "#abcdef" },
       ]);
     });
     it("rejects a bad enum / bad hex / bad drive mode", () => {
-      expect(() => validatePatch({ keeperDriveMode: "turbo" })).toThrow(/one of/);
+      expect(() => validatePatch({ driveMode: "turbo" })).toThrow(/one of/);
       expect(() => validatePatch({ "brand.accent": "red" })).toThrow(/hex color/);
       expect(() => validatePatch({ logLevel: "loud" })).toThrow(/one of/);
     });
@@ -191,12 +191,12 @@ describe("instance-config (#385)", () => {
     it("round-trips a change the loader then reads back", () => {
       const p = path.join(dataDir, "paddock.config.yaml");
       writeInstanceConfig(p, [
-        { key: "keeperDriveMode", value: "batch" },
+        { key: "driveMode", value: "batch" },
         { key: "selfMcpEnabled", value: true },
         { key: "recovery.autoReDrive", value: true },
       ]);
       const cfg = loadPaddockConfig();
-      expect(cfg.keeperDriveMode).toBe("batch");
+      expect(cfg.driveMode).toBe("batch");
       expect(cfg.selfMcpEnabled).toBe(true);
       expect(cfg.recovery.autoReDrive).toBe(true);
     });

@@ -112,7 +112,7 @@ test("Stop button appears while a turn is in flight (cancel affordance)", async 
   // EITHER the Stop button appeared OR the turn already completed (echo shown).
   // This documents the cancel control without a flaky mid-turn assertion.
   await createProjectViaUI(page, { name: uniq("CH Cancel") });
-  const composer = page.getByPlaceholder(/Message the keeper agent/i);
+  const composer = page.getByPlaceholder(/Message Claude/i);
   await composer.fill("a turn to maybe stop");
   await page.getByRole("button", { name: /^Send$/ }).click();
 

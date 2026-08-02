@@ -109,25 +109,26 @@ The recipe doesn't back anything up. Snapshot the volume (or schedule a copy of
 
 ## Secrets: the Claude (and GitHub) token
 
-Paddock needs a Claude credential to run keepers, delivered via a `Secret` that
+Paddock needs a Claude credential to run turns, delivered via a `Secret` that
 the Deployment reads with `envFrom`:
 
-- **`CLAUDE_CODE_OAUTH_TOKEN`** — a Claude Max token for the `cli` runtime — **or**
-  **`ANTHROPIC_API_KEY`** for the `sdk` runtime (API pricing). Provide one.
-- **`GITHUB_TOKEN`** *(optional)* — enables keepers to `git push` to backing repos.
+- **`CLAUDE_CODE_OAUTH_TOKEN`** — a Claude Max plan token — **or**
+  **`ANTHROPIC_API_KEY`** for API pricing. Provide one; either works on either
+  runtime.
+- **`GITHUB_TOKEN`** *(optional)* — enables Claude to `git push` to backing repos.
   Scope it to just the repos this instance should touch.
 
 Create the Secret imperatively (as in the quick start) so tokens never land in a
 file, or copy `secret.example.yaml` → `secret.yaml`, fill it in, and add it to
 `kustomization.yaml`. **Never commit real tokens.** The Secret reference is marked
 `optional: true`, so the pod still boots (and `/api/health` passes) without it — a
-valid token is only needed once a keeper actually runs a turn.
+valid token is only needed once a chat actually runs a turn.
 
 ## Base vs. devbox image
 
 The Deployment uses the **base** image, `ghcr.io/edspencer/paddock:latest` — the
 app plus the `git` / `openssh-client` / `gh` / `claude` CLIs. That's enough for
-keepers that write code and open PRs.
+projects where Claude writes code and opens PRs.
 
 For the full coding-agent toolbox — `pm` preview servers, `ffmpeg`, a headless
 Playwright browser, the Docker CLI, `kubectl`, and a scripting kit (`python3`, `uv`,
@@ -141,11 +142,11 @@ images:
     newTag: devbox        # was: latest
 ```
 
-The devbox is also the image to pick if you want a keeper to be able to *look at*
-the cluster it runs in — it carries `kubectl`, though deliberately no kubeconfig
+The devbox is also the image to pick if you want Claude to be able to *look at* the
+cluster it runs in — it carries `kubectl`, though deliberately no kubeconfig
 and no credentials. Giving it either (a projected service-account token and an
 in-cluster RBAC Role, or a mounted kubeconfig) is a decision you make explicitly;
-scope it to what you want an agent touching, because a keeper can do anything
+scope it to what you want an agent touching, because Claude can do anything
 that credential can.
 
 The devbox image is much heavier (the Chromium layer alone is ~1 GB) and wants more

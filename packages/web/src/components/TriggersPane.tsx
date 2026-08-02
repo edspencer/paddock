@@ -172,9 +172,9 @@ function toInput(d: Draft): TriggerInput {
 /** A compact one-line summary of a trigger's granted tools, for the list. */
 function capabilitySummary(t: Trigger): string {
   const tools = t.run.tools ?? [];
-  // A tool-less SCHEDULE runs as the keeper (full tools); a tool-less EVENT is a
+  // A tool-less SCHEDULE runs as Claude (full tools); a tool-less EVENT is a
   // deliberately tool-less curator (design §2.3 — the one asymmetry).
-  if (tools.length === 0) return t.trigger.type === "schedule" ? "Keeper tools" : "Tool-less";
+  if (tools.length === 0) return t.trigger.type === "schedule" ? "Claude's tools" : "Tool-less";
   return `${tools.length} tool${tools.length === 1 ? "" : "s"}`;
 }
 
@@ -743,7 +743,7 @@ export function TriggersPane({ project }: { project: Project }) {
                         />
                         <p className="mt-1 text-[12px] text-paddock-400">
                           A <code>.md</code> file under <code>.paddock/triggers/</code>, read fresh
-                          each fire (git-tracked, keeper-editable).
+                          each fire (git-tracked, Claude-editable).
                         </p>
                       </>
                     )}
@@ -756,7 +756,7 @@ export function TriggersPane({ project }: { project: Project }) {
                       The trigger agent can use exactly the tools you check here — nothing else.
                       Leave all unchecked for a tool-less trigger that only thinks and returns text
                       {draft.type === "schedule"
-                        ? " (a schedule with no tools runs as the keeper with its full toolset)."
+                        ? " (a schedule with no tools runs as Claude with its full toolset)."
                         : "."}
                     </p>
                     <div className="space-y-3" data-testid="trigger-tools">
@@ -868,7 +868,7 @@ export function TriggersPane({ project }: { project: Project }) {
                       className="input"
                       value={draft.model}
                       onChange={(e) => patchDraft({ model: e.target.value })}
-                      placeholder="Keeper default"
+                      placeholder="Workspace default"
                       data-testid="trigger-model"
                     />
                   </label>

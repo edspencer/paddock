@@ -1,5 +1,348 @@
 # @paddock/server
 
+## 0.54.2
+
+## 0.54.1
+
+### Patch Changes
+
+- [#600](https://github.com/edspencer/paddock/pull/600) [`b047b9c`](https://github.com/edspencer/paddock/commit/b047b9c0bbe409fce8c64935db61e03fba54f182) Thanks [@edspencer](https://github.com/edspencer)! - Bump `@herdctl/core` to **5.27.1**, which carries two data-integrity fixes to the
+  session layer Paddock reads on every listing.
+
+  **herdctl#419 — a failed metadata _read_ no longer destroys the file.**
+  `SessionMetadataStore.loadMetadata()` collapsed three outcomes into one `null`:
+  the file was absent (legitimate — storage is sparse), it could not be read
+  (EACCES/EIO/truncated), or it failed schema validation. All seven setters then
+  treated `null` as "start fresh" and `atomicWriteJson`'d an empty file over the
+  top, silently wiping every `customName`, `preview`, `autoName`, `isSidechain`
+  and `usage` entry for that agent. Nothing surfaced an error — the write
+  succeeded, so it looked clean.
+
+  This was reachable in normal operation, not just under exotic disk faults: a
+  routine listing warms the enrichment cache, which is exactly the read-then-write
+  that triggers it. On this instance the blast radius was ~1,500 sessions of
+  user-authored chat names per agent file. 5.27.1 distinguishes _absent_ from
+  _unreadable_ — absent still creates an empty file, unreadable now throws
+  `SessionMetadataUnreadableError` **without writing**, leaving the bytes on disk
+  and recoverable.
+
+  **herdctl#424 — one unreadable transcript entry no longer blanks a listing.**
+  An entry that `stat()`s as a valid `.jsonl` but is actually a directory (Linux
+  `open(2)` succeeds, `read(2)` throws `EISDIR`) threw out of per-session
+  enrichment and took down the whole result: `getAgentSessions` lost the agent's
+  entire list and `getAllSessions` lost _every_ agent's. Enrichment is now
+  isolated per entry — the bad one is skipped and warned, the rest still list.
+
+  The two fixes were verified to **compose**, not merely to co-exist: an
+  integration test upstream drives both failure modes simultaneously (a real
+  poison directory _and_ a real corrupt metadata file) and asserts the good
+  sessions still list, `sessionCount` stays in sync, and the corrupt file survives
+  byte-for-byte. Each fix was also shown to be load-bearing by reverting it and
+  confirming the _right_ assertion fails.
+
+  No Paddock code changes — `^5.27.0` already admitted this range; this pins the
+  floor so the lockfile resolves to a build containing the fixes.
+
+- [#607](https://github.com/edspencer/paddock/pull/607) [`c456b3e`](https://github.com/edspencer/paddock/commit/c456b3e0e66f7914646fa2eb32f7ac9b78ba8a5e) Thanks [@edspencer](https://github.com/edspencer)! - Lead the Home tab with what needs you: running chats, then unread chats.
+
+  **The feeds.** Home used to open on a list of recent chats — the same list the
+  sidebar already shows in full, so the front door duplicated the furniture and
+  buried the signal. It now opens on the two states that actually want a decision:
+  chats with a **live turn**, then chats holding an **unread reply**. Everything
+  else (files, notes) follows.
+
+  Both feeds come from one new route, `GET <base>/chats/attention`, scoped to the
+  workspace's **subtree**. A workspace's key is its path relative to the projects
+  root, so its descendants are exactly the workspaces it prefixes — and the root's
+  key is `""`, which prefixes every key there is. The root's Home is therefore
+  fleet-wide (every project's live work plus its own) and a project's Home is
+  scoped to itself, through one handler and one component that never learn which
+  they are rendering. No `root` flag, no second implementation to drift. Nesting,
+  when it lands, gives an intermediate workspace the same behaviour for free.
+
+  `running` is read from the live session hub rather than inferred from
+  timestamps, so it cannot disagree with the streaming dots. A chat is never in
+  both lists — a live turn hasn't landed a reply yet, so running wins.
+
+  **Why this could not have worked before.** The client only ever opened its
+  WebSocket from `subscribe()`, so landing on Home with no chat pane mounted
+  opened _no socket at all_ and the running set stayed permanently empty — and an
+  empty running set is indistinguishable from a quiet instance, which is why the
+  in-flight badge appeared merely unreliable rather than dead (#573). Watching the
+  active set is now itself a reason to hold a socket, and the server already
+  replays its whole running snapshot to every socket on connect, so the first
+  paint is correct.
+
+  **The Projects section is gone from Home.** It hosted the app's ONLY New Project
+  button, so that moved to the sidebar's Projects header — replacing the project
+  count, which answered a question nobody asks while the list sits directly
+  beneath it. Same `+` affordance as the chat sidebar's New chat, in the same
+  place relative to its list.
+
+  **Notes.** `OVERVIEW.md` now renders on Home beside `CHANGELOG.md`, both
+  collapsible with the choice remembered per workspace. It rides the workspace
+  payload next to `changelog`, so the two can never render a beat apart. The old
+  bottom "Overview" card (a summary plus a metadata table) is deleted — it
+  described the workspace rather than offering a way into it, and Settings already
+  owns editing that.
+
+## 0.54.0
+
+### Minor Changes
+
+- [#598](https://github.com/edspencer/paddock/pull/598) [`8b2fd83`](https://github.com/edspencer/paddock/commit/8b2fd838ee2c9d546bd841b3d96d364e372d218f) Thanks [@edspencer](https://github.com/edspencer)! - Rename the "keeper" config, env, and API surface (#585). **Breaking** — the old
+  names are gone, with no aliases: pre-1.0, a minor may break the one before it.
+
+  Env vars:
+
+  | before                         | after                   |
+  | ------------------------------ | ----------------------- |
+  | `PADDOCK_KEEPER_DRIVE_MODE`    | `PADDOCK_DRIVE_MODE`    |
+  | `PADDOCK_KEEPER_NATIVE_PROMPT` | `PADDOCK_NATIVE_PROMPT` |
+
+  Config file (`paddock.yaml`) and the instance-settings key: `keeperDriveMode` →
+  `driveMode`. An instance that still sets the old key falls back to the built-in
+  default (`session`) rather than erroring.
+
+  `GET /api/models` response fields: `keeperDefault` → `defaultModel`,
+  `keeperDriveModeDefault` → `driveModeDefault`. The self-MCP `create_project`
+  result field `keeperRegistered` → `agentRegistered`. Server and web change
+  together, so no client sees a mixed contract.
+
+  Internal constants and functions follow the same rule: `KEEPER_DEFAULT_MODEL` →
+  `DEFAULT_MODEL`, `KEEPER_DEFAULT_DRIVE_MODE` → `DEFAULT_DRIVE_MODE`,
+  `KEEPER_DEFAULT_MAX_TURNS` → `DEFAULT_MAX_TURNS`, `KEEPER_DEFAULT_PERMISSION_MODE`
+  → `DEFAULT_PERMISSION_MODE`, `KEEPER_DEFAULT_DOCKER` → `DEFAULT_DOCKER`,
+  `KEEPER_DENIED_TOOLS` → `DENIED_TOOLS`, `resolveKeeperDefault` →
+  `resolveDefaultModel`, `buildKeeperConfig` → `buildAgentConfig`,
+  `ensureKeeperModel` → `ensureAgentModel`.
+
+  The `keeper-` agent-name prefix is deliberately untouched: it is persisted in
+  herdctl job records, `state.yaml`, session directories, and six sidecar stores
+  keyed `keeper-<slug>\0<sessionId>`. Renaming it would orphan all of that.
+
+  Also: three source files embedded a **raw NUL byte** in a string literal, which
+  made ripgrep classify them as binary and skip them silently — `ws.ts` was missed
+  by every `keeper` audit for that reason alone. They now spell it `\u0000`, the
+  convention the other sidecar stores already used. Same runtime value; the files
+  are greppable again.
+
+- [#598](https://github.com/edspencer/paddock/pull/598) [`8b2fd83`](https://github.com/edspencer/paddock/commit/8b2fd838ee2c9d546bd841b3d96d364e372d218f) Thanks [@edspencer](https://github.com/edspencer)! - Retire "keeper" from the user-facing copy (#585). The UI now says **Claude** —
+  Paddock is a thin layer over Claude Code, so the persona was inventing a second
+  actor that does not exist.
+
+  | before                                                                  | after                                                                      |
+  | ----------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+  | `Message the keeper agent…`                                             | `Message Claude…`                                                          |
+  | `…stream live from the keeper agent`                                    | `…stream live from Claude`                                                 |
+  | `No files yet. Files the keeper agent writes appear here.`              | `No files yet. Files Claude writes appear here.`                           |
+  | `Runs appear here once the keeper starts finishing turns.`              | `Runs appear here once Claude starts finishing turns.`                     |
+  | `consulting the keeper` (composer spinner)                              | `consulting Claude`                                                        |
+  | `The keeper will respond again after the quota resets.`                 | `Claude will respond again after the quota resets.`                        |
+  | Settings section `Keeper agent`                                         | `Claude`                                                                   |
+  | `How this project's keeper agent runs. Changes re-register the keeper.` | `How Claude runs in this workspace. Changes take effect on the next turn.` |
+  | `Keeper tools` (trigger capability badge)                               | `Claude's tools`                                                           |
+  | `Keeper default` (trigger model placeholder)                            | `Workspace default`                                                        |
+  | `runs as the keeper (full tools)`                                       | `runs as Claude (full tools)`                                              |
+
+  Where a sentence did not need an actor the word is simply gone rather than
+  substituted — "a dedicated keeper agent" drops out of the empty-projects copy,
+  "a single keeper run" becomes "a single run".
+
+  Server-authored strings the user reads follow the same rule: the turn-notice
+  messages (`Claude reached its turn limit…`, `Claude's turn failed…`), the
+  registered agent's description and system prompt, and the herdctl fleet
+  description.
+
+  Behaviour is unchanged. The `keeper-` agent-name prefix is untouched — it is a
+  persisted on-disk encoding, not a word the user sees.
+
+### Patch Changes
+
+- [#598](https://github.com/edspencer/paddock/pull/598) [`8b2fd83`](https://github.com/edspencer/paddock/commit/8b2fd838ee2c9d546bd841b3d96d364e372d218f) Thanks [@edspencer](https://github.com/edspencer)! - Retire "keeper" from the OpenAPI surface (#585) — the last gap left by the
+  config/env (#592), docs (#593) and UI (#594) passes.
+
+  The published spec (`openapi-site/open-api.json`) is **generated** from the
+  route schemas via `app.swagger()`, so the wording was fixed at source in
+  `packages/server/src` and the spec regenerated with
+  `npm run build:server && node scripts/dump-openapi.mjs`:
+
+  - The API `info.description` no longer calls Paddock "the keeper-agent
+    platform" — it is the Claude Code workspace platform (`openapi.ts`).
+  - `POST /api/projects`, `PATCH`, `DELETE` and `POST .../promote-to-repo`
+    describe registering/re-registering **the project's agent and its sweeper**
+    rather than "the keeper"; the `model` / `permissionMode` / `maxTurns` /
+    `docker` / `driveMode` / `recovery` body-field descriptions follow.
+  - `GET .../commands` is now "List a project's slash commands".
+  - `POST .../chats/:sessionId/promote` creates "the project + its agent".
+
+  Also `openapi-site/index.html`'s meta description (hand-maintained, not
+  generated), and the `/api/models` row in `docs/API.md`, which still named the
+  pre-#592 `keeperDriveModeDefault` response field.
+
+  Descriptions only — no route, parameter, schema or status code changed. The
+  `keeper-<slug>` agent-name prefix is untouched, as in #592.
+
+- [#595](https://github.com/edspencer/paddock/pull/595) [`d24d48f`](https://github.com/edspencer/paddock/commit/d24d48f746d11f964c59f8d870aa51a8a8a45fd4) Thanks [@edspencer](https://github.com/edspencer)! - Stop a foreground sub-agent leaking its steps into the parent transcript, and
+  show what running sub-agents are doing.
+
+  **The leak.** Launching a sub-agent with `run_in_background: false` duplicated
+  every one of its steps: once inside the sub-agent card (correct) and once as
+  top-level rows of the _parent_ transcript. A three-step sub-agent therefore
+  printed three phantom `Read`/`Bash` rows next to the card that already contained
+  them.
+
+  The filter that prevents this (`isSidechainMessage` — a nested step carries
+  `parent_tool_use_id`) existed, but only ONE of the five live turn paths called
+  it: the background sink. That gap was deliberate, and wrong. A comment on the
+  sink recorded the premise that only a _backgrounded_ `Task` streams its nested
+  steps inline, a foreground one being routed by herdctl to "a SEPARATE sidechain
+  session, never the main turn stream". Under SDK streaming mode that is false — a
+  foreground `Task` streams its steps inline on whichever turn stream launched it,
+  so every unfiltered path duplicated them. The filter now runs on all five
+  (`chat:send`, slash-command, scheduled wake, `startAgentTurn`, background sink),
+  with the false premise corrected in place so it cannot be re-derived.
+
+  The bug was live-only, which is why it survived: history has always filtered
+  sidechain steps, so a reload "healed" the transcript and the duplication read as
+  a streaming glitch. The regression test therefore asserts over WS **frames**, not
+  the persisted transcript — the persisted view was never broken. A new
+  `[[SUBAGENT]]` directive in the test `claude` emits a real foreground Task with
+  inline sidechain steps to drive it.
+
+  Skipping these messages also keeps a sub-agent's context out of the parent's live
+  context meter, which `foldTurnUsage` would otherwise latch onto as its max — the
+  same shape as the #398 inflation, corrected only on refresh.
+
+  **Seeing what a sub-agent is doing.** A sub-agent could work for minutes behind a
+  collapsed card showing only a cost, with no indication of progress — and the card
+  is often scrolled well out of view. A live bar above the composer now lists each
+  RUNNING sub-agent with its latest step and step count, updating as it works.
+  Tapping a row scrolls that sub-agent's card into view, expands it, and flashes it
+  so the eye lands on it (`prefers-reduced-motion` drops the flash).
+
+  Polling is hoisted out of the card into the chat, so it stays at one request per
+  sub-agent per tick and a card reads the shared result instead of opening a second
+  poll — expanding a card now costs no extra fetching. The bar and the card decide
+  "is it running" through one shared `isSubagentRunning` predicate, so they cannot
+  disagree the way the five stream handlers did.
+
+- [#581](https://github.com/edspencer/paddock/pull/581) [`3c439f1`](https://github.com/edspencer/paddock/commit/3c439f15b2bac7e79a96d7baf813561959589b5f) Thanks [@edspencer](https://github.com/edspencer)! - Give the sweeper its own working directory, so a chat can no longer be bound to
+  the curator's transcript (#548).
+
+  A CLI agent's `working_directory` is what Claude Code encodes into its transcript
+  path, so two agents sharing a cwd share one session directory. The keeper's cwd
+  is `project.workingDir` and the sweeper's was `project.dir` — **identical for a
+  notebook project**, so both wrote their transcripts into the same `.chats/`.
+
+  herdctl identifies a freshly-spawned session by set-difference against a
+  pre-spawn snapshot of that directory. That is immune to a co-located agent
+  _appending_ to its own session, but not to one _creating_ a new file: whichever
+  brand-new `*.jsonl` appears first is claimed as "ours". Since a sweep is
+  scheduled after every keeper turn — with **zero delay** after a project's first
+  turn, because the interval watermark is still unset — the sweeper's spawn raced
+  the following keeper turn. When the sweeper's file landed first, the user's turn
+  was handed the sweeper's session id, and the consequences all followed from that
+  one substitution: the curation text streamed back as the reply, resuming the chat
+  resumed the curation transcript (so the keeper had no memory of the conversation),
+  and the chat could vanish from the project's list entirely — the sweeper is the
+  one deliberately hidden agent, so a session attributed to it is filtered out.
+
+  The sweeper is tool-less: it reads nothing and writes nothing, because
+  `SweepService` gathers the project's files itself, inlines them in the prompt, and
+  writes the curated results itself. Its cwd was therefore inert, and moving it to a
+  dedicated per-project directory under the data root removes the shared directory —
+  and with it the whole collision class — structurally rather than by timing. The
+  directory is kept outside `projectsRoot` on purpose: core's discovery unions every
+  transcript bucket whose decoded path is a strict descendant of an agent's cwd, and
+  the root workspace's cwd _is_ `projectsRoot`.
+
+  Existing sweeper transcripts stay where they are and are simply no longer read;
+  they were never surfaced in the UI (the sweeper is hidden), and curation does not
+  consult its own history.
+
+  This was the whole of paddock#548, the intermittent `packages/server` integration
+  failure that made a red CI indistinguishable from a real regression. It presented
+  as three unrelated-looking assertions — a renamed chat missing from the list, a
+  resumed chat that had forgotten its codeword, and a transcript read that came back
+  empty — and it explains the otherwise-odd invariant that a failing run always
+  failed _exactly one_ test: there is only one prompt sweeper spawn per project, so
+  at most one turn could be hijacked.
+
+## 0.53.0
+
+### Minor Changes
+
+- [#559](https://github.com/edspencer/paddock/pull/559) [`5011e64`](https://github.com/edspencer/paddock/commit/5011e64ea347426ba47be649518e5a47432a4a53) Thanks [@edspencer](https://github.com/edspencer)! - Give the sidebar's **Home** link the unread / in-flight badge every project row
+  already has.
+
+  The root is a workspace with its own chats, so its sidebar row should say what
+  every other workspace's row says: an accent pill for unread replies, a spinner +
+  count for turns in flight, and **nothing at all** when it is quiet. It is the
+  same `ProjectBadges` component with the same thresholds and the same accessible
+  labels — not a root-shaped lookalike.
+
+  **The data plumbing is the actual change.** The badge is folded from each
+  workspace's compact `chatTurns` list, which arrives on `GET /api/projects` — and
+  that route enumerates the root's _children_, so the root's own signal never
+  reached the client. It does now, as a sibling `root` field on the same response,
+  built by the same `buildChatTurns` fold as every child. The root stays out of the
+  `projects` array (it belongs in neither the grid nor the sidebar list), but its
+  counts land in the same badge map under the empty key, so `useProjectBadges`
+  computes Home and a project row in one pass with no branch on which is which.
+
+  This also removes a round-trip: the projects context used to follow every list
+  fetch with a full `GET /api/root` workspace-detail request — `changelog` and
+  `chats` included — and throw everything but the metadata away. One call now
+  serves both.
+
+  `""` is a real, routable workspace key, so the lookup is `badges.get(ROOT_KEY)`
+  and the server's fold takes the key as an ordinary argument; a falsy guard
+  anywhere on that path silently drops the root, which is the failure mode the new
+  tests are pointed at.
+
+### Patch Changes
+
+- [#577](https://github.com/edspencer/paddock/pull/577) [`1d52811`](https://github.com/edspencer/paddock/commit/1d5281178fe750e780c4b6e16edceb03c498cfe3) Thanks [@edspencer](https://github.com/edspencer)! - Drop four back-compat shims that no longer have anything to be compatible with
+  (#553). Two of them change the wire.
+
+  The project DTO no longer carries `created`. It was a dual-emit alias of
+  `started` — populated with the identical value, stripped again on write, and
+  documented as a reconciliation between two old specs. Its one consumer rendered
+  it as a read-only row _next to_ `started`, so the project Settings tab showed
+  **"Started" and "Created" as two adjacent rows containing the same date**. That
+  duplicated row is gone; `started` remains, unchanged, as the creation date.
+
+  `GET /api/models` no longer returns `sweeperDefault`. Nothing read it — the
+  sweeper's model is resolved server-side and was never selectable in the UI, so
+  the field only ever described a decision the client couldn't influence.
+
+  The two internal shims: the `SWEEPER_MODEL` alias of `SWEEPER_DEFAULT_MODEL` is
+  gone (the one importer now uses the canonical constant), and the five instance
+  defaults on `getModels()` — `keeperDriveModeDefault`, `maxSpawnDepthDefault`,
+  `recoveryDefault`, `attachmentsDefault`, `curationDefault` — are now **required**
+  rather than optional "for back-compat with older servers". There is no older
+  server; the server sends all five unconditionally. The `??`/`if` guards that
+  existed to tolerate their absence are gone with them, which also means a fixture
+  can no longer omit one and silently exercise a shape the server never sends.
+
+- [#577](https://github.com/edspencer/paddock/pull/577) [`1d52811`](https://github.com/edspencer/paddock/commit/1d5281178fe750e780c4b6e16edceb03c498cfe3) Thanks [@edspencer](https://github.com/edspencer)! - Remove the legacy `target` WebSocket alias for `projectSlug` (#551). Every
+  server→client frame carried `target` as a byte-for-byte duplicate of
+  `projectSlug`, and five client→server message types accepted it as an alias — a
+  compatibility surface for "early frontends" that do not exist, since the server
+  and the SPA ship as one artifact from one repo.
+
+  Frames now carry `projectSlug` only. Nothing read the alias: the web client sent
+  `projectSlug` at every send site, and the single server→client fallback was
+  unreachable because `projectSlug` is required on every emitted payload type and
+  every emit site sets it — including the root workspace's `""` (a _present_ empty
+  string) and `"?"` on the invalid-frame path.
+
+  The `chat:send` payload documentation now also records that `""` is the legal
+  ROOT workspace key, and that it must be tested with `=== undefined` rather than
+  for falsiness — the fact most likely to be re-broken, and the one the comment
+  omitted.
+
 ## 0.52.0
 
 ### Minor Changes

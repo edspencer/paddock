@@ -1,0 +1,293 @@
+---
+/**
+ * Figure — wrapper for the hand-authored architecture diagrams.
+ *
+ * Why not Mermaid: the site's Mermaid diagrams are initialized with a hard-coded
+ * `theme: 'dark'` (see astro.config.mjs head script), so they render as dark boxes
+ * on the light page, and a wide flowchart gets squeezed into the content column
+ * until it is unreadable. These diagrams are plain inline SVG instead: they scale
+ * with the container, respond to the light/dark toggle, and use real text nodes
+ * (so they are selectable, searchable, and screen-reader legible).
+ *
+ * Colour encodes OWNERSHIP, consistently across every diagram:
+ *   .is-paddock  terracotta — Paddock owns it
+ *   .is-herdctl  blue       — @herdctl/core owns it (herdctl's own brand blue)
+ *   .is-claude   neutral    — Claude Code / the Agent SDK owns it
+ */
+interface Props {
+	/** Rendered above the diagram as a small caption. */
+	title: string;
+	/** Rendered below the diagram. Supports inline HTML via <slot name="caption" />. */
+	caption?: string;
+}
+
+const { title, caption } = Astro.props;
+---
+
+<figure class="dg">
+	<figcaption class="dg-title">{title}</figcaption>
+	<div class="dg-canvas">
+		<slot />
+	</div>
+	{
+		(caption || Astro.slots.has('caption')) && (
+			<figcaption class="dg-caption">
+				{caption}
+				<slot name="caption" />
+			</figcaption>
+		)
+	}
+</figure>
+
+<style is:global>
+	/* ---------------------------------------------------------------- tokens */
+	:root {
+		--dg-surface: #fffdfc;
+		--dg-surface-sunken: #f6f3f1;
+		--dg-border: #e7e0dc;
+		--dg-text: #2b2725;
+		--dg-text-muted: #7c736e;
+		--dg-line: #b3a9a3;
+
+		/* Ownership hues */
+		--dg-paddock: #c2603c;
+		--dg-herdctl: #326ce5;
+		--dg-claude: #6b6560;
+
+		/* Node fills/strokes, derived so light + dark stay in balance */
+		--dg-fill-mix: 7%;
+		--dg-stroke-mix: 34%;
+		--dg-band-mix: 4%;
+		--dg-shadow: 0 1px 2px rgb(0 0 0 / 0.05);
+	}
+
+	:root[data-theme='dark'] {
+		--dg-surface: #1c1a19;
+		--dg-surface-sunken: #141312;
+		--dg-border: #35302d;
+		--dg-text: #ede8e5;
+		--dg-text-muted: #a09892;
+		--dg-line: #6d645f;
+
+		--dg-paddock: #e08a63;
+		--dg-herdctl: #6f9bf0;
+		--dg-claude: #9a938d;
+
+		--dg-fill-mix: 16%;
+		--dg-stroke-mix: 46%;
+		--dg-band-mix: 8%;
+		--dg-shadow: none;
+	}
+
+	/* ---------------------------------------------------------------- figure */
+	.dg {
+		margin: 2rem 0;
+	}
+
+	.dg-title {
+		font-size: 0.75rem;
+		font-weight: 600;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--dg-text-muted);
+		margin-bottom: 0.5rem;
+	}
+
+	.dg-canvas {
+		background: var(--dg-surface);
+		border: 1px solid var(--dg-border);
+		border-radius: 12px;
+		padding: 1.25rem 1rem;
+		box-shadow: var(--dg-shadow);
+		overflow: hidden;
+	}
+
+	.dg-canvas > svg {
+		display: block;
+		width: 100%;
+		height: auto;
+	}
+
+	.dg-caption {
+		margin-top: 0.6rem;
+		font-size: 0.8125rem;
+		line-height: 1.5;
+		color: var(--dg-text-muted);
+	}
+
+	.dg-caption code {
+		font-size: 0.95em;
+	}
+
+	/* ------------------------------------------------------------- svg atoms */
+	.dg-canvas svg text {
+		font-family: var(--sl-font, ui-sans-serif, system-ui, sans-serif);
+		fill: var(--dg-text);
+		/* SVG text has no wrapping; every line is placed by hand. */
+		white-space: pre;
+	}
+
+	/* Type scale — kept small and deliberate so nodes stay dense but legible. */
+	.dg-canvas svg .t-node {
+		font-size: 13.5px;
+		font-weight: 600;
+	}
+	.dg-canvas svg .t-sub {
+		font-size: 11px;
+		fill: var(--dg-text-muted);
+	}
+	.dg-canvas svg .t-mono {
+		font-family: var(--sl-font-mono, ui-monospace, monospace);
+		font-size: 11px;
+		fill: var(--dg-text-muted);
+	}
+	/* Case is preserved deliberately: "herdctl" and "@herdctl/core" are lowercase
+	   brand names, and text-transform:uppercase renders them as @HERDCTL/CORE. */
+	.dg-canvas svg .t-band {
+		font-size: 11px;
+		font-weight: 700;
+		letter-spacing: 0.02em;
+	}
+	/* Edge labels sit on open canvas and routinely cross a lifeline or a connector.
+	   paint-order:stroke draws a surface-coloured halo UNDER the glyphs, so the label
+	   punches a clean hole through whatever line it overlaps — no manual masking rects. */
+	.dg-canvas svg .t-edge {
+		font-size: 10.5px;
+		fill: var(--dg-text-muted);
+		paint-order: stroke;
+		stroke: var(--dg-surface);
+		stroke-width: 5px;
+		stroke-linejoin: round;
+	}
+	.dg-canvas svg .t-lead {
+		font-size: 15px;
+		font-weight: 650;
+	}
+
+	/* Nodes ------------------------------------------------------------------ */
+	.dg-canvas svg .node {
+		fill: var(--dg-surface);
+		stroke: var(--dg-border);
+		stroke-width: 1;
+	}
+
+	.dg-canvas svg .is-paddock .node,
+	.dg-canvas svg rect.node.is-paddock {
+		fill: color-mix(in oklab, var(--dg-paddock) var(--dg-fill-mix), var(--dg-surface));
+		stroke: color-mix(in oklab, var(--dg-paddock) var(--dg-stroke-mix), transparent);
+	}
+	.dg-canvas svg .is-herdctl .node,
+	.dg-canvas svg rect.node.is-herdctl {
+		fill: color-mix(in oklab, var(--dg-herdctl) var(--dg-fill-mix), var(--dg-surface));
+		stroke: color-mix(in oklab, var(--dg-herdctl) var(--dg-stroke-mix), transparent);
+	}
+	.dg-canvas svg .is-claude .node,
+	.dg-canvas svg rect.node.is-claude {
+		fill: color-mix(in oklab, var(--dg-claude) var(--dg-fill-mix), var(--dg-surface));
+		stroke: color-mix(in oklab, var(--dg-claude) var(--dg-stroke-mix), transparent);
+	}
+
+	/* Bands (layer backgrounds) ---------------------------------------------- */
+	.dg-canvas svg .band {
+		fill: var(--dg-surface-sunken);
+		stroke: var(--dg-border);
+		stroke-width: 1;
+	}
+	.dg-canvas svg .band.is-paddock {
+		fill: color-mix(in oklab, var(--dg-paddock) var(--dg-band-mix), var(--dg-surface));
+		stroke: color-mix(in oklab, var(--dg-paddock) 20%, transparent);
+	}
+	.dg-canvas svg .band.is-herdctl {
+		fill: color-mix(in oklab, var(--dg-herdctl) var(--dg-band-mix), var(--dg-surface));
+		stroke: color-mix(in oklab, var(--dg-herdctl) 20%, transparent);
+	}
+	.dg-canvas svg .band.is-claude {
+		fill: color-mix(in oklab, var(--dg-claude) var(--dg-band-mix), var(--dg-surface));
+		stroke: color-mix(in oklab, var(--dg-claude) 20%, transparent);
+	}
+
+	/* Band labels take the ownership hue so the legend reads at a glance. */
+	.dg-canvas svg .t-band.is-paddock {
+		fill: var(--dg-paddock);
+	}
+	.dg-canvas svg .t-band.is-herdctl {
+		fill: var(--dg-herdctl);
+	}
+	.dg-canvas svg .t-band.is-claude {
+		fill: var(--dg-claude);
+	}
+
+	/* Edges ------------------------------------------------------------------ */
+	.dg-canvas svg .edge {
+		fill: none;
+		stroke: var(--dg-line);
+		stroke-width: 1.4;
+	}
+	.dg-canvas svg .edge.is-strong {
+		stroke: color-mix(in oklab, var(--dg-paddock) 55%, var(--dg-line));
+		stroke-width: 1.8;
+	}
+	.dg-canvas svg .edge.is-dashed {
+		stroke-dasharray: 4 4;
+	}
+
+	/* Grouping outline — e.g. the "repeats per message" block in the turn sequence. */
+	.dg-canvas svg .loop {
+		fill: none;
+		stroke: var(--dg-border);
+		stroke-width: 1;
+		stroke-dasharray: 5 4;
+	}
+
+	/* Small accent dot used to tag a node's owner inside mixed containers. */
+	.dg-canvas svg .dot.is-paddock {
+		fill: var(--dg-paddock);
+	}
+	.dg-canvas svg .dot.is-herdctl {
+		fill: var(--dg-herdctl);
+	}
+	.dg-canvas svg .dot.is-claude {
+		fill: var(--dg-claude);
+	}
+
+	/* Legend ----------------------------------------------------------------- */
+	.dg-legend {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem 1.25rem;
+		margin-top: 0.75rem;
+		font-size: 0.8125rem;
+		color: var(--dg-text-muted);
+	}
+	.dg-legend span {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+	}
+	.dg-legend i {
+		width: 0.7rem;
+		height: 0.7rem;
+		border-radius: 3px;
+		flex: none;
+	}
+	.dg-legend .k-paddock {
+		background: color-mix(in oklab, var(--dg-paddock) 65%, transparent);
+	}
+	.dg-legend .k-herdctl {
+		background: color-mix(in oklab, var(--dg-herdctl) 65%, transparent);
+	}
+	.dg-legend .k-claude {
+		background: color-mix(in oklab, var(--dg-claude) 65%, transparent);
+	}
+
+	/* On narrow screens let wide diagrams scroll rather than shrink to mush. */
+	@media (max-width: 50rem) {
+		.dg-canvas {
+			padding: 1rem 0.75rem;
+			overflow-x: auto;
+		}
+		.dg-canvas > svg {
+			min-width: 34rem;
+		}
+	}
+</style>

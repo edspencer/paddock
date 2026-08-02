@@ -30,7 +30,7 @@
  * {@link import("./projects.js").ProjectYaml.recovery}). An absent/invalid
  * override inherits the instance default, resolved at dispatch by
  * {@link resolveRecoveryConfig} — never baked into the DTO (mirrors how
- * `driveMode` resolves against `cfg.keeperDriveMode` and `maxSpawnDepth` via
+ * `driveMode` resolves against `cfg.driveMode` and `maxSpawnDepth` via
  * `resolveMaxSpawnDepth`). A malformed override is ignored rather than fatal so a
  * hand-edited `project.yaml` can't wedge dispatch.
  */

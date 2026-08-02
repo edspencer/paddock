@@ -432,7 +432,7 @@ function fakeWrite(over: Partial<SelfMcpWriteContext> = {}): RecordingWrite {
         workingDir: input.repo ? `${dir}/checkout` : dir,
         repoBacked: Boolean(input.repo),
         ...(input.repo ? { repo: input.repo } : {}),
-        keeperRegistered: true,
+        agentRegistered: true,
       };
     },
     // T3 unified trigger management: default OFF (per-project opt-in) so the base
@@ -1129,7 +1129,7 @@ describe("self-management MCP (create_project)", () => {
     expect(json.repoBacked).toBe(false);
     expect(json.repo).toBeUndefined();
     expect(json.workingDir).toBe(json.dir);
-    expect(json.keeperRegistered).toBe(true);
+    expect(json.agentRegistered).toBe(true);
   });
 
   it("passes every optional field through, mapping `area` onto the project's group", async () => {
@@ -1238,7 +1238,7 @@ describe("self-management MCP (create_project)", () => {
     expect(text).toContain("<path>");
   });
 
-  it("reports keeperRegistered:false rather than failing when agent registration fails", async () => {
+  it("reports agentRegistered:false rather than failing when agent registration fails", async () => {
     const write = fakeWrite({
       projectsMcpEnabled: true,
       createProject: async (input) => ({
@@ -1247,13 +1247,13 @@ describe("self-management MCP (create_project)", () => {
         dir: "/srv/x",
         workingDir: "/srv/x",
         repoBacked: false,
-        keeperRegistered: false,
+        agentRegistered: false,
       }),
     });
     const { result, json } = await callWrite(write, "create_project", { name: "x" });
     expect(result.isError).toBeUndefined();
     expect(json.created).toBe(true);
-    expect(json.keeperRegistered).toBe(false);
+    expect(json.agentRegistered).toBe(false);
   });
 });
 

@@ -21,6 +21,33 @@ export const SubagentFetchContext = createContext<
 export const SubagentLiveContext = createContext<boolean>(false);
 
 /**
+ * Live per-sub-agent activity (steps so far + the latest one), keyed by the
+ * launching tool_use id, polled ONCE per sub-agent by the chat and shared with
+ * both the running-sub-agents bar and the cards. A card reads its steps from here
+ * when present, so expanding one costs no extra request; it falls back to its own
+ * lazy fetch for a FINISHED sub-agent (history), which nothing is polling.
+ */
+export const SubagentActivityContext = createContext<Map<
+  string,
+  import("./useSubagentActivity").SubagentActivity
+> | null>(null);
+
+/**
+ * Reveal-a-sub-agent wiring: the running-sub-agents bar asks the transcript to
+ * bring one into view, and the matching card responds by expanding, scrolling
+ * itself into view, and flashing a highlight so the eye lands on it.
+ *
+ * `focused` is a REQUEST token, not persistent selection state: it carries a
+ * `nonce` so that re-tapping the SAME sub-agent re-triggers the flash (a plain id
+ * would be an unchanged value the card could not distinguish from a re-render).
+ */
+export interface SubagentFocusValue {
+  focused: { toolUseId: string; nonce: number } | null;
+  focus: (toolUseId: string) => void;
+}
+export const SubagentFocusContext = createContext<SubagentFocusValue | null>(null);
+
+/**
  * Builds a raw-file URL for an image `Read` rendered inline (issue #239). Bound to
  * the project slug; null for a scratch chat (no servable project-file endpoint), so
  * ToolBlock falls back to the generic block there.

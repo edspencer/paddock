@@ -99,7 +99,7 @@ export async function startTestApp(opts: StartOptions = {}): Promise<TestApp> {
     PADDOCK_FAKE_SCRIPT: process.env.PADDOCK_FAKE_SCRIPT,
     PADDOCK_FAKE_SWEEP: process.env.PADDOCK_FAKE_SWEEP,
     PADDOCK_SWEEP_MIN_INTERVAL_MS: process.env.PADDOCK_SWEEP_MIN_INTERVAL_MS,
-    PADDOCK_KEEPER_DRIVE_MODE: process.env.PADDOCK_KEEPER_DRIVE_MODE,
+    PADDOCK_DRIVE_MODE: process.env.PADDOCK_DRIVE_MODE,
     PADDOCK_GITHUB_CLIENT_ID: process.env.PADDOCK_GITHUB_CLIENT_ID,
     PADDOCK_MODELS: process.env.PADDOCK_MODELS,
     LOG_LEVEL: process.env.LOG_LEVEL,
@@ -123,11 +123,11 @@ export async function startTestApp(opts: StartOptions = {}): Promise<TestApp> {
   // `claude` on PATH, which only the CLI (batch) runtime uses — the SDK/session
   // runtime needs a real login ("Not logged in"). The built-in default is now
   // `session` (#316) and the projects box also exports
-  // PADDOCK_KEEPER_DRIVE_MODE=session, so we can't rely on the default or on
+  // PADDOCK_DRIVE_MODE=session, so we can't rely on the default or on
   // deleting the var; explicitly PIN `batch` so the suite is deterministic
   // regardless of the box env (CI has it unset; a dev box may not). The session
   // path has its own coverage (unit/mocked harnesses).
-  process.env.PADDOCK_KEEPER_DRIVE_MODE = "batch";
+  process.env.PADDOCK_DRIVE_MODE = "batch";
   process.env.PATH = `${FAKE_BIN}${path.delimiter}${process.env.PATH ?? ""}`;
   process.env.PADDOCK_DATA_DIR = dataDir;
   process.env.PADDOCK_PROJECTS_DIR = projectsRoot;

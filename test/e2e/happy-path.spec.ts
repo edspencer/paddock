@@ -11,11 +11,11 @@ import { test, expect } from "@playwright/test";
  */
 
 // Create a project via the New Project modal, picking an area. Returns its slug.
-// The grid (and its "New Project" button) is the first section of ROOT HOME,
-// which is `/` (#531 + the nav cleanup that folded the Projects tab into Home).
+// "New Project" is the `+` on the SIDEBAR's Projects header (#599 deleted the
+// root-Home projects grid that used to be its only home).
 async function createProject(page: import("@playwright/test").Page, name: string, area?: string) {
   await page.goto("/");
-  await page.getByRole("button", { name: /New Project/i }).first().click();
+  await page.getByRole("complementary").getByRole("button", { name: "New Project" }).click();
   const dialog = page.locator("form").filter({ hasText: "New project" });
   await dialog.getByPlaceholder(/Garage Water Heater/i).fill(name);
   if (area) {
@@ -30,12 +30,12 @@ async function createProject(page: import("@playwright/test").Page, name: string
 test("create a project (pick an area) and land in it", async ({ page }) => {
   await createProject(page, "E2E Reactor", "Homelab");
   // The project's chat composer is present.
-  await expect(page.getByPlaceholder(/Message the keeper agent/i)).toBeVisible();
+  await expect(page.getByPlaceholder(/Message Claude/i)).toBeVisible();
 });
 
 test("send a chat, watch it stream, reload and see history", async ({ page }) => {
   await createProject(page, "E2E Streamer");
-  const composer = page.getByPlaceholder(/Message the keeper agent/i);
+  const composer = page.getByPlaceholder(/Message Claude/i);
   await composer.fill("ping from e2e");
   await page.getByRole("button", { name: /^Send$/ }).click();
 
@@ -59,9 +59,10 @@ test("send a chat, watch it stream, reload and see history", async ({ page }) =>
 
 test("collapse an area section on the projects grid", async ({ page }) => {
   await createProject(page, "E2E Collapsible", "House");
-  // The grid is a section of root Home at `/`. The area sections are still the
-  // thing under test.
-  await page.goto("/");
+  // The grid is its own page at `/projects` again (#599 gave root Home's opening
+  // screen to the running/unread feeds). The area sections are still the thing
+  // under test.
+  await page.goto("/projects");
 
   // The House section header (a button with the area label). Ensure it starts
   // expanded (collapse state persists in localStorage across runs).
@@ -87,8 +88,9 @@ test("filter projects by a domain tag", async ({ page }) => {
   // Create a project carrying a unique tag via the API for determinism, then
   // verify the tag filter view shows it. (We use the UI tag click to navigate.)
   await page.goto("/");
-  // Create a project with a domain tag through the modal.
-  await page.getByRole("button", { name: /New Project/i }).first().click();
+  // Create a project with a domain tag through the modal — same sidebar `+` as
+  // `createProject` above (the app's only New Project outside the grid page).
+  await page.getByRole("complementary").getByRole("button", { name: "New Project" }).click();
   const dialog = page.locator("form").filter({ hasText: "New project" });
   await dialog.getByPlaceholder(/Garage Water Heater/i).fill("E2E Tagged");
   await dialog.getByPlaceholder(/home, plumbing/i).fill("e2etag");

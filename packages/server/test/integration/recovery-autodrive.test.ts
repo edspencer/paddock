@@ -87,12 +87,15 @@ describe("integration: Layer 3 automatic re-drive end-to-end (#352)", () => {
       cfg: { recovery: { ...DEFAULT_RECOVERY, autoReDrive: true, debounceMs: 200 } },
       getProject: (slug) => t.projects.get(slug),
       reDrive: async (_project, sid) => {
-        reDrives += 1;
-        // The real re-drive: inject the recovery nudge as a resume turn. Wait for it
-        // to complete so the assertion sees the landed transcript entry.
+        // The real re-drive: inject the recovery nudge as a resume turn, and wait for
+        // it to COMPLETE before counting it. `reDrives` is the barrier the wait loop
+        // below polls, so it must mean "the nudge landed", not "the nudge was sent" —
+        // counting on entry let the loop fall through while the turn was still
+        // spawning, and the transcript read below then saw no nudge yet (issue #548).
         const mk = ws.mark();
         ws.send({ type: "chat:send", payload: { projectSlug: SLUG, sessionId: sid, message: RECOVERY_NUDGE } });
         await ws.waitFor((e) => isComplete(e) && e.payload?.sessionId === sid, { from: mk });
+        reDrives += 1;
       },
       pollMs: 40,
       killGraceMs: 4000,

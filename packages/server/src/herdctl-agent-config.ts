@@ -16,10 +16,10 @@ import YAML from "yaml";
 import type { PaddockConfig } from "./config.js";
 import type { Project } from "./projects.js";
 import {
-  KEEPER_DEFAULT_MODEL,
+  DEFAULT_MODEL,
   SWEEPER_DEFAULT_MODEL,
-  KEEPER_DEFAULT_PERMISSION_MODE,
-  KEEPER_DEFAULT_MAX_TURNS,
+  DEFAULT_PERMISSION_MODE,
+  DEFAULT_MAX_TURNS,
 } from "./models.js";
 import {
   triggerToAgentToolConfig,
@@ -33,7 +33,7 @@ import {
   triggerAgentName,
   browserMcpServers,
   BROWSER_MCP_TOOL,
-  KEEPER_DENIED_TOOLS,
+  DENIED_TOOLS,
   KEEPER_MAX_CONCURRENT,
   KEEPER_SESSION_TIMEOUT,
 } from "./herdctl-agent-names.js";
@@ -48,40 +48,49 @@ import {
  * project's persisted `model`, else the keeper default (Opus).
  *
  * System prompt: by default (`nativeSystemPrompt`, issue #176) we set NO
- * `system_prompt`, so herdctl's CLI runtime passes no `--system-prompt` and
- * Claude Code's full default coding prompt applies together with the project's
- * CLAUDE.md hierarchy — the canonical instance-wide `<projectsRoot>/CLAUDE.md`
+ * `system_prompt`, so Claude Code's full default coding prompt applies — the SDK
+ * runtime falls back to the `claude_code` preset and the CLI runtime passes no
+ * `--system-prompt`, which amount to the same thing. It applies together with
+ * the project's CLAUDE.md hierarchy — the canonical instance-wide
+ * `<projectsRoot>/CLAUDE.md`
  * (auto-loaded via the cwd walk-up, since a project dir is a child of the
  * projects root) plus a per-project CLAUDE.md. This is its own decision (issue
  * #176): an instance with no CLAUDE.md files can opt back into the terse replace
- * prompt below with `PADDOCK_KEEPER_NATIVE_PROMPT=false`.
+ * prompt below with `PADDOCK_NATIVE_PROMPT=false`.
  *
  * This is the reading #512 settled on, and the reason it is `projectsRoot` and
  * not `<dataDir>`: `projectsRoot` IS the instance's backing repo, so the file is
  * version-controlled. Since #516 the ROOT project reaches it the same way —
  * its cwd IS `projectsRoot`, so the walk-up needs no special-casing.
  */
-export function buildKeeperConfig(
+export function buildAgentConfig(
   cfg: PaddockConfig,
   project: Project,
   modelOverride?: string,
 ): Record<string, unknown> & { name: string } {
   const config: Record<string, unknown> & { name: string } = {
     name: keeperAgentName(project.slug),
-    description: project.summary || `Keeper agent for project ${project.name}.`,
+    description: project.summary || `Claude Code agent for project ${project.name}.`,
     // Repo-backed projects (issue #187): the keeper runs INSIDE the cloned
     // checkout (project.workingDir), so the repo's own CLAUDE.md + git tooling
     // apply. For a notebook project workingDir === dir, so this is unchanged.
     working_directory: project.workingDir,
-    // Explicit CLI runtime (Max plan) — see the scratch agent note: the fleet
-    // `defaults.runtime` is dropped by the core config loader, so set it here.
+    // `runtime` governs the ONE-SHOT `trigger()` path only — it does NOT decide
+    // how chats run. `openChatSession` (session drive-mode, the default) hard-codes
+    // `new SDKRuntime()` and never reads this field, so a normal chat runs on the
+    // Claude Agent SDK regardless. This value bites only when a project is set to
+    // `driveMode: batch`, whose turns go through `RuntimeFactory.create`. Set here
+    // per-agent because core's `DefaultsSchema` has no `runtime` key: the fleet
+    // `defaults.runtime` we write below is stripped when the file is parsed, so
+    // there is nothing for addAgent's deep-merge to hand down. Same for the
+    // sweeper and trigger copies.
     runtime: "cli",
-    model: modelOverride ?? project.model ?? KEEPER_DEFAULT_MODEL,
+    model: modelOverride ?? project.model ?? DEFAULT_MODEL,
     // Per-project keeper settings (issue #12). The project DTO always carries
     // concrete values (fleet defaults resolved in projects.ts), so setting
     // them here just overrides the inherited fleet `defaults` per project.
-    permission_mode: project.permissionMode ?? KEEPER_DEFAULT_PERMISSION_MODE,
-    max_turns: project.maxTurns ?? KEEPER_DEFAULT_MAX_TURNS,
+    permission_mode: project.permissionMode ?? DEFAULT_PERMISSION_MODE,
+    max_turns: project.maxTurns ?? DEFAULT_MAX_TURNS,
     // Allow parallel chats per project (forks, and just multiple open chats)
     // instead of herdctl's serialize-by-default max_concurrent: 1.
     instances: { max_concurrent: KEEPER_MAX_CONCURRENT },
@@ -101,10 +110,10 @@ export function buildKeeperConfig(
   if (project.docker) config.docker = { enabled: true };
   // Native by default: omit the replace prompt so the default coding prompt +
   // CLAUDE.md hierarchy apply (issue #176). Only a non-native instance
-  // (PADDOCK_KEEPER_NATIVE_PROMPT=false) gets the terse replace prompt.
+  // (PADDOCK_NATIVE_PROMPT=false) gets the terse replace prompt.
   if (!cfg.nativeSystemPrompt) {
     config.system_prompt =
-      "You are a Claude Code keeper agent for this project directory. " +
+      "You are a Claude Code agent for this project directory. " +
       "Honor any CLAUDE.md present. Keep CHANGELOG.md current. " +
       "Create branches for significant changes; never force-push.";
   }
@@ -125,6 +134,39 @@ export function buildKeeperConfig(
 }
 
 /**
+ * The sweeper's working directory: a dedicated per-project dir under the data
+ * root, deliberately NOT the project dir (issue #548).
+ *
+ * A CLI agent's working directory is what Claude Code encodes into its
+ * transcript path, so two agents sharing a cwd share ONE session directory. The
+ * sweeper's cwd used to be `project.dir`, which for a notebook project equals the
+ * keeper's `project.workingDir` — so keeper and sweeper wrote their transcripts
+ * into the same `.chats/`. herdctl identifies a freshly-spawned session by
+ * set-difference against a pre-spawn directory snapshot, which is immune to a
+ * co-located agent *appending* to its own session but NOT to one *creating* a new
+ * file: whichever brand-new `*.jsonl` appears first is claimed as "ours". A sweep
+ * is scheduled after every keeper turn, so the sweeper's spawn raced the next
+ * keeper turn and a user's chat could be bound to the sweeper's hidden curation
+ * transcript (wrong reply streamed, wrong transcript resumed, chat missing from
+ * the project's list).
+ *
+ * The sweeper is TOOL-LESS, so its cwd is inert — nothing about curation depends
+ * on it (SweepService reads the project's files itself and inlines them in the
+ * prompt, then writes the results itself). Giving it its own directory removes
+ * the shared directory, and with it the whole class of collisions, structurally.
+ *
+ * Kept OUTSIDE `projectsRoot` on purpose: core's discovery unions every
+ * `~/.claude/projects/*` bucket whose decoded path is a strict *descendant* of an
+ * agent's cwd, and the root workspace's cwd IS `projectsRoot`.
+ */
+export function sweeperWorkingDir(cfg: PaddockConfig, slug: string): string {
+  // The root workspace's key is "" (see project-paths.ts); reuse the same
+  // `_root` spelling the agent namespace uses so every sweeper dir is non-empty.
+  // Any other slug is SLUG_RE-validated upstream, so it holds no separators.
+  return path.join(cfg.dataDir, "sweepers", slug === "" ? "_root" : slug);
+}
+
+/**
  * A project's sweeper (curator) agent config. TOOL-LESS: the sweeper has NO
  * tools (`allowed_tools: []`) — it never reads or writes files. Instead it
  * RETURNS the curated content as plain assistant text in marked sections
@@ -136,6 +178,7 @@ export function buildKeeperConfig(
  * denied_tools to reason about (all irrelevant with zero tools).
  */
 export function buildSweeperConfig(
+  cfg: PaddockConfig,
   project: Project,
 ): Record<string, unknown> & { name: string } {
   // T5: the sweeper IS the default `curate-overview` (event/afterTurn) trigger. When a
@@ -147,8 +190,14 @@ export function buildSweeperConfig(
   return {
     name: sweeperAgentName(project.slug),
     description: `Overview/changelog curator (sweeper) for project ${project.name}.`,
-    working_directory: project.dir,
-    // Explicit CLI runtime (Max plan) — see the scratch agent note.
+    // NOT project.dir — see sweeperWorkingDir (issue #548).
+    working_directory: sweeperWorkingDir(cfg, project.slug),
+    // The sweeper only ever runs via the one-shot `trigger()` path, so unlike the
+    // keeper's copy this one really does take effect on every sweep: a `claude -p`
+    // CLI subprocess. Set here per-agent because core's `DefaultsSchema` has no
+    // `runtime` key — the fleet `defaults.runtime` never survives parsing, so
+    // there is nothing to inherit (registering via addAgent is not the reason:
+    // addAgent does deep-merge the loaded defaults, they just never carry it).
     runtime: "cli",
     model: curatorModel ?? SWEEPER_DEFAULT_MODEL,
     // Tool-less: a handful of turns is plenty since there are no tool loops.
@@ -220,13 +269,16 @@ export function buildTriggerConfig(
     name: triggerAgentName(project.slug, triggerName),
     description: `Trigger "${triggerName}" (${trigger.trigger.type}) for project ${project.name}.`,
     working_directory: project.workingDir,
-    // Explicit CLI runtime (Max plan) — the fleet `defaults.runtime` is dropped by
-    // the core config loader, so set it here (as keeper/sweeper/hook agents do).
+    // Triggers fire through the one-shot `trigger()` path, so this takes effect on
+    // every fire: a `claude -p` CLI subprocess. Set here per-agent for the same
+    // reason as the keeper/sweeper copies: core's `DefaultsSchema` has no
+    // `runtime` key, so the fleet `defaults.runtime` is stripped at parse and
+    // never merged in.
     runtime: "cli",
     // Model defaults to the keeper default unless the run pins one;
     // triggerToAgentToolConfig sets `model` only when the run specifies it, so
     // provide the fallback here so a trigger never boots without a concrete model.
-    model: trigger.run.model ?? project.model ?? KEEPER_DEFAULT_MODEL,
+    model: trigger.run.model ?? project.model ?? DEFAULT_MODEL,
     // run → tool config (allowed tools, permission mode, model, max_turns).
     ...triggerToAgentToolConfig(trigger.run),
   };
@@ -244,8 +296,10 @@ export function buildTriggerConfig(
  * yaml files or calls `reload()`.
  *
  * The `fleet` block is strict (name/description only). `defaults` are deep-
- * merged into each agent by addAgent (mergeDefaults defaults to true), so the
- * keeper agents inherit runtime/model/permission_mode/denied_tools from here.
+ * merged into each agent by addAgent (mergeDefaults defaults to true), so agents
+ * inherit model/max_turns/permission_mode/allowed+denied_tools from here. NOT
+ * `runtime`: core's `DefaultsSchema` has no such key, so it is stripped at parse
+ * and every agent sets its own.
  */
 export async function ensureConfigFile(cfg: PaddockConfig): Promise<void> {
   const configDir = path.dirname(cfg.herdctlConfigPath);
@@ -255,26 +309,33 @@ export async function ensureConfigFile(cfg: PaddockConfig): Promise<void> {
     version: 1,
     fleet: {
       name: "paddock",
-      description: "Paddock keeper-agent fleet (agents registered at runtime).",
+      description: "Paddock agent fleet (agents registered at runtime).",
     },
     defaults: {
+      // Currently INERT: core's `DefaultsSchema` has no `runtime` key, so this is
+      // stripped when the file is parsed and never reaches an agent — which is
+      // exactly why the keeper/sweeper/trigger configs above each set `runtime`
+      // themselves. Left in place because it costs nothing and records the
+      // fleet-wide intent; if core ever accepts it, every agent still overrides
+      // it. And even honoured it would govern the one-shot `trigger()` path only:
+      // chats opened via `openChatSession` always run the SDK runtime.
       runtime: "cli",
-      // Keeper default (Opus) so the scratch agent and any default-inheriting
-      // agent run on it; each keeper sets its own model explicitly anyway.
-      model: KEEPER_DEFAULT_MODEL,
+      // The default model, so any agent that doesn't set its own runs on it;
+      // in practice every agent above sets `model` explicitly anyway.
+      model: DEFAULT_MODEL,
       // ~200 turns: enough for real multi-step coding sessions while still
       // bounding runaway agents (CLAUDE.md: always set max_turns). A project
       // can override this per-project (issue #12); this is the inherited
       // default (shared constant so the DTO resolution stays in sync).
-      max_turns: KEEPER_DEFAULT_MAX_TURNS,
+      max_turns: DEFAULT_MAX_TURNS,
       // Keeper agents run native (no Docker) with acceptEdits + denied
       // dangerous bash patterns by default; a project can opt into Docker
       // isolation or a different permission mode per-project (issue #12).
-      permission_mode: KEEPER_DEFAULT_PERMISSION_MODE,
+      permission_mode: DEFAULT_PERMISSION_MODE,
       // `Skill` MUST be in the allowlist or every skill invocation is
-      // permission-denied in `-p` (non-interactive) mode — the CLI is spawned
-      // with an explicit `--allowedTools` list (cli-runtime), and any tool not
-      // on it is auto-denied with no prompt. Built-in skills (claude-api,
+      // permission-denied — both runtimes pass this list through verbatim (CLI:
+      // `--allowedTools`; SDK: `options.allowedTools`) and auto-deny any tool not
+      // on it, with no prompt. Built-in skills (claude-api,
       // code-review, deep-research, ...) ship inside the CLI binary and are
       // registered/visible regardless of setting-sources, so the ONLY thing
       // blocking them was this missing tool. Skills routinely fan out to
@@ -295,8 +356,8 @@ export async function ensureConfigFile(cfg: PaddockConfig): Promise<void> {
       // them); in batch mode they're inert (documented in the box CLAUDE.md).
       allowed_tools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "WebFetch", "WebSearch", "Task", "TodoWrite", "Skill", "NotebookEdit", "ToolSearch", "ScheduleWakeup", "Monitor", "CronCreate", "CronList", "CronDelete", BROWSER_MCP_TOOL],
       // Best-effort denylist (#179): narrow, honest catastrophic-wipe patterns
-      // that do NOT block legitimate absolute-path cleanup. See KEEPER_DENIED_TOOLS.
-      denied_tools: [...KEEPER_DENIED_TOOLS],
+      // that do NOT block legitimate absolute-path cleanup. See DENIED_TOOLS.
+      denied_tools: [...DENIED_TOOLS],
     },
   };
 

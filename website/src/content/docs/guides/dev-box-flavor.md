@@ -26,8 +26,8 @@ part of the lean runtime rather than the toolbox.
 
 The devbox only adds **tools**. It's the same app, the same data layout, the same
 `/data` volume — so you can stop one profile and start the other against the same
-data without losing anything. Reach for devbox when your keepers **build and run**
-apps, not just edit them.
+data without losing anything. Reach for devbox when Claude needs to **build and
+run** apps, not just edit them.
 
 :::note[The devbox is a big image]
 The Playwright Chromium layer alone is roughly a gigabyte. If your agents never
@@ -61,7 +61,7 @@ navigate, click, fill forms, and take screenshots — for example, to QA the ver
 preview server it just started with `pm`.
 
 This is **on by default** in devbox: the image sets `PADDOCK_BROWSER_MCP=1`, which
-tells Paddock to attach the browser MCP tools to keepers at launch. (On base, the
+tells Paddock to attach the browser MCP tools to Claude at launch. (On base, the
 browser tools simply aren't present.) The browser runs headless and sandboxed by
 the container — Paddock launches it `--no-sandbox --isolated`, because the
 container itself is the sandbox.
@@ -135,7 +135,7 @@ docker run -d --name paddock -p 127.0.0.1:4000:4000 \
 ```
 
 :::caution[A kubeconfig is a credential, and the agent will use it]
-Whatever that config can do, a keeper can do — including `delete`. If you wire
+Whatever that config can do, Claude can do — including `delete`. If you wire
 one in, give it a service account scoped to what you actually want an agent
 touching (read-only is a fine place to start), not your admin context.
 :::
@@ -166,8 +166,8 @@ docker run -d --name paddock -p 127.0.0.1:4000:4000 \
   so `~/.claude/projects` (session transcripts) survives restarts, which is what
   makes resume work. Use a named volume or a real disk you back up.
 - **Claude auth** comes in at run time, never baked into the image: set
-  `CLAUDE_CODE_OAUTH_TOKEN` for Claude Max/Pro (the `cli` runtime), or
-  `ANTHROPIC_API_KEY` to use the API (the `sdk` runtime). Get an OAuth token with
+  `CLAUDE_CODE_OAUTH_TOKEN` for Claude Max/Pro, or `ANTHROPIC_API_KEY` to use the
+  API (API pricing) — either works on either runtime. Get an OAuth token with
   `claude setup-token` on a machine where you're already logged in.
 - **`PADDOCK_DANGEROUSLY_ALLOW_OPEN=1`** is required for *any* containerized
   Paddock, base or devbox: inside a container the app always binds `0.0.0.0`
@@ -254,7 +254,7 @@ documents both:
   `/var/run/docker.sock` into the container, so an in-container `docker build/run`
   lands on the **host** daemon. Cheap, no nested daemon — but it gives the container
   effectively root-level control of the host through that socket, so only do it for
-  keepers you trust.
+  projects you trust.
 - **Privileged Docker-in-Docker** — run a real, isolated daemon *inside* the
   container. It never touches the host daemon, but `privileged: true` weakens the
   container boundary and you run and maintain a second daemon plus its storage.

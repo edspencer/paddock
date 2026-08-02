@@ -18,10 +18,12 @@ import { ok, fail, errText, coerceToolList } from "./self-mcp-util.js";
  * existing trigger via `mergeTriggerUpdate`, then validates). Only fields the
  * caller actually supplied are set, so an edit that omits a field preserves it
  * (create-or-update patch semantics) — the classic being an `enabled`-only flip.
- * Flat MCP args are the robust transport (the CLI runtime drops nested/array args,
- * so the discriminant is rebuilt here from scalar args). Returns a string error
- * message instead of a partial when a supplied `type`'s required WHEN field is
- * missing; `null` on none.
+ * Flat MCP args are the portable transport: the CLI runtime was observed dropping
+ * nested/array args, so the discriminant is rebuilt here from scalar args. Chats now
+ * run on the SDK runtime, but the flat shape is kept — it also has to survive
+ * the CLI runtime that a `driveMode: batch` project (or a trigger) still uses.
+ * Returns a string error message instead of a partial when a supplied `type`'s
+ * required WHEN field is missing; `null` on none.
  */
 export function buildTriggerUpdate(args: Record<string, unknown>): Record<string, unknown> | string {
   const incoming: Record<string, unknown> = {};

@@ -35,12 +35,17 @@ import { type Turn, historyToTurns, nextId, sealStreaming } from "./chat/turnMod
 import {
   RecoveryContext,
   type RecoveryContextValue,
+  SubagentActivityContext,
   SubagentFetchContext,
+  SubagentFocusContext,
+  type SubagentFocusValue,
   SubagentLiveContext,
   ToolImageUrlContext,
   TurnActionsContext,
   type TurnActionsValue,
 } from "./chat/chatContexts";
+import { RunningSubagents } from "./chat/RunningSubagents";
+import { useRunningSubagents, useSubagentActivity } from "./chat/useSubagentActivity";
 import {
   ConnDot,
   PreloadToggle,
@@ -83,9 +88,9 @@ export interface ChatPaneProps {
   /** Whether the project has an OVERVIEW.md to preload (issue #1). */
   preloadAvailable?: boolean;
   /**
-   * The project's configured keeper model — the default model for this chat's
+   * The project's configured model — the default model for this chat's
    * picker (CONTRACT-v3 §8). Undefined for scratch chats, where the default
-   * falls back to the models response's `keeperDefault`.
+   * falls back to the models response's `defaultModel`.
    */
   projectModel?: string;
   /**
@@ -229,10 +234,10 @@ export function ChatPane({
 
   // --- model picker + context meter (CONTRACT-v3 §8) -------------------------
   // The selectable models + defaults (fetched once, app-wide static). The
-  // picker's default is the project's model (project chats) or `keeperDefault`
+  // picker's default is the project's model (project chats) or the instance default
   // (scratch); a per-chat localStorage override takes precedence when present.
   const [models, setModels] = useState<ModelInfo[]>([]);
-  const [keeperDefault, setKeeperDefault] = useState<string | null>(null);
+  const [instanceDefaultModel, setInstanceDefaultModel] = useState<string | null>(null);
   const [model, setModel] = useState<string | null>(null);
   // Instance-default recovery config (issue #301), fetched once with the models.
   // Combined with the per-project `projectRecovery` override to gate the killed-
@@ -265,8 +270,8 @@ export function ChatPane({
   // the live ws chat:complete frame only knows the current turn.
   const [sessionUsage, setSessionUsage] = useState<ChatUsage | null>(null);
 
-  // The chat's default model: project model for project chats, else keeperDefault.
-  const defaultModel = (isProjectChat ? projectModel : keeperDefault) ?? keeperDefault;
+  // The chat's default model: project model for project chats, else instanceDefaultModel.
+  const defaultModel = (isProjectChat ? projectModel : instanceDefaultModel) ?? instanceDefaultModel;
 
   // The models OFFERED in this chat's picker (issue #457 Step 2): the instance list
   // narrowed to the project's allow-list when it sets one, else the full instance
@@ -326,6 +331,27 @@ export function ChatPane({
         : Promise.resolve([]),
     [projectSlug],
   );
+  // Which sub-agents are working right now, and what each is doing — derived from
+  // the SAME turn list the transcript renders, then polled once per sub-agent so a
+  // collapsed card still reports progress to the running-sub-agents bar.
+  //
+  // `streaming` is passed to the poller only to decide when a quiet sub-agent may
+  // be declared finished — NOT to gate the list. A sub-agent outlives its parent's
+  // turn (the SDK backgrounds them by default), so gating on `streaming` emptied
+  // the bar the instant the parent replied, while the work carried on.
+  const subagentCandidates = useRunningSubagents(turns);
+  const subagentActivity = useSubagentActivity(subagentCandidates, fetchSubagent, streaming);
+  // The bar lists only those still working. Once a sub-agent has been polled its
+  // own transcript decides; BEFORE the first poll lands we fall back to whether
+  // the chat is streaming — so a just-launched sub-agent appears immediately,
+  // while a finished chat reopened from history (never polled) lists nothing.
+  const runningSubagents = useMemo(
+    () =>
+      subagentCandidates.filter(
+        (c) => subagentActivity.get(c.toolUseId)?.running ?? streaming,
+      ),
+    [subagentCandidates, subagentActivity, streaming],
+  );
   // Raw-file URL builder for inline image reads (issue #239).
   const toolImageUrl = useMemo(
     () => (projectSlug ? (relPath: string) => api.projectFileRawUrl(projectSlug, relPath) : null),
@@ -368,6 +394,28 @@ export function ChatPane({
     if (el && pinnedRef.current) el.scrollTop = el.scrollHeight;
   }, [turns]);
 
+  // Reveal request from the running-sub-agents bar → the matching card expands,
+  // scrolls itself into view and flashes. The nonce makes a repeat tap on the SAME
+  // sub-agent a new request (see SubagentFocusContext).
+  //
+  // Unpinning is load-bearing, not a nicety. During a live turn `turns` changes
+  // constantly, and the layout effect above re-snaps to the bottom on every one of
+  // those updates — which silently overrode the smooth scroll and yanked the view
+  // back down, so revealing anything but the LAST card appeared to do nothing.
+  // An explicit reveal is a deliberate scroll away from the bottom, so it unpins
+  // exactly as a manual scroll-up would; the next send re-pins (see send()).
+  const [focusedSubagent, setFocusedSubagent] = useState<SubagentFocusValue["focused"]>(null);
+  const subagentFocus = useMemo<SubagentFocusValue>(
+    () => ({
+      focused: focusedSubagent,
+      focus: (toolUseId: string) => {
+        pinnedRef.current = false;
+        setFocusedSubagent((prev) => ({ toolUseId, nonce: (prev?.nonce ?? 0) + 1 }));
+      },
+    }),
+    [focusedSubagent],
+  );
+
   // --- connection state ------------------------------------------------------
   useEffect(() => chatClient.onState(setConn), []);
 
@@ -379,7 +427,7 @@ export function ChatPane({
       .then((res) => {
         if (cancelled) return;
         setModels(res.models);
-        setKeeperDefault(res.keeperDefault);
+        setInstanceDefaultModel(res.defaultModel);
         setRecoveryDefault(res.recoveryDefault);
         setAttachmentsDefault(res.attachmentsDefault);
       })
@@ -979,13 +1027,15 @@ export function ChatPane({
               </div>
               <p className="max-w-sm text-sm text-paddock-500">
                 {emptyHint ??
-                  "Start the conversation. Messages stream live from the keeper agent and persist as a resumable session."}
+                  "Start the conversation. Messages stream live from Claude and persist as a resumable session."}
               </p>
             </div>
           )}
 
           <SubagentFetchContext.Provider value={fetchSubagent}>
             <SubagentLiveContext.Provider value={streaming}>
+              <SubagentActivityContext.Provider value={subagentActivity}>
+                <SubagentFocusContext.Provider value={subagentFocus}>
               <ToolImageUrlContext.Provider value={toolImageUrl}>
                 <PaddockManageProjectContext.Provider value={projectSlug}>
                   <RecoveryContext.Provider value={recoveryCtx}>
@@ -999,6 +1049,8 @@ export function ChatPane({
                   </RecoveryContext.Provider>
                 </PaddockManageProjectContext.Provider>
               </ToolImageUrlContext.Provider>
+                </SubagentFocusContext.Provider>
+              </SubagentActivityContext.Provider>
             </SubagentLiveContext.Provider>
           </SubagentFetchContext.Provider>
         </div>
@@ -1008,6 +1060,15 @@ export function ChatPane({
           (#53) — independent of whether a bubble is currently painting, so it
           shows during the initial thinking gap and between tool calls, and lights
           up the instant you return to a still-streaming chat. */}
+      {/* One live line per RUNNING sub-agent, so long nested work is visible
+          without hunting for (and expanding) its card. Tapping a row reveals the
+          card in the transcript. Renders nothing when none is running. */}
+      <RunningSubagents
+        running={runningSubagents}
+        activity={subagentActivity}
+        onReveal={subagentFocus.focus}
+      />
+
       {streaming && <WorkingIndicator />}
 
       {error && (
@@ -1121,7 +1182,7 @@ export function ChatPane({
               placeholder={
                 streaming
                   ? "Queue a message to send next…"
-                  : (placeholder ?? "Message the keeper agent…")
+                  : (placeholder ?? "Message Claude…")
               }
               onChange={(e) => {
                 setDraft(e.target.value);

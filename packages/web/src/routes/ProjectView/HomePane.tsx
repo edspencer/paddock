@@ -1,236 +1,171 @@
-import type { Chat, Project } from "../../lib/types";
+import { useState } from "react";
+import type { AttentionChat, Project } from "../../lib/types";
 import { Markdown } from "../../components/Markdown";
 import { relativeTime } from "../../lib/format";
-import { areaLabel } from "../../lib/areas";
-import {
-  ChatIcon,
-  FileIcon,
-  LinkIcon,
-  PencilIcon,
-  PinIcon,
-  PlusIcon,
-} from "../../components/icons";
+import { ChevronRightIcon, FileIcon, PinIcon, PlusIcon } from "../../components/icons";
 
 /**
  * The Home tab: the workspace's landing page. Gives `/projects/:slug` a real
  * destination (instead of silently forwarding into a chat) and is the mobile
- * navigation hub — children, recent chats, recent files, the CHANGELOG, and
- * summary + metadata + edit, all deep-linkable via `/projects/:slug/home`.
+ * navigation hub, all deep-linkable via `/projects/:slug/home`.
  * (Extracted from ProjectView.tsx, issue #403.)
  *
- * Section order is deliberate and reads top-down as "what can I DO here?" before
- * "what IS this?": this workspace's own chats first, then its children (root
- * only), then its files, then the curated CHANGELOG, and finally the Overview
- * card. Chats lead because they are the live work and the same section appears
- * on EVERY workspace's Home — so the page opens the same way whether or not the
- * workspace has children. Overview used to lead; it is descriptive rather than
- * actionable, so it trails.
+ * Home answers "what needs me?" before "what is this?" (#599). It opens on the
+ * chats with a LIVE TURN, then the chats holding an UNREAD reply, then the
+ * files, then the curated OVERVIEW.md / CHANGELOG.md.
+ *
+ * It used to open on a generic list of recent chats, which the sidebar already
+ * shows in full — so the front door duplicated the furniture and buried the
+ * signal. Running and unread are the two states that actually want a decision.
+ *
+ * The two feeds arrive pre-derived from the server for this workspace's whole
+ * SUBTREE, so the ROOT's Home is fleet-wide (every project plus the root's own
+ * chats) and a project's Home is scoped to itself — through one component that
+ * never learns which it is rendering. See `useAttentionChats`.
  */
 export function HomePane({
   project,
-  chats,
+  running,
+  unread,
+  attentionLoading,
+  attentionError,
   changelog,
+  overview,
   files,
-  runningSessions,
   onOpenChat,
   onNewChat,
   onOpenFile,
   onOpenFiles,
-  onEditDetails,
-  projectsSection,
 }: {
   project: Project;
-  chats: Chat[];
+  /** Chats in this workspace's subtree with a turn in flight right now. */
+  running: AttentionChat[];
+  /** Chats in this workspace's subtree holding a reply the user hasn't seen. */
+  unread: AttentionChat[];
+  attentionLoading: boolean;
+  attentionError: string | null;
   changelog: string;
+  overview: string;
   files: string[];
-  runningSessions: ReadonlySet<string>;
-  onOpenChat: (sessionId: string) => void;
+  onOpenChat: (sessionId: string, projectSlug: string) => void;
   onNewChat: () => void;
-  // Files + Settings are optional so the ROOT project (issue #516) can render
-  // Home before its Files/Settings tabs exist (Phases 4-5). Omitting a handler
-  // hides the affordance it drives, rather than pointing it at a dead URL.
+  // Files is optional so the ROOT project (issue #516) can render Home before
+  // its Files tab exists. Omitting the handler hides the affordance it drives,
+  // rather than pointing it at a dead URL.
   onOpenFile?: (name: string) => void;
   onOpenFiles?: () => void;
-  onEditDetails?: () => void;
-  // This workspace's children (the projects grid), or undefined for a workspace
-  // that has none — which is every workspace but the root today. Passed in as a
-  // node rather than rendered here so Home stays independent of the grid (and of
-  // the projects context it fetches from), and so the "who has children?" call
-  // stays at the one call site that knows.
-  projectsSection?: React.ReactNode;
 }) {
-  const recentChats = chats.slice(0, 6);
   const recentFiles = files.slice(0, 6);
   return (
     <div className="flex-1 overflow-y-auto overscroll-contain">
       <div className="mx-auto max-w-3xl px-6 py-6">
-        {/* Chats: recent sessions + a shortcut to start a new one. */}
+        {/* Running: the live work, and the shortcut to start more. */}
         <section className="mb-8">
           <div className="mb-2 flex items-center justify-between">
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-paddock-500">
-              Chats
-              {chats.length > 0 && <span className="ml-1.5 text-paddock-400">{chats.length}</span>}
-            </h3>
+            <SectionLabel label="Running" count={running.length} />
             <button onClick={onNewChat} className="btn-subtle -mr-1 gap-1.5 px-2 py-1 text-xs">
               <PlusIcon width={13} height={13} />
               New chat
             </button>
           </div>
-          {recentChats.length === 0 ? (
+          {attentionError ? (
             <div className="card">
-              <p className="text-sm italic text-paddock-400">
-                No chats yet. Start one to begin working with the keeper agent.
-              </p>
+              <p className="text-sm text-rose-600 dark:text-rose-400">{attentionError}</p>
             </div>
           ) : (
-            <div className="overflow-hidden rounded-2xl border border-paddock-200 dark:border-paddock-800">
-              {recentChats.map((c, i) => (
-                <button
-                  key={c.sessionId}
-                  onClick={() => onOpenChat(c.sessionId)}
-                  className={`flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-paddock-100/70 dark:hover:bg-paddock-900/40 ${
-                    i > 0 ? "border-t border-paddock-200 dark:border-paddock-800" : ""
-                  }`}
-                >
-                  {runningSessions.has(c.sessionId) ? (
-                    <span
-                      title="Streaming a response…"
-                      aria-label="streaming"
-                      className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent"
-                    />
-                  ) : (
-                    <ChatIcon width={14} height={14} className="shrink-0 text-paddock-400" />
-                  )}
-                  <span className="min-w-0 flex-1 truncate text-sm font-medium">{c.name}</span>
-                  <span className="shrink-0 text-[11px] text-paddock-400">
-                    {relativeTime(c.updatedAt)}
-                  </span>
-                </button>
-              ))}
-            </div>
+            <ChatRows
+              chats={running}
+              workspaceSlug={project.slug}
+              loading={attentionLoading}
+              empty="Nothing running right now."
+              onOpenChat={onOpenChat}
+              kind="running"
+            />
           )}
         </section>
 
-        {/* This workspace's children, under its own chats: the root's Home opens
-            on the instance's live work, and the way OUT to a project follows.
-            Rendered in Home's own column so it lines up with its neighbours. */}
-        {projectsSection && <section className="mb-8">{projectsSection}</section>}
-
-        {/* Files: a preview of the file index; "View all" jumps to the Files tab.
-            Omitted entirely where there is no Files tab to jump TO (the root, until
-            #516 Phase 4). */}
-        {onOpenFile && (
-        <section className="mb-8">
-          <div className="mb-2 flex items-center justify-between">
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-paddock-500">
-              Files
-              {files.length > 0 && <span className="ml-1.5 text-paddock-400">{files.length}</span>}
-            </h3>
-            {files.length > recentFiles.length && (
-              <button onClick={onOpenFiles} className="btn-subtle -mr-1 px-2 py-1 text-xs">
-                View all
-              </button>
-            )}
-          </div>
-          {recentFiles.length === 0 ? (
-            <div className="card">
-              <p className="text-sm italic text-paddock-400">
-                No files yet. Files the keeper agent writes appear here.
-              </p>
+        {/* Unread: replies that landed while the user was elsewhere. */}
+        {!attentionError && (
+          <section className="mb-8">
+            <div className="mb-2 flex items-center justify-between">
+              <SectionLabel label="Unread" count={unread.length} />
             </div>
-          ) : (
-            <div className="overflow-hidden rounded-2xl border border-paddock-200 dark:border-paddock-800">
-              {recentFiles.map((f, i) => (
-                <button
-                  key={f}
-                  onClick={() => onOpenFile(f)}
-                  className={`flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-paddock-100/70 dark:hover:bg-paddock-900/40 ${
-                    i > 0 ? "border-t border-paddock-200 dark:border-paddock-800" : ""
-                  }`}
-                >
-                  <FileIcon width={15} height={15} className="shrink-0 text-paddock-400" />
-                  <span className="min-w-0 flex-1 truncate font-mono text-sm text-paddock-700 dark:text-paddock-200">
-                    {f}
-                  </span>
-                  {project.pinned.includes(f) && (
-                    <PinIcon width={12} height={12} className="shrink-0 text-accent" />
-                  )}
-                </button>
-              ))}
-            </div>
-          )}
-        </section>
+            <ChatRows
+              chats={unread}
+              workspaceSlug={project.slug}
+              loading={attentionLoading}
+              empty="No unread replies. All caught up."
+              onOpenChat={onOpenChat}
+              kind="unread"
+            />
+          </section>
         )}
 
-        {/* CHANGELOG.md — the curated project log. */}
-        <section className="mb-8">
-          <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-paddock-500">
-            CHANGELOG.md
-          </h3>
-          <div className="card">
-            {changelog.trim() ? (
-              <Markdown>{changelog}</Markdown>
-            ) : (
-              <p className="text-sm italic text-paddock-400">No CHANGELOG.md yet.</p>
-            )}
-          </div>
-        </section>
-
-        {/* Overview: summary + metadata + edit-details shortcut. Last on the
-            page — it describes the workspace rather than offering a way into it. */}
-        <section>
-          <div className="mb-2 flex items-center justify-between">
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-paddock-500">
-              Overview
-            </h3>
-            {onEditDetails && (
-              <button
-                onClick={onEditDetails}
-                className="btn-subtle -mr-1 gap-1.5 px-2 py-1 text-xs"
-              >
-                <PencilIcon width={13} height={13} />
-                Edit details
-              </button>
-            )}
-          </div>
-          <div className="card">
-            {project.summary ? (
-              <p className="text-sm text-paddock-700 dark:text-paddock-300">{project.summary}</p>
-            ) : (
-              <p className="text-sm italic text-paddock-400">No summary set yet.</p>
-            )}
-            <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-[13px] sm:grid-cols-3">
-              <Meta label="Status" value={project.status} />
-              <Meta label="Area" value={areaLabel(project.group)} />
-              <Meta label="Visibility" value={project.visibility} />
-              <Meta label="Model" value={project.model} />
-              <Meta label="Started" value={project.started} />
-              <Meta label="Updated" value={project.updated} />
-              {project.domain.length > 0 && (
-                <Meta label="Domains" value={project.domain.join(", ")} />
+        {/* Files: a preview of the file index; "View all" jumps to the Files tab.
+            Omitted entirely where there is no Files tab to jump TO. */}
+        {onOpenFile && (
+          <section className="mb-8">
+            <div className="mb-2 flex items-center justify-between">
+              <SectionLabel label="Files" count={files.length} />
+              {files.length > recentFiles.length && (
+                <button onClick={onOpenFiles} className="btn-subtle -mr-1 px-2 py-1 text-xs">
+                  View all
+                </button>
               )}
-              {project.repoBacked && project.repo && (
-                <Meta label="Repo" value={project.repo} />
-              )}
-            </dl>
-            {project.links && project.links.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {project.links.map((l) => (
-                  <a
-                    key={l.url}
-                    href={l.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1 rounded-md bg-paddock-100 px-2 py-1 text-xs text-paddock-700 transition-colors hover:bg-paddock-200 dark:bg-paddock-900 dark:text-paddock-300 dark:hover:bg-paddock-800"
+            </div>
+            {recentFiles.length === 0 ? (
+              <div className="card">
+                <p className="text-sm italic text-paddock-400">
+                  No files yet. Files Claude writes appear here.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-2xl border border-paddock-200 dark:border-paddock-800">
+                {recentFiles.map((f, i) => (
+                  <button
+                    key={f}
+                    onClick={() => onOpenFile(f)}
+                    className={`flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-paddock-100/70 dark:hover:bg-paddock-900/40 ${
+                      i > 0 ? "border-t border-paddock-200 dark:border-paddock-800" : ""
+                    }`}
                   >
-                    <LinkIcon width={12} height={12} />
-                    {l.label || l.url}
-                  </a>
+                    <FileIcon width={15} height={15} className="shrink-0 text-paddock-400" />
+                    <span className="min-w-0 flex-1 truncate font-mono text-sm text-paddock-700 dark:text-paddock-200">
+                      {f}
+                    </span>
+                    {project.pinned.includes(f) && (
+                      <PinIcon width={12} height={12} className="shrink-0 text-accent" />
+                    )}
+                  </button>
                 ))}
               </div>
             )}
-          </div>
-        </section>
+          </section>
+        )}
+
+        {/* The two curated notes files, as sibling collapsible cards (#599).
+            OVERVIEW.md leads: it says what this workspace IS and where the work
+            has got to, which is the context you want before the log of how it
+            got there. Both are long prose, so both fold away — and the choice
+            sticks per workspace, per browser. */}
+        {/* Keyed by workspace: the collapse state is read from localStorage in a
+            `useState` initializer, so navigating between workspaces has to
+            REMOUNT the section or it would keep showing the previous
+            workspace's fold. */}
+        <NotesSection
+          key={`${project.slug}:overview`}
+          id={`${project.slug}:overview`}
+          title="OVERVIEW.md"
+          body={overview}
+          emptyLabel="No OVERVIEW.md yet."
+        />
+        <NotesSection
+          key={`${project.slug}:changelog`}
+          id={`${project.slug}:changelog`}
+          title="CHANGELOG.md"
+          body={changelog}
+          emptyLabel="No CHANGELOG.md yet."
+        />
 
         <p className="mt-6 text-[11px] text-paddock-400">
           Project directory: <span className="font-mono">{project.dir}</span>
@@ -240,13 +175,176 @@ export function HomePane({
   );
 }
 
-function Meta({ label, value }: { label: string; value: string }) {
+/** A Home section heading + its count, in Home's shared visual language. */
+function SectionLabel({ label, count }: { label: string; count: number }) {
   return (
-    <div>
-      <dt className="text-[11px] font-semibold uppercase tracking-wide text-paddock-400">
-        {label}
-      </dt>
-      <dd className="text-paddock-700 dark:text-paddock-300">{value}</dd>
+    <h3 className="text-sm font-semibold uppercase tracking-wide text-paddock-500">
+      {label}
+      {count > 0 && <span className="ml-1.5 text-paddock-400">{count}</span>}
+    </h3>
+  );
+}
+
+/**
+ * The wide chat rows shared by the Running and Unread sections.
+ *
+ * `workspaceSlug` is the workspace whose Home this is, and the ONLY thing the
+ * project label keys off: a row from somewhere else names its project, a row
+ * from here doesn't. On the root's Home that labels every project's chat and
+ * leaves the root's own chats bare; on a project's Home nothing is labelled,
+ * because nothing can be from elsewhere. No `root`-flag needed.
+ *
+ * Note this compares against `workspaceSlug` with `!==`, not a truthiness test:
+ * the root workspace's slug is `""`, so `row.projectSlug || "…"` would label
+ * every root chat as foreign.
+ */
+function ChatRows({
+  chats,
+  workspaceSlug,
+  loading,
+  empty,
+  onOpenChat,
+  kind,
+}: {
+  chats: AttentionChat[];
+  workspaceSlug: string;
+  loading: boolean;
+  empty: string;
+  onOpenChat: (sessionId: string, projectSlug: string) => void;
+  kind: "running" | "unread";
+}) {
+  if (loading && chats.length === 0) {
+    return (
+      <div
+        className="h-[52px] animate-pulse rounded-2xl border border-paddock-200 bg-white/60 dark:border-paddock-800 dark:bg-paddock-900/50"
+        aria-busy="true"
+      />
+    );
+  }
+  if (chats.length === 0) {
+    return (
+      <div className="card">
+        <p className="text-sm italic text-paddock-400">{empty}</p>
+      </div>
+    );
+  }
+  return (
+    <div
+      className="overflow-hidden rounded-2xl border border-paddock-200 dark:border-paddock-800"
+      data-testid={`home-${kind}-chats`}
+    >
+      {chats.map((c, i) => (
+        <button
+          key={`${c.projectSlug}:${c.sessionId}`}
+          onClick={() => onOpenChat(c.sessionId, c.projectSlug)}
+          className={`flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-paddock-100/70 dark:hover:bg-paddock-900/40 ${
+            i > 0 ? "border-t border-paddock-200 dark:border-paddock-800" : ""
+          }`}
+        >
+          {kind === "running" ? (
+            <span
+              title="Streaming a response…"
+              aria-label="streaming"
+              className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent"
+            />
+          ) : (
+            <span
+              title="Unread reply"
+              aria-label="unread"
+              className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
+            />
+          )}
+          <span className="min-w-0 flex-1 truncate text-sm font-medium">{c.name}</span>
+          {c.projectSlug !== workspaceSlug && (
+            <span className="shrink-0 truncate rounded-md bg-paddock-100 px-1.5 py-0.5 text-[11px] text-paddock-600 dark:bg-paddock-800 dark:text-paddock-300">
+              {c.projectName}
+            </span>
+          )}
+          <span className="shrink-0 text-[11px] text-paddock-400">
+            {relativeTime(kind === "unread" ? (c.lastTurnCompletedAt ?? c.updatedAt) : c.updatedAt)}
+          </span>
+        </button>
+      ))}
     </div>
   );
+}
+
+/**
+ * One collapsible curated-notes card (OVERVIEW.md / CHANGELOG.md).
+ *
+ * Collapse state persists per workspace + file, so folding a project's giant
+ * changelog away doesn't fold every other workspace's too. Default is EXPANDED:
+ * the notes are the reason this part of the page exists, and the changelog has
+ * always rendered open — a default that hid it would read as "the content
+ * disappeared" rather than "it's tidied away".
+ */
+function NotesSection({
+  id,
+  title,
+  body,
+  emptyLabel,
+}: {
+  id: string;
+  title: string;
+  body: string;
+  emptyLabel: string;
+}) {
+  const [collapsed, toggle] = useCollapsed(id);
+  const open = !collapsed;
+  const hasBody = body.trim().length > 0;
+  return (
+    <section className="mb-8">
+      <button
+        type="button"
+        onClick={toggle}
+        aria-expanded={open}
+        className="mb-2 -ml-1 flex w-full items-center gap-1.5 rounded-lg px-1 py-1 text-left transition-colors hover:bg-paddock-100/60 dark:hover:bg-paddock-800/40"
+      >
+        <ChevronRightIcon
+          width={14}
+          height={14}
+          className={`shrink-0 text-paddock-400 transition-transform ${open ? "rotate-90" : ""}`}
+        />
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-paddock-500">{title}</h3>
+      </button>
+      {open && (
+        <div className="card">
+          {hasBody ? (
+            <Markdown>{body}</Markdown>
+          ) : (
+            <p className="text-sm italic text-paddock-400">{emptyLabel}</p>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/**
+ * Read/persist one Home notes section's collapsed state in localStorage.
+ * Default expanded. Keyed per workspace + section so each remembers
+ * independently across reloads. (localStorage is wrapped because it throws in
+ * private-mode / storage-disabled browsers, where "always expanded" is the
+ * right fallback.)
+ */
+function useCollapsed(key: string): [boolean, () => void] {
+  const storageKey = `paddock:home-collapsed:${key}`;
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(storageKey) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggle = () =>
+    setCollapsed((c) => {
+      const next = !c;
+      try {
+        localStorage.setItem(storageKey, next ? "1" : "0");
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  return [collapsed, toggle];
 }

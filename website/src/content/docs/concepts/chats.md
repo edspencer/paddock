@@ -36,7 +36,7 @@ Starting a chat sends `chat:send` with `sessionId: null`; the session id is
 minted by Claude Code and arrives mid-stream (Paddock captures it and attributes
 the running session to the project so the chat appears in the sidebar *before*
 the turn finishes — issue #100). Every later turn on that chat sends the same
-`sessionId`, and the keeper resumes the existing session (`resume: <sessionId>`).
+`sessionId`, and Claude resumes the existing session (`resume: <sessionId>`).
 
 Resumption is robust to interruptions at several layers:
 
@@ -53,8 +53,8 @@ Resumption is robust to interruptions at several layers:
 
 ## Token-by-token streaming
 
-A keeper's reply can accrete into the live bubble **token-by-token** as the model
-produces it, rather than landing in one drop when the turn ends. This is a
+A reply can accrete into the live bubble **token-by-token** as the model produces
+it, rather than landing in one drop when the turn ends. This is a
 property of the **runtime**, not the transport:
 
 - **Session mode (SDK runtime)** opts into partial (streaming) assistant messages
@@ -63,10 +63,10 @@ property of the **runtime**, not the transport:
 - **Batch mode (CLI runtime)** renders each assistant message **whole** when it
   completes; there's no intra-message streaming.
 
-The drive mode is set by `PADDOCK_KEEPER_DRIVE_MODE` (with a per-project
+The drive mode is set by `PADDOCK_DRIVE_MODE` (with a per-project
 `driveMode` override) — see
-[Keeper / agents](/configuration/environment/#keeper--agents). Everything else
-about a chat is identical either way: the transport was already delta-shaped, so
+[Agents](/configuration/environment/#agents). Everything else about a chat is
+identical either way: the transport was already delta-shaped, so
 re-attach and replay behave the same whether or not tokens stream.
 
 ## Forking
@@ -74,16 +74,16 @@ re-attach and replay behave the same whether or not tokens stream.
 A chat can be **forked** into a parallel child: `forkSession` *copies* the
 transcript and mints a new session id, so the child diverges without touching the
 parent. (Contrast with promotion, which *moves* a scratch chat into a project —
-see [Keepers](/concepts/keepers).) Forked children run under the
-same keeper (up to `KEEPER_MAX_CONCURRENT` in parallel) and are full chats in
-their own right — resumable, forkable, archivable.
+see [Agents](/concepts/agents).) Forked children run under the same agent (up to
+`KEEPER_MAX_CONCURRENT` in parallel) and are full chats in their own right —
+resumable, forkable, archivable.
 
 In the sidebar a fork is **filed underneath the chat it was forked from**, so
 splitting a conversation three ways gives you one foldable family rather than
 three unrelated rows. That's true however the fork was made — by you from the
-message hover rail, or by a keeper calling `fork_chat` — and note it nests under
-its **source**, which for a keeper-made fork isn't necessarily the keeper that
-made it. See [Provenance](/concepts/provenance/#from-badge-to-structure) for how
+message hover rail, or by Claude calling `fork_chat` — and note it nests under
+its **source**, which for a Claude-made fork isn't necessarily the chat that made
+it. See [Provenance](/concepts/provenance/#from-badge-to-structure) for how
 that edge is recorded, and for the spawn-depth consequence of forking a fork.
 
 ## In one line

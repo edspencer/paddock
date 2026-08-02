@@ -23,10 +23,10 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
 import {
-  KEEPER_DEFAULT_MODEL,
-  KEEPER_DEFAULT_PERMISSION_MODE,
-  KEEPER_DEFAULT_MAX_TURNS,
-  KEEPER_DEFAULT_DOCKER,
+  DEFAULT_MODEL,
+  DEFAULT_PERMISSION_MODE,
+  DEFAULT_MAX_TURNS,
+  DEFAULT_DOCKER,
   isKnownModel,
 } from "./models.js";
 import { cloneRepo } from "./git.js";
@@ -829,7 +829,7 @@ export class ProjectStore {
       ...(typeof p.docker === "boolean" ? { docker: p.docker } : {}),
       // driveMode (Paddock#111): carried only when explicitly set — an absent
       // value means "inherit the global default" and is resolved at dispatch
-      // (`project.driveMode ?? cfg.keeperDriveMode`), NOT here, so the env-level
+      // (`project.driveMode ?? cfg.driveMode`), NOT here, so the env-level
       // global can still take effect for projects that don't override it.
       ...(typeof p.driveMode === "string" ? { driveMode: p.driveMode } : {}),
       // maxSpawnDepth (issue #262): carried only when explicitly set — an absent
@@ -941,7 +941,7 @@ export class ProjectStore {
       pinned: yaml.pinned ?? [],
       // Always concrete in the DTO: an absent on-disk model resolves to the
       // keeper default (CONTRACT-v3 §4).
-      model: yaml.model ?? KEEPER_DEFAULT_MODEL,
+      model: yaml.model ?? DEFAULT_MODEL,
       // Offered-models override stays RAW (per-project only — resolved against the
       // instance allow-list in the web, never baked concrete here; the `model`/
       // `recovery` discipline), re-sanitised so a corrupt hand-edit never reaches
@@ -949,9 +949,9 @@ export class ProjectStore {
       // list (issue #457 Step 2).
       models: sanitizeModelsOverride(yaml.models),
       // Keeper-agent overrides — always concrete in the DTO (issue #12).
-      permissionMode: yaml.permissionMode ?? KEEPER_DEFAULT_PERMISSION_MODE,
-      maxTurns: yaml.maxTurns ?? KEEPER_DEFAULT_MAX_TURNS,
-      docker: yaml.docker ?? KEEPER_DEFAULT_DOCKER,
+      permissionMode: yaml.permissionMode ?? DEFAULT_PERMISSION_MODE,
+      maxTurns: yaml.maxTurns ?? DEFAULT_MAX_TURNS,
+      docker: yaml.docker ?? DEFAULT_DOCKER,
       // Recovery override stays RAW (per-project only — resolved against the
       // instance default at dispatch, never baked concrete here; the `driveMode`
       // discipline), but re-sanitised so a corrupt hand-edit never reaches the

@@ -39,7 +39,7 @@
  * per #270) with a per-project override (`project.yaml` → Settings). An absent /
  * invalid override inherits the instance default, resolved at dispatch by
  * {@link resolveMaxSpawnDepth} — never baked into the DTO (mirrors how `driveMode`
- * resolves against `cfg.keeperDriveMode`).
+ * resolves against `cfg.driveMode`).
  */
 
 /**
@@ -72,7 +72,7 @@ export function isValidMaxSpawnDepth(n: unknown): n is number {
 /**
  * Resolve the effective `maxSpawnDepth` for a dispatch: a valid per-project
  * override wins; otherwise inherit the instance default. Mirrors how `driveMode`
- * resolves (`project.driveMode ?? cfg.keeperDriveMode`) — the override is carried
+ * resolves (`project.driveMode ?? cfg.driveMode`) — the override is carried
  * on disk only when set, so an absent value transparently inherits the instance
  * (and, later, a YAML file) default. A malformed override is ignored rather than
  * fatal (defensive: a hand-edited `project.yaml` can't wedge dispatch).

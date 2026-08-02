@@ -6,7 +6,7 @@
 > together" map; the exact public `@herdctl/core` API contract Paddock depends on
 > lives in [`INTEGRATION.md`](./INTEGRATION.md), and the feature-level wire
 > contracts in [`CONTRACT-v2.md`](./archive/CONTRACT-v2.md) / [`CONTRACT-v3.md`](./archive/CONTRACT-v3.md).
-> For the conceptual model (what a project, keeper, chat, or sweeper *is*), see
+> For the conceptual model (what a project, agent, chat, or sweeper *is*), see
 > [`concepts/`](./concepts/).
 
 Everything here is grounded in the code under `packages/server/src` — file and
@@ -17,10 +17,12 @@ symbol names are cited so you can jump straight to the source.
 ## 1. The big picture
 
 Paddock is a thin, opinionated layer on top of the public `@herdctl/core`
-`FleetManager`. herdctl runs the actual Claude Code agents (as `claude -p` CLI
-subprocesses or managed SDK sessions) and owns session discovery; Paddock wires
-**projects**, **chats**, a **WebSocket streaming transport**, **in-process MCP
-tools**, an **auth boundary**, and a **git backing store** on top.
+`FleetManager`. herdctl runs the actual Claude Code agents — chats as managed
+**Claude Agent SDK** sessions, the sweeper and triggers as one-shot `claude -p`
+CLI subprocesses (see [§9](#9-drive-mode--session-vs-batch)) — and owns
+session discovery; Paddock wires **projects**, **chats**, a **WebSocket streaming
+transport**, **in-process MCP tools**, an **auth boundary**, and a **git backing
+store** on top.
 
 ```mermaid
 flowchart LR
@@ -284,9 +286,9 @@ Step by step:
    `onToolStart`→`chat:tool_start`, `onToolCall`→`chat:tool_call`. Frames are
    emitted through `turn.emit(...)`, never written straight to the socket.
 3. **Resolve model + drive mode.** The `model` override wins if
-   `isKnownModel`, else `project.model` (scratch → keeper default); the keeper is
-   re-registered via `ensureKeeperModel` because there's no per-trigger model API
-   (`ws.ts:1119-1148`). Drive mode is `project.driveMode ?? cfg.keeperDriveMode`.
+   `isKnownModel`, else `project.model` (scratch → the instance default); the
+   agent is re-registered via `ensureKeeperModel` because there's no per-trigger
+   model API (`ws.ts:1119-1148`). Drive mode is `project.driveMode ?? cfg.keeperDriveMode`.
 4. **Preload (optional).** For a *new* chat with `preloadContext` and a non-empty
    `OVERVIEW.md`, the overview + changelog tail are wrapped and prepended to the
    prompt (`ws.ts:1157`, CONTRACT-v2 §2).
@@ -347,28 +349,35 @@ output streams to whoever is attached to that session.
 
 ## 5. MCP injection
 
-Keepers receive extra tools via **in-process MCP injection** — no network, no
+Agents receive extra tools via **in-process MCP injection** — no network, no
 auth, no static `allowed_tools` change. Paddock builds herdctl
 `InjectedMcpServerDef` objects and passes them as `injectedMcpServers` on the
-trigger call; herdctl's CLI runtime stands up a localhost HTTP MCP bridge per
-injected server and auto-allowlists `mcp__<key>__*` (the keeper is a `claude -p`
-subprocess that can't reach an in-process SDK server directly).
+trigger call; herdctl auto-allowlists `mcp__<key>__*` and carries the def to the
+agent by whichever route its runtime needs:
+
+- **SDK runtime** (chats, the `session` default) — the def becomes an
+  **in-process SDK MCP server** (`createSdkMcpServer`). No bridge, no socket.
+- **CLI runtime** (the sweeper, triggers, `driveMode: batch` chats) — the agent
+  is a separate `claude -p` process that can't reach an in-process SDK server, so
+  herdctl stands up a **localhost HTTP MCP bridge** per injected server.
+
+Either way the tool handlers execute inside the Paddock server process.
 
 Two servers, both wired in `ws.ts` (`ws.ts:1173-1310`):
 
 - **`send_file`** (server key `paddock`, tool `mcp__paddock__send_file`) —
-  `sendFileServerDef()` in `send-file-mcp.ts`. Injected on **every** turn (keeper
+  `sendFileServerDef()` in `send-file-mcp.ts`. Injected on **every** turn (project
   and scratch). Lets the agent render a file inline in chat: either an inline
   virtual file (content in the envelope) or a real file copied into the
   `AttachmentStore` as an immutable snapshot. The web renders off the tool call
   itself, so it survives live streaming and reload (issue #112/#113).
 - **Self-management** (server key `paddock_manage`) — `selfMcpServerDef()` in
-  `self-mcp.ts`. **Keeper-only and env-gated** (`PADDOCK_SELF_MCP`), never on
+  `self-mcp.ts`. **Project-only and env-gated** (`PADDOCK_SELF_MCP`), never on
   scratch. Read tools (`list_projects`, `list_chats`, `read_chat`) are always
   present; write tools (`create_chat`, `fork_chat`, `send_message`,
   `fork_chat_batch` fan-out) are appended only when `PADDOCK_SELF_MCP_WRITE` is
-  *also* on. Write tools spawn real keeper turns via `startAgentTurn`, so spawned
-  chats appear in the sidebar, stream live, and are re-attachable (issue #214).
+  *also* on. Write tools spawn real turns via `startAgentTurn`, so spawned chats
+  appear in the sidebar, stream live, and are re-attachable (issue #214).
   The project tool (`create_project`) hangs off a third, independent flag
   (`PADDOCK_SELF_MCP_PROJECTS`) on top of write: unlike every other write tool it
   provisions **instance-level** state and clones a caller-supplied git URL, so it
@@ -475,9 +484,9 @@ of any reverse proxy. The endpoint therefore stays credential-gated even at
 `auth.mode: none`, and a bad token gets a `401` with a `WWW-Authenticate`
 challenge rather than a login redirect no MCP client could follow. Authorization
 is enforced once at the **operations layer** (`management-policy.ts`,
-`management-ops.ts`) rather than per-transport, so the in-process keeper path and
+`management-ops.ts`) rather than per-transport, so the in-process path and
 the external HTTP path share one policy implementation. Clients default to
-read-only: any write scope can start a keeper turn and keepers have `Bash`, so a
+read-only: any write scope can start a turn and Claude has `Bash`, so a
 write grant is equivalent to code execution on the host, and the config loader
 logs a named warning when one is configured. Only static bearer tokens are
 implemented — `auth.type: "token"`; there is no OAuth authenticator yet, so RFC
@@ -499,8 +508,8 @@ layer is documented in [CONFIGURATION.md](CONFIGURATION.md).) The main knobs:
 | **Server** | `PORT` (4000), `HOST` (127.0.0.1 — loopback by default; images set 0.0.0.0), `PADDOCK_DANGEROUSLY_ALLOW_OPEN` (unset; required to bind routable + `auth.mode: none`), `LOG_LEVEL` (info) |
 | **Paths** | `PADDOCK_DATA_DIR` (./data), `PADDOCK_PROJECTS_DIR`, `PADDOCK_STATE_DIR` (`.herdctl`), `PADDOCK_HERDCTL_CONFIG`, `PADDOCK_SCRATCH_DIR`, `PADDOCK_WEB_DIST`, `CLAUDE_HOME` (~/.claude) |
 | **Auth** | `PADDOCK_AUTH_MODE` (none), `PADDOCK_AUTH_USER_HEADER` (X-Forwarded-User), `..._EMAIL_HEADER`, `..._GROUPS_HEADER`, `..._JWT_HEADER` (Authorization), `..._JWKS_URL`, `..._JWT_ISSUER`, `..._JWT_AUDIENCE`, `..._USERNAME_CLAIM`, `..._GROUPS_CLAIM` (groups) |
-| **Keeper** | `PADDOCK_KEEPER_DRIVE_MODE` (session), `PADDOCK_KEEPER_NATIVE_PROMPT` (true), `PADDOCK_SELF_MCP` (false), `PADDOCK_SELF_MCP_WRITE` (false; implies read), `PADDOCK_SELF_MCP_PROJECTS` (false; implies write), `PADDOCK_HOOKS_MCP` (false), `PADDOCK_MAX_SPAWN_DEPTH` (1; range 0–8) |
-| **Models / API** | `PADDOCK_MODELS` (unset = whole catalog; default keeper model `claude-opus-5`), `PADDOCK_OPENAPI_ENABLED` (off; mounts `/open-api`) |
+| **Agent** | `PADDOCK_DRIVE_MODE` (session), `PADDOCK_NATIVE_PROMPT` (true), `PADDOCK_SELF_MCP` (false), `PADDOCK_SELF_MCP_WRITE` (false; implies read), `PADDOCK_SELF_MCP_PROJECTS` (false; implies write), `PADDOCK_HOOKS_MCP` (false), `PADDOCK_MAX_SPAWN_DEPTH` (1; range 0–8) |
+| **Models / API** | `PADDOCK_MODELS` (unset = whole catalog; default model `claude-opus-5`), `PADDOCK_OPENAPI_ENABLED` (off; mounts `/open-api`) |
 | **Sweeper** | `PADDOCK_SWEEP_MIN_INTERVAL_MS` (300000) |
 | **Whisper** | `PADDOCK_WHISPER_MODE` (off/local/remote), `PADDOCK_WHISPER_ENDPOINT`, `PADDOCK_WHISPER_MODEL` (base), `PADDOCK_WHISPER_API_KEY`, `PADDOCK_WHISPER_LANGUAGE`, `PADDOCK_WHISPER_MAX_UPLOAD_BYTES` (25 MB) |
 | **Brand** | `PADDOCK_BRAND_NAME` (Paddock), `PADDOCK_BRAND_LOGO` (🐎), `PADDOCK_BRAND_ACCENT` (#c2603c) |
@@ -511,23 +520,35 @@ layer is documented in [CONFIGURATION.md](CONFIGURATION.md).) The main knobs:
 
 ---
 
-## 9. Keeper drive mode — session vs. batch
+## 9. Drive mode — session vs. batch
 
-Each keeper turn runs in one of two modes (`PADDOCK_KEEPER_DRIVE_MODE`, default
+Each turn runs in one of two modes (`PADDOCK_DRIVE_MODE`, default
 `session` (#316), overridable per project via `project.driveMode`, resolved at
 dispatch in `ws.ts`):
 
 - **`batch`** — `HerdctlService.chat()` wraps `manager.trigger()`, a one-shot job
   that streams via `onMessage` and resolves when the turn ends. Simple and
-  stateless between turns.
+  stateless between turns. This is the only chat path that goes through
+  `RuntimeFactory.create`, and so the only one where the agent's `runtime` field
+  is read — Paddock sets `runtime: "cli"`, so a batch turn is a `claude -p`
+  subprocess.
 - **`session`** — `HerdctlService.chatSession()` drives a persistent
   `openChatSession({ manageLifecycle: true })`, registered in `liveSessions`. The
   session is kept alive by herdctl's reaper across turn boundaries, so
   **background tasks and scheduled wake-ups survive the turn** — the basis for
-  cross-turn keeper autonomy. `cancel()` maps to `session.interrupt()` in session
+  cross-turn autonomy. `cancel()` maps to `session.interrupt()` in session
   mode and `manager.cancelJob()` in batch mode.
 
-See [`concepts/keepers.md`](./concepts/keepers.md) for the
+> **The runtime follows the drive mode, not the agent config.** `openChatSession`
+> hard-codes `new SDKRuntime()` and never consults the agent's `runtime` field, so
+> a `session` turn always runs the **Claude Agent SDK** streaming runtime. Since
+> `session` is the default, **chats do not run as `claude -p`** — despite Paddock
+> setting `runtime: "cli"` on every agent. That field only reaches
+> `RuntimeFactory.create` on the one-shot `trigger()` path, i.e. the sweeper,
+> triggers/schedules, and `batch` chats. It is not dead config: flip a project to
+> `driveMode: batch` and its chats do become CLI subprocesses.
+
+See [`concepts/agents.md`](./concepts/agents.md) for the
 agent model and [`INTEGRATION.md`](./INTEGRATION.md) for the underlying herdctl
 trigger API.
 

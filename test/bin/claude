@@ -90,6 +90,11 @@
  *                     The pre-#394 live predicate (text + `end_turn` on ONE message)
  *                     never saw the reply → false banner. Must NOT surface a "turn
  *                     failed" banner beneath the answer.
+ *   • [[SUBAGENT]]  → a FOREGROUND sub-agent: a `Task` tool_use whose nested steps
+ *                     arrive INLINE on the SAME stream tagged `parent_tool_use_id`
+ *                     (isSidechain:true), as the SDK actually streams a synchronous
+ *                     Task. The sidechain steps must NEVER render as top-level rows
+ *                     of the parent transcript — only the Task card itself does.
  *   • [[BIGCONTEXT]]→ a long tool-heavy turn whose assistant context snapshot grows
  *                     to ~292k, then a terminal `result` whose usage is the
  *                     CUMULATIVE per-turn total (~828k). The live context meter must
@@ -143,8 +148,17 @@ function readStdin() {
 }
 
 // ── session path (mirrors @herdctl/core cli-session-path.encodePathForCli) ──
+// Replace EVERY non-alphanumeric character with a hyphen, exactly as Claude Code
+// (and herdctl's encodePathForCli, and paddock's encodeProjectDir) do. Replacing
+// only the separators — as this did until #548 — happens to agree for a path made
+// of letters, digits, `/` and `-`, which every path in the suite was. It silently
+// disagreed for anything containing `_` or `.`: herdctl would then watch a
+// different directory than the one we write to, and the turn dies on
+// "Timeout waiting for new session file" 60s later.
+// (Claude Code additionally truncates + hashes paths over 200 chars; temp paths
+// here are far shorter, so that branch is deliberately not mirrored.)
 function encodePathForCli(absolutePath) {
-  return absolutePath.replace(/[/\\]/g, "-");
+  return absolutePath.replace(/[^A-Za-z0-9]/g, "-");
 }
 function sessionDirFor(cwd) {
   return path.join(os.homedir(), ".claude", "projects", encodePathForCli(cwd));
@@ -702,6 +716,99 @@ function main() {
         role: "user",
         content: [
           { type: "tool_result", tool_use_id: toolUseId, content: "slow task done", is_error: false },
+        ],
+      },
+      uuid: crypto.randomUUID(),
+      timestamp: nowIso(),
+      cwd,
+      sessionId,
+    });
+    sleep(30);
+  }
+
+  // [[SUBAGENT]] (test-only): a FOREGROUND sub-agent — a `Task` tool_use whose
+  // nested steps arrive INLINE on this same stream tagged `parent_tool_use_id`
+  // (isSidechain:true), exactly as the SDK streams a synchronous Task. Those
+  // sidechain steps must NEVER render as top-level rows of the parent transcript
+  // (they belong inside the sub-agent card, via the subagents endpoint).
+  if ((prompt || "").includes("[[SUBAGENT]]")) {
+    const taskId = `toolu_${crypto.randomBytes(8).toString("hex")}`;
+    append({
+      parentUuid: null,
+      isSidechain: false,
+      type: "assistant",
+      message: {
+        id: `msg_${crypto.randomBytes(8).toString("hex")}`,
+        role: "assistant",
+        model,
+        stop_reason: "tool_use",
+        content: [
+          {
+            type: "tool_use",
+            id: taskId,
+            name: "Task",
+            input: {
+              description: "nested research",
+              subagent_type: "general-purpose",
+              prompt: "read the files",
+            },
+          },
+        ],
+        usage,
+      },
+      uuid: crypto.randomUUID(),
+      timestamp: nowIso(),
+      cwd,
+      sessionId,
+    });
+    // The sub-agent's own steps. Same sessionId as the parent (verified against
+    // real transcripts) — only `parent_tool_use_id`/isSidechain mark them apart.
+    for (const step of ["SIDECHAIN_STEP_ONE", "SIDECHAIN_STEP_TWO"]) {
+      const innerId = `toolu_${crypto.randomBytes(8).toString("hex")}`;
+      append({
+        parentUuid: null,
+        isSidechain: true,
+        parent_tool_use_id: taskId,
+        type: "assistant",
+        message: {
+          id: `msg_${crypto.randomBytes(8).toString("hex")}`,
+          role: "assistant",
+          model,
+          stop_reason: "tool_use",
+          parent_tool_use_id: taskId,
+          content: [{ type: "tool_use", id: innerId, name: "Read", input: { file_path: step } }],
+          usage,
+        },
+        uuid: crypto.randomUUID(),
+        timestamp: nowIso(),
+        cwd,
+        sessionId,
+      });
+      append({
+        parentUuid: null,
+        isSidechain: true,
+        parent_tool_use_id: taskId,
+        type: "user",
+        message: {
+          role: "user",
+          parent_tool_use_id: taskId,
+          content: [{ type: "tool_result", tool_use_id: innerId, content: step, is_error: false }],
+        },
+        uuid: crypto.randomUUID(),
+        timestamp: nowIso(),
+        cwd,
+        sessionId,
+      });
+    }
+    // The Task completes back on the MAIN lane.
+    append({
+      parentUuid: null,
+      isSidechain: false,
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: taskId, content: "sub-agent done", is_error: false },
         ],
       },
       uuid: crypto.randomUUID(),

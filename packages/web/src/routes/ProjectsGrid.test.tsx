@@ -42,14 +42,6 @@ function renderGrid(filterTag?: string) {
   );
 }
 
-function renderEmbedded() {
-  return render(
-    <MemoryRouter>
-      <ProjectsGrid embedded />
-    </MemoryRouter>,
-  );
-}
-
 describe("ProjectsGrid: area sectioning", () => {
   beforeEach(() => {
     listProjectChats.mockReset().mockResolvedValue([]);
@@ -120,7 +112,15 @@ describe("ProjectsGrid: area sectioning", () => {
 
 });
 
-describe("ProjectsGrid: embedded as the first section of root Home", () => {
+/**
+ * The grid is standalone-only again (#599). It briefly had an `embedded` mode
+ * that rendered it as the first section of root Home; Home now opens on the
+ * running/unread feeds instead, so the mode — and the tests that pinned its
+ * header/scroller/action differences — went with it. `/tags/:tag` is the only
+ * caller left, so what matters here is that the full page chrome is back
+ * unconditionally.
+ */
+describe("ProjectsGrid: the standalone page", () => {
   beforeEach(() => {
     listProjectChats.mockReset().mockResolvedValue([]);
     listScratchChats.mockReset().mockResolvedValue([]);
@@ -130,54 +130,18 @@ describe("ProjectsGrid: embedded as the first section of root Home", () => {
     mockProjects = [makeProject({ slug: "a", name: "Alpha", group: "homelab" })];
   });
 
-  it("drops its own page header — ProjectView already supplies the page chrome", () => {
-    renderEmbedded();
-    // No page title and no landing blurb: rendered inside ProjectView, the
-    // workspace header above it is the title, so this would be a second one.
-    expect(screen.queryByRole("heading", { level: 1 })).not.toBeInTheDocument();
-    expect(screen.queryByText(/Each project is a directory/)).not.toBeInTheDocument();
-    // The grid itself is unchanged.
+  it("renders the page header, the blurb and its own scroll container", () => {
+    const { container } = renderGrid();
+    expect(screen.getByRole("heading", { level: 1, name: "Projects" })).toBeInTheDocument();
+    expect(screen.getByText(/Each project is a directory/)).toBeInTheDocument();
+    expect(container.querySelector("div")!.className).toMatch(/overflow-y-auto/);
     expect(screen.getByText("Alpha")).toBeInTheDocument();
   });
 
-  it("carries a section heading in Home's own visual language", () => {
-    // Home labels its sections with a small uppercase <h3> ("Chats", "Files",
-    // "CHANGELOG.md"). Embedded, this is one of those sections, so it gets a
-    // matching heading + count rather than the standalone page's <h1>.
-    renderEmbedded();
-    const heading = screen.getByRole("heading", { level: 2, name: /^Projects/ });
-    expect(heading).toHaveTextContent("1");
-  });
-
-  it("contributes no scroll container of its own when embedded", () => {
-    // The host pane owns the scrolling. A second scroller here would trap the
-    // wheel inside the projects section and strand the rest of Home below it.
-    const { container } = renderEmbedded();
-    const root = container.querySelector("div")!;
-    expect(root.className).not.toMatch(/overflow-y-auto/);
-    expect(root.className).not.toMatch(/h-full/);
-  });
-
-  it("keeps New Project when embedded — it is the app's only one", () => {
-    // Load-bearing: the sidebar CTA is gone, so losing this would leave no way
-    // to create a project at all.
-    renderEmbedded();
-    expect(screen.getByRole("button", { name: /New Project/i })).toBeInTheDocument();
-  });
-
-  it("drops its 'New chat' action when embedded — Home's Chats section owns it", () => {
-    // Both pointed at `/chat`, and embedded they land on the same screen. Two
-    // identical buttons is worse than one, so the host's wins.
-    renderEmbedded();
-    expect(screen.queryByRole("button", { name: /New chat/i })).not.toBeInTheDocument();
+  it("keeps both page actions — New chat and New Project", () => {
     renderGrid();
     expect(screen.getByRole("button", { name: /New chat/i })).toBeInTheDocument();
-  });
-
-  it("still renders the full page header when NOT embedded", () => {
-    renderGrid();
-    expect(screen.getByRole("heading", { level: 1, name: "Projects" })).toBeInTheDocument();
-    expect(screen.getByText(/Each project is a directory/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /New Project/i })).toBeInTheDocument();
   });
 });
 

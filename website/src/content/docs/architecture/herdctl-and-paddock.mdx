@@ -1,0 +1,365 @@
+---
+title: "herdctl and Paddock"
+description: "What herdctl is, what Paddock adds on top of it, and exactly where the boundary between the two projects runs."
+---
+
+import Figure from '../../../components/diagram/Figure.astro';
+import StackDiagram from '../../../components/diagram/StackDiagram.astro';
+import FleetDiagram from '../../../components/diagram/FleetDiagram.astro';
+import TurnDiagram from '../../../components/diagram/TurnDiagram.astro';
+import StorageDiagram from '../../../components/diagram/StorageDiagram.astro';
+
+Paddock is not a Claude Code wrapper. It is a **project layer over a fleet
+orchestrator** — and that orchestrator, [herdctl](https://herdctl.dev), is a
+separate project with its own CLI, its own docs site, its own npm packages, and
+users who have never heard of Paddock.
+
+Understanding where one ends and the other begins explains a lot about Paddock:
+why a chat is a resumable session, why a project maps to exactly one agent, why
+schedules survive a restart, and why some things you might expect Paddock to own
+are not in this repository at all.
+
+The one-sentence version: **herdctl runs Claude Code agents; Paddock gives them
+projects, a browser, and a memory.**
+
+---
+
+## Part 1 — What herdctl is
+
+herdctl's own pitch is *"let Claude Code invoke itself."* Claude Code is
+enormously capable, but almost everything it does is triggered by a human sitting
+at a terminal. herdctl is the orchestration layer that removes the human from the
+trigger: agents are declared in YAML, and they fire on schedules, on webhooks, or
+on chat messages.
+
+Crucially, it is **not a sandbox and not a model wrapper**. An agent gets the same
+tools, the same MCP servers, the same `CLAUDE.md`, and the same slash commands it
+would have if you ran `claude` in that directory yourself. herdctl decides *when*
+a session runs and *what it is pointed at* — not what Claude can do once it starts.
+
+<Figure title="Figure 1 — Anatomy of a herdctl fleet">
+	<FleetDiagram />
+	<Fragment slot="caption">
+		A <strong>fleet</strong> is one process holding one registry, one scheduler and one runner.
+		Each agent is a name, a working directory, a schedule and a tool allow-list — and maps onto a
+		resumable Claude Code session. Every way in, including Paddock, drives the same
+		<code>FleetManager</code>.
+	</Fragment>
+</Figure>
+
+### A fleet is a single process
+
+`herdctl start` boots one process that holds one `FleetManager`. That object owns
+the agent registry, a single polling scheduler loop, the runner that executes
+jobs, and durable state under `.herdctl/`. Everything else — the CLI, the Discord
+and Slack connectors, the web dashboard — is a thin client on top of it.
+
+That layering is a deliberate architectural rule in herdctl: **core never imports
+an interaction-layer package.** `@herdctl/core` discovers `@herdctl/discord`,
+`@herdctl/slack` and `@herdctl/web` at runtime through dynamic imports, only if
+your config actually references them. Core builds and runs perfectly well with
+none of them installed.
+
+That rule is precisely what makes Paddock possible. Paddock is simply one more
+client of `FleetManager` — one that happens to ship its own UI.
+
+### Agents are YAML
+
+A minimal fleet is two files:
+
+```yaml
+# herdctl.yaml
+version: 1
+fleet:
+  name: my-fleet
+agents:
+  - path: agents/security-auditor.yaml
+```
+
+```yaml
+# agents/security-auditor.yaml
+name: security-auditor
+working_directory: ../../
+system_prompt: |
+  You audit this codebase for security regressions.
+schedules:
+  daily:
+    type: cron
+    cron: "0 6 * * *"
+    prompt: "Run /security-audit-daily"
+allowed_tools: [Read, Grep, Bash, WebSearch]
+runtime: sdk
+```
+
+Note the schedule's prompt invoking a **Claude Code slash command**. Because the
+agent's working directory is a real project, its `.claude/` commands, its
+`CLAUDE.md` and its MCP servers all load exactly as they would interactively.
+
+### Two runtimes, optionally in a container
+
+herdctl can execute an agent two ways, chosen per agent with `runtime:`:
+
+| Runtime | How it runs | Why you'd pick it |
+|---|---|---|
+| `sdk` *(default)* | In-process, via the Claude Agent SDK | Streaming, richer control, standard API pricing |
+| `cli` | Spawns a `claude` subprocess | Uses Claude Max plan pricing rather than API billing |
+
+Docker is **not** a third runtime — it is a decorator. Setting `docker.enabled`
+wraps whichever runtime you chose so the same execution happens inside a
+container. The privilege split is deliberate: an agent's own YAML may set safe
+knobs like memory and CPU limits, but only *fleet*-level config can set the image,
+the network mode, or host volume mounts — because an agent that can edit its own
+config file must not be able to mount your filesystem.
+
+### Everything durable lands on disk
+
+A run produces a **job record** (`.herdctl/jobs/job-*.yaml` plus a `.jsonl` output
+log) and updates a **session pointer** (`.herdctl/sessions/<agent>.json`) tracking
+which Claude session that agent is on. The transcript itself belongs to Claude
+Code, under `~/.claude/projects/`.
+
+This is why `herdctl sessions resume` works, and it is the same property Paddock
+leans on to make a chat survive a server restart: **the session is on disk, not in
+memory.**
+
+:::note[Using herdctl on its own]
+`npm install -g herdctl` → `herdctl init` → edit YAML → `herdctl start`. Then
+`herdctl status`, `herdctl logs -f`, `herdctl trigger <agent>`, and
+`herdctl sessions resume` to pick up any agent's session in your own terminal.
+Full docs at [herdctl.dev](https://herdctl.dev).
+:::
+
+---
+
+## Part 2 — What Paddock adds
+
+herdctl gives you agents, schedules and durable runs. What it does not give you is
+a *place to work*: no notion of a project, no browser UI, no live streaming
+transport, no per-user read state, no auth boundary, no git integration.
+
+That is the whole of Paddock.
+
+<Figure title="Figure 2 — The stack">
+	<StackDiagram />
+	<div class="dg-legend" slot="caption">
+		<span><i class="k-paddock"></i> Paddock owns it</span>
+		<span><i class="k-herdctl"></i> herdctl owns it</span>
+		<span><i class="k-claude"></i> Claude Code owns it</span>
+	</div>
+</Figure>
+
+Reading the stack top to bottom:
+
+- **The SPA** is a React app — chats, files, changes, settings. It talks to the
+  server over REST for state and a single WebSocket for anything live.
+- **The Paddock server** is Fastify. It owns the workspace-scoped HTTP routes (one
+  plugin, mounted twice — at `/api/root` and `/api/projects/:slug` — so the root
+  workspace and a nested project provably run the same handlers), the streaming
+  transport, the project and git layer, the auth boundary, and the in-process MCP
+  tools it injects into agent turns.
+- **`@herdctl/core`** is where Paddock stops. Agent registry, scheduler, runner,
+  sessions.
+- **Claude Code** actually does the work.
+
+### The seam is exactly one file
+
+Paddock's entire integration with herdctl lives in a single class, `HerdctlService`
+(`packages/server/src/herdctl.ts`). No other module in the server holds a
+`FleetManager` reference — every other file calls `deps.herdctl.<method>()`.
+
+That is a deliberate containment strategy, and it is unusually strictly observed:
+if herdctl's API shifts, exactly one file changes.
+
+Two facts about how Paddock registers agents are worth internalising, because they
+surprise people who know herdctl standalone:
+
+**Paddock's `herdctl.yaml` contains zero agents.** It is generated, marked
+do-not-edit, and holds only the fleet block and defaults. Every agent is
+registered *in memory* at boot and on demand:
+
+```ts
+await this.fleet.addAgent(this.keeperAgentConfig(project), { replace: true });
+```
+
+**Each project gets a small family of agents**, named deterministically:
+
+| Agent | Purpose |
+|---|---|
+| `keeper-<slug>` | The project's main agent. Its working directory *is* the project directory. |
+| `sweeper-<slug>` | Tool-less curator that updates `OVERVIEW.md` / `CHANGELOG.md` after a turn. |
+| `trigger-<slug>-<name>` | One per trigger; the trigger's granted tools *are* the agent's tool config. |
+
+:::note[Why `keeper-`?]
+"Keeper" was Paddock's old word for a project's agent, since retired from the
+product vocabulary. The **agent-name prefix deliberately survived the rename**:
+it is persisted in hundreds of job records, in `state.yaml`, in session directory
+names, and as a key in six sidecar stores. Renaming it would have meant migrating
+all of that for no user-visible gain. Treat `keeper-<slug>` as an internal
+identifier, not as a concept you need to learn.
+:::
+
+:::caution[The sweeper does not live in the project directory]
+It would be natural to give the sweeper the same working directory as the
+project's own agent. Paddock deliberately does not. Two agents sharing a working
+directory share one
+Claude transcript directory, and herdctl identifies a freshly created session by
+set-difference against a pre-spawn directory snapshot — so a sweeper starting up
+could "steal" the session a user's chat just created. The sweeper gets its own
+directory to keep those namespaces apart.
+:::
+
+### Where the empty string bites
+
+A workspace is identified by its **path relative to the projects root**, which
+means the root workspace's key is the empty string. That is elegant inside
+Paddock — `path.join(root, "")` is just `root`, so no code path needs a special
+case.
+
+But herdctl agent names cannot be empty. So there is exactly one translation, at
+exactly one boundary:
+
+```ts
+export const ROOT_KEY = "";        // the root workspace
+export const ROOT_AGENT_KEY = "_root";
+
+export function agentKeyFor(key) {
+  return isRootKey(key) ? ROOT_AGENT_KEY : key;
+}
+```
+
+The root workspace's agent is therefore `keeper-_root`. Project slugs cannot
+contain underscores, so a collision is impossible by construction.
+
+---
+
+## Part 3 — One turn, end to end
+
+<Figure title="Figure 3 — One turn, end to end">
+	<TurnDiagram />
+	<Fragment slot="caption">
+		The middle block repeats for every message Claude emits. Paddock's contribution is at steps 2
+		and 7 — composing the prompt on the way down, and filtering, translating and attributing on the
+		way back up.
+	</Fragment>
+</Figure>
+
+A few steps deserve expansion.
+
+**Step 2 — Paddock composes the prompt.** What Claude receives is not exactly what
+you typed. Attachments are wrapped in a hint block pointing the `Read` tool at
+their stored paths, and a brand-new chat can be prefixed with the project's
+`OVERVIEW.md` and `CHANGELOG.md`. Paddock also builds the MCP servers it will
+inject for this turn — `send_file` always, and the self-management tools when
+enabled.
+
+**Step 3 — two drive modes.** Paddock can drive a turn two ways:
+
+| Mode | herdctl call | Behaviour |
+|---|---|---|
+| `session` *(default)* | `openChatSession()` | Persistent session; background tasks and scheduled wake-ups survive the turn boundary. Always uses the SDK runtime. Writes **no job record**. |
+| `batch` | `trigger()` | One-shot. Honours the agent's configured runtime. Writes a job record. |
+
+Session mode writing no job record has a visible consequence: Paddock's chat list
+and attribution are built from `.herdctl/jobs/`, so Paddock **writes synthetic job
+records itself** to keep a running chat visible while it is still streaming.
+
+**Step 7 — sub-agent steps get filtered.** When a turn spawns foreground
+sub-agents, their internal steps arrive on the same stream, tagged as sidechain
+messages. If they are not dropped they render twice — once in the sub-agent's card
+and once inline in the parent transcript. Paddock has five distinct live-turn code
+paths (a human send, a slash command, a scheduled wake, a background sink, and a
+spawned agent turn), and **each one needs the guard independently**; for a long
+time only one had it.
+
+**Step 8 — frames are sequence-stamped.** Every frame goes through a session hub
+that stamps a monotonic sequence number, buffers recent frames, and fans out to
+every subscribed socket. This is what lets a turn survive its originating socket
+dying: reconnect, and the hub replays the gap.
+
+---
+
+## Part 4 — Who owns what on disk
+
+<Figure title="Figure 4 — Who owns what on disk">
+	<StorageDiagram />
+	<Fragment slot="caption">
+		Three parties, three storage areas — but only <strong>one</strong> transcript store, reached
+		from two directions through a symlink.
+	</Fragment>
+</Figure>
+
+The load-bearing trick is that bottom arrow.
+
+Claude Code stores transcripts at `~/.claude/projects/<encoded-working-dir>/`,
+where the directory name is its own lossy encoding of the working directory (every
+non-alphanumeric character becomes a dash — so `/a/b/c`, `/a/b-c` and `/a-b/c` all
+collapse to the same name). Paddock makes that directory a **symlink to the
+project's `.chats/` folder**.
+
+The result is that Claude Code writes transcripts directly into the project
+directory, while herdctl's session discovery — which knows nothing about Paddock —
+resolves, resumes, renames and deletes those same sessions transparently. Nobody
+copies anything.
+
+---
+
+## Part 5 — Where the boundary actually runs
+
+| Concern | Owner |
+|---|---|
+| Which agents exist, and their config | **Paddock** decides; **herdctl** validates and holds the registry |
+| Cron and interval firing | **herdctl** — Paddock writes schedules in herdctl's own schema and lets its scheduler read them |
+| Choosing SDK vs CLI, spawning processes, Docker | **herdctl** |
+| Session discovery, resume, transcript parsing | **herdctl** |
+| Job records, cancel, fork | **herdctl** |
+| Idle teardown, keeping a session alive for background work | **herdctl**'s session reaper |
+| Turning SDK messages into text/tool events | **`@herdctl/chat`** |
+| Projects, workspaces, the root workspace | **Paddock** |
+| HTTP, WebSocket, the frame protocol, replay | **Paddock** |
+| Auth, and the external Management API | **Paddock** |
+| Unread, stars, archive, provenance, nested chats | **Paddock** |
+| Prompt composition and MCP tool injection | **Paddock** |
+| Transcript surgery — fork, revert, promote | **Paddock**, by rewriting the JSONL directly |
+
+### herdctl calls back
+
+The dependency is not purely one-directional. herdctl exposes three
+inversion-of-control seams that let a host application take over behaviour that
+would otherwise run headless:
+
+- **`setScheduleTriggerHandler`** — Paddock takes over execution of scheduled
+  turns so they land in a real chat you can watch, instead of running invisibly.
+- **`setSessionWakeHandler`** — when a `ScheduleWakeup` fires and herdctl's reaper
+  resumes the session, the live session is handed to Paddock to stream, even
+  though no browser is connected.
+- **`setResolveInjectedMcpServers`** — lets Paddock re-supply its in-process MCP
+  tools on a turn it did not initiate.
+
+### The two projects co-evolve
+
+Several `@herdctl/core` APIs exist because Paddock needed them, and the core
+changelog says so explicitly: `addAgent()`/`removeAgent()` were added for hosts
+that manage agents *in memory rather than on disk*; `openChatSession()`'s
+`manageLifecycle` option is described as Paddock's session drive-mode; and the
+`spawned` trigger type was added so a host could record provenance for
+agent-spawned jobs.
+
+The relationship runs the other way too. Paddock is the largest embedding consumer
+of `@herdctl/core`, so it tends to find the sharp edges first — and several of the
+gaps documented in Paddock's older integration notes have since been closed
+upstream.
+
+---
+
+## Further reading
+
+- **[Architecture overview](/architecture/overview)** — how Paddock's own code fits
+  together, cited to `packages/server/src`.
+- **[herdctl integration contract](/architecture/herdctl-integration)** — the
+  call-by-call API surface. Note that page carries a staleness warning: it was
+  written against an older core and two of its headline findings have since been
+  fixed upstream.
+- **[Concepts](/concepts/)** — what a project, chat, schedule or sweeper *is*,
+  without the plumbing.
+- **[herdctl.dev](https://herdctl.dev)** — herdctl's own documentation, including
+  running it standalone with the CLI, Discord and Slack.
