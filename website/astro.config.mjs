@@ -36,42 +36,11 @@ export default defineConfig({
 			},
 			favicon: '/favicon.ico',
 			head: [
-				// Mermaid client-side rendering, themed from Starlight rather than pinned.
-				//
-				// This used to hard-code `theme: 'dark'`, which meant every diagram rendered
-				// on dark grey while the page around it was white (Starlight defaults to
-				// Auto, so a light OS gives a light page), and flipping the theme toggle did
-				// nothing because initialize() only ran once.
-				//
-				// Starlight always writes the RESOLVED theme to <html data-theme>, including
-				// when Auto follows a system change, so that attribute is the single source
-				// of truth. The MutationObserver re-renders on every change to it.
-				//
-				// The stashing is load-bearing: mermaid REPLACES each <pre>'s text with the
-				// rendered SVG and marks it data-processed, so without keeping the original
-				// source a second render would have no diagram left to draw.
-				{
-					tag: 'script',
-					attrs: { type: 'module' },
-					content: [
-						`import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';`,
-						`const nodes = [...document.querySelectorAll('pre.mermaid')];`,
-						`if (nodes.length) {`,
-						`  nodes.forEach((n) => { n.dataset.src = n.textContent; });`,
-						`  let drawn;`,
-						`  const draw = async () => {`,
-						`    const theme = document.documentElement.dataset.theme === 'dark' ? 'dark' : 'default';`,
-						`    if (theme === drawn) return;`,
-						`    drawn = theme;`,
-						`    nodes.forEach((n) => { n.textContent = n.dataset.src; n.removeAttribute('data-processed'); });`,
-						`    mermaid.initialize({ startOnLoad: false, theme });`,
-						`    await mermaid.run({ nodes });`,
-						`  };`,
-						`  await draw();`,
-						`  new MutationObserver(draw).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });`,
-						`}`,
-					].join('\n'),
-				},
+				// Mermaid: themed from Starlight, and kept legible rather than scaled
+				// down to fit. Lives in public/mermaid-init.js — it has real logic now
+				// (theme re-render, sequence spacing, fit-vs-scroll), and that does not
+				// belong in a template string inside this config.
+				{ tag: 'script', attrs: { type: 'module', src: '/mermaid-init.js' } },
 				// Social-share image. Starlight already emits PER-PAGE og:title,
 				// og:description, og:url (canonical) and twitter:card=summary_large_image
 				// (see @astrojs/starlight/utils/head.ts), and a user `head` entry

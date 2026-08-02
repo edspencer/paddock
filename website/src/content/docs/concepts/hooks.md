@@ -48,7 +48,9 @@ is declared, and whether that hook succeeds, fails, or is slow. A hook can
 observe and react to an action; it can never block or fail it.
 
 ```mermaid
-flowchart LR
+%% TB, not LR: this chain is 1293px wide laid out horizontally and gets scaled
+%% ~2x down into the prose column. Stacked it is 276px, so it renders 1:1.
+flowchart TB
   A["You archive a chat"] --> B["Archive commits<br/>(response returns)"]
   B --> C{{"onArchive event"}}
   C -. "fire-and-forget" .-> D["Hook agent turn<br/>trigger-slug-name"]

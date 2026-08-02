@@ -135,6 +135,10 @@ flowchart TB
     Ck["{slug}/{repo-name}/  ← agent cwd\n the external repo checkout (own .git, own CLAUDE.md)"]
     D --> Ck
   end
+  %% The two project shapes are unconnected, so mermaid ranks them side by side
+  %% (1071px, scaled 1.6x down). `~~~` is an invisible link that stacks them
+  %% vertically without drawing an edge — 686px, i.e. 1:1 in the column.
+  Notebook ~~~ Repo
 ```
 
 ## Why the split
