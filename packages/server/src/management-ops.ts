@@ -34,6 +34,7 @@
  */
 import type { ChatHandlerContext } from "./ws-context.js";
 import { keeperAgentName } from "./herdctl.js";
+import { recoverPreview } from "./chat-dto.js";
 import { isKnownModel, isKnownDriveMode, type DriveMode } from "./models.js";
 import type {
   SelfMcpContext,
@@ -196,7 +197,17 @@ export function buildManagementOps(
           chats.push({
             project: p.slug,
             sessionId: s.sessionId,
-            name: s.customName ?? s.autoName ?? s.sessionId.slice(0, 8),
+            // #614: same fallback chain the web UI uses (`chat-dto.ts`), preview
+            // step included. Without it this dropped straight to an 8-char
+            // sessionId slice for any chat Claude hasn't titled — 41% of them on
+            // this instance — so the MCP list and the UI disagreed about what a
+            // chat is called, and callers got a stub that merely LOOKS like an id.
+            name:
+              s.customName ??
+              s.autoName ??
+              (await recoverPreview(p.dir, s)) ??
+              s.preview ??
+              s.sessionId.slice(0, 8),
             updatedAt: s.mtime,
             running: hub.isRunning(s.sessionId),
             // #489: the archived flag the web UI has always had (`chat-dto.ts`) but
