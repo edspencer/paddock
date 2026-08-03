@@ -1,5 +1,92 @@
 # @paddock/server
 
+## 0.56.0
+
+### Minor Changes
+
+- [#643](https://github.com/edspencer/paddock/pull/643) [`b5fa1be`](https://github.com/edspencer/paddock/commit/b5fa1be5e8e02eafdeb1833d44f5aa40aac65cc3) Thanks [@edspencer](https://github.com/edspencer)! - Publish Paddock to npm as `@edspencer/paddock` — `npx @edspencer/paddock` (#637)
+
+  Paddock is now installable without Docker and without a clone:
+
+  ```sh
+  npx @edspencer/paddock
+  ```
+
+  The published package is **synthesized**, not a workspace package.
+  `scripts/make-npm-package.mjs` stages a single public package from the built
+  output; `@paddock/server` and `@paddock/web` stay `private` and unrenamed, so no
+  future `npm publish` in this repo can fire an internal-named package at the
+  registry by accident.
+
+  Two deliberate divergences from the repo tree: **sourcemaps are stripped** (files
+  and `sourceMappingURL` comments — 15 MB of the 19 MB web dist, for something an
+  end user of a packaged app never opens; 2.0 MB packed vs ~22 MB with maps), and
+  **dependencies are pinned** to the versions in `package-lock.json`, because a
+  lockfile does not travel with a published package and a caret would hand `npx`
+  users a `@herdctl/core` minor that CI never saw.
+
+  Releases publish via **OIDC trusted publishing** with provenance attestation —
+  no `NPM_TOKEN` secret exists, and the job fails the release if the attestation
+  does not appear.
+
+  Also corrects a long-standing docs claim: `CONTRIBUTING.md`, `DEV.md` and
+  `CLAUDE.md` all listed the `claude` CLI as a flat prerequisite. Chats do not need
+  it — they run herdctl's SDK runtime, which resolves the Claude Agent SDK's own
+  bundled binary and never consults `PATH`. Only the sweeper, triggers and
+  `driveMode: batch` shell out to `claude`.
+
+- [#558](https://github.com/edspencer/paddock/pull/558) [`f061cd6`](https://github.com/edspencer/paddock/commit/f061cd6dfdeb5ba83ede8fcf8638fea1e9d77b30) Thanks [@edspencer](https://github.com/edspencer)! - Remove `scratch` entirely, including the legacy `scratchDir` config field (#549)
+
+  Scratch was retired as a feature in #516 Phase 6 and the root became a
+  first-class workspace in #533. The code was already gone; what survived was one
+  deliberately-kept config field and 232 stale references across 67 files.
+
+  **Removed config:** `PADDOCK_SCRATCH_DIR` / `scratchDir:` no longer exists. It
+  was kept so an existing env or config file wouldn't fail validation — back-compat
+  for an install base that doesn't exist.
+
+  **Stale settings are IGNORED, not fatal.** An instance that still sets
+  `PADDOCK_SCRATCH_DIR`, or whose `paddock.config.yaml` still carries `scratchDir:`,
+  boots normally and the value has no effect. This isn't a shim: config resolution
+  is pull-based on both layers — env vars are read by name, and the YAML file is
+  parsed into a loose record that is only ever read, never enumerated or validated
+  against a schema — so a deleted key is simply never looked at. The trade-off is
+  that a typo'd key is equally silent; that is deliberate, because an operator
+  should not be locked out of a running instance by a stale line in an old env file.
+
+  **Also removed:** the dead `isProjectChat` prop on the web `ChatPane` (its
+  `false` branch only ever described a scratch chat and no caller passed it), and a
+  dead flow in the manual `scripts/e2e.mjs` smoke script that waited on a "One-off
+  chat" heading the app no longer renders.
+
+  **Your data is untouched.** On an existing instance, old one-off transcripts
+  still sit at `<dataDir>/scratch/.chats`. They have been unreferenced and unlisted
+  since #516 and nothing in this change deletes them — if you don't want them, that
+  directory is safe to remove by hand.
+
+### Patch Changes
+
+- [#639](https://github.com/edspencer/paddock/pull/639) [`66ccfe8`](https://github.com/edspencer/paddock/commit/66ccfe8861c293c920f3f5c9ace5270e30dfe399) Thanks [@edspencer](https://github.com/edspencer)! - Decode the web-dist module path with `fileURLToPath` (groundwork for `npx`)
+
+  `config.ts` derived the default location of the built SPA from
+  `new URL(import.meta.url).pathname`. That pathname is percent-**encoded**, so
+  any install path containing a space or a non-ASCII character — `/opt/my
+paddock/`, `~/Développement/paddock/` — resolved `packages/web/dist` to a
+  directory with a literal `%20` in it, which does not exist.
+
+  The failure was **silent**. `app.ts` treats a missing dist as "API-only mode"
+  and logs a warning, so the symptom was a blank page at `/` with nothing in the
+  UI explaining why, while `/api/health` kept returning `{"ok":true}`.
+
+  This never bit the Docker image, whose path is a fixed `/app`, and it does not
+  affect any instance that sets `PADDOCK_WEB_DIST` explicitly. It becomes
+  load-bearing the moment Paddock is installed under an arbitrary user directory,
+  which is exactly what `npx` / `npm i -g` will do. `fileURLToPath` also decodes
+  the `/C:/…` drive-letter form on Windows.
+
+  The resolution now lives in an exported `resolveDefaultWebDist(moduleUrl)` so it
+  can be tested against install paths this repo's own checkout does not have.
+
 ## 0.55.0
 
 ### Minor Changes
