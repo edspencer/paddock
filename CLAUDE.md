@@ -15,7 +15,9 @@ below).
 ## Monorepo layout
 
 Two `private` packages, versioned and released **together** (one number = "the
-Paddock version"; not published to npm):
+Paddock version"). Neither is published under its own name — releases synthesize
+a single public **`@edspencer/paddock`** package from their built output
+(`scripts/make-npm-package.mjs`), so the workspace manifests stay `private`:
 
 - **`packages/server`** (`@paddock/server`) — **Fastify 4 + `@fastify/websocket`**
   backend. Wraps herdctl's `FleetManager`, the Project layer, sidecar stores, the
@@ -60,8 +62,9 @@ Config is **entirely env-based** (`config.ts`, no config files) — see
 ## Dev conventions
 
 Full guide: [`CONTRIBUTING.md`](CONTRIBUTING.md); run modes: [`DEV.md`](DEV.md).
-Node 22+, `claude` CLI on `PATH`, a `CLAUDE_CODE_OAUTH_TOKEN` in env (never print
-or commit it).
+Node 22+, a `CLAUDE_CODE_OAUTH_TOKEN` in env (never print or commit it), and a
+`claude` CLI on `PATH` **for the sweeper and triggers only** — chats resolve the
+SDK's own bundled binary and never consult `PATH`.
 
 ```bash
 npm install                 # all workspaces

@@ -6,7 +6,10 @@ built SPA) and a **hot-reload dev** mode (Vite dev server + watched backend).
 
 ## Prerequisites
 
-- **Node 22+** and the **`claude` CLI** on your `PATH` (`claude --version`).
+- **Node 22+**, and the **`claude` CLI** on your `PATH` (`claude --version`) for
+  the sweeper and triggers. Chats do **not** need it — they run herdctl's SDK
+  runtime, which resolves the Claude Agent SDK's own bundled binary and never
+  consults `PATH` (only `driveMode: batch` chats use the CLI).
 - A **Claude Max OAuth token** in `~/herds/.env` as `CLAUDE_CODE_OAUTH_TOKEN`.
   The server passes it through the process environment to the agents;
   it is never written to any file. (Deployed: the LXC has the same token in env.)

@@ -365,3 +365,68 @@ jobs:
           git fetch origin main
           git rebase origin/main
           git push origin HEAD:main
+
+  # ---- npm package ---------------------------------------------------------
+  # Publishes @edspencer/paddock (#637) — the `npx @edspencer/paddock` entry
+  # point. Independent of the Docker/tarball job: it needs neither the per-arch
+  # digests nor a GitHub Release, so it runs alongside them off `release`.
+  #
+  # Auth is OIDC trusted publishing — no NPM_TOKEN secret exists or is wanted.
+  # That requires `id-token: write` below, npm >= 11.5.1 (Node 22 ships npm 10),
+  # and a trusted publisher configured for this package + workflow at
+  # npmjs.com/package/@edspencer/paddock/access.
+  #
+  # Provenance is requested explicitly via publishConfig.provenance in the
+  # synthesized manifest rather than relying on trusted publishing's implicit
+  # behaviour — see scripts/make-npm-package.mjs.
+  #
+  # NOTE: the very first publish of a new package CANNOT use OIDC — npm has no
+  # settings page for a package that does not exist yet (npm/cli#8544). v1 was
+  # published by hand; every release after it comes through here.
+  publish-npm:
+    name: Publish npm package
+    needs: [release]
+    if: needs.release.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC — trusted publishing + provenance
+    env:
+      VERSION: ${{ needs.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          # Without this, npm never writes a registry line into .npmrc and the
+          # publish fails to authenticate even with a valid OIDC token.
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Upgrade npm for trusted publishing
+        run: npm install -g npm@latest
+
+      - run: npm ci
+
+      - name: Build (server + web)
+        run: npm run build
+
+      - name: Stage the npm package
+        run: node scripts/make-npm-package.mjs
+
+      - name: Publish
+        run: npm publish
+        working-directory: dist-npm
+
+      - name: Verify provenance landed
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 10); do
+            if npm view "@edspencer/paddock@${VERSION}" dist.attestations.provenance --json | grep -q slsa; then
+              echo "provenance attested for ${VERSION}"; exit 0
+            fi
+            echo "attestation not visible yet (attempt $i) — waiting"; sleep 15
+          done
+          echo "::error::published ${VERSION} but no provenance attestation appeared" >&2
+          exit 1

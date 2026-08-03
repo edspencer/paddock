@@ -16,7 +16,11 @@ re-reading it here:
 
 ## Prerequisites
 
-- **Node 22+** and the **`claude` CLI** on your `PATH` (`claude --version`).
+- **Node 22+**, and the **`claude` CLI** on your `PATH` (`claude --version`) for
+  the sweeper and triggers. Chats do **not** need it — they run herdctl's SDK
+  runtime, which resolves the Claude Agent SDK's own bundled binary and never
+  consults `PATH`. Without a `claude` on `PATH` chats work, while each post-turn
+  sweep and every trigger fails (logged, non-fatal).
 - A **Claude Max OAuth token** (`CLAUDE_CODE_OAUTH_TOKEN`) or an
   `ANTHROPIC_API_KEY` in your environment. Never print or commit it — load it into
   the environment, don't hardcode it (see [DEV.md](DEV.md)).

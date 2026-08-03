@@ -32,8 +32,35 @@ import { fileURLToPath } from "node:url";
 
 const MIN_NODE_MAJOR = 22;
 
-/** Resolved once: `<pkg>/dist/cli/paddock.js` -> `<pkg>`. */
-const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+/** This module's own directory: `<…>/packages/server/dist/cli`. */
+const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Walk up from this module looking for `rel`, returning the containing dir.
+ *
+ * Two layouts have to work and they nest differently:
+ *
+ *   repo       `<repo>/packages/server/dist/cli/paddock.js`
+ *              deps at `<repo>/packages/server/node_modules` AND `<repo>/node_modules`
+ *   published  `<pkg>/packages/server/dist/cli/paddock.js`
+ *              deps at `<pkg>/node_modules` only — two levels FURTHER up
+ *
+ * A fixed `../..` hop is right for the repo and wrong for the published tarball,
+ * where it lands on `packages/server` and finds no `node_modules` at all. Walking
+ * up is correct for both without branching on which one we are in.
+ */
+function findUp(rel: string): string | undefined {
+  let dir = moduleDir;
+  for (;;) {
+    if (fs.existsSync(path.join(dir, rel))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return undefined;
+    dir = parent;
+  }
+}
+
+/** Nearest ancestor holding a `package.json` — `packages/server` in both layouts. */
+const packageRoot = findUp("package.json") ?? path.resolve(moduleDir, "../..");
 
 interface CliOptions {
   port?: string;
@@ -143,8 +170,9 @@ function checkNodeVersion(): void {
  * Without this, chats work and every sweep/trigger fails (logged, non-fatal).
  */
 function addBundledBinsToPath(): void {
-  const binDir = path.join(packageRoot, "node_modules", ".bin");
-  if (!fs.existsSync(binDir)) return;
+  const owner = findUp(path.join("node_modules", ".bin"));
+  if (owner === undefined) return;
+  const binDir = path.join(owner, "node_modules", ".bin");
   const sep = process.platform === "win32" ? ";" : ":";
   const current = process.env.PATH ?? "";
   if (current.split(sep).includes(binDir)) return;
