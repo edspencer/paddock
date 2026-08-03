@@ -45,6 +45,21 @@ consolidating to a single source is a tracked follow-up.
 The sidebar is maintained **by hand** in `astro.config.mjs` under `sidebar`.
 Starlight does NOT auto-discover pages — add new pages there explicitly.
 
+## Analytics
+
+PostHog, configured inline in `astro.config.mjs`'s `head` (the standard install
+snippet). It is proxied through our own origin: `api_host` is
+`https://paddock.edspencer.net/ingest`, and `functions/ingest/[[path]].ts` — a
+Cloudflare Pages Function — forwards to PostHog. Change one and you must change
+the other.
+
+The `phc_` project key in that snippet is public by design and belongs in the
+source. Do not "fix" it into an env var.
+
+Note `functions/` is the only part of this directory that Cloudflare runs rather
+than serves; it is invisible to `astro build`, so a broken proxy will not fail
+the build or show up in `npm run preview`. Verify it against a deploy preview.
+
 ## Deploy (Cloudflare Pages)
 
 Cloudflare Pages builds this directory directly (no GitHub Actions needed):
