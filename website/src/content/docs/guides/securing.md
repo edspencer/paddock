@@ -27,6 +27,19 @@ Paddock helps with the first by **binding to loopback (`127.0.0.1`) by default**
 refusing to start on a public interface with auth disabled. Everything below is how you
 add the second — all of it **at the edge**, with no password logic baked into Paddock.
 
+:::note[This page is half the threat model]
+Everything here is about **who can start a turn**. It says nothing about **what a turn
+can do once it starts** — and that second axis is where the real blast radius lives. A
+correctly-authenticated user and a scheduled trigger reach the same agent with the same
+tools and the same credentials.
+
+Read [**What your agents can do**](/guides/agent-capabilities/) for the capability side:
+the default toolset (you cannot remove `Bash`), what you can and can't scope, and the
+controls Paddock does not have. Then
+[**Prompt injection and untrusted content**](/guides/untrusted-content/) for the case
+where nobody breaks in and the agent follows instructions anyway.
+:::
+
 ## How Paddock reads identity
 
 Paddock sits behind an authenticating reverse proxy and reads the identity that proxy
@@ -174,6 +187,18 @@ With SSO you get per-user accounts, MFA, and — if you run several apps — **o
 all of them**. Because Paddock captures the authenticated user, this is also what makes
 its per-user features (like read-state) meaningful.
 
+:::caution[Accounts are for attribution, not isolation]
+SSO gives Paddock a *name* for each request. It does not partition anything. Every
+authenticated user can drive every project, read every chat including yours, rewrite the
+instance config, and start turns that run as the same OS user with the same credentials —
+there is [no per-resource authorization](/reference/api/) and no role model. Per-user
+read-state and provenance make it look more separated than it is; those are conveniences,
+not authorization.
+
+**Only give an account to someone you would give a shell on the host.** If you need two
+trust levels, run two instances.
+:::
+
 ## The `/mcp` Management API
 
 Everything above puts auth **at the edge**. Paddock's external
@@ -225,16 +250,21 @@ minting the token to the first `tools/list`.
 
 Three more rules that stay yours even with the exemption in place:
 
-- **Keep TLS in front — and don't lean on Paddock's plaintext guard.** Paddock
-  refuses a plaintext `/mcp` request from a non-loopback client (`403
-  insecure_transport`), but it currently trusts `X-Forwarded-Proto` from *any*
-  peer ([#474](https://github.com/edspencer/paddock/issues/474)), so a client can
-  satisfy that check itself. It is defence in depth, **not** a guarantee the
-  token never crosses the wire in cleartext. Terminate TLS at the proxy, forward
-  `X-Forwarded-Proto`, and verify the TLS yourself. (Related gotcha: a
-  container's *published* port is not loopback from inside — Docker NATs the peer
-  address — so an in-container plaintext test can `403` even though nothing left
-  the host.)
+- **Keep TLS in front — and name your terminator.** Paddock refuses a plaintext
+  `/mcp` request from a non-loopback client (`403 insecure_transport`). Since
+  **v0.48.1** ([#505](https://github.com/edspencer/paddock/pull/505), closing
+  [#474](https://github.com/edspencer/paddock/issues/474)) it believes an
+  `X-Forwarded-Proto: https` header **only from a peer you have trusted** —
+  `managementApi.trustedProxies`, or `PADDOCK_MANAGEMENT_TRUSTED_PROXIES`. Left
+  unset it defaults to loopback plus private address space, which is broad: on a
+  shared Docker network or a flat LAN, anything on that network can still assert
+  the header. **Set it to your actual proxy's address or CIDR** so the check
+  means something. (`all` disables the guard entirely, with a loud warning;
+  `none` is the strictest.) Even then it is defence in depth, **not** a guarantee
+  the token never crosses the wire in cleartext — terminate TLS at the proxy and
+  verify it yourself. (Related gotcha: a container's *published* port is not
+  loopback from inside — Docker NATs the peer address — so an in-container
+  plaintext test can `403` even though nothing left the host.)
 - **Strip the identity header on the exempt route.** No auth ran there, so there
   is no authenticated identity to assert — *delete* `X-Forwarded-User` (or
   whatever `PADDOCK_AUTH_USER_HEADER` names) rather than pass a client-supplied
@@ -292,6 +322,11 @@ Security isn't only the front door — it's also what the agents can reach:
 - [ ] Management-API client tokens live in the **environment** (`auth.ref:
       env:…`), never inline in `paddock.config.yaml`.
 - [ ] `/mcp` is reached over **real TLS** you verified — not merely a request
-      Paddock's `X-Forwarded-Proto` check accepted ([#474](https://github.com/edspencer/paddock/issues/474)).
+      Paddock's `X-Forwarded-Proto` check accepted.
+- [ ] `managementApi.trustedProxies` **names your actual TLS terminator**, rather
+      than inheriting the default private-address-space list.
 - [ ] nginx exemptions reset the forwarded-identity variable to `""`
       (`auth_basic off` alone still lets `$remote_user` be forged).
+- [ ] You have read [What your agents can do](/guides/agent-capabilities/) and
+      [Untrusted content](/guides/untrusted-content/) — authentication bounds who
+      starts a turn, not what it can reach.
