@@ -37,6 +37,7 @@
  *                      Applied to the environment BEFORE the config is read.
  *   --json             Emit the raw result as JSON instead of prose.
  */
+import { pathToFileURL } from "node:url";
 import { loadPaddockConfig } from "../config.js";
 import { ProjectStore, ROOT_KEY } from "../projects.js";
 import { HerdctlService } from "../herdctl.js";
@@ -205,7 +206,11 @@ async function main(): Promise<number> {
 }
 
 // Only run when invoked directly, so the arg parser stays unit-testable.
-if (process.argv[1] !== undefined && import.meta.url === `file://${process.argv[1]}`) {
+// `pathToFileURL`, not `"file://" + argv[1]`: the naive concatenation leaves any
+// space or non-ASCII character in the path un-encoded, so the comparison fails
+// and the script silently does nothing when run from such a directory — the same
+// percent-encoding trap as #636.
+if (process.argv[1] !== undefined && pathToFileURL(process.argv[1]).href === import.meta.url) {
   main()
     .then((code) => process.exit(code))
     .catch((err: unknown) => {
