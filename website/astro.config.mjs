@@ -87,9 +87,27 @@ export default defineConfig({
 						{ label: 'The Dev Box flavor', slug: 'guides/dev-box-flavor' },
 						{ label: 'Running Paddock on Proxmox (LXC)', slug: 'guides/proxmox-lxc' },
 						{ label: 'Running Paddock on Kubernetes', slug: 'guides/kubernetes' },
-						{ label: 'Securing Paddock', slug: 'guides/securing' },
 						{ label: 'Connect Claude Code to Paddock', slug: 'guides/connect-claude-code' },
 						{ label: 'A home-lab setup', slug: 'guides/home-lab' },
+					],
+				},
+				{
+					// Security is two axes, not one: who can start a turn (Securing,
+					// Authentication, Binding) and what a turn can then do (Agent
+					// capabilities, Untrusted content). Both live here, uncollapsed.
+					// This used to be a single entry buried sixth in Guides, below
+					// "Deploying" — which read as "stand it up, then maybe secure it".
+					// Authentication and Binding keep their `configuration/` slugs (so
+					// no redirects are needed); they are listed here rather than under
+					// Configuration so the group is complete in one place.
+					label: 'Security',
+					collapsed: false,
+					items: [
+						{ label: 'Securing Paddock', slug: 'guides/securing' },
+						{ label: 'What your agents can do', slug: 'guides/agent-capabilities' },
+						{ label: 'Prompt injection & untrusted content', slug: 'guides/untrusted-content' },
+						{ label: 'Authentication', slug: 'configuration/authentication' },
+						{ label: 'Binding & network exposure', slug: 'configuration/binding-and-exposure' },
 					],
 				},
 				{
@@ -114,8 +132,7 @@ export default defineConfig({
 						{ label: 'Environment variables', slug: 'configuration/environment' },
 						{ label: 'Config file (YAML)', slug: 'configuration/config-file' },
 						{ label: 'The Config screen', slug: 'configuration/instance-settings' },
-						{ label: 'Authentication', slug: 'configuration/authentication' },
-						{ label: 'Binding & network exposure', slug: 'configuration/binding-and-exposure' },
+						// Authentication + Binding are listed under Security, above.
 						{ label: 'Model allow-lists', slug: 'configuration/models' },
 						{ label: 'OpenAPI & Swagger', slug: 'configuration/openapi' },
 						{ label: 'Chat recovery', slug: 'configuration/chat-recovery' },

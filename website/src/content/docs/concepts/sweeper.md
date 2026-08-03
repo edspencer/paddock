@@ -20,14 +20,29 @@ extra prompt) or turns it **off** — see [Customise or disable it](#customise-o
 ## What it is
 
 - **Per project.** Each project has its own `sweeper-<slug>` agent, whose working
-  directory is the project's **metadata dir** (agents bind to a cwd, so the
-  sweeper can't share one across projects).
+  directory is a **dedicated scratch dir outside the projects tree**
+  (`<dataDir>/sweepers/<slug>`). Agents bind to a cwd, so the sweeper can't share
+  one across projects — and since [#548](https://github.com/edspencer/paddock/issues/548)
+  it deliberately does not sit in the project directory, where it would collide
+  with the project's own agent.
 - **Tool-less.** The sweeper is configured with `allowed_tools: []` and a small
-  model (`SWEEPER_DEFAULT_MODEL`, Haiku by default, `max_turns: 4`). It cannot
-  touch the working tree, run commands, or start other chats. It only *returns
-  text*; Paddock's `SweepService` (`sweep.ts`) parses that text and writes the
-  files. This is a safety and cost property: a curation pass can never mutate your
-  code and can never trigger another sweep.
+  model (`SWEEPER_DEFAULT_MODEL`, Haiku by default, `max_turns: 4`), gets **no
+  injected MCP tools** (unlike every other turn path, it does not even receive
+  `send_file`), and is told in its system prompt: *"You DO NOT use any tools — you
+  only return text."* It only *returns text*; Paddock's `SweepService`
+  (`sweep.ts`) parses that text and writes the files. So a curation pass never
+  mutates your code and can never trigger another sweep — the write side is
+  Paddock's, not the agent's.
+
+  :::note[Where that guarantee comes from]
+  Mostly from the prompt, the missing tools and the four-turn bound rather than
+  from the empty list itself: both runtimes emit `--allowedTools` only when the
+  list is **non-empty**, so `allowed_tools: []` passes *no* allow-list rather than
+  an empty one ([#647](https://github.com/edspencer/paddock/issues/647)). The
+  sweeper is still the narrowest agent Paddock runs, but if you
+  are reasoning about a scoped **trigger**, see
+  [What your agents can do](/guides/agent-capabilities/#scoped-agents-triggers-and-hooks).
+  :::
 
 ## When it runs
 
