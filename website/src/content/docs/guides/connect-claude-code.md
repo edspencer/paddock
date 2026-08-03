@@ -99,16 +99,30 @@ and [`kubernetes/`](https://github.com/edspencer/paddock-deploy/tree/main/kubern
 recipes for configurations that carry the exemption already.
 
 :::caution[Don't "fix" a `403` with `X-Forwarded-Proto: https`]
-Paddock treats that header as proof of TLS termination, and it currently accepts
-it from **any** peer ([#474](https://github.com/edspencer/paddock/issues/474)) —
-so adding it by hand doesn't satisfy the guard, it **switches the guard off**,
-and your token then crosses the network in cleartext with a `200` telling you
-everything is fine.
+Paddock treats that header as proof of TLS termination, but since **v0.48.1** it
+only believes it from a peer listed in `managementApi.trustedProxies`
+(`PADDOCK_MANAGEMENT_TRUSTED_PROXIES`) — the header alone is no longer enough
+from anywhere ([#474](https://github.com/edspencer/paddock/issues/474), fixed by
+[#505](https://github.com/edspencer/paddock/pull/505)). Unset, the trust list
+defaults to loopback plus the private address space (link-local and
+unique-local), **not** every peer: a public-addressed client sending the header
+is refused. `all` restores the old believe-anyone behaviour and boots with a
+loud warning; `none` is the strictest setting.
 
-It is defensible as a one-off same-host smoke test — for instance from inside a
-container, where a *published* port is not loopback because Docker NATs the peer
-address. **Never send it across a network**, and never bake it into a client
-config.
+So the fix is not to add the header by hand — it's to **name your actual TLS
+terminator** in `trustedProxies`, which is also what turns the check from a
+footgun-preventer into a control. Adding it from a client that merely happens to
+sit in private address space still "works" under the default list, and that is
+the habit to avoid: it stops working the moment you tighten the list, and it
+tells you nothing about whether your token crossed the network in clear. See
+[the `/mcp` reference](/reference/mcp/#which-peers-are-believed) for the full
+trust-list semantics and
+[the config file](/configuration/config-file/) for where to set it.
+
+Sending the header by hand is still defensible as a one-off same-host smoke test
+— for instance from inside a container, where a *published* port is not loopback
+because Docker NATs the peer address. **Never send it across a network**, and
+never bake it into a client config.
 :::
 
 ## 1. Mint a token
