@@ -6,9 +6,9 @@
  * mutates `process.env`, spawns, or starts a server, and is exercised by running
  * the built binary.
  *
- * Importing the module is safe because its `main()` is behind a
- * `pathToFileURL(process.argv[1]) === import.meta.url` guard — under vitest
- * argv[1] is the vitest entry, so nothing runs on import.
+ * These live in `cli/args.ts` rather than the entrypoint precisely so they can
+ * be imported without running anything — the run-directly guard that used to
+ * make that possible is what broke the published binary (see args.ts).
  */
 import { describe, it, expect } from "vitest";
 import {
@@ -16,7 +16,7 @@ import {
   nodeVersionProblem,
   explainListenError,
   CliError,
-} from "../../src/cli/paddock.js";
+} from "../../src/cli/args.js";
 
 describe("paddock CLI: parseArgs", () => {
   it("defaults every boolean to false and leaves values unset", () => {
