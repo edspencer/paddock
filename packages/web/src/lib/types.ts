@@ -1226,8 +1226,18 @@ export type ServerWsMessage =
 
 // --- Instance-wide settings (issue #385) ------------------------------------
 
-/** The rendering/validation kind of an instance-config field. */
-export type InstanceConfigFieldType = "number" | "boolean" | "string" | "enum" | "string-list";
+/**
+ * The rendering/validation kind of an instance-config field. `text` is `string`
+ * with a multi-line control (a `<textarea>`) — identical wire shape and
+ * coercion, used for prompt-sized values (issue #635).
+ */
+export type InstanceConfigFieldType =
+  | "number"
+  | "boolean"
+  | "string"
+  | "text"
+  | "enum"
+  | "string-list";
 
 /**
  * One field on the instance-wide Settings screen (GET /api/instance-config).

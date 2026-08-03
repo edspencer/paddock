@@ -29,6 +29,7 @@ import {
   isKnownModel,
 } from "./models.js";
 import { DEFAULT_MAX_SPAWN_DEPTH, isValidMaxSpawnDepth } from "./spawn-capability.js";
+import { DEFAULT_ENVIRONMENT_PROMPT } from "./environment-prompt.js";
 import { type RecoveryConfig, DEFAULT_RECOVERY } from "./recovery-config.js";
 import { type CurationConfig, DEFAULT_CURATION } from "./curation-config.js";
 import {
@@ -211,6 +212,25 @@ export interface PaddockConfig {
    * instance CLAUDE.md up by walk-up. That closes #512.
    */
   nativeSystemPrompt: boolean;
+  /**
+   * The **environment** prompt appended to every keeper turn's system prompt
+   * (issue #635) — the short note telling the agent it renders into a browser as
+   * GFM, not a terminal. Resolved from `PADDOCK_ENVIRONMENT_PROMPT` over the
+   * `environmentPrompt:` file key over
+   * {@link import("./environment-prompt.js").DEFAULT_ENVIRONMENT_PROMPT}.
+   *
+   * This is the RESOLVED, effective text, so it has only two meaningful states
+   * at the point of use: non-empty (append it) and `""` (append nothing — the
+   * instance opted out). The three *authoring* states — unset, a string, an
+   * empty string — collapse here, which is deliberate: every consumer just asks
+   * "is there anything to append?" and the Settings screen shows the text that
+   * is actually in force rather than a tri-state it would have to explain.
+   *
+   * Orthogonal to {@link nativeSystemPrompt}: that switch chooses the agent's
+   * *role* prompt (native preset vs Paddock's terse replace text); this states
+   * environmental fact about the deployment and applies on top of either.
+   */
+  environmentPrompt: string;
   /**
    * Whether keeper turns are handed the read-only self-management MCP server
    * (issue #214 Phase 1) — the `mcp__paddock_manage__*` tools that let a keeper
@@ -409,6 +429,13 @@ export interface PaddockConfigFile {
   models?: string[] | string;
   driveMode?: string;
   nativeSystemPrompt?: boolean | string;
+  /**
+   * Environment system prompt override (issue #635). Absent ⇒ Paddock's built-in
+   * text; a non-empty string ⇒ that text instead; an EMPTY string ⇒ append
+   * nothing. Unlike almost every other key here, blank is meaningful and is NOT
+   * folded to the default — see {@link loadEnvironmentPrompt}.
+   */
+  environmentPrompt?: string;
   selfMcpEnabled?: boolean | string;
   selfMcpWriteEnabled?: boolean | string;
   selfMcpProjectsEnabled?: boolean | string;
@@ -783,6 +810,7 @@ export function loadPaddockConfig(): PaddockConfig {
     models: loadModels(file.models),
     driveMode: loadDriveMode(file.driveMode),
     nativeSystemPrompt: loadNativeSystemPrompt(file.nativeSystemPrompt),
+    environmentPrompt: loadEnvironmentPrompt(file.environmentPrompt),
     selfMcpEnabled: loadSelfMcpEnabled(file.selfMcpEnabled),
     selfMcpWriteEnabled:
       loadSelfMcpEnabled(file.selfMcpEnabled) && loadSelfMcpWriteEnabled(file.selfMcpWriteEnabled),
@@ -1097,6 +1125,35 @@ function loadSelfMcpEnabled(file?: PaddockConfigFile["selfMcpEnabled"]): boolean
 function loadNativeSystemPrompt(file?: PaddockConfigFile["nativeSystemPrompt"]): boolean {
   const raw = envOr("PADDOCK_NATIVE_PROMPT", fileOr(file, "true")).toLowerCase();
   return !(raw === "0" || raw === "false" || raw === "no");
+}
+
+/**
+ * Resolve the environment system prompt (issue #635): env
+ * `PADDOCK_ENVIRONMENT_PROMPT` over the `environmentPrompt:` file key over the
+ * built-in {@link DEFAULT_ENVIRONMENT_PROMPT}.
+ *
+ * Deliberately does NOT use `envOr`/`fileOr`. Those fold a blank value to the
+ * fallback, which would make opting out impossible — blank is the opt-out here,
+ * so precedence is decided on *definedness*, not on emptiness:
+ *
+ *  - `PADDOCK_ENVIRONMENT_PROMPT` **defined at all** (even empty) wins outright.
+ *    That is why the field is declared `envShadowWhenDefined` in
+ *    instance-config.ts — same rule as `PADDOCK_BROWSER_MCP` — so the Settings
+ *    screen renders it read-only in exactly the cases where it really is.
+ *  - Otherwise a `string` file value wins, empty included. A non-string (a YAML
+ *    number, a mapping, `null` from a bare `environmentPrompt:`) is ignored
+ *    rather than stringified — `"null"` is not a prompt anyone meant to write.
+ *  - Otherwise the built-in default.
+ *
+ * The value is used verbatim: no trimming, no normalization. An operator's
+ * trailing newline or leading indentation survives the round-trip, because the
+ * text is going into a prompt where whitespace is content.
+ */
+function loadEnvironmentPrompt(file?: PaddockConfigFile["environmentPrompt"]): string {
+  const env = process.env.PADDOCK_ENVIRONMENT_PROMPT;
+  if (env !== undefined) return env;
+  if (typeof file === "string") return file;
+  return DEFAULT_ENVIRONMENT_PROMPT;
 }
 
 /**

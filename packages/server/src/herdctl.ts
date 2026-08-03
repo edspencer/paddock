@@ -323,6 +323,63 @@ export class HerdctlService {
   constructor(private readonly cfg: PaddockConfig) {}
 
   /**
+   * The environment system prompt to append to a keeper turn (issue #635), or
+   * `undefined` when the instance opted out (`environmentPrompt: ""`) — herdctl
+   * treats a falsy `systemPromptAppend` as "don't touch the system prompt", so
+   * an opted-out instance is byte-identical to pre-#635 behaviour.
+   *
+   * Read from `this.cfg` here rather than taken as a per-turn option **on
+   * purpose**. Every user-visible turn shape — a human send, a slash command, a
+   * scheduled wake, a spawned sub-chat, a `driveMode: batch` trigger — funnels
+   * through {@link chat}, {@link chatSession} or {@link runCommand}, so applying
+   * it at that choke point makes coverage structural. Threading it through
+   * `ChatTurnOptions` instead would make it one more thing five call sites have
+   * to remember, which is exactly how `isSidechainMessage` ended up wired into
+   * 1 of 5 turn paths.
+   *
+   * It is orthogonal to `nativeSystemPrompt`: herdctl appends to whatever prompt
+   * the agent has, so this rides on top of the native preset AND of Paddock's
+   * terse replace prompt (see `buildSystemPrompt` in core's sdk-runtime, which
+   * folds an append into a preset's `append` field or concatenates onto a
+   * literal string).
+   */
+  private get environmentPromptAppend(): string | undefined {
+    return this.cfg.environmentPrompt || undefined;
+  }
+
+  /**
+   * The same value for the **CLI** runtime (`driveMode: batch`), where it is NOT
+   * always safe to send.
+   *
+   * herdctl's CLI runtime has no `--append-system-prompt`; it folds
+   * `systemPromptAppend` into the single `--system-prompt` flag
+   * (`cli-runtime.ts`), and `--system-prompt` REPLACES Claude Code's preset:
+   *
+   *     agent.system_prompt && append  →  --system-prompt "<agent>\n\n<append>"   ✅ appends
+   *     append only                    →  --system-prompt "<append>"              ❌ REPLACES
+   *
+   * Paddock sets `agent.system_prompt` only when `nativeSystemPrompt` is false
+   * (herdctl-agent-config.ts), so on a DEFAULT batch instance the second branch
+   * fires and a two-rule environment note would silently become the agent's
+   * entire system prompt — the whole coding preset gone. That is the same
+   * replace-vs-append trap #635 warns about, one layer down.
+   *
+   * So: on the CLI path we send the append only when it will genuinely be
+   * appended. A default (native) batch instance is left byte-identical to
+   * pre-#635 and simply doesn't get the environment prompt — a missing hint is
+   * survivable; a missing coding prompt is not. The SDK runtime has no such
+   * problem (it folds the text into the preset's `append` field), and the SDK
+   * runtime is what every chat actually uses: `openChatSession` hard-codes it,
+   * and `session` is the default drive mode. Batch is the legacy path.
+   *
+   * Lifting this needs `--append-system-prompt` support in core's CLI runtime;
+   * tracked upstream in edspencer/herdctl.
+   */
+  private get environmentPromptAppendForCli(): string | undefined {
+    return this.cfg.nativeSystemPrompt ? undefined : this.environmentPromptAppend;
+  }
+
+  /**
    * Construct + initialize the FleetManager against a minimal zero-agent
    * config (fleet + defaults only). Agents are then registered programmatically
    * via `fleet.addAgent(...)` — a keeper + sweeper for each workspace, the root
@@ -725,6 +782,8 @@ export class HerdctlService {
       onMessage: opts.onMessage,
       onJobCreated: opts.onJobCreated,
       injectedMcpServers: opts.injectedMcpServers,
+      // CLI runtime — see the getter: only safe when it will append, not replace.
+      systemPromptAppend: this.environmentPromptAppendForCli,
     });
   }
 
@@ -774,6 +833,7 @@ export class HerdctlService {
         prompt: opts.prompt,
         manageLifecycle: true,
         injectedMcpServers: opts.injectedMcpServers,
+        systemPromptAppend: this.environmentPromptAppend,
         // Stream assistant text token-by-token: the SDK emits `stream_event` /
         // `text_delta` chunks that the translator surfaces as incremental
         // `chat:response` frames (edspencer/herdctl#382, paddock#315).
@@ -942,6 +1002,9 @@ export class HerdctlService {
       resume: opts.resume,
       // Stream the command's assistant text token-by-token (paddock#315).
       includePartialMessages: true,
+      // A slash command's output renders in the same chat bubble as any other
+      // turn, so it gets the same environment context (#635).
+      systemPromptAppend: this.environmentPromptAppend,
     });
     let sessionId: string | null = isResume ? (opts.resume as string) : null;
 
