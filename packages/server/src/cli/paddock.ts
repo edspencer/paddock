@@ -23,6 +23,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { HERE_MARKER, isHereWorkspace, countClaudeSessions, ensureGitignored } from "./here.js";
 
 const MIN_NODE_MAJOR = 22;
 
@@ -59,6 +60,7 @@ export interface CliOptions {
   port?: string;
   host?: string;
   dataDir?: string;
+  here: boolean;
   open: boolean;
   verbose: boolean;
   help: boolean;
@@ -69,7 +71,13 @@ export interface CliOptions {
 export class CliError extends Error {}
 
 export function parseArgs(argv: string[]): CliOptions {
-  const opts: CliOptions = { open: false, verbose: false, help: false, version: false };
+  const opts: CliOptions = {
+    here: false,
+    open: false,
+    verbose: false,
+    help: false,
+    version: false,
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     const next = (): string => {
@@ -88,6 +96,9 @@ export function parseArgs(argv: string[]): CliOptions {
       case "-d":
       case "--data-dir":
         opts.dataDir = next();
+        break;
+      case "--here":
+        opts.here = true;
         break;
       case "-o":
       case "--open":
@@ -134,10 +145,23 @@ Options
   -p, --port <port>       HTTP/WS port (default 4000, or $PORT)
       --host <host>       Bind address (default 127.0.0.1)
   -d, --data-dir <path>   Projects + state (default ~/.paddock, or $PADDOCK_DATA_DIR)
+      --here              Open the CURRENT directory as the workspace (see below)
   -o, --open              Open the app in your browser once it is listening
       --verbose           Show the server's own logs (quiet by default)
   -v, --version           Print the Paddock version and exit
   -h, --help              Show this help
+
+Opening a directory (--here)
+  Run \`paddock --here\` inside a project and Paddock opens THAT directory as its
+  workspace: Claude works in your files, and any Claude Code sessions you already
+  have for the directory are offered for import. It:
+
+    · creates .paddock/ in the directory for this workspace's own state
+    · creates .chats/ for transcripts, and adds both to .gitignore
+    · links ~/.claude/projects/<encoded-dir> at this workspace
+
+  Once done, later runs in the same directory resume it — no flag needed.
+  Without --here, Paddock never touches the directory you ran it from.
 
 Credentials
   Paddock drives Claude Code, so it needs Claude credentials in the
@@ -246,6 +270,52 @@ function noteFirstRun(dataDir: string): void {
   );
 }
 
+/**
+ * Say what `--here` is about to do to this directory, on the run that does it.
+ *
+ * The flag IS the consent — there is no prompt, and no `--yes` to remember.
+ * But consent only means something if you can know what you agreed to, so the
+ * effects are announced rather than asked about. Printed only on the first
+ * `--here` in a directory; resuming an already-opened one says nothing.
+ */
+function announceHereConsent(dir: string, dataDir: string): void {
+  console.log(
+    [
+      "",
+      `  Opening ${dir} as a Paddock workspace.`,
+      `    · ${path.relative(dir, dataDir) || HERE_MARKER}/ and .chats/ created here, and added to .gitignore`,
+      "    · ~/.claude sessions for this directory are linked at the workspace",
+      "  Later runs here resume it — no flag needed.",
+      "",
+    ].join("\n"),
+  );
+}
+
+/**
+ * Tell the user their existing Claude history could be opened here.
+ *
+ * The only way anyone discovers `--here` exists. Read-only: a bare run counts
+ * transcripts and prints, and changes nothing on disk.
+ */
+function offerHereIfSessionsExist(dir: string): void {
+  const claudeHome = process.env.CLAUDE_HOME ?? path.join(os.homedir(), ".claude");
+  let sessions = 0;
+  try {
+    sessions = countClaudeSessions(claudeHome, dir);
+  } catch {
+    return; // detection is a courtesy; never let it break a boot
+  }
+  if (sessions === 0) return;
+  console.log(
+    [
+      "",
+      `  This directory has ${sessions} Claude Code session${sessions === 1 ? "" : "s"}.`,
+      "  Run `paddock --here` to open it as a workspace and import them.",
+      "",
+    ].join("\n"),
+  );
+}
+
 /** Open `url` in the default browser. Best-effort: failing is never fatal. */
 function openBrowser(url: string): void {
   const cmd =
@@ -313,14 +383,47 @@ async function main(): Promise<void> {
 
   addBundledBinsToPath();
 
+  // Canonical, because working directories "MUST be canonical so session
+  // discovery (which encodes the real path) can find Claude transcripts"
+  // (config.ts). On macOS a /tmp vs /private/tmp divergence would silently
+  // break adoption — and macOS is most laptops.
+  let cwd = process.cwd();
+  try {
+    cwd = fs.realpathSync(cwd);
+  } catch {
+    /* keep the literal path; the server will surface any real problem */
+  }
+
+  // `--here` is the consent. A flagless run in a directory ALREADY opened this
+  // way resumes it — the git model, where `--here` is `git init` and `.paddock/`
+  // is `.git`. A flagless run anywhere else touches nothing.
+  const resuming = !opts.here && isHereWorkspace(cwd);
+  const hereMode = opts.here || resuming;
+
   // Apply CLI defaults as env vars. This is the whole integration surface: the
   // server resolves config inside `buildApp()`, so anything set before the
   // dynamic import below is picked up with no special-casing in config.ts.
   // Precedence is explicit flag > existing env > our default.
   const dataDir = path.resolve(
-    opts.dataDir ?? process.env.PADDOCK_DATA_DIR ?? path.join(os.homedir(), ".paddock"),
+    opts.dataDir ??
+      process.env.PADDOCK_DATA_DIR ??
+      (hereMode ? path.join(cwd, HERE_MARKER) : path.join(os.homedir(), ".paddock")),
   );
-  noteFirstRun(dataDir);
+
+  if (hereMode) {
+    if (!resuming) announceHereConsent(cwd, dataDir);
+    // The root workspace IS `projectsRoot` (its key is ""), so pointing this at
+    // the user's directory makes that directory the workspace. No schema change,
+    // no new project type — see cli/here.ts.
+    process.env.PADDOCK_PROJECTS_DIR = cwd;
+    fs.mkdirSync(dataDir, { recursive: true });
+    ensureGitignored(cwd, `/${HERE_MARKER}/`);
+    ensureGitignored(cwd, "/.chats/");
+  } else {
+    noteFirstRun(dataDir);
+    offerHereIfSessionsExist(cwd);
+  }
+
   process.env.PADDOCK_DATA_DIR = dataDir;
 
   if (opts.port) process.env.PORT = opts.port;
@@ -354,7 +457,18 @@ async function main(): Promise<void> {
   }
 
   const url = `http://${host}:${port}`;
-  console.log(`\n  Paddock is running at ${url}\n  Data: ${dataDir}\n  Press Ctrl-C to stop.\n`);
+  // ALWAYS name the workspace, not just in --here mode. Behaviour that varies
+  // with cwd is only safe if it is observable: "why is this instance different
+  // today" should be answerable by reading the two lines the tool just printed.
+  console.log(
+    [
+      "",
+      `  Paddock is running at ${url}`,
+      `  Workspace: ${hereMode ? cwd : dataDir}${resuming ? "  (resumed)" : ""}`,
+      "  Press Ctrl-C to stop.",
+      "",
+    ].join("\n"),
+  );
   if (opts.open) openBrowser(url);
 }
 

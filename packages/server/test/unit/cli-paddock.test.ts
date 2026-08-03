@@ -21,6 +21,7 @@ import {
 describe("paddock CLI: parseArgs", () => {
   it("defaults every boolean to false and leaves values unset", () => {
     expect(parseArgs([])).toEqual({
+      here: false,
       open: false,
       verbose: false,
       help: false,
