@@ -22,10 +22,16 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { HERE_MARKER, isHereWorkspace, countClaudeSessions, ensureGitignored } from "./here.js";
-
-const MIN_NODE_MAJOR = 22;
+import {
+  type CliOptions,
+  CliError,
+  USAGE,
+  parseArgs,
+  nodeVersionProblem,
+  explainListenError,
+} from "./args.js";
 
 /** This module's own directory: `<…>/packages/server/dist/cli`. */
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
@@ -56,72 +62,6 @@ function findUp(rel: string): string | undefined {
 /** Nearest ancestor holding a `package.json` — `packages/server` in both layouts. */
 const packageRoot = findUp("package.json") ?? path.resolve(moduleDir, "../..");
 
-export interface CliOptions {
-  port?: string;
-  host?: string;
-  dataDir?: string;
-  here: boolean;
-  open: boolean;
-  verbose: boolean;
-  help: boolean;
-  version: boolean;
-}
-
-/** A usage error. Thrown rather than exiting, so `parseArgs` stays testable. */
-export class CliError extends Error {}
-
-export function parseArgs(argv: string[]): CliOptions {
-  const opts: CliOptions = {
-    here: false,
-    open: false,
-    verbose: false,
-    help: false,
-    version: false,
-  };
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    const next = (): string => {
-      const v = argv[++i];
-      if (v === undefined) throw new CliError(`${arg} needs a value`);
-      return v;
-    };
-    switch (arg) {
-      case "-p":
-      case "--port":
-        opts.port = next();
-        break;
-      case "--host":
-        opts.host = next();
-        break;
-      case "-d":
-      case "--data-dir":
-        opts.dataDir = next();
-        break;
-      case "--here":
-        opts.here = true;
-        break;
-      case "-o":
-      case "--open":
-        opts.open = true;
-        break;
-      case "--verbose":
-        opts.verbose = true;
-        break;
-      case "-h":
-      case "--help":
-        opts.help = true;
-        break;
-      case "-v":
-      case "--version":
-        opts.version = true;
-        break;
-      default:
-        throw new CliError(`unknown option: ${arg}\nRun \`paddock --help\` for usage.`);
-    }
-  }
-  return opts;
-}
-
 function fail(message: string): never {
   console.error(`paddock: ${message}`);
   process.exit(1);
@@ -134,68 +74,6 @@ function readVersion(): string {
   } catch {
     return "unknown";
   }
-}
-
-const USAGE = `paddock — run a Paddock instance locally
-
-Usage
-  npx @edspencer/paddock [options]
-
-Options
-  -p, --port <port>       HTTP/WS port (default 4000, or $PORT)
-      --host <host>       Bind address (default 127.0.0.1)
-  -d, --data-dir <path>   Projects + state (default ~/.paddock, or $PADDOCK_DATA_DIR)
-      --here              Open the CURRENT directory as the workspace (see below)
-  -o, --open              Open the app in your browser once it is listening
-      --verbose           Show the server's own logs (quiet by default)
-  -v, --version           Print the Paddock version and exit
-  -h, --help              Show this help
-
-Opening a directory (--here)
-  Run \`paddock --here\` inside a project and Paddock opens THAT directory as its
-  workspace: Claude works in your files, and any Claude Code sessions you already
-  have for the directory are offered for import. It:
-
-    · creates .paddock/ in the directory for this workspace's own state
-    · creates .chats/ for transcripts, and adds both to .gitignore
-    · links ~/.claude/projects/<encoded-dir> at this workspace
-
-  Once done, later runs in the same directory resume it — no flag needed.
-  Without --here, Paddock never touches the directory you ran it from.
-
-Credentials
-  Paddock drives Claude Code, so it needs Claude credentials in the
-  environment: CLAUDE_CODE_OAUTH_TOKEN (Max/Pro) or ANTHROPIC_API_KEY (API
-  billing). If you already use Claude Code on this machine, an existing login
-  under ~/.claude is picked up automatically. Otherwise run \`claude setup-token\`.
-
-Your data
-  Everything lives in one directory — ~/.paddock unless you pass --data-dir.
-  Projects, chat transcripts and settings all persist there between runs. Move
-  that directory to move your instance; delete it to start over. Nothing is
-  stored anywhere else.
-
-Notes
-  Binds loopback with authentication disabled, which is safe for a laptop. To
-  expose it on a network, set PADDOCK_AUTH_MODE first — Paddock refuses to bind
-  a routable interface wide open. See AUTH.md.
-
-Docs: https://github.com/edspencer/paddock`;
-
-/**
- * Why this Node is unusable, or `undefined` if it is fine.
- *
- * Split from the exit so it can be tested. `engines` only warns by default, and
- * the failure it eventually produces is an unexplained syntax error deep inside
- * a dependency — which is nobody's idea of a first-run experience.
- */
-export function nodeVersionProblem(nodeVersion: string): string | undefined {
-  const major = Number(nodeVersion.split(".")[0]);
-  if (!Number.isFinite(major) || major >= MIN_NODE_MAJOR) return undefined;
-  return (
-    `Node ${nodeVersion} is too old — Paddock needs Node ${MIN_NODE_MAJOR}+.\n` +
-    `Upgrade Node, then re-run. (nodejs.org, or \`nvm install ${MIN_NODE_MAJOR}\`)`
-  );
 }
 
 /**
@@ -335,31 +213,6 @@ function openBrowser(url: string): void {
   }
 }
 
-/**
- * Translate a listen failure into something a human can act on.
- *
- * `EADDRINUSE` on 4000 is the single most likely first-run failure — it is a
- * popular port and Paddock's own default — and Node's raw error names neither
- * the port nor the flag that fixes it.
- */
-export function explainListenError(err: unknown, host: string, port: string): string {
-  const code = (err as { code?: string } | undefined)?.code;
-  if (code === "EADDRINUSE") {
-    return (
-      `port ${port} is already in use.\n` +
-      `Something else is listening on ${host}:${port} — possibly another Paddock.\n` +
-      `Pick a different port:  paddock --port ${Number(port) + 1}`
-    );
-  }
-  if (code === "EACCES") {
-    return (
-      `not allowed to bind ${host}:${port}.\n` +
-      `Ports below 1024 need elevated privileges — use a higher one:  paddock --port 4000`
-    );
-  }
-  return String((err as { message?: string } | undefined)?.message ?? err);
-}
-
 async function main(): Promise<void> {
   let opts: CliOptions;
   try {
@@ -472,13 +325,7 @@ async function main(): Promise<void> {
   if (opts.open) openBrowser(url);
 }
 
-// Run only when executed directly, so the unit tests can import the pure parts.
-// `pathToFileURL`, not `"file://" + argv[1]`: the naive concatenation breaks on
-// any path containing a space or non-ASCII character — the same percent-encoding
-// trap as #636.
-if (process.argv[1] !== undefined && pathToFileURL(process.argv[1]).href === import.meta.url) {
-  main().catch((err: unknown) => {
-    console.error("fatal:", err);
-    process.exit(1);
-  });
-}
+main().catch((err: unknown) => {
+  console.error("fatal:", err);
+  process.exit(1);
+});
