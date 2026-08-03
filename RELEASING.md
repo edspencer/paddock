@@ -69,12 +69,22 @@ Two traps this recipe avoids:
   the placeholder is a separate hand-written file rather than `npm run pack:npm`
   output. (If you ever must publish the real package by hand, override with
   `--no-provenance`.)
-- **`--tag bootstrap`, not `latest`.** A placeholder on `latest` means
-  `npx @edspencer/paddock` resolves a package with no `bin` and fails with a
-  confusing "could not determine executable to run". Keeping it off `latest`
-  means npx says "no matching version" until the first CI release, which is at
-  least honest. The placeholder is permanently unattested — that is unavoidable
-  and is why it holds no code.
+- **`--tag bootstrap` does NOT keep it off `latest` — npm sets `latest` anyway
+  on a package's first publish.** Verified when we did it: the flag was passed
+  and the tags came back `{ bootstrap: "0.0.1", latest: "0.0.1" }`. It only takes
+  effect from the second publish onward. So expect
+  `npx @edspencer/paddock` to fail with "could not determine executable to run"
+  (the placeholder has no `bin`) for the window between the bootstrap and the
+  first CI release, which moves `latest` to the real version. Keep that window
+  short and do not be alarmed by it. The placeholder is permanently unattested —
+  unavoidable, and why it holds no code.
+
+Also expect the registry to 404 the package for **a minute or two** after the
+bootstrap publish even though it succeeded: the version document and tarball are
+live immediately, but the aggregate packument that `npm view` and `npx` resolve
+against replicates separately (ours took ~90 seconds). The npmjs.com settings
+page does not wait for it, so the trusted-publisher step can be done straight
+away.
 
 ## Versioning model
 

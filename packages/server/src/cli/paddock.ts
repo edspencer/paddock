@@ -1,34 +1,28 @@
 #!/usr/bin/env node
 /**
- * `paddock` — the npx / global-install entrypoint (#TBD).
+ * `paddock` — the npx / global-install entrypoint (#637, #638).
  *
- * PROTOTYPE. This is the user-facing front door for `npx @edspencer/paddock`:
- * someone who has never seen this repo runs one command and gets a working
- * instance on localhost. Everything here is preflight and defaults — the server
- * itself is unchanged, and `start()` is the same lifecycle `node dist/index.js`
- * uses.
+ * The user-facing front door for `npx @edspencer/paddock`: someone who has never
+ * seen this repo runs one command and gets a working instance on localhost.
+ * Everything here is preflight, defaults and presentation — the server itself is
+ * untouched, and `start()` is the same lifecycle `node dist/index.js` uses.
  *
- * The design constraint that shapes this file: the server is already
- * *tolerant* — every setting has a default, an empty data dir self-initializes,
- * and auth defaults to `none` on a loopback bind. So a bare `start()` would in
- * fact boot. What it would NOT do is tell a first-time user why their chats
- * fail, or where their data went. Hence:
+ * The design constraint that shapes this file: the server is already *tolerant*
+ * — every setting has a default, an empty data dir self-initializes, and auth
+ * defaults to `none` on a loopback bind. So a bare `start()` would in fact boot.
+ * What it would NOT do is tell a first-time user why their chats fail, where
+ * their data went, or which of the several hundred lines of JSON that just
+ * scrolled past contained the URL.
  *
- *   1. Node version — checked explicitly, because the `engines` field only
- *      warns and the eventual failure is an opaque syntax error.
- *   2. Data dir — defaults to `~/.paddock`, NOT the server's `./data`, which is
- *      relative to cwd and would litter whatever directory you happened to run
- *      npx from (and silently give you a different instance next time).
- *   3. `claude` on PATH — prepended from our own node_modules/.bin. Chats do not
- *      need it (the SDK runtime resolves its own bundled binary), but the
- *      sweeper and triggers shell out to `claude` by name.
- *   4. Credentials — a warning, never a hard failure: we cannot reliably detect
- *      a macOS Keychain login, so refusing to start would lock out valid users.
+ * Everything below the arg parser is side-effecting by nature, so the pure parts
+ * (`parseArgs`, `nodeVersionProblem`, `explainListenError`) are exported and
+ * unit-tested; the rest is exercised by running the built binary.
  */
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { spawn } from "node:child_process";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const MIN_NODE_MAJOR = 22;
 
@@ -46,8 +40,7 @@ const moduleDir = path.dirname(fileURLToPath(import.meta.url));
  *              deps at `<pkg>/node_modules` only — two levels FURTHER up
  *
  * A fixed `../..` hop is right for the repo and wrong for the published tarball,
- * where it lands on `packages/server` and finds no `node_modules` at all. Walking
- * up is correct for both without branching on which one we are in.
+ * where it lands on `packages/server` and finds no `node_modules` at all.
  */
 function findUp(rel: string): string | undefined {
   let dir = moduleDir;
@@ -62,21 +55,26 @@ function findUp(rel: string): string | undefined {
 /** Nearest ancestor holding a `package.json` — `packages/server` in both layouts. */
 const packageRoot = findUp("package.json") ?? path.resolve(moduleDir, "../..");
 
-interface CliOptions {
+export interface CliOptions {
   port?: string;
   host?: string;
   dataDir?: string;
+  open: boolean;
+  verbose: boolean;
   help: boolean;
   version: boolean;
 }
 
-function parseArgs(argv: string[]): CliOptions {
-  const opts: CliOptions = { help: false, version: false };
+/** A usage error. Thrown rather than exiting, so `parseArgs` stays testable. */
+export class CliError extends Error {}
+
+export function parseArgs(argv: string[]): CliOptions {
+  const opts: CliOptions = { open: false, verbose: false, help: false, version: false };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     const next = (): string => {
       const v = argv[++i];
-      if (v === undefined) fail(`${arg} needs a value`);
+      if (v === undefined) throw new CliError(`${arg} needs a value`);
       return v;
     };
     switch (arg) {
@@ -91,6 +89,13 @@ function parseArgs(argv: string[]): CliOptions {
       case "--data-dir":
         opts.dataDir = next();
         break;
+      case "-o":
+      case "--open":
+        opts.open = true;
+        break;
+      case "--verbose":
+        opts.verbose = true;
+        break;
       case "-h":
       case "--help":
         opts.help = true;
@@ -100,7 +105,7 @@ function parseArgs(argv: string[]): CliOptions {
         opts.version = true;
         break;
       default:
-        fail(`unknown option: ${arg}\nRun \`paddock --help\` for usage.`);
+        throw new CliError(`unknown option: ${arg}\nRun \`paddock --help\` for usage.`);
     }
   }
   return opts;
@@ -129,6 +134,8 @@ Options
   -p, --port <port>       HTTP/WS port (default 4000, or $PORT)
       --host <host>       Bind address (default 127.0.0.1)
   -d, --data-dir <path>   Projects + state (default ~/.paddock, or $PADDOCK_DATA_DIR)
+  -o, --open              Open the app in your browser once it is listening
+      --verbose           Show the server's own logs (quiet by default)
   -v, --version           Print the Paddock version and exit
   -h, --help              Show this help
 
@@ -138,6 +145,12 @@ Credentials
   billing). If you already use Claude Code on this machine, an existing login
   under ~/.claude is picked up automatically. Otherwise run \`claude setup-token\`.
 
+Your data
+  Everything lives in one directory — ~/.paddock unless you pass --data-dir.
+  Projects, chat transcripts and settings all persist there between runs. Move
+  that directory to move your instance; delete it to start over. Nothing is
+  stored anywhere else.
+
 Notes
   Binds loopback with authentication disabled, which is safe for a laptop. To
   expose it on a network, set PADDOCK_AUTH_MODE first — Paddock refuses to bind
@@ -145,16 +158,20 @@ Notes
 
 Docs: https://github.com/edspencer/paddock`;
 
-/** Node's own version gate. `engines` only warns by default, and the failure it
- *  eventually produces is an unexplained syntax error deep in a dependency. */
-function checkNodeVersion(): void {
-  const major = Number(process.versions.node.split(".")[0]);
-  if (Number.isFinite(major) && major < MIN_NODE_MAJOR) {
-    fail(
-      `Node ${process.versions.node} is too old — Paddock needs Node ${MIN_NODE_MAJOR}+.\n` +
-        `Upgrade Node, then re-run. (nodejs.org, or \`nvm install ${MIN_NODE_MAJOR}\`)`,
-    );
-  }
+/**
+ * Why this Node is unusable, or `undefined` if it is fine.
+ *
+ * Split from the exit so it can be tested. `engines` only warns by default, and
+ * the failure it eventually produces is an unexplained syntax error deep inside
+ * a dependency — which is nobody's idea of a first-run experience.
+ */
+export function nodeVersionProblem(nodeVersion: string): string | undefined {
+  const major = Number(nodeVersion.split(".")[0]);
+  if (!Number.isFinite(major) || major >= MIN_NODE_MAJOR) return undefined;
+  return (
+    `Node ${nodeVersion} is too old — Paddock needs Node ${MIN_NODE_MAJOR}+.\n` +
+    `Upgrade Node, then re-run. (nodejs.org, or \`nvm install ${MIN_NODE_MAJOR}\`)`
+  );
 }
 
 /**
@@ -229,8 +246,58 @@ function noteFirstRun(dataDir: string): void {
   );
 }
 
+/** Open `url` in the default browser. Best-effort: failing is never fatal. */
+function openBrowser(url: string): void {
+  const cmd =
+    process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+  try {
+    const child = spawn(cmd, [url], {
+      stdio: "ignore",
+      detached: true,
+      shell: process.platform === "win32", // `start` is a cmd builtin, not a binary
+    });
+    // A headless box has no xdg-open. The URL is printed either way, so an
+    // unopenable browser is a non-event rather than a failed run.
+    child.on("error", () => {});
+    child.unref();
+  } catch {
+    /* as above */
+  }
+}
+
+/**
+ * Translate a listen failure into something a human can act on.
+ *
+ * `EADDRINUSE` on 4000 is the single most likely first-run failure — it is a
+ * popular port and Paddock's own default — and Node's raw error names neither
+ * the port nor the flag that fixes it.
+ */
+export function explainListenError(err: unknown, host: string, port: string): string {
+  const code = (err as { code?: string } | undefined)?.code;
+  if (code === "EADDRINUSE") {
+    return (
+      `port ${port} is already in use.\n` +
+      `Something else is listening on ${host}:${port} — possibly another Paddock.\n` +
+      `Pick a different port:  paddock --port ${Number(port) + 1}`
+    );
+  }
+  if (code === "EACCES") {
+    return (
+      `not allowed to bind ${host}:${port}.\n` +
+      `Ports below 1024 need elevated privileges — use a higher one:  paddock --port 4000`
+    );
+  }
+  return String((err as { message?: string } | undefined)?.message ?? err);
+}
+
 async function main(): Promise<void> {
-  const opts = parseArgs(process.argv.slice(2));
+  let opts: CliOptions;
+  try {
+    opts = parseArgs(process.argv.slice(2));
+  } catch (err) {
+    if (err instanceof CliError) fail(err.message);
+    throw err;
+  }
 
   if (opts.help) {
     console.log(USAGE);
@@ -241,7 +308,9 @@ async function main(): Promise<void> {
     return;
   }
 
-  checkNodeVersion();
+  const problem = nodeVersionProblem(process.versions.node);
+  if (problem !== undefined) fail(problem);
+
   addBundledBinsToPath();
 
   // Apply CLI defaults as env vars. This is the whole integration surface: the
@@ -257,6 +326,19 @@ async function main(): Promise<void> {
   if (opts.port) process.env.PORT = opts.port;
   if (opts.host) process.env.HOST = opts.host;
 
+  // Quiet by default. The server emits a few hundred lines on the way up, which
+  // scrolls the one line the user actually needs — the URL — off the top of the
+  // terminal. TWO loggers have to be told, and they are unrelated:
+  //   LOG_LEVEL          Paddock's own pino logger (config.ts).
+  //   HERDCTL_LOG_LEVEL  @herdctl/core's `createLogger`, which writes the
+  //                      `[fleet-manager] …` lines via console.info — pino's
+  //                      level cannot reach those.
+  // An explicit value for either is left alone, and `--verbose` skips both.
+  if (!opts.verbose) {
+    if (process.env.LOG_LEVEL === undefined) process.env.LOG_LEVEL = "warn";
+    if (process.env.HERDCTL_LOG_LEVEL === undefined) process.env.HERDCTL_LOG_LEVEL = "warn";
+  }
+
   warnIfNoCredentials(process.env.CLAUDE_HOME ?? path.join(os.homedir(), ".claude"));
 
   const port = process.env.PORT ?? "4000";
@@ -265,12 +347,24 @@ async function main(): Promise<void> {
   // Imported dynamically, AFTER the env above is set: a static import would
   // pull in app.ts -> config.ts and resolve config against the wrong data dir.
   const { start } = await import("../start.js");
-  await start();
+  try {
+    await start();
+  } catch (err) {
+    fail(explainListenError(err, host, port));
+  }
 
-  console.log(`\n  Paddock is running at http://${host}:${port}\n  Press Ctrl-C to stop.\n`);
+  const url = `http://${host}:${port}`;
+  console.log(`\n  Paddock is running at ${url}\n  Data: ${dataDir}\n  Press Ctrl-C to stop.\n`);
+  if (opts.open) openBrowser(url);
 }
 
-main().catch((err: unknown) => {
-  console.error("fatal:", err);
-  process.exit(1);
-});
+// Run only when executed directly, so the unit tests can import the pure parts.
+// `pathToFileURL`, not `"file://" + argv[1]`: the naive concatenation breaks on
+// any path containing a space or non-ASCII character — the same percent-encoding
+// trap as #636.
+if (process.argv[1] !== undefined && pathToFileURL(process.argv[1]).href === import.meta.url) {
+  main().catch((err: unknown) => {
+    console.error("fatal:", err);
+    process.exit(1);
+  });
+}
