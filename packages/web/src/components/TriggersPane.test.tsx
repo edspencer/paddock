@@ -107,6 +107,33 @@ describe("TriggersPane (Epic T / T4)", () => {
     expect(within(evt).getByText("onArchive")).toBeInTheDocument();
   });
 
+  it("does not present a tools:[] EVENT trigger as an enforced tool-less agent (#647)", async () => {
+    listTriggers.mockResolvedValue(response([curator]));
+    render(<TriggersPane project={project} />);
+    await screen.findByTestId("triggers-pane");
+    const row = await screen.findByRole("row", { name: /curate-overview/ });
+    // "Tool-less" claimed an enforcement that neither herdctl runtime performs:
+    // an empty `allowed_tools` is simply never emitted. Say what was declared.
+    expect(within(row).queryByText(/tool-less/i)).toBeNull();
+    expect(within(row).getByText(/no tools/i)).toBeInTheDocument();
+  });
+
+  it("warns that leaving every tool unchecked is not a deny-all (#647)", async () => {
+    listTriggers.mockResolvedValueOnce(response([]));
+    render(<TriggersPane project={project} />);
+    await screen.findByTestId("triggers-pane");
+    fireEvent.click(await screen.findByTestId("add-trigger"));
+    // The empty-list caveat is the EVENT case; a schedule with no tools genuinely
+    // does run as the keeper with Claude's full toolset, and says so.
+    fireEvent.change(screen.getByTestId("trigger-type"), { target: { value: "event" } });
+    // Located by the sentence that did NOT change, so this pins the copy rather
+    // than the markup.
+    const help = screen.getByText(/tools you check here/i);
+    expect(help).not.toHaveTextContent(/only thinks and returns text/i);
+    expect(help).toHaveTextContent(/not a deny-all|not enforced/i);
+    expect(help).toHaveTextContent(/default tools/i);
+  });
+
   it("creates an EVENT trigger through the discriminated form", async () => {
     listTriggers.mockResolvedValueOnce(response([]));
     render(<TriggersPane project={project} />);

@@ -167,15 +167,22 @@ export function sweeperWorkingDir(cfg: PaddockConfig, slug: string): string {
 }
 
 /**
- * A project's sweeper (curator) agent config. TOOL-LESS: the sweeper has NO
- * tools (`allowed_tools: []`) — it never reads or writes files. Instead it
- * RETURNS the curated content as plain assistant text in marked sections
- * (OVERVIEW / CHANGELOG / optional CLAUDE, issue #177); SweepService parses
- * that text and writes OVERVIEW.md / CHANGELOG.md / CLAUDE.md itself.
+ * A project's sweeper (curator) agent config. TOOL-LESS BY DESIGN: it declares
+ * `allowed_tools: []` and never reads or writes files. Instead it RETURNS the
+ * curated content as plain assistant text in marked sections (OVERVIEW /
+ * CHANGELOG / optional CLAUDE, issue #177); SweepService parses that text and
+ * writes OVERVIEW.md / CHANGELOG.md / CLAUDE.md itself.
  *
  * This is cheaper and far more predictable than letting a Haiku agent drive
  * file edits: no tool-loop turns, no partial writes, no permission_mode /
- * denied_tools to reason about (all irrelevant with zero tools).
+ * denied_tools to reason about.
+ *
+ * What makes it tool-less is NOT the empty `allowed_tools` — herdctl emits an
+ * allow-list only when it is non-empty, so `[]` restricts nothing (#647). The
+ * actual guarantees are: no injected MCP servers (the sweeper is the one turn
+ * path that does not even get `send_file`), `max_turns: 4`, a system prompt
+ * whose first line is "You DO NOT use any tools", and a non-interactive
+ * `claude -p` run that cannot answer a permission prompt.
  */
 export function buildSweeperConfig(
   cfg: PaddockConfig,
@@ -200,9 +207,13 @@ export function buildSweeperConfig(
     // addAgent does deep-merge the loaded defaults, they just never carry it).
     runtime: "cli",
     model: curatorModel ?? SWEEPER_DEFAULT_MODEL,
-    // Tool-less: a handful of turns is plenty since there are no tool loops.
+    // A handful of turns is plenty since there are no tool loops — and this, not
+    // the empty allow-list below, is one of the things actually bounding the run.
     max_turns: 4,
-    // NO tools. The sweeper returns text only; SweepService does the writing.
+    // Declares NO tools: the sweeper returns text only; SweepService does the
+    // writing. Note herdctl does not emit an empty allow-list at all, so this
+    // restricts nothing on its own (#647) — see the doc comment above for the
+    // properties that do make the sweeper tool-less in practice.
     allowed_tools: [],
     system_prompt:
       "You are a concise project curator. You DO NOT use any tools — you only " +
@@ -257,7 +268,8 @@ export function buildSweeperConfig(
  * (`allowed_tools`/`permission_mode`/`model`/`max_turns`, projected by
  * {@link triggerToAgentToolConfig} from the trigger's `run`) IS its capability set.
  * Runs in the project's WORKING dir (so a trigger's Bash/Write act on the same tree
- * the keeper does). A tool-less trigger gets `allowed_tools: []` and can only return text.
+ * the keeper does). A trigger that declares no tools gets `allowed_tools: []` — which
+ * herdctl does not enforce as a deny-all; see {@link triggerToAgentToolConfig} (#647).
  */
 export function buildTriggerConfig(
   cfg: PaddockConfig,
