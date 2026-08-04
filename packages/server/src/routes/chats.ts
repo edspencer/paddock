@@ -1536,7 +1536,16 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
     async (req, reply) => {
       try {
         const project = await projects.get(req.params.slug);
-        return await herdctl.listAdoptable(project);
+        const summary = await herdctl.listAdoptable(project);
+        // `importFrom` is a server-internal detail — the synthetic path a legacy
+        // source is reached through (#620). Clients round-trip `sourceCwd`, so
+        // strip it rather than publishing a `~/.claude` path in the DTO; the
+        // response schema is `additionalProperties: true`, so it would otherwise
+        // serialize.
+        return {
+          ...summary,
+          sources: summary.sources.map(({ importFrom: _importFrom, ...rest }) => rest),
+        };
       } catch (err) {
         return sendProjectError(reply, err);
       }

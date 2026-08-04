@@ -138,22 +138,48 @@ export interface PaddockConfig {
   /** Absolute path to the built web SPA (served in production). */
   webDist: string;
   /**
-   * Absolute path to the Claude home (`~/.claude`, unless `CLAUDE_HOME` says
-   * otherwise) — the directory whose `projects/<encoded-cwd>/` folders hold
-   * Claude Code's session transcripts.
+   * Absolute path to the Claude home THIS INSTANCE owns — the directory whose
+   * `projects/<encoded-cwd>/` folders hold Claude Code's session transcripts.
+   * Defaults to `<dataDir>/claude-home` (#620); see {@link resolveClaudeHome}
+   * for the full precedence.
    *
    * Resolved ONCE here (#588) rather than re-read from `process.env` at each call
    * site, because it must be the SAME value everywhere: paddock's transcript
    * relocation (`ensureProjectChats`) symlinks `<claudeHome>/projects/<encoded>`
    * at the project's `.chats/`, and the engine's session discovery / adoption
    * resolves transcripts under `FleetManagerOptions.claudeHomePath`. If paddock
-   * honoured `CLAUDE_HOME` while the engine fell back to `os.homedir()/.claude`,
+   * honoured one home while the engine fell back to `os.homedir()/.claude`,
    * detection would scan one home while reads came from another — chats LIST but
    * open EMPTY (herdctl#423 / #588 gotcha 1). The divergence is invisible
-   * whenever `CLAUDE_HOME` equals `$HOME/.claude`, which is exactly why it is
-   * threaded explicitly instead of being left to a shared default.
+   * whenever the two coincide, which is exactly why it is threaded explicitly
+   * instead of being left to a shared default.
    */
   claudeHome: string;
+  /**
+   * Absolute path to the USER's own Claude home — always `os.homedir()/.claude`,
+   * regardless of what {@link claudeHome} resolved to.
+   *
+   * This is a READ-ONLY source (#620), never a destination. Paddock consults it
+   * for exactly two things: adoption (`~/.claude` is where a user's own Claude
+   * Code CLI history lives, which #588 lets them import), and the user-level
+   * config bridge (see `claude-home.ts`). Nothing in paddock moves or deletes
+   * anything under it.
+   */
+  legacyClaudeHome: string;
+  /**
+   * Does paddock OWN {@link claudeHome} — i.e. is it something other than the
+   * user's `~/.claude`?
+   *
+   * The single gate on every mutating transcript operation (#620). Paddock's
+   * self-healing relocation is allowed to migrate a stray real transcript
+   * directory into `.chats/` inside a home it owns, because that directory is
+   * its own doing. Inside the user's home it is somebody else's data — a
+   * `claude` CLI session run in a directory paddock happens to also manage — and
+   * moving it is the destructive behaviour this flag exists to prevent.
+   *
+   * Derived, not configured: `resolve(claudeHome) !== resolve(legacyClaudeHome)`.
+   */
+  ownsClaudeHome: boolean;
   /** Provider-agnostic user-authentication config (see AUTH.md). */
   auth: AuthConfig;
   /** Voice-dictation (Whisper) capability (per-instance; default off). */
@@ -398,6 +424,8 @@ export interface PaddockConfigFile {
   stateDir?: string;
   herdctlConfigPath?: string;
   webDist?: string;
+  /** Claude home override; beneath `CLAUDE_HOME`/`CLAUDE_CONFIG_DIR` (#620). */
+  claudeHome?: string;
   auth?: {
     mode?: string;
     userHeader?: string;
@@ -781,10 +809,10 @@ export function loadPaddockConfig(): PaddockConfig {
   );
   // The ONE Claude home for this process (#588): paddock's transcript symlinks,
   // the engine's session discovery and session adoption all resolve against this
-  // exact value. NOT canonical()-ed: `claudeHome()` is also what the CLI runtime
-  // and Claude Code itself see, and canonicalising would silently diverge from
-  // the literal path they encode into `<home>/projects/<encoded-cwd>`.
-  const resolvedClaudeHome = claudeHome();
+  // exact value — which herdctl in turn hands Claude Code as `CLAUDE_CONFIG_DIR`.
+  // Defaults to `<dataDir>/claude-home` (#620); see `resolveClaudeHome`.
+  const resolvedClaudeHome = resolveClaudeHome(dataDir, fileOpt(file.claudeHome));
+  const legacyClaudeHome = userClaudeHome();
 
   const defaultWebDist = resolveDefaultWebDist(import.meta.url);
 
@@ -804,6 +832,11 @@ export function loadPaddockConfig(): PaddockConfig {
     herdctlConfigPath,
     webDist: abs(envOr("PADDOCK_WEB_DIST", fileOr(file.webDist, defaultWebDist))),
     claudeHome: resolvedClaudeHome,
+    legacyClaudeHome,
+    // Paddock owns any home that is not the user's own `~/.claude` (#620) —
+    // including one an operator pointed it at explicitly. The user's home is the
+    // only one whose contents belong to somebody else.
+    ownsClaudeHome: path.resolve(resolvedClaudeHome) !== path.resolve(legacyClaudeHome),
     auth: loadAuthConfig(file.auth),
     transcription: loadTranscriptionConfig(file.transcription),
     brand: loadBrandConfig(file.brand),
@@ -1201,16 +1234,58 @@ function loadDriveMode(file?: PaddockConfigFile["driveMode"]): DriveMode {
 }
 
 /**
- * Resolve the Claude home from the environment — `CLAUDE_HOME`, else
- * `~/.claude`.
+ * The USER's own Claude home — `~/.claude`, always. A read-only source for
+ * adoption and the user-config bridge, never a destination (#620).
+ *
+ * Stays a function (not a constant) because `os.homedir()` must be read at call
+ * time — tests and processes that mutate `HOME` depend on that.
+ */
+export function userClaudeHome(): string {
+  return path.join(os.homedir(), ".claude");
+}
+
+/**
+ * Resolve the Claude home paddock runs its agents against.
+ *
+ * Precedence, highest first:
+ *
+ * 1. **`CLAUDE_HOME`** — paddock's own long-standing override. Setting it to
+ *    `$HOME/.claude` restores the pre-#620 behaviour exactly, which is the
+ *    documented escape hatch if the relocation causes trouble.
+ * 2. **`CLAUDE_CONFIG_DIR`** — the variable *Claude Code itself* resolves its
+ *    home from. Honouring it is load-bearing, not a courtesy: herdctl
+ *    deliberately refuses to clobber an operator-set `CLAUDE_CONFIG_DIR`
+ *    (herdctl#423), so if paddock picked a different home the SDK would write
+ *    transcripts to one tree while herdctl read from another — the exact
+ *    split-brain #588 fixed. Deferring to it makes that state unreachable.
+ * 3. A `claudeHome:` key in the instance config file.
+ * 4. **`<dataDir>/claude-home`** — the default since #620.
+ *
+ * On the default, and why it changed: paddock already nests herdctl's whole
+ * state dir, the projects tree and the generated `herdctl.yaml` under its data
+ * dir. Transcripts were the one exception, reached by planting symlinks in the
+ * user's home — not a design choice but a constraint, because until
+ * herdctl#423 nothing set `CLAUDE_CONFIG_DIR` and the SDK wrote to `~/.claude`
+ * no matter what paddock configured. With that gone, owning the home makes the
+ * data dir relocatable as a unit, leaves `~/.claude` alone, and (because there
+ * is no longer a `.claude` path component) unblocks agent memory writes, which
+ * the harness refuses for any path containing `.claude`.
+ *
+ * NOT canonical()-ed: this exact string is what herdctl hands Claude Code as
+ * `CLAUDE_CONFIG_DIR`, and canonicalising would silently diverge from the
+ * literal path the two of them encode into `<home>/projects/<encoded-cwd>`.
  *
  * This is the RESOLVER, not the accessor. It is read once by
  * {@link loadPaddockConfig} into {@link PaddockConfig.claudeHome}; runtime code
  * should thread `cfg.claudeHome` rather than call this again, so paddock and the
- * engine can never end up resolving two different homes (#588). It stays a
- * function (not a constant) because `os.homedir()` must be read at call time —
- * tests and processes that mutate `HOME` depend on that.
+ * engine can never end up resolving two different homes (#588).
  */
-export function claudeHome(): string {
-  return process.env.CLAUDE_HOME ?? path.join(os.homedir(), ".claude");
+export function resolveClaudeHome(dataDir: string, fromFile?: string): string {
+  const env = envOpt("CLAUDE_HOME") ?? envOpt("CLAUDE_CONFIG_DIR");
+  if (env !== undefined) return abs(env);
+  if (fromFile !== undefined && fromFile !== "") return abs(fromFile);
+  return path.join(dataDir, DEFAULT_CLAUDE_HOME_DIRNAME);
 }
+
+/** Directory name of paddock's own Claude home inside the data dir (#620). */
+export const DEFAULT_CLAUDE_HOME_DIRNAME = "claude-home";

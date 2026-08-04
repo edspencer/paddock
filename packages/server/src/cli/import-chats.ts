@@ -15,11 +15,13 @@
  *
  * ## Deployment note
  *
- * The import needs READ access to the user's transcripts. In a container that
- * usually means running this on the HOST against the data dir (`--data-dir`),
- * or mounting `~/.claude` in and pointing `CLAUDE_HOME` at the mount. Detection
- * silently finds nothing if the transcripts are not visible — which is why
- * `--dry-run` prints the sources it found rather than only a count.
+ * The import needs READ access to the user's own transcripts, which live in
+ * `~/.claude` — a read-only source paddock reads out of and never writes to
+ * (#620). In a container that usually means running this on the HOST against
+ * the data dir (`--data-dir`), or bind-mounting the user's `~/.claude` in at the
+ * same path. Detection silently finds nothing if the transcripts are not
+ * visible — which is why `--dry-run` prints the sources it found rather than
+ * only a count.
  *
  * ## Usage
  *
@@ -156,8 +158,9 @@ async function main(): Promise<number> {
           : `Nothing to import for "${project.slug || "(root)"}".\n` +
               `Working directory: ${project.workingDir}\n` +
               `Claude home:       ${cfg.claudeHome}\n` +
+              `Importing from:    ${cfg.legacyClaudeHome}\n` +
               `If you expected chats here, check that this process can READ the transcripts\n` +
-              `(a container only sees what is mounted) and that CLAUDE_HOME points at them.\n`,
+              `under that source home (a container only sees what is mounted).\n`,
       );
       return 0;
     }
