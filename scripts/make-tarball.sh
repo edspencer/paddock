@@ -6,6 +6,7 @@
 #   package.json + package-lock.json (for `npm ci --omit=dev`)
 #   packages/server/{package.json,dist}
 #   packages/web/{package.json,dist}
+#   LICENSE
 #   INSTALL.md (run instructions)
 #
 # Consumer:  tar xzf paddock-<v>.tgz && cd paddock && npm ci --omit=dev \
@@ -23,7 +24,7 @@ test -d packages/web/dist    || { echo "packages/web/dist missing — run 'npm r
 rm -rf dist-tarball
 mkdir -p "${STAGE}/packages/server" "${STAGE}/packages/web"
 
-cp package.json package-lock.json "${STAGE}/"
+cp package.json package-lock.json LICENSE "${STAGE}/"
 cp packages/server/package.json "${STAGE}/packages/server/"
 cp -R packages/server/dist "${STAGE}/packages/server/dist"
 cp packages/web/package.json "${STAGE}/packages/web/"
