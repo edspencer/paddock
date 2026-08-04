@@ -1,5 +1,63 @@
 # @paddock/web
 
+## 0.60.0
+
+### Minor Changes
+
+- [#663](https://github.com/edspencer/paddock/pull/663) [`59aa52f`](https://github.com/edspencer/paddock/commit/59aa52f4a0aad1d0436efcfa389c459f912ca795) Thanks [@edspencer](https://github.com/edspencer)! - Confirm native-chat imports before they happen, and let them be undone
+
+  "Import N native chats" was a permanently-visible sidebar button that imported
+  everything on one click, showed nothing about what it was about to take, and
+  could not be undone from the UI. The absence of a dismiss was deliberate and
+  well-argued — a live count beats a stale dismissal flag — but that reasoning
+  assumes the count is trustworthy, and it has not been: the same button has
+  offered Paddock's own sweeper output and another instance's chats.
+
+  The click now opens a dialog listing the candidate sessions grouped by the
+  directory they came from, with their date, size and first message. Everything
+  starts ticked, because "yes, all of it" really is the common case. The source
+  path is the load-bearing detail — it is what makes "these are from a scratch copy,
+  not my checkout" visible before anything is imported rather than after.
+
+  A successful import offers **Undo** on its toast, which releases the adoptions and
+  deletes the copies the import placed. The user's own `~/.claude` history is never
+  touched. Which files an undo may delete is decided server-side from what the
+  import actually did, so the request carries session ids and no paths; the offer
+  lives in memory and expires with a restart, in which case undo reports that there
+  was nothing to undo rather than acting on a stale record.
+
+  API changes:
+
+  - `GET …/adoptable-chats` sources gain a `sessions` array (`mtime`, `preview`,
+    `autoName`, `sizeBytes`) alongside the existing `sessionIds`.
+  - `POST …/adopt-chats` accepts `sessionIds` to import a chosen subset.
+  - `POST …/unadopt-chats` is new.
+
+  The live count is unchanged, and there is still no dismiss state.
+
+### Patch Changes
+
+- [#657](https://github.com/edspencer/paddock/pull/657) [`4dac0ba`](https://github.com/edspencer/paddock/commit/4dac0ba251ef1490a814167ab04fef5c42aba875) Thanks [@edspencer](https://github.com/edspencer)! - Fix an expanded `send_file` card flickering forever and breaking chat scrolling
+
+  A sent file taller than 360px re-rendered **once per animation frame, for as long
+  as it was on screen**, strobing between its bounded (360px, scrollable) and
+  unbounded (full-height) layouts. Because the transcript's height changed by the
+  same amount every frame, scroll anchoring fought it and scrolling the chat became
+  unusable.
+
+  `ResizableBox` returned two structurally different trees for the two cases, so
+  React reused one host `<div>` for both roots — and the `ResizeObserver`, whose
+  effect never re-ran (its only dependency is the parent-owned `children`), kept
+  measuring that node after it had become the wrapper carrying `style.height`. The
+  measurement was therefore circular: it read back the applied height, `360 > 360`
+  was false, the box unbounded itself, measured the full height, bounded itself
+  again, forever (#656).
+
+  The tree shape is now the same in both cases — bounding only toggles classes and
+  attributes — so the measured element is always the content, which nothing sizes.
+  That also stops `children` being remounted on every flip, which is what left an
+  async Mermaid render inside a long markdown body permanently blank (#644).
+
 ## 0.59.1
 
 ## 0.59.0
