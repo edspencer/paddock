@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Guard: reject raw NUL (0x00) bytes in TypeScript sources under `packages/`.
+ * Guard: reject raw NUL (0x00) bytes in the repo's JS/TS sources.
  *
  * Why this exists (issue #570). A NUL byte is legal inside a JS/TS string
  * literal and is byte-for-byte identical at runtime to the escape sequence for
@@ -18,15 +18,26 @@
  *
  * The fix is always the same: spell the character as an escape instead of
  * pasting the raw byte. Run `npm run check:nul` locally.
+ *
+ * Scope (issue #642): the whole repo, not just `packages/`, and `.mjs`/`.js`
+ * as well as `.ts`/`.tsx` — the second real occurrence of this bug was a raw
+ * NUL in `scripts/demo-gif/seed.mjs`, which the original `packages/` + `.ts`
+ * scan never looked at. Data files (`.json`, `.md`) are deliberately NOT
+ * scanned: the guard is about *source* staying greppable, and a NUL in a JSON
+ * fixture is more likely to be deliberate test data.
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const SCAN_ROOT = path.join(ROOT, "packages");
+const SCAN_ROOT = ROOT;
 
-/** Directories never worth scanning: dependencies and build output. */
+/**
+ * Directories never worth scanning: dependencies and build output. Matched by
+ * name at any depth, so this already covers e.g. `website/dist` and every
+ * workspace's `node_modules`.
+ */
 const SKIP_DIRS = new Set([
   "node_modules",
   "dist",
@@ -37,9 +48,9 @@ const SKIP_DIRS = new Set([
   ".git",
 ]);
 
-const EXTENSIONS = new Set([".ts", ".tsx"]);
+const EXTENSIONS = new Set([".ts", ".tsx", ".mjs", ".js"]);
 
-/** Recursively collect the TypeScript sources to check. */
+/** Recursively collect the sources to check. */
 function collect(dir) {
   const found = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -86,7 +97,7 @@ for (const file of collect(SCAN_ROOT).sort()) {
 }
 
 if (offenders.length === 0) {
-  console.log(`check:nul — OK, no NUL bytes in ${scanned} TypeScript sources.`);
+  console.log(`check:nul — OK, no NUL bytes in ${scanned} JS/TS sources.`);
   process.exit(0);
 }
 
