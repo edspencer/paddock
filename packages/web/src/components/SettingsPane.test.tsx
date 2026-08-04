@@ -4,6 +4,17 @@ import userEvent from "@testing-library/user-event";
 import { SettingsPane } from "./SettingsPane";
 import { makeProject, makeModelsResponse } from "../test/factories";
 
+type ModelsResponse = ReturnType<typeof makeModelsResponse>;
+
+/** A promise resolved by hand, so the pre-fetch render is genuinely observable. */
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
 const updateProject = vi.fn();
 const getModels = vi.fn();
 const promoteProject = vi.fn();
@@ -194,6 +205,71 @@ describe("SettingsPane", () => {
       "p1",
       expect.objectContaining({ driveMode: null }),
     );
+  });
+
+  it("claims nothing about the inherited defaults until /api/models resolves (issue #587)", async () => {
+    // Hold the meta fetch open so the pre-resolution render is observable rather
+    // than a couple of frames we'd have to race.
+    const meta = deferred<ModelsResponse>();
+    getModels.mockReturnValue(meta.promise);
+    // An instance whose real drive-mode default is `session` — the seeded literal
+    // "batch" was a false claim about this box's configuration.
+    const resolved = makeModelsResponse({ driveModeDefault: "session" });
+
+    render(<SettingsPane project={makeProject({ slug: "p1" })} onSaved={vi.fn()} />);
+
+    // --- Pre-fetch: neutral placeholders, no invented values. ---------------
+    const drive = screen.getByLabelText("Drive mode") as HTMLSelectElement;
+    expect(drive.options[0].value).toBe("");
+    expect(drive.options[0].textContent).toBe("Global default (loading…)");
+    expect(drive.options[0].textContent).not.toMatch(/batch/i);
+    // The helper prose asserts the same default, so it must not claim one either.
+    expect(screen.queryByText(/Inheriting the box-wide default/i)).not.toBeInTheDocument();
+    const driveHint = screen.getByText(/Loading the box-wide drive-mode default…/);
+    expect(driveHint.textContent).not.toMatch(/batch/i);
+
+    const depth = screen.getByLabelText("Max spawn depth") as HTMLSelectElement;
+    expect(depth.options[0].value).toBe("");
+    expect(depth.options[0].textContent).toBe("Instance default (loading…)");
+    expect(screen.queryByText(/Inheriting the instance default:/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/Loading the instance max-spawn-depth default…/)).toBeInTheDocument();
+
+    expect(screen.getByLabelText("OVERVIEW.md token budget")).toHaveAttribute(
+      "placeholder",
+      "Instance default (loading…)",
+    );
+    expect(screen.getByLabelText("CHANGELOG.md token budget")).toHaveAttribute(
+      "placeholder",
+      "Instance default (loading…)",
+    );
+    expect(screen.getByLabelText("CLAUDE.md token budget")).toHaveAttribute(
+      "placeholder",
+      "Instance default (loading…)",
+    );
+    expect(screen.queryByText(/Inheriting the instance defaults:/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/Loading the instance curation budgets…/)).toBeInTheDocument();
+
+    // --- Post-fetch: the real instance values, everywhere. ------------------
+    meta.resolve(resolved);
+    await screen.findByRole("option", { name: "Global default (Session)" });
+
+    expect(drive.options[0].textContent).toBe("Global default (Session)");
+    expect(screen.getByText(/Inheriting the box-wide default/i)).toBeInTheDocument();
+    expect(depth.options[0].textContent).toBe("Instance default (1)");
+    expect(screen.getByText(/Inheriting the instance default:/i)).toBeInTheDocument();
+    expect(screen.getByLabelText("OVERVIEW.md token budget")).toHaveAttribute(
+      "placeholder",
+      "Instance default (2000)",
+    );
+    expect(screen.getByLabelText("CHANGELOG.md token budget")).toHaveAttribute(
+      "placeholder",
+      "Instance default (8000)",
+    );
+    expect(screen.getByLabelText("CLAUDE.md token budget")).toHaveAttribute(
+      "placeholder",
+      "Instance default (6000)",
+    );
+    expect(screen.getByText(/Inheriting the instance defaults:/i)).toBeInTheDocument();
   });
 
   it("maxSpawnDepth: sets a per-project override and sends it in the patch (issue #262)", async () => {
