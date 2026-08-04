@@ -154,7 +154,8 @@ Opening a directory (--here)
 
     · creates .paddock/ in the directory for this workspace's own state
     · creates .chats/ for transcripts, and adds both to .gitignore
-    · links ~/.claude/projects/<encoded-dir> at this workspace
+    · offers your ~/.claude sessions for this directory for import — nothing
+      there is moved, copied or linked until you confirm
 
   Once done, later runs in the same directory resume it — no flag needed.
   Without --here, Paddock never touches the directory you ran it from.

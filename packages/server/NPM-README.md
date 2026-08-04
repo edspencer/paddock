@@ -45,8 +45,10 @@ The flag is the consent, so here is everything it does:
 
 - creates **`.paddock/`** for the workspace's state and **`.chats/`** for transcripts
 - appends those two entries to **`.gitignore`**
-- **links** `~/.claude/projects/<encoded-dir>` at the workspace — your Claude Code
-  history is linked, never moved or copied
+
+**Your `~/.claude` is not touched.** Sessions found there are *offered* for import —
+nothing is moved, copied or linked until you confirm, and the originals stay put
+afterwards, so your terminal `claude` keeps working exactly as before.
 
 To undo it: `rm -rf .paddock .chats` and drop the two `.gitignore` lines.
 

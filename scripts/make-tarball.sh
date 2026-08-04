@@ -41,21 +41,27 @@ PORT=4000 HOST=0.0.0.0 \\
 node packages/server/dist/index.js
 \`\`\`
 
-Requires Node.js >= 22 and the \`claude\` CLI on PATH
-(\`npm i -g @anthropic-ai/claude-code\`).
+Requires Node.js >= 22. Chats resolve the Claude Agent SDK's own bundled binary, so
+they work as-is; the \`claude\` CLI on PATH
+(\`npm i -g @anthropic-ai/claude-code\`) is needed only for the post-turn sweeper
+and for triggers.
 
 ## Easier alternatives
 
 \`\`\`sh
 # No install, no clone:
-npx @edspencer/paddock@${VERSION}
+npx @edspencer/paddock
 
-# Or open the directory you're standing in as the workspace, importing any
-# Claude Code sessions you already have for it:
-npx @edspencer/paddock@${VERSION} --here
+# Or open the directory you're standing in as the workspace. Any Claude Code
+# sessions you already have for it are offered for import — nothing is moved,
+# copied or linked until you confirm:
+npx @edspencer/paddock --here
 \`\`\`
 
-The npm package bundles the Claude runtime, so it needs no separate \`claude\` CLI.
+Deliberately unpinned: releases 0.57.0-0.59.0 shipped a CLI that silently did nothing,
+so a pinned command generated from one of those tags would be a dud. \`@latest\` is
+always a working one.
+
 For an always-on server, the Docker image (ghcr.io/edspencer/paddock:${VERSION}) is
 batteries-included. This tarball is the right choice when you want the app on the box
 with no Docker and no registry access.
