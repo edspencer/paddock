@@ -94,10 +94,11 @@ conversations, resumable, rather than an empty instance. Then open
 **http://127.0.0.1:4000**. Later runs in the same directory resume it, no flag needed.
 
 `--here` is the consent, and here is all of it: it creates `.paddock/` (workspace
-state) and `.chats/` (transcripts) in the directory, appends both to `.gitignore`,
-and **links** your `~/.claude` history rather than moving or copying it. Undo with
-`rm -rf .paddock .chats` and dropping the two `.gitignore` lines. Without the flag,
-Paddock never touches the directory you ran it from.
+state) and `.chats/` (transcripts) in the directory and appends both to `.gitignore`.
+**Your `~/.claude` is not touched** — sessions there are *offered* for import, and
+nothing is moved, copied or linked until you confirm. Undo with `rm -rf .paddock
+.chats` and dropping the two `.gitignore` lines. Without the flag, Paddock never
+touches the directory you ran it from.
 
 Needs **Node 22+**. First run downloads ~250 MB — Paddock drives Claude Code, and
 the Agent SDK ships a per-platform binary of that size; later runs reuse the npm

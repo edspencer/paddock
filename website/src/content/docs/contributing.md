@@ -19,7 +19,9 @@ re-reading it here:
 
 ## Prerequisites
 
-- **Node 22+** and the **`claude` CLI** on your `PATH` (`claude --version`).
+- **Node 22+**, and the **`claude` CLI** on your `PATH` (`claude --version`) for the
+  sweeper and triggers — chats resolve the SDK's own bundled binary and never consult
+  `PATH`, so they run without it.
 - A **Claude Max OAuth token** (`CLAUDE_CODE_OAUTH_TOKEN`) or an
   `ANTHROPIC_API_KEY` in your environment. Never print or commit it — load it into
   the environment, don't hardcode it (see [DEV.md](https://github.com/edspencer/paddock/blob/main/DEV.md)).

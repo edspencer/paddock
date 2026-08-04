@@ -5,7 +5,7 @@ description: "The user-facing highlights of each Paddock release — one-command
 
 import DemoVideo from '../../components/DemoVideo.astro';
 
-## 0.56–0.59 — One command, on your own history
+## 0.59.1–0.60 — One command, on your own history
 
 - **`npx @edspencer/paddock` — nothing to install, nothing to clone.** Paddock is
   published to npm as a single self-contained package: the server, the web UI, and
@@ -23,16 +23,24 @@ import DemoVideo from '../../components/DemoVideo.astro';
   already did — not at an empty instance.
 
   The flag is the consent, and it says what it's about to do: it creates
-  `.paddock/` for the workspace's state and `.chats/` for transcripts, adds both to
-  your `.gitignore`, and **links** your `~/.claude` history rather than moving or
-  copying it. Later runs in the same directory resume it with no flag needed — the
-  git model, where `--here` is `git init` and `.paddock/` is `.git`. Without the
-  flag, Paddock never touches the directory you ran it from.
+  `.paddock/` for the workspace's state and `.chats/` for transcripts, and adds both
+  to your `.gitignore`. **Your `~/.claude` is not touched** — sessions there are
+  *offered* for import, and nothing is moved, copied or linked until you confirm, so
+  your terminal `claude` keeps working exactly as before. Later runs in the same
+  directory resume it with no flag needed — the git model, where `--here` is
+  `git init` and `.paddock/` is `.git`. Without the flag, Paddock never touches the
+  directory you ran it from.
 
 - **Published with provenance.** Releases go to npm from CI through OIDC trusted
   publishing, carrying a signed SLSA attestation that ties each version back to the
   exact commit and workflow that built it. The release fails if the attestation
   doesn't appear.
+
+:::caution[Use 0.59.1 or later]
+The npm package first shipped in 0.56.0, but **0.57.0 through 0.59.0 are broken** — the
+CLI silently did nothing and exited 0 when run through `npx` or a global install. Fixed
+in 0.59.1. `npx @edspencer/paddock@latest` always gets you a working one.
+:::
 
 ## 0.55 — Bring your terminal history with you
 
