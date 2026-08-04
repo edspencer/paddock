@@ -42,8 +42,23 @@ node packages/server/dist/index.js
 \`\`\`
 
 Requires Node.js >= 22 and the \`claude\` CLI on PATH
-(\`npm i -g @anthropic-ai/claude-code\`). See the Docker image
-(ghcr.io/edspencer/paddock:${VERSION}) for a batteries-included alternative.
+(\`npm i -g @anthropic-ai/claude-code\`).
+
+## Easier alternatives
+
+\`\`\`sh
+# No install, no clone:
+npx @edspencer/paddock@${VERSION}
+
+# Or open the directory you're standing in as the workspace, importing any
+# Claude Code sessions you already have for it:
+npx @edspencer/paddock@${VERSION} --here
+\`\`\`
+
+The npm package bundles the Claude runtime, so it needs no separate \`claude\` CLI.
+For an always-on server, the Docker image (ghcr.io/edspencer/paddock:${VERSION}) is
+batteries-included. This tarball is the right choice when you want the app on the box
+with no Docker and no registry access.
 EOF
 
 tar -czf "${OUT}.tgz" -C dist-tarball "${OUT}"

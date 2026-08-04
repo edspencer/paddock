@@ -11,7 +11,7 @@ v0.44 the defaults treat it that way.
 **The default bind host changed from `0.0.0.0` (all interfaces) to `127.0.0.1`
 (loopback only).**
 
-If you run Paddock **from source or the release tarball** and reached it from another
+If you run Paddock **from source, via `npx`, or from the release tarball** and reached it from another
 machine *without ever setting `HOST`*, upgrading to v0.44 or later will make it stop
 answering — connections from anywhere but the box itself are refused. Nothing is
 broken; it is bound where you didn't ask it to be reachable.
@@ -30,8 +30,11 @@ the same, and they need a flag of their own to boot at all. See
 
 ### 1. The default is loopback
 
-`HOST` defaults to `127.0.0.1`. A fresh `git clone` or tarball run is network-closed:
-reachable from the box itself, from nothing else. You opt in to more.
+`HOST` defaults to `127.0.0.1`. An `npx` run, a fresh `git clone` or a tarball run is
+network-closed: reachable from the box itself, from nothing else. You opt in to more.
+
+This is why `npx @edspencer/paddock` on a laptop needs no configuration and no proxy —
+it is already unreachable from anywhere but the machine it's running on.
 
 Resolution order, highest first:
 
@@ -164,8 +167,8 @@ docker run -p 127.0.0.1:4000:4000 \
 The [`paddock-deploy`](https://github.com/edspencer/paddock-deploy/tree/main/docker)
 recipes already do both — the loopback publish *and* the override, with the reasoning
 inline. The distinction that matters is which *mechanism* protects you: on bare metal,
-tarball, VM and systemd-in-LXC runs it's the bind host; in a container it's the publish
-posture, and the flag is how you tell the app so.
+`npx`, tarball, VM and systemd-in-LXC runs it's the bind host; in a container it's the
+publish posture, and the flag is how you tell the app so.
 
 ## See also
 

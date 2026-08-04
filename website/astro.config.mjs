@@ -85,7 +85,7 @@ export default defineConfig({
 			sidebar: [
 				{ label: 'Welcome', link: '/' },
 				{ label: "What's New", slug: 'whats-new' },
-				{ label: 'Getting Started', slug: 'getting-started' },
+				{ label: 'Getting Started', slug: 'getting-started', badge: { text: 'npx', variant: 'tip' } },
 				{
 					label: 'Using Paddock',
 					collapsed: false,

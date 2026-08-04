@@ -1,9 +1,38 @@
 ---
 title: What's New
-description: "The user-facing highlights of each Paddock release — importing your existing Claude Code CLI chats, a Home that leads with running and unread work, the keeper persona retired in favour of Claude, an unread badge on the sidebar's Home link, the instance's own root as a first-class workspace, subtree actions on the chat tree, a running-chats filter, instance Config split from workspace Settings, scratch retired, a much faster jobs index, a chat list that nests spawned chats under their parent, an external MCP endpoint, a generated API reference, per-message fork & revert, Claude Opus 5 by default, official Docker images & deploy recipes, attachments, streaming, unified triggers, and more."
+description: "The user-facing highlights of each Paddock release — one-command install with npx and opening the directory you're in, importing your existing Claude Code CLI chats, a Home that leads with running and unread work, the keeper persona retired in favour of Claude, an unread badge on the sidebar's Home link, the instance's own root as a first-class workspace, subtree actions on the chat tree, a running-chats filter, instance Config split from workspace Settings, scratch retired, a much faster jobs index, a chat list that nests spawned chats under their parent, an external MCP endpoint, a generated API reference, per-message fork & revert, Claude Opus 5 by default, official Docker images & deploy recipes, attachments, streaming, unified triggers, and more."
 ---
 
 import DemoVideo from '../../components/DemoVideo.astro';
+
+## 0.56–0.59 — One command, on your own history
+
+- **`npx @edspencer/paddock` — nothing to install, nothing to clone.** Paddock is
+  published to npm as a single self-contained package: the server, the web UI, and
+  the Claude Code runtime, in one command. If you have Node 22+, you have
+  everything you need. It starts quiet (the several hundred boot log lines used to
+  scroll the one URL you wanted off the top of the terminal), tells you where your
+  data lives the first time it creates it, and warns you up front rather than
+  silently failing if it can't find Claude credentials.
+
+- **`--here` opens the directory you're standing in.** Run
+  `npx @edspencer/paddock --here` inside a project and Paddock adopts *that*
+  directory as its workspace: Claude works in your files, and any Claude Code
+  sessions you already have for the directory are offered for import. So the
+  fastest way to find out whether Paddock is for you is to point it at work you
+  already did — not at an empty instance.
+
+  The flag is the consent, and it says what it's about to do: it creates
+  `.paddock/` for the workspace's state and `.chats/` for transcripts, adds both to
+  your `.gitignore`, and **links** your `~/.claude` history rather than moving or
+  copying it. Later runs in the same directory resume it with no flag needed — the
+  git model, where `--here` is `git init` and `.paddock/` is `.git`. Without the
+  flag, Paddock never touches the directory you ran it from.
+
+- **Published with provenance.** Releases go to npm from CI through OIDC trusted
+  publishing, carrying a signed SLSA attestation that ties each version back to the
+  exact commit and workflow that built it. The release fails if the attestation
+  doesn't appear.
 
 ## 0.55 — Bring your terminal history with you
 
