@@ -31,8 +31,10 @@ it touching your code:
 - creates **`.paddock/`** for this workspace's state
 - creates **`.chats/`** for transcripts
 - appends those two entries to **`.gitignore`**
-- links `~/.claude/projects/<encoded-dir>` at the workspace — your Claude Code history is
-  **linked, not moved or copied**
+
+**Your `~/.claude` is not touched.** Sessions found there are *offered* for import —
+nothing is moved, copied or linked until you confirm, and the originals stay where they
+are afterwards, so your terminal `claude` keeps working exactly as before.
 
 To undo it completely: `rm -rf .paddock .chats` and drop the two `.gitignore` lines.
 :::
@@ -174,7 +176,9 @@ Paddock.
 
 ## Run from source
 
-You need **Node 22+** and the **`claude` CLI** on your `PATH`.
+You need **Node 22+**. Chats resolve the Claude Agent SDK's own bundled binary and never
+consult `PATH`, so they work without anything else installed; the **`claude` CLI** on
+your `PATH` is needed only for the post-turn sweeper and for triggers.
 
 ```bash
 git clone https://github.com/edspencer/paddock.git
