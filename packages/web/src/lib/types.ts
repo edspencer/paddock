@@ -425,7 +425,11 @@ export interface ChatTriggerInfo {
   agentName: string;
   /** Whether the trigger is currently armed (a disabled trigger's past chats still show). */
   enabled: boolean;
-  /** The exact tool grant (herdctl `allowed_tools`); `[]` = a tool-less trigger. */
+  /**
+   * The declared tool grant (herdctl `allowed_tools`); `[]` = none declared. Note
+   * `[]` is NOT enforced as a deny-all — herdctl only emits the allow-list when it
+   * is non-empty, so an empty one leaves Claude's default tools in place (#647).
+   */
   allowedTools: string[];
   /** The permission mode the trigger's turns run under, when it sets one. */
   permissionMode?: string;
@@ -584,8 +588,8 @@ export type TriggerWhen =
 
 /**
  * WHAT a fired trigger does — the shared agent-run definition (identical across every
- * trigger type). Exactly one of `prompt` / `promptFile`; `tools` is a deny-by-default
- * allow-list (`[]` = a tool-less curator).
+ * trigger type). Exactly one of `prompt` / `promptFile`; `tools` is the allow-list
+ * (`[]` = none declared, which herdctl does not enforce as a deny-all — see #647).
  */
 export interface TriggerRun {
   prompt?: string;

@@ -172,9 +172,11 @@ function toInput(d: Draft): TriggerInput {
 /** A compact one-line summary of a trigger's granted tools, for the list. */
 function capabilitySummary(t: Trigger): string {
   const tools = t.run.tools ?? [];
-  // A tool-less SCHEDULE runs as Claude (full tools); a tool-less EVENT is a
-  // deliberately tool-less curator (design §2.3 — the one asymmetry).
-  if (tools.length === 0) return t.trigger.type === "schedule" ? "Claude's tools" : "Tool-less";
+  // A SCHEDULE with no tools runs on the keeper agent, so it really does get
+  // Claude's full toolset (design §2.3 — the one asymmetry). An EVENT with none
+  // gets `allowed_tools: []`, which herdctl never emits — so this states what was
+  // DECLARED and deliberately stops short of claiming it is enforced (#647/#319).
+  if (tools.length === 0) return t.trigger.type === "schedule" ? "Claude's tools" : "No tools";
   return `${tools.length} tool${tools.length === 1 ? "" : "s"}`;
 }
 
@@ -463,7 +465,12 @@ export function TriggersPane({ project }: { project: Project }) {
                           {whenSummary(t.trigger)}
                         </td>
                         <td className="px-2 py-2.5 align-top text-[12px] text-paddock-600 dark:text-paddock-300">
-                          <span title={t.run.tools?.join(", ") || "No tools granted"}>
+                          <span
+                            title={
+                              t.run.tools?.join(", ") ||
+                              "No tools declared — an empty list is not enforced as a deny-all"
+                            }
+                          >
                             {capabilitySummary(t)}
                           </span>
                           {t.run.permissionMode && (
@@ -754,10 +761,11 @@ export function TriggersPane({ project }: { project: Project }) {
                     <span className="field-label">Tools</span>
                     <p className="mb-2 text-[12px] text-paddock-400">
                       The trigger agent can use exactly the tools you check here — nothing else.
-                      Leave all unchecked for a tool-less trigger that only thinks and returns text
                       {draft.type === "schedule"
-                        ? " (a schedule with no tools runs as Claude with its full toolset)."
-                        : "."}
+                        ? " Leave all unchecked and the schedule runs as Claude with its full toolset."
+                        : " Leaving all unchecked declares no tools, but is not a deny-all: an empty" +
+                          " list is not passed to the runtime, so the agent falls back to Claude's" +
+                          " default tools."}
                     </p>
                     <div className="space-y-3" data-testid="trigger-tools">
                       {GROUP_ORDER.filter((g) => grantableTools.some((t) => t.group === g)).map(

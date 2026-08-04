@@ -48,17 +48,17 @@ const PERMISSION_MODES: ReadonlySet<string> = new Set([
 
 /**
  * A hook's capability set (GG-1) — projected verbatim onto the hook's OWN herdctl
- * agent's tool config, so the registered agent enforces exactly these tools. An
- * absent/empty {@link HookCapabilities.allowedTools} is a **tool-less** hook (it can
- * only think + return text); granting `Bash` lets it spin down servers / delete
- * clones itself. This is intentionally the whole capability model — there is no
- * higher-level profile.
+ * agent's tool config, so the registered agent carries exactly these tools. An
+ * absent/empty {@link HookCapabilities.allowedTools} DECLARES a **tool-less** hook;
+ * granting `Bash` lets it spin down servers / delete clones itself. This is
+ * intentionally the whole capability model — there is no higher-level profile.
  */
 export interface HookCapabilities {
   /**
-   * The tools the hook agent may use (herdctl `allowed_tools`). Omit or `[]` for a
-   * tool-less hook. The CLI runtime auto-denies any tool NOT on this list, so this
-   * is the effective grant.
+   * The tools the hook agent may use (herdctl `allowed_tools`). Omit or `[]` to
+   * declare a tool-less hook — but note herdctl emits the allow-list only when it
+   * is NON-empty, so `[]` is not enforced as a deny-all and the agent falls back to
+   * Claude Code's default tools (#647; enforcement itself is #319).
    */
   allowedTools?: string[];
   /** Tools explicitly denied even if otherwise allowed (herdctl `denied_tools`). */
@@ -134,7 +134,7 @@ export interface ChatHookInfo {
   agentName: string;
   /** Whether the hook is armed (a disabled hook's past chats are still shown). */
   enabled: boolean;
-  /** The exact tool grant (herdctl `allowed_tools`); `[]` = a tool-less hook. */
+  /** The declared tool grant (herdctl `allowed_tools`); `[]` = none, unenforced (#647). */
   allowedTools: string[];
   /** Tools explicitly denied even if otherwise allowed, when the hook sets any. */
   deniedTools?: string[];
@@ -326,18 +326,20 @@ export function sanitizeHooks(raw: unknown): Record<string, PaddockHook> | undef
 
 /**
  * Project a hook's {@link HookCapabilities} onto the exact herdctl agent tool-config
- * fields (snake_case), so the registered `hook-<slug>-<name>` agent enforces the
- * capability BY CONSTRUCTION. A tool-less hook yields `allowed_tools: []` (the CLI
- * runtime then denies every tool). Always sets `allowed_tools` + `max_turns` so a
- * hook agent never silently inherits the keeper's broad default toolset; the other
- * fields are set only when the capability specifies them (else the fleet defaults
- * apply). This is the ONE place capability→config translation lives.
+ * fields (snake_case), so the registered `hook-<slug>-<name>` agent carries the
+ * capability BY CONSTRUCTION. A hook that declares no tools yields
+ * `allowed_tools: []`, which herdctl does NOT enforce as a deny-all — the same
+ * caveat spelled out on `triggerToAgentToolConfig` in `trigger-config.ts` (#647).
+ * Always sets `allowed_tools` + `max_turns` so a hook agent never silently inherits
+ * the keeper's broad default toolset; the other fields are set only when the
+ * capability specifies them (else the fleet defaults apply). This is the ONE place
+ * capability→config translation lives.
  */
 export function hookToAgentToolConfig(caps: HookCapabilities | undefined): Record<string, unknown> {
   const out: Record<string, unknown> = {
-    // A hook's grant is exactly its allowedTools — default to NONE (tool-less), never
-    // the keeper's broad inherited allowlist. An empty list = the CLI runtime denies
-    // all tools, which is the correct "no capability" semantics.
+    // A hook's grant is exactly its allowedTools — default to NONE, never the
+    // keeper's broad inherited allowlist. An empty list expresses "no capability",
+    // though herdctl never emits it, so it is not enforced as one (#647).
     allowed_tools: caps?.allowedTools ?? [],
     max_turns: caps?.maxTurns ?? HOOK_DEFAULT_MAX_TURNS,
   };

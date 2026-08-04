@@ -37,13 +37,16 @@ export function TriggerCapabilityBanner({
   projectSlug: string;
 }) {
   const tools = trigger.allowedTools ?? [];
-  const toolLess = tools.length === 0;
-  // A tool-less SCHEDULE trigger runs as Claude (full tools); a tool-less EVENT
-  // trigger is a deliberately tool-less curator (design §2.3 — the one asymmetry).
-  const grantSummary = toolLess
+  const noneDeclared = tools.length === 0;
+  // A SCHEDULE trigger with no tools runs on the keeper agent, so it really does
+  // get Claude's full toolset (design §2.3 — the one asymmetry). An EVENT trigger
+  // with none gets its own agent with `allowed_tools: []` — which herdctl never
+  // emits, so it is a DECLARATION of intent, not an enforced sandbox (#647). #319
+  // tracks making a grant enforceable at all.
+  const grantSummary = noneDeclared
     ? trigger.type === "schedule"
       ? "runs as Claude (full tools)"
-      : "no tools — reasoning only"
+      : "no tools declared"
     : `${tools.length} tool${tools.length === 1 ? "" : "s"} granted`;
   const Icon = trigger.type === "schedule" ? ClockIcon : BoltIcon;
 
@@ -96,11 +99,11 @@ export function TriggerCapabilityBanner({
             <div className="mt-2 space-y-2 border-l-2 border-sky-300/60 pl-3 dark:border-sky-500/30">
               <div>
                 <div className="mb-1 font-medium">Allowed tools</div>
-                {toolLess ? (
+                {noneDeclared ? (
                   <p className="text-sky-800/80 dark:text-sky-200/70">
                     {trigger.type === "schedule"
                       ? "None declared — this schedule runs as Claude with its full toolset."
-                      : "None — this trigger can only read its prompt and respond (no file, shell, or MCP access)."}
+                      : "None declared. An empty list is not a restriction: no allow-list is passed to the runtime, so this agent falls back to Claude's default tools. Its prompt and max turns are the real bounds."}
                   </p>
                 ) : (
                   <ul className="flex flex-wrap gap-1" data-testid="trigger-allowed-tools">
