@@ -15,8 +15,9 @@
  *
  *  1. **Assemble candidate sources** — the project's own `workingDir`, plus any
  *     `<claudeHome>/projects/*` folder whose RECORDED cwd matches the project.
- *  2. **Filter low-value noise** — a zero-byte transcript or a session that is
- *     nothing but a `/mcp` slash command is not a chat anyone wants imported.
+ *  2. **Filter low-value noise** — a zero-byte transcript, a session that is
+ *     nothing but a `/mcp` slash command, or one of paddock's OWN sweeper runs
+ *     (#658) is not a chat anyone wants imported.
  *  3. **Cache** — the scan is O(all transcript folders on the machine), so it is
  *     keyed on directory mtimes and only redone when something could have moved.
  *
@@ -71,11 +72,11 @@ export interface FilteredSession {
 }
 
 /**
- * Why a candidate was withheld. Both values are OURS (paddock-side noise
+ * Why a candidate was withheld. All three values are OURS (paddock-side noise
  * filtering); the engine's own exclusions (sidechain / already-adopted /
  * attributed-to-run) never reach us as candidates at all.
  */
-export type FilterReason = "too-small" | "slash-command-only";
+export type FilterReason = "too-small" | "slash-command-only" | "sweeper-run";
 
 /** What a project could import right now. */
 export interface AdoptableSummary {
@@ -130,9 +131,56 @@ export const SLASH_COMMAND_MAX_BYTES = 4096;
  */
 const SLASH_COMMAND_ONLY_RE = /^\s*(?:<command-name>\s*)?\/[a-z][a-z0-9:_-]*(?![^\s<])/i;
 
+/**
+ * A preview that opens with paddock's OWN sweeper prompt (#658).
+ *
+ * The sweeper is a one-shot `claude -p` subprocess (`sweep.ts` `runSweeper`), so
+ * it writes a perfectly ordinary transcript into the project's own chat folder.
+ * When no run record binds that session — the sweeper's own history on the
+ * dogfooding instance has ten such transcripts with no `session_id` in any
+ * `job-*.yaml` — attribution cannot tell it from a session the user typed in a
+ * terminal, and paddock ends up offering the user its own curation output as a
+ * chat to "import".
+ *
+ * Matched on the prompt's two stable opening features: the `Project: <name>
+ * (slug: <slug>)` header `buildPrompt` always emits first, and the `You are
+ * curating` sentence that follows it. Both are required. The header alone is too
+ * weak (a user could plausibly open a chat that way), and the sentence alone
+ * would match someone quoting the sweeper prompt to talk ABOUT it.
+ *
+ * Whitespace between the two is `\s+` rather than `\n`: the header is followed by
+ * an optional `Summary:` line and a blank line, and the engine's preview
+ * normalises runs of whitespace. The wording of the sentence has already drifted
+ * once ("curating two files in this project directory" → "curating this
+ * project's three context files"), so only the stable `You are curating` stem is
+ * matched.
+ *
+ * The engine truncates a preview at 100 characters, so a project whose name is
+ * long enough to push `You are curating` past that boundary will not match and
+ * its sweeper chats stay on offer. That is the deliberate direction to fail in:
+ * a sweeper chat wrongly offered is noise the user can decline, while a real chat
+ * wrongly withheld is history they cannot get at. Withheld candidates are
+ * reported under `filtered` for the same reason.
+ */
+const SWEEPER_PROMPT_RE = /^Project: .*\(slug: [^)]*\)\s+(?:Summary:.*\s+)?You are curating\b/;
+
+/**
+ * Does this transcript preview look like paddock's own sweeper run (#658)?
+ *
+ * Exported so `sweeper-prompt-contract.test.ts` can assert it against the prompt
+ * `SweepService` REALLY builds. The wording has drifted once already; a copy of
+ * it pasted into a test here would go stale silently and take the filter with it.
+ */
+export function isSweeperPrompt(preview: string): boolean {
+  return SWEEPER_PROMPT_RE.test(preview);
+}
+
 /** Classify a candidate as noise, or `null` to keep it. */
 function filterReasonFor(session: AdoptableSession): FilterReason | null {
   if (session.sizeBytes < MIN_TRANSCRIPT_BYTES) return "too-small";
+  if (session.preview !== undefined && isSweeperPrompt(session.preview)) {
+    return "sweeper-run";
+  }
   if (
     session.sizeBytes < SLASH_COMMAND_MAX_BYTES &&
     session.preview !== undefined &&

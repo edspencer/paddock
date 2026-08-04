@@ -15,6 +15,9 @@
  */
 import { describe, it, expect } from "vitest";
 import { buildSweeperConfig } from "../../src/herdctl-agent-config.js";
+import { SweepService } from "../../src/sweep.js";
+import { isSweeperPrompt } from "../../src/adoptable.js";
+import { DEFAULT_CURATION } from "../../src/curation-config.js";
 import type { PaddockConfig } from "../../src/config.js";
 import type { Project } from "../../src/projects.js";
 
@@ -73,5 +76,68 @@ describe("sweeper system_prompt ↔ writer contract (#480)", () => {
 
   it("keeps the sweeper tool-less, so the writer stays the only file mutator", () => {
     expect(buildSweeperConfig(cfg, project).allowed_tools).toEqual([]);
+  });
+});
+
+/**
+ * The curation prompt ↔ adoption-filter contract (#658).
+ *
+ * The sweeper is a one-shot `claude -p` subprocess, so it writes an ordinary
+ * transcript into the project's own chat folder. When no run record binds that
+ * session, attribution cannot distinguish it from a session the user typed in a
+ * terminal — and the "Import N native chats" button offers paddock's own
+ * curation output back to the user (ten such transcripts on the dogfooding
+ * instance). `isSweeperPrompt` is what keeps them out of the offer.
+ *
+ * It matches on the prompt's opening, so it is only as good as its agreement
+ * with the prompt `SweepService` really builds. Asserted against the real
+ * builder rather than a pasted copy: the sentence has already drifted once
+ * ("curating two files in this project directory" → "curating this project's
+ * three context files"), and a stale copy here would let it drift again with the
+ * filter quietly following.
+ */
+describe("curation prompt ↔ adoption filter (#658)", () => {
+  const promptFor = (over: Partial<Project> = {}): string => {
+    const svc = new SweepService({
+      herdctl: {} as never,
+      projects: {} as never,
+      dataDir: "/tmp/data",
+      logger: { info() {}, warn() {}, error() {} },
+    });
+    // `curationPrompt` is private; reached through the index signature rather
+    // than exported, so production code keeps its narrow surface.
+    const build = (svc as unknown as Record<string, (a: unknown) => string>)["curationPrompt"];
+    return build.call(svc, {
+      project: { slug: "demo", name: "Demo", summary: "", ...over } as unknown as Project,
+      overview: "# Overview",
+      changelog: "# Changelog",
+      claudeMd: "# CLAUDE",
+      digest: "some recent activity",
+      extraInstructions: "",
+      budget: DEFAULT_CURATION,
+    });
+  };
+
+  /** Truncate exactly as `extractFirstMessagePreview` does — the filter only ever
+   *  sees the first 100 characters, so the marker has to land inside them. */
+  const asPreview = (text: string): string =>
+    text.length > 100 ? `${text.substring(0, 100)}...` : text;
+
+  it("opens with something the adoption filter recognises", () => {
+    expect(isSweeperPrompt(asPreview(promptFor()))).toBe(true);
+  });
+
+  it("is still recognised when the project has a summary line", () => {
+    expect(isSweeperPrompt(asPreview(promptFor({ summary: "A demo project" } as Partial<Project>))))
+      .toBe(true);
+  });
+
+  it("does not match an ordinary chat that merely mentions curating", () => {
+    expect(isSweeperPrompt("You are curating the wrong file — why does the sweeper do that?")).toBe(
+      false,
+    );
+    expect(isSweeperPrompt("Project: Demo (slug: demo) — what is left before the release?")).toBe(
+      false,
+    );
   });
 });

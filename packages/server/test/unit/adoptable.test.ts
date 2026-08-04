@@ -242,6 +242,70 @@ describe("AdoptableIndex (#588)", () => {
     );
   });
 
+  it("withholds paddock's OWN sweeper runs, and says so (#658)", async () => {
+    const own = path.join(tmp, "notes");
+    // The current wording, and the older one it drifted from — both are real
+    // prompts found in the dogfooding instance's transcript folder.
+    await transcript(own, "sweep-now", {
+      firstUserText:
+        "Project: Paddock (slug: paddock)\n\n\nYou are curating this project's three context " +
+        "files from recent chat activity. You are shown each file IN FULL",
+      padTo: 6000,
+    });
+    await transcript(own, "sweep-old", {
+      firstUserText:
+        "Project: Paddock (slug: paddock)\nYou are curating two files in this project " +
+        "directory based on recent chat activity",
+      padTo: 6000,
+    });
+    // With a `Summary:` line between the header and the sentence.
+    await transcript(own, "sweep-summary", {
+      firstUserText:
+        "Project: Acme (slug: acme)\nSummary: the acme thing\n\nYou are curating this " +
+        "project's three context files",
+      padTo: 6000,
+    });
+    // A real chat that merely TALKS about the sweeper must survive: the header
+    // is absent, so the sentence alone is not enough.
+    await transcript(own, "talks-about-it", {
+      firstUserText: "You are curating the wrong files — can you look at why the sweeper does that?",
+      padTo: 6000,
+    });
+    // The header alone is not enough either.
+    await transcript(own, "header-only", {
+      firstUserText: "Project: Paddock (slug: paddock) — what's left to do before the release?",
+      padTo: 6000,
+    });
+
+    const summary = await index().adoptableFor(fleet, project({ workingDir: own }), "keeper-p");
+    expect(summary.sources[0].sessionIds.sort()).toEqual(["header-only", "talks-about-it"]);
+    expect(summary.filtered.map((f) => f.sessionId).sort()).toEqual([
+      "sweep-now",
+      "sweep-old",
+      "sweep-summary",
+    ]);
+    expect(new Set(summary.filtered.map((f) => f.reason))).toEqual(new Set(["sweeper-run"]));
+    // Withheld, not silently dropped — `filtered` is what answers "why 2 and
+    // not 5?", and #660's preview dialog renders it.
+    expect(summary.count).toBe(2);
+  });
+
+  it("withholds a sweeper run that is far too big to be caught by any other rule", async () => {
+    // Guards the ordering in `filterReasonFor`: a curation transcript is a large
+    // file, so neither the size floor nor the slash-command ceiling would ever
+    // reach it. Only the sweeper rule can.
+    const own = path.join(tmp, "notes");
+    await transcript(own, "big-sweep", {
+      firstUserText: "Project: Paddock (slug: paddock)\n\n\nYou are curating this project's three",
+      padTo: SLASH_COMMAND_MAX_BYTES * 4,
+    });
+    const summary = await index().adoptableFor(fleet, project({ workingDir: own }), "keeper-p");
+    expect(summary.count).toBe(0);
+    expect(summary.filtered).toEqual([
+      { sessionId: "big-sweep", sourceCwd: own, reason: "sweeper-run" },
+    ]);
+  });
+
   it("reports count 0 with empty sources when there is nothing to import", async () => {
     const summary = await index().adoptableFor(
       fleet,
@@ -320,7 +384,13 @@ async function scanLikeTheEngine(
     let preview: string | undefined;
     try {
       const content = (JSON.parse(head) as { message?: { content?: unknown } }).message?.content;
-      if (typeof content === "string") preview = content;
+      // Truncated at 100 chars + "…" exactly as `extractFirstMessagePreview` does.
+      // Fidelity that matters: the sweeper-run rule (#658) has to match inside
+      // that budget, and a fake handing over the untruncated prompt would prove
+      // nothing about whether it does.
+      if (typeof content === "string") {
+        preview = content.length > 100 ? `${content.substring(0, 100)}...` : content;
+      }
     } catch {
       preview = undefined;
     }
