@@ -30,11 +30,23 @@ export function Toast({
    * remainder of the first one's.
    */
   durationMs = 6000,
+  /**
+   * Optional single action offered alongside the message — an "Undo" for an
+   * action that has already happened (#660).
+   *
+   * Inside the toast rather than beside it because the toast IS the window in
+   * which the offer stands: it disappears with the message, so there is never an
+   * Undo button pointing at an import the user has long since forgotten. Callers
+   * that offer one should raise the dwell time to match — six seconds is right
+   * for reading an outcome, short for deciding to reverse it.
+   */
+  action,
 }: {
   message: string | null;
   tone?: "success" | "error";
   onDismiss: () => void;
   durationMs?: number;
+  action?: { label: string; onAct: () => void };
 }) {
   useEffect(() => {
     if (message === null || durationMs <= 0) return;
@@ -67,6 +79,15 @@ export function Toast({
           <CheckIcon width={16} height={16} className="mt-0.5 shrink-0 text-emerald-500" />
         )}
         <span className="break-words">{message}</span>
+        {action && (
+          <button
+            type="button"
+            onClick={action.onAct}
+            className="ml-1 shrink-0 font-medium underline underline-offset-2 transition hover:opacity-80"
+          >
+            {action.label}
+          </button>
+        )}
         <button
           type="button"
           onClick={onDismiss}

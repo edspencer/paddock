@@ -6,6 +6,7 @@ import {
   AdoptableIndex,
   MIN_TRANSCRIPT_BYTES,
   SLASH_COMMAND_MAX_BYTES,
+  normalizeRemote,
   type AdoptableFleet,
 } from "../../src/adoptable.js";
 import type { Project } from "../../src/projects.js";
@@ -88,6 +89,47 @@ describe("AdoptableIndex (#588)", () => {
     return file;
   }
 
+  /**
+   * Make `dir` look like a real git checkout of `remoteUrl` (#659).
+   *
+   * A same-named directory now has to PROVE it is a clone of the project's repo,
+   * and the proof is read out of `.git/config` — so a test that wants a match has
+   * to write one. Deliberately a real config file rather than a stub in the
+   * production code's path: the INI shape (tab-indented keys under a
+   * `[remote "…"]` section) is exactly what git writes and what the parser must
+   * cope with.
+   *
+   * With `worktree: true`, lays out a LINKED WORKTREE instead: `.git` is a FILE
+   * pointing at `<main>/.git/worktrees/<name>`, which holds a `commondir` pointer
+   * back to the main git dir where the config actually lives.
+   */
+  async function gitCheckout(
+    dir: string,
+    remoteUrl: string,
+    opts: { worktree?: boolean; remoteName?: string } = {},
+  ): Promise<void> {
+    const config =
+      "[core]\n\trepositoryformatversion = 0\n" +
+      `[remote "${opts.remoteName ?? "origin"}"]\n` +
+      `\turl = ${remoteUrl}\n` +
+      `\tfetch = +refs/heads/*:refs/remotes/${opts.remoteName ?? "origin"}/*\n`;
+
+    if (opts.worktree !== true) {
+      await fs.mkdir(path.join(dir, ".git"), { recursive: true });
+      await fs.writeFile(path.join(dir, ".git", "config"), config, "utf8");
+      return;
+    }
+    // `<dir>` is a linked worktree of a main repo living beside it.
+    const main = path.join(path.dirname(dir), `${path.basename(dir)}-main`);
+    const mainGit = path.join(main, ".git");
+    const linked = path.join(mainGit, "worktrees", path.basename(dir));
+    await fs.mkdir(linked, { recursive: true });
+    await fs.writeFile(path.join(mainGit, "config"), config, "utf8");
+    await fs.writeFile(path.join(linked, "commondir"), "../..\n", "utf8");
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, ".git"), `gitdir: ${linked}\n`, "utf8");
+  }
+
   // --- matching heuristic ------------------------------------------------
 
   it("offers a NOTEBOOK project only its own working directory (exact cwd)", async () => {
@@ -98,10 +140,16 @@ describe("AdoptableIndex (#588)", () => {
 
     const summary = await index().adoptableFor(fleet, project({ workingDir: own }), "keeper-p");
     expect(summary.count).toBe(1);
-    expect(summary.sources).toEqual([{ sourceCwd: own, sessionIds: ["own-1"] }]);
+    expect(summary.sources).toHaveLength(1);
+    expect(summary.sources[0].sourceCwd).toBe(own);
+    expect(summary.sources[0].sessionIds).toEqual(["own-1"]);
+    // The detailed projection carries the same session, described (#660), and
+    // stays in lockstep with the id list — both are built from one array.
+    expect(summary.sources[0].sessions.map((s) => s.sessionId)).toEqual(["own-1"]);
+    expect(summary.sources[0].sessions[0].sizeBytes).toBeGreaterThan(0);
   });
 
-  it("offers a REPO-BACKED project its own checkout PLUS same-named checkouts elsewhere", async () => {
+  it("offers a REPO-BACKED project its own checkout PLUS same-named CLONES elsewhere", async () => {
     const own = path.join(tmp, "data", "projects", "acme-api", "acme-api");
     const laptop = path.join(tmp, "laptop", "code", "acme-api");
     const unrelated = path.join(tmp, "laptop", "code", "something-else");
@@ -109,6 +157,9 @@ describe("AdoptableIndex (#588)", () => {
     await transcript(laptop, "laptop-1", { padTo: 600 });
     await transcript(laptop, "laptop-2", { padTo: 600 });
     await transcript(unrelated, "nope-1", { padTo: 600 });
+    // Written in a DIFFERENT form from the project's `repo` on purpose: the same
+    // repo, addressed over https rather than ssh, still has to match (#659).
+    await gitCheckout(laptop, "https://github.com/acme/acme-api.git");
 
     const summary = await index().adoptableFor(
       fleet,
@@ -127,6 +178,7 @@ describe("AdoptableIndex (#588)", () => {
     const own = path.join(tmp, "data", "projects", "my-notes", "paddock");
     const laptop = path.join(tmp, "laptop", "paddock");
     await transcript(laptop, "laptop-1", { padTo: 600 });
+    await gitCheckout(laptop, "https://github.com/edspencer/paddock");
 
     const summary = await index().adoptableFor(
       fleet,
@@ -134,6 +186,87 @@ describe("AdoptableIndex (#588)", () => {
       "keeper-my-notes",
     );
     expect(summary.sources.map((s) => s.sourceCwd)).toEqual([laptop]);
+  });
+
+  it("does NOT offer a same-named directory that is not a clone of this repo (#659)", async () => {
+    // The regression this closes: on the dogfooding box the `hushpod` project
+    // offered 15 chats out of `/data/scratch/paddock-video/data/projects/hushpod`
+    // — a throwaway QA instance's data dir, matched purely on leaf name.
+    const own = path.join(tmp, "data", "projects", "hushpod", "hushpod");
+    const scratch = path.join(tmp, "scratch", "paddock-video", "data", "projects", "hushpod");
+    const otherRepo = path.join(tmp, "laptop", "hushpod");
+    await transcript(own, "own-1", { padTo: 600 });
+    await transcript(scratch, "qa-1", { padTo: 600 });
+    await transcript(otherRepo, "fork-1", { padTo: 600 });
+    // `scratch` gets NO git config at all — it is another instance's data dir,
+    // not a checkout. `otherRepo` is a real checkout of a DIFFERENT repo.
+    await gitCheckout(otherRepo, "https://github.com/someone-else/hushpod.git");
+
+    const summary = await index().adoptableFor(
+      fleet,
+      project({ workingDir: own, repo: "https://github.com/edspencer/hushpod" }),
+      "keeper-p",
+    );
+    // Only the project's own working directory survives.
+    expect(summary.sources.map((s) => s.sourceCwd)).toEqual([own]);
+    expect(summary.count).toBe(1);
+  });
+
+  it("matches a clone through a LINKED WORKTREE, where .git is a file (#659)", async () => {
+    // This repo is developed with worktrees, so a contributor's `wt-*` checkout
+    // is a real case: `.git` is a FILE and the config lives in the MAIN repo's
+    // git dir, reachable only via the `commondir` pointer.
+    const own = path.join(tmp, "data", "projects", "acme-api", "acme-api");
+    const wt = path.join(tmp, "laptop", "acme-api");
+    await transcript(own, "own-1", { padTo: 600 });
+    await transcript(wt, "wt-1", { padTo: 600 });
+    await gitCheckout(wt, "git@github.com:acme/acme-api.git", { worktree: true });
+
+    const summary = await index().adoptableFor(
+      fleet,
+      project({ workingDir: own, repo: "https://github.com/acme/acme-api.git" }),
+      "keeper-p",
+    );
+    expect(summary.sources.map((s) => s.sourceCwd)).toEqual([wt, own]);
+    expect(summary.count).toBe(2);
+  });
+
+  it("matches on ANY configured remote, not just origin (#659)", async () => {
+    const own = path.join(tmp, "data", "projects", "acme-api", "acme-api");
+    const forkFirst = path.join(tmp, "laptop", "acme-api");
+    await transcript(own, "own-1", { padTo: 600 });
+    await transcript(forkFirst, "fork-1", { padTo: 600 });
+    // A contributor whose `origin` is their fork and whose `upstream` is the
+    // project's repo is still working on this project.
+    await gitCheckout(forkFirst, "git@github.com:me/acme-api.git");
+    await fs.appendFile(
+      path.join(forkFirst, ".git", "config"),
+      '[remote "upstream"]\n\turl = https://github.com/acme/acme-api.git\n',
+      "utf8",
+    );
+
+    const summary = await index().adoptableFor(
+      fleet,
+      project({ workingDir: own, repo: "https://github.com/acme/acme-api" }),
+      "keeper-p",
+    );
+    expect(summary.sources.map((s) => s.sourceCwd)).toEqual([forkFirst, own]);
+  });
+
+  it("still offers the project's OWN working directory whatever its remote says", async () => {
+    // The own-dir is appended unconditionally: a project whose checkout has an
+    // odd remote (or none) must never lose its own history.
+    const own = path.join(tmp, "data", "projects", "acme-api", "acme-api");
+    await transcript(own, "own-1", { padTo: 600 });
+    await gitCheckout(own, "https://example.invalid/nothing-to-do-with-it.git");
+
+    const summary = await index().adoptableFor(
+      fleet,
+      project({ workingDir: own, repo: "https://github.com/acme/acme-api" }),
+      "keeper-p",
+    );
+    expect(summary.sources.map((s) => s.sourceCwd)).toEqual([own]);
+    expect(summary.count).toBe(1);
   });
 
   it("reads each folder's RECORDED cwd — never the (lossy, non-invertible) folder name", async () => {
@@ -155,6 +288,7 @@ describe("AdoptableIndex (#588)", () => {
     const laptop = path.join(tmp, "laptop", "acme-api");
     await transcript(own, "own-1", { padTo: 600 });
     await transcript(laptop, "laptop-1", { padTo: 600 });
+    await gitCheckout(laptop, "/repos/acme-api.git");
 
     const summary = await index().adoptableFor(
       fleet,
@@ -242,6 +376,70 @@ describe("AdoptableIndex (#588)", () => {
     );
   });
 
+  it("withholds paddock's OWN sweeper runs, and says so (#658)", async () => {
+    const own = path.join(tmp, "notes");
+    // The current wording, and the older one it drifted from — both are real
+    // prompts found in the dogfooding instance's transcript folder.
+    await transcript(own, "sweep-now", {
+      firstUserText:
+        "Project: Paddock (slug: paddock)\n\n\nYou are curating this project's three context " +
+        "files from recent chat activity. You are shown each file IN FULL",
+      padTo: 6000,
+    });
+    await transcript(own, "sweep-old", {
+      firstUserText:
+        "Project: Paddock (slug: paddock)\nYou are curating two files in this project " +
+        "directory based on recent chat activity",
+      padTo: 6000,
+    });
+    // With a `Summary:` line between the header and the sentence.
+    await transcript(own, "sweep-summary", {
+      firstUserText:
+        "Project: Acme (slug: acme)\nSummary: the acme thing\n\nYou are curating this " +
+        "project's three context files",
+      padTo: 6000,
+    });
+    // A real chat that merely TALKS about the sweeper must survive: the header
+    // is absent, so the sentence alone is not enough.
+    await transcript(own, "talks-about-it", {
+      firstUserText: "You are curating the wrong files — can you look at why the sweeper does that?",
+      padTo: 6000,
+    });
+    // The header alone is not enough either.
+    await transcript(own, "header-only", {
+      firstUserText: "Project: Paddock (slug: paddock) — what's left to do before the release?",
+      padTo: 6000,
+    });
+
+    const summary = await index().adoptableFor(fleet, project({ workingDir: own }), "keeper-p");
+    expect(summary.sources[0].sessionIds.sort()).toEqual(["header-only", "talks-about-it"]);
+    expect(summary.filtered.map((f) => f.sessionId).sort()).toEqual([
+      "sweep-now",
+      "sweep-old",
+      "sweep-summary",
+    ]);
+    expect(new Set(summary.filtered.map((f) => f.reason))).toEqual(new Set(["sweeper-run"]));
+    // Withheld, not silently dropped — `filtered` is what answers "why 2 and
+    // not 5?", and #660's preview dialog renders it.
+    expect(summary.count).toBe(2);
+  });
+
+  it("withholds a sweeper run that is far too big to be caught by any other rule", async () => {
+    // Guards the ordering in `filterReasonFor`: a curation transcript is a large
+    // file, so neither the size floor nor the slash-command ceiling would ever
+    // reach it. Only the sweeper rule can.
+    const own = path.join(tmp, "notes");
+    await transcript(own, "big-sweep", {
+      firstUserText: "Project: Paddock (slug: paddock)\n\n\nYou are curating this project's three",
+      padTo: SLASH_COMMAND_MAX_BYTES * 4,
+    });
+    const summary = await index().adoptableFor(fleet, project({ workingDir: own }), "keeper-p");
+    expect(summary.count).toBe(0);
+    expect(summary.filtered).toEqual([
+      { sessionId: "big-sweep", sourceCwd: own, reason: "sweeper-run" },
+    ]);
+  });
+
   it("reports count 0 with empty sources when there is nothing to import", async () => {
     const summary = await index().adoptableFor(
       fleet,
@@ -320,7 +518,13 @@ async function scanLikeTheEngine(
     let preview: string | undefined;
     try {
       const content = (JSON.parse(head) as { message?: { content?: unknown } }).message?.content;
-      if (typeof content === "string") preview = content;
+      // Truncated at 100 chars + "…" exactly as `extractFirstMessagePreview` does.
+      // Fidelity that matters: the sweeper-run rule (#658) has to match inside
+      // that budget, and a fake handing over the untruncated prompt would prove
+      // nothing about whether it does.
+      if (typeof content === "string") {
+        preview = content.length > 100 ? `${content.substring(0, 100)}...` : content;
+      }
     } catch {
       preview = undefined;
     }
@@ -335,3 +539,49 @@ async function scanLikeTheEngine(
   }
   return out;
 }
+
+/**
+ * Git remote normalisation (#659).
+ *
+ * The repo-backed match compares a project's `repo` against the remotes
+ * configured in a candidate checkout, and the two routinely disagree on FORM
+ * while naming the same repo — the project may record the https URL while the
+ * user cloned over ssh. Every equivalence here is one a real pair of values
+ * would hit; the inequalities are what stops "same host, different repo" from
+ * quietly matching.
+ */
+describe("normalizeRemote (#659)", () => {
+  const github = "github.com/acme/acme-api";
+
+  it("reduces every spelling of one repo to the same identity", () => {
+    for (const url of [
+      "https://github.com/acme/acme-api.git",
+      "https://github.com/acme/acme-api",
+      "https://github.com/acme/acme-api/",
+      "git@github.com:acme/acme-api.git",
+      "git@github.com:acme/acme-api",
+      "ssh://git@github.com/acme/acme-api.git",
+      "git://github.com/acme/acme-api.git",
+      "  https://github.com/Acme/Acme-API.git  ",
+    ]) {
+      expect(normalizeRemote(url)).toBe(github);
+    }
+  });
+
+  it("keeps genuinely different repos apart", () => {
+    expect(normalizeRemote("https://github.com/someone-else/acme-api")).not.toBe(github);
+    expect(normalizeRemote("https://gitlab.com/acme/acme-api")).not.toBe(github);
+    expect(normalizeRemote("https://github.com/acme/acme-web")).not.toBe(github);
+  });
+
+  it("handles a local path remote without mangling it into a host", () => {
+    expect(normalizeRemote("/repos/acme-api.git")).toBe("/repos/acme-api");
+    expect(normalizeRemote("/repos/acme-api")).toBe("/repos/acme-api");
+  });
+
+  it("reduces empty and whitespace-only input to the empty string", () => {
+    // Never equal to a real remote, so the caller needs no special case.
+    expect(normalizeRemote("")).toBe("");
+    expect(normalizeRemote("   ")).toBe("");
+  });
+});
