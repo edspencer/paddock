@@ -175,7 +175,38 @@ HushPod's whisper config so both can share a backend. See [DEV.md](https://githu
 | `PADDOCK_MAX_SPAWN_DEPTH` | `1` | no | How deep a spawn tree may grow before spawned children stop receiving the self-management MCP: a spawned turn at depth `d` gets it (including the write tools, so a child can `send_message` back to its parent) only while `d ≤` this value. `0` means no spawned child ever gets it. A per-project `maxSpawnDepth` overrides this at dispatch; an out-of-range value falls back to the default rather than failing startup. Only meaningful when the **write** self-MCP is on — spawning needs those tools. |
 | `PADDOCK_SCHEDULE_MUTATION` | `false` | no | Allow schedules to be created / edited / deleted **programmatically** at runtime (the Schedules REST routes and the trigger MCP tools). Off by default, so a plain instance's schedules can only change by editing `project.yaml`. Schedules declared statically in `project.yaml` are armed either way. Accepts `1`/`true`/`yes`. See [Scheduling & the schedule gates](/configuration/schedules/). |
 | `PADDOCK_HOOKS_MCP` | `false` | no | Instance default for the hook/trigger-management tools (`list_triggers` / `set_trigger` / `remove_trigger`) — Claude declaring and editing its own [event hooks](/concepts/hooks/) and schedules. Off by default; a per-project `hooksMcpEnabled` in `project.yaml` overrides it. Only honored when the self-management **write** MCP is also on; when off the tools are **absent** (not present-but-refusing). Accepts `1`/`true`/`yes`. |
+| `PADDOCK_ENVIRONMENT_PROMPT` | *(Paddock's built-in text)* | no | Text **appended** to every keeper turn's system prompt, telling the agent it renders into a browser as GitHub-Flavored Markdown rather than into a terminal. Any value replaces the built-in text entirely. See below, and [the environment prompt](/configuration/instance-settings/#the-environment-prompt). |
 | `PADDOCK_BROWSER_MCP` | *(off)* | no | When `=1`, inject a headless-Chromium Playwright MCP into the agent (browse/screenshot). |
+
+### The environment prompt is the one place blank is *not* unset
+
+`PADDOCK_ENVIRONMENT_PROMPT` breaks the "blank is unset" rule at the top of this page,
+on purpose: an empty value is how you **opt out**, so there has to be a difference
+between "unset" and "set to nothing".
+
+```bash
+# unset            → Paddock's built-in two-rule prompt is appended
+PADDOCK_ENVIRONMENT_PROMPT="Link every Jira key as a URL."   # → that, instead
+PADDOCK_ENVIRONMENT_PROMPT=""                                # → nothing appended
+```
+
+Because it is *defined-ness* rather than emptiness that decides, an exported-but-empty
+`PADDOCK_ENVIRONMENT_PROMPT` still shadows the config file — and the Settings screen
+correctly renders the field read-only in that case. `PADDOCK_BROWSER_MCP` behaves the
+same way, for the same reason.
+
+The value is used verbatim: no trimming, no escaping. Leading indentation and trailing
+newlines survive.
+
+:::caution[Drive mode `batch` keeps the native prompt instead]
+On `driveMode: batch`, turns go through herdctl's CLI runtime, which has no
+`--append-system-prompt` — it folds an append into `--system-prompt`, and that
+**replaces** Claude Code's preset when there is nothing to append onto. So a batch
+instance with `PADDOCK_NATIVE_PROMPT=true` (the default) gets **no** environment prompt,
+rather than getting it at the cost of the entire coding preset. Turn the native prompt
+off and the two are concatenated as expected. The default drive mode, `session`, is
+unaffected — the SDK runtime appends properly.
+:::
 
 ## Chat recovery
 

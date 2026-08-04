@@ -236,6 +236,23 @@ export class RunProvenanceStore {
     await this.stamp(sessionId, provenance);
   }
 
+  /**
+   * Forget a chat's provenance (#660).
+   *
+   * The inverse of {@link stamp}, for the one case where a chat's creation is
+   * itself undone: undoing a native-chat import releases the adoption and deletes
+   * the copy, and a marker left behind would badge a LATER import of the same
+   * session as belonging to the one that was undone. Returns silently when there
+   * was nothing recorded, so an undo of a partially-stamped import is not an
+   * error.
+   */
+  async clear(sessionId: string): Promise<void> {
+    if (!isSafeId(sessionId)) return;
+    const map = await this.ensureLoaded();
+    if (!map.delete(sessionId)) return;
+    await this.persist(map);
+  }
+
   /** Write-through, serialised so overlapping stamps can't corrupt the file. */
   private persist(map: Map<string, RunProvenance>): Promise<void> {
     this.writing = this.writing.then(async () => {

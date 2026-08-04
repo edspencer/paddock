@@ -149,8 +149,14 @@ export function SessionSidebar({
   adoptableCount: number;
   /** True while an import is in flight — the button says so and refuses clicks. */
   importing: boolean;
-  /** Import everything on offer. One click, no confirmation: copy-only, and the
-   *  user's own `~/.claude` is never touched, so there is nothing to warn about. */
+  /**
+   * Open the import confirmation dialog (#660).
+   *
+   * This used to import everything on the spot, justified by the import being
+   * copy-only. Copy-only means it cannot destroy anything — it does not mean the
+   * user wanted 26 unrecognised chats in their sidebar, with no undo. The click
+   * now opens a dialog that shows what would come in and where from.
+   */
   importChats: () => void;
 }) {
   // While searching, ignore the collapsed set. A query filters to matches and
@@ -613,21 +619,35 @@ export function SessionSidebar({
               Rendered only while the count is non-zero, and the count is re-read
               after every import — so this disappears because there is nothing left
               to import, and reappears by itself if the user later runs more
-              terminal sessions. There is deliberately no dismiss state. */}
+              terminal sessions. There is deliberately no dismiss state.
+
+              It OPENS A DIALOG rather than importing (#660). The no-dismiss
+              design is right only while the count is trustworthy, and it has not
+              been: this button has offered Paddock's own sweeper output (#658)
+              and another instance's chats (#659). A permanent, one-click,
+              irreversible action is the wrong shape for something a user may not
+              recognise — so the click now asks. */}
           {adoptableCount > 0 && (
             <div className="px-2 pb-2">
               <button
                 type="button"
                 onClick={importChats}
                 disabled={importing}
+                // The accessible name still leads with the visible label's own
+                // words ("Import N native chat…") — a name that said "Review"
+                // while the button read "Import" would break label-in-name for
+                // anyone driving this by voice. That it opens a dialog rather
+                // than acting immediately is carried by `aria-haspopup`, which
+                // is what that attribute is for.
                 aria-label={`Import ${adoptableCount} native Claude Code chat${adoptableCount === 1 ? "" : "s"} into this workspace`}
+                aria-haspopup="dialog"
                 className="btn-ghost w-full justify-start py-1.5 text-xs"
               >
                 <TerminalIcon width={13} height={13} className="shrink-0" />
                 <span className="truncate">
                   {importing
                     ? "Importing…"
-                    : `Import ${adoptableCount} native chat${adoptableCount === 1 ? "" : "s"}`}
+                    : `Import ${adoptableCount} native chat${adoptableCount === 1 ? "" : "s"}…`}
                 </span>
               </button>
             </div>

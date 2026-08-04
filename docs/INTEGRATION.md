@@ -259,6 +259,24 @@ survive a turn boundary: herdctl's reaper keeps the session alive while it holds
 live background work. The caller must treat **the message stream ending as a reap**
 and re-open (resume) later to keep driving the conversation.
 
+The keep-alive rule has **no backstop** — no idle timer, no max lifetime. So a
+session whose background work never finishes is never reaped on its own and its
+message stream never ends, which (since we derive "is this chat running?" from
+that stream) leaves the chat wedged as running forever. **`fleet.reapChatSession(sessionId)`**
+(core ≥ 5.31.0) is the way out: it closes such a session on demand, the stream
+ends, and our ordinary unwind emits `chat:complete`. `HerdctlService.cancel`
+routes Stop here for background-phase turns (paddock#528).
+
+Do **not** reach for `session.close()` instead. It closes the query behind the
+reaper's bookkeeping, leaving the id registered live — a later resume of that
+chat then stalls until its 5-minute ceiling, and the session's wakes are skipped
+indefinitely.
+
+`session.interrupt()` is the other half of the pair, and the two are not
+interchangeable: `interrupt()` ends an **in-flight model turn** and keeps the
+session usable, so it's what Stop means during a live turn. A session held open
+purely for background work has no model turn to interrupt.
+
 `listAgentCommands(agentName, options)` is the one-shot convenience wrapper —
 opens a session, reads the command list, always closes.
 
@@ -345,6 +363,7 @@ fleet.getAgentWorkingDirectory(name);                  // string | undefined
 await fleet.deleteSession(name, sessionId);            // removes the transcript
 await fleet.setSessionName(name, sessionId, custom);   // custom display name
 fleet.invalidateSessions(name);                        // force a fresh listing
+fleet.reapChatSession(sessionId);                      // close a managed session now (§c.1)
 ```
 
 Paddock uses this layer exclusively — there is no `new SessionDiscoveryService(…)`

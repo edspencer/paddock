@@ -25,6 +25,17 @@ dedicated check, wired into CI ahead of `npm ci` (issue #570).
 The fix is always to spell the character as an escape rather than paste the raw
 byte — see the `KEY_SEP` constants in `packages/server/src`.
 
+## `demo-gif/` — regenerate the README / docs demo GIF
+
+`npm run demo:gif` seeds a throwaway synthetic Paddock instance, boots it, drives
+a couple of live turns, photographs eight beats with Playwright, and encodes the
+result to GIF (plus MP4/WebM). It writes both committed copies of the asset —
+`docs/demo/paddock-demo.gif` and `website/public/demo/paddock-demo.gif`.
+
+Everything it shows is invented: no production data, no real repositories. See
+[`demo-gif/README.md`](demo-gif/README.md) for how to change the storyboard, and
+for the list of things that fail silently if you get them wrong.
+
 ## `pm` — stable-port preview servers for agents
 
 `pm` is a thin wrapper over [PM2](https://pm2.keymetrics.io/) plus a small shared

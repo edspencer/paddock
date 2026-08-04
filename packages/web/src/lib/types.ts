@@ -455,6 +455,26 @@ export interface AdoptableSource {
   sourceCwd: string;
   /** The importable (native, non-sidechain, un-adopted) session ids under it. */
   sessionIds: string[];
+  /** The same sessions, with what the confirmation dialog needs to show them. */
+  sessions: AdoptableCandidate[];
+}
+
+/**
+ * One session on offer, described well enough to decide about (#660).
+ *
+ * The import used to be an unconfirmed click, so an id was all the count needed.
+ * A dialog that asks "import these?" has to say what "these" ARE — the instance
+ * that prompted this offered 26 chats of which the user recognised none.
+ */
+export interface AdoptableCandidate {
+  sessionId: string;
+  /** ISO 8601 last-modified time of the transcript. */
+  mtime: string;
+  /** First user message, truncated server-side at 100 chars. */
+  preview?: string;
+  /** Auto-generated session name, when the transcript carries a summary. */
+  autoName?: string;
+  sizeBytes: number;
 }
 
 /**
@@ -486,6 +506,18 @@ export interface AdoptSkip {
 export interface AdoptChatsResult {
   adopted: string[];
   skipped: AdoptSkip[];
+}
+
+/**
+ * `POST <base>/unadopt-chats` (#660) — the session ids released by undoing the
+ * most recent import.
+ *
+ * An empty array is a legitimate, non-error outcome: there was nothing to undo
+ * because nothing was imported, it has already been undone, or the server has
+ * restarted since (the undo offer is deliberately in-memory and short-lived).
+ */
+export interface UnadoptChatsResult {
+  released: string[];
 }
 
 /**
@@ -1226,8 +1258,18 @@ export type ServerWsMessage =
 
 // --- Instance-wide settings (issue #385) ------------------------------------
 
-/** The rendering/validation kind of an instance-config field. */
-export type InstanceConfigFieldType = "number" | "boolean" | "string" | "enum" | "string-list";
+/**
+ * The rendering/validation kind of an instance-config field. `text` is `string`
+ * with a multi-line control (a `<textarea>`) — identical wire shape and
+ * coercion, used for prompt-sized values (issue #635).
+ */
+export type InstanceConfigFieldType =
+  | "number"
+  | "boolean"
+  | "string"
+  | "text"
+  | "enum"
+  | "string-list";
 
 /**
  * One field on the instance-wide Settings screen (GET /api/instance-config).

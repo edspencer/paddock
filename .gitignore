@@ -23,3 +23,5 @@ test/e2e/.mobile-shots/
 /paddock-*.tgz
 /paddock-*.tgz.sha256
 /dist-tarball/
+dist-npm/
+*.tgz

@@ -1,6 +1,6 @@
 {
   "name": "paddock",
-  "version": "0.55.0",
+  "version": "0.59.1",
   "private": true,
   "description": "Project-first launchpad built on herdctl. Server-hosted, persistent Claude Code sessions organized by project.",
   "type": "module",
@@ -14,6 +14,7 @@
     "build": "npm run build -w packages/server && npm run build -w packages/web",
     "build:server": "npm run build -w packages/server",
     "build:web": "npm run build -w packages/web",
+    "pack:npm": "npm run build && node scripts/make-npm-package.mjs",
     "dev": "npm run dev -w packages/server",
     "dev:web": "npm run dev -w packages/web",
     "typecheck": "npm run typecheck -w packages/server && npm run typecheck -w packages/web",
@@ -26,7 +27,8 @@
     "test:e2e:live": "PADDOCK_TEST_LIVE=1 playwright test -c test/e2e/playwright.config.ts",
     "changeset": "changeset",
     "changeset:version": "changeset version && node scripts/sync-root-version.mjs && npm install --package-lock-only",
-    "version:print": "node -p \"require('./packages/server/package.json').version\""
+    "version:print": "node -p \"require('./packages/server/package.json').version\"",
+    "demo:gif": "node scripts/demo-gif/make.mjs"
   },
   "devDependencies": {
     "@changesets/changelog-github": "^0.5.2",

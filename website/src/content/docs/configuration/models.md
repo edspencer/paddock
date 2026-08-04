@@ -18,6 +18,23 @@ can offer a subset, and a project can narrow the instance's subset further.
   turn to turn.
 - **Noise.** A five-item picker for an instance that only ever uses two.
 
+:::caution[This filters the picker, not the turn]
+An allow-list is an **operator-intent and UX control. It is not a security or
+capability boundary**, and it is not enforced on the path that actually runs a turn.
+
+The list is consumed in exactly two places: `GET /api/models`, which is what the picker
+renders, and the subset check when you `PATCH` a project's `models`. The turn path does
+not consult it. A chat message arriving over the WebSocket carries its own `model`, and
+the server accepts it if it is in the **catalog** — `packages/server/src/ws.ts` resolves
+`requested && isKnownModel(requested) ? requested : project.model`, and `isKnownModel`
+validates against every model Paddock ships, not against what you offered. The self-MCP
+model override and the Management API's turn ops resolve theirs the same way.
+
+So a WebSocket client, or an `/mcp` client, can run **any model in the catalog**
+regardless of the list. Narrow it to keep the picker honest and to signal intent — don't
+narrow it expecting it to stop spend on a model you excluded.
+:::
+
 ## The instance list
 
 Three ways to set it — same setting, three surfaces:

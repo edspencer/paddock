@@ -107,6 +107,8 @@ export async function startTestApp(opts: StartOptions = {}): Promise<TestApp> {
     PADDOCK_HOST: process.env.PADDOCK_HOST,
     PADDOCK_DANGEROUSLY_ALLOW_OPEN: process.env.PADDOCK_DANGEROUSLY_ALLOW_OPEN,
     PADDOCK_CONFIG: process.env.PADDOCK_CONFIG,
+    PADDOCK_ENVIRONMENT_PROMPT: process.env.PADDOCK_ENVIRONMENT_PROMPT,
+    PADDOCK_FAKE_INVOCATION_LOG: process.env.PADDOCK_FAKE_INVOCATION_LOG,
     ...Object.fromEntries(Object.keys(opts.env ?? {}).map((k) => [k, process.env[k]])),
   };
 
@@ -133,6 +135,11 @@ export async function startTestApp(opts: StartOptions = {}): Promise<TestApp> {
   // regardless of the box env (CI has it unset; a dev box may not). The session
   // path has its own coverage (unit/mocked harnesses).
   process.env.PADDOCK_DRIVE_MODE = "batch";
+  // #635: a defined-but-blank PADDOCK_ENVIRONMENT_PROMPT is the opt-out, so an
+  // ambient value on a dev box would silently change what every turn's system
+  // prompt looks like. Clear it; tests that want one pass it via `opts.env`.
+  delete process.env.PADDOCK_ENVIRONMENT_PROMPT;
+  delete process.env.PADDOCK_FAKE_INVOCATION_LOG;
   process.env.PATH = `${FAKE_BIN}${path.delimiter}${process.env.PATH ?? ""}`;
   process.env.PADDOCK_DATA_DIR = dataDir;
   process.env.PADDOCK_PROJECTS_DIR = projectsRoot;

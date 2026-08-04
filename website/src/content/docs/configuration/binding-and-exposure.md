@@ -49,13 +49,33 @@ and Paddock will not do it. Startup **fails closed** with a message naming your 
 | Bind host | Auth mode | Result |
 |---|---|---|
 | Loopback | anything | ✅ Starts |
-| Non-loopback | `trusted-header` or `jwt` | ✅ Starts — no flag needed |
+| Non-loopback | `trusted-header` or `jwt` | ✅ Starts — no flag needed (but see the caution below: the guard checks only that *a* mode is set) |
 | Non-loopback | `none` | ❌ **Refuses to start** |
 | Non-loopback | `none`, with `PADDOCK_DANGEROUSLY_ALLOW_OPEN` | ⚠️ Starts, logs a loud warning |
 
 Note the second row: **binding widely is fine once you have real authentication.** The
 guard isn't about exposure alone, it's about exposure *without* a way to tell who's
 knocking.
+
+:::caution[The guard checks that a mode is set — not that it's spoof-resistant]
+`evaluateBindSafety` asks one question: is `PADDOCK_AUTH_MODE` something other than
+`none`? It cannot tell a mode that proves identity from one that merely *reads* it. So
+`trusted-header` on `0.0.0.0` starts silently, with no warning, and in that mode
+**anything that can reach the port can forge the identity header** — including anything
+that reaches it *around* your proxy.
+
+That is only safe when something outside Paddock guarantees the proxy is the sole route
+to the port: a private container/pod network, a firewall rule, a VPN interface. Binding
+`0.0.0.0` is precisely the case where that guarantee is easiest to lose — the port is
+now open on every interface, and the proxy is one of the things that can reach it, not
+the only one.
+
+**`jwt` is the mode that is spoof-proof on its own**, because Paddock verifies the
+token's signature itself and a request arriving directly is still rejected. If the
+network boundary is doing the work instead, keep the bind narrow (loopback, or the one
+private interface the proxy is on) rather than widening it and relying on the mode.
+See [Authentication](/configuration/authentication/) for the comparison.
+:::
 
 ### What counts as loopback
 
@@ -77,6 +97,11 @@ wide. Nothing else is needed — no dangerous flag, no warning.
 HOST=0.0.0.0
 PADDOCK_AUTH_MODE=trusted-header   # behind a proxy that authenticates
 ```
+
+With `trusted-header`, "the right answer" carries a condition: the network must
+guarantee that proxy is the **only** route to the port, because the header is forgeable
+by anything that can reach it — see [the caution above](#2-exposed-and-unauthenticated-refuses-to-start).
+`jwt` needs no such condition.
 
 See [Securing Paddock](/guides/securing/) for the ladder from a VPN through to SSO.
 

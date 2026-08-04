@@ -320,10 +320,39 @@ function sleep(ms) {
   }
 }
 
+/**
+ * Opt-in invocation recorder (#635). When PADDOCK_FAKE_INVOCATION_LOG names a
+ * file, append one JSON line per spawn describing the flags herdctl actually
+ * built. This is how a test proves a system-prompt append reaches the spawned
+ * process's argv rather than merely reaching a config object — the CLI runtime
+ * is the only runtime whose prompt assembly is observable from outside (the SDK
+ * runtime resolves its own bundled binary and never shells out).
+ *
+ * A no-op when the env var is unset, so existing tests are unaffected.
+ */
+function recordInvocation(flags, prompt) {
+  const logPath = process.env.PADDOCK_FAKE_INVOCATION_LOG;
+  if (!logPath) return;
+  try {
+    fs.appendFileSync(
+      logPath,
+      JSON.stringify({
+        prompt,
+        systemPrompt: flags.systemPrompt ?? null,
+        model: flags.model ?? null,
+        resume: flags.resume ?? null,
+      }) + "\n",
+    );
+  } catch {
+    /* recording is diagnostics only — never fail a turn over it */
+  }
+}
+
 function main() {
   const argv = process.argv.slice(2);
   const flags = parseArgs(argv);
   const prompt = readStdin();
+  recordInvocation(flags, prompt);
   const cwd = process.cwd();
   const script = loadScript();
 

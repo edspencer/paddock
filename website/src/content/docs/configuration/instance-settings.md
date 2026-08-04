@@ -76,7 +76,7 @@ without a browser.
 |---|---|
 | **Curation** | The three [sweeper token budgets](/configuration/environment/#curation-sweeper-token-budgets) for `OVERVIEW.md`, `CHANGELOG.md` and `CLAUDE.md`. |
 | **Sweeper** | Minimum interval between post-turn sweeps. Blank falls back to the 5-minute default. |
-| **Capabilities** | Drive mode, the [offered-model list](/configuration/models/), native system prompt, the three self-MCP gates, max spawn depth, schedule mutation, the hooks MCP, and the browser MCP. Most default off. |
+| **Capabilities** | Drive mode, the [offered-model list](/configuration/models/), native system prompt, the [environment prompt](#the-environment-prompt), the three self-MCP gates, max spawn depth, schedule mutation, the hooks MCP, and the browser MCP. Most default off. |
 | **Recovery** | The [chat recovery](/configuration/chat-recovery/) layers and their guards. |
 | **Attachments** | Inbound upload master switch, size and count caps, allowed types. |
 | **Branding** | Name, logo, accent colour. |
@@ -87,6 +87,41 @@ without a browser.
 
 Clearing an optional numeric field (leaving it blank) removes the key from the file, so
 it falls back to the built-in default rather than being pinned to zero.
+
+## The environment prompt
+
+**Environment prompt** (Capabilities) is the one multi-line field on this screen. It is
+appended to the system prompt of every keeper turn, and it exists because the agent
+otherwise has no idea where it is: on a default instance it runs on Claude Code's stock
+preset, which is written for a terminal. Nothing tells it that its reply is rendered as
+GitHub-Flavored Markdown in a browser, that a bare `#123` is dead text, or that
+`mcp__paddock__send_file` puts an image on screen.
+
+The built-in text is deliberately two rules — *show, don't describe* and *make clickable
+things clickable* — chosen from an audit of real chats rather than from first principles.
+Resist growing it; a long environment prompt is paid for on every single turn.
+
+Unlike every other field here, **blank is meaningful**:
+
+| The box contains | What happens |
+|---|---|
+| the built-in text, untouched | Paddock's default is appended (the key stays out of your file, so you track future revisions of it) |
+| your own text | that is appended **instead** — a full override, not an addition |
+| nothing at all | **nothing** is appended — the opt-out |
+
+"Restore default" (under the box, when your value differs) clears your override rather
+than pasting the text in, so you go back to tracking the built-in rather than pinning
+today's copy of it.
+
+Two interactions worth knowing:
+
+- **It is orthogonal to "Native system prompt."** That switch picks the agent's *role*
+  prompt; this states *environmental fact*. The environment prompt rides on top of
+  either. The one exception is drive mode `batch`, where it is withheld while the native
+  prompt is on — see [the note in Environment variables](/configuration/environment/#agents).
+- **The text is not escaped or sandboxed.** It is concatenated into a system prompt, so
+  treat it as instructions you are giving the agent with full authority. It's operator
+  input, at the same trust level as the rest of `paddock.config.yaml`.
 
 ## Secrets are never in the response
 

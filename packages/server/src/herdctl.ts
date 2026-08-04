@@ -306,6 +306,25 @@ export class HerdctlService {
   private liveSessions = new Map<string, RuntimeSession>();
 
   /**
+   * Background-phase turns keyed by the synthetic job id the sink minted for
+   * them, valued by the chat session they belong to (paddock#528).
+   *
+   * After a turn's primary `result` lands, {@link chatSession} returns and drops
+   * its {@link liveSessions} entry — but the session itself may live on, held
+   * open by the reaper because the turn launched background work, streaming
+   * autonomous re-invocation turns. Those turns are real, running, and shown as
+   * such; until now they were also uncancellable, because nothing registered
+   * them anywhere Stop could reach.
+   *
+   * `interrupt()` would be the wrong tool even if it could: it targets an
+   * in-flight model turn, and the wedge case is a session sitting idle holding
+   * background work that will never finish. So these route to a force-reap
+   * instead — end the session, let the stream end, and let the ordinary unwind
+   * emit `chat:complete`. Entries are removed when the background stream ends.
+   */
+  private backgroundTurns = new Map<string, string>();
+
+  /**
    * Incremental index of `<stateDir>/jobs`, backing the unread-badge reads
    * (`lastTurnCompletedAt*`) — one per service, reused across requests so a warm
    * scan only parses records it has never seen (#529). See
@@ -331,6 +350,63 @@ export class HerdctlService {
    */
   private get claudeHomeTarget(): ClaudeHomeTarget {
     return { path: this.cfg.claudeHome, owned: this.cfg.ownsClaudeHome };
+  }
+
+  /**
+   * The environment system prompt to append to a keeper turn (issue #635), or
+   * `undefined` when the instance opted out (`environmentPrompt: ""`) — herdctl
+   * treats a falsy `systemPromptAppend` as "don't touch the system prompt", so
+   * an opted-out instance is byte-identical to pre-#635 behaviour.
+   *
+   * Read from `this.cfg` here rather than taken as a per-turn option **on
+   * purpose**. Every user-visible turn shape — a human send, a slash command, a
+   * scheduled wake, a spawned sub-chat, a `driveMode: batch` trigger — funnels
+   * through {@link chat}, {@link chatSession} or {@link runCommand}, so applying
+   * it at that choke point makes coverage structural. Threading it through
+   * `ChatTurnOptions` instead would make it one more thing five call sites have
+   * to remember, which is exactly how `isSidechainMessage` ended up wired into
+   * 1 of 5 turn paths.
+   *
+   * It is orthogonal to `nativeSystemPrompt`: herdctl appends to whatever prompt
+   * the agent has, so this rides on top of the native preset AND of Paddock's
+   * terse replace prompt (see `buildSystemPrompt` in core's sdk-runtime, which
+   * folds an append into a preset's `append` field or concatenates onto a
+   * literal string).
+   */
+  private get environmentPromptAppend(): string | undefined {
+    return this.cfg.environmentPrompt || undefined;
+  }
+
+  /**
+   * The same value for the **CLI** runtime (`driveMode: batch`), where it is NOT
+   * always safe to send.
+   *
+   * herdctl's CLI runtime has no `--append-system-prompt`; it folds
+   * `systemPromptAppend` into the single `--system-prompt` flag
+   * (`cli-runtime.ts`), and `--system-prompt` REPLACES Claude Code's preset:
+   *
+   *     agent.system_prompt && append  →  --system-prompt "<agent>\n\n<append>"   ✅ appends
+   *     append only                    →  --system-prompt "<append>"              ❌ REPLACES
+   *
+   * Paddock sets `agent.system_prompt` only when `nativeSystemPrompt` is false
+   * (herdctl-agent-config.ts), so on a DEFAULT batch instance the second branch
+   * fires and a two-rule environment note would silently become the agent's
+   * entire system prompt — the whole coding preset gone. That is the same
+   * replace-vs-append trap #635 warns about, one layer down.
+   *
+   * So: on the CLI path we send the append only when it will genuinely be
+   * appended. A default (native) batch instance is left byte-identical to
+   * pre-#635 and simply doesn't get the environment prompt — a missing hint is
+   * survivable; a missing coding prompt is not. The SDK runtime has no such
+   * problem (it folds the text into the preset's `append` field), and the SDK
+   * runtime is what every chat actually uses: `openChatSession` hard-codes it,
+   * and `session` is the default drive mode. Batch is the legacy path.
+   *
+   * Lifting this needs `--append-system-prompt` support in core's CLI runtime;
+   * tracked upstream in edspencer/herdctl.
+   */
+  private get environmentPromptAppendForCli(): string | undefined {
+    return this.cfg.nativeSystemPrompt ? undefined : this.environmentPromptAppend;
   }
 
   /**
@@ -604,7 +680,19 @@ export class HerdctlService {
    */
   async adoptChats(
     project: Project,
-    opts: { sourceCwd?: string; mode?: AdoptionPlacementMode; dryRun?: boolean } = {},
+    opts: {
+      sourceCwd?: string;
+      /**
+       * Import only these sessions (#660). Anything else the engine adopts along
+       * the way is released again, exactly as a noise-filtered session is — see
+       * the "honouring the noise filter" note above, which this reuses wholesale.
+       * Undefined means "everything on offer", which is what a confirmed
+       * select-all sends and what the CLI has always sent.
+       */
+      sessionIds?: string[];
+      mode?: AdoptionPlacementMode;
+      dryRun?: boolean;
+    } = {},
   ): Promise<{ adopted: string[]; skipped: AdoptSkipped[] }> {
     const agent = keeperAgentName(project.slug);
     const mode = opts.mode ?? "copy";
@@ -633,8 +721,29 @@ export class HerdctlService {
         : summary.sources.map((s) => s.importFrom ?? s.sourceCwd);
     // sessionId -> why detection withheld it.
     const withheld = new Map(summary.filtered.map((f) => [f.sessionId, f.reason] as const));
+    // A selection narrows the offer the same way the noise filter does, and for
+    // the same reason: the engine adopts a whole SOURCE, so anything the user did
+    // not tick has to be released again afterwards. Tracked separately from
+    // `withheld` because a session the user simply did not choose is not a
+    // "skip" worth reporting back — it was never part of this import, and listing
+    // 23 of them would read as an import that half failed.
+    const deselected =
+      opts.sessionIds === undefined
+        ? null
+        : (() => {
+            const wanted = new Set(opts.sessionIds);
+            const out = new Set<string>();
+            for (const source of summary.sources) {
+              for (const id of source.sessionIds) if (!wanted.has(id)) out.add(id);
+            }
+            return out;
+          })();
 
     const adopted: string[] = [];
+    // Of `adopted`, the ones where this call PLACED a file — the only ones undo
+    // may ever delete. Computed here, where `fromWorkingDir` is still known;
+    // afterwards nothing can tell a copy from an in-place adoption.
+    const copies: string[] = [];
     const skipped: AdoptSkipped[] = [];
     for (const fromWorkingDir of sources) {
       // Sequential, not parallel: each source re-scans the adoption store, so a
@@ -648,8 +757,20 @@ export class HerdctlService {
       skipped.push(...result.skipped);
       for (const sessionId of result.adopted) {
         const reason = withheld.get(sessionId);
+        // Not chosen: release it, and say nothing about it. Checked BEFORE the
+        // noise filter so a deselected session stays silent even if it would
+        // also have been withheld.
+        if (deselected?.has(sessionId) === true) {
+          if (!dryRun) {
+            await this.releaseWithheld(agent, project, fromWorkingDir, sessionId, mode);
+          }
+          continue;
+        }
         if (reason === undefined) {
           adopted.push(sessionId);
+          if (mode === "copy" && !dryRun && this.placedACopy(project, fromWorkingDir, sessionId)) {
+            copies.push(sessionId);
+          }
           continue;
         }
         skipped.push({ sessionId, reason });
@@ -664,6 +785,8 @@ export class HerdctlService {
       this.invalidateSessions(agent);
       this.jobsIndexOrNull?.invalidate();
       this.invalidateAdoptable(project.slug);
+      // Replaces any earlier import: only the most recent one is undoable.
+      this.lastImport.set(project.slug, { adopted: [...adopted], copies });
     }
     // A session adopted from one source and then met again in the NEXT source
     // (its fresh copy now sits in the project's own transcript folder) comes back
@@ -672,6 +795,88 @@ export class HerdctlService {
     // never also reported as skipped by it.
     const done = new Set(adopted);
     return { adopted, skipped: skipped.filter((s) => !done.has(s.sessionId)) };
+  }
+
+  /**
+   * Did an import of `sessionId` from `fromWorkingDir` place a NEW file?
+   *
+   * The same test `releaseWithheld` makes before deleting anything: an in-place
+   * adoption resolves the destination and the origin to one path, so there is no
+   * copy and nothing that may be removed.
+   */
+  private placedACopy(project: Project, fromWorkingDir: string, sessionId: string): boolean {
+    const home = this.cfg.claudeHome;
+    const placed = getCliSessionFile(project.workingDir, sessionId, home);
+    const origin = getCliSessionFile(fromWorkingDir, sessionId, home);
+    return path.resolve(placed) !== path.resolve(origin);
+  }
+
+  /**
+   * What the LAST import into each workspace did, so it can be undone (#660).
+   *
+   * Keyed by workspace key (which may be `""` — the root). Holds the sessions
+   * that import actually brought in, and of those, the ones where it PLACED a
+   * copy and may therefore delete one again.
+   *
+   * Server-side rather than a token the client hands back: undo deletes files, so
+   * the set of paths it may touch must come from what this process actually did,
+   * not from a request body. A restart forgets it, which is the right failure —
+   * the offer to undo is a transient toast, not a durable feature.
+   *
+   * Only the most recent import per workspace is kept. Undoing an import two
+   * imports ago is not offered and would be a lie to describe as "undo".
+   */
+  private readonly lastImport = new Map<string, { adopted: string[]; copies: string[] }>();
+
+  /**
+   * Undo the import this process most recently performed into `project` (#660).
+   *
+   * Releases each adoption and deletes the copies that import placed, leaving the
+   * user's own `~/.claude` history exactly as it was. Returns the sessions it
+   * released; an empty array means there was nothing to undo (nothing imported
+   * yet, already undone, or the server restarted since).
+   *
+   * `sessionIds` narrows it to part of that import — the rest stays. Ids that
+   * were not part of it are ignored rather than rejected: undo is a best-effort
+   * safety net, and the alternative is a 400 for a button the user pressed once.
+   */
+  async unadoptChats(
+    project: Project,
+    opts: { sessionIds?: string[] } = {},
+  ): Promise<{ released: string[] }> {
+    const agent = keeperAgentName(project.slug);
+    const last = this.lastImport.get(project.slug);
+    if (last === undefined) return { released: [] };
+
+    const wanted =
+      opts.sessionIds === undefined ? null : new Set(opts.sessionIds);
+    const target = last.adopted.filter((id) => wanted === null || wanted.has(id));
+    if (target.length === 0) return { released: [] };
+
+    const copies = new Set(last.copies);
+    const released: string[] = [];
+    for (const sessionId of target) {
+      await this.manager.unadoptSession(agent, sessionId).catch(() => undefined);
+      // Delete ONLY a file this import placed. A session adopted in place has no
+      // copy, and its transcript is the user's own — removing it would destroy
+      // history rather than restore it.
+      if (copies.has(sessionId)) {
+        const placed = getCliSessionFile(project.workingDir, sessionId, this.cfg.claudeHome);
+        await fs.rm(placed, { force: true }).catch(() => undefined);
+      }
+      released.push(sessionId);
+    }
+
+    // Consume what was undone, so a second undo is a no-op rather than a repeat
+    // attempt to delete files that are already gone.
+    const remaining = last.adopted.filter((id) => !released.includes(id));
+    if (remaining.length === 0) this.lastImport.delete(project.slug);
+    else this.lastImport.set(project.slug, { adopted: remaining, copies: last.copies });
+
+    this.invalidateSessions(agent);
+    this.jobsIndexOrNull?.invalidate();
+    this.invalidateAdoptable(project.slug);
+    return { released };
   }
 
   /**
@@ -754,6 +959,8 @@ export class HerdctlService {
       onMessage: opts.onMessage,
       onJobCreated: opts.onJobCreated,
       injectedMcpServers: opts.injectedMcpServers,
+      // CLI runtime — see the getter: only safe when it will append, not replace.
+      systemPromptAppend: this.environmentPromptAppendForCli,
     });
   }
 
@@ -803,6 +1010,7 @@ export class HerdctlService {
         prompt: opts.prompt,
         manageLifecycle: true,
         injectedMcpServers: opts.injectedMcpServers,
+        systemPromptAppend: this.environmentPromptAppend,
         // Stream assistant text token-by-token: the SDK emits `stream_event` /
         // `text_delta` chunks that the translator surfaces as incremental
         // `chat:response` frames (edspencer/herdctl#382, paddock#315).
@@ -971,6 +1179,9 @@ export class HerdctlService {
       resume: opts.resume,
       // Stream the command's assistant text token-by-token (paddock#315).
       includePartialMessages: true,
+      // A slash command's output renders in the same chat bubble as any other
+      // turn, so it gets the same environment context (#635).
+      systemPromptAppend: this.environmentPromptAppend,
     });
     let sessionId: string | null = isResume ? (opts.resume as string) : null;
 
@@ -1006,10 +1217,29 @@ export class HerdctlService {
   }
 
   /**
+   * Register a background-phase turn so Stop can reach it (paddock#528). Called
+   * by the background turn sink once it knows both the synthetic job id it
+   * published and the session that stream belongs to. Re-registering the same
+   * job id with a later session id is fine — the sink refreshes the mapping if
+   * the stream resolves a different session.
+   */
+  registerBackgroundTurn(jobId: string, sessionId: string): void {
+    this.backgroundTurns.set(jobId, sessionId);
+  }
+
+  /** Forget a background-phase turn once its stream has ended. */
+  unregisterBackgroundTurn(jobId: string): void {
+    this.backgroundTurns.delete(jobId);
+  }
+
+  /**
    * Cancel a running turn (Stop button → WS chat:cancel). Handles BOTH drive
    * modes off the single id the client holds as `jobId`:
    *  - **session mode** — the id is a synthetic turn id in {@link liveSessions};
    *    interrupt the live `RuntimeSession` (there is no herdctl job to cancel).
+   *  - **background phase** — the id is a synthetic id in
+   *    {@link backgroundTurns}; there is no model turn to interrupt, so reap the
+   *    session (paddock#528).
    *  - **batch mode** — the id is a real herdctl job id; abort it via `cancelJob`
    *    (which kills the CLI subprocess / aborts the SDK query).
    *
@@ -1027,6 +1257,21 @@ export class HerdctlService {
         console.warn(`[herdctl] session interrupt failed for ${jobId}:`, err);
         return false;
       }
+    }
+    // Background phase: the primary turn is over and its liveSessions entry is
+    // gone, but the session is still open streaming autonomous re-invocation
+    // turns. Stop here means "end this session" — reaping reaches even a session
+    // the reap policy would hold open forever, and ending the stream is what
+    // drives the sink's onDone → chat:complete → the UI unlocking.
+    const backgroundSession = this.backgroundTurns.get(jobId);
+    if (backgroundSession !== undefined) {
+      const reaped = this.manager.reapChatSession(backgroundSession);
+      if (!reaped) {
+        console.warn(
+          `[herdctl] no live managed session ${backgroundSession} to reap for background turn ${jobId}`,
+        );
+      }
+      return reaped;
     }
     try {
       await this.manager.cancelJob(jobId);
