@@ -15,6 +15,7 @@
  *
  *     package.json                  <- synthesized, @edspencer/paddock
  *     README.md                     <- npm landing page
+ *     LICENSE                       <- copied from the repo root
  *     packages/server/package.json  <- kept: the CLI reads its version from here
  *     packages/server/dist/**       <- compiled server + the `paddock` bin
  *     packages/web/dist/**          <- built SPA
@@ -130,6 +131,21 @@ const serverPkg = readJson(path.join(repoRoot, "packages/server/package.json"));
 const lock = readJson(path.join(repoRoot, "package-lock.json"));
 const version = serverPkg.version;
 
+// The published licence is READ, never defaulted. A `?? "MIT"` fallback here
+// once made every release advertise an MIT grant the repo had not actually
+// made (#674). Fail loudly instead: a missing field is a licensing bug, not
+// something a build script gets to decide.
+const license = serverPkg.license;
+if (typeof license !== "string" || license.trim() === "") {
+  die(
+    'no "license" field in packages/server/package.json — refusing to publish a package with no licence. ' +
+      'Add `"license": "MIT"` (and keep the repo LICENSE file in sync).',
+  );
+}
+
+const licenseFile = path.join(repoRoot, "LICENSE");
+if (!fs.existsSync(licenseFile)) die("LICENSE missing at repo root — the published package must ship its licence text");
+
 const serverDist = path.join(repoRoot, "packages/server/dist");
 const webDist = path.join(repoRoot, "packages/web/dist");
 for (const [label, dir] of [
@@ -169,7 +185,7 @@ const manifest = {
   bugs: { url: "https://github.com/edspencer/paddock/issues" },
   // Must match, case-sensitively, the repo provenance is generated from.
   repository: { type: "git", url: "git+https://github.com/edspencer/paddock.git" },
-  license: serverPkg.license ?? "MIT",
+  license,
   author: "Ed Spencer",
   type: "module",
   engines: { node: ">=22" },
@@ -177,7 +193,14 @@ const manifest = {
   scripts: { preinstall: "node install-notice.mjs" },
   dependencies: pinnedVersions(lock, serverPkg.dependencies, "packages/server"),
   optionalDependencies: pinnedVersions(lock, serverPkg.optionalDependencies ?? {}, "packages/server"),
-  files: ["packages/server/dist", "packages/server/package.json", "packages/web/dist", "install-notice.mjs", "README.md"],
+  files: [
+    "packages/server/dist",
+    "packages/server/package.json",
+    "packages/web/dist",
+    "install-notice.mjs",
+    "README.md",
+    "LICENSE",
+  ],
   publishConfig: {
     // Scoped packages default to `restricted`, which needs a paid plan — a
     // publish without this fails with 402.
@@ -191,6 +214,8 @@ fs.writeFileSync(path.join(outDir, "package.json"), JSON.stringify(manifest, nul
 
 const readme = path.join(repoRoot, "packages/server/NPM-README.md");
 fs.copyFileSync(readme, path.join(outDir, "README.md"));
+
+fs.copyFileSync(licenseFile, path.join(outDir, "LICENSE"));
 
 const size = Number(
   process.env.PADDOCK_SKIP_SIZE

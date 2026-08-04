@@ -324,4 +324,4 @@ env gotchas, and the changesets flow.
 
 ## License
 
-See the repository for license details.
+[MIT](LICENSE) © 2026 Ed Spencer.

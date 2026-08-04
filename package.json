@@ -3,6 +3,7 @@
   "version": "0.60.0",
   "private": true,
   "description": "Project-first launchpad built on herdctl. Server-hosted, persistent Claude Code sessions organized by project.",
+  "license": "MIT",
   "type": "module",
   "workspaces": [
     "packages/*"
