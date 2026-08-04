@@ -150,13 +150,21 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
   // it (issue #54). See session-hub.ts.
   const hub = new SessionHub();
 
-  // Per-session marker of the last queued message the server has already drained
-  // (#245), keyed `agent \0 sessionId` and stamped with that message's client
-  // timestamp. Lets an idle-drain skip a message it already sent — e.g. a stale
-  // localStorage copy a reloaded client re-asserts — instead of double-sending.
-  // In-memory (shared across this handler's sockets); a rare double-send only
-  // survives a server restart, when the persisted store is already empty anyway.
-  const lastFlushedTs = new Map<string, number>();
+  // Per-session marker of the queued messages the server has already drained
+  // (#245), keyed `agent \0 sessionId`. Lets a drain skip a message it already
+  // sent — e.g. a stale localStorage copy a reloaded client re-asserts — instead
+  // of double-sending. In-memory (shared across this handler's sockets); a rare
+  // double-send only survives a server restart, when the persisted store is
+  // already empty anyway.
+  //
+  // A message's identity is the (ts, text) TUPLE, not the timestamp alone (#628).
+  // The client deliberately KEEPS one enqueue ts when APPENDING to an existing
+  // queue (#245 stable identity), so "same ts, different text" is a genuinely new
+  // message — deduping on the ts alone silently destroyed the appended text.
+  // Timestamps are monotonic per session (a fresh queue stamps `Date.now()`), so
+  // anything strictly OLDER than `ts` is stale by construction and only the texts
+  // flushed AT `ts` need remembering — one bounded set per session.
+  const lastFlushed = new Map<string, { ts: number; texts: Set<string> }>();
 
   // Every currently-connected socket, so a turn's start/stop transition can be
   // broadcast to all clients — powering the per-chat sidebar streaming dots that
@@ -487,7 +495,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
     // successfully and (b) when a queue is set while the session is idle — a queue
     // that arrived (e.g. via the reconnect outbox) after the turn it was meant to
     // follow already ended. `take` makes the read+clear atomic so the two callers
-    // can never both send it; the `lastFlushedTs` marker skips a message already
+    // can never both send it; the `lastFlushed` marker skips a message already
     // drained (a stale client re-assert on reload) so it isn't sent twice.
     const drainQueue = async (slug: string, sessionId: string): Promise<void> => {
       if (!deps.queuedMessage) return;
@@ -495,7 +503,15 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       const queued = await deps.queuedMessage.take(agent, sessionId).catch(() => null);
       if (!queued?.text) return;
       const markerKey = `${agent}${KEY_SEP}${sessionId}`;
-      const already = (lastFlushedTs.get(markerKey) ?? 0) >= queued.createdAtMs;
+      const marker = lastFlushed.get(markerKey);
+      // Already drained, on the (ts, text) tuple (#628): either this exact text
+      // went out at this exact ts, or the whole message predates the last one we
+      // flushed — which, timestamps being monotonic, can only be a stale re-assert.
+      // An APPEND reuses the ts with longer text, so it is NOT a duplicate.
+      const already =
+        marker !== undefined &&
+        (queued.createdAtMs < marker.ts ||
+          (queued.createdAtMs === marker.ts && marker.texts.has(queued.text)));
       // Tell every attached client (origin + reconnected sockets) to clear its copy
       // of this message. When we're really sending it, carry the text so the client
       // renders the sent bubble in-transcript; on a stale re-assert we only clear.
@@ -508,7 +524,10 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
         },
       });
       if (already) return;
-      lastFlushedTs.set(markerKey, queued.createdAtMs);
+      // Record the tuple. A newer ts supersedes the marker outright (everything at
+      // the old ts is now stale); the same ts adds one more flushed text.
+      if (marker !== undefined && marker.ts === queued.createdAtMs) marker.texts.add(queued.text);
+      else lastFlushed.set(markerKey, { ts: queued.createdAtMs, texts: new Set([queued.text]) });
       // Broadcast the flush frame BEFORE kicking the turn so the user bubble renders
       // above the reply. Run it detached, like a human send. A leading-slash queued
       // message is a slash command (e.g. "/compact"): route it through the command
