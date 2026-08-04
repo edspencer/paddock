@@ -3,8 +3,10 @@ title: Deploying Paddock
 description: The recommended way to run Paddock — on a low-power, always-on machine you can reach over HTTPS from anywhere.
 ---
 
-You *can* run Paddock on your laptop (see [Getting started](/getting-started/)), but
-that's not how it's meant to live. Paddock's whole point is **persistent, resumable
+You *can* run Paddock on your laptop — `npx @edspencer/paddock --here` is one command
+and the fastest way to try it (see
+[Getting started](/getting-started/#try-it-with-npx)) — but that's not how it's meant
+to live. Paddock's whole point is **persistent, resumable
 agents you can reach from anywhere** — and a laptop that sleeps, closes, and moves
 around defeats that.
 

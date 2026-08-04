@@ -80,7 +80,33 @@ you visit, more a service your other tools talk to.
 
 ## Quickstart
 
-Run the published image, point it at a data volume, and give it a Claude token:
+**Try it on your own Claude Code history, in one command.** `cd` into a directory
+where you've been using Claude Code recently:
+
+```bash
+cd ~/code/some-project
+npx @edspencer/paddock --here
+```
+
+Paddock opens **that directory** as its workspace, finds the Claude Code sessions
+you already have for it, and offers them for import — so you're looking at your own
+conversations, resumable, rather than an empty instance. Then open
+**http://127.0.0.1:4000**. Later runs in the same directory resume it, no flag needed.
+
+`--here` is the consent, and here is all of it: it creates `.paddock/` (workspace
+state) and `.chats/` (transcripts) in the directory, appends both to `.gitignore`,
+and **links** your `~/.claude` history rather than moving or copying it. Undo with
+`rm -rf .paddock .chats` and dropping the two `.gitignore` lines. Without the flag,
+Paddock never touches the directory you ran it from.
+
+Needs **Node 22+**. First run downloads ~250 MB — Paddock drives Claude Code, and
+the Agent SDK ships a per-platform binary of that size; later runs reuse the npm
+cache. For repeated use, `npm i -g @edspencer/paddock` beats bare `npx`.
+
+### Always-on: Docker
+
+For a server rather than a laptop, run the published image, point it at a data
+volume, and give it a Claude token:
 
 ```bash
 docker run -d --name paddock -p 127.0.0.1:4000:4000 \
@@ -123,9 +149,10 @@ volumes:
 > **The web UI has no login of its own** — run it behind a reverse proxy / auth
 > layer you trust (see [AUTH.md](AUTH.md)). Paddock reads credentials from the
 > environment and from files the host provides; it never stores secrets itself.
-> It also fails closed: a source or tarball run binds loopback by default, and
-> refuses to start on a routable interface with `PADDOCK_AUTH_MODE=none` unless
-> you explicitly set `PADDOCK_DANGEROUSLY_ALLOW_OPEN`. (The
+> It also fails closed: an `npx`, source or tarball run binds loopback by default,
+> and refuses to start on a routable interface with `PADDOCK_AUTH_MODE=none` unless
+> you explicitly set `PADDOCK_DANGEROUSLY_ALLOW_OPEN`. None of that is a concern for
+> a local `npx` run, which is reachable only from your own machine. (The
 > [Management API](#drive-it-from-outside) is the one surface that authenticates
 > itself rather than delegating to your proxy.)
 

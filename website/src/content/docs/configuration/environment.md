@@ -20,6 +20,11 @@ For a runnable starting point, copy [`.env.example`](../.env.example) to `.env`
 and adjust. Authentication is summarised below but documented in full in
 [AUTH.md](/configuration/authentication).
 
+Running via `npx` and have no checkout to copy that file from? The CLI's own flags
+cover the common cases without any environment at all — `--port`, `--host`,
+`--data-dir`, `--here`. Run `npx @edspencer/paddock --help` for the full list; every
+`PADDOCK_*` variable below still works if you export it first.
+
 ## How values are parsed
 
 Two helpers do almost every read:

@@ -1,14 +1,73 @@
 ---
 title: Getting started
-description: Run Paddock with Docker or from source, and connect a Claude token.
+description: Try Paddock in one command with npx, or run it with Docker or from source.
 ---
 
-Paddock is a single process per data root + port. The fastest way to try it is the
-published Docker image; you can also run it from source for development.
+Paddock is a single process per data root + port. The fastest way to try it is
+**`npx`** — nothing to install, nothing to clone. For an always-on instance on a server,
+use the published Docker image; to hack on Paddock itself, run it from source.
+
+## Try it with npx
+
+If you have Node 22+, you can run Paddock against your **existing Claude Code history**
+in one command. `cd` into a directory where you've been using Claude Code recently:
+
+```bash
+cd ~/code/some-project
+npx @edspencer/paddock --here
+```
+
+Paddock opens **that directory** as its workspace, finds the Claude Code sessions you
+already have for it, and offers them for import. Open **http://127.0.0.1:4000** (or add
+`-o` to have it opened for you) — and instead of an empty instance, you're looking at
+your own conversations, resumable.
+
+Later runs in the same directory resume it, with no flag needed.
+
+:::note[What `--here` writes into the directory]
+The flag is the consent, so here is exactly what it does — all of it reversible, none of
+it touching your code:
+
+- creates **`.paddock/`** for this workspace's state
+- creates **`.chats/`** for transcripts
+- appends those two entries to **`.gitignore`**
+- links `~/.claude/projects/<encoded-dir>` at the workspace — your Claude Code history is
+  **linked, not moved or copied**
+
+To undo it completely: `rm -rf .paddock .chats` and drop the two `.gitignore` lines.
+:::
+
+Without `--here`, Paddock never touches the directory you ran it from — it starts a
+normal instance in `~/.paddock` and you create projects from the UI.
+
+**First run downloads ~250 MB.** Paddock drives Claude Code, and the Claude Agent SDK
+ships a per-platform binary of that size. Later runs reuse the npm cache and start
+immediately. If you expect to use it often, `npm i -g @edspencer/paddock` is friendlier
+than bare `npx`.
+
+Useful flags:
+
+```
+  -p, --port <port>       HTTP/WS port (default 4000)
+      --host <host>       Bind address (default 127.0.0.1)
+  -d, --data-dir <path>   Projects + state (default ~/.paddock)
+      --here              Open the CURRENT directory as the workspace
+  -o, --open              Open the app in your browser once it is listening
+      --verbose           Show the server's own logs (quiet by default)
+```
+
+Credentials work the same as everywhere else — see
+[Claude authentication](#claude-authentication) below. If you already use Claude Code on
+this machine, your existing login is picked up automatically and there is nothing to do.
+
+An npx run binds **loopback with authentication disabled**, which is the right default
+for a laptop, and it *fails closed*: bind a routable address without configuring auth and
+it refuses to start. See [Binding & network exposure](/configuration/binding-and-exposure/).
 
 ## Run with Docker
 
-Run the published image, point it at a data volume, and give it a Claude token:
+For an always-on instance on a server, the published image is the simplest route. Point
+it at a data volume and give it a Claude token:
 
 ```bash
 docker run -d --name paddock -p 127.0.0.1:4000:4000 \
@@ -91,10 +150,13 @@ compose stack, `proxmox-iac/` (Tofu + Ansible), `kubernetes/` (Kustomize), and a
 :::
 
 :::caution[No built-in login]
-Paddock has **no authentication of its own**. Run it behind a reverse proxy / auth
-layer you trust — see [Authentication](/configuration/authentication/). It reads
-credentials from the environment and from files the host provides; it never stores
-secrets itself.
+Paddock has **no authentication of its own**. Anywhere it is reachable by more than your
+own machine — a server, a container published on a routable address — run it behind a
+reverse proxy / auth layer you trust; see
+[Authentication](/configuration/authentication/). It reads credentials from the
+environment and from files the host provides; it never stores secrets itself.
+
+This is not a concern for a local `npx` run, which binds loopback only.
 :::
 
 ## Claude authentication
