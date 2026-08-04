@@ -16,9 +16,10 @@
  * Each test uses its own project to avoid the cross-test sweep race (see
  * ws-reattach.test.ts).
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { startTestApp, type TestApp } from "../helpers/app.js";
 import { listen, connectWs, type WsEvent } from "../helpers/ws.js";
+import type { RuntimeSession } from "@herdctl/core";
 
 describe("integration: WS cancel interrupts a running turn (Stop button)", () => {
   let t: TestApp;
@@ -119,5 +120,155 @@ describe("integration: WS cancel interrupts a running turn (Stop button)", () =>
     } finally {
       ws.close();
     }
+  });
+});
+
+/**
+ * Stop on a SLASH-COMMAND turn (#632).
+ *
+ * A `/compact` turn was permanently un-stoppable: `onChatCommand` hardcoded
+ * `jobId: null` in its routing, so no id ever reached the client (its Stop is
+ * guarded by `if (meta.jobId)`), and `runCommand` never registered its session in
+ * `liveSessions`, so even a hand-supplied id had nothing to interrupt.
+ *
+ * Unlike the `chat:send` tests above, this path cannot use the fake `claude`:
+ * `runCommand` goes through `openChatSession`, which in @herdctl/core ALWAYS runs
+ * on the SDK runtime (control requests like `interrupt()` exist nowhere else), so
+ * the CLI stand-in on PATH is never spawned and `[[HANG]]` never runs. We
+ * therefore stub `openChatSession` with a session that streams a line and then
+ * hangs — the RuntimeSession-level equivalent of `[[HANG]]` — and drive
+ * everything else (ws.ts, HerdctlService.runCommand, HerdctlService.cancel, the
+ * hub) for real.
+ */
+describe("integration: WS cancel on a slash-command turn (#632)", () => {
+  let t: TestApp;
+  let port: number;
+  let ws: Awaited<ReturnType<typeof connectWs>>;
+  let spy: ReturnType<typeof vi.spyOn>;
+  let n = 0;
+
+  /**
+   * A RuntimeSession that streams one assistant message and then blocks without a
+   * terminal `result` — the turn stays running until `interrupt()` releases it,
+   * exactly as the fake CLI's `[[HANG]]` does for a batch turn.
+   */
+  function hangingSession(sessionId: string) {
+    const calls = { interrupt: 0, close: 0, sent: [] as string[] };
+    let release: () => void = () => {};
+    const interrupted = new Promise<void>((r) => {
+      release = r;
+    });
+    async function* messages(): AsyncGenerator<unknown> {
+      yield {
+        type: "assistant",
+        session_id: sessionId,
+        message: { model: "opus", content: [{ type: "text", text: "Compacting…" }] },
+      };
+      await interrupted;
+      yield {
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        session_id: sessionId,
+        result: "[Request interrupted by user]",
+      };
+    }
+    const session = {
+      messages: messages(),
+      send: async (text: string) => {
+        calls.sent.push(text);
+      },
+      interrupt: async () => {
+        calls.interrupt++;
+        release();
+      },
+      listCommands: async () => [],
+      setModel: async () => {},
+      close: async () => {
+        calls.close++;
+      },
+    } as unknown as RuntimeSession;
+    return { session, calls };
+  }
+
+  /** Fire a `/compact` and wait until its turn is visibly streaming. */
+  async function startCommandTurn() {
+    const sessionId = `cmd-sess-${++n}`;
+    const fake = hangingSession(sessionId);
+    spy.mockResolvedValue(fake.session as never);
+    const mark = ws.mark();
+    ws.send({
+      type: "chat:command",
+      payload: { projectSlug: "cmd-stop", command: "/compact", sessionId },
+    });
+    await ws.waitFor(
+      (e: WsEvent) => e.type === "chat:response" && e.payload?.sessionId === sessionId,
+      { from: mark },
+    );
+    // The jobId, if any, is pushed on chat:active the moment the turn is opened —
+    // i.e. strictly before the first streamed frame above.
+    const armed = ws.events
+      .slice(mark)
+      .find((e) => typeof e.payload?.jobId === "string" && e.payload?.sessionId === sessionId);
+    return { sessionId, fake, mark, jobId: armed?.payload?.jobId as string | undefined };
+  }
+
+  beforeAll(async () => {
+    t = await startTestApp({ sweepIntervalMs: 600_000 });
+    await t.app.inject({ method: "POST", url: "/api/projects", payload: { name: "Cmd Stop" } });
+    spy = vi.spyOn(t.herdctl.manager, "openChatSession");
+    ({ port } = await listen(t.app));
+    ws = await connectWs(port);
+  });
+  afterAll(async () => {
+    ws?.close();
+    spy?.mockRestore();
+    await t.teardown();
+  });
+
+  it("arms Stop: a slash-command turn emits a real jobId", async () => {
+    const { jobId } = await startCommandTurn();
+    // Pre-#632 every frame of a command turn carried `jobId: null`, so the client's
+    // `if (meta.jobId)` guard swallowed the click and Stop never sent anything.
+    expect(jobId, "no frame of the slash-command turn carried a jobId").toBeTruthy();
+  });
+
+  it("Stop actually cancels: chat:cancel interrupts the live session and ends the turn", async () => {
+    const { sessionId, fake, jobId } = await startCommandTurn();
+    expect(jobId, "no frame of the slash-command turn carried a jobId").toBeTruthy();
+
+    // The hanging turn has NOT ended on its own.
+    expect(fake.calls.interrupt).toBe(0);
+
+    const cancelMark = ws.mark();
+    ws.send({ type: "chat:cancel", payload: { jobId } });
+
+    // The real cancel routing reaches the real session, and the turn terminates.
+    await ws.waitFor(
+      (e: WsEvent) => e.type === "chat:complete" && e.payload?.sessionId === sessionId,
+      { from: cancelMark, timeoutMs: 15_000 },
+    );
+    expect(fake.calls.interrupt).toBe(1);
+    await ws.waitFor(
+      (e: WsEvent) =>
+        e.type === "chat:active" && e.payload?.sessionId === sessionId && e.payload?.running === false,
+      { from: cancelMark, timeoutMs: 15_000 },
+    );
+  });
+
+  it("does not leak: the registration is dropped once the command turn ends", async () => {
+    const { sessionId, fake, jobId } = await startCommandTurn();
+    const cancelMark = ws.mark();
+    ws.send({ type: "chat:cancel", payload: { jobId } });
+    await ws.waitFor(
+      (e: WsEvent) => e.type === "chat:complete" && e.payload?.sessionId === sessionId,
+      { from: cancelMark, timeoutMs: 15_000 },
+    );
+    expect(fake.calls.close).toBe(1);
+
+    // A second Stop on the finished turn must no longer resolve to that session —
+    // the entry was removed alongside the close, mirroring chatSession.
+    expect(await t.herdctl.cancel(jobId as string)).toBe(false);
+    expect(fake.calls.interrupt).toBe(1);
   });
 });

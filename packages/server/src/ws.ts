@@ -989,6 +989,11 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       const slug = msg.payload.projectSlug as string;
       const { command, sessionId } = msg.payload;
       let resolvedSession: string | null = sessionId ?? null;
+      // The turn id Stop cancels this command by (#632). Hardcoded `null` until
+      // now, so a `/compact` was permanently un-stoppable: the client's cancel is
+      // guarded by `if (meta.jobId)`, and even the deferred pre-arm cancel (#196)
+      // waited forever for an id that never arrived.
+      let jobId: string | null = null;
       const seen: TurnUsageState = initTurnUsage();
       // Same hub-tracked turn as onChatSend so a slash-command turn also survives
       // a mid-turn socket drop (issue #54). A command always targets an existing
@@ -998,7 +1003,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       const routing = (): Routing => ({
         projectSlug: slug,
         sessionId: resolvedSession,
-        jobId: null,
+        jobId,
       });
 
       // #429: sub-agent launches recovered live from the tool_use input (a command
@@ -1050,6 +1055,13 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
         const { sessionId: finalSession } = await deps.herdctl.runCommand(agentName, {
           command,
           resume: resolvedSession,
+          // Arm Stop the moment the session exists (#632) — the same contract
+          // onChatSend uses, so the client renders and can fire Stop while the
+          // command is still working.
+          onJobCreated: (id) => {
+            jobId = id;
+            turn.setJobId(id);
+          },
           onMessage: async (m: SDKMessage) => {
             // A slash-command turn can spawn a Task too; its nested steps never
             // render top-level ({@link isSidechainMessage}).
