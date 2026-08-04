@@ -407,6 +407,7 @@ interface RecordingWrite extends SelfMcpWriteContext {
     sendMessage: Array<{ projectSlug: string; sessionId: string; prompt: string }>;
     setArchived: Array<{ projectSlug: string; sessionId: string; archived: boolean }>;
     createProject: SelfMcpCreateProjectInput[];
+    promoteProject: Array<{ projectSlug: string; repo: string }>;
     setTrigger: Array<{ projectSlug: string; name: string; trigger: Record<string, unknown> }>;
     removeTrigger: Array<{ projectSlug: string; name: string }>;
     listTriggers: Array<{ projectSlug: string }>;
@@ -421,6 +422,7 @@ function fakeWrite(over: Partial<SelfMcpWriteContext> = {}): RecordingWrite {
     sendMessage: [],
     setArchived: [],
     createProject: [],
+    promoteProject: [],
     setTrigger: [],
     removeTrigger: [],
     listTriggers: [],
@@ -459,6 +461,22 @@ function fakeWrite(over: Partial<SelfMcpWriteContext> = {}): RecordingWrite {
         workingDir: input.repo ? `${dir}/checkout` : dir,
         repoBacked: Boolean(input.repo),
         ...(input.repo ? { repo: input.repo } : {}),
+        agentRegistered: true,
+      };
+    },
+    // Promotion (#470) rides on the SAME `projectsMcpEnabled` gate, so it too is
+    // absent by default. The fake mirrors the store: the project keeps its slug,
+    // name and metadata dir, and only `workingDir`/`repoBacked`/`repo` change.
+    promoteProject: async (projectSlug, repo) => {
+      calls.promoteProject.push({ projectSlug, repo });
+      const dir = `/srv/paddock/projects/${projectSlug}`;
+      return {
+        slug: projectSlug,
+        name: projectSlug,
+        dir,
+        workingDir: `${dir}/checkout`,
+        repoBacked: true,
+        repo,
         agentRegistered: true,
       };
     },
@@ -1135,7 +1153,8 @@ describe("self-management MCP (create_project)", () => {
     expect(on.tools.map((t) => t.name)).toContain("create_project");
     // Its own gate — it does NOT drag the trigger tools in with it.
     expect(on.tools.map((t) => t.name)).not.toContain("set_trigger");
-    expect(on.tools).toHaveLength(10);
+    // 9 base + the two project tools (create_project, promote_project — #470).
+    expect(on.tools).toHaveLength(11);
   });
 
   it("is absent WITHOUT a write ctx at all (it lives in the write block)", () => {
@@ -1280,6 +1299,163 @@ describe("self-management MCP (create_project)", () => {
     const { result, json } = await callWrite(write, "create_project", { name: "x" });
     expect(result.isError).toBeUndefined();
     expect(json.created).toBe(true);
+    expect(json.agentRegistered).toBe(false);
+  });
+});
+
+// ── promote_project (issue #470) ────────────────────────────────────────────
+
+describe("self-management MCP (promote_project)", () => {
+  it("is ABSENT unless projectsMcpEnabled is on — even with the write tools present", () => {
+    const off = selfMcpServerDef(fakeContext(), fakeWrite());
+    expect(off.tools.map((t) => t.name)).not.toContain("promote_project");
+
+    const on = selfMcpServerDef(fakeContext(), fakeWrite({ projectsMcpEnabled: true }));
+    expect(on.tools.map((t) => t.name)).toContain("promote_project");
+    // Shares create_project's gate — the project block is the two of them, and it
+    // still does NOT drag the trigger tools in with it.
+    expect(on.tools.map((t) => t.name)).toContain("create_project");
+    expect(on.tools.map((t) => t.name)).not.toContain("set_trigger");
+    expect(on.tools).toHaveLength(11);
+  });
+
+  it("is absent WITHOUT a write ctx at all (it lives in the write block)", () => {
+    const def = selfMcpServerDef(fakeContext());
+    expect(def.tools.map((t) => t.name)).not.toContain("promote_project");
+  });
+
+  it("names the tool as mcp__paddock_manage__promote_project", () => {
+    expect(SELF_MCP_PROJECT_TOOL_NAMES.promoteProject).toBe(
+      "mcp__paddock_manage__promote_project",
+    );
+  });
+
+  it("promotes the CURRENT project when `project` is omitted", async () => {
+    const write = fakeWrite({ projectsMcpEnabled: true });
+    const { json } = await callWrite(write, "promote_project", {
+      repo: "https://github.com/octocat/Hello-World",
+    });
+    expect(write.calls.promoteProject).toEqual([
+      { projectSlug: "paddock", repo: "https://github.com/octocat/Hello-World" },
+    ]);
+    expect(json.promoted).toBe(true);
+    expect(json.slug).toBe("paddock");
+    expect(json.repoBacked).toBe(true);
+    expect(json.repo).toBe("https://github.com/octocat/Hello-World");
+    // The whole point: the keeper's cwd moves to the nested checkout.
+    expect(json.workingDir).not.toBe(json.dir);
+    expect(json.agentRegistered).toBe(true);
+  });
+
+  it("promotes a NAMED project, trimming the slug and the repo url", async () => {
+    const write = fakeWrite({ projectsMcpEnabled: true });
+    const { json } = await callWrite(write, "promote_project", {
+      project: " herdctl ",
+      repo: " git@github.com:edspencer/herdctl.git ",
+    });
+    expect(write.calls.promoteProject).toEqual([
+      { projectSlug: "herdctl", repo: "git@github.com:edspencer/herdctl.git" },
+    ]);
+    expect(json.slug).toBe("herdctl");
+  });
+
+  it("requires a non-blank repo url", async () => {
+    const write = fakeWrite({ projectsMcpEnabled: true });
+    for (const args of [{}, { repo: "   " }, { repo: 42 }]) {
+      const { result } = await callWrite(write, "promote_project", args);
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("`repo` is required");
+    }
+    expect(write.calls.promoteProject).toEqual([]);
+  });
+
+  it("rejects a malformed repo URL before touching the store", async () => {
+    const write = fakeWrite({ projectsMcpEnabled: true });
+    const { result } = await callWrite(write, "promote_project", {
+      repo: "github.com/octocat/Hello-World",
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("invalid repo URL");
+    expect(write.calls.promoteProject).toEqual([]);
+  });
+
+  it("surfaces an unknown target project as a clean isError", async () => {
+    const write = fakeWrite({
+      projectsMcpEnabled: true,
+      promoteProject: async () => {
+        throw new Error("Project not found: nope");
+      },
+    });
+    const { result } = await callWrite(write, "promote_project", {
+      project: "nope",
+      repo: "https://github.com/octocat/Hello-World",
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toBe("Error promoting project: Project not found: nope");
+  });
+
+  it("surfaces an already-repo-backed target as a clean isError", async () => {
+    const write = fakeWrite({
+      projectsMcpEnabled: true,
+      promoteProject: async () => {
+        throw new Error("Project is already repo-backed: paddock");
+      },
+    });
+    const { result } = await callWrite(write, "promote_project", {
+      repo: "https://github.com/octocat/Hello-World",
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toBe(
+      "Error promoting project: Project is already repo-backed: paddock",
+    );
+  });
+
+  it("surfaces a CLONE FAILURE cleanly, keeping the repo URL but redacting server paths", async () => {
+    // The rollback lives in ProjectStore.promote (the notebook is left intact); all
+    // the tool has to do is report git's reason without the server's on-disk layout.
+    const write = fakeWrite({
+      projectsMcpEnabled: true,
+      promoteProject: async () => {
+        throw new Error(
+          "Command failed: git clone -- https://github.com/octocat/does-not-exist " +
+            "/srv/paddock/projects/notes/does-not-exist\n" +
+            "remote: Repository not found.\n" +
+            "fatal: repository 'https://github.com/octocat/does-not-exist/' not found\n",
+        );
+      },
+    });
+    const { result } = await callWrite(write, "promote_project", {
+      repo: "https://github.com/octocat/does-not-exist",
+    });
+    expect(result.isError).toBe(true);
+    const text = result.content[0].text;
+    expect(text).toContain("Repository not found");
+    expect(text).toContain("https://github.com/octocat/does-not-exist");
+    expect(text).not.toContain("/srv/paddock/projects");
+    expect(text).toContain("<path>");
+  });
+
+  it("reports agentRegistered:false rather than failing when re-registration fails", async () => {
+    // Load-bearing for promote specifically: re-registration is what re-symlinks the
+    // new cwd at the project's existing `.chats/`, so a false here means the existing
+    // chats may not be listed/resumable yet even though the promotion committed.
+    const write = fakeWrite({
+      projectsMcpEnabled: true,
+      promoteProject: async (projectSlug, repo) => ({
+        slug: projectSlug,
+        name: projectSlug,
+        dir: "/srv/x",
+        workingDir: "/srv/x/checkout",
+        repoBacked: true,
+        repo,
+        agentRegistered: false,
+      }),
+    });
+    const { result, json } = await callWrite(write, "promote_project", {
+      repo: "https://github.com/octocat/Hello-World",
+    });
+    expect(result.isError).toBeUndefined();
+    expect(json.promoted).toBe(true);
     expect(json.agentRegistered).toBe(false);
   });
 });

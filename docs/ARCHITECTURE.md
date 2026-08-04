@@ -414,12 +414,14 @@ Two servers, both wired in `ws.ts` (`ws.ts:1173-1310`):
   `fork_chat_batch` fan-out) are appended only when `PADDOCK_SELF_MCP_WRITE` is
   *also* on. Write tools spawn real turns via `startAgentTurn`, so spawned chats
   appear in the sidebar, stream live, and are re-attachable (issue #214).
-  The project tool (`create_project`) hangs off a third, independent flag
-  (`PADDOCK_SELF_MCP_PROJECTS`) on top of write: unlike every other write tool it
-  provisions **instance-level** state and clones a caller-supplied git URL, so it
-  gets its own opt-in. It delegates to the same `ProjectStore.create` +
-  `ensureProjectAgent` pair `POST /api/projects` uses, so the REST and MCP
-  creation paths cannot drift (issue #467).
+  The project tools (`create_project`, `promote_project`) hang off a third,
+  independent flag (`PADDOCK_SELF_MCP_PROJECTS`) on top of write: unlike every
+  other write tool they provision or restructure **instance-level** state and
+  clone a caller-supplied git URL, so they get their own opt-in. Each delegates to
+  the same store call + `ensureProjectAgent` pair its REST route uses
+  (`ProjectStore.create` for `POST /api/projects`, `ProjectStore.promote` for
+  `POST /api/projects/:slug/promote`), so the REST and MCP paths cannot drift
+  (issues #467, #470).
 
 **Anti-fork-bomb design:** the limit on runaway recursion is a **configurable
 depth gate, not a structural barrier**. Spawned/automated turns (`startAgentTurn`,

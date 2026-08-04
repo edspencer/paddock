@@ -12,16 +12,16 @@ server key is **`paddock_manage`**, so the agent sees each tool as:
 mcp__paddock_manage__<tool>
 ```
 
-There are **14 tools** across four capability tiers. Every tier past the first is
+There are **15 tools** across four capability tiers. Every tier past the first is
 **off by default**; a stock instance grants nothing here at all.
 
 :::caution[These tools are a capability grant, not a convenience]
 Six of them (`create_chat`, `fork_chat`, `fork_chat_batch`, `send_message`,
 `run_trigger`, `set_trigger`) **start real turns**, and Claude runs with `Bash`
-and `Write`. `create_project` runs `git clone` on a URL the *agent*
-chose. Turning on the write tier is a deliberate decision about blast radius —
-which is exactly why it is a separate flag from the read tier, and why
-`create_project` has a flag of its own on top of that.
+and `Write`. `create_project` and `promote_project` run `git clone` on a URL the
+*agent* chose. Turning on the write tier is a deliberate decision about blast
+radius — which is exactly why it is a separate flag from the read tier, and why
+the project tools have a flag of their own on top of that.
 :::
 
 ## How it reaches the agent
@@ -57,7 +57,7 @@ Four independent instance flags, each also settable as a YAML key in
 | --- | --- | --- |
 | **Read** | `list_projects`, `list_chats`, `read_chat` | `PADDOCK_SELF_MCP` / `selfMcpEnabled` |
 | **Write** | `create_chat`, `fork_chat`, `send_message`, `archive_chat`, `unarchive_chat`, `fork_chat_batch` | `PADDOCK_SELF_MCP_WRITE` / `selfMcpWriteEnabled` **and** read |
-| **Project** | `create_project` | `PADDOCK_SELF_MCP_PROJECTS` / `selfMcpProjectsEnabled` **and** write **and** read |
+| **Project** | `create_project`, `promote_project` | `PADDOCK_SELF_MCP_PROJECTS` / `selfMcpProjectsEnabled` **and** write **and** read |
 | **Triggers** | `list_triggers`, `set_trigger`, `remove_trigger`, `run_trigger` | `PADDOCK_HOOKS_MCP` / `hooksMcpEnabled` (per-project override wins) **and** write |
 
 All four default to **`false`**. The nesting is enforced in the config loader
@@ -67,12 +67,16 @@ unless both of the others are.
 
 Three details that are easy to get wrong:
 
-- **`create_project` has its own flag on purpose.** Every other write tool acts
-  *within* an existing project. This one mutates **instance-level** state (a new
-  directory in the projects root, new long-lived agents) and runs `git clone` on
-  a caller-supplied URL. It is an operator-intent boundary rather than a hard
+- **The project tools have their own flag on purpose.** Every other write tool
+  acts *within* an existing project. These mutate **instance-level** state (a new
+  directory in the projects root, new long-lived agents; or an existing project's
+  working directory moved to a fresh checkout) and run `git clone` on a
+  caller-supplied URL. It is an operator-intent boundary rather than a hard
   security one — Claude with `Bash` in a write-enabled project can already
   clone whatever it likes — but provisioning infrastructure should be opt-in.
+  `promote_project` shares the flag rather than getting a third one: same
+  blast-radius class, and an operator who granted "may provision projects" has
+  already made that call.
 - **The trigger gate is the *hooks* flag, reused.** There is no
   `PADDOCK_TRIGGERS_MCP`. Epic T collapsed the separate schedule and hook verbs
   into one trigger family and kept the existing `PADDOCK_HOOKS_MCP` gate, which a
@@ -332,7 +336,7 @@ are created concurrently; herdctl enforces the real concurrency cap downstream.
 More than 20 directives, or any blank entry, is refused with an explicit error
 rather than partially executed.
 
-## Project tool
+## Project tools
 
 Present only when `PADDOCK_SELF_MCP_PROJECTS` is on, on top of write and read.
 
@@ -368,6 +372,34 @@ Two things this tool guarantees, and one it doesn't:
 - **`keeperRegistered: false` is not a failure.** Mirroring the REST route, the
   project *is* created even if agent registration fails — but it is reported,
   because a project with no live agent cannot accept a `create_chat` yet.
+
+### `promote_project`
+
+Turn an **existing notebook project into a repo-backed one, in place** — for when
+a notes-only project has grown into (or was always meant to be) a codebase, and
+you would otherwise create a second project and abandon the first.
+
+| Argument | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `project` | string | no | Slug of the notebook project to promote. Defaults to the **current** project. |
+| `repo` | string | **yes** | A git URL (`https://`, `git://`, `ssh://`, or `git@host:owner/repo`). |
+
+**Returns**
+`{ promoted: true, slug, name, dir, workingDir, repoBacked, repo, agentRegistered }`
+— the same report `create_project` returns, because a promoted project ends up in
+exactly the state a repo-backed `create_project` would have produced.
+
+- **It is the same code path as `POST /api/projects/:slug/promote`** — the same
+  store `promote` followed by the same agent re-registration, in the same order.
+- **Existing chats are kept.** The project's transcripts already live in its
+  `.chats/` store; re-registering the agent re-symlinks the *new* working
+  directory at that same store, so every chat stays listed and resumable.
+- **Only ever notebook → repo-backed.** A project that is already repo-backed is
+  refused, as is the root workspace. There is no MCP verb to undo a promotion.
+- **A bad or unreachable repo URL leaves the notebook untouched.** The clone runs
+  before anything is mutated, and a failure rolls back just the checkout, so it is
+  safe to retry with a corrected URL. Server filesystem paths are stripped from
+  the error before the agent sees it.
 
 ## Trigger tools
 

@@ -371,7 +371,7 @@ A call must satisfy **both** dimensions: the operation *and* the project.
 | Class | Operations |
 |-------|------------|
 | Read | `list_projects`, `list_chats`, `read_chat` |
-| Write | `create_project`, `create_chat`, `fork_chat`, `send_message`, `fork_chat_batch`, `archive_chat`, `unarchive_chat` |
+| Write | `create_project`, `promote_project`, `create_chat`, `fork_chat`, `send_message`, `fork_chat_batch`, `archive_chat`, `unarchive_chat` |
 | Triggers | `list_triggers`, `set_trigger`, `remove_trigger`, `run_trigger` |
 
 Matching is deliberately **not** a general glob — a security predicate should be

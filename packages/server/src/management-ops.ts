@@ -435,6 +435,32 @@ export function buildManagementOps(
         agentRegistered,
       };
     },
+    // Promotion (#470), sharing create's gate. Same discipline: the SAME two calls,
+    // in the same order, that `POST /api/projects/:slug/promote` makes — store
+    // promote, then agent re-registration. Every guard (already repo-backed, the
+    // root workspace, an existing checkout dir, a bad URL) and the rollback to an
+    // untouched notebook on clone failure live in `ProjectStore.promote` (#213).
+    promoteProject: async (projectSlug, repo) => {
+      const project = await deps.projects.promote(projectSlug, repo);
+      // Non-fatal, as in the route — but it matters more than it does for create:
+      // re-registering is what re-symlinks the NEW working dir at the project's
+      // existing `.chats/` store, which is what keeps its chats listed + resumable.
+      let agentRegistered = true;
+      try {
+        await deps.herdctl.ensureProjectAgent(project);
+      } catch {
+        agentRegistered = false;
+      }
+      return {
+        slug: project.slug,
+        name: project.name,
+        dir: project.dir,
+        workingDir: project.workingDir,
+        repoBacked: project.repoBacked === true,
+        ...(project.repo ? { repo: project.repo } : {}),
+        agentRegistered,
+      };
+    },
     triggersMcpEnabled: includeTriggers,
     listTriggers: async (projectSlug) => {
       if (!deps.triggers) return [];
@@ -536,12 +562,22 @@ export function enforceManagementPolicy(
   const write: SelfMcpWriteContext = {
     currentProjectSlug: w.currentProjectSlug,
     currentSessionId: w.currentSessionId,
+    // The project block is offered when EITHER of its verbs is granted; the
+    // per-tool filter (`managementToolFilter`) is what hides the other one, so a
+    // client scoped to just one of them isn't denied both.
+    projectsMcpEnabled:
+      w.projectsMcpEnabled &&
+      (isOperationAllowed(scope, "create_project") || isOperationAllowed(scope, "promote_project")),
     // Instance-level, so there is no project to scope-check — only the verb.
-    projectsMcpEnabled: w.projectsMcpEnabled && isOperationAllowed(scope, "create_project"),
     createProject: (input) => {
       assertOperation(principal, "create_project");
       return w.createProject(input);
     },
+    // Promotion DOES name an existing project, so unlike create it is scope-checked
+    // against `projects` too — a client confined to one project must not restructure
+    // another.
+    promoteProject: (projectSlug, repo) =>
+      guard("promote_project", projectSlug, () => w.promoteProject(projectSlug, repo)),
     createChat: (projectSlug, prompt, o) =>
       guard("create_chat", projectSlug, () => w.createChat(projectSlug, prompt, o)),
     // NOTE: `fork_chat_batch` is a convenience wrapper that calls this same

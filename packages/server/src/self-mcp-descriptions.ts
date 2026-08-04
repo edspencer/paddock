@@ -124,7 +124,7 @@ export const FORK_CHAT_BATCH_DESC =
   `that model. Up to ${FORK_BATCH_MAX} forks per call; they run ` +
   "concurrently. Returns the source and every new child's sessionId.";
 
-// ── Project tools (issue #467) ──────────────────────────────────────────────
+// ── Project tools (issues #467, #470) ───────────────────────────────────────
 
 export const CREATE_PROJECT_DESC =
   "Create a BRAND-NEW Paddock project — the workspace a keeper agent lives in — and " +
@@ -139,6 +139,21 @@ export const CREATE_PROJECT_DESC =
   "pass that slug to `create_chat` to start working in it. A bad or unreachable " +
   "repo URL fails cleanly and leaves NO half-created project behind, so it is safe " +
   "to retry with a corrected URL.";
+
+export const PROMOTE_PROJECT_DESC =
+  "Turn an EXISTING notebook project into a REPO-BACKED one, in place — use this " +
+  "when a notes-only project has grown into (or was always meant to be) a codebase, " +
+  "instead of creating a second project and abandoning the first. `repo` (a git URL) " +
+  "is required; `project` defaults to the CURRENT project, so an agent can promote " +
+  "the workspace it is running in. The repo is cloned into a nested checkout inside " +
+  "the project, that checkout becomes the agent's working directory, and the agent is " +
+  "re-registered there. Everything already in the project is KEPT — its existing " +
+  "chats stay listed and resumable, and its OVERVIEW/CHANGELOG/settings are " +
+  "untouched. Not reversible through this MCP, and only ever notebook → repo-backed: " +
+  "a project that is ALREADY repo-backed is refused, as is the root workspace. A bad " +
+  "or unreachable repo URL fails cleanly, leaving the notebook exactly as it was, so " +
+  "it is safe to retry with a corrected URL. Returns the project's new working " +
+  "directory and whether its agent re-registered.";
 
 // ── Unified trigger tools (Epic T / T3) ─────────────────────────────────────
 

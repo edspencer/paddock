@@ -199,6 +199,54 @@ export function createProjectHandler(write: SelfMcpWriteContext) {
   };
 }
 
+/**
+ * `promote_project` (issue #470) — turn an EXISTING notebook project into a
+ * repo-backed one in place, over the same `ProjectStore.promote` (#213) that
+ * `POST /api/projects/:slug/promote` uses. Shares `create_project`'s
+ * `projectsMcpEnabled` gate: same blast-radius class (it clones a caller-supplied
+ * URL and restructures a project), and this one MUTATES existing state.
+ *
+ * Pure, like its siblings: it resolves the target (defaulting to the current
+ * project, as every other project-targeting write tool does), shape-checks the URL
+ * with the very same `isValidRepoUrl` the store uses, and delegates. Everything
+ * that makes promotion safe — the already-repo-backed / root-workspace / existing-
+ * checkout-dir guards, and the rollback that leaves an untouched notebook when the
+ * clone fails — stays in the store; nothing is re-implemented here.
+ *
+ * Deliberately NO up-front `SLUG_RE` check on the target, unlike `create_project`:
+ * there the slug names a project being INVENTED, here it names one that must
+ * already exist, so the store's own `not_found` is both the real check and the
+ * better message — and `SLUG_RE` would reject the root workspace's legitimate ""
+ * key with a misleading "invalid slug" instead of the store's explicit refusal.
+ */
+export function promoteProjectHandler(write: SelfMcpWriteContext) {
+  return async (args: Record<string, unknown>): Promise<McpToolCallResult> => {
+    try {
+      const projectArg = typeof args.project === "string" ? args.project.trim() : "";
+      const projectSlug = projectArg.length > 0 ? projectArg : write.currentProjectSlug;
+
+      const repo = typeof args.repo === "string" ? args.repo.trim() : "";
+      if (!repo) {
+        return fail("Error: `repo` is required (the git URL to back the project with).");
+      }
+      if (!isValidRepoUrl(repo)) {
+        return fail(
+          `Error: invalid repo URL "${repo}" — expected an https://, git://, ssh:// or ` +
+            "git@host:owner/repo url.",
+        );
+      }
+
+      const project = await write.promoteProject(projectSlug, repo);
+      return ok({ promoted: true, ...project });
+    } catch (error) {
+      // Same hygiene as create_project: a clone failure arrives as git's whole argv
+      // (`Command failed: git clone -- <url> <dest>`), and the agent needs the repo
+      // URL + git's reason, not our on-disk layout.
+      return fail(`Error promoting project: ${truncateText(redactPaths(errText(error)))}`);
+    }
+  };
+}
+
 export function forkChatBatchHandler(write: SelfMcpWriteContext) {
   return async (args: Record<string, unknown>): Promise<McpToolCallResult> => {
     try {

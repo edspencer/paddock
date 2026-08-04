@@ -255,7 +255,7 @@ number.
 |------|---------|--------|
 | `selfMcpEnabled` | `PADDOCK_SELF_MCP` | Read: list projects/chats, read a chat |
 | `selfMcpWriteEnabled` | `PADDOCK_SELF_MCP_WRITE` | **Starts real turns**: `create_chat`, `send_message`, `fork_chat` |
-| `selfMcpProjectsEnabled` | `PADDOCK_SELF_MCP_PROJECTS` | `create_project` — `git clone` on a URL **the agent chose** |
+| `selfMcpProjectsEnabled` | `PADDOCK_SELF_MCP_PROJECTS` | `create_project` / `promote_project` — `git clone` on a URL **the agent chose** |
 | `hooksMcpEnabled` | `PADDOCK_HOOKS_MCP` | `set_trigger` / `remove_trigger` / `run_trigger` |
 | `browserMcp` | `PADDOCK_BROWSER_MCP` | Headless Chromium (accepts literal `1` only) |
 | `maxSpawnDepth` | `PADDOCK_MAX_SPAWN_DEPTH` | Default `1`. How deep spawned turns keep these tools |

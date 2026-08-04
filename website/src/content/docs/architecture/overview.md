@@ -432,11 +432,11 @@ Two servers, both wired into `injectedMcpServers` in `ws.ts`'s `onChatSend`:
   `AttachmentStore` as an immutable snapshot. The web renders off the tool call
   itself, so it survives live streaming and reload (issue #112/#113).
 - **Self-management** (server key `paddock_manage`) — `selfMcpServerDef()` in
-  `self-mcp.ts`. **Project-only and env-gated.** Its 14 tools sit
+  `self-mcp.ts`. **Project-only and env-gated.** Its 15 tools sit
   in four tiers, each behind its own flag on top of the one below it: **read**
   (`PADDOCK_SELF_MCP`), **write** (`PADDOCK_SELF_MCP_WRITE` — the chat-mutating
   tools, including `archive_chat` / `unarchive_chat`), **project**
-  (`PADDOCK_SELF_MCP_PROJECTS`, `create_project` only), and **triggers**
+  (`PADDOCK_SELF_MCP_PROJECTS`, `create_project` / `promote_project`), and **triggers**
   (`PADDOCK_HOOKS_MCP`, with a per-project override). Several of them spawn real
   turns via `startAgentTurn`, so spawned chats appear in the sidebar, stream live,
   and are re-attachable (issue #214). The
@@ -588,7 +588,7 @@ The main knobs:
 | **Paths** | `PADDOCK_DATA_DIR` (./data), `PADDOCK_PROJECTS_DIR`, `PADDOCK_STATE_DIR` (`.herdctl`), `PADDOCK_HERDCTL_CONFIG`, `PADDOCK_WEB_DIST`, `CLAUDE_HOME` / `CLAUDE_CONFIG_DIR` (`<dataDir>/claude-home` — paddock owns its Claude home (#620); resolved once by `resolveClaudeHome()` in `config.ts` and threaded to BOTH paddock's transcript paths and the engine's `claudeHomePath`) |
 | **Auth** | `PADDOCK_AUTH_MODE` (none), `PADDOCK_AUTH_USER_HEADER` (X-Forwarded-User), `..._EMAIL_HEADER`, `..._GROUPS_HEADER`, `..._JWT_HEADER` (Authorization), `..._JWKS_URL`, `..._JWT_ISSUER`, `..._JWT_AUDIENCE`, `..._USERNAME_CLAIM`, `..._GROUPS_CLAIM` (groups) |
 | **Agent** | `PADDOCK_DRIVE_MODE` (session), `PADDOCK_NATIVE_PROMPT` (true) |
-| **Self-MCP + spawning** | `PADDOCK_SELF_MCP` (false), `PADDOCK_SELF_MCP_WRITE` (false; implies read), `PADDOCK_SELF_MCP_PROJECTS` (false; `create_project`, rides on write), `PADDOCK_HOOKS_MCP` (false; the trigger tools, per-project override), **`PADDOCK_MAX_SPAWN_DEPTH` (`1`, bounded `0`–`8`)** — see [§5](#5-mcp-injection) |
+| **Self-MCP + spawning** | `PADDOCK_SELF_MCP` (false), `PADDOCK_SELF_MCP_WRITE` (false; implies read), `PADDOCK_SELF_MCP_PROJECTS` (false; `create_project` / `promote_project`, ride on write), `PADDOCK_HOOKS_MCP` (false; the trigger tools, per-project override), **`PADDOCK_MAX_SPAWN_DEPTH` (`1`, bounded `0`–`8`)** — see [§5](#5-mcp-injection) |
 | **Agent capabilities** | `PADDOCK_BROWSER_MCP` (false — Playwright/headless Chromium, via the static agent config, not injection) |
 | **Sweeper** | `PADDOCK_SWEEP_MIN_INTERVAL_MS` (300000) |
 | **Curation budgets** | `PADDOCK_CURATION_OVERVIEW_MAX_TOKENS` (2000), `PADDOCK_CURATION_CHANGELOG_MAX_TOKENS` (8000), `PADDOCK_CURATION_CLAUDEMD_MAX_TOKENS` (6000) — `curation.*` in YAML, per-project overridable (`curation-config.ts`) |
