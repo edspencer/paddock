@@ -99,37 +99,6 @@ function addBundledBinsToPath(): void {
 }
 
 /**
- * Best-effort credential check — WARNS, never blocks.
- *
- * Claude Code stores credentials differently per platform (a file under
- * ~/.claude on Linux, the Keychain on macOS), so absence of a file does not
- * prove absence of a login. Refusing to start on a false negative would be
- * worse than a chat that fails with the runtime's own error, so this only
- * prints guidance.
- */
-function warnIfNoCredentials(claudeHome: string): void {
-  if (process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_API_KEY) return;
-  const looksLoggedIn =
-    fs.existsSync(path.join(claudeHome, ".credentials.json")) ||
-    fs.existsSync(path.join(os.homedir(), ".claude.json"));
-  if (looksLoggedIn) return;
-
-  console.warn(
-    [
-      "",
-      "  ⚠ No Claude credentials found.",
-      "",
-      "    Paddock will start, but chats will fail until it has credentials.",
-      "    Fix with either:",
-      "",
-      "      claude setup-token                  # Claude Max/Pro",
-      "      export ANTHROPIC_API_KEY=sk-ant-…   # API billing",
-      "",
-    ].join("\n"),
-  );
-}
-
-/**
  * Report where the data lives, the first time we create it.
  *
  * `npx` is stateless enough that people reasonably assume the whole thing is
@@ -162,7 +131,7 @@ function announceHereConsent(dir: string, dataDir: string): void {
       "",
       `  Opening ${dir} as a Paddock workspace.`,
       `    · ${path.relative(dir, dataDir) || HERE_MARKER}/ and .chats/ created here, and added to .gitignore`,
-      "    · ~/.claude sessions for this directory are linked at the workspace",
+      "    · ~/.claude sessions for this directory are offered for import (nothing is moved)",
       "  Later runs here resume it — no flag needed.",
       "",
     ].join("\n"),
@@ -188,7 +157,7 @@ function offerHereIfSessionsExist(dir: string): void {
     [
       "",
       `  This directory has ${sessions} Claude Code session${sessions === 1 ? "" : "s"}.`,
-      "  Run `paddock --here` to open it as a workspace and import them.",
+      "  Run `paddock --here` to open it as a workspace, where they can be imported.",
       "",
     ].join("\n"),
   );
@@ -295,7 +264,13 @@ async function main(): Promise<void> {
     if (process.env.HERDCTL_LOG_LEVEL === undefined) process.env.HERDCTL_LOG_LEVEL = "warn";
   }
 
-  warnIfNoCredentials(process.env.CLAUDE_HOME ?? path.join(os.homedir(), ".claude"));
+  // No credential preflight here: `ensureClaudeHome` (claude-home.ts) already
+  // warns at boot, and it is the only check that can be right. It tests the home
+  // paddock will ACTUALLY use — `<dataDir>/claude-home` since #620 — after the
+  // bridge has symlinked in any `~/.claude/.credentials.json`, and its remedy
+  // names the `CLAUDE_CONFIG_DIR` keychain scoping that is the real reason a
+  // logged-in user can still land with no credentials. It logs at `warn`, which
+  // survives the quiet default set just above.
 
   const port = process.env.PORT ?? "4000";
   const host = process.env.HOST ?? "127.0.0.1";
