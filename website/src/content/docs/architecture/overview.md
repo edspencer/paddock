@@ -218,9 +218,10 @@ indefinitely. #488 separated *persistence* from *optimism* — the optimistic in
 clear now lives in the **same in-memory map** the server payload folds into
 (`lib/lastSeen.ts`), so every reload re-derives from server truth and divergence is
 structurally impossible rather than merely repaired. A failed `POST …/seen` rolls the
-bump back (`revertSeenLocally`) instead of silently sticking. The surviving
-localStorage touchpoints exist **only** for the one-time backfill of pre-#488 values
-(`lib/lastSeenBackfill.ts`) and go away once that migration drains.
+bump back (`revertSeenLocally`) instead of silently sticking. The one-time backfill
+that pushed surviving pre-#488 values up to the server has drained and been deleted
+(#552), so **nothing in the client reads or writes these keys any more** — any left
+in an old browser profile are inert.
 :::
 
 ### Class 3 — Server JSON sidecars (durable app state)

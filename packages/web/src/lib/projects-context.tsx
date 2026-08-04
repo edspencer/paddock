@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -28,6 +29,11 @@ interface ProjectsContextValue {
    * `null` here means only "the first fetch hasn't landed yet".
    */
   rootWorkspace: Project | null;
+  /**
+   * True only until the FIRST successful fetch lands (#572). Subsequent
+   * refreshes revalidate quietly — the sidebar keeps rendering the list it has
+   * rather than flashing placeholders over it. See {@link refresh}.
+   */
   loading: boolean;
   error: string | null;
   refresh: () => Promise<void>;
@@ -45,8 +51,24 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  /**
+   * Whether a fetch has ever succeeded. Stale-while-revalidate hinges on this
+   * (#572): `loading` used to mean both "we have never loaded the list" and
+   * "we are re-checking a list we are already showing", and only the first
+   * deserves a placeholder. `ProjectView` refreshes from three turn-lifecycle
+   * callbacks, so the conflation blanked the whole sidebar twice per turn.
+   *
+   * A ref, not state: it must be readable synchronously inside `refresh` (two
+   * refreshes can overlap) and it never needs to trigger a render of its own.
+   * Keyed on a SUCCESSFUL fetch rather than on `projects.length`, so a first
+   * load that legitimately returns zero projects still stops the placeholder —
+   * while a first load that FAILED gets one again on retry, having nothing to
+   * show in the meantime.
+   */
+  const loadedOnce = useRef(false);
+
   const refresh = useCallback(async () => {
-    setLoading(true);
+    if (!loadedOnce.current) setLoading(true);
     setError(null);
     try {
       // One call for both: the children list and the root workspace, the root
@@ -54,6 +76,7 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
       // be two requests, the second a full `GET /api/root` detail fetch whose
       // `changelog` and `chats` were thrown away on arrival.
       const { projects, root } = await api.listProjects();
+      loadedOnce.current = true;
       setProjects(projects);
       // Keep the last-known root on a null (unreadable record) rather than
       // blanking the sidebar; `null` still means "nothing has landed yet".

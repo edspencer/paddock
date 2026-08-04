@@ -5,8 +5,6 @@ import {
   markSeenLocally,
   revertSeenLocally,
   setServerLastSeen,
-  legacyLastSeenEntries,
-  clearLegacyLastSeen,
   LAST_SEEN_EVENT,
 } from "./lastSeen";
 
@@ -98,49 +96,17 @@ describe("lastSeen: optimistic rollback on a failed POST (#488)", () => {
   });
 });
 
-describe("lastSeen: legacy localStorage helpers (#488 migration)", () => {
-  it("reads legacy entries and ignores unrelated / malformed keys", () => {
-    localStorage.setItem(lastSeenKey("a"), "1000");
-    localStorage.setItem(lastSeenKey("b"), "2000");
-    localStorage.setItem(lastSeenKey("bad"), "not-a-number");
-    localStorage.setItem("paddock:draft:x", "unrelated");
-    const entries = legacyLastSeenEntries();
-    expect(entries.get("a")).toBe(1000);
-    expect(entries.get("b")).toBe(2000);
-    expect(entries.has("bad")).toBe(false);
-    expect(entries.size).toBe(2);
-  });
-
-  it("clears only the named legacy keys", () => {
-    localStorage.setItem(lastSeenKey("a"), "1000");
-    localStorage.setItem(lastSeenKey("b"), "2000");
-    clearLegacyLastSeen(["a"]);
-    expect(localStorage.getItem(lastSeenKey("a"))).toBeNull();
-    expect(localStorage.getItem(lastSeenKey("b"))).toBe("2000");
-  });
+// The #488 guards proper: read-state is SERVER-authoritative, so a leftover
+// localStorage value must be inert. Kept after the one-time migration that used
+// to consume those keys was deleted (#552) — with nothing left to drain them, a
+// stale key lingering in some old profile must stay incapable of doing harm.
+describe("lastSeen: leftover pre-#488 localStorage keys are inert", () => {
+  afterEach(() => vi.restoreAllMocks());
 
   it("legacy values do NOT feed readLastSeen (the server is authoritative)", () => {
     const s = sid();
     localStorage.setItem(lastSeenKey(s), "9999999");
     expect(readLastSeen(s)).toBe(0);
-  });
-});
-
-describe("lastSeen resilience (private mode / quota)", () => {
-  afterEach(() => vi.restoreAllMocks());
-
-  it("legacy read never throws when localStorage is denied", () => {
-    vi.spyOn(Storage.prototype, "key").mockImplementation(() => {
-      throw new Error("denied");
-    });
-    expect(() => legacyLastSeenEntries()).not.toThrow();
-  });
-
-  it("legacy clear swallows a throwing removeItem", () => {
-    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
-      throw new Error("quota");
-    });
-    expect(() => clearLegacyLastSeen(["sess-1"])).not.toThrow();
   });
 
   it("readLastSeen never touches localStorage at all", () => {

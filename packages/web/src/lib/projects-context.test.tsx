@@ -128,6 +128,45 @@ describe("ProjectsProvider", () => {
     expect(screen.queryByText("a")).not.toBeInTheDocument();
   });
 
+  // #572: `loading` used to mean two different things — "we have never loaded
+  // the list" and "we are re-checking a list we are already showing". Only the
+  // first deserves a placeholder; `ProjectView` refreshes from three
+  // turn-lifecycle callbacks, so the second blanked the sidebar mid-turn.
+  it("stays out of the loading state on a refresh once the list has loaded (#572)", async () => {
+    mockListOnce([makeProject({ slug: "a" })]);
+    render(
+      <ProjectsProvider>
+        <Probe />
+      </ProjectsProvider>,
+    );
+    // First fetch DOES get the placeholder…
+    expect(screen.getByTestId("loading")).toHaveTextContent("true");
+    await waitFor(() => expect(screen.getByText("a")).toBeInTheDocument());
+    expect(screen.getByTestId("loading")).toHaveTextContent("false");
+
+    // …a subsequent one revalidates quietly. Hold the second response open so
+    // the state is observed WHILE the refetch is in flight, not just after.
+    let release!: (v: { projects: Project[]; root: Project | null }) => void;
+    listProjects.mockReturnValueOnce(
+      new Promise<{ projects: Project[]; root: Project | null }>((r) => {
+        release = r;
+      }),
+    );
+    let settled!: Promise<void>;
+    act(() => {
+      settled = ctx().refresh();
+    });
+    expect(screen.getByTestId("loading")).toHaveTextContent("false");
+    // …and the stale list is still on screen rather than replaced.
+    expect(screen.getByText("a")).toBeInTheDocument();
+
+    await act(async () => {
+      release({ projects: [makeProject({ slug: "c" })], root: ROOT_DEFAULT });
+      await settled;
+    });
+    expect(screen.getByText("c")).toBeInTheDocument();
+  });
+
   it("useProjects throws when used outside the provider", () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     expect(() => render(<Probe />)).toThrow(/must be used within ProjectsProvider/);

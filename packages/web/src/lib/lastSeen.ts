@@ -24,9 +24,9 @@
 // - `markSeenLocally`  — optimistic bump; caller also fires `POST .../seen`.
 // - `revertSeenLocally`— undo that bump when the POST fails.
 //
-// `legacyLastSeenEntries` / `clearLegacyLastSeen` support the one-time backfill
-// of pre-#488 localStorage values (see `lib/lastSeenBackfill.ts`); they are the
-// only remaining localStorage touchpoints and go away once the migration drains.
+// Nothing in here touches localStorage any more. The one-time migration that
+// pushed surviving pre-#488 values up to the server has drained and was deleted
+// (#552), along with the two helpers that read and cleared those keys.
 
 const PREFIX = "paddock:lastSeen:";
 
@@ -45,7 +45,11 @@ const lastSeen = new Map<string, number>();
  */
 export const LAST_SEEN_EVENT = "paddock:lastSeen-changed";
 
-/** The (legacy) localStorage key for a chat's last-seen timestamp. */
+/**
+ * The pre-#488 localStorage key for a chat's last-seen timestamp. Nothing reads
+ * or writes it any more — it survives only so the guard tests can name the key
+ * this module must never touch again.
+ */
 export function lastSeenKey(sessionId: string): string {
   return PREFIX + sessionId;
 }
@@ -117,34 +121,4 @@ export function revertSeenLocally(sessionId: string, prev: number, applied: numb
  */
 export function resetLastSeenForTests(): void {
   lastSeen.clear();
-}
-
-/**
- * Read the pre-#488 localStorage last-seen values as a `sessionId -> when` map,
- * for the one-time backfill. Never throws (private mode / quota / no window).
- */
-export function legacyLastSeenEntries(): Map<string, number> {
-  const out = new Map<string, number>();
-  try {
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (!key || !key.startsWith(PREFIX)) continue;
-      const n = Number(localStorage.getItem(key));
-      if (Number.isFinite(n) && n > 0) out.set(key.slice(PREFIX.length), n);
-    }
-  } catch {
-    /* ignore — no legacy state available */
-  }
-  return out;
-}
-
-/** Drop legacy localStorage last-seen keys once backfilled. Never throws. */
-export function clearLegacyLastSeen(sessionIds: Iterable<string>): void {
-  for (const sid of sessionIds) {
-    try {
-      localStorage.removeItem(lastSeenKey(sid));
-    } catch {
-      /* ignore (private mode / quota) */
-    }
-  }
 }
