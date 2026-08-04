@@ -1165,6 +1165,11 @@ export class HerdctlService {
    * compacts the real chat history. SDK messages stream via `onMessage` (same
    * shape as {@link chat}); resolves when the turn completes, then closes the
    * session. Returns the resolved session id.
+   *
+   * Like {@link chatSession}, the session is registered in {@link liveSessions}
+   * under a synthetic turn id handed back via `onJobCreated`, so Stop can
+   * interrupt a long-running command (#632). The session is still NOT managed by
+   * the reaper — teardown remains this method's own `finally`.
    */
   async runCommand(
     agentName: string,
@@ -1172,9 +1177,12 @@ export class HerdctlService {
       command: string;
       resume?: string | null;
       onMessage?: (msg: SDKMessage) => void | Promise<void>;
+      /** Receives the synthetic turn id Stop cancels this command turn by (#632). */
+      onJobCreated?: (jobId: string) => void;
     },
   ): Promise<{ sessionId: string | null }> {
     const isResume = typeof opts.resume === "string";
+    const turnId = randomUUID();
     const session = await this.manager.openChatSession(agentName, {
       resume: opts.resume,
       // Stream the command's assistant text token-by-token (paddock#315).
@@ -1183,6 +1191,14 @@ export class HerdctlService {
       // turn, so it gets the same environment context (#635).
       systemPromptAppend: this.environmentPromptAppend,
     });
+    // Register the live session under the synthetic turn id exactly as
+    // {@link chatSession} does, so `chat:cancel` routes to `session.interrupt()`
+    // (#632) — without this there is nothing for {@link cancel} to resolve and
+    // Stop is a no-op for the whole command. Removed in the same `finally` that
+    // closes the session, so the entry never outlives the turn.
+    this.liveSessions.set(turnId, session);
+    // Surface the synthetic id as the turn's jobId so the client renders Stop.
+    opts.onJobCreated?.(turnId);
     let sessionId: string | null = isResume ? (opts.resume as string) : null;
 
     try {
@@ -1211,6 +1227,9 @@ export class HerdctlService {
     } catch {
       // Stream error — fall through and let the caller surface completion.
     } finally {
+      // Deregister BEFORE closing, so a Stop racing teardown can't reach a
+      // session that is already shutting down.
+      this.liveSessions.delete(turnId);
       await session.close();
     }
     return { sessionId };
