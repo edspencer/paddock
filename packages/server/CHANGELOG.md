@@ -1,5 +1,140 @@
 # @paddock/server
 
+## 0.60.0
+
+### Minor Changes
+
+- [#663](https://github.com/edspencer/paddock/pull/663) [`59aa52f`](https://github.com/edspencer/paddock/commit/59aa52f4a0aad1d0436efcfa389c459f912ca795) Thanks [@edspencer](https://github.com/edspencer)! - Confirm native-chat imports before they happen, and let them be undone
+
+  "Import N native chats" was a permanently-visible sidebar button that imported
+  everything on one click, showed nothing about what it was about to take, and
+  could not be undone from the UI. The absence of a dismiss was deliberate and
+  well-argued — a live count beats a stale dismissal flag — but that reasoning
+  assumes the count is trustworthy, and it has not been: the same button has
+  offered Paddock's own sweeper output and another instance's chats.
+
+  The click now opens a dialog listing the candidate sessions grouped by the
+  directory they came from, with their date, size and first message. Everything
+  starts ticked, because "yes, all of it" really is the common case. The source
+  path is the load-bearing detail — it is what makes "these are from a scratch copy,
+  not my checkout" visible before anything is imported rather than after.
+
+  A successful import offers **Undo** on its toast, which releases the adoptions and
+  deletes the copies the import placed. The user's own `~/.claude` history is never
+  touched. Which files an undo may delete is decided server-side from what the
+  import actually did, so the request carries session ids and no paths; the offer
+  lives in memory and expires with a restart, in which case undo reports that there
+  was nothing to undo rather than acting on a stale record.
+
+  API changes:
+
+  - `GET …/adoptable-chats` sources gain a `sessions` array (`mtime`, `preview`,
+    `autoName`, `sizeBytes`) alongside the existing `sessionIds`.
+  - `POST …/adopt-chats` accepts `sessionIds` to import a chosen subset.
+  - `POST …/unadopt-chats` is new.
+
+  The live count is unchanged, and there is still no dismiss state.
+
+### Patch Changes
+
+- [#663](https://github.com/edspencer/paddock/pull/663) [`59aa52f`](https://github.com/edspencer/paddock/commit/59aa52f4a0aad1d0436efcfa389c459f912ca795) Thanks [@edspencer](https://github.com/edspencer)! - Stop offering Paddock's own sweeper runs as native chats to import
+
+  The "Import N native chats" button could offer back the sweeper's own curation
+  transcripts. On the dogfooding instance, 10 of the 26 chats the `paddock`
+  project offered were Paddock's output, not the user's terminal history.
+
+  The sweeper is a one-shot `claude -p` subprocess, so it writes an ordinary
+  transcript into the project's own chat folder. Adoption relies on the engine's
+  attribution to exclude "sessions a real Paddock run owns", and attribution is
+  driven by run records — but no `job-*.yaml` binds those ten session ids. With no
+  run record, a sweeper transcript is indistinguishable from a session the user
+  typed in a terminal, so it was offered for import.
+
+  Curation runs are now recognised by their prompt's opening (the
+  `Project: <name> (slug: <slug>)` header plus the `You are curating` sentence) and
+  withheld under a new `sweeper-run` filter reason. Like the existing `too-small`
+  and `slash-command-only` reasons they are reported in `filtered` rather than
+  dropped silently, so the count always has an explanation.
+
+  The rule is asserted against the prompt `SweepService` really builds, not a copy
+  of it — the wording has drifted once already ("curating two files in this project
+  directory" → "curating this project's three context files"), and a stale copy
+  would have let the filter drift with it.
+
+- [#663](https://github.com/edspencer/paddock/pull/663) [`59aa52f`](https://github.com/edspencer/paddock/commit/59aa52f4a0aad1d0436efcfa389c459f912ca795) Thanks [@edspencer](https://github.com/edspencer)! - Only offer a same-named directory for import if it really is a clone of the repo
+
+  For a repo-backed project, the import offer matched any transcript folder whose
+  recorded working directory had the same BASENAME as the project's checkout —
+  anywhere on disk. On the dogfooding instance the `hushpod` project was
+  consequently offering 15 chats out of
+  `/data/scratch/paddock-video/data/projects/hushpod`: a throwaway QA instance's
+  data directory, matched purely on leaf name and belonging to a different Paddock
+  instance entirely.
+
+  A same-named directory now has to prove it is a clone of the project's repo. Its
+  git remotes are compared against `project.repo`, normalised so that the same repo
+  addressed different ways still matches:
+
+      https://github.com/acme/api.git  ┐
+      git@github.com:acme/api          ├─ all → github.com/acme/api
+      ssh://git@github.com/acme/api/   ┘
+
+  Any configured remote counts, not just `origin`, so a contributor whose `origin`
+  is their fork and whose `upstream` is the project's repo still matches. Linked
+  worktrees are handled (`.git` is a file; the config lives in the main repository's
+  git dir behind a `commondir` pointer).
+
+  The original reason for not checking the remote was cost — running git in every
+  candidate directory, behind a count rendered in a header. Nothing shells out
+  here: the remote is read from `.git/config`, only for directories that already
+  passed the basename test, memoised on that file's mtime and size.
+
+  A candidate with no readable git config, or whose remotes all point elsewhere, is
+  no longer offered. The project's own working directory is exempt and always
+  offered, so a project whose checkout has an unusual remote keeps its own history.
+
+- [#662](https://github.com/edspencer/paddock/pull/662) [`63acc1e`](https://github.com/edspencer/paddock/commit/63acc1e8436c873ce038f587fdf7bee2f7f201e1) Thanks [@edspencer](https://github.com/edspencer)! - Fix Stop being a permanent no-op while a chat runs background work (#528)
+
+  A chat could sit with the spinner and the **Stop** button showing forever. Stop
+  did nothing — no error, no frame, no log line. The composer silently queued
+  anything typed instead of sending it, and reloading didn't help because the state
+  is server-authoritative and replays as running. Only restarting the server
+  cleared it.
+
+  Two independent things had to be wrong at once, and both were.
+
+  **The turn had no cancellable identity.** Once a session-mode turn's primary
+  `result` lands, the session can stay open — the reaper holds it while the turn's
+  background work runs — and autonomous re-invocation turns keep arriving on the
+  same stream. Paddock renders that stretch through `makeBackgroundTurnSink`, which
+  opened its hub turn and never called `setJobId`. `setJobId` was being called at
+  only two of the five turn-start sites, and this was one of the three that missed,
+  so every frame and every `chat:active` carried `jobId: null`. The client's
+  deferred-cancel (#196) waits for a jobId that never arrives, so clicking Stop put
+  **nothing on the wire at all** — which is why it failed silently rather than
+  erroring. The sink now mints a synthetic job id and publishes it the moment the
+  turn opens, exactly as the foreground path does via `onJobCreated`.
+
+  **Nothing it could route to.** `HerdctlService.cancel` knew two kinds of id: a
+  live turn in `liveSessions` (→ `session.interrupt()`) and a batch job (→
+  `cancelJob`). The primary turn's `liveSessions` entry is deleted the moment it
+  returns, so a background-phase id matched neither and fell through to
+  `cancelJob(<synthetic uuid>)` → `JobNotFoundError` → `false`, discarded by the WS
+  layer. `interrupt()` would have been wrong anyway: it targets an in-flight model
+  turn, and this session is idle, holding background work. Cancel now routes these
+  to `fleet.reapChatSession()` (new in `@herdctl/core` 5.31.0) — end the session,
+  let the stream end, and let the existing unwind emit `chat:complete` and unlock
+  the UI.
+
+  The wedge is easiest to hit on a **subscription usage limit**: sub-agents die, the
+  parent's re-invocation turn dies without a Stop hook, and the reaper's
+  `awaitingTasks` state (cleared by that turn's `activity`) means no later signal
+  can ever reap the session. It also covers the originally reported trigger — a
+  model-authored `until` loop whose sentinel never arrives, so the background task
+  set never drains.
+
+  Requires `@herdctl/core` ≥ 5.31.0.
+
 ## 0.59.1
 
 ### Patch Changes
