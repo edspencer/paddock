@@ -113,12 +113,25 @@ export const api = {
    * so the unread affordance follows them across devices. Fire-and-forget from
    * the UI (the local mirror clears the cue optimistically). `when` defaults to
    * the server's now.
+   *
+   * `keepUnread` marks the seen as INFERRED rather than intentional (#608): the
+   * watermark still advances, but the server leaves any manual "mark unread"
+   * override (#458) alone, so an explicit flag outlives a turn that lands while
+   * the user happens to be looking at the chat.
    */
-  async markChatSeen(slug: string, sessionId: string, when?: number): Promise<void> {
+  async markChatSeen(
+    slug: string,
+    sessionId: string,
+    when?: number,
+    opts?: { keepUnread?: boolean },
+  ): Promise<void> {
     const path = `${apiBase(slug)}/chats/${encodeURIComponent(sessionId)}/seen`;
-    await req<{ ok: boolean; lastSeen: number }>(path, {
+    await req<{ ok: boolean; lastSeen: number; unread: boolean }>(path, {
       method: "POST",
-      body: JSON.stringify(when !== undefined ? { when } : {}),
+      body: JSON.stringify({
+        ...(when !== undefined ? { when } : {}),
+        ...(opts?.keepUnread ? { keepUnread: true } : {}),
+      }),
     });
   },
 
