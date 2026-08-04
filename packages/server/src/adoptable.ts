@@ -36,16 +36,35 @@
  *
  * ## The matching heuristic, and what it cannot do
  *
- * For a REPO-BACKED project a folder matches when its recorded cwd's BASENAME
- * equals the project's checkout name (`repoCheckoutName(repo)`) — i.e. "the user
- * has their own clone of this repo elsewhere". This is deliberately simple and
- * is NOT identity-precise: two unrelated checkouts that happen to share a
- * basename (`~/work/api` and `~/oss/api`) both match, and a clone the user
- * renamed on disk does not match at all. Verifying the checkout's git remote
- * would be exact; it also means running git in every candidate directory, which
- * is the wrong cost for a count shown in a header. Noted as a known limit
- * (#588 gotcha 6) rather than pretended away — the import is per-source, so a
- * user who sees a source they don't recognise can decline it.
+ * For a REPO-BACKED project a folder matches when BOTH hold: its recorded cwd's
+ * BASENAME equals the project's checkout name (`repoCheckoutName(repo)`), AND
+ * that directory is a git checkout with a remote pointing at the project's repo
+ * — i.e. "the user really does have their own clone of this repo elsewhere".
+ *
+ * The basename test alone used to be the whole rule, documented as deliberately
+ * loose. It is unbounded across the filesystem, and on the dogfooding instance it
+ * was reaching into a THROWAWAY QA instance's data directory: the `hushpod`
+ * project offered 15 chats out of `/data/scratch/paddock-video/data/projects/
+ * hushpod`, which belong to a different Paddock instance entirely (#659). "Two
+ * unrelated checkouts that share a basename" turns out not to be a corner case on
+ * a machine that hosts scratch copies, backups and QA clones.
+ *
+ * The original objection to checking the remote was cost — "running git in every
+ * candidate directory is the wrong cost for a count shown in a header". That
+ * objection is answered by not running git: the remote is READ out of
+ * `<cwd>/.git/config`, one small file, and only for the handful of directories
+ * that already passed the basename test. Results are memoised on the config
+ * file's own mtime+size.
+ *
+ * A candidate with no readable git config, or whose remotes all point somewhere
+ * else, is not offered. That is stricter than before by design — a directory that
+ * is not a clone of this repo has no claim to be imported into it. The project's
+ * OWN working directory is exempt: it is appended unconditionally below, so a
+ * project whose checkout has an unusual remote still offers its own history.
+ *
+ * Still NOT identity-precise, and deliberately so: a clone the user renamed on
+ * disk does not match (the basename test runs first), and a fork with a different
+ * remote does not match. Both fail CLOSED — nothing is offered that shouldn't be.
  *
  * For a NOTEBOOK project the match is exact cwd equality: its working directory
  * IS the project directory, and nothing else is plausibly "the same project".
@@ -191,12 +210,98 @@ function filterReasonFor(session: AdoptableSession): FilterReason | null {
   return null;
 }
 
+/**
+ * Reduce a git remote URL to a comparable `host/path` identity (#659).
+ *
+ * The same repo is written many ways, and a project's `repo` field and a clone's
+ * configured remote routinely disagree on form while naming the same thing:
+ *
+ *   https://github.com/edspencer/hushpod.git   ┐
+ *   git@github.com:edspencer/hushpod           ├─ all → github.com/edspencer/hushpod
+ *   ssh://git@github.com/edspencer/hushpod/    ┘
+ *
+ * So: drop any scheme, drop `user@`, turn the scp-style `host:path` colon into a
+ * slash, drop a trailing `.git` and any trailing slashes, and lowercase. A local
+ * path remote (`/srv/git/foo.git`) normalises to `/srv/git/foo` and still
+ * compares correctly against itself.
+ *
+ * Returns `""` for anything that reduces to nothing, which never compares equal
+ * to a real remote — the caller does not have to special-case it.
+ */
+export function normalizeRemote(url: string): string {
+  let s = url.trim();
+  if (s === "") return "";
+  s = s.replace(/^[a-z][a-z0-9+.-]*:\/\//i, ""); // https://, ssh://, git://
+  s = s.replace(/^[^/@]+@/, ""); // git@
+  // scp-style `host:owner/repo` — but not a port (`host:22/owner/repo`) and not
+  // an absolute local path, neither of which has this shape.
+  s = s.replace(/^([^/:]+):(?!\/)/, "$1/");
+  s = s.replace(/\.git$/i, "");
+  s = s.replace(/\/+$/, "");
+  return s.toLowerCase();
+}
+
+/**
+ * Every remote URL configured in a git checkout, normalised.
+ *
+ * Reads `.git/config` directly rather than shelling out to git: this runs for
+ * candidate directories behind a count rendered in a header, and a subprocess per
+ * candidate is exactly the cost that made checking the remote look unaffordable
+ * in the first place.
+ *
+ * Handles a linked WORKTREE, where `.git` is a FILE holding `gitdir: <path>` and
+ * the config lives in the MAIN repository's git dir — found by resolving the
+ * `commondir` pointer. This repo is developed with worktrees, so a contributor's
+ * `wt-*` checkout is a real case, not a hypothetical.
+ *
+ * Returns `[]` for anything unreadable or not a checkout at all. An INI parse is
+ * enough here — `url = …` inside a `[remote "…"]` section — because the question
+ * is only "does any remote name this repo", not "what is the exact config".
+ */
+async function gitRemotes(cwd: string): Promise<string[]> {
+  const dot = path.join(cwd, ".git");
+  const st = await fs.stat(dot).catch(() => null);
+  if (st === null) return [];
+
+  let gitDir = dot;
+  if (!st.isDirectory()) {
+    const pointer = await fs.readFile(dot, "utf8").catch(() => "");
+    const m = /^\s*gitdir:\s*(.+?)\s*$/m.exec(pointer);
+    if (m === null) return [];
+    gitDir = path.resolve(cwd, m[1]);
+    // A linked worktree's own git dir has no `config`; `commondir` points at the
+    // main repository's git dir, which does.
+    const common = await fs.readFile(path.join(gitDir, "commondir"), "utf8").catch(() => null);
+    if (common !== null) gitDir = path.resolve(gitDir, common.trim());
+  }
+
+  const text = await fs.readFile(path.join(gitDir, "config"), "utf8").catch(() => null);
+  if (text === null) return [];
+
+  const out: string[] = [];
+  let inRemote = false;
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (line.startsWith("[")) {
+      inRemote = /^\[remote\b/i.test(line);
+      continue;
+    }
+    if (!inRemote) continue;
+    const m = /^url\s*=\s*(.+)$/i.exec(line);
+    if (m === null) continue;
+    const url = normalizeRemote(m[1]);
+    if (url !== "") out.push(url);
+  }
+  return out;
+}
+
 /** The engine surface this module needs — narrowed so tests can fake it. */
 export interface AdoptableFleet {
   listAdoptableSessions(agentName: string, fromWorkingDir?: string): Promise<AdoptableSession[]>;
 }
 
-/** A directory's cache identity: its mtime + size, or `null` when absent. */
+/** A path's cache identity: its mtime + size, or `"-"` when absent. Used for
+ *  directories (has the file SET changed) and for single files alike. */
 async function dirKey(dir: string): Promise<string> {
   const st = await fs.stat(dir).catch(() => null);
   return st ? `${st.mtimeMs}:${st.size}` : "-";
@@ -242,6 +347,13 @@ interface FolderEntry {
 export class AdoptableIndex {
   /** folder name → last-seen entry, reused while its `key` is unchanged. */
   private readonly folders = new Map<string, FolderEntry>();
+  /**
+   * checkout dir → its normalised remotes, memoised on the git config's own
+   * mtime+size (#659). Keyed on the config rather than the transcript folder
+   * because that is the file whose CHANGE would change the answer: adding or
+   * re-pointing a remote must be picked up, and it does not touch `~/.claude`.
+   */
+  private readonly remotes = new Map<string, { key: string; urls: string[] }>();
   /** project key → cached summary + the composite key it was computed under. */
   private readonly summaries = new Map<string, { key: string; summary: AdoptableSummary }>();
 
@@ -298,6 +410,29 @@ export class AdoptableIndex {
   }
 
   /**
+   * A checkout's normalised git remotes, memoised on its config's mtime+size.
+   *
+   * The memo is keyed by directory and re-validated on every call, so a remote
+   * added or re-pointed after the last scan is picked up without waiting for
+   * anything in `~/.claude` to change.
+   */
+  private async remotesFor(cwd: string): Promise<string[]> {
+    // Cheap enough to re-key every time: two `stat`s. Both halves are needed —
+    // `.git/config` is the file that answers the question for an ordinary
+    // checkout, and `.git` itself covers a linked worktree, where `.git` is a
+    // FILE and `.git/config` does not exist at all.
+    const key = [
+      await dirKey(path.join(cwd, ".git")),
+      await dirKey(path.join(cwd, ".git", "config")),
+    ].join("|");
+    const cached = this.remotes.get(cwd);
+    if (cached && cached.key === key) return cached.urls;
+    const urls = await gitRemotes(cwd);
+    this.remotes.set(cwd, { key, urls });
+    return urls;
+  }
+
+  /**
    * The candidate source working directories for a project, de-duplicated by the
    * transcript folder they resolve to.
    *
@@ -309,13 +444,15 @@ export class AdoptableIndex {
     const ownFolder = path.join(this.claudeHomePath, "projects", encodePathForCli(own));
     const ownReal = await fs.realpath(ownFolder).catch(() => ownFolder);
 
-    const matches = (cwd: string): boolean => {
+    const repo = project.repo !== undefined && project.repo !== "" ? project.repo : null;
+    const wantRemote = repo === null ? "" : normalizeRemote(repo);
+
+    /** The CHEAP test: worth reading a git config for? */
+    const nameMatches = (cwd: string): boolean => {
       if (cwd === own) return true;
-      // Repo-backed: "the user's own clone of the same repo", matched by the
-      // checkout basename. Deliberately loose — see the module header.
-      if (project.repo !== undefined && project.repo !== "") {
-        return path.basename(cwd) === repoCheckoutName(project.repo);
-      }
+      // Repo-backed: "the user's own clone of the same repo". A necessary but
+      // NOT sufficient condition — `remoteMatches` below is the other half.
+      if (repo !== null) return path.basename(cwd) === repoCheckoutName(repo);
       // Notebook: exact cwd equality only.
       return false;
     };
@@ -323,8 +460,15 @@ export class AdoptableIndex {
     const seen = new Set<string>([ownReal]);
     const sources: string[] = [];
     for (const folder of folders) {
-      if (folder.cwd === null || !matches(folder.cwd)) continue;
+      if (folder.cwd === null || !nameMatches(folder.cwd)) continue;
       if (seen.has(folder.realPath)) continue;
+      // A same-named directory has to prove it is a clone of THIS repo (#659).
+      // Only reached for repo-backed projects, and only after the basename test,
+      // so this is a handful of small file reads rather than a filesystem sweep.
+      if (repo !== null && folder.cwd !== own) {
+        const urls = await this.remotesFor(folder.cwd);
+        if (!urls.includes(wantRemote)) continue;
+      }
       seen.add(folder.realPath);
       sources.push(folder.cwd);
     }
