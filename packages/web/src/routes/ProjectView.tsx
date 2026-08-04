@@ -3,7 +3,13 @@ import { useLocation, useNavigate, useOutletContext, useParams } from "react-rou
 import { api } from "../lib/api";
 import { chatClient } from "../lib/ws";
 import { useProjects } from "../lib/projects-context";
-import type { Chat, ChatCompleteUsage, ChatUsage, Project } from "../lib/types";
+import type {
+  AdoptableChats,
+  Chat,
+  ChatCompleteUsage,
+  ChatUsage,
+  Project,
+} from "../lib/types";
 import { StatusPill } from "../components/StatusPill";
 import { TagPill } from "../components/TagPill";
 import { ChatPane } from "../components/ChatPane";
@@ -19,6 +25,7 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ForkChatModal } from "../components/ForkChatModal";
 import { RenameChatModal } from "../components/RenameChatModal";
 import { PromoteChatModal } from "../components/PromoteChatModal";
+import { ImportChatsModal } from "../components/ImportChatsModal";
 import { usePaneWidth } from "../components/PaneResizer";
 import { CHATLIST_PANE } from "../lib/paneWidth";
 import {
@@ -199,10 +206,20 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
   // offer, which is the same thing as far as the UI is concerned.
   const [adoptableCount, setAdoptableCount] = useState(0);
   const [importing, setImporting] = useState(false);
+  // The full offer, fetched with the count and handed to the confirmation dialog
+  // (#660). Held beside the count rather than re-fetched on open so the dialog
+  // shows exactly what the button counted.
+  const [adoptable, setAdoptable] = useState<AdoptableChats | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
   // The one transient outcome message this route raises. Distinct from `loadErr`,
   // which is an early return that replaces the entire page — correct for "this
   // project failed to load", far too violent for "imported 7 chats".
-  const [toast, setToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
+  const [toast, setToast] = useState<{
+    message: string;
+    tone: "success" | "error";
+    /** Offered inside the toast, so the window to undo IS the toast's dwell. */
+    action?: { label: string; onAct: () => void };
+  } | null>(null);
   const dismissToast = useCallback(() => setToast(null), []);
 
   // Git backing store: the project's working-tree status. null = not yet loaded
@@ -488,34 +505,78 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
   const refreshAdoptable = useCallback(async () => {
     const res = await api.getAdoptableChats(slug).catch(() => null);
     setAdoptableCount(res?.count ?? 0);
+    setAdoptable(res);
   }, [slug]);
 
   /**
-   * Import every adoptable native CLI chat into this workspace (#588).
+   * Undo the import just performed (#660).
    *
-   * One click, no confirmation: the server COPIES the source transcripts, so the
-   * user's own `~/.claude` is untouched and there is nothing to warn about. An
-   * empty body means "take everything matched" — the per-source `sourceCwd`
-   * narrowing exists for the CLI, not for this button.
+   * Carries only the session ids; WHICH files may be deleted is decided
+   * server-side from what the import actually did, so this can never be talked
+   * into removing something it did not create. `released: []` is a normal
+   * outcome (the offer is in-memory and expires with a restart) and is reported
+   * as such rather than as a success.
+   */
+  const undoImport = useCallback(
+    async (sessionIds: string[]) => {
+      setToast(null);
+      try {
+        const res = await api.unadoptChats(slug, { sessionIds });
+        await refreshChats();
+        await refreshAdoptable();
+        setToast(
+          res.released.length > 0
+            ? {
+                message: `Removed ${res.released.length} imported chat${res.released.length === 1 ? "" : "s"}.`,
+                tone: "success",
+              }
+            : { message: "Nothing left to undo.", tone: "error" },
+        );
+      } catch (e) {
+        setToast({
+          message: e instanceof Error ? e.message : "Failed to undo the import",
+          tone: "error",
+        });
+      }
+    },
+    [slug, refreshChats, refreshAdoptable],
+  );
+
+  /**
+   * Import the native CLI chats the user confirmed (#588, #660).
+   *
+   * Takes an explicit id list rather than "everything matched": the dialog is
+   * where the decision is made, and sending the selection means a user who
+   * unticked a source they did not recognise gets what they asked for.
    *
    * Both the chat list AND the count are re-read afterwards, in that order of
    * importance: the list is what the user came for, the count is what makes the
    * button disappear. Neither is inferred from the response — the count in
    * particular must come from the server, or the button's visibility would drift
    * away from what is actually still importable.
+   *
+   * A successful import offers an Undo for as long as its toast stands.
    */
-  const importChats = useCallback(async () => {
+  const importChats = useCallback(
+    async (sessionIds: string[]) => {
     if (importing) return;
     setImporting(true);
     try {
-      const res = await api.adoptChats(slug);
+      const res = await api.adoptChats(slug, { sessionIds });
+      setImportOpen(false);
       await refreshChats();
       await refreshAdoptable();
+      const failed = res.adopted.length === 0 && res.skipped.length > 0;
       setToast({
         message: importSummary(res),
         // Nothing imported AND something refused is the one shape that reads as a
         // failure to the user, whatever the HTTP status said.
-        tone: res.adopted.length === 0 && res.skipped.length > 0 ? "error" : "success",
+        tone: failed ? "error" : "success",
+        // Nothing came in, nothing to take back out.
+        action:
+          res.adopted.length > 0
+            ? { label: "Undo", onAct: () => void undoImport(res.adopted) }
+            : undefined,
       });
     } catch (e) {
       // Deliberately NOT `setLoadErr` (which would blank the whole project view
@@ -529,7 +590,9 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
       // In `finally` so a throw can never strand the button in "Importing…".
       setImporting(false);
     }
-  }, [importing, slug, refreshChats, refreshAdoptable]);
+    },
+    [importing, slug, refreshChats, refreshAdoptable, undoImport],
+  );
 
   // Fetch the adoptable count once per workspace open. `refreshAdoptable` is
   // slug-scoped and otherwise stable, so this is the whole "on open, not on every
@@ -538,6 +601,8 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
   // import the previous one's chats.
   useEffect(() => {
     setAdoptableCount(0);
+    setAdoptable(null);
+    setImportOpen(false);
     setToast(null);
     void refreshAdoptable();
   }, [refreshAdoptable]);
@@ -1251,7 +1316,7 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
           detachChat={detachChat}
           adoptableCount={adoptableCount}
           importing={importing}
-          importChats={() => void importChats()}
+          importChats={() => setImportOpen(true)}
         />
 
         {/* Main: tabs + content. The active tab is derived from the URL. */}
@@ -1617,7 +1682,23 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
           unconditionally — `Toast` is a no-op while there is no message — and at
           the route level rather than inside the sidebar so it is not clipped by
           the sidebar's own scroll containers. */}
-      <Toast message={toast?.message ?? null} tone={toast?.tone} onDismiss={dismissToast} />
+      {/* Confirm what an import would bring in, before it brings it in (#660). */}
+      <ImportChatsModal
+        open={importOpen}
+        adoptable={adoptable}
+        busy={importing}
+        onClose={() => setImportOpen(false)}
+        onImport={(sessionIds) => void importChats(sessionIds)}
+      />
+      <Toast
+        message={toast?.message ?? null}
+        tone={toast?.tone}
+        onDismiss={dismissToast}
+        action={toast?.action}
+        // Longer than the default 6s when an Undo is on offer: six seconds is
+        // enough to read an outcome, not to decide to reverse it.
+        durationMs={toast?.action ? 12000 : undefined}
+      />
     </div>
   );
 }

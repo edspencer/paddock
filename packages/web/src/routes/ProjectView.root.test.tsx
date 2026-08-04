@@ -511,13 +511,29 @@ describe("ProjectView root (#516)", () => {
 
     it("imports and re-reads both the list and the count under the empty key", async () => {
       apiFns.getAdoptableChats
-        .mockResolvedValueOnce({ count: 2, sources: [{ sourceCwd: "/w", sessionIds: ["n1", "n2"] }] })
+        .mockResolvedValueOnce({
+          count: 2,
+          sources: [
+            {
+              sourceCwd: "/w",
+              sessionIds: ["n1", "n2"],
+              sessions: [
+                { sessionId: "n1", mtime: "2026-07-01T09:00:00.000Z", sizeBytes: 4096 },
+                { sessionId: "n2", mtime: "2026-07-02T09:00:00.000Z", sizeBytes: 4096 },
+              ],
+            },
+          ],
+        })
         .mockResolvedValue({ count: 0, sources: [] });
       apiFns.adoptChats.mockResolvedValue({ adopted: ["n1", "n2"], skipped: [] });
       renderRootAt("/chat");
+      // Through the confirmation dialog (#660), same as a project.
       fireEvent.click(await screen.findByRole("button", { name: /Import 2 native/i }));
+      fireEvent.click(await screen.findByRole("button", { name: /^Import 2 chats$/i }));
 
-      await waitFor(() => expect(apiFns.adoptChats).toHaveBeenCalledWith(""));
+      await waitFor(() =>
+        expect(apiFns.adoptChats).toHaveBeenCalledWith("", { sessionIds: ["n1", "n2"] }),
+      );
       await waitFor(() => expect(apiFns.listProjectChats).toHaveBeenCalledWith(""));
       expect(await screen.findByRole("status")).toHaveTextContent("Imported 2 chats");
       // Gone because the live count came back 0 — the same property as a project.

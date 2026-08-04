@@ -649,7 +649,19 @@ export class HerdctlService {
    */
   async adoptChats(
     project: Project,
-    opts: { sourceCwd?: string; mode?: AdoptionPlacementMode; dryRun?: boolean } = {},
+    opts: {
+      sourceCwd?: string;
+      /**
+       * Import only these sessions (#660). Anything else the engine adopts along
+       * the way is released again, exactly as a noise-filtered session is — see
+       * the "honouring the noise filter" note above, which this reuses wholesale.
+       * Undefined means "everything on offer", which is what a confirmed
+       * select-all sends and what the CLI has always sent.
+       */
+      sessionIds?: string[];
+      mode?: AdoptionPlacementMode;
+      dryRun?: boolean;
+    } = {},
   ): Promise<{ adopted: string[]; skipped: AdoptSkipped[] }> {
     const agent = keeperAgentName(project.slug);
     const mode = opts.mode ?? "copy";
@@ -661,8 +673,29 @@ export class HerdctlService {
         : summary.sources.map((s) => s.sourceCwd);
     // sessionId -> why detection withheld it.
     const withheld = new Map(summary.filtered.map((f) => [f.sessionId, f.reason] as const));
+    // A selection narrows the offer the same way the noise filter does, and for
+    // the same reason: the engine adopts a whole SOURCE, so anything the user did
+    // not tick has to be released again afterwards. Tracked separately from
+    // `withheld` because a session the user simply did not choose is not a
+    // "skip" worth reporting back — it was never part of this import, and listing
+    // 23 of them would read as an import that half failed.
+    const deselected =
+      opts.sessionIds === undefined
+        ? null
+        : (() => {
+            const wanted = new Set(opts.sessionIds);
+            const out = new Set<string>();
+            for (const source of summary.sources) {
+              for (const id of source.sessionIds) if (!wanted.has(id)) out.add(id);
+            }
+            return out;
+          })();
 
     const adopted: string[] = [];
+    // Of `adopted`, the ones where this call PLACED a file — the only ones undo
+    // may ever delete. Computed here, where `fromWorkingDir` is still known;
+    // afterwards nothing can tell a copy from an in-place adoption.
+    const copies: string[] = [];
     const skipped: AdoptSkipped[] = [];
     for (const fromWorkingDir of sources) {
       // Sequential, not parallel: each source re-scans the adoption store, so a
@@ -676,8 +709,20 @@ export class HerdctlService {
       skipped.push(...result.skipped);
       for (const sessionId of result.adopted) {
         const reason = withheld.get(sessionId);
+        // Not chosen: release it, and say nothing about it. Checked BEFORE the
+        // noise filter so a deselected session stays silent even if it would
+        // also have been withheld.
+        if (deselected?.has(sessionId) === true) {
+          if (!dryRun) {
+            await this.releaseWithheld(agent, project, fromWorkingDir, sessionId, mode);
+          }
+          continue;
+        }
         if (reason === undefined) {
           adopted.push(sessionId);
+          if (mode === "copy" && !dryRun && this.placedACopy(project, fromWorkingDir, sessionId)) {
+            copies.push(sessionId);
+          }
           continue;
         }
         skipped.push({ sessionId, reason });
@@ -692,6 +737,8 @@ export class HerdctlService {
       this.invalidateSessions(agent);
       this.jobsIndexOrNull?.invalidate();
       this.invalidateAdoptable(project.slug);
+      // Replaces any earlier import: only the most recent one is undoable.
+      this.lastImport.set(project.slug, { adopted: [...adopted], copies });
     }
     // A session adopted from one source and then met again in the NEXT source
     // (its fresh copy now sits in the project's own transcript folder) comes back
@@ -700,6 +747,88 @@ export class HerdctlService {
     // never also reported as skipped by it.
     const done = new Set(adopted);
     return { adopted, skipped: skipped.filter((s) => !done.has(s.sessionId)) };
+  }
+
+  /**
+   * Did an import of `sessionId` from `fromWorkingDir` place a NEW file?
+   *
+   * The same test `releaseWithheld` makes before deleting anything: an in-place
+   * adoption resolves the destination and the origin to one path, so there is no
+   * copy and nothing that may be removed.
+   */
+  private placedACopy(project: Project, fromWorkingDir: string, sessionId: string): boolean {
+    const home = this.cfg.claudeHome;
+    const placed = getCliSessionFile(project.workingDir, sessionId, home);
+    const origin = getCliSessionFile(fromWorkingDir, sessionId, home);
+    return path.resolve(placed) !== path.resolve(origin);
+  }
+
+  /**
+   * What the LAST import into each workspace did, so it can be undone (#660).
+   *
+   * Keyed by workspace key (which may be `""` — the root). Holds the sessions
+   * that import actually brought in, and of those, the ones where it PLACED a
+   * copy and may therefore delete one again.
+   *
+   * Server-side rather than a token the client hands back: undo deletes files, so
+   * the set of paths it may touch must come from what this process actually did,
+   * not from a request body. A restart forgets it, which is the right failure —
+   * the offer to undo is a transient toast, not a durable feature.
+   *
+   * Only the most recent import per workspace is kept. Undoing an import two
+   * imports ago is not offered and would be a lie to describe as "undo".
+   */
+  private readonly lastImport = new Map<string, { adopted: string[]; copies: string[] }>();
+
+  /**
+   * Undo the import this process most recently performed into `project` (#660).
+   *
+   * Releases each adoption and deletes the copies that import placed, leaving the
+   * user's own `~/.claude` history exactly as it was. Returns the sessions it
+   * released; an empty array means there was nothing to undo (nothing imported
+   * yet, already undone, or the server restarted since).
+   *
+   * `sessionIds` narrows it to part of that import — the rest stays. Ids that
+   * were not part of it are ignored rather than rejected: undo is a best-effort
+   * safety net, and the alternative is a 400 for a button the user pressed once.
+   */
+  async unadoptChats(
+    project: Project,
+    opts: { sessionIds?: string[] } = {},
+  ): Promise<{ released: string[] }> {
+    const agent = keeperAgentName(project.slug);
+    const last = this.lastImport.get(project.slug);
+    if (last === undefined) return { released: [] };
+
+    const wanted =
+      opts.sessionIds === undefined ? null : new Set(opts.sessionIds);
+    const target = last.adopted.filter((id) => wanted === null || wanted.has(id));
+    if (target.length === 0) return { released: [] };
+
+    const copies = new Set(last.copies);
+    const released: string[] = [];
+    for (const sessionId of target) {
+      await this.manager.unadoptSession(agent, sessionId).catch(() => undefined);
+      // Delete ONLY a file this import placed. A session adopted in place has no
+      // copy, and its transcript is the user's own — removing it would destroy
+      // history rather than restore it.
+      if (copies.has(sessionId)) {
+        const placed = getCliSessionFile(project.workingDir, sessionId, this.cfg.claudeHome);
+        await fs.rm(placed, { force: true }).catch(() => undefined);
+      }
+      released.push(sessionId);
+    }
+
+    // Consume what was undone, so a second undo is a no-op rather than a repeat
+    // attempt to delete files that are already gone.
+    const remaining = last.adopted.filter((id) => !released.includes(id));
+    if (remaining.length === 0) this.lastImport.delete(project.slug);
+    else this.lastImport.set(project.slug, { adopted: remaining, copies: last.copies });
+
+    this.invalidateSessions(agent);
+    this.jobsIndexOrNull?.invalidate();
+    this.invalidateAdoptable(project.slug);
+    return { released };
   }
 
   /**

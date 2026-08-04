@@ -140,7 +140,13 @@ describe("AdoptableIndex (#588)", () => {
 
     const summary = await index().adoptableFor(fleet, project({ workingDir: own }), "keeper-p");
     expect(summary.count).toBe(1);
-    expect(summary.sources).toEqual([{ sourceCwd: own, sessionIds: ["own-1"] }]);
+    expect(summary.sources).toHaveLength(1);
+    expect(summary.sources[0].sourceCwd).toBe(own);
+    expect(summary.sources[0].sessionIds).toEqual(["own-1"]);
+    // The detailed projection carries the same session, described (#660), and
+    // stays in lockstep with the id list — both are built from one array.
+    expect(summary.sources[0].sessions.map((s) => s.sessionId)).toEqual(["own-1"]);
+    expect(summary.sources[0].sessions[0].sizeBytes).toBeGreaterThan(0);
   });
 
   it("offers a REPO-BACKED project its own checkout PLUS same-named CLONES elsewhere", async () => {

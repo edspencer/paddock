@@ -6,6 +6,7 @@
 import {
   type AdoptChatsResult,
   type AdoptableChats,
+  type UnadoptChatsResult,
   type AttachmentRef,
   type AttachmentsConfig,
   type Chat,
@@ -576,17 +577,39 @@ export const api = {
    * transcripts in — the user's own `~/.claude` is never mutated — so the imported
    * chats become real, resumable chats in this workspace.
    *
-   * With no `sourceCwd` this takes EVERYTHING on offer, which is what the one-click
-   * sidebar button sends; passing one narrows the import to a single source
-   * directory (the CLI's `--from`). A partly-skipped import still resolves: the
-   * caller reports `adopted` and `skipped` rather than treating it as a failure.
+   * With neither option this takes EVERYTHING on offer; `sourceCwd` narrows it to
+   * a single source directory (the CLI's `--from`), and `sessionIds` to the
+   * subset the user ticked in the confirmation dialog (#660). A partly-skipped
+   * import still resolves: the caller reports `adopted` and `skipped` rather than
+   * treating it as a failure.
    */
-  async adoptChats(slug: string, opts?: { sourceCwd?: string }): Promise<AdoptChatsResult> {
+  async adoptChats(
+    slug: string,
+    opts?: { sourceCwd?: string; sessionIds?: string[] },
+  ): Promise<AdoptChatsResult> {
     return req<AdoptChatsResult>(`${apiBase(slug)}/adopt-chats`, {
       method: "POST",
       // `{}` rather than no body at all: the contract accepts an empty object or
       // null, and every other POST here sends JSON, so the content-type header
       // `req` always sets stays honest.
+      body: JSON.stringify(opts ?? {}),
+    });
+  },
+
+  /**
+   * Undo the most recent native-chat import into this workspace (#660).
+   *
+   * Releases the adoptions and deletes the copies that import placed; the user's
+   * own `~/.claude` history is never touched. Which sessions those are is decided
+   * SERVER-side from what it actually did — this call carries no paths, so an
+   * undo can never be talked into deleting something the import did not create.
+   *
+   * `released: []` is a normal outcome, not an error: the offer is in-memory and
+   * expires with a restart, so an undo pressed late simply finds nothing to do.
+   */
+  async unadoptChats(slug: string, opts?: { sessionIds?: string[] }): Promise<UnadoptChatsResult> {
+    return req<UnadoptChatsResult>(`${apiBase(slug)}/unadopt-chats`, {
+      method: "POST",
       body: JSON.stringify(opts ?? {}),
     });
   },

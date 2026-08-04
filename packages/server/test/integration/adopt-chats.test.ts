@@ -14,8 +14,10 @@ const run = promisify(execFile);
  * The setup mirrors the situation the feature exists for: a user with terminal
  * `claude` history in their OWN checkout of a repo, who then makes a paddock
  * project backed by that repo. Their transcripts live in a Claude home folder
- * that has nothing to do with the project's directory, and the only thing tying
- * the two together is the checkout's name.
+ * that has nothing to do with the project's directory; what ties the two
+ * together is the checkout's name PLUS its git remote (#659 — the name alone
+ * used to be enough, and reached into unrelated directories that happened to
+ * share it).
  */
 describe("integration: import native Claude Code chats (#588)", () => {
   let t: TestApp;
@@ -90,10 +92,13 @@ describe("integration: import native Claude Code chats (#588)", () => {
     });
     expect(promoted.statusCode).toBe(200);
 
-    // The user's own clone, elsewhere on the "laptop" — same basename, and that
-    // is the ONLY thing linking it to the project.
+    // The user's own clone, elsewhere on the "laptop". A REAL clone, not a bare
+    // directory with the right name: since #659 a same-named directory has to
+    // prove it is a checkout of this repo, and its `.git/config` is the proof.
+    // Cloning for real also means the remote URL under test is one git wrote.
     laptopCheckout = path.join(t.tmp, "laptop", "code", "acme-api");
-    await fs.mkdir(laptopCheckout, { recursive: true });
+    await fs.mkdir(path.dirname(laptopCheckout), { recursive: true });
+    await run("git", ["clone", "-q", src, laptopCheckout]);
   });
   afterAll(async () => {
     await t.teardown();
@@ -335,5 +340,137 @@ describe("integration: import native Claude Code chats (#588)", () => {
     expect(res.statusCode).toBe(200);
     expect(res.json().adopted).toEqual(["eeeeeeee-5555-4555-8555-555555555555"]);
     expect((await adoptable("/api/root")).count).toBe(0);
+  });
+
+  // --- choosing a subset, and undoing (#660) --------------------------------
+
+  it("describes each candidate well enough for a dialog to show it", async () => {
+    await transcript(laptopCheckout, "f1111111-6666-4666-8666-666666666661", {
+      firstUserText: "port the billing job to the new queue",
+    });
+    const body = (await t.app.inject({
+      method: "GET",
+      url: "/api/projects/acme-api/adoptable-chats",
+    })).json() as {
+      sources: Array<{
+        sourceCwd: string;
+        sessionIds: string[];
+        sessions: Array<{ sessionId: string; mtime: string; preview?: string; sizeBytes: number }>;
+      }>;
+    };
+    const session = body.sources[0].sessions.find(
+      (s) => s.sessionId === "f1111111-6666-4666-8666-666666666661",
+    );
+    expect(session?.preview).toContain("port the billing job");
+    expect(session?.sizeBytes).toBeGreaterThan(0);
+    expect(Number.isNaN(Date.parse(session?.mtime ?? ""))).toBe(false);
+    // The id-only projection stays in lockstep with the detailed one.
+    expect(body.sources[0].sessionIds).toEqual(body.sources[0].sessions.map((s) => s.sessionId));
+  });
+
+  it("imports ONLY the chosen sessions, leaving the rest exactly as they were", async () => {
+    await transcript(laptopCheckout, "f2222222-6666-4666-8666-666666666662");
+    const chosen = "f1111111-6666-4666-8666-666666666661";
+    const spurned = "f2222222-6666-4666-8666-666666666662";
+    expect((await adoptable("/api/projects/acme-api")).count).toBe(2);
+
+    const res = await t.app.inject({
+      method: "POST",
+      url: "/api/projects/acme-api/adopt-chats",
+      payload: { sessionIds: [chosen] },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().adopted).toEqual([chosen]);
+    // A session the user did not tick is NOT reported as a skip — it was never
+    // part of this import, and listing it would read as a half-failed one.
+    expect(
+      (res.json().skipped as Array<{ sessionId: string }>).map((s) => s.sessionId),
+    ).not.toContain(spurned);
+
+    const project = (await t.app.inject({ method: "GET", url: "/api/projects/acme-api" })).json()
+      .project as { workingDir: string };
+    const destDir = path.join(claudeHome, "projects", encodePathForCli(project.workingDir));
+    const placed = await fs.readdir(destDir);
+    expect(placed).toContain(`${chosen}.jsonl`);
+    // The engine adopts a whole SOURCE, so the deselected one was adopted and
+    // then released again — no copy may survive that round trip.
+    expect(placed).not.toContain(`${spurned}.jsonl`);
+    // …and it is still on offer, untouched.
+    expect((await adoptable("/api/projects/acme-api")).count).toBe(1);
+  });
+
+  it("undoes the import: the chat goes away and the offer comes back", async () => {
+    const chosen = "f1111111-6666-4666-8666-666666666661";
+    const project = (await t.app.inject({ method: "GET", url: "/api/projects/acme-api" })).json()
+      .project as { workingDir: string };
+    const copy = path.join(
+      claudeHome,
+      "projects",
+      encodePathForCli(project.workingDir),
+      `${chosen}.jsonl`,
+    );
+    expect((await fs.stat(copy)).isFile()).toBe(true);
+
+    const res = await t.app.inject({
+      method: "POST",
+      url: "/api/projects/acme-api/unadopt-chats",
+      payload: {},
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().released).toEqual([chosen]);
+
+    // The copy the import placed is gone…
+    expect(await fs.stat(copy).catch(() => null)).toBeNull();
+    // …the user's own transcript is NOT…
+    const origin = path.join(
+      claudeHome,
+      "projects",
+      encodePathForCli(laptopCheckout),
+      `${chosen}.jsonl`,
+    );
+    expect((await fs.stat(origin)).isFile()).toBe(true);
+    // …the chat no longer lists…
+    const chats = (await t.app.inject({ method: "GET", url: "/api/projects/acme-api/chats" }))
+      .json().chats as Array<{ sessionId: string }>;
+    expect(chats.map((c) => c.sessionId)).not.toContain(chosen);
+    // …and it is back on offer, which is the state that existed before.
+    expect((await adoptable("/api/projects/acme-api")).count).toBe(2);
+  });
+
+  it("a second undo is a harmless no-op, not a repeat deletion", async () => {
+    const res = await t.app.inject({
+      method: "POST",
+      url: "/api/projects/acme-api/unadopt-chats",
+      payload: {},
+    });
+    expect(res.statusCode).toBe(200);
+    // Nothing left to undo — reported as an empty release rather than an error.
+    expect(res.json().released).toEqual([]);
+    // The user's history is still all there.
+    expect((await adoptable("/api/projects/acme-api")).count).toBe(2);
+  });
+
+  it("undo only ever touches the import it remembers", async () => {
+    // Import one session, then ask to undo a DIFFERENT one that this process
+    // never imported. Nothing should happen to either.
+    const a = "f1111111-6666-4666-8666-666666666661";
+    const b = "f2222222-6666-4666-8666-666666666662";
+    await t.app.inject({
+      method: "POST",
+      url: "/api/projects/acme-api/adopt-chats",
+      payload: { sessionIds: [a] },
+    });
+    const res = await t.app.inject({
+      method: "POST",
+      url: "/api/projects/acme-api/unadopt-chats",
+      payload: { sessionIds: [b] },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().released).toEqual([]);
+
+    // `a` is still imported: an undo aimed at something else did not take it out.
+    const chats = (await t.app.inject({ method: "GET", url: "/api/projects/acme-api/chats" }))
+      .json().chats as Array<{ sessionId: string }>;
+    expect(chats.map((c) => c.sessionId)).toContain(a);
   });
 });

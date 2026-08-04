@@ -75,12 +75,40 @@ import { encodePathForCli, readSessionCwd, type AdoptableSession } from "@herdct
 import type { Project } from "./projects.js";
 import { repoCheckoutName } from "./project-paths.js";
 
+/**
+ * One session on offer, with enough about it to decide (#660).
+ *
+ * The import used to be a single unconfirmed click, so an id was all the count
+ * needed. A confirmation dialog has to show the user WHAT it is about to import —
+ * and on the instance that prompted this, three quarters of the offer was things
+ * the user would have declined on sight. Every field here is already computed by
+ * the engine's scan; none of it costs an extra transcript parse.
+ */
+export interface AdoptableCandidate {
+  sessionId: string;
+  /** ISO 8601 last-modified time of the transcript (also the sort order). */
+  mtime: string;
+  /** First user message, truncated by the engine at 100 chars. */
+  preview?: string;
+  /** Auto-generated session name, when the transcript carries a summary. */
+  autoName?: string;
+  sizeBytes: number;
+}
+
 /** One working directory that has adoptable sessions, and which ones. */
 export interface AdoptableSource {
   /** The working directory whose transcript folder holds these sessions. */
   sourceCwd: string;
-  /** Adoptable session ids, newest transcript first. */
+  /**
+   * Adoptable session ids, newest transcript first.
+   *
+   * Exactly the ids of {@link sessions}, both built from one array at one site
+   * below so they cannot drift. Kept because it is the documented response shape
+   * and the narrower thing most callers want.
+   */
   sessionIds: string[];
+  /** The same sessions, with what a confirmation dialog needs to describe them. */
+  sessions: AdoptableCandidate[];
 }
 
 /** A candidate that detection deliberately did NOT offer, and why. */
@@ -522,7 +550,7 @@ export class AdoptableIndex {
       // Fault-isolated per source: an unreadable folder costs its own sessions,
       // not the whole count.
       const sessions = await fleet.listAdoptableSessions(agentName, sourceCwd).catch(() => []);
-      const ids: string[] = [];
+      const candidates: AdoptableCandidate[] = [];
       for (const session of sessions) {
         // De-dup by session id. Two candidate cwds can collide onto one folder
         // under the lossy encoding, and a transcript may have been copied; either
@@ -534,11 +562,23 @@ export class AdoptableIndex {
           filtered.push({ sessionId: session.sessionId, sourceCwd, reason });
           continue;
         }
-        ids.push(session.sessionId);
+        candidates.push({
+          sessionId: session.sessionId,
+          mtime: session.mtime,
+          preview: session.preview,
+          autoName: session.autoName,
+          sizeBytes: session.sizeBytes,
+        });
       }
-      if (ids.length > 0) {
-        out.push({ sourceCwd, sessionIds: ids });
-        count += ids.length;
+      if (candidates.length > 0) {
+        // Both projections built HERE, from one array, so `sessionIds` can never
+        // disagree with `sessions`.
+        out.push({
+          sourceCwd,
+          sessionIds: candidates.map((c) => c.sessionId),
+          sessions: candidates,
+        });
+        count += candidates.length;
       }
     }
 
