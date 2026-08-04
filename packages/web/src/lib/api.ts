@@ -4,6 +4,9 @@
 // which is correct both behind the dev proxy and in production where the server
 // serves the built SPA).
 import {
+  type AdoptChatsResult,
+  type AdoptableChats,
+  type UnadoptChatsResult,
   type AttachmentRef,
   type AttachmentsConfig,
   type Chat,
@@ -23,6 +26,7 @@ import {
   type PollResult,
   type Project,
   type ProjectDetail,
+  type AttentionChats,
   type ProjectFile,
   type ProjectRuns,
   type RecoveryConfig,
@@ -279,9 +283,26 @@ export const api = {
     return { projects, root: root ?? null };
   },
 
-  /** Enriched single-workspace payload: metadata + changelog + its chats. */
+  /**
+   * Enriched single-workspace payload: metadata + CHANGELOG.md + OVERVIEW.md +
+   * its chats.
+   */
   async getProjectDetail(slug: string): Promise<ProjectDetail> {
     return req<ProjectDetail>(`${apiBase(slug)}`);
+  },
+
+  /**
+   * The Home attention feed (#599): the chats in this workspace's SUBTREE that
+   * are running or unread.
+   *
+   * Called with the ROOT key (`""`) it is fleet-wide, because the root's key
+   * prefixes every workspace key; called with a project slug it is that project
+   * alone. Home does not branch on which — it asks its own workspace and
+   * renders what comes back — so the two views cannot drift apart.
+   */
+  async attentionChats(slug: string): Promise<AttentionChats> {
+    const res = await req<Partial<AttentionChats>>(`${apiBase(slug)}/chats/attention`);
+    return { running: res.running ?? [], unread: res.unread ?? [] };
   },
 
   async createProject(input: CreateProjectInput): Promise<Project> {
@@ -418,10 +439,6 @@ export const api = {
    * Promote a chat into a new project (issue #20). Creates the project and
    * re-homes the chat's transcript into it. `promoted:false` means the project
    * was created but the transcript couldn't be moved.
-   *
-   * Took a bare `sessionId` while it was a scratch-only action; #516 Phase 6
-   * retired scratch and moved it onto the source project's chat routes, so the
-   * chat's current slug is now part of the address.
    */
   async promoteChat(
     slug: string,
@@ -539,6 +556,62 @@ export const api = {
       `${apiBase(slug)}/chats`,
     );
     return chats;
+  },
+
+  /**
+   * How many native Claude Code CLI chats this workspace could import right now
+   * (#588) — the sessions the user ran in a terminal against the same working
+   * directory, which paddock cannot see until they are adopted.
+   *
+   * Cheap enough to call after every import, and that is the point: the button it
+   * drives is gated on a LIVE count rather than a dismissed flag, so it vanishes
+   * only when there is genuinely nothing left and reappears by itself once the
+   * user accrues more terminal history.
+   */
+  async getAdoptableChats(slug: string): Promise<AdoptableChats> {
+    return req<AdoptableChats>(`${apiBase(slug)}/adoptable-chats`);
+  },
+
+  /**
+   * Import the workspace's adoptable native CLI chats (#588). Copies the source
+   * transcripts in — the user's own `~/.claude` is never mutated — so the imported
+   * chats become real, resumable chats in this workspace.
+   *
+   * With neither option this takes EVERYTHING on offer; `sourceCwd` narrows it to
+   * a single source directory (the CLI's `--from`), and `sessionIds` to the
+   * subset the user ticked in the confirmation dialog (#660). A partly-skipped
+   * import still resolves: the caller reports `adopted` and `skipped` rather than
+   * treating it as a failure.
+   */
+  async adoptChats(
+    slug: string,
+    opts?: { sourceCwd?: string; sessionIds?: string[] },
+  ): Promise<AdoptChatsResult> {
+    return req<AdoptChatsResult>(`${apiBase(slug)}/adopt-chats`, {
+      method: "POST",
+      // `{}` rather than no body at all: the contract accepts an empty object or
+      // null, and every other POST here sends JSON, so the content-type header
+      // `req` always sets stays honest.
+      body: JSON.stringify(opts ?? {}),
+    });
+  },
+
+  /**
+   * Undo the most recent native-chat import into this workspace (#660).
+   *
+   * Releases the adoptions and deletes the copies that import placed; the user's
+   * own `~/.claude` history is never touched. Which sessions those are is decided
+   * SERVER-side from what it actually did — this call carries no paths, so an
+   * undo can never be talked into deleting something the import did not create.
+   *
+   * `released: []` is a normal outcome, not an error: the offer is in-memory and
+   * expires with a restart, so an undo pressed late simply finds nothing to do.
+   */
+  async unadoptChats(slug: string, opts?: { sessionIds?: string[] }): Promise<UnadoptChatsResult> {
+    return req<UnadoptChatsResult>(`${apiBase(slug)}/unadopt-chats`, {
+      method: "POST",
+      body: JSON.stringify(opts ?? {}),
+    });
   },
 
   /**

@@ -3,7 +3,13 @@ import { useLocation, useNavigate, useOutletContext, useParams } from "react-rou
 import { api } from "../lib/api";
 import { chatClient } from "../lib/ws";
 import { useProjects } from "../lib/projects-context";
-import type { Chat, ChatCompleteUsage, ChatUsage, Project } from "../lib/types";
+import type {
+  AdoptableChats,
+  Chat,
+  ChatCompleteUsage,
+  ChatUsage,
+  Project,
+} from "../lib/types";
 import { StatusPill } from "../components/StatusPill";
 import { TagPill } from "../components/TagPill";
 import { ChatPane } from "../components/ChatPane";
@@ -19,6 +25,7 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ForkChatModal } from "../components/ForkChatModal";
 import { RenameChatModal } from "../components/RenameChatModal";
 import { PromoteChatModal } from "../components/PromoteChatModal";
+import { ImportChatsModal } from "../components/ImportChatsModal";
 import { usePaneWidth } from "../components/PaneResizer";
 import { CHATLIST_PANE } from "../lib/paneWidth";
 import {
@@ -47,12 +54,33 @@ import {
   repoHref,
   viewBase,
 } from "./ProjectView/urls";
-import { ProjectsGrid } from "./ProjectsGrid";
 import { TabButton } from "./ProjectView/TabButton";
 import { PinnedTab } from "./ProjectView/PinnedTab";
 import { HomePane } from "./ProjectView/HomePane";
 import { SessionSidebar } from "./ProjectView/SessionSidebar";
 import { useUnreadChats } from "./ProjectView/useUnreadChats";
+import { useAttentionChats } from "./ProjectView/useAttentionChats";
+import { Toast } from "../components/Toast";
+import type { AdoptChatsResult } from "../lib/types";
+
+/**
+ * What an import actually did (#588), in one line.
+ *
+ * Reports skips rather than rounding them away: "Imported 7 chats" when two were
+ * refused is a lie the user only discovers by counting rows. When every skip
+ * shares a reason the reason is named — it is usually the whole explanation ("no
+ * transcript on disk") and it is what turns a confusing number into an
+ * actionable one.
+ */
+export function importSummary({ adopted, skipped }: AdoptChatsResult): string {
+  const n = adopted.length;
+  if (n === 0 && skipped.length === 0) return "Nothing to import — no native chats were found.";
+  const head = n === 0 ? "Imported nothing" : `Imported ${n} chat${n === 1 ? "" : "s"}`;
+  if (skipped.length === 0) return head;
+  const reasons = [...new Set(skipped.map((s) => s.reason).filter(Boolean))];
+  const why = reasons.length === 1 ? ` (${reasons[0]})` : "";
+  return `${head} — skipped ${skipped.length}${why}`;
+}
 
 /**
  * The active view ("home" | "chat" | "files") and the selected chat/file are
@@ -163,8 +191,36 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
   const [runningSessions, setRunningSessions] = useState<ReadonlySet<string>>(new Set());
   useEffect(() => chatClient.onActiveSessions(setRunningSessions), []);
   const [changelog, setChangelog] = useState("");
+  // Raw OVERVIEW.md, rendered on Home beside the changelog (#599). Rides the
+  // same workspace payload, so the two can never render a beat apart.
+  const [overview, setOverview] = useState("");
   const [files, setFiles] = useState<string[]>([]);
   const [loadErr, setLoadErr] = useState<string | null>(null);
+
+  // --- Import native Claude Code CLI chats (#588) ----------------------------
+  // How many terminal-run sessions this workspace could adopt right now. A LIVE
+  // count, not a "has the user dismissed the offer?" flag: it is re-read after
+  // every import, so the sidebar button vanishes only because there is genuinely
+  // nothing left to take — and comes back on its own when the user accrues more
+  // CLI history. 0 both before the first fetch and when there is nothing on
+  // offer, which is the same thing as far as the UI is concerned.
+  const [adoptableCount, setAdoptableCount] = useState(0);
+  const [importing, setImporting] = useState(false);
+  // The full offer, fetched with the count and handed to the confirmation dialog
+  // (#660). Held beside the count rather than re-fetched on open so the dialog
+  // shows exactly what the button counted.
+  const [adoptable, setAdoptable] = useState<AdoptableChats | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+  // The one transient outcome message this route raises. Distinct from `loadErr`,
+  // which is an early return that replaces the entire page — correct for "this
+  // project failed to load", far too violent for "imported 7 chats".
+  const [toast, setToast] = useState<{
+    message: string;
+    tone: "success" | "error";
+    /** Offered inside the toast, so the window to undo IS the toast's dwell. */
+    action?: { label: string; onAct: () => void };
+  } | null>(null);
+  const dismissToast = useCallback(() => setToast(null), []);
 
   // Git backing store: the project's working-tree status. null = not yet loaded
   // or not a git repo (`status.repo === false`) — either way the Changes tab is
@@ -293,6 +349,11 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
     onManySeen: clearManualUnreadMany,
   });
 
+  // Home's two feeds (#599), server-derived over this workspace's SUBTREE — so
+  // the root's Home is fleet-wide and a project's is its own, with no branch
+  // here. `runningSessions` is the staleness signal, not the data.
+  const attention = useAttentionChats(slug, runningSessions);
+
   // The chats actually rendered in the sidebar, after applying the search
   // filter (issue #96). Empty query -> the full list unchanged.
   const visibleChats = useMemo(() => {
@@ -366,6 +427,7 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
       setProject(detail.project);
       setChats(detail.chats);
       setChangelog(detail.changelog);
+      setOverview(detail.overview ?? "");
       const fileList = await api.listProjectFiles(slug).catch(() => []);
       setFiles(fileList);
     } catch (e) {
@@ -431,6 +493,120 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
     if (list) setChats(list);
   }, [slug]);
 
+  // Re-read the adoptable-chat count (#588). Called on workspace open and again
+  // after an import — never on render, and never on a timer: the set of native
+  // sessions only changes when the user runs `claude` in a terminal, which no
+  // amount of polling here would make more timely.
+  //
+  // A failure zeroes the count rather than leaving the previous one standing: the
+  // endpoint is new and an older server 404s it, and a button offering to import
+  // N chats that then fails to import anything is worse than no button. The
+  // offer costs nothing to make again on the next open.
+  const refreshAdoptable = useCallback(async () => {
+    const res = await api.getAdoptableChats(slug).catch(() => null);
+    setAdoptableCount(res?.count ?? 0);
+    setAdoptable(res);
+  }, [slug]);
+
+  /**
+   * Undo the import just performed (#660).
+   *
+   * Carries only the session ids; WHICH files may be deleted is decided
+   * server-side from what the import actually did, so this can never be talked
+   * into removing something it did not create. `released: []` is a normal
+   * outcome (the offer is in-memory and expires with a restart) and is reported
+   * as such rather than as a success.
+   */
+  const undoImport = useCallback(
+    async (sessionIds: string[]) => {
+      setToast(null);
+      try {
+        const res = await api.unadoptChats(slug, { sessionIds });
+        await refreshChats();
+        await refreshAdoptable();
+        setToast(
+          res.released.length > 0
+            ? {
+                message: `Removed ${res.released.length} imported chat${res.released.length === 1 ? "" : "s"}.`,
+                tone: "success",
+              }
+            : { message: "Nothing left to undo.", tone: "error" },
+        );
+      } catch (e) {
+        setToast({
+          message: e instanceof Error ? e.message : "Failed to undo the import",
+          tone: "error",
+        });
+      }
+    },
+    [slug, refreshChats, refreshAdoptable],
+  );
+
+  /**
+   * Import the native CLI chats the user confirmed (#588, #660).
+   *
+   * Takes an explicit id list rather than "everything matched": the dialog is
+   * where the decision is made, and sending the selection means a user who
+   * unticked a source they did not recognise gets what they asked for.
+   *
+   * Both the chat list AND the count are re-read afterwards, in that order of
+   * importance: the list is what the user came for, the count is what makes the
+   * button disappear. Neither is inferred from the response — the count in
+   * particular must come from the server, or the button's visibility would drift
+   * away from what is actually still importable.
+   *
+   * A successful import offers an Undo for as long as its toast stands.
+   */
+  const importChats = useCallback(
+    async (sessionIds: string[]) => {
+    if (importing) return;
+    setImporting(true);
+    try {
+      const res = await api.adoptChats(slug, { sessionIds });
+      setImportOpen(false);
+      await refreshChats();
+      await refreshAdoptable();
+      const failed = res.adopted.length === 0 && res.skipped.length > 0;
+      setToast({
+        message: importSummary(res),
+        // Nothing imported AND something refused is the one shape that reads as a
+        // failure to the user, whatever the HTTP status said.
+        tone: failed ? "error" : "success",
+        // Nothing came in, nothing to take back out.
+        action:
+          res.adopted.length > 0
+            ? { label: "Undo", onAct: () => void undoImport(res.adopted) }
+            : undefined,
+      });
+    } catch (e) {
+      // Deliberately NOT `setLoadErr` (which would blank the whole project view
+      // over a failed side-action) and deliberately no count refresh — the offer
+      // stands, so the button stays clickable for a retry.
+      setToast({
+        message: e instanceof Error ? e.message : "Failed to import native chats",
+        tone: "error",
+      });
+    } finally {
+      // In `finally` so a throw can never strand the button in "Importing…".
+      setImporting(false);
+    }
+    },
+    [importing, slug, refreshChats, refreshAdoptable, undoImport],
+  );
+
+  // Fetch the adoptable count once per workspace open. `refreshAdoptable` is
+  // slug-scoped and otherwise stable, so this is the whole "on open, not on every
+  // render" story — the deps array does the gating, no ref needed. The count and
+  // any leftover toast reset FIRST so switching workspaces can't briefly offer to
+  // import the previous one's chats.
+  useEffect(() => {
+    setAdoptableCount(0);
+    setAdoptable(null);
+    setImportOpen(false);
+    setToast(null);
+    void refreshAdoptable();
+  }, [refreshAdoptable]);
+
   // After a turn completes, re-fetch the project + files (pull model): a fresh
   // sweep may have written OVERVIEW.md / appended to CHANGELOG / added files.
   const refreshAfterTurn = useCallback(async () => {
@@ -439,6 +615,7 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
       setProject(detail.project);
       setChats(detail.chats);
       setChangelog(detail.changelog);
+      setOverview(detail.overview ?? "");
     }
     const fileList = await api.listProjectFiles(slug).catch(() => null);
     if (fileList) setFiles(fileList);
@@ -502,6 +679,19 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
     (sessionId: string) =>
       navigate(`${base}/chat/${encodeURIComponent(sessionId)}`),
     [navigate, base],
+  );
+  /**
+   * Open a chat that may live in ANOTHER workspace (#599). Home's running and
+   * unread feeds are subtree-wide, so on the root's Home most rows belong to a
+   * project and have to navigate into that project's own base, not this one's.
+   *
+   * `viewBase` is what resolves the key, so the root (`""`) lands on the bare
+   * top-level routes and a project on `/projects/:slug` — no branch here.
+   */
+  const openChatIn = useCallback(
+    (sessionId: string, projectSlug: string) =>
+      navigate(`${viewBase(projectSlug)}/chat/${encodeURIComponent(sessionId)}`),
+    [navigate],
   );
   // Fork a chat with a chosen name: duplicate it server-side into a NEW session
   // in the same project, then jump straight to it. The fork exists immediately —
@@ -1124,6 +1314,9 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
           starChat={starChat}
           toggleUnread={toggleUnread}
           detachChat={detachChat}
+          adoptableCount={adoptableCount}
+          importing={importing}
+          importChats={() => setImportOpen(true)}
         />
 
         {/* Main: tabs + content. The active tab is derived from the URL. */}
@@ -1287,22 +1480,23 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
           {view === "home" && (
             <HomePane
               project={project}
-              chats={chats}
+              // Both feeds are subtree-scoped server-side, so the ROOT's Home
+              // lists every project's live/unread work and a project's lists
+              // only its own — same props, same component, no `root` gate. The
+              // projects GRID that used to sit here is gone with it (#599): the
+              // sidebar owns navigating to a project, and its Projects header
+              // now carries the New Project button the grid used to host.
+              running={attention.running}
+              unread={attention.unread}
+              attentionLoading={attention.loading}
+              attentionError={attention.error}
               changelog={changelog}
+              overview={overview}
               files={files}
-              runningSessions={runningSessions}
-              onOpenChat={openChat}
+              onOpenChat={openChatIn}
               onNewChat={newChat}
               onOpenFile={goToFilesPath}
               onOpenFiles={goFiles}
-              onEditDetails={goSettings}
-              // The workspace's CHILDREN, rendered by the SAME grid component the
-              // `/tags/:tag` page uses. It used to be a tab of its own; folding it
-              // into Home means the instance's front door shows the projects
-              // instead of merely linking to them. Only the root has children
-              // today, hence the `root` gate — when nesting lands, every workspace
-              // with children gets this for free.
-              projectsSection={root ? <ProjectsGrid embedded /> : undefined}
             />
           )}
           {view === "chat" && (
@@ -1333,7 +1527,6 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
               onForkFromMessage={forkFromMessage}
               onRevertToMessage={revertToMessage}
               autoFocus={justForked}
-              isProjectChat
               // For a trigger chat (Epic T / T4): the owning trigger's truthful-from-
               // config capability descriptor, drives the read-only capability banner.
               // Prefers the live list DTO, falling back to the last-seen DTO so the
@@ -1485,6 +1678,27 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
           }}
         />
       )}
+      {/* Transient outcome of the native-chat import (#588). Rendered
+          unconditionally — `Toast` is a no-op while there is no message — and at
+          the route level rather than inside the sidebar so it is not clipped by
+          the sidebar's own scroll containers. */}
+      {/* Confirm what an import would bring in, before it brings it in (#660). */}
+      <ImportChatsModal
+        open={importOpen}
+        adoptable={adoptable}
+        busy={importing}
+        onClose={() => setImportOpen(false)}
+        onImport={(sessionIds) => void importChats(sessionIds)}
+      />
+      <Toast
+        message={toast?.message ?? null}
+        tone={toast?.tone}
+        onDismiss={dismissToast}
+        action={toast?.action}
+        // Longer than the default 6s when an Undo is on offer: six seconds is
+        // enough to read an outcome, not to decide to reverse it.
+        durationMs={toast?.action ? 12000 : undefined}
+      />
     </div>
   );
 }

@@ -85,6 +85,13 @@ logLevel: info
 keeperDriveMode: session      # session enables cross-turn autonomy (ScheduleWakeup / /loop)
 nativeSystemPrompt: true      # use the native Claude Code prompt + CLAUDE.md hierarchy
 
+# Appended to every keeper turn's system prompt. Omit the key entirely for
+# Paddock's built-in text; set it to "" to append nothing. See
+# /configuration/instance-settings/#the-environment-prompt
+environmentPrompt: |
+  You are running in Acme's Paddock — replies render as Markdown in a browser.
+  Link every ticket as [ABC-123](https://acme.atlassian.net/browse/ABC-123).
+
 # --- Authentication (see the Authentication page for modes) ---
 auth:
   mode: jwt

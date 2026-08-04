@@ -15,9 +15,15 @@ npm install
 npm run build && npm run preview   # preview the built site (Mermaid renders here)
 ```
 
-Prefer `npm run build && npm run preview` for visual verification. `npm run dev`
-(`astro dev`) is fine for fast iteration but Mermaid diagrams are configured via
-`rehype-mermaid` and render most reliably in the built output.
+Either `npm run dev` or `npm run build && npm run preview` is fine for visual
+verification, including for Mermaid. `rehype-mermaid` runs with
+`strategy: 'pre-mermaid'`, which only tags the `<pre>` — all rendering happens
+client-side from the CDN, identically in dev and in the built output. (The
+"Mermaid only renders in the build" rule applies to the `img-svg` strategy that
+herdctl's docs site uses, not to this one.)
+
+Do check diagrams in **both** colour themes: Mermaid is re-rendered on every
+change to `<html data-theme>`, so the theme toggle is a real code path.
 
 Note: the projects box exports `NODE_ENV=production`. The build deps (astro,
 starlight, tailwind) are intentionally in `dependencies` (not `devDependencies`)
@@ -38,6 +44,21 @@ consolidating to a single source is a tracked follow-up.
 
 The sidebar is maintained **by hand** in `astro.config.mjs` under `sidebar`.
 Starlight does NOT auto-discover pages — add new pages there explicitly.
+
+## Analytics
+
+PostHog, configured inline in `astro.config.mjs`'s `head` (the standard install
+snippet). It is proxied through our own origin: `api_host` is
+`https://paddock.edspencer.net/ingest`, and `functions/ingest/[[path]].ts` — a
+Cloudflare Pages Function — forwards to PostHog. Change one and you must change
+the other.
+
+The `phc_` project key in that snippet is public by design and belongs in the
+source. Do not "fix" it into an env var.
+
+Note `functions/` is the only part of this directory that Cloudflare runs rather
+than serves; it is invisible to `astro build`, so a broken proxy will not fail
+the build or show up in `npm run preview`. Verify it against a deploy preview.
 
 ## Deploy (Cloudflare Pages)
 

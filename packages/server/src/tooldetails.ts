@@ -463,8 +463,7 @@ export async function attachToolDetails(
     if (!extra) return m;
     // For an image Read inside the project dir, add the servable relative path so
     // the web can render it inline (issue #239). Clone rather than mutate the
-    // cached `detail.readInfo`. Scratch chats pass their scratchDir as projectDir;
-    // the web still gates on a real project slug before rendering.
+    // cached `detail.readInfo`.
     if (extra.readInfo?.isImage) {
       const rel = servableRelPath(projectDir, extra.readInfo.filePath);
       if (rel) extra = { ...extra, readInfo: { ...extra.readInfo, projectRelPath: rel } };

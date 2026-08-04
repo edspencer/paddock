@@ -11,6 +11,7 @@
  * as a group keeps that intact with no late-binding. ws.ts's socket layer consumes
  * the returned surface.
  */
+import { randomUUID } from "node:crypto";
 import type {
   SDKMessage,
   SessionWakeEntry,
@@ -260,6 +261,13 @@ const makeBackgroundTurnSink = (
   let producedReply = false;
   let noticeEmitted = false;
   let sawError = false;
+  // #528: the synthetic job id published for this background stretch, and the
+  // session id currently registered against it. The stretch is a real running
+  // turn as far as the UI is concerned, so it needs a cancellable identity —
+  // without one `chat:active` carries `jobId: null`, the client's deferred
+  // cancel never fires, and Stop puts nothing on the wire at all.
+  let bgJobId: string | null = null;
+  let registeredSession: string | null = null;
   // #429: sub-agent launches recovered live from the tool_use input, keyed by
   // toolUseId, so the enriched card renders without a refresh (see subagentLaunchFields).
   const launches = new Map<string, SubagentLaunch>();
@@ -268,6 +276,18 @@ const makeBackgroundTurnSink = (
     sessionId: resolvedSession,
     jobId: turn?.jobId ?? null,
   });
+  /**
+   * Point the published job id at whatever session this stream has resolved.
+   * Deferred rather than done once at mint time because the id is published when
+   * the turn opens, which can precede the first message that names a session;
+   * re-run on every message so a stream that resolves (or moves to) a different
+   * session stays cancellable.
+   */
+  const syncBackgroundRegistration = (): void => {
+    if (!bgJobId || !resolvedSession || registeredSession === resolvedSession) return;
+    deps.herdctl.registerBackgroundTurn(bgJobId, resolvedSession);
+    registeredSession = resolvedSession;
+  };
   const emitNotice = (notice: TurnNotice): void => {
     if (!turn || noticeEmitted) return;
     if (suppressNoticeAfterReply(notice, producedReply)) return;
@@ -281,6 +301,13 @@ const makeBackgroundTurnSink = (
     if (turn) return;
     resolvedSession = sid;
     turn = hub.startTurn(projectSlug, null, sid);
+    // #528: give the stretch a cancellable identity the moment it opens, exactly
+    // as the foreground path does via onJobCreated. Stop then routes to a
+    // force-reap of this session rather than an interrupt — there is no model
+    // turn in flight here to interrupt.
+    bgJobId = randomUUID();
+    turn.setJobId(bgJobId);
+    syncBackgroundRegistration();
     const t = turn;
     translate = createSDKMessageHandler({
       onText: (chunk) => {
@@ -332,6 +359,7 @@ const makeBackgroundTurnSink = (
     // across re-invocation boundaries.
     ensureTurn(m.session_id ?? resolvedSession);
     if (m.session_id) turn!.setSession(m.session_id);
+    syncBackgroundRegistration();
     if (messageProducedReply(m as Parameters<typeof messageProducedReply>[0]))
       producedReply = true;
     const notice = noticeFromMessage(m as Parameters<typeof noticeFromMessage>[0]);
@@ -347,6 +375,13 @@ const makeBackgroundTurnSink = (
   // Finalize the single turn once the background stream ends (reaper reap). No-op
   // if nothing was ever rendered (a sidechain-only stretch opened no turn).
   const onDone = (): void => {
+    // Drop the cancellable identity first, and unconditionally: the stream is
+    // over, so a later Stop must fall through to the "already finished" path
+    // rather than reaping whatever session has since taken this id. Runs even
+    // for a sidechain-only stretch that opened no turn, and on a second call.
+    if (bgJobId) deps.herdctl.unregisterBackgroundTurn(bgJobId);
+    bgJobId = null;
+    registeredSession = null;
     if (!turn) return;
     turn.emit({
       type: "chat:complete",
@@ -544,8 +579,7 @@ async function startAgentTurn(opts: StartAgentTurnOpts): Promise<string> {
     resume,
     injectedMcpServers,
     // Gap B: deliver autonomous background-completion turns live (session mode
-    // only; batch `chat` ignores this). Scratch has no keeper worth streaming
-    // background turns for, so skip it. See makeBackgroundTurnSink above.
+    // only; batch `chat` ignores this). See makeBackgroundTurnSink above.
     onBackgroundMessage: bgSink?.onMessage,
     onBackgroundDone: bgSink?.onDone,
     onJobCreated: (id) => {
@@ -722,15 +756,14 @@ const injectingRecovery = new Set<string>();
  * and the Layer 3 automatic re-drive ({@link RecoveryEngine}). Re-drives the
  * hung keeper via {@link startAgentTurn} with the {@link RECOVERY_NUDGE} and a
  * `recovery` sender, exactly the message a human sends by hand to unstick it.
- * No-op for scratch (no keeper) or a session that no longer exists. The gate on
+ * No-op for a session that no longer exists. The gate on
  * WHICH layer may call this lives in each caller (surfaceKilledTask vs
  * autoReDrive); this helper is layer-agnostic.
  */
 const injectRecoveryNudge = async (project: Project, sessionId: string): Promise<void> => {
   // Every workspace has a keeper, including the root — whose key is `""`. This
-  // guard used to read `if (!slug) return;` to skip scratch, which had no
-  // keeper; scratch is gone, so the only thing it still skipped was the root,
-  // silently killing both the "Continue" nudge and auto-re-drive for root chats.
+  // guard used to read `if (!slug) return;`, which silently killed both the
+  // "Continue" nudge and auto-re-drive for every root chat.
   const slug = project.slug;
   // Single-flight double-dispatch guard (issue #352). Two dispatches resuming the
   // SAME session at once is fatal under session-mode `chatSession(resume)`: the

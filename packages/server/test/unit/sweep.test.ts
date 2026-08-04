@@ -467,7 +467,7 @@ describe("SweepService", () => {
   it("normalizes the sweeper's OVERVIEW before writing (strips box-dev sections)", async () => {
     const withBoxConventions =
       "<<<OVERVIEW>>>\n# Demo\n\nA thing.\n\n" +
-      "## Local Development\n\nClone into scratch/clones and run `vite` on localhost:4100.\n\n" +
+      "## Local Development\n\nClone into tmp/clones and run `vite` on localhost:4100.\n\n" +
       "## Architecture\n\nMatters.\n<<<CHANGELOG>>>\nDid a thing.\n<<<END>>>";
     const { svc } = makeService({ sweeperText: withBoxConventions });
     svc.enqueue("demo");

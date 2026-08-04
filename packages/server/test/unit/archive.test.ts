@@ -72,7 +72,7 @@ describe("ArchiveStore", () => {
     const store = new ArchiveStore(dir);
     await store.setArchived("keeper-a", "same", true);
     expect(await store.isArchived("keeper-a", "same")).toBe(true);
-    expect(await store.isArchived("scratch", "same")).toBe(false);
+    expect(await store.isArchived("keeper-other", "same")).toBe(false);
   });
 
   it("tolerates a corrupt state file (reads as empty)", async () => {

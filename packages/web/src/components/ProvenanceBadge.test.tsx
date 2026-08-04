@@ -69,4 +69,31 @@ describe("ProvenanceBadge (#267)", () => {
     const badge = container.querySelector("[data-provenance='hook']");
     expect(badge?.getAttribute("title")).toMatch(/cleanup/);
   });
+
+  // #588. The one badge that isn't a "ran without me" case — the human ran it,
+  // just in a terminal. Without it, imported history is indistinguishable from a
+  // chat started in paddock, which is the whole reason it exists.
+  it("badges an adopted (imported from the CLI) chat", () => {
+    const { container } = render(
+      <ProvenanceBadge provenance={{ origin: "adopted", depth: 0 }} />,
+    );
+    const badge = container.querySelector("[data-provenance='adopted']");
+    expect(badge).not.toBeNull();
+    expect(badge?.getAttribute("aria-label")).toBe("Imported chat");
+    expect(badge?.getAttribute("title")).toMatch(/Claude Code CLI/i);
+    expect(badge?.querySelector("svg")).not.toBeNull();
+  });
+
+  // The guard on line 1 of the component is a `!==` chain, not an exhaustive
+  // switch — so a new origin silently renders NOTHING rather than failing to
+  // compile. This is the assertion that would have caught that.
+  it("badges an adopted chat nested under a parent, unlike a spawned one", () => {
+    // (The sidebar suppresses `spawned` on a nested row because the indent
+    // already says it; `adopted` has no such structural tell, so it must survive
+    // wherever the row lands.)
+    const { container } = render(
+      <ProvenanceBadge provenance={{ origin: "adopted", depth: 2 }} />,
+    );
+    expect(container.querySelector("[data-provenance='adopted']")).not.toBeNull();
+  });
 });

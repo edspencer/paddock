@@ -5,10 +5,22 @@
  *
  * Everything is resolved once at startup so the rest of the app can import a
  * frozen object. Paths are normalised to absolute.
+ *
+ * **Retired settings are IGNORED, never fatal** (#549). Config is pull-based on
+ * both layers: env vars are read by name via {@link envOr}, and the YAML file is
+ * parsed into a loose record whose keys are only ever read, never enumerated or
+ * validated against a schema. So a setting Paddock has since deleted is simply
+ * never looked at — boot succeeds and the value has no effect. This is a property
+ * of the resolution shape rather than a compatibility shim, so it needs no
+ * per-key upkeep as settings come and go. The cost is that a typo'd key is
+ * equally silent; that trade is deliberate — an operator should not be hard-failed
+ * out of a running instance by a stale line in an old env file. Pinned by
+ * `test/unit/config.test.ts`.
  */
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 import YAML from "yaml";
 import {
   type DriveMode,
@@ -17,6 +29,7 @@ import {
   isKnownModel,
 } from "./models.js";
 import { DEFAULT_MAX_SPAWN_DEPTH, isValidMaxSpawnDepth } from "./spawn-capability.js";
+import { DEFAULT_ENVIRONMENT_PROMPT } from "./environment-prompt.js";
 import { type RecoveryConfig, DEFAULT_RECOVERY } from "./recovery-config.js";
 import { type CurationConfig, DEFAULT_CURATION } from "./curation-config.js";
 import {
@@ -124,8 +137,49 @@ export interface PaddockConfig {
   herdctlConfigPath: string;
   /** Absolute path to the built web SPA (served in production). */
   webDist: string;
-  /** Working directory for one-off / scratch chats. */
-  scratchDir: string;
+  /**
+   * Absolute path to the Claude home THIS INSTANCE owns — the directory whose
+   * `projects/<encoded-cwd>/` folders hold Claude Code's session transcripts.
+   * Defaults to `<dataDir>/claude-home` (#620); see {@link resolveClaudeHome}
+   * for the full precedence.
+   *
+   * Resolved ONCE here (#588) rather than re-read from `process.env` at each call
+   * site, because it must be the SAME value everywhere: paddock's transcript
+   * relocation (`ensureProjectChats`) symlinks `<claudeHome>/projects/<encoded>`
+   * at the project's `.chats/`, and the engine's session discovery / adoption
+   * resolves transcripts under `FleetManagerOptions.claudeHomePath`. If paddock
+   * honoured one home while the engine fell back to `os.homedir()/.claude`,
+   * detection would scan one home while reads came from another — chats LIST but
+   * open EMPTY (herdctl#423 / #588 gotcha 1). The divergence is invisible
+   * whenever the two coincide, which is exactly why it is threaded explicitly
+   * instead of being left to a shared default.
+   */
+  claudeHome: string;
+  /**
+   * Absolute path to the USER's own Claude home — always `os.homedir()/.claude`,
+   * regardless of what {@link claudeHome} resolved to.
+   *
+   * This is a READ-ONLY source (#620), never a destination. Paddock consults it
+   * for exactly two things: adoption (`~/.claude` is where a user's own Claude
+   * Code CLI history lives, which #588 lets them import), and the user-level
+   * config bridge (see `claude-home.ts`). Nothing in paddock moves or deletes
+   * anything under it.
+   */
+  legacyClaudeHome: string;
+  /**
+   * Does paddock OWN {@link claudeHome} — i.e. is it something other than the
+   * user's `~/.claude`?
+   *
+   * The single gate on every mutating transcript operation (#620). Paddock's
+   * self-healing relocation is allowed to migrate a stray real transcript
+   * directory into `.chats/` inside a home it owns, because that directory is
+   * its own doing. Inside the user's home it is somebody else's data — a
+   * `claude` CLI session run in a directory paddock happens to also manage — and
+   * moving it is the destructive behaviour this flag exists to prevent.
+   *
+   * Derived, not configured: `resolve(claudeHome) !== resolve(legacyClaudeHome)`.
+   */
+  ownsClaudeHome: boolean;
   /** Provider-agnostic user-authentication config (see AUTH.md). */
   auth: AuthConfig;
   /** Voice-dictation (Whisper) capability (per-instance; default off). */
@@ -163,7 +217,7 @@ export interface PaddockConfig {
    */
   models?: string[];
   /**
-   * Whether keeper AND scratch agents use the native Claude Code system prompt +
+   * Whether keeper agents use the native Claude Code system prompt +
    * project CLAUDE.md hierarchy (true, the default) instead of a terse Paddock
    * "replace" system prompt (false). Driven by `PADDOCK_NATIVE_PROMPT`.
    *
@@ -178,23 +232,37 @@ export interface PaddockConfig {
    * (issue #512). `projectsRoot` IS the instance's backing repo, so that file is
    * version-controlled and pushed with everything else, whereas a
    * `<dataDir>/CLAUDE.md` would sit outside the repo. It reaches every project
-   * keeper by walk-up (a project dir is a child of `projectsRoot`) and, since
-   * #516, the ROOT keeper too — the root project's cwd IS `projectsRoot`.
-   *
-   * The exception was SCRATCH (retired in #516 Phase 6), whose cwd was
-   * `<dataDir>/scratch`, a *sibling* of
-   * `projects/`, so nothing above it is the instance CLAUDE.md and a scratch chat
-   * starts with zero instance context. That is #512's original complaint; #516
-   * fixes it by making the root an ordinary project rather than by patching
-   * scratch, and #516 Phase 6 retires scratch outright.
+   * keeper by walk-up (a project dir is a child of `projectsRoot`) and the ROOT
+   * keeper too — the root workspace's cwd IS `projectsRoot`. There is no longer
+   * any agent whose cwd sits outside that tree, so every keeper picks the
+   * instance CLAUDE.md up by walk-up. That closes #512.
    */
   nativeSystemPrompt: boolean;
+  /**
+   * The **environment** prompt appended to every keeper turn's system prompt
+   * (issue #635) — the short note telling the agent it renders into a browser as
+   * GFM, not a terminal. Resolved from `PADDOCK_ENVIRONMENT_PROMPT` over the
+   * `environmentPrompt:` file key over
+   * {@link import("./environment-prompt.js").DEFAULT_ENVIRONMENT_PROMPT}.
+   *
+   * This is the RESOLVED, effective text, so it has only two meaningful states
+   * at the point of use: non-empty (append it) and `""` (append nothing — the
+   * instance opted out). The three *authoring* states — unset, a string, an
+   * empty string — collapse here, which is deliberate: every consumer just asks
+   * "is there anything to append?" and the Settings screen shows the text that
+   * is actually in force rather than a tri-state it would have to explain.
+   *
+   * Orthogonal to {@link nativeSystemPrompt}: that switch chooses the agent's
+   * *role* prompt (native preset vs Paddock's terse replace text); this states
+   * environmental fact about the deployment and applies on top of either.
+   */
+  environmentPrompt: string;
   /**
    * Whether keeper turns are handed the read-only self-management MCP server
    * (issue #214 Phase 1) — the `mcp__paddock_manage__*` tools that let a keeper
    * enumerate projects/chats and read another chat's transcript. Driven by
-   * `PADDOCK_SELF_MCP`; default OFF (opt-in per instance). Never injected on
-   * scratch turns. The write tools (create/fork/message) are gated separately by
+   * `PADDOCK_SELF_MCP`; default OFF (opt-in per instance). The write tools
+   * (create/fork/message) are gated separately by
    * {@link selfMcpWriteEnabled}.
    */
   selfMcpEnabled: boolean;
@@ -309,7 +377,7 @@ export interface PaddockConfig {
    */
   logLevel: string;
   /**
-   * Whether keeper + scratch agents receive the Playwright browser MCP server
+   * Whether keeper agents receive the Playwright browser MCP server
    * (headless Chromium) so Claude Code can drive a browser (navigate / click /
    * snapshot / screenshot). Driven by `PADDOCK_BROWSER_MCP` (`1` enables);
    * default false. Scoped PER INSTANCE — a box without the browser stack leaves
@@ -356,7 +424,8 @@ export interface PaddockConfigFile {
   stateDir?: string;
   herdctlConfigPath?: string;
   webDist?: string;
-  scratchDir?: string;
+  /** Claude home override; beneath `CLAUDE_HOME`/`CLAUDE_CONFIG_DIR` (#620). */
+  claudeHome?: string;
   auth?: {
     mode?: string;
     userHeader?: string;
@@ -388,6 +457,13 @@ export interface PaddockConfigFile {
   models?: string[] | string;
   driveMode?: string;
   nativeSystemPrompt?: boolean | string;
+  /**
+   * Environment system prompt override (issue #635). Absent ⇒ Paddock's built-in
+   * text; a non-empty string ⇒ that text instead; an EMPTY string ⇒ append
+   * nothing. Unlike almost every other key here, blank is meaningful and is NOT
+   * folded to the default — see {@link loadEnvironmentPrompt}.
+   */
+  environmentPrompt?: string;
   selfMcpEnabled?: boolean | string;
   selfMcpWriteEnabled?: boolean | string;
   selfMcpProjectsEnabled?: boolean | string;
@@ -680,6 +756,29 @@ function loadBrandConfig(file: PaddockConfigFile["brand"] = {}): BrandConfig {
   };
 }
 
+/**
+ * Default location of the built web SPA, resolved RELATIVE TO THIS MODULE:
+ * `packages/server/{src,dist}/config.js` -> `packages/web/dist`. The same hop
+ * works from both the `tsx src/` and `node dist/` layouts, so neither needs a
+ * `PADDOCK_WEB_DIST` override.
+ *
+ * Takes the module URL as a parameter purely so a test can exercise install
+ * paths this repo's own checkout does not have.
+ *
+ * **`fileURLToPath`, NOT `new URL(url).pathname`.** The raw pathname is
+ * percent-ENCODED, so an install path containing a space or any non-ASCII
+ * character (`/opt/my paddock/`, `~/Développement/`) yields a literal `%20`
+ * that resolves to a directory which does not exist. The failure is SILENT:
+ * `app.ts` degrades to API-only mode with only a log warning, so the user gets
+ * a blank page and no explanation of why. `fileURLToPath` also decodes the
+ * `/C:/...` drive-letter form on Windows. This is irrelevant when the path is
+ * the Docker image's fixed `/app`, and load-bearing the moment the package is
+ * installed under an arbitrary user directory (`npx`, global install).
+ */
+export function resolveDefaultWebDist(moduleUrl: string): string {
+  return path.resolve(path.dirname(fileURLToPath(moduleUrl)), "../../web/dist");
+}
+
 export function loadPaddockConfig(): PaddockConfig {
   // The optional YAML instance-config file provides the BASE layer; env vars
   // override it (precedence file < env). The file is located under the data dir,
@@ -696,8 +795,8 @@ export function loadPaddockConfig(): PaddockConfig {
   } catch {
     /* best-effort; downstream mkdirs will surface real errors */
   }
-  // working_directory of keeper/scratch agents MUST be canonical so session
-  // discovery (which encodes the real path) can find Claude transcripts.
+  // working_directory of keeper agents MUST be canonical so session discovery
+  // (which encodes the real path) can find Claude transcripts.
   const dataDir = canonical(dataRoot);
   const projectsRoot = canonical(
     envOr("PADDOCK_PROJECTS_DIR", fileOr(file.projectsRoot, path.join(dataRoot, "projects"))),
@@ -708,15 +807,14 @@ export function loadPaddockConfig(): PaddockConfig {
   const herdctlConfigPath = canonical(
     envOr("PADDOCK_HERDCTL_CONFIG", fileOr(file.herdctlConfigPath, path.join(dataRoot, "herdctl.yaml"))),
   );
-  const scratchDir = canonical(
-    envOr("PADDOCK_SCRATCH_DIR", fileOr(file.scratchDir, path.join(dataRoot, "scratch"))),
-  );
+  // The ONE Claude home for this process (#588): paddock's transcript symlinks,
+  // the engine's session discovery and session adoption all resolve against this
+  // exact value — which herdctl in turn hands Claude Code as `CLAUDE_CONFIG_DIR`.
+  // Defaults to `<dataDir>/claude-home` (#620); see `resolveClaudeHome`.
+  const resolvedClaudeHome = resolveClaudeHome(dataDir, fileOpt(file.claudeHome));
+  const legacyClaudeHome = userClaudeHome();
 
-  // packages/server/src/config.ts -> packages/web/dist
-  const defaultWebDist = path.resolve(
-    path.dirname(new URL(import.meta.url).pathname),
-    "../../web/dist",
-  );
+  const defaultWebDist = resolveDefaultWebDist(import.meta.url);
 
   return Object.freeze({
     port: Number(envOr("PORT", fileOr(file.port, "4000"))),
@@ -733,13 +831,19 @@ export function loadPaddockConfig(): PaddockConfig {
     stateDir,
     herdctlConfigPath,
     webDist: abs(envOr("PADDOCK_WEB_DIST", fileOr(file.webDist, defaultWebDist))),
-    scratchDir,
+    claudeHome: resolvedClaudeHome,
+    legacyClaudeHome,
+    // Paddock owns any home that is not the user's own `~/.claude` (#620) —
+    // including one an operator pointed it at explicitly. The user's home is the
+    // only one whose contents belong to somebody else.
+    ownsClaudeHome: path.resolve(resolvedClaudeHome) !== path.resolve(legacyClaudeHome),
     auth: loadAuthConfig(file.auth),
     transcription: loadTranscriptionConfig(file.transcription),
     brand: loadBrandConfig(file.brand),
     models: loadModels(file.models),
     driveMode: loadDriveMode(file.driveMode),
     nativeSystemPrompt: loadNativeSystemPrompt(file.nativeSystemPrompt),
+    environmentPrompt: loadEnvironmentPrompt(file.environmentPrompt),
     selfMcpEnabled: loadSelfMcpEnabled(file.selfMcpEnabled),
     selfMcpWriteEnabled:
       loadSelfMcpEnabled(file.selfMcpEnabled) && loadSelfMcpWriteEnabled(file.selfMcpWriteEnabled),
@@ -826,7 +930,7 @@ function loadSweepMinIntervalMs(file?: PaddockConfigFile["sweepMinIntervalMs"]):
 }
 
 /**
- * Resolve whether keeper + scratch agents receive the Playwright browser MCP
+ * Resolve whether keeper agents receive the Playwright browser MCP
  * (issue #269 fold). The env var keeps its exact literal-'1' semantics (any
  * other set value — including `true` — disables it, matching pre-loader
  * behaviour); only when the env var is UNSET does the config file provide the
@@ -1045,7 +1149,7 @@ function loadSelfMcpEnabled(file?: PaddockConfigFile["selfMcpEnabled"]): boolean
 }
 
 /**
- * Resolve whether keeper/scratch agents use the native system prompt + CLAUDE.md
+ * Resolve whether keeper agents use the native system prompt + CLAUDE.md
  * hierarchy (issue #176). Defaults to `true` (native) on every instance so a
  * seeded instance-wide + per-project `CLAUDE.md` is auto-loaded; set
  * `PADDOCK_NATIVE_PROMPT` to 0/false/no to fall back to the terse replace
@@ -1054,6 +1158,35 @@ function loadSelfMcpEnabled(file?: PaddockConfigFile["selfMcpEnabled"]): boolean
 function loadNativeSystemPrompt(file?: PaddockConfigFile["nativeSystemPrompt"]): boolean {
   const raw = envOr("PADDOCK_NATIVE_PROMPT", fileOr(file, "true")).toLowerCase();
   return !(raw === "0" || raw === "false" || raw === "no");
+}
+
+/**
+ * Resolve the environment system prompt (issue #635): env
+ * `PADDOCK_ENVIRONMENT_PROMPT` over the `environmentPrompt:` file key over the
+ * built-in {@link DEFAULT_ENVIRONMENT_PROMPT}.
+ *
+ * Deliberately does NOT use `envOr`/`fileOr`. Those fold a blank value to the
+ * fallback, which would make opting out impossible — blank is the opt-out here,
+ * so precedence is decided on *definedness*, not on emptiness:
+ *
+ *  - `PADDOCK_ENVIRONMENT_PROMPT` **defined at all** (even empty) wins outright.
+ *    That is why the field is declared `envShadowWhenDefined` in
+ *    instance-config.ts — same rule as `PADDOCK_BROWSER_MCP` — so the Settings
+ *    screen renders it read-only in exactly the cases where it really is.
+ *  - Otherwise a `string` file value wins, empty included. A non-string (a YAML
+ *    number, a mapping, `null` from a bare `environmentPrompt:`) is ignored
+ *    rather than stringified — `"null"` is not a prompt anyone meant to write.
+ *  - Otherwise the built-in default.
+ *
+ * The value is used verbatim: no trimming, no normalization. An operator's
+ * trailing newline or leading indentation survives the round-trip, because the
+ * text is going into a prompt where whitespace is content.
+ */
+function loadEnvironmentPrompt(file?: PaddockConfigFile["environmentPrompt"]): string {
+  const env = process.env.PADDOCK_ENVIRONMENT_PROMPT;
+  if (env !== undefined) return env;
+  if (typeof file === "string") return file;
+  return DEFAULT_ENVIRONMENT_PROMPT;
 }
 
 /**
@@ -1100,7 +1233,59 @@ function loadDriveMode(file?: PaddockConfigFile["driveMode"]): DriveMode {
   return raw && isKnownDriveMode(raw) ? raw : DEFAULT_DRIVE_MODE;
 }
 
-/** Default Claude home, used for session discovery. */
-export function claudeHome(): string {
-  return process.env.CLAUDE_HOME ?? path.join(os.homedir(), ".claude");
+/**
+ * The USER's own Claude home — `~/.claude`, always. A read-only source for
+ * adoption and the user-config bridge, never a destination (#620).
+ *
+ * Stays a function (not a constant) because `os.homedir()` must be read at call
+ * time — tests and processes that mutate `HOME` depend on that.
+ */
+export function userClaudeHome(): string {
+  return path.join(os.homedir(), ".claude");
 }
+
+/**
+ * Resolve the Claude home paddock runs its agents against.
+ *
+ * Precedence, highest first:
+ *
+ * 1. **`CLAUDE_HOME`** — paddock's own long-standing override. Setting it to
+ *    `$HOME/.claude` restores the pre-#620 behaviour exactly, which is the
+ *    documented escape hatch if the relocation causes trouble.
+ * 2. **`CLAUDE_CONFIG_DIR`** — the variable *Claude Code itself* resolves its
+ *    home from. Honouring it is load-bearing, not a courtesy: herdctl
+ *    deliberately refuses to clobber an operator-set `CLAUDE_CONFIG_DIR`
+ *    (herdctl#423), so if paddock picked a different home the SDK would write
+ *    transcripts to one tree while herdctl read from another — the exact
+ *    split-brain #588 fixed. Deferring to it makes that state unreachable.
+ * 3. A `claudeHome:` key in the instance config file.
+ * 4. **`<dataDir>/claude-home`** — the default since #620.
+ *
+ * On the default, and why it changed: paddock already nests herdctl's whole
+ * state dir, the projects tree and the generated `herdctl.yaml` under its data
+ * dir. Transcripts were the one exception, reached by planting symlinks in the
+ * user's home — not a design choice but a constraint, because until
+ * herdctl#423 nothing set `CLAUDE_CONFIG_DIR` and the SDK wrote to `~/.claude`
+ * no matter what paddock configured. With that gone, owning the home makes the
+ * data dir relocatable as a unit, leaves `~/.claude` alone, and (because there
+ * is no longer a `.claude` path component) unblocks agent memory writes, which
+ * the harness refuses for any path containing `.claude`.
+ *
+ * NOT canonical()-ed: this exact string is what herdctl hands Claude Code as
+ * `CLAUDE_CONFIG_DIR`, and canonicalising would silently diverge from the
+ * literal path the two of them encode into `<home>/projects/<encoded-cwd>`.
+ *
+ * This is the RESOLVER, not the accessor. It is read once by
+ * {@link loadPaddockConfig} into {@link PaddockConfig.claudeHome}; runtime code
+ * should thread `cfg.claudeHome` rather than call this again, so paddock and the
+ * engine can never end up resolving two different homes (#588).
+ */
+export function resolveClaudeHome(dataDir: string, fromFile?: string): string {
+  const env = envOpt("CLAUDE_HOME") ?? envOpt("CLAUDE_CONFIG_DIR");
+  if (env !== undefined) return abs(env);
+  if (fromFile !== undefined && fromFile !== "") return abs(fromFile);
+  return path.join(dataDir, DEFAULT_CLAUDE_HOME_DIRNAME);
+}
+
+/** Directory name of paddock's own Claude home inside the data dir (#620). */
+export const DEFAULT_CLAUDE_HOME_DIRNAME = "claude-home";

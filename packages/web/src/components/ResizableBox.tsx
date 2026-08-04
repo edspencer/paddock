@@ -47,14 +47,19 @@ export function ResizableBox({
   // Measure the natural content height on mount and whenever the content
   // changes. A ResizeObserver keeps it correct as async content (highlighted
   // code, rendered markdown, fonts) settles; guard for jsdom where it's absent.
+  //
+  // `measure` reads `contentRef.current` at call time rather than closing over
+  // the node: the effect's only dependency is `children`, which is a prop OWNED
+  // BY THE PARENT, so a state change inside this component does not re-run it
+  // (issue #656). A captured node would go stale and — worse — be the wrapper we
+  // ourselves size, making the measurement circular.
   useEffect(() => {
-    const el = contentRef.current;
-    if (!el) return;
-    const measure = () => setNatural(el.scrollHeight || 0);
+    if (!contentRef.current) return;
+    const measure = () => setNatural(contentRef.current?.scrollHeight || 0);
     measure();
     if (typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(measure);
-    ro.observe(el);
+    ro.observe(contentRef.current);
     return () => ro.disconnect();
   }, [children]);
 
@@ -71,27 +76,37 @@ export function ResizableBox({
     appliedHeight = defaultMaxHeight;
   }
 
-  // Unbounded: short content (or unknown measurement) renders as-is, no handle.
-  if (!bounded) {
-    return <div ref={contentRef}>{children}</div>;
-  }
-
+  // ONE tree shape for both cases — bounding only toggles classes/attributes on
+  // nodes that already exist. Two structurally different trees (what this used to
+  // return) made React reuse the same host <div> for the bounded wrapper AND the
+  // unbounded content root, so `contentRef`'s node was the very element carrying
+  // `style.height`: measuring it fed the applied height back in as the "natural"
+  // height, `natural > defaultMaxHeight` flipped (360 > 360 is false), and the
+  // card oscillated between the two states once per frame (#656). It also
+  // remounted `children` on every flip, which is what left an async Mermaid
+  // render permanently blank (#644). Keeping the shape stable fixes both: the
+  // measured node is always the innermost content div, which nothing sizes.
   return (
-    <div className="group relative" style={{ height: appliedHeight }}>
-      <div className="h-full overflow-y-auto">
+    <div
+      className={bounded ? "group relative" : undefined}
+      style={bounded ? { height: appliedHeight } : undefined}
+    >
+      <div className={bounded ? "h-full overflow-y-auto" : undefined}>
         <div ref={contentRef}>{children}</div>
       </div>
-      <ResizeHandle
-        appliedHeight={appliedHeight}
-        onResize={(px) => setOverride(px)}
-        onCommit={(px) => writeItemHeight(itemId, px)}
-        onReset={() => {
-          clearItemHeight(itemId);
-          setOverride(null);
-        }}
-        minHeight={minHeight}
-        maxHeight={maxDrag}
-      />
+      {bounded ? (
+        <ResizeHandle
+          appliedHeight={appliedHeight}
+          onResize={(px) => setOverride(px)}
+          onCommit={(px) => writeItemHeight(itemId, px)}
+          onReset={() => {
+            clearItemHeight(itemId);
+            setOverride(null);
+          }}
+          minHeight={minHeight}
+          maxHeight={maxDrag}
+        />
+      ) : null}
     </div>
   );
 }

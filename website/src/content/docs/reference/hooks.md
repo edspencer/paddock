@@ -39,7 +39,7 @@ Field notes:
 | `trigger.on` | The lifecycle event. **`onArchive`** (a chat is archived) is the event that fires a normal hook agent. The enum also accepts `afterTurn` (a user turn completed), but an `afterTurn` event trigger defines/customizes the post-turn **curator** (the [sweeper](/concepts/sweeper/)) rather than a general hook. |
 | `run.prompt` / `run.promptFile` | **Exactly one is required.** `promptFile` is a `.md` path under `.paddock/triggers/`, read fresh at fire time (git-tracked, agent-editable). Declaring *both* is a validation error and the whole trigger entry is dropped; via `set_trigger`, supplying one side clears the other. |
 | `run.tools` | The hook agent's allow-list — its **whole capability**. Empty/omitted ⇒ a tool-less hook (reasoning only). The picker's tool names come from Paddock's grantable-tool catalog (`GRANTABLE_TOOLS`): `Read`, `Glob`, `Grep`, `Edit`, `Write`, `NotebookEdit`, `Bash`, `WebFetch`, `WebSearch`, `Task`, and more. |
-| `run.permissionMode` | Claude Code permission mode for the hook's turns. |
+| `run.permissionMode` | Claude Code permission mode for the hook's turns. **`bypassPermissions` runs every tool unprompted** — see the caution below. |
 | `run.model` | Model override; absent inherits the project default. |
 | `run.maxTurns` | Upper bound on agent turns in one fire. Default **30**. |
 | `run.maxSpawnDepth` | Bounds the hook's own spawning of sub-chats. |
@@ -47,8 +47,23 @@ Field notes:
 | `enabled` | A disabled hook is stored but never fired. New hooks default **disabled**. |
 
 A hook fires as its own agent, `trigger-<slug>-<name>` — so the tools above are
-enforced by the runtime, and the chat's [capability banner](/concepts/hooks/) is
+what that agent is registered with (see
+[#319](https://github.com/edspencer/paddock/issues/319) for how far that grant
+actually goes today), and the chat's [capability banner](/concepts/hooks/) is
 projected from that same config.
+
+:::caution[`bypassPermissions` removes the last check]
+`bypassPermissions` runs every granted tool with no prompt and no gate. On a hook that
+matters more than it does in an interactive chat: a hook fires **unattended**, so there
+is no human at the keyboard to prompt anyway — the confirmation that would normally
+catch a bad `Bash` or `Write` simply never happens. Combined with `run.tools`, it is the
+whole capability, exercised without review.
+
+Use it only where the blast radius is one you accept unsupervised: a sandbox, a scratch
+checkout, a project whose files you'd let an agent rewrite unwatched. Otherwise leave it
+at `default` or `acceptEdits` and keep `run.tools` narrow. See
+[What your agents can do](/guides/agent-capabilities/).
+:::
 
 :::note[Legacy `hooks:` block]
 Event hooks first shipped under a separate per-project `hooks:` map (with

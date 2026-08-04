@@ -98,7 +98,7 @@ const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const SCRATCH_ROOT = cfg("PM_SCRATCH_ROOT", "/var/lib/paddock-servers");
 const SCRUB_VARS = cfg(
   "PM_SCRUB_VARS",
-  "PADDOCK_DATA_DIR,PADDOCK_PROJECTS_DIR,PADDOCK_STATE_DIR,PADDOCK_HERDCTL_CONFIG,PADDOCK_SCRATCH_DIR"
+  "PADDOCK_DATA_DIR,PADDOCK_PROJECTS_DIR,PADDOCK_STATE_DIR,PADDOCK_HERDCTL_CONFIG"
 ).split(",").map((s) => s.trim()).filter(Boolean);
 // Known production data roots a dev server must never be pointed at. Matched at
 // a path boundary so the scratch root (/var/lib/paddock-servers) is NOT flagged.

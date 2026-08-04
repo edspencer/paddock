@@ -49,6 +49,10 @@ const apiFns = {
   markChatUnread: vi.fn(),
   deleteProjectChats: vi.fn(),
   detachProjectChat: vi.fn(),
+  attentionChats: vi.fn(),
+  getAdoptableChats: vi.fn(),
+  adoptChats: vi.fn(),
+  unadoptChats: vi.fn(),
 };
 vi.mock("../lib/api", async () => {
   const actual = await vi.importActual<typeof import("../lib/api")>("../lib/api");
@@ -78,6 +82,10 @@ vi.mock("../lib/api", async () => {
       markChatUnread: (...a: unknown[]) => apiFns.markChatUnread(...a),
       deleteProjectChats: (...a: unknown[]) => apiFns.deleteProjectChats(...a),
       detachProjectChat: (...a: unknown[]) => apiFns.detachProjectChat(...a),
+      attentionChats: (...a: unknown[]) => apiFns.attentionChats(...a),
+      getAdoptableChats: (...a: unknown[]) => apiFns.getAdoptableChats(...a),
+      adoptChats: (...a: unknown[]) => apiFns.adoptChats(...a),
+      unadoptChats: (...a: unknown[]) => apiFns.unadoptChats(...a),
     },
   };
 });
@@ -132,9 +140,11 @@ function renderAt(path: string) {
         <Route path="/projects/:slug/settings" element={<ProjectView />} />
         <Route path="/projects/:slug/triggers" element={<ProjectView />} />
         <Route path="/projects/:slug/hooks" element={<ProjectView />} />
-        {/* Deleting a project returns to the projects list, which is now the
-            first section of root Home at `/` (see `gridUrl`). */}
-        <Route path="/" element={<div>GRID</div>} />
+        {/* Deleting a project returns to the projects list, which #599 put back
+            on its own page at `/projects` (see `gridUrl`). Mounted at that path
+            rather than `/` so this stub can only be reached by navigating where
+            `gridUrl()` actually points. */}
+        <Route path="/projects" element={<div>GRID</div>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -153,6 +163,14 @@ beforeEach(() => {
   apiFns.markChatSeen.mockResolvedValue(undefined);
   apiFns.chatUsage.mockResolvedValue({});
   apiFns.projectChatMessages.mockResolvedValue([]);
+  // Home's attention feed (#599). Default to a quiet workspace; a test that
+  // cares about the rows themselves overrides this.
+  apiFns.attentionChats.mockResolvedValue({ running: [], unread: [] });
+  // #588: nothing to import unless a test says otherwise, so the sidebar's
+  // "Import N native chats" row stays absent from every unrelated assertion.
+  apiFns.getAdoptableChats.mockResolvedValue({ count: 0, sources: [] });
+  apiFns.adoptChats.mockResolvedValue({ adopted: [], skipped: [] });
+  apiFns.unadoptChats.mockResolvedValue({ released: [] });
   apiFns.getModels.mockResolvedValue(
     makeModelsResponse({
       models: [{ id: "claude-opus-4-8", label: "Opus 4.8", contextLimit: 1_000_000 }],
@@ -249,54 +267,53 @@ describe("ProjectView: tabs", () => {
     expect(screen.queryByText(/did a thing/)).not.toBeInTheDocument();
   });
 
-  it("Home tab shows the project overview (summary) and the changelog", async () => {
+  it("Home tab shows OVERVIEW.md and CHANGELOG.md, plus the files", async () => {
     apiFns.getProjectDetail.mockResolvedValue(
       detail(makeProject({ slug: "p", summary: "the overview blurb" }), {
         changelog: "# Changes\n- did a thing",
-        chats: [makeChat({ sessionId: "s1", name: "First chat" })],
+        overview: "# Overview\n- what this is",
       }),
     );
-    apiFns.listProjectFiles.mockResolvedValue(["OVERVIEW.md"]);
+    apiFns.listProjectFiles.mockResolvedValue(["NOTES.md"]);
     renderAt("/projects/p/home");
-    // Summary appears both in the header and the Home overview card.
-    expect(await screen.findAllByText("the overview blurb")).not.toHaveLength(0);
+    // Both curated files render, expanded by default (#599). OVERVIEW.md leads:
+    // what the workspace IS, before the log of how it got there.
+    expect(await screen.findByText(/what this is/)).toBeInTheDocument();
     expect(screen.getByText(/did a thing/)).toBeInTheDocument();
-    // Recent chats + files are surfaced on Home (the chat also appears in the
-    // session-list column, so match all occurrences).
-    expect(screen.getAllByText("First chat").length).toBeGreaterThan(0);
-    expect(screen.getByText("OVERVIEW.md")).toBeInTheDocument();
+    expect(screen.getByText("NOTES.md")).toBeInTheDocument();
+    // The summary is the header's job now — Home no longer restates it in a
+    // card of its own, so it appears exactly once.
+    expect(screen.getAllByText("the overview blurb")).toHaveLength(1);
   });
 
-  it("Home orders its sections Chats → Files → CHANGELOG → Overview", async () => {
+  it("Home orders its sections Running → Unread → Files → OVERVIEW.md → CHANGELOG.md", async () => {
     apiFns.getProjectDetail.mockResolvedValue(
-      detail(makeProject({ slug: "p", summary: "blurb" }), {
-        changelog: "# Changes",
-        chats: [makeChat({ sessionId: "s1", name: "First chat" })],
-      }),
+      detail(makeProject({ slug: "p", summary: "blurb" }), { changelog: "# Changes" }),
     );
-    apiFns.listProjectFiles.mockResolvedValue(["OVERVIEW.md"]);
+    apiFns.listProjectFiles.mockResolvedValue(["NOTES.md"]);
     renderAt("/projects/p/home");
-    await screen.findByRole("button", { name: /Edit details/i });
+    await screen.findByRole("heading", { name: /^Running/ });
     const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent ?? "");
-    // Overview trails now: it describes the project rather than offering a way
-    // into it. Chats lead.
-    expect(headings).toEqual(["Chats1", "Files1", "CHANGELOG.md", "Overview"]);
+    // "What needs me?" before "what is this?" (#599): the two decision feeds
+    // lead, the curated prose trails.
+    expect(headings).toEqual(["Running", "Unread", "Files1", "OVERVIEW.md", "CHANGELOG.md"]);
   });
 
-  it("a project's Home has NO projects section — only a workspace with children does", async () => {
+  it("a project's Home has NO projects section — the grid moved off Home entirely", async () => {
     apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
     renderAt("/projects/p/home");
-    await screen.findByRole("button", { name: /Edit details/i });
-    const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent ?? "");
+    await screen.findByRole("heading", { name: /^Running/ });
+    const headings = screen.getAllByRole("heading").map((h) => h.textContent ?? "");
     expect(headings.some((h) => /^Projects/.test(h))).toBe(false);
-    // …and no New Project button leaks in from the embedded grid.
+    // New Project lives on the sidebar's Projects header now (#599), which
+    // ProjectView doesn't render — so nothing here should offer it.
     expect(screen.queryByRole("button", { name: /New Project/i })).not.toBeInTheDocument();
   });
 
   it("has no Projects tab — that was the root's, and it folded into Home", async () => {
     apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
     renderAt("/projects/p/home");
-    await screen.findByRole("button", { name: /Edit details/i });
+    await screen.findByRole("heading", { name: /^Running/ });
     expect(screen.queryByRole("button", { name: "Projects" })).not.toBeInTheDocument();
     // Home leads the row for a project too.
     const home = screen.getByRole("button", { name: "Home" });
@@ -312,8 +329,8 @@ describe("ProjectView: tabs", () => {
     await screen.findByTestId("chat-pane");
     // The name in the header is a button that navigates up to Home.
     fireEvent.click(screen.getByRole("button", { name: "Reactor" }));
-    // Home renders — its "Edit details" overview action is present.
-    expect(await screen.findByRole("button", { name: /Edit details/i })).toBeInTheDocument();
+    // Home renders — its leading Running section is present.
+    expect(await screen.findByRole("heading", { name: /^Running/ })).toBeInTheDocument();
   });
 
   it("the Settings tab opens the SettingsPane and deep-links (issue #122)", async () => {
@@ -1814,5 +1831,370 @@ describe("ProjectView: chat row declares its action count (#508)", () => {
     // and the timestamp would never hide.
     expect(rowFor("Solo")).toHaveClass("chat-row");
     expect(rowFor("Solo").querySelector(".chat-row-time")).toBeInTheDocument();
+  });
+});
+
+/**
+ * Importing the user's existing Claude Code CLI chats (#588).
+ *
+ * The load-bearing property here is that the button is gated on a LIVE COUNT and
+ * not on a dismissed flag (gotcha #5 on the issue). A dismiss flag passes the
+ * happy path identically — click, button goes away — and then never comes back
+ * when the user runs more terminal sessions. So the suite asserts both halves:
+ * the button vanishes when the re-read count is 0, AND returns when it isn't.
+ */
+describe("ProjectView: import native CLI chats (#588)", () => {
+  /** The sidebar's import row, or null when it isn't offered. */
+  const importRow = () => screen.queryByRole("button", { name: /Import \d+ native/i });
+
+  /** One source's worth of offer, in the shape the server really returns. */
+  function source(sourceCwd: string, sessionIds: string[]) {
+    return {
+      sourceCwd,
+      sessionIds,
+      sessions: sessionIds.map((sessionId, i) => ({
+        sessionId,
+        mtime: `2026-07-0${(i % 9) + 1}T10:00:00.000Z`,
+        preview: `did some work in ${sourceCwd}`,
+        sizeBytes: 4096,
+      })),
+    };
+  }
+
+  /** Offer `count` importable sessions on this workspace's first fetch. */
+  function offer(count: number, sessionIds = ["n1", "n2"]) {
+    apiFns.getAdoptableChats.mockResolvedValue({
+      count,
+      sources: [source("/home/ed/code/p", sessionIds)],
+    });
+  }
+
+  /**
+   * Do what a user does to import: open the dialog, then confirm it (#660).
+   *
+   * The click on the sidebar row no longer imports anything by itself, so every
+   * test below that cares about the RESULT of an import goes through here.
+   */
+  async function confirmImport(offered: RegExp) {
+    fireEvent.click(await screen.findByRole("button", { name: offered }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Import \d+ chat/i }));
+  }
+
+  it("does not offer an import when there is nothing to import", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
+    offer(0, []);
+    renderAt("/projects/p/chat");
+    await screen.findByText(/No saved chats yet/);
+    await waitFor(() => expect(apiFns.getAdoptableChats).toHaveBeenCalledWith("p"));
+    expect(importRow()).toBeNull();
+  });
+
+  it("labels the button with the live count, singular for one", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
+    offer(1, ["n1"]);
+    renderAt("/projects/p/chat");
+    const btn = await screen.findByRole("button", { name: /Import 1 native/i });
+    expect(btn).toHaveTextContent("Import 1 native chat");
+    // Not "1 native chats" — the plural is derived, so this is the case that
+    // catches a hard-coded "s".
+    expect(btn).not.toHaveTextContent("chats");
+  });
+
+  it("pluralises the label for more than one", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
+    offer(7);
+    renderAt("/projects/p/chat");
+    const btn = await screen.findByRole("button", { name: /Import 7 native/i });
+    expect(btn).toHaveTextContent("Import 7 native chats");
+    // Reachable by its accessible name, not just its visible text.
+    expect(btn.getAttribute("aria-label")).toMatch(/Import 7 native Claude Code chats/i);
+  });
+
+  it("fetches the count once per workspace open, not on every render", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
+    offer(3);
+    renderAt("/projects/p/chat");
+    await screen.findByRole("button", { name: /Import 3 native/i });
+    // Drive an unrelated re-render (the running-set socket frame) and prove it
+    // did not trigger a second fetch.
+    act(() => activeCb?.(new Set(["whatever"])));
+    await waitFor(() => expect(apiFns.getAdoptableChats).toHaveBeenCalledTimes(1));
+  });
+
+  // The property #660 adds, and the one the old one-click behaviour failed: the
+  // click ASKS. On the instance that prompted this the offer was 26 chats the
+  // user recognised none of, with no preview and no undo.
+  it("asks before importing anything — the click opens a dialog, not a POST", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
+    offer(2);
+    renderAt("/projects/p/chat");
+    fireEvent.click(await screen.findByRole("button", { name: /Import 2 native/i }));
+
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    // Nothing has been imported by opening it.
+    expect(apiFns.adoptChats).not.toHaveBeenCalled();
+  });
+
+  it("shows what would be imported, and where it came from", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
+    apiFns.getAdoptableChats.mockResolvedValue({
+      count: 2,
+      sources: [source("/data/scratch/qa-copy/p", ["n1", "n2"])],
+    });
+    renderAt("/projects/p/chat");
+    fireEvent.click(await screen.findByRole("button", { name: /Import 2 native/i }));
+    await screen.findByRole("dialog");
+
+    // The source path is the load-bearing detail: it is what makes "these are
+    // from a scratch copy, not my checkout" visible at all (#659).
+    expect(screen.getByText("/data/scratch/qa-copy/p")).toBeInTheDocument();
+    expect(screen.getAllByText(/did some work in/)).toHaveLength(2);
+  });
+
+  it("cancelling imports nothing and leaves the offer standing", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
+    offer(2);
+    renderAt("/projects/p/chat");
+    fireEvent.click(await screen.findByRole("button", { name: /Import 2 native/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Cancel$/ }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(apiFns.adoptChats).not.toHaveBeenCalled();
+    expect(importRow()).not.toBeNull();
+  });
+
+  it("imports only the sessions still ticked", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
+    offer(2);
+    apiFns.adoptChats.mockResolvedValue({ adopted: ["n2"], skipped: [] });
+    renderAt("/projects/p/chat");
+    fireEvent.click(await screen.findByRole("button", { name: /Import 2 native/i }));
+    await screen.findByRole("dialog");
+
+    // Everything starts ticked — the common case is "yes, all of it".
+    const boxes = screen.getAllByRole("checkbox");
+    expect(boxes.every((b) => (b as HTMLInputElement).checked)).toBe(true);
+
+    fireEvent.click(boxes[0]);
+    fireEvent.click(screen.getByRole("button", { name: /^Import 1 chat$/i }));
+    await waitFor(() =>
+      expect(apiFns.adoptChats).toHaveBeenCalledWith("p", { sessionIds: ["n2"] }),
+    );
+  });
+
+  it("shows 'Importing…' while the import is in flight", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
+    apiFns.getAdoptableChats
+      .mockResolvedValueOnce({ count: 2, sources: [source("/w", ["n1", "n2"])] })
+      .mockResolvedValue({ count: 0, sources: [] });
+    let release!: (v: { adopted: string[]; skipped: never[] }) => void;
+    apiFns.adoptChats.mockReturnValue(
+      new Promise<{ adopted: string[]; skipped: never[] }>((res) => {
+        release = res;
+      }),
+    );
+    renderAt("/projects/p/chat");
+    await confirmImport(/Import 2 native/i);
+
+    await waitFor(() =>
+      expect(apiFns.adoptChats).toHaveBeenCalledWith("p", { sessionIds: ["n1", "n2"] }),
+    );
+    const busy = screen.getByRole("button", { name: /Import 2 native/i });
+    expect(busy).toHaveTextContent("Importing…");
+    expect(busy).toBeDisabled();
+
+    act(() => release({ adopted: ["n1", "n2"], skipped: [] }));
+    await waitFor(() => expect(importRow()).toBeNull());
+  });
+
+  it("re-fetches BOTH the chat list and the count after importing", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
+    offer(2);
+    apiFns.adoptChats.mockResolvedValue({ adopted: ["n1", "n2"], skipped: [] });
+    apiFns.listProjectChats.mockResolvedValue([
+      makeChat({ sessionId: "n1", name: "From my terminal" }),
+    ]);
+    renderAt("/projects/p/chat");
+    await confirmImport(/Import 2 native/i);
+
+    // The list is what the user came for; the count is what hides the button.
+    // Neither is inferred from the POST's response.
+    await waitFor(() => expect(apiFns.listProjectChats).toHaveBeenCalledWith("p"));
+    await waitFor(() => expect(apiFns.getAdoptableChats).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("From my terminal")).toBeInTheDocument();
+  });
+
+  it("hides the button when the re-read count comes back 0", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
+    apiFns.getAdoptableChats
+      .mockResolvedValueOnce({ count: 2, sources: [source("/w", ["n1", "n2"])] })
+      .mockResolvedValue({ count: 0, sources: [] });
+    apiFns.adoptChats.mockResolvedValue({ adopted: ["n1", "n2"], skipped: [] });
+    renderAt("/projects/p/chat");
+    await confirmImport(/Import 2 native/i);
+    await waitFor(() => expect(importRow()).toBeNull());
+  });
+
+  // The live-count property itself. A "dismissed" boolean passes every test
+  // above and fails this one.
+  it("offers the import AGAIN when the count comes back non-zero", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
+    apiFns.getAdoptableChats
+      .mockResolvedValueOnce({ count: 2, sources: [source("/w", ["n1", "n2"])] })
+      // The user has been busy in a terminal since: two imported, three new.
+      .mockResolvedValue({ count: 3, sources: [source("/w", ["n3", "n4", "n5"])] });
+    apiFns.adoptChats.mockResolvedValue({ adopted: ["n1", "n2"], skipped: [] });
+    renderAt("/projects/p/chat");
+    await confirmImport(/Import 2 native/i);
+    expect(await screen.findByRole("button", { name: /Import 3 native/i })).toBeInTheDocument();
+  });
+
+  it("toasts what was imported", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
+    offer(7);
+    apiFns.adoptChats.mockResolvedValue({
+      adopted: ["a", "b", "c", "d", "e", "f", "g"],
+      skipped: [],
+    });
+    renderAt("/projects/p/chat");
+    await confirmImport(/Import 7 native/i);
+    expect(await screen.findByRole("status")).toHaveTextContent("Imported 7 chats");
+  });
+
+  it("is honest about skipped sessions rather than reporting a clean success", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
+    offer(5);
+    apiFns.adoptChats.mockResolvedValue({
+      adopted: ["a", "b", "c"],
+      skipped: [
+        { sessionId: "d", reason: "no transcript on disk" },
+        { sessionId: "e", reason: "no transcript on disk" },
+      ],
+    });
+    renderAt("/projects/p/chat");
+    await confirmImport(/Import 5 native/i);
+    const toast = await screen.findByRole("status");
+    expect(toast).toHaveTextContent("Imported 3 chats");
+    expect(toast).toHaveTextContent("skipped 2");
+    // One shared reason is named — it is usually the whole explanation.
+    expect(toast).toHaveTextContent("no transcript on disk");
+  });
+
+  it("surfaces a failed import WITHOUT blanking the project view or sticking the button", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p", name: "Reactor" })));
+    offer(4);
+    apiFns.adoptChats.mockRejectedValue(new Error("source transcripts not readable"));
+    renderAt("/projects/p/chat");
+    await confirmImport(/Import 4 native/i);
+
+    expect(await screen.findByRole("status")).toHaveTextContent("source transcripts not readable");
+    // NOT `loadErr`: that is an early return that replaces the whole page, so
+    // the project header must still be there.
+    expect(screen.getByRole("heading", { name: "Reactor" })).toBeInTheDocument();
+    // The offer stands and the button is clickable again — a `finally`, not a
+    // success-path reset.
+    const btn = screen.getByRole("button", { name: /Import 4 native/i });
+    expect(btn).toHaveTextContent("Import 4 native chats");
+    expect(btn).not.toBeDisabled();
+    // A failed POST must not re-read the count: zeroing it here would retract
+    // the offer over a transient error.
+    expect(apiFns.getAdoptableChats).toHaveBeenCalledTimes(1);
+  });
+
+  // --- undo (#660) --------------------------------------------------------
+
+  it("offers an Undo on the import toast, and undoing releases what came in", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
+    offer(2);
+    apiFns.adoptChats.mockResolvedValue({ adopted: ["n1", "n2"], skipped: [] });
+    apiFns.unadoptChats.mockResolvedValue({ released: ["n1", "n2"] });
+    renderAt("/projects/p/chat");
+    await confirmImport(/Import 2 native/i);
+
+    const toast = await screen.findByRole("status");
+    fireEvent.click(within(toast).getByRole("button", { name: /^Undo$/ }));
+
+    // Only ids travel: WHICH files may be deleted is the server's call, from
+    // what the import actually did, so an undo can never be talked into
+    // removing something it did not create.
+    await waitFor(() =>
+      expect(apiFns.unadoptChats).toHaveBeenCalledWith("p", { sessionIds: ["n1", "n2"] }),
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent("Removed 2 imported chats");
+  });
+
+  it("re-reads the list and the count after an undo, so the offer comes back", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
+    apiFns.getAdoptableChats
+      .mockResolvedValueOnce({ count: 1, sources: [source("/w", ["n1"])] })
+      .mockResolvedValueOnce({ count: 0, sources: [] })
+      // After the undo the session is native again, so it is on offer again.
+      .mockResolvedValue({ count: 1, sources: [source("/w", ["n1"])] });
+    apiFns.adoptChats.mockResolvedValue({ adopted: ["n1"], skipped: [] });
+    apiFns.unadoptChats.mockResolvedValue({ released: ["n1"] });
+    renderAt("/projects/p/chat");
+    await confirmImport(/Import 1 native/i);
+    await waitFor(() => expect(importRow()).toBeNull());
+
+    fireEvent.click(within(await screen.findByRole("status")).getByRole("button", { name: /^Undo$/ }));
+    expect(await screen.findByRole("button", { name: /Import 1 native/i })).toBeInTheDocument();
+    expect(apiFns.listProjectChats).toHaveBeenCalled();
+  });
+
+  it("offers no Undo when the import brought nothing in", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
+    offer(2);
+    apiFns.adoptChats.mockResolvedValue({
+      adopted: [],
+      skipped: [{ sessionId: "n1", reason: "no transcript on disk" }],
+    });
+    renderAt("/projects/p/chat");
+    await confirmImport(/Import 2 native/i);
+
+    const toast = await screen.findByRole("status");
+    expect(within(toast).queryByRole("button", { name: /^Undo$/ })).toBeNull();
+  });
+
+  it("says so when there is nothing left to undo, rather than claiming success", async () => {
+    // The undo offer is in-memory server-side and expires with a restart, so an
+    // empty release is a normal outcome that must not read as "removed 0 chats".
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
+    offer(1, ["n1"]);
+    apiFns.adoptChats.mockResolvedValue({ adopted: ["n1"], skipped: [] });
+    apiFns.unadoptChats.mockResolvedValue({ released: [] });
+    renderAt("/projects/p/chat");
+    await confirmImport(/Import 1 native/i);
+    fireEvent.click(within(await screen.findByRole("status")).getByRole("button", { name: /^Undo$/ }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent("Nothing left to undo");
+  });
+
+  it("dismisses the toast on request", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
+    offer(1, ["n1"]);
+    apiFns.adoptChats.mockResolvedValue({ adopted: ["n1"], skipped: [] });
+    renderAt("/projects/p/chat");
+    await confirmImport(/Import 1 native/i);
+    await screen.findByRole("status");
+    fireEvent.click(screen.getByRole("button", { name: /Dismiss notification/i }));
+    await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+  });
+
+  it("badges an imported chat in the list so it reads as history, not a paddock chat", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [
+          makeChat({ sessionId: "n1", name: "Terminal work", provenance: { origin: "adopted", depth: 0 } }),
+          makeChat({ sessionId: "s1", name: "Started here" }),
+        ],
+      }),
+    );
+    renderAt("/projects/p/chat");
+    await screen.findByText("Terminal work");
+    const imported = screen.getByText("Terminal work").closest(".chat-row") as HTMLElement;
+    const native = screen.getByText("Started here").closest(".chat-row") as HTMLElement;
+    expect(within(imported).getByLabelText("Imported chat")).toBeInTheDocument();
+    // The human-origin chat stays unbadged, so the marker actually distinguishes.
+    expect(within(native).queryByLabelText("Imported chat")).toBeNull();
   });
 });

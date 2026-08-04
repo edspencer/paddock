@@ -48,8 +48,6 @@ Two consequences worth internalising:
   a JSON array. Chats run on the SDK runtime now, but the flat shape is kept — the
   same tools have to work from a `driveMode: batch` chat, which does not.
 
-Scratch turns never get this server, whatever the flags say.
-
 ## The gating matrix
 
 Four independent instance flags, each also settable as a YAML key in
@@ -140,25 +138,51 @@ silent:
 
 Present whenever `PADDOCK_SELF_MCP` is on.
 
+### The root workspace's key is `""`
+
+Every `project` argument below is really a **workspace key** — a path relative to
+the projects root. The **root workspace** (the instance's own top-level
+directory, "Home" in the sidebar) is a workspace like any other, and its key is
+the **empty string**. So `project: ""` addresses the root, and an *absent*
+`project` is what means "unspecified".
+
+That distinction is load-bearing, because `""` is falsy. Until #560 these tools
+tested it for truthiness, which made every root chat unreachable — `list_chats
+{"project": ""}` silently answered for *all projects*, and `read_chat` reported
+`project` missing when it had been supplied.
+
 ### `list_projects`
 
 Every project on the instance, across all areas. No arguments.
 
-**Returns** `{ count, projects: [{ slug, name, area?, status }] }`. `area` is
-omitted when the project has none. Use `slug` to target the other tools.
+**Returns** `{ count, projects: [{ slug, name, area?, status }], root }`. `area`
+is omitted when the project has none. Use `slug` to target the other tools.
+
+`root` is the **root workspace** in the same `{ slug, name, area?, status }`
+shape, with `slug: ""` — or `null` when the caller's scope doesn't reach it. It
+is deliberately **not** a member of `projects`, and not counted in `count`: the
+root is not a project, and enumeration walks the projects root's *children*
+only. It rides alongside instead, exactly as `GET /api/projects` returns
+`{ projects, root }`. This is how a caller learns the root exists at all.
 
 ### `list_chats`
 
 | Argument | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `project` | string | no | Project slug to filter by. **Omit to list chats across all projects.** |
+| `project` | string | no | Workspace key to filter by: a project slug, or `""` for the **root workspace**. **Omit to list chats across all workspaces** — every project *and* the root. |
 | `include_archived` | boolean | no | Include archived chats. **Defaults to `false`**, matching the web UI. |
 
 Cheap — it does not read transcripts.
 
 **Returns** `{ count, omittedArchived, project, chats: [{ project, sessionId, name, updatedAt, running, archived }] }`,
-where `project` echoes the filter (`null` when unfiltered), `updatedAt` is the
-last transcript write and `running` says whether a turn is in flight.
+where `project` echoes the filter (`null` when unfiltered — distinct from `""`,
+which is the root), `updatedAt` is the last transcript write and `running` says
+whether a turn is in flight. A root chat reports `project: ""`; pass that value
+back to `read_chat` verbatim.
+
+`name` falls back to an **8-character `sessionId` prefix** when the chat has no
+stored title. Read that as *untitled* — it is not a meaningful name, and it is
+not a usable id, so don't pass it anywhere a full `session_id` is wanted.
 
 **Archived chats are hidden by default.** The web UI files them into a collapsed
 "Archived" section, and this tool now agrees — on an instance with a few hundred
@@ -176,7 +200,7 @@ A trimmed **tail** of a chat's transcript.
 
 | Argument | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `project` | string | **yes** | Project slug that owns the chat. |
+| `project` | string | **yes** | Workspace that owns the chat: a project slug, or `""` for the root workspace. Use whatever `list_chats` reported, verbatim. Required means *present* — `""` is a valid value, an absent argument is the error. |
 | `session_id` | string | **yes** | From `list_chats`. |
 | `limit` | number | no | Trailing messages to return. Default **30**, max **200**; out-of-range values are clamped, not rejected. |
 
@@ -184,6 +208,22 @@ A trimmed **tail** of a chat's transcript.
 `total` is the full transcript length and `returned` the tail size, so the agent
 can tell it is looking at a window. `role` is `user`, `assistant` or `tool`; each
 `text` is capped at 2 000 characters.
+
+:::caution[A lossy view — know what it drops]
+`role: "tool"` entries always have **empty `text`**. The tool's name, input and
+output are not included, and those blank entries still count against `limit`, so
+on a tool-heavy chat most of the response is padding. Thinking blocks,
+attachments and sub-agent transcripts are dropped entirely.
+
+So `read_chat` answers *"what is this chat about, what was decided"*. It cannot
+answer *"how did this chat go"* — errors, tool failures, stalls, cost. For that,
+read the transcript directly: it is JSONL, one object per line, at
+`<data-dir>/projects/<slug>/.chats/<sessionId>.jsonl`, with any sub-agents under
+`<sessionId>/subagents/agent-*.jsonl`.
+
+An unknown `session_id` returns `total: 0` with **no error**. That means *not
+found*, not *empty chat* — re-check the id before concluding anything from it.
+:::
 
 ## Write tools
 
@@ -428,8 +468,8 @@ every turn on the sweeper's agent and has no on-demand path.
 
 `paddock_manage` is not the only server Paddock injects. A separate one under the
 server key **`paddock`** provides **`mcp__paddock__send_file`**, which renders a
-file inline in the chat. It is injected on **every** turn — project *and* scratch,
-human *and* spawned — and is not affected by any flag on this page.
+file inline in the chat. It is injected on **every** turn — human *and* spawned —
+and is not affected by any flag on this page.
 
 It is documented in
 **[Sending files & images](/using/sending-files-and-images/)**; nothing about it

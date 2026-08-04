@@ -8,14 +8,10 @@ Every chat in Paddock is run by a Claude Code **agent** registered with herdctl'
 runs Claude in the project's directory — plus the [sweeper](/concepts/sweeper),
 which is an internal per-project agent you never chat with directly.
 
-> **This page used to be "Keeper vs. scratch agents".** Paddock had a second,
-> shared `scratch` agent for one-off chats that belonged to no project. #516
-> retired it: the root of the instance is now [a project like any
-> other](/concepts/projects), so a chat that belongs to no *particular* project is
-> simply a chat of the root project, run by an ordinary agent. Every capability
-> scratch was deliberately denied — the self-management MCP, curation, triggers,
-> attachments, run history, a CLAUDE.md that actually reaches it, more than one
-> turn at a time — a root chat has for free.
+Every workspace has an agent, including the instance root — a chat that belongs
+to no *particular* project is simply a chat of [the root
+workspace](/concepts/projects), run by an ordinary agent with the full toolset:
+the self-management MCP, curation, triggers, attachments and run history.
 
 ## One agent per project
 

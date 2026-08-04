@@ -391,8 +391,14 @@ export interface Chat {
  * How a chat came to exist (issue #261) — the dimension the list badges (#267). The
  * `hook` origin is reused by event/webhook triggers (Epic T), which share the same
  * badge surface.
+ *
+ * `adopted` (#588) is the one origin that predates paddock entirely: the chat was
+ * imported from the user's own Claude Code CLI history, so its turns happened in a
+ * terminal before this project ever saw them. It is badged for exactly that reason
+ * — imported history reads identically to a chat started here otherwise, and "did I
+ * write this in paddock or in my terminal?" is not answerable from the transcript.
  */
-export type ChatOrigin = "human" | "scheduled" | "spawned" | "hook";
+export type ChatOrigin = "human" | "scheduled" | "spawned" | "hook" | "adopted";
 
 /**
  * The capability descriptor of the TRIGGER that owns a trigger chat (Epic T / T4) —
@@ -434,6 +440,84 @@ export interface ChatProvenance {
   origin: ChatOrigin;
   /** Spawn hops from the human/scheduled root (0 = root itself). */
   depth: number;
+}
+
+/**
+ * One working directory the user already has native Claude Code CLI history for,
+ * and which of its sessions this workspace could import (#588).
+ *
+ * There can be more than one: a repo-backed project matches both its own working
+ * directory and the ORIGIN checkout the user actually ran `claude` in. The server
+ * dedupes by session id across sources, so the ids here do not overlap.
+ */
+export interface AdoptableSource {
+  /** The native transcript folder's recorded cwd. */
+  sourceCwd: string;
+  /** The importable (native, non-sidechain, un-adopted) session ids under it. */
+  sessionIds: string[];
+  /** The same sessions, with what the confirmation dialog needs to show them. */
+  sessions: AdoptableCandidate[];
+}
+
+/**
+ * One session on offer, described well enough to decide about (#660).
+ *
+ * The import used to be an unconfirmed click, so an id was all the count needed.
+ * A dialog that asks "import these?" has to say what "these" ARE — the instance
+ * that prompted this offered 26 chats of which the user recognised none.
+ */
+export interface AdoptableCandidate {
+  sessionId: string;
+  /** ISO 8601 last-modified time of the transcript. */
+  mtime: string;
+  /** First user message, truncated server-side at 100 chars. */
+  preview?: string;
+  /** Auto-generated session name, when the transcript carries a summary. */
+  autoName?: string;
+  sizeBytes: number;
+}
+
+/**
+ * `GET <base>/adoptable-chats` (#588) — how many native CLI chats this workspace
+ * could import right now, and where they'd come from.
+ *
+ * `count` is a LIVE figure, not a one-shot offer: it is re-read after every import
+ * and drops to 0 only because there is genuinely nothing left to take, so the
+ * import affordance reappears by itself if the user later runs more terminal
+ * sessions in the same directory (gotcha #5 on the issue).
+ */
+export interface AdoptableChats {
+  count: number;
+  sources: AdoptableSource[];
+}
+
+/** One session the import declined to take, and why. */
+export interface AdoptSkip {
+  sessionId: string;
+  reason: string;
+}
+
+/**
+ * `POST <base>/adopt-chats` (#588) — the session ids actually imported, plus the
+ * ones that were passed over. A partly-skipped import is a success with a caveat,
+ * not a failure: the adopted chats are really there, so the result is reported
+ * rather than thrown.
+ */
+export interface AdoptChatsResult {
+  adopted: string[];
+  skipped: AdoptSkip[];
+}
+
+/**
+ * `POST <base>/unadopt-chats` (#660) — the session ids released by undoing the
+ * most recent import.
+ *
+ * An empty array is a legitimate, non-error outcome: there was nothing to undo
+ * because nothing was imported, it has already been undone, or the server has
+ * restarted since (the undo offer is deliberately in-memory and short-lived).
+ */
+export interface UnadoptChatsResult {
+  released: string[];
 }
 
 /**
@@ -876,7 +960,36 @@ export interface HistoryMessage {
 export interface ProjectDetail {
   project: Project;
   changelog: string;
+  /**
+   * Raw OVERVIEW.md text — the sweep-curated current-state notes, rendered on
+   * Home as the sibling of the changelog (#599). `""` when the workspace has no
+   * overview yet, same as `changelog`. Optional on the wire so a client running
+   * against an older server degrades to "no overview" rather than crashing.
+   */
+  overview?: string;
   chats: Chat[];
+}
+
+/**
+ * One row of the Home attention feed (#599): a chat, plus which workspace it
+ * belongs to. The workspace fields are what let the ROOT's fleet-wide list stay
+ * attributable — the same chat name can exist in three projects, and "which one
+ * is this?" has to be answerable from the row itself.
+ */
+export interface AttentionChat extends Chat {
+  projectSlug: string;
+  projectName: string;
+}
+
+/**
+ * `GET <base>/chats/attention` — the chats in a workspace's SUBTREE that are
+ * running or unread. On the root mount the subtree is the whole fleet; on a
+ * project mount it is that project alone. A chat appears in at most one list: a
+ * live turn hasn't landed a reply yet, so `running` wins.
+ */
+export interface AttentionChats {
+  running: AttentionChat[];
+  unread: AttentionChat[];
 }
 
 // --- Git backing store (GET /api/git, .../git/status, GitHub device flow) ---
@@ -1145,8 +1258,18 @@ export type ServerWsMessage =
 
 // --- Instance-wide settings (issue #385) ------------------------------------
 
-/** The rendering/validation kind of an instance-config field. */
-export type InstanceConfigFieldType = "number" | "boolean" | "string" | "enum" | "string-list";
+/**
+ * The rendering/validation kind of an instance-config field. `text` is `string`
+ * with a multi-line control (a `<textarea>`) — identical wire shape and
+ * coercion, used for prompt-sized values (issue #635).
+ */
+export type InstanceConfigFieldType =
+  | "number"
+  | "boolean"
+  | "string"
+  | "text"
+  | "enum"
+  | "string-list";
 
 /**
  * One field on the instance-wide Settings screen (GET /api/instance-config).

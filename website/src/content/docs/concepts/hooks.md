@@ -27,15 +27,27 @@ describe, and the tools you grant it **are** its entire capability:
 
 There is no hook "kind", "profile", or "curator" concept to choose from: the
 capability *is* the tool list. Under the hood the hook runs as its own agent
-(`trigger-<slug>-<name>`) registered exactly like the project's own agent, so
-the tools you pick are enforced by the runtime, not merely suggested. A hook's
-capability also includes its permission mode, an optional model override, and a
-`max_turns` bound (default **30**) so a runaway hook can't loop forever.
+(`trigger-<slug>-<name>`) registered exactly like the project's own agent, and
+the tools you pick are what that agent is configured with. A hook's capability
+also includes its permission mode, an optional model override, and a `max_turns`
+bound (default **30**) so a runaway hook can't loop forever.
 
 :::note[Tool-less by default]
 A brand-new event hook is granted **no tools** until you check some in the
 capability picker. That's the safe default — a hook can't touch files or run
 commands unless you deliberately hand it the tools to.
+:::
+
+:::caution[The grant is intent, not yet a sandbox]
+The tool list is passed to the runtime as an allow-list, but
+[#319](https://github.com/edspencer/paddock/issues/319) is open: that flag does
+**not** hard-deny a non-listed tool at runtime. A scoped agent granted
+`["Read","Grep","Edit"]` has been observed running `Bash` when prompted to.
+
+So a hook's tool list is a least-surprise default and a statement of intent — it
+is not a boundary you can rely on to contain an agent processing content you
+don't control. See
+[What your agents can do](/guides/agent-capabilities/#scoped-agents-triggers-and-hooks).
 :::
 
 ## It fires *after* the action, and can never break it
@@ -48,7 +60,9 @@ is declared, and whether that hook succeeds, fails, or is slow. A hook can
 observe and react to an action; it can never block or fail it.
 
 ```mermaid
-flowchart LR
+%% TB, not LR: this chain is 1293px wide laid out horizontally and gets scaled
+%% ~2x down into the prose column. Stacked it is 276px, so it renders 1:1.
+flowchart TB
   A["You archive a chat"] --> B["Archive commits<br/>(response returns)"]
   B --> C{{"onArchive event"}}
   C -. "fire-and-forget" .-> D["Hook agent turn<br/>trigger-slug-name"]

@@ -118,7 +118,7 @@ export const MTIME_CACHE_MAX = 1024;
 
 export type MtimeCache<T> = Map<string, { mtimeMs: number; value: T }>;
 
-const taskUsesCache: MtimeCache<TaskToolUse[]> = new Map();
+const taskUsesCache: MtimeCache<TaskToolUses> = new Map();
 const durationCache: MtimeCache<number | undefined> = new Map();
 const usageCache: MtimeCache<SessionTokenUsage> = new Map();
 
@@ -307,7 +307,7 @@ export interface ReadInfo {
    * The read target's path relative to the project dir, set only when it's an
    * image that resolves INSIDE the project dir so the web can render it inline via
    * the raw file endpoint (issue #239). Absent for a non-image read, an image
-   * outside the project dir, or a scratch chat (no servable file endpoint).
+   * outside the project dir.
    */
   projectRelPath?: string;
 }
@@ -371,26 +371,56 @@ export type EnrichedMessage = Omit<ChatMessage, "toolCall"> & {
 };
 
 /**
+ * Task/Agent launches recovered from one transcript, split by whether the launch
+ * has come back yet.
+ *
+ * They are kept apart because they join to herdctl's parsed messages by DIFFERENT
+ * cursors: core emits one message per paired call, plus a `pending:true` message
+ * for each still-unpaired launch. Interleaving them in a single list is what used
+ * to misalign a completed sub-agent that ran in parallel with a live one.
+ */
+export interface TaskToolUses {
+  /** Launches with a matching tool_result, in file order. */
+  paired: TaskToolUse[];
+  /** Launches still in flight (no tool_result yet), in file order. */
+  pending: TaskToolUse[];
+}
+
+/**
  * Stream the main session transcript and recover, in file order, every
  * `Task`/`Agent` tool_use that was **paired** with a tool_result. Pairing is
  * tracked so the returned list aligns 1:1 with herdctl's parsed tool messages
- * (which only exist for paired calls): an in-flight/unpaired launch at the tail
- * is simply omitted until the turn completes, keeping the positional join exact.
+ * for completed calls.
+ *
+ * Paired-only by design — {@link readTaskUsesFromFile} exposes the in-flight
+ * launches separately, and mixing them here would break that alignment.
  */
 export async function readTaskToolUses(
   projectDir: string,
   sessionId: string,
 ): Promise<TaskToolUse[]> {
-  if (!SAFE_SEGMENT.test(sessionId)) return [];
+  return (await readTaskUsesForSession(projectDir, sessionId)).paired;
+}
+
+/**
+ * Both halves of a session's Task/Agent launches. `sessionId` is a path segment,
+ * so it is validated here — every caller reaches the transcript through this.
+ */
+async function readTaskUsesForSession(
+  projectDir: string,
+  sessionId: string,
+): Promise<TaskToolUses> {
+  if (!SAFE_SEGMENT.test(sessionId)) return { paired: [], pending: [] };
   return readTaskUsesFromFile(path.join(projectChatsDir(projectDir), `${sessionId}.jsonl`));
 }
 
 /**
- * Recover paired Task/Agent tool_uses (in order) from an arbitrary transcript
- * file — the main session file, or a sub-agent's own transcript (which lets a
- * sub-agent's nested launches be enriched for recursive expansion).
+ * Recover Task/Agent tool_uses (in order, split paired vs in-flight) from an
+ * arbitrary transcript file — the main session file, or a sub-agent's own
+ * transcript (which lets a sub-agent's nested launches be enriched for recursive
+ * expansion).
  */
-async function readTaskUsesFromFile(file: string): Promise<TaskToolUse[]> {
+async function readTaskUsesFromFile(file: string): Promise<TaskToolUses> {
   const mtimeMs = await statMtimeMs(file);
   if (mtimeMs !== undefined) {
     const cached = mtimeCacheGet(taskUsesCache, file, mtimeMs);
@@ -401,7 +431,7 @@ async function readTaskUsesFromFile(file: string): Promise<TaskToolUse[]> {
   return value;
 }
 
-async function readTaskUsesFromFileUncached(file: string): Promise<TaskToolUse[]> {
+async function readTaskUsesFromFileUncached(file: string): Promise<TaskToolUses> {
   const byId = new Map<string, TaskToolUse>();
   const order: string[] = [];
   const resultIds = new Set<string>();
@@ -445,13 +475,16 @@ async function readTaskUsesFromFileUncached(file: string): Promise<TaskToolUse[]
       }
     }
   } catch {
-    return [];
+    return { paired: [], pending: [] };
   } finally {
     rl.close();
     stream.destroy();
   }
 
-  return order.filter((id) => resultIds.has(id)).map((id) => byId.get(id)!);
+  return {
+    paired: order.filter((id) => resultIds.has(id)).map((id) => byId.get(id)!),
+    pending: order.filter((id) => !resultIds.has(id)).map((id) => byId.get(id)!),
+  };
 }
 
 /**
@@ -566,7 +599,7 @@ export async function enrichWithSubagents(
 ): Promise<EnrichedMessage[]> {
   if (!hasSubagentTool(messages)) return messages;
   const [taskUses, subagents] = await Promise.all([
-    readTaskToolUses(projectDir, sessionId),
+    readTaskUsesForSession(projectDir, sessionId),
     listSubagents(projectDir, sessionId),
   ]);
   const [durations, costs] = await Promise.all([
@@ -830,25 +863,51 @@ function hasSubagentTool(messages: ChatMessage[]): boolean {
  */
 function attachSubagentFields(
   messages: ChatMessage[],
-  taskUses: TaskToolUse[],
+  taskUses: TaskToolUses,
   subagents: Map<string, SubagentMeta>,
   durations: Map<string, number>,
   costs: Map<string, number | null>,
 ): EnrichedMessage[] {
   let i = 0;
+  let p = 0;
   return messages.map((m) => {
     if (!m.toolCall || !SUBAGENT_TOOL_NAMES.has(m.toolCall.toolName)) return m;
-    // An in-flight (`pending`) tool_use has no matching tool_result, so
-    // `readTaskToolUses` (paired-only) omits it — core@5.24.0 nonetheless injects
-    // the unpaired pending message into the parsed stream so it's visible on
-    // rehydration (herdctl#399). Skip it here so it does NOT consume a `taskUses`
-    // slot and shift every following completed sub-agent's enrichment onto the
-    // wrong call (the parallel-sub-agent case: a still-running Agent would else
-    // inherit a finished sibling's `hasSubagent`/`toolUseId` and wrongly render as
-    // expandable). It falls through unenriched → the generic running sub-agent box,
-    // matching the live `chat:tool_start` path.
-    if (m.toolCall.pending) return m;
-    const use = taskUses[i++];
+    // An in-flight (`pending`) tool_use has no matching tool_result yet, and
+    // core@5.24.0 injects it into the parsed stream so it stays visible on
+    // rehydration (herdctl#399). It is joined off its OWN cursor against the
+    // in-flight launches, never off the paired one — consuming a paired slot here
+    // would shift every following completed sub-agent's enrichment onto the wrong
+    // call (the parallel case: a running Agent inheriting a finished sibling's
+    // `toolUseId`/`hasSubagent` and wrongly rendering as expandable).
+    //
+    // Enriching it at all is what keeps the running-sub-agents bar alive across a
+    // re-mount: the bar's candidates need `toolUseId` + `hasSubagent`, which the
+    // live `chat:tool_start` frame supplies but rehydration used to drop — so
+    // navigating away from a running chat and back emptied the bar for the rest of
+    // the run, with no way to recover short of the sub-agent finishing (#622).
+    if (m.toolCall.pending) {
+      const use = taskUses.pending[p++];
+      if (!use) return m;
+      return {
+        ...m,
+        toolCall: {
+          ...m.toolCall,
+          toolUseId: use.toolUseId,
+          subagentType: use.subagentType,
+          description: use.description,
+          prompt: use.prompt,
+          // Optimistic, exactly as the live path does (see `subagentLaunchFields`):
+          // the sidecar may not be on disk for the first moment of the run, and the
+          // client's expand/poll paths already degrade to "starting…" until it is.
+          hasSubagent: true,
+          // Deliberately NO `subagentDurationMs`: it is derived from the first→last
+          // timestamp of a transcript that is still growing, so setting it here
+          // would both freeze a bogus part-way duration onto the card AND mark the
+          // sub-agent finished — `useRunningSubagents` drops any card that has one.
+        },
+      };
+    }
+    const use = taskUses.paired[i++];
     if (!use) return m;
     return {
       ...m,

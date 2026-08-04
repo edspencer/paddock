@@ -1,5 +1,425 @@
 # @paddock/web
 
+## 0.60.0
+
+### Minor Changes
+
+- [#663](https://github.com/edspencer/paddock/pull/663) [`59aa52f`](https://github.com/edspencer/paddock/commit/59aa52f4a0aad1d0436efcfa389c459f912ca795) Thanks [@edspencer](https://github.com/edspencer)! - Confirm native-chat imports before they happen, and let them be undone
+
+  "Import N native chats" was a permanently-visible sidebar button that imported
+  everything on one click, showed nothing about what it was about to take, and
+  could not be undone from the UI. The absence of a dismiss was deliberate and
+  well-argued — a live count beats a stale dismissal flag — but that reasoning
+  assumes the count is trustworthy, and it has not been: the same button has
+  offered Paddock's own sweeper output and another instance's chats.
+
+  The click now opens a dialog listing the candidate sessions grouped by the
+  directory they came from, with their date, size and first message. Everything
+  starts ticked, because "yes, all of it" really is the common case. The source
+  path is the load-bearing detail — it is what makes "these are from a scratch copy,
+  not my checkout" visible before anything is imported rather than after.
+
+  A successful import offers **Undo** on its toast, which releases the adoptions and
+  deletes the copies the import placed. The user's own `~/.claude` history is never
+  touched. Which files an undo may delete is decided server-side from what the
+  import actually did, so the request carries session ids and no paths; the offer
+  lives in memory and expires with a restart, in which case undo reports that there
+  was nothing to undo rather than acting on a stale record.
+
+  API changes:
+
+  - `GET …/adoptable-chats` sources gain a `sessions` array (`mtime`, `preview`,
+    `autoName`, `sizeBytes`) alongside the existing `sessionIds`.
+  - `POST …/adopt-chats` accepts `sessionIds` to import a chosen subset.
+  - `POST …/unadopt-chats` is new.
+
+  The live count is unchanged, and there is still no dismiss state.
+
+### Patch Changes
+
+- [#657](https://github.com/edspencer/paddock/pull/657) [`4dac0ba`](https://github.com/edspencer/paddock/commit/4dac0ba251ef1490a814167ab04fef5c42aba875) Thanks [@edspencer](https://github.com/edspencer)! - Fix an expanded `send_file` card flickering forever and breaking chat scrolling
+
+  A sent file taller than 360px re-rendered **once per animation frame, for as long
+  as it was on screen**, strobing between its bounded (360px, scrollable) and
+  unbounded (full-height) layouts. Because the transcript's height changed by the
+  same amount every frame, scroll anchoring fought it and scrolling the chat became
+  unusable.
+
+  `ResizableBox` returned two structurally different trees for the two cases, so
+  React reused one host `<div>` for both roots — and the `ResizeObserver`, whose
+  effect never re-ran (its only dependency is the parent-owned `children`), kept
+  measuring that node after it had become the wrapper carrying `style.height`. The
+  measurement was therefore circular: it read back the applied height, `360 > 360`
+  was false, the box unbounded itself, measured the full height, bounded itself
+  again, forever (#656).
+
+  The tree shape is now the same in both cases — bounding only toggles classes and
+  attributes — so the measured element is always the content, which nothing sizes.
+  That also stops `children` being remounted on every flip, which is what left an
+  async Mermaid render inside a long markdown body permanently blank (#644).
+
+## 0.59.1
+
+## 0.59.0
+
+## 0.58.0
+
+## 0.57.0
+
+### Minor Changes
+
+- [#645](https://github.com/edspencer/paddock/pull/645) [`cbdccd5`](https://github.com/edspencer/paddock/commit/cbdccd5c721e6a208a01daa0c1ae099079789eef) Thanks [@edspencer](https://github.com/edspencer)! - Tell the agent it is in a browser: a small, overridable environment system prompt
+
+  Paddock injected no system prompt of its own. On a default instance the keeper ran
+  on Claude Code's stock preset, which is written for a terminal — nothing anywhere
+  told it that its replies render as GitHub-Flavored Markdown in a browser, that a
+  bare `#123` is dead text, or that `mcp__paddock__send_file` puts an image on screen.
+
+  An audit of the 100 most recent chats on the dogfood instance (3,944 assistant
+  messages, 2.1 MB of prose) measured the cost: **4,440 bare `#123` refs against 155
+  markdown links**, and **194 image reads / 138 screenshots with zero images ever sent
+  to a user**. In one chat that gap cost a full re-work round — the agent read 17 QC
+  frames, showed none, misread one, and shipped a regression the user then had to
+  screenshot themselves.
+
+  Paddock now appends a two-rule environment prompt to every keeper turn — _show,
+  don't describe_ and _make clickable things clickable_. Both rules come from that
+  audit; several plausible-sounding extras ("no ANSI colour", "don't paste long
+  content", "use markdown structure") were measured, refuted, and cut.
+
+  Configure it with `PADDOCK_ENVIRONMENT_PROMPT` / `environmentPrompt:`, or from
+  **Settings → Capabilities → Environment prompt**, which gains a multi-line editor.
+  Unlike every other setting, blank is meaningful: omit the key for the built-in text,
+  set a string to replace it, set an empty string to append nothing.
+
+  One caveat, documented rather than papered over: on `driveMode: batch` the append is
+  withheld while the native system prompt is on. herdctl's CLI runtime has no
+  `--append-system-prompt`, so sending it there would swap Claude Code's entire coding
+  preset for two rules. The default `session` drive mode — what every chat actually
+  uses — appends properly.
+
+## 0.56.0
+
+### Minor Changes
+
+- [#558](https://github.com/edspencer/paddock/pull/558) [`f061cd6`](https://github.com/edspencer/paddock/commit/f061cd6dfdeb5ba83ede8fcf8638fea1e9d77b30) Thanks [@edspencer](https://github.com/edspencer)! - Remove `scratch` entirely, including the legacy `scratchDir` config field (#549)
+
+  Scratch was retired as a feature in #516 Phase 6 and the root became a
+  first-class workspace in #533. The code was already gone; what survived was one
+  deliberately-kept config field and 232 stale references across 67 files.
+
+  **Removed config:** `PADDOCK_SCRATCH_DIR` / `scratchDir:` no longer exists. It
+  was kept so an existing env or config file wouldn't fail validation — back-compat
+  for an install base that doesn't exist.
+
+  **Stale settings are IGNORED, not fatal.** An instance that still sets
+  `PADDOCK_SCRATCH_DIR`, or whose `paddock.config.yaml` still carries `scratchDir:`,
+  boots normally and the value has no effect. This isn't a shim: config resolution
+  is pull-based on both layers — env vars are read by name, and the YAML file is
+  parsed into a loose record that is only ever read, never enumerated or validated
+  against a schema — so a deleted key is simply never looked at. The trade-off is
+  that a typo'd key is equally silent; that is deliberate, because an operator
+  should not be locked out of a running instance by a stale line in an old env file.
+
+  **Also removed:** the dead `isProjectChat` prop on the web `ChatPane` (its
+  `false` branch only ever described a scratch chat and no caller passed it), and a
+  dead flow in the manual `scripts/e2e.mjs` smoke script that waited on a "One-off
+  chat" heading the app no longer renders.
+
+  **Your data is untouched.** On an existing instance, old one-off transcripts
+  still sit at `<dataDir>/scratch/.chats`. They have been unreferenced and unlisted
+  since #516 and nothing in this change deletes them — if you don't want them, that
+  directory is safe to remove by hand.
+
+## 0.55.0
+
+### Minor Changes
+
+- [#621](https://github.com/edspencer/paddock/pull/621) [`28f4305`](https://github.com/edspencer/paddock/commit/28f4305c0fd6cb1d0b837ebbf1d115d855ba72f4) Thanks [@edspencer](https://github.com/edspencer)! - Import the Claude Code CLI chats you already have into a project.
+
+  A project is backed by a working directory, and you very often already have
+  terminal `claude` history for it — or for your own checkout of the same repo,
+  somewhere else entirely. Until now that history was invisible here.
+
+  When a workspace has importable sessions, an **Import _N_ native chats** button
+  appears at the top of its chat list. One click, no confirmation dialog: the
+  chats are imported, the list refreshes, and a toast reports how many arrived.
+  The count is live rather than a dismissable prompt, so it returns if you accrue
+  new terminal sessions later. Imported chats carry an **Imported** badge so they
+  are distinguishable from chats started here.
+
+  Underneath are two new workspace-scoped routes:
+
+  - `GET …/adoptable-chats` → `{ count, sources, filtered }` — what this project
+    could import, per source working directory. Recomputed on every call, so the
+    count reaches 0 only because there is genuinely nothing left.
+  - `POST …/adopt-chats` → `{ adopted, skipped }` — imports every detected source,
+    or just the one you name.
+
+  Both are on the same dual-mounted plugin as the rest of the chat routes, so the
+  **root workspace** gets them for free. `npm run import-chats -w @paddock/server`
+  is the headless equivalent, for when the transcripts and the server do not share
+  a filesystem view — a containerised instance only sees what is mounted.
+
+  This requires **`@herdctl/core@5.29.0`**, which is where the session-adoption
+  primitives live, along with the `CLAUDE_CONFIG_DIR` fix without which _resuming_
+  an imported chat fails outright.
+
+  Detection looks at the project's own working directory plus any Claude
+  transcript folder whose _recorded_ working directory matches the project — by
+  checkout name for a repo-backed project, by exact path for a notebook one. The
+  recorded cwd is read out of the transcript rather than derived from the folder
+  name, because that encoding is lossy and non-invertible: `/a/b-c`, `/a-b/c` and
+  `/a/b/c` all share one folder. That same lossiness is why sources are
+  de-duplicated by resolved folder and sessions by id — otherwise a colliding pair
+  of directories offers every session twice. Empty and slash-command-only
+  transcripts are withheld as noise and listed under `filtered`, so a lower count
+  always has an explanation. Results are cached on transcript-directory mtimes and
+  dropped after every import.
+
+  Transcripts are **copied**, never moved: your `~/.claude` history stays intact,
+  and the copies keep their original timestamps so imported chats sort by when
+  they actually happened.
+
+  Two fixes ride along, both about timestamps and homes being taken for granted:
+
+  - The configured `CLAUDE_HOME` is now resolved once and handed to the engine.
+    It previously honoured the variable for its own paths while the engine fell
+    back to `~/.claude`, so with a non-default home chats could list from one
+    directory and open empty from another. Invisible whenever the two happen to
+    be the same directory, which is most deployments.
+  - Relocating an existing transcript directory into a project now preserves file
+    timestamps. It didn't, and mtime is both the chat-list sort key and the cache
+    key for titles and previews — so a months-old archive collapsed to "today".
+    Note the narrow scope: registering an agent still **moves** a matching
+    `~/.claude` transcript directory into the project. This stops that move
+    mangling the dates; it does not stop the move. Paddock owning its own Claude
+    home is filed separately as #620.
+
+  Imported chats are marked with a new `adopted` provenance origin. It counts as a
+  root (nothing here created it) and as _attended_ (you ran it yourself), so
+  importing 22 sessions never claims 22 things ran while you were away.
+
+## 0.54.2
+
+### Patch Changes
+
+- [#605](https://github.com/edspencer/paddock/pull/605) [`457cdbd`](https://github.com/edspencer/paddock/commit/457cdbd7add0be5f00c96dc4443f0c27749e8a31) Thanks [@edspencer](https://github.com/edspencer)! - A sub-agent's own transcript now decides whether it is running, and what its
+  duration is — not the parent's turn.
+
+  Two visible bugs, one root cause. The SDK **backgrounds sub-agents by default**,
+  so the parent routinely finishes its reply while they keep working. Both the
+  "running" state and the displayed duration were derived from the parent instead
+  of the sub-agent.
+
+  **The bar vanished the moment the parent replied.** Liveness hung off the chat's
+  `streaming` flag. Captured frame timeline for a turn that launches two research
+  sub-agents and then answers:
+
+  ```
+   13.5s  chat:tool_call   Agent  durationMs=38     ← launch-ack
+   22.6s  chat:complete                             ← both sub-agents still working
+   22.6s  chat:active      running=false            ← client sets streaming=false
+   34.9s  chat:active      running=true             ← background stream reopens
+  ```
+
+  For those ~12 seconds the chat looked idle: the running-sub-agents bar
+  disappeared and every card snapped from "RUNNING" to a finished state, while the
+  work carried on for another six minutes.
+
+  **Cards advertised the launch-ack as the runtime.** `durationMs` on the launching
+  `Task`/`Agent` call is the time to _spawn_ a background sub-agent (~30ms), not the
+  time it ran. A four-minute research sub-agent displayed "38ms" until a reload
+  replaced it via the history join.
+
+  Liveness and duration now come from the sub-agent's own transcript, which the
+  running-sub-agents bar already polls:
+
+  - a sub-agent stays "running" while its transcript grows, and only settles after
+    6 silent polls (~12s) once the chat is no longer live — so it survives the
+    parent's `chat:complete`;
+  - duration prefers the server's final figure, else the transcript's first→last
+    span, else **shows nothing**. An honest gap beats a wrong number, and the
+    launch-ack is never used for a sub-agent card.
+
+  Polling is armed only for sub-agents seen while the chat was live, so reopening a
+  finished chat still fetches nothing until you expand a card (the lazy-load
+  contract), and it stops entirely once everything has settled.
+
+  Verified live: bar continuously present 9s→393s across the parent's completion,
+  zero samples of a hidden bar while a card read RUNNING, and final durations of
+  4m 34s / 5m 55s instead of ~30ms.
+
+  Known limitation, deliberately left visible: a sub-agent that goes completely
+  silent for >12s while the parent is idle settles early and drops out of the bar
+  (its card keeps the elapsed time it reached). The robust fix is server-side —
+  `chat:active` should not report `running: false` while background sub-agents are
+  still in flight.
+
+## 0.54.1
+
+### Patch Changes
+
+- [#607](https://github.com/edspencer/paddock/pull/607) [`c456b3e`](https://github.com/edspencer/paddock/commit/c456b3e0e66f7914646fa2eb32f7ac9b78ba8a5e) Thanks [@edspencer](https://github.com/edspencer)! - Lead the Home tab with what needs you: running chats, then unread chats.
+
+  **The feeds.** Home used to open on a list of recent chats — the same list the
+  sidebar already shows in full, so the front door duplicated the furniture and
+  buried the signal. It now opens on the two states that actually want a decision:
+  chats with a **live turn**, then chats holding an **unread reply**. Everything
+  else (files, notes) follows.
+
+  Both feeds come from one new route, `GET <base>/chats/attention`, scoped to the
+  workspace's **subtree**. A workspace's key is its path relative to the projects
+  root, so its descendants are exactly the workspaces it prefixes — and the root's
+  key is `""`, which prefixes every key there is. The root's Home is therefore
+  fleet-wide (every project's live work plus its own) and a project's Home is
+  scoped to itself, through one handler and one component that never learn which
+  they are rendering. No `root` flag, no second implementation to drift. Nesting,
+  when it lands, gives an intermediate workspace the same behaviour for free.
+
+  `running` is read from the live session hub rather than inferred from
+  timestamps, so it cannot disagree with the streaming dots. A chat is never in
+  both lists — a live turn hasn't landed a reply yet, so running wins.
+
+  **Why this could not have worked before.** The client only ever opened its
+  WebSocket from `subscribe()`, so landing on Home with no chat pane mounted
+  opened _no socket at all_ and the running set stayed permanently empty — and an
+  empty running set is indistinguishable from a quiet instance, which is why the
+  in-flight badge appeared merely unreliable rather than dead (#573). Watching the
+  active set is now itself a reason to hold a socket, and the server already
+  replays its whole running snapshot to every socket on connect, so the first
+  paint is correct.
+
+  **The Projects section is gone from Home.** It hosted the app's ONLY New Project
+  button, so that moved to the sidebar's Projects header — replacing the project
+  count, which answered a question nobody asks while the list sits directly
+  beneath it. Same `+` affordance as the chat sidebar's New chat, in the same
+  place relative to its list.
+
+  **Notes.** `OVERVIEW.md` now renders on Home beside `CHANGELOG.md`, both
+  collapsible with the choice remembered per workspace. It rides the workspace
+  payload next to `changelog`, so the two can never render a beat apart. The old
+  bottom "Overview" card (a summary plus a metadata table) is deleted — it
+  described the workspace rather than offering a way into it, and Settings already
+  owns editing that.
+
+## 0.54.0
+
+### Minor Changes
+
+- [#598](https://github.com/edspencer/paddock/pull/598) [`8b2fd83`](https://github.com/edspencer/paddock/commit/8b2fd838ee2c9d546bd841b3d96d364e372d218f) Thanks [@edspencer](https://github.com/edspencer)! - Rename the "keeper" config, env, and API surface (#585). **Breaking** — the old
+  names are gone, with no aliases: pre-1.0, a minor may break the one before it.
+
+  Env vars:
+
+  | before                         | after                   |
+  | ------------------------------ | ----------------------- |
+  | `PADDOCK_KEEPER_DRIVE_MODE`    | `PADDOCK_DRIVE_MODE`    |
+  | `PADDOCK_KEEPER_NATIVE_PROMPT` | `PADDOCK_NATIVE_PROMPT` |
+
+  Config file (`paddock.yaml`) and the instance-settings key: `keeperDriveMode` →
+  `driveMode`. An instance that still sets the old key falls back to the built-in
+  default (`session`) rather than erroring.
+
+  `GET /api/models` response fields: `keeperDefault` → `defaultModel`,
+  `keeperDriveModeDefault` → `driveModeDefault`. The self-MCP `create_project`
+  result field `keeperRegistered` → `agentRegistered`. Server and web change
+  together, so no client sees a mixed contract.
+
+  Internal constants and functions follow the same rule: `KEEPER_DEFAULT_MODEL` →
+  `DEFAULT_MODEL`, `KEEPER_DEFAULT_DRIVE_MODE` → `DEFAULT_DRIVE_MODE`,
+  `KEEPER_DEFAULT_MAX_TURNS` → `DEFAULT_MAX_TURNS`, `KEEPER_DEFAULT_PERMISSION_MODE`
+  → `DEFAULT_PERMISSION_MODE`, `KEEPER_DEFAULT_DOCKER` → `DEFAULT_DOCKER`,
+  `KEEPER_DENIED_TOOLS` → `DENIED_TOOLS`, `resolveKeeperDefault` →
+  `resolveDefaultModel`, `buildKeeperConfig` → `buildAgentConfig`,
+  `ensureKeeperModel` → `ensureAgentModel`.
+
+  The `keeper-` agent-name prefix is deliberately untouched: it is persisted in
+  herdctl job records, `state.yaml`, session directories, and six sidecar stores
+  keyed `keeper-<slug>\0<sessionId>`. Renaming it would orphan all of that.
+
+  Also: three source files embedded a **raw NUL byte** in a string literal, which
+  made ripgrep classify them as binary and skip them silently — `ws.ts` was missed
+  by every `keeper` audit for that reason alone. They now spell it `\u0000`, the
+  convention the other sidecar stores already used. Same runtime value; the files
+  are greppable again.
+
+- [#598](https://github.com/edspencer/paddock/pull/598) [`8b2fd83`](https://github.com/edspencer/paddock/commit/8b2fd838ee2c9d546bd841b3d96d364e372d218f) Thanks [@edspencer](https://github.com/edspencer)! - Retire "keeper" from the user-facing copy (#585). The UI now says **Claude** —
+  Paddock is a thin layer over Claude Code, so the persona was inventing a second
+  actor that does not exist.
+
+  | before                                                                  | after                                                                      |
+  | ----------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+  | `Message the keeper agent…`                                             | `Message Claude…`                                                          |
+  | `…stream live from the keeper agent`                                    | `…stream live from Claude`                                                 |
+  | `No files yet. Files the keeper agent writes appear here.`              | `No files yet. Files Claude writes appear here.`                           |
+  | `Runs appear here once the keeper starts finishing turns.`              | `Runs appear here once Claude starts finishing turns.`                     |
+  | `consulting the keeper` (composer spinner)                              | `consulting Claude`                                                        |
+  | `The keeper will respond again after the quota resets.`                 | `Claude will respond again after the quota resets.`                        |
+  | Settings section `Keeper agent`                                         | `Claude`                                                                   |
+  | `How this project's keeper agent runs. Changes re-register the keeper.` | `How Claude runs in this workspace. Changes take effect on the next turn.` |
+  | `Keeper tools` (trigger capability badge)                               | `Claude's tools`                                                           |
+  | `Keeper default` (trigger model placeholder)                            | `Workspace default`                                                        |
+  | `runs as the keeper (full tools)`                                       | `runs as Claude (full tools)`                                              |
+
+  Where a sentence did not need an actor the word is simply gone rather than
+  substituted — "a dedicated keeper agent" drops out of the empty-projects copy,
+  "a single keeper run" becomes "a single run".
+
+  Server-authored strings the user reads follow the same rule: the turn-notice
+  messages (`Claude reached its turn limit…`, `Claude's turn failed…`), the
+  registered agent's description and system prompt, and the herdctl fleet
+  description.
+
+  Behaviour is unchanged. The `keeper-` agent-name prefix is untouched — it is a
+  persisted on-disk encoding, not a word the user sees.
+
+### Patch Changes
+
+- [#595](https://github.com/edspencer/paddock/pull/595) [`d24d48f`](https://github.com/edspencer/paddock/commit/d24d48f746d11f964c59f8d870aa51a8a8a45fd4) Thanks [@edspencer](https://github.com/edspencer)! - Stop a foreground sub-agent leaking its steps into the parent transcript, and
+  show what running sub-agents are doing.
+
+  **The leak.** Launching a sub-agent with `run_in_background: false` duplicated
+  every one of its steps: once inside the sub-agent card (correct) and once as
+  top-level rows of the _parent_ transcript. A three-step sub-agent therefore
+  printed three phantom `Read`/`Bash` rows next to the card that already contained
+  them.
+
+  The filter that prevents this (`isSidechainMessage` — a nested step carries
+  `parent_tool_use_id`) existed, but only ONE of the five live turn paths called
+  it: the background sink. That gap was deliberate, and wrong. A comment on the
+  sink recorded the premise that only a _backgrounded_ `Task` streams its nested
+  steps inline, a foreground one being routed by herdctl to "a SEPARATE sidechain
+  session, never the main turn stream". Under SDK streaming mode that is false — a
+  foreground `Task` streams its steps inline on whichever turn stream launched it,
+  so every unfiltered path duplicated them. The filter now runs on all five
+  (`chat:send`, slash-command, scheduled wake, `startAgentTurn`, background sink),
+  with the false premise corrected in place so it cannot be re-derived.
+
+  The bug was live-only, which is why it survived: history has always filtered
+  sidechain steps, so a reload "healed" the transcript and the duplication read as
+  a streaming glitch. The regression test therefore asserts over WS **frames**, not
+  the persisted transcript — the persisted view was never broken. A new
+  `[[SUBAGENT]]` directive in the test `claude` emits a real foreground Task with
+  inline sidechain steps to drive it.
+
+  Skipping these messages also keeps a sub-agent's context out of the parent's live
+  context meter, which `foldTurnUsage` would otherwise latch onto as its max — the
+  same shape as the #398 inflation, corrected only on refresh.
+
+  **Seeing what a sub-agent is doing.** A sub-agent could work for minutes behind a
+  collapsed card showing only a cost, with no indication of progress — and the card
+  is often scrolled well out of view. A live bar above the composer now lists each
+  RUNNING sub-agent with its latest step and step count, updating as it works.
+  Tapping a row scrolls that sub-agent's card into view, expands it, and flashes it
+  so the eye lands on it (`prefers-reduced-motion` drops the flash).
+
+  Polling is hoisted out of the card into the chat, so it stays at one request per
+  sub-agent per tick and a card reads the shared result instead of opening a second
+  poll — expanding a card now costs no extra fetching. The bar and the card decide
+  "is it running" through one shared `isSubagentRunning` predicate, so they cannot
+  disagree the way the five stream handlers did.
+
 ## 0.53.0
 
 ### Minor Changes

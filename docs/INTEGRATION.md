@@ -4,7 +4,7 @@
 > the shipped `.d.ts` declarations of the **installed** package.
 >
 > **Re-verified 2026-07-31 against `@herdctl/core@5.27.0`** (paddock depends on
-> `^5.27.0`; `@herdctl/chat@^0.8.0` is also a direct dependency —
+> `^5.29.0`; `@herdctl/chat@^0.8.0` is also a direct dependency —
 > `packages/server/package.json`). This page was originally written against
 > **5.10.1**, and the headline finding has inverted since: **all four "gaps" it
 > asked herdctl for have shipped**, and paddock uses every one of them. Sections
@@ -85,9 +85,23 @@ interface FleetManagerOptions {
 }
 ```
 
+Two more options exist and paddock passes both. They were added after this page
+was written, so they fall outside its "verified against 5.10.1" claim:
+`allowScheduleMutation`, and — since **5.29.0** — **`claudeHomePath`**, the
+Claude home the engine's session discovery, its adoption primitives, and Claude
+Code itself resolve transcripts under. Paddock passes `cfg.claudeHome` so the two
+sides cannot disagree about which home is real; see `HerdctlService` in
+`herdctl.ts` and the `CLAUDE_HOME` row in [CONFIGURATION.md](CONFIGURATION.md).
+
+5.29.0 is also where the session-adoption primitives the chat import is built on
+arrived — `listAdoptableSessions`, `adoptSessionsFrom` and `unadoptSession` on
+the FleetManager (used by `AdoptableIndex` in `adoptable.ts` and
+`HerdctlService.adoptChats` in `herdctl.ts`) — along with the `CLAUDE_CONFIG_DIR`
+fix without which **resuming** an adopted session fails.
+
 There is also `initializeWebOnly({port?, host?})` — a zero-agent mode that serves
 session data from `~/.claude/` without a `herdctl.yaml`. Paddock does not use it
-(we always have at least the scratch agent), but it's available.
+(we always have at least the root workspace's keeper), but it's available.
 
 **Config-file requirements discovered the hard way** (the spike caught these — a
 naive inline config 400s):
@@ -114,11 +128,11 @@ Minimal working pair:
 version: 1
 fleet: { name: paddock-spike, description: spike fleet }
 agents:
-  - path: /abs/scratch.agent.yaml
+  - path: /abs/spike.agent.yaml
 ```
 ```yaml
-# scratch.agent.yaml
-name: scratch
+# spike.agent.yaml
+name: spike
 working_directory: /abs/dir
 runtime: cli
 max_turns: 3
@@ -153,7 +167,7 @@ on every call, which makes re-registration idempotent.
 
 Paddock's actual usage (`herdctl.ts`, `ensureProjectAgent` /
 `removeProjectAgent` and friends): the FleetManager boots from a **minimal
-zero-agent config** (fleet + defaults only) and every agent — scratch,
+zero-agent config** (fleet + defaults only) and every agent —
 `keeper-<slug>`, `sweeper-<slug>`, `trigger-<slug>-<name>` — is registered
 programmatically at init and on project create/update. Nothing writes per-agent
 yaml, and `reload()` is never called.
@@ -189,7 +203,6 @@ Config-dir layout paddock owns (generated, never hand-edited):
 <PADDOCK_DATA_DIR>/
   herdctl.yaml                 # fleet block + defaults ONLY — zero agent refs
   .herdctl/                    # state dir (state.yaml, jobs/, sessions/, …)
-  scratch/                     # scratch agent working dir
   projects/<slug>/             # project dirs (project.yaml, CHANGELOG.md, …)
 ```
 
@@ -245,6 +258,24 @@ await session.close();
 survive a turn boundary: herdctl's reaper keeps the session alive while it holds
 live background work. The caller must treat **the message stream ending as a reap**
 and re-open (resume) later to keep driving the conversation.
+
+The keep-alive rule has **no backstop** — no idle timer, no max lifetime. So a
+session whose background work never finishes is never reaped on its own and its
+message stream never ends, which (since we derive "is this chat running?" from
+that stream) leaves the chat wedged as running forever. **`fleet.reapChatSession(sessionId)`**
+(core ≥ 5.31.0) is the way out: it closes such a session on demand, the stream
+ends, and our ordinary unwind emits `chat:complete`. `HerdctlService.cancel`
+routes Stop here for background-phase turns (paddock#528).
+
+Do **not** reach for `session.close()` instead. It closes the query behind the
+reaper's bookkeeping, leaving the id registered live — a later resume of that
+chat then stalls until its 5-minute ceiling, and the session's wakes are skipped
+indefinitely.
+
+`session.interrupt()` is the other half of the pair, and the two are not
+interchangeable: `interrupt()` ends an **in-flight model turn** and keeps the
+session usable, so it's what Stop means during a live turn. A session held open
+purely for background work has no model turn to interrupt.
 
 `listAgentCommands(agentName, options)` is the one-shot convenience wrapper —
 opens a session, reads the command list, always closes.
@@ -332,6 +363,7 @@ fleet.getAgentWorkingDirectory(name);                  // string | undefined
 await fleet.deleteSession(name, sessionId);            // removes the transcript
 await fleet.setSessionName(name, sessionId, custom);   // custom display name
 fleet.invalidateSessions(name);                        // force a fresh listing
+fleet.reapChatSession(sessionId);                      // close a managed session now (§c.1)
 ```
 
 Paddock uses this layer exclusively — there is no `new SessionDiscoveryService(…)`

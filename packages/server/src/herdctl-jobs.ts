@@ -67,10 +67,10 @@ export async function lastTurnCompletedAt(index: JobsDirIndex): Promise<Map<stri
  * `listSessions` fan-out or any transcript parse. Returns `slug -> (sessionId
  * -> latest finished_at)`.
  *
- * Only keeper-attributed records (`agent: keeper-<slug>`) are kept — scratch
- * and sweeper records carry their own session ids that are not project chats,
- * so `keeperSlugFromAgent` returning `null` naturally filters them out. A chat
- * promoted from scratch is grouped under its keeper slug (its keeper record).
+ * Only keeper-attributed records (`agent: keeper-<slug>`) are kept — sweeper,
+ * trigger and hook records carry their own session ids that are not chats, so
+ * `keeperSlugFromAgent` returning `null` naturally filters them out. A promoted
+ * chat is grouped under its keeper slug (its keeper record).
  */
 export async function lastTurnCompletedAtByProject(
   index: JobsDirIndex,
@@ -102,7 +102,7 @@ export async function lastTurnCompletedAtByProject(
  * `job-*.yaml` carrying `trigger_type`, `status`, `started_at`/`finished_at`,
  * `duration_seconds`, `session_id`, `schedule` and `forked_from`; this reads
  * them via core's `listJobs` (importable from `@herdctl/core`, sorted by
- * `started_at` descending) filtered to `keeper-<slug>`, so scratch/sweeper
+ * `started_at` descending) filtered to `keeper-<slug>`, so sweeper/trigger
  * records are excluded.
  *
  * The true human/scheduled/spawned provenance is carried by Paddock's
@@ -181,9 +181,9 @@ export async function listRunsForAgents(
 /**
  * Point every herdctl job record for `sessionId` at the project's keeper so
  * the core attribution index (last-write-wins per session) lists the session
- * under the project. A scratch chat writes one job record PER TURN (all
- * `agent: scratch`); simply adding a keeper record alongside them is not
- * enough — whichever record the index visits last wins. So we rewrite the
+ * under the project. A session can already have MANY job records (one per
+ * turn) attributed elsewhere; simply adding a keeper record alongside them is
+ * not enough — whichever record the index visits last wins. So we rewrite the
  * `agent` field of all existing records for the session. When none exist
  * (e.g. a transcript migrated from outside paddock), we synthesize one.
  */
@@ -242,8 +242,8 @@ export async function writeAdoptionJob(
 
 /**
  * Underlying adoption-record writer, parametrized by the target agent name so
- * it serves both project keepers (fork/promote/adopt) and the scratch agent
- * (see {@link attributeRunningSession}). Writes a `<jobId>.yaml` mapping the
+ * every caller (fork/promote/adopt — see {@link attributeRunningSession}) shares
+ * one implementation. Writes a `<jobId>.yaml` mapping the
  * session id to `agentName` plus a matching empty `.jsonl` output file.
  */
 export async function writeAgentAdoptionJob(

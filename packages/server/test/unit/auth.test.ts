@@ -54,13 +54,22 @@ function authConfig(over: Partial<AuthConfig>): AuthConfig {
   };
 }
 
-/** A Fastify app with auth registered + an echo route returning req.user. */
+/**
+ * A Fastify app with auth registered + an echo route returning req.user.
+ *
+ * Only routes that EXIST in the real app may be registered here. This helper used
+ * to also hand-register `/healthz`, which the real router never served — so the
+ * health-path tests below proved the hook exempts what it is told to exempt while
+ * saying nothing about whether the path resolves to anything. That masked issue
+ * #569 for five unregistered aliases. Whether HEALTH_PATHS matches the real router
+ * is asserted against the real app in
+ * `test/integration/auth-health-paths.test.ts` — the check this file cannot make.
+ */
 function buildApp(auth: AuthConfig): FastifyInstance {
   const app = Fastify({ logger: false });
   registerAuth(app, auth);
   app.get("/api/whoami", async (req) => ({ user: req.user }));
   app.get("/api/health", async () => ({ ok: true }));
-  app.get("/healthz", async () => ({ ok: true }));
   return app;
 }
 
@@ -123,11 +132,26 @@ describe("auth: mode=trusted-header", () => {
     });
   });
 
-  it("exempts health paths (no header required)", async () => {
+  it("exempts the health route (no header required), including with a query string", async () => {
     app = buildApp(authConfig({ mode: "trusted-header" }));
-    for (const url of ["/api/health", "/healthz"]) {
+    // The query-string form covers normalizePath: a probe URL carrying params must
+    // still match the exemption.
+    for (const url of ["/api/health", "/api/health?probe=k8s"]) {
       const res = await app.inject({ method: "GET", url });
       expect(res.statusCode, url).toBe(200);
+      expect(res.json().ok, url).toBe(true);
+    }
+  });
+
+  // #569: the retired aliases must be gated like any other unregistered path. A
+  // 401 here (not a 404) is the assertion — it proves the auth hook stops them
+  // BEFORE routing, which in the real app is what kept them out of the SPA shell.
+  it("does not exempt the retired health aliases (issue #569)", async () => {
+    app = buildApp(authConfig({ mode: "trusted-header" }));
+    for (const url of ["/healthz", "/-/health", "/health", "/readyz", "/livez"]) {
+      const res = await app.inject({ method: "GET", url });
+      expect(res.statusCode, `${url} must not be exempt`).toBe(401);
+      expect(res.json().code, url).toBe("auth_required");
     }
   });
 });
@@ -272,11 +296,16 @@ describe("auth: mode=jwt", () => {
     expect(res.statusCode).toBe(401);
   });
 
-  it("exempts health paths without a token", async () => {
+  it("exempts the health route without a token, but not the retired aliases (issue #569)", async () => {
     app = buildApp(authConfig({ mode: "jwt", jwksUrl: "https://idp/jwks" }));
-    for (const url of ["/api/health", "/healthz"]) {
+    for (const url of ["/api/health", "/api/health?probe=k8s"]) {
       const res = await app.inject({ method: "GET", url });
       expect(res.statusCode, url).toBe(200);
+      expect(res.json().ok, url).toBe(true);
+    }
+    for (const url of ["/healthz", "/-/health", "/health", "/readyz", "/livez"]) {
+      const res = await app.inject({ method: "GET", url });
+      expect(res.statusCode, `${url} must not be exempt`).toBe(401);
     }
   });
 

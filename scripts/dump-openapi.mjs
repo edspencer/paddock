@@ -27,7 +27,6 @@ const tmp = mkdtempSync(path.join(tmpdir(), "paddock-openapi-"));
 process.env.PADDOCK_DATA_DIR = tmp;
 process.env.PADDOCK_PROJECTS_DIR = path.join(tmp, "projects");
 process.env.PADDOCK_STATE_DIR = path.join(tmp, "state");
-process.env.PADDOCK_SCRATCH_DIR = path.join(tmp, "scratch");
 process.env.PADDOCK_HERDCTL_CONFIG = path.join(tmp, "herdctl.yaml");
 mkdirSync(process.env.PADDOCK_PROJECTS_DIR, { recursive: true });
 // jwt mode → the reference shows the bearer Authorize scheme. The JWKS URL is a

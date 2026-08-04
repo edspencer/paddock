@@ -5,8 +5,8 @@ batch of releases. This is written for an agent working on the Paddock dev box,
 but the shape holds anywhere.
 
 Run this whenever the docs site has fallen behind. It has been run at v0.46.0
-(a large backlog), v0.52.0 (six releases) and v0.53.0 (a single release); keep it
-updated as the process changes.
+(a large backlog), v0.52.0 (six releases), v0.53.0 (a single release) and v0.55.0
+(three releases, with video); keep it updated as the process changes.
 
 ---
 
@@ -21,7 +21,7 @@ of hours and usually **one PR**. What changes:
 | 1. Ground truth | Full per-page last-touch map | Confirm version + read the two changelog sections |
 | 3. Audit | Fan out 4 subagents over page groups | **Skip the fan-out.** Grep the site for the specific doc contracts the release touched |
 | 4. Plan | One PR per doc area | One PR; two only if screenshots want separating |
-| 5. Screenshots | Demo rig, seeded, multiple shots | Only if the release has a genuinely visual change — and see the observability check below |
+| 5. Media | Demo rig, seeded, multiple shots, a recorded clip for the headline | Only if the release has a genuinely visual change — and see the observability check below |
 | 9. Delegation | Fan out to child chats | Don't. Do it inline |
 
 The steps that **never** scale down, because each has cost a real plan:
@@ -216,10 +216,57 @@ Two rules learned the hard way:
 
 ---
 
-## 5. Screenshots: spin a demo instance
+## 5. Screenshots and video: spin a demo instance
 
-The What's New page always carries screenshots of the new UI. Never screenshot
-production — it contains real transcripts and private project names.
+The What's New page always carries screenshots of the new UI, and a genuinely
+visual headline feature is worth a short recording. Never shoot production — it
+contains real transcripts and private project names.
+
+### Video: use the harness, and ship MP4 not GIF
+
+**There is already a video-production harness in `video/`** (landed via #584).
+Do not write a recorder. It gives you Playwright `recordVideo` capture, a
+*synthetic* cursor (Playwright's real pointer is not captured by the screencast,
+so without it the UI looks like a ghost is driving), eased human-ish motion, and
+a caption/assemble pipeline for full films. Read `video/README.md` first; the
+measured capture constraints there are inputs, not suggestions.
+
+A new film is a new directory — `video/videos/<name>/scenes/*.mjs` — never a fork
+of `lib/`. For a single docs clip you only need `record()` plus `humanClick` /
+`dwell` / `settle` from `lib/cinematics.mjs`; the manifest and caption machinery
+are for cut films. Run everything with `env -u NODE_ENV
+PLAYWRIGHT_BROWSERS_PATH=/ms-playwright` and point `PADDOCK_VIDEO_OUT` outside
+the repo.
+
+**Ship an MP4 through the repo's `DemoVideo` component, not an animated GIF.**
+This is already settled and the component's header carries the measurements. On
+the 0.55 import clip: **274 KB of MP4 against 2.0 MB for the equivalent GIF**,
+and the GIF loses small UI text — tool names, timestamps, counts — to 256-colour
+dithering. `DemoVideo` configures the video to *behave* like a GIF (muted,
+autoplay, loop, playsinline) while keeping controls, a poster frame, and an
+inline script that honours `prefers-reduced-motion`, which CSS cannot do for a
+video. If someone asks for "a GIF", give them this — it is the same experience,
+smaller and readable.
+
+Two mechanical consequences:
+
+- `DemoVideo` is an Astro component, so the page must be **`.mdx`**. Renaming
+  `whats-new.md` → `whats-new.mdx` is safe: Starlight routes both to the same
+  slug, so the published URL does not move.
+- **MDX is stricter than Markdown.** A JSX block placed immediately after a list
+  item fails the build with `Unexpected lazy line in container` — it is read as a
+  lazy continuation of the list. Put a blank line before every JSX block. Tables
+  inside list items survive the conversion fine.
+
+Media goes in two different places: **video and poster in `website/public/demo/`**
+(referenced by absolute path, `/demo/foo.mp4`, and served as-is), **stills in
+`website/src/assets/whats-new/`** (referenced relatively, and run through Astro's
+image pipeline into `.webp`). Putting a video in `src/assets/` does not work.
+
+Verify in a browser, not just in the build: load the page and check
+`video.readyState`, `videoWidth` and `duration` are non-zero. Images below the
+fold report `naturalWidth: 0` because they are lazy-loaded — that is not a
+failure; curl the built `/_astro/*.webp` URLs to confirm they are really there.
 
 ### First: can the feature actually be observed?
 
@@ -287,8 +334,8 @@ export PATH="$CLONE/test/bin:$PATH"       # the fake `claude` stub
 # The fake claude is a CLI stub, so turns MUST run on the batch runtime.
 # The default is `session` (SDK runtime + its own bundled claude), which
 # ignores PATH and dead-ends on "Not logged in". This box also EXPORTS
-# PADDOCK_KEEPER_DRIVE_MODE=session, so pin it explicitly.
-export PADDOCK_KEEPER_DRIVE_MODE=batch
+# PADDOCK_DRIVE_MODE=session, so pin it explicitly.
+export PADDOCK_DRIVE_MODE=batch
 
 # SCRUB INHERITED CREDENTIALS AND BRANDING. `pm` copies the whole host env and
 # deletes only five data-path vars — see the comment in scripts/pm, which says
@@ -315,7 +362,101 @@ ss -lptn "sport = :$PORT"
 tr '\0' '\n' < /proc/<pid>/environ | grep PADDOCK_DATA_DIR
 ```
 
-### Seed data
+### Seeding from a COPY of production
+
+Hand-seeded fixtures never look like a real instance: the chat volume is wrong,
+every timestamp is "today", and the sidebar is too tidy. Copying production gives
+you genuine density for free. **Copy — never symlink.** A symlinked `.chats` has
+already cost real transcripts on this box, and the whole value of a copy is that
+you may safely rewrite it.
+
+```bash
+rsync -a --exclude='node_modules/' --exclude='.git/' --exclude='clones/' \
+      --exclude='wt-*/' --exclude='qa/' --exclude='.playwright-mcp/' \
+      --exclude='dist/' --exclude='*.mp4' --exclude='*.webm' \
+      /data/projects/ "$RIG/data/projects/"
+# then the data-root sidecars, or history/provenance/read-state are all missing:
+#   .herdctl/  attachments/  agents/  sweepers/  herdctl.yaml
+#   {archive,read,unread,star,sweep}-state.json  {run,message}-provenance.json
+```
+
+Then disarm it: strip `triggers:` blocks and `repo:` keys from every
+`project.yaml`, so nothing can fire on a schedule or reach a real repository.
+
+**`CLAUDE_HOME` works and is the cleaner isolation.** An older rig's launcher
+claims setting it "yields ZERO discovered chats" — that is no longer true.
+Pointing it at a private directory still discovers every copied chat (Paddock
+re-plants its `<claudeHome>/projects/<encoded workingDir>` symlinks on boot) and
+keeps the rig's transcripts, plus anything you stage, out of the shared
+`~/.claude`. Verify the running process rather than the intent:
+`tr '\0' '\n' < /proc/<pid>/environ`.
+
+#### Scan the copy for secrets BEFORE you record
+
+Production transcripts contain credentials that agents pasted, printed or read.
+On the 0.55 pass a copy of `/data/projects` carried **16 files with live tokens**
+— seven Anthropic OAuth tokens and nine GitHub PATs — including *the transcript
+of the very session doing the work*, because it had `cat`ed a rig launcher that
+holds a token in plaintext.
+
+```bash
+grep -rlE 'sk-ant-[a-z0-9]+-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}' "$RIG/data"
+```
+
+Two traps, both of which produce a confident zero:
+
+- **`grep -E` with `\{20,\}` matches nothing.** Under ERE the braces are literal.
+  The first sweep on this pass "found" 0 secrets in files that demonstrably had
+  them. Use bare `{20,}` with `-E`, and sanity-check the pattern against a file
+  you know matches.
+- **Do not `cat` a rig launcher.** Several hold a real `CLAUDE_CODE_OAUTH_TOKEN`
+  at `chmod 600`. Reading one copies it into your own transcript, which is then
+  itself a file the next rig copy will pick up. `grep -c` for what you need, or
+  read with the token line filtered out.
+
+Scrub in place rather than deleting the chats — deleting leaves orphaned job
+records and dents the density you copied the data for:
+
+```bash
+sed -i -E 's/sk-ant-[a-z0-9]+-[A-Za-z0-9_-]{20,}/sk-ant-REDACTED/g' "$f"
+```
+
+#### Fictionalise what will be on camera
+
+Real chat *titles* are the revealing part — project names are usually already
+public, but "Revive/kill <product>" is a business signal. You control the copy,
+so fix it rather than leaving the judgement to the reviewer: rename via
+`PATCH <base>/chats/:sessionId` with `{"name": "..."}` (use `/api/root` for root
+chats, `/api/projects/<slug>` otherwise). Renaming the ~30 chats that appear in
+the feed you are shooting takes one script and removes the question entirely.
+
+Then re-shoot and **look at the frames**. The rig's Home footer prints its real
+data directory; hide it before the first frame, and assert from the page that
+nothing else leaks:
+
+```js
+document.body.innerText.match(/<your-domain>|127\.0\.0\.1|\/data\/scratch|sk-ant/g)
+```
+
+#### Staging a feature that has no data yet
+
+For a feature like 0.55's chat import, the honest demo is a **fictional project**
+— a repo you have just added, whose history is still in your terminal. That is
+both the real use case and completely safe to publish. What the detection
+actually requires (traced from source, and cheaper to know than to rediscover):
+
+- `CLAUDE_HOME` is honoured, so stage into the rig's private home.
+- The folder name is `encodePathForCli(cwd)` — every non-alphanumeric character
+  becomes `-`. **The fake checkout directory itself need not exist.**
+- A repo-backed project matches on the *checkout basename* of its `repo:` key, so
+  keep `repo:` on the one project you are filming even though you stripped it
+  everywhere else.
+- Each transcript must be **≥ 256 bytes** and its first user message must **not**
+  start with `/`, or it is filtered as noise.
+- The adoptable cache is **in-process**; `touch` will not invalidate it. Restart
+  the rig after staging.
+
+### Seed data for a live-turn shot
 
 **Disable curation before you seed, not after.** The rig runs a real agent, so
 a completed turn enqueues a sweep — and the sweeper replaces `OVERVIEW.md` and
@@ -397,6 +538,10 @@ House style, derived from the existing page:
   extended when a new supersession happens.
 - The editorial paragraph near the top draws the thematic arc across the recent
   stretch. Update it when the arc genuinely changes.
+- **A bug the release fixed in a previous entry is worth saying so.** When 0.54
+  fixed the socket gap that 0.53's entry had disclosed, the 0.54 bullet said
+  which earlier symptom it cured. That is the page being honest across time
+  rather than each entry pretending to be the whole story.
 
 ---
 
@@ -428,6 +573,24 @@ Check all four:
 
 Also confirm internal links resolve. Starlight will build happily with a broken
 relative link.
+
+When the diff carries **media**, add a fifth check: serve the built site and look
+at it. `pm` is the way to give a reviewer a URL, and Astro's dev server is not —
+it 403s the dev subdomain because `allowedHosts` is ignored. Build once and serve
+`dist/` statically:
+
+```bash
+# /data/paddock-servers/<name>/serve.sh
+cd "$SITE/dist" && exec python3 -m http.server "${PORT:-8080}" --bind 0.0.0.0
+```
+
+Then curl each new asset for a `200` **and** open the page in a browser: a video
+that 404s still builds, and a still that has been silently dropped leaves no
+trace in the build log.
+
+Note the two grep hits you should expect and ignore: `127.0.0.1` appears ~27
+times in the built deployment guides as legitimate loopback documentation, and
+the leak-check instructions in this runbook match their own pattern.
 
 ---
 

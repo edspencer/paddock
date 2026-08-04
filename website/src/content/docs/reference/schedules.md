@@ -45,10 +45,22 @@ The fields:
 | `run.session` | `new` \| `resume` | `new` (default) = a fresh chat each firing; `resume` = one owned accreting session. |
 | `run.tools` | string array | The fired agent's allow-list. Empty (default) = runs as the project's own agent with full tools; non-empty = its own scoped `trigger-<slug>-<name>` agent with exactly those tools. |
 | `run.model` | string | Optional per-trigger model override. |
-| `run.permissionMode` | `default` \| `acceptEdits` \| `bypassPermissions` \| `plan` | Permission mode the fired turns run under. |
+| `run.permissionMode` | `default` \| `acceptEdits` \| `bypassPermissions` \| `plan` | Permission mode the fired turns run under. **`bypassPermissions` runs every tool unprompted** — see the caution below. |
 | `run.maxTurns` | integer | Upper bound on agent turns (default 30). |
 | `run.maxSpawnDepth` | integer ≥ 0 | Bounds internal spawning (`0` = may not spawn). |
 | `enabled` | boolean | Whether it's armed. A trigger created through the UI or MCP defaults to **disabled**. |
+
+:::caution[`bypassPermissions` removes the last check]
+`bypassPermissions` runs every granted tool with no prompt and no gate. A schedule fires
+**unattended, on a timer** — there is no human at the keyboard to prompt anyway, so the
+confirmation that would normally catch a bad `Bash` or `Write` never happens, and it
+won't happen at 3am either. With `run.tools`, this is the fired agent's whole capability
+exercised without review, on every firing.
+
+Use it only where you accept that blast radius unsupervised — a sandbox or a scratch
+checkout. Otherwise leave it at `default` or `acceptEdits` and keep `run.tools` narrow.
+See [What your agents can do](/guides/agent-capabilities/).
+:::
 
 :::note[Exactly-one rules]
 A schedule needs **exactly one** of `cron` / `interval`, and its `run` needs

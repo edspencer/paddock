@@ -63,7 +63,7 @@ property of the **runtime**, not the transport:
 - **Batch mode (CLI runtime)** renders each assistant message **whole** when it
   completes; there's no intra-message streaming.
 
-The drive mode is set by `PADDOCK_KEEPER_DRIVE_MODE` (with a per-project
+The drive mode is set by `PADDOCK_DRIVE_MODE` (with a per-project
 `driveMode` override) — see
 [Agents](/configuration/environment/#agents). Everything else about a chat is
 identical either way: the transport was already delta-shaped, so
@@ -73,7 +73,7 @@ re-attach and replay behave the same whether or not tokens stream.
 
 A chat can be **forked** into a parallel child: `forkSession` *copies* the
 transcript and mints a new session id, so the child diverges without touching the
-parent. (Contrast with promotion, which *moves* a scratch chat into a project —
+parent. (Contrast with promotion, which *moves* a root chat into a project of its own —
 see [Agents](/concepts/agents).) Forked children run under the same agent (up to
 `KEEPER_MAX_CONCURRENT` in parallel) and are full chats in their own right —
 resumable, forkable, archivable.

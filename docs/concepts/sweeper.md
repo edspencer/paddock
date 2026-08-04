@@ -20,7 +20,7 @@ chat with it.
 
 ## When it runs
 
-1. After a **successful, non-scratch** user turn, `ws.ts` calls `enqueue(slug)`.
+1. After a **successful** user turn, `ws.ts` calls `enqueue(slug)`.
 2. Sweeps are **debounced/coalesced**: at most one per project per
    `minIntervalMs` (default **5 minutes**, `PADDOCK_SWEEP_MIN_INTERVAL_MS`).
    Bursts of turns fold into a single trailing run.

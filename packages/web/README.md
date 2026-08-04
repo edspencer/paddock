@@ -1,7 +1,7 @@
 # @paddock/web
 
 The project-first Paddock SPA — React + Vite + Tailwind, dark-mode, responsive.
-Projects are the first-class citizen; one-off chats are secondary.
+Projects are the first-class citizen; the instance root is a workspace of its own.
 
 > **Running the full stack (server + token + web)?** See **`../../DEV.md`** at the
 > repo root — it has the one-place instructions for both production-like and
@@ -22,10 +22,9 @@ npm run -w packages/web build
 | Path | Role |
 |------|------|
 | `src/main.tsx` | Router + `ProjectsProvider`. Routes: `/`, `/projects/:slug`, `/chat`, `/chat/:sessionId`. |
-| `src/components/AppShell.tsx` | Sidebar (project nav, **New Project**, secondary **New one-off chat**). |
+| `src/components/AppShell.tsx` | Sidebar (**Home** nav + the project list). |
 | `src/routes/ProjectsGrid.tsx` | Landing: project cards (status, domains, chat count, last activity) + empty state. |
 | `src/routes/ProjectView.tsx` | Project header, chat/session list, chat pane, Files & Changelog tab. |
-| `src/routes/OneOffChat.tsx` | Scratch chats against the `scratch` slug — secondary in the IA. |
 | `src/components/ChatPane.tsx` | The core: streaming markdown, tool blocks, boundaries, cancel, history hydration. |
 | `src/components/NewProjectModal.tsx` | Create-project flow (name, summary, domains, status). |
 | `src/components/Markdown.tsx` | `react-markdown` + `remark-gfm`, styled via the `.md` scope in `index.css`. |
@@ -40,7 +39,7 @@ REST: `GET/POST /api/projects`, `GET /api/projects/:slug` (`{project, changelog,
 `GET /api/chats`, `GET /api/chats/:sessionId/messages`.
 
 WebSocket `/ws`:
-- client→server: `chat:send {projectSlug ("scratch" = one-off), sessionId|null, message}`,
+- client→server: `chat:send {projectSlug ("" = the root workspace), sessionId|null, message}`,
   `chat:cancel {jobId}`, `ping`.
 - server→client: `chat:response {chunk}`, `chat:tool_call {toolName, inputSummary?, output, isError, durationMs?}`,
   `chat:message_boundary` (splits assistant turns), `chat:complete {sessionId, success, error?}`

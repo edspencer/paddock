@@ -6,6 +6,7 @@ import {
   projectChatsDir,
   ensureProjectChats,
   readFirstUserText,
+  type ClaudeHomeTarget,
 } from "../../src/transcripts.js";
 import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
 
@@ -69,17 +70,16 @@ describe("readFirstUserText (issue #62)", () => {
 describe("ensureProjectChats", () => {
   let home: string;
   let projectDir: string;
-  let prevClaudeHome: string | undefined;
+
+  // The home is passed explicitly, never read from the environment (#620): the
+  // parameter is required precisely so no caller can silently take a default.
+  const owned = (): ClaudeHomeTarget => ({ path: home, owned: true });
 
   beforeEach(async () => {
     home = await makeTmpDir("paddock-claude-home-");
-    prevClaudeHome = process.env.CLAUDE_HOME;
-    process.env.CLAUDE_HOME = home;
     projectDir = await makeTmpDir("paddock-proj-");
   });
   afterEach(async () => {
-    if (prevClaudeHome === undefined) delete process.env.CLAUDE_HOME;
-    else process.env.CLAUDE_HOME = prevClaudeHome;
     await rmTmpDir(home);
     await rmTmpDir(projectDir);
   });
@@ -89,7 +89,7 @@ describe("ensureProjectChats", () => {
   }
 
   it("creates .chats and a symlink from the encoded path to it (fresh case)", async () => {
-    await ensureProjectChats(projectDir);
+    await ensureProjectChats(projectDir, projectDir, owned());
     const chats = projectChatsDir(projectDir);
     expect((await fs.stat(chats)).isDirectory()).toBe(true);
 
@@ -101,8 +101,8 @@ describe("ensureProjectChats", () => {
   });
 
   it("is idempotent (second call leaves a correct symlink)", async () => {
-    await ensureProjectChats(projectDir);
-    await ensureProjectChats(projectDir);
+    await ensureProjectChats(projectDir, projectDir, owned());
+    await ensureProjectChats(projectDir, projectDir, owned());
     const enc = encodedPath();
     expect((await fs.lstat(enc)).isSymbolicLink()).toBe(true);
   });
@@ -113,7 +113,7 @@ describe("ensureProjectChats", () => {
     const elsewhere = await makeTmpDir("paddock-elsewhere-");
     await fs.symlink(elsewhere, enc);
 
-    await ensureProjectChats(projectDir);
+    await ensureProjectChats(projectDir, projectDir, owned());
 
     const target = await fs.readlink(enc);
     expect(path.resolve(path.dirname(enc), target)).toBe(
@@ -130,7 +130,7 @@ describe("ensureProjectChats", () => {
     await fs.writeFile(path.join(enc, "sess-1.jsonl"), '{"type":"user"}\n', "utf8");
     await fs.writeFile(path.join(enc, "sess-2.jsonl"), '{"type":"user"}\n', "utf8");
 
-    await ensureProjectChats(projectDir);
+    await ensureProjectChats(projectDir, projectDir, owned());
 
     // The encoded path is now a symlink…
     expect((await fs.lstat(enc)).isSymbolicLink()).toBe(true);
@@ -149,17 +149,57 @@ describe("ensureProjectChats", () => {
     await fs.mkdir(enc, { recursive: true });
     await fs.writeFile(path.join(enc, "sess-1.jsonl"), "OVERWRITE", "utf8");
 
-    await ensureProjectChats(projectDir);
+    await ensureProjectChats(projectDir, projectDir, owned());
 
     // The pre-existing .chats copy wins (no clobber).
     expect(await fs.readFile(path.join(chats, "sess-1.jsonl"), "utf8")).toBe("KEEP");
   });
 
+  // #620: the migrate branch copies transcripts into `.chats/` and then `fs.rm`s
+  // the originals. That is fine inside a home paddock owns — such a directory can
+  // only be its own doing. Inside the user's `~/.claude` it is somebody else's
+  // `claude` CLI history for a directory paddock happens to also manage, and
+  // deleting it was the destructive behaviour #620 exists to stop.
+  describe("in a home paddock does NOT own", () => {
+    const unowned = (h: string): ClaudeHomeTarget => ({ path: h, owned: false });
+
+    it("leaves an existing real transcript dir completely alone", async () => {
+      const enc = encodedPath();
+      await fs.mkdir(enc, { recursive: true });
+      await fs.writeFile(path.join(enc, "mine.jsonl"), '{"type":"user"}\n', "utf8");
+      const before = await fs.stat(path.join(enc, "mine.jsonl"));
+
+      await ensureProjectChats(projectDir, projectDir, unowned(home));
+
+      // Still a real directory, still holding the user's transcript, untouched.
+      expect((await fs.lstat(enc)).isDirectory()).toBe(true);
+      expect((await fs.lstat(enc)).isSymbolicLink()).toBe(false);
+      const after = await fs.stat(path.join(enc, "mine.jsonl"));
+      expect(after.mtimeMs).toBe(before.mtimeMs);
+      // …and nothing was copied out of it either.
+      await expect(
+        fs.access(path.join(projectChatsDir(projectDir), "mine.jsonl")),
+      ).rejects.toBeTruthy();
+    });
+
+    it("still plants the symlink when there is nothing there (the escape hatch works)", async () => {
+      // CLAUDE_HOME=$HOME/.claude restores the pre-#620 layout in full, so the
+      // ordinary fresh-project path must keep working in an unowned home.
+      await ensureProjectChats(projectDir, projectDir, unowned(home));
+      const enc = encodedPath();
+      expect((await fs.lstat(enc)).isSymbolicLink()).toBe(true);
+      expect(path.resolve(path.dirname(enc), await fs.readlink(enc))).toBe(
+        path.resolve(projectChatsDir(projectDir)),
+      );
+    });
+  });
+
   it("never throws (swallows errors) when the encoded path is unwritable", async () => {
-    // Point CLAUDE_HOME at a file (not a dir) so mkdir of projects/ fails.
+    // Point the home at a file (not a dir) so mkdir of projects/ fails.
     const badHome = path.join(home, "afile");
     await fs.writeFile(badHome, "x", "utf8");
-    process.env.CLAUDE_HOME = badHome;
-    await expect(ensureProjectChats(projectDir)).resolves.toBeUndefined();
+    await expect(
+      ensureProjectChats(projectDir, projectDir, { path: badHome, owned: true }),
+    ).resolves.toBeUndefined();
   });
 });

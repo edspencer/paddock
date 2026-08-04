@@ -15,7 +15,9 @@ below).
 ## Monorepo layout
 
 Two `private` packages, versioned and released **together** (one number = "the
-Paddock version"; not published to npm):
+Paddock version"). Neither is published under its own name — releases synthesize
+a single public **`@edspencer/paddock`** package from their built output
+(`scripts/make-npm-package.mjs`), so the workspace manifests stay `private`:
 
 - **`packages/server`** (`@paddock/server`) — **Fastify 4 + `@fastify/websocket`**
   backend. Wraps herdctl's `FleetManager`, the Project layer, sidecar stores, the
@@ -50,7 +52,7 @@ is cited to `packages/server/src`). The essentials:
   notes out of band (always a one-shot `trigger()`, so always the CLI runtime).
   Chat turns run `batch` (one-shot `trigger()`, CLI runtime) or `session`
   (persistent `openChatSession`, which hard-codes the SDK runtime; background
-  tasks / wake-ups survive the turn), per `PADDOCK_KEEPER_DRIVE_MODE` /
+  tasks / wake-ups survive the turn), per `PADDOCK_DRIVE_MODE` /
   `project.driveMode`. `session` is the default, so **chats normally run on the
   SDK, not `claude -p`**.
 
@@ -60,8 +62,9 @@ Config is **entirely env-based** (`config.ts`, no config files) — see
 ## Dev conventions
 
 Full guide: [`CONTRIBUTING.md`](CONTRIBUTING.md); run modes: [`DEV.md`](DEV.md).
-Node 22+, `claude` CLI on `PATH`, a `CLAUDE_CODE_OAUTH_TOKEN` in env (never print
-or commit it).
+Node 22+, a `CLAUDE_CODE_OAUTH_TOKEN` in env (never print or commit it), and a
+`claude` CLI on `PATH` **for the sweeper and triggers only** — chats resolve the
+SDK's own bundled binary and never consult `PATH`.
 
 ```bash
 npm install                 # all workspaces
@@ -97,3 +100,13 @@ npm run test:e2e            # Playwright vs real server + a fake `claude` on PAT
 | Auth modes & secrets | [`AUTH.md`](AUTH.md) |
 | Release pipeline | [`RELEASING.md`](RELEASING.md) |
 | herdctl API contract Paddock depends on | [`docs/INTEGRATION.md`](docs/INTEGRATION.md) |
+| Regenerating the README/docs demo reel | [`scripts/demo-gif/README.md`](scripts/demo-gif/README.md) |
+
+**The demo reel is generated, not hand-made.** `docs/demo/paddock-demo.gif` (and
+its copy under `website/public/demo/`) comes out of `npm run demo:gif` — a
+committed seed/shoot/build pipeline that stages a synthetic instance, drives it,
+and photographs it. Never edit or hand-replace those files; change
+`scripts/demo-gif/beats.mjs` (the storyboard) or `fixtures.mjs` (the content) and
+re-run. It went 26 minor versions stale once because the original was ad-hoc and
+undiscoverable — worth refreshing whenever a release changes what the UI looks
+like.

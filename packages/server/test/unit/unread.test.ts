@@ -59,7 +59,7 @@ describe("UnreadStore", () => {
     const store = new UnreadStore(dir);
     await store.setUnread(null, "keeper-a", "same", true);
     expect(await store.isUnread(null, "keeper-a", "same")).toBe(true);
-    expect(await store.isUnread(null, "scratch", "same")).toBe(false);
+    expect(await store.isUnread(null, "keeper-other", "same")).toBe(false);
   });
 
   it("does not lose an entry when concurrent toggles race before the first load resolves", async () => {

@@ -5,7 +5,7 @@
  *
  *   client -> server:
  *     { type: "chat:send", payload: {
- *         projectSlug: string,        // project slug, or "scratch" for one-off
+ *         projectSlug: string,        // workspace key: a project slug, or "" for the root
  *         sessionId: string | null,   // resume an existing chat, or null = new
  *         message: string,
  *         preloadContext?: boolean,   // new chat: prepend the project OVERVIEW.md
@@ -136,6 +136,12 @@ import {
 // See issue #46.
 const SERVER_PING_INTERVAL_MS = 30_000;
 
+// Separator in a composite in-memory key; a NUL can't occur in an agent name or
+// a UUID. Spelled as an escape, never a raw 0x00 byte — a literal NUL makes
+// ripgrep/grep treat this file as binary and skip it during directory traversal
+// (silently, exit 1, indistinguishable from "no matches"). See issue #570.
+const KEY_SEP = "\u0000";
+
 
 export function makeChatHandler(deps: ChatHandlerDeps) {
   // ONE hub shared across every socket this handler serves: it tracks each
@@ -188,8 +194,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
   // it down when it goes idle again (and re-captures any fresh wakeups).
   deps.herdctl.onSessionWake(async (session: RuntimeSession, entry: SessionWakeEntry) => {
     // Only KEEPER agents own chats. A wake from a sweeper/trigger/hook agent has
-    // no chat to drive, so there is nothing to route. (Before #516 Phase 6 this
-    // fell back to the scratch slug, which is no longer an addressable chat.)
+    // no chat to drive, so there is nothing to route.
     const slug = keeperSlugFromAgent(entry.agent);
     // `null` = not a keeper. `""` = the ROOT workspace's own key, so this must
     // stay an explicit null check or every root chat's wake is dropped.
@@ -320,8 +325,10 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
     } finally {
       turn.end();
     }
-    // Post-wake curation sweep, same as a human turn (never for scratch). T5: routed
-    // through the `afterTurn` event so the folded-in curator dispatches once.
+    // Post-wake curation sweep, same as a human turn. Fires for EVERY workspace,
+    // the root included (its sweeper is `sweeper-_root`, registered at boot) — the
+    // emit is unconditional and skips nothing. T5: routed through the `afterTurn`
+    // event so the folded-in curator dispatches once.
     emitAfterTurn(slug, resolvedSession ?? null);
   });
 
@@ -429,8 +436,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
      * turn streams live, lists in the sidebar, and is attributable
      * (`sender: recovery`). Server-authoritative gate: no-op unless the resolved
      * `recovery.surfaceKilledTask` is on for this project, so a stale/rogue client
-     * can't re-drive when the operator disabled Layer 2. Scratch chats have no
-     * keeper session to recover, so they're ignored.
+     * can't re-drive when the operator disabled Layer 2.
      */
     const onChatContinue = async (msg: ChatContinueMessage): Promise<void> => {
       // `""` addresses the ROOT workspace, so only a MISSING key is a no-op.
@@ -488,7 +494,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       const agent = keeperAgentName(slug);
       const queued = await deps.queuedMessage.take(agent, sessionId).catch(() => null);
       if (!queued?.text) return;
-      const markerKey = `${agent}\u0000${sessionId}`;
+      const markerKey = `${agent}${KEY_SEP}${sessionId}`;
       const already = (lastFlushedTs.get(markerKey) ?? 0) >= queued.createdAtMs;
       // Tell every attached client (origin + reconnected sockets) to clear its copy
       // of this message. When we're really sending it, carry the text so the client
@@ -527,7 +533,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       if (slug === undefined || slug === null) return;
       const sessionId = msg.payload.sessionId ?? null;
       const text = msg.payload.text ?? null;
-      // Every chat belongs to a project keeper (#516 Phase 6 retired scratch).
+      // Every chat belongs to a workspace keeper.
       const agent = keeperAgentName(slug);
       if (!sessionId) {
         // New chat: queue isn't stored until the session id exists. The client
@@ -576,8 +582,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       // The model the turn will run on; resolved below once we know the target.
       let effectiveModel: string = DEFAULT_MODEL;
       // How this turn is driven (Paddock#111): the global default unless the
-      // project overrides it (resolved in the project branch below). Scratch
-      // chats have no project, so they always take the global default.
+      // workspace overrides it (resolved in the workspace branch below).
       let driveMode: DriveMode = deps.cfg.driveMode;
       // The agent's working directory, so the send_file tool can resolve a real
       // `file_path` (and sandbox it). Resolved alongside the agent below.
@@ -655,8 +660,8 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       });
 
       try {
-        // Every slug resolves to a project keeper (`keeper-<slug>`), including
-        // the root's `keeper-__root` — #516 Phase 6 retired the scratch branch.
+        // Every workspace key resolves to a keeper (`keeper-<slug>`), including
+        // the root's `keeper-_root` (its key is `""`, encoded via `agentKeyFor`).
         let agentName: string;
         // Effective prompt — may be augmented with the project overview below.
         let prompt = message;
@@ -740,8 +745,8 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
           [SEND_FILE_SERVER_KEY]: sendFile,
         };
 
-        // Self-management MCP (issue #214): only on keeper turns (never scratch)
-        // and only when the instance opts in via PADDOCK_SELF_MCP. A HUMAN turn is
+        // Self-management MCP (issue #214): only on keeper turns, and only when
+        // the instance opts in via PADDOCK_SELF_MCP. A HUMAN turn is
         // the ROOT of any spawn tree (origin human, depth 0), so its children are
         // depth 1 — the same builder the spawned path uses, just seeded with
         // HUMAN_ROOT. Write tools follow the instance write opt-in (B1 #262: the
@@ -782,7 +787,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
           // mode only; batch `chat` ignores this). The human turn holds the
           // session open when it launches background work; the persistent sink
           // renders each later re-invocation onto ONE hub turn (skipping sidechain
-          // sub-agent steps). Scratch is skipped (no keeper worth streaming).
+          // sub-agent steps).
           onBackgroundMessage: bgSink?.onMessage,
           onBackgroundDone: bgSink?.onDone,
           onJobCreated: (id) => {
@@ -861,10 +866,11 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
         // the banner already does — a real reply supersedes a benign trailing failure.
         const effectiveSuccess = turnEffectivelySucceeded(result.success, producedReply);
 
-        // Post-turn sweep (issues #2/#6): on a successful USER turn in a real
-        // project, enqueue a coalesced/debounced curation sweep. Out of band —
-        // never blocks or breaks chat, and can't recurse (the sweep uses a
-        // separate agent triggered off the user-chat path). Skipped for scratch.
+        // Post-turn sweep (issues #2/#6): on a successful USER turn, enqueue a
+        // coalesced/debounced curation sweep. Out of band — never blocks or breaks
+        // chat, and can't recurse (the sweep uses a separate agent triggered off
+        // the user-chat path). Turn success is the ONLY gate: every workspace is
+        // swept, the root included (`sweeper-_root`).
         // T5: routed through the `afterTurn` event so the folded-in `curate-overview`
         // trigger is the single dispatch (no double-curation).
         if (effectiveSuccess) emitAfterTurn(slug, result.sessionId ?? resolvedSession ?? null);

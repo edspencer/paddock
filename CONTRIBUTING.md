@@ -16,7 +16,11 @@ re-reading it here:
 
 ## Prerequisites
 
-- **Node 22+** and the **`claude` CLI** on your `PATH` (`claude --version`).
+- **Node 22+**, and the **`claude` CLI** on your `PATH` (`claude --version`) for
+  the sweeper and triggers. Chats do **not** need it — they run herdctl's SDK
+  runtime, which resolves the Claude Agent SDK's own bundled binary and never
+  consults `PATH`. Without a `claude` on `PATH` chats work, while each post-turn
+  sweep and every trigger fails (logged, non-fatal).
 - A **Claude Max OAuth token** (`CLAUDE_CODE_OAUTH_TOKEN`) or an
   `ANTHROPIC_API_KEY` in your environment. Never print or commit it — load it into
   the environment, don't hardcode it (see [DEV.md](DEV.md)).
@@ -47,6 +51,22 @@ npm run test:e2e            # Playwright journeys against the real server + a fa
   only the LLM is swapped for a fake `claude` on PATH (zero Anthropic calls). Opt
   into a real-Claude run with `npm run test:e2e:live`.
 - More on the test layers: [docs/TESTING.md](docs/TESTING.md).
+
+## The demo reel
+
+The GIF at the top of the README (and on the docs homepage) is **generated**, not
+hand-made. If a change of yours alters what the UI looks like, it may be worth
+refreshing:
+
+```bash
+npm run demo:gif            # ~4 min; writes both committed copies of the GIF
+```
+
+It stages a wholly synthetic instance, drives it, photographs eleven beats with
+Playwright and encodes GIF + MP4/WebM. Change the storyboard in
+`scripts/demo-gif/beats.mjs` or the content in `fixtures.mjs` — never edit the
+GIF itself. Full notes, and the list of things that fail silently:
+[scripts/demo-gif/README.md](scripts/demo-gif/README.md).
 
 ## Environment gotchas
 

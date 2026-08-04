@@ -12,7 +12,7 @@
  *   - Real identity (trusted-header / jwt): `username \0 agent \0 sessionId`
  *   - No user (`none` mode / anonymous):     `agent \0 sessionId` (shared)
  * NUL-separated, same rationale as ArchiveStore: a NUL can occur in neither a
- * username, an agent name (`keeper-<slug>` / `scratch`), nor a UUID, so keys
+ * username, an agent name (`keeper-<slug>`), nor a UUID, so keys
  * can't collide — and a user-keyed entry can never alias the shared bucket.
  *
  * `setLastSeen` is MONOTONIC (only ever advances a chat's last-seen time): the

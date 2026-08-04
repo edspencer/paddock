@@ -73,7 +73,7 @@ describe("StarStore", () => {
     const store = new StarStore(dir);
     await store.setStarred("keeper-a", "same", true);
     expect(await store.isStarred("keeper-a", "same")).toBe(true);
-    expect(await store.isStarred("scratch", "same")).toBe(false);
+    expect(await store.isStarred("keeper-other", "same")).toBe(false);
   });
 
   it("tolerates a corrupt state file (reads as empty)", async () => {

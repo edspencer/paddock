@@ -10,7 +10,7 @@ describe("chatModel persistence", () => {
 
   it("keys a brand-new chat (no session id) by new:<slug>", () => {
     expect(chatModelKey(null, "proj")).toBe("paddock:chatModel:new:proj");
-    expect(chatModelKey(undefined, "scratch")).toBe("paddock:chatModel:new:scratch");
+    expect(chatModelKey(undefined, "proj")).toBe("paddock:chatModel:new:proj");
   });
 
   it("round-trips a saved model", () => {

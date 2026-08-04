@@ -1,0 +1,94 @@
+---
+/**
+ * Who owns what on disk. The load-bearing detail is the symlink: Claude Code's
+ * transcript directory IS the project's .chats/ dir, so all three parties read
+ * and write one store without any of them copying files around.
+ */
+---
+
+<svg viewBox="0 0 920 424" role="img" aria-labelledby="store-t store-d">
+	<title id="store-t">Who owns what on disk</title>
+	<desc id="store-d">
+		Three storage areas. Paddock owns its data directory: a generated herdctl.yaml with no agents
+		in it, the projects tree with each project's metadata and its dot-chats transcript folder,
+		attachments, and JSON sidecars for read state, stars and provenance. herdctl owns its dot-herdctl
+		state directory: state.yaml, job records, session pointers and session metadata. Claude Code owns
+		the dot-claude directory in your home folder. The link between them is that Claude Code's
+		per-working-directory transcript folder is a symlink pointing at the project's dot-chats
+		directory, so Claude writes transcripts straight into the project.
+	</desc>
+
+	<defs>
+		<marker id="sto-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+			<path d="M 0 0 L 10 5 L 0 10 z" fill="var(--dg-line)"></path>
+		</marker>
+	</defs>
+
+	<!-- ============================================================ paddock -->
+	<rect class="band is-paddock" x="16" y="14" width="286" height="330" rx="10"></rect>
+	<text class="t-band is-paddock" x="32" y="34">Paddock owns</text>
+
+	<text class="t-mono" x="32" y="62">&lt;dataDir&gt;/</text>
+	<text class="t-mono" x="32" y="81">  herdctl.yaml</text>
+	<text class="t-sub" x="46" y="98">generated · contains zero agents</text>
+	<text class="t-mono" x="32" y="122">  projects/</text>
+	<text class="t-mono" x="32" y="141">    CLAUDE.md</text>
+	<text class="t-mono" x="32" y="160">    &lt;slug&gt;/</text>
+	<text class="t-mono" x="32" y="179">      project.yaml</text>
+	<text class="t-mono" x="32" y="198">      OVERVIEW.md</text>
+	<text class="t-mono" x="32" y="217">      CHANGELOG.md</text>
+
+	<circle class="dot is-claude" cx="37" cy="232" r="3"></circle>
+	<text class="t-mono" x="46" y="236">.chats/&lt;id&gt;.jsonl</text>
+	<text class="t-sub" x="46" y="253">the real transcript store</text>
+
+	<text class="t-mono" x="32" y="278">  attachments/</text>
+	<text class="t-mono" x="32" y="297">  read-state.json</text>
+	<text class="t-mono" x="32" y="316">  run-provenance.json</text>
+	<text class="t-sub" x="32" y="333">…and the other JSON sidecars</text>
+
+	<!-- ============================================================ herdctl -->
+	<rect class="band is-herdctl" x="317" y="14" width="286" height="330" rx="10"></rect>
+	<text class="t-band is-herdctl" x="333" y="34">herdctl owns</text>
+
+	<text class="t-mono" x="333" y="62">.herdctl/</text>
+	<text class="t-mono" x="333" y="81">  state.yaml</text>
+	<text class="t-sub" x="347" y="98">fleet + schedule state, session wakes</text>
+	<text class="t-mono" x="333" y="122">  jobs/job-*.yaml</text>
+	<text class="t-mono" x="333" y="141">  jobs/job-*.jsonl</text>
+	<text class="t-sub" x="347" y="158">one record + output log per run</text>
+	<text class="t-mono" x="333" y="182">  sessions/&lt;agent&gt;.json</text>
+	<text class="t-sub" x="347" y="199">which session an agent is on</text>
+	<text class="t-mono" x="333" y="223">  session-metadata/</text>
+	<text class="t-mono" x="333" y="242">  docker-sessions/</text>
+
+	<rect class="node is-paddock" x="333" y="264" width="254" height="66" rx="8"></rect>
+	<text class="t-sub" x="347" y="285">Paddock reads jobs/ for attribution —</text>
+	<text class="t-sub" x="347" y="303">and writes synthetic records into it,</text>
+	<text class="t-sub" x="347" y="321">because chat sessions produce none.</text>
+
+	<!-- ============================================================= claude -->
+	<rect class="band is-claude" x="618" y="14" width="286" height="330" rx="10"></rect>
+	<text class="t-band is-claude" x="634" y="34">Claude Code owns</text>
+
+	<text class="t-mono" x="634" y="62">~/.claude/</text>
+	<text class="t-mono" x="634" y="81">  projects/</text>
+	<text class="t-mono" x="634" y="100">    &lt;encoded-working-dir&gt;/</text>
+
+	<rect class="node is-claude" x="634" y="120" width="254" height="88" rx="8"></rect>
+	<text class="t-sub" x="648" y="141">This directory is not a directory.</text>
+	<text class="t-sub" x="648" y="160">It is a symlink pointing back at</text>
+	<text class="t-sub" x="648" y="179">the project's .chats/ folder — so</text>
+	<text class="t-sub" x="648" y="198">Claude writes straight into it.</text>
+
+	<text class="t-sub" x="634" y="234">The directory name is Claude Code's own</text>
+	<text class="t-sub" x="634" y="252">lossy encoding of the working directory:</text>
+	<text class="t-mono" x="634" y="274">/a/b/c → -a-b-c</text>
+	<text class="t-sub" x="634" y="298">herdctl reproduces it byte-for-byte,</text>
+	<text class="t-sub" x="634" y="316">then disambiguates by reading the</text>
+	<text class="t-sub" x="634" y="334">cwd recorded inside each transcript.</text>
+
+	<!-- ======================================================= the symlink -->
+	<path class="edge is-strong" d="M 761 344 L 761 388 Q 761 396 751 396 L 180 396 Q 170 396 170 388 L 170 352" marker-end="url(#sto-arrow)"></path>
+	<text class="t-edge" x="465" y="400" text-anchor="middle">one store, three readers — nobody copies transcripts anywhere</text>
+</svg>

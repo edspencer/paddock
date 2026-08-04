@@ -49,7 +49,7 @@ describe("SentFileBlock", () => {
   });
 
   it("renders a file-source image from its rawUrl", () => {
-    const rawUrl = "/api/chat-files/scratch?path=p.png";
+    const rawUrl = "/api/chat-files/sess-1?path=p.png";
     render(
       <SentFileBlock file={{ filename: "p.png", kind: "image", source: "file", rawUrl }} />,
     );
@@ -110,7 +110,7 @@ describe("SentFileBlock", () => {
     );
     render(
       <SentFileBlock
-        file={{ filename: "r.txt", kind: "text", source: "file", rawUrl: "/api/chat-files/scratch?path=r.txt" }}
+        file={{ filename: "r.txt", kind: "text", source: "file", rawUrl: "/api/chat-files/sess-1?path=r.txt" }}
       />,
     );
     expect(await screen.findByText("fetched body")).toBeInTheDocument();
@@ -120,7 +120,7 @@ describe("SentFileBlock", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("nope", { status: 404 }));
     render(
       <SentFileBlock
-        file={{ filename: "r.txt", kind: "text", source: "file", rawUrl: "/api/chat-files/scratch?path=r.txt" }}
+        file={{ filename: "r.txt", kind: "text", source: "file", rawUrl: "/api/chat-files/sess-1?path=r.txt" }}
       />,
     );
     await waitFor(() => expect(screen.getByText(/could not load/i)).toBeInTheDocument());

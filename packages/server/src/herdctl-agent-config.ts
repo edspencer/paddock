@@ -344,7 +344,7 @@ export async function ensureConfigFile(cfg: PaddockConfig): Promise<void> {
       // this same allowlist — so include them here to keep skills functional
       // end-to-end (adds no capability the keeper's existing tools don't).
       // BROWSER_MCP_TOOL (mcp__playwright__*) is listed unconditionally: it is a
-      // no-op unless the keeper/scratch agent actually attaches the playwright
+      // no-op unless the keeper agent actually attaches the playwright
       // server (gated by PADDOCK_BROWSER_MCP), and having it on the allowlist
       // means enabling the browser is a per-box env flip with no code change.
       // Timer-class autonomy tools (Paddock#111): `ScheduleWakeup` + the

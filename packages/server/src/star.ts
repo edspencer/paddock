@@ -9,9 +9,9 @@
  *
  * This is a near-verbatim copy of {@link ArchiveStore} — the same tiny JSON
  * sidecar pattern SweepService uses for its watermark state. Keyed by
- * `<agent>\0<sessionId>` (NUL-separated) so a project chat and a scratch chat can
- * never collide — a NUL can occur in neither an agent name (`keeper-<slug>` /
- * `scratch`) nor a UUID. Only starred entries are stored (an unstar deletes the
+ * `<agent>\0<sessionId>` (NUL-separated) so chats under different agents can
+ * never collide — a NUL can occur in neither an agent name (`keeper-<slug>`)
+ * nor a UUID. Only starred entries are stored (an unstar deletes the
  * key), keeping the file compact. Unlike ArchiveStore there is NO lifecycle event
  * — starring fires no hooks.
  */

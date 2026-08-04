@@ -66,7 +66,7 @@ Consequences worth knowing:
 - **Blank is unset.** A whitespace-only value (`PADDOCK_X=""`) yields the default,
   not an empty string.
 - **Booleans** accept `1` / `true` / `yes` (case-insensitive) as true — *except*
-  `PADDOCK_KEEPER_NATIVE_PROMPT`, which is on by default and only `0` / `false` /
+  `PADDOCK_NATIVE_PROMPT`, which is on by default and only `0` / `false` /
   `no` turns it off.
 - **Unknown enum values fall back to the default** rather than failing startup
   (e.g. an unrecognised `PADDOCK_AUTH_MODE` becomes `none`).
@@ -82,7 +82,6 @@ Consequences worth knowing:
 | `PADDOCK_CONFIG` | `<data>/paddock.config.yaml` | no | Path to the optional [YAML instance-config file](#instance-config-file-yaml) (base layer; env overrides it). When set explicitly, a missing file fails startup; unset, an absent default file is a no-op. |
 | `PADDOCK_DATA_DIR` | `./data` | no | Data root. **All paths below default to subdirectories of this** — set it and everything cascades. Holds projects, generated herdctl config, and state. |
 | `PADDOCK_PROJECTS_DIR` | `<data>/projects` | no | Root that contains per-project directories (each is an agent's working dir). |
-| `PADDOCK_SCRATCH_DIR` | `<data>/scratch` | no | **Legacy.** Where one-off ("scratch") chats lived before #516 Phase 6 retired them. No agent runs here and nothing reads it any more; the setting survives so an existing env/config file doesn't fail validation, and so any old transcripts stay findable by hand at `<scratchDir>/.chats`. They are **not** migrated and no longer listed. |
 | `PADDOCK_STATE_DIR` | `<data>/.herdctl` | no | herdctl state directory. |
 | `PADDOCK_HERDCTL_CONFIG` | `<data>/herdctl.yaml` | no | Path to the generated `herdctl.yaml` the FleetManager loads (Paddock owns/regenerates it). |
 | `PADDOCK_WEB_DIST` | `packages/web/dist` | no | Built SPA served in production (resolved relative to the server module). |
@@ -90,7 +89,8 @@ Consequences worth knowing:
 | `HOST` | `127.0.0.1` | no | Bind host. Loopback by default (#435) so a fresh source/tarball run is network-closed. The container images set `HOST=0.0.0.0` — the network namespace is their boundary. `PADDOCK_HOST` is an accepted alias. |
 | `PADDOCK_DANGEROUSLY_ALLOW_OPEN` | — | no | Permits binding a non-loopback host while `PADDOCK_AUTH_MODE=none`. Without it that combination **refuses to start**; see [AUTH.md](../AUTH.md). Boots with a loud warning when set. |
 | `PADDOCK_MANAGEMENT_TRUSTED_PROXIES` | `loopback, linklocal, uniquelocal` | no | Peers whose `X-Forwarded-Proto` the `/mcp` plaintext guard believes. IPs, CIDRs, `loopback`/`linklocal`/`uniquelocal`, or `none`/`all`. Overrides `managementApi.trustedProxies`; see [Management API](#management-api-mcp-external-callers). |
-| `CLAUDE_HOME` | `~/.claude` | no | Claude home used for session/transcript discovery. |
+| `CLAUDE_HOME` | `<dataDir>/claude-home` | no | The Claude home Paddock runs its agents against — the directory whose `projects/<encoded-cwd>/` folders hold Claude Code's session transcripts, and the value handed to Claude Code as `CLAUDE_CONFIG_DIR`. **Paddock owns this directory** (#620): the data dir is a single relocatable root, and the user's `~/.claude` is a read-only source Paddock imports out of but never writes to. Precedence: `CLAUDE_HOME`, then `CLAUDE_CONFIG_DIR`, then a `claudeHome:` config-file key, then the default. `CLAUDE_CONFIG_DIR` is honoured because herdctl deliberately refuses to clobber an operator-set value (herdctl#423) — if Paddock disagreed with it, the SDK would write transcripts to one tree while herdctl read from another. Resolved **once** at startup into `PaddockConfig.claudeHome` (`resolveClaudeHome()` in `config.ts`) and threaded to *both* consumers: Paddock's transcript relocation and import detection (`ensureProjectChats` in `transcripts.ts`, `AdoptableIndex` in `adoptable.ts`), **and** the engine, as `FleetManagerOptions.claudeHomePath` (`herdctl.ts`). It is deliberately one value: were Paddock to honour this variable while the engine fell back to `$HOME/.claude`, chats would **list from one directory and open empty from another** (#588). Set it to `$HOME/.claude` to restore the pre-#620 layout exactly. |
+| `CLAUDE_CONFIG_DIR` | *(unset)* | no | Claude Code's own home variable. When set, Paddock adopts it as its Claude home rather than picking a different one (see above). Note that Claude Code scopes its credential store to whether this is set at all, so a keychain login made against the default home is not visible under a relocated one — Paddock warns at boot when it can find no credential source. |
 
 > **`PADDOCK_CONFIG__*` is not implemented.** There is no generic
 > `PADDOCK_CONFIG__foo__bar` → nested-herdctl-key override mechanism in this tree.
@@ -293,9 +293,9 @@ HushPod's whisper config so both can share a backend. See [DEV.md](../DEV.md#voi
 
 | Variable | Default | Required | Purpose |
 |----------|---------|----------|---------|
-| `PADDOCK_KEEPER_DRIVE_MODE` | `session` | no | Box-wide default for how turns are driven. `session` (the default, #316) runs the persistent `openChatSession` path, enabling cross-turn autonomy (`ScheduleWakeup` / `/loop`) and SDK streaming; set `batch` for the legacy one-shot `trigger()` path. A per-project `driveMode` overrides this at dispatch. Unknown → default. |
+| `PADDOCK_DRIVE_MODE` | `session` | no | Box-wide default for how turns are driven. `session` (the default, #316) runs the persistent `openChatSession` path, enabling cross-turn autonomy (`ScheduleWakeup` / `/loop`) and SDK streaming; set `batch` for the legacy one-shot `trigger()` path. A per-project `driveMode` overrides this at dispatch. Unknown → default. |
 | `PADDOCK_MODELS` | *(all)* | no | Comma-separated allow-list of which built-in catalog models the picker offers (e.g. `claude-opus-5,claude-sonnet-5`). Unset ⇒ every catalog model is offered. Unknown ids are dropped; if nothing valid remains the full catalog is offered (never zero). The catalog stays the source of each model's label/context-limit/pricing — this only narrows what's offered. Also settable as a YAML `models:` array, and a per-project `models` override may further subset it. |
-| `PADDOCK_KEEPER_NATIVE_PROMPT` | `true` | no | Agents use the native Claude Code system prompt + `CLAUDE.md` hierarchy. Set `0`/`false`/`no` for the terse Paddock "replace" prompt (e.g. an instance with no `CLAUDE.md`). |
+| `PADDOCK_NATIVE_PROMPT` | `true` | no | Agents use the native Claude Code system prompt + `CLAUDE.md` hierarchy. Set `0`/`false`/`no` for the terse Paddock "replace" prompt (e.g. an instance with no `CLAUDE.md`). |
 | `PADDOCK_SELF_MCP` | `false` | no | Give Claude the read-only self-management MCP (`mcp__paddock_manage__*`: enumerate projects/chats, read another chat's transcript). |
 | `PADDOCK_SELF_MCP_WRITE` | `false` | no | Additionally give Claude the self-management **write** tools (`create_chat`, `fork_chat`, `send_message`, `fork_chat_batch`). Only honored when `PADDOCK_SELF_MCP` is also on (write implies read). |
 | `PADDOCK_SELF_MCP_PROJECTS` | `false` | no | Additionally give Claude the self-management **project** tool (`create_project`) — provisioning a whole new project, cloning a repo when repo-backed. Gated separately from the other write tools because it creates instance-level state and clones a caller-supplied git URL. Only honored when `PADDOCK_SELF_MCP` and `PADDOCK_SELF_MCP_WRITE` are also on. |

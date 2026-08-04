@@ -94,6 +94,12 @@ export default defineConfig({
         PADDOCK_E2E_PORT: PORT,
         PADDOCK_E2E_TMP: TMP,
         PADDOCK_TEST_LIVE: process.env.PADDOCK_TEST_LIVE ?? "",
+        // How long the fake's [[SLOWTOOL]] holds a turn IN FLIGHT. The default
+        // (5s) is tuned for assertions made on the SAME page; Home's Running
+        // feed (#599) has to be observed from another route, so the window must
+        // outlast a navigation plus the attention fetch. Nothing else in the
+        // e2e suite uses [[SLOWTOOL]], so widening it here costs nothing.
+        PADDOCK_FAKE_SLOWTOOL_MS: "12000",
       },
     },
     {

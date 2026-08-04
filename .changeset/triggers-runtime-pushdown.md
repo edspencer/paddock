@@ -38,10 +38,10 @@ the entire directory and then filtered, the new one filters first and lets core
 sort the survivors. So the regression test diffs the new call against a literal
 reimplementation of the old one, over records deliberately interleaved across
 agents and timestamps so that any per-agent grouping would reorder the result.
-Those tests fail against the previous core, which is the intended signal: this
-needs `@herdctl/core` >= 5.28.0, and the dependency floor is raised rather than
-re-filtering defensively in Paddock, which would mask a version mismatch instead
-of surfacing it.
+Those tests fail against a core older than 5.28.0, which is the intended signal:
+this needs `@herdctl/core` >= 5.28.0 (the dependency floor is already `^5.31.0`)
+rather than re-filtering defensively in Paddock, which would mask a version
+mismatch instead of surfacing it.
 
 The pre-existing "a chatty agent can push a rarely-run trigger out of the 200
 window" behaviour is preserved exactly — the limit still applies after filtering

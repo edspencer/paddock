@@ -7,7 +7,7 @@ description: "The exact public @herdctl/core API surface Paddock depends on, re-
 > the shipped `.d.ts` declarations of the **installed** package.
 
 :::note[Re-verified 2026-07-31 against `@herdctl/core@5.27.0`]
-Paddock depends on `@herdctl/core@^5.27.0` and `@herdctl/chat@^0.8.0`
+Paddock depends on `@herdctl/core@^5.29.0` and `@herdctl/chat@^0.8.0`
 (`packages/server/package.json`).
 
 This page was originally written against **5.10.1**, and its headline finding has
@@ -91,9 +91,26 @@ interface FleetManagerOptions {
 }
 ```
 
+Two more options exist and paddock passes both. They were added after this page
+was written, so they fall outside its "verified against 5.10.1" claim:
+`allowScheduleMutation`, and — since **5.29.0** — **`claudeHomePath`**, the
+Claude home the engine's session discovery, its adoption primitives, and Claude
+Code itself resolve transcripts under. Paddock passes its one resolved
+`claudeHome` so the two sides cannot disagree about which home is real; see
+`HerdctlService` in `herdctl.ts` and the `CLAUDE_HOME` row in
+[Environment variables](/configuration/environment/).
+
+5.29.0 is also where the session-adoption primitives behind
+[importing your terminal `claude`
+history](/using/working-in-chats/#import-your-terminal-claude-history) arrived —
+`listAdoptableSessions`, `adoptSessionsFrom` and `unadoptSession` on the
+FleetManager (used by `AdoptableIndex` in `adoptable.ts` and
+`HerdctlService.adoptChats` in `herdctl.ts`) — along with the `CLAUDE_CONFIG_DIR`
+fix without which **resuming** an adopted session fails.
+
 There is also `initializeWebOnly({port?, host?})` — a zero-agent mode that serves
 session data from `~/.claude/` without a `herdctl.yaml`. Paddock does not use it
-(we always have at least the scratch agent), but it's available.
+(we always have at least the root workspace's keeper), but it's available.
 
 **Config-file requirements discovered the hard way** (the spike caught these — a
 naive inline config 400s):
@@ -120,11 +137,11 @@ Minimal working pair:
 version: 1
 fleet: { name: paddock-spike, description: spike fleet }
 agents:
-  - path: /abs/scratch.agent.yaml
+  - path: /abs/spike.agent.yaml
 ```
 ```yaml
-# scratch.agent.yaml
-name: scratch
+# spike.agent.yaml
+name: spike
 working_directory: /abs/dir
 runtime: cli
 max_turns: 3
@@ -159,7 +176,7 @@ on every call, which makes re-registration idempotent.
 
 Paddock's actual usage (`herdctl.ts:337,412,443,486` / `:469,514`): the
 FleetManager boots from a **minimal zero-agent config** (fleet + defaults only)
-and every agent — scratch, `keeper-<slug>`, `sweeper-<slug>`,
+and every agent — `keeper-<slug>`, `sweeper-<slug>`,
 `trigger-<slug>-<name>` — is registered programmatically at init and on project
 create/update. Nothing writes per-agent yaml, and `reload()` is never called.
 
@@ -195,7 +212,6 @@ Config-dir layout paddock owns (generated, never hand-edited):
 <PADDOCK_DATA_DIR>/
   herdctl.yaml                 # fleet block + defaults ONLY — zero agent refs
   .herdctl/                    # state dir (state.yaml, jobs/, sessions/, …)
-  scratch/                     # scratch agent working dir
   projects/<slug>/             # project dirs (project.yaml, CHANGELOG.md, …)
 ```
 

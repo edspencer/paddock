@@ -69,7 +69,7 @@ export function makeProject(over: Partial<Project> = {}): Project {
 export function makeChat(over: Partial<Chat> = {}): Chat {
   return {
     sessionId: "sess-1",
-    workingDirectory: "/data/scratch/.chats",
+    workingDirectory: "/data/projects/demo/.chats",
     name: "A chat",
     updatedAt: "2026-06-21T10:00:00.000Z",
     resumable: true,

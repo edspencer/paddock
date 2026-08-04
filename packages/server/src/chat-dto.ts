@@ -10,7 +10,7 @@ import type { Project } from "./projects.js";
 import { TRIGGER_AGENT_PREFIX, triggerAgentName } from "./herdctl.js";
 import { getContextLimit, estimateCostUsdByModel } from "./models.js";
 import { type SessionTokenUsage } from "./usage.js";
-import type { RunProvenance } from "./run-provenance.js";
+import type { RunProvenance, TurnOrigin } from "./run-provenance.js";
 import { toTriggerDto } from "./triggers.js";
 import { toChatTriggerInfo, type ChatTriggerInfo } from "./trigger-config.js";
 import { readFirstUserText } from "./transcripts.js";
@@ -34,15 +34,30 @@ export interface ChatParentRef {
 }
 
 /**
- * Origins that are, by definition, the ROOT of a chat tree — a human typed it, a
- * schedule fired it, or an event hook did. None of them is created BY another
- * chat, so none can acquire a parent.
+ * Which origins are, by definition, the ROOT of a chat tree. `spawned` is the
+ * only one that isn't: a human typed it, a schedule fired it, an event hook did,
+ * or it was IMPORTED from the user's own terminal history (#588) — none of those
+ * is created BY another chat, so none can acquire a parent.
+ *
+ * `adopted` belongs here for a stronger reason than the rest: the session ran
+ * OUTSIDE Paddock entirely, so there is no chat here that COULD be its parent.
+ * It is named explicitly rather than left to the `depth === 0` arm of
+ * {@link isRecordedRoot}, because depth is a value the import happens to stamp
+ * as 0 — if that ever changed, or a legacy marker carried a depth, the inference
+ * tier would go looking for a parent that cannot exist and file the chat under
+ * whichever chat happened to inject a prompt near it.
+ *
+ * A total `Record`, not a `Set`: a set of strings silently accepts a union that
+ * has grown past it, whereas a missing key here is a compile error — so adding
+ * an origin forces a deliberate root/child decision.
  */
-const ROOT_ORIGINS: ReadonlySet<RunProvenance["origin"]> = new Set([
-  "human",
-  "scheduled",
-  "hook",
-]);
+const ORIGIN_IS_ROOT: Record<TurnOrigin, boolean> = {
+  human: true,
+  scheduled: true,
+  hook: true,
+  adopted: true,
+  spawned: false,
+};
 
 /**
  * Does this recorded provenance describe a chat that is a root by construction?
@@ -53,7 +68,7 @@ const ROOT_ORIGINS: ReadonlySet<RunProvenance["origin"]> = new Set([
  * never recorded", which is the only case the inference tier exists to cover.
  */
 export function isRecordedRoot(p: RunProvenance): boolean {
-  return p.depth === 0 || ROOT_ORIGINS.has(p.origin);
+  return p.depth === 0 || ORIGIN_IS_ROOT[p.origin] === true;
 }
 
 /**
@@ -318,26 +333,42 @@ export async function buildProjectChats(
       const starred = starredOf ? await starredOf(s).catch(() => false) : false;
       const unread = unreadOf ? await unreadOf(s).catch(() => false) : false;
       const parent = parentOf ? await parentOf(s).catch(() => null) : null;
-      // A preview polluted by a machine-prepended wrapper: the preload context
-      // block (#1) and/or the composer-attachment block (#328). Either makes the
-      // raw first message a poor display name, so recover the real request below.
+      // A name polluted by a machine-prepended wrapper: the preload context block
+      // (#1) and/or the composer-attachment block (#328). Either makes the raw
+      // first message a poor display name, so recover the real request below.
+      //
+      // `autoName` has to be tested, not merely checked for absence. @herdctl/core
+      // used to leave it undefined for a transcript with no title entry — which is
+      // nearly every CLI transcript — so "no autoName" was a reliable proxy for
+      // "the preview is all we have". It now falls back to the first user message
+      // itself (custom-title → ai-title → summary → preview), so a preload chat
+      // arrives with `autoName` ALREADY set to the `<project-context>` block. Kept
+      // as an absence check, this whole branch became unreachable and every
+      // preload chat was titled with the injected overview.
+      const isWrapped = (v: string | undefined) =>
+        v !== undefined && (v.startsWith(PRELOAD_CONTEXT_OPEN) || v.startsWith(ATTACHMENTS_OPEN));
+      // A polluted autoName is worse than none: it would beat the cleaned preview
+      // in `toChatDto`'s name precedence, so drop it rather than compete with it.
+      const session = isWrapped(s.autoName) ? { ...s, autoName: undefined } : s;
       const pollutedPreview =
-        !s.customName &&
-        !s.autoName &&
-        (s.preview?.startsWith(PRELOAD_CONTEXT_OPEN) || s.preview?.startsWith(ATTACHMENTS_OPEN));
+        !session.customName &&
+        !session.autoName &&
+        (isWrapped(s.preview) || isWrapped(s.autoName));
       if (!pollutedPreview)
-        return toChatDto(s, undefined, usage, archived, turnAt, lastSeen, provenance, trigger, starred, unread, parent);
+        return toChatDto(session, undefined, usage, archived, turnAt, lastSeen, provenance, trigger, starred, unread, parent);
 
       const full = await readFirstUserText(projectDir, s.sessionId).catch(() => undefined);
       // Strip preload FIRST (it wraps the whole thing), then the attachment block
       // nested inside it, leaving just the user's typed request.
-      const cleaned = stripAttachmentsWrapper(stripPreloadWrapper(full ?? s.preview ?? "")).trim();
+      const cleaned = stripAttachmentsWrapper(
+        stripPreloadWrapper(full ?? s.preview ?? s.autoName ?? ""),
+      ).trim();
       // couldn't recover
       if (!cleaned)
-        return toChatDto(s, undefined, usage, archived, turnAt, lastSeen, provenance, trigger, starred, unread, parent);
+        return toChatDto(session, undefined, usage, archived, turnAt, lastSeen, provenance, trigger, starred, unread, parent);
       const preview =
         cleaned.length > PREVIEW_MAX ? `${cleaned.slice(0, PREVIEW_MAX)}...` : cleaned;
-      return toChatDto(s, preview, usage, archived, turnAt, lastSeen, provenance, trigger, starred, unread, parent);
+      return toChatDto(session, preview, usage, archived, turnAt, lastSeen, provenance, trigger, starred, unread, parent);
     }),
   );
 }

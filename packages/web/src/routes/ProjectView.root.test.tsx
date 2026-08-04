@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
 import { ProjectView } from "./ProjectView";
 import { makeProject, makeChat } from "../test/factories";
 import { resetLastSeenForTests } from "../lib/lastSeen";
-import type { Project, ProjectDetail } from "../lib/types";
+import type { AttentionChat, Project, ProjectDetail } from "../lib/types";
 import type { ChatPaneProps } from "../components/ChatPane";
 import { readLastTab } from "../lib/lastTab";
 
@@ -14,8 +14,8 @@ import { readLastTab } from "../lib/lastTab";
  * The design's claim is that the root needs no separate view: the same
  * component, the same API calls, only flat top-level URLs and the empty
  * workspace key. So these tests are about the differences that ARE real — `/` is
- * Home (and carries the root's CHILDREN as a section), `/chat` is the chat tab,
- * and there is no sticky last tab.
+ * Home (whose attention feed is fleet-wide, because the root's subtree is the
+ * whole instance), `/chat` is the chat tab, and there is no sticky last tab.
  */
 let chatPaneProps: ChatPaneProps | null = null;
 vi.mock("../components/ChatPane", () => ({
@@ -69,6 +69,9 @@ const apiFns = {
   projectChatMessages: vi.fn(),
   markChatSeen: vi.fn(),
   promoteChat: vi.fn(),
+  attentionChats: vi.fn(),
+  getAdoptableChats: vi.fn(),
+  adoptChats: vi.fn(),
 };
 vi.mock("../lib/api", async () => {
   const actual = await vi.importActual<typeof import("../lib/api")>("../lib/api");
@@ -84,12 +87,16 @@ vi.mock("../lib/api", async () => {
       projectChatMessages: (...a: unknown[]) => apiFns.projectChatMessages(...a),
       markChatSeen: (...a: unknown[]) => apiFns.markChatSeen(...a),
       promoteChat: (...a: unknown[]) => apiFns.promoteChat(...a),
+      attentionChats: (...a: unknown[]) => apiFns.attentionChats(...a),
+      getAdoptableChats: (...a: unknown[]) => apiFns.getAdoptableChats(...a),
+      adoptChats: (...a: unknown[]) => apiFns.adoptChats(...a),
     },
   };
 });
 
-// The root workspace's CHILDREN — read by the ProjectsGrid embedded in the Home
-// pane. Mutable so a test can put a project in the grid.
+// The root workspace's CHILDREN, as the shared projects context sees them. Only
+// the promote tests care about the list itself now — root Home's fleet-wide feed
+// comes from the server (`attentionChats`), not from this list.
 let mockProjects: Project[] = [];
 // The context's mutators, as STABLE spies. They have to survive re-renders: the
 // promote tests assert the sidebar was told about the new project (#566), and a
@@ -152,6 +159,14 @@ function renderRootAt(path: string) {
 const rootWorkspace = () =>
   makeProject({ slug: "", name: "Instance Root", summary: "everything, from the top" });
 
+/** One row of the Home attention feed, tagged with the workspace it lives in. */
+const foreignChat = (
+  sessionId: string,
+  name: string,
+  projectSlug: string,
+  projectName: string,
+): AttentionChat => ({ ...makeChat({ sessionId, name }), projectSlug, projectName });
+
 beforeEach(() => {
   chatPaneProps = null;
   historySlug = null;
@@ -166,6 +181,11 @@ beforeEach(() => {
   apiFns.chatUsage.mockResolvedValue({});
   apiFns.markChatSeen.mockResolvedValue(undefined);
   apiFns.projectChatMessages.mockResolvedValue([]);
+  apiFns.attentionChats.mockResolvedValue({ running: [], unread: [] });
+  // #588: nothing to import by default, so the sidebar's import row is absent
+  // from every test that isn't about it.
+  apiFns.getAdoptableChats.mockResolvedValue({ count: 0, sources: [] });
+  apiFns.adoptChats.mockResolvedValue({ adopted: [], skipped: [] });
   apiFns.getProjectDetail.mockResolvedValue(detail(rootWorkspace()));
   resetLastSeenForTests();
   localStorage.clear();
@@ -177,7 +197,7 @@ describe("ProjectView root (#516)", () => {
       detail(rootWorkspace(), { changelog: "# Changes\n- did a root thing" }),
     );
     renderRootAt("/");
-    // The summary lands in both the header and the Home overview card.
+    // The summary lands in the workspace header above the tab bar.
     expect(await screen.findAllByText("everything, from the top")).not.toHaveLength(0);
     expect(screen.getByText(/did a root thing/)).toBeInTheDocument();
     expect(screen.queryByTestId("chat-pane")).not.toBeInTheDocument();
@@ -240,44 +260,69 @@ describe("ProjectView root (#516)", () => {
     }
   });
 
-  it("renders the projects grid as a section of root Home, under its own Chats", async () => {
-    mockProjects = [makeProject({ slug: "hushpod", name: "Hushpod", group: "homelab" })];
+  it("lists a CHILD project's running chat on root Home, labelled with its project", async () => {
+    // The root's subtree is the whole instance, so its Home is the fleet's
+    // "what needs me?" (#599) — and it gets there by asking for its OWN
+    // workspace's feed. No `root` branch: the server's subtree scoping is what
+    // makes the same request fleet-wide here and project-local elsewhere.
+    apiFns.attentionChats.mockResolvedValue({
+      running: [foreignChat("s9", "Ad stripping run", "hushpod", "Hushpod")],
+      unread: [],
+    });
     renderRootAt("/chat");
     await screen.findByTestId("chat-pane");
     fireEvent.click(screen.getByRole("button", { name: "Home" }));
-    expect(await screen.findByText("Hushpod")).toBeInTheDocument();
-    // Home is `/` at the root — no `/projects`, no `/home`.
+    expect(await screen.findByText("Ad stripping run")).toBeInTheDocument();
+    // Labelled with the owning project, because "which Hushpod is this?" has to
+    // be answerable from the row itself once the list spans workspaces.
+    const row = screen.getByTestId("home-running-chats");
+    expect(within(row).getByText("Hushpod")).toBeInTheDocument();
+    expect(apiFns.attentionChats).toHaveBeenCalledWith("");
+    // Home is `/` at the root — no `/projects`, no `/home`. And the only <h1> is
+    // still the workspace's; the projects grid that used to add a second heading
+    // here is gone.
     expect(screen.getByTestId("here").textContent).toBe("/");
-    // Embedded: the grid drops its own page header, because this view's header
-    // (the workspace name) is already the page title. The only <h1> is the
-    // workspace's, never a second "Projects".
-    const h1s = screen.getAllByRole("heading", { level: 1 }).map((h) => h.textContent);
-    expect(h1s).toEqual(["Instance Root"]);
-    // …but its actions survive the embedding. This is now the ONLY New Project
-    // button in the app (the sidebar's was removed), so losing it would leave no
-    // way to create a project at all.
-    expect(screen.getByRole("button", { name: /New Project/i })).toBeInTheDocument();
-    // Order: the workspace's own chats lead, then its children, then Overview
-    // last. Chats lead because that section is on EVERY workspace's Home, so the
-    // page opens the same way whether or not there are children.
-    //
-    // Queried via the DOM, not getAllByRole per level: the grid's heading is an
-    // <h2> and Home's are <h3>, so collecting by level and concatenating sorts by
-    // heading RANK rather than position — it would report "Projects first" no
-    // matter where the section actually sits.
-    const headings = [...document.querySelectorAll("h2, h3")].map((h) => h.textContent ?? "");
-    const idx = (re: RegExp) => headings.findIndex((h) => re.test(h));
-    expect(idx(/^Chats/)).toBeGreaterThanOrEqual(0);
-    expect(idx(/^Chats/)).toBeLessThan(idx(/^Projects/));
-    expect(idx(/^Projects/)).toBeLessThan(idx(/^Overview/));
+    expect(screen.getAllByRole("heading", { level: 1 }).map((h) => h.textContent)).toEqual([
+      "Instance Root",
+    ]);
   });
 
-  it("shows the children on a direct load of `/`, not just after a tab click", async () => {
-    // `/` IS root Home, so the grid has to be there on arrival — the instance's
+  it("shows the feed on a direct load of `/`, not just after a tab click", async () => {
+    // `/` IS root Home, so the rows have to be there on arrival — the instance's
     // front door is the one page nobody navigates TO.
-    mockProjects = [makeProject({ slug: "hushpod", name: "Hushpod", group: "homelab" })];
+    apiFns.attentionChats.mockResolvedValue({
+      running: [],
+      unread: [foreignChat("s9", "Reply waiting", "hushpod", "Hushpod")],
+    });
     renderRootAt("/");
-    expect(await screen.findByText("Hushpod")).toBeInTheDocument();
+    expect(await screen.findByText("Reply waiting")).toBeInTheDocument();
+  });
+
+  it("leaves the ROOT's OWN chats unlabelled — the empty key is not 'foreign'", async () => {
+    // The regression a truthiness test would cause: the root's slug is `""`, so
+    // `row.projectSlug || …` would tag every one of its own chats with a project
+    // pill. The comparison has to be `!==` against the workspace key.
+    apiFns.attentionChats.mockResolvedValue({
+      running: [foreignChat("r1", "Root's own chat", "", "Instance Root")],
+      unread: [],
+    });
+    renderRootAt("/");
+    const row = await screen.findByTestId("home-running-chats");
+    expect(within(row).getByText("Root's own chat")).toBeInTheDocument();
+    expect(within(row).queryByText("Instance Root")).not.toBeInTheDocument();
+  });
+
+  it("opens a child project's chat in THAT project's URL, not the root's", async () => {
+    // Root Home's rows span workspaces, so clicking one has to navigate into the
+    // owning workspace's base — `/projects/hushpod/chat/s9`, not the root's flat
+    // `/chat/s9`, which would open a session the root doesn't have.
+    apiFns.attentionChats.mockResolvedValue({
+      running: [foreignChat("s9", "Ad stripping run", "hushpod", "Hushpod")],
+      unread: [],
+    });
+    renderRootAt("/");
+    fireEvent.click(await screen.findByText("Ad stripping run"));
+    expect(screen.getByTestId("here").textContent).toBe("/projects/hushpod/chat/s9");
   });
 
   it("renders the Files tab at the flat `/files`, against the empty root key", async () => {
@@ -437,6 +482,64 @@ describe("ProjectView root (#516)", () => {
       expect(await screen.findByText("disk on fire")).toBeInTheDocument();
       expect(projectsCtx.upsert).not.toHaveBeenCalled();
       expect(screen.getByTestId("here").textContent).toBe("/chat");
+    });
+  });
+
+  /**
+   * Importing native CLI chats at the ROOT (#588).
+   *
+   * The root's workspace key is the EMPTY STRING, so anything that hand-builds a
+   * URL or gates on `if (slug)` silently drops it — the import would either 404 or
+   * never be offered at all. These assert the key actually travels: `apiBase("")`
+   * resolves to `/api/root`, and the calls are made with `""`, not with some
+   * sentinel or with the project route's slug.
+   */
+  describe("import native CLI chats (#588)", () => {
+    it("offers the import at the root, addressed by the empty key", async () => {
+      apiFns.getAdoptableChats.mockResolvedValue({
+        count: 4,
+        sources: [{ sourceCwd: "/data/projects", sessionIds: ["n1", "n2", "n3", "n4"] }],
+      });
+      renderRootAt("/chat");
+      expect(
+        await screen.findByRole("button", { name: /Import 4 native/i }),
+      ).toBeInTheDocument();
+      // `toHaveBeenCalledWith("")` and not merely "was called": a truthiness gate
+      // on the key would skip the fetch entirely and this is what catches it.
+      expect(apiFns.getAdoptableChats).toHaveBeenCalledWith("");
+    });
+
+    it("imports and re-reads both the list and the count under the empty key", async () => {
+      apiFns.getAdoptableChats
+        .mockResolvedValueOnce({
+          count: 2,
+          sources: [
+            {
+              sourceCwd: "/w",
+              sessionIds: ["n1", "n2"],
+              sessions: [
+                { sessionId: "n1", mtime: "2026-07-01T09:00:00.000Z", sizeBytes: 4096 },
+                { sessionId: "n2", mtime: "2026-07-02T09:00:00.000Z", sizeBytes: 4096 },
+              ],
+            },
+          ],
+        })
+        .mockResolvedValue({ count: 0, sources: [] });
+      apiFns.adoptChats.mockResolvedValue({ adopted: ["n1", "n2"], skipped: [] });
+      renderRootAt("/chat");
+      // Through the confirmation dialog (#660), same as a project.
+      fireEvent.click(await screen.findByRole("button", { name: /Import 2 native/i }));
+      fireEvent.click(await screen.findByRole("button", { name: /^Import 2 chats$/i }));
+
+      await waitFor(() =>
+        expect(apiFns.adoptChats).toHaveBeenCalledWith("", { sessionIds: ["n1", "n2"] }),
+      );
+      await waitFor(() => expect(apiFns.listProjectChats).toHaveBeenCalledWith(""));
+      expect(await screen.findByRole("status")).toHaveTextContent("Imported 2 chats");
+      // Gone because the live count came back 0 — the same property as a project.
+      await waitFor(() =>
+        expect(screen.queryByRole("button", { name: /Import \d+ native/i })).toBeNull(),
+      );
     });
   });
 });

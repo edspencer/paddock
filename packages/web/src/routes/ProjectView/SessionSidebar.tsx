@@ -20,6 +20,7 @@ import {
   PlusIcon,
   SearchIcon,
   StarIcon,
+  TerminalIcon,
   TrashIcon,
   UnlinkIcon,
   XIcon,
@@ -83,6 +84,9 @@ export function SessionSidebar({
   starChat,
   toggleUnread,
   detachChat,
+  adoptableCount,
+  importing,
+  importChats,
 }: {
   chatList: ReturnType<typeof usePaneWidth>;
   sessionsOpen: boolean;
@@ -114,8 +118,7 @@ export function SessionSidebar({
   setForkingChat: Dispatch<SetStateAction<Chat | null>>;
   /**
    * Open the "promote this chat into a new project" dialog (issue #20).
-   * Undefined hides the action — it is only offered at the ROOT, where the
-   * chats that used to be scratch one-offs now live (#516 Phase 6). Promoting a
+   * Undefined hides the action — it is only offered at the ROOT. Promoting a
    * chat that already belongs to a project would be a move between projects,
    * which is a different feature and not what this ever meant.
    */
@@ -134,6 +137,27 @@ export function SessionSidebar({
   starChat: (chat: Chat) => Promise<void>;
   /** Promote a nested chat (with its own subtree) to the top level (#508). */
   detachChat: (chat: Chat) => Promise<void>;
+  /**
+   * How many native Claude Code CLI chats this workspace could import (#588) —
+   * the sessions the user ran in a terminal against the same working directory.
+   *
+   * A LIVE count, re-read after every import, not a "have they dismissed it yet?"
+   * flag: `0` hides the button because there is genuinely nothing left to take, so
+   * it comes back on its own once the user accrues more terminal history. That is
+   * the whole reason this is a number rather than a boolean.
+   */
+  adoptableCount: number;
+  /** True while an import is in flight — the button says so and refuses clicks. */
+  importing: boolean;
+  /**
+   * Open the import confirmation dialog (#660).
+   *
+   * This used to import everything on the spot, justified by the import being
+   * copy-only. Copy-only means it cannot destroy anything — it does not mean the
+   * user wanted 26 unrecognised chats in their sidebar, with no undo. The click
+   * now opens a dialog that shows what would come in and where from.
+   */
+  importChats: () => void;
 }) {
   // While searching, ignore the collapsed set. A query filters to matches and
   // their ancestors, so honouring collapse would let a folded-up parent hide the
@@ -374,8 +398,7 @@ export function SessionSidebar({
             <BranchIcon width={13} height={13} />
           </button>
         </Tooltip>
-        {/* Promote into a new project (#20). Offered only at the root, where the
-            chats that used to be scratch one-offs now live (#516 Phase 6). */}
+        {/* Promote into a new project (#20). Offered only at the root. */}
         {setPromotingChat && (
           <Tooltip content="Promote into a new project — give this chat a home of its own">
             <button
@@ -586,6 +609,49 @@ export function SessionSidebar({
           </button>
         </div>
         <div className="flex min-h-0 flex-1 flex-col">
+          {/* Import native CLI chats (#588). A full-width row of its own ABOVE the
+              "Chats" header rather than a fourth icon in the toolbar: it is a
+              one-off migration affordance that needs a readable count in its
+              label, and the toolbar is already three controls wide at a 256px
+              sidebar. Sitting above the header also puts it directly over the list
+              it is about to fill.
+
+              Rendered only while the count is non-zero, and the count is re-read
+              after every import — so this disappears because there is nothing left
+              to import, and reappears by itself if the user later runs more
+              terminal sessions. There is deliberately no dismiss state.
+
+              It OPENS A DIALOG rather than importing (#660). The no-dismiss
+              design is right only while the count is trustworthy, and it has not
+              been: this button has offered Paddock's own sweeper output (#658)
+              and another instance's chats (#659). A permanent, one-click,
+              irreversible action is the wrong shape for something a user may not
+              recognise — so the click now asks. */}
+          {adoptableCount > 0 && (
+            <div className="px-2 pb-2">
+              <button
+                type="button"
+                onClick={importChats}
+                disabled={importing}
+                // The accessible name still leads with the visible label's own
+                // words ("Import N native chat…") — a name that said "Review"
+                // while the button read "Import" would break label-in-name for
+                // anyone driving this by voice. That it opens a dialog rather
+                // than acting immediately is carried by `aria-haspopup`, which
+                // is what that attribute is for.
+                aria-label={`Import ${adoptableCount} native Claude Code chat${adoptableCount === 1 ? "" : "s"} into this workspace`}
+                aria-haspopup="dialog"
+                className="btn-ghost w-full justify-start py-1.5 text-xs"
+              >
+                <TerminalIcon width={13} height={13} className="shrink-0" />
+                <span className="truncate">
+                  {importing
+                    ? "Importing…"
+                    : `Import ${adoptableCount} native chat${adoptableCount === 1 ? "" : "s"}…`}
+                </span>
+              </button>
+            </div>
+          )}
           <div className="mb-1 flex items-center justify-between pr-3">
             <span className="section-label">Chats</span>
             {/* Also rendered while the running filter is ON with nothing left to

@@ -3,6 +3,8 @@ title: Reading Claude's work
 description: How to review what Claude actually did — richly rendered tool calls (diffs with line numbers, images, exit codes, search counts, background jobs), live nested sub-agent cards, Paddock's own tools as first-class UI, the context + cost meter, pinned file tabs, and the Files and Changes tabs for browsing and committing what the agent produced.
 ---
 
+import DemoVideo from '../../../components/DemoVideo.astro';
+
 Claude Code doesn't just reply — it *works*: it reads files, edits them, runs
 commands, searches the tree, spawns sub-agents, and launches background jobs. A
 plain chat log would flatten all of that into walls of text. Paddock instead
@@ -97,6 +99,42 @@ A running sub-agent's **duration and cost** appear once it settles (or on
 reload) — they aren't estimated mid-flight. And while a *deeper* sub-agent (one
 spawned by another sub-agent) is still running it shows as a generic row; it
 picks up its real type, steps, duration and cost within a poll of finishing.
+:::
+
+### Running sub-agents stay in view
+
+A sub-agent can work for minutes behind a collapsed card, and by the time it does
+the transcript has usually scrolled it off the top of the window. So while any
+sub-agent is running, Paddock pins a **live bar just above the message box**
+listing each one — headed `2 sub-agents running` — and it stays there no matter
+how far the transcript has moved on.
+
+Each row names the sub-agent's **type** (e.g. `general-purpose`), its
+**description**, and — the useful part — **what it is doing right now**, refreshed
+from that sub-agent's own transcript every couple of seconds, with a running
+**step count** on the right. A row that hasn't reported yet reads `starting…`.
+
+**Tap a row** and Paddock scrolls the transcript to that sub-agent's card, expands
+it, and pulses it briefly so you can see which one it landed on. The bar
+disappears by itself when the last sub-agent finishes, so an ordinary turn looks
+exactly as it always did.
+
+The same live step doubles as the **collapsed card's subtitle** while the
+sub-agent works — so a card scrolled past in the transcript reads as *what it's
+doing*, not a description written minutes ago. It reverts to the description once
+the sub-agent is done.
+
+<DemoVideo
+	src="/demo/subagent-bar.mp4"
+	poster="/demo/subagent-bar-poster.jpg"
+	alt="A Paddock chat spawns two research sub-agents. A bar above the message box lists both, each showing its live current step and a climbing step count. Clicking a row scrolls to that sub-agent's card and expands it, revealing its nested steps arriving in real time. The keeper writes a haiku while the two agents keep working, and when they finish the bar disappears and the cards show their real durations of 2m 7s and 2m 32s."
+	caption="Two sub-agents researching in parallel. Sped up 3x — the real turn took about three and a half minutes."
+/>
+
+:::note[Only the ones it can see]
+The bar tracks sub-agents spawned by **the turn you are watching**. A sub-agent
+one level deeper — one that another sub-agent spawned — shows up inside its
+parent's expanded card rather than as its own row.
 :::
 
 ### Background work outlives the turn

@@ -1,7 +1,6 @@
 import React, { lazy } from "react";
 import ReactDOM from "react-dom/client";
-import { createBrowserRouter, Navigate, RouterProvider, useParams } from "react-router-dom";
-import { gridUrl } from "./routes/ProjectView/urls";
+import { createBrowserRouter, RouterProvider, useParams } from "react-router-dom";
 import "./index.css";
 import { AppShell } from "./components/AppShell";
 import { RouteError } from "./components/RouteError";
@@ -54,12 +53,12 @@ const router = createBrowserRouter([
       // nothing to wait for. No redirect and no sticky last tab: `/` is the
       // instance's front door and always renders the same thing.
       { index: true, element: <ProjectView root /> },
-      // The projects grid folded INTO root Home, so `/projects` no longer has a
-      // pane of its own. Kept as a permanent redirect rather than deleted: it
-      // was the grid's URL for a whole release, so bookmarks, the docs, and any
-      // link out to "the project list" would otherwise 404 on the RouteError
-      // screen. `replace` keeps it out of the Back history.
-      { path: "projects", element: <Navigate to={gridUrl()} replace /> },
+      // The projects grid, back on its own page (#599). It spent a release as a
+      // section of root Home, but Home's opening screen now belongs to the
+      // running/unread feeds — and with the section gone, `/projects` is the
+      // only route that renders the grid UNFILTERED, so without it the area
+      // sections and the first-project empty state would be unreachable.
+      { path: "projects", element: <ProjectsGrid /> },
       // The projects grid, filtered to a single domain tag (click a tag pill).
       { path: "tags/:tag", element: <TaggedProjects /> },
       // Bare project URL redirects to the sticky last tab (defaults to home).
@@ -83,11 +82,8 @@ const router = createBrowserRouter([
       // ProjectView redirects this to /triggers so old links/bookmarks don't 404.
       { path: "projects/:slug/hooks", element: <ProjectView /> },
       // Root chats (#516). `/chat` IS root chats — never a redirect to them.
-      // It used to fall back to a one-off "scratch" chat without a root project;
-      // Phase 6 retired scratch, so it now joins Files/Changes/History/Triggers
-      // in 404ing through the shell's error boundary instead. Nothing links here
-      // without a root project, and the chats that used to live at this URL were
-      // re-homed onto the root keeper by the Phase 6 migration.
+      // With no root project it 404s through the shell's error boundary, the same
+      // as Files/Changes/History/Triggers.
       { path: "chat", element: <ProjectView root /> },
       { path: "chat/:sessionId", element: <ProjectView root /> },
       // Root Files + Changes (#516 Phase 4). These paths have no pre-#516

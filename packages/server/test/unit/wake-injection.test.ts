@@ -262,7 +262,7 @@ describe("createWakeInjectionCache", () => {
     expect(b).toBe(SET_A);
   });
 
-  it("stays empty when rebuild yields undefined (scratch/unknown/disabled)", async () => {
+  it("stays empty when rebuild yields undefined (unknown project / disabled)", async () => {
     const cache = createWakeInjectionCache({ rebuild: async () => undefined });
     expect(cache.resolve(entry("s1"))).toBeUndefined();
     await cache.warm(entry("s1"));

@@ -4,14 +4,15 @@
  * unread / promote). Chat SENDING happens over WS; these are the REST reads +
  * lifecycle mutations.
  *
- * The mirrored one-off "scratch" cluster that used to live at the end of this
- * file was deleted by #516 Phase 6 — the root is a project, so root chats are
- * ordinary project chats served by the routes above.
+ * Every route here is workspace-scoped and mounted twice (`/api/root` and
+ * `/api/projects/:slug`), so the root — whose key is `""` — is served by these
+ * same handlers with no special-casing.
  */
 import path from "node:path";
 import type { FastifyInstance, FastifyReply } from "fastify";
-import type { DiscoveredSession } from "@herdctl/core";
+import { PathTraversalError, type DiscoveredSession } from "@herdctl/core";
 import { keeperAgentName } from "../herdctl.js";
+import { ROOT_KEY } from "../projects.js";
 import { applyMessageProvenance } from "../message-provenance.js";
 import { buildProjectRuns } from "../runs.js";
 import { DEFAULT_MODEL } from "../models.js";
@@ -20,8 +21,9 @@ import { readSubagentMessages, readSessionTokenUsageWithSubagents } from "../sub
 import { readContextSeries } from "../usage.js";
 import { enrichWithToolDetails } from "../tooldetails.js";
 import { scanTranscriptNotice } from "../turn-notice.js";
-import { type RunProvenance, childOf, HUMAN_ROOT } from "../run-provenance.js";
+import { type RunProvenance, childOf, HUMAN_ROOT, ADOPTED_ROOT } from "../run-provenance.js";
 import { sendProjectError } from "../route-errors.js";
+import { mapWithConcurrency, FILE_FANOUT_CONCURRENCY } from "../concurrency.js";
 import {
   type ChatUsage,
   type ChatUsageScope,
@@ -77,6 +79,19 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
       error: `sessionIds must be an array of 1-${BATCH_SESSIONS_MAX} valid session ids`,
       code: "bad_request",
     });
+
+  /**
+   * Does this session have a live turn right now? The session hub is the only
+   * thing that knows (a running turn is in-memory state, not something any
+   * sidecar or job record has yet), and REST reaches it through the same
+   * context the MCP surface's `list_chats` uses.
+   *
+   * The context is optional in the dep bag, so a server built without the WS
+   * layer reports "nothing is running" rather than throwing — the attention
+   * feed then degrades to its unread half instead of 500ing.
+   */
+  const isRunning = (sessionId: string): boolean =>
+    ctx.managementOpsContext?.hub.isRunning(sessionId) ?? false;
 
   // --- chats (sessions) --------------------------------------------------
 
@@ -147,6 +162,127 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
       return sendProjectError(reply, err);
     }
   });
+
+  // --- the Home tab's attention feed (#599) ----------------------------------
+
+  /**
+   * The chats in this workspace's SUBTREE that want the user's attention right
+   * now: the ones with a live turn, and the ones holding an unread reply.
+   *
+   * Subtree, not workspace, is what makes root Home fleet-wide and a project's
+   * Home project-scoped through ONE handler. A workspace's key is its path
+   * relative to `projectsRoot`, so its descendants are exactly the workspaces
+   * whose key it prefixes — and the root's key is `""`, which prefixes every
+   * key there is. The root therefore sweeps the whole fleet and a (leaf)
+   * project sweeps only itself, with no branch on the key and no second
+   * implementation for the root to drift from. Nesting, when it lands, makes an
+   * intermediate workspace work for free.
+   *
+   * `running` is authoritative (the live hub), not inferred from timestamps.
+   * `unread` reuses the sidebar badge's derivation — the manual override (#458)
+   * or a completed turn newer than the read watermark (#189) — with ONE
+   * deliberate difference: archived chats are filed away on purpose, so they
+   * are excluded here. That means an archived chat with an unread turn still
+   * counts toward the sidebar's badge (`buildChatTurns` never consults
+   * `ArchiveStore`) while not appearing in this list. The two can therefore
+   * disagree by exactly that set; making them agree means teaching the badge
+   * about archiving, which is a behaviour change to the badge, not to this
+   * route.
+   */
+  app.get<{ Params: { slug: string } }>(
+    "/chats/attention",
+    {
+      schema: {
+        tags: ["Chats"],
+        summary: "List the chats in this workspace's subtree that are running or unread",
+        description:
+          "Returns `{ running, unread }` — the chats in this workspace AND its descendants that currently have a live turn (`running`) or hold an unread reply (`unread`). Each row is a chat DTO plus the `projectSlug`/`projectName` it belongs to, so a fleet-wide list stays attributable. On the root mount (`/api/root/chats/attention`) the subtree is the whole instance, because the root workspace's key (`\"\"`) prefixes every workspace key; on a project mount it is that project alone. A chat is never in both lists: a live turn hasn't landed a reply yet, so running wins.",
+        params: {
+          type: "object",
+          properties: {
+            slug: { type: "string", description: "Project slug." },
+          },
+          required: ["slug"],
+        },
+        response: {
+          200: {
+            description:
+              "Object `{ running, unread }`, each an array of chat DTOs enriched with `projectSlug` and `projectName`.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
+    async (req, reply) => {
+      try {
+        const self = await projects.get(req.params.slug);
+        // Descendants = every workspace this one's key prefixes. The root's key
+        // is `""`, so its prefix is `""` and the filter admits everything; a
+        // project's prefix is `"<slug>/"`. The `=== ROOT_KEY` test is explicit
+        // on purpose — `self.slug ? ... : ...` would take the root down the
+        // project branch and silently return an empty fleet.
+        const prefix = self.slug === ROOT_KEY ? "" : `${self.slug}/`;
+        const all = await projects.list().catch(() => []);
+        const subtree = [self, ...all.filter((p) => p.slug !== self.slug && p.slug.startsWith(prefix))];
+
+        const user = readStateUser(req);
+        // One shared job-record scan for the whole subtree rather than one per
+        // workspace: `lastTurnCompletedAt()` is the cached jobs-dir index, and
+        // re-reading it per project is what made the old N-request client
+        // fan-out expensive.
+        const lastTurnAt = await herdctl.lastTurnCompletedAt().catch(() => new Map<string, string>());
+
+        const running: unknown[] = [];
+        const unreadRows: unknown[] = [];
+        for (const p of subtree) {
+          const sessions = await herdctl.listSessions(p).catch(() => []);
+          if (sessions.length === 0) continue;
+          const keeper = keeperAgentName(p.slug);
+          const archivedOf = (s: DiscoveredSession) => archive.isArchived(keeper, s.sessionId);
+          const starredOf = (s: DiscoveredSession) => star.isStarred(keeper, s.sessionId);
+          const lastSeenOf = (s: DiscoveredSession) =>
+            readState.getLastSeen(user, keeper, s.sessionId);
+          const unreadOf = (s: DiscoveredSession) => unread.isUnread(user, keeper, s.sessionId);
+          const provenanceOf = (s: DiscoveredSession) => runProvenance.get(s.sessionId);
+          const triggerOf = makeTriggerResolver(p);
+          const parentOf = makeParentResolver(runProvenance, messageProvenance, p.slug, (id) =>
+            parentDetach.isDetached(keeper, id),
+          );
+          const chats = await buildProjectChats(
+            p.dir,
+            sessions,
+            undefined,
+            archivedOf,
+            lastTurnAt,
+            lastSeenOf,
+            provenanceOf,
+            triggerOf,
+            starredOf,
+            unreadOf,
+            parentOf,
+          );
+          for (const c of chats) {
+            const row = { ...c, projectSlug: p.slug, projectName: p.name };
+            if (isRunning(c.sessionId)) {
+              running.push(row);
+              continue;
+            }
+            // Archived chats are filed away on purpose; they stay out of the
+            // unread feed so archiving is a real way to silence a chat. A
+            // RUNNING archived chat still shows — it is live work either way.
+            if (c.archived) continue;
+            const completed = c.lastTurnCompletedAt ? Date.parse(c.lastTurnCompletedAt) : NaN;
+            const seen = c.lastSeen ?? 0;
+            if (c.unread || (Number.isFinite(completed) && completed > seen)) unreadRows.push(row);
+          }
+        }
+        return { running, unread: unreadRows };
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
 
   // --- run history: "while you were away" (E3 / #268 / DD-6) ------------------
   // A project-level view of what ran unattended (scheduled + spawned) plus human
@@ -325,8 +461,13 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
         const scope = req.query.scope ?? "active";
         const keeper = keeperAgentName(project.slug);
         const usageOf = chatUsageResolver(project.dir, project.model ?? DEFAULT_MODEL);
-        const entries = await Promise.all(
-          sessions.map(async (s) => {
+        // Bounded, NOT `Promise.all` (#544): one transcript read per chat, so an
+        // unbounded map opens 1,515 concurrent streams on a real project and
+        // peaks at 706 MB for no speed — 16 measured faster AND 4× smaller.
+        const entries = await mapWithConcurrency(
+          sessions,
+          FILE_FANOUT_CONCURRENCY,
+          async (s) => {
             // `all` skips the archive lookup entirely; the other two split on it.
             // The lookup is an in-memory sidecar read, so it is free next to the
             // transcript stream it is deciding whether to skip.
@@ -338,7 +479,7 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
             }
             const u = await usageOf(s).catch(() => null);
             return u ? ([s.sessionId, u] as const) : null;
-          }),
+          },
         );
         const usage: Record<string, ChatUsage> = {};
         for (const e of entries) if (e) usage[e[0]] = e[1];
@@ -549,8 +690,8 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
     async (req, reply) => {
       try {
         const projectDir = await projectDirForSlug(req.params.slug);
-        // Every slug here addresses a project now that scratch is gone (#516
-        // Phase 6), so the per-project model override always applies.
+        // Every key here addresses a workspace, so the per-workspace model
+        // override always applies.
         const p = await projects.get(req.params.slug).catch(() => null);
         const model = p?.model ?? DEFAULT_MODEL;
         const u = await readSessionTokenUsageWithSubagents(projectDir, req.params.sessionId).catch(
@@ -1278,10 +1419,8 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
   // project was created but the transcript couldn't be moved (e.g. an unknown
   // session id); the project is still usable.
   //
-  // Lived at `POST /api/chats/:sessionId/promote` until #516 Phase 6, when
-  // scratch was retired and the action followed the chats onto the root keeper.
-  // Nothing about it is root-specific: it takes a source project like every
-  // other route in this file, and the root is a project.
+  // Nothing about it is root-specific: it takes a source workspace like every
+  // other route in this file, and the root is a workspace.
   app.post<{
     Params: { slug: string; sessionId: string };
     Body: { name?: string; slug?: string; group?: string; summary?: string; domain?: string[] };
@@ -1352,6 +1491,207 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
           req.log.warn({ err }, "promote: could not re-home the transcript");
         }
         return reply.code(201).send({ project, promoted, sessionId: req.params.sessionId });
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  // --- importing native Claude Code chats (#588) -------------------------
+  //
+  // A workspace is backed by a working directory, and the user very often
+  // already has terminal `claude` history for it — or for their own checkout of
+  // the same repo elsewhere on disk. These two routes surface that history and
+  // pull it in. Detection lives in `../adoptable.ts`; the actual adoption is the
+  // engine's primitive, threaded through `herdctl.adoptChats`.
+  //
+  // Both are workspace-scoped like everything else in this file, so the ROOT
+  // workspace (key "") gets them from the same mount, unchanged.
+
+  app.get<{ Params: { slug: string } }>(
+    "/adoptable-chats",
+    {
+      schema: {
+        tags: ["Chats"],
+        summary: "Count the native Claude Code chats this project could import",
+        description:
+          "Returns the terminal `claude` sessions that could be imported into this project but are not yet visible in it: the project's own working directory, plus any Claude transcript folder whose recorded working directory matches the project (by checkout name for a repo-backed project, by exact path for a notebook project). Sidechains, already-imported sessions and sessions belonging to a real Paddock run are excluded by the engine; empty transcripts, slash-command-only transcripts and Paddock's own sweeper curation runs (`too-small` / `slash-command-only` / `sweeper-run`) are additionally withheld as noise and reported under `filtered`, so a count lower than the raw total always has an explanation. Response: `{ count, sources: [{ sourceCwd, sessionIds }], filtered: [{ sessionId, sourceCwd, reason }] }`. The count is LIVE — re-read it after an import rather than remembering a dismissal.",
+        params: {
+          type: "object",
+          properties: {
+            slug: { type: "string", description: "Project slug." },
+          },
+          required: ["slug"],
+        },
+        response: {
+          200: {
+            description:
+              "Object `{ count, sources, filtered }` describing what this project could import.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
+    async (req, reply) => {
+      try {
+        const project = await projects.get(req.params.slug);
+        const summary = await herdctl.listAdoptable(project);
+        // `importFrom` is a server-internal detail — the synthetic path a legacy
+        // source is reached through (#620). Clients round-trip `sourceCwd`, so
+        // strip it rather than publishing a `~/.claude` path in the DTO; the
+        // response schema is `additionalProperties: true`, so it would otherwise
+        // serialize.
+        return {
+          ...summary,
+          sources: summary.sources.map(({ importFrom: _importFrom, ...rest }) => rest),
+        };
+      } catch (err) {
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  app.post<{
+    Params: { slug: string };
+    Body: { sourceCwd?: string; sessionIds?: string[] } | null;
+  }>(
+    "/adopt-chats",
+    {
+      schema: {
+        tags: ["Chats"],
+        summary: "Import native Claude Code chats into this project",
+        description:
+          "Imports the terminal `claude` sessions reported by GET …/adoptable-chats. With no body (or no `sourceCwd`) every detected source is imported; with `sourceCwd` only that source is, and it must be one this project actually offers — an unrecognised path is a 400 rather than an invitation to scan arbitrary directories. `sessionIds` narrows the import to a chosen SUBSET of what is on offer (what the confirmation dialog sends); ids that are not on offer are simply not imported, and anything the engine adopts as a side effect of taking a whole source is released again. Transcripts are COPIED, never moved: the user's own `~/.claude` history is left intact and the copies keep their original mtimes, so imported chats sort by when they really happened. Afterwards the session, run-record and detection caches are dropped, so the chats appear on the very next list request with no restart. Response: `{ adopted, skipped }` — `skipped` carries the engine's reason per session (`sidechain`, `already-adopted`, `destination-exists`, `attributed-to-run`, `unreadable`, `placement-failed`, `record-failed`).",
+        params: {
+          type: "object",
+          properties: {
+            slug: { type: "string", description: "Project slug." },
+          },
+          required: ["slug"],
+        },
+        body: {
+          type: ["object", "null"],
+          additionalProperties: true,
+          properties: {
+            sourceCwd: {
+              description:
+                "Optional single source working directory to import from. Must be one of the `sourceCwd` values reported by GET …/adoptable-chats (or the project's own working directory); anything else is rejected with 400.",
+            },
+            sessionIds: {
+              type: "array",
+              items: { type: "string" },
+              description:
+                "Optional subset of the offered session ids to import. Omit to import everything on offer.",
+            },
+          },
+          required: [],
+        },
+        response: {
+          200: {
+            description: "Object `{ adopted, skipped }` describing what was imported.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
+    async (req, reply) => {
+      try {
+        const project = await projects.get(req.params.slug);
+        const sourceCwd = req.body?.sourceCwd;
+        // `=== undefined`, never truthiness: a caller could legitimately post an
+        // empty body, and the workspace key itself may be "" — falsiness tests
+        // are how the root workspace gets silently dropped (#531).
+        if (sourceCwd !== undefined) {
+          const { sources } = await herdctl.listAdoptable(project);
+          const known =
+            sourceCwd === project.workingDir || sources.some((s) => s.sourceCwd === sourceCwd);
+          if (!known) {
+            return reply
+              .code(400)
+              .send({ error: `Not an importable source: ${sourceCwd}`, code: "invalid" });
+          }
+        }
+        const result = await herdctl.adoptChats(project, {
+          sourceCwd,
+          sessionIds: req.body?.sessionIds,
+        });
+        // Stamp each imported chat's provenance so the list can badge it as
+        // imported rather than as an ordinary human chat. `stampIfAbsent`, not
+        // `stamp`: provenance describes how a chat came to exist and is never
+        // clobbered — if a marker is somehow already there, it knows more than
+        // the import does. Best-effort; a sidecar write must not fail an import
+        // that already succeeded on disk.
+        await Promise.all(
+          result.adopted.map((sessionId) =>
+            runProvenance.stampIfAbsent(sessionId, ADOPTED_ROOT).catch(() => undefined),
+          ),
+        );
+        return result;
+      } catch (err) {
+        // A session id that isn't path-safe is bad INPUT, not a server fault:
+        // the engine refuses to build a state-file path from it and throws
+        // PathTraversalError. Map it to 400 so it reads as "that id is not
+        // importable" rather than an internal error.
+        if (err instanceof PathTraversalError) {
+          return reply.code(400).send({ error: err.message, code: "invalid" });
+        }
+        return sendProjectError(reply, err);
+      }
+    },
+  );
+
+  app.post<{ Params: { slug: string }; Body: { sessionIds?: string[] } | null }>(
+    "/unadopt-chats",
+    {
+      schema: {
+        tags: ["Chats"],
+        summary: "Undo the most recent native-chat import into this project",
+        description:
+          "Reverses the import this server most recently performed into the workspace: each adoption is released and the copies that import placed are deleted, leaving the user's own `~/.claude` history untouched. `sessionIds` undoes part of that import; omit it to undo all of it. Deliberately scoped to the LAST import and remembered in memory — undo may delete files, so the paths it can touch come from what this process actually did rather than from the request body, and a restart forgets the offer rather than acting on a stale one. Response: `{ released }`, the session ids actually released; an empty array means there was nothing to undo (nothing imported, already undone, or the server restarted since).",
+        params: {
+          type: "object",
+          properties: {
+            slug: { type: "string", description: "Project slug." },
+          },
+          required: ["slug"],
+        },
+        body: {
+          type: ["object", "null"],
+          additionalProperties: true,
+          properties: {
+            sessionIds: {
+              type: "array",
+              items: { type: "string" },
+              description:
+                "Optional subset of the last import's session ids to release. Omit to undo the whole import. Ids outside that import are ignored.",
+            },
+          },
+          required: [],
+        },
+        response: {
+          200: {
+            description: "Object `{ released }` listing the session ids released.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
+    async (req, reply) => {
+      try {
+        const project = await projects.get(req.params.slug);
+        const result = await herdctl.unadoptChats(project, {
+          sessionIds: req.body?.sessionIds,
+        });
+        // Drop the provenance marker the import stamped, so a session that is
+        // later re-imported is badged by that import rather than carrying a
+        // marker from one that has been undone.
+        await Promise.all(
+          result.released.map((sessionId) => runProvenance.clear(sessionId).catch(() => undefined)),
+        );
+        return result;
       } catch (err) {
         return sendProjectError(reply, err);
       }

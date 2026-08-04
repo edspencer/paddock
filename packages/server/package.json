@@ -1,14 +1,18 @@
 {
   "name": "@paddock/server",
-  "version": "0.53.0",
+  "version": "0.60.0",
   "private": true,
   "description": "Paddock backend: Fastify + WebSocket wrapping @herdctl/core FleetManager and a project layer.",
   "type": "module",
   "main": "dist/index.js",
+  "bin": {
+    "paddock": "dist/cli/paddock.js"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
+    "import-chats": "tsx src/cli/import-chats.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -22,7 +26,7 @@
     "@fastify/swagger-ui": "^4.2.0",
     "@fastify/websocket": "10.0.1",
     "@herdctl/chat": "^0.8.0",
-    "@herdctl/core": "^5.28.0",
+    "@herdctl/core": "^5.31.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "fastify": "4.28.1",
     "jose": "^6.2.3",

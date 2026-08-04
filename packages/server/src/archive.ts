@@ -9,9 +9,9 @@
  * layer that persists custom chat names), whose schema already reserves room for
  * a future `archived` field. Until that ships upstream, Paddock keeps its own
  * tiny JSON sidecar in the data dir — the exact same pattern SweepService uses
- * for its watermark state. Keyed by `<agent>\0<sessionId>` (NUL-separated) so a
- * project chat and a scratch chat can never collide — a NUL can occur in neither
- * an agent name (`keeper-<slug>` / `scratch`) nor a UUID. Only archived entries
+ * for its watermark state. Keyed by `<agent>\0<sessionId>` (NUL-separated) so
+ * chats under different agents can never collide — a NUL can occur in neither an
+ * agent name (`keeper-<slug>`) nor a UUID. Only archived entries
  * are stored (an unarchive deletes the key), keeping the file compact.
  */
 import { promises as fs } from "node:fs";

@@ -44,7 +44,7 @@ import type { TurnOrigin } from "./run-provenance.js";
 
 /** The per-turn context that decides which injected servers a turn receives. */
 export interface InjectedMcpBuildArgs {
-  /** Slug of the project this turn runs in (`scratch` gets send_file only). */
+  /** Workspace key this turn runs in (`""` is the root). */
   projectSlug: string;
   /** Keeper cwd — resolves the send_file tool's relative `file_path`. */
   workingDir: string;
@@ -193,7 +193,8 @@ export interface WakeInjectionDeps {
   /**
    * Rebuild the injected servers for a woken session — resolves the project + its
    * config and delegates to {@link buildInjectedMcpServers}. Returns `undefined` when
-   * the session should receive no injection (scratch / unknown project). Should not
+   * the session should receive no injection (a non-keeper agent / unknown project).
+   * Should not
    * reject (the cache catches defensively regardless).
    */
   rebuild: (entry: SessionWakeEntry) => Promise<Record<string, InjectedMcpServerDef> | undefined>;

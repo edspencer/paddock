@@ -47,9 +47,43 @@ token is rejected even if it arrives directly. Paddock holds **no key material**
 — only the JWKS URL. Key rotation is handled automatically (`jose`'s
 `createRemoteJWKSet` fetches + caches the JWKS).
 
-Either way, **health/readiness endpoints are always exempt** so the proxy and
-monitoring can probe a locked-down server: `/api/health` (Paddock's own),
-`/healthz`, `/-/health`, `/health`, `/readyz`, `/livez`.
+### What the auth hook does not gate
+
+Either way, **Paddock's health endpoint is always exempt** so the proxy and
+monitoring can probe a locked-down server: **`/api/health`**, which answers
+`200 {"ok":true}` as `application/json`. It is the only exempt *health* path — point
+every liveness/readiness probe at it (the shipped `Dockerfile` HEALTHCHECK and the
+Kubernetes probes both do).
+
+It is not, however, the only exempt path. If you're auditing what an unauthenticated
+client can reach, this is the whole list — three groups, and nothing else:
+
+| Exempt | What it is | Why |
+|---|---|---|
+| `/api/health` | The health route above. | Probes must work on a locked-down instance. |
+| `/assets/`, `/icons/`, `/fonts/` (prefixes) and `/sw.js`, `/manifest.webmanifest`, `/favicon.ico` | The compiled front-end bundle — content-hashed JS/CSS/fonts, the service worker, the PWA manifest. | They carry no secrets and no per-user data, and gating them turns a transient auth lapse (an SSO session refresh, the proxy briefly not injecting the header) into a `401` on a chunk fetch and a broken app. |
+| `/mcp` and `/.well-known/oauth-protected-resource…` (prefixes) | The [Management API](/reference/mcp/) and its OAuth discovery document. | They **authenticate themselves**, independently of `PADDOCK_AUTH_MODE`. |
+
+Two things worth being precise about. The static-asset exemption covers the compiled
+bundle only — **the app shell (`index.html` and the client routes) and every data route
+(`/api/…`, `/ws`) stay authenticated**, so this exposes nothing an authenticated user's
+browser doesn't already download. And `/mcp` being exempt from *this* hook does not make
+it open: it runs its own authenticator and fails closed — `404` when unconfigured, `401`
+otherwise — even at `PADDOCK_AUTH_MODE=none`. That is also why it must be exempt: `jwt`
+mode reads `Authorization`, which collides head-on with an MCP client's own bearer token.
+
+Matching strips the query string and one trailing slash, so `/api/health?probe=1` is
+exempt too. Everything else — including any path no route serves — is gated.
+
+:::caution[No `/healthz` alias]
+Paddock does not serve `/healthz`, `/-/health`, `/health`, `/readyz` or `/livez`.
+Earlier versions of this page listed them as exempt, but no route was ever
+registered — so with the SPA mounted they were answered by the front-end catch-all
+with `200 text/html`, and a probe pointed at one reported healthy no matter what
+state the app was in. They are now gated like any other unknown path (`401` in
+`trusted-header`/`jwt` mode). If you have a probe on one of them, repoint it at
+`/api/health` ([issue #569](https://github.com/edspencer/paddock/issues/569)).
+:::
 
 ---
 

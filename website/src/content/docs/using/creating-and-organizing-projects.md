@@ -1,6 +1,6 @@
 ---
 title: Creating & organizing projects
-description: A hands-on walkthrough — make a new project (notebook or repo-backed), promote a notebook to repo-backed in place, fill in its project.yaml, group projects into areas, tune the agent in Settings (models, curation budgets), and promote a scratch chat into a project.
+description: A hands-on walkthrough — make a new project (notebook or repo-backed), promote a notebook to repo-backed in place, fill in its project.yaml, group projects into areas, tune the agent in Settings (models, curation budgets), and promote a root chat into a project.
 ---
 
 Everything you do in Paddock lives inside a **project**. This guide is the
@@ -9,8 +9,8 @@ that page explains *what* a project is; this one walks through *how* to create
 one, organize a growing collection, and tune it to your taste.
 
 By the end you'll know how to create both kinds of project, sort them into
-**areas**, set per-project metadata and agent behaviour, and rescue a one-off
-scratch chat by promoting it into a real project.
+**areas**, set per-project metadata and agent behaviour, and rescue a root chat
+by promoting it into a project of its own.
 
 ## Create a new project
 
@@ -118,8 +118,8 @@ refuses rather than overwriting it.
 
 :::note[Two different "promotes"]
 Don't confuse this with
-[promoting a *scratch chat* into a project](#promote-a-scratch-chat-into-a-project)
-further down. This one changes a project's **type**; that one turns a one-off
+[promoting a *root chat* into a project](#promote-a-root-chat-into-a-project)
+further down. This one changes a project's **type**; that one turns a loose
 conversation into a project in the first place.
 :::
 
@@ -220,7 +220,7 @@ and Links, all editable here. (Slug, Started, and Created are shown read-only.)
 - **Drive mode** — **Batch (one-shot per turn)** is the classic path; **Session
   (cross-turn autonomy)** keeps the agent alive across turns so features like
   `ScheduleWakeup` and `/loop` work. Leave it on **Global default** to inherit the
-  box-wide `PADDOCK_KEEPER_DRIVE_MODE`; a **Reset to global default** button clears
+  box-wide `PADDOCK_DRIVE_MODE`; a **Reset to global default** button clears
   an override.
 - **Max turns** — an upper bound (1–1000) on agent turns in a single run.
 - **Docker sandbox** — run Claude inside a Docker container (needs a working
@@ -290,22 +290,23 @@ brand-new project the toggle still appears but is **disabled** (labelled "no
 overview yet") until the [sweeper](/concepts/sweeper/) has written an
 `OVERVIEW.md` — there's nothing to preload until then.
 
-## Promote a scratch chat into a project
+## Promote a root chat into a project
 
-Not everything starts as a project. Paddock has **one-off (scratch) chats** — a
-quick conversation not tied to anything — for when you just want to think out
-loud. If one turns out to be worth keeping, don't copy-paste it: **promote it**.
+Not everything starts as a project. A **root chat** — a conversation on the
+instance root, belonging to no particular project — is where you think out loud
+before you know what it is. If one turns out to be worth keeping, don't
+copy-paste it: **promote it**.
 
-From a one-off chat, click **Promote to project**. Give it a **Project name**
+From a root chat, click **Promote to project**. Give it a **Project name**
 (pre-filled from the chat), and optionally a summary, area, and domain tags:
 
 Paddock then creates a real project **and moves the chat's full history into it**
 — transcript and all — so the conversation stays resumable under the new
-project's agent. Nothing is lost; the scratch chat simply becomes the project's
+project's agent. Nothing is lost; the root chat simply becomes the project's
 first chat.
 
 :::tip[Start loose, organize later]
-This is the intended workflow: brainstorm in a scratch chat with zero setup, and
+This is the intended workflow: brainstorm in a root chat with zero setup, and
 only promote to a project once it's clearly something you'll return to. You never
 have to decide up front.
 :::

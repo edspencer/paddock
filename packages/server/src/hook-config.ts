@@ -3,7 +3,7 @@
  *
  * A hook is an **event-triggered agent turn** (design doc §5, GG-1..GG-4). Each
  * hook is registered as its OWN herdctl agent `hook-<slug>-<name>` — exactly how
- * keeper/sweeper/scratch agents are registered via `fleet.addAgent` — whose tool
+ * keeper/sweeper agents are registered via `fleet.addAgent` — whose tool
  * config (`allowed_tools`/`denied_tools`/`permission_mode`/`model`/`max_turns`) IS
  * its capability set. There is NO hook "kind"/profile and NO "curator" concept: a
  * hook with no tools is simply a hook granted no tools; a hook that must write files

@@ -30,8 +30,32 @@ import path from "node:path";
 
 const STATE_FILE = "run-provenance.json";
 
-/** How a turn/chat came to exist — the provenance dimension #267 badges on. */
-export type TurnOrigin = "human" | "scheduled" | "spawned" | "hook";
+/**
+ * Every origin, as VALUES — the single source of truth for both the type and the
+ * runtime allowlist {@link coerce} validates against.
+ *
+ * Declared this way round on purpose (#588). It used to be a hand-written union
+ * with a separate `readonly TurnOrigin[]` list, and `readonly TurnOrigin[]` only
+ * asserts that each element IS an origin — never that every origin is an
+ * element. So when the union grew, the allowlist silently lagged: `coerce()`
+ * returned null for the new member, and every chat carrying it lost BOTH its
+ * badge and its parent edge on read, with no error anywhere. Deriving the type
+ * from the list makes that impossible rather than merely documented.
+ */
+export const ORIGINS = ["human", "scheduled", "spawned", "hook", "adopted"] as const;
+
+/**
+ * How a turn/chat came to exist — the provenance dimension #267 badges on.
+ *
+ * `adopted` (#588) is the odd one out: the chat was not created by Paddock at
+ * all. It is a terminal `claude` session the user ran themselves and later
+ * imported, so it has no creating turn, no parent, and nothing ever "ran" it
+ * here. It is therefore a ROOT and it is ATTENDED — see `ORIGIN_IS_ROOT` in
+ * ./chat-dto.ts and `ORIGIN_IS_UNATTENDED` in ./runs.ts, both of which are
+ * `Record<TurnOrigin, boolean>` so that adding a member here forces a
+ * DECISION at each of them instead of a silent fallthrough.
+ */
+export type TurnOrigin = (typeof ORIGINS)[number];
 
 /** A chat's provenance marker: how it was created + how deep in a spawn tree. */
 export interface RunProvenance {
@@ -69,6 +93,17 @@ export const HUMAN_ROOT: RunProvenance = { origin: "human", depth: 0 };
 export const SCHEDULED_ROOT: RunProvenance = { origin: "scheduled", depth: 0 };
 
 /**
+ * An IMPORTED terminal chat (#588): origin `adopted`, depth 0.
+ *
+ * Depth 0 because the session was never spawned by anything in this instance —
+ * the user ran it themselves in a terminal and Paddock only adopted the
+ * transcript. Stamped with `stampIfAbsent`, never `stamp`: if a chat somehow
+ * already carries a marker, whatever created it here knows more about its
+ * origin than the import does.
+ */
+export const ADOPTED_ROOT: RunProvenance = { origin: "adopted", depth: 0 };
+
+/**
  * The provenance a child inherits when `parent` spawns it via a self-MCP write
  * tool: origin becomes `spawned` and depth is one deeper. So a fan-out tree's
  * depth is always the number of spawn hops from its human/scheduled root, which
@@ -85,8 +120,6 @@ export function childOf(parent: RunProvenance, parentRef?: ParentChatRef | null)
       : {}),
   };
 }
-
-const ORIGINS: readonly TurnOrigin[] = ["human", "scheduled", "spawned", "hook"];
 
 function isOrigin(v: unknown): v is TurnOrigin {
   return typeof v === "string" && (ORIGINS as readonly string[]).includes(v);
@@ -201,6 +234,23 @@ export class RunProvenanceStore {
     const map = await this.ensureLoaded();
     if (map.has(sessionId)) return;
     await this.stamp(sessionId, provenance);
+  }
+
+  /**
+   * Forget a chat's provenance (#660).
+   *
+   * The inverse of {@link stamp}, for the one case where a chat's creation is
+   * itself undone: undoing a native-chat import releases the adoption and deletes
+   * the copy, and a marker left behind would badge a LATER import of the same
+   * session as belonging to the one that was undone. Returns silently when there
+   * was nothing recorded, so an undo of a partially-stamped import is not an
+   * error.
+   */
+  async clear(sessionId: string): Promise<void> {
+    if (!isSafeId(sessionId)) return;
+    const map = await this.ensureLoaded();
+    if (!map.delete(sessionId)) return;
+    await this.persist(map);
   }
 
   /** Write-through, serialised so overlapping stamps can't corrupt the file. */

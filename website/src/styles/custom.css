@@ -11,3 +11,34 @@
 :root {
 	--sl-content-width: 50rem;
 }
+
+/* Mermaid: render at natural size and scroll, rather than scaling down to fit.
+ *
+ * Mermaid sets an inline `max-width: <natural>px` and lets the SVG shrink to the
+ * container, so a diagram wider than the prose column is silently scaled down --
+ * there is no floor, and the labels go with it. The one on /architecture/overview/
+ * was 2915px in a 692px column (4.4x, ~3px text).
+ *
+ * The diagram SOURCES are the real fix (TB instead of LR, `~~~` to stack
+ * unconnected subgraphs), and after those only the sequence diagram still
+ * overflows. This is the safety net so the failure mode is "scroll a bit"
+ * rather than "unreadable", and so it cannot silently regress if a future
+ * diagram grows.
+ *
+ * The natural width itself is pinned in JS (see the head script in
+ * astro.config.mjs) because CSS cannot read a viewBox: an SVG with no width
+ * attribute resolves `width: auto` to 100% of its container, so the pixel value
+ * has to come from script. This rule only provides the scroll container.
+ */
+.sl-markdown-content pre.mermaid {
+	overflow-x: auto;
+	/* Room for the scrollbar when a wide diagram needs one. */
+	padding-block: 0.5rem;
+}
+
+.sl-markdown-content pre.mermaid > svg {
+	display: block;
+	/* Centre it when it is narrower than the column. */
+	margin-inline: auto;
+	height: auto;
+}

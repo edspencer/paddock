@@ -34,7 +34,7 @@ Consequences worth knowing:
 - **Blank is unset.** A whitespace-only value (`PADDOCK_X=""`) yields the default,
   not an empty string.
 - **Booleans** accept `1` / `true` / `yes` (case-insensitive) as true — *except*
-  `PADDOCK_KEEPER_NATIVE_PROMPT`, which is on by default and only `0` / `false` /
+  `PADDOCK_NATIVE_PROMPT`, which is on by default and only `0` / `false` /
   `no` turns it off.
 - **Unknown enum values fall back to the default** rather than failing startup
   (e.g. an unrecognised `PADDOCK_AUTH_MODE` becomes `none`).
@@ -47,17 +47,18 @@ Consequences worth knowing:
 
 | Variable | Default | Required | Purpose |
 |----------|---------|----------|---------|
-| `PADDOCK_DATA_DIR` | `./data` | no | Data root. **All paths below default to subdirectories of this** — set it and everything cascades. Holds projects, scratch, generated herdctl config, and state. |
+| `PADDOCK_DATA_DIR` | `./data` | no | Data root. **All paths below default to subdirectories of this** — set it and everything cascades. Holds projects, generated herdctl config, and state. |
 | `PADDOCK_CONFIG` | `<data>/paddock.config.yaml` | no | Path to the optional YAML instance-config file — the base layer *beneath* every variable on this page. Resolved against the bootstrap data dir when unset; a missing file **there** is fine (env-only deployments are unaffected), but an explicitly-set path that doesn't exist is a **startup error**, so a typo can't silently boot an instance with none of your settings. See [Config file (YAML)](/configuration/config-file/). |
 | `PADDOCK_PROJECTS_DIR` | `<data>/projects` | no | Root that contains per-project directories (each is an agent's working dir). |
-| `PADDOCK_SCRATCH_DIR` | `<data>/scratch` | no | Working directory for one-off / scratch chats. |
 | `PADDOCK_STATE_DIR` | `<data>/.herdctl` | no | herdctl state directory. |
 | `PADDOCK_HERDCTL_CONFIG` | `<data>/herdctl.yaml` | no | Path to the generated `herdctl.yaml` the FleetManager loads (Paddock owns/regenerates it). |
 | `PADDOCK_WEB_DIST` | `packages/web/dist` | no | Built SPA served in production (resolved relative to the server module). |
 | `PORT` | `4000` | no | HTTP/WS listen port. |
 | `HOST` | `127.0.0.1` | no | Bind host. **Safe by default:** defaults to loopback, so a fresh run is network-closed. `PADDOCK_HOST` is an alias. Set to `0.0.0.0` (all interfaces) only behind auth or a proxy — see the guard below. |
 | `PADDOCK_DANGEROUSLY_ALLOW_OPEN` | `false` | no | Escape hatch for the open-server guard: allow a non-loopback bind **with no authentication** (`PADDOCK_AUTH_MODE=none`). Accepts `1`/`true`/`yes`. Without it, that combination **refuses to start**; with it, the server boots but logs a loud one-line warning. Leave unset unless you truly intend an unauthenticated server on a routable interface. |
-| `CLAUDE_HOME` | `~/.claude` | no | Claude home used for session/transcript discovery. |
+| `CLAUDE_HOME` | `<dataDir>/claude-home` | no | The Claude home Paddock runs its agents against — the directory whose `projects/<encoded-cwd>/` folders hold Claude Code's session transcripts, and the value handed to Claude Code as `CLAUDE_CONFIG_DIR`. **Paddock owns this directory** (#620): the data dir is a single relocatable root, and the user's `~/.claude` is a read-only source Paddock imports out of but never writes to. Precedence: `CLAUDE_HOME`, then `CLAUDE_CONFIG_DIR`, then a `claudeHome:` config-file key, then the default. `CLAUDE_CONFIG_DIR` is honoured because herdctl deliberately refuses to clobber an operator-set value (herdctl#423) — if Paddock disagreed with it, the SDK would write transcripts to one tree while herdctl read from another. Resolved **once** at startup into `PaddockConfig.claudeHome` (`resolveClaudeHome()` in `config.ts`) and threaded to *both* consumers: Paddock's transcript relocation and import detection (`ensureProjectChats` in `transcripts.ts`, `AdoptableIndex` in `adoptable.ts`), **and** the engine, as `FleetManagerOptions.claudeHomePath` (`herdctl.ts`). It is deliberately one value: were Paddock to honour this variable while the engine fell back to `$HOME/.claude`, chats would **list from one directory and open empty from another** (#588). Set it to `$HOME/.claude` to restore the pre-#620 layout exactly. |
+| `CLAUDE_CONFIG_DIR` | *(unset)* | no | Claude Code's own home variable. When set, Paddock adopts it as its Claude home rather than picking a different one (see above). Note that Claude Code scopes its credential store to whether this is set at all, so a keychain login made against the default home is not visible under a relocated one — Paddock warns at boot when it can find no credential source. |
+
 
 > **Safe-by-default binding.** Paddock runs code and spends Claude tokens, so it
 > refuses to expose itself carelessly. The bind host defaults to `127.0.0.1`
@@ -165,16 +166,47 @@ HushPod's whisper config so both can share a backend. See [DEV.md](https://githu
 
 | Variable | Default | Required | Purpose |
 |----------|---------|----------|---------|
-| `PADDOCK_KEEPER_DRIVE_MODE` | `session` | no | Box-wide default for how turns are driven. `session` (the built-in default since v0.36) enables cross-turn autonomy (`ScheduleWakeup` / `/loop`) and token-by-token streaming; `batch` is one-shot per turn. A per-project `driveMode` overrides this at dispatch. Unknown → default. |
+| `PADDOCK_DRIVE_MODE` | `session` | no | Box-wide default for how turns are driven. `session` (the built-in default since v0.36) enables cross-turn autonomy (`ScheduleWakeup` / `/loop`) and token-by-token streaming; `batch` is one-shot per turn. A per-project `driveMode` overrides this at dispatch. Unknown → default. |
 | `PADDOCK_MODELS` | *(every catalog model)* | no | Comma-separated allow-list of built-in catalog model **ids** (e.g. `claude-opus-5,claude-sonnet-5`) the model picker and the per-project default may offer. Unset ⇒ every catalog model is offered. Unknown, blank and duplicate ids are dropped silently, and if nothing valid survives the full catalog is offered again — **an instance never ends up offering zero models.** A per-project list can narrow this further, never widen it. See [Model allow-lists](/configuration/models/). |
-| `PADDOCK_KEEPER_NATIVE_PROMPT` | `true` | no | Agents use the native Claude Code system prompt + `CLAUDE.md` hierarchy. Set `0`/`false`/`no` for the terse Paddock "replace" prompt (e.g. an instance with no `CLAUDE.md`). |
-| `PADDOCK_SELF_MCP` | `false` | no | Give Claude the read-only self-management MCP (`mcp__paddock_manage__*`: enumerate projects/chats, read another chat's transcript). Never injected on scratch turns. |
+| `PADDOCK_NATIVE_PROMPT` | `true` | no | Agents use the native Claude Code system prompt + `CLAUDE.md` hierarchy. Set `0`/`false`/`no` for the terse Paddock "replace" prompt (e.g. an instance with no `CLAUDE.md`). |
+| `PADDOCK_SELF_MCP` | `false` | no | Give Claude the read-only self-management MCP (`mcp__paddock_manage__*`: enumerate projects/chats, read another chat's transcript). |
 | `PADDOCK_SELF_MCP_WRITE` | `false` | no | Additionally give Claude the self-management **write** tools (`create_chat`, `fork_chat`, `send_message`, `fork_chat_batch`). Only honored when `PADDOCK_SELF_MCP` is also on (write implies read). |
 | `PADDOCK_SELF_MCP_PROJECTS` | `false` | no | Additionally give Claude the self-management **project** tool (`create_project`) — provisioning a whole new project, cloning a repo when repo-backed. Gated separately from the other write tools because it creates instance-level state and clones a caller-supplied git URL. Only honored when `PADDOCK_SELF_MCP` and `PADDOCK_SELF_MCP_WRITE` are also on. |
 | `PADDOCK_MAX_SPAWN_DEPTH` | `1` | no | How deep a spawn tree may grow before spawned children stop receiving the self-management MCP: a spawned turn at depth `d` gets it (including the write tools, so a child can `send_message` back to its parent) only while `d ≤` this value. `0` means no spawned child ever gets it. A per-project `maxSpawnDepth` overrides this at dispatch; an out-of-range value falls back to the default rather than failing startup. Only meaningful when the **write** self-MCP is on — spawning needs those tools. |
 | `PADDOCK_SCHEDULE_MUTATION` | `false` | no | Allow schedules to be created / edited / deleted **programmatically** at runtime (the Schedules REST routes and the trigger MCP tools). Off by default, so a plain instance's schedules can only change by editing `project.yaml`. Schedules declared statically in `project.yaml` are armed either way. Accepts `1`/`true`/`yes`. See [Scheduling & the schedule gates](/configuration/schedules/). |
 | `PADDOCK_HOOKS_MCP` | `false` | no | Instance default for the hook/trigger-management tools (`list_triggers` / `set_trigger` / `remove_trigger`) — Claude declaring and editing its own [event hooks](/concepts/hooks/) and schedules. Off by default; a per-project `hooksMcpEnabled` in `project.yaml` overrides it. Only honored when the self-management **write** MCP is also on; when off the tools are **absent** (not present-but-refusing). Accepts `1`/`true`/`yes`. |
+| `PADDOCK_ENVIRONMENT_PROMPT` | *(Paddock's built-in text)* | no | Text **appended** to every keeper turn's system prompt, telling the agent it renders into a browser as GitHub-Flavored Markdown rather than into a terminal. Any value replaces the built-in text entirely. See below, and [the environment prompt](/configuration/instance-settings/#the-environment-prompt). |
 | `PADDOCK_BROWSER_MCP` | *(off)* | no | When `=1`, inject a headless-Chromium Playwright MCP into the agent (browse/screenshot). |
+
+### The environment prompt is the one place blank is *not* unset
+
+`PADDOCK_ENVIRONMENT_PROMPT` breaks the "blank is unset" rule at the top of this page,
+on purpose: an empty value is how you **opt out**, so there has to be a difference
+between "unset" and "set to nothing".
+
+```bash
+# unset            → Paddock's built-in two-rule prompt is appended
+PADDOCK_ENVIRONMENT_PROMPT="Link every Jira key as a URL."   # → that, instead
+PADDOCK_ENVIRONMENT_PROMPT=""                                # → nothing appended
+```
+
+Because it is *defined-ness* rather than emptiness that decides, an exported-but-empty
+`PADDOCK_ENVIRONMENT_PROMPT` still shadows the config file — and the Settings screen
+correctly renders the field read-only in that case. `PADDOCK_BROWSER_MCP` behaves the
+same way, for the same reason.
+
+The value is used verbatim: no trimming, no escaping. Leading indentation and trailing
+newlines survive.
+
+:::caution[Drive mode `batch` keeps the native prompt instead]
+On `driveMode: batch`, turns go through herdctl's CLI runtime, which has no
+`--append-system-prompt` — it folds an append into `--system-prompt`, and that
+**replaces** Claude Code's preset when there is nothing to append onto. So a batch
+instance with `PADDOCK_NATIVE_PROMPT=true` (the default) gets **no** environment prompt,
+rather than getting it at the cost of the entire coding preset. Turn the native prompt
+off and the two are concatenated as expected. The default drive mode, `session`, is
+unaffected — the SDK runtime appends properly.
+:::
 
 ## Chat recovery
 

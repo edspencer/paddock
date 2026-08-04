@@ -64,6 +64,8 @@ import {
   type ScheduleTriggerHandler,
   type ScheduleInfo,
   type JobMetadata,
+  type AdoptionPlacementMode,
+  type AdoptSkippedSession,
 } from "@herdctl/core";
 import { consumeResumedTurn, consumeBackgroundTurns } from "./resume-drain.js";
 import { createSDKMessageHandler, type SDKMessage as ChatSDKMessage } from "@herdctl/chat";
@@ -73,7 +75,7 @@ import path from "node:path";
 import type { PaddockConfig } from "./config.js";
 import type { Project } from "./projects.js";
 import { DEFAULT_MODEL } from "./models.js";
-import { ensureProjectChats, projectChatsDir } from "./transcripts.js";
+import { ensureProjectChats, projectChatsDir, type ClaudeHomeTarget } from "./transcripts.js";
 import {
   triggerRunsOnOwnAgent,
   isCuratorTrigger,
@@ -88,6 +90,18 @@ import {
 } from "./herdctl-agent-config.js";
 import * as jobs from "./herdctl-jobs.js";
 import { JobsDirIndex } from "./herdctl-jobs-index.js";
+import { AdoptableIndex, type AdoptableSummary, type FilterReason } from "./adoptable.js";
+
+/**
+ * One session an import did NOT bring in, with a reason a UI can show verbatim.
+ *
+ * A superset of the engine's own `AdoptSkippedSession`: paddock's noise filter
+ * (`./adoptable.ts`) contributes its own reasons on top of the engine's, and a
+ * caller renders the string either way rather than switching on it.
+ */
+export type AdoptSkipped =
+  | AdoptSkippedSession
+  | { sessionId: string; reason: FilterReason; detail?: string };
 
 /** Options passed through to a streamed trigger. */
 export interface ChatTurnOptions {
@@ -275,7 +289,7 @@ export class HerdctlService {
   private agentModels = new Map<string, string>();
 
   /**
-   * Each agent's working directory (the keeper's cwd / scratch dir), recorded at
+   * Each agent's working directory (the keeper's cwd), recorded at
    * registration. Used to resolve the `claude` CLI transcript for a resume so we
    * can measure its pending async-input-queue depth (the resume self-interrupt
    * fix's residue gate — see {@link residueDepthFor} + `./resume-drain.ts`).
@@ -290,6 +304,25 @@ export class HerdctlService {
    * {@link cancel}). Entries are removed when the turn's stream ends.
    */
   private liveSessions = new Map<string, RuntimeSession>();
+
+  /**
+   * Background-phase turns keyed by the synthetic job id the sink minted for
+   * them, valued by the chat session they belong to (paddock#528).
+   *
+   * After a turn's primary `result` lands, {@link chatSession} returns and drops
+   * its {@link liveSessions} entry — but the session itself may live on, held
+   * open by the reaper because the turn launched background work, streaming
+   * autonomous re-invocation turns. Those turns are real, running, and shown as
+   * such; until now they were also uncancellable, because nothing registered
+   * them anywhere Stop could reach.
+   *
+   * `interrupt()` would be the wrong tool even if it could: it targets an
+   * in-flight model turn, and the wedge case is a session sitting idle holding
+   * background work that will never finish. So these route to a force-reap
+   * instead — end the session, let the stream end, and let the ordinary unwind
+   * emit `chat:complete`. Entries are removed when the background stream ends.
+   */
+  private backgroundTurns = new Map<string, string>();
 
   /**
    * Incremental index of `<stateDir>/jobs`, backing the unread-badge reads
@@ -309,10 +342,78 @@ export class HerdctlService {
   constructor(private readonly cfg: PaddockConfig) {}
 
   /**
+   * The Claude home every transcript symlink is planted in, plus whether paddock
+   * owns it (#620). One accessor, so no call site can quietly take a default and
+   * land in a different home than the FleetManager was built with — the bug
+   * `ensureSweeperHome` had, which put the sweeper's symlink in `~/.claude` while
+   * every other agent's went to the configured home.
+   */
+  private get claudeHomeTarget(): ClaudeHomeTarget {
+    return { path: this.cfg.claudeHome, owned: this.cfg.ownsClaudeHome };
+  }
+
+  /**
+   * The environment system prompt to append to a keeper turn (issue #635), or
+   * `undefined` when the instance opted out (`environmentPrompt: ""`) — herdctl
+   * treats a falsy `systemPromptAppend` as "don't touch the system prompt", so
+   * an opted-out instance is byte-identical to pre-#635 behaviour.
+   *
+   * Read from `this.cfg` here rather than taken as a per-turn option **on
+   * purpose**. Every user-visible turn shape — a human send, a slash command, a
+   * scheduled wake, a spawned sub-chat, a `driveMode: batch` trigger — funnels
+   * through {@link chat}, {@link chatSession} or {@link runCommand}, so applying
+   * it at that choke point makes coverage structural. Threading it through
+   * `ChatTurnOptions` instead would make it one more thing five call sites have
+   * to remember, which is exactly how `isSidechainMessage` ended up wired into
+   * 1 of 5 turn paths.
+   *
+   * It is orthogonal to `nativeSystemPrompt`: herdctl appends to whatever prompt
+   * the agent has, so this rides on top of the native preset AND of Paddock's
+   * terse replace prompt (see `buildSystemPrompt` in core's sdk-runtime, which
+   * folds an append into a preset's `append` field or concatenates onto a
+   * literal string).
+   */
+  private get environmentPromptAppend(): string | undefined {
+    return this.cfg.environmentPrompt || undefined;
+  }
+
+  /**
+   * The same value for the **CLI** runtime (`driveMode: batch`), where it is NOT
+   * always safe to send.
+   *
+   * herdctl's CLI runtime has no `--append-system-prompt`; it folds
+   * `systemPromptAppend` into the single `--system-prompt` flag
+   * (`cli-runtime.ts`), and `--system-prompt` REPLACES Claude Code's preset:
+   *
+   *     agent.system_prompt && append  →  --system-prompt "<agent>\n\n<append>"   ✅ appends
+   *     append only                    →  --system-prompt "<append>"              ❌ REPLACES
+   *
+   * Paddock sets `agent.system_prompt` only when `nativeSystemPrompt` is false
+   * (herdctl-agent-config.ts), so on a DEFAULT batch instance the second branch
+   * fires and a two-rule environment note would silently become the agent's
+   * entire system prompt — the whole coding preset gone. That is the same
+   * replace-vs-append trap #635 warns about, one layer down.
+   *
+   * So: on the CLI path we send the append only when it will genuinely be
+   * appended. A default (native) batch instance is left byte-identical to
+   * pre-#635 and simply doesn't get the environment prompt — a missing hint is
+   * survivable; a missing coding prompt is not. The SDK runtime has no such
+   * problem (it folds the text into the preset's `append` field), and the SDK
+   * runtime is what every chat actually uses: `openChatSession` hard-codes it,
+   * and `session` is the default drive mode. Batch is the legacy path.
+   *
+   * Lifting this needs `--append-system-prompt` support in core's CLI runtime;
+   * tracked upstream in edspencer/herdctl.
+   */
+  private get environmentPromptAppendForCli(): string | undefined {
+    return this.cfg.nativeSystemPrompt ? undefined : this.environmentPromptAppend;
+  }
+
+  /**
    * Construct + initialize the FleetManager against a minimal zero-agent
    * config (fleet + defaults only). Agents are then registered programmatically
-   * via `fleet.addAgent(...)` — the scratch agent plus a keeper + sweeper for
-   * each existing project. No per-agent yaml files; no `reload()`.
+   * via `fleet.addAgent(...)` — a keeper + sweeper for each workspace, the root
+   * included. No per-agent yaml files; no `reload()`.
    */
   async init(projects: Project[]): Promise<void> {
     await this.ensureConfigFile();
@@ -325,6 +426,13 @@ export class HerdctlService {
       // before herdctl's runtime schedule-mutation APIs can add or remove a
       // schedule at runtime. Declaring schedules in project.yaml is unaffected.
       allowScheduleMutation: this.cfg.scheduleMutationEnabled,
+      // Hand the engine the SAME Claude home paddock resolved (#588). Omitting
+      // it makes the engine fall back to `os.homedir()/.claude` while paddock
+      // honours `CLAUDE_HOME`, so discovery, adoption and paddock's `.chats/`
+      // symlinks would resolve against different directories — sessions list
+      // from one home and open empty from the other. Masked whenever the two
+      // coincide, which is why it must be explicit.
+      claudeHomePath: this.cfg.claudeHome,
     });
     await this.fleet.initialize();
 
@@ -337,7 +445,7 @@ export class HerdctlService {
       // at the .chats store in the metadata dir — so repo-backed transcripts stay
       // out of the external checkout's working tree (issue #187). For a notebook
       // project workingDir === dir, so this is the classic behavior.
-      await ensureProjectChats(project.workingDir, project.dir);
+      await ensureProjectChats(project.workingDir, project.dir, this.claudeHomeTarget);
       await this.ensureSweeperHome(project);
       await this.fleet.addAgent(this.keeperAgentConfig(project), { replace: true });
       await this.fleet.addAgent(this.sweeperAgentConfig(project), { replace: true });
@@ -413,7 +521,7 @@ export class HerdctlService {
    */
   async ensureProjectAgent(project: Project): Promise<void> {
     if (!this.fleet) return;
-    await ensureProjectChats(project.workingDir, project.dir);
+    await ensureProjectChats(project.workingDir, project.dir, this.claudeHomeTarget);
     await this.ensureSweeperHome(project);
     await this.fleet.addAgent(this.keeperAgentConfig(project), { replace: true });
     await this.fleet.addAgent(this.sweeperAgentConfig(project), { replace: true });
@@ -504,6 +612,295 @@ export class HerdctlService {
     this.fleet.invalidateSessions(agentName);
   }
 
+  // --- native-chat adoption (#588) ---------------------------------------
+
+  /**
+   * Detector for a project's importable native Claude Code chats, with its own
+   * mtime-keyed cache. Lazy for the same reason {@link jobsIndex} is: unit tests
+   * construct this service against a partial config.
+   */
+  private adoptableIndexOrNull: AdoptableIndex | null = null;
+  private get adoptableIndex(): AdoptableIndex {
+    return (this.adoptableIndexOrNull ??= new AdoptableIndex(
+      this.cfg.claudeHome,
+      this.cfg.stateDir,
+      this.cfg.legacyClaudeHome,
+    ));
+  }
+
+  /** What `project` could import right now (see `./adoptable.ts`). */
+  async listAdoptable(project: Project): Promise<AdoptableSummary> {
+    return this.adoptableIndex.adoptableFor(
+      this.manager,
+      project,
+      keeperAgentName(project.slug),
+    );
+  }
+
+  /**
+   * Drop the cached adoptable summary for a workspace (or all of them).
+   *
+   * The workspace key may be `""` (the root), so this forwards the argument
+   * as-is — `if (!slug)` here would silently clear the WRONG thing.
+   */
+  invalidateAdoptable(projectKey?: string): void {
+    this.adoptableIndexOrNull?.invalidate(projectKey);
+  }
+
+  /**
+   * Import a project's native Claude Code chats.
+   *
+   * With `sourceCwd`, imports that one source; without, every source detection
+   * currently offers. `mode` defaults to `copy`, which never mutates the user's
+   * original `~/.claude` transcripts and preserves their mtimes; `move` and
+   * `link` exist for the CLI and nothing in the web UI should reach them.
+   *
+   * ## Honouring the noise filter
+   *
+   * Detection withholds empty and slash-command-only transcripts, but the engine
+   * adopts a whole SOURCE — it has no "adopt these ids" call. Left alone, that
+   * means the header offers 2 chats and the import brings in 4, including a
+   * zero-byte stub. So anything the engine adopted that detection had withheld is
+   * released again ({@link FleetManager.unadoptSession}) and reported in
+   * `skipped` under the filter's own reason, and — in `copy` mode only — the copy
+   * this call just placed is removed.
+   *
+   * That deletion is deliberately narrow. It happens only when all of: the mode
+   * is `copy` (in `move` the original is GONE, so the copy is the user's only
+   * remaining copy and must never be touched); the engine reported the id as
+   * newly `adopted` in THIS call, so it placed the file here and did not find one
+   * (`destination-exists` is a skip, not an adopt); and the destination path
+   * differs from the source, so an in-place adoption can never delete an
+   * original. The result is that a withheld session is left exactly as it was
+   * before the import.
+   *
+   * Afterwards the herdctl session cache, the jobs index and the adoptable cache
+   * are all dropped, so the imported chats list on the very next request — the
+   * same trio {@link promoteSession} invalidates for the same reason.
+   */
+  async adoptChats(
+    project: Project,
+    opts: {
+      sourceCwd?: string;
+      /**
+       * Import only these sessions (#660). Anything else the engine adopts along
+       * the way is released again, exactly as a noise-filtered session is — see
+       * the "honouring the noise filter" note above, which this reuses wholesale.
+       * Undefined means "everything on offer", which is what a confirmed
+       * select-all sends and what the CLI has always sent.
+       */
+      sessionIds?: string[];
+      mode?: AdoptionPlacementMode;
+      dryRun?: boolean;
+    } = {},
+  ): Promise<{ adopted: string[]; skipped: AdoptSkipped[] }> {
+    const agent = keeperAgentName(project.slug);
+    const mode = opts.mode ?? "copy";
+    const dryRun = opts.dryRun ?? false;
+    const summary = await this.listAdoptable(project);
+    // Translate the DISPLAY path a caller sends back into the path the engine
+    // actually reads that source through (#620). They differ for the user's own
+    // `~/.claude` history, which is reached via a mirror named for a synthetic
+    // path — handing the engine the recorded cwd would send it to the project's
+    // OWN transcript folder and import nothing.
+    //
+    // Filter rather than find: post-#620 the user's `~/.claude` folder for a cwd
+    // and the project's own `.chats/` are two different directories that both
+    // display as that cwd, so one display path can legitimately name two sources.
+    const engineDirs = (displayCwd: string): string[] => {
+      const matched = summary.sources
+        .filter((s) => s.sourceCwd === displayCwd)
+        .map((s) => s.importFrom ?? s.sourceCwd);
+      // An unmatched path is one the route already validated as the project's own
+      // working directory; pass it straight through, as before.
+      return matched.length > 0 ? matched : [displayCwd];
+    };
+    const sources =
+      opts.sourceCwd !== undefined
+        ? engineDirs(opts.sourceCwd)
+        : summary.sources.map((s) => s.importFrom ?? s.sourceCwd);
+    // sessionId -> why detection withheld it.
+    const withheld = new Map(summary.filtered.map((f) => [f.sessionId, f.reason] as const));
+    // A selection narrows the offer the same way the noise filter does, and for
+    // the same reason: the engine adopts a whole SOURCE, so anything the user did
+    // not tick has to be released again afterwards. Tracked separately from
+    // `withheld` because a session the user simply did not choose is not a
+    // "skip" worth reporting back — it was never part of this import, and listing
+    // 23 of them would read as an import that half failed.
+    const deselected =
+      opts.sessionIds === undefined
+        ? null
+        : (() => {
+            const wanted = new Set(opts.sessionIds);
+            const out = new Set<string>();
+            for (const source of summary.sources) {
+              for (const id of source.sessionIds) if (!wanted.has(id)) out.add(id);
+            }
+            return out;
+          })();
+
+    const adopted: string[] = [];
+    // Of `adopted`, the ones where this call PLACED a file — the only ones undo
+    // may ever delete. Computed here, where `fromWorkingDir` is still known;
+    // afterwards nothing can tell a copy from an in-place adoption.
+    const copies: string[] = [];
+    const skipped: AdoptSkipped[] = [];
+    for (const fromWorkingDir of sources) {
+      // Sequential, not parallel: each source re-scans the adoption store, so a
+      // session offered by two sources is adopted by the first and reported
+      // `already-adopted` by the second instead of racing to place the same file.
+      const result = await this.manager.adoptSessionsFrom(agent, {
+        fromWorkingDir,
+        mode,
+        dryRun,
+      });
+      skipped.push(...result.skipped);
+      for (const sessionId of result.adopted) {
+        const reason = withheld.get(sessionId);
+        // Not chosen: release it, and say nothing about it. Checked BEFORE the
+        // noise filter so a deselected session stays silent even if it would
+        // also have been withheld.
+        if (deselected?.has(sessionId) === true) {
+          if (!dryRun) {
+            await this.releaseWithheld(agent, project, fromWorkingDir, sessionId, mode);
+          }
+          continue;
+        }
+        if (reason === undefined) {
+          adopted.push(sessionId);
+          if (mode === "copy" && !dryRun && this.placedACopy(project, fromWorkingDir, sessionId)) {
+            copies.push(sessionId);
+          }
+          continue;
+        }
+        skipped.push({ sessionId, reason });
+        if (dryRun) continue;
+        await this.releaseWithheld(agent, project, fromWorkingDir, sessionId, mode);
+      }
+    }
+
+    // A dry run wrote nothing, so there is nothing to invalidate — and dropping
+    // caches would misrepresent it as a state change.
+    if (!dryRun && adopted.length > 0) {
+      this.invalidateSessions(agent);
+      this.jobsIndexOrNull?.invalidate();
+      this.invalidateAdoptable(project.slug);
+      // Replaces any earlier import: only the most recent one is undoable.
+      this.lastImport.set(project.slug, { adopted: [...adopted], copies });
+    }
+    // A session adopted from one source and then met again in the NEXT source
+    // (its fresh copy now sits in the project's own transcript folder) comes back
+    // as `already-adopted`. That is true per-source, but as a RESULT it reads as
+    // "imported 7, skipped 5" for an import of 7. A session this call imported is
+    // never also reported as skipped by it.
+    const done = new Set(adopted);
+    return { adopted, skipped: skipped.filter((s) => !done.has(s.sessionId)) };
+  }
+
+  /**
+   * Did an import of `sessionId` from `fromWorkingDir` place a NEW file?
+   *
+   * The same test `releaseWithheld` makes before deleting anything: an in-place
+   * adoption resolves the destination and the origin to one path, so there is no
+   * copy and nothing that may be removed.
+   */
+  private placedACopy(project: Project, fromWorkingDir: string, sessionId: string): boolean {
+    const home = this.cfg.claudeHome;
+    const placed = getCliSessionFile(project.workingDir, sessionId, home);
+    const origin = getCliSessionFile(fromWorkingDir, sessionId, home);
+    return path.resolve(placed) !== path.resolve(origin);
+  }
+
+  /**
+   * What the LAST import into each workspace did, so it can be undone (#660).
+   *
+   * Keyed by workspace key (which may be `""` — the root). Holds the sessions
+   * that import actually brought in, and of those, the ones where it PLACED a
+   * copy and may therefore delete one again.
+   *
+   * Server-side rather than a token the client hands back: undo deletes files, so
+   * the set of paths it may touch must come from what this process actually did,
+   * not from a request body. A restart forgets it, which is the right failure —
+   * the offer to undo is a transient toast, not a durable feature.
+   *
+   * Only the most recent import per workspace is kept. Undoing an import two
+   * imports ago is not offered and would be a lie to describe as "undo".
+   */
+  private readonly lastImport = new Map<string, { adopted: string[]; copies: string[] }>();
+
+  /**
+   * Undo the import this process most recently performed into `project` (#660).
+   *
+   * Releases each adoption and deletes the copies that import placed, leaving the
+   * user's own `~/.claude` history exactly as it was. Returns the sessions it
+   * released; an empty array means there was nothing to undo (nothing imported
+   * yet, already undone, or the server restarted since).
+   *
+   * `sessionIds` narrows it to part of that import — the rest stays. Ids that
+   * were not part of it are ignored rather than rejected: undo is a best-effort
+   * safety net, and the alternative is a 400 for a button the user pressed once.
+   */
+  async unadoptChats(
+    project: Project,
+    opts: { sessionIds?: string[] } = {},
+  ): Promise<{ released: string[] }> {
+    const agent = keeperAgentName(project.slug);
+    const last = this.lastImport.get(project.slug);
+    if (last === undefined) return { released: [] };
+
+    const wanted =
+      opts.sessionIds === undefined ? null : new Set(opts.sessionIds);
+    const target = last.adopted.filter((id) => wanted === null || wanted.has(id));
+    if (target.length === 0) return { released: [] };
+
+    const copies = new Set(last.copies);
+    const released: string[] = [];
+    for (const sessionId of target) {
+      await this.manager.unadoptSession(agent, sessionId).catch(() => undefined);
+      // Delete ONLY a file this import placed. A session adopted in place has no
+      // copy, and its transcript is the user's own — removing it would destroy
+      // history rather than restore it.
+      if (copies.has(sessionId)) {
+        const placed = getCliSessionFile(project.workingDir, sessionId, this.cfg.claudeHome);
+        await fs.rm(placed, { force: true }).catch(() => undefined);
+      }
+      released.push(sessionId);
+    }
+
+    // Consume what was undone, so a second undo is a no-op rather than a repeat
+    // attempt to delete files that are already gone.
+    const remaining = last.adopted.filter((id) => !released.includes(id));
+    if (remaining.length === 0) this.lastImport.delete(project.slug);
+    else this.lastImport.set(project.slug, { adopted: remaining, copies: last.copies });
+
+    this.invalidateSessions(agent);
+    this.jobsIndexOrNull?.invalidate();
+    this.invalidateAdoptable(project.slug);
+    return { released };
+  }
+
+  /**
+   * Undo the adoption of a session detection had withheld, restoring the state
+   * that existed before this import. See {@link adoptChats} for why the file
+   * removal is safe and why it is limited to `copy` mode.
+   */
+  private async releaseWithheld(
+    agent: string,
+    project: Project,
+    fromWorkingDir: string,
+    sessionId: string,
+    mode: AdoptionPlacementMode,
+  ): Promise<void> {
+    await this.manager.unadoptSession(agent, sessionId).catch(() => undefined);
+    if (mode !== "copy") return;
+    const home = this.cfg.claudeHome;
+    const placed = getCliSessionFile(project.workingDir, sessionId, home);
+    const origin = getCliSessionFile(fromWorkingDir, sessionId, home);
+    // In-place adoption placed nothing; `origin` IS the user's file.
+    if (path.resolve(placed) === path.resolve(origin)) return;
+    await fs.rm(placed, { force: true }).catch(() => undefined);
+  }
+
   /**
    * Unregister a project's keeper + sweeper (+ any event-hook) agents at runtime.
    * Uses `fleet.removeAgent`, the inverse of ensureProjectAgent. Running jobs are
@@ -562,6 +959,8 @@ export class HerdctlService {
       onMessage: opts.onMessage,
       onJobCreated: opts.onJobCreated,
       injectedMcpServers: opts.injectedMcpServers,
+      // CLI runtime — see the getter: only safe when it will append, not replace.
+      systemPromptAppend: this.environmentPromptAppendForCli,
     });
   }
 
@@ -611,6 +1010,7 @@ export class HerdctlService {
         prompt: opts.prompt,
         manageLifecycle: true,
         injectedMcpServers: opts.injectedMcpServers,
+        systemPromptAppend: this.environmentPromptAppend,
         // Stream assistant text token-by-token: the SDK emits `stream_event` /
         // `text_delta` chunks that the translator surfaces as incremental
         // `chat:response` frames (edspencer/herdctl#382, paddock#315).
@@ -779,6 +1179,9 @@ export class HerdctlService {
       resume: opts.resume,
       // Stream the command's assistant text token-by-token (paddock#315).
       includePartialMessages: true,
+      // A slash command's output renders in the same chat bubble as any other
+      // turn, so it gets the same environment context (#635).
+      systemPromptAppend: this.environmentPromptAppend,
     });
     let sessionId: string | null = isResume ? (opts.resume as string) : null;
 
@@ -814,10 +1217,29 @@ export class HerdctlService {
   }
 
   /**
+   * Register a background-phase turn so Stop can reach it (paddock#528). Called
+   * by the background turn sink once it knows both the synthetic job id it
+   * published and the session that stream belongs to. Re-registering the same
+   * job id with a later session id is fine — the sink refreshes the mapping if
+   * the stream resolves a different session.
+   */
+  registerBackgroundTurn(jobId: string, sessionId: string): void {
+    this.backgroundTurns.set(jobId, sessionId);
+  }
+
+  /** Forget a background-phase turn once its stream has ended. */
+  unregisterBackgroundTurn(jobId: string): void {
+    this.backgroundTurns.delete(jobId);
+  }
+
+  /**
    * Cancel a running turn (Stop button → WS chat:cancel). Handles BOTH drive
    * modes off the single id the client holds as `jobId`:
    *  - **session mode** — the id is a synthetic turn id in {@link liveSessions};
    *    interrupt the live `RuntimeSession` (there is no herdctl job to cancel).
+   *  - **background phase** — the id is a synthetic id in
+   *    {@link backgroundTurns}; there is no model turn to interrupt, so reap the
+   *    session (paddock#528).
    *  - **batch mode** — the id is a real herdctl job id; abort it via `cancelJob`
    *    (which kills the CLI subprocess / aborts the SDK query).
    *
@@ -835,6 +1257,21 @@ export class HerdctlService {
         console.warn(`[herdctl] session interrupt failed for ${jobId}:`, err);
         return false;
       }
+    }
+    // Background phase: the primary turn is over and its liveSessions entry is
+    // gone, but the session is still open streaming autonomous re-invocation
+    // turns. Stop here means "end this session" — reaping reaches even a session
+    // the reap policy would hold open forever, and ending the stream is what
+    // drives the sink's onDone → chat:complete → the UI unlocking.
+    const backgroundSession = this.backgroundTurns.get(jobId);
+    if (backgroundSession !== undefined) {
+      const reaped = this.manager.reapChatSession(backgroundSession);
+      if (!reaped) {
+        console.warn(
+          `[herdctl] no live managed session ${backgroundSession} to reap for background turn ${jobId}`,
+        );
+      }
+      return reaped;
     }
     try {
       await this.manager.cancelJob(jobId);
@@ -888,7 +1325,7 @@ export class HerdctlService {
    * the keeper PLUS every declared event-hook agent (`hook-<slug>-<name>`), so a
    * hook's chats show up in the sidebar alongside the keeper's. The sweeper is
    * deliberately excluded — it's the `hideChats` case (its curation chats stay
-   * hidden, unchanged) — and scratch is a separate global list. See
+   * hidden, unchanged). See
    * {@link visibleProjectAgentNames}.
    *
    * Sessions are keyed by working directory in core's discovery, and every one of
@@ -957,10 +1394,8 @@ export class HerdctlService {
    * resumes under the new project with NO restart — doing the same writes from
    * outside the process would need one, to drop the attribution-index cache.
    *
-   * Generalised from `promoteScratchSession` when #516 Phase 6 retired scratch.
-   * The operation was never really about scratch — it moves one chat from one
-   * keeper's store to another's — and the root is a project like any other, so
-   * the root chats that inherited scratch's URL inherit its promote action too.
+   * Moves one chat from one keeper's store to another's. The root is a workspace
+   * like any other, so root chats carry the promote action too.
    *
    * The caller MUST have already created `to` and registered its keeper
    * (ensureProjectAgent), so its `.chats/` + transcript symlink exist. Throws if
@@ -1021,7 +1456,7 @@ export class HerdctlService {
    * materialized only when the user sends a first message. The source is left
    * untouched (this is a copy, not a move).
    *
-   * Same mechanics as {@link promoteScratchSession} (copy the JSONL, keep it
+   * Same mechanics as {@link promoteSession} (copy the JSONL, keep it
    * discoverable + attributed), with two differences: a NEW session id is minted
    * and rewritten onto every transcript line (so the copy is internally
    * consistent with its new filename — Claude Code stamps appended lines with the
@@ -1159,7 +1594,7 @@ export class HerdctlService {
    * record (same session id, same agent) the attribution is unchanged.
    *
    * @param sessionId - The freshly-resolved session id of the running turn
-   * @param agentName - The qualified agent the session belongs to (keeper or scratch)
+   * @param agentName - The qualified agent the session belongs to
    */
   async attributeRunningSession(sessionId: string, agentName: string): Promise<void> {
     if (!/^[A-Za-z0-9._-]+$/.test(sessionId)) return;
@@ -1237,7 +1672,7 @@ export class HerdctlService {
    */
   private async ensureSweeperHome(project: Project): Promise<void> {
     const dir = sweeperWorkingDir(this.cfg, project.slug);
-    await ensureProjectChats(dir, dir);
+    await ensureProjectChats(dir, dir, this.claudeHomeTarget);
   }
 
   private triggerAgentConfig(

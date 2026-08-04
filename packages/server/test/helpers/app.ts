@@ -93,9 +93,9 @@ export async function startTestApp(opts: StartOptions = {}): Promise<TestApp> {
     PADDOCK_PROJECTS_DIR: process.env.PADDOCK_PROJECTS_DIR,
     PADDOCK_STATE_DIR: process.env.PADDOCK_STATE_DIR,
     PADDOCK_HERDCTL_CONFIG: process.env.PADDOCK_HERDCTL_CONFIG,
-    PADDOCK_SCRATCH_DIR: process.env.PADDOCK_SCRATCH_DIR,
     PADDOCK_WEB_DIST: process.env.PADDOCK_WEB_DIST,
     CLAUDE_HOME: process.env.CLAUDE_HOME,
+    CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR,
     PADDOCK_FAKE_SCRIPT: process.env.PADDOCK_FAKE_SCRIPT,
     PADDOCK_FAKE_SWEEP: process.env.PADDOCK_FAKE_SWEEP,
     PADDOCK_SWEEP_MIN_INTERVAL_MS: process.env.PADDOCK_SWEEP_MIN_INTERVAL_MS,
@@ -107,6 +107,8 @@ export async function startTestApp(opts: StartOptions = {}): Promise<TestApp> {
     PADDOCK_HOST: process.env.PADDOCK_HOST,
     PADDOCK_DANGEROUSLY_ALLOW_OPEN: process.env.PADDOCK_DANGEROUSLY_ALLOW_OPEN,
     PADDOCK_CONFIG: process.env.PADDOCK_CONFIG,
+    PADDOCK_ENVIRONMENT_PROMPT: process.env.PADDOCK_ENVIRONMENT_PROMPT,
+    PADDOCK_FAKE_INVOCATION_LOG: process.env.PADDOCK_FAKE_INVOCATION_LOG,
     ...Object.fromEntries(Object.keys(opts.env ?? {}).map((k) => [k, process.env[k]])),
   };
 
@@ -118,7 +120,12 @@ export async function startTestApp(opts: StartOptions = {}): Promise<TestApp> {
   process.env.HOST = "127.0.0.1";
   delete process.env.PADDOCK_HOST;
   delete process.env.PADDOCK_DANGEROUSLY_ALLOW_OPEN;
-  delete process.env.CLAUDE_HOME; // fall back to $HOME/.claude, matching the CLI runtime
+  // Both Claude-home overrides are cleared so the suite exercises the DEFAULT
+  // resolution — `<dataDir>/claude-home` since #620. `CLAUDE_CONFIG_DIR` matters
+  // as much as `CLAUDE_HOME` now that it is honoured (and a dev box may export
+  // it), or the whole suite would silently run against the ambient home.
+  delete process.env.CLAUDE_HOME;
+  delete process.env.CLAUDE_CONFIG_DIR;
   // Hermetic drive mode: this integration harness drives turns through a fake
   // `claude` on PATH, which only the CLI (batch) runtime uses — the SDK/session
   // runtime needs a real login ("Not logged in"). The built-in default is now
@@ -128,6 +135,11 @@ export async function startTestApp(opts: StartOptions = {}): Promise<TestApp> {
   // regardless of the box env (CI has it unset; a dev box may not). The session
   // path has its own coverage (unit/mocked harnesses).
   process.env.PADDOCK_DRIVE_MODE = "batch";
+  // #635: a defined-but-blank PADDOCK_ENVIRONMENT_PROMPT is the opt-out, so an
+  // ambient value on a dev box would silently change what every turn's system
+  // prompt looks like. Clear it; tests that want one pass it via `opts.env`.
+  delete process.env.PADDOCK_ENVIRONMENT_PROMPT;
+  delete process.env.PADDOCK_FAKE_INVOCATION_LOG;
   process.env.PATH = `${FAKE_BIN}${path.delimiter}${process.env.PATH ?? ""}`;
   process.env.PADDOCK_DATA_DIR = dataDir;
   process.env.PADDOCK_PROJECTS_DIR = projectsRoot;

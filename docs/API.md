@@ -60,7 +60,7 @@ return `{ error, code }` with `404` (not found), `409` (exists), or `400`
 |--------|------|---------|------|
 | GET | `/api/projects` | `{ projects, root }` — the root workspace's CHILDREN, each with a compact `chatTurns` unread signal, plus the `root` workspace itself carrying the same field (never a member of `projects`, so the sidebar's Home badge and a project row's badge fold one payload). `root` is `null` only if the record could not be read. | gated |
 | POST | `/api/projects` | Create a project (+ its agent & sweeper) → `201 { project }`. | gated |
-| GET | `/api/projects/:slug` | One project + its `changelog` + `chats`. | gated |
+| GET | `/api/projects/:slug` | One project + its `changelog` + `overview` (raw `CHANGELOG.md` / `OVERVIEW.md` text, `""` when absent) + `chats`. | gated |
 | PATCH | `/api/projects/:slug` | Update project metadata (model, permissionMode, maxTurns, docker, driveMode, …); re-registers the agent. `400` on invalid field. | gated |
 | DELETE | `/api/projects/:slug` | Delete the project dir + unregister its agents → `{ ok, slug }`. | gated |
 
@@ -91,6 +91,7 @@ return `{ error, code }` with `404` (not found), `409` (exists), or `400`
 |--------|------|---------|------|
 | GET | `/api/projects/:slug/chats` | List the project's chats (no usage rings). | gated |
 | POST | `/api/projects/:slug/chats` | Thin: validate the project + return the WS target → `201`. The real chat is created lazily over `/ws`. | gated |
+| GET | `/api/projects/:slug/chats/attention` | `{ running, unread }` — the chats in this workspace's **subtree** with a live turn, or holding an unread reply; each row is a chat DTO plus `projectSlug`/`projectName`. Drives the Home tab's two feeds (#599). Because the root's key (`""`) prefixes every workspace key, `/api/root/chats/attention` is fleet-wide while a project's is scoped to itself — one handler, no branch. `running` is read from the live session hub; a chat is never in both lists. Archived chats are excluded from `unread` but a running one still lists. | gated |
 | GET | `/api/projects/:slug/chats/usage` | Bulk context-window usage keyed by session id. `?scope=` `active` (default) / `archived` / `all` — usage is derived by streaming each transcript, so the collapsed Archived group is not paid for until it is opened (#537). | gated |
 | GET | `/api/projects/:slug/chats/:sessionId/messages` | A chat's messages, enriched with tool details. | gated |
 | GET | `/api/projects/:slug/chats/:sessionId/context` | Context-window usage from the transcript's last turn. | gated |
@@ -105,6 +106,37 @@ return `{ error, code }` with `404` (not found), `409` (exists), or `400`
 | POST | `/api/projects/:slug/chats/batch/archive` | Archive/unarchive a SET of chats in one atomic sidecar write — body `{ sessionIds, archived? }` → `{ ok, archived, changed }`. | gated |
 | POST | `/api/projects/:slug/chats/batch/unread` | Mark a SET of chats read/unread — body `{ sessionIds, unread? }`. `unread:false` also advances each last-seen watermark. | gated |
 | POST | `/api/projects/:slug/chats/batch/delete` | Delete a SET of chats — body `{ sessionIds }` → `{ ok, removed, failed }`. Best-effort per chat: filesystem deletes can't be atomic, so the response names what it couldn't remove. | gated |
+
+### Importing native Claude Code chats
+
+The terminal `claude` sessions a user already has for a workspace's working
+directory can be imported so they list and resume like any other chat
+(`AdoptableIndex` in `adoptable.ts`, `HerdctlService.adoptChats` in
+`herdctl.ts`). Transcripts are **copied** — the user's `~/.claude` history is
+never mutated — and keep their original mtimes, which are both the chat-list
+sort key and the metadata cache key. Imported chats carry the `adopted`
+provenance origin.
+
+**What counts as importable** is narrower than it looks. A workspace matches its
+own working directory, and — for a repo-backed project — a same-named directory
+elsewhere on disk *that is a real checkout of the same repo*, verified by reading
+`.git/config` (#659; the basename alone used to be enough and reached into
+unrelated directories). Paddock's own sweeper curation runs are withheld (#658),
+as are empty and slash-command-only transcripts; every exclusion is named under
+`filtered` rather than dropped silently.
+
+| Method | Path | Purpose | Auth |
+|--------|------|---------|------|
+| GET | `/api/projects/:slug/adoptable-chats` | What this workspace could import → `{ count, sources: [{ sourceCwd, sessionIds, sessions }], filtered }`. `sessions` describes each candidate (`mtime`, `preview`, `autoName`, `sizeBytes`) so a confirmation dialog can show what it is about to take; `sessionIds` is the same list, ids only. The count is LIVE (recomputed, cached on transcript-dir mtimes, dropped after every import), so it returns if new terminal sessions accrue and reaches `0` only when there is genuinely nothing left. | gated |
+| POST | `/api/projects/:slug/adopt-chats` | Import every detected source, just one, or a chosen subset — body `{ sourceCwd?, sessionIds? }` → `{ adopted, skipped }`. Invalidates the workspace's session cache. | gated |
+| POST | `/api/projects/:slug/unadopt-chats` | Undo the most recent import into this workspace — body `{ sessionIds? }` → `{ released }`. Releases the adoptions and deletes the copies that import placed; the user's own `~/.claude` history is untouched. Scoped to the LAST import and held in memory, so *which* files may be deleted comes from what the server actually did rather than from the request body — a restart forgets the offer and `released` comes back empty. | gated |
+
+> Like the rest of the chat routes these live in the dual-mounted plugin
+> (`registerChatWorkspaceRoutes` in `routes/chats.ts`), so the **root workspace**
+> gets them at `/api/root/adoptable-chats`, `/api/root/adopt-chats` and
+> `/api/root/unadopt-chats` with no extra handler. `packages/server/src/cli/import-chats.ts` is the headless
+> equivalent (`npm run import-chats -w @paddock/server`), for when the
+> transcripts and the server do not share a filesystem view.
 
 ---
 
@@ -124,7 +156,7 @@ Server→client **chat events** carry a common **`Routing`** block in `payload`:
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `projectSlug` | `string` | Project slug, or `"scratch"` for one-off chats. |
+| `projectSlug` | `string` | Workspace key — a project slug, or `""` for the root workspace. |
 | `sessionId` | `string \| null` | Null until a brand-new chat's id first streams back. |
 | `jobId` | `string \| null` | The cancellable job id, when known. |
 | `seq` | `number?` | Per-turn monotonic sequence for reconnect/gap-replay. Absent on frames not routed through the hub (`chat:error`, `chat:resync`, `chat:active`, `chat:queued_flushed`, `pong`). |

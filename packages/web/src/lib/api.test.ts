@@ -76,6 +76,25 @@ describe("api: reads", () => {
     expect(call()[0]).toBe("/api/projects/a%2Fb");
   });
 
+  it("attentionChats addresses the workspace mount — the root's included (#599)", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ running: [], unread: [] }));
+    await api.attentionChats("");
+    // The root's key is `""`, which `apiBase` turns into `/api/root` — the same
+    // handler a project reaches at `/api/projects/:slug`. Asserted on both
+    // mounts because Home calls this with whichever workspace it is rendering
+    // and never branches on which.
+    expect(call()[0]).toBe("/api/root/chats/attention");
+    await api.attentionChats("foo");
+    expect(call(1)[0]).toBe("/api/projects/foo/chats/attention");
+  });
+
+  it("attentionChats defaults a missing list to empty rather than undefined", async () => {
+    // An older server (or a partial payload) must degrade to "nothing to show",
+    // not to a Home that crashes mapping over `undefined`.
+    fetchMock.mockResolvedValue(jsonResponse({}));
+    expect(await api.attentionChats("p")).toEqual({ running: [], unread: [] });
+  });
+
   it("listProjectFiles keeps only top-level FILE names from the listing (#259)", async () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({
@@ -195,8 +214,7 @@ describe("api: writes build the right request", () => {
 
   it("promoteChat POSTs the build payload to the source workspace's promote endpoint", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ project: makeProject(), promoted: true }));
-    // The root workspace's key is "", which mounts at `/api/root` — where the
-    // chats that used to be scratch one-offs now live (#516 Phase 6).
+    // The root workspace's key is "", which mounts at `/api/root`.
     const res = await api.promoteChat("", "sess-9", { name: "X", group: "g" });
     const [url, init] = call();
     expect(url).toBe("/api/root/chats/sess-9/promote");

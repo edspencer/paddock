@@ -3,7 +3,7 @@
   "info": {
     "title": "Paddock HTTP API",
     "description": "HTTP API for Paddock — the Claude Code workspace platform (persistent chats, projects, unified triggers).\n\nThis document is **generated from the server's route schemas** via `@fastify/swagger`, so it\ntracks the code: a new or changed route with a schema shows up here automatically.\n\n**Live chat is WebSocket, not REST.** Sending a message, streaming the response, tool-call\nevents, cancel, slash-commands and the live queue all flow over `GET /ws`. This spec covers the\nHTTP surface: reads, project/chat/trigger/git management, instance config, and attachment\nupload/serve. The two-step attachment flow is: `POST .../chats/:sessionId/upload` (HTTP, here)\nthen reference the returned file ids in the `chat:send` WebSocket frame.\n\n## Authentication\n\nPaddock has no built-in login — authentication is provider-agnostic and handled at the edge (reverse proxy / IdP). **When these docs are served by the Paddock instance itself, behind your proxy, a `Try it out` request is a same-origin call that inherits your existing SSO session — it authenticates automatically, nothing to paste here.** Use the **Authorize** button only for the explicit-token path (a different origin, a programmatic client, or testing without the proxy).\n\nThis instance runs **jwt** mode: a signed token in the `Authorization` header, verified against the JWKS.",
-    "version": "0.53.0"
+    "version": "0.60.0"
   },
   "components": {
     "securitySchemes": {
@@ -492,7 +492,7 @@
         "tags": [
           "Projects"
         ],
-        "description": "Returns `{ project, changelog, chats }` — the project metadata, its raw CHANGELOG.md text, and its chats (sessions) enriched with archived/starred/last-seen/provenance/trigger flags. Per-chat usage rings are filled separately by the client.",
+        "description": "Returns `{ project, changelog, overview, chats }` — the project metadata, its raw CHANGELOG.md and OVERVIEW.md text (empty strings when absent), and its chats (sessions) enriched with archived/starred/last-seen/provenance/trigger flags. Per-chat usage rings are filled separately by the client.",
         "parameters": [
           {
             "schema": {
@@ -506,11 +506,11 @@
         ],
         "responses": {
           "200": {
-            "description": "Object with `project`, `changelog` text, and a `chats` array.",
+            "description": "Object with `project`, `changelog` text, `overview` text, and a `chats` array.",
             "content": {
               "application/json": {
                 "schema": {
-                  "description": "Object with `project`, `changelog` text, and a `chats` array.",
+                  "description": "Object with `project`, `changelog` text, `overview` text, and a `chats` array.",
                   "type": "object",
                   "additionalProperties": true
                 }
@@ -1027,6 +1027,40 @@
               "application/json": {
                 "schema": {
                   "description": "Object `{ projectSlug, sessionId, ws, note }` giving the WS target `/ws`.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/root/chats/attention": {
+      "get": {
+        "summary": "List the chats in this workspace's subtree that are running or unread",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Returns `{ running, unread }` — the chats in this workspace AND its descendants that currently have a live turn (`running`) or hold an unread reply (`unread`). Each row is a chat DTO plus the `projectSlug`/`projectName` it belongs to, so a fleet-wide list stays attributable. On the root mount (`/api/root/chats/attention`) the subtree is the whole instance, because the root workspace's key (`\"\"`) prefixes every workspace key; on a project mount it is that project alone. A chat is never in both lists: a live turn hasn't landed a reply yet, so running wins.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ running, unread }`, each an array of chat DTOs enriched with `projectSlug` and `projectName`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ running, unread }`, each an array of chat DTOs enriched with `projectSlug` and `projectName`.",
                   "type": "object",
                   "additionalProperties": true
                 }
@@ -2107,6 +2141,157 @@
         }
       }
     },
+    "/api/root/adoptable-chats": {
+      "get": {
+        "summary": "Count the native Claude Code chats this project could import",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Returns the terminal `claude` sessions that could be imported into this project but are not yet visible in it: the project's own working directory, plus any Claude transcript folder whose recorded working directory matches the project (by checkout name for a repo-backed project, by exact path for a notebook project). Sidechains, already-imported sessions and sessions belonging to a real Paddock run are excluded by the engine; empty transcripts, slash-command-only transcripts and Paddock's own sweeper curation runs (`too-small` / `slash-command-only` / `sweeper-run`) are additionally withheld as noise and reported under `filtered`, so a count lower than the raw total always has an explanation. Response: `{ count, sources: [{ sourceCwd, sessionIds }], filtered: [{ sessionId, sourceCwd, reason }] }`. The count is LIVE — re-read it after an import rather than remembering a dismissal.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ count, sources, filtered }` describing what this project could import.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ count, sources, filtered }` describing what this project could import.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/root/adopt-chats": {
+      "post": {
+        "summary": "Import native Claude Code chats into this project",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Imports the terminal `claude` sessions reported by GET …/adoptable-chats. With no body (or no `sourceCwd`) every detected source is imported; with `sourceCwd` only that source is, and it must be one this project actually offers — an unrecognised path is a 400 rather than an invitation to scan arbitrary directories. `sessionIds` narrows the import to a chosen SUBSET of what is on offer (what the confirmation dialog sends); ids that are not on offer are simply not imported, and anything the engine adopts as a side effect of taking a whole source is released again. Transcripts are COPIED, never moved: the user's own `~/.claude` history is left intact and the copies keep their original mtimes, so imported chats sort by when they really happened. Afterwards the session, run-record and detection caches are dropped, so the chats appear on the very next list request with no restart. Response: `{ adopted, skipped }` — `skipped` carries the engine's reason per session (`sidechain`, `already-adopted`, `destination-exists`, `attributed-to-run`, `unreadable`, `placement-failed`, `record-failed`).",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": true,
+                "properties": {
+                  "sourceCwd": {
+                    "description": "Optional single source working directory to import from. Must be one of the `sourceCwd` values reported by GET …/adoptable-chats (or the project's own working directory); anything else is rejected with 400."
+                  },
+                  "sessionIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Optional subset of the offered session ids to import. Omit to import everything on offer."
+                  }
+                },
+                "required": []
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ adopted, skipped }` describing what was imported.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ adopted, skipped }` describing what was imported.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/root/unadopt-chats": {
+      "post": {
+        "summary": "Undo the most recent native-chat import into this project",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Reverses the import this server most recently performed into the workspace: each adoption is released and the copies that import placed are deleted, leaving the user's own `~/.claude` history untouched. `sessionIds` undoes part of that import; omit it to undo all of it. Deliberately scoped to the LAST import and remembered in memory — undo may delete files, so the paths it can touch come from what this process actually did rather than from the request body, and a restart forgets the offer rather than acting on a stale one. Response: `{ released }`, the session ids actually released; an empty array means there was nothing to undo (nothing imported, already undone, or the server restarted since).",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": true,
+                "properties": {
+                  "sessionIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Optional subset of the last import's session ids to release. Omit to undo the whole import. Ids outside that import are ignored."
+                  }
+                },
+                "required": []
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ released }` listing the session ids released.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ released }` listing the session ids released.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/root/git/status": {
       "get": {
         "summary": "Get a project's git working-tree status",
@@ -2539,7 +2724,7 @@
         "tags": [
           "Projects"
         ],
-        "description": "Returns `{ project, changelog, chats }` — the project metadata, its raw CHANGELOG.md text, and its chats (sessions) enriched with archived/starred/last-seen/provenance/trigger flags. Per-chat usage rings are filled separately by the client.",
+        "description": "Returns `{ project, changelog, overview, chats }` — the project metadata, its raw CHANGELOG.md and OVERVIEW.md text (empty strings when absent), and its chats (sessions) enriched with archived/starred/last-seen/provenance/trigger flags. Per-chat usage rings are filled separately by the client.",
         "parameters": [
           {
             "schema": {
@@ -2553,11 +2738,11 @@
         ],
         "responses": {
           "200": {
-            "description": "Object with `project`, `changelog` text, and a `chats` array.",
+            "description": "Object with `project`, `changelog` text, `overview` text, and a `chats` array.",
             "content": {
               "application/json": {
                 "schema": {
-                  "description": "Object with `project`, `changelog` text, and a `chats` array.",
+                  "description": "Object with `project`, `changelog` text, `overview` text, and a `chats` array.",
                   "type": "object",
                   "additionalProperties": true
                 }
@@ -3074,6 +3259,40 @@
               "application/json": {
                 "schema": {
                   "description": "Object `{ projectSlug, sessionId, ws, note }` giving the WS target `/ws`.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/chats/attention": {
+      "get": {
+        "summary": "List the chats in this workspace's subtree that are running or unread",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Returns `{ running, unread }` — the chats in this workspace AND its descendants that currently have a live turn (`running`) or hold an unread reply (`unread`). Each row is a chat DTO plus the `projectSlug`/`projectName` it belongs to, so a fleet-wide list stays attributable. On the root mount (`/api/root/chats/attention`) the subtree is the whole instance, because the root workspace's key (`\"\"`) prefixes every workspace key; on a project mount it is that project alone. A chat is never in both lists: a live turn hasn't landed a reply yet, so running wins.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ running, unread }`, each an array of chat DTOs enriched with `projectSlug` and `projectName`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ running, unread }`, each an array of chat DTOs enriched with `projectSlug` and `projectName`.",
                   "type": "object",
                   "additionalProperties": true
                 }
@@ -4145,6 +4364,157 @@
               "application/json": {
                 "schema": {
                   "description": "Object `{ project, promoted, sessionId }` describing the created project and whether the transcript was re-homed.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/adoptable-chats": {
+      "get": {
+        "summary": "Count the native Claude Code chats this project could import",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Returns the terminal `claude` sessions that could be imported into this project but are not yet visible in it: the project's own working directory, plus any Claude transcript folder whose recorded working directory matches the project (by checkout name for a repo-backed project, by exact path for a notebook project). Sidechains, already-imported sessions and sessions belonging to a real Paddock run are excluded by the engine; empty transcripts, slash-command-only transcripts and Paddock's own sweeper curation runs (`too-small` / `slash-command-only` / `sweeper-run`) are additionally withheld as noise and reported under `filtered`, so a count lower than the raw total always has an explanation. Response: `{ count, sources: [{ sourceCwd, sessionIds }], filtered: [{ sessionId, sourceCwd, reason }] }`. The count is LIVE — re-read it after an import rather than remembering a dismissal.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ count, sources, filtered }` describing what this project could import.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ count, sources, filtered }` describing what this project could import.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/adopt-chats": {
+      "post": {
+        "summary": "Import native Claude Code chats into this project",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Imports the terminal `claude` sessions reported by GET …/adoptable-chats. With no body (or no `sourceCwd`) every detected source is imported; with `sourceCwd` only that source is, and it must be one this project actually offers — an unrecognised path is a 400 rather than an invitation to scan arbitrary directories. `sessionIds` narrows the import to a chosen SUBSET of what is on offer (what the confirmation dialog sends); ids that are not on offer are simply not imported, and anything the engine adopts as a side effect of taking a whole source is released again. Transcripts are COPIED, never moved: the user's own `~/.claude` history is left intact and the copies keep their original mtimes, so imported chats sort by when they really happened. Afterwards the session, run-record and detection caches are dropped, so the chats appear on the very next list request with no restart. Response: `{ adopted, skipped }` — `skipped` carries the engine's reason per session (`sidechain`, `already-adopted`, `destination-exists`, `attributed-to-run`, `unreadable`, `placement-failed`, `record-failed`).",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": true,
+                "properties": {
+                  "sourceCwd": {
+                    "description": "Optional single source working directory to import from. Must be one of the `sourceCwd` values reported by GET …/adoptable-chats (or the project's own working directory); anything else is rejected with 400."
+                  },
+                  "sessionIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Optional subset of the offered session ids to import. Omit to import everything on offer."
+                  }
+                },
+                "required": []
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ adopted, skipped }` describing what was imported.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ adopted, skipped }` describing what was imported.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/unadopt-chats": {
+      "post": {
+        "summary": "Undo the most recent native-chat import into this project",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Reverses the import this server most recently performed into the workspace: each adoption is released and the copies that import placed are deleted, leaving the user's own `~/.claude` history untouched. `sessionIds` undoes part of that import; omit it to undo all of it. Deliberately scoped to the LAST import and remembered in memory — undo may delete files, so the paths it can touch come from what this process actually did rather than from the request body, and a restart forgets the offer rather than acting on a stale one. Response: `{ released }`, the session ids actually released; an empty array means there was nothing to undo (nothing imported, already undone, or the server restarted since).",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": true,
+                "properties": {
+                  "sessionIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Optional subset of the last import's session ids to release. Omit to undo the whole import. Ids outside that import are ignored."
+                  }
+                },
+                "required": []
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ released }` listing the session ids released.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ released }` listing the session ids released.",
                   "type": "object",
                   "additionalProperties": true
                 }

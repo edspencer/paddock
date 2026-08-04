@@ -7,7 +7,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { loadPaddockConfig } from "../../src/config.js";
+import { loadPaddockConfig, resolveDefaultWebDist } from "../../src/config.js";
 import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
 
 const ENV_KEYS = [
@@ -618,5 +618,97 @@ describe("loadPaddockConfig: models allow-list (#457)", () => {
   it("falls back to undefined (full catalog) when every configured id is unknown", () => {
     process.env.PADDOCK_MODELS = "gpt-4,gemini";
     expect(loadPaddockConfig().models).toBeUndefined();
+  });
+});
+
+/**
+ * Retired settings must be IGNORED, never fatal (#549).
+ *
+ * `scratchDir` / `PADDOCK_SCRATCH_DIR` was deleted in #549. An operator upgrading
+ * with a stale env file or an old `paddock.config.yaml` must still boot: config is
+ * pull-based on both layers (env vars read by name, YAML parsed into a loose record
+ * that is only ever read), so a deleted key is simply never looked at. These tests
+ * pin that as a contract rather than an accident — and use `scratchDir` as the
+ * concrete case the issue asked us to decide.
+ */
+describe("loadPaddockConfig: retired settings are ignored, not fatal (#549)", () => {
+  const ENV = ["PADDOCK_DATA_DIR", "PADDOCK_CONFIG", "PADDOCK_SCRATCH_DIR"];
+  let dataDir: string;
+  let saved: Record<string, string | undefined>;
+
+  beforeEach(async () => {
+    dataDir = await makeTmpDir("paddock-config-retired-");
+    saved = {};
+    for (const k of ENV) {
+      saved[k] = process.env[k];
+      delete process.env[k];
+    }
+    process.env.PADDOCK_DATA_DIR = dataDir;
+  });
+  afterEach(async () => {
+    for (const k of ENV) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+    await rmTmpDir(dataDir);
+  });
+
+  it("boots with a stale PADDOCK_SCRATCH_DIR set, and carries no scratchDir", () => {
+    process.env.PADDOCK_SCRATCH_DIR = path.join(dataDir, "somewhere-else");
+    const cfg = loadPaddockConfig();
+    expect(cfg.dataDir).toBeTruthy();
+    expect("scratchDir" in cfg).toBe(false);
+  });
+
+  it("does not create a scratch dir for a stale PADDOCK_SCRATCH_DIR", () => {
+    const stale = path.join(dataDir, "stale-scratch");
+    process.env.PADDOCK_SCRATCH_DIR = stale;
+    loadPaddockConfig();
+    expect(fs.existsSync(stale)).toBe(false);
+  });
+
+  it("boots with a retired `scratchDir:` key in the YAML file, alongside live keys", () => {
+    fs.writeFileSync(
+      path.join(dataDir, "paddock.config.yaml"),
+      ["scratchDir: /gone/nowhere", "logLevel: debug"].join("\n") + "\n",
+      "utf8",
+    );
+    const cfg = loadPaddockConfig();
+    // The retired key is inert; the live key beside it still resolves.
+    expect("scratchDir" in cfg).toBe(false);
+    expect(cfg.logLevel).toBe("debug");
+  });
+
+  it("ignores an entirely unknown key rather than throwing", () => {
+    fs.writeFileSync(
+      path.join(dataDir, "paddock.config.yaml"),
+      ["neverWasASetting: 42", "logLevel: warn"].join("\n") + "\n",
+      "utf8",
+    );
+    expect(loadPaddockConfig().logLevel).toBe("warn");
+  });
+});
+
+describe("resolveDefaultWebDist: percent-encoding (npx/global install)", () => {
+  it("decodes a space in the install path instead of leaving %20", () => {
+    // `new URL(url).pathname` would yield `/opt/my%20paddock/...`, which names a
+    // directory that does not exist — and app.ts fails SILENTLY into API-only
+    // mode, so the symptom is a blank page rather than an error.
+    const dist = resolveDefaultWebDist("file:///opt/my%20paddock/packages/server/dist/config.js");
+    expect(dist).toBe("/opt/my paddock/packages/web/dist");
+    expect(dist).not.toContain("%20");
+  });
+
+  it("decodes non-ASCII characters in the install path", () => {
+    const dist = resolveDefaultWebDist(
+      "file:///home/ed/D%C3%A9veloppement/paddock/packages/server/dist/config.js",
+    );
+    expect(dist).toBe("/home/ed/Développement/paddock/packages/web/dist");
+  });
+
+  it("still resolves the plain ASCII case to packages/web/dist", () => {
+    expect(resolveDefaultWebDist("file:///app/packages/server/dist/config.js")).toBe(
+      "/app/packages/web/dist",
+    );
   });
 });
