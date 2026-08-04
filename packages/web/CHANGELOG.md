@@ -1,5 +1,119 @@
 # @paddock/web
 
+## 0.61.0
+
+### Patch Changes
+
+- [#671](https://github.com/edspencer/paddock/pull/671) [`aa607e4`](https://github.com/edspencer/paddock/commit/aa607e47e061801f77298aa349d657b403577fe1) Thanks [@edspencer](https://github.com/edspencer)! - Remove the one-time #488 localStorage read-state backfill (#552)
+
+  #488 made read-state server-authoritative and dropped the localStorage
+  `lastSeen` mirror; to avoid resurfacing already-read chats it shipped a one-time
+  migration that pushed any surviving `paddock:lastSeen:*` keys up to the server
+  and deleted them. That migration has drained, but it was wired into the sidebar's
+  projects effect — so it re-scanned every localStorage key on **every projects
+  refresh, forever**, only to return early.
+
+  `lastSeenBackfill.ts` and the two localStorage helpers it used
+  (`legacyLastSeenEntries`, `clearLegacyLastSeen`) are gone. The client now has no
+  localStorage read-state code path at all.
+
+  The one caveat: a browser profile that has not opened Paddock since 2026-07-26
+  still holds legacy keys that will now never be pushed up, so the chats they cover
+  read as unread once. Those keys are inert — nothing reads them — and opening the
+  affected chats clears the cue for good.
+
+- [#672](https://github.com/edspencer/paddock/pull/672) [`62f518f`](https://github.com/edspencer/paddock/commit/62f518ff993055e74a8b3323a16a0bbbead41faa) Thanks [@edspencer](https://github.com/edspencer)! - An explicit "mark unread" now survives a turn landing in the focused chat (#608)
+
+  Marking the open chat unread and having its in-flight turn complete a moment
+  later silently discarded the flag. The web client marks the focused chat seen
+  when a turn finishes there ("you were watching it"), and `POST .../seen` clears
+  the manual unread override — so an inferred seen quietly overrode an explicit
+  intent. The same happened via the API: `POST .../chats/:id/unread` returned
+  `{ ok: true }` and the write was then undone by a browser sitting in that chat,
+  with nothing telling the caller.
+
+  `POST .../chats/:id/seen` now accepts `keepUnread: true`, which advances the
+  last-seen watermark **without** clearing the manual override, and its response
+  carries the override's resulting state (`{ ok, lastSeen, unread }`). The web
+  client passes it only on the turn-completed-while-focused path; opening a chat
+  and the explicit read/unread toggle still spend the flag exactly as before.
+
+- [#671](https://github.com/edspencer/paddock/pull/671) [`aa607e4`](https://github.com/edspencer/paddock/commit/aa607e47e061801f77298aa349d657b403577fe1) Thanks [@edspencer](https://github.com/edspencer)! - Stop the sidebar project list flashing to skeletons on every turn (#572)
+
+  `ProjectsProvider.refresh()` set `loading = true` unconditionally, and the
+  sidebar renders three pulsing placeholders _instead of_ the project list
+  whenever that flag is set. `ProjectView` refreshes the list from three
+  turn-lifecycle callbacks (`onSessionStarted`, `onSessionEstablished`,
+  `onTurnComplete`), so the whole nav blanked and re-populated **twice per keeper
+  turn** — measured on a live instance with a `MutationObserver`.
+
+  `loading` was doing double duty: "we have never loaded the list" and "we are
+  re-checking a list we are already showing". Only the first deserves a
+  placeholder. It now stays true only until the first _successful_ fetch lands;
+  after that, refreshes revalidate quietly and the previous list stays on screen.
+  A first load that fails still gets the placeholder back on retry, having nothing
+  to show in the meantime.
+
+- [#667](https://github.com/edspencer/paddock/pull/667) [`5fc3371`](https://github.com/edspencer/paddock/commit/5fc3371260b5124607d2b5bdd30dc71439bb28fd) Thanks [@edspencer](https://github.com/edspencer)! - Show the "conversation compacted" chip below the `/compact` that produced it
+
+  Claude Code appends a compaction's records to the session JSONL at positions
+  _preceding_ the command line that triggered it, while stamping them with the time
+  compaction _finished_. Paddock renders in file order, so a compacted chat read
+  backwards: the 🗜️ boundary sat above the `/compact` chip, as though the
+  conversation had been compacted before anyone asked for it, with the two records
+  up to three minutes apart in wall-clock terms (#630).
+
+  The transcript's grouping step now moves a compaction boundary one slot past the
+  `/compact` echo that produced it. It is a targeted swap, not a re-sort: a boundary
+  with no echo to pair with (an auto-compaction) and a `/compact` whose compaction
+  never completed are both left in file order, and no turn is added or dropped.
+  Purely cosmetic — the summary body stays tucked behind its disclosure exactly as
+  before.
+
+- [#670](https://github.com/edspencer/paddock/pull/670) [`def27b8`](https://github.com/edspencer/paddock/commit/def27b874482c628d8801084217759f362e526e6) Thanks [@edspencer](https://github.com/edspencer)! - Stop describing a trigger with no tools as an enforced tool-less agent (#647)
+
+  Paddock expresses "no tools" as `allowed_tools: []`, and both herdctl runtimes emit
+  the allow-list **only when it is non-empty** — the CLI runtime guards
+  `if (allowed_tools?.length)` before pushing `--allowedTools`, and `toSDKOptions`
+  does the same before setting `allowedTools`. An empty list is therefore
+  indistinguishable from an unset one: the agent runs with Claude Code's default
+  tools, not a deny-all.
+
+  The source comments and the Triggers UI claimed the opposite. Nothing about the
+  runtime changes here — only what Paddock says about it:
+
+  - The trigger capability banner no longer promises a `tools: []` event trigger
+    "can only read its prompt and respond (no file, shell, or MCP access)". It now
+    says no tools were declared, that an empty list is not a restriction, and that
+    the prompt and max turns are the real bounds.
+  - The Triggers list shows "No tools" instead of "Tool-less", and the tool picker's
+    help text spells out that leaving everything unchecked is not a deny-all.
+  - The comments on `triggerToAgentToolConfig`, `hookToAgentToolConfig` and the
+    sweeper config describe what actually happens. The sweeper's tool-less-ness is
+    restated in terms of the properties that do hold: no injected MCP servers,
+    `max_turns: 4`, a system prompt that forbids tool use, and a non-interactive
+    `claude -p` run that cannot answer a permission prompt.
+
+  Making a tool grant enforceable at all is tracked separately in #319; this change
+  deliberately implements no enforcement.
+
+- [#669](https://github.com/edspencer/paddock/pull/669) [`e873f98`](https://github.com/edspencer/paddock/commit/e873f98b7e12bb2204561d8493895939989e2f60) Thanks [@edspencer](https://github.com/edspencer)! - Stop Settings claiming an instance default it hasn't fetched yet
+
+  A project's Settings tab seeded the three inherited instance defaults with
+  literals, so before `GET /api/models` returned it told you your box defaults to
+  drive mode **Batch** — a claim about instance configuration, and a wrong one:
+  the box-wide default has been `session` since v0.36. The literal was written
+  when `batch` was the default and was never updated, which is exactly the drift a
+  hard-coded copy invites (#587).
+
+  The pre-fetch state is now genuinely unknown (`null`) rather than a guess, and
+  renders as such: `Global default (loading…)`, `Instance default (loading…)` and a
+  short "Loading the …" hint in place of the "Inheriting …" prose, matching the
+  existing _"Loading the instance model list…"_ idiom in the same pane. Applied to
+  drive mode, max spawn depth and the curation budgets alike, so none of them can
+  drift the next time a server default changes. Nothing about what is persisted
+  changes — the placeholder was never saved.
+
 ## 0.60.0
 
 ### Minor Changes

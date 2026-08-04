@@ -1,5 +1,158 @@
 # @paddock/server
 
+## 0.61.0
+
+### Minor Changes
+
+- [#634](https://github.com/edspencer/paddock/pull/634) [`4df3a7a`](https://github.com/edspencer/paddock/commit/4df3a7a2ef6358c6e41a480eddf1add8d9ed31e4) Thanks [@edspencer](https://github.com/edspencer)! - Paddock now owns its Claude home; `~/.claude` is a read-only source (#620)
+
+  Claude Code's transcripts were the one piece of state Paddock did not keep under
+  its own data dir. They lived in the user's `~/.claude`, reached by planting
+  symlinks into it from outside — and `ensureProjectChats` would, on every agent
+  registration and inside a bare `catch {}`, copy a user's existing transcripts out
+  of there and **delete the originals**. That fired in exactly the case the chat
+  import (#588) exists to serve: pointing a project at a directory you already have
+  terminal `claude` history for.
+
+  That layout was forced, not chosen: until herdctl#423 nothing set
+  `CLAUDE_CONFIG_DIR`, so the SDK wrote to `~/.claude` whatever home Paddock
+  configured. With `@herdctl/core@5.29.0` that constraint is gone.
+
+  - The Claude home now defaults to **`<dataDir>/claude-home`**, making a data dir
+    movable, backable and wipeable as a unit. Precedence is `CLAUDE_HOME`, then
+    `CLAUDE_CONFIG_DIR`, then a `claudeHome:` config-file key, then the default.
+  - **Paddock never moves or deletes anything under `~/.claude`.** The destructive
+    migrate branch is gated on owning the home, so in the user's home it does
+    nothing at all.
+  - **Chat import still reads `~/.claude`** — the user's transcript folders are
+    mirrored into Paddock's home read-only, so a source is copied out of and never
+    written to.
+  - **Agent memory writes work.** Claude Code keeps per-project memory at
+    `<claudeHome>/projects/<enc-cwd>/memory/`; with no `.claude` path component the
+    harness restriction that blocked writes there no longer applies.
+  - User-level config in `~/.claude` (`.credentials.json`, `settings.json`,
+    `CLAUDE.md`, `agents/`, `commands/`, `plugins/`) is symlinked into the new home
+    when it has none of its own, so relocating does not drop your memory,
+    permissions or login.
+
+  **No data migration is required or performed.** Paddock-managed transcripts
+  already live in `<projectDir>/.chats/`; only the redirect symlink moves. The
+  symlinks a previous version planted in `~/.claude/projects/` are left in place
+  (nothing reads them any more) and reported once at boot so they can be cleaned up.
+
+  **Upgrading with a keychain-based login:** Claude Code scopes its credential store
+  to whether `CLAUDE_CONFIG_DIR` is set, so a login held in the OS keychain against
+  the default home is not found under the new one. Token-in-environment setups
+  (`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`) and file-based logins are
+  unaffected — the latter are bridged. Paddock warns at boot when it can find no
+  credential source, and `CLAUDE_HOME=$HOME/.claude` restores the previous layout
+  exactly.
+
+### Patch Changes
+
+- [#675](https://github.com/edspencer/paddock/pull/675) [`38fe841`](https://github.com/edspencer/paddock/commit/38fe841c4b8e49b52694b69026a05350ea2eec83) Thanks [@edspencer](https://github.com/edspencer)! - Stop destroying appended queued text when the enqueue timestamp is reused (#628)
+
+  The server's queue drain deduped a queued message on its client-supplied
+  `createdAtMs` alone. The client deliberately KEEPS that timestamp when appending
+  to an existing queue, so the message identity stays stable (#245) — which meant a
+  pane holding an already-drained queue (it never saw the un-buffered
+  `chat:queued_flushed` clear) re-asserted the same timestamp with longer text, and
+  the next drain treated it as a duplicate: it broadcast a text-less clear and threw
+  the appended text away. Not delayed — gone.
+
+  Drain now dedups on the `(ts, text)` tuple. A re-assert of the exact same message
+  is still a duplicate (so #245's no-double-send guarantee is unchanged), but "same
+  ts, different text" is correctly recognised as a new message and sent.
+
+- [#672](https://github.com/edspencer/paddock/pull/672) [`62f518f`](https://github.com/edspencer/paddock/commit/62f518ff993055e74a8b3323a16a0bbbead41faa) Thanks [@edspencer](https://github.com/edspencer)! - An explicit "mark unread" now survives a turn landing in the focused chat (#608)
+
+  Marking the open chat unread and having its in-flight turn complete a moment
+  later silently discarded the flag. The web client marks the focused chat seen
+  when a turn finishes there ("you were watching it"), and `POST .../seen` clears
+  the manual unread override — so an inferred seen quietly overrode an explicit
+  intent. The same happened via the API: `POST .../chats/:id/unread` returned
+  `{ ok: true }` and the write was then undone by a browser sitting in that chat,
+  with nothing telling the caller.
+
+  `POST .../chats/:id/seen` now accepts `keepUnread: true`, which advances the
+  last-seen watermark **without** clearing the manual override, and its response
+  carries the override's resulting state (`{ ok, lastSeen, unread }`). The web
+  client passes it only on the turn-completed-while-focused path; opening a chat
+  and the explicit read/unread toggle still spend the flag exactly as before.
+
+- [#675](https://github.com/edspencer/paddock/pull/675) [`38fe841`](https://github.com/edspencer/paddock/commit/38fe841c4b8e49b52694b69026a05350ea2eec83) Thanks [@edspencer](https://github.com/edspencer)! - Make Stop work on slash-command turns (#632)
+
+  Pressing Stop during a `/compact` did nothing — permanently. Two wiring gaps:
+  `onChatCommand` hardcoded `jobId: null` in its routing, so no turn id ever
+  reached the client (whose cancel is guarded by `if (meta.jobId)`, and whose
+  deferred pre-arm cancel therefore waited forever); and `runCommand` never
+  registered its session in `liveSessions`, so even a hand-supplied id resolved to
+  nothing to interrupt. Since compaction runs 60–180s, that is a long stretch with
+  no way out.
+
+  `runCommand` now mints a synthetic turn id, registers the live session under it
+  exactly as `chatSession` does (and deregisters it in the same `finally` that
+  closes the session), and hands it back via `onJobCreated`; `onChatCommand` puts
+  that id in its routing. `chat:cancel` on a command turn now reaches
+  `RuntimeSession.interrupt()`.
+
+- [#670](https://github.com/edspencer/paddock/pull/670) [`def27b8`](https://github.com/edspencer/paddock/commit/def27b874482c628d8801084217759f362e526e6) Thanks [@edspencer](https://github.com/edspencer)! - Stop describing a trigger with no tools as an enforced tool-less agent (#647)
+
+  Paddock expresses "no tools" as `allowed_tools: []`, and both herdctl runtimes emit
+  the allow-list **only when it is non-empty** — the CLI runtime guards
+  `if (allowed_tools?.length)` before pushing `--allowedTools`, and `toSDKOptions`
+  does the same before setting `allowedTools`. An empty list is therefore
+  indistinguishable from an unset one: the agent runs with Claude Code's default
+  tools, not a deny-all.
+
+  The source comments and the Triggers UI claimed the opposite. Nothing about the
+  runtime changes here — only what Paddock says about it:
+
+  - The trigger capability banner no longer promises a `tools: []` event trigger
+    "can only read its prompt and respond (no file, shell, or MCP access)". It now
+    says no tools were declared, that an empty list is not a restriction, and that
+    the prompt and max turns are the real bounds.
+  - The Triggers list shows "No tools" instead of "Tool-less", and the tool picker's
+    help text spells out that leaving everything unchecked is not a deny-all.
+  - The comments on `triggerToAgentToolConfig`, `hookToAgentToolConfig` and the
+    sweeper config describe what actually happens. The sweeper's tool-less-ness is
+    restated in terms of the properties that do hold: no injected MCP servers,
+    `max_turns: 4`, a system prompt that forbids tool use, and a non-interactive
+    `claude -p` run that cannot answer a permission prompt.
+
+  Making a tool grant enforceable at all is tracked separately in #319; this change
+  deliberately implements no enforcement.
+
+- [#665](https://github.com/edspencer/paddock/pull/665) [`1e03494`](https://github.com/edspencer/paddock/commit/1e03494ef7a610b7b97cc0659733ed3b41d526bd) Thanks [@edspencer](https://github.com/edspencer)! - CLI: tell the truth about `--here` and stop double-warning about credentials
+
+  `--here` no longer links the user's `~/.claude` transcripts into the workspace —
+  since #620/#634 `ensureProjectChats` bails out inside a home Paddock does not own,
+  so those sessions are left exactly where they are and surface as an _import offer_
+  (which since #663 also asks for confirmation). Two consent strings still described
+  the old behaviour and now describe the real one.
+
+  The `npx paddock` preflight also printed its own "No Claude credentials found"
+  warning immediately before the boot-time one from `ensureClaudeHome`. The
+  preflight checked the _legacy_ `~/.claude` rather than the home Paddock actually
+  uses, and treated a bare `~/.claude.json` as proof of a login — so it could stay
+  silent while Paddock's own home held no credentials at all. It is removed; the
+  boot notice checks the right directory, runs after the credential bridge, and
+  explains the `CLAUDE_CONFIG_DIR` keychain scoping that causes the failure.
+
+- [#676](https://github.com/edspencer/paddock/pull/676) [`1bbba15`](https://github.com/edspencer/paddock/commit/1bbba15bbbd64a3e5b795684b4c8d6fca62ef589) Thanks [@edspencer](https://github.com/edspencer)! - Paddock is MIT licensed, and the packaging script now proves it (#674)
+
+  The repo had no `LICENSE` file and no `license` field in any manifest — legally,
+  all rights reserved — while `scripts/make-npm-package.mjs` carried a
+  `license: serverPkg.license ?? "MIT"` fallback, so every published release told
+  npm it was MIT. The registry advertised a grant the source never made.
+
+  Now there is a real `LICENSE` (MIT, © 2026 Ed Spencer) at the repo root,
+  `"license": "MIT"` in the root, server, and web manifests, and the licence text
+  ships inside the published tarball and the release tarball. The fallback is
+  gone: the packaging script reads the real field and **exits non-zero** if it is
+  missing or blank, so a Paddock package can never again claim a licence the repo
+  did not grant.
+
 ## 0.60.0
 
 ### Minor Changes
