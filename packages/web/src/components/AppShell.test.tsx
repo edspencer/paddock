@@ -3,7 +3,7 @@ import { render, screen, fireEvent, waitFor, within, act } from "@testing-librar
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { AppShell } from "./AppShell";
 import { makeProject } from "../test/factories";
-import { markSeenLocally, resetLastSeenForTests } from "../lib/lastSeen";
+import { markSeenLocally, readLastSeen, resetLastSeenForTests } from "../lib/lastSeen";
 import { gridUrl } from "../routes/ProjectView/urls";
 import type { Project } from "../lib/types";
 
@@ -32,6 +32,9 @@ vi.mock("../lib/projects-context", () => ({
 // Stub the one call it makes so the flow is drivable offline; everything else in
 // the module (ApiError, apiBase, …) stays real.
 const createProject = vi.fn();
+// `markChatSeen` is stubbed purely so the #552 guard below can assert the shell
+// makes NO read-state POST of its own on mount.
+const markChatSeen = vi.fn();
 vi.mock("../lib/api", async () => {
   const actual = await vi.importActual<typeof import("../lib/api")>("../lib/api");
   return {
@@ -39,6 +42,7 @@ vi.mock("../lib/api", async () => {
     api: {
       ...actual.api,
       createProject: (...a: unknown[]) => createProject(...a),
+      markChatSeen: (...a: unknown[]) => markChatSeen(...a),
     },
   };
 });
@@ -88,6 +92,7 @@ beforeEach(() => {
   mockLoading = false;
   upsert.mockReset();
   createProject.mockReset();
+  markChatSeen.mockReset();
   activeInfos = new Map();
   activeInfoCbs.clear();
   localStorage.clear();
@@ -462,6 +467,48 @@ describe("AppShell: the root workspace's Home badge (#553)", () => {
     // The badge is on Home; the root is still not a row in the list below it.
     expect(screen.queryByRole("link", { name: /Instance Root/ })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Alpha/ })).toBeInTheDocument();
+  });
+});
+
+/**
+ * The one-time #488 localStorage read-state backfill is GONE (#552).
+ *
+ * It ran from the shell's projects effect — i.e. on every projects refresh,
+ * forever — scanning localStorage and POSTing any surviving
+ * `paddock:lastSeen:*` value up to the server. The migration has drained, so
+ * what is pinned here is the absence: mounting the shell must not read those
+ * keys, must not push them anywhere, and must not delete them.
+ */
+describe("AppShell: no legacy read-state migration on mount (#552)", () => {
+  // The pre-#488 key shape, written as a literal rather than via `lastSeenKey`:
+  // this is an artifact of a version that no longer exists, so the test should
+  // not depend on the app still being able to construct it.
+  const LEGACY_KEY = "paddock:lastSeen:s1";
+  const FUTURE = new Date(Date.now() + 60_000).toISOString();
+
+  it("leaves pre-#488 localStorage keys alone and POSTs nothing", async () => {
+    localStorage.setItem(LEGACY_KEY, "9000");
+    mockProjects = [
+      makeProject({
+        slug: "alpha",
+        name: "Alpha",
+        // The server is BEHIND the legacy value — exactly the case the old
+        // backfill existed to push up.
+        chatTurns: [{ sessionId: "s1", lastTurnCompletedAt: FUTURE, lastSeen: 1000 }],
+      }),
+    ];
+    renderShell("/projects/alpha/chat");
+    // Let any stray async sweep get its chance to run before asserting absence.
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(markChatSeen).not.toHaveBeenCalled();
+    expect(localStorage.getItem(LEGACY_KEY)).toBe("9000"); // untouched, not consumed
+    // …and the legacy value never reaches the effective read-state: the server's
+    // 1000 stands alone, which is the whole point of #488.
+    expect(readLastSeen("s1")).toBe(1000);
   });
 });
 
