@@ -187,6 +187,14 @@ add one at runtime was (1) write a per-agent yaml file (`working_directory` = th
 project dir), (2) regenerate `herdctl.yaml` to reference it, (3) call
 `await fleet.reload()`. Paddock did exactly that until 5.11.0.
 
+```ts
+// paddock's HerdctlService.ensureProjectAgent(), as it was until 5.11.0.
+// NEITHER of these exists in packages/ any more.
+await regenerateConfigFiles(allProjects); // wrote agents/<name>.yaml + herdctl.yaml
+const payload = await fleet.reload();     // hot-reload; no restart
+// payload.changes => [{type:"added", category:"agent", name:"keeper-foo"}, ...]
+```
+
 The `reload()` contract below still holds and still matters — Paddock owns the
 on-disk `herdctl.yaml` (fleet block + `defaults`) even though it no longer lists
 agents there.
@@ -199,13 +207,6 @@ agents there.
 - Updates the scheduler with new agents/schedules.
 - Emits `config:reloaded` with a `ConfigChange[]` diff (added/removed/modified ×
   agent/schedule/defaults).
-
-```ts
-// paddock's HerdctlService.ensureProjectAgent()
-await regenerateConfigFiles(allProjects); // writes agents/<name>.yaml + herdctl.yaml
-const payload = await fleet.reload();      // hot-reload; no restart
-// payload.changes => [{type:"added", category:"agent", name:"keeper-foo"}, ...]
-```
 
 Config-dir layout paddock owns (generated, never hand-edited):
 ```

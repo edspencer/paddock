@@ -29,8 +29,9 @@ a single public **`@edspencer/paddock`** package from their built output
 
 ## Architecture pointers
 
-Read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for depth (every claim there
-is cited to `packages/server/src`). The essentials:
+Read [`website/src/content/docs/architecture/overview.md`](website/src/content/docs/architecture/overview.md)
+for depth (every claim there is cited to `packages/server/src`, by file + symbol,
+never by line number). The essentials:
 
 - **Three storage classes** (ARCHITECTURE §3) — keep them straight: (1) **transcript
   JSONL** written by Claude Code, Paddock reads/renders only (`~/.claude/projects/<enc-cwd>`
@@ -57,7 +58,7 @@ is cited to `packages/server/src`). The essentials:
   SDK, not `claude -p`**.
 
 Config is **entirely env-based** (`config.ts`, no config files) — see
-[`docs/CONFIGURATION.md`](docs/CONFIGURATION.md).
+[`website/src/content/docs/configuration/environment.md`](website/src/content/docs/configuration/environment.md).
 
 ## Dev conventions
 
@@ -88,18 +89,26 @@ npm run test:e2e            # Playwright vs real server + a fake `claude` on PAT
 
 ## Where to find things
 
+**The documentation website is the source of truth**, and its content is plain
+markdown checked into this repo under `website/src/content/docs/` — read those
+files directly, no fetching. `docs/` is a stale fork kept only until it is
+deleted; prefer the website copy whenever both exist. The handful of root files
+below (`AUTH.md`, `CONTRIBUTING.md`, `DEV.md`, `RELEASING.md`) are contributor
+runbooks the website does not own, and stay canonical here.
+
 | For… | Read |
 |---|---|
-| How the code fits together | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
-| What a project/agent/chat/sweeper *is* | [`docs/concepts/`](docs/concepts/) |
+| How the code fits together | [`website/src/content/docs/architecture/overview.md`](website/src/content/docs/architecture/overview.md) |
+| What a project/agent/chat/sweeper *is* | [`website/src/content/docs/concepts/`](website/src/content/docs/concepts/) |
 | Running the full stack locally | [`DEV.md`](DEV.md) |
 | Contributing, tests, gotchas | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
-| Every `PADDOCK_*` env var | [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) |
-| REST + WebSocket contract | [`docs/API.md`](docs/API.md) |
-| Test strategy & layers | [`docs/TESTING.md`](docs/TESTING.md) |
+| Every `PADDOCK_*` env var | [`website/src/content/docs/configuration/environment.md`](website/src/content/docs/configuration/environment.md) |
+| REST endpoints | [`openapi-site/open-api.json`](openapi-site/open-api.json) — the OpenAPI 3 spec, generated from the Fastify route schemas (published at `/api/`; live on an instance at `/open-api` when `PADDOCK_OPENAPI_ENABLED=1`) |
+| WebSocket (`/ws`) frame contract | [`website/src/content/docs/reference/websocket.md`](website/src/content/docs/reference/websocket.md) — hand-maintained; OpenAPI cannot describe it |
+| Test strategy & layers | [`website/src/content/docs/contributing/testing.md`](website/src/content/docs/contributing/testing.md) |
 | Auth modes & secrets | [`AUTH.md`](AUTH.md) |
 | Release pipeline | [`RELEASING.md`](RELEASING.md) |
-| herdctl API contract Paddock depends on | [`docs/INTEGRATION.md`](docs/INTEGRATION.md) |
+| herdctl API contract Paddock depends on | [`website/src/content/docs/architecture/herdctl-integration.md`](website/src/content/docs/architecture/herdctl-integration.md) |
 | Regenerating the README/docs demo reel | [`scripts/demo-gif/README.md`](scripts/demo-gif/README.md) |
 
 **The demo reel is generated, not hand-made.** `docs/demo/paddock-demo.gif` (and
