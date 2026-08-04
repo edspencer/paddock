@@ -306,6 +306,25 @@ export class HerdctlService {
   private liveSessions = new Map<string, RuntimeSession>();
 
   /**
+   * Background-phase turns keyed by the synthetic job id the sink minted for
+   * them, valued by the chat session they belong to (paddock#528).
+   *
+   * After a turn's primary `result` lands, {@link chatSession} returns and drops
+   * its {@link liveSessions} entry — but the session itself may live on, held
+   * open by the reaper because the turn launched background work, streaming
+   * autonomous re-invocation turns. Those turns are real, running, and shown as
+   * such; until now they were also uncancellable, because nothing registered
+   * them anywhere Stop could reach.
+   *
+   * `interrupt()` would be the wrong tool even if it could: it targets an
+   * in-flight model turn, and the wedge case is a session sitting idle holding
+   * background work that will never finish. So these route to a force-reap
+   * instead — end the session, let the stream end, and let the ordinary unwind
+   * emit `chat:complete`. Entries are removed when the background stream ends.
+   */
+  private backgroundTurns = new Map<string, string>();
+
+  /**
    * Incremental index of `<stateDir>/jobs`, backing the unread-badge reads
    * (`lastTurnCompletedAt*`) — one per service, reused across requests so a warm
    * scan only parses records it has never seen (#529). See
@@ -1169,10 +1188,29 @@ export class HerdctlService {
   }
 
   /**
+   * Register a background-phase turn so Stop can reach it (paddock#528). Called
+   * by the background turn sink once it knows both the synthetic job id it
+   * published and the session that stream belongs to. Re-registering the same
+   * job id with a later session id is fine — the sink refreshes the mapping if
+   * the stream resolves a different session.
+   */
+  registerBackgroundTurn(jobId: string, sessionId: string): void {
+    this.backgroundTurns.set(jobId, sessionId);
+  }
+
+  /** Forget a background-phase turn once its stream has ended. */
+  unregisterBackgroundTurn(jobId: string): void {
+    this.backgroundTurns.delete(jobId);
+  }
+
+  /**
    * Cancel a running turn (Stop button → WS chat:cancel). Handles BOTH drive
    * modes off the single id the client holds as `jobId`:
    *  - **session mode** — the id is a synthetic turn id in {@link liveSessions};
    *    interrupt the live `RuntimeSession` (there is no herdctl job to cancel).
+   *  - **background phase** — the id is a synthetic id in
+   *    {@link backgroundTurns}; there is no model turn to interrupt, so reap the
+   *    session (paddock#528).
    *  - **batch mode** — the id is a real herdctl job id; abort it via `cancelJob`
    *    (which kills the CLI subprocess / aborts the SDK query).
    *
@@ -1190,6 +1228,21 @@ export class HerdctlService {
         console.warn(`[herdctl] session interrupt failed for ${jobId}:`, err);
         return false;
       }
+    }
+    // Background phase: the primary turn is over and its liveSessions entry is
+    // gone, but the session is still open streaming autonomous re-invocation
+    // turns. Stop here means "end this session" — reaping reaches even a session
+    // the reap policy would hold open forever, and ending the stream is what
+    // drives the sink's onDone → chat:complete → the UI unlocking.
+    const backgroundSession = this.backgroundTurns.get(jobId);
+    if (backgroundSession !== undefined) {
+      const reaped = this.manager.reapChatSession(backgroundSession);
+      if (!reaped) {
+        console.warn(
+          `[herdctl] no live managed session ${backgroundSession} to reap for background turn ${jobId}`,
+        );
+      }
+      return reaped;
     }
     try {
       await this.manager.cancelJob(jobId);
