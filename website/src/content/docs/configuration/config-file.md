@@ -474,6 +474,22 @@ names and referenced variable names only, with URLs stripped of their query
 string. For the same reason the block is absent from the Config screen and from
 every API response.
 
+:::caution[`driveMode: batch` puts the definition on the command line]
+There is one place a token escapes, and it is downstream of Paddock. Under
+**`driveMode: session`** (the default) the servers are handed to the runtime
+in-process, and a stdio server receives its `env` the way any process does —
+readable only by its owner, exactly as your own Claude Code does it. Under
+**`driveMode: batch`** the engine instead passes the whole definition to `claude`
+as a `--mcp-config` **argument**, and a process argument is world-readable on
+Linux (`/proc/<pid>/cmdline`, and `ps`). Any local user can read the token for
+as long as the turn runs.
+
+So prefer `session` — the default — for any server holding a credential. Paddock
+warns at startup if you are on `batch` with one, and notes it even on `session`,
+because a single project pinning `driveMode: batch` for itself brings the
+exposure back.
+:::
+
 :::caution[What cannot be declared]
 Unlike `claude.mcpServers: host` — which passes an imperfectly-carried server
 with a warning, on the grounds that you configured it elsewhere for something

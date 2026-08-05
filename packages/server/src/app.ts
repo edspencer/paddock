@@ -173,6 +173,10 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
     servers: cfg.mcpServers,
     hostNames: Object.keys(hostMcp.source.user),
     browserMcp: cfg.browserMcp,
+    // …and where a declared credential ends up once the runtime has it: on the
+    // `claude` command line under `batch`, in-process under `session`. Paddock
+    // cannot close that from here, so it names it at boot instead.
+    driveMode: cfg.driveMode,
   })) {
     app.log[notice.level](notice.message);
   }

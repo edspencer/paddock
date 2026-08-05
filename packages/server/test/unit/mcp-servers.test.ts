@@ -316,6 +316,38 @@ describe("mcpServers: what the boot log says", () => {
   });
 
   /**
+   * The exposure that survives every rule this module enforces, because it
+   * happens downstream of paddock: herdctl's CLI runtime serialises the whole
+   * server definition into a `--mcp-config` command-line argument, and
+   * `/proc/<pid>/cmdline` is world-readable. Observed end-to-end in
+   * `test/integration/declared-mcp-argv.test.ts`; this pins how it is reported.
+   */
+  it("warns under batch that an env value lands on the claude command line", () => {
+    const servers = { notion: { command: "npx", env: { NOTION_TOKEN: SECRET } } };
+    const batch = declaredMcpNotices({ servers, driveMode: "batch" });
+    const session = declaredMcpNotices({ servers, driveMode: "session" });
+
+    const warned = batch.find((n) => n.message.includes("/proc/<pid>/cmdline"));
+    expect(warned?.level).toBe("warn");
+    // `session` (the default) passes them in-process, so it is a note rather
+    // than a warning — but it is still said, because ONE project pinning
+    // `driveMode: batch` brings the exposure back.
+    expect(session.find((n) => n.message.includes("/proc/<pid>/cmdline"))?.level).toBe("info");
+    // Naming the server is the point; printing its value would be the leak.
+    expect(warned?.message).toContain("notion");
+    expect([...batch, ...session].map((n) => n.message).join("\n")).not.toContain(SECRET);
+  });
+
+  it("says nothing about the command line for a server with no env, or with no drive mode", () => {
+    const noEnv = { docs: { url: "https://mcp.example.test/mcp" } };
+    expect(declaredMcpNotices({ servers: noEnv, driveMode: "batch" }).length).toBe(1);
+    // Callers that only want the inventory line (and every existing one) pass no
+    // drive mode and must keep getting exactly what they got before.
+    const servers = { notion: { command: "npx", env: { NOTION_TOKEN: SECRET } } };
+    expect(declaredMcpNotices({ servers }).length).toBe(1);
+  });
+
+  /**
    * The one collision paddock's own side wins, so it must not be silent — an
    * operator who declared `playwright` would otherwise see their flags ignored
    * with no explanation.
