@@ -25,6 +25,7 @@ import {
   findPlantedChatsLinks,
 } from "./claude-home.js";
 import { loadHostMcpSource } from "./claude-mcp.js";
+import { declaredMcpNotices } from "./mcp-servers.js";
 import { installHerdctlLogBridge } from "./agent-errors.js";
 import { ProjectStore, ROOT_KEY } from "./projects.js";
 import { AttachmentStore } from "./attachments.js";
@@ -160,7 +161,22 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   // Under `own` (the default) the file is not opened at all.
   const hostMcp = await loadHostMcpSource(cfg);
   for (const notice of hostMcp.notices) app.log[notice.level](notice.message);
-  const herdctl = new HerdctlService(cfg, hostMcp.source);
+  // …and the servers this instance declares for ITSELF, from the top-level
+  // `mcpServers:` block (#691 step 6). Resolved during config load (it needs
+  // `process.env` for the `env:VAR` references), logged here because that is
+  // where the logger is. Nothing below carries a value out of the block: the
+  // diagnostics name keys and variable names only, and every server mentioned in
+  // a notice is rendered by `describeServer`.
+  for (const message of cfg.mcpServersDiagnostics.errors) app.log.error(message);
+  for (const message of cfg.mcpServersDiagnostics.warnings) app.log.warn(message);
+  for (const notice of declaredMcpNotices({
+    servers: cfg.mcpServers,
+    hostNames: Object.keys(hostMcp.source.user),
+    browserMcp: cfg.browserMcp,
+  })) {
+    app.log[notice.level](notice.message);
+  }
+  const herdctl = new HerdctlService(cfg, { ...hostMcp.source, declared: cfg.mcpServers });
   const git = new GitService(cfg.projectsRoot, cfg.gitAuthor);
   const githubAuth = new GithubAuth(path.join(cfg.dataDir, "github-auth.json"), cfg.githubClientId);
   const archive = new ArchiveStore(cfg.dataDir);

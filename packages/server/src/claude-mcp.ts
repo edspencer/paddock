@@ -118,13 +118,16 @@
  * process per fire for nothing. Keepers are what a user means by "my MCP servers
  * in paddock".
  *
- * ## Built so step 6 is an addition, not a rewrite
+ * ## Step 6 landed here, as an addition
  *
- * #691 step 6 is an instance-level `mcpServers:` block in `paddock.config.yaml`
- * for servers a user declares themselves. Everything below the parse — the
- * {@link HostMcpSource} shape, {@link mcpServersFor}, the allowlist widening in
- * `buildAgentConfig` — is source-agnostic. Step 6 adds a second contributor to
- * `HostMcpSource.user` and changes nothing else.
+ * #691 step 6 — an instance-level `mcpServers:` block in `paddock.config.yaml`
+ * for servers a user declares themselves — is `mcp-servers.ts`. It contributes
+ * {@link McpSources.declared} and nothing else: the shape, {@link mcpServersFor},
+ * and the allowlist widening in `buildAgentConfig` were already source-agnostic
+ * and did not change. What it does NOT share is validation posture — a host
+ * server paddock cannot carry faithfully is passed with a warning (the user
+ * declared it elsewhere, for something else), while a declared one is refused
+ * with an error (they typed it here, at us, and can fix it).
  */
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -173,7 +176,7 @@ export function hostMcpConfigPath(legacyClaudeHome: string): string {
  * here is what makes the lossiness above visible at the type level rather than
  * at runtime.
  */
-export interface HostMcpServer {
+export interface McpServerDef {
   command?: string;
   args?: string[];
   env?: Record<string, string>;
@@ -181,7 +184,7 @@ export interface HostMcpServer {
 }
 
 /** A set of MCP servers, keyed by the name their tools are namespaced under. */
-export type HostMcpServers = Record<string, HostMcpServer>;
+export type McpServerDefs = Record<string, McpServerDef>;
 
 /** Something about a declared server that could not be carried through. */
 export interface HostMcpCaveat {
@@ -194,28 +197,39 @@ export interface HostMcpCaveat {
 }
 
 /**
- * The user's declared servers, parsed once and looked up per working directory.
+ * Every MCP server this instance will attach, from every source, plus what could
+ * not be carried.
  *
- * Two scopes, because `.claude.json` has two: a top-level `mcpServers` that
- * applies everywhere, and a `projects[<absolute dir>].mcpServers` that applies
- * only in that directory. The per-directory one is keyed by the LITERAL absolute
- * path — not the `-`-encoded form the transcript folders use — and it is the
- * scope a `--here` workspace hits, because `claude mcp add` without `--scope
- * user` writes there.
+ * The host's `~/.claude.json` supplies two scopes, because that file has two: a
+ * top-level `mcpServers` that applies everywhere, and a
+ * `projects[<absolute dir>].mcpServers` that applies only in that directory. The
+ * per-directory one is keyed by the LITERAL absolute path — not the `-`-encoded
+ * form the transcript folders use — and it is the scope a `--here` workspace
+ * hits, because `claude mcp add` without `--scope user` writes there.
+ *
+ * {@link declared} is the third contributor and the one that is not the host's at
+ * all: paddock's own top-level `mcpServers:` config block (#691 step 6), resolved
+ * by `mcp-servers.ts`. It is carried here rather than threaded separately so that
+ * everything downstream of this type — {@link mcpServersFor}, the allowlist
+ * widening in `buildAgentConfig` — stays source-agnostic and had to change not at
+ * all when it was added.
  */
-export interface HostMcpSource {
-  /** Top-level `mcpServers`: every keeper gets these. */
-  user: HostMcpServers;
-  /** `projects[<dir>].mcpServers`, keyed by the literal absolute directory. */
-  byDir: Record<string, HostMcpServers>;
-  /** Everything that could not be carried faithfully, for the boot notice. */
+export interface McpSources {
+  /** Host `~/.claude.json` top-level `mcpServers`: every keeper gets these. */
+  user: McpServerDefs;
+  /** Host `projects[<dir>].mcpServers`, keyed by the literal absolute directory. */
+  byDir: Record<string, McpServerDefs>;
+  /** Declared by this instance in `paddock.config.yaml`; every keeper gets these. */
+  declared: McpServerDefs;
+  /** Everything the host file could not carry faithfully, for the boot notice. */
   caveats: HostMcpCaveat[];
 }
 
-/** `mcpServers: own`, an unreadable file, and the value tests start from. */
-export const EMPTY_HOST_MCP: HostMcpSource = Object.freeze({
+/** No servers from anywhere: `mcpServers: own` + an empty block, and where tests start. */
+export const EMPTY_MCP_SOURCES: McpSources = Object.freeze({
   user: {},
   byDir: {},
+  declared: {},
   caveats: [],
 });
 
@@ -238,12 +252,12 @@ function narrowServer(
   name: string,
   raw: unknown,
   caveats: HostMcpCaveat[],
-): HostMcpServer | undefined {
+): McpServerDef | undefined {
   if (!isRecord(raw)) {
     caveats.push({ name, kind: "dropped", reason: "its declaration is not a JSON object" });
     return undefined;
   }
-  const server: HostMcpServer = {};
+  const server: McpServerDef = {};
   if (typeof raw.command === "string" && raw.command !== "") server.command = raw.command;
   if (Array.isArray(raw.args) && raw.args.every((a) => typeof a === "string")) {
     if (raw.args.length > 0) server.args = [...(raw.args as string[])];
@@ -291,9 +305,9 @@ function narrowServer(
   return server;
 }
 
-function serversOf(raw: unknown, caveats: HostMcpCaveat[]): HostMcpServers {
+function serversOf(raw: unknown, caveats: HostMcpCaveat[]): McpServerDefs {
   if (!isRecord(raw)) return {};
-  const out: HostMcpServers = {};
+  const out: McpServerDefs = {};
   for (const [name, decl] of Object.entries(raw)) {
     const server = narrowServer(name, decl, caveats);
     if (server) out[name] = server;
@@ -311,18 +325,18 @@ function serversOf(raw: unknown, caveats: HostMcpCaveat[]): HostMcpServers {
  * never turn into a boot failure. What it does instead is return nothing and let
  * the caller say so.
  */
-export function parseHostMcpConfig(raw: string): HostMcpSource {
+export function parseHostMcpConfig(raw: string): McpSources {
   const caveats: HostMcpCaveat[] = [];
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return { user: {}, byDir: {}, caveats };
+    return { user: {}, byDir: {}, declared: {}, caveats };
   }
-  if (!isRecord(parsed)) return { user: {}, byDir: {}, caveats };
+  if (!isRecord(parsed)) return { user: {}, byDir: {}, declared: {}, caveats };
 
   const user = serversOf(parsed.mcpServers, caveats);
-  const byDir: Record<string, HostMcpServers> = {};
+  const byDir: Record<string, McpServerDefs> = {};
   if (isRecord(parsed.projects)) {
     for (const [dir, entry] of Object.entries(parsed.projects)) {
       if (!isRecord(entry)) continue;
@@ -330,27 +344,34 @@ export function parseHostMcpConfig(raw: string): HostMcpSource {
       if (Object.keys(servers).length > 0) byDir[dir] = servers;
     }
   }
-  return { user, byDir, caveats };
+  return { user, byDir, declared: {}, caveats };
 }
 
 /**
  * The servers that apply to one agent's working directory.
  *
- * Per-directory wins on a name collision: it is the more specific declaration,
- * and it is the one `claude mcp add` writes by default, so a user who re-declared
- * a server inside a project meant that one.
+ * Precedence, weakest first: host user scope, host directory scope, then this
+ * instance's own `mcpServers:` block.
  *
- * The lookup is exact rather than a prefix walk. `.claude.json`'s `projects` keys
- * are the literal cwd Claude Code was started in, and Claude Code does not
+ * Host per-directory wins over host user scope because it is the more specific
+ * declaration, and it is the one `claude mcp add` writes by default, so a user
+ * who re-declared a server inside a project meant that one. {@link
+ * McpSources.declared} wins over both because it is a statement about THIS
+ * instance while `~/.claude.json` is ambient machine state — a user who wrote a
+ * server into paddock's own config was answering "what should paddock have?",
+ * which is a narrower question than "what does this machine have?".
+ *
+ * The host lookup is exact rather than a prefix walk. `.claude.json`'s `projects`
+ * keys are the literal cwd Claude Code was started in, and Claude Code does not
  * inherit a parent directory's entry either — matching that keeps paddock's
  * answer the same as the terminal's, which is the whole point of `host`.
  */
-export function mcpServersFor(source: HostMcpSource, workingDir: string): HostMcpServers {
-  return { ...source.user, ...(source.byDir[workingDir] ?? {}) };
+export function mcpServersFor(source: McpSources, workingDir: string): McpServerDefs {
+  return { ...source.user, ...(source.byDir[workingDir] ?? {}), ...source.declared };
 }
 
 /** Every directory-scoped key, for the boot notice. */
-export function hostMcpScopedDirs(source: HostMcpSource): string[] {
+export function hostMcpScopedDirs(source: McpSources): string[] {
   return Object.keys(source.byDir);
 }
 
@@ -362,7 +383,7 @@ export interface HostMcpNotice {
 
 /** What {@link loadHostMcpSource} found. */
 export interface HostMcpReport {
-  source: HostMcpSource;
+  source: McpSources;
   notices: HostMcpNotice[];
 }
 
@@ -383,7 +404,7 @@ export async function loadHostMcpSource(cfg: {
   legacyClaudeHome: string;
   claude: { mcpServers: McpServersMode };
 }): Promise<HostMcpReport> {
-  if (cfg.claude.mcpServers !== "host") return { source: EMPTY_HOST_MCP, notices: [] };
+  if (cfg.claude.mcpServers !== "host") return { source: EMPTY_MCP_SOURCES, notices: [] };
   const file = hostMcpConfigPath(cfg.legacyClaudeHome);
   const notices: HostMcpNotice[] = [];
   let raw: string;
@@ -397,7 +418,7 @@ export async function loadHostMcpSource(cfg: {
         `no host MCP servers are attached. That file is where \`claude mcp add\` writes; ` +
         `it does not exist until you have added one.`,
     });
-    return { source: EMPTY_HOST_MCP, notices };
+    return { source: EMPTY_MCP_SOURCES, notices };
   }
   const source = parseHostMcpConfig(raw);
   const userNames = Object.keys(source.user);

@@ -1,6 +1,7 @@
 /**
- * `claude.mcpServers` where it is actually observable: the agent config paddock
- * hands herdctl (#691 step 5).
+ * The MCP servers paddock attaches, where they are actually observable: the agent
+ * config it hands herdctl. Both sources — `claude.mcpServers: host` (#691 step 5)
+ * and the instance's own `mcpServers:` block (step 6).
  *
  * `mcp_servers` is the ONE seam that reaches both runtimes — the SDK runtime
  * turns it into `sdkOptions.mcpServers` via `transformMcpServers`, the CLI
@@ -18,7 +19,7 @@ import {
   buildTriggerConfig,
 } from "../../src/herdctl-agent-config.js";
 import { FLEET_ALLOWED_TOOLS, BROWSER_MCP_TOOL } from "../../src/herdctl-agent-names.js";
-import { EMPTY_HOST_MCP, parseHostMcpConfig } from "../../src/claude-mcp.js";
+import { EMPTY_MCP_SOURCES, parseHostMcpConfig, type McpSources } from "../../src/claude-mcp.js";
 import type { PaddockConfig } from "../../src/config.js";
 import type { Project } from "../../src/projects.js";
 
@@ -57,7 +58,7 @@ describe("buildAgentConfig: claude.mcpServers own vs host (#691)", () => {
    * moves. Before step 5 both columns were the left one, for everybody.
    */
   it("hands the runtime nothing under `own` and the user's servers under `host`", () => {
-    const own = buildAgentConfig(cfg(), project(), undefined, EMPTY_HOST_MCP);
+    const own = buildAgentConfig(cfg(), project(), undefined, EMPTY_MCP_SOURCES);
     const host = buildAgentConfig(cfg(), project(), undefined, hostConfig);
 
     expect(own.mcp_servers).toBeUndefined();
@@ -93,7 +94,7 @@ describe("buildAgentConfig: claude.mcpServers own vs host (#691)", () => {
   });
 
   it("leaves allowed_tools unset under `own`, so the fleet defaults are inherited", () => {
-    const own = buildAgentConfig(cfg(), project(), undefined, EMPTY_HOST_MCP);
+    const own = buildAgentConfig(cfg(), project(), undefined, EMPTY_MCP_SOURCES);
     expect(own.allowed_tools).toBeUndefined();
   });
 
@@ -151,5 +152,94 @@ describe("buildAgentConfig: claude.mcpServers own vs host (#691)", () => {
   it("defaults to isolated when no source is passed at all", () => {
     // Every pre-existing caller omits the argument; it has to mean `own`.
     expect(buildAgentConfig(cfg(), project()).mcp_servers).toBeUndefined();
+  });
+});
+
+/**
+ * #691 step 6 — servers this instance declares for ITSELF, in the top-level
+ * `mcpServers:` block. Same seam, same trap: an attached server whose tool
+ * pattern is not on the keeper's allowlist has every call auto-denied, with no
+ * prompt and nothing in the logs.
+ */
+describe("buildAgentConfig: instance-declared mcpServers (#691 step 6)", () => {
+  const declaredOnly = (
+    declared: Record<string, { command?: string; url?: string }>,
+  ): McpSources => ({ ...EMPTY_MCP_SOURCES, declared });
+
+  /**
+   * THE test for step 6. A declared server has to arrive on `mcp_servers` (the
+   * one record both runtimes read) AND on `allowed_tools` — either half alone
+   * ships something that looks configured and does nothing.
+   */
+  it("reaches the agent config with its allowlist pattern", () => {
+    const config = buildAgentConfig(
+      cfg(),
+      project(),
+      undefined,
+      declaredOnly({ notion: { command: "notion-mcp" } }),
+    );
+    expect(config.mcp_servers).toEqual({ notion: { command: "notion-mcp" } });
+    expect(config.allowed_tools).toEqual([...FLEET_ALLOWED_TOOLS, "mcp__notion__*"]);
+  });
+
+  it("reaches EVERY project, unlike the host's directory scope", () => {
+    // Instance-wide is the whole point: the block says what paddock has, and
+    // paddock's projects are not a scoping dimension of that question.
+    const sources = declaredOnly({ notion: { command: "notion-mcp" } });
+    for (const dir of ["/home/ed/code/api", "/home/ed/code/web", "/srv/elsewhere"]) {
+      expect(buildAgentConfig(cfg(), project(dir), undefined, sources).mcp_servers).toEqual({
+        notion: { command: "notion-mcp" },
+      });
+    }
+  });
+
+  /**
+   * Precedence. `paddock.config.yaml` is a statement about THIS instance;
+   * `~/.claude.json` is ambient machine state that happens to be readable. The
+   * narrower answer wins — including over the host's per-directory scope, which
+   * beats the host's user scope.
+   */
+  it("wins over the same name inherited from the host, in either host scope", () => {
+    const sources: McpSources = {
+      ...hostConfig,
+      declared: { notion: { command: "mine" }, pg: { command: "mine-too" } },
+    };
+    const config = buildAgentConfig(cfg(), project("/home/ed/code/api"), undefined, sources);
+    const servers = config.mcp_servers as Record<string, { command?: string }>;
+    expect(servers.notion.command).toBe("mine"); // host user scope
+    expect(servers.pg.command).toBe("mine-too"); // host DIRECTORY scope
+    // One pattern each, not two: the allowlist is keyed by server name.
+    expect(config.allowed_tools).toEqual([...FLEET_ALLOWED_TOOLS, "mcp__notion__*", "mcp__pg__*"]);
+  });
+
+  /**
+   * The one collision paddock's own side still wins. Its flags are box-specific,
+   * and `browserMcp` is a toggle in the same file — so an operator who wants
+   * theirs turns it off. Not silent: `declaredMcpNotices` warns by name at boot.
+   */
+  it("still loses to paddock's own browser server", () => {
+    const config = buildAgentConfig(
+      cfg({ browserMcp: true } as Partial<PaddockConfig>),
+      project(),
+      undefined,
+      declaredOnly({ playwright: { command: "my-playwright" } }),
+    );
+    const servers = config.mcp_servers as Record<string, { command?: string }>;
+    expect(servers.playwright.command).toBe("playwright-mcp");
+  });
+
+  it("never attaches a declared server to the sweeper or to a trigger", () => {
+    // Same scope decision as the host lever: the sweeper is tool-less and each
+    // trigger carries its own narrow allowlist, so either would spawn a process
+    // per fire that nothing could call.
+    // Neither builder even takes an McpSources argument — which IS the
+    // structural guarantee, and is what this pins against a future signature.
+    expect(buildSweeperConfig(cfg(), project()).mcp_servers).toBeUndefined();
+    expect(
+      buildTriggerConfig(cfg(), project(), "nightly", {
+        trigger: { type: "schedule", cron: "0 3 * * *" },
+        run: {},
+      } as unknown as Parameters<typeof buildTriggerConfig>[3]).mcp_servers,
+    ).toBeUndefined();
   });
 });

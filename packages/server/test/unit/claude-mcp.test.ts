@@ -13,7 +13,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import {
   DEFAULT_MCP_SERVERS_MODE,
-  EMPTY_HOST_MCP,
+  EMPTY_MCP_SOURCES,
   HOST_MCP_CONFIG_FILE,
   hostMcpConfigPath,
   isKnownMcpServersMode,
@@ -194,7 +194,7 @@ describe("claude-mcp: which servers an agent's directory gets (#691)", () => {
   });
 
   it("is empty for the empty source, which is what `own` means", () => {
-    expect(mcpServersFor(EMPTY_HOST_MCP, "/home/ed/code/api")).toEqual({});
+    expect(mcpServersFor(EMPTY_MCP_SOURCES, "/home/ed/code/api")).toEqual({});
   });
 });
 
@@ -224,7 +224,7 @@ describe("claude-mcp: loading from disk (#691)", () => {
   it("does not read the file at all under `own`", async () => {
     await writeHostConfig({ mcpServers: { notion: { command: "notion-mcp" } } });
     const report = await loadHostMcpSource(cfgFor("own"));
-    expect(report.source).toBe(EMPTY_HOST_MCP);
+    expect(report.source).toBe(EMPTY_MCP_SOURCES);
     expect(report.notices).toEqual([]);
   });
 
@@ -243,7 +243,7 @@ describe("claude-mcp: loading from disk (#691)", () => {
 
   it("says so calmly when the file does not exist, rather than failing a boot", async () => {
     const report = await loadHostMcpSource(cfgFor("host"));
-    expect(report.source).toBe(EMPTY_HOST_MCP);
+    expect(report.source).toBe(EMPTY_MCP_SOURCES);
     expect(report.notices[0].level).toBe("info");
     expect(report.notices[0].message).toContain("claude mcp add");
   });

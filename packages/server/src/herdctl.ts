@@ -88,7 +88,7 @@ import {
   buildTriggerConfig,
   ensureConfigFile as writeBootConfigFile,
 } from "./herdctl-agent-config.js";
-import { EMPTY_HOST_MCP, type HostMcpSource } from "./claude-mcp.js";
+import { EMPTY_MCP_SOURCES, type McpSources } from "./claude-mcp.js";
 import * as jobs from "./herdctl-jobs.js";
 import { JobsDirIndex } from "./herdctl-jobs-index.js";
 import { AdoptableIndex, type AdoptableSummary, type FilterReason } from "./adoptable.js";
@@ -356,8 +356,11 @@ export class HerdctlService {
   }
 
   /**
-   * The user's own MCP servers under `claude.mcpServers: host` (#691 step 5),
-   * read once at boot by `loadHostMcpSource` and handed in here.
+   * The external MCP servers every keeper gets: the user's own under
+   * `claude.mcpServers: host` (#691 step 5, read once at boot by
+   * `loadHostMcpSource`) plus the ones this instance declares in its own
+   * `mcpServers:` block (step 6, resolved during config load). Both are merged
+   * into one value by `buildApp` and handed in here.
    *
    * A constructor argument rather than something this service reads for itself,
    * for the same reason `ensureClaudeHome` runs in `buildApp`: the read has
@@ -368,7 +371,7 @@ export class HerdctlService {
    */
   constructor(
     private readonly cfg: PaddockConfig,
-    private readonly hostMcp: HostMcpSource = EMPTY_HOST_MCP,
+    private readonly mcpSources: McpSources = EMPTY_MCP_SOURCES,
   ) {}
 
   /**
@@ -1739,7 +1742,7 @@ export class HerdctlService {
     project: Project,
     modelOverride?: string,
   ): Record<string, unknown> & { name: string } {
-    return buildAgentConfig(this.cfg, project, modelOverride, this.hostMcp);
+    return buildAgentConfig(this.cfg, project, modelOverride, this.mcpSources);
   }
 
   private sweeperAgentConfig(project: Project): Record<string, unknown> & { name: string } {

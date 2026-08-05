@@ -40,6 +40,7 @@ import { DEFAULT_TRANSCRIPTS_MODE } from "./transcripts.js";
 import { DEFAULT_CREDENTIALS_MODE } from "./claude-credentials.js";
 import { DEFAULT_INSTRUCTIONS_MODE } from "./claude-instructions.js";
 import { DEFAULT_HOOKS_MODE } from "./claude-settings.js";
+import { DEFAULT_MCP_SERVERS_MODE } from "./claude-mcp.js";
 import { type PaddockConfig } from "./config.js";
 
 /** Groups the Settings screen renders, in display order. */
@@ -318,6 +319,20 @@ export const FIELDS: readonly FieldSpec[] = [
   // answer, and it should be readable without opening a YAML file.
   { key: "claude.instructions", group: "advanced", label: "Instructions", help: "own = this instance's own only; host = your ~/.claude CLAUDE.md, agents/, commands/ and plugins/ as well.", type: "string", envVars: ["PADDOCK_CLAUDE_INSTRUCTIONS"], default: DEFAULT_INSTRUCTIONS_MODE, editable: false },
   { key: "claude.hooks", group: "advanced", label: "Hooks", help: "own = your ~/.claude/settings.json hooks do NOT run here (its other keys still apply); host = they do.", type: "string", envVars: ["PADDOCK_CLAUDE_HOOKS"], default: DEFAULT_HOOKS_MODE, editable: false },
+  // The fifth lever, which step 5 shipped without surfacing here. Read-only like
+  // its four siblings, and worth the row for the same reason `hooks` is: an MCP
+  // server is a process this instance spawns, so "is this instance running my
+  // machine's MCP servers?" should be answerable without opening a YAML file.
+  //
+  // NOTE what is deliberately absent: the top-level `mcpServers:` block (#691
+  // step 6), which declares servers rather than borrowing them. Its values hold
+  // resolved credentials — an MCP server's `env` is where a stdio server's API
+  // token lives — and every field in this table is serialised verbatim into the
+  // GET response, so a row for it would publish tokens to any authenticated UI
+  // user. There is no redacting variant of `FieldSpec`, and inventing one to
+  // display a server list is not worth the leak surface: the boot log already
+  // names every declared server, secret-free, via `describeServer`.
+  { key: "claude.mcpServers", group: "advanced", label: "MCP servers", help: "own = only the servers Paddock provides itself; host = the ones declared in your ~/.claude.json as well.", type: "string", envVars: ["PADDOCK_CLAUDE_MCP_SERVERS"], default: DEFAULT_MCP_SERVERS_MODE, editable: false },
   // Auth: read-only in v1 (misconfig can lock everyone out — issue #385). Only
   // the mode is surfaced; JWT/JWKS internals stay out of the API.
   { key: "auth.mode", group: "advanced", label: "Auth mode", type: "string", envVars: ["PADDOCK_AUTH_MODE"], default: "none", editable: false, sensitive: true },
