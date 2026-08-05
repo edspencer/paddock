@@ -88,6 +88,7 @@ import {
   buildTriggerConfig,
   ensureConfigFile as writeBootConfigFile,
 } from "./herdctl-agent-config.js";
+import { EMPTY_HOST_MCP, type HostMcpSource } from "./claude-mcp.js";
 import * as jobs from "./herdctl-jobs.js";
 import { JobsDirIndex } from "./herdctl-jobs-index.js";
 import { AdoptableIndex, type AdoptableSummary, type FilterReason } from "./adoptable.js";
@@ -354,7 +355,21 @@ export class HerdctlService {
     return (this.jobsIndexOrNull ??= new JobsDirIndex(this.cfg.stateDir));
   }
 
-  constructor(private readonly cfg: PaddockConfig) {}
+  /**
+   * The user's own MCP servers under `claude.mcpServers: host` (#691 step 5),
+   * read once at boot by `loadHostMcpSource` and handed in here.
+   *
+   * A constructor argument rather than something this service reads for itself,
+   * for the same reason `ensureClaudeHome` runs in `buildApp`: the read has
+   * notices an operator needs to see in the boot log, and it must not happen at
+   * all under `mcpServers: own`. Defaults to empty so every existing caller —
+   * including the several tests that construct this with `{} as PaddockConfig` —
+   * keeps meaning "isolated".
+   */
+  constructor(
+    private readonly cfg: PaddockConfig,
+    private readonly hostMcp: HostMcpSource = EMPTY_HOST_MCP,
+  ) {}
 
   /**
    * The Claude home every transcript symlink is planted in, plus where those
@@ -1724,7 +1739,7 @@ export class HerdctlService {
     project: Project,
     modelOverride?: string,
   ): Record<string, unknown> & { name: string } {
-    return buildAgentConfig(this.cfg, project, modelOverride);
+    return buildAgentConfig(this.cfg, project, modelOverride, this.hostMcp);
   }
 
   private sweeperAgentConfig(project: Project): Record<string, unknown> & { name: string } {

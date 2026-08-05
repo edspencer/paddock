@@ -62,6 +62,13 @@ interface StartOptions {
    */
   configFile?: Record<string, unknown>;
   /**
+   * A synthetic `~/.claude.json` written into the throwaway HOME before build
+   * (#691 step 5). That file is the host's MCP-server declaration and it lives
+   * BESIDE the Claude home rather than inside it, so no other helper reaches it.
+   * Always synthetic: the real one on a dev box holds a user's own servers.
+   */
+  hostClaudeJson?: Record<string, unknown>;
+  /**
    * Extra environment variables to set before build (restored on teardown).
    * Needed for config that is REFERENCED from the YAML rather than inlined —
    * management-API tokens are `ref: env:VAR`, so the test must supply the var.
@@ -99,6 +106,7 @@ export async function startTestApp(opts: StartOptions = {}): Promise<TestApp> {
     PADDOCK_CLAUDE_CREDENTIALS: process.env.PADDOCK_CLAUDE_CREDENTIALS,
     PADDOCK_CLAUDE_INSTRUCTIONS: process.env.PADDOCK_CLAUDE_INSTRUCTIONS,
     PADDOCK_CLAUDE_HOOKS: process.env.PADDOCK_CLAUDE_HOOKS,
+    PADDOCK_CLAUDE_MCP_SERVERS: process.env.PADDOCK_CLAUDE_MCP_SERVERS,
     PADDOCK_FAKE_SCRIPT: process.env.PADDOCK_FAKE_SCRIPT,
     PADDOCK_FAKE_SWEEP: process.env.PADDOCK_FAKE_SWEEP,
     PADDOCK_SWEEP_MIN_INTERVAL_MS: process.env.PADDOCK_SWEEP_MIN_INTERVAL_MS,
@@ -143,6 +151,9 @@ export async function startTestApp(opts: StartOptions = {}): Promise<TestApp> {
   // opposite of the shipped default.
   delete process.env.PADDOCK_CLAUDE_INSTRUCTIONS;
   delete process.env.PADDOCK_CLAUDE_HOOKS;
+  // And step 5's, which would otherwise make `buildApp` read the DEV BOX's real
+  // ~/.claude.json — the one file this suite must never depend on the contents of.
+  delete process.env.PADDOCK_CLAUDE_MCP_SERVERS;
   // Hermetic drive mode: this integration harness drives turns through a fake
   // `claude` on PATH, which only the CLI (batch) runtime uses — the SDK/session
   // runtime needs a real login ("Not logged in"). The built-in default is now
@@ -201,6 +212,17 @@ export async function startTestApp(opts: StartOptions = {}): Promise<TestApp> {
     process.env.PADDOCK_CONFIG = configPath;
   } else {
     delete process.env.PADDOCK_CONFIG;
+  }
+
+  // The host's MCP declarations (#691 step 5). `<home>/.claude.json`, not
+  // `<home>/.claude/.claude.json` — that asymmetry is the whole reason the lever
+  // could not be a symlink bridge.
+  if (opts.hostClaudeJson) {
+    await fs.writeFile(
+      path.join(home, ".claude.json"),
+      JSON.stringify(opts.hostClaudeJson, null, 2),
+      "utf8",
+    );
   }
 
   for (const [k, v] of Object.entries(opts.env ?? {})) process.env[k] = v;

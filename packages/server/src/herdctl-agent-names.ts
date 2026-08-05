@@ -139,6 +139,38 @@ export function visibleProjectAgentNames(project: Project): string[] {
 export const BROWSER_MCP_TOOL = "mcp__playwright__*";
 
 /**
+ * The fleet-wide `defaults.allowed_tools` a keeper inherits.
+ *
+ * Extracted from `ensureConfigFile` — where the reasoning for each entry still
+ * lives — because `claude.mcpServers: host` (#691 step 5) has to hand a keeper
+ * this list PLUS one `mcp__<server>__*` pattern per attached host server. Arrays
+ * are replaced rather than merged by herdctl's `mergeAgentConfig`, so widening
+ * the allowlist per-agent means restating the defaults, and restating them means
+ * they can only be written down once.
+ */
+export const FLEET_ALLOWED_TOOLS: readonly string[] = [
+  "Read",
+  "Edit",
+  "Write",
+  "Bash",
+  "Glob",
+  "Grep",
+  "WebFetch",
+  "WebSearch",
+  "Task",
+  "TodoWrite",
+  "Skill",
+  "NotebookEdit",
+  "ToolSearch",
+  "ScheduleWakeup",
+  "Monitor",
+  "CronCreate",
+  "CronList",
+  "CronDelete",
+  BROWSER_MCP_TOOL,
+];
+
+/**
  * The keeper's default `denied_tools` — a **best-effort, defence-in-depth**
  * denylist, NOT a sandbox. Real isolation (per-agent filesystem confinement)
  * is tracked in #7; these string patterns are trivially bypassable (a relative

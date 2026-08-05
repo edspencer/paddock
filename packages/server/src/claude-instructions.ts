@@ -74,8 +74,11 @@
  *   either way. See `claude-settings.ts`.
  * - **`enabledPlugins`**, which lives inside `settings.json` and is therefore
  *   still inherited under `instructions: own`, orphaned from the `plugins/` dir
- *   it names. Harmless as long as bridging `plugins/` is inert (below); if step 5
- *   of #691 makes plugins load, this key has to move under this lever with them.
+ *   it names. Harmless as long as bridging `plugins/` is inert (below) — and step
+ *   5 has now been built without changing that: `claude.mcpServers: host` reads
+ *   `~/.claude.json` and touches no setting source, so the flag is still never
+ *   loaded and a bridged plugin still never switches on. If that ever changes,
+ *   this key has to move under this lever with the directory it names.
  * - **`.credentials.json`** — `claude.credentials`, step 3.
  * - **`projects/`, `todos/`, `shell-snapshots/`, `statsig/`, `sessions/`** — never
  *   bridged in either mode. Per-instance runtime state, which is exactly what

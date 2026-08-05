@@ -452,6 +452,20 @@ into the **static herdctl agent config** by `browserMcpServers()` in
 off). It is scoped per *instance*, not per turn, so a box without the browser stack
 leaves it off and there are no failed spawns.
 
+The same `mcp_servers` key is how the user's OWN servers arrive under
+`claude.mcpServers: host` (#691, `claude-mcp.ts`): paddock reads `~/.claude.json`
+once at boot — top-level `mcpServers` plus `projects.<abs-dir>.mcpServers` — and
+`buildAgentConfig` merges the ones matching a project's working directory into the
+same key. That is deliberately *not* `injectedMcpServers`, whose
+`InjectedMcpServerDef` carries in-process JS handlers and cannot express a stdio
+command; `mcp_servers` is also the one seam that reaches BOTH runtimes, since the
+SDK adapter turns it into `sdkOptions.mcpServers` and the CLI runtime serialises it
+into `--mcp-config`. A host server also forces `allowed_tools` to be restated
+(`FLEET_ALLOWED_TOOLS` + one `mcp__<name>__*` per server): both runtimes auto-deny
+any tool absent from an explicit allowlist, and herdctl auto-adds those patterns for
+*injected* servers only — which is why `mcp__playwright__*` is hard-coded into the
+fleet defaults.
+
 **Anti-fork-bomb design:** recursion is bounded by a **depth gate**, not by
 withholding the toolset from every automated turn. Every server-initiated turn
 carries a spawn `depth` (a human turn is the un-gated **depth-0 root**; each chat
@@ -586,7 +600,7 @@ The main knobs:
 | Area | Vars (default) |
 |---|---|
 | **Server** | `PORT` (4000), `HOST` (or `PADDOCK_HOST`; **127.0.0.1** since v0.44 — see [Binding & exposure](/configuration/binding-and-exposure/)), `LOG_LEVEL` (info), `PADDOCK_DANGEROUSLY_ALLOW_OPEN` (false — downgrades the bind-safety refusal to a warning) |
-| **Paths** | `PADDOCK_DATA_DIR` (./data), `PADDOCK_PROJECTS_DIR`, `PADDOCK_STATE_DIR` (`.herdctl`), `PADDOCK_HERDCTL_CONFIG`, `PADDOCK_WEB_DIST`, `CLAUDE_CONFIG_DIR` (`<dataDir>/claude-home` — paddock ALWAYS owns its Claude home and refuses to start if this resolves to the user's `~/.claude` (#691); resolved once by `resolveClaudeHome()` in `config.ts` and threaded to BOTH paddock's transcript paths and the engine's `claudeHomePath`), `PADDOCK_CLAUDE_TRANSCRIPTS` (`own`|`host` — whose transcripts), `PADDOCK_CLAUDE_CREDENTIALS` (`own`|`host`, **default `host`** — whose login; sets `CLAUDE_SECURESTORAGE_CONFIG_DIR=""` so Claude Code reads the machine's unsuffixed keychain entry without moving the home, `claude-credentials.ts`), `PADDOCK_CLAUDE_INSTRUCTIONS` (`own`|`host` — whose `CLAUDE.md`/`agents/`/`commands/`/`plugins/`; symlink bridge, `claude-instructions.ts`), `PADDOCK_CLAUDE_HOOKS` (`own`|`host` — whether the host's `settings.json` hooks execute here; `own` cannot be a symlink decision, so paddock writes a filtered `settings.json` and re-derives it each boot, `claude-settings.ts`). All four are keys of `claude:` in the config file |
+| **Paths** | `PADDOCK_DATA_DIR` (./data), `PADDOCK_PROJECTS_DIR`, `PADDOCK_STATE_DIR` (`.herdctl`), `PADDOCK_HERDCTL_CONFIG`, `PADDOCK_WEB_DIST`, `CLAUDE_CONFIG_DIR` (`<dataDir>/claude-home` — paddock ALWAYS owns its Claude home and refuses to start if this resolves to the user's `~/.claude` (#691); resolved once by `resolveClaudeHome()` in `config.ts` and threaded to BOTH paddock's transcript paths and the engine's `claudeHomePath`), `PADDOCK_CLAUDE_TRANSCRIPTS` (`own`|`host` — whose transcripts), `PADDOCK_CLAUDE_CREDENTIALS` (`own`|`host`, **default `host`** — whose login; sets `CLAUDE_SECURESTORAGE_CONFIG_DIR=""` so Claude Code reads the machine's unsuffixed keychain entry without moving the home, `claude-credentials.ts`), `PADDOCK_CLAUDE_INSTRUCTIONS` (`own`|`host` — whose `CLAUDE.md`/`agents/`/`commands/`/`plugins/`; symlink bridge, `claude-instructions.ts`), `PADDOCK_CLAUDE_HOOKS` (`own`|`host` — whether the host's `settings.json` hooks execute here; `own` cannot be a symlink decision, so paddock writes a filtered `settings.json` and re-derives it each boot, `claude-settings.ts`), `PADDOCK_CLAUDE_MCP_SERVERS` (`own`|`host` — whose MCP servers the keepers get; NOT a bridge, since they are declared in `~/.claude.json` BESIDE the home rather than inside it, so paddock reads that file once at boot and puts the servers on the keeper's `mcp_servers` agent config — the one seam both runtimes read — widening `allowed_tools` by `mcp__<name>__*` or every call would be auto-denied, `claude-mcp.ts`). All five are keys of `claude:` in the config file |
 | **Auth** | `PADDOCK_AUTH_MODE` (none), `PADDOCK_AUTH_USER_HEADER` (X-Forwarded-User), `..._EMAIL_HEADER`, `..._GROUPS_HEADER`, `..._JWT_HEADER` (Authorization), `..._JWKS_URL`, `..._JWT_ISSUER`, `..._JWT_AUDIENCE`, `..._USERNAME_CLAIM`, `..._GROUPS_CLAIM` (groups) |
 | **Agent** | `PADDOCK_DRIVE_MODE` (session), `PADDOCK_NATIVE_PROMPT` (true) |
 | **Self-MCP + spawning** | `PADDOCK_SELF_MCP` (false), `PADDOCK_SELF_MCP_WRITE` (false; implies read), `PADDOCK_SELF_MCP_PROJECTS` (false; `create_project`, rides on write), `PADDOCK_HOOKS_MCP` (false; the trigger tools, per-project override), **`PADDOCK_MAX_SPAWN_DEPTH` (`1`, bounded `0`–`8`)** — see [§5](#5-mcp-injection) |
