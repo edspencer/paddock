@@ -5,6 +5,57 @@ description: "The user-facing highlights of each Paddock release — one-command
 
 import DemoVideo from '../../components/DemoVideo.astro';
 
+## 0.61.1 — Your `~/.claude`, left alone and finally usable
+
+- **Paddock no longer plants anything in a Claude home it doesn't own** — and if an
+  earlier build planted one, it now tells you where. Paddock used to redirect a
+  directory's transcripts by replacing `~/.claude/projects/<encoded-dir>` with a
+  symlink to the workspace's `.chats/`. It skipped that for directories you already
+  had history in, but not for ones you didn't — and a directory with no history is
+  exactly what `--here` is usually pointed at. From that moment *every* `claude`
+  session you started in that directory was written into Paddock's store, so deleting
+  `.chats/` — an ordinary thing to do — took real history with it. One person lost
+  30 transcripts this way.
+
+  Nothing is created under `~/.claude` now, in any configuration. Import stays the
+  way you bring history in: offered, confirmed by you, originals untouched.
+
+  :::caution[Check for a leftover link if you used `--here` before 0.61.1]
+  `--here` on **0.59.1–0.60** planted one with no special configuration, as did
+  0.61.0 with `CLAUDE_HOME=~/.claude`. Paddock now names any it finds at startup.
+  To look yourself:
+
+  ```sh
+  ls -l ~/.claude/projects | grep -- '-> .*\.chats'
+  ```
+
+  Any link listed there still redirects that directory's sessions. Deleting the link
+  restores normal behaviour; **move the transcripts out of the `.chats/` it points at
+  first** if you want to keep them. Paddock won't remove it for you — not writing to
+  `~/.claude` has to include not deleting from it.
+  :::
+
+- **On a Mac, your existing Claude Code login just works.** Claude Code files its
+  Keychain entry under a name derived from whether `CLAUDE_CONFIG_DIR` is set, so
+  once Paddock started pointing at its own Claude home (0.61.0), a perfectly good
+  login became invisible: `npx @edspencer/paddock --here` would start, load the UI,
+  and fail every turn with `Not logged in`. A Keychain entry can't be shared the way
+  a `.credentials.json` can, so there was no bridging it.
+
+  With no token in your environment, the CLI now runs against your own `~/.claude`
+  and uses the login already there. Your transcripts stay where Claude Code has
+  always written them rather than moving into `.chats/`, and it says so on startup.
+  Pass `--isolated-claude-home` for a Claude home of Paddock's own. Servers, the
+  container image and `node dist/index.js` are unchanged — isolation is a server
+  concern, and `--here` means *my* directory, *my* login.
+
+- **A first run with no credentials looks like a message, not a crash.** It used to
+  print several screens of stack trace with the entire sweeper system prompt in it,
+  four times over, with the one useful line — `Not logged in` — about forty lines
+  down. The server was fine and still serving; nothing about that output said so.
+  A known, non-fatal background failure is now one line naming the cause and the fix.
+  `--verbose` (or `HERDCTL_LOG_LEVEL=debug`) still gets you everything.
+
 ## 0.59.1–0.60 — One command, on your own history
 
 - **`npx @edspencer/paddock` — nothing to install, nothing to clone.** Paddock is
