@@ -98,6 +98,7 @@ environmentPrompt: |
 # nothing outside the data dir is written.
 claude:
   transcripts: own            # own | host — see the section below
+  credentials: host           # own | host — the ONE key that defaults to host
 
 # --- Authentication (see the Authentication page for modes) ---
 auth:
@@ -155,7 +156,7 @@ PADDOCK_CONFIG=/etc/paddock/instance.yaml node packages/server/dist/index.js
 ## `claude` — what this instance shares with your Claude Code
 
 Paddock drives Claude Code, which means it sits next to state you already have:
-transcripts, a login, MCP servers, a `CLAUDE.md`. **By default it shares none of
+transcripts, a login, MCP servers, a `CLAUDE.md`. **By default it writes none of
 it.** A fresh instance keeps its own Claude home under the data dir, and your
 `~/.claude` is read for user-level config only (`CLAUDE.md`, `agents/`,
 `commands/`, a `.credentials.json`) — bridged in by symlink, never written to.
@@ -167,6 +168,7 @@ inferred from which directory Paddock happens to be pointed at.
 ```yaml
 claude:
   transcripts: own    # own | host — default own
+  credentials: host   # own | host — default host
 ```
 
 ### `transcripts`
@@ -189,8 +191,37 @@ that moves is the one thing that must not (#690). Paddock refuses to start if
 `CLAUDE_CONFIG_DIR` or a `claudeHome:` key resolves to your own `~/.claude`, and
 the refusal names this key as what you probably wanted.
 
-Not yet split out, and welded to the Claude home until they are: credentials, MCP
-servers, `CLAUDE.md`/`agents/`/`commands/`, and hooks. They are tracked in #691.
+### `credentials`
+
+**The one key that defaults to `host`,** and the exception is deliberate:
+isolation is about *writes*. Reading a login creates, moves and deletes nothing,
+while defaulting it to `own` produces an instance that boots cleanly, says
+everything is ready, and then fails every single turn with "Not logged in" —
+which is exactly the bug this key closes (#683).
+
+- **`host`** (default) — Paddock uses the Claude Code login already on this
+  machine. On macOS that is the Keychain entry `claude /login` wrote; everywhere
+  else it is your `~/.claude/.credentials.json`, symlinked into Paddock's home
+  rather than copied, so a refreshed token is never duplicated or stale.
+- **`own`** — Paddock uses only a login of its own: a `CLAUDE_CODE_OAUTH_TOKEN` /
+  `ANTHROPIC_API_KEY` in the environment, or a `.credentials.json` inside its own
+  Claude home (`CLAUDE_CONFIG_DIR=<data-dir>/claude-home claude login`). Nothing
+  of yours is read. If a previous boot bridged your `.credentials.json` in, that
+  symlink is removed on the next start.
+
+The macOS half works because Claude Code resolves its secure-storage scope from
+`CLAUDE_SECURESTORAGE_CONFIG_DIR` *instead of* `CLAUDE_CONFIG_DIR` whenever that
+variable is defined. Paddock defines it as the **empty string**, which selects the
+unsuffixed service name — your real login — while its own Claude home stays
+exactly where it is. Nothing else is shared by this key: not transcripts, not
+memory, not `.claude.json`. If you set `CLAUDE_SECURESTORAGE_CONFIG_DIR` yourself
+to something non-empty, Paddock honours yours and says so at startup.
+
+Paddock says which login it is running on when it has anything to report, and
+warns before the first turn — rather than after it — when it can find none.
+
+Not yet split out, and welded to the Claude home until they are: MCP servers,
+`CLAUDE.md`/`agents/`/`commands/`, and hooks. They are tracked in #691.
 
 ## Capability & safety gates worth setting here
 

@@ -95,6 +95,8 @@ export async function startTestApp(opts: StartOptions = {}): Promise<TestApp> {
     PADDOCK_HERDCTL_CONFIG: process.env.PADDOCK_HERDCTL_CONFIG,
     PADDOCK_WEB_DIST: process.env.PADDOCK_WEB_DIST,
     CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR,
+    CLAUDE_SECURESTORAGE_CONFIG_DIR: process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR,
+    PADDOCK_CLAUDE_CREDENTIALS: process.env.PADDOCK_CLAUDE_CREDENTIALS,
     PADDOCK_FAKE_SCRIPT: process.env.PADDOCK_FAKE_SCRIPT,
     PADDOCK_FAKE_SWEEP: process.env.PADDOCK_FAKE_SWEEP,
     PADDOCK_SWEEP_MIN_INTERVAL_MS: process.env.PADDOCK_SWEEP_MIN_INTERVAL_MS,
@@ -125,6 +127,15 @@ export async function startTestApp(opts: StartOptions = {}): Promise<TestApp> {
   // the ambient home — or, if that home is the user's own `~/.claude`, refuse to
   // boot at all.
   delete process.env.CLAUDE_CONFIG_DIR;
+  // Same reasoning for the secure-storage scope (#691, `claude.credentials`).
+  // `buildApp` WRITES this variable — it is how the credentials mode reaches the
+  // runtime — so it must start from a known state, and the snapshot above
+  // restores whatever the box had. An operator-set value is honoured over the
+  // config key, so an ambient one would make the mode untestable; a stale ""
+  // from a previous app in this same worker would be indistinguishable from
+  // paddock's own.
+  delete process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR;
+  delete process.env.PADDOCK_CLAUDE_CREDENTIALS;
   // Hermetic drive mode: this integration harness drives turns through a fake
   // `claude` on PATH, which only the CLI (batch) runtime uses — the SDK/session
   // runtime needs a real login ("Not logged in"). The built-in default is now

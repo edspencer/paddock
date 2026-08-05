@@ -15,7 +15,8 @@
  * READ-ONLY source. This module owns everything that follows from that:
  *
  *  - **{@link ensureClaudeHome}** — create the home, bridge the user-level config
- *    that lives in `~/.claude`, and report anything an operator needs to know.
+ *    that lives in `~/.claude`, put `claude.credentials` into the environment
+ *    Claude Code runs in, and report anything an operator needs to know.
  *  - **{@link mirrorLegacyTranscriptFolders}** — keep adoption (#588) able to see
  *    the user's own CLI history, which by definition is in `~/.claude`.
  *
@@ -42,6 +43,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { encodePathForCli } from "@herdctl/core";
 import type { PaddockConfig } from "./config.js";
+import { applyCredentialsMode, SECURE_STORAGE_DIR_VAR } from "./claude-credentials.js";
 
 /**
  * Entries of a Claude home that are USER-LEVEL configuration rather than
@@ -54,24 +56,43 @@ import type { PaddockConfig } from "./config.js";
  * capability. Dropping them is not "a clean home", it is a behaviour regression
  * nobody asked for.
  *
- * `.credentials.json` is the one that matters most: on Linux (and in the Docker
- * image) it is where `claude login` puts the OAuth token, so without the bridge
- * every file-authenticated install would come back logged out. Symlinked rather
- * than copied — a copy would duplicate a live secret onto disk AND diverge the
- * moment Claude Code refreshed the token.
- *
  * Deliberately NOT bridged: `projects/` (that's the whole point), and everything
  * that is per-instance runtime state — `todos/`, `shell-snapshots/`, `statsig/`,
  * `sessions/`. Those are exactly what should now be per-instance.
+ *
+ * `.credentials.json` is NOT in this list, and used to be: it is the file half of
+ * the `claude.credentials` lever, so it is bridged only under `host` (#691). See
+ * {@link CREDENTIAL_ENTRY}. Splitting `settings.json`, `CLAUDE.md`, `agents/`,
+ * `commands/` and `plugins/` the same way is steps 4–5 of #691; until then they
+ * are bridged unconditionally, as they always have been.
  */
 export const BRIDGED_ENTRIES = [
-  ".credentials.json",
   "settings.json",
   "CLAUDE.md",
   "agents",
   "commands",
   "plugins",
 ] as const;
+
+/**
+ * The user's file-based Claude Code login, bridged in only under
+ * `claude.credentials: host` (#691).
+ *
+ * This is what the lever means on Linux and in the Docker image, where `claude
+ * login` writes a file rather than using a keychain: on darwin `credentials: host`
+ * is the `CLAUDE_SECURESTORAGE_CONFIG_DIR` empty-string trick, here it is this
+ * symlink, and one config key has to mean the same thing on both.
+ *
+ * Symlinked rather than copied — a copy would duplicate a live secret onto disk
+ * AND diverge the moment Claude Code refreshed the token.
+ *
+ * It was bridged unconditionally before the lever existed, which is why
+ * `credentials` defaulting to `host` keeps every existing install working
+ * unchanged; `own` is the new behaviour, and it has to also REMOVE a link a
+ * previous boot planted, or "isolated" would be a claim that only holds for
+ * instances that were never anything else.
+ */
+export const CREDENTIAL_ENTRY = ".credentials.json";
 
 /** Env vars that authenticate Claude Code without any on-disk credential. */
 const TOKEN_ENV_VARS = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"];
@@ -84,9 +105,13 @@ const TOKEN_ENV_VARS = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROP
  * home can already see. What we are looking for is the login made before paddock
  * was involved.
  *
- * More than one candidate because the name is Claude Code's private detail, not
- * a contract — see {@link probeMacosKeychainLogin} for why guessing wrong here
- * is designed to be harmless.
+ * The first name is now **confirmed exact**, not guessed (#691): the SDK bundle
+ * builds it as `` `Claude Code${OAUTH_FILE_SUFFIX}${"-credentials"}${hash}` ``,
+ * with an empty production suffix and no hash when the config dir is unscoped —
+ * see `claude-credentials.ts`, which quotes the function. The second is kept as a
+ * cheap hedge against an older or future spelling; it costs one `security` call
+ * that fails fast, and {@link probeMacosKeychainLogin} is built so a miss is
+ * harmless either way.
  */
 const KEYCHAIN_SERVICE_NAMES = ["Claude Code-credentials", "Claude Code"];
 
@@ -113,15 +138,24 @@ export type KeychainProbe = () => Promise<KeychainFinding>;
  * ## The asymmetry, which is deliberate
  *
  * A positive result is trustworthy: an entry under that service name is a login.
- * A negative result is NOT — the service name is Claude Code's internal detail
- * and can change, and `security` can fail for a dozen reasons that have nothing
- * to do with the user. So a miss returns `unknown`, and the caller falls back to
- * the existing, correct, generic warning. Guessing the name wrong therefore
- * costs nothing beyond the improvement not happening.
+ * A negative result is NOT — `security` can fail for a dozen reasons that have
+ * nothing to do with the user, and the service name, though now read straight out
+ * of the SDK bundle rather than guessed, is still Claude Code's internal detail
+ * and can change. So a miss returns `unknown`, and the caller falls back to the
+ * existing, correct, generic warning. Being wrong about the name therefore costs
+ * nothing beyond the improvement not happening.
  *
  * Never prompts and never reads a secret: `find-generic-password` WITHOUT `-w`
  * reports existence only (attributes, which are discarded), so nothing sensitive
  * reaches a log, a transcript, or this process's memory.
+ *
+ * One known imprecision, left in on purpose: Claude Code's own lookup also passes
+ * `-a` (`process.env.USER`, falling back to the OS username), and this does not.
+ * So an entry filed under a DIFFERENT account still reads as `found` here while
+ * Claude Code would miss it — a service running under a different `USER` than the
+ * terminal that logged in. Matching that exactly would trade a rare false
+ * positive for a rarer false negative, and a false negative is the one that costs
+ * something: it downgrades a specific instruction back to the generic warning.
  */
 export async function probeMacosKeychainLogin(
   platform: string = process.platform,
@@ -165,6 +199,60 @@ async function exists(p: string): Promise<boolean> {
 }
 
 /**
+ * Symlink one entry of the user's home into paddock's, if paddock's does not
+ * already have that name. Returns whether a link was planted THIS call.
+ *
+ * Non-clobbering by `lstat`, not `stat`: a bridge symlink planted on a previous
+ * boot whose target has since been removed still occupies the name, and
+ * re-linking it would be a no-op churn at best. Never throws — a race with
+ * another instance, or a read-only home, is not a reason to fail a boot.
+ */
+async function bridgeEntry(
+  cfg: Pick<PaddockConfig, "claudeHome" | "legacyClaudeHome">,
+  entry: string,
+): Promise<boolean> {
+  const target = path.join(cfg.legacyClaudeHome, entry);
+  const link = path.join(cfg.claudeHome, entry);
+  const occupied = await fs
+    .lstat(link)
+    .then(() => true)
+    .catch(() => false);
+  if (occupied) return false;
+  if (!(await exists(target))) return false;
+  return fs.symlink(target, link).then(
+    () => true,
+    () => false,
+  );
+}
+
+/**
+ * Undo {@link bridgeEntry} for one entry: remove it IF it is a symlink pointing
+ * into the user's home. Returns whether anything was removed.
+ *
+ * Deliberately narrow. A real file at that name is this instance's own — an
+ * operator's, or the product of a `CLAUDE_CONFIG_DIR=<own home> claude login` —
+ * and removing it would be paddock deleting a credential nobody asked it to
+ * touch. A symlink pointing somewhere OTHER than the user's home is not ours
+ * either. Only a link paddock itself would have planted is withdrawn, and the
+ * withdrawal happens inside paddock's own home, so the "never write to
+ * `~/.claude`" invariant is untouched.
+ */
+async function unbridgeEntry(
+  cfg: Pick<PaddockConfig, "claudeHome" | "legacyClaudeHome">,
+  entry: string,
+): Promise<boolean> {
+  const link = path.join(cfg.claudeHome, entry);
+  const target = await fs.readlink(link).catch(() => null);
+  if (target === null) return false; // absent, or a real file: not ours
+  const resolved = path.resolve(path.dirname(link), target);
+  if (resolved !== path.resolve(cfg.legacyClaudeHome, entry)) return false;
+  return fs.unlink(link).then(
+    () => true,
+    () => false,
+  );
+}
+
+/**
  * Create paddock's Claude home and bridge the user-level config into it.
  *
  * Idempotent and non-clobbering: an entry paddock's home already has (whether a
@@ -174,13 +262,30 @@ async function exists(p: string): Promise<boolean> {
  * Never throws. A home that cannot be created is not a reason to refuse to boot
  * — Claude Code falls back to its own default and chat still works, which is the
  * same failure mode `ensureProjectChats` has always had.
+ *
+ * **Mutates `env`** (`process.env` by default) to carry `claude.credentials` into
+ * the environment Claude Code runs in — see {@link applyCredentialsMode} for why
+ * that is the only seam available and why it is safe process-wide. Done here
+ * because this is already the one call that runs before the fleet starts, and
+ * because the credential warning below has to describe the environment it just
+ * set rather than the one it found.
  */
 export async function ensureClaudeHome(
-  cfg: Pick<PaddockConfig, "claudeHome" | "legacyClaudeHome">,
+  cfg: Pick<PaddockConfig, "claudeHome" | "legacyClaudeHome" | "claude">,
   env: NodeJS.ProcessEnv = process.env,
   probeKeychain: KeychainProbe = probeMacosKeychainLogin,
 ): Promise<ClaudeHomeReport> {
   const report: ClaudeHomeReport = { bridged: [], notices: [] };
+  const credentials = cfg.claude.credentials;
+  const decision = applyCredentialsMode(credentials, env);
+  if (decision.action === "deferred") {
+    report.notices.push({
+      level: "info",
+      message:
+        `${SECURE_STORAGE_DIR_VAR} is already set to "${decision.value}"; honouring it and ` +
+        `ignoring \`claude.credentials: ${credentials}\`. Unset it to let paddock choose.`,
+    });
+  }
   try {
     await fs.mkdir(path.join(cfg.claudeHome, "projects"), { recursive: true });
   } catch (err) {
@@ -198,23 +303,19 @@ export async function ensureClaudeHome(
   // that resolves the home to `~/.claude` never gets this far — `resolveClaudeHome`
   // refuses to start. So the bridge below runs unconditionally.
   for (const entry of BRIDGED_ENTRIES) {
-    const target = path.join(cfg.legacyClaudeHome, entry);
-    const link = path.join(cfg.claudeHome, entry);
-    // lstat, not stat: a bridge symlink planted on a previous boot whose target
-    // has since been removed still occupies the name, and re-linking it would be
-    // a no-op churn at best.
-    const occupied = await fs
-      .lstat(link)
-      .then(() => true)
-      .catch(() => false);
-    if (occupied) continue;
-    if (!(await exists(target))) continue;
-    try {
-      await fs.symlink(target, link);
-      report.bridged.push(entry);
-    } catch {
-      /* a race with another instance, or a read-only home — not fatal */
-    }
+    if (await bridgeEntry(cfg, entry)) report.bridged.push(entry);
+  }
+  // …except the login, which is the `credentials` lever's file half.
+  if (credentials === "host") {
+    if (await bridgeEntry(cfg, CREDENTIAL_ENTRY)) report.bridged.push(CREDENTIAL_ENTRY);
+  } else if (await unbridgeEntry(cfg, CREDENTIAL_ENTRY)) {
+    report.notices.push({
+      level: "info",
+      message:
+        `removed the bridged ${CREDENTIAL_ENTRY} symlink into ${cfg.legacyClaudeHome}: ` +
+        `\`claude.credentials: own\` means this instance uses only its own login. A real ` +
+        `${CREDENTIAL_ENTRY} in ${cfg.claudeHome} is left alone.`,
+    });
   }
 
   report.notices.push({
@@ -224,43 +325,64 @@ export async function ensureClaudeHome(
       (report.bridged.length > 0 ? ` — bridged from ~/.claude: ${report.bridged.join(", ")}` : ""),
   });
 
-  // The credential question (#620). Claude Code derives its secure-storage
+  // The credential question (#620, #683). Claude Code derives its secure-storage
   // service name from whether `CLAUDE_CONFIG_DIR` is SET AT ALL — unset gets the
-  // plain name, set gets a path-hash suffix. Pointing paddock at its own home
-  // means it is always set, so a login held in the macOS Keychain under the plain
-  // name will not be found. A token in the environment is unaffected, and a
-  // file-based login is bridged above; if neither applies we cannot see the
-  // credential at all, so say so BEFORE the first turn fails with "Not logged in"
-  // rather than leaving the operator to work it out from a chat that never
-  // replies.
+  // plain name, set gets a path-hash suffix. Paddock always sets it, so a login
+  // held in the macOS Keychain under the plain name is invisible unless
+  // `credentials: host` un-scopes it above. A token in the environment is
+  // unaffected, and a file-based login is bridged (under `host`); if none of that
+  // applies we cannot see a credential at all, so say so BEFORE the first turn
+  // fails with "Not logged in" rather than leaving the operator to work it out
+  // from a chat that never replies.
   const hasTokenEnv = TOKEN_ENV_VARS.some((v) => (env[v] ?? "").trim().length > 0);
-  const hasCredentialFile = await exists(path.join(cfg.claudeHome, ".credentials.json"));
+  const hasCredentialFile = await exists(path.join(cfg.claudeHome, CREDENTIAL_ENTRY));
   if (!hasTokenEnv && !hasCredentialFile) {
     // #683: "you have no login" and "your login exists but I changed the service
-    // name it is filed under" are the same message today, and only one of them is
-    // the user's problem to solve. On darwin we can tell them apart, and a hit
-    // upgrades a paragraph of explanation into an instruction. A miss is
-    // inconclusive by design (see probeMacosKeychainLogin), so it falls through
-    // to the generic wording rather than asserting anything.
+    // name it is filed under" were the same message, and only one of them is the
+    // user's problem to solve. On darwin we can tell them apart, and a hit either
+    // resolves the question outright (`host`) or upgrades a paragraph of
+    // explanation into an instruction (`own`). A miss is inconclusive by design
+    // (see probeMacosKeychainLogin), so it falls through to the generic wording
+    // rather than asserting anything.
     const keychain = await probeKeychain();
-    report.notices.push({
-      level: "warn",
-      message:
-        keychain === "found"
-          ? `you ARE logged in to Claude Code, but paddock cannot see it. The login is in the ` +
-            `macOS Keychain, and Claude Code files it under a service name derived from whether ` +
-            `CLAUDE_CONFIG_DIR is set — paddock sets it, to ${cfg.claudeHome}, so it looks under ` +
-            `a different name. A Keychain entry cannot be bridged the way ~/.claude files are. ` +
-            `Fix it by logging in for this home too: ` +
-            `\`CLAUDE_CONFIG_DIR=${cfg.claudeHome} claude login\`. (Sharing the Keychain login ` +
-            `itself is the \`claude.credentials\` lever, still to come — #691.)`
-          : `no Claude credentials found for ${cfg.claudeHome}: no .credentials.json and no ` +
-            `${TOKEN_ENV_VARS.join("/")} in the environment. Claude Code scopes its credential ` +
-            `store to CLAUDE_CONFIG_DIR, so a login stored in the OS keychain against the ` +
-            `default home will NOT be found here. If turns fail with "Not logged in", re-run ` +
-            `\`claude login\` with CLAUDE_CONFIG_DIR=${cfg.claudeHome}, or put a token in the ` +
-            `environment.`,
-    });
+    if (keychain === "found" && credentials === "host") {
+      // Not a problem: this is the lever working. Said out loud anyway, because
+      // "paddock found no credentials of its own and is using yours" is exactly
+      // the kind of thing an operator should not have to deduce.
+      report.notices.push({
+        level: "info",
+        message:
+          `Claude login: this machine's own, from the macOS Keychain ` +
+          `(\`claude.credentials: host\`). Paddock sets ${SECURE_STORAGE_DIR_VAR}="" so Claude ` +
+          `Code reads the same unsuffixed entry your own \`claude\` does, while its config dir ` +
+          `stays at ${cfg.claudeHome}. Set \`claude.credentials: own\` to use only a login of ` +
+          `this instance's.`,
+      });
+    } else {
+      report.notices.push({
+        level: "warn",
+        message:
+          keychain === "found"
+            ? `you ARE logged in to Claude Code, but paddock cannot see it. The login is in the ` +
+              `macOS Keychain, and Claude Code files it under a service name derived from ` +
+              `whether CLAUDE_CONFIG_DIR is set — paddock sets it, to ${cfg.claudeHome}, so it ` +
+              `looks under a different name. \`claude.credentials: own\` is what keeps it that ` +
+              `way. Fix it either way: drop that key (the default is \`host\`, which shares this ` +
+              `machine's login and writes nothing), or log in for this home too with ` +
+              `\`CLAUDE_CONFIG_DIR=${cfg.claudeHome} claude login\`.`
+            : `no Claude credentials found for ${cfg.claudeHome}: no ${CREDENTIAL_ENTRY} and no ` +
+              `${TOKEN_ENV_VARS.join("/")} in the environment` +
+              (credentials === "host"
+                ? ` — and \`claude.credentials: host\` found nothing on this machine to share ` +
+                  `either (no ~/.claude/${CREDENTIAL_ENTRY}, and no macOS Keychain login under ` +
+                  `the name Claude Code uses). `
+                : `, and \`claude.credentials: own\` means this instance shares none of yours. ` +
+                  `Claude Code scopes its credential store to CLAUDE_CONFIG_DIR, so a login in ` +
+                  `the OS keychain against the default home will NOT be found here. `) +
+              `If turns fail with "Not logged in", re-run \`claude login\` with ` +
+              `CLAUDE_CONFIG_DIR=${cfg.claudeHome}, or put a token in the environment.`,
+      });
+    }
   }
 
   return report;

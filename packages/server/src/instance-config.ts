@@ -37,6 +37,7 @@ import { DEFAULT_ATTACHMENTS, sanitizeAllowedTypes } from "./attachments-config.
 import { DEFAULT_CURATION } from "./curation-config.js";
 import { DEFAULT_ENVIRONMENT_PROMPT } from "./environment-prompt.js";
 import { DEFAULT_TRANSCRIPTS_MODE } from "./transcripts.js";
+import { DEFAULT_CREDENTIALS_MODE } from "./claude-credentials.js";
 import { type PaddockConfig } from "./config.js";
 
 /** Groups the Settings screen renders, in display order. */
@@ -305,6 +306,10 @@ export const FIELDS: readonly FieldSpec[] = [
   // no toggle. It is surfaced because "what is this instance sharing?" should be
   // answerable without reading a YAML file.
   { key: "claude.transcripts", group: "advanced", label: "Transcripts", help: "own = Paddock's own, in each project's .chats/; host = your ~/.claude transcripts, shared live.", type: "string", envVars: ["PADDOCK_CLAUDE_TRANSCRIPTS"], default: DEFAULT_TRANSCRIPTS_MODE, editable: false },
+  // Read-only for the same reason, plus one of its own: the secure-storage
+  // variable it sets is read by Claude Code when a turn's process starts, so a
+  // live toggle would apply to some turns and not others.
+  { key: "claude.credentials", group: "advanced", label: "Credentials", help: "host = this machine's Claude Code login (macOS Keychain, or your ~/.claude/.credentials.json); own = only a login of this instance's.", type: "string", envVars: ["PADDOCK_CLAUDE_CREDENTIALS"], default: DEFAULT_CREDENTIALS_MODE, editable: false },
   // Auth: read-only in v1 (misconfig can lock everyone out — issue #385). Only
   // the mode is surfaced; JWT/JWKS internals stay out of the API.
   { key: "auth.mode", group: "advanced", label: "Auth mode", type: "string", envVars: ["PADDOCK_AUTH_MODE"], default: "none", editable: false, sensitive: true },

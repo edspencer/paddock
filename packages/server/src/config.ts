@@ -34,6 +34,11 @@ import {
   DEFAULT_TRANSCRIPTS_MODE,
   isKnownTranscriptsMode,
 } from "./transcripts.js";
+import {
+  type CredentialsMode,
+  DEFAULT_CREDENTIALS_MODE,
+  isKnownCredentialsMode,
+} from "./claude-credentials.js";
 import { DEFAULT_ENVIRONMENT_PROMPT } from "./environment-prompt.js";
 import { type RecoveryConfig, DEFAULT_RECOVERY } from "./recovery-config.js";
 import { type CurationConfig, DEFAULT_CURATION } from "./curation-config.js";
@@ -118,10 +123,10 @@ export interface BrandConfig {
  * guarantee an operator should be able to read straight off the config file —
  * **nothing outside the data dir is read or written**.
  *
- * Only `transcripts` exists so far. `credentials`, `mcpServers`, `instructions`
- * and `hooks` are the remaining levers in #691's sequence; each will be a key
- * here rather than another meaning welded onto the Claude home, which is how the
- * three incidents (#682, #683, #689) that motivated this all happened.
+ * `transcripts` and `credentials` exist so far. `mcpServers`, `instructions` and
+ * `hooks` are the remaining levers in #691's sequence; each will be a key here
+ * rather than another meaning welded onto the Claude home, which is how the three
+ * incidents (#682, #683, #689) that motivated this all happened.
  */
 export interface ClaudeConfig {
   /**
@@ -134,6 +139,17 @@ export interface ClaudeConfig {
    * `CLAUDE_CONFIG_DIR`.
    */
   transcripts: TranscriptsMode;
+  /**
+   * Whose Claude Code login this instance uses. `host` (the default, and the ONE
+   * key that does not default to `own`) also reads this machine's own login — the
+   * macOS Keychain entry on darwin, the user's `~/.claude/.credentials.json`
+   * elsewhere; `own` uses only what is inside paddock's own Claude home.
+   *
+   * Driven by `PADDOCK_CLAUDE_CREDENTIALS`, then the `claude.credentials:` key.
+   * See `claude-credentials.ts` for the mechanism, and for why sharing a login is
+   * the safe default when everything else here isolates.
+   */
+  credentials: CredentialsMode;
 }
 
 /** OpenAPI / Swagger-UI reference surface config (see PaddockConfig.openapi). */
@@ -459,7 +475,7 @@ export interface PaddockConfigFile {
    * `own` or `host`; a matching `PADDOCK_CLAUDE_*` env var still overrides it
    * (file < env). Absent ⇒ fully isolated.
    */
-  claude?: { transcripts?: string };
+  claude?: { transcripts?: string; credentials?: string };
   auth?: {
     mode?: string;
     userHeader?: string;
@@ -1280,13 +1296,25 @@ export function userClaudeHome(): string {
  *
  * Precedence is the file's usual env > file > default. An unrecognised value
  * falls back to the default rather than failing the boot — the same rule every
- * other enum here follows (`driveMode`, whisper `mode`), and the safe direction:
- * a typo isolates rather than silently sharing the user's files.
+ * other enum here follows (`driveMode`, whisper `mode`). For `transcripts` that
+ * is also the safe direction: a typo isolates rather than silently sharing the
+ * user's files. For `credentials` the default is `host` and a typo therefore
+ * falls back to sharing — deliberately, because the failure it avoids (#683: an
+ * instance that boots clean and fails every turn) is the worse one, and reading a
+ * login risks no file of the user's. See `claude-credentials.ts`.
  */
 function loadClaudeConfig(file: PaddockConfigFile["claude"] = {}): ClaudeConfig {
-  const raw = (envOpt("PADDOCK_CLAUDE_TRANSCRIPTS") ?? fileOpt(file.transcripts))?.toLowerCase();
+  const transcripts = (
+    envOpt("PADDOCK_CLAUDE_TRANSCRIPTS") ?? fileOpt(file.transcripts)
+  )?.toLowerCase();
+  const credentials = (
+    envOpt("PADDOCK_CLAUDE_CREDENTIALS") ?? fileOpt(file.credentials)
+  )?.toLowerCase();
   return {
-    transcripts: raw && isKnownTranscriptsMode(raw) ? raw : DEFAULT_TRANSCRIPTS_MODE,
+    transcripts:
+      transcripts && isKnownTranscriptsMode(transcripts) ? transcripts : DEFAULT_TRANSCRIPTS_MODE,
+    credentials:
+      credentials && isKnownCredentialsMode(credentials) ? credentials : DEFAULT_CREDENTIALS_MODE,
   };
 }
 
