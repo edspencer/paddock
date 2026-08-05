@@ -103,6 +103,21 @@ export type AdoptSkipped =
   | AdoptSkippedSession
   | { sessionId: string; reason: FilterReason; detail?: string };
 
+/**
+ * Outcome of deleting a chat (#689).
+ *
+ * Two fields rather than one boolean because "the transcript is gone" and "the
+ * chat is no longer listed here" stopped being the same thing: in a home paddock
+ * does not own, the file belongs to the user's terminal `claude` and is released
+ * rather than removed. See {@link HerdctlService.deleteSession}.
+ */
+export interface ChatDeletion {
+  /** A transcript file was unlinked. False when none existed, or when retained. */
+  removed: boolean;
+  /** The transcript was deliberately left on disk because it is not paddock's. */
+  retained: boolean;
+}
+
 /** Options passed through to a streamed trigger. */
 export interface ChatTurnOptions {
   prompt: string;
@@ -928,14 +943,46 @@ export class HerdctlService {
   }
 
   /**
-   * Delete a single chat (session) by agent name + session id. The FleetManager
-   * resolves the agent's working directory, removes the transcript JSONL, and
-   * invalidates the discovery cache so the list reflects it immediately.
-   * Validates the sessionId (rejects path traversal). Returns true if a
-   * transcript file was removed, false if none existed.
+   * Delete a single chat (session) by agent name + session id.
+   *
+   * In a home paddock OWNS, this removes the transcript JSONL: the file lives in
+   * paddock's own tree (via the project's `.chats/` symlink), so it is ours to
+   * delete. The FleetManager resolves the agent's working directory, unlinks the
+   * file, validates the sessionId against traversal, and invalidates the
+   * discovery cache so the list reflects it immediately.
+   *
+   * In a home paddock does NOT own, it **releases the session instead** (#689).
+   * There is no copy to delete there: `ensureProjectChats` plants no symlink in
+   * somebody else's home (#682), so the transcript the agent reads and writes is
+   * the file in `~/.claude/projects/<encoded-cwd>/` — for an adopted chat that is
+   * literally the user's own terminal history. `rm`-ing it destroys history
+   * paddock never owned, which is the same class of mistake #682 was, pointed the
+   * other way: that one claimed where future sessions get written, this one
+   * deletes the past ones.
+   *
+   * `undoImport` already draws exactly this line ("A session adopted in place has
+   * no copy, and its transcript is the user's own — removing it would destroy
+   * history rather than restore it"); the invariant simply never reached here.
+   *
+   * Stated as the rule rather than a special case: **paddock never deletes
+   * anything under a home it does not own** — the same invariant `claude-home.ts`
+   * already claims for the rest of `~/.claude`. Deliberately NOT narrowed to
+   * "only adopted chats": a chat paddock started in an unowned home has its
+   * transcript in the user's tree too, and distinguishing them well enough to
+   * risk an `rm` is not worth the failure mode of getting it wrong. The cost is a
+   * transcript left behind, which the caller is told about; the alternative cost
+   * is somebody's history.
+   *
+   * The chat leaves paddock's list either way — which is what the user asked for
+   * — so `retained` is how a caller tells "gone" from "no longer shown here".
    */
-  async deleteSession(agentName: string, sessionId: string): Promise<boolean> {
-    return this.manager.deleteSession(agentName, sessionId);
+  async deleteSession(agentName: string, sessionId: string): Promise<ChatDeletion> {
+    if (this.cfg.ownsClaudeHome) {
+      return { removed: await this.manager.deleteSession(agentName, sessionId), retained: false };
+    }
+    await this.manager.unadoptSession(agentName, sessionId).catch(() => undefined);
+    this.invalidateSessions(agentName);
+    return { removed: false, retained: true };
   }
 
   /**
