@@ -709,6 +709,7 @@ describe("loadPaddockConfig: the claude: block (#691)", () => {
     "PADDOCK_DATA_DIR",
     "PADDOCK_CONFIG",
     "PADDOCK_CLAUDE_TRANSCRIPTS",
+    "PADDOCK_CLAUDE_CREDENTIALS",
     "CLAUDE_HOME",
     "CLAUDE_CONFIG_DIR",
     "HOME",
@@ -758,6 +759,34 @@ describe("loadPaddockConfig: the claude: block (#691)", () => {
   it("falls back to own on an unrecognised value — a typo isolates, never shares", () => {
     writeConfig("claude:\n  transcripts: hostt\n");
     expect(loadPaddockConfig().claude.transcripts).toBe("own");
+  });
+
+  // The one key that does not default to `own`, and the reason is not symmetry:
+  // reading a login writes nothing, while defaulting it to `own` is #683 — an
+  // instance that boots clean and fails every turn.
+  it("defaults credentials to host, deliberately against the pattern", () => {
+    expect(loadPaddockConfig().claude.credentials).toBe("host");
+  });
+
+  it("reads credentials: own from the file, and env still wins over it", () => {
+    writeConfig("claude:\n  credentials: own\n");
+    expect(loadPaddockConfig().claude.credentials).toBe("own");
+    process.env.PADDOCK_CLAUDE_CREDENTIALS = "host";
+    expect(loadPaddockConfig().claude.credentials).toBe("host");
+  });
+
+  it("falls back to host on an unrecognised credentials value", () => {
+    // Note the direction: for credentials a typo SHARES, because the failure it
+    // avoids is the worse one and nothing of the user's is put at risk.
+    writeConfig("claude:\n  credentials: ownn\n");
+    expect(loadPaddockConfig().claude.credentials).toBe("host");
+  });
+
+  it("keeps the two keys independent — that separation is the whole point", () => {
+    writeConfig("claude:\n  transcripts: host\n  credentials: own\n");
+    const cfg = loadPaddockConfig();
+    expect(cfg.claude.transcripts).toBe("host");
+    expect(cfg.claude.credentials).toBe("own");
   });
 
   // CLAUDE_HOME is deleted (#691). It is not an error — retired settings are

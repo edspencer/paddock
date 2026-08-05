@@ -10,8 +10,14 @@ import {
   findPlantedChatsLinks,
   probeMacosKeychainLogin,
   BRIDGED_ENTRIES,
+  CREDENTIAL_ENTRY,
   type KeychainProbe,
 } from "../../src/claude-home.js";
+import {
+  DEFAULT_CREDENTIALS_MODE,
+  SECURE_STORAGE_DIR_VAR,
+  type CredentialsMode,
+} from "../../src/claude-credentials.js";
 import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
 
 /**
@@ -27,7 +33,16 @@ describe("claude-home (#620)", () => {
   let ownHome: string;
   let legacyHome: string;
 
-  const cfg = () => ({ claudeHome: ownHome, legacyClaudeHome: legacyHome });
+  /**
+   * A config for `ensureClaudeHome`, at the SHIPPED defaults unless a test says
+   * otherwise — `credentials: host` included, because that default is load-bearing
+   * (#691/#683) and a helper that quietly isolated would hide a regression in it.
+   */
+  const cfg = (credentials: CredentialsMode = DEFAULT_CREDENTIALS_MODE) => ({
+    claudeHome: ownHome,
+    legacyClaudeHome: legacyHome,
+    claude: { transcripts: "own" as const, credentials },
+  });
 
   beforeEach(async () => {
     root = await makeTmpDir("paddock-claude-home-");
@@ -103,6 +118,78 @@ describe("claude-home (#620)", () => {
       expect((await fs.readdir(legacyHome)).sort()).toEqual(before);
     });
 
+    /**
+     * The `claude.credentials` lever's two halves (#691).
+     *
+     * On darwin it is the `CLAUDE_SECURESTORAGE_CONFIG_DIR` empty-string trick;
+     * here — Linux, the Docker image, CI — it is the `.credentials.json` symlink,
+     * which is where `claude login` actually puts the token. One config key has to
+     * mean the same thing on both, so both are asserted, and the environment half
+     * is asserted on every platform because the decision is pure.
+     */
+    describe("credentials: own | host", () => {
+      it("bridges the user's login under host, and NOT under own", async () => {
+        await fs.writeFile(path.join(legacyHome, CREDENTIAL_ENTRY), "{}", "utf8");
+
+        expect((await ensureClaudeHome(cfg("host"), {})).bridged).toContain(CREDENTIAL_ENTRY);
+        await fs.rm(path.join(ownHome, CREDENTIAL_ENTRY));
+
+        expect((await ensureClaudeHome(cfg("own"), {})).bridged).not.toContain(CREDENTIAL_ENTRY);
+        await expect(fs.lstat(path.join(ownHome, CREDENTIAL_ENTRY))).rejects.toBeTruthy();
+      });
+
+      it("bridges everything else either way — separate levers, still to come", async () => {
+        await fs.writeFile(path.join(legacyHome, "CLAUDE.md"), "user memory", "utf8");
+        expect((await ensureClaudeHome(cfg("own"), {})).bridged).toContain("CLAUDE.md");
+      });
+
+      it("WITHDRAWS a link a previous host boot planted when switched to own", async () => {
+        // Otherwise "isolated" would be a claim that only holds for instances
+        // that were never anything else — the bridge is non-clobbering, so a
+        // stale link would survive the switch and keep reading the user's token.
+        await fs.writeFile(path.join(legacyHome, CREDENTIAL_ENTRY), "{}", "utf8");
+        await ensureClaudeHome(cfg("host"), {});
+        expect((await fs.lstat(path.join(ownHome, CREDENTIAL_ENTRY))).isSymbolicLink()).toBe(true);
+
+        const report = await ensureClaudeHome(cfg("own"), {});
+        await expect(fs.lstat(path.join(ownHome, CREDENTIAL_ENTRY))).rejects.toBeTruthy();
+        expect(report.notices.some((n) => n.message.includes(`removed the bridged`))).toBe(true);
+        // The user's own file is untouched — the withdrawal happens entirely
+        // inside paddock's home.
+        expect(await fs.readFile(path.join(legacyHome, CREDENTIAL_ENTRY), "utf8")).toBe("{}");
+      });
+
+      it("never removes a REAL credentials file of this instance's own", async () => {
+        // A `CLAUDE_CONFIG_DIR=<own home> claude login`, or an operator's file.
+        // `own` means "use only your own login", not "delete it".
+        await fs.mkdir(ownHome, { recursive: true });
+        await fs.writeFile(path.join(ownHome, CREDENTIAL_ENTRY), '{"mine":true}', "utf8");
+        await ensureClaudeHome(cfg("own"), {});
+        const kept = await fs.readFile(path.join(ownHome, CREDENTIAL_ENTRY), "utf8");
+        expect(kept).toBe('{"mine":true}');
+      });
+
+      it("puts the mode into the environment Claude Code will run in", async () => {
+        // The darwin half, asserted where it can be: what paddock hands the
+        // runtime. `test/integration/claude-credentials-env.test.ts` carries it
+        // through a real boot and a real spawn.
+        const host: NodeJS.ProcessEnv = {};
+        await ensureClaudeHome(cfg("host"), host);
+        expect(host[SECURE_STORAGE_DIR_VAR]).toBe("");
+
+        const own: NodeJS.ProcessEnv = { [SECURE_STORAGE_DIR_VAR]: "" };
+        await ensureClaudeHome(cfg("own"), own);
+        expect(SECURE_STORAGE_DIR_VAR in own).toBe(false);
+      });
+
+      it("honours an operator's own value and says so", async () => {
+        const env: NodeJS.ProcessEnv = { [SECURE_STORAGE_DIR_VAR]: "/elsewhere" };
+        const report = await ensureClaudeHome(cfg("host"), env);
+        expect(env[SECURE_STORAGE_DIR_VAR]).toBe("/elsewhere");
+        expect(report.notices.some((n) => n.message.includes("already set to"))).toBe(true);
+      });
+    });
+
     // The credential question. Claude Code scopes its secure-storage service name
     // to whether CLAUDE_CONFIG_DIR is SET AT ALL, so a keychain login against the
     // default home is invisible under a relocated one. We cannot fix that; we can
@@ -147,14 +234,37 @@ describe("claude-home (#620)", () => {
 
       // #683 — "you have no login" and "your login exists but I changed the
       // service name it is filed under" were one message, and only one of them
-      // is the user's problem to solve.
-      it("says you ARE logged in when the Keychain has the plain-name entry", async () => {
-        const report = await ensureClaudeHome(cfg(), {}, keychainLogin);
+      // is the user's problem to solve. Since #691 there is a third state: the
+      // login exists AND this instance is configured to use it, which is not a
+      // problem at all and must not be reported as one.
+      it("says you ARE logged in when credentials: own hides the Keychain entry", async () => {
+        const report = await ensureClaudeHome(cfg("own"), {}, keychainLogin);
         const warning = report.notices.find((n) => n.level === "warn")!;
         expect(warning.message).toContain("you ARE logged in");
         expect(warning.message).not.toContain("no Claude credentials");
-        // The remedy, which is not guessable from the generic wording.
+        // Both remedies, neither guessable from the generic wording — and the
+        // cheap one (drop the key) is the one #691 added.
         expect(warning.message).toContain(`CLAUDE_CONFIG_DIR=${ownHome} claude login`);
+        expect(warning.message).toContain("claude.credentials");
+      });
+
+      it("does NOT warn under host when the Keychain login is there to be used", async () => {
+        const report = await ensureClaudeHome(cfg("host"), {}, keychainLogin);
+        expect(report.notices.some((n) => n.level === "warn")).toBe(false);
+        // Still said out loud: which login an instance is running on should not
+        // have to be deduced from the absence of a warning.
+        const info = report.notices.find((n) => n.message.includes("Claude login:"))!;
+        expect(info.level).toBe("info");
+        expect(info.message).toContain(SECURE_STORAGE_DIR_VAR);
+      });
+
+      it("still warns under host when there is no login anywhere to share", async () => {
+        const report = await ensureClaudeHome(cfg("host"), {}, noKeychain);
+        const warning = report.notices.find((n) => n.level === "warn")!;
+        expect(warning.message).toContain("no Claude credentials");
+        // The distinction that matters: "host is on and found nothing" is a
+        // different sentence from "own is on and shares nothing".
+        expect(warning.message).toContain("found nothing on this machine to share");
       });
 
       it("falls back to the generic wording on an inconclusive probe, never asserting there is no login", async () => {

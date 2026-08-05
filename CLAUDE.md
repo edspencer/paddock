@@ -63,8 +63,10 @@ Config resolves **env > YAML file > default** (`config.ts`; the file is
 [`environment.md`](website/src/content/docs/configuration/environment.md) for every
 variable and [`config-file.md`](website/src/content/docs/configuration/config-file.md)
 for the file. The `claude:` block there says what an instance shares with the host's
-Claude Code (`transcripts: own|host`, #691); paddock ALWAYS owns its Claude home
-(`<dataDir>/claude-home`) and refuses to start if it resolves to the user's `~/.claude`.
+Claude Code (`transcripts: own|host`, `credentials: own|host`, #691); paddock ALWAYS
+owns its Claude home (`<dataDir>/claude-home`) and refuses to start if it resolves to
+the user's `~/.claude`. `credentials` is the one key defaulting to `host` — isolation
+is about writes, and reading a login writes nothing (see `claude-credentials.ts`).
 
 ## Dev conventions
 

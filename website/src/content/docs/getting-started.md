@@ -180,6 +180,13 @@ turn is driven.
 The token is passed through the process environment; it is never written to disk by
 Paddock.
 
+**Or provide neither.** If this machine already has a Claude Code login, Paddock uses
+it: the macOS Keychain entry on a Mac, your `~/.claude/.credentials.json` elsewhere.
+That is `claude.credentials: host`, the default, and it is the one thing Paddock shares
+by default — because reading a login writes nothing. Set `claude: { credentials: own }`
+in the [config file](/configuration/config-file/#claude--what-this-instance-shares-with-your-claude-code)
+to turn it off.
+
 ## Run from source
 
 You need **Node 22+**. Chats resolve the Claude Agent SDK's own bundled binary and never

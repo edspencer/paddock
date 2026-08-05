@@ -161,29 +161,30 @@ Opening a directory (--here)
   Without --here, Paddock never touches the directory you ran it from.
 
 Credentials
-  Paddock drives Claude Code, so it needs Claude credentials. It keeps a Claude
-  home of its own under the data dir and never runs as yours, so a login is a
-  CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY in the environment, a
-  ~/.claude/.credentials.json (symlinked in for you), or a one-off
-  \`CLAUDE_CONFIG_DIR=<data-dir>/claude-home claude login\`. With no login at all
-  anywhere, run \`claude setup-token\`.
+  Paddock drives Claude Code, so it needs Claude credentials — and if you
+  already use Claude Code on this machine, it uses the login you already have.
+  That is a macOS Keychain entry on a Mac, or your ~/.claude/.credentials.json
+  elsewhere (symlinked in, never copied). Reading a login writes nothing.
 
-  A macOS login held in the Keychain is filed under a name scoped to the Claude
-  home, so it is not visible to Paddock's — the one-off login above fixes it,
-  and Paddock says so at startup if it finds no credentials.
+  Otherwise: a CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY in the environment,
+  or a one-off \`CLAUDE_CONFIG_DIR=<data-dir>/claude-home claude login\`. With no
+  login at all anywhere, run \`claude setup-token\`. Paddock says at startup when
+  it can find none.
 
 Sharing your Claude Code state
-  By default Paddock touches nothing outside its data dir: transcripts go to
-  each project's .chats/, and your ~/.claude is read for config only. To share
-  your real transcripts live in both directions, put this in
+  Apart from that login, Paddock writes nothing outside its data dir by
+  default: transcripts go to each project's .chats/, and your ~/.claude is read
+  for config only. Each thing it can share is one key in
   <data-dir>/paddock.config.yaml:
 
     claude:
-      transcripts: host
+      transcripts: host   # own | host, default own
+      credentials: host   # own | host, default host
 
-  Then a chat and a \`claude --resume\` in the same directory are the same file.
-  Deleting such a chat in Paddock releases it rather than removing it — it is
-  your history, not Paddock's copy.
+  transcripts: host makes a chat and a \`claude --resume\` in the same directory
+  the same file, live in both directions; deleting such a chat in Paddock
+  releases it rather than removing it, because it is your history rather than
+  Paddock's copy. credentials: own is the opt-out from sharing the login above.
 
 Your data
   Everything lives in one directory — ~/.paddock unless you pass --data-dir.

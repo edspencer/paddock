@@ -26,11 +26,16 @@ claude setup-token                  # Claude Max/Pro
 export ANTHROPIC_API_KEY=sk-ant-…   # or API billing
 ```
 
-Paddock keeps a Claude home of its own under the data dir, so it needs a login of its
-own: a token in the environment as above, a `~/.claude/.credentials.json` (symlinked in
-for you), or a one-off `CLAUDE_CONFIG_DIR=<data-dir>/claude-home claude login`. A macOS
-login held in the Keychain is filed under a name scoped to the Claude home, so that
-last one is what makes it visible — Paddock says so at startup if it finds nothing.
+**If you already use Claude Code on this machine, there is nothing to do.** Paddock
+keeps a Claude home of its own under the data dir, but not a login of its own: it uses
+the one you already have — the macOS Keychain entry on a Mac, your
+`~/.claude/.credentials.json` elsewhere (symlinked in, never copied). Reading a login
+writes nothing, and nothing else is shared with it.
+
+To give Paddock its own instead, set `claude: { credentials: own }` in
+`<data-dir>/paddock.config.yaml`; a login is then a token in the environment as above,
+or a one-off `CLAUDE_CONFIG_DIR=<data-dir>/claude-home claude login`. Either way,
+Paddock says at startup if it can find no credentials at all.
 
 ## Open your own project
 
@@ -54,7 +59,8 @@ Claude home of its own under `.paddock/` and relocates transcripts into `.chats/
 Sessions found in `~/.claude` are *offered* for import: nothing is moved, copied or
 linked until you confirm, and your terminal `claude` keeps working exactly as before.
 To share one set of transcripts between Paddock and your terminal instead, set
-`claude: { transcripts: host }` in `<data-dir>/paddock.config.yaml`.
+`claude: { transcripts: host }` in `<data-dir>/paddock.config.yaml`. (Your *login* is
+already shared, which is why there is nothing to log into — see Credentials above.)
 
 To undo it: `rm -rf .paddock .chats` and drop the two `.gitignore` lines.
 

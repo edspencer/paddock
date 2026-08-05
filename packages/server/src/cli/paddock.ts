@@ -235,10 +235,9 @@ async function main(): Promise<void> {
   // `CLAUDE_HOME` at `~/.claude` so a macOS Keychain login would be visible
   // (#683); paddock now always owns its home, and what a user actually wanted
   // from that — shared transcripts, shared login — are separate `claude:` config
-  // keys. `claude.credentials: host` is the one that restores the Keychain half
-  // and is still to come; until it lands, a Mac with no token in the environment
-  // needs `CLAUDE_CONFIG_DIR=<data-dir>/claude-home claude login` once, which is
-  // exactly what `ensureClaudeHome`'s boot warning says.
+  // keys. `claude.credentials` restores the Keychain half and defaults to `host`,
+  // so a Mac whose only login is a `claude /login` still works out of the box
+  // with no flag: see `claude-credentials.ts`.
 
   // Apply CLI defaults as env vars. This is the whole integration surface: the
   // server resolves config inside `buildApp()`, so anything set before the
