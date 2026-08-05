@@ -187,6 +187,12 @@ by default — because reading a login writes nothing. Set `claude: { credential
 in the [config file](/configuration/config-file/#claude--what-this-instance-shares-with-your-claude-code)
 to turn it off.
 
+That login is the *only* thing shared by default. Your `~/.claude/CLAUDE.md`, `agents/`,
+`commands/` and `plugins/` are not loaded, and the hooks your `settings.json` binds to
+tool use do not run — `claude.instructions` and `claude.hooks` turn each on, and both
+default to `own`. If you have a curated `~/.claude/CLAUDE.md`, that is the one to know
+about: Paddock names the key at startup when it finds files it is not loading.
+
 ## Run from source
 
 You need **Node 22+**. Chats resolve the Claude Agent SDK's own bundled binary and never
