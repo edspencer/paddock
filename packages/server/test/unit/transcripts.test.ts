@@ -182,15 +182,29 @@ describe("ensureProjectChats", () => {
       ).rejects.toBeTruthy();
     });
 
-    it("still plants the symlink when there is nothing there (the escape hatch works)", async () => {
-      // CLAUDE_HOME=$HOME/.claude restores the pre-#620 layout in full, so the
-      // ordinary fresh-project path must keep working in an unowned home.
+    // #682, the regression this file did not have. The two branches above were
+    // guarded and tested; this one was not, on the reading that creating a name
+    // nobody has used yet cannot destroy anything. It can: the encoded path is
+    // where the user's FUTURE `claude` sessions for this directory land, so the
+    // link quietly redirects them into `.chats/` — and then deleting `.chats/`,
+    // an ordinary thing to do, takes transcripts paddock never owned with it.
+    it("plants NOTHING when the encoded folder does not exist yet", async () => {
       await ensureProjectChats(projectDir, projectDir, unowned(home));
+
       const enc = encodedPath();
-      expect((await fs.lstat(enc)).isSymbolicLink()).toBe(true);
-      expect(path.resolve(path.dirname(enc), await fs.readlink(enc))).toBe(
-        path.resolve(projectChatsDir(projectDir)),
-      );
+      // The decisive assertion: the name is still free, so Claude Code will
+      // create its own real directory there and keep the user's history.
+      await expect(fs.lstat(enc)).rejects.toMatchObject({ code: "ENOENT" });
+      // Nothing else was left in the home either — not a stray dir, not a link.
+      expect(await fs.readdir(path.join(home, "projects")).catch(() => [])).toEqual([]);
+    });
+
+    it("still creates the project's .chats/ store (bailing is not failing)", async () => {
+      // Adoption (#588) copies INTO `.chats/`, and every direct reader of the
+      // store (readFirstUserText, subagents) resolves it by path — so the
+      // directory must exist even when no symlink points at it.
+      await ensureProjectChats(projectDir, projectDir, unowned(home));
+      expect((await fs.stat(projectChatsDir(projectDir))).isDirectory()).toBe(true);
     });
   });
 
