@@ -138,7 +138,7 @@ describe("claude-home (#620)", () => {
         await expect(fs.lstat(path.join(ownHome, CREDENTIAL_ENTRY))).rejects.toBeTruthy();
       });
 
-      it("bridges everything else either way — those are separate levers, still to come", async () => {
+      it("bridges everything else either way — separate levers, still to come", async () => {
         await fs.writeFile(path.join(legacyHome, "CLAUDE.md"), "user memory", "utf8");
         expect((await ensureClaudeHome(cfg("own"), {})).bridged).toContain("CLAUDE.md");
       });
@@ -165,7 +165,8 @@ describe("claude-home (#620)", () => {
         await fs.mkdir(ownHome, { recursive: true });
         await fs.writeFile(path.join(ownHome, CREDENTIAL_ENTRY), '{"mine":true}', "utf8");
         await ensureClaudeHome(cfg("own"), {});
-        expect(await fs.readFile(path.join(ownHome, CREDENTIAL_ENTRY), "utf8")).toBe('{"mine":true}');
+        const kept = await fs.readFile(path.join(ownHome, CREDENTIAL_ENTRY), "utf8");
+        expect(kept).toBe('{"mine":true}');
       });
 
       it("puts the mode into the environment Claude Code will run in", async () => {
@@ -236,7 +237,7 @@ describe("claude-home (#620)", () => {
       // is the user's problem to solve. Since #691 there is a third state: the
       // login exists AND this instance is configured to use it, which is not a
       // problem at all and must not be reported as one.
-      it("says you ARE logged in when the Keychain has the entry and credentials: own hides it", async () => {
+      it("says you ARE logged in when credentials: own hides the Keychain entry", async () => {
         const report = await ensureClaudeHome(cfg("own"), {}, keychainLogin);
         const warning = report.notices.find((n) => n.level === "warn")!;
         expect(warning.message).toContain("you ARE logged in");
@@ -247,7 +248,7 @@ describe("claude-home (#620)", () => {
         expect(warning.message).toContain("claude.credentials");
       });
 
-      it("does NOT warn under credentials: host when the Keychain login is there to be used", async () => {
+      it("does NOT warn under host when the Keychain login is there to be used", async () => {
         const report = await ensureClaudeHome(cfg("host"), {}, keychainLogin);
         expect(report.notices.some((n) => n.level === "warn")).toBe(false);
         // Still said out loud: which login an instance is running on should not

@@ -6,6 +6,8 @@ import { startTestApp, type TestApp } from "../helpers/app.js";
 import { SECURE_STORAGE_DIR_VAR } from "../../src/claude-credentials.js";
 
 const run = promisify(execFile);
+/** The variable name, escaped for the `node -e` source the child runs. */
+const VAR_LITERAL = JSON.stringify(SECURE_STORAGE_DIR_VAR);
 
 /**
  * `claude.credentials` (#691, step 3) — the environment a real boot hands the
@@ -50,8 +52,8 @@ describe("integration: claude.credentials decides the runtime's environment (#69
   async function childSees(env?: NodeJS.ProcessEnv): Promise<string | null> {
     const { stdout } = await run(
       process.execPath,
-      ["-e", `process.stdout.write(JSON.stringify(process.env[${JSON.stringify(SECURE_STORAGE_DIR_VAR)}] ?? null))`],
-      env === undefined ? {} : { env: env as NodeJS.ProcessEnv },
+      ["-e", `process.stdout.write(JSON.stringify(process.env[${VAR_LITERAL}] ?? null))`],
+      env === undefined ? {} : { env },
     );
     return JSON.parse(stdout) as string | null;
   }
