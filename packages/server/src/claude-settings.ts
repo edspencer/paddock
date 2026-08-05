@@ -22,26 +22,52 @@
  * {@link HOST_ONLY_SETTINGS_KEYS}, serialise the remainder. `hooks: host` is the
  * old symlink, unchanged.
  *
- * ### The staleness this buys, and why it is acceptable
+ * ### The staleness this buys, which is real
  *
- * A copy diverges the moment the user edits theirs; a symlink never does. Three
- * things make that tolerable rather than a design flaw:
+ * A copy diverges the moment the user edits theirs; a symlink does not — and
+ * **that difference is live, not just at the next process start.** Claude Code
+ * runs a settings-change watcher (~1s poll + 500ms debounce) that follows the
+ * symlink to its real target, clears its whole settings memo and re-applies the
+ * result mid-session; verified by mutating a symlink target under a running
+ * `query()` and watching `Detected change to … (via symlink target …)` come back.
+ * So the honest statement is that a symlink propagates an edit in about a second
+ * and the copy propagates it at the next paddock restart. Two things make that
+ * an acceptable price rather than a design flaw:
  *
- * 1. **It is regenerated on every boot** (`ensureClaudeHome`), so a restart is
- *    the whole of the fix, and paddock says so in the boot notice.
- * 2. **Only users who actually have hooks pay it.** {@link planHostSettings}
+ * 1. **Only users who actually have hooks pay it.** {@link planHostSettings}
  *    returns `link` when the user's file has none of the governed keys, which is
  *    most files — nothing to filter, so nothing is copied and there is nothing to
  *    go stale. The copy exists exactly where filtering is doing work.
- * 3. Claude Code reads user settings when a session process starts, and paddock's
- *    session runtime outlives any single turn, so even a symlink is not "live"
- *    for a session already running. A restart is already the reliable way to
- *    apply a settings change; the copy makes it the only one.
+ * 2. **It is regenerated on every boot** (`ensureClaudeHome`), so a restart is
+ *    the whole of the fix, and paddock says so in the boot notice.
  *
- * A file-watcher that regenerated on change was the alternative. It buys a
- * narrower window at the cost of a watcher on a path in the user's home, a race
- * with paddock's own write, and a second way for the file to change — not worth
- * it for a file people edit a handful of times a year.
+ * A file-watcher on the user's file, re-running the filter, would close the gap
+ * — and because Claude Code's own watcher fires on content change regardless of
+ * who wrote it, paddock re-writing the copy WOULD be picked up live. That is a
+ * real option if the cadence ever matters. It is not taken here: it puts a
+ * watcher on a path in the user's home, races paddock's own write against the
+ * 5s echo-suppression window Claude Code uses for exactly this, and buys a
+ * narrower window on a file people edit a handful of times a year.
+ *
+ * ### Which turns this actually governs today, which is not all of them
+ *
+ * `<claudeHome>/settings.json` is Claude Code's `userSettings` source, and
+ * **herdctl does not load that source on the SDK runtime.** `sdk-adapter.js`
+ * defaults `settingSources` to `["project"]` for any agent with a
+ * `working_directory` — which is every paddock keeper — so the SDK is invoked
+ * with `--setting-sources=project` and never reads this file at all. The CLI
+ * runtime passes `--setting-sources` only when an agent declares
+ * `setting_sources`, and paddock declares none, so `claude -p` runs on the
+ * default `["user","project","local"]` and DOES read it.
+ *
+ * So the host's hooks execute in the sweeper, in triggers, and in
+ * `driveMode: batch` chats — and not, today, in a default SDK chat turn. That
+ * makes this lever narrower than #691 assumed, and worth keeping regardless:
+ * those paths are real code execution, the asymmetry is a herdctl default rather
+ * than a guarantee, and a lever that is correct before the default changes is
+ * the only kind worth having. The same caveat applies to the keys it KEEPS —
+ * the user's `permissions` and `model` reach the CLI paths and not the SDK ones,
+ * which was true before this change too.
  *
  * ## What `own` does NOT stop, and should
  *

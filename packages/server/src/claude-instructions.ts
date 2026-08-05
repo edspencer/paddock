@@ -29,21 +29,41 @@
  * > `plugins/` are capability. Dropping them is not "a clean home", it is a
  * > behaviour regression nobody asked for.
  *
- * All of that is still true, and `instructions: own` is exactly that regression
- * for anyone who has curated a `~/.claude/CLAUDE.md`: their agents stop knowing
- * things they knew yesterday, and the change is invisible — no error, just
- * different behaviour. Someone who hits it has no reason to suspect a config key
- * they never set.
+ * The reasoning is sound and the premise is **false for the runtime paddock
+ * actually uses**, which is worth knowing before weighing the default.
  *
- * It is nonetheless the default (#691), because the counter-argument is about
- * what a user can *state* rather than what is convenient. "`own` everywhere means
- * nothing outside the data dir is read or written" is a guarantee an operator can
- * read off a config file; "…except your CLAUDE.md, agents, commands and plugins,
- * always, with no key to turn them off" is not a guarantee, it is a footnote. A
- * regression that is one documented key away from being undone is recoverable;
- * an inherited capability with no lever at all is the thing #691 exists to end.
+ * `~/.claude/CLAUDE.md` is NOT "auto-loaded into every session". User memory,
+ * `agents/` and `commands/` all move as one unit with Claude Code's `user`
+ * setting source, and herdctl invokes the Agent SDK with
+ * `--setting-sources=project` for every agent that has a working directory —
+ * which is every paddock keeper. Verified by capturing the outbound request
+ * body: under the default sources the prompt carries a `# claudeMd` block naming
+ * `<claudeHome>/CLAUDE.md`; under `["project"]` that block is absent entirely,
+ * while the PROJECT's own `CLAUDE.md` still loads. `system/init` likewise drops
+ * the home's subagents and slash commands from `agents` / `slash_commands`.
+ * (The one thing in the home that is NOT gated is `projects/<enc>/memory/` —
+ * auto-memory reaches the agent either way.)
  *
- * The cost is real and lands on exactly the users who invested most in their own
+ * So on a default chat turn these four entries have been inert since chats moved
+ * to the SDK runtime, bridged or not. Where they DO bite is the CLI paths — the
+ * post-turn sweeper, triggers, and `driveMode: batch` chats — which pass no
+ * `--setting-sources` and therefore run on the default `user,project,local`.
+ *
+ * That shrinks the case against `own` rather than answering it: the behaviour
+ * regression the docstring warned about has, for the main path, already
+ * happened, silently, and nobody filed it. What is left is a real change to the
+ * CLI paths, and a lever that is correct before herdctl's default changes rather
+ * than after.
+ *
+ * `own` is the default (#691) because the remaining argument is about what a
+ * user can *state*. "`own` everywhere means nothing outside the data dir is read
+ * or written" is a guarantee an operator can read off a config file; "…except
+ * your CLAUDE.md, agents, commands and plugins, always, with no key to turn them
+ * off" is not a guarantee, it is a footnote. A regression one documented key away
+ * from being undone is recoverable; an inherited capability with no lever at all
+ * is the thing #691 exists to end.
+ *
+ * The residual cost lands on exactly the users who invested most in their own
  * Claude Code setup, so the boot notice names the key rather than leaving them to
  * find it — see `ensureClaudeHome`.
  *
@@ -83,13 +103,22 @@ export function isKnownInstructionsMode(value: string): value is InstructionsMod
 /**
  * The entries of the user's Claude home this lever governs.
  *
- * `plugins` is here on the strength of the files rather than their effect: the
- * Agent SDK takes plugins per-session through its own `plugins?:
- * SdkPluginConfig[]` option and does not auto-discover installed ones the way the
- * interactive CLI does, and paddock passes none — so bridging the directory is
- * very probably INERT today (#691, reproduced on a real machine: an installed
- * plugin's MCP server did not appear). It is governed anyway, because "inert
- * today" is a property of a caller that step 5 is about to change, and a lever
- * that silently omitted plugins would then start leaking them.
+ * `plugins` is here on the strength of the files rather than their effect —
+ * though NOT for the reason #691 gives. The design says the SDK "does not
+ * auto-discover installed plugins" and that bridging the directory is therefore
+ * inert. That is wrong on the mechanism: the runtime's plugin root IS the Claude
+ * home (`join(CLAUDE_CONFIG_DIR, "plugins")`), the `plugins?: SdkPluginConfig[]`
+ * option is a sideload channel that gets MERGED with what is discovered there,
+ * and a live probe loaded a plugin from a planted home with no `plugins` option
+ * passed at all.
+ *
+ * What makes it inert for paddock is one step further along: discovery is driven
+ * by `enabledPlugins`, which lives in `settings.json`, and herdctl runs the SDK
+ * with `--setting-sources=project` so the HOME's `settings.json` is never read
+ * (see `claude-settings.ts`). Bridge the directory and the flag that turns its
+ * contents on is still not loaded. That is a property of two callers rather than
+ * of the files, which is exactly why this lever governs them anyway: step 5 is
+ * about to change one of those callers, and a lever that silently omitted
+ * plugins would then start leaking them.
  */
 export const INSTRUCTION_ENTRIES = ["CLAUDE.md", "agents", "commands", "plugins"] as const;

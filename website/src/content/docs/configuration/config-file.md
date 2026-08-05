@@ -237,21 +237,34 @@ it can invoke by name; nothing here runs a command on its own.
 - **`host`** — all four are symlinked in, which is what every version before
   0.62 did unconditionally.
 
-**This default is a reversal, and it has a real cost.** If you have curated a
-`~/.claude/CLAUDE.md`, `instructions: own` means your Paddock agents stop knowing
-things they knew yesterday — with no error, just different behaviour. That is a
-regression, and the argument against it is a good one. It is the default anyway
-because *"`own` everywhere means nothing outside the data dir is read or
-written"* has to be a guarantee you can read off this file, and *"…except your
-CLAUDE.md, agents, commands and plugins, always, with no key to turn them off"*
-is not a guarantee, it is a footnote. Paddock names the key at startup when it
-finds files it is not loading, so the fix is one line and you are told where.
+**This default is a reversal, and it is smaller than it looks.** The version it
+reverses argued that dropping these is a silent behaviour regression — your
+curated `~/.claude/CLAUDE.md` no longer reaching your agents, with no error.
+That is a fair argument, but its premise does not hold for the runtime Paddock
+actually runs chats on: user memory, `agents/` and `commands/` all move with
+Claude Code's **`user` setting source**, and Paddock's agents run with only
+`project` loaded (see the caution under `hooks`). So on a default chat turn these
+four have been inert since chats moved to the SDK runtime — bridged or not. They
+*do* apply to the CLI paths: the post-turn sweeper, triggers, and
+`driveMode: batch` chats.
 
-`plugins/` is bridged under `host` for completeness rather than effect: the Agent
-SDK takes plugins per-session through its own option and does not auto-discover
-installed ones the way the interactive CLI does, so today the directory is very
-probably inert either way. That is a property of a caller, not of the files, so
-the lever governs them regardless.
+It is the default anyway because *"`own` everywhere means nothing outside the
+data dir is read or written"* has to be a guarantee you can read off this file,
+and *"…except your CLAUDE.md, agents, commands and plugins, always, with no key
+to turn them off"* is not a guarantee, it is a footnote. Paddock names the key at
+startup when it finds files it is not loading, so the fix is one line and you are
+told where. Your project's own `CLAUDE.md` is unaffected in every mode, and so is
+agent auto-memory, which lives in the Claude home but is not gated by the setting
+source.
+
+`plugins/` is bridged under `host` for completeness rather than effect. The
+runtime's plugin root really is the Claude home, and it does discover what is
+there — but discovery is driven by `enabledPlugins`, which lives in
+`settings.json`, and Paddock's agents run with only the *project* settings source
+loaded (see below), so the home's `settings.json` is never read and the flag that
+would switch a bridged plugin on never arrives. Inert today, for a reason that is
+a property of two callers rather than of the files, so the lever governs them
+regardless.
 
 ### `hooks`
 
@@ -281,6 +294,22 @@ your keys, with `hooks` dropped. Two consequences worth knowing:
 If your `~/.claude/settings.json` cannot be parsed, Paddock plants **nothing**
 rather than falling back to the symlink: it would rather run with no user-level
 settings than hand over the hooks this key exists to withhold.
+
+:::caution[Which turns this governs today]
+`<claude-home>/settings.json` is Claude Code's **`userSettings`** source, and
+Paddock's chat runtime does not load it. herdctl invokes the Agent SDK with
+`--setting-sources=project` for any agent that has a working directory — which is
+every Paddock agent — so a default chat turn reads your *project's*
+`.claude/settings.json` and never the Claude home's. The CLI runtime (the
+post-turn sweeper, triggers, and `driveMode: batch` chats) passes no such flag and
+runs on the default `user,project,local`, so it **does** read it.
+
+So today the host's hooks execute in the sweeper, in triggers and in `batch`
+chats, and not in a default SDK chat turn — narrower than it looks, and still
+real code execution. The same asymmetry applies to the keys this key *keeps*:
+your `permissions` and `model` reach those paths and not the SDK ones, which was
+true before this key existed too.
+:::
 
 **Scope, stated plainly:** `hooks: own` means "no host hooks", not "no host
 commands". `settings.json` has several other keys that name a script to run —
