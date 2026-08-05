@@ -80,6 +80,14 @@ describe("classifyAgentError", () => {
     expect(classifyAgentError("Credit balance is too low")).toMatch(/credit/i);
   });
 
+  it("does not blame the CLI for an ENOENT that is not about `claude`", () => {
+    // A confident wrong answer is worse than the raw error it replaces, and it
+    // would send somebody off reinstalling a binary that is sitting on PATH.
+    expect(
+      classifyAgentError("ENOENT: no such file or directory, open '/data/projects/x.yaml'"),
+    ).toBeUndefined();
+  });
+
   // The important negative. An unknown failure keeps its full detail, because
   // that is precisely the case where somebody needs it.
   it("returns undefined for a failure it does not recognise", () => {

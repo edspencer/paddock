@@ -43,7 +43,10 @@ const KNOWN_CAUSES: ReadonlyArray<{ pattern: RegExp; cause: string }> = [
     cause: "the Claude account is out of credit",
   },
   {
-    pattern: /ENOENT|command not found/i,
+    // Anchored to `claude` specifically. A bare /ENOENT/ would claim a missing
+    // CLI for any file the engine failed to open, which is a confident wrong
+    // answer — worse than the raw error it replaces.
+    pattern: /ENOENT[^\n]{0,40}claude|claude: (command )?not found/i,
     cause: "the `claude` CLI is not on PATH (needed by the sweeper and triggers)",
   },
 ];
