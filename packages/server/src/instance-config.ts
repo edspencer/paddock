@@ -38,6 +38,8 @@ import { DEFAULT_CURATION } from "./curation-config.js";
 import { DEFAULT_ENVIRONMENT_PROMPT } from "./environment-prompt.js";
 import { DEFAULT_TRANSCRIPTS_MODE } from "./transcripts.js";
 import { DEFAULT_CREDENTIALS_MODE } from "./claude-credentials.js";
+import { DEFAULT_INSTRUCTIONS_MODE } from "./claude-instructions.js";
+import { DEFAULT_HOOKS_MODE } from "./claude-settings.js";
 import { type PaddockConfig } from "./config.js";
 
 /** Groups the Settings screen renders, in display order. */
@@ -310,6 +312,12 @@ export const FIELDS: readonly FieldSpec[] = [
   // variable it sets is read by Claude Code when a turn's process starts, so a
   // live toggle would apply to some turns and not others.
   { key: "claude.credentials", group: "advanced", label: "Credentials", help: "host = this machine's Claude Code login (macOS Keychain, or your ~/.claude/.credentials.json); own = only a login of this instance's.", type: "string", envVars: ["PADDOCK_CLAUDE_CREDENTIALS"], default: DEFAULT_CREDENTIALS_MODE, editable: false },
+  // Read-only for the same reasons. `hooks` is the one worth finding here even
+  // though it cannot be changed here: "does this instance run the shell commands
+  // my ~/.claude/settings.json binds to tool use?" is a question with a security
+  // answer, and it should be readable without opening a YAML file.
+  { key: "claude.instructions", group: "advanced", label: "Instructions", help: "own = this instance's own only; host = your ~/.claude CLAUDE.md, agents/, commands/ and plugins/ as well.", type: "string", envVars: ["PADDOCK_CLAUDE_INSTRUCTIONS"], default: DEFAULT_INSTRUCTIONS_MODE, editable: false },
+  { key: "claude.hooks", group: "advanced", label: "Hooks", help: "own = your ~/.claude/settings.json hooks do NOT run here (its other keys still apply); host = they do.", type: "string", envVars: ["PADDOCK_CLAUDE_HOOKS"], default: DEFAULT_HOOKS_MODE, editable: false },
   // Auth: read-only in v1 (misconfig can lock everyone out — issue #385). Only
   // the mode is surfaced; JWT/JWKS internals stay out of the API.
   { key: "auth.mode", group: "advanced", label: "Auth mode", type: "string", envVars: ["PADDOCK_AUTH_MODE"], default: "none", editable: false, sensitive: true },

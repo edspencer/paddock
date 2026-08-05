@@ -99,6 +99,8 @@ environmentPrompt: |
 claude:
   transcripts: own            # own | host — see the section below
   credentials: host           # own | host — the ONE key that defaults to host
+  instructions: own           # own | host — your ~/.claude CLAUDE.md, agents, commands
+  hooks: own                  # own | host — shell commands your settings.json binds
 
 # --- Authentication (see the Authentication page for modes) ---
 auth:
@@ -157,9 +159,10 @@ PADDOCK_CONFIG=/etc/paddock/instance.yaml node packages/server/dist/index.js
 
 Paddock drives Claude Code, which means it sits next to state you already have:
 transcripts, a login, MCP servers, a `CLAUDE.md`. **By default it writes none of
-it.** A fresh instance keeps its own Claude home under the data dir, and your
-`~/.claude` is read for user-level config only (`CLAUDE.md`, `agents/`,
-`commands/`, a `.credentials.json`) — bridged in by symlink, never written to.
+it, and reads almost none of it.** A fresh instance keeps its own Claude home
+under the data dir; the only thing it takes from your `~/.claude` unasked is your
+login (see `credentials` below) and the non-executable half of your
+`settings.json`. Everything else is a key you turn on.
 
 Each key under `claude:` answers one question — *whose X does this instance use?*
 — with one vocabulary, so the guarantee is readable at a glance rather than
@@ -169,6 +172,8 @@ inferred from which directory Paddock happens to be pointed at.
 claude:
   transcripts: own    # own | host — default own
   credentials: host   # own | host — default host
+  instructions: own   # own | host — default own
+  hooks: own          # own | host — default own
 ```
 
 ### `transcripts`
@@ -220,8 +225,102 @@ to something non-empty, Paddock honours yours and says so at startup.
 Paddock says which login it is running on when it has anything to report, and
 warns before the first turn — rather than after it — when it can find none.
 
-Not yet split out, and welded to the Claude home until they are: MCP servers,
-`CLAUDE.md`/`agents/`/`commands/`, and hooks. They are tracked in #691.
+### `instructions`
+
+Your `~/.claude/CLAUDE.md`, `agents/`, `commands/` and `plugins/` — prompts,
+subagent definitions and slash commands. Content the model reads, or definitions
+it can invoke by name; nothing here runs a command on its own.
+
+- **`own`** (default) — none of them are loaded. Each project's own `CLAUDE.md`
+  and `.claude/` are unaffected, and so is anything you put in Paddock's own
+  Claude home.
+- **`host`** — all four are symlinked in, which is what every version before
+  0.62 did unconditionally.
+
+**This default is a reversal, and it is smaller than it looks.** The version it
+reverses argued that dropping these is a silent behaviour regression — your
+curated `~/.claude/CLAUDE.md` no longer reaching your agents, with no error.
+That is a fair argument, but its premise does not hold for the runtime Paddock
+actually runs chats on: user memory, `agents/` and `commands/` all move with
+Claude Code's **`user` setting source**, and Paddock's agents run with only
+`project` loaded (see the caution under `hooks`). So on a default chat turn these
+four have been inert since chats moved to the SDK runtime — bridged or not. They
+*do* apply to the CLI paths: the post-turn sweeper, triggers, and
+`driveMode: batch` chats.
+
+It is the default anyway because *"`own` everywhere means nothing outside the
+data dir is read or written"* has to be a guarantee you can read off this file,
+and *"…except your CLAUDE.md, agents, commands and plugins, always, with no key
+to turn them off"* is not a guarantee, it is a footnote. Paddock names the key at
+startup when it finds files it is not loading, so the fix is one line and you are
+told where. Your project's own `CLAUDE.md` is unaffected in every mode, and so is
+agent auto-memory, which lives in the Claude home but is not gated by the setting
+source.
+
+`plugins/` is bridged under `host` for completeness rather than effect. The
+runtime's plugin root really is the Claude home, and it does discover what is
+there — but discovery is driven by `enabledPlugins`, which lives in
+`settings.json`, and Paddock's agents run with only the *project* settings source
+loaded (see below), so the home's `settings.json` is never read and the flag that
+would switch a bridged plugin on never arrives. Inert today, for a reason that is
+a property of two callers rather than of the files, so the lever governs them
+regardless.
+
+### `hooks`
+
+Hooks are **shell commands** your `~/.claude/settings.json` binds to tool use and
+session lifecycle (`PreToolUse`, `PostToolUse`, `SessionStart`, …). Before 0.62
+they were inherited unconditionally, so every hook you had ever configured ran
+inside every Paddock turn with no key to turn it off. This is that key.
+
+- **`own`** (default) — your hooks do **not** run here.
+- **`host`** — your `settings.json` is symlinked in whole and your hooks run.
+
+`settings.json` is a mixed bag: it carries `hooks` *and* `permissions`, `model`,
+`statusLine`, `enabledPlugins`. A symlink is all-or-nothing and the file is not,
+so under `own` Paddock **writes its own `settings.json`** into its Claude home —
+your keys, with `hooks` dropped. Two consequences worth knowing:
+
+- **A restart is what applies an edit.** The generated file is regenerated at
+  every startup, so changing your `~/.claude/settings.json` reaches Paddock on
+  the next start rather than immediately. Only files that actually define hooks
+  are copied at all; without them Paddock symlinks yours as before and nothing
+  can go stale.
+- **A `settings.json` you put in Paddock's own Claude home is never touched.**
+  Paddock recognises its own generated file by hash, so editing that file makes
+  it yours and Paddock stops regenerating it — and says at startup that `hooks:
+  own` is therefore not in force for whatever that file says.
+
+If your `~/.claude/settings.json` cannot be parsed, Paddock plants **nothing**
+rather than falling back to the symlink: it would rather run with no user-level
+settings than hand over the hooks this key exists to withhold.
+
+:::caution[Which turns this governs today]
+`<claude-home>/settings.json` is Claude Code's **`userSettings`** source, and
+Paddock's chat runtime does not load it. herdctl invokes the Agent SDK with
+`--setting-sources=project` for any agent that has a working directory — which is
+every Paddock agent — so a default chat turn reads your *project's*
+`.claude/settings.json` and never the Claude home's. The CLI runtime (the
+post-turn sweeper, triggers, and `driveMode: batch` chats) passes no such flag and
+runs on the default `user,project,local`, so it **does** read it.
+
+So today the host's hooks execute in the sweeper, in triggers and in `batch`
+chats, and not in a default SDK chat turn — narrower than it looks, and still
+real code execution. The same asymmetry applies to the keys this key *keeps*:
+your `permissions` and `model` reach those paths and not the SDK ones, which was
+true before this key existed too.
+:::
+
+**Scope, stated plainly:** `hooks: own` means "no host hooks", not "no host
+commands". `settings.json` has several other keys that name a script to run —
+`apiKeyHelper`, `awsAuthRefresh`, `awsCredentialExport`, `gcpAuthRefresh`,
+`proxyAuthHelper`, `otelHeadersHelper`, `statusLine`, `subagentStatusLine` — and
+they are still inherited. Several of those are how a corporate login *works*, so
+dropping them under a key named `hooks` would break authentication for people who
+did nothing wrong; where they belong is an open question (#691).
+
+Still not split out, and inherited with the Claude home until it is: MCP servers,
+tracked in #691.
 
 ## Capability & safety gates worth setting here
 

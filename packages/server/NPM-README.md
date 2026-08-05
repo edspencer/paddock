@@ -37,6 +37,24 @@ To give Paddock its own instead, set `claude: { credentials: own }` in
 or a one-off `CLAUDE_CONFIG_DIR=<data-dir>/claude-home claude login`. Either way,
 Paddock says at startup if it can find no credentials at all.
 
+## What else Paddock does and does not take from your `~/.claude`
+
+Apart from that login: **nothing, by default.** Your `CLAUDE.md`, `agents/`,
+`commands/` and `plugins/` are not loaded, and the hooks your `settings.json` binds to
+tool use do not run. Both are one key in `<data-dir>/paddock.config.yaml`:
+
+```yaml
+claude:
+  instructions: host   # own | host, default own — CLAUDE.md, agents, commands, plugins
+  hooks: host          # own | host, default own — shell commands settings.json binds
+```
+
+`instructions: own` is worth knowing about if you have curated a `~/.claude/CLAUDE.md`:
+your Paddock agents will not see it until you set `host`. Each project's own `CLAUDE.md`
+always applies. `hooks` is off by default because inheriting someone's shell commands is
+not a thing to discover after the fact; the rest of your `settings.json` — permissions,
+model, statusline — applies either way.
+
 ## Open your own project
 
 ```sh

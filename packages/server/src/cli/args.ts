@@ -180,11 +180,24 @@ Sharing your Claude Code state
     claude:
       transcripts: host   # own | host, default own
       credentials: host   # own | host, default host
+      instructions: host  # own | host, default own
+      hooks: host         # own | host, default own
 
   transcripts: host makes a chat and a \`claude --resume\` in the same directory
   the same file, live in both directions; deleting such a chat in Paddock
   releases it rather than removing it, because it is your history rather than
   Paddock's copy. credentials: own is the opt-out from sharing the login above.
+
+  instructions: host loads your ~/.claude CLAUDE.md, agents/, commands/ and
+  plugins/. Off by default, which is a change: your curated CLAUDE.md does not
+  reach Paddock's agents unless you say so. Each project's own CLAUDE.md always
+  does.
+
+  hooks: host runs the shell commands your ~/.claude/settings.json binds to
+  tool use. Off by default — inheriting someone's hooks is not something to
+  discover after the fact. Its other keys (permissions, model, statusline)
+  apply either way: under hooks: own Paddock writes its own settings.json
+  carrying them with hooks dropped, regenerated at startup.
 
 Your data
   Everything lives in one directory — ~/.paddock unless you pass --data-dir.

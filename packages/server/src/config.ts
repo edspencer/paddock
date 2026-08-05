@@ -39,6 +39,12 @@ import {
   DEFAULT_CREDENTIALS_MODE,
   isKnownCredentialsMode,
 } from "./claude-credentials.js";
+import {
+  type InstructionsMode,
+  DEFAULT_INSTRUCTIONS_MODE,
+  isKnownInstructionsMode,
+} from "./claude-instructions.js";
+import { type HooksMode, DEFAULT_HOOKS_MODE, isKnownHooksMode } from "./claude-settings.js";
 import { DEFAULT_ENVIRONMENT_PROMPT } from "./environment-prompt.js";
 import { type RecoveryConfig, DEFAULT_RECOVERY } from "./recovery-config.js";
 import { type CurationConfig, DEFAULT_CURATION } from "./curation-config.js";
@@ -123,8 +129,8 @@ export interface BrandConfig {
  * guarantee an operator should be able to read straight off the config file —
  * **nothing outside the data dir is read or written**.
  *
- * `transcripts` and `credentials` exist so far. `mcpServers`, `instructions` and
- * `hooks` are the remaining levers in #691's sequence; each will be a key here
+ * `transcripts`, `credentials`, `instructions` and `hooks` exist so far.
+ * `mcpServers` is the remaining lever in #691's sequence; it will be a key here
  * rather than another meaning welded onto the Claude home, which is how the three
  * incidents (#682, #683, #689) that motivated this all happened.
  */
@@ -150,6 +156,27 @@ export interface ClaudeConfig {
    * the safe default when everything else here isolates.
    */
   credentials: CredentialsMode;
+  /**
+   * Whose user-level instructions this instance loads — the user's `~/.claude`
+   * `CLAUDE.md`, `agents/`, `commands/` and `plugins/`. `own` (default) loads
+   * none of them; `host` symlinks them in, which is what every version before
+   * this one did unconditionally.
+   *
+   * Driven by `PADDOCK_CLAUDE_INSTRUCTIONS`, then the `claude.instructions:` key.
+   * See `claude-instructions.ts` — including the case AGAINST this default,
+   * which is real and is kept there rather than deleted.
+   */
+  instructions: InstructionsMode;
+  /**
+   * Whether this instance runs the host machine's Claude Code hooks — shell
+   * commands `~/.claude/settings.json` binds to tool use and session lifecycle.
+   * `own` (default) writes paddock's own `settings.json` carrying every other key
+   * of the user's with `hooks` dropped; `host` symlinks theirs in whole.
+   *
+   * Driven by `PADDOCK_CLAUDE_HOOKS`, then the `claude.hooks:` key. The one lever
+   * here that governs code execution rather than data — see `claude-settings.ts`.
+   */
+  hooks: HooksMode;
 }
 
 /** OpenAPI / Swagger-UI reference surface config (see PaddockConfig.openapi). */
@@ -475,7 +502,12 @@ export interface PaddockConfigFile {
    * `own` or `host`; a matching `PADDOCK_CLAUDE_*` env var still overrides it
    * (file < env). Absent ⇒ fully isolated.
    */
-  claude?: { transcripts?: string; credentials?: string };
+  claude?: {
+    transcripts?: string;
+    credentials?: string;
+    instructions?: string;
+    hooks?: string;
+  };
   auth?: {
     mode?: string;
     userHeader?: string;
@@ -1302,6 +1334,11 @@ export function userClaudeHome(): string {
  * falls back to sharing — deliberately, because the failure it avoids (#683: an
  * instance that boots clean and fails every turn) is the worse one, and reading a
  * login risks no file of the user's. See `claude-credentials.ts`.
+ *
+ * `hooks` is the one where falling back on a typo is load-bearing in the other
+ * direction: `PADDOCK_CLAUDE_HOOKS=hots` isolates rather than executing the
+ * host's shell commands, which is the only acceptable way for a security lever
+ * to misread its input.
  */
 function loadClaudeConfig(file: PaddockConfigFile["claude"] = {}): ClaudeConfig {
   const transcripts = (
@@ -1310,11 +1347,20 @@ function loadClaudeConfig(file: PaddockConfigFile["claude"] = {}): ClaudeConfig 
   const credentials = (
     envOpt("PADDOCK_CLAUDE_CREDENTIALS") ?? fileOpt(file.credentials)
   )?.toLowerCase();
+  const instructions = (
+    envOpt("PADDOCK_CLAUDE_INSTRUCTIONS") ?? fileOpt(file.instructions)
+  )?.toLowerCase();
+  const hooks = (envOpt("PADDOCK_CLAUDE_HOOKS") ?? fileOpt(file.hooks))?.toLowerCase();
   return {
     transcripts:
       transcripts && isKnownTranscriptsMode(transcripts) ? transcripts : DEFAULT_TRANSCRIPTS_MODE,
     credentials:
       credentials && isKnownCredentialsMode(credentials) ? credentials : DEFAULT_CREDENTIALS_MODE,
+    instructions:
+      instructions && isKnownInstructionsMode(instructions)
+        ? instructions
+        : DEFAULT_INSTRUCTIONS_MODE,
+    hooks: hooks && isKnownHooksMode(hooks) ? hooks : DEFAULT_HOOKS_MODE,
   };
 }
 

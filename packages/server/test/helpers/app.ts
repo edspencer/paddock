@@ -97,6 +97,8 @@ export async function startTestApp(opts: StartOptions = {}): Promise<TestApp> {
     CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR,
     CLAUDE_SECURESTORAGE_CONFIG_DIR: process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR,
     PADDOCK_CLAUDE_CREDENTIALS: process.env.PADDOCK_CLAUDE_CREDENTIALS,
+    PADDOCK_CLAUDE_INSTRUCTIONS: process.env.PADDOCK_CLAUDE_INSTRUCTIONS,
+    PADDOCK_CLAUDE_HOOKS: process.env.PADDOCK_CLAUDE_HOOKS,
     PADDOCK_FAKE_SCRIPT: process.env.PADDOCK_FAKE_SCRIPT,
     PADDOCK_FAKE_SWEEP: process.env.PADDOCK_FAKE_SWEEP,
     PADDOCK_SWEEP_MIN_INTERVAL_MS: process.env.PADDOCK_SWEEP_MIN_INTERVAL_MS,
@@ -136,6 +138,11 @@ export async function startTestApp(opts: StartOptions = {}): Promise<TestApp> {
   // paddock's own.
   delete process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR;
   delete process.env.PADDOCK_CLAUDE_CREDENTIALS;
+  // And the two levers #691 step 4 added, for the same reason: an ambient
+  // PADDOCK_CLAUDE_HOOKS=host on a dev box would make the suite assert the
+  // opposite of the shipped default.
+  delete process.env.PADDOCK_CLAUDE_INSTRUCTIONS;
+  delete process.env.PADDOCK_CLAUDE_HOOKS;
   // Hermetic drive mode: this integration harness drives turns through a fake
   // `claude` on PATH, which only the CLI (batch) runtime uses — the SDK/session
   // runtime needs a real login ("Not logged in"). The built-in default is now

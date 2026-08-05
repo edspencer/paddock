@@ -40,39 +40,18 @@
  * `ensureProjectChats`.
  */
 import { promises as fs } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { encodePathForCli } from "@herdctl/core";
 import type { PaddockConfig } from "./config.js";
 import { applyCredentialsMode, SECURE_STORAGE_DIR_VAR } from "./claude-credentials.js";
-
-/**
- * Entries of a Claude home that are USER-LEVEL configuration rather than
- * per-instance state, symlinked from the user's home into paddock's own when
- * paddock's does not already have its own.
- *
- * Without this, relocating the home silently changes agent behaviour: the user's
- * `~/.claude/CLAUDE.md` is auto-loaded into every session, `settings.json`
- * carries permissions and hooks, and `agents/` `commands/` `plugins/` are
- * capability. Dropping them is not "a clean home", it is a behaviour regression
- * nobody asked for.
- *
- * Deliberately NOT bridged: `projects/` (that's the whole point), and everything
- * that is per-instance runtime state — `todos/`, `shell-snapshots/`, `statsig/`,
- * `sessions/`. Those are exactly what should now be per-instance.
- *
- * `.credentials.json` is NOT in this list, and used to be: it is the file half of
- * the `claude.credentials` lever, so it is bridged only under `host` (#691). See
- * {@link CREDENTIAL_ENTRY}. Splitting `settings.json`, `CLAUDE.md`, `agents/`,
- * `commands/` and `plugins/` the same way is steps 4–5 of #691; until then they
- * are bridged unconditionally, as they always have been.
- */
-export const BRIDGED_ENTRIES = [
-  "settings.json",
-  "CLAUDE.md",
-  "agents",
-  "commands",
-  "plugins",
-] as const;
+import { INSTRUCTION_ENTRIES } from "./claude-instructions.js";
+import {
+  planHostSettings,
+  GENERATED_MARKER_FILE,
+  SETTINGS_ENTRY,
+  type HooksMode,
+} from "./claude-settings.js";
 
 /**
  * The user's file-based Claude Code login, bridged in only under
@@ -93,6 +72,36 @@ export const BRIDGED_ENTRIES = [
  * instances that were never anything else.
  */
 export const CREDENTIAL_ENTRY = ".credentials.json";
+
+/**
+ * Entries of the user's Claude home that paddock can bridge into its own — the
+ * complete list, for callers that want to reason about the surface rather than
+ * about one lever.
+ *
+ * There is no longer an "always bridged" set: since #691 step 4, every entry here
+ * belongs to exactly one key of the `claude:` block, and the mapping is the whole
+ * point of the block.
+ *
+ * | Entry | Lever |
+ * |---|---|
+ * | `CLAUDE.md`, `agents/`, `commands/`, `plugins/` | `claude.instructions` |
+ * | `settings.json` (its `hooks` key) | `claude.hooks` |
+ * | `.credentials.json` | `claude.credentials` |
+ *
+ * `settings.json` appears under `hooks` because that is the half of it a lever
+ * governs; its OTHER keys — permissions, model, statusline, `enabledPlugins` —
+ * are inherited in every mode, which is why `hooks: own` writes a filtered file
+ * rather than declining to bridge one. See `claude-settings.ts`.
+ *
+ * Deliberately NOT bridged in any mode: `projects/` (that's the whole point), and
+ * everything that is per-instance runtime state — `todos/`, `shell-snapshots/`,
+ * `statsig/`, `sessions/`. Those are exactly what should be per-instance.
+ */
+export const BRIDGEABLE_ENTRIES: readonly string[] = [
+  SETTINGS_ENTRY,
+  ...INSTRUCTION_ENTRIES,
+  CREDENTIAL_ENTRY,
+];
 
 /** Env vars that authenticate Claude Code without any on-disk credential. */
 const TOKEN_ENV_VARS = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"];
@@ -186,6 +195,22 @@ export interface ClaudeHomeNotice {
 export interface ClaudeHomeReport {
   /** Entries symlinked in from the user's home this boot. */
   bridged: string[];
+  /**
+   * Entries whose bridge symlink was REMOVED this boot because the lever that
+   * governs them now says `own` (#691).
+   *
+   * The bridge is non-clobbering, so without this an instance that was ever
+   * `host` would keep reading the user's file forever after being reconfigured —
+   * "isolated" would be a claim that only holds for instances that were never
+   * anything else.
+   */
+  withdrawn: string[];
+  /**
+   * Entries paddock WROTE into its own home this boot rather than symlinking,
+   * because a lever needs part of a file and not the whole of it. Only
+   * `settings.json` today — see `claude-settings.ts`.
+   */
+  generated: string[];
   /** Messages for `app.ts` to log — config resolution has no logger of its own. */
   notices: ClaudeHomeNotice[];
 }
@@ -252,12 +277,211 @@ async function unbridgeEntry(
   );
 }
 
+/** What is sitting at `<ownHome>/<entry>`, from paddock's point of view. */
+type OwnEntryState =
+  /** Nothing there. */
+  | "absent"
+  /** A bridge symlink at the user's file — planted by paddock, so paddock's to remove. */
+  | "bridge"
+  /** A real file paddock wrote, unmodified since (see {@link GENERATED_MARKER_FILE}). */
+  | "generated"
+  /** Anything else: a human's file, or a link somewhere paddock never pointed. Hands off. */
+  | "foreign";
+
+const sha256 = (content: string): string =>
+  createHash("sha256").update(content, "utf8").digest("hex");
+
+/** Read the entry → sha256 map of files paddock generated. Never throws. */
+async function readGeneratedHashes(home: string): Promise<Record<string, string>> {
+  const raw = await fs.readFile(path.join(home, GENERATED_MARKER_FILE), "utf8").catch(() => null);
+  if (raw === null) return {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed as Record<string, string>;
+  } catch {
+    return {};
+  }
+}
+
+/** Record (or, with `null`, forget) the hash of a file paddock generated. */
+async function recordGenerated(home: string, entry: string, hash: string | null): Promise<void> {
+  const hashes = await readGeneratedHashes(home);
+  if (hash === null) {
+    if (!(entry in hashes)) return;
+    delete hashes[entry];
+  } else {
+    if (hashes[entry] === hash) return;
+    hashes[entry] = hash;
+  }
+  const marker = path.join(home, GENERATED_MARKER_FILE);
+  await fs.writeFile(marker, `${JSON.stringify(hashes, null, 2)}\n`, "utf8").catch(() => {});
+}
+
 /**
- * Create paddock's Claude home and bridge the user-level config into it.
+ * Decide whether paddock may replace `<ownHome>/<entry>`.
  *
- * Idempotent and non-clobbering: an entry paddock's home already has (whether a
- * real file the user put there or a symlink from a previous boot) is left
- * completely alone, so this is safe to run on every start.
+ * The `generated` case is the one that is new (#691 step 4) and the one the
+ * whole copy-and-filter mechanism rests on. A symlink needs no such question —
+ * paddock can always recognise its own by where it points — but a real file it
+ * wrote is indistinguishable from a real file a human wrote, and getting that
+ * wrong in either direction is bad: refuse to regenerate and the filtered copy
+ * is stale forever, regenerate anyway and paddock silently overwrites an
+ * operator's settings. Hashing what we wrote and comparing on the next boot
+ * answers it exactly, and answers `foreign` — the safe way — for any file we
+ * did not write or that has been edited since.
+ */
+async function classifyOwnEntry(
+  cfg: Pick<PaddockConfig, "claudeHome" | "legacyClaudeHome">,
+  entry: string,
+): Promise<OwnEntryState> {
+  const own = path.join(cfg.claudeHome, entry);
+  const st = await fs.lstat(own).catch(() => null);
+  if (st === null) return "absent";
+  if (st.isSymbolicLink()) {
+    const raw = await fs.readlink(own).catch(() => null);
+    if (raw === null) return "foreign";
+    const resolved = path.resolve(path.dirname(own), raw);
+    return resolved === path.resolve(cfg.legacyClaudeHome, entry) ? "bridge" : "foreign";
+  }
+  const content = await fs.readFile(own, "utf8").catch(() => null);
+  if (content === null) return "foreign";
+  const recorded = (await readGeneratedHashes(cfg.claudeHome))[entry];
+  return recorded !== undefined && recorded === sha256(content) ? "generated" : "foreign";
+}
+
+/** Remove a file paddock generated, and forget it. Returns whether it went. */
+async function removeGenerated(home: string, entry: string): Promise<boolean> {
+  const ok = await fs.rm(path.join(home, entry), { force: true }).then(
+    () => true,
+    () => false,
+  );
+  if (ok) await recordGenerated(home, entry, null);
+  return ok;
+}
+
+/**
+ * Put the right `settings.json` in paddock's home for the `claude.hooks` mode
+ * (#691 step 4).
+ *
+ * Four states have to compose, and all four are reachable by editing one config
+ * key on a running instance:
+ *
+ * | own home has | `hooks: host` | `hooks: own` |
+ * |---|---|---|
+ * | nothing | symlink the user's | symlink, or write the filtered copy |
+ * | paddock's bridge symlink | leave it | replace with the filtered copy |
+ * | paddock's generated file | delete it, symlink | regenerate from the user's |
+ * | a human's file | leave it | leave it, and say so if hooks were in play |
+ *
+ * The last row is the existing non-clobbering bridge behaviour, extended to a
+ * file rather than a name — with one addition, because silence there is
+ * dangerous: if the user's settings define hooks and paddock is not allowed to
+ * write the filtered copy, `hooks: own` is NOT in force for whatever that file
+ * says, so it warns rather than leaving an operator to believe a guarantee that
+ * is not holding.
+ *
+ * Never throws; a home it cannot write just keeps whatever it had.
+ */
+async function materializeSettings(
+  cfg: Pick<PaddockConfig, "claudeHome" | "legacyClaudeHome">,
+  hooks: HooksMode,
+  report: ClaudeHomeReport,
+): Promise<void> {
+  const entry = SETTINGS_ENTRY;
+  const own = path.join(cfg.claudeHome, entry);
+  const state = await classifyOwnEntry(cfg, entry);
+  const raw = await fs.readFile(path.join(cfg.legacyClaudeHome, entry), "utf8").catch(() => null);
+
+  if (raw === null) {
+    // The user has no settings.json at all — including the case where they
+    // deleted one paddock had already bridged or filtered. Withdraw ours.
+    if (state === "bridge" && (await unbridgeEntry(cfg, entry))) report.withdrawn.push(entry);
+    else if (state === "generated" && (await removeGenerated(cfg.claudeHome, entry)))
+      report.withdrawn.push(entry);
+    return;
+  }
+
+  const plan = planHostSettings(hooks, raw);
+
+  if (state === "foreign") {
+    if (plan.action === "write") {
+      report.notices.push({
+        level: "warn",
+        message:
+          `\`claude.hooks: own\` cannot take effect: ${own} is a file paddock did not write, ` +
+          `so it is left alone (as any entry of your own always is). Your ` +
+          `~/.claude/${entry} defines hooks, and whatever THAT file says is what runs. ` +
+          `Move or delete it to let paddock generate the filtered copy.`,
+      });
+    }
+    return;
+  }
+
+  if (plan.action === "skip") {
+    // Fail closed: a settings.json that will not parse cannot be filtered, and
+    // linking it instead would hand over exactly the hooks `own` withholds.
+    if (state === "bridge" && (await unbridgeEntry(cfg, entry))) report.withdrawn.push(entry);
+    else if (state === "generated" && (await removeGenerated(cfg.claudeHome, entry)))
+      report.withdrawn.push(entry);
+    report.notices.push({
+      level: "warn",
+      message:
+        `not using your ~/.claude/${entry}: ${plan.reason}. Paddock could not filter it, and ` +
+        `\`claude.hooks: own\` means it must not be used unfiltered — so this instance runs ` +
+        `with no user-level settings at all. Fix the JSON and restart.`,
+    });
+    return;
+  }
+
+  if (plan.action === "link") {
+    // Nothing to filter (no hooks, or `hooks: host`): the symlink is strictly
+    // better than a copy, so prefer it even under `own`. Only users who actually
+    // have hooks pay the staleness of a copy.
+    if (state === "generated") await removeGenerated(cfg.claudeHome, entry);
+    if (await bridgeEntry(cfg, entry)) report.bridged.push(entry);
+    return;
+  }
+
+  if (state === "bridge") await fs.unlink(own).catch(() => {});
+  const existing = state === "generated" ? await fs.readFile(own, "utf8").catch(() => null) : null;
+  if (existing !== plan.content) {
+    const ok = await fs.writeFile(own, plan.content, "utf8").then(
+      () => true,
+      () => false,
+    );
+    if (!ok) {
+      report.notices.push({
+        level: "warn",
+        message:
+          `could not write ${own}, so \`claude.hooks: own\` is not in force — this instance ` +
+          `has no user-level settings rather than filtered ones.`,
+      });
+      return;
+    }
+    report.generated.push(entry);
+  }
+  await recordGenerated(cfg.claudeHome, entry, sha256(plan.content));
+  report.notices.push({
+    level: "info",
+    message:
+      `Claude hooks: your ~/.claude/${entry} defines ${plan.dropped.join(", ")}, which this ` +
+      `instance does NOT run (\`claude.hooks: own\`). Paddock writes its own ${entry} carrying ` +
+      `every other key of yours — permissions, model, statusline — and regenerates it at ` +
+      `startup, so restart paddock after editing yours. Set \`claude.hooks: host\` to run them.`,
+  });
+}
+
+/**
+ * Create paddock's Claude home and put the user-level config into it that this
+ * instance's `claude:` levers say it should have (#691).
+ *
+ * Idempotent and non-clobbering: a real file the user put in paddock's home is
+ * left completely alone, so this is safe to run on every start. What it DOES
+ * maintain is what paddock itself planted — bridge symlinks, withdrawn when a
+ * lever flips to `own`, and the generated `settings.json`, regenerated from the
+ * user's current one. Ownership of a generated file is decided by hash
+ * ({@link classifyOwnEntry}), never by "it is at a name we use".
  *
  * Never throws. A home that cannot be created is not a reason to refuse to boot
  * — Claude Code falls back to its own default and chat still works, which is the
@@ -275,7 +499,7 @@ export async function ensureClaudeHome(
   env: NodeJS.ProcessEnv = process.env,
   probeKeychain: KeychainProbe = probeMacosKeychainLogin,
 ): Promise<ClaudeHomeReport> {
-  const report: ClaudeHomeReport = { bridged: [], notices: [] };
+  const report: ClaudeHomeReport = { bridged: [], withdrawn: [], generated: [], notices: [] };
   const credentials = cfg.claude.credentials;
   const decision = applyCredentialsMode(credentials, env);
   if (decision.action === "deferred") {
@@ -301,14 +525,13 @@ export async function ensureClaudeHome(
 
   // No "is this home ours?" branch any more (#691): it always is, and a config
   // that resolves the home to `~/.claude` never gets this far — `resolveClaudeHome`
-  // refuses to start. So the bridge below runs unconditionally.
-  for (const entry of BRIDGED_ENTRIES) {
-    if (await bridgeEntry(cfg, entry)) report.bridged.push(entry);
-  }
-  // …except the login, which is the `credentials` lever's file half.
+  // refuses to start. What remains is one lever per entry.
+
+  // The login — `claude.credentials`, step 3. Its file half on Linux/Docker.
   if (credentials === "host") {
     if (await bridgeEntry(cfg, CREDENTIAL_ENTRY)) report.bridged.push(CREDENTIAL_ENTRY);
   } else if (await unbridgeEntry(cfg, CREDENTIAL_ENTRY)) {
+    report.withdrawn.push(CREDENTIAL_ENTRY);
     report.notices.push({
       level: "info",
       message:
@@ -318,11 +541,48 @@ export async function ensureClaudeHome(
     });
   }
 
+  // CLAUDE.md, agents, commands, plugins — `claude.instructions`, step 4.
+  const instructions = cfg.claude.instructions;
+  for (const entry of INSTRUCTION_ENTRIES) {
+    if (instructions === "host") {
+      if (await bridgeEntry(cfg, entry)) report.bridged.push(entry);
+    } else if (await unbridgeEntry(cfg, entry)) {
+      report.withdrawn.push(entry);
+    }
+  }
+  if (instructions === "own") {
+    // Named rather than left to be discovered. `own` is the default and it is a
+    // real behaviour change for anyone with a curated `~/.claude/CLAUDE.md`:
+    // their agents quietly stop knowing things, with no error to search for. So
+    // paddock says which of their files it is not using, and which key turns
+    // them back on. Only when they HAVE some — otherwise it is noise.
+    const present: string[] = [];
+    for (const entry of INSTRUCTION_ENTRIES) {
+      if (await exists(path.join(cfg.legacyClaudeHome, entry))) present.push(entry);
+    }
+    if (present.length > 0) {
+      report.notices.push({
+        level: "info",
+        message:
+          `Claude instructions: this instance's own only (\`claude.instructions: own\`). Your ` +
+          `~/.claude ${present.join(", ")} ${present.length === 1 ? "is" : "are"} NOT loaded — ` +
+          `set \`claude.instructions: host\` (or PADDOCK_CLAUDE_INSTRUCTIONS=host) to share ` +
+          `them. Each project's own CLAUDE.md is unaffected either way.`,
+      });
+    }
+  }
+
+  // settings.json — `claude.hooks`, step 4. Not a bridge decision: the file is a
+  // mixed bag, so `own` writes a filtered copy. See `materializeSettings`.
+  await materializeSettings(cfg, cfg.claude.hooks, report);
+
   report.notices.push({
     level: "info",
     message:
       `Claude home: ${cfg.claudeHome} (paddock-owned; ~/.claude is read-only)` +
-      (report.bridged.length > 0 ? ` — bridged from ~/.claude: ${report.bridged.join(", ")}` : ""),
+      (report.bridged.length > 0 ? ` — bridged from ~/.claude: ${report.bridged.join(", ")}` : "") +
+      (report.generated.length > 0 ? ` — generated: ${report.generated.join(", ")}` : "") +
+      (report.withdrawn.length > 0 ? ` — withdrawn: ${report.withdrawn.join(", ")}` : ""),
   });
 
   // The credential question (#620, #683). Claude Code derives its secure-storage

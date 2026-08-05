@@ -710,6 +710,8 @@ describe("loadPaddockConfig: the claude: block (#691)", () => {
     "PADDOCK_CONFIG",
     "PADDOCK_CLAUDE_TRANSCRIPTS",
     "PADDOCK_CLAUDE_CREDENTIALS",
+    "PADDOCK_CLAUDE_INSTRUCTIONS",
+    "PADDOCK_CLAUDE_HOOKS",
     "CLAUDE_HOME",
     "CLAUDE_CONFIG_DIR",
     "HOME",
@@ -782,11 +784,46 @@ describe("loadPaddockConfig: the claude: block (#691)", () => {
     expect(loadPaddockConfig().claude.credentials).toBe("host");
   });
 
-  it("keeps the two keys independent — that separation is the whole point", () => {
-    writeConfig("claude:\n  transcripts: host\n  credentials: own\n");
+  // #691 step 4. Both default `own`, and `instructions: own` is a deliberate
+  // reversal of the argument #620 shipped with — see `claude-instructions.ts`.
+  it("defaults instructions and hooks to own", () => {
+    const cfg = loadPaddockConfig();
+    expect(cfg.claude.instructions).toBe("own");
+    expect(cfg.claude.hooks).toBe("own");
+  });
+
+  it("reads instructions: host from the file, and env still wins over it", () => {
+    writeConfig("claude:\n  instructions: host\n");
+    expect(loadPaddockConfig().claude.instructions).toBe("host");
+    process.env.PADDOCK_CLAUDE_INSTRUCTIONS = "own";
+    expect(loadPaddockConfig().claude.instructions).toBe("own");
+  });
+
+  it("reads hooks: host from the file, and env still wins over it", () => {
+    writeConfig("claude:\n  hooks: host\n");
+    expect(loadPaddockConfig().claude.hooks).toBe("host");
+    process.env.PADDOCK_CLAUDE_HOOKS = "own";
+    expect(loadPaddockConfig().claude.hooks).toBe("own");
+  });
+
+  it("falls back to own on an unrecognised hooks value — a typo never executes", () => {
+    // The direction matters more here than anywhere else in the block: the
+    // fallback for a security lever has to be the safe side of it.
+    writeConfig("claude:\n  hooks: hots\n  instructions: hostt\n");
+    const cfg = loadPaddockConfig();
+    expect(cfg.claude.hooks).toBe("own");
+    expect(cfg.claude.instructions).toBe("own");
+  });
+
+  it("keeps all four keys independent — that separation is the whole point", () => {
+    writeConfig(
+      "claude:\n  transcripts: host\n  credentials: own\n  instructions: host\n  hooks: own\n",
+    );
     const cfg = loadPaddockConfig();
     expect(cfg.claude.transcripts).toBe("host");
     expect(cfg.claude.credentials).toBe("own");
+    expect(cfg.claude.instructions).toBe("host");
+    expect(cfg.claude.hooks).toBe("own");
   });
 
   // CLAUDE_HOME is deleted (#691). It is not an error — retired settings are
