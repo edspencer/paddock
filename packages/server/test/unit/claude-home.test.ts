@@ -7,6 +7,7 @@ import {
   mirrorLegacyTranscriptFolders,
   legacySourcePath,
   countLegacyTranscriptLinks,
+  findPlantedChatsLinks,
   BRIDGED_ENTRIES,
 } from "../../src/claude-home.js";
 import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
@@ -248,6 +249,68 @@ describe("claude-home (#620)", () => {
 
     it("is zero when the user has no Claude home at all", async () => {
       expect(await countLegacyTranscriptLinks(path.join(root, "nope"), root)).toBe(0);
+    });
+  });
+
+  // #682 — anyone who ran an affected build has one of these, and it keeps
+  // redirecting their own `claude` sessions until they remove it. The point of
+  // the finder is to name the exact path; it must not remove anything.
+  describe("findPlantedChatsLinks", () => {
+    const projectsOf = (h: string) => path.join(h, "projects");
+
+    it("finds a --here workspace's poisoned link, which the dataDir check misses", async () => {
+      // The observed shape: `--here` in ~/Code/thing puts the data dir at
+      // <dir>/.paddock but the store at <dir>/.chats, so the link target is NOT
+      // under dataDir and countLegacyTranscriptLinks reports nothing.
+      const workspace = path.join(root, "Code", "thing");
+      const dataDir = path.join(workspace, ".paddock");
+      const chats = path.join(workspace, ".chats");
+      await fs.mkdir(chats, { recursive: true });
+      const link = path.join(projectsOf(legacyHome), "-root-Code-thing");
+      await fs.symlink(chats, link);
+
+      expect(await countLegacyTranscriptLinks(legacyHome, dataDir)).toBe(0); // the gap
+      expect(await findPlantedChatsLinks(legacyHome, dataDir)).toEqual([
+        { link, target: chats, dangling: false },
+      ]);
+    });
+
+    it("flags a link whose .chats/ has already been deleted as dangling", async () => {
+      const link = path.join(projectsOf(legacyHome), "-gone");
+      await fs.symlink(path.join(root, "gone", ".chats"), link);
+      const [found] = await findPlantedChatsLinks(legacyHome, path.join(root, "data"));
+      expect(found.dangling).toBe(true);
+    });
+
+    it("ignores this instance's own residue, real dirs, and non-.chats links", async () => {
+      const dataDir = path.join(root, "data");
+      // Residue from the pre-#620 layout — already reported as harmless.
+      await fs.symlink(
+        path.join(dataDir, "projects", "a", ".chats"),
+        path.join(projectsOf(legacyHome), "-own"),
+      );
+      // The user's own transcripts, and a link that is nothing to do with us.
+      await fs.mkdir(path.join(projectsOf(legacyHome), "-real"), { recursive: true });
+      await fs.symlink(path.join(root, "elsewhere"), path.join(projectsOf(legacyHome), "-other"));
+
+      expect(await findPlantedChatsLinks(legacyHome, dataDir)).toEqual([]);
+    });
+
+    it("removes nothing it reports", async () => {
+      const chats = path.join(root, "ws", ".chats");
+      await fs.mkdir(chats, { recursive: true });
+      await fs.writeFile(path.join(chats, "s.jsonl"), "{}\n", "utf8");
+      const link = path.join(projectsOf(legacyHome), "-ws");
+      await fs.symlink(chats, link);
+
+      await findPlantedChatsLinks(legacyHome, path.join(root, "data"));
+
+      expect((await fs.lstat(link)).isSymbolicLink()).toBe(true);
+      expect(await fs.readFile(path.join(chats, "s.jsonl"), "utf8")).toBe("{}\n");
+    });
+
+    it("never throws when the user has no Claude home at all", async () => {
+      expect(await findPlantedChatsLinks(path.join(root, "nope"), root)).toEqual([]);
     });
   });
 });

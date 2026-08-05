@@ -320,3 +320,60 @@ export async function countLegacyTranscriptLinks(
   }
   return count;
 }
+
+/** A `~/.claude/projects/<enc>` symlink pointing at some `.chats/` store. */
+export interface PlantedChatsLink {
+  /** The link itself, inside the user's home — the path to tell the user about. */
+  link: string;
+  /** What it points at, resolved. Always a `.chats` directory by construction. */
+  target: string;
+  /** Does the target still exist? A dangling link is the one that breaks tooling. */
+  dangling: boolean;
+}
+
+/**
+ * Find transcript symlinks planted in the user's home that point at a `.chats/`
+ * store OUTSIDE `dataDir` (#682).
+ *
+ * The instance's own leftovers — links into this data dir — are already reported
+ * by {@link countLegacyTranscriptLinks} as harmless pre-#620 residue, and they
+ * are: they were planted for a project whose transcripts paddock does own.
+ *
+ * The ones this finds are the poisoned kind. Under `--here` the workspace's
+ * `.chats/` sits at `<dir>/.chats` while the data dir is `<dir>/.paddock`, so a
+ * link planted by an affected build points somewhere no `dataDir` prefix match
+ * will ever catch. While it exists, every `claude` session the user starts in
+ * that directory writes into paddock's store instead of their own history, and
+ * anything that expects `~/.claude/projects/<enc>` to be a real directory
+ * (`unzip -d ~/.claude` being the observed one) fails with an error impossible
+ * to trace back here.
+ *
+ * Reported, never removed. Paddock not writing to `~/.claude` is the entire
+ * point of #620, and that has to include cleaning up after itself — a boot that
+ * silently deleted something under there would be the same class of surprise in
+ * the opposite direction. Naming the exact path is enough: `rm` is one command
+ * and the user can see what they are removing first.
+ *
+ * Never throws; an unreadable home just yields no findings.
+ */
+export async function findPlantedChatsLinks(
+  legacyHome: string,
+  dataDir: string,
+): Promise<PlantedChatsLink[]> {
+  const root = path.join(legacyHome, "projects");
+  const names = await fs.readdir(root).catch(() => [] as string[]);
+  const ownPrefix = path.resolve(dataDir) + path.sep;
+  const found: PlantedChatsLink[] = [];
+  for (const name of names) {
+    const link = path.join(root, name);
+    const raw = await fs.readlink(link).catch(() => null);
+    if (raw === null) continue;
+    const target = path.resolve(path.dirname(link), raw);
+    // `.chats` is paddock's store name and nothing else's — a precise enough
+    // signature that a link the user made themselves won't be misreported.
+    if (path.basename(target) !== ".chats") continue;
+    if (target.startsWith(ownPrefix)) continue; // this instance's own residue
+    found.push({ link, target, dangling: !(await exists(target)) });
+  }
+  return found;
+}

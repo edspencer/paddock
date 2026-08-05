@@ -58,14 +58,21 @@ export function projectChatsDir(projectDir: string): string {
  * Making the parameter required is what stops that class of bug at the type
  * level.
  *
- * `home.owned` gates the one destructive branch (#620): migrating an existing
- * real transcript directory into `.chats/` copies the files and then REMOVES the
- * originals. That is correct self-healing inside a home paddock owns, where such
- * a directory can only be paddock's own doing. Inside the user's `~/.claude` it
- * is somebody else's data — a `claude` CLI session run in a directory paddock
- * happens to also manage — so we leave it strictly alone and let the SDK keep
- * writing there. Those transcripts stay importable through adoption (#588),
- * which is the deliberate, user-driven version of the same move.
+ * `home.owned` gates EVERY write into the home (#620, #682). Two of them:
+ *
+ *  - Migrating an existing real transcript directory into `.chats/` copies the
+ *    files and then REMOVES the originals. That is correct self-healing inside a
+ *    home paddock owns, where such a directory can only be paddock's own doing.
+ *    Inside the user's `~/.claude` it is somebody else's data — a `claude` CLI
+ *    session run in a directory paddock happens to also manage — so we leave it
+ *    strictly alone and let the SDK keep writing there.
+ *  - Planting the redirect symlink at a path that does not exist yet. Not
+ *    destructive on the day it happens, which is why it was missed, but it
+ *    silently claims where the user's FUTURE sessions for that directory get
+ *    written (#682). See the branch itself for the full argument.
+ *
+ * Either way those transcripts stay importable through adoption (#588), which is
+ * the deliberate, user-driven version of the same move.
  */
 export interface ClaudeHomeTarget {
   /** Absolute path to the Claude home to plant the redirect symlink in. */
@@ -126,6 +133,24 @@ export async function ensureProjectChats(
       await fs.symlink(chatsDir, encoded);
       return;
     }
+
+    // Nothing there yet. In a home paddock does NOT own, planting here is the
+    // data-loss branch (#682): the encoded path is where the USER's future
+    // `claude` sessions for this directory land, so a link redirects every one of
+    // them into paddock's `.chats/` — from that moment "their history" and "our
+    // store" are the same files, and an ordinary `rm -rf .chats` destroys
+    // transcripts paddock never owned. It also breaks unrelated tooling that
+    // expects `~/.claude/projects/<enc>` to be a directory. Creating a name the
+    // user has not used yet is not "overwriting", so it slipped past the letter
+    // of claude-home.ts's invariant while breaking its intent.
+    //
+    // The cost of bailing is that transcripts stay in the user's home instead of
+    // being self-contained in `.chats/`, which is exactly the pre-#620 trade for
+    // the `CLAUDE_HOME=~/.claude` escape hatch. Chat still works end to end:
+    // paddock and the engine both resolve THIS home, so discovery, resume and
+    // rename all read the real directory. Adoption (#588) remains the deliberate,
+    // user-driven way to pull those transcripts into a project.
+    if (!home.owned) return;
 
     // Nothing there yet — just create the symlink so future turns land in .chats.
     await fs.symlink(chatsDir, encoded);
