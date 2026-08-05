@@ -19,7 +19,11 @@ import { createRequire } from "node:module";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { loadPaddockConfig, type PaddockConfig } from "./config.js";
-import { ensureClaudeHome, countLegacyTranscriptLinks } from "./claude-home.js";
+import {
+  ensureClaudeHome,
+  countLegacyTranscriptLinks,
+  findPlantedChatsLinks,
+} from "./claude-home.js";
 import { installHerdctlLogBridge } from "./agent-errors.js";
 import { ProjectStore, ROOT_KEY } from "./projects.js";
 import { AttachmentStore } from "./attachments.js";
@@ -215,6 +219,23 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
           `paddock leaves them alone because it does not write to ~/.claude. Safe to delete.`,
       );
     }
+  }
+  // #682: links an affected build planted at a path the user had not used yet.
+  // Unlike the residue above these are still LIVE — they redirect the user's own
+  // future `claude` sessions — so they warn, and name every path. Paddock does
+  // not remove them; it does not write to `~/.claude`.
+  const poisoned = await findPlantedChatsLinks(cfg.legacyClaudeHome, cfg.dataDir);
+  if (poisoned.length > 0) {
+    app.log.warn(
+      `${poisoned.length} symlink(s) in ${path.join(cfg.legacyClaudeHome, "projects")} redirect ` +
+        `Claude Code's transcripts into a paddock .chats/ store (#682). While they exist, ` +
+        `\`claude\` sessions you start in those directories are written to paddock's store, and ` +
+        `deleting that store destroys them. Paddock does not remove anything under ~/.claude — ` +
+        `delete them yourself if you did not intend this:\n` +
+        poisoned
+          .map((p) => `  ${p.link} -> ${p.target}${p.dangling ? "  (target is missing)" : ""}`)
+          .join("\n"),
+    );
   }
 
   const rootWorkspace = await projects.get(ROOT_KEY);

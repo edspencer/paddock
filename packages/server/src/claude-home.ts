@@ -70,6 +70,73 @@ export const BRIDGED_ENTRIES = [
 /** Env vars that authenticate Claude Code without any on-disk credential. */
 const TOKEN_ENV_VARS = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"];
 
+/**
+ * Keychain service names Claude Code is known to store its login under.
+ *
+ * Only the unsuffixed form matters here: with `CLAUDE_CONFIG_DIR` set, Claude
+ * Code appends a path hash, and an entry under THAT name is one paddock's own
+ * home can already see. What we are looking for is the login made before paddock
+ * was involved.
+ *
+ * More than one candidate because the name is Claude Code's private detail, not
+ * a contract — see {@link probeMacosKeychainLogin} for why guessing wrong here
+ * is designed to be harmless.
+ */
+const KEYCHAIN_SERVICE_NAMES = ["Claude Code-credentials", "Claude Code"];
+
+/**
+ * What a Keychain probe concluded.
+ *
+ * `unknown` is the important one and the default: not darwin, no `security`
+ * binary, the lookup errored, or we simply did not find an entry under a name we
+ * guessed. It must never be reported to the user as "you have no login".
+ */
+export type KeychainFinding = "found" | "unknown";
+
+/** Probe for a macOS login paddock's own home cannot see. Injectable for tests. */
+export type KeychainProbe = () => Promise<KeychainFinding>;
+
+/**
+ * Ask the macOS Keychain whether a plain-name Claude Code login exists (#683).
+ *
+ * The whole value of this is turning "you appear to have no credentials" into
+ * "you ARE logged in; paddock cannot see it, and here is the one-liner" — a
+ * distinction paddock currently cannot make, and the difference between a
+ * message that describes a problem and one that fixes it.
+ *
+ * ## The asymmetry, which is deliberate
+ *
+ * A positive result is trustworthy: an entry under that service name is a login.
+ * A negative result is NOT — the service name is Claude Code's internal detail
+ * and can change, and `security` can fail for a dozen reasons that have nothing
+ * to do with the user. So a miss returns `unknown`, and the caller falls back to
+ * the existing, correct, generic warning. Guessing the name wrong therefore
+ * costs nothing beyond the improvement not happening.
+ *
+ * Never prompts and never reads a secret: `find-generic-password` WITHOUT `-w`
+ * reports existence only (attributes, which are discarded), so nothing sensitive
+ * reaches a log, a transcript, or this process's memory.
+ */
+export async function probeMacosKeychainLogin(
+  platform: string = process.platform,
+): Promise<KeychainFinding> {
+  if (platform !== "darwin") return "unknown";
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const run = promisify(execFile);
+  for (const service of KEYCHAIN_SERVICE_NAMES) {
+    // No `-w`: existence only. Output is discarded either way.
+    const found = await run("security", ["find-generic-password", "-s", service], {
+      timeout: 5_000,
+    }).then(
+      () => true,
+      () => false,
+    );
+    if (found) return "found";
+  }
+  return "unknown";
+}
+
 /** A message for the operator, at the level it should be logged at. */
 export interface ClaudeHomeNotice {
   level: "info" | "warn";
@@ -105,6 +172,7 @@ async function exists(p: string): Promise<boolean> {
 export async function ensureClaudeHome(
   cfg: Pick<PaddockConfig, "claudeHome" | "legacyClaudeHome" | "ownsClaudeHome">,
   env: NodeJS.ProcessEnv = process.env,
+  probeKeychain: KeychainProbe = probeMacosKeychainLogin,
 ): Promise<ClaudeHomeReport> {
   const report: ClaudeHomeReport = { bridged: [], notices: [] };
   try {
@@ -169,15 +237,30 @@ export async function ensureClaudeHome(
   const hasTokenEnv = TOKEN_ENV_VARS.some((v) => (env[v] ?? "").trim().length > 0);
   const hasCredentialFile = await exists(path.join(cfg.claudeHome, ".credentials.json"));
   if (!hasTokenEnv && !hasCredentialFile) {
+    // #683: "you have no login" and "your login exists but I changed the service
+    // name it is filed under" are the same message today, and only one of them is
+    // the user's problem to solve. On darwin we can tell them apart, and a hit
+    // upgrades a paragraph of explanation into an instruction. A miss is
+    // inconclusive by design (see probeMacosKeychainLogin), so it falls through
+    // to the generic wording rather than asserting anything.
+    const keychain = await probeKeychain();
     report.notices.push({
       level: "warn",
       message:
-        `no Claude credentials found for ${cfg.claudeHome}: no .credentials.json and no ` +
-        `${TOKEN_ENV_VARS.join("/")} in the environment. Claude Code scopes its credential ` +
-        `store to CLAUDE_CONFIG_DIR, so a login stored in the OS keychain against the ` +
-        `default home will NOT be found here. If turns fail with "Not logged in", either ` +
-        `re-run \`claude login\` with CLAUDE_CONFIG_DIR=${cfg.claudeHome}, or set ` +
-        `CLAUDE_HOME=${cfg.legacyClaudeHome} to keep using the previous layout.`,
+        keychain === "found"
+          ? `you ARE logged in to Claude Code, but paddock cannot see it. The login is in the ` +
+            `macOS Keychain, and Claude Code files it under a service name derived from whether ` +
+            `CLAUDE_CONFIG_DIR is set — paddock sets it, to ${cfg.claudeHome}, so it looks under ` +
+            `a different name. A Keychain entry cannot be bridged the way ~/.claude files are. ` +
+            `Fix it either way: run \`CLAUDE_CONFIG_DIR=${cfg.claudeHome} claude login\` to log ` +
+            `in for this home too, or set CLAUDE_HOME=${cfg.legacyClaudeHome} (what \`paddock\` ` +
+            `does by default) to run against your own home and use the login you already have.`
+          : `no Claude credentials found for ${cfg.claudeHome}: no .credentials.json and no ` +
+            `${TOKEN_ENV_VARS.join("/")} in the environment. Claude Code scopes its credential ` +
+            `store to CLAUDE_CONFIG_DIR, so a login stored in the OS keychain against the ` +
+            `default home will NOT be found here. If turns fail with "Not logged in", either ` +
+            `re-run \`claude login\` with CLAUDE_CONFIG_DIR=${cfg.claudeHome}, or set ` +
+            `CLAUDE_HOME=${cfg.legacyClaudeHome} to keep using the previous layout.`,
     });
   }
 
@@ -319,4 +402,61 @@ export async function countLegacyTranscriptLinks(
     if (target !== null && path.resolve(target).startsWith(prefix)) count++;
   }
   return count;
+}
+
+/** A `~/.claude/projects/<enc>` symlink pointing at some `.chats/` store. */
+export interface PlantedChatsLink {
+  /** The link itself, inside the user's home — the path to tell the user about. */
+  link: string;
+  /** What it points at, resolved. Always a `.chats` directory by construction. */
+  target: string;
+  /** Does the target still exist? A dangling link is the one that breaks tooling. */
+  dangling: boolean;
+}
+
+/**
+ * Find transcript symlinks planted in the user's home that point at a `.chats/`
+ * store OUTSIDE `dataDir` (#682).
+ *
+ * The instance's own leftovers — links into this data dir — are already reported
+ * by {@link countLegacyTranscriptLinks} as harmless pre-#620 residue, and they
+ * are: they were planted for a project whose transcripts paddock does own.
+ *
+ * The ones this finds are the poisoned kind. Under `--here` the workspace's
+ * `.chats/` sits at `<dir>/.chats` while the data dir is `<dir>/.paddock`, so a
+ * link planted by an affected build points somewhere no `dataDir` prefix match
+ * will ever catch. While it exists, every `claude` session the user starts in
+ * that directory writes into paddock's store instead of their own history, and
+ * anything that expects `~/.claude/projects/<enc>` to be a real directory
+ * (`unzip -d ~/.claude` being the observed one) fails with an error impossible
+ * to trace back here.
+ *
+ * Reported, never removed. Paddock not writing to `~/.claude` is the entire
+ * point of #620, and that has to include cleaning up after itself — a boot that
+ * silently deleted something under there would be the same class of surprise in
+ * the opposite direction. Naming the exact path is enough: `rm` is one command
+ * and the user can see what they are removing first.
+ *
+ * Never throws; an unreadable home just yields no findings.
+ */
+export async function findPlantedChatsLinks(
+  legacyHome: string,
+  dataDir: string,
+): Promise<PlantedChatsLink[]> {
+  const root = path.join(legacyHome, "projects");
+  const names = await fs.readdir(root).catch(() => [] as string[]);
+  const ownPrefix = path.resolve(dataDir) + path.sep;
+  const found: PlantedChatsLink[] = [];
+  for (const name of names) {
+    const link = path.join(root, name);
+    const raw = await fs.readlink(link).catch(() => null);
+    if (raw === null) continue;
+    const target = path.resolve(path.dirname(link), raw);
+    // `.chats` is paddock's store name and nothing else's — a precise enough
+    // signature that a link the user made themselves won't be misreported.
+    if (path.basename(target) !== ".chats") continue;
+    if (target.startsWith(ownPrefix)) continue; // this instance's own residue
+    found.push({ link, target, dangling: !(await exists(target)) });
+  }
+  return found;
 }

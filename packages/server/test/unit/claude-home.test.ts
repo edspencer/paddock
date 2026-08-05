@@ -7,7 +7,10 @@ import {
   mirrorLegacyTranscriptFolders,
   legacySourcePath,
   countLegacyTranscriptLinks,
+  findPlantedChatsLinks,
+  probeMacosKeychainLogin,
   BRIDGED_ENTRIES,
+  type KeychainProbe,
 } from "../../src/claude-home.js";
 import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
 
@@ -106,27 +109,80 @@ describe("claude-home (#620)", () => {
     // default home is invisible under a relocated one. We cannot fix that; we can
     // refuse to let it be discovered as a chat that never replies.
     describe("credential warning", () => {
+      // The probe is injected in EVERY case, including the ones that predate it:
+      // left to its default these tests would read the real Keychain, and a
+      // logged-in Mac would flip four of them. A decision table has to be a
+      // decision table on every machine that runs it.
+      const noKeychain: KeychainProbe = () => Promise.resolve("unknown");
+      const keychainLogin: KeychainProbe = () => Promise.resolve("found");
+
       const warned = (r: { notices: { level: string; message: string }[] }) =>
         r.notices.some((n) => n.level === "warn" && n.message.includes("no Claude credentials"));
 
       it("warns when neither a token env var nor a credentials file is visible", async () => {
-        expect(warned(await ensureClaudeHome(cfg(), {}))).toBe(true);
+        expect(warned(await ensureClaudeHome(cfg(), {}, noKeychain))).toBe(true);
       });
 
       it("stays quiet when a token is in the environment", async () => {
-        expect(warned(await ensureClaudeHome(cfg(), { CLAUDE_CODE_OAUTH_TOKEN: "t" }))).toBe(false);
-        expect(warned(await ensureClaudeHome(cfg(), { ANTHROPIC_API_KEY: "k" }))).toBe(false);
+        expect(
+          warned(await ensureClaudeHome(cfg(), { CLAUDE_CODE_OAUTH_TOKEN: "t" }, noKeychain)),
+        ).toBe(false);
+        expect(warned(await ensureClaudeHome(cfg(), { ANTHROPIC_API_KEY: "k" }, noKeychain))).toBe(
+          false,
+        );
       });
 
       it("stays quiet when the user's credentials file was bridged in", async () => {
         await fs.writeFile(path.join(legacyHome, ".credentials.json"), "{}", "utf8");
-        expect(warned(await ensureClaudeHome(cfg(), {}))).toBe(false);
+        expect(warned(await ensureClaudeHome(cfg(), {}, noKeychain))).toBe(false);
       });
 
       it("names the escape hatch, so the fix is in the message", async () => {
-        const report = await ensureClaudeHome(cfg(), {});
+        const report = await ensureClaudeHome(cfg(), {}, noKeychain);
         const warning = report.notices.find((n) => n.level === "warn")!;
         expect(warning.message).toContain(`CLAUDE_HOME=${legacyHome}`);
+      });
+
+      // #683 — "you have no login" and "your login exists but I changed the
+      // service name it is filed under" were one message, and only one of them
+      // is the user's problem to solve.
+      it("says you ARE logged in when the Keychain has the plain-name entry", async () => {
+        const report = await ensureClaudeHome(cfg(), {}, keychainLogin);
+        const warning = report.notices.find((n) => n.level === "warn")!;
+        expect(warning.message).toContain("you ARE logged in");
+        expect(warning.message).not.toContain("no Claude credentials");
+        // Both remedies, because which one is right depends on whether the user
+        // wants isolation — and neither is guessable from the generic wording.
+        expect(warning.message).toContain(`CLAUDE_CONFIG_DIR=${ownHome} claude login`);
+        expect(warning.message).toContain(`CLAUDE_HOME=${legacyHome}`);
+      });
+
+      it("falls back to the generic wording on an inconclusive probe, never asserting there is no login", async () => {
+        // The service name is Claude Code's private detail, so a miss means
+        // "did not find one under a name I guessed", not "there isn't one".
+        const report = await ensureClaudeHome(cfg(), {}, noKeychain);
+        expect(report.notices.find((n) => n.level === "warn")!.message).not.toMatch(
+          /you (are|ARE) not logged in|no login/,
+        );
+      });
+
+      it("does not probe at all when the credential question does not arise", async () => {
+        let probed = 0;
+        const counting: KeychainProbe = () => {
+          probed++;
+          return Promise.resolve("unknown");
+        };
+        await ensureClaudeHome(cfg(), { CLAUDE_CODE_OAUTH_TOKEN: "t" }, counting);
+        expect(probed).toBe(0);
+      });
+    });
+
+    // The probe shells out, so the one thing worth pinning without a Mac is that
+    // it cannot do anything on a machine that has no Keychain.
+    describe("probeMacosKeychainLogin", () => {
+      it("is inconclusive off darwin without spawning anything", async () => {
+        expect(await probeMacosKeychainLogin("linux")).toBe("unknown");
+        expect(await probeMacosKeychainLogin("win32")).toBe("unknown");
       });
     });
 
@@ -248,6 +304,68 @@ describe("claude-home (#620)", () => {
 
     it("is zero when the user has no Claude home at all", async () => {
       expect(await countLegacyTranscriptLinks(path.join(root, "nope"), root)).toBe(0);
+    });
+  });
+
+  // #682 — anyone who ran an affected build has one of these, and it keeps
+  // redirecting their own `claude` sessions until they remove it. The point of
+  // the finder is to name the exact path; it must not remove anything.
+  describe("findPlantedChatsLinks", () => {
+    const projectsOf = (h: string) => path.join(h, "projects");
+
+    it("finds a --here workspace's poisoned link, which the dataDir check misses", async () => {
+      // The observed shape: `--here` in ~/Code/thing puts the data dir at
+      // <dir>/.paddock but the store at <dir>/.chats, so the link target is NOT
+      // under dataDir and countLegacyTranscriptLinks reports nothing.
+      const workspace = path.join(root, "Code", "thing");
+      const dataDir = path.join(workspace, ".paddock");
+      const chats = path.join(workspace, ".chats");
+      await fs.mkdir(chats, { recursive: true });
+      const link = path.join(projectsOf(legacyHome), "-root-Code-thing");
+      await fs.symlink(chats, link);
+
+      expect(await countLegacyTranscriptLinks(legacyHome, dataDir)).toBe(0); // the gap
+      expect(await findPlantedChatsLinks(legacyHome, dataDir)).toEqual([
+        { link, target: chats, dangling: false },
+      ]);
+    });
+
+    it("flags a link whose .chats/ has already been deleted as dangling", async () => {
+      const link = path.join(projectsOf(legacyHome), "-gone");
+      await fs.symlink(path.join(root, "gone", ".chats"), link);
+      const [found] = await findPlantedChatsLinks(legacyHome, path.join(root, "data"));
+      expect(found.dangling).toBe(true);
+    });
+
+    it("ignores this instance's own residue, real dirs, and non-.chats links", async () => {
+      const dataDir = path.join(root, "data");
+      // Residue from the pre-#620 layout — already reported as harmless.
+      await fs.symlink(
+        path.join(dataDir, "projects", "a", ".chats"),
+        path.join(projectsOf(legacyHome), "-own"),
+      );
+      // The user's own transcripts, and a link that is nothing to do with us.
+      await fs.mkdir(path.join(projectsOf(legacyHome), "-real"), { recursive: true });
+      await fs.symlink(path.join(root, "elsewhere"), path.join(projectsOf(legacyHome), "-other"));
+
+      expect(await findPlantedChatsLinks(legacyHome, dataDir)).toEqual([]);
+    });
+
+    it("removes nothing it reports", async () => {
+      const chats = path.join(root, "ws", ".chats");
+      await fs.mkdir(chats, { recursive: true });
+      await fs.writeFile(path.join(chats, "s.jsonl"), "{}\n", "utf8");
+      const link = path.join(projectsOf(legacyHome), "-ws");
+      await fs.symlink(chats, link);
+
+      await findPlantedChatsLinks(legacyHome, path.join(root, "data"));
+
+      expect((await fs.lstat(link)).isSymbolicLink()).toBe(true);
+      expect(await fs.readFile(path.join(chats, "s.jsonl"), "utf8")).toBe("{}\n");
+    });
+
+    it("never throws when the user has no Claude home at all", async () => {
+      expect(await findPlantedChatsLinks(path.join(root, "nope"), root)).toEqual([]);
     });
   });
 });

@@ -26,7 +26,12 @@ describe("paddock CLI: parseArgs", () => {
       verbose: false,
       help: false,
       version: false,
+      isolatedClaudeHome: false,
     });
+  });
+
+  it("parses --isolated-claude-home (#683's opt-out)", () => {
+    expect(parseArgs(["--isolated-claude-home"]).isolatedClaudeHome).toBe(true);
   });
 
   it("parses long forms", () => {
