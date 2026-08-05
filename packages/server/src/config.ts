@@ -45,6 +45,11 @@ import {
   isKnownInstructionsMode,
 } from "./claude-instructions.js";
 import { type HooksMode, DEFAULT_HOOKS_MODE, isKnownHooksMode } from "./claude-settings.js";
+import {
+  type McpServersMode,
+  DEFAULT_MCP_SERVERS_MODE,
+  isKnownMcpServersMode,
+} from "./claude-mcp.js";
 import { DEFAULT_ENVIRONMENT_PROMPT } from "./environment-prompt.js";
 import { type RecoveryConfig, DEFAULT_RECOVERY } from "./recovery-config.js";
 import { type CurationConfig, DEFAULT_CURATION } from "./curation-config.js";
@@ -129,10 +134,11 @@ export interface BrandConfig {
  * guarantee an operator should be able to read straight off the config file —
  * **nothing outside the data dir is read or written**.
  *
- * `transcripts`, `credentials`, `instructions` and `hooks` exist so far.
- * `mcpServers` is the remaining lever in #691's sequence; it will be a key here
- * rather than another meaning welded onto the Claude home, which is how the three
- * incidents (#682, #683, #689) that motivated this all happened.
+ * All five levers of #691's sequence now exist. Each is a key here rather than
+ * another meaning welded onto the Claude home, which is how the three incidents
+ * (#682, #683, #689) that motivated this all happened. What remains of #691 is
+ * step 6 — a place for a user to declare their OWN MCP servers, which is a
+ * different question from whose existing ones this instance borrows.
  */
 export interface ClaudeConfig {
   /**
@@ -177,6 +183,17 @@ export interface ClaudeConfig {
    * here that governs code execution rather than data — see `claude-settings.ts`.
    */
   hooks: HooksMode;
+  /**
+   * Whose MCP servers this instance's keepers get. `own` (default) attaches only
+   * the servers paddock itself provides; `host` also attaches the ones declared
+   * in the user's `~/.claude.json` — the top-level `mcpServers` plus any scoped
+   * to a project's own working directory.
+   *
+   * Driven by `PADDOCK_CLAUDE_MCP_SERVERS`, then the `claude.mcpServers:` key.
+   * The one lever whose source is NOT inside `~/.claude` — see `claude-mcp.ts`
+   * for why that made it break silently and separately from the other four.
+   */
+  mcpServers: McpServersMode;
 }
 
 /** OpenAPI / Swagger-UI reference surface config (see PaddockConfig.openapi). */
@@ -507,6 +524,7 @@ export interface PaddockConfigFile {
     credentials?: string;
     instructions?: string;
     hooks?: string;
+    mcpServers?: string;
   };
   auth?: {
     mode?: string;
@@ -1338,7 +1356,9 @@ export function userClaudeHome(): string {
  * `hooks` is the one where falling back on a typo is load-bearing in the other
  * direction: `PADDOCK_CLAUDE_HOOKS=hots` isolates rather than executing the
  * host's shell commands, which is the only acceptable way for a security lever
- * to misread its input.
+ * to misread its input. `mcpServers` follows the same direction for a weaker
+ * reason — an MCP server is a process paddock spawns, so a typo that attaches
+ * nothing is better than one that attaches the user's whole set unasked.
  */
 function loadClaudeConfig(file: PaddockConfigFile["claude"] = {}): ClaudeConfig {
   const transcripts = (
@@ -1351,6 +1371,9 @@ function loadClaudeConfig(file: PaddockConfigFile["claude"] = {}): ClaudeConfig 
     envOpt("PADDOCK_CLAUDE_INSTRUCTIONS") ?? fileOpt(file.instructions)
   )?.toLowerCase();
   const hooks = (envOpt("PADDOCK_CLAUDE_HOOKS") ?? fileOpt(file.hooks))?.toLowerCase();
+  const mcpServers = (
+    envOpt("PADDOCK_CLAUDE_MCP_SERVERS") ?? fileOpt(file.mcpServers)
+  )?.toLowerCase();
   return {
     transcripts:
       transcripts && isKnownTranscriptsMode(transcripts) ? transcripts : DEFAULT_TRANSCRIPTS_MODE,
@@ -1361,6 +1384,8 @@ function loadClaudeConfig(file: PaddockConfigFile["claude"] = {}): ClaudeConfig 
         ? instructions
         : DEFAULT_INSTRUCTIONS_MODE,
     hooks: hooks && isKnownHooksMode(hooks) ? hooks : DEFAULT_HOOKS_MODE,
+    mcpServers:
+      mcpServers && isKnownMcpServersMode(mcpServers) ? mcpServers : DEFAULT_MCP_SERVERS_MODE,
   };
 }
 

@@ -712,6 +712,7 @@ describe("loadPaddockConfig: the claude: block (#691)", () => {
     "PADDOCK_CLAUDE_CREDENTIALS",
     "PADDOCK_CLAUDE_INSTRUCTIONS",
     "PADDOCK_CLAUDE_HOOKS",
+    "PADDOCK_CLAUDE_MCP_SERVERS",
     "CLAUDE_HOME",
     "CLAUDE_CONFIG_DIR",
     "HOME",
@@ -815,15 +816,35 @@ describe("loadPaddockConfig: the claude: block (#691)", () => {
     expect(cfg.claude.instructions).toBe("own");
   });
 
-  it("keeps all four keys independent — that separation is the whole point", () => {
+  // #691 step 5, the last lever. Defaults `own` like the other three; the typo
+  // direction matters because an MCP server is a process paddock spawns.
+  it("defaults mcpServers to own", () => {
+    expect(loadPaddockConfig().claude.mcpServers).toBe("own");
+  });
+
+  it("reads mcpServers: host from the file, and env still wins over it", () => {
+    writeConfig("claude:\n  mcpServers: host\n");
+    expect(loadPaddockConfig().claude.mcpServers).toBe("host");
+    process.env.PADDOCK_CLAUDE_MCP_SERVERS = "own";
+    expect(loadPaddockConfig().claude.mcpServers).toBe("own");
+  });
+
+  it("falls back to own on an unrecognised mcpServers value", () => {
+    writeConfig("claude:\n  mcpServers: hosts\n");
+    expect(loadPaddockConfig().claude.mcpServers).toBe("own");
+  });
+
+  it("keeps all five keys independent — that separation is the whole point", () => {
     writeConfig(
-      "claude:\n  transcripts: host\n  credentials: own\n  instructions: host\n  hooks: own\n",
+      "claude:\n  transcripts: host\n  credentials: own\n  instructions: host\n" +
+        "  hooks: own\n  mcpServers: host\n",
     );
     const cfg = loadPaddockConfig();
     expect(cfg.claude.transcripts).toBe("host");
     expect(cfg.claude.credentials).toBe("own");
     expect(cfg.claude.instructions).toBe("host");
     expect(cfg.claude.hooks).toBe("own");
+    expect(cfg.claude.mcpServers).toBe("host");
   });
 
   // CLAUDE_HOME is deleted (#691). It is not an error — retired settings are

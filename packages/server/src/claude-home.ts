@@ -96,6 +96,12 @@ export const CREDENTIAL_ENTRY = ".credentials.json";
  * Deliberately NOT bridged in any mode: `projects/` (that's the whole point), and
  * everything that is per-instance runtime state — `todos/`, `shell-snapshots/`,
  * `statsig/`, `sessions/`. Those are exactly what should be per-instance.
+ *
+ * The fifth lever, `claude.mcpServers`, has NO row here on purpose: MCP servers
+ * are declared in `~/.claude.json`, which is a sibling of the home rather than an
+ * entry inside it, so it is not bridgeable at all — paddock reads it and passes
+ * the servers programmatically (`claude-mcp.ts`). That asymmetry is the reason
+ * MCP inheritance broke separately from everything in this table.
  */
 export const BRIDGEABLE_ENTRIES: readonly string[] = [
   SETTINGS_ENTRY,

@@ -24,6 +24,7 @@ import {
   countLegacyTranscriptLinks,
   findPlantedChatsLinks,
 } from "./claude-home.js";
+import { loadHostMcpSource } from "./claude-mcp.js";
 import { installHerdctlLogBridge } from "./agent-errors.js";
 import { ProjectStore, ROOT_KEY } from "./projects.js";
 import { AttachmentStore } from "./attachments.js";
@@ -152,7 +153,14 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   const projects = new ProjectStore(cfg.projectsRoot);
   await projects.init();
 
-  const herdctl = new HerdctlService(cfg);
+  // The user's own MCP servers, under `claude.mcpServers: host` (#691 step 5).
+  // Read BEFORE the service is constructed because every keeper's agent config
+  // carries them, and read exactly once — a `.claude.json` that grows a server
+  // mid-run is picked up at the next restart, which is what the notice says.
+  // Under `own` (the default) the file is not opened at all.
+  const hostMcp = await loadHostMcpSource(cfg);
+  for (const notice of hostMcp.notices) app.log[notice.level](notice.message);
+  const herdctl = new HerdctlService(cfg, hostMcp.source);
   const git = new GitService(cfg.projectsRoot, cfg.gitAuthor);
   const githubAuth = new GithubAuth(path.join(cfg.dataDir, "github-auth.json"), cfg.githubClientId);
   const archive = new ArchiveStore(cfg.dataDir);

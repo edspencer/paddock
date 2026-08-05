@@ -174,6 +174,7 @@ claude:
   credentials: host   # own | host — default host
   instructions: own   # own | host — default own
   hooks: own          # own | host — default own
+  mcpServers: own     # own | host — default own
 ```
 
 ### `transcripts`
@@ -319,8 +320,72 @@ they are still inherited. Several of those are how a corporate login *works*, so
 dropping them under a key named `hooks` would break authentication for people who
 did nothing wrong; where they belong is an open question (#691).
 
-Still not split out, and inherited with the Claude home until it is: MCP servers,
-tracked in #691.
+### `mcpServers`
+
+The MCP servers you have added with `claude mcp add` — the external tools your
+own Claude Code can call.
+
+- **`own`** (default) — your agents get only the servers Paddock provides itself:
+  `send_file`, the optional [self-management tools](/reference/self-mcp/), and the
+  optional browser server. Nothing of yours is read.
+- **`host`** — Paddock also attaches the servers declared in your
+  `~/.claude.json`: the top-level `mcpServers` (user scope, everywhere) plus any
+  under `projects.<absolute-dir>.mcpServers` (directory scope), which a project
+  gets only when that directory is its own working directory. The boot log names
+  every server it attached.
+
+**This key is the odd one out, and the path is why.** MCP servers are not
+declared inside `~/.claude` at all — they live in **`~/.claude.json`**, a sibling
+*file* next to that directory, because Claude Code resolves it as
+`<config-dir-or-home>/.claude.json`. So the config bridge the other keys are built
+on could never have reached them, no matter how it was configured, and MCP
+inheritance broke silently and separately from everything else.
+
+`host` is therefore a **read**, not a link: Paddock reads that file and passes the
+servers to the runtime. It deliberately does not symlink it, because Claude Code
+*writes* to it — per-project trust, server approvals, migration flags — and
+bridging it would mean a Paddock instance mutating your real config, which is the
+thing this whole block exists to prevent.
+
+The file is read **once, at startup**. Add a server and restart Paddock to pick it
+up.
+
+:::caution[Two things that cannot be carried through yet]
+Paddock passes servers to the engine, and the engine's MCP schema has fields for
+`command`, `args`, `env` and `url` only. Two keys of Claude Code's own MCP config
+have nowhere to go, so Paddock warns about each affected server by name at
+startup rather than letting it fail mysteriously later:
+
+- **`headers`** — a remote server authenticated by a bearer header arrives
+  without it. Worse than it sounds: MCP OAuth tokens are stored under a key
+  derived from a hash of `{type, url, headers}`, so a stripped header also means
+  the stored token is not found.
+- **`type: sse`** — every `url` server is connected to as HTTP.
+
+A stdio server (`command` + `args` + `env`), which is most of them, is carried
+exactly. A server declaring neither a `command` nor a `url` is skipped entirely.
+:::
+
+**MCP logins do follow `credentials`.** An OAuth-authenticated server's tokens
+live under an `mcpOAuth` key in the *same* credential store as your Anthropic
+login — `~/.claude/.credentials.json`, or the one `Claude Code-credentials`
+Keychain item — so `credentials: host` (the default) carries them, and
+`credentials: own` means re-authorising inside Paddock. There is no separate MCP
+token store.
+
+**Plugins are not covered by this key.** A plugin can contribute MCP servers, and
+none of them reach Paddock. The plugin files are bridged by `instructions: host`,
+but what switches a plugin on is `enabledPlugins` in the Claude home's
+`settings.json`, and Paddock's agents run with only the *project* settings source
+loaded — so the flag is never read. The engine also has no way to pass a plugin
+path per session. Tracked in #691; until then, a plugin's MCP server has to be
+declared directly with `claude mcp add`.
+
+**Declaring a server that is only for Paddock** is not this key — it borrows
+servers you already have. Two things work today: `claude mcp add` inside the
+instance (`CLAUDE_CONFIG_DIR=<data-dir>/claude-home claude mcp add …`), or a
+per-project `.mcp.json` checked into the repo. A first-class `mcpServers:` block
+in this file is tracked in #691.
 
 ## Capability & safety gates worth setting here
 
