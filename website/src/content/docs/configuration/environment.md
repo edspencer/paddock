@@ -287,6 +287,8 @@ non-numeric, blank) falls back to the default rather than failing startup.
 | `CLAUDE_CODE_OAUTH_TOKEN` | — | conditional | Claude **Max plan** auth. Read from the server's environment and passed through to the `claude` process the runtime spawns; never written to config. Provide this **or** `ANTHROPIC_API_KEY`. |
 | `ANTHROPIC_API_KEY` | — | conditional | Claude **API-key** auth (API pricing). Alternative to `CLAUDE_CODE_OAUTH_TOKEN`. |
 | `LOG_LEVEL` | `info` | no | Fastify/pino log level (`fatal`…`trace`). |
+| `HERDCTL_LOG_LEVEL` | `info` | no | `@herdctl/core`'s own logger (the `[fleet-manager]` / `[CLIRuntime]` lines), which pino's level cannot reach. Paddock routes these through a handler that cuts the reconstructed `claude` argv out of agent-failure messages — a `claude -p` command line carries the whole system prompt and is noise in a log (#684). Set this to `debug` to get the full command back. |
+| `PADDOCK_QUIET` | — | no | Set by the `paddock` CLI unless `--verbose`. Collapses a *recognised*, non-fatal background failure (no login, no credit, no `claude` on PATH) to one actionable line instead of a stack trace; an unrecognised failure always keeps its full detail. A level alone could not do this — these are logged at `error`, above every threshold. |
 
 > Which auth you use is **independent of the runtime** — either credential works
 > on both the SDK runtime (chats) and the CLI runtime (the sweeper, triggers,

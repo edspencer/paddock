@@ -24,6 +24,7 @@ import {
   countLegacyTranscriptLinks,
   findPlantedChatsLinks,
 } from "./claude-home.js";
+import { installHerdctlLogBridge } from "./agent-errors.js";
 import { ProjectStore, ROOT_KEY } from "./projects.js";
 import { AttachmentStore } from "./attachments.js";
 import { HerdctlService } from "./herdctl.js";
@@ -114,6 +115,12 @@ function hasFileExtension(pathname: string): boolean {
  */
 export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   const cfg = opts.config ?? loadPaddockConfig();
+
+  // Shape the engine's own logging before anything can start a job (#684). Two
+  // of the three sources of the credential-failure stack-trace wall are inside
+  // `@herdctl/core`, and `setLogHandler` is the supported way to reach them from
+  // out here. `PADDOCK_QUIET` is set by `cli/paddock.ts` unless `--verbose`.
+  installHerdctlLogBridge({ quiet: (process.env.PADDOCK_QUIET ?? "") !== "" });
 
   const app = Fastify({
     logger: { level: cfg.logLevel },

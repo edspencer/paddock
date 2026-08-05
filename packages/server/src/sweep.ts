@@ -39,6 +39,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { HerdctlService } from "./herdctl.js";
 import { keeperAgentName } from "./herdctl.js";
+import { classifyAgentError } from "./agent-errors.js";
 import type { ProjectStore, Project } from "./projects.js";
 import {
   DEFAULT_CURATION,
@@ -266,7 +267,17 @@ export class SweepService {
         lastSweptSessionMtime: wm.lastSweptSessionMtime,
         lastSweptAt: Date.now(),
       });
-      this.log.error({ err, slug }, "sweep: sweeper run errored (non-fatal)");
+      // #684: this is a best-effort background task whose failure is already
+      // labelled non-fatal, so a recognised cause gets ONE line at warn — no
+      // `err`, because pino serialising it is what put four copies of the
+      // curator system prompt on a first-time user's terminal. An unrecognised
+      // failure keeps the full object: that is the case somebody needs it.
+      const cause = classifyAgentError(err);
+      if (cause === undefined) {
+        this.log.error({ err, slug }, "sweep: sweeper run errored (non-fatal)");
+      } else {
+        this.log.warn({ slug }, `sweep: skipped, ${cause} (non-fatal — chat is unaffected)`);
+      }
     } finally {
       this.running.delete(slug);
     }

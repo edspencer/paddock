@@ -288,9 +288,17 @@ async function main(): Promise<void> {
   //                      `[fleet-manager] …` lines via console.info — pino's
   //                      level cannot reach those.
   // An explicit value for either is left alone, and `--verbose` skips both.
+  // A LEVEL is not enough, which is what #684 was about. Background job failures
+  // are logged at `error` — level 50, above every threshold either variable can
+  // set — and one of them is a bare `console.error` inside the engine. So quiet
+  // mode is also stated as a fact the server can act on: `agent-errors.ts` reads
+  // this to collapse a recognised, non-fatal failure to its cause instead of
+  // printing a stack trace with 2 KB of system prompt in it. Internal to the
+  // CLI; `--verbose` leaves it unset and nothing is suppressed.
   if (!opts.verbose) {
     if (process.env.LOG_LEVEL === undefined) process.env.LOG_LEVEL = "warn";
     if (process.env.HERDCTL_LOG_LEVEL === undefined) process.env.HERDCTL_LOG_LEVEL = "warn";
+    process.env.PADDOCK_QUIET = "1";
   }
 
   // No credential preflight here: `ensureClaudeHome` (claude-home.ts) already
