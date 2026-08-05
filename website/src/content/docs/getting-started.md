@@ -32,9 +32,22 @@ it touching your code:
 - creates **`.chats/`** for transcripts
 - appends those two entries to **`.gitignore`**
 
-**Your `~/.claude` is not touched.** Sessions found there are *offered* for import —
-nothing is moved, copied or linked until you confirm, and the originals stay where they
-are afterwards, so your terminal `claude` keeps working exactly as before.
+**Nothing is written into your `~/.claude`, ever** — no file, no symlink, in any
+configuration.
+
+What you see *inside* Paddock depends on how it authenticated, and it says which on
+startup:
+
+- **With a token in the environment** (`CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY`),
+  or with `--isolated-claude-home`, Paddock uses its own Claude home under `.paddock/`.
+  Sessions found in `~/.claude` are *offered* for import — nothing is moved, copied or
+  linked until you confirm, and the originals stay put.
+- **With no token** it runs against your own `~/.claude`, so it uses the Claude Code
+  login already on the machine — including one held in the **macOS Keychain**, which
+  cannot be shared any other way. Your existing sessions for the directory then just
+  open, and new ones are written where Claude Code has always written them rather than
+  into `.chats/`. Read-only as far as your history goes; your terminal `claude` keeps
+  working exactly as before either way.
 
 To undo it completely: `rm -rf .paddock .chats` and drop the two `.gitignore` lines.
 :::
@@ -56,6 +69,9 @@ Useful flags:
       --here              Open the CURRENT directory as the workspace
   -o, --open              Open the app in your browser once it is listening
       --verbose           Show the server's own logs (quiet by default)
+      --isolated-claude-home
+                          Give Paddock its own Claude home instead of using
+                          the login and history in ~/.claude
 ```
 
 Credentials work the same as everywhere else — see

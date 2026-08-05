@@ -24,6 +24,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { HERE_MARKER, isHereWorkspace, countClaudeSessions, ensureGitignored } from "./here.js";
+import { chooseClaudeHome, userClaudeHomePath } from "./claude-home-choice.js";
 import {
   type CliOptions,
   CliError,
@@ -125,13 +126,21 @@ function noteFirstRun(dataDir: string): void {
  * effects are announced rather than asked about. Printed only on the first
  * `--here` in a directory; resuming an already-opened one says nothing.
  */
-function announceHereConsent(dir: string, dataDir: string): void {
+function announceHereConsent(dir: string, dataDir: string, inheritedHome?: string): void {
   console.log(
     [
       "",
       `  Opening ${dir} as a Paddock workspace.`,
       `    · ${path.relative(dir, dataDir) || HERE_MARKER}/ and .chats/ created here, and added to .gitignore`,
-      "    · ~/.claude sessions for this directory are offered for import (nothing is moved)",
+      // Continuity (#683) changes this line's truth, so it must not be a
+      // constant. Running against `~/.claude` means the directory's existing
+      // sessions are simply THERE — paddock reads the home they already live in
+      // — rather than being offered for import. Still nothing written: no
+      // symlink is planted in a home paddock does not own (#682), and new
+      // transcripts land where Claude Code has always put them.
+      inheritedHome === undefined
+        ? "    · ~/.claude sessions for this directory are offered for import (nothing is moved)"
+        : `    · your existing ${inheritedHome} sessions for this directory open directly (nothing is moved, and new ones stay there too)`,
       "  Later runs here resume it — no flag needed.",
       "",
     ].join("\n"),
@@ -222,6 +231,20 @@ async function main(): Promise<void> {
   const resuming = !opts.here && isHereWorkspace(cwd);
   const hereMode = opts.here || resuming;
 
+  // Credential continuity (#683). Decided HERE, in the interactive CLI, and
+  // nowhere else: `resolveClaudeHome`'s precedence is untouched, so a server, a
+  // container and `node dist/index.js` all keep the owned home. All this does is
+  // set the same `CLAUDE_HOME` a user could set by hand — the difference is that
+  // on macOS they currently have no way to know they need to.
+  const userHome = userClaudeHomePath(os.homedir());
+  const homeChoice = chooseClaudeHome({
+    env: process.env,
+    userClaudeHome: userHome,
+    userHomeExists: fs.existsSync(userHome),
+    forceIsolated: opts.isolatedClaudeHome,
+  });
+  if (homeChoice.claudeHome !== undefined) process.env.CLAUDE_HOME = homeChoice.claudeHome;
+
   // Apply CLI defaults as env vars. This is the whole integration surface: the
   // server resolves config inside `buildApp()`, so anything set before the
   // dynamic import below is picked up with no special-casing in config.ts.
@@ -233,7 +256,7 @@ async function main(): Promise<void> {
   );
 
   if (hereMode) {
-    if (!resuming) announceHereConsent(cwd, dataDir);
+    if (!resuming) announceHereConsent(cwd, dataDir, homeChoice.claudeHome);
     // The root workspace IS `projectsRoot` (its key is ""), so pointing this at
     // the user's directory makes that directory the workspace. No schema change,
     // no new project type — see cli/here.ts.
@@ -266,11 +289,11 @@ async function main(): Promise<void> {
 
   // No credential preflight here: `ensureClaudeHome` (claude-home.ts) already
   // warns at boot, and it is the only check that can be right. It tests the home
-  // paddock will ACTUALLY use — `<dataDir>/claude-home` since #620 — after the
-  // bridge has symlinked in any `~/.claude/.credentials.json`, and its remedy
-  // names the `CLAUDE_CONFIG_DIR` keychain scoping that is the real reason a
-  // logged-in user can still land with no credentials. It logs at `warn`, which
-  // survives the quiet default set just above.
+  // paddock will ACTUALLY use — after the bridge has symlinked in any
+  // `~/.claude/.credentials.json`, and, on darwin, after probing the Keychain for
+  // the login `CLAUDE_CONFIG_DIR` scoping hides (#683). It logs at `warn`, which
+  // survives the quiet default set just above. Continuity (chosen above) usually
+  // means it has nothing to say, because there is nothing left to bridge.
 
   const port = process.env.PORT ?? "4000";
   const host = process.env.HOST ?? "127.0.0.1";
@@ -293,6 +316,12 @@ async function main(): Promise<void> {
       "",
       `  Paddock is running at ${url}`,
       `  Workspace: ${hereMode ? cwd : dataDir}${resuming ? "  (resumed)" : ""}`,
+      // Same rule as the workspace line: running against somebody's own Claude
+      // home is a real difference in what this instance reads and writes, so it
+      // is stated every run rather than only on the one that decided it.
+      ...(homeChoice.claudeHome !== undefined
+        ? [`  Claude home: ${homeChoice.claudeHome}  (yours — sessions and login shared)`]
+        : []),
       "  Press Ctrl-C to stop.",
       "",
     ].join("\n"),
