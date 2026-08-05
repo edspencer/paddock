@@ -94,7 +94,6 @@ export async function startTestApp(opts: StartOptions = {}): Promise<TestApp> {
     PADDOCK_STATE_DIR: process.env.PADDOCK_STATE_DIR,
     PADDOCK_HERDCTL_CONFIG: process.env.PADDOCK_HERDCTL_CONFIG,
     PADDOCK_WEB_DIST: process.env.PADDOCK_WEB_DIST,
-    CLAUDE_HOME: process.env.CLAUDE_HOME,
     CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR,
     PADDOCK_FAKE_SCRIPT: process.env.PADDOCK_FAKE_SCRIPT,
     PADDOCK_FAKE_SWEEP: process.env.PADDOCK_FAKE_SWEEP,
@@ -120,11 +119,11 @@ export async function startTestApp(opts: StartOptions = {}): Promise<TestApp> {
   process.env.HOST = "127.0.0.1";
   delete process.env.PADDOCK_HOST;
   delete process.env.PADDOCK_DANGEROUSLY_ALLOW_OPEN;
-  // Both Claude-home overrides are cleared so the suite exercises the DEFAULT
-  // resolution — `<dataDir>/claude-home` since #620. `CLAUDE_CONFIG_DIR` matters
-  // as much as `CLAUDE_HOME` now that it is honoured (and a dev box may export
-  // it), or the whole suite would silently run against the ambient home.
-  delete process.env.CLAUDE_HOME;
+  // Cleared so the suite exercises the DEFAULT resolution —
+  // `<dataDir>/claude-home`. A dev box may export `CLAUDE_CONFIG_DIR`, and it is
+  // honoured (#691), so without this the whole suite would silently run against
+  // the ambient home — or, if that home is the user's own `~/.claude`, refuse to
+  // boot at all.
   delete process.env.CLAUDE_CONFIG_DIR;
   // Hermetic drive mode: this integration harness drives turns through a fake
   // `claude` on PATH, which only the CLI (batch) runtime uses — the SDK/session

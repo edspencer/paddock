@@ -30,7 +30,13 @@
  * what a user wants; it is not paddock relocating their data behind their back.
  * The thing #620 exists to stop — `ensureProjectChats` copying a user's
  * transcripts out and then `fs.rm`-ing the originals, unprompted, inside a bare
- * `catch {}` — is gone, gated on `PaddockConfig.ownsClaudeHome`.
+ * `catch {}` — is gone: paddock's home is never the user's, so the directory it
+ * migrates can only be its own (#691, `resolveClaudeHome`).
+ *
+ * The one thing that DOES write under `~/.claude` is `claude.transcripts: host`,
+ * which creates the encoded folder its symlink points at. That is the user
+ * asking for their transcripts to be shared, by name, in a config file — see
+ * `ensureProjectChats`.
  */
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -170,7 +176,7 @@ async function exists(p: string): Promise<boolean> {
  * same failure mode `ensureProjectChats` has always had.
  */
 export async function ensureClaudeHome(
-  cfg: Pick<PaddockConfig, "claudeHome" | "legacyClaudeHome" | "ownsClaudeHome">,
+  cfg: Pick<PaddockConfig, "claudeHome" | "legacyClaudeHome">,
   env: NodeJS.ProcessEnv = process.env,
   probeKeychain: KeychainProbe = probeMacosKeychainLogin,
 ): Promise<ClaudeHomeReport> {
@@ -188,16 +194,9 @@ export async function ensureClaudeHome(
     return report;
   }
 
-  // Running in the user's own home is the pre-#620 layout: nothing to bridge
-  // (the files are already there) and nothing to warn about.
-  if (!cfg.ownsClaudeHome) {
-    report.notices.push({
-      level: "info",
-      message: `Claude home: ${cfg.claudeHome} (the user's own — paddock is not managing it)`,
-    });
-    return report;
-  }
-
+  // No "is this home ours?" branch any more (#691): it always is, and a config
+  // that resolves the home to `~/.claude` never gets this far — `resolveClaudeHome`
+  // refuses to start. So the bridge below runs unconditionally.
   for (const entry of BRIDGED_ENTRIES) {
     const target = path.join(cfg.legacyClaudeHome, entry);
     const link = path.join(cfg.claudeHome, entry);
@@ -252,15 +251,15 @@ export async function ensureClaudeHome(
             `macOS Keychain, and Claude Code files it under a service name derived from whether ` +
             `CLAUDE_CONFIG_DIR is set — paddock sets it, to ${cfg.claudeHome}, so it looks under ` +
             `a different name. A Keychain entry cannot be bridged the way ~/.claude files are. ` +
-            `Fix it either way: run \`CLAUDE_CONFIG_DIR=${cfg.claudeHome} claude login\` to log ` +
-            `in for this home too, or set CLAUDE_HOME=${cfg.legacyClaudeHome} (what \`paddock\` ` +
-            `does by default) to run against your own home and use the login you already have.`
+            `Fix it by logging in for this home too: ` +
+            `\`CLAUDE_CONFIG_DIR=${cfg.claudeHome} claude login\`. (Sharing the Keychain login ` +
+            `itself is the \`claude.credentials\` lever, still to come — #691.)`
           : `no Claude credentials found for ${cfg.claudeHome}: no .credentials.json and no ` +
             `${TOKEN_ENV_VARS.join("/")} in the environment. Claude Code scopes its credential ` +
             `store to CLAUDE_CONFIG_DIR, so a login stored in the OS keychain against the ` +
-            `default home will NOT be found here. If turns fail with "Not logged in", either ` +
-            `re-run \`claude login\` with CLAUDE_CONFIG_DIR=${cfg.claudeHome}, or set ` +
-            `CLAUDE_HOME=${cfg.legacyClaudeHome} to keep using the previous layout.`,
+            `default home will NOT be found here. If turns fail with "Not logged in", re-run ` +
+            `\`claude login\` with CLAUDE_CONFIG_DIR=${cfg.claudeHome}, or put a token in the ` +
+            `environment.`,
     });
   }
 
@@ -334,6 +333,14 @@ export function legacySourcePath(legacyHome: string, folderName: string): string
  * mirroring them would re-offer paddock's own chats as "adoptable". That also
  * makes the leftovers from before this change inert rather than confusing.
  *
+ * A folder paddock's own home ALREADY links to directly is skipped for the same
+ * reason. That is the `claude.transcripts: host` case (#691): there the folder in
+ * the user's home is a real directory that paddock itself writes through, so
+ * mirroring it would offer every project's own live chats back as importable —
+ * the #658 mistake with the arrow reversed. (Adoption de-duplicates sources by
+ * resolved real path, so this was noise rather than breakage; it is skipped here
+ * because a link paddock plants and then mirrors is confusing to find on disk.)
+ *
  * Idempotent and never throws. Returns every mirror it maintains, not only the
  * ones planted this call, so a caller can rely on the mapping after any call.
  */
@@ -353,6 +360,11 @@ export async function mirrorLegacyTranscriptFolders(
       const legacyDir = path.join(from, folderName);
       const st = await fs.lstat(legacyDir).catch(() => null);
       if (!st?.isDirectory()) continue; // skips files AND paddock's old symlinks
+      // Already reachable directly from paddock's own home (`transcripts: host`)?
+      // Then it is not an outside source to import; it is where this instance's
+      // own chats live.
+      const direct = await fs.readlink(path.join(to, folderName)).catch(() => null);
+      if (direct !== null && path.resolve(to, direct) === path.resolve(legacyDir)) continue;
       const engineCwd = legacySourcePath(legacyHome, folderName);
       // encodePathForCli, not a local encoder: this name must be byte-identical
       // to what the engine derives from `engineCwd`, including the truncate+hash

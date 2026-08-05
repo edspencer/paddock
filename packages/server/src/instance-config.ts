@@ -36,6 +36,7 @@ import { DEFAULT_RECOVERY } from "./recovery-config.js";
 import { DEFAULT_ATTACHMENTS, sanitizeAllowedTypes } from "./attachments-config.js";
 import { DEFAULT_CURATION } from "./curation-config.js";
 import { DEFAULT_ENVIRONMENT_PROMPT } from "./environment-prompt.js";
+import { DEFAULT_TRANSCRIPTS_MODE } from "./transcripts.js";
 import { type PaddockConfig } from "./config.js";
 
 /** Groups the Settings screen renders, in display order. */
@@ -297,6 +298,13 @@ export const FIELDS: readonly FieldSpec[] = [
   { key: "stateDir", group: "advanced", label: "State dir", type: "string", envVars: ["PADDOCK_STATE_DIR"], default: null, editable: false },
   { key: "herdctlConfigPath", group: "advanced", label: "herdctl config path", type: "string", envVars: ["PADDOCK_HERDCTL_CONFIG"], default: null, editable: false },
   { key: "webDist", group: "advanced", label: "Web dist", type: "string", envVars: ["PADDOCK_WEB_DIST"], default: null, editable: false },
+  // What this instance shares with the host's Claude Code (#691). READ-ONLY on
+  // purpose: `host` means paddock writes to the user's real transcript files,
+  // and the symlinks that implement it are planted at agent-registration time —
+  // a toggle that silently does nothing until the next boot would be worse than
+  // no toggle. It is surfaced because "what is this instance sharing?" should be
+  // answerable without reading a YAML file.
+  { key: "claude.transcripts", group: "advanced", label: "Transcripts", help: "own = Paddock's own, in each project's .chats/; host = your ~/.claude transcripts, shared live.", type: "string", envVars: ["PADDOCK_CLAUDE_TRANSCRIPTS"], default: DEFAULT_TRANSCRIPTS_MODE, editable: false },
   // Auth: read-only in v1 (misconfig can lock everyone out — issue #385). Only
   // the mode is surfaced; JWT/JWKS internals stay out of the API.
   { key: "auth.mode", group: "advanced", label: "Auth mode", type: "string", envVars: ["PADDOCK_AUTH_MODE"], default: "none", editable: false, sensitive: true },

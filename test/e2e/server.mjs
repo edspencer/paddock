@@ -96,7 +96,7 @@ const env = {
   PADDOCK_WEB_DIST: webDist,
   LOG_LEVEL: process.env.LOG_LEVEL || "warn",
 };
-delete env.CLAUDE_HOME; // fall back to $HOME/.claude (matches the CLI runtime)
+delete env.CLAUDE_CONFIG_DIR; // use paddock's own <dataDir>/claude-home (#691)
 
 if (live) {
   // Live: keep the real claude on PATH, require the Max token.

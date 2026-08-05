@@ -24,7 +24,6 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { HERE_MARKER, isHereWorkspace, countClaudeSessions, ensureGitignored } from "./here.js";
-import { chooseClaudeHome, userClaudeHomePath } from "./claude-home-choice.js";
 import {
   type CliOptions,
   CliError,
@@ -126,27 +125,20 @@ function noteFirstRun(dataDir: string): void {
  * effects are announced rather than asked about. Printed only on the first
  * `--here` in a directory; resuming an already-opened one says nothing.
  */
-function announceHereConsent(dir: string, dataDir: string, inheritedHome?: string): void {
+function announceHereConsent(dir: string, dataDir: string): void {
   console.log(
     [
       "",
       `  Opening ${dir} as a Paddock workspace.`,
       `    · ${path.relative(dir, dataDir) || HERE_MARKER}/ and .chats/ created here, and added to .gitignore`,
-      // Import consent is UNCHANGED by continuity, which is worth stating
-      // because it is not what you would predict: reading the user's home does
-      // not turn their sessions into paddock's chats. Verified against a running
-      // instance — a pre-existing transcript for the directory comes back from
-      // `adoptable-chats` (offered) and NOT from `chats` (listed), because
-      // session discovery is attribution-based, not "whatever is in the folder".
-      // So #663's confirmation still gates every import.
-      //
-      // What continuity DOES change is where transcripts live: with no symlink
-      // planted in a home paddock does not own (#682), Claude Code keeps writing
-      // to `~/.claude/projects/<encoded-cwd>/` and `.chats/` stays empty.
-      inheritedHome === undefined
-        ? "    · ~/.claude sessions for this directory are offered for import (nothing is moved)"
-        : `    · running against your ${inheritedHome}: sessions there are offered for import ` +
-          `(nothing is moved), and new transcripts stay there rather than in .chats/`,
+      // Worth stating because it is not what you would predict: paddock reading
+      // the home a user's sessions live in does not turn them into paddock's
+      // chats. Verified against a running instance — a pre-existing transcript
+      // for the directory comes back from `adoptable-chats` (offered) and NOT
+      // from `chats` (listed), because session discovery is attribution-based,
+      // not "whatever is in the folder". So #663's confirmation still gates
+      // every import.
+      "    · ~/.claude sessions for this directory are offered for import (nothing is moved)",
       "  Later runs here resume it — no flag needed.",
       "",
     ].join("\n"),
@@ -160,7 +152,9 @@ function announceHereConsent(dir: string, dataDir: string, inheritedHome?: strin
  * transcripts and prints, and changes nothing on disk.
  */
 function offerHereIfSessionsExist(dir: string): void {
-  const claudeHome = process.env.CLAUDE_HOME ?? path.join(os.homedir(), ".claude");
+  // The USER's own home, always: this is looking for `claude` history they made
+  // in a terminal, which is by definition in `~/.claude` and never in paddock's.
+  const claudeHome = path.join(os.homedir(), ".claude");
   let sessions = 0;
   try {
     sessions = countClaudeSessions(claudeHome, dir);
@@ -237,19 +231,14 @@ async function main(): Promise<void> {
   const resuming = !opts.here && isHereWorkspace(cwd);
   const hereMode = opts.here || resuming;
 
-  // Credential continuity (#683). Decided HERE, in the interactive CLI, and
-  // nowhere else: `resolveClaudeHome`'s precedence is untouched, so a server, a
-  // container and `node dist/index.js` all keep the owned home. All this does is
-  // set the same `CLAUDE_HOME` a user could set by hand — the difference is that
-  // on macOS they currently have no way to know they need to.
-  const userHome = userClaudeHomePath(os.homedir());
-  const homeChoice = chooseClaudeHome({
-    env: process.env,
-    userClaudeHome: userHome,
-    userHomeExists: fs.existsSync(userHome),
-    forceIsolated: opts.isolatedClaudeHome,
-  });
-  if (homeChoice.claudeHome !== undefined) process.env.CLAUDE_HOME = homeChoice.claudeHome;
+  // No Claude-home choice happens here any more (#691). The CLI used to point
+  // `CLAUDE_HOME` at `~/.claude` so a macOS Keychain login would be visible
+  // (#683); paddock now always owns its home, and what a user actually wanted
+  // from that — shared transcripts, shared login — are separate `claude:` config
+  // keys. `claude.credentials: host` is the one that restores the Keychain half
+  // and is still to come; until it lands, a Mac with no token in the environment
+  // needs `CLAUDE_CONFIG_DIR=<data-dir>/claude-home claude login` once, which is
+  // exactly what `ensureClaudeHome`'s boot warning says.
 
   // Apply CLI defaults as env vars. This is the whole integration surface: the
   // server resolves config inside `buildApp()`, so anything set before the
@@ -262,7 +251,7 @@ async function main(): Promise<void> {
   );
 
   if (hereMode) {
-    if (!resuming) announceHereConsent(cwd, dataDir, homeChoice.claudeHome);
+    if (!resuming) announceHereConsent(cwd, dataDir);
     // The root workspace IS `projectsRoot` (its key is ""), so pointing this at
     // the user's directory makes that directory the workspace. No schema change,
     // no new project type — see cli/here.ts.
@@ -330,12 +319,6 @@ async function main(): Promise<void> {
       "",
       `  Paddock is running at ${url}`,
       `  Workspace: ${hereMode ? cwd : dataDir}${resuming ? "  (resumed)" : ""}`,
-      // Same rule as the workspace line: running against somebody's own Claude
-      // home is a real difference in what this instance reads and writes, so it
-      // is stated every run rather than only on the one that decided it.
-      ...(homeChoice.claudeHome !== undefined
-        ? [`  Claude home: ${homeChoice.claudeHome}  (yours — sessions and login shared)`]
-        : []),
       "  Press Ctrl-C to stop.",
       "",
     ].join("\n"),

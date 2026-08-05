@@ -60,10 +60,9 @@ terminal icon) so you can tell them from chats started here — see
 you had those conversations, just somewhere else.
 
 :::note[When Paddock can't see your `~/.claude`]
-A containerised instance only sees what is mounted. Point
-[`CLAUDE_HOME`](/configuration/environment/) at a mounted copy of the history, or
-run the headless importer (`npm run import-chats -w @paddock/server`) on the host
-against the data dir.
+A containerised instance only sees what is mounted. Mount the history at the
+`~/.claude` the container's own `$HOME` resolves to, or run the headless importer
+(`npm run import-chats -w @paddock/server`) on the host against the data dir.
 :::
 
 ## Project chats vs root chats

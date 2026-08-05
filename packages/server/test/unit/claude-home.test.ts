@@ -27,11 +27,7 @@ describe("claude-home (#620)", () => {
   let ownHome: string;
   let legacyHome: string;
 
-  const cfg = (owns = true) => ({
-    claudeHome: owns ? ownHome : legacyHome,
-    legacyClaudeHome: legacyHome,
-    ownsClaudeHome: owns,
-  });
+  const cfg = () => ({ claudeHome: ownHome, legacyClaudeHome: legacyHome });
 
   beforeEach(async () => {
     root = await makeTmpDir("paddock-claude-home-");
@@ -96,12 +92,15 @@ describe("claude-home (#620)", () => {
       expect((await ensureClaudeHome(cfg(), {})).bridged).toEqual([]);
     });
 
-    it("does not touch the user's home at all when paddock does not own the home", async () => {
-      const before = await fs.readdir(legacyHome);
-      const report = await ensureClaudeHome(cfg(false), {});
-      expect(report.bridged).toEqual([]);
-      // No self-bridging: the entries are already there.
-      expect((await fs.readdir(legacyHome)).sort()).toEqual(before.sort());
+    // #691 removed the "is this home ours?" branch — it always is, and a config
+    // that resolves the home to `~/.claude` refuses to boot. The invariant this
+    // used to guard is unchanged and stated directly: bridging only ever ADDS
+    // symlinks to paddock's own home.
+    it("adds nothing to the user's home while bridging out of it", async () => {
+      await fs.writeFile(path.join(legacyHome, "CLAUDE.md"), "user memory", "utf8");
+      const before = (await fs.readdir(legacyHome)).sort();
+      await ensureClaudeHome(cfg(), {});
+      expect((await fs.readdir(legacyHome)).sort()).toEqual(before);
     });
 
     // The credential question. Claude Code scopes its secure-storage service name
@@ -137,10 +136,13 @@ describe("claude-home (#620)", () => {
         expect(warned(await ensureClaudeHome(cfg(), {}, noKeychain))).toBe(false);
       });
 
-      it("names the escape hatch, so the fix is in the message", async () => {
+      it("names the fix, so it is in the message", async () => {
         const report = await ensureClaudeHome(cfg(), {}, noKeychain);
         const warning = report.notices.find((n) => n.level === "warn")!;
-        expect(warning.message).toContain(`CLAUDE_HOME=${legacyHome}`);
+        expect(warning.message).toContain(`CLAUDE_CONFIG_DIR=${ownHome}`);
+        // The old remedy — point the whole home at `~/.claude` — is gone (#691),
+        // and must not come back in the wording: it re-breaks agent memory.
+        expect(warning.message).not.toContain("CLAUDE_HOME");
       });
 
       // #683 — "you have no login" and "your login exists but I changed the
@@ -151,10 +153,8 @@ describe("claude-home (#620)", () => {
         const warning = report.notices.find((n) => n.level === "warn")!;
         expect(warning.message).toContain("you ARE logged in");
         expect(warning.message).not.toContain("no Claude credentials");
-        // Both remedies, because which one is right depends on whether the user
-        // wants isolation — and neither is guessable from the generic wording.
+        // The remedy, which is not guessable from the generic wording.
         expect(warning.message).toContain(`CLAUDE_CONFIG_DIR=${ownHome} claude login`);
-        expect(warning.message).toContain(`CLAUDE_HOME=${legacyHome}`);
       });
 
       it("falls back to the generic wording on an inconclusive probe, never asserting there is no login", async () => {
@@ -254,6 +254,21 @@ describe("claude-home (#620)", () => {
       expect(
         await fs.readFile(path.join(ownHome, "projects", mirrors[0].name, "sess.jsonl"), "utf8"),
       ).toContain("user");
+    });
+
+    // #691, `claude.transcripts: host`. There the folder in the user's home is a
+    // real directory paddock itself writes through, reached by a link of the
+    // SAME name in its own home — so mirroring it would offer every project's
+    // own live chats back to it as importable. #658 with the arrow reversed.
+    it("skips a legacy folder paddock's own home already links straight at", async () => {
+      const shared = await seedLegacyFolder("-home-ed-code-shared");
+      const own = path.join(ownHome, "projects", "-home-ed-code-shared");
+      await fs.mkdir(path.dirname(own), { recursive: true });
+      await fs.symlink(shared, own);
+
+      expect(await mirrorLegacyTranscriptFolders(ownHome, legacyHome)).toEqual([]);
+      // The direct link is untouched — it is how the chats are read at all.
+      expect(await fs.readlink(own)).toBe(shared);
     });
 
     it("skips symlinks in the legacy home — the leftovers of the old layout", async () => {

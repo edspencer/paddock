@@ -34,8 +34,9 @@ for depth (every claim there is cited to `packages/server/src`, by file + symbol
 never by line number). The essentials:
 
 - **Three storage classes** (ARCHITECTURE §3) — keep them straight: (1) **transcript
-  JSONL** written by Claude Code, Paddock reads/renders only (`~/.claude/projects/<enc-cwd>`
-  symlinked to `<project>/.chats/`); (2) **browser localStorage** `paddock:*` client
+  JSONL** written by Claude Code, Paddock reads/renders only
+  (`<dataDir>/claude-home/projects/<enc-cwd>` symlinked to `<project>/.chats/`, or out at
+  the user's own folder under `claude.transcripts: host`); (2) **browser localStorage** `paddock:*` client
   prefs (drafts, model, heights); (3) **server JSON sidecars** for durable app state
   (`ArchiveStore`, `ReadStateStore`, `QueuedMessageStore`, sweep watermark) — all
   write-through, corruption-tolerant, follow one shared pattern.
@@ -57,8 +58,13 @@ never by line number). The essentials:
   `project.driveMode`. `session` is the default, so **chats normally run on the
   SDK, not `claude -p`**.
 
-Config is **entirely env-based** (`config.ts`, no config files) — see
-[`website/src/content/docs/configuration/environment.md`](website/src/content/docs/configuration/environment.md).
+Config resolves **env > YAML file > default** (`config.ts`; the file is
+`<dataDir>/paddock.config.yaml`) — see
+[`environment.md`](website/src/content/docs/configuration/environment.md) for every
+variable and [`config-file.md`](website/src/content/docs/configuration/config-file.md)
+for the file. The `claude:` block there says what an instance shares with the host's
+Claude Code (`transcripts: own|host`, #691); paddock ALWAYS owns its Claude home
+(`<dataDir>/claude-home`) and refuses to start if it resolves to the user's `~/.claude`.
 
 ## Dev conventions
 

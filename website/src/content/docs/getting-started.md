@@ -32,20 +32,16 @@ it touching your code:
 - creates **`.chats/`** for transcripts
 - appends those two entries to **`.gitignore`**
 
-**Nothing is written into your `~/.claude`, ever** — no file, no symlink, in any
-configuration. Sessions found there are *offered* for import: nothing is moved, copied
-or linked until you confirm, the originals stay put, and your terminal `claude` keeps
-working exactly as before. That holds however Paddock authenticated.
+**Nothing is written into your `~/.claude`** — no file, no symlink. Paddock keeps a
+Claude home of its own under `.paddock/`, transcripts are relocated into `.chats/` so
+the directory is self-contained, and your `~/.claude` is read for user-level config
+only. Sessions found there are *offered* for import: nothing is moved, copied or
+linked until you confirm, the originals stay put, and your terminal `claude` keeps
+working exactly as before.
 
-What *does* vary is which Claude home Paddock runs against, and it says which on startup:
-
-- **With a token in the environment** (`CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY`),
-  or with `--isolated-claude-home`, it uses its own home under `.paddock/`, and
-  transcripts are relocated into `.chats/` so the directory is self-contained.
-- **With no token** it runs against your own `~/.claude` and uses the Claude Code login
-  already on the machine — including one held in the **macOS Keychain**, which cannot be
-  shared any other way. Transcripts then stay in `~/.claude/projects/`, where Claude Code
-  has always written them, and `.chats/` stays empty.
+If you would rather Paddock and your terminal share **one** set of transcripts, that is
+a config key rather than a flag — `claude: { transcripts: host }`, see
+[the config file](/configuration/config-file/#claude--what-this-instance-shares-with-your-claude-code).
 
 To undo it completely: `rm -rf .paddock .chats` and drop the two `.gitignore` lines.
 :::
@@ -67,14 +63,10 @@ Useful flags:
       --here              Open the CURRENT directory as the workspace
   -o, --open              Open the app in your browser once it is listening
       --verbose           Show the server's own logs (quiet by default)
-      --isolated-claude-home
-                          Give Paddock its own Claude home instead of using
-                          the login and history in ~/.claude
 ```
 
 Credentials work the same as everywhere else — see
-[Claude authentication](#claude-authentication) below. If you already use Claude Code on
-this machine, your existing login is picked up automatically and there is nothing to do.
+[Claude authentication](#claude-authentication) below.
 
 An npx run binds **loopback with authentication disabled**, which is the right default
 for a laptop, and it *fails closed*: bind a routable address without configuring auth and
