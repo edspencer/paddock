@@ -97,6 +97,10 @@ const env = {
   LOG_LEVEL: process.env.LOG_LEVEL || "warn",
 };
 delete env.CLAUDE_CONFIG_DIR; // use paddock's own <dataDir>/claude-home (#691)
+// An operator-set value is honoured over `claude.credentials` (#691), so an
+// ambient one on a dev box would silently change which login the E2E instance
+// runs on. Let paddock decide from the config, as a real first run does.
+delete env.CLAUDE_SECURESTORAGE_CONFIG_DIR;
 
 if (live) {
   // Live: keep the real claude on PATH, require the Max token.
