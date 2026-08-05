@@ -1,5 +1,71 @@
 # @paddock/server
 
+## 0.61.1
+
+### Patch Changes
+
+- [#686](https://github.com/edspencer/paddock/pull/686) [`3f63720`](https://github.com/edspencer/paddock/commit/3f63720a70b9fd73cff52bd3e4cc8a33a809c7ef) Thanks [@edspencer](https://github.com/edspencer)! - The `paddock` CLI now uses the Claude Code login you already have, including on
+  macOS (#683). With no `CLAUDE_CODE_OAUTH_TOKEN`/`ANTHROPIC_API_KEY` and no explicit
+  `CLAUDE_HOME`/`CLAUDE_CONFIG_DIR`, it runs against your own `~/.claude` instead of an
+  isolated home under the data dir.
+
+  Since #620 Paddock always set `CLAUDE_CONFIG_DIR`, and Claude Code derives its
+  secure-storage service name from whether that variable is set at all — so a Keychain
+  login made under the plain name became invisible. The `.credentials.json` bridge
+  covers the file-based store and is structurally incapable of covering macOS. The
+  result was `npx @edspencer/paddock --here` booting fine and failing every turn with
+  `Not logged in`, on the platform the npx story is aimed at.
+
+  Continuity means transcripts stay in `~/.claude/projects/` rather than being relocated
+  into the workspace's `.chats/`. Paddock still writes nothing there (#682), and import
+  consent is unchanged — existing sessions are offered, not opened, exactly as before.
+  Pass `--isolated-claude-home` for the previous behaviour; a server, the container image
+  and `node dist/index.js` are unchanged.
+
+  Also: on macOS, when Paddock does hold its own home and finds no credential, it now
+  probes the Keychain and — if a login is there — says so and gives the exact command,
+  instead of a generic "no credentials found". The secret is never read or copied.
+
+- [#685](https://github.com/edspencer/paddock/pull/685) [`5fee9ee`](https://github.com/edspencer/paddock/commit/5fee9ee1ccfc15f18fc58dcb1d5eba67b1f7b749) Thanks [@edspencer](https://github.com/edspencer)! - Never plant a transcript symlink in a Claude home Paddock does not own (#682).
+  `ensureProjectChats` gated its two existing-directory branches on `home.owned` but
+  not the "nothing there yet" one, so with `CLAUDE_HOME=~/.claude` a directory with no
+  prior transcripts got `~/.claude/projects/<encoded-cwd>` replaced by a link to the
+  workspace's `.chats/`. From then on every `claude` session started in that directory
+  was written into Paddock's store, and deleting that store — an ordinary thing to do —
+  destroyed transcripts Paddock never owned. Reported on a real laptop: 30 sessions lost.
+
+  Paddock now creates nothing in an unowned home; transcripts stay where Claude Code
+  writes them and adoption remains the user-driven way to import them. Boot also warns
+  about links an affected build already planted, naming each path. Nothing is deleted
+  automatically — Paddock does not write to `~/.claude`, and that has to include
+  cleaning up after itself.
+
+- [#680](https://github.com/edspencer/paddock/pull/680) [`fee480a`](https://github.com/edspencer/paddock/commit/fee480a76027ffd4aa1caa302df947436f57a7a2) Thanks [@edspencer](https://github.com/edspencer)! - Correct `paddock --help`: `--here` does not link `~/.claude`. #665 fixed the two
+  runtime `console.log` strings but missed the `USAGE` block, which still claimed the
+  flag "links `~/.claude/projects/<encoded-dir>` at this workspace". Since #620/#634 the
+  Claude home defaults to `<dataDir>/claude-home` and `transcripts.ts` bails before
+  planting a symlink in a home Paddock does not own — sessions are _offered_ for import
+  and nothing is moved, copied or linked until you confirm (#663).
+
+- [#687](https://github.com/edspencer/paddock/pull/687) [`194dfc2`](https://github.com/edspencer/paddock/commit/194dfc295636dbb12893442c7d44407b558050bf) Thanks [@edspencer](https://github.com/edspencer)! - A credential-less first run no longer greets you with a stack-trace wall (#684).
+
+  `npx @edspencer/paddock --here` with no token printed a multi-screen dump containing
+  the entire sweeper system prompt four times — in the `ExecaError`, in the
+  `[fleet-manager]` line, in the serialised `err.message` and again in `err.stack`. The
+  one useful string, `Not logged in · Please run /login`, was on line 40. The server was
+  fine and still serving; nothing in the output said so.
+
+  - The sweeper recognises "not logged in", "out of credit" and "no `claude` on PATH"
+    and logs one actionable warn line with no error object to serialise. An
+    unrecognised failure keeps its full detail.
+  - The `claude` argv is cut out of `@herdctl/core`'s agent-failure lines, taking the
+    2 KB system prompt with it. `HERDCTL_LOG_LEVEL=debug` restores it.
+  - The CLI's quiet mode now actually covers failures. `LOG_LEVEL=warn` never could:
+    these are logged at `error`, above every threshold either variable can set.
+
+  Measured on the repo's own test-suite log: eight copies of the curator system prompt
+  before, zero after.
+
 ## 0.61.0
 
 ### Minor Changes
