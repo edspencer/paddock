@@ -210,15 +210,15 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   for (const notice of (await ensureClaudeHome(cfg)).notices) {
     app.log[notice.level](notice.message);
   }
-  if (cfg.ownsClaudeHome) {
-    const stale = await countLegacyTranscriptLinks(cfg.legacyClaudeHome, cfg.dataDir);
-    if (stale > 0) {
-      app.log.info(
-        `${stale} transcript symlink(s) from a previous layout still point into ${cfg.dataDir} ` +
-          `from ${path.join(cfg.legacyClaudeHome, "projects")}. Nothing reads them any more; ` +
-          `paddock leaves them alone because it does not write to ~/.claude. Safe to delete.`,
-      );
-    }
+  // Unconditional since #691 — paddock always owns its home, so there is no
+  // longer a layout in which these links are the live ones.
+  const stale = await countLegacyTranscriptLinks(cfg.legacyClaudeHome, cfg.dataDir);
+  if (stale > 0) {
+    app.log.info(
+      `${stale} transcript symlink(s) from a previous layout still point into ${cfg.dataDir} ` +
+        `from ${path.join(cfg.legacyClaudeHome, "projects")}. Nothing reads them any more; ` +
+        `paddock leaves them alone because it does not write to ~/.claude. Safe to delete.`,
+    );
   }
   // #682: links an affected build planted at a path the user had not used yet.
   // Unlike the residue above these are still LIVE — they redirect the user's own

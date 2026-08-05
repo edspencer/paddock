@@ -26,11 +26,11 @@ claude setup-token                  # Claude Max/Pro
 export ANTHROPIC_API_KEY=sk-ant-…   # or API billing
 ```
 
-If you already use Claude Code on this machine, there is nothing to do: with no token
-in the environment, Paddock runs against your own `~/.claude` and uses the login
-already there — including one held in the **macOS Keychain**, which cannot be shared
-any other way. Pass `--isolated-claude-home` to give Paddock a Claude home of its own
-instead.
+Paddock keeps a Claude home of its own under the data dir, so it needs a login of its
+own: a token in the environment as above, a `~/.claude/.credentials.json` (symlinked in
+for you), or a one-off `CLAUDE_CONFIG_DIR=<data-dir>/claude-home claude login`. A macOS
+login held in the Keychain is filed under a name scoped to the Claude home, so that
+last one is what makes it visible — Paddock says so at startup if it finds nothing.
 
 ## Open your own project
 
@@ -49,13 +49,12 @@ The flag is the consent, so here is everything it does:
 - creates **`.paddock/`** for the workspace's state and **`.chats/`** for transcripts
 - appends those two entries to **`.gitignore`**
 
-**Nothing is written into your `~/.claude`, ever** — no file, no symlink, in any
-configuration. Sessions found there are *offered* for import: nothing is moved, copied
-or linked until you confirm, and your terminal `claude` keeps working exactly as
-before. What varies is which Claude home Paddock runs against, and it says which on
-startup — with a token in the environment (or `--isolated-claude-home`) it uses its own
-under `.paddock/` and relocates transcripts into `.chats/`; without one it uses your
-`~/.claude`, and transcripts stay there instead.
+**Nothing is written into your `~/.claude`** — no file, no symlink. Paddock uses a
+Claude home of its own under `.paddock/` and relocates transcripts into `.chats/`.
+Sessions found in `~/.claude` are *offered* for import: nothing is moved, copied or
+linked until you confirm, and your terminal `claude` keeps working exactly as before.
+To share one set of transcripts between Paddock and your terminal instead, set
+`claude: { transcripts: host }` in `<data-dir>/paddock.config.yaml`.
 
 To undo it: `rm -rf .paddock .chats` and drop the two `.gitignore` lines.
 
@@ -70,8 +69,6 @@ Without `--here`, Paddock never touches the directory you ran it from.
       --here              Open the CURRENT directory as the workspace
   -o, --open              Open the app in your browser once it is listening
       --verbose           Show the server's own logs (quiet by default)
-      --isolated-claude-home
-                          Use Paddock's own Claude home instead of ~/.claude
   -v, --version           Print the version
   -h, --help              Show help
 ```

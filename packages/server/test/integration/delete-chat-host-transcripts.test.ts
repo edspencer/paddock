@@ -7,13 +7,23 @@
  * that directory was gone from disk.
  *
  * There is no copy to fall back on, which is the part that makes it data loss
- * rather than an inconvenience: `ensureProjectChats` deliberately plants no
- * symlink in a home paddock does not own (#682), so the file the agent reads and
- * writes IS the user's. It is #682 pointed the other way — that one claimed
- * where future sessions get written, this one deleted the past ones.
+ * rather than an inconvenience: under `claude.transcripts: host` the project's
+ * transcript symlink points OUT at `~/.claude/projects/<encoded-cwd>/`, so the
+ * file the agent reads and writes IS the user's. It is #682 pointed the other
+ * way — that one claimed where future sessions get written, this one deleted the
+ * past ones.
  *
- * Both directions are asserted here. A test that only covered the unowned case
+ * Both directions are asserted here. A test that only covered the shared case
  * could be satisfied by never deleting anything.
+ *
+ * ## What #691 changed, and what it did not
+ *
+ * The discriminator. This branch used to key off `ownsClaudeHome` — "is the home
+ * we are pointed at somebody else's?" — and the fixture had to arrange for
+ * paddock to run AS the user's home, which is precisely the coupling #691
+ * removes. Paddock now always owns its home; the question that survives is "is
+ * this transcript ours?", which is `claude.transcripts`. Same invariant, asked
+ * of the thing actually at risk.
  *
  * Scope: this fixes the DATA LOSS only. The released chat is still listed, which
  * is a known gap with its own test below — see there for why the tombstone that
@@ -40,7 +50,7 @@ async function oneTurn(ws: WsClient, slug: string, message: string): Promise<str
   return complete.payload?.sessionId as string;
 }
 
-describe("integration: deleting a chat in a Claude home paddock does NOT own (#689)", () => {
+describe("integration: deleting a chat under claude.transcripts: host (#689)", () => {
   let t: TestApp;
   let ws: WsClient;
   let sessionId: string;
@@ -51,26 +61,22 @@ describe("integration: deleting a chat in a Claude home paddock does NOT own (#6
   let userHome: string;
 
   beforeAll(async () => {
-    // `ownsClaudeHome` is DERIVED — `resolve(claudeHome) !== resolve(homedir()/.claude)`
-    // — so making it false means those two must be the same path, and the
-    // harness picks its own HOME after we would have to name it. Hence both vars
-    // here, pointing at a home of our own: `opts.env` is applied last, so this
-    // wins over the harness's HOME, and `os.homedir()` reads it at build time.
-    //
-    // With the two equal, herdctl also (correctly) declines to inject
-    // CLAUDE_CONFIG_DIR, so the fake `claude` resolves the same tree. Nothing in
-    // the fixture is fighting the harness; it is the laptop shape exactly.
+    // A HOME of our own, so `~/.claude` is a real directory this test owns:
+    // `opts.env` is applied last, so it wins over the harness's HOME, and
+    // `userClaudeHome()` reads `os.homedir()` at config-build time. Paddock's own
+    // home stays where it always is, `<dataDir>/claude-home` — the point of #691
+    // is that sharing no longer means moving it.
     userHome = await makeTmpDir("paddock-userhome-");
     t = await startTestApp({
-      env: { HOME: userHome, CLAUDE_HOME: path.join(userHome, ".claude") },
+      env: { HOME: userHome, PADDOCK_CLAUDE_TRANSCRIPTS: "host" },
     });
     const { port } = await listen(t.app);
     ws = await connectWs(port);
     await t.app.inject({ method: "POST", url: "/api/projects", payload: { name: SLUG } });
     sessionId = await oneTurn(ws, SLUG, "history worth keeping");
 
-    // Where the engine actually put it — the user's home, with no `.chats/`
-    // symlink in front of it.
+    // Where the engine actually put it: through paddock's own home, out into the
+    // user's real folder for that working directory.
     transcript = path.join(
       userHome,
       ".claude",
@@ -86,12 +92,23 @@ describe("integration: deleting a chat in a Claude home paddock does NOT own (#6
     await rmTmpDir(userHome);
   });
 
-  it("puts the transcript in the user's home, with no .chats/ symlink in front", async () => {
+  it("puts the transcript in the USER's home, reached through paddock's own", async () => {
     // Guards the fixture itself. If this stops holding, the assertions below
     // would be deleting a paddock-owned copy and would pass for the wrong reason.
     expect(await fs.stat(transcript).then((s) => s.isFile())).toBe(true);
-    const encoded = path.dirname(transcript);
-    expect((await fs.lstat(encoded)).isSymbolicLink()).toBe(false);
+    // The user's own folder is a real directory — paddock did not plant a link
+    // over it (#682); it planted one POINTING at it, in its own home.
+    expect((await fs.lstat(path.dirname(transcript))).isSymbolicLink()).toBe(false);
+    const link = path.join(
+      t.cfg.claudeHome,
+      "projects",
+      encodeProjectDir(path.join(t.projectsRoot, SLUG)),
+    );
+    expect((await fs.lstat(link)).isSymbolicLink()).toBe(true);
+    expect(await fs.realpath(link)).toBe(await fs.realpath(path.dirname(transcript)));
+    // …and the literal path handed to the agent has no `.claude` component, which
+    // is what keeps agent memory writable (#690).
+    expect(link.split(path.sep)).not.toContain(".claude");
   });
 
   it("releases the chat instead of removing it, leaving the transcript on disk", async () => {
@@ -118,10 +135,8 @@ describe("integration: deleting a chat in a Claude home paddock does NOT own (#6
   // "take this out of my chat list", is not yet honoured.
   //
   // Closing it needs a tombstone: paddock filtering a session it must not
-  // delete. That is deliberately NOT built here — see #689. This delete branch
-  // keys off `ownsClaudeHome`, which #691 removes (paddock will always own its
-  // home, and `transcripts: own|host` becomes the discriminator), so the
-  // tombstone belongs with that mode rather than to a flag about to disappear.
+  // delete. That is deliberately NOT built here — it is #693, and it belongs
+  // with the `transcripts` lever rather than being smuggled in alongside it.
   it("does NOT yet remove it from the list (the tombstone is still owed)", async () => {
     t.herdctl.invalidateSessions(`keeper-${SLUG}`);
     const chats = (await t.app.inject({ method: "GET", url: `/api/projects/${SLUG}/chats` })).json()
@@ -130,14 +145,14 @@ describe("integration: deleting a chat in a Claude home paddock does NOT own (#6
   });
 });
 
-describe("integration: deleting a chat in a Claude home paddock DOES own", () => {
+describe("integration: deleting a chat under claude.transcripts: own (the default)", () => {
   let t: TestApp;
   let ws: WsClient;
 
   const SLUG = "owned-del";
 
   beforeAll(async () => {
-    t = await startTestApp(); // default: <dataDir>/claude-home, owned
+    t = await startTestApp(); // default: <dataDir>/claude-home, transcripts: own
     const { port } = await listen(t.app);
     ws = await connectWs(port);
     await t.app.inject({ method: "POST", url: "/api/projects", payload: { name: SLUG } });
@@ -149,8 +164,8 @@ describe("integration: deleting a chat in a Claude home paddock DOES own", () =>
   });
 
   // The other half of the invariant. Releasing everywhere would be "safe" and
-  // useless — in a home paddock owns, the transcript is its own copy in the
-  // project's `.chats/`, and delete has to mean delete.
+  // useless — under `own` the transcript is paddock's own copy in the project's
+  // `.chats/`, and delete has to mean delete.
   it("removes the transcript, because the copy is paddock's own", async () => {
     const sessionId = await oneTurn(ws, SLUG, "delete me for real");
     const transcript = path.join(t.projectsRoot, SLUG, ".chats", `${sessionId}.jsonl`);

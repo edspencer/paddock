@@ -92,6 +92,13 @@ environmentPrompt: |
   You are running in Acme's Paddock — replies render as Markdown in a browser.
   Link every ticket as [ABC-123](https://acme.atlassian.net/browse/ABC-123).
 
+# --- What this instance shares with the host's Claude Code (#691) ---
+# `own` = Paddock's, isolated inside the data dir. `host` = this machine's
+# Claude Code. Omit the block entirely for full isolation, which is the default:
+# nothing outside the data dir is written.
+claude:
+  transcripts: own            # own | host — see the section below
+
 # --- Authentication (see the Authentication page for modes) ---
 auth:
   mode: jwt
@@ -144,6 +151,46 @@ Point Paddock at a file in a non-default place with `PADDOCK_CONFIG`:
 ```bash
 PADDOCK_CONFIG=/etc/paddock/instance.yaml node packages/server/dist/index.js
 ```
+
+## `claude` — what this instance shares with your Claude Code
+
+Paddock drives Claude Code, which means it sits next to state you already have:
+transcripts, a login, MCP servers, a `CLAUDE.md`. **By default it shares none of
+it.** A fresh instance keeps its own Claude home under the data dir, and your
+`~/.claude` is read for user-level config only (`CLAUDE.md`, `agents/`,
+`commands/`, a `.credentials.json`) — bridged in by symlink, never written to.
+
+Each key under `claude:` answers one question — *whose X does this instance use?*
+— with one vocabulary, so the guarantee is readable at a glance rather than
+inferred from which directory Paddock happens to be pointed at.
+
+```yaml
+claude:
+  transcripts: own    # own | host — default own
+```
+
+### `transcripts`
+
+- **`own`** (default) — each project's chats live in its own `.chats/`, inside
+  the data dir. Move the data dir and the whole instance moves with it. Deleting
+  a chat deletes Paddock's copy.
+- **`host`** — Paddock uses your real `~/.claude/projects/<encoded-cwd>/` folder
+  for each project's working directory. One set of files, both directions: a chat
+  you continue in the terminal with `claude --resume` shows up in Paddock without
+  a restart or a re-import, and vice versa. Deleting a chat in Paddock
+  **releases** it — the chat leaves your list and the transcript stays on disk,
+  because it is your history rather than Paddock's copy (#689).
+
+`host` is implemented as one symlink per project pointing *out* of Paddock's own
+Claude home, not by pointing Paddock at `~/.claude`. That distinction is
+load-bearing rather than cosmetic: agent memory lives beside the transcripts, and
+an agent cannot write to any path containing a `.claude` component — so the home
+that moves is the one thing that must not (#690). Paddock refuses to start if
+`CLAUDE_CONFIG_DIR` or a `claudeHome:` key resolves to your own `~/.claude`, and
+the refusal names this key as what you probably wanted.
+
+Not yet split out, and welded to the Claude home until they are: credentials, MCP
+servers, `CLAUDE.md`/`agents/`/`commands/`, and hooks. They are tracked in #691.
 
 ## Capability & safety gates worth setting here
 

@@ -7,7 +7,12 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { loadPaddockConfig, resolveDefaultWebDist } from "../../src/config.js";
+import {
+  loadPaddockConfig,
+  resolveDefaultWebDist,
+  claudeHomeRefusal,
+  DEFAULT_CLAUDE_HOME_DIRNAME,
+} from "../../src/config.js";
 import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
 
 const ENV_KEYS = [
@@ -686,6 +691,109 @@ describe("loadPaddockConfig: retired settings are ignored, not fatal (#549)", ()
       "utf8",
     );
     expect(loadPaddockConfig().logLevel).toBe("warn");
+  });
+});
+
+/**
+ * The `claude:` block and the home it is NOT allowed to resolve to (#691).
+ *
+ * Paddock used to have one lever — which Claude home it pointed at — and every
+ * distinct concern hung off it: whose transcripts a delete removed, which login
+ * was visible, whether agent memory could be written. Three incidents in a week
+ * (#682, #683, #689) came out of moving it for one reason and getting the other
+ * four for free. These pin the replacement: the home is always paddock's, and
+ * what is SHARED is asked for by name.
+ */
+describe("loadPaddockConfig: the claude: block (#691)", () => {
+  const KEYS = [
+    "PADDOCK_DATA_DIR",
+    "PADDOCK_CONFIG",
+    "PADDOCK_CLAUDE_TRANSCRIPTS",
+    "CLAUDE_HOME",
+    "CLAUDE_CONFIG_DIR",
+    "HOME",
+  ];
+
+  let dataDir: string;
+  let saved: Record<string, string | undefined>;
+
+  const writeConfig = (body: string): void => {
+    fs.writeFileSync(path.join(dataDir, "paddock.config.yaml"), body, "utf8");
+  };
+
+  beforeEach(async () => {
+    dataDir = await makeTmpDir("paddock-claudecfg-");
+    saved = {};
+    for (const k of KEYS) {
+      saved[k] = process.env[k];
+      delete process.env[k];
+    }
+    process.env.HOME = await makeTmpDir("paddock-claudecfg-home-");
+    process.env.PADDOCK_DATA_DIR = dataDir;
+  });
+  afterEach(async () => {
+    const home = process.env.HOME;
+    for (const k of KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+    if (home !== undefined) await rmTmpDir(home);
+    await rmTmpDir(dataDir);
+  });
+
+  it("defaults to own — nothing outside the data dir is written", () => {
+    const cfg = loadPaddockConfig();
+    expect(cfg.claude.transcripts).toBe("own");
+    expect(cfg.claudeHome).toBe(path.join(cfg.dataDir, DEFAULT_CLAUDE_HOME_DIRNAME));
+    expect(cfg.legacyClaudeHome).toBe(path.join(process.env.HOME!, ".claude"));
+  });
+
+  it("reads transcripts: host from the file, and env still wins over it", () => {
+    writeConfig("claude:\n  transcripts: host\n");
+    expect(loadPaddockConfig().claude.transcripts).toBe("host");
+    process.env.PADDOCK_CLAUDE_TRANSCRIPTS = "own";
+    expect(loadPaddockConfig().claude.transcripts).toBe("own");
+  });
+
+  it("falls back to own on an unrecognised value — a typo isolates, never shares", () => {
+    writeConfig("claude:\n  transcripts: hostt\n");
+    expect(loadPaddockConfig().claude.transcripts).toBe("own");
+  });
+
+  // CLAUDE_HOME is deleted (#691). It is not an error — retired settings are
+  // ignored, never fatal (#549) — it simply has no effect any more, and the
+  // point of asserting it is that a stale export cannot quietly move the home
+  // back on top of the user's.
+  it("ignores the removed CLAUDE_HOME entirely", () => {
+    process.env.CLAUDE_HOME = path.join(process.env.HOME!, ".claude");
+    const cfg = loadPaddockConfig();
+    expect(cfg.claudeHome).toBe(path.join(cfg.dataDir, DEFAULT_CLAUDE_HOME_DIRNAME));
+  });
+
+  // CLAUDE_CONFIG_DIR cannot be ignored the same way: it is Claude Code's own
+  // variable, and herdctl declines to clobber an operator-set value, so
+  // disagreeing with it is the #588 split-brain.
+  it("honours CLAUDE_CONFIG_DIR as where paddock's OWN home goes", () => {
+    const alt = path.join(dataDir, "elsewhere");
+    process.env.CLAUDE_CONFIG_DIR = alt;
+    expect(loadPaddockConfig().claudeHome).toBe(alt);
+  });
+
+  it("REFUSES to start when the home resolves to the user's own ~/.claude", () => {
+    process.env.CLAUDE_CONFIG_DIR = path.join(process.env.HOME!, ".claude");
+    expect(() => loadPaddockConfig()).toThrow(/refusing to start/);
+    // …and the message names the lever that does what they actually wanted.
+    expect(() => loadPaddockConfig()).toThrow(/transcripts: host/);
+  });
+
+  it("refuses the same value from the config file, not just from env", () => {
+    writeConfig(`claudeHome: ${path.join(process.env.HOME!, ".claude")}\n`);
+    expect(() => loadPaddockConfig()).toThrow(/paddock.config.yaml/);
+  });
+
+  it("sees through a trailing slash — the check resolves both sides", () => {
+    expect(claudeHomeRefusal("/u/me/.claude/", "/u/me/.claude", true)).toMatch(/refusing/);
+    expect(claudeHomeRefusal("/u/me/.paddock/claude-home", "/u/me/.claude", true)).toBeUndefined();
   });
 });
 

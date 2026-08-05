@@ -357,14 +357,18 @@ export class HerdctlService {
   constructor(private readonly cfg: PaddockConfig) {}
 
   /**
-   * The Claude home every transcript symlink is planted in, plus whether paddock
-   * owns it (#620). One accessor, so no call site can quietly take a default and
-   * land in a different home than the FleetManager was built with — the bug
-   * `ensureSweeperHome` had, which put the sweeper's symlink in `~/.claude` while
-   * every other agent's went to the configured home.
+   * The Claude home every transcript symlink is planted in, plus where those
+   * symlinks point (#620, #691). One accessor, so no call site can quietly take
+   * a default and land in a different home than the FleetManager was built with
+   * — the bug `ensureSweeperHome` had, which put the sweeper's symlink in
+   * `~/.claude` while every other agent's went to the configured home.
    */
   private get claudeHomeTarget(): ClaudeHomeTarget {
-    return { path: this.cfg.claudeHome, owned: this.cfg.ownsClaudeHome };
+    return {
+      path: this.cfg.claudeHome,
+      transcripts: this.cfg.claude.transcripts,
+      userHome: this.cfg.legacyClaudeHome,
+    };
   }
 
   /**
@@ -443,10 +447,10 @@ export class HerdctlService {
       allowScheduleMutation: this.cfg.scheduleMutationEnabled,
       // Hand the engine the SAME Claude home paddock resolved (#588). Omitting
       // it makes the engine fall back to `os.homedir()/.claude` while paddock
-      // honours `CLAUDE_HOME`, so discovery, adoption and paddock's `.chats/`
-      // symlinks would resolve against different directories — sessions list
-      // from one home and open empty from the other. Masked whenever the two
-      // coincide, which is why it must be explicit.
+      // uses its own, so discovery, adoption and paddock's transcript symlinks
+      // would resolve against different directories — sessions list from one
+      // home and open empty from the other. Masked whenever the two coincide,
+      // which is why it must be explicit.
       claudeHomePath: this.cfg.claudeHome,
     });
     await this.fleet.initialize();
@@ -945,39 +949,38 @@ export class HerdctlService {
   /**
    * Delete a single chat (session) by agent name + session id.
    *
-   * In a home paddock OWNS, this removes the transcript JSONL: the file lives in
-   * paddock's own tree (via the project's `.chats/` symlink), so it is ours to
-   * delete. The FleetManager resolves the agent's working directory, unlinks the
-   * file, validates the sessionId against traversal, and invalidates the
-   * discovery cache so the list reflects it immediately.
+   * Under `claude.transcripts: own`, this removes the transcript JSONL: the file
+   * lives in paddock's own tree (via the project's `.chats/` symlink), so it is
+   * ours to delete. The FleetManager resolves the agent's working directory,
+   * unlinks the file, validates the sessionId against traversal, and invalidates
+   * the discovery cache so the list reflects it immediately.
    *
-   * In a home paddock does NOT own, it **releases the session instead** (#689).
-   * There is no copy to delete there: `ensureProjectChats` plants no symlink in
-   * somebody else's home (#682), so the transcript the agent reads and writes is
-   * the file in `~/.claude/projects/<encoded-cwd>/` — for an adopted chat that is
-   * literally the user's own terminal history. `rm`-ing it destroys history
-   * paddock never owned, which is the same class of mistake #682 was, pointed the
-   * other way: that one claimed where future sessions get written, this one
-   * deletes the past ones.
+   * Under `claude.transcripts: host`, it **releases the session instead** (#689).
+   * There is no copy to delete there: the symlink points OUT at
+   * `~/.claude/projects/<encoded-cwd>/`, so the transcript the agent reads and
+   * writes is the user's own — for an adopted chat, literally their terminal
+   * history. `rm`-ing it destroys history paddock never owned, which is the same
+   * class of mistake #682 was, pointed the other way: that one claimed where
+   * future sessions get written, this one deletes the past ones.
    *
    * `undoImport` already draws exactly this line ("A session adopted in place has
    * no copy, and its transcript is the user's own — removing it would destroy
    * history rather than restore it"); the invariant simply never reached here.
    *
-   * Stated as the rule rather than a special case: **paddock never deletes
-   * anything under a home it does not own** — the same invariant `claude-home.ts`
-   * already claims for the rest of `~/.claude`. Deliberately NOT narrowed to
-   * "only adopted chats": a chat paddock started in an unowned home has its
-   * transcript in the user's tree too, and distinguishing them well enough to
-   * risk an `rm` is not worth the failure mode of getting it wrong. The cost is a
-   * transcript left behind, which the caller is told about; the alternative cost
-   * is somebody's history.
+   * The discriminator changed with #691 and the meaning did not. It used to be
+   * `ownsClaudeHome` — "is this home ours?" — which is now always true; the
+   * question that survives is "is this transcript ours?", and that is exactly
+   * what `transcripts` says. Deliberately NOT narrowed to "only adopted chats":
+   * under `host` a chat paddock started itself is in the user's tree too, and
+   * distinguishing them well enough to risk an `rm` is not worth the failure mode
+   * of getting it wrong. The cost is a transcript left behind, which the caller
+   * is told about; the alternative cost is somebody's history.
    *
    * The chat leaves paddock's list either way — which is what the user asked for
    * — so `retained` is how a caller tells "gone" from "no longer shown here".
    */
   async deleteSession(agentName: string, sessionId: string): Promise<ChatDeletion> {
-    if (this.cfg.ownsClaudeHome) {
+    if (this.cfg.claude.transcripts === "own") {
       return { removed: await this.manager.deleteSession(agentName, sessionId), retained: false };
     }
     await this.manager.unadoptSession(agentName, sessionId).catch(() => undefined);

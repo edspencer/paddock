@@ -97,7 +97,7 @@ was written, so they fall outside its "verified against 5.10.1" claim:
 Claude home the engine's session discovery, its adoption primitives, and Claude
 Code itself resolve transcripts under. Paddock passes its one resolved
 `claudeHome` so the two sides cannot disagree about which home is real; see
-`HerdctlService` in `herdctl.ts` and the `CLAUDE_HOME` row in
+`HerdctlService` in `herdctl.ts` and the `CLAUDE_CONFIG_DIR` row in
 [Environment variables](/configuration/environment/).
 
 5.29.0 is also where the session-adoption primitives behind

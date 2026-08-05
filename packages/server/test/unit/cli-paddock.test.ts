@@ -26,12 +26,13 @@ describe("paddock CLI: parseArgs", () => {
       verbose: false,
       help: false,
       version: false,
-      isolatedClaudeHome: false,
     });
   });
 
-  it("parses --isolated-claude-home (#683's opt-out)", () => {
-    expect(parseArgs(["--isolated-claude-home"]).isolatedClaudeHome).toBe(true);
+  // #691 deleted it: what it opted out of — running as the user's own Claude
+  // home — is no longer something paddock ever does.
+  it("rejects the removed --isolated-claude-home flag like any other unknown option", () => {
+    expect(() => parseArgs(["--isolated-claude-home"])).toThrow(/unknown option/);
   });
 
   it("parses long forms", () => {

@@ -101,7 +101,8 @@ with `Bash` can read, out of `/proc/self/environ`:
 - whatever else your deployment exports into the server's environment
 
 Also on disk: if the instance is logged in with a Claude subscription,
-**`$CLAUDE_HOME/.credentials.json`** (default `~/.claude/`) holds the OAuth *refresh*
+**`<claudeHome>/.credentials.json`** (`<dataDir>/claude-home/`, usually a symlink to
+the user's `~/.claude/.credentials.json`) holds the OAuth *refresh*
 token, not just a short-lived access token. If you ever have to assume it leaked, rotating
 locally is not enough — revoke at Anthropic.
 

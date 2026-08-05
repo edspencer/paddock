@@ -33,14 +33,6 @@ export interface CliOptions {
   verbose: boolean;
   help: boolean;
   version: boolean;
-  /**
-   * Keep paddock's own Claude home instead of inheriting the user's (#683).
-   *
-   * The CLI defaults to running against `~/.claude` when there is no token and
-   * no explicit home, because that is the only way a macOS Keychain login is
-   * visible at all. This is the opt-out — see `cli/claude-home-choice.ts`.
-   */
-  isolatedClaudeHome: boolean;
 }
 
 /** A usage error. Thrown rather than exiting, so parsing stays testable. */
@@ -55,7 +47,6 @@ export function parseArgs(argv: string[]): CliOptions {
     verbose: false,
     help: false,
     version: false,
-    isolatedClaudeHome: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -85,9 +76,6 @@ export function parseArgs(argv: string[]): CliOptions {
         break;
       case "--verbose":
         opts.verbose = true;
-        break;
-      case "--isolated-claude-home":
-        opts.isolatedClaudeHome = true;
         break;
       case "-h":
       case "--help":
@@ -156,9 +144,6 @@ Options
       --here              Open the CURRENT directory as the workspace (see below)
   -o, --open              Open the app in your browser once it is listening
       --verbose           Show the server's own logs (quiet by default)
-      --isolated-claude-home
-                          Use Paddock's own Claude home instead of ~/.claude
-                          (see Credentials below)
   -v, --version           Print the Paddock version and exit
   -h, --help              Show this help
 
@@ -176,18 +161,29 @@ Opening a directory (--here)
   Without --here, Paddock never touches the directory you ran it from.
 
 Credentials
-  Paddock drives Claude Code, so it needs Claude credentials. With no
-  CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY in the environment, it runs
-  against your own ~/.claude and uses the Claude Code login already there —
-  including one held in the macOS Keychain, which cannot be shared any other
-  way. Paddock creates nothing under ~/.claude; your transcripts just stay
-  there rather than being relocated into .chats/, and existing sessions are
-  still offered for import rather than opened for you.
+  Paddock drives Claude Code, so it needs Claude credentials. It keeps a Claude
+  home of its own under the data dir and never runs as yours, so a login is a
+  CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY in the environment, a
+  ~/.claude/.credentials.json (symlinked in for you), or a one-off
+  \`CLAUDE_CONFIG_DIR=<data-dir>/claude-home claude login\`. With no login at all
+  anywhere, run \`claude setup-token\`.
 
-  Pass --isolated-claude-home (or set CLAUDE_HOME) for a Claude home of its
-  own; then a login must be a token in the environment, a ~/.claude
-  .credentials.json, or \`CLAUDE_CONFIG_DIR=<data-dir>/claude-home claude login\`.
-  With no login at all anywhere, run \`claude setup-token\`.
+  A macOS login held in the Keychain is filed under a name scoped to the Claude
+  home, so it is not visible to Paddock's — the one-off login above fixes it,
+  and Paddock says so at startup if it finds no credentials.
+
+Sharing your Claude Code state
+  By default Paddock touches nothing outside its data dir: transcripts go to
+  each project's .chats/, and your ~/.claude is read for config only. To share
+  your real transcripts live in both directions, put this in
+  <data-dir>/paddock.config.yaml:
+
+    claude:
+      transcripts: host
+
+  Then a chat and a \`claude --resume\` in the same directory are the same file.
+  Deleting such a chat in Paddock releases it rather than removing it — it is
+  your history, not Paddock's copy.
 
 Your data
   Everything lives in one directory — ~/.paddock unless you pass --data-dir.
