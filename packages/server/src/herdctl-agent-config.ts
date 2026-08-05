@@ -16,10 +16,10 @@ import YAML from "yaml";
 import type { PaddockConfig } from "./config.js";
 import type { Project } from "./projects.js";
 import {
-  EMPTY_HOST_MCP,
+  EMPTY_MCP_SOURCES,
   mcpServersFor,
   mcpToolPattern,
-  type HostMcpSource,
+  type McpSources,
 } from "./claude-mcp.js";
 import {
   DEFAULT_MODEL,
@@ -69,18 +69,20 @@ import {
  * version-controlled. Since #516 the ROOT project reaches it the same way —
  * its cwd IS `projectsRoot`, so the walk-up needs no special-casing.
  *
- * `hostMcp` is the user's own MCP servers under `claude.mcpServers: host` (#691),
- * read once at boot and passed in rather than re-read here so this stays pure and
- * so a `.claude.json` is never opened under `mcpServers: own`. It defaults to
- * empty, which is both the isolated mode and what every existing caller means.
- * The KEEPER is the only agent that gets them: the sweeper is tool-less and each
+ * `mcpSources` is the external MCP servers this instance attaches — the user's
+ * own under `claude.mcpServers: host` (#691 step 5) plus the ones the instance
+ * declares in its own `mcpServers:` block (step 6). Both are resolved once at
+ * boot and passed in rather than re-read here, so this stays pure and so a
+ * `.claude.json` is never opened under `mcpServers: own`. It defaults to empty,
+ * which is both the isolated mode and what every existing caller means. The
+ * KEEPER is the only agent that gets them: the sweeper is tool-less and each
  * trigger declares its own narrow allowlist, so neither could call one anyway.
  */
 export function buildAgentConfig(
   cfg: PaddockConfig,
   project: Project,
   modelOverride?: string,
-  hostMcp: HostMcpSource = EMPTY_HOST_MCP,
+  mcpSources: McpSources = EMPTY_MCP_SOURCES,
 ): Record<string, unknown> & { name: string } {
   const config: Record<string, unknown> & { name: string } = {
     name: keeperAgentName(project.slug),
@@ -140,31 +142,37 @@ export function buildAgentConfig(
   // non-empty so a trigger-less project stays byte-identical to before.
   const schedules = triggersToHerdctlSchedules(project.triggers);
   if (schedules) config.schedules = schedules;
-  // MCP servers, from two sources, both landing on the SAME `mcp_servers` key:
+  // MCP servers, from three sources, all landing on the SAME `mcp_servers` key:
   //
   //  - the browser MCP (headless Chromium) when enabled for this box —
   //    `mcp__playwright__*` is already on the inherited defaults.allowed_tools;
-  //  - the user's own servers under `claude.mcpServers: host` (#691 step 5), which
-  //    are NOT, because their names are not knowable at config-file-write time.
+  //  - the user's own servers under `claude.mcpServers: host` (#691 step 5);
+  //  - the ones this instance declares in its own `mcpServers:` block (#691 step
+  //    6), which win over the inherited ones (`mcpServersFor` merges them last).
   //
-  // Paddock's own server wins a name collision: its flags are box-specific (the
-  // Ansible-installed chromium engine, --no-sandbox for an unprivileged LXC) and
-  // a host `playwright` entry would almost certainly not start here.
+  // Neither of the latter two is on the default allowlist, because their names are
+  // not knowable at config-file-write time — hence the widening below.
+  //
+  // Paddock's own server still wins a name collision, against BOTH: its flags are
+  // box-specific (the Ansible-installed chromium engine, --no-sandbox for an
+  // unprivileged LXC) and someone else's `playwright` would almost certainly not
+  // start here. A declared collision is warned about by name at boot
+  // (`declaredMcpNotices`) so it is not silent.
   const browser = browserMcpServers(cfg.browserMcp);
-  const host = mcpServersFor(hostMcp, project.workingDir);
-  const servers = { ...host, ...(browser ?? {}) };
+  const external = mcpServersFor(mcpSources, project.workingDir);
+  const servers = { ...external, ...(browser ?? {}) };
   if (Object.keys(servers).length > 0) config.mcp_servers = servers;
-  // Widen the allowlist by exactly the host servers' tool patterns. WITHOUT this
-  // the lever is a no-op with no error: both runtimes auto-deny any tool missing
-  // from an explicit `allowed_tools`, so an attached-but-unlisted server connects
-  // and then has every call refused. herdctl does this automatically for INJECTED
-  // servers only (`cli-runtime.js`), never for config `mcp_servers` — which is
-  // why `mcp__playwright__*` is hard-coded into the defaults.
+  // Widen the allowlist by exactly those servers' tool patterns. WITHOUT this
+  // both levers are a no-op with no error: both runtimes auto-deny any tool
+  // missing from an explicit `allowed_tools`, so an attached-but-unlisted server
+  // connects and then has every call refused. herdctl does this automatically for
+  // INJECTED servers only (`cli-runtime.js`), never for config `mcp_servers` —
+  // which is why `mcp__playwright__*` is hard-coded into the defaults.
   //
   // Patterns already on the defaults are filtered out, so nothing is restated
-  // for an instance with no host servers (or one whose only host server paddock's
+  // for an instance with no external servers (or one whose only server paddock's
   // own overrode above) — that config stays byte-identical to before this lever.
-  const extra = Object.keys(host)
+  const extra = Object.keys(external)
     .map(mcpToolPattern)
     .filter((pattern) => !FLEET_ALLOWED_TOOLS.includes(pattern));
   if (extra.length > 0) config.allowed_tools = [...FLEET_ALLOWED_TOOLS, ...extra];

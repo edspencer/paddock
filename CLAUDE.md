@@ -74,7 +74,13 @@ than by declining a symlink (`claude-settings.ts`). `mcpServers` is the odd one 
 servers are declared in `~/.claude.json`, a SIBLING of the home rather than a file in it,
 so no symlink bridge could reach them — `host` READS that file at boot and merges the
 servers into each keeper's `mcp_servers` agent config, the one seam both runtimes read
-(`claude-mcp.ts`).
+(`claude-mcp.ts`). A **sibling** `mcpServers:` block declares servers to paddock itself
+rather than borrowing the machine's (`mcp-servers.ts`); it wins a name clash with `host`,
+is file-only, and takes `env:VAR_NAME` references anywhere a string goes so tokens stay
+out of the git-tracked file. Two rules that are load-bearing for anything touching MCP
+here: an attached server whose `mcp__<name>__*` pattern is not added to the keeper's
+`allowed_tools` has every call auto-denied with no prompt, and nothing may ever log or
+serialise a declared server's values (`describeServer` is the only renderer).
 
 ## Dev conventions
 

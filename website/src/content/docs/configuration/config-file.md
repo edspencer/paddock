@@ -101,6 +101,19 @@ claude:
   credentials: host           # own | host — the ONE key that defaults to host
   instructions: own           # own | host — your ~/.claude CLAUDE.md, agents, commands
   hooks: own                  # own | host — shell commands your settings.json binds
+  mcpServers: own             # own | host — the servers you added with `claude mcp add`
+
+# --- MCP servers this instance declares for ITSELF ---
+# A sibling of `claude:`, not a key in it: that block borrows what this machine
+# already has, this one says what Paddock should have regardless. `env:VAR_NAME`
+# anywhere a string goes means "read it from the environment" — keep tokens out
+# of this file, it is git-tracked.
+mcpServers:
+  notion:
+    command: npx
+    args: ["-y", "@notionhq/notion-mcp-server"]
+    env:
+      NOTION_TOKEN: env:NOTION_TOKEN
 
 # --- Authentication (see the Authentication page for modes) ---
 auth:
@@ -382,10 +395,103 @@ path per session. Tracked in #691; until then, a plugin's MCP server has to be
 declared directly with `claude mcp add`.
 
 **Declaring a server that is only for Paddock** is not this key — it borrows
-servers you already have. Two things work today: `claude mcp add` inside the
-instance (`CLAUDE_CONFIG_DIR=<data-dir>/claude-home claude mcp add …`), or a
-per-project `.mcp.json` checked into the repo. A first-class `mcpServers:` block
-in this file is tracked in #691.
+servers you already have. That is the top-level [`mcpServers:`](#mcpservers--the-servers-this-instance-declares-itself)
+block below.
+
+## `mcpServers` — the servers this instance declares itself
+
+A **sibling of `claude:`, not a key inside it**, because it answers a different
+question. `claude.mcpServers` asks *whose* servers this instance uses; this one
+says what this instance should have, whether or not the machine it runs on has
+ever heard of it. If you are running Paddock in a container and want Notion in
+it, there is nothing on the host to borrow — you declare it here.
+
+```yaml
+mcpServers:
+  notion:
+    command: npx
+    args: ["-y", "@notionhq/notion-mcp-server"]
+    env:
+      NOTION_VERSION: "2022-06-28"
+      NOTION_TOKEN: env:NOTION_TOKEN     # a REFERENCE — see below
+  linear:
+    url: https://mcp.example.com/mcp
+```
+
+Every project's keeper gets every server here, and Paddock adds each one's
+`mcp__<name>__*` pattern to that keeper's tool allow-list — without which the
+server would attach and then have every one of its calls silently refused. The
+boot log names each attached server.
+
+**This block is file-only.** There is no `PADDOCK_MCP_SERVERS`: a map of servers
+does not express as a scalar, and the credentials belong in the environment as
+*references* rather than as one JSON blob. Same reasoning as `managementApi`.
+
+:::note[Why not just `claude mcp add` inside the instance, or a `.mcp.json`?]
+Both get the server *attached* and neither gets it *usable*. Paddock's agents
+carry an explicit tool allow-list, and both runtimes deny any tool missing from
+it with no prompt — so a server Paddock did not attach itself has no
+`mcp__<name>__*` entry on that list, connects, and then has every single call
+refused with nothing in the logs to explain it. Declaring the server here is what
+adds the allow-list entry.
+:::
+
+**Precedence** — `claude.mcpServers: host` < `mcpServers:` < Paddock's own. A
+name you declare here beats the same name inherited from your `~/.claude.json`,
+because this file is a statement about *this instance* and that one is ambient
+machine state. Paddock's own servers still win: **`paddock`** (which carries
+`send_file`) and **`paddock_manage`** (the
+[self-management tools](/reference/self-mcp/)) are reserved names and declaring
+one is an error, and a `playwright` of yours loses to the built-in browser server
+— with a warning at boot, not in silence — unless you set `browserMcp: false`.
+
+### Keeping the token out of the file
+
+This file is git-tracked, and the Config screen can write to it. So anywhere a
+string is expected — `command`, an `args` entry, an `env` value, `url` —
+**`env:VAR_NAME` means "read this from the environment"**, exactly as
+`managementApi.clients.<id>.auth.ref` does:
+
+```yaml
+mcpServers:
+  notion:
+    command: npx
+    args: ["-y", "@notionhq/notion-mcp-server"]
+    env:
+      NOTION_TOKEN: env:NOTION_TOKEN
+```
+
+If the referenced variable is unset or blank the **server is dropped** with a
+warning naming the variable, rather than started without its credential — a
+server that connects unauthenticated is worse than one that does not connect.
+
+An inline value is allowed, because unlike a management token an MCP `env` entry
+is often not a secret (`NOTION_VERSION` is not one). But an inline value under a
+credential-shaped key (`…TOKEN`, `…KEY`, `…SECRET`, …), or a `url` carrying a
+query string or `user:pass@`, gets a warning telling you to move it. **Nothing
+Paddock logs about this block ever contains a value from it**: server names, key
+names and referenced variable names only, with URLs stripped of their query
+string. For the same reason the block is absent from the Config screen and from
+every API response.
+
+:::caution[What cannot be declared]
+Unlike `claude.mcpServers: host` — which passes an imperfectly-carried server
+with a warning, on the grounds that you configured it elsewhere for something
+else — a declaration here is **refused** if Paddock cannot carry it faithfully.
+You typed it at Paddock, so a mistake is one you can fix:
+
+- **`headers:`** — the engine's MCP schema has no field for them, so a
+  bearer-authenticated server would arrive unauthenticated *and* miss its stored
+  OAuth token (keyed on a hash that includes the headers).
+- **`type: sse`** — every `url` server is connected to as streamable HTTP, so an
+  sse server would be silently downgraded.
+- **an unrecognised key** — `arg:` for `args:` would otherwise start the server
+  with the wrong arguments and no indication why.
+- both a `command` and a `url`, or neither.
+
+Each is reported at startup naming the server, and **only that server** is
+dropped; the rest still attach and the instance still boots.
+:::
 
 ## Capability & safety gates worth setting here
 

@@ -47,9 +47,11 @@ import {
 import { type HooksMode, DEFAULT_HOOKS_MODE, isKnownHooksMode } from "./claude-settings.js";
 import {
   type McpServersMode,
+  type McpServerDefs,
   DEFAULT_MCP_SERVERS_MODE,
   isKnownMcpServersMode,
 } from "./claude-mcp.js";
+import { resolveDeclaredMcpServers, type McpServersConfigFile } from "./mcp-servers.js";
 import { DEFAULT_ENVIRONMENT_PROMPT } from "./environment-prompt.js";
 import { type RecoveryConfig, DEFAULT_RECOVERY } from "./recovery-config.js";
 import { type CurationConfig, DEFAULT_CURATION } from "./curation-config.js";
@@ -418,6 +420,28 @@ export interface PaddockConfig {
    */
   managementApiDiagnostics: { errors: string[]; warnings: string[] };
   /**
+   * MCP servers this instance declares for itself (#691 step 6), resolved from
+   * the top-level `mcpServers:` block with every `env:VAR_NAME` reference read
+   * from the environment. Every project's keeper is attached all of them, and
+   * they win a name collision against anything inherited via
+   * `claude.mcpServers: host`.
+   *
+   * **Holds resolved secret material** — an MCP server's `env` is where a stdio
+   * server's API token lives — exactly as {@link managementApi}'s client tokens
+   * do. It must never be serialised into an API response; `instance-config.ts`
+   * publishes only the fields in its own `FIELDS` table, and this is
+   * deliberately not one of them.
+   */
+  mcpServers: McpServerDefs;
+  /**
+   * Operator-facing problems found while resolving {@link mcpServers}: a
+   * declaration paddock cannot carry (`errors`, server dropped) or one whose
+   * `env:` reference did not resolve / whose secret is inlined (`warnings`).
+   * Carried, not logged, for the same reason as
+   * {@link managementApiDiagnostics}. Never contains a value from the block.
+   */
+  mcpServersDiagnostics: { errors: string[]; warnings: string[] };
+  /**
    * Instance default for the hook-management MCP (Epic G / G5, GG-4) — the
    * `mcp__paddock_manage__{list,set,remove}_hook` tools that let a project agent
    * declare/edit/delete its own event hooks. A sibling of {@link selfMcpWriteEnabled}:
@@ -526,6 +550,17 @@ export interface PaddockConfigFile {
     hooks?: string;
     mcpServers?: string;
   };
+  /**
+   * MCP servers this instance declares for ITSELF (#691 step 6) — a sibling of
+   * `claude:`, not a member of it, because it answers a different question:
+   * `claude.mcpServers` borrows whatever this machine already has, while this
+   * says what paddock should have regardless.
+   *
+   * File-only, like `managementApi`: a map of servers does not express as a
+   * scalar env var. Token material belongs in the environment and is referenced
+   * as `env:VAR_NAME` from any string here — see `mcp-servers.ts`.
+   */
+  mcpServers?: McpServersConfigFile;
   auth?: {
     mode?: string;
     userHeader?: string;
@@ -960,6 +995,13 @@ export function loadPaddockConfig(): PaddockConfig {
         process.env,
       );
       return { managementApi: config, managementApiDiagnostics: { errors, warnings } };
+    })(),
+    ...(() => {
+      // #691 step 6: file-only, and resolved against the real environment because
+      // any string in the block may be an `env:VAR_NAME` reference. Diagnostics
+      // ride along for app.ts to log — they never carry a resolved value.
+      const { servers, errors, warnings } = resolveDeclaredMcpServers(file.mcpServers, process.env);
+      return { mcpServers: servers, mcpServersDiagnostics: { errors, warnings } };
     })(),
     hooksMcpEnabled: loadHooksMcpEnabled(file.hooksMcpEnabled),
     recovery: loadRecoveryConfig(file.recovery),

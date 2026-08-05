@@ -134,6 +134,33 @@ or `secret:` in the YAML is a hard config error — the config file is git-track
 Deliver these like any other runtime credential: from a secrets manager or a
 secrets file, not a committed `.env`.
 
+## MCP server credentials
+
+The top-level [`mcpServers:`](/configuration/config-file/#mcpservers--the-servers-this-instance-declares-itself)
+block — where you declare an MCP server *to this instance* — is likewise
+**config-file-only**, and borrows the same indirection. Anywhere it expects a
+string (`command`, an `args` entry, an `env` value, `url`), `env:VAR_NAME` reads
+that value from the environment instead:
+
+```yaml
+mcpServers:
+  notion:
+    command: npx
+    args: ["-y", "@notionhq/notion-mcp-server"]
+    env:
+      NOTION_TOKEN: env:NOTION_TOKEN
+```
+
+```bash
+NOTION_TOKEN=ntn_…
+```
+
+The variable name is entirely yours — Paddock reads whatever the reference names,
+with no `PADDOCK_` convention, because these are third-party servers' own
+variables. An unset or blank one **drops that server** with a warning naming the
+variable, rather than starting it without its credential. Nothing Paddock logs or
+serves ever contains a value from this block.
+
 ## OpenAPI / Swagger reference
 
 Opt-in, and off on a plain instance: mounting it publishes a map of the whole HTTP
