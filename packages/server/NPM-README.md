@@ -50,12 +50,12 @@ The flag is the consent, so here is everything it does:
 - appends those two entries to **`.gitignore`**
 
 **Nothing is written into your `~/.claude`, ever** — no file, no symlink, in any
-configuration. What you see inside Paddock depends on how it authenticated, and it
-says which on startup: with a token in the environment (or `--isolated-claude-home`)
-sessions found there are *offered* for import and nothing moves until you confirm;
-without one, Paddock reads that home directly, so your existing sessions for the
-directory simply open and new ones stay there rather than going into `.chats/`.
-Either way your terminal `claude` keeps working exactly as before.
+configuration. Sessions found there are *offered* for import: nothing is moved, copied
+or linked until you confirm, and your terminal `claude` keeps working exactly as
+before. What varies is which Claude home Paddock runs against, and it says which on
+startup — with a token in the environment (or `--isolated-claude-home`) it uses its own
+under `.paddock/` and relocates transcripts into `.chats/`; without one it uses your
+`~/.claude`, and transcripts stay there instead.
 
 To undo it: `rm -rf .paddock .chats` and drop the two `.gitignore` lines.
 

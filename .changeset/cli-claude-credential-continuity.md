@@ -14,10 +14,11 @@ covers the file-based store and is structurally incapable of covering macOS. The
 result was `npx @edspencer/paddock --here` booting fine and failing every turn with
 `Not logged in`, on the platform the npx story is aimed at.
 
-Continuity means your existing sessions for the directory open directly and new ones
-stay in `~/.claude`, rather than being relocated into `.chats/`. Paddock still writes
-nothing there (#682). Pass `--isolated-claude-home` for the previous behaviour; a
-server, the container image and `node dist/index.js` are unchanged.
+Continuity means transcripts stay in `~/.claude/projects/` rather than being relocated
+into the workspace's `.chats/`. Paddock still writes nothing there (#682), and import
+consent is unchanged — existing sessions are offered, not opened, exactly as before.
+Pass `--isolated-claude-home` for the previous behaviour; a server, the container image
+and `node dist/index.js` are unchanged.
 
 Also: on macOS, when Paddock does hold its own home and finds no credential, it now
 probes the Keychain and — if a login is there — says so and gives the exact command,

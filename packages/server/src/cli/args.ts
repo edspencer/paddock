@@ -180,8 +180,9 @@ Credentials
   CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY in the environment, it runs
   against your own ~/.claude and uses the Claude Code login already there —
   including one held in the macOS Keychain, which cannot be shared any other
-  way. Your existing sessions for the directory are then visible directly,
-  and Paddock creates nothing under ~/.claude.
+  way. Paddock creates nothing under ~/.claude; your transcripts just stay
+  there rather than being relocated into .chats/, and existing sessions are
+  still offered for import rather than opened for you.
 
   Pass --isolated-claude-home (or set CLAUDE_HOME) for a Claude home of its
   own; then a login must be a token in the environment, a ~/.claude

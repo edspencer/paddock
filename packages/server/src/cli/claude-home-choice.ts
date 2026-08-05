@@ -43,10 +43,17 @@
  * there (#682, and the reason this was blocked on it), so transcripts stay in
  * `~/.claude/projects/<encoded-cwd>/` rather than being relocated into the
  * workspace's `.chats/`. Chats still list, open, resume and rename — paddock and
- * the engine read the one home — but the workspace directory is not
- * self-contained, and existing sessions for that directory are simply THERE
- * rather than being offered for import. The CLI says so out loud when it makes
- * this choice; see `paddock.ts`.
+ * the engine read the one home — but the workspace directory is no longer
+ * self-contained. The CLI says so out loud when it makes this choice; see
+ * `paddock.ts`.
+ *
+ * What it does NOT change, contrary to the obvious guess: **import consent**.
+ * Reading the home a user's sessions live in does not make them paddock's chats.
+ * Session discovery is attribution-based, so a transcript paddock never ran is
+ * offered by `adoptable-chats` and absent from `chats` — exactly as under an
+ * owned home — and #663's confirmation still gates every import. Checked against
+ * a running instance rather than reasoned about, because the reasoning went the
+ * other way.
  */
 import path from "node:path";
 

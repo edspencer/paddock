@@ -132,15 +132,21 @@ function announceHereConsent(dir: string, dataDir: string, inheritedHome?: strin
       "",
       `  Opening ${dir} as a Paddock workspace.`,
       `    · ${path.relative(dir, dataDir) || HERE_MARKER}/ and .chats/ created here, and added to .gitignore`,
-      // Continuity (#683) changes this line's truth, so it must not be a
-      // constant. Running against `~/.claude` means the directory's existing
-      // sessions are simply THERE — paddock reads the home they already live in
-      // — rather than being offered for import. Still nothing written: no
-      // symlink is planted in a home paddock does not own (#682), and new
-      // transcripts land where Claude Code has always put them.
+      // Import consent is UNCHANGED by continuity, which is worth stating
+      // because it is not what you would predict: reading the user's home does
+      // not turn their sessions into paddock's chats. Verified against a running
+      // instance — a pre-existing transcript for the directory comes back from
+      // `adoptable-chats` (offered) and NOT from `chats` (listed), because
+      // session discovery is attribution-based, not "whatever is in the folder".
+      // So #663's confirmation still gates every import.
+      //
+      // What continuity DOES change is where transcripts live: with no symlink
+      // planted in a home paddock does not own (#682), Claude Code keeps writing
+      // to `~/.claude/projects/<encoded-cwd>/` and `.chats/` stays empty.
       inheritedHome === undefined
         ? "    · ~/.claude sessions for this directory are offered for import (nothing is moved)"
-        : `    · your existing ${inheritedHome} sessions for this directory open directly (nothing is moved, and new ones stay there too)`,
+        : `    · running against your ${inheritedHome}: sessions there are offered for import ` +
+          `(nothing is moved), and new transcripts stay there rather than in .chats/`,
       "  Later runs here resume it — no flag needed.",
       "",
     ].join("\n"),
