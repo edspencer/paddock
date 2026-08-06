@@ -274,13 +274,13 @@ to turn them off"* is not a guarantee, it is a footnote. Your project's own
 agent auto-memory, which lives in the Claude home but is not gated by the setting
 source.
 
-:::caution[You will probably not be told]
-Paddock does name this key at startup when it finds files it is not loading —
-but that notice is written at `info`, and the `npx` launcher sets `LOG_LEVEL=warn`
-unless you pass `--verbose`. So on the most common install path the message is
-filtered out before you see it. Run `npx @edspencer/paddock --verbose` once if
-you want to check what your instance is and is not loading.
-:::
+**You are told.** When Paddock finds `~/.claude` instruction files it is not
+loading, it names them and names this key at startup — as a **warning**, so it
+survives the `npx` launcher's quiet default (`LOG_LEVEL=warn` unless you pass
+`--verbose`). It says nothing at all if you have none of those files, or if you
+are on `host`. Earlier versions wrote that notice at `info`, which the quiet
+default filtered out — so if you started on 0.62 and saw nothing, that is why
+([#706](https://github.com/edspencer/paddock/issues/706)).
 
 `plugins/` is bridged under `host` for completeness rather than effect. The
 runtime's plugin root really is the Claude home, and it does discover what is

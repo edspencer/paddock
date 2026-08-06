@@ -11,6 +11,7 @@ import {
   probeMacosKeychainLogin,
   BRIDGEABLE_ENTRIES,
   CREDENTIAL_ENTRY,
+  type ClaudeHomeReport,
   type KeychainProbe,
 } from "../../src/claude-home.js";
 import { SECURE_STORAGE_DIR_VAR } from "../../src/claude-credentials.js";
@@ -285,7 +286,6 @@ describe("claude-home (#620)", () => {
         await seedInstructions();
         const report = await ensureClaudeHome(cfg(), {});
         const notice = report.notices.find((n) => n.message.includes("Claude instructions:"))!;
-        expect(notice.level).toBe("info");
         expect(notice.message).toContain("claude.instructions: host");
         expect(notice.message).toContain("CLAUDE.md");
       });
@@ -293,6 +293,25 @@ describe("claude-home (#620)", () => {
       it("says nothing when the user has no instruction files to miss", async () => {
         const report = await ensureClaudeHome(cfg(), {});
         expect(report.notices.some((n) => n.message.includes("Claude instructions:"))).toBe(false);
+      });
+
+      it("warns rather than informs — but ONLY when there is something to say (#706)", async () => {
+        // The level and the condition are one decision, so they are asserted
+        // together. `cli/paddock.ts` sets LOG_LEVEL=warn unless `--verbose`, so
+        // at `info` this notice was invisible on the `npx` path — the one
+        // population it exists for (#706). `warn` is not noise only because of
+        // the second half: an instance whose user has no ~/.claude instruction
+        // files says nothing at all. A test pinning the level alone would still
+        // pass if that condition were dropped.
+        const find = (r: ClaudeHomeReport) =>
+          r.notices.filter((n) => n.message.includes("Claude instructions:"));
+
+        expect(find(await ensureClaudeHome(cfg(), {}))).toEqual([]);
+
+        await seedInstructions();
+        expect(find(await ensureClaudeHome(cfg(), {}))).toEqual([
+          expect.objectContaining({ level: "warn" }),
+        ]);
       });
     });
 
