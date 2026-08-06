@@ -61,7 +61,10 @@ model, statusline — applies either way.
 
 To give this instance an MCP server your machine does not have — the case `host`
 cannot serve — declare it in a **sibling** `mcpServers:` block of the same file, using
-`env:VAR_NAME` anywhere a string goes so the token stays out of the file:
+`env:VAR_NAME` anywhere a string goes so the token stays out of the git-tracked file
+(keep `driveMode` on its default `session` for a server holding a credential — `batch`
+passes the definition to `claude` as a command-line argument, where any local user can
+read it):
 
 ```yaml
 mcpServers:

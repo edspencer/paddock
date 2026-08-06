@@ -94,6 +94,17 @@ destroyed real terminal history](https://github.com/edspencer/paddock/issues/689
   which matters, because that file is git-tracked and editable from the Config
   screen. Paddock never prints a value from this block back to you.
 
+  One limit worth knowing, and it is downstream of Paddock rather than a bug in
+  it: `env:VAR_NAME` keeps a credential out of the *file*, and under
+  **`driveMode: batch`** it does not keep it out of `ps`. On that runtime the
+  engine passes the whole server definition to `claude` as a `--mcp-config`
+  command-line argument, and process arguments are world-readable on Linux
+  (`/proc/<pid>/cmdline`). The default **`driveMode: session`** hands the same
+  record over in-process, so the server receives its `env` the way any process
+  does — owner-readable only, exactly as your own Claude Code does it. Prefer the
+  default for any server holding a credential; Paddock warns at startup if you
+  are on `batch` with one.
+
 - **Deleting a shared chat releases it instead of destroying it.** Under
   `transcripts: host` a Paddock chat and a `claude --resume` in the same
   directory are the same file, in both directions and with no re-import. So

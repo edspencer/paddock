@@ -12,5 +12,7 @@ MCP servers were not part of the block at all.
 
 It now lists all five, and adds a line for the sibling top-level `mcpServers:`
 block (#691 step 6) — the way to give an instance a server the host machine does
-not have, which is the case `host` cannot serve. Help text only; no behaviour
-change.
+not have, which is the case `host` cannot serve. That line also carries #702's
+caveat, so `--help` does not imply more than `env:VAR_NAME` delivers: it keeps a
+credential out of the git-tracked file, and under `driveMode: batch` it does not
+keep it out of `ps`. Help text only; no behaviour change.

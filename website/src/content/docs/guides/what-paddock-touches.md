@@ -128,6 +128,44 @@ exception: Paddock will then use only a token in its environment or a login
 inside its own Claude home, and a `.credentials.json` symlink planted by an
 earlier boot is withdrawn on the next start.
 
+## Credentials you hand to Paddock
+
+Separately from the `claude:` block, a sibling
+[`mcpServers:` block](/configuration/config-file/#mcpservers--the-servers-this-instance-declares-itself)
+declares MCP servers to Paddock itself — and it is the one place you type a
+credential into Paddock's own config. Two properties, and one limit:
+
+- **`env:VAR_NAME` is a reference, not a value.** Written anywhere a string goes,
+  it is resolved from the environment at startup, so the token stays out of the
+  file — which matters, because that file is git-tracked and writable from the
+  Config screen. An unset variable drops that one server with a warning naming
+  it, rather than starting it without its credential.
+- **Nothing Paddock says about the block contains a value from it.** Every
+  notice, warning and error routes through one renderer that counts `args` and
+  `env` entries rather than printing them, and strips a URL's query, fragment and
+  userinfo. There is deliberately no row for the block on the Config screen, so
+  it cannot reach an API response either.
+
+:::caution[`driveMode: batch` puts the token on the command line]
+This one is downstream of Paddock and cannot be fixed from here. Under
+**`driveMode: session`** — the default — the server definitions are handed to
+the runtime in-process, and a stdio server receives its `env` the way any
+process does: `/proc/<pid>/environ` is owner-only, which is exactly what your
+own Claude Code does.
+
+Under **`driveMode: batch`** the engine instead serialises the whole definition
+into a `--mcp-config` **argument** to `claude`. Process arguments are not private
+on Linux — `/proc/<pid>/cmdline` is world-readable and `ps` prints it — so any
+local user can read the token for as long as each turn runs.
+
+So `env:VAR_NAME` keeps a secret out of the file, and on `batch` it does not keep
+it out of `ps`. Prefer the default `session` for any server holding a credential.
+Paddock warns at startup on `batch`, and mentions it even on `session` — because
+a single project pinning `driveMode: batch` for itself brings the exposure back.
+That note is written at `info`, so on the `npx` path you will only see it with
+`--verbose`.
+:::
+
 ## Verifying it yourself
 
 Paddock reports what it bridged, what it withheld and which login it found at

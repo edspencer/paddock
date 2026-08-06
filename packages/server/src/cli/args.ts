@@ -204,7 +204,9 @@ Sharing your Claude Code state
   the top-level ones, plus a project's own when its directory matches. To give
   this instance a server your machine doesn't have, declare it instead in a
   sibling mcpServers: block of the same file; use env:VAR_NAME anywhere a
-  string goes so tokens stay out of it.
+  string goes so tokens stay out of it. That keeps a token out of the file, not
+  out of \`ps\`: leave driveMode on its default (session) for a server holding
+  one, since batch passes the definition to claude as a command-line argument.
 
 Your data
   Everything lives in one directory — ~/.paddock unless you pass --data-dir.
