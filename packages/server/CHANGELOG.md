@@ -1,5 +1,89 @@
 # @paddock/server
 
+## 0.63.0
+
+### Minor Changes
+
+- [#705](https://github.com/edspencer/paddock/pull/705) [`571def3`](https://github.com/edspencer/paddock/commit/571def3a8768f3b49c0d4fb6cfda19a4cc7c2905) Thanks [@edspencer](https://github.com/edspencer)! - Inherit the host's Claude Code **plugins**, and stop degrading `sse` /
+  header-authenticated MCP servers (#700).
+
+  Requires `@herdctl/core` 5.32.0, which adds the two things Paddock had no channel
+  for.
+
+  **Plugins.** A plugin that provides an MCP server — a Slack plugin installed on
+  your laptop, say — was invisible in Paddock on every setting, because the SDK
+  enables a discovered plugin from `enabledPlugins` in the **user** settings source
+  and Paddock's agents are invoked with `setting_sources: ["project"]`. Paddock now
+  enumerates the host's installed plugin directories from the CLI's own
+  `installed_plugins.json` registry and passes them explicitly, which needs no
+  settings-source grant. Two levers gate it, because a plugin is mostly
+  instructions and only sometimes MCP servers:
+
+  | `claude.instructions` | `claude.mcpServers` | what a keeper gets                                     |
+  | --------------------- | ------------------- | ------------------------------------------------------ |
+  | `host`                | `host`              | the plugin, including its MCP servers                  |
+  | `host`                | `own`               | the plugin's commands/agents/skills/hooks only         |
+  | `own`                 | _any_               | no plugins (`instructions` is what bridges `plugins/`) |
+
+  Each plugin server's `mcp__plugin_<plugin>_<server>__*` pattern is added to the
+  keeper's allowed tools automatically — without it the server connects and then has
+  every call auto-denied with no prompt. A plugin whose manifest points `mcpServers`
+  at a bundle rather than declaring them inline cannot be enumerated that way; it is
+  still attached, and a boot warning names it and the pattern to add by hand.
+
+  **MCP server fields.** `headers` and an explicit `type` (`sse`) are now carried
+  through verbatim instead of being stripped. So a bearer-authenticated or `sse`
+  server inherited under `claude.mcpServers: host` arrives intact and finds its
+  stored OAuth token (which is keyed on a hash of `{type, url, headers}`), and the
+  boot warnings v0.62.0 shipped for both are gone. The instance's own `mcpServers:`
+  block accepts both keys too — `headers` values take `env:VAR_NAME` references like
+  everything else there, and are never printed.
+
+### Patch Changes
+
+- [#703](https://github.com/edspencer/paddock/pull/703) [`a789260`](https://github.com/edspencer/paddock/commit/a789260df837a0629b29629fe6e5558e850e3288) Thanks [@edspencer](https://github.com/edspencer)! - `paddock --help` now documents the fifth sharing lever.
+
+  The "Sharing your Claude Code state" section listed four keys —
+  `transcripts`, `credentials`, `instructions`, `hooks` — and omitted
+  `claude.mcpServers`, which shipped alongside them in #691 step 5. Someone
+  reading `--help` to find out what an instance shares would have concluded that
+  MCP servers were not part of the block at all.
+
+  It now lists all five, and adds a line for the sibling top-level `mcpServers:`
+  block (#691 step 6) — the way to give an instance a server the host machine does
+  not have, which is the case `host` cannot serve. That line also carries #702's
+  caveat, so `--help` does not imply more than `env:VAR_NAME` delivers: it keeps a
+  credential out of the git-tracked file, and under `driveMode: batch` it does not
+  keep it out of `ps`. Help text only; no behaviour change.
+
+- [#702](https://github.com/edspencer/paddock/pull/702) [`f5cf1d2`](https://github.com/edspencer/paddock/commit/f5cf1d28a00b1de747b71e9362569532da0fd9d2) Thanks [@edspencer](https://github.com/edspencer)! - Say where a declared MCP server's credential actually ends up (follow-up to
+  #691 step 6).
+
+  `mcpServers:` keeps a resolved secret out of every surface Paddock owns — the
+  boot log, error messages, the Settings API. It does that completely, and it was
+  still not the whole story: on the **CLI runtime** (`driveMode: batch`) the engine
+  serialises the entire server definition, `env` values included, into a single
+  `--mcp-config` **command-line argument**. A process argument is world-readable on
+  Linux, so the token is legible to any local user through `/proc/<pid>/cmdline`
+  and `ps` for as long as the turn runs.
+
+  The default `driveMode: session` does not have this problem: the same record goes
+  to the SDK in-process, and the stdio server it spawns receives the value in its
+  environment, where `/proc/<pid>/environ` is owner-only — which is where Claude
+  Code itself puts it.
+
+  Paddock cannot close this from its side (the fix is upstream: the Claude CLI's
+  `--mcp-config` also accepts a _file path_), so it refuses to be silent instead.
+  An instance on `batch` with a credential-carrying declared server now gets a
+  **warning** at startup naming the server; one on `session` gets the same as an
+  informational note, because a single project pinning `driveMode: batch` brings
+  the exposure back. Documented alongside the block.
+
+  Verified rather than inferred: a new integration test drives a real turn and
+  reads the token back out of the spawned process's argv. It is a characterisation
+  test — if it ever starts failing, the engine has stopped doing this and both the
+  test and the warning should be deleted.
+
 ## 0.62.0
 
 ### Minor Changes
