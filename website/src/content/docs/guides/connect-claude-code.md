@@ -3,6 +3,16 @@ title: Connect Claude Code to Paddock
 description: "The simplest end-to-end path from nothing to a working read-only MCP connection: mint a token, set one environment variable, add six lines of YAML, and run claude mcp add. No proxy, no secrets manager, no Kubernetes."
 ---
 
+:::note[This is the outbound direction]
+This page connects **your terminal `claude` to a Paddock instance**, so a session
+on your laptop can read what the instance is doing. If what you want is the
+other direction — letting a Paddock instance use the transcripts, login,
+`CLAUDE.md` or MCP servers that your Claude Code already has on this machine —
+that is the [`claude:` config block](/configuration/config-file/#claude--what-this-instance-shares-with-your-claude-code),
+summarised in [What Paddock touches on your
+machine](/guides/what-paddock-touches/). Nothing on this page affects it.
+:::
+
 At the end of this guide, a `claude` session on your laptop can list the
 projects on your Paddock instance, list their chats, and read a transcript —
 and **cannot** start a turn, send a message, or create anything.

@@ -90,8 +90,10 @@ curl -fsS http://127.0.0.1:4000/api/health      # -> {"ok":true}
 ## Statefulness & single-writer
 
 **`/data` is the instance.** It holds the project store, the generated herdctl
-config and state, and — because the image sets `HOME=/data` — the Claude session
-transcripts under `~/.claude/projects`. **Resume depends on this volume
+config and state, and — because Paddock owns its own Claude home under the data
+dir — the Claude session transcripts under
+`/data/claude-home/projects/<encoded-cwd>`, each entry a symlink to that project's
+`.chats/`. **Resume depends on this volume
 persisting.** Lose it and you lose every project and conversation, so the PVC must
 be durable and must survive pod restarts.
 

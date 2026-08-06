@@ -107,11 +107,17 @@ for modes, provider examples, and secret handling — this table is only the kno
 
 ## Management API tokens (`PADDOCK_MCP_TOKEN_*`)
 
-The external [Management API](/reference/mcp/) at `/mcp` has **no `PADDOCK_*`
-variables of its own** — the whole `managementApi` block is
-[config-file-only](/configuration/config-file/#managementapi--the-file-first-block).
-The environment's job is to hold the **client tokens**, which the file only ever
-*references*:
+The external [Management API](/reference/mcp/) at `/mcp` is
+[config-file-first](/configuration/config-file/#managementapi--the-file-first-block):
+the whole `managementApi` block is set in the file, with **exactly one
+environment override** —
+
+| Variable | Default | Restart? | What it does |
+|---|---|---|---|
+| `PADDOCK_MANAGEMENT_TRUSTED_PROXIES` | `loopback,linklocal,uniquelocal` | yes | Overrides `managementApi.trustedProxies`: which peers may be believed when they say a `/mcp` request arrived over HTTPS (`X-Forwarded-Proto`) and who it came from. Comma-separated IPs, CIDRs, or the preset names `loopback` / `linklocal` / `uniquelocal`. The environment wins over the file; saying nothing yields the compatibility default above rather than a strict list. |
+
+The environment's other job here is to hold the **client tokens**, which the file
+only ever *references*:
 
 ```yaml
 managementApi:

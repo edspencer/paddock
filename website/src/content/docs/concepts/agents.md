@@ -23,7 +23,7 @@ by working directory, **that cwd is what ties a project's chats to that project.
 - Registered programmatically at startup and on project create/update via
   `HerdctlService.ensureProjectAgent()` (`fleet.addAgent(config, { replace: true })`
   — no yaml round-trip). See `keeperAgentConfig()` in `herdctl.ts`.
-- Runs the project's default model (`project.model ?? KEEPER_DEFAULT_MODEL`, Opus
+- Runs the project's default model (`project.model ?? DEFAULT_MODEL`, Opus
   by default) and honors the project's `permissionMode`, `maxTurns`, and
   `driveMode`.
 - Allows up to `KEEPER_MAX_CONCURRENT` (10) concurrent chats, so several chats —
@@ -32,7 +32,7 @@ by working directory, **that cwd is what ties a project's chats to that project.
   tools (env-gated).
 
 Because it is **one shared agent per project**, a per-chat model override is
-applied by re-registering that agent (`ensureKeeperModel`) — last-write-wins
+applied by re-registering that agent (`ensureAgentModel`) — last-write-wins
 across concurrent chats of the same project. Acceptable for single-user; a clean
 per-trigger override is a herdctl follow-up.
 
@@ -58,7 +58,10 @@ repo.** That is the intent — the root is where you act across the instance —
 it is a real escalation over a project agent, which is confined to its own
 subtree.
 
-Its chats live at `/chat` and in `<projectsRoot>/.chats/`.
+Its chats live at `/chat` and — under the default
+[`transcripts: own`](/configuration/config-file/#transcripts) — in
+`<projectsRoot>/.chats/`. Under `transcripts: host` they live in the user's own
+`~/.claude/projects/<encoded-cwd>/` instead.
 
 ## Promotion: giving a chat its own project
 

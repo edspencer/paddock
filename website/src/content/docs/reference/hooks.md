@@ -8,6 +8,13 @@ type `event`**, so it's stored in a project's `triggers` block and managed throu
 the trigger tools. For the conceptual model and a hands-on walkthrough, see
 [Event hooks](/concepts/hooks/) and [Automating with hooks](/using/automating-with-hooks/).
 
+:::note[Looking for Claude Code's hooks?]
+The shell commands `~/.claude/settings.json` binds to tool use are a different
+mechanism with the same name. Whether the host machine's run inside Paddock turns
+is the [`claude.hooks` key](/configuration/config-file/#hooks) (default `own` —
+they do not). Nothing on this page relates to it.
+:::
+
 ## `project.yaml` schema
 
 An event hook is one entry in the project's `triggers` map, keyed by name. Each

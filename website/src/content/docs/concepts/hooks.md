@@ -14,6 +14,22 @@ The motivating example is housekeeping: *"when I archive a chat, tidy up after
 it"* — spin down a dev server, delete a scratch clone, jot a line in a log. You
 declare that once as a hook, and from then on it happens on its own.
 
+:::note[Not to be confused with Claude Code hooks]
+Since v0.62 there are two unrelated things called "hooks" in Paddock's
+vocabulary, and they are one word apart in configuration.
+
+- **Paddock event hooks** — this page. Declarative triggers in a project's
+  `project.yaml` that fire an *agent turn* when a Paddock lifecycle event
+  happens. Gated by `PADDOCK_HOOKS_MCP`.
+- **Claude Code hooks** — *shell commands* your `~/.claude/settings.json` binds
+  to tool use and session lifecycle (`PreToolUse`, `PostToolUse`,
+  `SessionStart`). Whether the host machine's run inside Paddock turns is the
+  [`claude.hooks` key](/configuration/config-file/#hooks) —
+  `PADDOCK_CLAUDE_HOOKS` — which defaults to `own`, meaning they do not.
+
+Nothing on this page is affected by that key.
+:::
+
 ## A hook is an agent turn, and its tools are its capability
 
 A hook is **not** a fixed built-in behaviour. It's a small agent turn you

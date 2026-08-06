@@ -26,7 +26,8 @@ This page covers what is specific to a nested workspace, chiefly the two project
 ├── OVERVIEW.md      # current synthesized state — sweeper-curated, replaced wholesale
 ├── CHANGELOG.md     # append-only dated history — sweeper + hand-edited
 ├── CLAUDE.md        # durable project identity / working conventions (notebook only)
-├── .chats/          # the chat transcripts (JSONL), symlinked from ~/.claude
+├── .chats/          # the chat transcripts (JSONL), symlinked from
+│                    #   <dataDir>/claude-home/projects/<encoded-cwd>
 └── <authored files> # notes.md, spec.html, diagrams… (you write these)
 ```
 
@@ -51,7 +52,7 @@ concrete into the file. The three automation blocks are keyed records —
 
 The server reads the file
 into a `ProjectYaml`, then resolves a fully-concrete `Project` DTO for the API —
-filling defaults (e.g. `model ?? KEEPER_DEFAULT_MODEL`) and deriving fields like
+filling defaults (e.g. `model ?? DEFAULT_MODEL`) and deriving fields like
 `dir`, `workingDir`, `repoBacked`, and `hasOverview`. `stripDto()` is the inverse,
 so round-tripping never rewrites fields that weren't set.
 

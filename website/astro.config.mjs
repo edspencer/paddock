@@ -124,6 +124,7 @@ export default defineConfig({
 					collapsed: false,
 					items: [
 						{ label: 'Securing Paddock', slug: 'guides/securing' },
+						{ label: 'What Paddock touches on your machine', slug: 'guides/what-paddock-touches' },
 						{ label: 'What your agents can do', slug: 'guides/agent-capabilities' },
 						{ label: 'Prompt injection & untrusted content', slug: 'guides/untrusted-content' },
 						{ label: 'Authentication', slug: 'configuration/authentication' },

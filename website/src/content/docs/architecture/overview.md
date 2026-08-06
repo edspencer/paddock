@@ -137,7 +137,7 @@ internalize about the backend.
 ```mermaid
 flowchart TB
   subgraph C1["1 · Transcript JSONL — read-render"]
-    T["~/.claude/projects/{enc-cwd}/*.jsonl\n(symlinked → {project}/.chats/)"]
+    T["{dataDir}/claude-home/projects/{enc-cwd}/*.jsonl\n(symlinked → {project}/.chats/)"]
   end
   subgraph C2["2 · Browser localStorage — client prefs"]
     L["drafts · chat model · row heights · unread · queued · theme"]
@@ -163,19 +163,30 @@ flowchart TB
 
 The chat transcript is a JSONL file **written by the Claude Code CLI**, never by
 Paddock — Paddock only reads and renders it. Claude Code stores transcripts under
-`~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl`, where `<encoded-cwd>` is the
+`<claudeHome>/projects/<encoded-cwd>/<sessionId>.jsonl`, where `<encoded-cwd>` is the
 agent's absolute working directory with every non-`[A-Za-z0-9]` char replaced by
-`-` (`encodeProjectDir()` in `transcripts.ts`). **The working directory *is* the session key** — no
-manual tagging.
+`-` (`encodeProjectDir()` in `transcripts.ts`). Paddock always points Claude Code
+at a Claude home **it owns** — `<dataDir>/claude-home` (`resolveClaudeHome()` in
+`config.ts`), and it refuses to start if that resolves to the user's `~/.claude` —
+so in practice the path is `<dataDir>/claude-home/projects/<encoded-cwd>/`.
+**The working directory *is* the session key** — no manual tagging.
 
-To make transcripts portable (so a project directory is self-contained and can be
-backed up / moved), Paddock replaces that encoded directory with a **symlink to
-`<projectDir>/.chats/`** via `ensureProjectChats()` (`transcripts.ts`). It is
-idempotent and self-healing: it creates `.chats/`, then repoints a drifted
-symlink, migrates a pre-existing real transcript directory (EXDEV-safe `cp`+`rm`
-across mounts), or just creates the symlink — and never throws. For a repo-backed
-project the transcripts land in the **metadata dir**, not the external checkout
-(the `chatsHostDir` split, issue #187).
+Paddock then replaces that encoded directory with a **symlink**, via
+`ensureProjectChats()` (`transcripts.ts`). What it points at is chosen by the
+`claude.transcripts` config key ([reference](/configuration/config-file/#transcripts)):
+
+- `own` (the default) — the symlink targets `<projectDir>/.chats/`, so transcripts
+  are portable: a project directory is self-contained and can be backed up or moved.
+- `host` — the symlink targets the user's real `~/.claude/projects/<encoded-cwd>/`,
+  so chats are shared with the machine's own terminal `claude` history. In that mode
+  Paddock additionally points the project's `.chats/` at the user's folder, so the
+  by-path readers below keep working unchanged.
+
+The routine is idempotent and self-healing: it creates `.chats/`, then repoints a
+drifted symlink, migrates a pre-existing real transcript directory (EXDEV-safe
+`cp`+`rm` across mounts), or just creates the symlink — and never throws. For a
+repo-backed project the transcripts land in the **metadata dir**, not the external
+checkout (the `chatsHostDir` split, issue #187).
 
 Paddock reads transcripts two ways:
 
@@ -251,10 +262,6 @@ sidecar: lazy single-load into an in-memory `Map`/`Set` via `ensureLoaded()`
 through a `private writing: Promise<void>` chain** so overlapping writes never
 interleave, and non-throwing reads that degrade to a default. New durable app
 state should follow this same shape.
-
-> Implementation note: `QueuedMessageStore`'s key separator is a space, not the
-> NUL byte the others use (see its `keyOf`) — a benign inconsistency, but don't
-> assume a uniform separator across all of them.
 
 :::caution[A workspace key can be the empty string]
 Several of these are keyed by, or carry, a **workspace key** — and the root
@@ -349,8 +356,8 @@ Step by step:
    emitted through `turn.emit(...)`, never written straight to the socket.
 3. **Resolve model + drive mode.** The `model` override wins if
    `isKnownModel`, else `project.model`, else the instance default; the
-   agent is re-registered via `ensureKeeperModel` because there's no per-trigger
-   model API (`ws.ts`). Drive mode is `project.driveMode ?? cfg.keeperDriveMode`.
+   agent is re-registered via `ensureAgentModel` because there's no per-trigger
+   model API (`ws.ts`). Drive mode is `project.driveMode ?? cfg.driveMode`.
 4. **Preload (optional).** For a *new* chat with `preloadContext` and a non-empty
    `OVERVIEW.md`, the overview + changelog tail are wrapped and prepended to the
    prompt (`composePreloadedPrompt()` in `ws-triggers.ts`, CONTRACT-v2 §2).

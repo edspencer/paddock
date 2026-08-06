@@ -65,6 +65,17 @@ state / web-dist paths, the herdctl config path, the auth mode, and the
 GitHub client id. These are process and filesystem bindings — you change them by
 changing how the process is *launched*, not from inside the running app.
 
+The same group also shows the five [`claude:` sharing
+levers](/configuration/config-file/#claude--what-this-instance-shares-with-your-claude-code)
+— **Transcripts**, **Credentials**, **Instructions**, **Hooks** and **MCP
+servers**, each `own` or `host`. They are read-only for a slightly different
+reason than the paths above: they are applied while the instance starts, not per
+request. Transcript symlinks are planted as each agent is registered, and the
+secure-storage variable is read when a turn's process starts — so a value edited
+here would be cosmetic until a restart anyway. They are *shown* because
+"is this instance running my machine's MCP servers, or my shell commands?" ought
+to be answerable without opening a YAML file.
+
 Auth is deliberately read-only too. A misconfigured auth mode can lock everyone —
 including you — out of the very UI you'd need to fix it, so v1 shows the mode and stops
 there. Change it via the environment or the config file, where you can also fix it
@@ -129,6 +140,16 @@ No field on this screen carries a secret value. That isn't a masking rule applie
 render time — the secret-bearing settings simply aren't part of the surface at all, so
 they can't appear in the API response in the first place. The transcription API key and
 the JWT/JWKS internals are the notable absences.
+
+So is the top-level [`mcpServers:` block](/configuration/config-file/#mcpservers--the-servers-this-instance-declares-itself),
+and that one is deliberate rather than incidental. A declared server's `env` is
+exactly where its API token lives, and every field on this screen is serialised
+verbatim into the GET response — so a row for that block would publish tokens to
+any authenticated UI user. There is no row, and no redacting variant of a field
+to build one with. What the block *is* doing is named secret-free in the startup
+log instead, which reports each declared server by name with its arguments
+counted rather than printed. Note the `claude.mcpServers` lever above **is**
+shown: it is one word, `own` or `host`, and carries nothing.
 
 Two settings are marked **sensitive** and shown read-only because they're
 semi-revealing rather than secret: the auth mode and the GitHub client id.

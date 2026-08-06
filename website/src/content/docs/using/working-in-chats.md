@@ -341,6 +341,23 @@ Archived section are two separate trees, so a parent you archive moves out on it
 own and its still-active children are promoted to top-level rows rather than
 following it or being hidden behind it.
 
+### Delete, and what it means when transcripts are shared
+
+Deleting a chat normally unlinks its transcript — it is Paddock's copy, kept in
+the project's `.chats/`, and it is gone.
+
+Under [`claude.transcripts: host`](/configuration/config-file/#transcripts) it is
+not Paddock's copy: the file *is* your terminal `claude` history for that
+directory. So delete **releases** the chat instead of removing it, and the
+transcript stays on disk untouched. That is deliberate — Paddock does not delete
+history it did not create.
+
+One rough edge to know about: a released chat is still **listed**. Releasing
+drops Paddock's adoption record, but the engine finds the transcript again on the
+next listing and shows it, so the chat comes back. Closing that gap is tracked as
+[#693](https://github.com/edspencer/paddock/issues/693). Until then, if you want
+a shared chat out of your list, the transcript itself has to move.
+
 ### Resize the columns
 
 On a desktop-width screen both left-hand columns — the app **side-nav** and the
