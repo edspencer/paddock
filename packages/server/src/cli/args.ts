@@ -182,6 +182,7 @@ Sharing your Claude Code state
       credentials: host   # own | host, default host
       instructions: host  # own | host, default own
       hooks: host         # own | host, default own
+      mcpServers: host    # own | host, default own
 
   transcripts: host makes a chat and a \`claude --resume\` in the same directory
   the same file, live in both directions; deleting such a chat in Paddock
@@ -198,6 +199,12 @@ Sharing your Claude Code state
   discover after the fact. Its other keys (permissions, model, statusline)
   apply either way: under hooks: own Paddock writes its own settings.json
   carrying them with hooks dropped, regenerated at startup.
+
+  mcpServers: host attaches the MCP servers declared in your ~/.claude.json —
+  the top-level ones, plus a project's own when its directory matches. To give
+  this instance a server your machine doesn't have, declare it instead in a
+  sibling mcpServers: block of the same file; use env:VAR_NAME anywhere a
+  string goes so tokens stay out of it.
 
 Your data
   Everything lives in one directory — ~/.paddock unless you pass --data-dir.
