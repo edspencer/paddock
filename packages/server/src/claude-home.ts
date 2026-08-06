@@ -568,7 +568,15 @@ export async function ensureClaudeHome(
     }
     if (present.length > 0) {
       report.notices.push({
-        level: "info",
+        // `warn`, not `info`, and deliberately (#706). `cli/paddock.ts` sets
+        // LOG_LEVEL=warn unless `--verbose`, so at `info` this was filtered out
+        // on the `npx` path — the documented install route, and the one
+        // population the notice exists for. It is not noise at `warn` because it
+        // is already inside `present.length > 0`: it fires only for someone who
+        // HAS ~/.claude instruction files that are not being loaded. An empty
+        // ~/.claude, or `instructions: host`, prints nothing at all. Do not
+        // "tidy" it back to `info` — that reintroduces #706.
+        level: "warn",
         message:
           `Claude instructions: this instance's own only (\`claude.instructions: own\`). Your ` +
           `~/.claude ${present.join(", ")} ${present.length === 1 ? "is" : "are"} NOT loaded — ` +

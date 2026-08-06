@@ -65,6 +65,11 @@ destroyed real terminal history](https://github.com/edspencer/paddock/issues/689
   launcher's quiet default filters out. If you had it, you will not be told you
   lost it. Hence this entry.
 
+  *Superseded:* that notice is now a **warning**
+  ([#706](https://github.com/edspencer/paddock/issues/706)), so it survives the
+  `npx` quiet default and you are told — still only when you actually have
+  `~/.claude` instruction files that are not being loaded.
+
 - **Your `~/.claude/settings.json` hooks no longer run inside Paddock turns.**
   Hooks are shell commands bound to tool use, and until now every one you had
   ever configured ran in Paddock with no key to turn it off. `hooks: own` is the

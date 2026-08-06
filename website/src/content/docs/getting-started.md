@@ -69,8 +69,10 @@ Useful flags:
 
 Under `--here` the data dir is `<dir>/.paddock` rather than `~/.paddock`.
 `--verbose` is worth one run on a new instance: several of Paddock's startup
-notices — including which of your `~/.claude` files it is and is not loading —
-are written at `info`, which the quiet default filters out.
+notices — which login it found, what it bridged from `~/.claude`, what it
+withheld — are written at `info`, which the quiet default filters out. The one
+notice you get either way is the warning that names your `~/.claude` instruction
+files when they are not being loaded.
 
 Credentials work the same as everywhere else — see
 [Claude authentication](#claude-authentication) below.
@@ -198,7 +200,8 @@ That login is the *only* thing shared by default. Your `~/.claude/CLAUDE.md`, `a
 `commands/` and `plugins/` are not loaded, and the hooks your `settings.json` binds to
 tool use do not run — `claude.instructions` and `claude.hooks` turn each on, and both
 default to `own`. If you have a curated `~/.claude/CLAUDE.md`, that is the one to know
-about: Paddock names the key at startup when it finds files it is not loading.
+about: Paddock warns at startup, naming the key, when it finds files it is not
+loading — including on a plain `npx` run.
 
 ## Run from source
 
