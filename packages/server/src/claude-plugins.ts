@@ -357,9 +357,15 @@ export async function enumerateHostPlugins(opts: {
   const disabled = disabledIds(opts.settings);
   const plugins: HostPlugin[] = [];
   const toolPatterns = new Set<string>();
+  // One plugin can be recorded under several scopes, and two ids can in principle
+  // resolve to one directory. `--plugin-dir` the same path twice and the CLI loads
+  // it twice under one name, so collapse them here.
+  const seen = new Set<string>();
 
   for (const install of parseInstalledPlugins(opts.installed, opts.root)) {
     if (disabled.has(install.id.toLowerCase())) continue;
+    if (seen.has(install.installPath)) continue;
+    seen.add(install.installPath);
     // A registry entry whose directory is gone is the normal aftermath of a
     // hand-deleted plugin. The SDK would log "Plugin path does not exist" and
     // carry on, but saying it here is what makes an empty `plugins` explicable.
