@@ -89,6 +89,7 @@
  * instance down.
  */
 import type { McpServerDefs, McpServerDef } from "./claude-mcp.js";
+import type { DriveMode } from "./models.js";
 
 /** On-disk shape of one entry of the `mcpServers:` block. Every field optional. */
 export interface McpServerConfigFile {
@@ -453,6 +454,62 @@ export function resolveDeclaredMcpServers(
   return { servers, errors, warnings };
 }
 
+/**
+ * The one way a declared credential leaves paddock, said out loud.
+ *
+ * Everything else in this module is about keeping a resolved value out of the
+ * places paddock controls — the log, an error, the Settings API. It does that
+ * completely, and it is still not the whole story, because of what herdctl does
+ * with the record afterwards:
+ *
+ * ```js
+ * // @herdctl/core, runner/runtime/cli-runtime.js
+ * const mcpServers = transformMcpServers(options.agent.mcp_servers);
+ * const mcpConfig = JSON.stringify({ mcpServers });
+ * args.push("--mcp-config", mcpConfig);      // ← env values and all
+ * ```
+ *
+ * A process ARGUMENT is not private on Linux: `/proc/<pid>/cmdline` is
+ * world-readable by default (no `hidepid`), and `ps` prints it. So on the CLI
+ * runtime every declared server's `env` — the API token included — is legible to
+ * any local user for the lifetime of each `claude` invocation. Observed, not
+ * inferred: `test/integration/declared-mcp-argv.test.ts` drives a real turn and
+ * reads the token back out of the spawned process's argv.
+ *
+ * The SDK runtime does NOT do this. It hands the same record to the SDK
+ * in-process, and the stdio server it spawns receives the value in its
+ * environment, where `/proc/<pid>/environ` is owner-only — which is exactly what
+ * Claude Code itself does, so it is not a regression to fix here.
+ *
+ * Which runtime runs is `driveMode`: `session` (the default) is the SDK,
+ * `batch` is the CLI. Hence a WARNING on an instance that is on `batch`, and an
+ * informational note otherwise — because a single project can pin `driveMode:
+ * batch` for itself and bring the exposure back with it.
+ *
+ * Paddock cannot close this from here: the fix is upstream (the Claude CLI's
+ * `--mcp-config` also accepts a file path, which is not readable from another
+ * process's argv). Refusing to attach the server instead would break the feature
+ * for the deployments most likely to need it, so what this does is refuse to be
+ * silent — the same posture step 5 takes towards the fields the engine's schema
+ * cannot carry.
+ */
+function argvExposure(names: readonly string[], driveMode: DriveMode): DeclaredMcpNotice {
+  const batch = driveMode === "batch";
+  return {
+    level: batch ? "warn" : "info",
+    message:
+      `${names.join(", ")} ${names.length === 1 ? "declares" : "declare"} \`env\` values, and ` +
+      `under \`driveMode: batch\` the engine passes the whole server definition to \`claude\` ` +
+      `as a \`--mcp-config\` COMMAND-LINE argument — where any local process can read it via ` +
+      `/proc/<pid>/cmdline. ` +
+      (batch
+        ? `This instance is on \`driveMode: batch\`, so that applies to every turn. Prefer ` +
+          `\`driveMode: session\` (the default) for a server that holds a credential.`
+        : `This instance is on \`driveMode: session\`, which passes them in-process instead — ` +
+          `but a project that pins \`driveMode: batch\` brings the exposure back.`),
+  };
+}
+
 /** A line for the boot log, at a level (mirrors `HostMcpNotice`). */
 export interface DeclaredMcpNotice {
   level: "info" | "warn";
@@ -474,6 +531,12 @@ export function declaredMcpNotices(opts: {
   hostNames?: readonly string[];
   /** Whether paddock's own browser server is attached (it wins a name clash). */
   browserMcp?: boolean;
+  /**
+   * The instance's drive mode, which decides whether a declared `env` value ends
+   * up on a command line. Omitted ⇒ say nothing (the several callers that only
+   * want the inventory line).
+   */
+  driveMode?: DriveMode;
 }): DeclaredMcpNotice[] {
   const names = Object.keys(opts.servers);
   if (names.length === 0) return [];
@@ -494,6 +557,12 @@ export function declaredMcpNotices(opts: {
         `${shadowed.join(", ")} ${shadowed.length === 1 ? "is" : "are"} also declared in your ` +
         `~/.claude.json (\`claude.mcpServers: host\`); this instance's own declaration wins.`,
     });
+  }
+  const exposed = names.filter((n) => Object.keys(opts.servers[n].env ?? {}).length > 0);
+  if (exposed.length > 0 && opts.driveMode !== undefined) {
+    // The one place a declared credential escapes paddock, and it escapes
+    // downstream of every rule this module enforces — see {@link argvExposure}.
+    notices.push(argvExposure(exposed, opts.driveMode));
   }
   if (opts.browserMcp && names.includes("playwright")) {
     notices.push({
