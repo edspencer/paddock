@@ -475,6 +475,15 @@ It is documented in
 **[Sending files & images](/using/sending-files-and-images/)**; nothing about it
 is restated here.
 
+:::caution[`paddock` and `paddock_manage` are reserved names]
+Both are materialised under the `mcp__<name>__*` tool namespace, and two servers
+claiming one namespace has no defined winner. So a server you
+[declare yourself](/configuration/config-file/#mcpservers--the-servers-this-instance-declares-itself)
+under either name is **refused outright** — an error naming the clash, with that
+server not attached, rather than a silent shadowing. The rest of the block still
+loads and the instance still starts. Pick any other key.
+:::
+
 ## The in-process surface vs. the external `/mcp` API
 
 Paddock exposes the *same underlying operations* two ways, and it is worth being

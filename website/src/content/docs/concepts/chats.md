@@ -13,15 +13,29 @@ itself is Claude Code's.
 
 Each chat is one JSONL transcript file, `<sessionId>.jsonl`, **written by the
 Claude Code CLI** — Paddock only reads it. Claude Code stores transcripts under
-`~/.claude/projects/<encoded-cwd>/`, where the encoded name is the agent's
+`<claudeHome>/projects/<encoded-cwd>/`, where the encoded name is the agent's
 absolute working directory with non-alphanumeric characters replaced by `-`. So
 **the working directory is the session key** — no separate database of chats.
+Paddock always runs Claude Code against a Claude home it owns —
+`<dataDir>/claude-home` — so that path is
+`<dataDir>/claude-home/projects/<encoded-cwd>/`.
 
-Paddock makes chats portable by symlinking that encoded directory to the
-project's `.chats/` folder (`ensureProjectChats()` in `transcripts.ts`), so the
-transcript physically lives inside the project directory and rides the same
-backup. Listing, reading, resuming, and deleting all resolve transparently through
-the symlink.
+Paddock then symlinks that encoded directory, and
+[`claude.transcripts`](/configuration/config-file/#transcripts) decides where the
+symlink points (`ensureProjectChats()` in `transcripts.ts`). Under the default
+`transcripts: own` it targets the project's `.chats/` folder, so the transcript
+physically lives inside the project directory and rides the same backup. Under
+`transcripts: host` it targets the user's real `~/.claude/projects/<encoded-cwd>/`
+instead, so chats are shared with the machine's own terminal `claude` history.
+
+Listing, reading, and resuming resolve transparently through the symlink either
+way. **Deleting does not.** Under `transcripts: host` the transcript is the user's
+own `claude` history rather than Paddock's copy, so `HerdctlService.deleteSession`
+*releases* the chat instead of removing it (`{removed: false, retained: true}`) and
+the file stays on disk. Releasing only drops the adoption record, so the chat is
+**still listed** afterwards — the engine rediscovers the transcript structurally on
+the next listing. That gap is tracked as
+[issue #693](https://github.com/edspencer/paddock/issues/693).
 
 The transcript is the **authoritative record** of the conversation. Everything
 else about a chat is either derived from it (previews, token/context usage, the

@@ -40,13 +40,17 @@ Paddock says at startup if it can find no credentials at all.
 ## What else Paddock does and does not take from your `~/.claude`
 
 Apart from that login: **nothing, by default.** Your `CLAUDE.md`, `agents/`,
-`commands/` and `plugins/` are not loaded, and the hooks your `settings.json` binds to
-tool use do not run. Both are one key in `<data-dir>/paddock.config.yaml`:
+`commands/` and `plugins/` are not loaded, the hooks your `settings.json` binds to tool
+use do not run, your transcripts are not touched, and your `~/.claude.json` MCP servers
+are not attached. Each is one key in `<data-dir>/paddock.config.yaml`:
 
 ```yaml
 claude:
+  transcripts: host    # own | host, default own — whose session transcripts
+  credentials: host    # own | host, default host — the one shared by default
   instructions: host   # own | host, default own — CLAUDE.md, agents, commands, plugins
   hooks: host          # own | host, default own — shell commands settings.json binds
+  mcpServers: host     # own | host, default own — the servers in your ~/.claude.json
 ```
 
 `instructions: own` is worth knowing about if you have curated a `~/.claude/CLAUDE.md`:
@@ -54,6 +58,19 @@ your Paddock agents will not see it until you set `host`. Each project's own `CL
 always applies. `hooks` is off by default because inheriting someone's shell commands is
 not a thing to discover after the fact; the rest of your `settings.json` — permissions,
 model, statusline — applies either way.
+
+To give this instance an MCP server your machine does not have — the case `host`
+cannot serve — declare it in a **sibling** `mcpServers:` block of the same file, using
+`env:VAR_NAME` anywhere a string goes so the token stays out of the file:
+
+```yaml
+mcpServers:
+  notion:
+    command: npx
+    args: ["-y", "@notionhq/notion-mcp-server"]
+    env:
+      NOTION_TOKEN: env:NOTION_TOKEN
+```
 
 ## Open your own project
 
@@ -118,9 +135,17 @@ A multi-arch Docker image is published alongside this package, and is the better
 fit for a server deployment:
 
 ```sh
-docker run -d -p 4000:4000 -v /srv/paddock-data:/data \
-  -e CLAUDE_CODE_OAUTH_TOKEN=… ghcr.io/edspencer/paddock:latest
+docker run -d -p 127.0.0.1:4000:4000 -v /srv/paddock-data:/data \
+  -e CLAUDE_CODE_OAUTH_TOKEN=… \
+  -e PADDOCK_DANGEROUSLY_ALLOW_OPEN=1 \
+  ghcr.io/edspencer/paddock:latest
 ```
+
+`PADDOCK_DANGEROUSLY_ALLOW_OPEN=1` is required: the image binds `0.0.0.0` and the
+default auth mode is `none`, and Paddock refuses to bind a routable interface
+unauthenticated unless told to. Publishing on `127.0.0.1:` is what makes that
+safe — Paddock runs code and spends Claude tokens, so put an auth mode or a
+reverse proxy in front of it before exposing the port to a network.
 
 ## Links
 

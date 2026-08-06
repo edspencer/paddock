@@ -82,7 +82,7 @@ host: 0.0.0.0
 logLevel: info
 
 # --- Agent behaviour ---
-keeperDriveMode: session      # session enables cross-turn autonomy (ScheduleWakeup / /loop)
+driveMode: session            # session enables cross-turn autonomy (ScheduleWakeup / /loop)
 nativeSystemPrompt: true      # use the native Claude Code prompt + CLAUDE.md hierarchy
 
 # Appended to every keeper turn's system prompt. Omit the key entirely for
@@ -199,8 +199,12 @@ claude:
   for each project's working directory. One set of files, both directions: a chat
   you continue in the terminal with `claude --resume` shows up in Paddock without
   a restart or a re-import, and vice versa. Deleting a chat in Paddock
-  **releases** it — the chat leaves your list and the transcript stays on disk,
-  because it is your history rather than Paddock's copy (#689).
+  **releases** it — the transcript stays on disk, because it is your history
+  rather than Paddock's copy (#689). Note the chat does **not** yet leave your
+  list: releasing drops Paddock's adoption record, but the engine rediscovers
+  the transcript structurally on the next listing and shows it again. Closing
+  that gap needs a tombstone and is tracked as
+  [#693](https://github.com/edspencer/paddock/issues/693).
 
 `host` is implemented as one symlink per project pointing *out* of Paddock's own
 Claude home, not by pointing Paddock at `~/.claude`. That distinction is
@@ -265,11 +269,18 @@ four have been inert since chats moved to the SDK runtime — bridged or not. Th
 It is the default anyway because *"`own` everywhere means nothing outside the
 data dir is read or written"* has to be a guarantee you can read off this file,
 and *"…except your CLAUDE.md, agents, commands and plugins, always, with no key
-to turn them off"* is not a guarantee, it is a footnote. Paddock names the key at
-startup when it finds files it is not loading, so the fix is one line and you are
-told where. Your project's own `CLAUDE.md` is unaffected in every mode, and so is
+to turn them off"* is not a guarantee, it is a footnote. Your project's own
+`CLAUDE.md` is unaffected in every mode, and so is
 agent auto-memory, which lives in the Claude home but is not gated by the setting
 source.
+
+:::caution[You will probably not be told]
+Paddock does name this key at startup when it finds files it is not loading —
+but that notice is written at `info`, and the `npx` launcher sets `LOG_LEVEL=warn`
+unless you pass `--verbose`. So on the most common install path the message is
+filtered out before you see it. Run `npx @edspencer/paddock --verbose` once if
+you want to check what your instance is and is not loading.
+:::
 
 `plugins/` is bridged under `host` for completeness rather than effect. The
 runtime's plugin root really is the Claude home, and it does discover what is

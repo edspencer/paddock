@@ -23,8 +23,11 @@ Pure-logic + component tests. No server, no fleet, no claude.
     traversal guard, overview, remove.
   - `models.test.ts` — the model list, defaults, lookups.
   - `transcripts.test.ts` — `encodeProjectDir`, `ensureProjectChats` incl. the
-    symlink-healing + real-dir-migration branches, and the #620 guard that
-    refuses to migrate out of a Claude home paddock does not own.
+    symlink-healing + real-dir-migration branches, and a `transcripts: host`
+    block covering the other symlink target (the encoded path points at the
+    user's own folder, and writes go through it). The old #620 ownership guard is
+    gone: since #691 paddock always owns its Claude home, so there is nothing to
+    gate on.
   - `github-auth.test.ts` — the GitHub OAuth **device flow** with a mocked
     global `fetch`: `clientId`/`status`, `startDeviceFlow` (happy + non-ok +
     malformed), `pollDeviceFlow` (pending / slow_down / authorized / error /
@@ -70,7 +73,7 @@ temp data dir, with the fake `claude` first on `PATH`. Files:
   malformed messages → `chat:error`, the `onChatSend` catch path (unknown
   project), `preloadContext` (OVERVIEW.md injection for a new chat, no-op when
   there is no overview), per-chat **model override** (valid →
-  `ensureKeeperModel`; unknown → fallback), `chat:tool_call` + `chat:message_boundary`
+  `ensureAgentModel`; unknown → fallback), `chat:tool_call` + `chat:message_boundary`
   (via the fake's `[[TOOL]]` / `[[BOUNDARY]]` directives), `chat:cancel`, the
   usage/model surfaced on `chat:complete`, and the legacy `target` alias.
 - `routes.test.ts` — REST coverage gaps: rename + delete chat (incl.
@@ -110,9 +113,14 @@ JSONL file** it writes (it does *not* read the process's stdout). So the fake:
    `--system-prompt`, `--allowedTools`, `--resume <id>`, …) and reads the prompt
    from **stdin**.
 2. Computes the session dir the same way herdctl does —
-   `~/.claude/projects/<cwd-with-every-non-alnum→'-'>/` (via `os.homedir()`). For
-   paddock that encoded path is a symlink to `<projectDir>/.chats`, so writes
-   land in the project.
+   `<claudeHome>/projects/<cwd-with-every-non-alnum→'-'>/`, resolving
+   `<claudeHome>` from `CLAUDE_CONFIG_DIR` and only falling back to `~/.claude`
+   (`claudeHome()` in `test/bin/claude`). That fallback is *not* the paddock case:
+   paddock runs against its own home, so the dir is
+   `<dataDir>/claude-home/projects/<enc>` — and that encoded path is the symlink to
+   `<projectDir>/.chats`, so writes land in the project. Hard-coding `~/.claude`
+   here writes transcripts somewhere herdctl is not watching, and the turn dies 60s
+   later on "Timeout waiting for new session file".
 3. Writes a **real `<sessionId>.jsonl` transcript** with the exact line shapes
    `@herdctl/core`'s `jsonl-parser` + the `@herdctl/chat` translator consume:
    - `user`  → `{type:"user", message:{role:"user", content:"…"}, sessionId,

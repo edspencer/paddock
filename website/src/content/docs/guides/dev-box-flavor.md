@@ -162,9 +162,10 @@ docker run -d --name paddock -p 127.0.0.1:4000:4000 \
 ```
 
 - **`/data`** is the one thing you must persist. Everything Paddock keeps —
-  projects, chat transcripts, and its sidecar state — lives there, and `HOME=/data`
-  so `~/.claude/projects` (session transcripts) survives restarts, which is what
-  makes resume work. Use a named volume or a real disk you back up.
+  projects, chat transcripts, and its sidecar state — lives there, and Paddock owns
+  its own Claude home under the data dir, so `/data/claude-home/projects` (session
+  transcripts) survives restarts, which is what makes resume work. Use a named
+  volume or a real disk you back up.
 - **Claude auth** comes in at run time, never baked into the image: set
   `CLAUDE_CODE_OAUTH_TOKEN` for Claude Max/Pro, or `ANTHROPIC_API_KEY` to use the
   API (API pricing) — either works on either runtime. Get an OAuth token with

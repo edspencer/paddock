@@ -36,8 +36,18 @@ CronCreate  CronList  CronDelete  mcp__playwright__*
 
 :::caution[No Paddock setting removes a tool from this list]
 There is no env var, no `paddock.config.yaml` key, and no `project.yaml` field that
-changes it, and hand-editing the generated `herdctl.yaml` is overwritten at the next
-restart.
+**removes** one, and hand-editing the generated `herdctl.yaml` is overwritten at the
+next restart.
+
+Two keys do **add** to it, both new in v0.62 and both off by default.
+[`claude.mcpServers: host`](/configuration/config-file/#mcpservers) attaches the MCP
+servers declared in your `~/.claude.json`, and a top-level
+[`mcpServers:` block](/configuration/config-file/#mcpservers--the-servers-this-instance-declares-itself)
+attaches ones you declare to Paddock directly. Either way the allow-list is widened by
+that server's `mcp__<name>__*` pattern — it has to be, or both levers would be no-ops
+with no error, since both runtimes auto-deny any tool missing from an explicit
+allow-list. So attaching a server is granting a capability, and the tools it carries
+are as reachable as anything in the list above.
 
 The one real escape hatch is outside Paddock: the agent's working directory is a
 [Claude Code settings source](https://docs.claude.com/en/docs/claude-code/settings), so a
@@ -274,6 +284,41 @@ capability side:
   trigger-initiated chat — keep the self-MCP write tools; their children do not. It is an anti-fork-bomb
   measure, not an authority boundary.
 - **These are settable over `PUT /api/instance-config`.** See below.
+
+## Inherited from the host machine (`claude:`)
+
+Separate from the flags above, three of the [`claude:`
+levers](/guides/what-paddock-touches/) decide whether the machine Paddock runs on
+contributes capability to a turn. All three default to `own`, meaning it does not.
+
+| Key | At `host`, a turn also gets |
+|---|---|
+| `claude.hooks` | The **shell commands** your `~/.claude/settings.json` binds to tool use and session lifecycle |
+| `claude.instructions` | Your `~/.claude` `CLAUDE.md` (standing instruction), plus `agents/` and `commands/` — definitions the model can invoke by name |
+| `claude.mcpServers` | The MCP servers in your `~/.claude.json`, with the allow-list widened to match |
+
+`hooks` is the one that is unambiguously code execution, and it is worth knowing
+it used to be unconditional: **before v0.62 the host's hooks ran inside every
+Paddock turn with no key to turn them off.** That default is now `own`.
+
+Two qualifications, both easy to state too strongly:
+
+- **`hooks: own` stops hooks, not every host command.** Other `settings.json`
+  keys name a script to run — `apiKeyHelper`, `awsCredentialExport`,
+  `awsAuthRefresh`, `gcpAuthRefresh`, `proxyAuthHelper`, `otelHeadersHelper`,
+  `statusLine`, `subagentStatusLine` — and those are still inherited
+  ([#698](https://github.com/edspencer/paddock/issues/698)).
+- **The reach is narrower than it sounds, today.** Paddock's chat runtime loads
+  only the *project* setting source, so the Claude home's `settings.json`,
+  `CLAUDE.md`, `agents/` and `commands/` are not read on a default SDK chat turn
+  at all. They apply on the CLI paths — the post-turn sweeper, triggers, and
+  `driveMode: batch` chats. That is a herdctl default rather than a guarantee, so
+  it is the wrong thing to rely on as a boundary; treat `hooks: own` as the
+  control and this as a footnote.
+
+Note a repo-supplied `.claude/settings.json` in a project's working directory is
+a *different* and unrelated route to the same outcome, and is not governed by any
+of these keys — see [Prompt injection](/guides/untrusted-content/).
 
 ## What Paddock does not limit
 

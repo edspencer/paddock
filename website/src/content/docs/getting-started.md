@@ -63,7 +63,14 @@ Useful flags:
       --here              Open the CURRENT directory as the workspace
   -o, --open              Open the app in your browser once it is listening
       --verbose           Show the server's own logs (quiet by default)
+  -v, --version           Print the Paddock version and exit
+  -h, --help              Show this help
 ```
+
+Under `--here` the data dir is `<dir>/.paddock` rather than `~/.paddock`.
+`--verbose` is worth one run on a new instance: several of Paddock's startup
+notices — including which of your `~/.claude` files it is and is not loading —
+are written at `info`, which the quiet default filters out.
 
 Credentials work the same as everywhere else — see
 [Claude authentication](#claude-authentication) below.
