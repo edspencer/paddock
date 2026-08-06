@@ -113,13 +113,23 @@ export interface Project {
   dir: string;
   /**
    * The keeper's working directory (cwd). Equals `dir` for a notebook project;
-   * for a repo-backed project it's the nested checkout under `dir` (issue #187).
+   * for a repo-backed project it's the nested checkout under `dir` (issue #187);
+   * for a LINKED project it's `path` — an existing checkout outside the data repo
+   * that Paddock uses in place and never writes to (issue #206).
    */
   workingDir: string;
-  /** Whether this project is backed by an external git repo (issue #187). */
+  /**
+   * Whether the keeper's cwd is a git repo owning its own `CLAUDE.md` — true for
+   * both a cloned checkout (#187) and a linked directory (#206).
+   */
   repoBacked: boolean;
   /** The external git repo URL, when repo-backed (issue #187). */
   repo?: string;
+  /**
+   * The linked on-box directory this project works in, used in place with no copy
+   * (issue #206). Present only for a LINKED project; `workingDir` equals it.
+   */
+  path?: string;
   /** True once a sweep has written OVERVIEW.md (drives the preload checkbox + Overview hint). */
   hasOverview: boolean;
   /** Pinned file names rendered as sibling tabs (order-preserving). Default []. */
@@ -266,6 +276,15 @@ export interface CreateProjectInput {
    * checkout). Absent ⇒ a notebook project.
    */
   repo?: string;
+  /**
+   * Absolute path to an EXISTING on-box git checkout to LINK as the working
+   * directory, used in place with no copy (issue #206). The server validates it
+   * (absolute, exists, is a dir with `.git`, outside the projects root / data dir
+   * / every other project's cwd) and rejects the create otherwise. Immutable once
+   * set. Takes precedence over `repo`, which may still be supplied as a
+   * remote-match / re-clone hint.
+   */
+  path?: string;
 }
 
 /** Editable project metadata (slug + dates are immutable server-side). */

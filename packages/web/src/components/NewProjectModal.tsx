@@ -21,6 +21,7 @@ export function NewProjectModal({
   const [group, setGroup] = useState("");
   const [status, setStatus] = useState<ProjectStatus>("active");
   const [repo, setRepo] = useState("");
+  const [linkPath, setLinkPath] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -37,6 +38,7 @@ export function NewProjectModal({
       setGroup("");
       setStatus("active");
       setRepo("");
+      setLinkPath("");
       setError(null);
     }
   }, [open]);
@@ -64,6 +66,7 @@ export function NewProjectModal({
         group: group || undefined,
         summary: summary.trim() || undefined,
         repo: repo.trim() || undefined,
+        path: linkPath.trim() || undefined,
         domain: domain
           .split(",")
           .map((d) => d.trim())
@@ -133,6 +136,21 @@ export function NewProjectModal({
         </label>
 
         <label className="mb-4 block">
+          <span className="field-label">Existing directory on this machine (optional)</span>
+          <input
+            className="input"
+            value={linkPath}
+            onChange={(e) => setLinkPath(e.target.value)}
+            placeholder="/home/ed/Code/foo"
+          />
+          <span className="mt-1 block text-xs text-paddock-400 dark:text-paddock-500">
+            Work in a checkout you already have — its real history, branches and
+            remotes. Paddock uses it in place and writes nothing into it (chats stay
+            in the project's own folder). Must be an absolute path to a git checkout.
+          </span>
+        </label>
+
+        <label className="mb-4 block">
           <span className="field-label">Git repository URL (optional)</span>
           <input
             className="input"
@@ -141,9 +159,9 @@ export function NewProjectModal({
             placeholder="https://github.com/owner/repo.git"
           />
           <span className="mt-1 block text-xs text-paddock-400 dark:text-paddock-500">
-            Link an external repo and Paddock clones it as the project's working
-            directory — the repo's own CLAUDE.md, branches &amp; PR flow apply. Leave
-            blank for a notebook project.
+            {linkPath.trim()
+              ? "Not cloned — the directory above is used as-is. A URL here just records which repo it is, so Paddock can match up prior sessions and offer to re-clone it later."
+              : "Paddock clones this repo and makes the checkout the project's working directory — the repo's own CLAUDE.md, branches & PR flow apply. Leave both blank for a notebook project."}
           </span>
         </label>
 

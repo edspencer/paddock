@@ -45,14 +45,21 @@ name, and **visibility** defaults to `public`. Both — plus everything above �
 are editable afterwards from the project's [Settings tab](#tune-the-agent-the-settings-tab).
 :::
 
-## Choose the project type: notebook vs repo-backed
+## Choose the project type: notebook, repo-backed, or linked
 
-The single choice that matters at creation time is whether you fill in the
-**Git repository URL** field. It's what splits the two project types. You don't
-have to get it right first time: a notebook can be
+The choice that matters at creation time is which of the two backing fields you
+fill in — **Existing directory on this machine** or **Git repository URL**. That's
+what splits the three project types:
+
+| Leave both blank | Fill in **Git repository URL** | Fill in **Existing directory** |
+|---|---|---|
+| **Notebook** — notes, plans, runbooks | **Repo-backed** — Paddock clones the repo | **Linked** — Paddock uses a checkout you already have, in place |
+
+You don't have to get it right first time: a notebook can be
 [promoted to repo-backed later](#promote-a-notebook-to-repo-backed), in place.
 That promotion is **one-way**, though — a repo-backed project can never go back
-to being a notebook.
+to being a notebook, and a linked project can't be promoted at all (there's
+nothing to clone; it's already a real checkout).
 
 ### Notebook — for notes, plans, and ops
 
@@ -85,6 +92,59 @@ box.
 
 For the full mechanics of `dir` vs `workingDir` and why metadata stays outside
 the checkout, see the [Projects concept page](/concepts/projects/).
+
+### Linked — for a checkout you already have
+
+Fill in **Existing directory on this machine** with an absolute path like
+`/home/ed/Code/foo`, and Paddock makes *that directory* the working directory —
+used **in place, with no copy**. This is the mode for running Paddock on your own
+machine over the clones you already work in: the agent gets your real history,
+your branches, and your remotes, not a second detached copy.
+
+The defining property is what Paddock *doesn't* do:
+
+:::tip[Paddock writes zero files into a linked directory]
+No `.chats/`, no `.gitignore`, no `CLAUDE.md`. Chat transcripts live in the
+project's own folder inside Paddock's data directory, and the repo's own
+`CLAUDE.md` is the only one in play. `git status` in your checkout stays as clean
+as you left it.
+:::
+
+Two things follow from the working directory being one you also use by hand:
+
+- **Prior `claude` sessions in that directory are offered for adoption.**
+  Transcripts are keyed by working directory, so the conversations you already had
+  there show up in the project's **Adopt chats** list. (This only ever surfaces
+  sessions that really happened on this machine at that path.)
+- **The [`claude.transcripts`](/configuration/config-file/) and
+  `claude.mcpServers` levers finally mean something for a code project.** Both key
+  on the working directory. A cloned repo-backed project points at a directory you
+  have never opened a terminal in, so `transcripts: host` has nothing to share and
+  your `~/.claude.json` has no per-directory MCP servers registered for it. A
+  linked project matches natively.
+
+The path must be **absolute**, must **exist**, must be a **directory containing
+`.git`** (an ordinary checkout or a linked git worktree both qualify), and must sit
+**outside** Paddock's own projects root and data directory, and outside every other
+project's working directory. Paddock rejects the create otherwise rather than
+half-making a project.
+
+You can fill in the **Git repository URL** as well as a directory. Nothing is
+cloned — the URL is recorded only as a note of *which* repo this is, which helps
+Paddock match up prior sessions and gives it something to offer to re-clone from
+if the directory ever goes away. The directory always wins as the working
+directory.
+
+:::caution[A linked path is specific to this machine]
+It records an absolute path that Paddock did not create, so it does not survive
+being rebuilt somewhere else — on a fresh box the project points at a directory
+that isn't there until you re-clone it. Repo-backed projects, which Paddock clones
+itself, don't have this problem.
+:::
+
+`path:` is set **once**, at creation, and is immutable — the working directory is
+baked into every transcript path, so re-pointing it would strand the project's
+history.
 
 ### Promote a notebook to repo-backed
 
@@ -157,7 +217,8 @@ The fields:
 | `group` | The project's **area** — its single, exclusive home. |
 | `started`, `updated` | Creation date (immutable) and last-touched date (auto-bumped). |
 | `links` | Optional `{label, url}` bookmarks. |
-| `repo` | Present only for repo-backed projects. Absent on a notebook, and set **once** — at creation, or by [promoting](#promote-a-notebook-to-repo-backed). Once set it never changes. |
+| `repo` | Present only for repo-backed projects. Absent on a notebook, and set **once** — at creation, or by [promoting](#promote-a-notebook-to-repo-backed). Once set it never changes. On a [linked](#linked--for-a-checkout-you-already-have) project it is optional and records *which* repo the directory is, without causing a clone. |
+| `path` | Present only for [linked](#linked--for-a-checkout-you-already-have) projects: the absolute path to an existing on-box checkout used in place. Set **once**, at creation, and immutable. Takes precedence over `repo` as the working directory. |
 | `model`, `permissionMode`, `driveMode`, `maxTurns`, `docker` | Per-project agent overrides — see below. Absent means *inherit the box default*. |
 | `models` | Optional allow-list narrowing which models this project offers — see [Restrict the offered models](#restrict-the-offered-models). |
 | `curation` | Optional per-file sweeper token budgets — see [Curation budgets](#curation-budgets). |

@@ -94,6 +94,30 @@ describe("NewProjectModal", () => {
     await waitFor(() => expect(createProject).toHaveBeenCalled());
     const payload = createProject.mock.calls[0][0] as Record<string, unknown>;
     expect(payload.repo).toBeUndefined();
+    expect(payload.path).toBeUndefined();
+  });
+
+  it("includes the linked directory path in the payload when provided (issue #206)", async () => {
+    render(<NewProjectModal open onClose={() => {}} onCreated={() => {}} />);
+    await userEvent.type(screen.getByPlaceholderText(/Garage Water Heater/i), "Linked Proj");
+    await userEvent.type(screen.getByPlaceholderText("/home/ed/Code/foo"), "  /home/ed/Code/foo  ");
+    fireEvent.click(screen.getByRole("button", { name: /create project/i }));
+    await waitFor(() => expect(createProject).toHaveBeenCalled());
+    const payload = createProject.mock.calls[0][0] as Record<string, unknown>;
+    expect(payload.path).toBe("/home/ed/Code/foo");
+    // Linking is independent of `repo`; leaving the URL blank must not send one.
+    expect(payload.repo).toBeUndefined();
+  });
+
+  it("tells the user a repo URL is not cloned once a directory is linked (issue #206)", async () => {
+    render(<NewProjectModal open onClose={() => {}} onCreated={() => {}} />);
+    // The two fields are not mutually exclusive server-side (`path` wins for the
+    // cwd), so the copy has to say what a URL alongside a linked dir actually does
+    // — otherwise "Git repository URL" reads as "this will be cloned".
+    expect(screen.getByText(/Paddock clones this repo/i)).toBeInTheDocument();
+    await userEvent.type(screen.getByPlaceholderText("/home/ed/Code/foo"), "/home/ed/Code/foo");
+    expect(screen.queryByText(/Paddock clones this repo/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/Not cloned — the directory above is used as-is/i)).toBeInTheDocument();
   });
 
   it("surfaces an API error and stays open", async () => {

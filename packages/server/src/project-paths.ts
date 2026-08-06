@@ -106,11 +106,37 @@ export function repoCheckoutName(repo: string): string {
 }
 
 /**
- * Resolve a project's working directory (keeper cwd) from its metadata dir + repo
- * URL: the nested checkout for a repo-backed project, else the metadata dir
- * itself for a notebook project (issue #187).
+ * Whether `child` is `parent` itself or lives underneath it. Both are resolved
+ * first, so this compares real path strings rather than the caller's spelling
+ * (it does NOT follow symlinks — callers that care resolve them beforehand).
+ *
+ * The `+ path.sep` is load-bearing: a plain `startsWith(parent)` would call
+ * `/data/projects-old` a child of `/data/projects`.
  */
-export function workingDirFor(dir: string, repo?: string): string {
+export function isPathInside(child: string, parent: string): boolean {
+  const c = path.resolve(child);
+  const p = path.resolve(parent);
+  return c === p || c.startsWith(p + path.sep);
+}
+
+/**
+ * Resolve a project's working directory (keeper cwd) from its metadata dir plus
+ * whichever backing field is set. Three shapes:
+ *
+ *  - **linked** (`linkedPath`, issue #206) — the cwd IS a directory the user
+ *    already has (`~/Code/foo`), returned verbatim, used in place with no copy.
+ *    Nothing is nested under the metadata dir, so Paddock writes nothing into it.
+ *  - **repo-backed** (`repo`, issue #187) — the nested checkout Paddock cloned.
+ *  - **notebook** — the metadata dir itself.
+ *
+ * `linkedPath` WINS over `repo`: the two are deliberately not mutually exclusive
+ * (issue #206 findings §4). A linked project may also record a `repo` URL, which
+ * stays useful for the adoption matcher's remote-URL check (`adoptable.ts`, #659)
+ * and as a re-clone hint for disaster recovery — but it must never trigger a
+ * clone or move the cwd off the directory the user pointed at.
+ */
+export function workingDirFor(dir: string, repo?: string, linkedPath?: string): string {
+  if (linkedPath) return linkedPath;
   return repo ? path.join(dir, repoCheckoutName(repo)) : dir;
 }
 

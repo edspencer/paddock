@@ -143,7 +143,7 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
         tags: ["Projects"],
         summary: "Create a project",
         description:
-          "Creates a project from `CreateProjectInput` and registers its agent and its sweeper. Set `repo` to create a repo-backed project (the cloned checkout becomes the agent's working directory); omit it for a notebook project. Responds 201 with `{ project }`.",
+          "Creates a project from `CreateProjectInput` and registers its agent and its sweeper. Set `repo` to create a repo-backed project (the cloned checkout becomes the agent's working directory), or `path` to LINK an existing on-box git checkout used in place with no copy (that directory becomes the working directory and Paddock writes nothing into it); omit both for a notebook project. Responds 201 with `{ project }`.",
         body: {
           type: ["object", "null"],
           additionalProperties: true,
@@ -162,6 +162,10 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
             },
             repo: {
               description: "External git repo URL to back this project (repo-backed if set).",
+            },
+            path: {
+              description:
+                "Absolute path to an EXISTING on-box git checkout to link as the working directory, used in place with no copy (issue #206). Must be absolute, exist, be a directory containing `.git`, and lie outside the projects root, the data dir, and every other project's working directory. Immutable once set.",
             },
           },
           required: [],

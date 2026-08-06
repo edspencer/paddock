@@ -81,14 +81,26 @@ these routes can already start a chat and run Bash, which is strictly more
 capability than reading a file. It is worth closing because "hidden in the listing" should
 not be the only thing standing between an API and a transcript.
 
-## The two project types
+## The three project types
 
-A project is one of two types, distinguished by a single field: the optional
-`repo` (an external git repo URL) in `project.yaml` (`repoBacked =
-Boolean(yaml.repo)`). The type is set at creation, or later by
-[**promoting**](/using/creating-and-organizing-projects/#promote-a-notebook-to-repo-backed)
-a notebook to repo-backed in place — a one-way transition. Once `repo` is set it
-never changes.
+A project's type is decided by two optional fields in `project.yaml` — `repo` (an
+external git repo URL) and `path` (an absolute path to a directory already on the
+box). `workingDirFor()` resolves the agent's cwd from them, and `path` wins:
+
+```ts
+workingDir = path ?? (repo ? `${dir}/${repoCheckoutName(repo)}` : dir)
+repoBacked = Boolean(repo || path)
+```
+
+Both fields are set at creation and immutable thereafter — the one exception being
+[**promotion**](/using/creating-and-organizing-projects/#promote-a-notebook-to-repo-backed),
+which sets `repo` on an existing notebook in place (a one-way transition, and
+refused for a linked project).
+
+`repoBacked` covering both backed types is deliberate: what consumers of the flag
+care about is "the cwd is a git repo that owns its own `CLAUDE.md`", which is
+equally true of a clone Paddock made and a directory the user pointed at. It is
+what suppresses the sweeper's `CLAUDE.md` curation.
 
 ### Notebook (the classic type)
 
@@ -126,6 +138,50 @@ of the enclosing data repo (a deliberate "git-in-git" arrangement). Because the
 checkout's `CLAUDE.md` is upstream-owned, the sweeper never amends it for a
 repo-backed project.
 
+### Linked (an existing on-box directory as the agent's cwd)
+
+`path` is set to an absolute path to a directory that already exists on the box,
+and the agent's working directory **is that directory** — used in place, with no
+copy. Nothing is nested under the metadata dir at all:
+
+```
+dir         = <projectsRoot>/<slug>            # metadata dir (Paddock-owned)
+workingDir  = <path>                           # the user's own checkout, verbatim
+```
+
+Because nothing is nested, **Paddock writes nothing into the linked directory**.
+The transcript store stays in the metadata dir via `ensureProjectChats`'s
+two-argument split (`ensureProjectChats(workingDir, chatsHostDir, home)` — the cwd
+names the transcript folder, `chatsHostDir` says where the store lives); there is
+no sidecar `.gitignore` to write, because there is nothing to ignore; and no
+per-project `CLAUDE.md` is seeded, which for a linked project would not even sit
+on the agent's cwd walk-up path.
+
+The payoff is that `workingDir` is now a directory the user *also* uses by hand,
+which is what several cwd-keyed features have always needed:
+
+- **Session adoption works with no extra machinery.** `candidateSources` already
+  appends the project's own `workingDir` last, so the exact-cwd branch matches the
+  user's prior `claude` sessions in that directory natively.
+- **`claude.transcripts: host` and per-directory `~/.claude.json` MCP servers
+  become meaningful.** Both key on `workingDir`; against a clone Paddock made
+  there is nothing on the host side to match.
+
+`path` is validated once, at creation: absolute, extant, a directory containing
+`.git` (tested for presence rather than kind, so a linked git worktree — where
+`.git` is a *file* — qualifies), and outside `projectsRoot`, the data dir, and
+every other project's `workingDir`. Symlinks are resolved *before* those
+containment checks, so an innocent-looking path outside the root cannot smuggle in
+a target inside Paddock's own state.
+
+:::caution[Deleting a linked project never deletes the directory]
+Every recursive delete in the project store goes through one guard that refuses
+any path not strictly inside `projectsRoot`. Before linked projects that
+containment was implicit — everything a project owned was nested under its slug
+dir — and a linked working directory is precisely what breaks that assumption, so
+it is now explicit and centralised rather than re-derived at each call site.
+:::
+
 ```mermaid
 flowchart TB
   subgraph Notebook["Notebook project"]
@@ -136,10 +192,15 @@ flowchart TB
     Ck["{slug}/{repo-name}/  ← agent cwd\n the external repo checkout (own .git, own CLAUDE.md)"]
     D --> Ck
   end
-  %% The two project shapes are unconnected, so mermaid ranks them side by side
+  subgraph Linked["Linked project"]
+    LD["{slug}/  (metadata dir)\n project.yaml · OVERVIEW · CHANGELOG · .chats/"]
+    LC["/home/ed/Code/foo  ← agent cwd\n the user's OWN checkout — Paddock writes nothing here"]
+    LD -. "cwd only" .-> LC
+  end
+  %% The project shapes are unconnected, so mermaid ranks them side by side
   %% (1071px, scaled 1.6x down). `~~~` is an invisible link that stacks them
   %% vertically without drawing an edge — 686px, i.e. 1:1 in the column.
-  Notebook ~~~ Repo
+  Notebook ~~~ Repo ~~~ Linked
 ```
 
 ## Why the split

@@ -139,7 +139,7 @@ async function main(): Promise<number> {
   if (args.dataDir !== undefined) process.env.PADDOCK_DATA_DIR = args.dataDir;
 
   const cfg = loadPaddockConfig();
-  const projects = new ProjectStore(cfg.projectsRoot);
+  const projects = new ProjectStore(cfg.projectsRoot, cfg.dataDir);
   const herdctl = new HerdctlService(cfg);
   const project = await projects.get(args.project);
 
