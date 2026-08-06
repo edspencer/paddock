@@ -93,45 +93,61 @@ describe("claude-mcp: parsing a .claude.json (#691)", () => {
     expect(Object.keys(src.byDir)).not.toContain("/home/ed/code/web");
   });
 
-  it("keeps only the four fields herdctl's McpServerSchema can carry", () => {
+  /**
+   * The inverse of the two assertions this file used to carry (#699 → #700).
+   * `headers` and `type` were stripped here because herdctl's `McpServerSchema`
+   * had no field for either and would have dropped them at `addAgent` anyway;
+   * carrying them was pointless and warning about the loss was the honest thing
+   * to do instead. herdctl 5.32.0 (#446) added both fields, so the useful
+   * assertion is now that they SURVIVE — and that nothing warns about them.
+   *
+   * Proven at the boundary, not inferred: with 5.32.0 installed,
+   * `addAgent` → `getAgents()` → `toSDKOptions()` returns
+   * `{type: "sse", url, headers}` unchanged. This test pins paddock's half of
+   * that; `packages/core`'s `mcp-and-plugin-passthrough.test.ts` pins herdctl's.
+   */
+  it("carries `headers` and an explicit `type`, which 5.32.0 no longer strips", () => {
     const src = parseHostMcpConfig(
       JSON.stringify({
         mcpServers: {
           remote: {
-            type: "http",
-            url: "https://mcp.example.com/mcp",
+            type: "sse",
+            url: "https://mcp.example.com/sse",
             headers: { Authorization: "REDACTED" },
             env: { TOKEN: "x" },
           },
         },
       }),
     );
-    // `type` and `headers` have no field in herdctl's schema and would be
-    // stripped at addAgent anyway; dropping them here is what makes the loss
-    // reportable instead of invisible.
-    expect(src.user.remote).toEqual({ url: "https://mcp.example.com/mcp", env: { TOKEN: "x" } });
+    expect(src.user.remote).toEqual({
+      type: "sse",
+      url: "https://mcp.example.com/sse",
+      headers: { Authorization: "REDACTED" },
+      env: { TOKEN: "x" },
+    });
+    // The whole point of the bump: no caveat, so no boot warning. An `sse` server
+    // authenticated with a bearer header used to produce two.
+    expect(src.caveats).toEqual([]);
   });
 
-  it("warns that a dropped `headers` also orphans the server's OAuth token", () => {
+  it("still strips a key herdctl has no field for, without pretending otherwise", () => {
+    // `tools` (an `McpServerToolPolicy[]`) is real Claude Code config and is still
+    // not in `McpServerSchema`, so the narrowing is still a narrowing — it just no
+    // longer breaks authentication. No caveat, because unlike `headers` losing it
+    // degrades nothing an operator would recognise as a failure.
     const src = parseHostMcpConfig(
-      JSON.stringify({
-        mcpServers: { remote: { url: "https://x/mcp", headers: { Authorization: "REDACTED" } } },
-      }),
+      JSON.stringify({ mcpServers: { remote: { url: "https://x/mcp", tools: ["a"] } } }),
     );
-    const caveat = src.caveats.find((c) => c.name === "remote");
-    expect(caveat?.kind).toBe("degraded");
-    // Not a guess: MCP tokens are stored under `mcpOAuth[`${name}|sha256({type,url,headers})`]`
-    // in the same credential store as the Anthropic login, so losing the headers
-    // changes the key and the token is not found. See `claude-mcp.ts`.
-    expect(caveat?.reason).toContain("OAuth token");
+    expect(src.user.remote).toEqual({ url: "https://x/mcp" });
   });
 
-  it("flags an sse server, which herdctl can only connect to as http", () => {
+  it("ignores a `type` it does not recognise rather than passing it on", () => {
+    // herdctl's enum would strip it, and the bare-`url` ⇒ `http` inference is a
+    // better fallback than a field that vanishes one layer down.
     const src = parseHostMcpConfig(
-      JSON.stringify({ mcpServers: { stream: { type: "sse", url: "https://x/sse" } } }),
+      JSON.stringify({ mcpServers: { odd: { type: "websocket", url: "https://x/ws" } } }),
     );
-    expect(src.user.stream).toEqual({ url: "https://x/sse" });
-    expect(src.caveats.find((c) => c.name === "stream")?.reason).toContain("sse");
+    expect(src.user.odd).toEqual({ url: "https://x/ws" });
   });
 
   it("drops — rather than degrades — a server with nothing to start", () => {
@@ -248,13 +264,20 @@ describe("claude-mcp: loading from disk (#691)", () => {
     expect(report.notices[0].message).toContain("claude mcp add");
   });
 
-  it("warns at boot about every server it could not carry faithfully", async () => {
+  it("warns at boot about a server it cannot start, and only about that", async () => {
+    // The `degraded` warnings #699 shipped — a dropped `headers`, a coerced
+    // `sse` — are gone with herdctl 5.32.0. What remains is the one case that is
+    // genuinely unusable rather than merely narrowed.
     await writeHostConfig({
-      mcpServers: { remote: { url: "https://x/mcp", headers: { Authorization: "REDACTED" } } },
+      mcpServers: {
+        remote: { url: "https://x/mcp", type: "sse", headers: { Authorization: "REDACTED" } },
+        broken: { args: ["--x"] },
+      },
     });
     const report = await loadHostMcpSource(cfgFor("host"));
-    const warn = report.notices.find((n) => n.level === "warn");
-    expect(warn?.message).toContain("remote");
-    expect(warn?.message).toContain("degraded");
+    const warnings = report.notices.filter((n) => n.level === "warn");
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].message).toContain("broken");
+    expect(warnings[0].message).toContain("NOT attached");
   });
 });

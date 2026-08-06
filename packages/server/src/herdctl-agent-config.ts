@@ -21,6 +21,7 @@ import {
   mcpToolPattern,
   type McpSources,
 } from "./claude-mcp.js";
+import { EMPTY_HOST_PLUGINS, type HostPluginSource } from "./claude-plugins.js";
 import {
   DEFAULT_MODEL,
   SWEEPER_DEFAULT_MODEL,
@@ -77,12 +78,18 @@ import {
  * which is both the isolated mode and what every existing caller means. The
  * KEEPER is the only agent that gets them: the sweeper is tool-less and each
  * trigger declares its own narrow allowlist, so neither could call one anyway.
+ *
+ * `hostPlugins` is the same story for the host's Claude Code plugins (#700),
+ * resolved once at boot by `claude-plugins.ts` and gated by `claude.instructions`
+ * rather than `claude.mcpServers` — see that module for why. Keeper-only for the
+ * same reasons, and empty unless the lever is on.
  */
 export function buildAgentConfig(
   cfg: PaddockConfig,
   project: Project,
   modelOverride?: string,
   mcpSources: McpSources = EMPTY_MCP_SOURCES,
+  hostPlugins: HostPluginSource = EMPTY_HOST_PLUGINS,
 ): Record<string, unknown> & { name: string } {
   const config: Record<string, unknown> & { name: string } = {
     name: keeperAgentName(project.slug),
@@ -172,9 +179,18 @@ export function buildAgentConfig(
   // Patterns already on the defaults are filtered out, so nothing is restated
   // for an instance with no external servers (or one whose only server paddock's
   // own overrode above) — that config stays byte-identical to before this lever.
-  const extra = Object.keys(external)
-    .map(mcpToolPattern)
-    .filter((pattern) => !FLEET_ALLOWED_TOOLS.includes(pattern));
+  //
+  // The host's Claude Code PLUGINS ride on the same two mechanisms (#700, and the
+  // `plugins` passthrough herdctl 5.32.0 added for it). They are a separate key
+  // rather than more `mcp_servers` because a plugin is a directory the engine
+  // loads, not a server paddock can describe — but their servers land in the same
+  // tool namespace and need the same allowlist widening, under names paddock has
+  // to derive rather than read (`claude-plugins.ts`).
+  if (hostPlugins.plugins.length > 0) config.plugins = hostPlugins.plugins;
+  const extra = [
+    ...Object.keys(external).map(mcpToolPattern),
+    ...hostPlugins.toolPatterns,
+  ].filter((pattern) => !FLEET_ALLOWED_TOOLS.includes(pattern));
   if (extra.length > 0) config.allowed_tools = [...FLEET_ALLOWED_TOOLS, ...extra];
   return config;
 }

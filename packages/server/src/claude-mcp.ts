@@ -71,44 +71,73 @@
  * only when there are some, so an instance with no host servers stays
  * byte-identical to before.
  *
- * ## What cannot be carried, honestly
+ * ## What could not be carried, and now can (herdctl 5.32.0)
  *
- * herdctl's `McpServerSchema` is `{command?, args?, env?, url?}` and it is a
- * plain `z.object`, so anything else is silently STRIPPED at `addAgent`. Two
- * consequences that matter and that #691 does not mention:
+ * Until `@herdctl/core@5.32.0`, `McpServerSchema` was `{command?, args?, env?,
+ * url?}`, so `headers` and `type` were silently STRIPPED at `addAgent` and
+ * `transformMcpServer` rewrote every `url` to `type: "http"`. A
+ * header-authenticated server arrived unauthenticated and an `sse` server was
+ * downgraded to HTTP, so #699 shipped a boot warning naming every server that
+ * lost a field.
  *
- * - **`headers` is dropped.** A remote MCP server authenticated with a bearer
- *   header therefore arrives unauthenticated.
- * - **`type` is dropped**, and `transformMcpServer` maps any `url` to
- *   `type: "http"`. An `sse` server is silently downgraded to HTTP.
+ * herdctl#446 (in 5.32.0) widened the schema to mirror the SDK's own
+ * `McpServerConfig` — `type`, `headers`, `timeout` and `alwaysLoad` — and an
+ * explicit `type` now wins over the bare-`url` inference. Verified against the
+ * installed 5.32.0 rather than assumed: `addAgent` → `getAgents()` →
+ * `toSDKOptions()` returns `{type: "sse", url, headers}` unchanged for a server
+ * declared that way, and still infers `type: "http"` for a bare `url`. So the
+ * two `degraded` caveats are gone and {@link McpServerDef} carries both fields.
  *
- * And those two strippings are worse than they look, because of where MCP OAuth
- * tokens turn out to live. #691 listed that as an open question; it is now
- * answered, from the bundled CLI binary rather than by inference:
+ * Why that mattered more than it looked, and why it is worth not regressing:
+ * MCP OAuth tokens are stored under a top-level **`mcpOAuth`** key in the SAME
+ * credential store as `claudeAiOauth` — `<securestorage-dir>/.credentials.json`
+ * on Linux, the one `Claude Code-credentials` keychain item on darwin. There is
+ * no MCP-specific service name and no `mcp-oauth/` directory. The store is
+ * resolved by `CLAUDE_SECURESTORAGE_CONFIG_DIR ?? CLAUDE_CONFIG_DIR ?? ~/.claude`,
+ * which is exactly the variable `claude.credentials` drives — **so
+ * `credentials: host` DOES carry MCP OAuth tokens**, in either direction. But
+ * the per-server key is `` `${serverName}|${sha256({type,url,headers}).slice(0,16)}` ``,
+ * so a dropped header or a coerced `type` changed the hash and the stored token
+ * was simply not found. Carrying both fields verbatim is what makes
+ * `credentials: host` + `mcpServers: host` work for an OAuth server at all.
  *
- * - Tokens are stored under a top-level **`mcpOAuth`** key in the SAME credential
- *   store as `claudeAiOauth` — `<securestorage-dir>/.credentials.json` on Linux,
- *   the one `Claude Code-credentials` keychain item on darwin. There is no
- *   MCP-specific service name and no `mcp-oauth/` directory. The store is
- *   resolved by `CLAUDE_SECURESTORAGE_CONFIG_DIR ?? CLAUDE_CONFIG_DIR ?? ~/.claude`,
- *   which is exactly the variable `claude.credentials` drives. **So
- *   `credentials: host` DOES carry MCP OAuth tokens** — they are not separable
- *   from the Anthropic login, in either direction.
- * - But the per-server key is `` `${serverName}|${sha256({type,url,headers}).slice(0,16)}` ``.
- *   A dropped `headers`, or an `sse` coerced to `http`, changes that hash and the
- *   stored token is simply not found. So the combination that works today is
- *   `credentials: host` + `mcpServers: host` for an OAuth server declared with no
- *   headers and no `type` disagreement; a header-authenticated or `sse` server
- *   arrives looking unauthenticated even though its token is right there.
+ * `z.object` still strips what it has no field for (`tools`, and anything Claude
+ * Code grows next), so this narrowing is still a narrowing — it is just no longer
+ * one that breaks authentication. The one case that is still DROPPED is a server
+ * with neither `command` nor `url`, which cannot be started at all.
  *
- * Neither is paddock's to fix here (both need a herdctl schema change). What
- * paddock CAN do is refuse to be silent about it: {@link parseHostMcpConfig}
- * records every key it had to drop and every `sse` it had to coerce, and the
- * boot notice names the server. The server is still passed — this is a
- * capability lever, not a security one, and a user who declared a server should
- * get it plus a warning rather than nothing plus a warning. The one case that IS
- * dropped is a server with neither `command` nor `url`, which cannot be started
- * at all.
+ * ## The cost of carrying `headers`, which is real and is upstream
+ *
+ * herdctl's **CLI runtime** serialises the whole `mcp_servers` record into a
+ * single `--mcp-config '{"mcpServers":…}'` argv element, so everything in it is
+ * readable from `/proc/<pid>/cmdline` by any process of the same user. That was
+ * already true of an `env` value; it is now true of an `Authorization` header as
+ * well, which is the more likely place a bearer token lives. The SDK runtime
+ * passes the record in-process and is unaffected.
+ *
+ * Paddock's chats default to the SDK runtime (`driveMode: session`), but the
+ * sweeper and triggers are always one-shot CLI runs and a `driveMode: batch`
+ * project's turns are too — and neither the sweeper nor a trigger is given these
+ * servers, so the exposure is `driveMode: batch` only. Not paddock's to fix (the
+ * argv shape is herdctl's) and not a reason to go back to dropping the header:
+ * a stripped header is an authentication failure for everyone, while this is a
+ * same-user disclosure on one non-default drive mode. Worth knowing before
+ * putting a long-lived token in a `headers` block on a shared box.
+ *
+ * #702 found and measured this for a DECLARED server's `env` (it reads the token
+ * back out of a real spawned process's argv), and `mcp-servers.ts`'s
+ * `argvExposure` is the boot warning — now widened to `headers` for the same
+ * reason. There is no equivalent warning for a HOST server, deliberately: this
+ * module does not look at a value it did not resolve, and a user who ran
+ * `claude mcp add` on the box is already in the argv-exposure position with their
+ * own terminal.
+ *
+ * ## Plugins are the other half of this lever
+ *
+ * A Claude Code **plugin** can provide MCP servers too, and they are invisible to
+ * everything above: they are declared inside the plugin, not in `.claude.json`
+ * (#700). `claude-plugins.ts` is that half — it enumerates the host's installed
+ * plugin directories for `agent.plugins`, the second thing 5.32.0 added.
  *
  * ## Scope: keepers only
  *
@@ -172,15 +201,20 @@ export function hostMcpConfigPath(legacyClaudeHome: string): string {
  * One MCP server, in the only shape herdctl's `McpServerSchema` can carry.
  *
  * Deliberately NOT `SDKMcpServerConfig`: that is what herdctl produces on the
- * far side of `transformMcpServer`, and pinning the narrower agent-config shape
- * here is what makes the lossiness above visible at the type level rather than
- * at runtime.
+ * far side of `transformMcpServer`, and pinning the agent-config shape here is
+ * what keeps any remaining lossiness visible at the type level rather than at
+ * runtime. As of herdctl 5.32.0 the two differ only in what the SDK has that
+ * herdctl still has no field for (`tools`).
  */
 export interface McpServerDef {
+  /** Explicit transport. Wins over the bare-`url` ⇒ `http` inference (5.32.0). */
+  type?: "stdio" | "sse" | "http";
   command?: string;
   args?: string[];
   env?: Record<string, string>;
   url?: string;
+  /** Carried verbatim since 5.32.0 — and part of the OAuth token's key. */
+  headers?: Record<string, string>;
 }
 
 /** A set of MCP servers, keyed by the name their tools are namespaced under. */
@@ -190,7 +224,14 @@ export type McpServerDefs = Record<string, McpServerDef>;
 export interface HostMcpCaveat {
   /** The server's name in `.claude.json`. */
   name: string;
-  /** `dropped` = not passed at all; `degraded` = passed, but not faithfully. */
+  /**
+   * `dropped` = not passed at all; `degraded` = passed, but not faithfully.
+   *
+   * Nothing produces `degraded` since herdctl 5.32.0 carries `headers` and
+   * `type` verbatim (#700) — the variant and its notice branch are kept because
+   * the class of defect ("the engine has no field for this") is the one #699 was
+   * filed about and is one schema narrowing away from coming back.
+   */
   kind: "dropped" | "degraded";
   /** Human-readable, and specific enough to act on. */
   reason: string;
@@ -268,6 +309,18 @@ function narrowServer(
     if (Object.keys(env).length > 0) server.env = env;
   }
   if (typeof raw.url === "string" && raw.url !== "") server.url = raw.url;
+  // Both carried verbatim since herdctl 5.32.0 (#700). Before that they were
+  // stripped at `addAgent` and this function pushed a `degraded` caveat naming
+  // the server; the fields reaching `toSDKOptions()` intact is what retired that
+  // warning. A `type` we do not recognise is left off rather than passed on —
+  // herdctl's enum would strip it anyway, and the bare-`url` inference is the
+  // better fallback than nothing.
+  if (raw.type === "stdio" || raw.type === "sse" || raw.type === "http") server.type = raw.type;
+  if (isRecord(raw.headers)) {
+    const headers: Record<string, string> = {};
+    for (const [k, v] of Object.entries(raw.headers)) if (typeof v === "string") headers[k] = v;
+    if (Object.keys(headers).length > 0) server.headers = headers;
+  }
 
   if (server.command === undefined && server.url === undefined) {
     caveats.push({
@@ -276,31 +329,6 @@ function narrowServer(
       reason: "it declares neither a `command` nor a `url`, so there is nothing to start",
     });
     return undefined;
-  }
-  // The lossy bits. `type` and `headers` are real keys of Claude Code's own MCP
-  // config that herdctl's schema has no field for and therefore strips; saying so
-  // is the difference between "my Notion server does not work" and "my Notion
-  // server's bearer header was dropped, here is the issue to file".
-  if (isRecord(raw.headers) && Object.keys(raw.headers).length > 0) {
-    caveats.push({
-      name,
-      kind: "degraded",
-      reason:
-        `its \`headers\` (${Object.keys(raw.headers).join(", ")}) cannot be carried — ` +
-        `herdctl's MCP schema has no field for them, so the server is passed WITHOUT them, ` +
-        `any auth they held is gone, and its stored OAuth token (keyed on a hash that ` +
-        `includes the headers) will not be found either`,
-    });
-  }
-  if (raw.type === "sse") {
-    caveats.push({
-      name,
-      kind: "degraded",
-      reason:
-        'it is an `sse` server, and herdctl maps every `url` to `type: "http"` — it will ' +
-        "be connected to as HTTP, and any OAuth token stored against the `sse` shape " +
-        "will not be found",
-    });
   }
   return server;
 }

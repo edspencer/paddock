@@ -48,16 +48,23 @@
  * Unlike a management token, an MCP `env` entry is not necessarily secret
  * (`NOTION_VERSION: "2022-06-28"` is not), so an inline value is a WARNING and
  * not an error — but the warning is emitted for any key that looks like a
- * credential, and nothing in this module ever prints a value. Every diagnostic
- * names keys, variable names and server names only; a `url` is reported with its
- * query string and userinfo stripped, because that is where an API key rides.
- * {@link describeServer} is the single place a server is rendered for a human,
- * so there is one function to audit rather than a scattering of template strings.
+ * credential, and nothing in this module ever prints a value. `headers` follows
+ * the same rule and for a stronger reason: `Authorization` is the usual reason a
+ * header is declared at all. Every diagnostic names keys, variable names and
+ * server names only; a `url` is reported with its query string and userinfo
+ * stripped, because that is where an API key rides. {@link describeServer} is the
+ * single place a server is rendered for a human, so there is one function to
+ * audit rather than a scattering of template strings.
  *
  * The resolved values do land in the frozen `PaddockConfig` (as management tokens
  * already do). They must never reach an API response: `instance-config.ts`
  * publishes only the fields in its own `FIELDS` table, and this block is
  * deliberately absent from it.
+ *
+ * One exposure the `env:` indirection does NOT close: under `driveMode: batch`
+ * the resolved value reaches a COMMAND LINE. See {@link argvExposure} — and note
+ * that carrying `headers` (#700) widens it, because an `Authorization` bearer is
+ * a likelier long-lived credential than an `env` entry.
  *
  * ## Validation is strict, and drops rather than degrades
  *
@@ -65,10 +72,15 @@
  * grounds that a user who declared a server elsewhere should get it plus a
  * warning rather than nothing plus a warning. That reasoning inverts here,
  * because the user typed this file: an unusable declaration is a mistake they can
- * fix, and a `headers:` block that is silently dropped is an authentication
- * failure that looks like a broken server. So anything that cannot be carried is
- * an ERROR and that server is not attached — including an unknown key, which is
- * how a typo (`arg:` for `args:`) otherwise becomes a server that starts wrong.
+ * fix. So anything that cannot be carried is an ERROR and that server is not
+ * attached — including an unknown key, which is how a typo (`arg:` for `args:`)
+ * otherwise becomes a server that starts wrong.
+ *
+ * `headers:` and `type: sse` USED to be in that category, because herdctl's
+ * schema had no field for either. herdctl 5.32.0 (#446) carries both verbatim,
+ * so refusing them would now reject a declaration that works — they are accepted,
+ * and `headers` is a first-class secret-bearing field with the same `env:VAR`
+ * resolution and the same never-print rule as `env`.
  *
  * Never a boot failure, though: one bad server drops itself and the rest attach,
  * matching `resolveManagementApiConfig`. A typo in a capability must not take an
@@ -85,11 +97,11 @@ export interface McpServerConfigFile {
   args?: string[];
   /** Environment for the server process. Values may be `env:VAR_NAME`. */
   env?: Record<string, string>;
-  /** Endpoint for a streamable-HTTP server. Mutually exclusive with {@link command}. */
+  /** Endpoint for a remote server. Mutually exclusive with {@link command}. */
   url?: string;
-  /** Accepted only as `stdio`/`http`, and only when it agrees with the above. */
+  /** `stdio` for a {@link command}; `http` or `sse` for a {@link url}. */
   type?: string;
-  /** Present only in a MISCONFIGURED file: the engine cannot carry headers. */
+  /** Headers for a remote server. Values may be `env:VAR_NAME`. */
   headers?: Record<string, string>;
 }
 
@@ -177,10 +189,12 @@ export function redactUrl(raw: string): string {
 export function describeServer(name: string, def: McpServerDef): string {
   const parts: string[] = [];
   if (def.command) parts.push(`stdio: ${def.command.split(/[\\/]/).pop()}`);
-  if (def.url) parts.push(`http: ${redactUrl(def.url)}`);
+  if (def.url) parts.push(`${def.type ?? "http"}: ${redactUrl(def.url)}`);
   if (def.args?.length) parts.push(`${def.args.length} args`);
   const envCount = Object.keys(def.env ?? {}).length;
   if (envCount > 0) parts.push(`${envCount} env ${envCount === 1 ? "entry" : "entries"}`);
+  const headerCount = Object.keys(def.headers ?? {}).length;
+  if (headerCount > 0) parts.push(`${headerCount} ${headerCount === 1 ? "header" : "headers"}`);
   return `${name} (${parts.join(", ")})`;
 }
 
@@ -226,18 +240,18 @@ interface NarrowResult {
  * Validate + resolve one declaration into the shape herdctl's `McpServerSchema`
  * carries, or explain why it cannot be.
  *
- * The rejections are the interesting part, and each is a thing step 5 discovered
- * the engine strips silently:
+ * The one rejection left that is about the engine rather than about the file is
+ * **an unknown key** — the only defence against `arg:`/`envs:`/`commands:`, which
+ * would otherwise yield a server that starts with the wrong argv.
  *
- * - **`headers`** — there is no field for them, so a bearer-authenticated server
- *   would arrive unauthenticated AND miss its stored OAuth token, which is keyed
- *   on a hash that includes the headers. Step 5 passes such a host server with a
- *   warning; a hand-written declaration gets an error instead, because the user
- *   typed the header and can act on being told it does nothing.
- * - **`type: sse`** — every `url` is mapped to `type: "http"` downstream, so an
- *   sse server is silently downgraded, with the same OAuth-key consequence.
- * - **an unknown key** — the only defence against `arg:`/`envs:`/`commands:`,
- *   which would otherwise yield a server that starts with the wrong argv.
+ * `headers` and `type: sse` were rejections too until herdctl 5.32.0, because
+ * the schema had no field for either: a bearer-authenticated server arrived
+ * unauthenticated and missed its stored OAuth token (keyed on a hash that
+ * includes the headers and the type), and an `sse` url was silently connected to
+ * as HTTP. Both are now carried verbatim, so both are accepted — `headers`
+ * through the same `env:VAR` resolution as `env`, and `type` checked only for
+ * agreeing with the declaration (`stdio` for a `command`, `http`/`sse` for a
+ * `url`).
  */
 function narrowDeclaration(
   name: string,
@@ -269,20 +283,11 @@ function narrowDeclaration(
   const unknown = Object.keys(raw).filter((k) => !KNOWN_KEYS.has(k));
   if (unknown.length > 0) {
     return fail(
-      `${where}: unrecognised key(s) ${unknown.join(", ")} (supported: command, args, env, url) ` +
+      `${where}: unrecognised key(s) ${unknown.join(", ")} ` +
+        `(supported: command, args, env, url, type, headers) ` +
         `— a mistyped key would otherwise be dropped without a trace`,
     );
   }
-  if (raw.headers !== undefined) {
-    const keys = isRecord(raw.headers) ? Object.keys(raw.headers) : [];
-    return fail(
-      `${where}: \`headers\`${keys.length > 0 ? ` (${keys.join(", ")})` : ""} cannot be ` +
-        `carried — the engine's MCP schema has no field for them, so the server would arrive ` +
-        `unauthenticated and its stored OAuth token (keyed on a hash that includes the headers) ` +
-        `would not be found either`,
-    );
-  }
-
   const hasCommand = typeof raw.command === "string" && raw.command.trim().length > 0;
   const hasUrl = typeof raw.url === "string" && raw.url.trim().length > 0;
   if (hasCommand && hasUrl) {
@@ -296,25 +301,24 @@ function narrowDeclaration(
     );
   }
 
+  const server: McpServerDef = {};
+
   if (raw.type !== undefined) {
     const type = String(raw.type).trim().toLowerCase();
-    if (type === "sse") {
+    // `sse` joined `http` here in herdctl 5.32.0; an explicit type now wins over
+    // the bare-`url` ⇒ `http` inference rather than being stripped on the way
+    // down. It still has to agree with the rest of the declaration, because a
+    // `type` that disagrees is a typo and starting the wrong transport is a
+    // confusing failure rather than a loud one.
+    const expected = hasUrl ? ["http", "sse"] : ["stdio"];
+    if (!expected.includes(type)) {
       return fail(
-        `${where}: \`type: sse\` cannot be carried — every \`url\` server is connected to as ` +
-          `streamable HTTP downstream, so an sse server would be silently downgraded (and its ` +
-          `stored OAuth token, keyed on a hash that includes the type, not found). Declare it ` +
-          `as \`http\` if the server supports it`,
+        `${where}: \`type: ${type}\` disagrees with the declaration ` +
+          `(expected ${expected.join(" or ")})`,
       );
     }
-    const expected = hasUrl ? "http" : "stdio";
-    if (type !== expected) {
-      return fail(
-        `${where}: \`type: ${type}\` disagrees with the declaration (expected ${expected})`,
-      );
-    }
+    server.type = type as McpServerDef["type"];
   }
-
-  const server: McpServerDef = {};
 
   if (hasCommand) {
     const res = resolveLeaf((raw.command as string).trim(), env, `${where}.command`);
@@ -325,9 +329,9 @@ function narrowDeclaration(
     const res = resolveLeaf((raw.url as string).trim(), env, `${where}.url`);
     if (!res.ok) return { errors, warnings: [...warnings, `${res.error} — server not attached`] };
     server.url = res.value;
-    // A key in the query string is the usual way a remote MCP endpoint is
-    // authenticated now that `headers` cannot be carried, and this file is
-    // git-tracked. Say so once; never echo the query itself.
+    // A key in the query string is one of the two ways a remote MCP endpoint is
+    // authenticated (the other, `headers`, is carryable again since #700), and
+    // this file is git-tracked. Say so once; never echo the query itself.
     if (!(raw.url as string).startsWith(ENV_REF_PREFIX)) {
       let parsed: URL | undefined;
       try {
@@ -379,6 +383,35 @@ function narrowDeclaration(
       }
     }
     if (Object.keys(resolved).length > 0) server.env = resolved;
+  }
+
+  if (raw.headers !== undefined) {
+    if (!hasUrl) {
+      return fail(`${where}.headers: only a \`url\` server can carry headers`);
+    }
+    if (!isRecord(raw.headers)) {
+      return fail(`${where}.headers: must be a mapping of header name to value`);
+    }
+    const resolved: Record<string, string> = {};
+    for (const [key, value] of Object.entries(raw.headers)) {
+      if (typeof value !== "string") {
+        return fail(`${where}.headers.${key}: must be a string`);
+      }
+      const res = resolveLeaf(value, env, `${where}.headers.${key}`);
+      if (!res.ok) return { errors, warnings: [...warnings, `${res.error} — server not attached`] };
+      resolved[key] = res.value;
+      // Same heuristic as `env`, one rule to learn — and `Authorization` is the
+      // usual reason a header is declared at all, so this fires on the common
+      // case rather than the exotic one.
+      if (!value.startsWith(ENV_REF_PREFIX) && SECRET_ISH_KEY_RE.test(key)) {
+        warnings.push(
+          `${where}.headers.${key}: looks like a credential and is written into the config file ` +
+            `itself, which is git-tracked — prefer \`${key}: ${ENV_REF_PREFIX}VAR_NAME\` and set ` +
+            `the value in the environment`,
+        );
+      }
+    }
+    if (Object.keys(resolved).length > 0) server.headers = resolved;
   }
 
   return { server, errors, warnings };
@@ -436,8 +469,9 @@ export function resolveDeclaredMcpServers(
  *
  * A process ARGUMENT is not private on Linux: `/proc/<pid>/cmdline` is
  * world-readable by default (no `hidepid`), and `ps` prints it. So on the CLI
- * runtime every declared server's `env` — the API token included — is legible to
- * any local user for the lifetime of each `claude` invocation. Observed, not
+ * runtime every declared server's `env` — and, since #700 made the field
+ * carryable, its `headers` — is legible to any local user for the lifetime of
+ * each `claude` invocation. Observed, not
  * inferred: `test/integration/declared-mcp-argv.test.ts` drives a real turn and
  * reads the token back out of the spawned process's argv.
  *
@@ -463,7 +497,8 @@ function argvExposure(names: readonly string[], driveMode: DriveMode): DeclaredM
   return {
     level: batch ? "warn" : "info",
     message:
-      `${names.join(", ")} ${names.length === 1 ? "declares" : "declare"} \`env\` values, and ` +
+      `${names.join(", ")} ${names.length === 1 ? "declares" : "declare"} \`env\` values or ` +
+      `\`headers\`, and ` +
       `under \`driveMode: batch\` the engine passes the whole server definition to \`claude\` ` +
       `as a \`--mcp-config\` COMMAND-LINE argument — where any local process can read it via ` +
       `/proc/<pid>/cmdline. ` +
@@ -523,7 +558,16 @@ export function declaredMcpNotices(opts: {
         `~/.claude.json (\`claude.mcpServers: host\`); this instance's own declaration wins.`,
     });
   }
-  const exposed = names.filter((n) => Object.keys(opts.servers[n].env ?? {}).length > 0);
+  // `headers` joined `env` here in #700: herdctl 5.32.0 carries them, so an
+  // `Authorization` bearer now rides in the same `--mcp-config` argv element that
+  // #702 found an `env` token in — and a bearer is the likelier long-lived
+  // credential of the two. A server declared with headers and no env would
+  // otherwise be the one case this warning missed.
+  const exposed = names.filter(
+    (n) =>
+      Object.keys(opts.servers[n].env ?? {}).length > 0 ||
+      Object.keys(opts.servers[n].headers ?? {}).length > 0,
+  );
   if (exposed.length > 0 && opts.driveMode !== undefined) {
     // The one place a declared credential escapes paddock, and it escapes
     // downstream of every rule this module enforces — see {@link argvExposure}.

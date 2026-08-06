@@ -89,6 +89,7 @@ import {
   ensureConfigFile as writeBootConfigFile,
 } from "./herdctl-agent-config.js";
 import { EMPTY_MCP_SOURCES, type McpSources } from "./claude-mcp.js";
+import { EMPTY_HOST_PLUGINS, type HostPluginSource } from "./claude-plugins.js";
 import * as jobs from "./herdctl-jobs.js";
 import { JobsDirIndex } from "./herdctl-jobs-index.js";
 import { AdoptableIndex, type AdoptableSummary, type FilterReason } from "./adoptable.js";
@@ -368,10 +369,15 @@ export class HerdctlService {
    * all under `mcpServers: own`. Defaults to empty so every existing caller —
    * including the several tests that construct this with `{} as PaddockConfig` —
    * keeps meaning "isolated".
+   *
+   * `hostPlugins` is the host's Claude Code plugins (#700), read at boot by
+   * `loadHostPlugins` under `claude.instructions: host`, and handed in for
+   * exactly the same reasons.
    */
   constructor(
     private readonly cfg: PaddockConfig,
     private readonly mcpSources: McpSources = EMPTY_MCP_SOURCES,
+    private readonly hostPlugins: HostPluginSource = EMPTY_HOST_PLUGINS,
   ) {}
 
   /**
@@ -1742,7 +1748,13 @@ export class HerdctlService {
     project: Project,
     modelOverride?: string,
   ): Record<string, unknown> & { name: string } {
-    return buildAgentConfig(this.cfg, project, modelOverride, this.mcpSources);
+    return buildAgentConfig(
+      this.cfg,
+      project,
+      modelOverride,
+      this.mcpSources,
+      this.hostPlugins,
+    );
   }
 
   private sweeperAgentConfig(project: Project): Record<string, unknown> & { name: string } {
