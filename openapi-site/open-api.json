@@ -3,7 +3,7 @@
   "info": {
     "title": "Paddock HTTP API",
     "description": "HTTP API for Paddock — the Claude Code workspace platform (persistent chats, projects, unified triggers).\n\nThis document is **generated from the server's route schemas** via `@fastify/swagger`, so it\ntracks the code: a new or changed route with a schema shows up here automatically.\n\n**Live chat is WebSocket, not REST.** Sending a message, streaming the response, tool-call\nevents, cancel, slash-commands and the live queue all flow over `GET /ws`. This spec covers the\nHTTP surface: reads, project/chat/trigger/git management, instance config, and attachment\nupload/serve. The two-step attachment flow is: `POST .../chats/:sessionId/upload` (HTTP, here)\nthen reference the returned file ids in the `chat:send` WebSocket frame.\n\n## Authentication\n\nPaddock has no built-in login — authentication is provider-agnostic and handled at the edge (reverse proxy / IdP). **When these docs are served by the Paddock instance itself, behind your proxy, a `Try it out` request is a same-origin call that inherits your existing SSO session — it authenticates automatically, nothing to paste here.** Use the **Authorize** button only for the explicit-token path (a different origin, a programmatic client, or testing without the proxy).\n\nThis instance runs **jwt** mode: a signed token in the `Authorization` header, verified against the JWKS.",
-    "version": "0.61.1"
+    "version": "0.62.0"
   },
   "components": {
     "securitySchemes": {
@@ -1359,7 +1359,7 @@
         "tags": [
           "Chats"
         ],
-        "description": "Deletes a project chat (session): removes its transcript JSONL and clears any archived/starred flag so a future session id can't inherit it. Responds 200 with `{ ok, removed }`.",
+        "description": "Deletes a project chat (session) and clears any archived/starred flag so a future session id can't inherit it. Responds 200 with `{ ok, removed, retained }`. In a Claude home Paddock owns, the transcript JSONL is unlinked (`removed: true`). In a home it does NOT own the transcript is the user's own terminal `claude` history — Paddock plants no symlink there (#682), so there is no copy to delete — and the session is RELEASED instead: it leaves the chat list, the file stays on disk, and `retained` is true (#689).",
         "parameters": [
           {
             "schema": {
@@ -3594,7 +3594,7 @@
         "tags": [
           "Chats"
         ],
-        "description": "Deletes a project chat (session): removes its transcript JSONL and clears any archived/starred flag so a future session id can't inherit it. Responds 200 with `{ ok, removed }`.",
+        "description": "Deletes a project chat (session) and clears any archived/starred flag so a future session id can't inherit it. Responds 200 with `{ ok, removed, retained }`. In a Claude home Paddock owns, the transcript JSONL is unlinked (`removed: true`). In a home it does NOT own the transcript is the user's own terminal `claude` history — Paddock plants no symlink there (#682), so there is no copy to delete — and the session is RELEASED instead: it leaves the chat list, the file stays on disk, and `retained` is true (#689).",
         "parameters": [
           {
             "schema": {
