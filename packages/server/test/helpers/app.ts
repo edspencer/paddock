@@ -69,6 +69,17 @@ interface StartOptions {
    */
   hostClaudeJson?: Record<string, unknown>;
   /**
+   * Synthetic host Claude Code PLUGINS (#700), planted under
+   * `<home>/.claude/plugins/`: one `installed_plugins.json` registry entry per
+   * key, each pointing at a directory with a `.claude-plugin/plugin.json` and
+   * (when given) a `.mcp.json`.
+   *
+   * Always synthetic, and nothing ever runs them — a plugin directory is data
+   * until a turn loads it, and no turn runs in these tests. The real plugin root
+   * on a dev box holds a user's own plugins and their credentials.
+   */
+  hostPlugins?: Record<string, { mcpServers?: Record<string, unknown> }>;
+  /**
    * Extra environment variables to set before build (restored on teardown).
    * Needed for config that is REFERENCED from the YAML rather than inlined —
    * management-API tokens are `ref: env:VAR`, so the test must supply the var.
@@ -221,6 +232,36 @@ export async function startTestApp(opts: StartOptions = {}): Promise<TestApp> {
     await fs.writeFile(
       path.join(home, ".claude.json"),
       JSON.stringify(opts.hostClaudeJson, null, 2),
+      "utf8",
+    );
+  }
+
+  // The host's plugins (#700). `<home>/.claude/plugins/`, enumerated from the
+  // CLI's own `installed_plugins.json` registry rather than by scanning — see
+  // `claude-plugins.ts` for why that file is the source of truth.
+  if (opts.hostPlugins) {
+    const root = path.join(home, ".claude", "plugins");
+    const registry: Record<string, unknown[]> = {};
+    for (const [name, decl] of Object.entries(opts.hostPlugins)) {
+      const dir = path.join(root, "cache", "test-marketplace", name, "1.0.0");
+      await fs.mkdir(path.join(dir, ".claude-plugin"), { recursive: true });
+      await fs.writeFile(
+        path.join(dir, ".claude-plugin", "plugin.json"),
+        JSON.stringify({ name }),
+        "utf8",
+      );
+      if (decl.mcpServers) {
+        await fs.writeFile(
+          path.join(dir, ".mcp.json"),
+          JSON.stringify({ mcpServers: decl.mcpServers }),
+          "utf8",
+        );
+      }
+      registry[`${name}@test-marketplace`] = [{ scope: "user", installPath: dir }];
+    }
+    await fs.writeFile(
+      path.join(root, "installed_plugins.json"),
+      JSON.stringify({ version: 2, plugins: registry }, null, 2),
       "utf8",
     );
   }

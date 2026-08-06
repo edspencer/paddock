@@ -62,9 +62,11 @@ describe("mcpServers: the shape that reaches the runtime", () => {
       NO_ENV,
     );
     expect(errors).toEqual([]);
-    // `type` is not a field herdctl's schema has, so it is consumed here rather
-    // than passed on to be stripped downstream.
-    expect(servers).toEqual({ linear: { url: "https://mcp.example.test/mcp" } });
+    // `type` used to be consumed here — herdctl's schema had no field for it, so
+    // passing it on only meant being stripped one layer down. 5.32.0 has one, and
+    // an explicit type wins over the bare-`url` ⇒ `http` inference, so it is
+    // carried through even when it agrees with what would be inferred anyway.
+    expect(servers).toEqual({ linear: { url: "https://mcp.example.test/mcp", type: "http" } });
   });
 
   it("ignores an absent block entirely", () => {
@@ -78,37 +80,71 @@ describe("mcpServers: the shape that reaches the runtime", () => {
 
 describe("mcpServers: what is refused, and why refusing beats degrading", () => {
   /**
-   * The case the brief singles out. herdctl's `McpServerSchema` has no `headers`
-   * field, so a bearer-authenticated server would arrive unauthenticated — and
-   * its stored OAuth token, keyed on a hash that includes the headers, would not
-   * be found either. Step 5 warns and passes it; a hand-written declaration gets
-   * an error, because the user typed the header and can act on being told it does
-   * nothing.
+   * These two used to be refusals — the cases the #691-step-6 brief singled out —
+   * because herdctl's `McpServerSchema` had no `headers` field and mapped every
+   * `url` to `type: "http"`, so declaring either produced a server that arrived
+   * unauthenticated and could not find its stored OAuth token. herdctl 5.32.0
+   * (#446) carries both verbatim, so refusing them would now reject a declaration
+   * that works. The invariant that has to survive the change is the secrets one:
+   * a header value is a credential and must never be echoed.
    */
-  it("refuses `headers`, naming the header keys and never their values", () => {
-    const { servers, errors } = resolveDeclaredMcpServers(
+  it("accepts `headers` and `type: sse`, and never echoes a header value", () => {
+    const { servers, errors, warnings } = resolveDeclaredMcpServers(
       {
         notion: {
-          url: "https://mcp.example.test/mcp",
+          url: "https://mcp.example.test/sse",
+          type: "sse",
           headers: { Authorization: `Bearer ${SECRET}` },
         },
       },
       NO_ENV,
     );
-    expect(servers).toEqual({});
-    expect(errors).toHaveLength(1);
-    expect(errors[0]).toContain("Authorization");
-    expect(errors[0]).toContain("not attached");
-    expect(errors.join("\n")).not.toContain(SECRET);
+    expect(errors).toEqual([]);
+    expect(servers.notion).toEqual({
+      url: "https://mcp.example.test/sse",
+      type: "sse",
+      headers: { Authorization: `Bearer ${SECRET}` },
+    });
+    // Inline and credential-shaped, so it earns the same advice `env` values get…
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("Authorization");
+    // …and the advice does not contain the thing it is advising about.
+    expect([...errors, ...warnings].join("\n")).not.toContain(SECRET);
   });
 
-  it("refuses `type: sse`, which would otherwise be silently connected to as HTTP", () => {
+  it("resolves an `env:VAR_NAME` header, and says nothing when it is used", () => {
+    const { servers, errors, warnings } = resolveDeclaredMcpServers(
+      {
+        notion: {
+          url: "https://mcp.example.test/mcp",
+          headers: { Authorization: `${ENV_REF_PREFIX}NOTION_BEARER` },
+        },
+      },
+      { NOTION_BEARER: `Bearer ${SECRET}` },
+    );
+    expect(errors).toEqual([]);
+    expect(warnings).toEqual([]);
+    expect(servers.notion.headers).toEqual({ Authorization: `Bearer ${SECRET}` });
+  });
+
+  it("refuses headers on a stdio server, where they mean nothing", () => {
     const { servers, errors } = resolveDeclaredMcpServers(
-      { legacy: { url: "https://mcp.example.test/sse", type: "sse" } },
+      { local: { command: "x", headers: { Authorization: "y" } } },
       NO_ENV,
     );
     expect(servers).toEqual({});
-    expect(errors[0]).toContain("sse");
+    expect(errors[0]).toContain("only a `url` server can carry headers");
+  });
+
+  it("still refuses a `type` that disagrees with the declaration", () => {
+    // `sse` is legal now; `stdio` on a `url` server is still a typo, and starting
+    // the wrong transport is a confusing failure rather than a loud one.
+    const { servers, errors } = resolveDeclaredMcpServers(
+      { legacy: { url: "https://mcp.example.test/sse", type: "stdio" } },
+      NO_ENV,
+    );
+    expect(servers).toEqual({});
+    expect(errors[0]).toContain("expected http or sse");
   });
 
   /**
@@ -170,7 +206,7 @@ describe("mcpServers: what is refused, and why refusing beats degrading", () => 
   /** One bad server must not take the instance — or the other servers — down. */
   it("drops only the offending server", () => {
     const { servers, errors } = resolveDeclaredMcpServers(
-      { good: { command: "ok-mcp" }, bad: { url: "https://x.test", type: "sse" } },
+      { good: { command: "ok-mcp" }, bad: { url: "https://x.test", type: "stdio" } },
       NO_ENV,
     );
     expect(Object.keys(servers)).toEqual(["good"]);
@@ -269,7 +305,10 @@ describe("mcpServers: secrets", () => {
           args: [`--token=${SECRET}`],
           env: { API_KEY: SECRET },
         },
-        remote: { url: `https://user:${SECRET}@mcp.example.test/mcp?key=${SECRET}` },
+        remote: {
+          url: `https://user:${SECRET}@mcp.example.test/mcp?key=${SECRET}`,
+          headers: { Authorization: `Bearer ${SECRET}`, "X-Api-Key": SECRET },
+        },
       },
       NO_ENV,
     );
@@ -288,6 +327,15 @@ describe("mcpServers: secrets", () => {
       env: { API_KEY: SECRET },
     });
     expect(line).toBe("notion (stdio: npx, 2 args, 1 env entry)");
+  });
+
+  it("describeServer counts headers and names the declared transport", () => {
+    const line = describeServer("notion", {
+      url: "https://mcp.example.test/sse",
+      type: "sse",
+      headers: { Authorization: `Bearer ${SECRET}` },
+    });
+    expect(line).toBe("notion (sse: https://mcp.example.test/sse, 1 header)");
   });
 
   it("redactUrl strips query, fragment and userinfo", () => {

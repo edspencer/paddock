@@ -27,7 +27,16 @@ const HOST_CLAUDE_JSON = {
   // Claude Code writes plenty of unrelated state into this file; carrying some of
   // it proves the parse ignores what it does not own.
   firstStartTime: "2026-01-01T00:00:00.000Z",
-  mcpServers: { notion: { command: "notion-mcp-not-real", args: ["--stdio"] } },
+  mcpServers: {
+    notion: { command: "notion-mcp-not-real", args: ["--stdio"] },
+    // A header-authenticated `sse` server: the exact shape #699 had to warn about,
+    // and the reason this repo needs @herdctl/core >= 5.32.0.
+    stream: {
+      type: "sse",
+      url: "https://mcp.example.invalid/sse",
+      headers: { Authorization: "Bearer not-a-real-token" },
+    },
+  },
   projects: {
     "/nonexistent/scoped-project": { mcpServers: { pg: { command: "pg-mcp-not-real" } } },
   },
@@ -71,6 +80,11 @@ describe("integration: claude.mcpServers decides what the runtime is handed (#69
     const keeper = keeperConfigFor(t, "/nonexistent/plain-project");
     expect(keeper.mcp_servers).toEqual({
       notion: { command: "notion-mcp-not-real", args: ["--stdio"] },
+      stream: {
+        type: "sse",
+        url: "https://mcp.example.invalid/sse",
+        headers: { Authorization: "Bearer not-a-real-token" },
+      },
     });
     // …and the allowlist is widened, or every one of its tools is auto-denied.
     expect(keeper.allowed_tools).toContain("mcp__notion__*");
@@ -86,10 +100,46 @@ describe("integration: claude.mcpServers decides what the runtime is handed (#69
     });
     const scoped = keeperConfigFor(t, "/nonexistent/scoped-project");
     const other = keeperConfigFor(t, "/nonexistent/plain-project");
-    expect(Object.keys(scoped.mcp_servers as object).sort()).toEqual(["notion", "pg"]);
-    expect(Object.keys(other.mcp_servers as object)).toEqual(["notion"]);
+    expect(Object.keys(scoped.mcp_servers as object).sort()).toEqual(["notion", "pg", "stream"]);
+    expect(Object.keys(other.mcp_servers as object).sort()).toEqual(["notion", "stream"]);
     expect(scoped.allowed_tools).toContain("mcp__pg__*");
     expect(other.allowed_tools).not.toContain("mcp__pg__*");
+  });
+
+  /**
+   * The assertion that retires #699's stripping warnings, made where the stripping
+   * used to happen: `AgentConfigSchema` is a `z.object`, so a field it has no slot
+   * for is dropped at `addAgent` with no error. Reading the agent back out of the
+   * LIVE fleet is therefore the only place the answer is trustworthy — the unit
+   * tests above pass identically against 5.31.x, where both fields are gone by
+   * this point and a bearer-authenticated `sse` server arrives as unauthenticated
+   * HTTP (and cannot find its stored OAuth token, which is keyed on a hash of
+   * `{type, url, headers}`).
+   *
+   * So this fails on 5.31.x and passes on 5.32.0 — verified by installing both —
+   * which makes it the guard for the dependency floor, not just for the code.
+   */
+  it("keeps `headers` and `type: sse` through AgentConfigSchema (herdctl 5.32.0)", async () => {
+    t = await startTestApp({
+      hostClaudeJson: HOST_CLAUDE_JSON,
+      env: { PADDOCK_CLAUDE_MCP_SERVERS: "host" },
+      gitRepo: true,
+    });
+    await t.app.inject({
+      method: "POST",
+      url: "/api/projects",
+      payload: { name: "Streamed", slug: "streamed" },
+    });
+    const keeper = t.herdctl.manager
+      .getAgents()
+      .find((a) => a.name === keeperAgentName("streamed")) as
+      | { mcp_servers?: Record<string, Record<string, unknown>> }
+      | undefined;
+    expect(keeper?.mcp_servers?.stream).toEqual({
+      type: "sse",
+      url: "https://mcp.example.invalid/sse",
+      headers: { Authorization: "Bearer not-a-real-token" },
+    });
   });
 
   it("reads the key from the config file too, and boots fine with no .claude.json", async () => {

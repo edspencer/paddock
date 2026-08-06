@@ -77,10 +77,20 @@ servers into each keeper's `mcp_servers` agent config, the one seam both runtime
 (`claude-mcp.ts`). A **sibling** `mcpServers:` block declares servers to paddock itself
 rather than borrowing the machine's (`mcp-servers.ts`); it wins a name clash with `host`,
 is file-only, and takes `env:VAR_NAME` references anywhere a string goes so tokens stay
-out of the git-tracked file. Two rules that are load-bearing for anything touching MCP
-here: an attached server whose `mcp__<name>__*` pattern is not added to the keeper's
-`allowed_tools` has every call auto-denied with no prompt, and nothing may ever log or
-serialise a declared server's values (`describeServer` is the only renderer).
+out of the git-tracked file. A host Claude Code **plugin** is the third contributor and
+the one neither of those can see, because a plugin declares its servers inside itself
+(#700): `claude-plugins.ts` enumerates the host's installed plugin directories from the
+CLI's own `plugins/installed_plugins.json` and passes them as `agent.plugins`, gated by
+`claude.instructions` (which is what bridges `plugins/`) with `claude.mcpServers`
+deciding only whether the plugins' own servers come too, via `skipMcpDiscovery`. Three
+rules that are load-bearing for anything touching MCP here: an attached server whose
+`mcp__<name>__*` pattern is not added to the keeper's `allowed_tools` has every call
+auto-denied with no prompt (a PLUGIN's server is registered as
+`plugin:<plugin>:<server>`, so its pattern is `mcp__plugin_<plugin>_<server>__*` —
+derived, not read); nothing may ever log or serialise a declared server's values
+(`describeServer` is the only renderer); and under `driveMode: batch` the CLI runtime
+puts the whole `mcp_servers` record in one `--mcp-config` argv element, so an `env`
+value or an `Authorization` header is visible in `/proc/<pid>/cmdline` to the same user.
 
 ## Dev conventions
 

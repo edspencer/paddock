@@ -20,6 +20,7 @@ import {
 } from "../../src/herdctl-agent-config.js";
 import { FLEET_ALLOWED_TOOLS, BROWSER_MCP_TOOL } from "../../src/herdctl-agent-names.js";
 import { EMPTY_MCP_SOURCES, parseHostMcpConfig, type McpSources } from "../../src/claude-mcp.js";
+import { EMPTY_HOST_PLUGINS, type HostPluginSource } from "../../src/claude-plugins.js";
 import type { PaddockConfig } from "../../src/config.js";
 import type { Project } from "../../src/projects.js";
 
@@ -240,6 +241,74 @@ describe("buildAgentConfig: instance-declared mcpServers (#691 step 6)", () => {
         trigger: { type: "schedule", cron: "0 3 * * *" },
         run: {},
       } as unknown as Parameters<typeof buildTriggerConfig>[3]).mcp_servers,
+    ).toBeUndefined();
+  });
+});
+
+/**
+ * The host's PLUGINS on the same seam (#700, consuming herdctl 5.32.0's `plugins`
+ * passthrough). Asserted here rather than in `claude-plugins.test.ts` because the
+ * thing that can silently break is not the enumeration — it is the two keys
+ * landing on the same agent config together, since a plugin whose server is
+ * attached without its `mcp__…__*` pattern has every call auto-denied with no
+ * prompt and nothing in the logs.
+ *
+ * Nothing here loads a plugin; the paths are synthetic and never touched.
+ */
+describe("buildAgentConfig: host plugins (#700)", () => {
+  const hostPlugins: HostPluginSource = {
+    plugins: [{ type: "local", path: "/home/ed/.claude/plugins/cache/acme/slack/1.0.0" }],
+    toolPatterns: ["mcp__plugin_slack_chat__*"],
+    caveats: [],
+  };
+
+  it("passes them as `plugins` and widens the allowlist by their tool patterns", () => {
+    const config = buildAgentConfig(cfg(), project(), undefined, EMPTY_MCP_SOURCES, hostPlugins);
+    expect(config.plugins).toEqual(hostPlugins.plugins);
+    expect(config.allowed_tools).toEqual([...FLEET_ALLOWED_TOOLS, "mcp__plugin_slack_chat__*"]);
+  });
+
+  /**
+   * The allowlist is ONE array and herdctl's `mergeAgentConfig` REPLACES arrays
+   * rather than merging them, so an agent that widens it inherits nothing from the
+   * fleet defaults. Both sources therefore have to be restated together or the
+   * second one silently removes the first.
+   */
+  it("widens by the plugins' patterns AND the servers', in one array", () => {
+    const config = buildAgentConfig(cfg(), project(), undefined, hostConfig, hostPlugins);
+    expect(config.allowed_tools).toEqual([
+      ...FLEET_ALLOWED_TOOLS,
+      "mcp__notion__*",
+      "mcp__pg__*",
+      "mcp__plugin_slack_chat__*",
+    ]);
+  });
+
+  it("leaves a config with no plugins byte-identical to before the lever", () => {
+    // The default argument means every existing caller — and every project on an
+    // instance with `instructions: own` — keeps meaning "no plugins".
+    const before = buildAgentConfig(cfg(), project(), undefined, EMPTY_MCP_SOURCES);
+    const after = buildAgentConfig(
+      cfg(),
+      project(),
+      undefined,
+      EMPTY_MCP_SOURCES,
+      EMPTY_HOST_PLUGINS,
+    );
+    expect(after).toEqual(before);
+    expect("plugins" in after).toBe(false);
+    expect(after.allowed_tools).toBeUndefined();
+  });
+
+  it("never attaches a plugin to the sweeper or to a trigger", () => {
+    // Same scope decision as both MCP sources, and the same structural guarantee:
+    // neither builder takes a HostPluginSource at all.
+    expect(buildSweeperConfig(cfg(), project()).plugins).toBeUndefined();
+    expect(
+      buildTriggerConfig(cfg(), project(), "nightly", {
+        trigger: { type: "schedule", cron: "0 3 * * *" },
+        run: {},
+      } as unknown as Parameters<typeof buildTriggerConfig>[3]).plugins,
     ).toBeUndefined();
   });
 });

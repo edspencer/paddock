@@ -25,6 +25,7 @@ import {
   findPlantedChatsLinks,
 } from "./claude-home.js";
 import { loadHostMcpSource } from "./claude-mcp.js";
+import { loadHostPlugins } from "./claude-plugins.js";
 import { declaredMcpNotices } from "./mcp-servers.js";
 import { installHerdctlLogBridge } from "./agent-errors.js";
 import { ProjectStore, ROOT_KEY } from "./projects.js";
@@ -176,7 +177,18 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   })) {
     app.log[notice.level](notice.message);
   }
-  const herdctl = new HerdctlService(cfg, { ...hostMcp.source, declared: cfg.mcpServers });
+  // …and the host's Claude Code PLUGINS (#700), which no amount of reading
+  // `.claude.json` can find: a plugin declares its own MCP servers internally.
+  // Gated by `claude.instructions` (which is what bridges `plugins/`), with
+  // `claude.mcpServers` deciding only whether the plugins' servers come too —
+  // see `claude-plugins.ts` for why that is not the single lever #700 assumes.
+  const hostPlugins = await loadHostPlugins(cfg);
+  for (const notice of hostPlugins.notices) app.log[notice.level](notice.message);
+  const herdctl = new HerdctlService(
+    cfg,
+    { ...hostMcp.source, declared: cfg.mcpServers },
+    hostPlugins.source,
+  );
   const git = new GitService(cfg.projectsRoot, cfg.gitAuthor);
   const githubAuth = new GithubAuth(path.join(cfg.dataDir, "github-auth.json"), cfg.githubClientId);
   const archive = new ArchiveStore(cfg.dataDir);
