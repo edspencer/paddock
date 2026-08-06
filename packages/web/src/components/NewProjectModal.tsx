@@ -22,6 +22,8 @@ export function NewProjectModal({
   const [status, setStatus] = useState<ProjectStatus>("active");
   const [repo, setRepo] = useState("");
   const [linkPath, setLinkPath] = useState("");
+  // Only meaningful when a path is given with no repo — see the checkbox below.
+  const [managedNotes, setManagedNotes] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -39,6 +41,7 @@ export function NewProjectModal({
       setStatus("active");
       setRepo("");
       setLinkPath("");
+      setManagedNotes(false);
       setError(null);
     }
   }, [open]);
@@ -67,6 +70,10 @@ export function NewProjectModal({
         summary: summary.trim() || undefined,
         repo: repo.trim() || undefined,
         path: linkPath.trim() || undefined,
+        // Send `managed` only for the ambiguous shape (a path with no repo);
+        // otherwise let the server derive it, so there is one rule not two.
+        managed:
+          linkPath.trim() && !repo.trim() ? managedNotes : undefined,
         domain: domain
           .split(",")
           .map((d) => d.trim())
@@ -136,7 +143,7 @@ export function NewProjectModal({
         </label>
 
         <label className="mb-4 block">
-          <span className="field-label">Existing directory on this machine (optional)</span>
+          <span className="field-label">Directory on this machine (optional)</span>
           <input
             className="input"
             value={linkPath}
@@ -144,9 +151,9 @@ export function NewProjectModal({
             placeholder="/home/ed/Code/foo"
           />
           <span className="mt-1 block text-xs text-paddock-400 dark:text-paddock-500">
-            Work in a checkout you already have — its real history, branches and
-            remotes. Paddock uses it in place and writes nothing into it (chats stay
-            in the project's own folder). Must be an absolute path to a git checkout.
+            Where this project's content lives. An existing checkout is used in
+            place — its real history, branches and remotes — and Paddock writes
+            nothing into it. Absolute path; created for you if it doesn't exist.
           </span>
         </label>
 
@@ -159,11 +166,35 @@ export function NewProjectModal({
             placeholder="https://github.com/owner/repo.git"
           />
           <span className="mt-1 block text-xs text-paddock-400 dark:text-paddock-500">
-            {linkPath.trim()
-              ? "Not cloned — the directory above is used as-is. A URL here just records which repo it is, so Paddock can match up prior sessions and offer to re-clone it later."
-              : "Paddock clones this repo and makes the checkout the project's working directory — the repo's own CLAUDE.md, branches & PR flow apply. Leave both blank for a notebook project."}
+            {!linkPath.trim()
+              ? "Paddock clones this repo into the project and works in the checkout. Leave both blank for a notes project."
+              : "Cloned into the directory above if it doesn't exist yet; otherwise the directory is used as-is and this just records which repo it is."}
           </span>
         </label>
+
+        {/*
+          `managed` is derived server-side as `!(repo || path)`, which decides the
+          two unambiguous cases on its own: naming a repo means code, naming
+          neither means notes. A path ALONE is the one genuinely ambiguous input —
+          `~/Code/foo` could be a checkout or a folder of notes — so that is the
+          only time the choice is worth putting to the user.
+        */}
+        {linkPath.trim() && !repo.trim() && (
+          <label className="mb-4 flex cursor-pointer items-start gap-2">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={managedNotes}
+              onChange={(e) => setManagedNotes(e.target.checked)}
+            />
+            <span className="text-xs text-paddock-500 dark:text-paddock-400">
+              <span className="font-medium">These are notes — let Paddock curate them.</span>{" "}
+              Its OVERVIEW.md, CHANGELOG.md and CLAUDE.md are written into that
+              directory. Leave unticked for a code checkout you version yourself,
+              and Paddock will write nothing into it.
+            </span>
+          </label>
+        )}
 
         <div className="mb-5 grid grid-cols-2 gap-3">
           <label className="block">

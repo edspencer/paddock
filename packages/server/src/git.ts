@@ -85,6 +85,9 @@ export class GitService {
   /** Cached repo-detection result for `projectsRoot` (null = not yet checked). */
   private repoFlag: boolean | null = null;
 
+  /** Cached per-directory repo detection, keyed by resolved path (#597 / #206). */
+  private readonly repoAt = new Map<string, boolean>();
+
   /**
    * @param projectsRoot Absolute path to the projects root the service operates on.
    * @param author Commit identity used when Paddock commits on a project's behalf.
@@ -109,24 +112,60 @@ export class GitService {
    * Whether the backing store is a git working tree. Cached after the first
    * successful check (repo-ness doesn't change under a running server); a thrown
    * git / missing-binary error resolves to `false`.
+   *
+   * Store-wide, so it still gates the store-wide operations ({@link dirtyCounts},
+   * {@link remote}, {@link push}). The PER-PROJECT surface asks
+   * {@link isRepoAt} about the project's own working directory instead — see
+   * that method for why the two had to be separated.
    */
   async isRepo(): Promise<boolean> {
     if (this.repoFlag !== null) return this.repoFlag;
-    try {
-      const out = await this.git(this.projectsRoot, [
-        "rev-parse",
-        "--is-inside-work-tree",
-      ]);
-      this.repoFlag = out.trim() === "true";
-    } catch {
-      this.repoFlag = false;
-    }
+    this.repoFlag = await this.probeRepo(this.projectsRoot);
     return this.repoFlag;
   }
 
-  /** Force the next `isRepo()` to re-check (e.g. after `git init` at runtime). */
+  /**
+   * Whether `dir` is inside a git working tree, cached per directory.
+   *
+   * The per-project git surface used to gate on {@link isRepo} — "is the PROJECTS
+   * ROOT a repo?" — which was right only while every project's tree lived under
+   * that root. It stopped being right twice over (issue #597, issue #206):
+   *
+   *  - a project whose working directory is a linked checkout outside the root
+   *    would report "not a repo" whenever the root itself wasn't one, hiding the
+   *    Changes tab for the exact directory that IS a repo;
+   *  - conversely a non-repo directory inside a repo root would claim to be one.
+   *
+   * Asking about the directory the project actually works in answers both. For
+   * every pre-existing shape it returns what {@link isRepo} did, because a
+   * project dir under a repo root is itself inside that work tree.
+   *
+   * Probing rather than requiring is the house style: nothing here refuses a
+   * directory for not being a repo, it just doesn't light up the git features.
+   */
+  async isRepoAt(dir: string): Promise<boolean> {
+    const key = path.resolve(dir);
+    const cached = this.repoAt.get(key);
+    if (cached !== undefined) return cached;
+    const found = await this.probeRepo(key);
+    this.repoAt.set(key, found);
+    return found;
+  }
+
+  /** One `rev-parse`, false on any failure (missing binary, missing dir, not a repo). */
+  private async probeRepo(dir: string): Promise<boolean> {
+    try {
+      const out = await this.git(dir, ["rev-parse", "--is-inside-work-tree"]);
+      return out.trim() === "true";
+    } catch {
+      return false;
+    }
+  }
+
+  /** Force the next repo check to re-run (e.g. after `git init` at runtime). */
   resetRepoCache(): void {
     this.repoFlag = null;
+    this.repoAt.clear();
   }
 
   /**
@@ -135,7 +174,9 @@ export class GitService {
    * `projectDir`.
    */
   async projectStatus(projectDir: string): Promise<GitProjectStatus> {
-    if (!(await this.isRepo())) {
+    // Per-DIRECTORY, not store-wide: callers pass the project's workingDir, which
+    // may be a linked checkout outside `projectsRoot` entirely (#597 / #206).
+    if (!(await this.isRepoAt(projectDir))) {
       return { repo: false, files: [], clean: true };
     }
     let branch: string | undefined;
@@ -223,7 +264,7 @@ export class GitService {
    * (they're listed by `projectStatus`). Returns "" when not a repo / no diff.
    */
   async projectDiff(projectDir: string, file?: string): Promise<string> {
-    if (!(await this.isRepo())) return "";
+    if (!(await this.isRepoAt(projectDir))) return "";
     const args = ["diff", "HEAD", "--", file ?? "."];
     try {
       return await this.git(projectDir, args);
@@ -303,7 +344,7 @@ export class GitService {
     message: string,
     paths?: string[],
   ): Promise<{ committed: boolean; hash?: string; error?: string }> {
-    if (!(await this.isRepo())) return { committed: false, error: "not a repo" };
+    if (!(await this.isRepoAt(projectDir))) return { committed: false, error: "not a repo" };
     const msg = message.trim() || "Update project";
     let pathspec: string[];
     if (paths && paths.length) {
@@ -362,6 +403,34 @@ export class GitService {
       return counts;
     } catch {
       return {};
+    }
+  }
+
+  /**
+   * Uncommitted-file count for ONE directory's own repository.
+   *
+   * The companion to {@link dirtyCounts} for a project whose working directory
+   * lives outside `projectsRoot` (issue #206). That method answers the whole grid
+   * in a single `git status` over the store, which is why it is cheap — and also
+   * why it structurally cannot see a linked checkout: it buckets paths by their
+   * first segment relative to the store, and a directory outside it has no such
+   * segment. This one costs a subprocess, so callers use it only for the projects
+   * the cheap sweep genuinely cannot cover.
+   *
+   * Returns 0 for a directory that isn't a repo, matching "nothing to report".
+   */
+  async dirtyCountAt(dir: string): Promise<number> {
+    if (!(await this.isRepoAt(dir))) return 0;
+    try {
+      const out = await this.git(dir, [
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=all",
+      ]);
+      return parsePorcelainZ(out).length;
+    } catch {
+      return 0;
     }
   }
 

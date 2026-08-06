@@ -119,20 +119,28 @@ function RepoBackingSection({
     setRepo("");
     setConfirming(false);
     setError(null);
-  }, [project.slug, project.repoBacked]);
+  }, [project.slug, project.managed]);
 
-  // Repo-backed already: show the backing read-only (promotion is one-way).
-  if (project.repoBacked) {
+  // Already backed by a repo or a nominated directory: show it read-only. There
+  // is no un-promote and no re-pointing (#206 — the cwd is baked into every
+  // transcript path), so this is a statement of fact rather than a form.
+  if (!project.managed || project.path) {
     return (
       <Section
-        title="Repository backing"
-        description="This project is backed by an external git repo — Claude works in a checkout of it."
+        title="Backing"
+        description={
+          project.managed
+            ? "Claude works in the directory below, and Paddock curates this project's notes there."
+            : "Claude works in the directory below. Paddock does not write project files into it — its notes stay in the project's own folder."
+        }
       >
         <dl className="grid grid-cols-1 gap-y-3">
-          <ReadOnly
-            label="Repository"
-            value={<span className="break-all font-mono text-[13px]">{project.repo}</span>}
-          />
+          {project.repo && (
+            <ReadOnly
+              label={project.path ? "Repository (recorded)" : "Repository"}
+              value={<span className="break-all font-mono text-[13px]">{project.repo}</span>}
+            />
+          )}
           <ReadOnly
             label="Working directory"
             value={<span className="break-all font-mono text-[13px]">{project.workingDir}</span>}

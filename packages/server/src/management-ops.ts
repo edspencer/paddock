@@ -430,8 +430,9 @@ export function buildManagementOps(
         name: project.name,
         dir: project.dir,
         workingDir: project.workingDir,
-        repoBacked: project.repoBacked === true,
+        managed: project.managed === true,
         ...(project.repo ? { repo: project.repo } : {}),
+        ...(project.path ? { path: project.path } : {}),
         agentRegistered,
       };
     },

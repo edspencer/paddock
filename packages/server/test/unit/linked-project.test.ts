@@ -183,15 +183,17 @@ describe("ProjectStore — linked projects (issue #206)", () => {
 
   // --- DTO shape / round-trip ------------------------------------------------
 
-  it("a linked project is repoBacked, with cwd = the linked dir and no seeded CLAUDE.md", async () => {
+  it("a linked project is UNMANAGED, with cwd = the linked dir and no seeded CLAUDE.md", async () => {
     const p = await store.create({ name: "Foo", path: checkout, summary: "linked" });
 
     expect(p.path).toBe(checkout);
     expect(p.workingDir).toBe(checkout);
     expect(p.dir).toBe(path.join(root, "foo"));
-    // repoBacked drives the sweeper's CLAUDE.md suppression — the linked repo has
-    // its own upstream-owned one that the sweeper must never write (#206 item 5).
-    expect(p.repoBacked).toBe(true);
+    // `managed: false` is what suppresses the sweeper's CLAUDE.md curation — the
+    // linked repo owns its own, and the sweeper must never write it.
+    expect(p.managed).toBe(false);
+    // An unmanaged project's curated files stay sidecarred in the metadata dir.
+    expect(p.contentDir).toBe(p.dir);
     expect(p.repo).toBeUndefined();
 
     // No per-project CLAUDE.md seeded, and no sidecar .gitignore (nothing nested).
@@ -209,7 +211,7 @@ describe("ProjectStore — linked projects (issue #206)", () => {
     const reread = await store.get(p.slug);
     expect(reread.path).toBe(checkout);
     expect(reread.workingDir).toBe(checkout);
-    expect(reread.repoBacked).toBe(true);
+    expect(reread.managed).toBe(false);
   });
 
   it("accepts a repo URL alongside path — the cwd stays the linked dir, no clone happens", async () => {
@@ -251,7 +253,7 @@ describe("ProjectStore — linked projects (issue #206)", () => {
     const notebook = await store.create({ name: "Notes" });
     const nPatched = await store.update(notebook.slug, { path: elsewhere } as never);
     expect(nPatched.path).toBeUndefined();
-    expect(nPatched.repoBacked).toBe(false);
+    expect(nPatched.managed).toBe(true);
     expect(nPatched.workingDir).toBe(nPatched.dir);
 
     await rmTmpDir(path.dirname(elsewhere));
@@ -290,11 +292,15 @@ describe("ProjectStore — linked projects (issue #206)", () => {
     ).rejects.toMatchObject({ code: "not_directory" });
   });
 
-  it("rejects a directory with no .git", async () => {
+  it("ACCEPTS a directory with no .git — paddock probes for git, never requires it", async () => {
+    // This is the one place paddock could have grown a mandatory git check, and
+    // deliberately has not. Everywhere else it degrades: `isRepo()` goes false,
+    // the Changes tab removes itself, commit/push return "not a repo" — and the
+    // default E2E server runs on a non-git directory on purpose.
     const plain = await makeTmpDir("paddock-plain-");
-    await expect(store.create({ name: "Plain", path: plain })).rejects.toMatchObject({
-      code: "invalid",
-    });
+    const p = await store.create({ name: "Plain", path: plain, managed: false });
+    expect(p.workingDir).toBe(plain);
+    expect(p.managed).toBe(false);
     await rmTmpDir(plain);
   });
 
@@ -363,11 +369,257 @@ describe("ProjectStore — linked projects (issue #206)", () => {
     });
   });
 
-  it("a rejected linked path leaves no project directory behind", async () => {
-    await expect(store.create({ name: "Bad", path: "/nope/missing" })).rejects.toThrow(
-      ProjectError,
-    );
+  it("a rejected path leaves no project directory behind", async () => {
+    await expect(
+      store.create({ name: "Bad", path: "/nope/missing", managed: false }),
+    ).rejects.toThrow(ProjectError);
     // Validation runs before ANY mkdir, so there is nothing to roll back.
     await expect(fs.access(path.join(root, "bad"))).rejects.toThrow();
   });
+});
+
+describe("the managed axis (issue #206)", () => {
+  let root: string;
+  let dataDir: string;
+  let store: ProjectStore;
+  let warnings: string[];
+
+  /** Write a `project.yaml` by hand, to stand in for one an older paddock wrote. */
+  const writeYaml = async (slug: string, lines: string[]): Promise<void> => {
+    await fs.mkdir(path.join(root, slug), { recursive: true });
+    await fs.writeFile(path.join(root, slug, "project.yaml"), lines.join("\n"), "utf8");
+  };
+
+  beforeEach(async () => {
+    dataDir = await makeTmpDir("paddock-data-");
+    root = path.join(dataDir, "projects");
+    await fs.mkdir(root, { recursive: true });
+    warnings = [];
+    store = new ProjectStore(root, dataDir, { warn: (m) => warnings.push(m) });
+    await store.init();
+  });
+  afterEach(async () => {
+    await rmTmpDir(dataDir);
+  });
+
+  // --- the derived default, and why it cannot be a constant ------------------
+
+  it("derives `managed` for a LEGACY project.yaml that predates the key", async () => {
+    // The upgrade path, and the whole reason the default is derived rather than
+    // simply `true`. Both files are the shape paddock wrote before #206.
+    await writeYaml("legacy-notebook", [
+      "name: Legacy Notebook",
+      "slug: legacy-notebook",
+      "status: active",
+      "started: 2025-01-01",
+      "",
+    ]);
+    await writeYaml("legacy-repo", [
+      "name: Legacy Repo",
+      "slug: legacy-repo",
+      "status: active",
+      "started: 2025-01-01",
+      "repo: https://github.com/owner/thing.git",
+      "",
+    ]);
+
+    // A notebook stays managed …
+    expect((await store.get("legacy-notebook")).managed).toBe(true);
+    // … and a repo-backed one stays UNMANAGED. If an absent key meant `true`, this
+    // would flip on upgrade and the sweeper would start writing CLAUDE.md into
+    // somebody's checkout.
+    expect((await store.get("legacy-repo")).managed).toBe(false);
+  });
+
+  it("writes `managed` explicitly on a new project, so nothing relies on the default", async () => {
+    const created = await store.create({ name: "Notes" });
+    const raw = YAML.parse(await fs.readFile(path.join(created.dir, "project.yaml"), "utf8"));
+    expect(raw.managed).toBe(true);
+  });
+
+  it("does NOT rewrite a legacy file merely by reading it", async () => {
+    // `normalize` carries `managed` only when it is explicitly on disk, so a
+    // `list()` leaves the file byte-identical and the derived value never becomes
+    // sticky by accident.
+    const lines = [
+      "name: Legacy",
+      "slug: legacy",
+      "status: active",
+      "started: 2025-01-01",
+      "repo: https://github.com/owner/thing.git",
+      "",
+    ];
+    await writeYaml("legacy", lines);
+    await store.list();
+    expect(await fs.readFile(path.join(root, "legacy", "project.yaml"), "utf8")).toBe(
+      lines.join("\n"),
+    );
+  });
+
+  // --- the rejected combination ----------------------------------------------
+
+  it("rejects `managed: true` together with `repo` rather than silently dropping one", async () => {
+    await expect(
+      store.create({ name: "Both", managed: true, repo: "https://github.com/o/r.git" }),
+    ).rejects.toMatchObject({ code: "invalid" });
+    expect(await store.exists("both")).toBe(false);
+  });
+
+  it("rejects an unmanaged project with neither path nor repo", async () => {
+    await expect(store.create({ name: "Nothing", managed: false })).rejects.toMatchObject({
+      code: "invalid",
+    });
+  });
+
+  // --- managed + an external path --------------------------------------------
+
+  it("managed + path: content follows the path, the registry entry stays in the data dir", async () => {
+    const notes = path.join(await makeTmpDir("paddock-notes-"), "my-notes");
+
+    const p = await store.create({ name: "My Notes", path: notes, managed: true });
+
+    expect(p.managed).toBe(true);
+    expect(p.workingDir).toBe(notes);
+    expect(p.contentDir).toBe(notes);
+
+    // The curated trio lives out at the path — the accepted consequence being
+    // that these do NOT end up in the paddock data dir.
+    expect(await fs.readFile(path.join(notes, "CHANGELOG.md"), "utf8")).toContain(
+      "Project opened.",
+    );
+    await expect(fs.access(path.join(notes, "CLAUDE.md"))).resolves.toBeUndefined();
+    await expect(fs.access(path.join(p.dir, "CHANGELOG.md"))).rejects.toThrow();
+    await expect(fs.access(path.join(p.dir, "CLAUDE.md"))).rejects.toThrow();
+
+    // Application state does not move: `project.yaml` is the registry entry
+    // paddock discovers projects by scanning for.
+    await expect(fs.access(path.join(p.dir, "project.yaml"))).resolves.toBeUndefined();
+    await expect(fs.access(path.join(notes, "project.yaml"))).rejects.toThrow();
+
+    // …and the curated readers/writers follow the content too.
+    await store.writeOverview(p.slug, "# Overview\n\nstate\n");
+    expect(await fs.readFile(path.join(notes, "OVERVIEW.md"), "utf8")).toContain("state");
+    expect(await store.readOverview(p.slug)).toContain("state");
+    expect((await store.get(p.slug)).hasOverview).toBe(true);
+
+    await rmTmpDir(path.dirname(notes));
+  });
+
+  it("managed + path CREATES a directory that doesn't exist yet", async () => {
+    const notes = path.join(await makeTmpDir("paddock-notes-"), "not", "yet", "here");
+    const p = await store.create({ name: "Fresh", path: notes, managed: true });
+    expect(p.workingDir).toBe(notes);
+    expect((await fs.stat(notes)).isDirectory()).toBe(true);
+    await rmTmpDir(path.dirname(notes));
+  });
+
+  it("managed + path never clobbers notes that are already there", async () => {
+    const notes = await makeTmpDir("paddock-existing-notes-");
+    await fs.writeFile(path.join(notes, "CHANGELOG.md"), "# my own history\n");
+    await fs.writeFile(path.join(notes, "CLAUDE.md"), "# my own conventions\n");
+
+    await store.create({ name: "Existing", path: notes, managed: true });
+
+    expect(await fs.readFile(path.join(notes, "CHANGELOG.md"), "utf8")).toBe("# my own history\n");
+    expect(await fs.readFile(path.join(notes, "CLAUDE.md"), "utf8")).toBe("# my own conventions\n");
+    await rmTmpDir(notes);
+  });
+
+  // --- acquisition -----------------------------------------------------------
+
+  it("clones the repo INTO a nominated path that does not exist yet", async () => {
+    const src = await makeCheckout(path.join(await makeTmpDir("paddock-src-"), "src"));
+    const dest = path.join(await makeTmpDir("paddock-dest-"), "cloned");
+
+    const p = await store.create({ name: "Cloned", path: dest, repo: src });
+
+    expect(p.managed).toBe(false);
+    expect(p.workingDir).toBe(dest);
+    expect(p.repo).toBe(src);
+    // A real clone landed there: the source's content, and its own .git.
+    expect(await fs.readFile(path.join(dest, "README.md"), "utf8")).toContain("real work");
+    expect((await fs.stat(path.join(dest, ".git"))).isDirectory()).toBe(true);
+
+    await rmTmpDir(path.dirname(src));
+    await rmTmpDir(path.dirname(dest));
+  });
+
+  it("warns — but does not fail — when an existing path's remote differs from `repo`", async () => {
+    const checkout = await makeCheckout(path.join(await makeTmpDir("paddock-co-"), "foo"));
+    await run("git", ["-C", checkout, "remote", "add", "origin", "https://github.com/real/foo.git"]);
+
+    const p = await store.create({
+      name: "Mismatch",
+      path: checkout,
+      repo: "https://github.com/someone-else/other.git",
+    });
+
+    // Used as given — the directory the user named is the one they meant …
+    expect(p.workingDir).toBe(checkout);
+    // … but the mismatch is said out loud rather than silently ignored (#659).
+    expect(warnings.join(" ")).toMatch(/do not include the declared repo/i);
+    await rmTmpDir(path.dirname(checkout));
+  });
+
+  it("does NOT warn when the remote matches, modulo URL spelling", async () => {
+    const checkout = await makeCheckout(path.join(await makeTmpDir("paddock-co-"), "foo"));
+    await run("git", ["-C", checkout, "remote", "add", "origin", "https://github.com/real/foo.git"]);
+
+    // Same repo, different spelling: scp-style ssh, and no `.git` suffix.
+    await store.create({ name: "Match", path: checkout, repo: "git@github.com:real/foo" });
+
+    expect(warnings).toEqual([]);
+    await rmTmpDir(path.dirname(checkout));
+  });
+
+  // --- cleanup: only ever what this call created -----------------------------
+
+  it("uses a PRE-EXISTING directory rather than cloning into it, and never removes it", async () => {
+    // The footgun the cleanup rule exists for: a nominated directory that already
+    // holds the user's files. It must be used as-is, and an unclonable `repo`
+    // alongside it must not put it anywhere near a recursive delete.
+    const target = await makeTmpDir("paddock-precious-");
+    await fs.writeFile(path.join(target, "irreplaceable.txt"), "please do not delete\n");
+    const bogus = path.join(root, "_src", "does-not-exist.git");
+
+    const p = await store.create({ name: "Precious", path: target, repo: bogus });
+
+    expect(p.workingDir).toBe(target);
+    expect(await fs.readFile(path.join(target, "irreplaceable.txt"), "utf8")).toBe(
+      "please do not delete\n",
+    );
+    await rmTmpDir(target);
+  });
+
+  it("a failed clone removes the directory it created, and nothing above it", async () => {
+    const parent = await makeTmpDir("paddock-parent-");
+    await fs.writeFile(path.join(parent, "sibling.txt"), "keep me\n");
+    const dest = path.join(parent, "cloned");
+    const bogus = path.join(root, "_src", "does-not-exist.git");
+
+    await expect(
+      store.create({ name: "Doomed", path: dest, repo: bogus }),
+    ).rejects.toMatchObject({ code: "invalid" });
+
+    // The clone target we created is gone …
+    await expect(fs.access(dest)).rejects.toThrow();
+    // … the parent, which we did NOT create, is untouched …
+    expect(await fs.readFile(path.join(parent, "sibling.txt"), "utf8")).toBe("keep me\n");
+    // … and no half-made project is left behind.
+    expect(await store.exists("doomed")).toBe(false);
+    await expect(fs.access(path.join(root, "doomed"))).rejects.toThrow();
+
+    await rmTmpDir(parent);
+  });
+
+  // NOTE on what the test above can and cannot prove. `git clone` removes its own
+  // target when it fails, so the "the clone target is gone" assertion stays green
+  // even if paddock's rollback never ran — it is really pinning the SECOND half,
+  // that the pre-existing parent survives. There is no failure reachable through
+  // the public API that leaves clone debris behind for paddock to clean up, so the
+  // completeness of the rollback rests on the shape of the code (`acquirePath`
+  // records the directory BEFORE the risky step, and `create` wraps every step
+  // after the slug dir in one try/rollback) rather than on a test. Recording after
+  // the fact would be untestable AND wrong; recording before is untestable and
+  // right, which is why it is written the way it is.
 });

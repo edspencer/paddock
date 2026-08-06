@@ -220,36 +220,58 @@ export interface ProjectYaml {
    */
   repo?: string;
   /**
-   * Absolute path to an EXISTING on-box directory to use as this project's
-   * working directory, in place, with no copy (issue #206) — a LINKED project.
+   * Whether Paddock looks after this project's own files (issue #206).
    *
-   * Where `repo` says "clone me a fresh copy", this says "the clone is already
-   * here, work in it": the keeper's cwd becomes this exact directory, with its
-   * real history, branches and remotes. The motivating case is running Paddock on
-   * your own machine over the clones you already have (`~/Code/foo`).
+   * `true` — Paddock curates `CLAUDE.md` / `OVERVIEW.md` / `CHANGELOG.md` here;
+   * this is what "notebook" used to mean. `false` — the content is code that you
+   * or your agents source-control OUTSIDE Paddock, and Paddock never writes
+   * project files into it.
    *
-   * Two properties follow, and both are the point:
+   * This is the real axis. It replaced the derived `repoBacked` boolean, which
+   * was one flag doing four jobs and broke the moment a fifth backing shape
+   * appeared. Whether a git repo sits behind the project is INDEPENDENT of this
+   * and is not a type — it is just which of `path`/`repo` are set.
    *
-   *  - **Paddock writes ZERO files into it.** Nothing is nested here — the
-   *    `.chats/` transcript store stays in the metadata dir via
-   *    `ensureProjectChats(workingDir, chatsHostDir, home)`'s two-argument split,
-   *    there is no sidecar `.gitignore` to write (nothing to ignore), and no
-   *    per-project `CLAUDE.md` is seeded (see `repoBacked` below).
-   *  - **Transcripts key on this cwd**, so prior `claude` sessions run here by
-   *    hand are offered for adoption natively, and `claude.transcripts: host` /
-   *    per-directory `~/.claude.json` MCP servers finally mean something for a
-   *    code project (they key on `workingDir`, which for a cloned repo-backed
-   *    project is a directory the user has never opened a terminal in).
+   * **Optional on disk, and the default is DERIVED rather than constant:**
+   * `managed ?? !(repo || path)` (see
+   * {@link import("./project-paths.js").isManaged}). Every `project.yaml` written
+   * before this key existed relies on that: were an absent value to mean `true`,
+   * every existing repo-backed project would flip to managed on upgrade and the
+   * sweeper would begin writing `CLAUDE.md` into its checkout. `create()` always
+   * writes the key explicitly, so the derivation only ever serves legacy files.
+   *
+   * `managed: true` together with `repo` is REJECTED at creation rather than
+   * silently ignored — Paddock curating files into a repo it also clones is not a
+   * combination with a sensible meaning.
+   */
+  managed?: boolean;
+  /**
+   * Absolute path to the directory holding this project's content (issue #206).
+   *
+   * Applies on BOTH sides of the managed axis, which is what makes it a location
+   * rather than a type:
+   *
+   *  - **unmanaged + `path`** — LINK a code checkout you already have
+   *    (`~/Code/foo`), used in place with no copy: its real history, branches and
+   *    remotes. Paddock writes nothing into it (no `.chats/`, no sidecar
+   *    `.gitignore`, no `CLAUDE.md`); transcripts stay in `<slug>/.chats/` via
+   *    `ensureProjectChats`'s two-argument split. Transcripts key on this cwd, so
+   *    prior `claude` sessions run there by hand are offered for adoption, and
+   *    `claude.transcripts: host` / per-directory `~/.claude.json` MCP servers
+   *    finally mean something for a code project.
+   *  - **managed + `path`** — nominate where your NOTES live. The curated trio
+   *    (`OVERVIEW.md`/`CHANGELOG.md`/`CLAUDE.md`) follows the path, so those files
+   *    end up outside the Paddock data dir.
+   *
+   * Either way `project.yaml` (the registry entry Paddock discovers projects by
+   * scanning for) and `.chats/` (Paddock's own state) stay in
+   * `<projectsRoot>/<slug>/`.
+   *
+   * Acquisition when the path does NOT exist: with `repo`, Paddock clones into it;
+   * for a managed project, Paddock creates it; otherwise the create is rejected.
    *
    * Set at creation and immutable thereafter (like `slug`/`started`/`repo`) — the
    * cwd is baked into every transcript path, so moving it would strand history.
-   * NOT mutually exclusive with `repo`: when both are present `path` wins for the
-   * cwd and `repo` remains a useful remote-match/re-clone hint (see
-   * {@link import("./project-paths.js").workingDirFor}).
-   *
-   * A linked project counts as REPO-BACKED in the DTO — the flag drives the
-   * sweeper's `CLAUDE.md` suppression, and the whole point is that the directory
-   * has its own upstream-owned `CLAUDE.md` the sweeper must never write.
    */
   path?: string;
   /**
@@ -289,29 +311,46 @@ export interface Project extends ProjectYaml {
    *  empty string means "Unsorted". */
   group: string;
   /**
-   * Absolute path to the project's METADATA directory — the per-slug dir in the
-   * instance data repo that holds `project.yaml`, `OVERVIEW.md`, `CHANGELOG.md`,
-   * `.chats/`, and (for a notebook project) `CLAUDE.md`. For a NOTEBOOK project
-   * this is also the keeper's cwd; for a REPO-BACKED project the cwd is
-   * {@link workingDir} (the nested checkout) instead — see #187.
+   * Absolute path to the project's METADATA directory — the per-slug dir under
+   * `projectsRoot`. Always holds `project.yaml` (the registry entry Paddock
+   * discovers projects by scanning for, so it can never move) and `.chats/`
+   * (Paddock's own state, and what backup tooling points at).
+   *
+   * It ALSO holds the curated trio (`OVERVIEW.md`/`CHANGELOG.md`/`CLAUDE.md`)
+   * unless the project is managed with an external `path`, in which case those
+   * follow the content — see {@link contentDir}.
    */
   dir: string;
   /**
-   * The keeper agent's working directory (cwd). For a notebook project this
-   * equals {@link dir}; for a repo-backed project it's the nested checkout
-   * (`<dir>/<repo-name>`), so the repo's own `CLAUDE.md` + git tooling apply
-   * (issue #187); for a LINKED project it is {@link ProjectYaml.path} verbatim —
-   * a directory OUTSIDE the data repo that Paddock never writes to (issue #206).
-   * Always concrete in the DTO.
+   * The keeper agent's working directory (cwd): {@link ProjectYaml.path} verbatim
+   * when set, else the nested checkout for a `repo`-backed project (#187), else
+   * {@link dir}. Always concrete in the DTO.
+   *
+   * This — not {@link dir} — is the directory the git surface reports on, which
+   * is what issue #597 was: the Changes tab read `dir`, so it showed the metadata
+   * directory rather than the code the project is actually about.
    */
   workingDir: string;
   /**
-   * Whether this project is backed by an external git repo — a cloned checkout
-   * (issue #187) or a linked existing directory (issue #206). Both mean "the cwd
-   * is a git repo with its own upstream-owned `CLAUDE.md`", which is what this
-   * flag is consumed for (the sweeper's `CLAUDE.md` suppression, `sweep.ts`).
+   * Where the sweeper's curated trio lives — {@link workingDir} for a managed
+   * project, {@link dir} for an unmanaged one (issue #206). Always concrete.
+   *
+   * Equals {@link dir} in every pre-#206 shape; it differs only for a managed
+   * project with an external `path`.
    */
-  repoBacked: boolean;
+  contentDir: string;
+  /**
+   * Whether Paddock curates this project's own files — ALWAYS concrete in the
+   * DTO, derived via `managed ?? !(repo || path)` so legacy files keep their
+   * meaning (issue #206).
+   *
+   * This replaced `repoBacked`, which conflated four separate questions into one
+   * boolean and broke as soon as a fifth backing shape appeared. Each consumer
+   * now takes the fact it actually needs: the sweeper's `CLAUDE.md` suppression
+   * and the promote guard key on `managed`; the git surface keys on whether
+   * {@link workingDir} is a git working tree, asked per directory.
+   */
+  managed: boolean;
   /** Whether OVERVIEW.md exists in the project dir (sweep-curated context). */
   hasOverview: boolean;
   /** Always present in the DTO (defaults to []). */
@@ -346,12 +385,22 @@ export interface CreateProjectInput {
    */
   repo?: string;
   /**
-   * Absolute path to an existing on-box directory to LINK as this project's
-   * working directory, in place, with no copy (issue #206). Validated at create
-   * time (absolute, exists, is a directory, contains `.git`, and outside
-   * `projectsRoot` / the data dir / every other project's working directory);
-   * immutable thereafter. May be combined with `repo`, which then serves only as
-   * a remote-match / re-clone hint — `path` is what the cwd becomes.
+   * Whether Paddock should curate this project's own files (issue #206). Absent ⇒
+   * derived as `!(repo || path)`, so a plain create is managed and a create that
+   * names a backing is not. `managed: true` together with `repo` is REJECTED.
+   */
+  managed?: boolean;
+  /**
+   * Absolute path to the directory this project's content lives in (issue #206).
+   *
+   * Validated at create time: absolute, and outside `projectsRoot` / the data dir
+   * / every other project's working directory. Immutable thereafter. If it does
+   * not exist, Paddock clones `repo` into it when one is given, creates it for a
+   * managed project, and otherwise rejects the create.
+   *
+   * There is deliberately NO requirement that it be a git repository — Paddock
+   * probes for git and lights up the git features when it finds one, exactly as
+   * it already does for the projects root.
    */
   path?: string;
 }

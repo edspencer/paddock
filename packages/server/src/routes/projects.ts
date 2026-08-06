@@ -123,7 +123,16 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
       list.map(async (p) => ({
         ...p,
         chatTurns: await buildChatTurns(p.slug, turnsByProject, user, readState, unread),
-        dirty: dirty[p.slug] ?? 0,
+        // The cheap store-wide sweep above buckets by path segment under
+        // `projectsRoot`, so it can only speak for projects whose working dir is
+        // the metadata dir. For one pointing somewhere else (a linked checkout,
+        // issue #206) ask its own repo directly — a subprocess, but only for the
+        // projects the sweep structurally cannot cover, and only for as many of
+        // those as actually exist.
+        dirty:
+          p.workingDir === p.dir
+            ? (dirty[p.slug] ?? 0)
+            : await git.dirtyCountAt(p.workingDir).catch(() => 0),
       })),
     );
     // No `dirty` for the root: `dirtyCounts()` buckets by first path segment, so
@@ -165,7 +174,11 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
             },
             path: {
               description:
-                "Absolute path to an EXISTING on-box git checkout to link as the working directory, used in place with no copy (issue #206). Must be absolute, exist, be a directory containing `.git`, and lie outside the projects root, the data dir, and every other project's working directory. Immutable once set.",
+                "Absolute path to the directory this project's content lives in (issue #206). For an unmanaged project this LINKS an existing on-box checkout, used in place with no copy. If it does not exist, Paddock clones `repo` into it when one is given, or creates it for a managed project. Must lie outside the projects root, the data dir, and every other project's working directory. No git repository is required. Immutable once set.",
+            },
+            managed: {
+              description:
+                "Whether Paddock curates this project's own CLAUDE.md/OVERVIEW.md/CHANGELOG.md (issue #206). Omit to derive it: a create naming `repo` or `path` is unmanaged, a plain one is managed. `managed: true` together with `repo` is rejected.",
             },
           },
           required: [],

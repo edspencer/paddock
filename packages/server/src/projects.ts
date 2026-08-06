@@ -59,6 +59,8 @@ import {
   ROOT_KEY,
   isRootKey,
   isPathInside,
+  isManaged,
+  contentDirFor,
   isValidRepoUrl,
   repoCheckoutName,
   workingDirFor,
@@ -71,12 +73,15 @@ export {
   ROOT_KEY,
   isRootKey,
   isPathInside,
+  isManaged,
+  contentDirFor,
   isValidRepoUrl,
   repoCheckoutName,
   workingDirFor,
   slugify,
   ProjectError,
 };
+import { gitRemotes, normalizeRemote } from "./adoptable.js";
 
 import {
   normalizeLinks,
@@ -133,14 +138,19 @@ export class ProjectStore {
   /**
    * @param root The projects root (`cfg.projectsRoot`) — every project's metadata dir.
    * @param dataDir The instance data dir (`cfg.dataDir`), used ONLY to reject a
-   *   linked `path:` that points inside Paddock's own state (issue #206). Optional
-   *   so the many tests that construct a bare store keep compiling; when omitted,
-   *   `root` alone is the containment check (in the default layout `projectsRoot`
-   *   is `<dataDir>/projects`, so it is the tighter of the two anyway).
+   *   `path:` that points inside Paddock's own state (issue #206). Optional so the
+   *   many tests that construct a bare store keep compiling; when omitted, `root`
+   *   alone is the containment check (in the default layout `projectsRoot` is
+   *   `<dataDir>/projects`, so it is the tighter of the two anyway).
+   * @param log Where non-fatal advisories go — currently only the declared-repo /
+   *   actual-remote mismatch on an existing `path` (issue #206), which must be
+   *   said out loud rather than silently ignored (#659) but must not fail the
+   *   create. Defaults to a no-op so a bare `new ProjectStore(root)` is unchanged.
    */
   constructor(
     private readonly root: string,
     private readonly dataDir?: string,
+    private readonly log: { warn: (message: string) => void } = { warn: () => {} },
   ) {}
 
   /** Ensure the projects root exists. Call once at startup. */
@@ -265,88 +275,226 @@ export class ProjectStore {
   }
 
   /**
-   * Validate a linked `path:` (issue #206) and return it canonicalised.
+   * Undo a failed {@link create} by removing the directories it created — and
+   * ONLY those.
+   *
+   * This is the non-negotiable half of the acquisition rules (issue #206). The
+   * previous rollback was an unconditional `fs.rm(dir, {recursive, force})` on the
+   * slug dir, safe only because everything a project owned was nested inside it.
+   * Once `path:` lets a user nominate a clone TARGET, an unconditional recursive
+   * delete is a footgun aimed at whatever they typed — a home directory, say. So
+   * the caller records what it brought into being and this removes exactly that
+   * list; a pre-existing directory is never in it and therefore can never be
+   * deleted, no matter how the create failed.
+   *
+   * Removed deepest-first so a nested pair (slug dir + its checkout) unwinds
+   * cleanly. Failures are swallowed: the original error is the one worth
+   * reporting, and a rollback that can't finish must not mask it.
+   */
+  private async rollback(created: string[]): Promise<void> {
+    for (const target of [...created].reverse()) {
+      await fs.rm(target, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
+  /**
+   * Validate a `path:` (issue #206) and return it canonicalised, along with
+   * whether it already exists.
    *
    * This is the ONLY gate between a user-supplied string and a directory Paddock
-   * will hand an agent as its cwd, so it is deliberately strict and deliberately
-   * ordered cheapest-first. It rejects:
+   * will hand an agent as its cwd (and may `git clone` into), so it is
+   * deliberately strict and ordered cheapest-first. It rejects:
    *
    *  - a relative path (a cwd must be unambiguous — it is baked into every
    *    transcript path, and resolving it against the server's cwd is a footgun);
-   *  - a path that doesn't exist, or isn't a directory;
-   *  - a directory with no `.git` (entry, not necessarily a dir — a linked git
-   *    WORKTREE has a `.git` *file*, and those are exactly as valid to link);
+   *  - a path that exists but isn't a directory;
    *  - a path inside `projectsRoot` or the data dir — that is Paddock's own
-   *    state, and linking into it re-creates the nesting this feature exists to
+   *    state, and pointing at it re-creates the nesting this feature exists to
    *    avoid (plus `remove()` would then really delete it);
    *  - a path that is, contains, or sits inside another project's working
    *    directory — two keepers sharing one cwd collide on transcripts (they are
    *    keyed by cwd) and on the working tree itself.
    *
-   * Symlinks are resolved FIRST (`fs.realpath`), so the containment checks can't
-   * be defeated by a symlink that points back into `projectsRoot`, and the value
-   * persisted to `project.yaml` is the canonical one.
+   * It deliberately does NOT reject a directory for not being a git repository.
+   * That would be the only mandatory git check in the codebase: everywhere else
+   * paddock PROBES and degrades (`GitService.isRepo()` → false, the Changes tab
+   * removes itself, commit/push return `{error: "not a repo"}`), and the default
+   * E2E server runs on a non-git directory on purpose.
+   *
+   * A MISSING path is not an error here — it is an acquisition instruction, which
+   * {@link acquirePath} resolves. Only the existing-path branch can be
+   * canonicalised by `realpath`, so for a missing one the containment checks run
+   * against the resolved-but-not-real path plus its nearest existing ancestor —
+   * otherwise `/tmp/link -> <projectsRoot>` with a missing leaf would slip past.
    */
-  private async validateLinkedPath(raw: string): Promise<string> {
+  private async validatePath(
+    raw: string,
+  ): Promise<{ resolved: string; exists: boolean }> {
     const input = raw.trim();
     if (!path.isAbsolute(input)) {
-      throw new ProjectError(`Linked path must be absolute: ${input}`, "invalid");
+      throw new ProjectError(`Project path must be absolute: ${input}`, "invalid");
     }
 
     // Resolve symlinks before ANY containment check — otherwise
-    // `/tmp/innocent -> <projectsRoot>/victim` would sail through them all.
-    let resolved: string;
-    try {
-      resolved = await fs.realpath(input);
-    } catch {
-      throw new ProjectError(`Linked path does not exist: ${input}`, "invalid");
-    }
+    // `/tmp/innocent -> <projectsRoot>/victim` would sail through them all. A
+    // path that doesn't exist yet can't be realpath'd, so fall back to resolving
+    // its nearest existing ancestor and re-appending the missing tail; that keeps
+    // a symlinked PARENT from smuggling the target back inside our own state.
+    const direct = await fs.realpath(input).catch(() => null);
+    const exists = direct !== null;
+    const resolved = direct ?? (await this.resolveViaExistingAncestor(input));
 
-    const st = await fs.stat(resolved).catch(() => null);
-    if (!st?.isDirectory()) {
-      throw new ProjectError(`Linked path is not a directory: ${input}`, "not_directory");
-    }
-
-    // `.git` may be a directory (ordinary checkout) or a file (linked worktree /
-    // submodule), so test for presence, not for kind.
-    const hasGit = await fs
-      .lstat(path.join(resolved, ".git"))
-      .then(() => true)
-      .catch(() => false);
-    if (!hasGit) {
-      throw new ProjectError(
-        `Linked path is not a git repository (no .git found): ${input}`,
-        "invalid",
-      );
+    if (exists) {
+      const st = await fs.stat(resolved).catch(() => null);
+      if (!st?.isDirectory()) {
+        throw new ProjectError(`Project path is not a directory: ${input}`, "not_directory");
+      }
     }
 
     if (isPathInside(resolved, this.root)) {
       throw new ProjectError(
-        `Linked path must be outside the projects root (${this.root}): ${input}`,
+        `Project path must be outside the projects root (${this.root}): ${input}`,
         "invalid",
       );
     }
     if (this.dataDir && isPathInside(resolved, this.dataDir)) {
       throw new ProjectError(
-        `Linked path must be outside the Paddock data dir (${this.dataDir}): ${input}`,
+        `Project path must be outside the Paddock data dir (${this.dataDir}): ${input}`,
         "invalid",
       );
     }
 
-    // Reject overlap with an existing project's cwd in EITHER direction: linking
-    // a parent of another project's working dir is just as broken as linking a
-    // child of one.
+    // Reject overlap with an existing project's cwd in EITHER direction: pointing
+    // at a parent of another project's working dir is just as broken as pointing
+    // at a child of one.
     for (const other of await this.list()) {
       const cwd = other.workingDir;
       if (isPathInside(resolved, cwd) || isPathInside(cwd, resolved)) {
         throw new ProjectError(
-          `Linked path overlaps the working directory of project "${other.slug}" (${cwd}): ${input}`,
+          `Project path overlaps the working directory of project "${other.slug}" (${cwd}): ${input}`,
           "invalid",
         );
       }
     }
 
-    return resolved;
+    return { resolved, exists };
+  }
+
+  /**
+   * Canonicalise a path that does not exist yet, by realpath-ing the deepest
+   * ancestor that DOES exist and re-appending the missing segments. Used only by
+   * {@link validatePath}, so a clone target under a symlinked parent still gets
+   * containment-checked against its real location.
+   */
+  private async resolveViaExistingAncestor(input: string): Promise<string> {
+    let head = path.resolve(input);
+    const tail: string[] = [];
+    for (;;) {
+      const real = await fs.realpath(head).catch(() => null);
+      if (real) return path.join(real, ...tail.reverse());
+      const parent = path.dirname(head);
+      // Hit the filesystem root without finding anything real: nothing left to
+      // resolve against, so the already-normalised path is the best answer.
+      if (parent === head) return path.resolve(input);
+      tail.push(path.basename(head));
+      head = parent;
+    }
+  }
+
+  /**
+   * Bring a project's `path` into existence, returning the directories THIS call
+   * created so a failure can roll back exactly those and nothing else.
+   *
+   * The acquisition rules (issue #206):
+   *
+   *  - path exists ⇒ use it. With `repo` also set, verify the remote matches and
+   *    WARN on a mismatch rather than silently ignoring `repo` — that is the #659
+   *    bug class (a directory that is a clone of a *different* repo).
+   *  - path missing + `repo` ⇒ clone the repo to that path.
+   *  - path missing, managed ⇒ create the directory; the user is nominating where
+   *    their notes should live, and an empty dir is a valid notebook.
+   *  - path missing, unmanaged, no `repo` ⇒ error. There is nothing to acquire
+   *    from and an empty directory is not a codebase.
+   *
+   * **Cleanup rule:** `created` only ever gains directories this call brought into
+   * being. A pre-existing directory is never appended, so no rollback can delete
+   * one — the target is user-nominated and may be a home directory.
+   *
+   * `created` is an OUT-parameter rather than a return value on purpose. Returning
+   * the list would mean the caller only learns what to clean up on the success
+   * path: an `acquirePath` that threw would never hand back the directory it had
+   * already made, so a clone that died partway through would orphan it. Recording
+   * before the risky step is what makes the rollback complete.
+   */
+  private async acquirePath(args: {
+    resolved: string;
+    exists: boolean;
+    repo?: string;
+    managed: boolean;
+    warn: (message: string) => void;
+    created: string[];
+  }): Promise<void> {
+    const { resolved, exists, repo, managed, warn, created } = args;
+
+    if (exists) {
+      // Used as-is. Nothing is appended to `created` — this directory is the
+      // user's, and it must survive any failure that follows.
+      if (repo) await this.warnOnRemoteMismatch(resolved, repo, warn);
+      return;
+    }
+
+    if (!repo && !managed) {
+      throw new ProjectError(
+        `Project path does not exist and there is no repo to clone from: ${resolved}`,
+        "invalid",
+      );
+    }
+
+    // From here the directory is ours: record it BEFORE creating it, so a failure
+    // midway (a clone that dies after writing some objects) still rolls back.
+    created.push(resolved);
+
+    if (repo) {
+      try {
+        await cloneRepo(repo, resolved);
+      } catch (err) {
+        throw new ProjectError(
+          err instanceof Error ? err.message : `Failed to clone ${repo} to ${resolved}`,
+          "invalid",
+        );
+      }
+      return;
+    }
+
+    await fs.mkdir(resolved, { recursive: true });
+  }
+
+  /**
+   * Warn when a directory's git remotes don't include `repo`.
+   *
+   * Deliberately a warning, not a rejection: the directory the user named is the
+   * one they meant, and plenty of legitimate setups (a fork, a mirror, an
+   * ssh-vs-https spelling) won't match exactly. But silently ignoring `repo` is
+   * how #659 happened, so the mismatch has to be said out loud. A directory with
+   * no git at all is not a mismatch — it is just not a repo, which is allowed.
+   *
+   * Reuses `adoptable.ts`'s reader, which parses `.git/config` directly (no
+   * subprocess) and already follows a linked worktree's `gitdir:`/`commondir`
+   * pointers, and returns URLs already through {@link normalizeRemote}.
+   */
+  private async warnOnRemoteMismatch(
+    dir: string,
+    repo: string,
+    warn: (message: string) => void,
+  ): Promise<void> {
+    const remotes = await gitRemotes(dir);
+    if (remotes.length === 0) return;
+    if (remotes.includes(normalizeRemote(repo))) return;
+    warn(
+      `Project path ${dir} is a git repo whose remotes (${remotes.join(", ")}) ` +
+        `do not include the declared repo ${repo}. Using the directory as given; ` +
+        `the repo URL is recorded as a hint only.`,
+    );
   }
 
   /**
@@ -369,20 +517,42 @@ export class ProjectStore {
       throw new ProjectError(`Project already exists: ${slug}`, "exists");
     }
 
-    // Repo-backed project (issue #187): validate the URL up front so a bad value
-    // never reaches `git clone` and the project isn't half-created.
+    // Validate the repo URL up front so a bad value never reaches `git clone`
+    // and the project isn't half-created (issue #187).
     const repo = input.repo?.trim() || undefined;
     if (repo && !isValidRepoUrl(repo)) {
       throw new ProjectError(`Invalid repo URL: ${repo}`, "invalid");
     }
 
-    // Linked project (issue #206): validate BEFORE anything is created, so a bad
-    // path leaves no project dir behind. `path` wins over `repo` for the cwd; a
-    // `repo` alongside it is kept purely as a remote-match / re-clone hint and
-    // must NOT trigger a clone.
-    const linkedPath = input.path?.trim()
-      ? await this.validateLinkedPath(input.path)
-      : undefined;
+    const rawPath = input.path?.trim() || undefined;
+
+    // The managed axis (issue #206). Absent input derives the same way a legacy
+    // file does, so "what you get by default" is one rule everywhere.
+    const managed = isManaged({ managed: input.managed, repo, path: rawPath });
+
+    // Paddock curating its own files INTO a repo it also clones has no sensible
+    // meaning, so refuse rather than silently dropping one half. Refusing is the
+    // reversible choice: accepting it now and changing what it means later would
+    // be a migration.
+    if (managed && repo) {
+      throw new ProjectError(
+        "A managed project cannot have a repo — Paddock would be curating files " +
+          "into a checkout it clones. Use managed: false to work in the repo, or " +
+          "drop `repo` for a notebook.",
+        "invalid",
+      );
+    }
+    if (!managed && !repo && !rawPath) {
+      throw new ProjectError(
+        "An unmanaged project needs a `path` (a directory to work in) or a `repo` " +
+          "(one to clone), or both.",
+        "invalid",
+      );
+    }
+
+    // Validate BEFORE anything is created, so a bad path leaves nothing behind.
+    const checked = rawPath ? await this.validatePath(rawPath) : undefined;
+    const linkedPath = checked?.resolved;
 
     const now = today();
     const yaml: ProjectYaml = {
@@ -399,89 +569,135 @@ export class ProjectStore {
       summary: input.summary ?? "",
       links: input.links ?? [],
       pinned: [],
-      // Carry `repo` only when repo-backed (same round-trip discipline as model).
+      // ALWAYS written explicitly, even though it is optional on disk: the
+      // derived default exists to give LEGACY files their old meaning, not to be
+      // relied on by files we write ourselves.
+      managed,
+      // Carry `repo` only when set (same round-trip discipline as model).
       ...(repo ? { repo } : {}),
-      // Carry the canonicalised linked path only when linked (issue #206).
+      // Carry the canonicalised path only when set (issue #206).
       ...(linkedPath ? { path: linkedPath } : {}),
     };
 
+    // Everything this call brings into being, newest last — the ONLY things a
+    // failure below is allowed to remove. A pre-existing directory is never in
+    // here, which is what stops a rollback deleting a user-nominated target that
+    // might be their home directory.
+    const created: string[] = [];
     const dir = this.dirFor(slug);
+    if (!(await fs.stat(dir).then(() => true).catch(() => false))) created.push(dir);
     await fs.mkdir(dir, { recursive: true });
 
-    // For a repo-backed project, clone the external repo into the nested checkout
-    // BEFORE writing any metadata, so a clone failure rolls the whole thing back
-    // (rm the freshly-made dir) rather than leaving a broken project.yaml behind.
-    //
-    // A LINKED project (issue #206) takes NEITHER step: there is nothing to clone
-    // (the directory already exists and is used in place), and nothing to ignore
-    // (nothing is nested under `dir`, so the sidecar `.gitignore`'s `/<checkout>/`
-    // line would name a path that does not exist). Skipping the `.gitignore`
-    // entirely is what makes "Paddock writes zero files into the linked repo" true
-    // — and note the `.gitignore` would have landed in the METADATA dir either
-    // way; it is skipped because it is meaningless here, not because it is unsafe.
-    if (repo && !linkedPath) {
-      const checkoutName = repoCheckoutName(repo);
-      const checkoutDir = path.join(dir, checkoutName);
-      try {
-        await cloneRepo(repo, checkoutDir);
-      } catch (err) {
-        // Rollback: `dir` is the slug dir we just made, and for a CLONED project
-        // the checkout is nested inside it, so removing it is self-contained.
-        // That containment is exactly what a linked project breaks — hence
-        // `rmInsideRoot`, which re-checks the invariant here rather than trusting
-        // the branch condition above, because the cost of that condition ever
-        // being wrong is deleting somebody's real work repo.
-        //
-        // Ordinary rm failures are swallowed (the clone error is the useful one
-        // to report); a containment violation never is.
-        await this.rmInsideRoot(dir).catch((rmErr) => {
-          if (rmErr instanceof ProjectError) throw rmErr;
+    try {
+      if (linkedPath && checked) {
+        // Acquire the nominated path: use it, clone into it, or create it.
+        // `created` is threaded in so a mid-acquisition failure still rolls back
+        // what was made — see acquirePath.
+        await this.acquirePath({
+          resolved: linkedPath,
+          exists: checked.exists,
+          repo,
+          managed,
+          warn: (message) => this.log.warn(message),
+          created,
         });
-        throw new ProjectError(
-          err instanceof Error ? err.message : `Failed to clone ${repo}`,
-          "invalid",
-        );
+      } else if (repo) {
+        // No path nominated: clone into the nested checkout, as before (#187).
+        const checkoutName = repoCheckoutName(repo);
+        const checkoutDir = path.join(dir, checkoutName);
+        created.push(checkoutDir);
+        try {
+          await cloneRepo(repo, checkoutDir);
+        } catch (err) {
+          throw new ProjectError(
+            err instanceof Error ? err.message : `Failed to clone ${repo}`,
+            "invalid",
+          );
+        }
+        // Keep the nested checkout (a full git repo) OUT of the instance data
+        // repo: a sidecar `.gitignore` ignores the checkout dir (git-in-git per
+        // #187's option A). `.chats/` is likewise data-repo noise.
+        await this.ensureSidecarGitignore(dir, checkoutName);
       }
-      // Keep the nested checkout (a full git repo) OUT of the instance data repo:
-      // a sidecar `.gitignore` ignores the checkout dir (git-in-git per #187's
-      // option A). `.chats/` (our transcript store) is likewise data-repo noise.
-      await this.ensureSidecarGitignore(dir, checkoutName);
-    }
-
-    await this.writeYaml(slug, yaml);
-    await fs.writeFile(
-      path.join(dir, CHANGELOG_FILE),
-      [
-        `# Changelog — ${name}`,
-        "",
-        "<!--",
-        "Reverse-chronological. Newest entry on top, under a `## YYYY-MM-DD` heading.",
-        "-->",
-        "",
-        `## ${now}`,
-        "- Project opened.",
-        "",
-      ].join("\n"),
-      "utf8",
-    );
-
-    // Seed a minimal per-project CLAUDE.md (issue #177) — but ONLY for a NOTEBOOK
-    // project. A repo-backed project defers to the repo's OWN CLAUDE.md (loaded
-    // natively via the cwd walk-up from the checkout); the sweeper must never
-    // touch that upstream-owned file, so we don't seed a competing one (#187).
-    // A LINKED project is the same case (#206), and more so: its cwd is outside
-    // the data repo entirely, so a CLAUDE.md in the metadata dir isn't even on the
-    // agent's walk-up path — it would be a file nothing ever reads.
-    if (!repo && !linkedPath) {
-      await fs.writeFile(
-        path.join(dir, CLAUDE_FILE),
-        claudeTemplate(name, yaml.summary),
-        "utf8",
-      );
+      await this.finishCreate({ slug, yaml, dir, name, now, managed });
+    } catch (err) {
+      // ONE rollback covering everything after the slug dir, not just the
+      // acquisition: a `writeYaml` or seed-file failure used to leave the
+      // directories we had just made (a clone target, a created notes dir) behind
+      // with no project to own them.
+      await this.rollback(created);
+      throw err;
     }
 
     // No OVERVIEW.md at creation — the first sweep writes it.
     return this.toDto(dir, yaml, false);
+  }
+
+  /**
+   * Write a new project's `project.yaml` and seed its content files. Split out of
+   * {@link create} so the whole sequence sits inside that method's single
+   * try/rollback rather than trailing off the end of it.
+   */
+  private async finishCreate(args: {
+    slug: string;
+    yaml: ProjectYaml;
+    dir: string;
+    name: string;
+    now: string;
+    managed: boolean;
+  }): Promise<void> {
+    const { slug, yaml, dir, name, now, managed } = args;
+    await this.writeYaml(slug, yaml);
+    const contentDir = contentDirFor(dir, yaml);
+    // The curated trio follows the content (issue #206): for a managed project
+    // with an external `path` these land out there rather than in the data dir.
+    // `dir` is already made; `contentDir` may be the same directory or the
+    // freshly-acquired path, both of which exist by now.
+    //
+    // Never clobber: a managed `path` may point at a folder of notes that already
+    // has a CHANGELOG.md, and seeding "Project opened." over the user's history
+    // would be the worst kind of data loss — silent and plausible. For a fresh
+    // project dir the file is always absent, so this only bites in the new case.
+    const changelogFile = path.join(contentDir, CHANGELOG_FILE);
+    const changelogExists = await fs
+      .access(changelogFile)
+      .then(() => true)
+      .catch(() => false);
+    if (!changelogExists) {
+      await fs.writeFile(
+        changelogFile,
+        [
+          `# Changelog — ${name}`,
+          "",
+          "<!--",
+          "Reverse-chronological. Newest entry on top, under a `## YYYY-MM-DD` heading.",
+          "-->",
+          "",
+          `## ${now}`,
+          "- Project opened.",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+    }
+
+    // Seed a minimal per-project CLAUDE.md (issue #177) — but ONLY for a MANAGED
+    // project, and never over an existing one. An UNMANAGED project's working
+    // directory owns its own `CLAUDE.md` (upstream's, in a checkout the user
+    // source-controls); the sweeper must never write that file, so we don't seed a
+    // competing one. A managed project with an external `path` DOES get one, out
+    // there with the rest of its content — but if that directory already has a
+    // `CLAUDE.md` (a pre-existing notes folder), it is the user's and stays.
+    if (managed) {
+      const claudeFile = path.join(contentDir, CLAUDE_FILE);
+      const claudeExists = await fs
+        .access(claudeFile)
+        .then(() => true)
+        .catch(() => false);
+      if (!claudeExists) {
+        await fs.writeFile(claudeFile, claudeTemplate(name, yaml.summary), "utf8");
+      }
+    }
   }
 
   /**
@@ -521,18 +737,24 @@ export class ProjectStore {
       throw new ProjectError("The root workspace cannot be repo-backed", "invalid");
     }
     const current = await this.get(slug); // throws not_found
-    // A LINKED project (issue #206) is reported as repoBacked, so the check below
-    // already refuses it — but say so in its own words, because the generic
-    // message would be actively misleading (there is no clone to speak of) and
-    // because promoting one would mean cloning INTO the user's real work repo.
-    if (current.path) {
+    // Promotion means "start working in a clone of this repo", so it only makes
+    // sense for a project Paddock currently manages. An UNMANAGED project already
+    // works in code somebody source-controls (issue #206).
+    if (!current.managed) {
       throw new ProjectError(
-        `Project "${slug}" is linked to an existing directory (${current.path}) and cannot be promoted`,
+        `Project is already backed by a repo or directory: ${slug}`,
         "invalid",
       );
     }
-    if (current.repoBacked) {
-      throw new ProjectError(`Project is already repo-backed: ${slug}`, "invalid");
+    // A managed project with its own `path` is a notes folder the user nominated;
+    // promoting it would clone into that directory. Say so specifically — the
+    // generic message above would be misleading.
+    if (current.path) {
+      throw new ProjectError(
+        `Project "${slug}" keeps its content in ${current.path} and cannot be promoted; ` +
+          `create an unmanaged project pointing at the repo instead`,
+        "invalid",
+      );
     }
     const repo = repoUrl?.trim();
     if (!repo || !isValidRepoUrl(repo)) {
@@ -578,6 +800,12 @@ export class ProjectStore {
     const next: ProjectYaml = {
       ...this.stripDto(current),
       repo,
+      // Promotion crosses the managed axis (issue #206): the keeper's cwd becomes
+      // a checkout that owns its own CLAUDE.md, which is exactly what unmanaged
+      // means. Set explicitly — `stripDto` carries the notebook's concrete
+      // `managed: true` forward, and leaving it would persist the one combination
+      // `create()` rejects (managed + repo).
+      managed: false,
       updated: today(),
     };
     try {
@@ -622,15 +850,22 @@ export class ProjectStore {
       started: current.started, // immutable
       updated: today(),
     };
-    // `path` is immutable (issue #206), and enforced here rather than by its
-    // absence from UpdateProjectInput — that type is a compile-time shape while
-    // `rest` is spread from a request body. Both directions matter: a linked
-    // project must not be RE-POINTED (its cwd is baked into every transcript
-    // path, so moving it strands the history), and a notebook must not be turned
-    // INTO one by a stray key, which would silently hand its keeper a cwd
-    // somewhere else on the box that never went through `validateLinkedPath`.
+    // `path` and `managed` are immutable (issue #206), enforced here rather than
+    // by their absence from UpdateProjectInput — that type is a compile-time shape
+    // while `rest` is spread from a request body.
+    //
+    // For `path` both directions matter: a project must not be RE-POINTED (its cwd
+    // is baked into every transcript path, so moving it strands the history), and
+    // one must not be given a path by a stray key, which would silently hand its
+    // keeper a cwd somewhere else on the box that never went through
+    // `validatePath`. `managed` is re-asserted from `current` for the same reason
+    // — flipping it would move where the curated trio lives and either start the
+    // sweeper writing into a checkout or orphan the existing notes. (Changing it
+    // deliberately is a migration, not a PATCH; see #708 for what a silent
+    // location flip does to history.)
     if (current.path) next.path = current.path;
     else delete next.path;
+    next.managed = current.managed;
     if (driveModePatch === null) {
       // Clear the per-project override -> inherit the global default (issue #122).
       delete next.driveMode;
@@ -694,7 +929,7 @@ export class ProjectStore {
   /** Read OVERVIEW.md, or "" if it doesn't exist yet. */
   async readOverview(slug: string): Promise<string> {
     try {
-      return await fs.readFile(path.join(this.dirFor(slug), OVERVIEW_FILE), "utf8");
+      return await fs.readFile(path.join(await this.contentDirOf(slug), OVERVIEW_FILE), "utf8");
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return "";
       throw err;
@@ -703,13 +938,13 @@ export class ProjectStore {
 
   /** Replace OVERVIEW.md wholesale (the sweep regenerates it each time). */
   async writeOverview(slug: string, content: string): Promise<void> {
-    await fs.writeFile(path.join(this.dirFor(slug), OVERVIEW_FILE), content, "utf8");
+    await fs.writeFile(path.join(await this.contentDirOf(slug), OVERVIEW_FILE), content, "utf8");
   }
 
   /** Read CHANGELOG.md, or "" if it doesn't exist yet (issue #188). */
   async readChangelog(slug: string): Promise<string> {
     try {
-      return await fs.readFile(path.join(this.dirFor(slug), CHANGELOG_FILE), "utf8");
+      return await fs.readFile(path.join(await this.contentDirOf(slug), CHANGELOG_FILE), "utf8");
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return "";
       throw err;
@@ -718,12 +953,34 @@ export class ProjectStore {
 
   /** Whether OVERVIEW.md exists for this project. */
   async overviewExists(slug: string): Promise<boolean> {
+    return this.overviewExistsIn(await this.contentDirOf(slug));
+  }
+
+  /**
+   * {@link overviewExists} for a content dir already in hand.
+   *
+   * `readSafe` needs this: it has just parsed the yaml, so it can derive the
+   * content dir for free, whereas going through the slug would re-read
+   * `project.yaml` on every project of every `list()`.
+   */
+  private async overviewExistsIn(contentDir: string): Promise<boolean> {
     try {
-      await fs.access(path.join(this.dirFor(slug), OVERVIEW_FILE));
+      await fs.access(path.join(contentDir, OVERVIEW_FILE));
       return true;
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Where this project's curated trio lives (issue #206) — see
+   * {@link contentDirFor}. Falls back to the metadata dir for a slug that names
+   * no project, so a caller reading a missing project still gets "" rather than
+   * throwing.
+   */
+  private async contentDirOf(slug: string): Promise<string> {
+    const project = await this.readSafe(slug);
+    return project?.contentDir ?? this.dirFor(slug);
   }
 
   // --- CLAUDE.md (durable identity & conventions, sweep-amended) ----------
@@ -731,7 +988,7 @@ export class ProjectStore {
   /** Read CLAUDE.md, or "" if it doesn't exist yet (issue #177). */
   async readClaudeMd(slug: string): Promise<string> {
     try {
-      return await fs.readFile(path.join(this.dirFor(slug), CLAUDE_FILE), "utf8");
+      return await fs.readFile(path.join(await this.contentDirOf(slug), CLAUDE_FILE), "utf8");
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return "";
       throw err;
@@ -754,8 +1011,7 @@ export class ProjectStore {
   async writeClaudeCurated(slug: string, curatedBody: string): Promise<void> {
     const trimmed = curatedBody.trim();
     if (!trimmed) return;
-    const dir = this.dirFor(slug);
-    const file = path.join(dir, CLAUDE_FILE);
+    const file = path.join(await this.contentDirOf(slug), CLAUDE_FILE);
     let body: string;
     try {
       body = await fs.readFile(file, "utf8");
@@ -879,7 +1135,7 @@ export class ProjectStore {
   async writeChangelog(slug: string, body: string): Promise<void> {
     const trimmed = body.trim();
     if (!trimmed) return;
-    const file = path.join(this.dirFor(slug), CHANGELOG_FILE);
+    const file = path.join(await this.contentDirOf(slug), CHANGELOG_FILE);
     const title = `# Changelog — ${slug}`;
     // Drop a leading top-level heading the model may have emitted, so the
     // Paddock-owned title isn't duplicated.
@@ -954,8 +1210,11 @@ export class ProjectStore {
       if (!isRootKey(key)) return null;
       yaml = this.normalize({}, key);
     }
-    // overviewExists is a cheap fs.access; do it after the yaml parse succeeds.
-    const hasOverview = await this.overviewExists(key);
+    // A cheap fs.access, done after the yaml parse succeeds. Deliberately the
+    // content-dir-in-hand variant: the slug-taking `overviewExists` would re-read
+    // this very `project.yaml` to find the content dir, once per project of every
+    // `list()`.
+    const hasOverview = await this.overviewExistsIn(contentDirFor(dir, yaml));
     return this.toDto(dir, yaml, hasOverview);
   }
 
@@ -1037,17 +1296,24 @@ export class ProjectStore {
       // the project repo-backed and drives the workingDir resolution in toDto.
       ...(typeof p.repo === "string" && p.repo.trim() ? { repo: p.repo.trim() } : {}),
       // path (issue #206): carried only when present AND absolute — its presence
-      // makes the project LINKED and returns the cwd verbatim from workingDirFor.
-      // The absolute check is a read-boundary backstop against a hand-edited
-      // relative value, which would otherwise resolve against the server's cwd;
-      // dropping it degrades the project to a notebook rather than pointing an
-      // agent somewhere arbitrary. Existence/containment were checked at create
-      // time and are NOT re-checked here — `normalize` runs on every list() and
-      // must stay pure + cheap, and a linked dir that has since gone away should
-      // surface as a broken cwd, not silently mutate into a notebook project.
+      // is what makes workingDirFor return the cwd verbatim. The absolute check is
+      // a read-boundary backstop against a hand-edited relative value, which would
+      // otherwise resolve against the server's cwd; dropping it degrades the
+      // project to an unbacked one rather than pointing an agent somewhere
+      // arbitrary. Existence/containment were checked at create time and are NOT
+      // re-checked here — `normalize` runs on every list() and must stay pure +
+      // cheap, and a path that has since gone away should surface as a broken cwd,
+      // not silently mutate into a different kind of project.
       ...(typeof p.path === "string" && path.isAbsolute(p.path.trim())
         ? { path: p.path.trim() }
         : {}),
+      // managed (issue #206): carried ONLY when explicitly set on disk. An absent
+      // value must stay absent so it keeps deriving from the backing
+      // (`!(repo || path)`) — baking a concrete `true` in here would flip every
+      // legacy repo-backed project to managed the first time its yaml was
+      // re-written, and the sweeper would start writing CLAUDE.md into a checkout.
+      // Same round-trip discipline as `driveMode`, and for a much sharper reason.
+      ...(typeof p.managed === "boolean" ? { managed: p.managed } : {}),
       // schedules (issue #265): carried only when at least one well-formed entry
       // survives sanitization — an absent/empty map stays absent on disk, so files
       // without schedules round-trip unchanged. A malformed entry is dropped (not
@@ -1153,29 +1419,40 @@ export class ProjectStore {
       // sanitised so a corrupt hand-edit never reaches the web. Absent ⇒ omitted (#384).
       curation: sanitizeCurationOverride(yaml.curation),
       dir,
-      // The keeper's cwd: a LINKED project's `path` verbatim (#206), else the
-      // nested checkout for a repo-backed project (#187), else the metadata dir
-      // itself for a notebook. `repoBacked` covers the first two — both mean the
-      // cwd is a git repo owning its own CLAUDE.md, which is what consumers of
-      // the flag (the sweeper's suppression) actually care about.
+      // The keeper's cwd: `path` verbatim (#206), else the nested checkout for a
+      // repo-backed project (#187), else the metadata dir.
       workingDir: workingDirFor(dir, yaml.repo, yaml.path),
-      repoBacked: Boolean(yaml.repo || yaml.path),
+      // Where the curated trio lives, and whether Paddock curates at all — the
+      // two facts that replaced `repoBacked` (#206). Both ALWAYS concrete here,
+      // with `managed` resolved through the derived default so a legacy file
+      // without the key keeps the meaning it has always had.
+      contentDir: contentDirFor(dir, yaml),
+      managed: isManaged(yaml),
       hasOverview,
     };
   }
 
+  /**
+   * Drop the derived DTO-only fields, leaving the on-disk shape.
+   *
+   * `managed` deliberately SURVIVES: it is a real `project.yaml` key, and because
+   * the DTO's value is always concrete, the first `update()` of a legacy project
+   * pins its derived value explicitly on disk. That is the desired direction —
+   * the file stops depending on a default — and it is safe precisely because the
+   * value written is the one the derivation already produced.
+   */
   private stripDto(p: Project): ProjectYaml {
     const {
       dir: _dir,
       workingDir: _workingDir,
-      repoBacked: _repoBacked,
+      contentDir: _contentDir,
       hasOverview: _hasOverview,
       group,
       ...rest
     } = p;
     void _dir;
     void _workingDir;
-    void _repoBacked;
+    void _contentDir;
     void _hasOverview;
     // Keep an empty area off the yaml so it isn't persisted as `group: ""`.
     return group?.trim() ? { ...rest, group } : rest;

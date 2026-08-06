@@ -119,15 +119,26 @@ export interface Project {
    */
   workingDir: string;
   /**
-   * Whether the keeper's cwd is a git repo owning its own `CLAUDE.md` — true for
-   * both a cloned checkout (#187) and a linked directory (#206).
+   * Where the sweeper's curated trio (`CLAUDE.md`/`OVERVIEW.md`/`CHANGELOG.md`)
+   * lives: `workingDir` for a managed project, `dir` for an unmanaged one. Equals
+   * `dir` except for a managed project with an external `path` (issue #206).
    */
-  repoBacked: boolean;
-  /** The external git repo URL, when repo-backed (issue #187). */
+  contentDir: string;
+  /**
+   * Whether Paddock curates this project's own files (issue #206) — always
+   * concrete, derived server-side as `managed ?? !(repo || path)`.
+   *
+   * Replaced `repoBacked`. Whether a git repo backs the project is a SEPARATE
+   * question, answered per directory by the git status endpoint (`status.repo`),
+   * not by this flag.
+   */
+  managed: boolean;
+  /** The external git repo URL, when one is recorded (issue #187 / #206). */
   repo?: string;
   /**
-   * The linked on-box directory this project works in, used in place with no copy
-   * (issue #206). Present only for a LINKED project; `workingDir` equals it.
+   * The directory this project's content lives in, when one was nominated
+   * (issue #206). `workingDir` equals it. For an unmanaged project this is a
+   * checkout used in place; for a managed one it is where the notes live.
    */
   path?: string;
   /** True once a sweep has written OVERVIEW.md (drives the preload checkbox + Overview hint). */
@@ -277,14 +288,23 @@ export interface CreateProjectInput {
    */
   repo?: string;
   /**
-   * Absolute path to an EXISTING on-box git checkout to LINK as the working
-   * directory, used in place with no copy (issue #206). The server validates it
-   * (absolute, exists, is a dir with `.git`, outside the projects root / data dir
-   * / every other project's cwd) and rejects the create otherwise. Immutable once
-   * set. Takes precedence over `repo`, which may still be supplied as a
-   * remote-match / re-clone hint.
+   * Absolute path to the directory this project's content lives in (issue #206).
+   *
+   * An existing directory is used in place; a missing one is cloned into (with
+   * `repo`) or created (when managed). The server validates it — absolute, and
+   * outside the projects root / data dir / every other project's working
+   * directory — and rejects the create otherwise. No git repo is required.
+   * Immutable once set, and it takes precedence over `repo` for the cwd.
    */
   path?: string;
+  /**
+   * Whether Paddock curates this project's own CLAUDE.md/OVERVIEW.md/CHANGELOG.md
+   * (issue #206). Omit to let the server derive it as `!(repo || path)` — which
+   * settles the unambiguous cases — and send it explicitly only for a `path` with
+   * no `repo`, where "checkout" vs "notes folder" is a real choice.
+   * `managed: true` together with `repo` is rejected.
+   */
+  managed?: boolean;
 }
 
 /** Editable project metadata (slug + dates are immutable server-side). */

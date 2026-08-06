@@ -369,11 +369,16 @@ export class SweepService {
     // NOCHANGE leaves it untouched. A write failure is non-fatal (OVERVIEW/
     // CHANGELOG already landed; the watermark should still advance) → warn.
     //
-    // REPO-BACKED projects (issue #187): the CLAUDE.md is the external repo's
-    // OWN, upstream-owned file — the sweeper must NEVER write it (that would
-    // dirty the checkout and, if pushed, leak curation upstream). OVERVIEW.md +
-    // CHANGELOG.md are still curated (sidecarred), just not CLAUDE.md.
-    if (parsed.claude !== null && !project.repoBacked) {
+    // UNMANAGED projects (issue #206, formerly keyed on `repoBacked`): the
+    // CLAUDE.md belongs to the working directory's own source control — the
+    // sweeper must NEVER write it (that would dirty the checkout and, if pushed,
+    // leak curation upstream). OVERVIEW.md + CHANGELOG.md are still curated
+    // (sidecarred into the metadata dir), just not CLAUDE.md.
+    //
+    // `managed` is the precise fact here, where `repoBacked` was a proxy for it:
+    // what decides this is whether Paddock looks after the project's files, not
+    // whether a git repo happens to sit behind them.
+    if (parsed.claude !== null && project.managed) {
       const bounded = enforceHeadBudget(parsed.claude, budgetChars(budget, "claudeMaxTokens"));
       await this.projects.writeClaudeCurated(project.slug, bounded).catch((err) => {
         this.log.warn({ err, slug: project.slug }, "sweep: CLAUDE.md write failed (non-fatal)");

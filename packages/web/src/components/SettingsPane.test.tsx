@@ -397,7 +397,7 @@ describe("SettingsPane", () => {
     const promoted = makeProject({
       slug: "p1",
       name: "Note Book",
-      repoBacked: true,
+      managed: false,
       repo: "https://github.com/owner/repo.git",
       workingDir: "/data/projects/p1/repo",
     });
@@ -434,15 +434,15 @@ describe("SettingsPane", () => {
     expect(onSaved).not.toHaveBeenCalled();
   });
 
-  it("shows the backing read-only for an already repo-backed project (no promote form)", () => {
+  it("shows the backing read-only for an already-backed project (no promote form)", () => {
     const project = makeProject({
       slug: "p1",
-      repoBacked: true,
+      managed: false,
       repo: "https://github.com/owner/repo.git",
       workingDir: "/data/projects/p1/repo",
     });
     render(<SettingsPane project={project} onSaved={vi.fn()} />);
-    expect(screen.getByText("Repository backing")).toBeInTheDocument();
+    expect(screen.getByText("Backing")).toBeInTheDocument();
     expect(screen.getByText("https://github.com/owner/repo.git")).toBeInTheDocument();
     expect(screen.getByText("/data/projects/p1/repo")).toBeInTheDocument();
     expect(screen.queryByLabelText("Git repository URL")).not.toBeInTheDocument();

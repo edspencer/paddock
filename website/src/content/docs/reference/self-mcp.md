@@ -339,21 +339,27 @@ Present only when `PADDOCK_SELF_MCP_PROJECTS` is on, on top of write and read.
 ### `create_project`
 
 Provision a whole new project — its directory, `project.yaml`, seeded notes files
-and, when repo-backed, a cloned nested checkout — and register its agent.
+and, when a `repo` is given, a cloned nested checkout — and register its agent.
 
 | Argument | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `name` | string | **yes** | Display name. |
 | `slug` | string | no | Kebab-case (lowercase `a-z`, `0-9`, single hyphens). Omit to derive it from `name`. |
-| `repo` | string | no | A git URL (`https://`, `git://`, `ssh://`, or `git@host:owner/repo`). Supplying it makes the project **repo-backed**: the repo is cloned into a nested checkout that becomes the agent's working directory. Omit for a **notebook** project. |
+| `repo` | string | no | A git URL (`https://`, `git://`, `ssh://`, or `git@host:owner/repo`). Supplying it makes the project **unmanaged** and clones the repo into a nested checkout that becomes the agent's working directory. Omit for a **managed** notes project. |
 | `summary` | string | no | One-line description. |
 | `area` | string | no | The grouping shown in the sidebar. |
 | `status` | enum | no | One of `idea`, `active`, `paused`, `blocked`, `done`, `abandoned`. Default `active`. |
 
 **Returns**
-`{ created: true, slug, name, dir, workingDir, repoBacked, repo?, keeperRegistered }`.
+`{ created: true, slug, name, dir, workingDir, managed, repo?, path?, keeperRegistered }`.
 `dir` is the project's metadata directory; `workingDir` is the agent's cwd (the
-nested checkout when repo-backed, otherwise `dir`).
+nested checkout when a `repo` was cloned, otherwise `dir`). `managed` says whether
+Paddock curates the project's own files — it replaced the older `repoBacked` flag,
+which conflated that question with whether a git repo was involved (see
+[Projects](/concepts/projects/#two-axes-not-three-types)).
+
+This tool does not expose `path`; an agent cannot point a new project at an
+arbitrary directory on the box. Create those from the UI or the REST API.
 
 Two things this tool guarantees, and one it doesn't:
 
