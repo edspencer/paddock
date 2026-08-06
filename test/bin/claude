@@ -120,6 +120,7 @@ function parseArgs(argv) {
     resume: undefined,
     permissionMode: undefined,
     allowedTools: undefined,
+    mcpConfig: undefined,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -131,7 +132,7 @@ function parseArgs(argv) {
     else if (a === "--permission-mode") flags.permissionMode = argv[++i];
     else if (a === "--allowedTools") flags.allowedTools = argv[++i];
     else if (a === "--disallowedTools") argv[++i];
-    else if (a === "--mcp-config") argv[++i];
+    else if (a === "--mcp-config") flags.mcpConfig = argv[++i];
     else if (a === "--setting-sources") argv[++i];
     else if (a === "--tools") argv[++i];
     // Unknown bare flags are ignored.
@@ -341,6 +342,11 @@ function recordInvocation(flags, prompt) {
         systemPrompt: flags.systemPrompt ?? null,
         model: flags.model ?? null,
         resume: flags.resume ?? null,
+        allowedTools: flags.allowedTools ?? null,
+        // The `--mcp-config` JSON verbatim, INCLUDING each server's env. Recorded
+        // so a test can observe what herdctl actually puts on the command line
+        // rather than infer it from core's source (#691 step 6).
+        mcpConfig: flags.mcpConfig ?? null,
       }) + "\n",
     );
   } catch {
