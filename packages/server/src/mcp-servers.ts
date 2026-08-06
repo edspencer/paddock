@@ -61,12 +61,10 @@
  * publishes only the fields in its own `FIELDS` table, and this block is
  * deliberately absent from it.
  *
- * One exposure the `env:` indirection does NOT close, and that carrying `headers`
- * widens: under `driveMode: batch` herdctl's CLI runtime serialises the whole
- * `mcp_servers` record into one `--mcp-config` argv element, so a resolved value
- * — an `env` entry, and now an `Authorization` header — is readable from
- * `/proc/<pid>/cmdline` by any process of the same user. See `claude-mcp.ts`; it
- * is upstream, and it is still better than the header being dropped.
+ * One exposure the `env:` indirection does NOT close: under `driveMode: batch`
+ * the resolved value reaches a COMMAND LINE. See {@link argvExposure} — and note
+ * that carrying `headers` (#700) widens it, because an `Authorization` bearer is
+ * a likelier long-lived credential than an `env` entry.
  *
  * ## Validation is strict, and drops rather than degrades
  *
@@ -331,9 +329,9 @@ function narrowDeclaration(
     const res = resolveLeaf((raw.url as string).trim(), env, `${where}.url`);
     if (!res.ok) return { errors, warnings: [...warnings, `${res.error} — server not attached`] };
     server.url = res.value;
-    // A key in the query string is the usual way a remote MCP endpoint is
-    // authenticated now that `headers` cannot be carried, and this file is
-    // git-tracked. Say so once; never echo the query itself.
+    // A key in the query string is one of the two ways a remote MCP endpoint is
+    // authenticated (the other, `headers`, is carryable again since #700), and
+    // this file is git-tracked. Say so once; never echo the query itself.
     if (!(raw.url as string).startsWith(ENV_REF_PREFIX)) {
       let parsed: URL | undefined;
       try {
@@ -471,8 +469,9 @@ export function resolveDeclaredMcpServers(
  *
  * A process ARGUMENT is not private on Linux: `/proc/<pid>/cmdline` is
  * world-readable by default (no `hidepid`), and `ps` prints it. So on the CLI
- * runtime every declared server's `env` — the API token included — is legible to
- * any local user for the lifetime of each `claude` invocation. Observed, not
+ * runtime every declared server's `env` — and, since #700 made the field
+ * carryable, its `headers` — is legible to any local user for the lifetime of
+ * each `claude` invocation. Observed, not
  * inferred: `test/integration/declared-mcp-argv.test.ts` drives a real turn and
  * reads the token back out of the spawned process's argv.
  *
@@ -498,7 +497,8 @@ function argvExposure(names: readonly string[], driveMode: DriveMode): DeclaredM
   return {
     level: batch ? "warn" : "info",
     message:
-      `${names.join(", ")} ${names.length === 1 ? "declares" : "declare"} \`env\` values, and ` +
+      `${names.join(", ")} ${names.length === 1 ? "declares" : "declare"} \`env\` values or ` +
+      `\`headers\`, and ` +
       `under \`driveMode: batch\` the engine passes the whole server definition to \`claude\` ` +
       `as a \`--mcp-config\` COMMAND-LINE argument — where any local process can read it via ` +
       `/proc/<pid>/cmdline. ` +
@@ -558,7 +558,16 @@ export function declaredMcpNotices(opts: {
         `~/.claude.json (\`claude.mcpServers: host\`); this instance's own declaration wins.`,
     });
   }
-  const exposed = names.filter((n) => Object.keys(opts.servers[n].env ?? {}).length > 0);
+  // `headers` joined `env` here in #700: herdctl 5.32.0 carries them, so an
+  // `Authorization` bearer now rides in the same `--mcp-config` argv element that
+  // #702 found an `env` token in — and a bearer is the likelier long-lived
+  // credential of the two. A server declared with headers and no env would
+  // otherwise be the one case this warning missed.
+  const exposed = names.filter(
+    (n) =>
+      Object.keys(opts.servers[n].env ?? {}).length > 0 ||
+      Object.keys(opts.servers[n].headers ?? {}).length > 0,
+  );
   if (exposed.length > 0 && opts.driveMode !== undefined) {
     // The one place a declared credential escapes paddock, and it escapes
     // downstream of every rule this module enforces — see {@link argvExposure}.

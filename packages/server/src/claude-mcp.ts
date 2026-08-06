@@ -124,6 +124,14 @@
  * same-user disclosure on one non-default drive mode. Worth knowing before
  * putting a long-lived token in a `headers` block on a shared box.
  *
+ * #702 found and measured this for a DECLARED server's `env` (it reads the token
+ * back out of a real spawned process's argv), and `mcp-servers.ts`'s
+ * `argvExposure` is the boot warning — now widened to `headers` for the same
+ * reason. There is no equivalent warning for a HOST server, deliberately: this
+ * module does not look at a value it did not resolve, and a user who ran
+ * `claude mcp add` on the box is already in the argv-exposure position with their
+ * own terminal.
+ *
  * ## Plugins are the other half of this lever
  *
  * A Claude Code **plugin** can provide MCP servers too, and they are invisible to

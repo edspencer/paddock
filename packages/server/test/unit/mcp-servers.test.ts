@@ -386,6 +386,28 @@ describe("mcpServers: what the boot log says", () => {
     expect([...batch, ...session].map((n) => n.message).join("\n")).not.toContain(SECRET);
   });
 
+  /**
+   * #700 made `headers` carryable, which puts an `Authorization` bearer into the
+   * same argv element #702 read an `env` token out of — and a bearer is the
+   * likelier long-lived credential. A url server with headers and no `env` would
+   * have been the one shape this warning missed.
+   */
+  it("warns about `headers` too, which is the field #700 made carryable", () => {
+    const servers = {
+      notion: {
+        url: "https://mcp.example.test/sse",
+        type: "sse" as const,
+        headers: { Authorization: `Bearer ${SECRET}` },
+      },
+    };
+    const batch = declaredMcpNotices({ servers, driveMode: "batch" });
+    const warned = batch.find((n) => n.message.includes("/proc/<pid>/cmdline"));
+    expect(warned?.level).toBe("warn");
+    expect(warned?.message).toContain("notion");
+    expect(warned?.message).toContain("headers");
+    expect(batch.map((n) => n.message).join("\n")).not.toContain(SECRET);
+  });
+
   it("says nothing about the command line for a server with no env, or with no drive mode", () => {
     const noEnv = { docs: { url: "https://mcp.example.test/mcp" } };
     expect(declaredMcpNotices({ servers: noEnv, driveMode: "batch" }).length).toBe(1);
