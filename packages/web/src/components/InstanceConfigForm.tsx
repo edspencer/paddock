@@ -1,31 +1,45 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError } from "../lib/api";
-import type { InstanceConfig, InstanceConfigField } from "../lib/types";
-import { AlertIcon, CheckIcon } from "./icons";
+import type { InstanceConfig, InstanceConfigField, InstanceConfigGroup } from "../lib/types";
+import { AlertIcon, CheckIcon, SearchIcon, XIcon } from "./icons";
 
 /**
  * The instance-config editor BODY (issue #385) — everything below the page
- * header: the restart banner, the grouped fields, and the save/reset footer.
+ * header: the section rail, the filter bar, the fields, and the save footer.
  *
- * Extracted verbatim from `routes/InstanceSettings.tsx` (issue #516 Phase 5) so
- * two surfaces can share it:
+ * ## Why it is shaped like this
  *
- *  - **`/settings`** on an instance with no root project — the standalone admin
- *    page, which keeps its own header and simply renders this. Unchanged.
- *  - **the ROOT project's Settings tab**, where this sits beneath the root's own
- *    `SettingsPane` as the second of two sections.
+ * There are ~47 fields in 10 groups. Rendered as one narrow column of
+ * label-then-field rows it came to **5,500px — seven screenfuls** — with no way
+ * to reach a known setting except scrolling past everything else, and no
+ * hierarchy: `driveMode` and `webDist` had identical visual weight.
  *
- * They stay two sections rather than being fused, because they are genuinely
- * different things: instance *runtime* config lives in `paddock.config.yaml`,
- * is frozen at boot and needs a restart; the root's *workspace* config lives in
- * `project.yaml` and is hot-applied by agent re-registration.
+ * The fix follows VS Code's settings screen rather than tabs, and the difference
+ * matters: **tabs partition, which is exactly what defeats a search.** A rail of
+ * section links scroll-spies over ONE document, so "jump to Branding" and "find
+ * every field mentioning `token`" are both available at once and neither
+ * disables the other. Concretely:
  *
- * Behaviours the ticket pins down, carried over unchanged:
+ *  - **Filter bar** — matches label, dotted key, help text, env var and enum
+ *    values, so an operator who thinks in `PADDOCK_*` names finds the field by
+ *    typing one. A group whose LABEL matches keeps all of its fields.
+ *  - **"Modified only"** — the other way in: show just what differs from the
+ *    built-in default, which on a real instance is a handful of rows.
+ *  - **Two-column grid.** Booleans/numbers/enums are half-width; only genuinely
+ *    wide values (prompts, lists, long paths) span. This alone roughly halves
+ *    the height.
+ *  - **Env overrides are a chip, not a paragraph.** On a containerized instance
+ *    most fields are env-shadowed, and repeating the same two-line amber
+ *    explanation twenty times was the single largest source of the length. The
+ *    sentence is stated once, in a legend; each field carries `env` + the var
+ *    name.
+ *
+ * Behaviours the original ticket pins down, carried over unchanged:
  *  - **Restart-required.** Writes land in the file but never hot-apply. A
  *    persistent banner says so, and turns into a "saved — restart to apply"
  *    confirmation after a write.
  *  - **Env precedence.** A field the server reports as `envOverridden` renders
- *    read-only with an "overridden by <ENV>" note — editing it would no-op.
+ *    read-only — editing it would silently no-op.
  *  - **Read-only bindings.** Non-editable fields (ports/paths, auth) render as
  *    plain values.
  *
@@ -40,6 +54,10 @@ export function InstanceConfigForm() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [query, setQuery] = useState("");
+  const [modifiedOnly, setModifiedOnly] = useState(false);
+  const [activeGroup, setActiveGroup] = useState<string | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -82,6 +100,62 @@ export function InstanceConfigForm() {
       .filter((f) => !valuesEqual(edits[f.key], f.value))
       .map((f) => f.key);
   }, [allFields, edits]);
+  const dirtySet = useMemo(() => new Set(dirtyKeys), [dirtyKeys]);
+
+  // The filtered document: groups keep their order, empty ones drop out. A group
+  // whose own label matches keeps every field, so typing "branding" behaves like
+  // a jump rather than hiding the section's contents.
+  const visibleGroups = useMemo(() => {
+    if (!config) return [];
+    const q = query.trim().toLowerCase();
+    const out: InstanceConfigGroup[] = [];
+    for (const g of config.groups) {
+      const groupHit = q !== "" && g.label.toLowerCase().includes(q);
+      const fields = g.fields.filter((f) => {
+        const shown = Object.prototype.hasOwnProperty.call(edits, f.key) ? edits[f.key] : f.value;
+        if (modifiedOnly && valuesEqual(shown, f.default)) return false;
+        if (q === "" || groupHit) return true;
+        return fieldHaystack(f).includes(q);
+      });
+      if (fields.length > 0) out.push({ ...g, fields });
+    }
+    return out;
+  }, [config, query, modifiedOnly, edits]);
+
+  const visibleCount = visibleGroups.reduce((n, g) => n + g.fields.length, 0);
+  const filtering = query.trim() !== "" || modifiedOnly;
+  // Keyed off what is ON SCREEN: the legend explains the `env` chip, so it earns
+  // its space exactly when a filtered view still contains one.
+  const anyEnvOverridden = visibleGroups.some((g) => g.fields.some((f) => f.envOverridden));
+
+  // Scroll-spy: the active rail item is the last section whose top has passed
+  // the reading line. Measured against the scroll container's own box so it does
+  // not care where that container sits on the page.
+  useEffect(() => {
+    const root = scrollRef.current;
+    if (!root || visibleGroups.length === 0) return;
+    const ids = visibleGroups.map((g) => g.id);
+    const update = () => {
+      const rootTop = root.getBoundingClientRect().top;
+      let current = ids[0];
+      for (const id of ids) {
+        const el = document.getElementById(sectionDomId(id));
+        if (!el) continue;
+        if (el.getBoundingClientRect().top - rootTop <= 80) current = id;
+        else break;
+      }
+      setActiveGroup(current);
+    };
+    update();
+    root.addEventListener("scroll", update, { passive: true });
+    return () => root.removeEventListener("scroll", update);
+  }, [visibleGroups]);
+
+  const jumpTo = (id: string) => {
+    const el = document.getElementById(sectionDomId(id));
+    el?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    setActiveGroup(id);
+  };
 
   const save = async () => {
     if (dirtyKeys.length === 0) return;
@@ -112,32 +186,73 @@ export function InstanceConfigForm() {
 
   return (
     <>
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
-        <div className="mx-auto max-w-2xl">
-          <RestartBanner saved={saved} configPath={config?.configPath} />
+      <div className="flex min-h-0 flex-1">
+        {config && (
+          <SectionRail
+            groups={visibleGroups}
+            active={activeGroup}
+            onJump={jumpTo}
+            dirtyCount={countDirty(visibleGroups, dirtySet)}
+          />
+        )}
 
-          {loading && <p className="text-sm text-paddock-500">Loading…</p>}
-          {loadError && (
-            <p className="text-sm text-red-600 dark:text-red-400" role="alert">
-              Failed to load settings: {loadError}
-            </p>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {config && (
+            <FilterBar
+              query={query}
+              onQuery={setQuery}
+              modifiedOnly={modifiedOnly}
+              onModifiedOnly={setModifiedOnly}
+              visibleCount={visibleCount}
+              totalCount={allFields.length}
+              filtering={filtering}
+            />
           )}
 
-          {config &&
-            config.groups.map((g) => (
-              <Section key={g.id} title={g.label} description={g.description}>
-                <div className="grid grid-cols-1 gap-4">
-                  {g.fields.map((f) => (
-                    <Field
-                      key={f.key}
-                      field={f}
-                      value={shownValue(f)}
-                      onChange={(v) => setField(f.key, v)}
-                    />
-                  ))}
-                </div>
-              </Section>
-            ))}
+          <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
+            <div className="mx-auto max-w-4xl">
+              <RestartBanner saved={saved} configPath={config?.configPath} />
+
+              {loading && <p className="text-sm text-paddock-500">Loading…</p>}
+              {loadError && (
+                <p className="text-sm text-red-600 dark:text-red-400" role="alert">
+                  Failed to load settings: {loadError}
+                </p>
+              )}
+
+              {config && anyEnvOverridden && <EnvLegend />}
+
+              {config && visibleCount === 0 && (
+                <p className="py-8 text-center text-sm text-paddock-500">
+                  No settings match{" "}
+                  {query.trim() ? (
+                    <>
+                      “<span className="font-medium">{query.trim()}</span>”
+                    </>
+                  ) : (
+                    "this filter"
+                  )}
+                  .
+                </p>
+              )}
+
+              {visibleGroups.map((g) => (
+                <Section key={g.id} group={g}>
+                  <div className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2">
+                    {g.fields.map((f) => (
+                      <Field
+                        key={f.key}
+                        field={f}
+                        value={shownValue(f)}
+                        dirty={dirtySet.has(f.key)}
+                        onChange={(v) => setField(f.key, v)}
+                      />
+                    ))}
+                  </div>
+                </Section>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -177,6 +292,131 @@ export function InstanceConfigForm() {
 }
 
 /**
+ * The left rail of section links (VS Code's table of contents, not tabs). It
+ * scroll-spies rather than switching panes, so the filter above can still search
+ * across every section at once. Hidden below `lg`, where the filter is the only
+ * practical way through anyway.
+ */
+function SectionRail({
+  groups,
+  active,
+  onJump,
+  dirtyCount,
+}: {
+  groups: InstanceConfigGroup[];
+  active: string | null;
+  onJump: (id: string) => void;
+  dirtyCount: Record<string, number>;
+}) {
+  return (
+    <nav
+      aria-label="Config sections"
+      className="hidden w-52 shrink-0 overflow-y-auto border-r border-paddock-200 px-2 py-4 dark:border-paddock-800 lg:block"
+    >
+      <ul className="space-y-0.5">
+        {groups.map((g) => {
+          const isActive = g.id === active;
+          const dirty = dirtyCount[g.id] ?? 0;
+          return (
+            <li key={g.id}>
+              <button
+                type="button"
+                onClick={() => onJump(g.id)}
+                aria-current={isActive ? "true" : undefined}
+                className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] transition-colors ${
+                  isActive
+                    ? "bg-paddock-100 font-medium text-paddock-900 dark:bg-paddock-800 dark:text-paddock-100"
+                    : "text-paddock-500 hover:bg-paddock-100/60 hover:text-paddock-800 dark:hover:bg-paddock-800/50 dark:hover:text-paddock-200"
+                }`}
+              >
+                <span className="min-w-0 flex-1 truncate">{g.label}</span>
+                {dirty > 0 && (
+                  <span
+                    className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
+                    aria-label={`${dirty} unsaved`}
+                  />
+                )}
+                <span className="shrink-0 text-[11px] tabular-nums text-paddock-400">
+                  {g.fields.length}
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </nav>
+  );
+}
+
+/** The filter bar: live text search plus the "modified only" lens. */
+function FilterBar({
+  query,
+  onQuery,
+  modifiedOnly,
+  onModifiedOnly,
+  visibleCount,
+  totalCount,
+  filtering,
+}: {
+  query: string;
+  onQuery: (v: string) => void;
+  modifiedOnly: boolean;
+  onModifiedOnly: (v: boolean) => void;
+  visibleCount: number;
+  totalCount: number;
+  filtering: boolean;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 border-b border-paddock-200 px-4 py-2.5 dark:border-paddock-800 sm:px-6">
+      <div className="relative min-w-0 flex-1 sm:max-w-sm">
+        <SearchIcon
+          width={14}
+          height={14}
+          className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-paddock-400"
+        />
+        <input
+          type="search"
+          aria-label="Search settings"
+          placeholder="Search settings, keys, env vars…"
+          // `type=search` for the searchbox role; the UA's own clear affordance
+          // is suppressed so it does not sit beside ours as a second ✕.
+          className="input h-8 w-full pl-8 pr-7 text-[13px] [&::-webkit-search-cancel-button]:appearance-none"
+          value={query}
+          onChange={(e) => onQuery(e.target.value)}
+        />
+        {query !== "" && (
+          <button
+            type="button"
+            aria-label="Clear search"
+            onClick={() => onQuery("")}
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-paddock-400 hover:text-paddock-700 dark:hover:text-paddock-200"
+          >
+            <XIcon width={13} height={13} />
+          </button>
+        )}
+      </div>
+
+      <button
+        type="button"
+        aria-pressed={modifiedOnly}
+        onClick={() => onModifiedOnly(!modifiedOnly)}
+        className={`shrink-0 rounded-md border px-2.5 py-1 text-[12px] transition-colors ${
+          modifiedOnly
+            ? "border-accent/60 bg-accent/10 text-accent"
+            : "border-paddock-200 text-paddock-500 hover:text-paddock-800 dark:border-paddock-700 dark:hover:text-paddock-200"
+        }`}
+      >
+        Modified only
+      </button>
+
+      <span className="shrink-0 text-[12px] tabular-nums text-paddock-400">
+        {filtering ? `${visibleCount} of ${totalCount}` : `${totalCount} settings`}
+      </span>
+    </div>
+  );
+}
+
+/**
  * The persistent restart notice. Instance config is frozen at boot, so ANY edit
  * needs a restart to take effect — the banner is always shown, and switches to a
  * success tone right after a save lands.
@@ -185,7 +425,7 @@ function RestartBanner({ saved, configPath }: { saved: boolean; configPath?: str
   return (
     <div
       role="status"
-      className={`mb-6 flex items-start gap-2 rounded-lg border px-3 py-2.5 text-[13px] leading-snug ${
+      className={`mb-5 flex items-start gap-2 rounded-lg border px-3 py-2.5 text-[13px] leading-snug ${
         saved
           ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-700/60 dark:bg-emerald-900/20 dark:text-emerald-300"
           : "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700/60 dark:bg-amber-900/20 dark:text-amber-300"
@@ -214,57 +454,80 @@ function RestartBanner({ saved, configPath }: { saved: boolean; configPath?: str
   );
 }
 
-/** A titled card grouping related fields. */
-function Section({
-  title,
-  description,
-  children,
-}: {
-  title: string;
-  description?: string;
-  children: React.ReactNode;
-}) {
+/**
+ * The env-override explanation, stated ONCE. Per-field it is just an `env` chip
+ * plus the variable name; repeating this sentence beside twenty fields is what
+ * made the old screen unreadable on a containerized instance.
+ */
+function EnvLegend() {
   return (
-    <section className="mb-6">
-      <h2 className="text-sm font-semibold uppercase tracking-wide text-paddock-500">{title}</h2>
-      {description && <p className="mb-3 mt-0.5 text-[13px] text-paddock-500">{description}</p>}
-      <div className={`card ${description ? "" : "mt-2"}`}>{children}</div>
+    <p className="mb-5 text-[12px] leading-snug text-paddock-500">
+      Settings marked <Chip tone="amber">env</Chip> are overridden by an environment variable,
+      which wins over this file — edit that variable (and restart) to change them.
+    </p>
+  );
+}
+
+/** A titled section of related fields, and the scroll-spy anchor for the rail. */
+function Section({ group, children }: { group: InstanceConfigGroup; children: React.ReactNode }) {
+  return (
+    <section id={sectionDomId(group.id)} className="mb-7 scroll-mt-4">
+      <h2 className="text-sm font-semibold tracking-tight text-paddock-800 dark:text-paddock-200">
+        {group.label}
+      </h2>
+      {group.description && (
+        <p className="mt-0.5 text-[12px] leading-snug text-paddock-500">{group.description}</p>
+      )}
+      <div className="mt-2.5">{children}</div>
     </section>
   );
 }
 
-/** One field row: a label + control (or read-only value) + hints/notes. */
+/**
+ * One field. Booleans put the control on the label line (a toggle needs no row of
+ * its own); everything else stacks label → help → control. Wide types span both
+ * grid columns.
+ */
 function Field({
   field: f,
   value,
+  dirty,
   onChange,
 }: {
   field: InstanceConfigField;
   value: unknown;
+  dirty: boolean;
   onChange: (v: unknown) => void;
 }) {
   const locked = !f.editable || f.envOverridden;
   const inputId = `cfg-${f.key}`;
+  const isBoolean = f.type === "boolean";
 
   return (
-    <div>
-      <div className="flex items-center justify-between gap-3">
-        <label htmlFor={locked ? undefined : inputId} className="text-sm font-medium">
-          {f.label}
-          {f.sensitive && (
-            <span className="ml-1.5 align-middle text-[10px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
-              sensitive
-            </span>
+    <div
+      className={`min-w-0 ${isWide(f, value) ? "sm:col-span-2" : ""} ${
+        dirty ? "-ml-2.5 border-l-2 border-accent pl-2" : ""
+      }`}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <label
+          htmlFor={locked || isBoolean ? undefined : inputId}
+          className="min-w-0 text-[13px] font-medium"
+        >
+          <span className="align-middle">{f.label}</span>
+          {f.sensitive && <Chip tone="amber">sensitive</Chip>}
+          {f.envOverridden && (
+            <Chip
+              tone="amber"
+              title={`Overridden by environment variable ${f.envVar} — edit that env var (and restart) to change it.`}
+            >
+              env
+            </Chip>
           )}
+          {!f.editable && !f.envOverridden && <Chip tone="plain">read-only</Chip>}
         </label>
-        {f.type === "boolean" && !locked && (
-          <input
-            id={inputId}
-            type="checkbox"
-            className="h-4 w-4 accent-accent"
-            checked={Boolean(value)}
-            onChange={(e) => onChange(e.target.checked)}
-          />
+        {isBoolean && !locked && (
+          <Toggle id={inputId} checked={Boolean(value)} onChange={onChange} label={f.label} />
         )}
       </div>
 
@@ -273,19 +536,66 @@ function Field({
       {locked ? (
         <LockedValue field={f} value={value} />
       ) : (
-        f.type !== "boolean" && <Control field={f} value={value} onChange={onChange} inputId={inputId} />
+        !isBoolean && <Control field={f} value={value} onChange={onChange} inputId={inputId} />
       )}
 
       {f.envOverridden && (
-        <p className="mt-1 flex items-start gap-1.5 text-[12px] leading-snug text-amber-600 dark:text-amber-400">
-          <AlertIcon width={13} height={13} className="mt-0.5 shrink-0" />
-          <span>
-            Overridden by environment variable <code className="font-mono">{f.envVar}</code> — edit
-            that env var (and restart) to change it.
-          </span>
+        <p className="mt-1 truncate font-mono text-[11px] text-amber-600 dark:text-amber-500/90">
+          {f.envVar}
         </p>
       )}
     </div>
+  );
+}
+
+/** A small inline tag beside a field label. */
+function Chip({
+  children,
+  tone,
+  title,
+}: {
+  children: React.ReactNode;
+  tone: "amber" | "plain";
+  title?: string;
+}) {
+  return (
+    <span
+      title={title}
+      className={`ml-1.5 rounded px-1 py-px align-middle text-[10px] font-semibold uppercase tracking-wide ${
+        tone === "amber"
+          ? "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400"
+          : "bg-paddock-100 text-paddock-500 dark:bg-paddock-800 dark:text-paddock-400"
+      }`}
+    >
+      {children}
+    </span>
+  );
+}
+
+/** A checkbox styled as a switch — still a real checkbox for a11y and tests. */
+function Toggle({
+  id,
+  checked,
+  onChange,
+  label,
+}: {
+  id: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  label: string;
+}) {
+  return (
+    <label htmlFor={id} className="relative shrink-0 cursor-pointer">
+      <input
+        id={id}
+        type="checkbox"
+        aria-label={label}
+        className="peer sr-only"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+      <span className="block h-[18px] w-8 rounded-full bg-paddock-300 transition-colors after:absolute after:left-[2px] after:top-[2px] after:h-[14px] after:w-[14px] after:rounded-full after:bg-white after:transition-transform after:content-[''] peer-checked:bg-accent peer-checked:after:translate-x-[14px] peer-focus-visible:ring-2 peer-focus-visible:ring-accent/50 dark:bg-paddock-700" />
+    </label>
   );
 }
 
@@ -350,8 +660,8 @@ function Control({
       <div className="mt-1.5">
         <textarea
           id={inputId}
-          className="input min-h-[9rem] resize-y font-mono text-[12px] leading-relaxed"
-          rows={10}
+          className="input min-h-[7rem] resize-y font-mono text-[12px] leading-relaxed"
+          rows={6}
           spellCheck={false}
           value={shown}
           onChange={(e) => onChange(e.target.value)}
@@ -409,10 +719,15 @@ function Control({
   );
 }
 
-/** The read-only presentation of a locked (non-editable or env-shadowed) field. */
+/**
+ * The read-only presentation of a locked (non-editable or env-shadowed) field.
+ * Deliberately NOT input-shaped — the old dashed box read as a disabled text
+ * field, and fourteen of them in "Advanced" looked like a form you were being
+ * denied rather than a list of facts.
+ */
 function LockedValue({ field: f, value }: { field: InstanceConfigField; value: unknown }) {
   return (
-    <div className="mt-1.5 rounded-md border border-dashed border-paddock-300 bg-paddock-50 px-2.5 py-1.5 text-[13px] text-paddock-600 dark:border-paddock-700 dark:bg-paddock-900/40 dark:text-paddock-300">
+    <div className="mt-1 text-[12px] text-paddock-600 dark:text-paddock-300">
       {f.type === "boolean" ? (
         <span className="font-mono">{value ? "true" : "false"}</span>
       ) : value === null || value === undefined || value === "" ? (
@@ -424,17 +739,45 @@ function LockedValue({ field: f, value }: { field: InstanceConfigField; value: u
       ) : f.type === "text" ? (
         // Multi-line: preserve the operator's line breaks instead of collapsing
         // a whole prompt onto one `break-all` line.
-        <span className="block max-h-64 overflow-y-auto whitespace-pre-wrap font-mono text-[12px] leading-relaxed">
+        <span className="block max-h-40 overflow-y-auto whitespace-pre-wrap rounded bg-paddock-50 px-2 py-1.5 font-mono text-[12px] leading-relaxed dark:bg-paddock-900/40">
           {String(value)}
         </span>
       ) : (
-        <span className="break-all font-mono">
+        <span className="block break-all font-mono">
           {Array.isArray(value) ? value.join(", ") : String(value)}
         </span>
       )}
     </div>
   );
 }
+
+/**
+ * Which fields earn the full width. Prompts and lists always; a plain string
+ * whose value is long (a filesystem path, a URL) would otherwise be truncated
+ * into uselessness in a half-width cell.
+ */
+function isWide(f: InstanceConfigField, value: unknown): boolean {
+  if (f.type === "text" || f.type === "string-list") return true;
+  const s = Array.isArray(value) ? value.join(", ") : value == null ? "" : String(value);
+  return s.length > 38;
+}
+
+/** Everything a search query is matched against. */
+function fieldHaystack(f: InstanceConfigField): string {
+  return [f.label, f.key, f.help, f.envVar, ...(f.enumValues ?? [])]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+/** Per-group count of unsaved edits, for the rail's dot. */
+function countDirty(groups: InstanceConfigGroup[], dirty: Set<string>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const g of groups) out[g.id] = g.fields.filter((f) => dirty.has(f.key)).length;
+  return out;
+}
+
+const sectionDomId = (groupId: string) => `cfg-section-${groupId}`;
 
 /** Compare two field values (arrays by content) for dirty-detection. */
 function valuesEqual(a: unknown, b: unknown): boolean {
