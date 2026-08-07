@@ -373,12 +373,64 @@ destroyed real terminal history](https://github.com/edspencer/paddock/issues/689
   A known, non-fatal background failure is now one line naming the cause and the fix.
   `--verbose` (or `HERDCTL_LOG_LEVEL=debug`) still gets you everything.
 
+## 0.61.0 — Paddock keeps its own Claude home
+
+- **Transcripts stop living in your `~/.claude` and move inside Paddock's data
+  directory.** They were the last piece of state kept outside it, reached by
+  planting symlinks into your Claude home from the outside — and the code that did
+  it would, on every agent registration, copy your existing transcripts out and
+  **delete the originals**, inside a bare `catch`. That fired in exactly the case
+  chat adoption exists for. The Claude home now defaults to a directory under your
+  data dir, so the whole instance moves, backs up and wipes as one unit, and
+  Paddock never moves or deletes anything under `~/.claude` again — adoption still
+  *reads* it. Your user-level config (credentials, settings, `CLAUDE.md`, agents,
+  commands, plugins) is linked into the new home when it has none of its own, so
+  nothing you had stops working.
+
+  :::caution[This one moved twice more]
+  0.61.0 gave Paddock its own Claude home; **0.61.1** then made the `paddock` CLI
+  run against *your* `~/.claude` again, because an isolated home cannot see a
+  macOS Keychain login and every turn failed with *Not logged in*; **0.62**
+  replaced the whole mechanism with the `claude:` config block. If you are
+  reading this to decide what your instance does today, read 0.62.
+  :::
+
+- **Appending to a message you already queued no longer throws the addition
+  away.** The queue deduped on a timestamp the client deliberately *reuses* when
+  you append, so a pane that had missed the "queue cleared" broadcast re-asserted
+  the same timestamp with longer text and the next drain treated it as a duplicate
+  — discarding the appended text. Not delayed: gone.
+- **Stop works on a `/compact`.** Slash-command turns never registered a
+  cancellable id, so Stop did nothing, permanently — and compaction runs for one to
+  three minutes, which is a long time to sit with no way out.
+- **Marking the chat you are reading as unread survives its own turn landing.**
+  The client marks a focused chat as seen when a turn completes, which silently
+  undid the flag you had just set — an inferred "seen" overriding an explicit
+  intent.
+- **The sidebar stops flashing to skeletons twice per turn.** The project list
+  rendered its loading placeholders on every refresh, and a chat refreshes the
+  list three times over a turn's lifecycle, so the whole nav blanked and
+  re-populated while you were reading it.
+- **A compacted chat reads in the right order.** Claude Code writes the
+  compaction record *before* the `/compact` that triggered it, so the 🗜️ boundary
+  rendered above the command, as though the conversation had been compacted before
+  anyone asked.
+- **A trigger with no tools selected is no longer described as sandboxed.** An
+  empty tool list is indistinguishable from an unset one at the runtime, so such a
+  trigger runs with Claude Code's *default* tools — it was never a deny-all. Only
+  the wording changed; enforcement is tracked separately.
+- **Paddock is MIT licensed, and the packaging now proves it.** The repository had
+  no licence file and no `license` field — legally all rights reserved — while the
+  publish script defaulted the field to MIT, so every release told npm it was MIT
+  while the source granted nothing. That is now a real licence, asserted in the
+  manifests, shipped in both tarballs, and the fallback is gone.
+
 ## 0.59.1–0.60 — One command, on your own history
 
 - **`npx @edspencer/paddock` — nothing to install, nothing to clone.** Paddock is
   published to npm as a single self-contained package: the server, the web UI, and
   the Claude Code runtime, in one command. If you have Node 22+, you have
-  everything you need. It starts quiet (the several hundred boot log lines used to
+  everything you need. It starts quiet (the boot logging used to
   scroll the one URL you wanted off the top of the terminal), tells you where your
   data lives the first time it creates it, and warns you up front rather than
   silently failing if it can't find Claude credentials.
@@ -417,6 +469,79 @@ The npm package first shipped in 0.56.0, but **0.57.0 through 0.59.0 are broken*
 CLI silently did nothing and exited 0 when run through `npx` or a global install. Fixed
 in 0.59.1. `npx @edspencer/paddock@latest` always gets you a working one.
 :::
+
+## 0.58 — A command-line worth running
+
+- **The CLI got quiet, explains its failures, and can open the browser for you.**
+  A first run printed about thirty lines of boot logging, which scrolled the one
+  URL you actually wanted off the top of the terminal; it now prints nine, all
+  meaningful, and `--verbose` opts back in. Getting there meant hushing two
+  unrelated loggers — Paddock's own, and the orchestration engine underneath it,
+  which writes through a channel the first one cannot reach. **`--open`** launches
+  the browser once the server is listening. A port clash is now a sentence naming
+  the port and suggesting the next one, rather than a stack trace — worth doing
+  because the default port was itself the likeliest first-run failure, which is
+  what 0.66 eventually fixed properly. And `--help` now says where your data
+  lives, that it persists, and that moving or deleting that directory moves or
+  resets the instance.
+
+  :::caution[Not reachable by `npx` until 0.59.1]
+  Everything here shipped in a CLI that, installed through npm, **printed nothing
+  and exited zero** — a run-directly guard compared the script's own path against
+  `argv[1]`, which npm makes a symlink, so they never matched. Running the file
+  directly with `node` worked, which is why it went unnoticed across 0.57, 0.58
+  and 0.59.0. 0.59.1 fixed it and removed the condition entirely rather than
+  correcting it.
+  :::
+
+## 0.57 — Telling Claude it is in a browser
+
+- **Paddock now tells the agent what it is rendering into.** It injected no system
+  prompt of its own, so on a default instance Claude ran on its stock preset —
+  written for a *terminal*. Nothing said that replies render as GitHub-Flavored
+  Markdown in a browser, that a bare `#123` is dead text rather than a link, or
+  that there is a tool which puts an image on screen. An audit of the hundred most
+  recent chats on the dogfooding instance — 3,944 assistant messages — found
+  **4,440 bare `#123` references against 155 markdown links**, and **194 images
+  read with not one ever shown to the user**. In one chat that gap cost a full
+  round of rework: the agent read seventeen quality-control frames, showed none,
+  misread one, and shipped a regression the user then had to screenshot
+  themselves.
+
+  The injected prompt is two rules — *show, don't describe*, and *make clickable
+  things clickable* — and it is deliberately that short. Several plausible extras
+  ("no ANSI colour", "don't paste long output", "use markdown structure") were
+  measured against the same corpus, found to describe problems that did not exist,
+  and cut.
+- **You can replace it or turn it off.** Set `environmentPrompt:` (or
+  `PADDOCK_ENVIRONMENT_PROMPT`) to your own text and it is used instead; set it to
+  an **empty string** and nothing is appended at all. The distinction between
+  *omitted* and *empty* is meaningful here in a way it is not for other settings,
+  so it is spelled out beside the field, which is a multi-line editor under
+  **Capabilities**.
+
+## 0.56 — `npx @edspencer/paddock`
+
+- **Paddock is on npm.** One command, no Docker and no clone. The published
+  package is *synthesised* from built output rather than being one of the
+  workspace packages, so the internal packages stay private and unrenamed and no
+  future publish can fire one of them at the registry by accident. Two deliberate
+  differences from the repository tree: source maps are stripped — fifteen of the
+  nineteen megabytes of the web build, for something an end user never opens,
+  taking the package from about 22 MB to **2 MB** — and dependencies are pinned to
+  the versions CI actually tested, because a lockfile does not travel with a
+  published package.
+- **A correction that outlived its release:** `CONTRIBUTING.md`, `DEV.md` and
+  `CLAUDE.md` all listed the `claude` CLI as a flat prerequisite. Chats never
+  needed it — they run through the SDK, which resolves its own bundled binary and
+  never consults your `PATH`. Only the sweeper, triggers and `driveMode: batch`
+  shell out to `claude`.
+- **`PADDOCK_SCRATCH_DIR` and `scratchDir:` are gone**, the last remnants of the
+  scratch chat retired back in 0.50. An instance still setting either boots
+  normally and ignores it. That is worth knowing generally: Paddock reads config
+  by name rather than validating a schema, so a removed key is simply never looked
+  at — and by the same token **a typo'd key is equally silent**, deliberately, so
+  a stale line in an old env file can never lock you out of a running instance.
 
 ## 0.55 — Bring your terminal history with you
 
