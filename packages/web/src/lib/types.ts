@@ -1276,7 +1276,24 @@ export type ServerWsMessage =
        * its next write to prove it is editing the slot as it stands.
        */
       type: "chat:queued_state";
-      payload: { projectSlug: string; sessionId: string; text: string | null; qid?: string };
+      payload: {
+        projectSlug: string;
+        sessionId: string;
+        text: string | null;
+        qid?: string;
+        /** `returned` — a user pressed Stop and took the message back (#751). */
+        reason?: "returned";
+      };
+    }
+  | {
+      /**
+       * A user pressed Stop, so the queued message is handed BACK to their
+       * composer instead of being sent (#751). Sent only to the socket that
+       * asked to cancel — never rendered as a sent user bubble, because it
+       * wasn't sent.
+       */
+      type: "chat:queued_returned";
+      payload: { projectSlug: string; sessionId: string; text: string };
     }
   | {
       /**

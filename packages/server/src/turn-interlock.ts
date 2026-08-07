@@ -103,6 +103,15 @@ export async function quiesceSession(
   const cancelled = new Set<string>();
   let reaped = false;
 
+  // Mark the turn end this is about to cause as OURS, not a user's Stop. The WS
+  // layer treats the two oppositely for anything queued behind the turn: a Stop
+  // hands the message back to the user's composer, while this caller is about to
+  // delete, revert or promote the transcript — so the queue must be left strictly
+  // alone. Draining it here would start a fresh turn on a chat being removed (the
+  // #730 resurrection), and would make the session busy again so the poll below
+  // could never settle.
+  deps.hub?.noteCancel(sessionId, { reason: "quiesce", origin: null });
+
   for (;;) {
     const jobId = deps.hub?.activeInfo(sessionId)?.jobId ?? null;
     if (jobId && !cancelled.has(jobId)) {

@@ -111,6 +111,18 @@ export interface ActiveInfo {
   running: boolean;
 }
 
+/** Why a turn is being cancelled, and which socket asked for it. */
+export interface CancelIntent {
+  /**
+   * `stop` — a user pressed Stop (`chat:cancel`): they are taking control back.
+   * `quiesce` — a destructive op is stopping the turn so it can safely mutate
+   * the transcript (#731); the chat is being deleted, reverted or promoted.
+   */
+  reason: "stop" | "quiesce";
+  /** The socket that asked, if any. */
+  origin: HubSocket | null;
+}
+
 export class SessionHub {
   /** sessionId → the current (running or recently-completed) turn for that session. */
   private bySession = new Map<string, Turn>();
@@ -143,8 +155,38 @@ export class SessionHub {
    * emitted, so a drained follow-up's bubble lands below the turn it followed.
    */
   onTurnEnd:
-    | ((info: { sessionId: string; projectSlug: string; origin: HubSocket | null }) => void)
+    | ((info: {
+        sessionId: string;
+        projectSlug: string;
+        origin: HubSocket | null;
+        /** Set when this end was CAUSED by an explicit cancel — see {@link noteCancel}. */
+        cancel?: CancelIntent;
+      }) => void)
     | null = null;
+
+  /**
+   * Why a turn was cancelled, and by whom, pending the end it causes.
+   * Consumed by the next {@link end} for that session.
+   */
+  private cancels = new Map<string, CancelIntent>();
+
+  /**
+   * Record that a cancel was just issued for `sessionId`, so the turn end it
+   * causes can be told apart from a turn that finished on its own.
+   *
+   * The distinction is not cosmetic: "the turn ended" and "the user took control
+   * back" call for opposite treatment of anything queued behind that turn. A
+   * `stop` hands the queued message back to the client that pressed Stop; a
+   * `quiesce` (the destructive-op interlock, #731) must not touch it at all —
+   * that caller is about to delete or rewrite the transcript, and starting a
+   * fresh turn into it is the resurrection #730 was about.
+   *
+   * `origin` is the socket that asked, so the WS layer knows where to hand the
+   * message back; null when the cancel came from no socket at all.
+   */
+  noteCancel(sessionId: string, intent: CancelIntent): void {
+    this.cancels.set(sessionId, intent);
+  }
 
   /**
    * Begin tracking a turn. Pass `sessionId` when it's already known (a resumed
@@ -232,13 +274,27 @@ export class SessionHub {
    * like `chat:queued_flushed` that must reach a client that reconnected on a new
    * socket after the origin died.
    */
-  broadcast(sessionId: string, msg: HubMessage): void {
+  broadcast(sessionId: string, msg: HubMessage, opts: { except?: HubSocket | null } = {}): void {
     const set = new Set<HubSocket>();
     const turn = this.bySession.get(sessionId);
     if (turn?.origin) set.add(turn.origin);
     const subs = this.subscribers.get(sessionId);
     if (subs) for (const s of subs) set.add(s);
+    if (opts.except) set.delete(opts.except);
     for (const s of set) SessionHub.write(s, msg);
+  }
+
+  /**
+   * The session a cancellable job id belongs to, or null if no tracked turn
+   * carries it. `chat:cancel` names only a job id, so this is how the WS layer
+   * learns WHICH chat a Stop was aimed at. Covers a background stretch too — it
+   * publishes its synthetic id on its own hub turn (#528).
+   */
+  sessionForJob(jobId: string): { sessionId: string; projectSlug: string } | null {
+    for (const [sessionId, turn] of this.bySession) {
+      if (turn.jobId === jobId) return { sessionId, projectSlug: turn.projectSlug };
+    }
+    return null;
   }
 
   // --- internals, driven by TurnHandle -------------------------------------
@@ -296,12 +352,15 @@ export class SessionHub {
       this.fireActive(turn);
       turn.evictTimer = setTimeout(() => this.evict(turn), COMPLETED_TTL_MS);
       turn.evictTimer.unref?.();
-      // #627: the session is idle again — let the WS layer drain a queued
-      // follow-up. Never allowed to throw into a caller finalizing its turn.
+      // #627: the session is idle again — let the WS layer deal with anything
+      // queued behind this turn. Never allowed to throw into a caller finalizing
+      // its turn. A pending cancel intent belongs to THIS end, so consume it.
+      const cancel = this.cancels.get(turn.sessionId);
+      this.cancels.delete(turn.sessionId);
       if (this.onTurnEnd) {
         const { sessionId, projectSlug, origin } = turn;
         try {
-          this.onTurnEnd({ sessionId, projectSlug, origin });
+          this.onTurnEnd({ sessionId, projectSlug, origin, ...(cancel ? { cancel } : {}) });
         } catch {
           /* a drain that throws must not break turn teardown */
         }

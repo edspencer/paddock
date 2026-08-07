@@ -120,7 +120,12 @@ export interface ChatHandlers {
    * alongside us, edited the slot, or cleared it. `text` is the slot's full
    * contents (null when empty) and `qid` its identity, which the pane adopts.
    */
-  onQueuedState?: (meta: { text: string | null; qid?: string }) => void;
+  onQueuedState?: (meta: { text: string | null; qid?: string; reason?: "returned" }) => void;
+  /**
+   * A Stop handed this chat's queued message back to THIS client's composer
+   * (#751). Only the socket that pressed Stop receives it.
+   */
+  onQueuedReturned?: (meta: { text: string }) => void;
   /**
    * A machine-injected user turn arrived for this chat (#290): another chat
    * `send_message`d / a schedule fired into it. Render the injected user bubble
@@ -701,10 +706,11 @@ class ChatClient {
       // into localStorage and hand it to any mounted pane. Before this, a queue was
       // written and never announced: a second client's queue silently replaced the
       // first's, whose chip went on showing a message that no longer existed.
-      const { sessionId, text, qid } = msg.payload as {
+      const { sessionId, text, qid, reason } = msg.payload as {
         sessionId?: string;
         text?: string | null;
         qid?: string;
+        reason?: "returned";
       };
       if (sessionId) {
         const next = text && text.length > 0 ? text : null;
@@ -714,7 +720,26 @@ class ChatClient {
         });
         for (const sub of this.subs.values()) {
           if (sub.projectSlug === slug && sub.sessionId === sessionId) {
-            sub.handlers.onQueuedState?.({ text: next, qid });
+            sub.handlers.onQueuedState?.({ text: next, qid, reason });
+          }
+        }
+      }
+      return;
+    }
+
+    if (msg.type === "chat:queued_returned") {
+      // A Stop gave this chat's queued message back to us rather than sending it
+      // (#751). Clear the persisted queue copy — it is a composer draft now, and
+      // the pane persists it as one — then hand the text to the mounted pane.
+      const { sessionId, text } = msg.payload as { sessionId?: string; text?: string };
+      if (sessionId && typeof text === "string") {
+        void import("./queued.js").then(({ writeQueued, writeQueuedId }) => {
+          writeQueued(sessionId, slug, null);
+          writeQueuedId(sessionId, slug, null);
+        });
+        for (const sub of this.subs.values()) {
+          if (sub.projectSlug === slug && sub.sessionId === sessionId) {
+            sub.handlers.onQueuedReturned?.({ text });
           }
         }
       }

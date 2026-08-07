@@ -575,6 +575,39 @@ export interface ChatQueuedStateMessage {
      * edit updates this shared slot in place rather than appending beside it.
      */
     qid?: string;
+    /**
+     * Why the slot changed, when it is worth explaining. `returned` means a user
+     * pressed Stop and the message went back to THEIR composer — sent to the
+     * other clients so a chip that just vanished from under them has a reason
+     * attached, rather than looking like the message evaporated. The client that
+     * pressed Stop is excluded from this broadcast; it gets
+     * {@link ChatQueuedReturnedMessage} instead.
+     */
+    reason?: "returned";
+  };
+}
+
+/**
+ * A user pressed Stop, so the message queued behind that turn is handed BACK to
+ * them (#751 follow-up). Sent only to the socket that asked to cancel.
+ *
+ * Stop means "give me control back". Auto-sending the follow-up would have the
+ * agent start working again the instant the user stopped it, and holding the
+ * message server-side is what stranded it (#627) — so it returns to the composer,
+ * where it is visible, editable, and sent only when the user says so.
+ *
+ * Deliberately NOT `chat:queued_flushed` with a flag: that frame means "this text
+ * was sent, render it as the user's bubble", and a returned message is precisely
+ * one that was NOT sent. Overloading it risks a phantom user turn in the
+ * transcript for a message the agent never received.
+ */
+export interface ChatQueuedReturnedMessage {
+  type: "chat:queued_returned";
+  payload: {
+    projectSlug: string;
+    sessionId: string;
+    /** The queued text, for the client to put back in its composer. */
+    text: string;
   };
 }
 
@@ -626,6 +659,7 @@ export type ServerMessage =
   | ChatActiveMessage
   | ChatQueuedFlushedMessage
   | ChatQueuedStateMessage
+  | ChatQueuedReturnedMessage
   | ChatKilledTaskMessage
   | ChatNoticeMessage
   | PongMessage;

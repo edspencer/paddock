@@ -77,7 +77,7 @@ import {
   type DriveMode,
 } from "./models.js";
 import { SessionHub, type TurnHandle, type ActiveInfo, type HubSocket } from "./session-hub.js";
-import { partsOf } from "./queued-message.js";
+import { partsOf, type QueuedMessage } from "./queued-message.js";
 import { resolveAttachmentsConfig } from "./attachments-config.js";
 import { wrapAttachments, inferAttachmentKind, type PromptAttachment } from "./attachments-hint.js";
 import { sendFileServerDef, SEND_FILE_SERVER_KEY } from "./send-file-mcp.js";
@@ -169,6 +169,24 @@ function queueIdOf(payload: { qid?: string | null; ts?: number | null }): string
   return `anon:${randomUUID()}`;
 }
 
+/** Write one frame straight to a single socket, skipping a closed one. */
+function writeFrame(socket: HubSocket, msg: ServerMessage): void {
+  if (socket.readyState !== socket.OPEN) return;
+  try {
+    socket.send(JSON.stringify(msg));
+  } catch {
+    /* a socket that throws on send is effectively gone */
+  }
+}
+
+/**
+ * The identity of a slot as a whole (not of one contribution). Written by every
+ * `upsert`; synthesised for an entry an older server wrote without one.
+ */
+function slotVersion(m: QueuedMessage): string {
+  return m.id ?? `legacy:${m.createdAtMs}`;
+}
+
 export function makeChatHandler(deps: ChatHandlerDeps) {
   // ONE hub shared across every socket this handler serves: it tracks each
   // session's in-flight turn and fans its frames out to whichever socket(s) are
@@ -218,6 +236,15 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
     }
     return m;
   };
+
+  // Slots we could NOT hand back to a composer on Stop, keyed `agent \0 sessionId`
+  // → the slot version that was parked. A parked message stays queued and visible,
+  // but no turn end auto-sends it: the user pressed Stop, and firing their
+  // follow-up later — behind whatever they type next — is the stranding this whole
+  // change exists to remove. Any real edit mints a new slot version, so the parked
+  // id simply stops matching and the message becomes ordinary again; a bare
+  // re-assert keeps the version and stays parked. Same bound as the ledger above.
+  const parked = new Map<string, string>();
 
   /** Record one flushed part, trimming the oldest entries past the bounds. */
   const rememberFlushed = (ledger: Map<string, Set<string>>, id: string, text: string): void => {
@@ -489,6 +516,28 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       // (issues #52/#53).
       const active = hub.activeInfo(sessionId);
       if (active) send(activeFrame(active));
+      // …and what is currently QUEUED on it (#629). The queue is shared chat
+      // state, but a pane could only ever learn it from its own localStorage, so
+      // a message queued on another device — or one parked by a Stop nobody was
+      // left to hand it back to — was invisible to whoever opened the chat next.
+      const slug = msg.payload.projectSlug;
+      if (deps.queuedMessage && typeof slug === "string") {
+        void deps.queuedMessage
+          .get(keeperAgentName(slug), sessionId)
+          .then((queued) => {
+            if (!queued?.text) return;
+            send({
+              type: "chat:queued_state",
+              payload: {
+                projectSlug: slug,
+                sessionId,
+                text: queued.text,
+                ...(queued.id ? { qid: queued.id } : {}),
+              },
+            });
+          })
+          .catch(() => undefined);
+      }
     };
 
     // Server-authoritative queue drain (#245): auto-send a persisted queued
@@ -508,7 +557,15 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       const agent = keeperAgentName(slug);
       const queued = await deps.queuedMessage.take(agent, sessionId).catch(() => null);
       if (!queued?.text) return;
-      const ledger = flushedLedger(`${agent}${KEY_SEP}${sessionId}`);
+      const markerKey = `${agent}${KEY_SEP}${sessionId}`;
+      // Parked by a Stop we couldn't hand back (see returnQueueToComposer): the
+      // user asked for control, so it waits for them, not for the next turn end.
+      // Put it back — `take` already removed it.
+      if (parked.get(markerKey) === slotVersion(queued)) {
+        await deps.queuedMessage.set(agent, sessionId, queued).catch(() => undefined);
+        return;
+      }
+      const ledger = flushedLedger(markerKey);
       // Have we already sent this? (#628/#736.)
       //
       // Identity is the (id, text) TUPLE, matched by EQUALITY, against every
@@ -1218,12 +1275,92 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
         })
       : headlessOps;
 
-  // #627: EVERY turn-ending path drains the queue, because every one of them ends
-  // its turn through the hub. Previously this was a single call after a successful
-  // `chat:send`, so a message queued during a slash command, a trigger, a wake, a
-  // background stretch or a Stopped turn was stranded until some later `chat:send`
+  /**
+   * Stop hands the queued message BACK to the user instead of sending it.
+   *
+   * Stop means "give me control back", so the one thing it must not do is have
+   * the agent start working again on the follow-up the instant it is stopped.
+   * Holding the message server-side isn't the answer either — that is exactly
+   * what stranded it (#627): it sat there and went out behind whatever the user
+   * typed next. So it goes back to the composer of the client that pressed Stop,
+   * where it is visible, editable, and sent only when they say so. The client
+   * runs its existing "Edit queued message" path on the frame; the composer draft
+   * is persisted to localStorage by the same effect that persists any draft.
+   *
+   * Every OTHER turn-ending path — normal completion, a slash command, a trigger,
+   * a wake, a spawn, a background stretch — still drains. This is the single
+   * explicit exception, not a gap.
+   */
+  const returnQueueToComposer = async (
+    slug: string,
+    sessionId: string,
+    to: HubSocket | null,
+  ): Promise<void> => {
+    if (!deps.queuedMessage) return;
+    // A successor turn is already live (a Stop racing the next send): leave the
+    // queue to that turn's own end rather than yanking it mid-flight.
+    if (hub.isRunning(sessionId)) return;
+    const agent = keeperAgentName(slug);
+    const queued = await deps.queuedMessage.take(agent, sessionId).catch(() => null);
+    if (!queued?.text) return;
+    const live = to && to.readyState === to.OPEN ? to : null;
+    if (!live) {
+      // Nobody to hand it to — the tab closed between the Stop and this turn
+      // ending, or the cancel came from no socket at all. Put it back and PARK
+      // it: still queued, still visible (every attached client is told, and a
+      // pane opening this chat is told on subscribe), but no turn end will
+      // auto-send it. Dropping it here would be exactly the silent loss this
+      // change is about, and sending it would be the surprise Stop must not have.
+      await deps.queuedMessage.set(agent, sessionId, queued).catch(() => undefined);
+      const key = `${agent}${KEY_SEP}${sessionId}`;
+      parked.set(key, slotVersion(queued));
+      if (parked.size > MAX_FLUSHED_SESSIONS) {
+        parked.delete(parked.keys().next().value as string);
+      }
+      hub.broadcast(sessionId, {
+        type: "chat:queued_state",
+        payload: {
+          projectSlug: slug,
+          sessionId,
+          text: queued.text,
+          ...(queued.id ? { qid: queued.id } : {}),
+        },
+      });
+      return;
+    }
+    // The stopping client gets the text; everyone else just sees the shared slot
+    // clear, WITH a reason — a chip vanishing from under you with no explanation
+    // is the same silence that made #629 bite.
+    writeFrame(live, {
+      type: "chat:queued_returned",
+      payload: { projectSlug: slug, sessionId, text: queued.text },
+    });
+    hub.broadcast(
+      sessionId,
+      {
+        type: "chat:queued_state",
+        payload: { projectSlug: slug, sessionId, text: null, reason: "returned" },
+      },
+      { except: live },
+    );
+  };
+
+  // #627: EVERY turn-ending path deals with the queue, because every one of them
+  // ends its turn through the hub. Previously this was a single call after a
+  // successful `chat:send`, so a message queued during a slash command, a trigger,
+  // a wake or a background stretch was stranded until some later `chat:send`
   // flushed it — out of order, behind a message the user typed afterwards.
-  hub.onTurnEnd = ({ sessionId, projectSlug, origin }) => {
+  hub.onTurnEnd = ({ sessionId, projectSlug, origin, cancel }) => {
+    // A destructive op stopped this turn so it can delete/revert/promote the
+    // chat (#731). Its transcript is about to be rewritten or removed, so a
+    // drained follow-up would either race that or resurrect the chat (#730) —
+    // and, by making the session busy again, would make the interlock time out
+    // and refuse the operation. Leave the queue exactly where it is.
+    if (cancel?.reason === "quiesce") return;
+    if (cancel?.reason === "stop") {
+      void returnQueueToComposer(projectSlug, sessionId, cancel.origin);
+      return;
+    }
     void opsFor(origin).drainQueue(projectSlug, sessionId);
   };
 
@@ -1289,6 +1426,13 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
         return;
       }
       if (parsed.type === "chat:cancel") {
+        // Tell the hub this end is a user Stop, and which socket asked, so the
+        // turn end it causes hands the queued follow-up back to THAT composer
+        // instead of sending it. `chat:cancel` names only a job id, so the hub
+        // resolves the chat it belongs to; a stale Stop for a turn that already
+        // finished resolves to nothing and marks nothing.
+        const target = hub.sessionForJob(parsed.payload.jobId);
+        if (target) hub.noteCancel(target.sessionId, { reason: "stop", origin: socket });
         void deps.herdctl.cancel(parsed.payload.jobId).catch(() => undefined);
         return;
       }
