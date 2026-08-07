@@ -111,12 +111,77 @@ export function repoCheckoutName(repo: string): string {
  * (it does NOT follow symlinks — callers that care resolve them beforehand).
  *
  * The `+ path.sep` is load-bearing: a plain `startsWith(parent)` would call
- * `/data/projects-old` a child of `/data/projects`.
+ * `/data/projects-old` a child of `/data/projects`. It does NOT hold for the one
+ * parent whose string already ends in a separator — the filesystem root — where
+ * appending would ask for `"//"` and report every child as outside (issue #719).
+ * That made the bidirectional overlap guard in `validatePath` fail open in both
+ * directions once any project's working dir was `/`, so two keepers could be
+ * created with overlapping working trees. Append the separator only when the
+ * parent doesn't already end in one.
  */
 export function isPathInside(child: string, parent: string): boolean {
   const c = path.resolve(child);
   const p = path.resolve(parent);
-  return c === p || c.startsWith(p + path.sep);
+  return c === p || c.startsWith(p.endsWith(path.sep) ? p : p + path.sep);
+}
+
+/**
+ * Directories beneath which a project may never be linked (issue #720) — the
+ * operating system rather than anybody's work.
+ *
+ * Each entry denies itself and everything under it. The filesystem root is
+ * handled separately in {@link isSystemPath}: it is refused by exact match, not
+ * by containment, because since #719 EVERY absolute path is "inside" `/`.
+ *
+ * This is a floor, not an allow-list. The alternative the issue floated —
+ * requiring linked paths to sit under a configurable allowed root — is a bigger
+ * lever than the problem needs: it adds a config dimension and would invalidate
+ * every already-linked project the day it shipped. A denylist only ever refuses
+ * paths nobody legitimately links a project at.
+ *
+ * Deliberately NOT here: `/opt`, `/srv`, `/mnt`, `/tmp`, `/root` and `/var` —
+ * each is somewhere a real checkout or notebook plausibly lives (`/var` in
+ * particular holds Paddock's own data dir on some boxes, and macOS temp dirs
+ * canonicalise under `/private/var`).
+ *
+ * On most distros `/bin`, `/sbin` and `/lib*` are symlinks into `/usr`;
+ * {@link import("./projects.js").ProjectStore.validatePath} canonicalises before
+ * checking, so those are caught by the `/usr` entry too. They are listed anyway
+ * for the systems where they are real directories.
+ */
+export const SYSTEM_PATH_DENYLIST = [
+  "/bin",
+  "/boot",
+  "/dev",
+  "/etc",
+  "/lib",
+  "/lib32",
+  "/lib64",
+  "/libx32",
+  "/proc",
+  "/run",
+  "/sbin",
+  "/sys",
+  "/usr",
+] as const;
+
+/**
+ * Whether a (resolved) path is the filesystem root or sits inside a system
+ * directory — the floor beneath which {@link
+ * import("./projects.js").ProjectStore.validatePath} refuses to link a project
+ * (issue #720).
+ *
+ * This is a FOOTGUN guard, not a privilege boundary: anyone who can reach the
+ * projects API can already create projects and run turns as whoever Paddock runs
+ * as. It exists because the failure is silent and the blast radius is large — a
+ * linked project's directory becomes a keeper's cwd, that keeper runs
+ * `acceptEdits` by default, and a MANAGED project's `contentDir` IS that
+ * directory, so the sweeper writes `CLAUDE.md`/`CHANGELOG.md` into it.
+ */
+export function isSystemPath(candidate: string): boolean {
+  const p = path.resolve(candidate);
+  if (p === path.parse(p).root) return true;
+  return SYSTEM_PATH_DENYLIST.some((root) => isPathInside(p, root));
 }
 
 /**
