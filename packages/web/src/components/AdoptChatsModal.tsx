@@ -4,9 +4,9 @@ import { useEscapeKey } from "../lib/useEscapeKey";
 import { TerminalIcon, XIcon } from "./icons";
 
 /**
- * Confirm what a native-chat import is about to bring in (#660).
+ * Confirm what a native-chat adoption is about to bring in (#660).
  *
- * The import used to be one unconfirmed click on a permanently-visible sidebar
+ * Adoption used to be one unconfirmed click on a permanently-visible sidebar
  * button, with no preview and no undo. That is a bad combination with a count
  * that can be wrong: on the instance that prompted this, the offer of 26 chats
  * was 10 of Paddock's own sweeper runs (#658) and 16 forgotten `claude -p` smoke
@@ -23,20 +23,20 @@ import { TerminalIcon, XIcon } from "./icons";
  * `sourceCwd` is shown per group and is the most load-bearing thing here: it is
  * what makes "these 15 are from a scratch copy, not my checkout" visible at all.
  */
-export function ImportChatsModal({
+export function AdoptChatsModal({
   open,
   adoptable,
   busy,
   onClose,
-  onImport,
+  onAdopt,
 }: {
   open: boolean;
   /** What the workspace currently offers, as returned by `getAdoptableChats`. */
   adoptable: AdoptableChats | null;
   busy: boolean;
   onClose: () => void;
-  /** Import exactly these sessions. Never called with an empty selection. */
-  onImport: (sessionIds: string[]) => void;
+  /** Adopt exactly these sessions. Never called with an empty selection. */
+  onAdopt: (sessionIds: string[]) => void;
 }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
@@ -69,7 +69,7 @@ export function ImportChatsModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, idKey]);
 
-  // Escape closes, but not out from under an in-flight import — the request
+  // Escape closes, but not out from under an in-flight adoption — the request
   // would still land. Same rule as `ConfirmDialog` and `PromoteChatModal`.
   useEscapeKey(open && !busy, onClose);
 
@@ -104,14 +104,14 @@ export function ImportChatsModal({
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="Import native Claude Code chats"
+        aria-label="Adopt native Claude Code chats"
         className="flex max-h-[80vh] w-full max-w-2xl animate-scale-in flex-col rounded-2xl border border-paddock-200 bg-white p-6 shadow-2xl dark:border-paddock-800 dark:bg-paddock-900"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-1 flex items-center justify-between">
           <h2 className="flex items-center gap-2 text-lg font-semibold">
             <TerminalIcon width={16} height={16} />
-            Import native chats
+            Adopt native chats
           </h2>
           <button
             type="button"
@@ -124,13 +124,14 @@ export function ImportChatsModal({
           </button>
         </div>
         <p className="mb-4 text-sm text-paddock-500">
-          These Claude Code sessions were run in a terminal and aren&apos;t visible here yet. Your
-          own <code>~/.claude</code> history is copied, never moved.
+          These Claude Code sessions were run in a terminal and aren&apos;t visible here yet.
+          Adopting them lists them here — your own <code>~/.claude</code> history is never moved
+          or deleted.
         </p>
 
         <div className="-mx-1 flex-1 overflow-y-auto px-1">
           {sources.length === 0 && (
-            <p className="py-6 text-center text-sm text-paddock-500">Nothing left to import.</p>
+            <p className="py-6 text-center text-sm text-paddock-500">Nothing left to adopt.</p>
           )}
           {sources.map((source) => {
             const ids = source.sessions.map((c) => c.sessionId);
@@ -193,9 +194,9 @@ export function ImportChatsModal({
               type="button"
               className="btn-primary"
               disabled={busy || count === 0}
-              onClick={() => onImport([...selected])}
+              onClick={() => onAdopt([...selected])}
             >
-              {busy ? "Importing…" : `Import ${count} chat${count === 1 ? "" : "s"}`}
+              {busy ? "Adopting…" : `Adopt ${count} chat${count === 1 ? "" : "s"}`}
             </button>
           </span>
         </div>

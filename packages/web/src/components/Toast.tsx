@@ -7,8 +7,8 @@ import { AlertIcon, CheckIcon, XIcon } from "./icons";
  * paddock had no toast mechanism before this: action feedback was either
  * ProjectView's `loadErr` — which is an early return that REPLACES the whole page,
  * fine for "the project failed to load" and far too violent for "7 chats
- * imported" — or a pane-local inline strip (`ChatPane`'s composer error). Neither
- * can report a background action that succeeded, which is what an import needs, so
+ * adopted" — or a pane-local inline strip (`ChatPane`'s composer error). Neither
+ * can report a background action that succeeded, which is what an adoption needs, so
  * this is the small shared piece that was missing rather than a fourth private
  * copy of the idea.
  *
@@ -36,7 +36,7 @@ export function Toast({
    *
    * Inside the toast rather than beside it because the toast IS the window in
    * which the offer stands: it disappears with the message, so there is never an
-   * Undo button pointing at an import the user has long since forgotten. Callers
+   * Undo button pointing at an adoption the user has long since forgotten. Callers
    * that offer one should raise the dwell time to match — six seconds is right
    * for reading an outcome, short for deciding to reverse it.
    */

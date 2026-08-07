@@ -1,6 +1,6 @@
 ---
 title: What's New
-description: "The user-facing highlights of each Paddock release — five independent levers for what an instance shares with your Claude Code, declaring your own MCP servers, one-command install with npx and opening the directory you're in, importing your existing Claude Code CLI chats, a Home that leads with running and unread work, the keeper persona retired in favour of Claude, an unread badge on the sidebar's Home link, the instance's own root as a first-class workspace, subtree actions on the chat tree, a running-chats filter, instance Config split from workspace Settings, scratch retired, a much faster jobs index, a chat list that nests spawned chats under their parent, an external MCP endpoint, a generated API reference, per-message fork & revert, Claude Opus 5 by default, official Docker images & deploy recipes, attachments, streaming, unified triggers, and more."
+description: "The user-facing highlights of each Paddock release — five independent levers for what an instance shares with your Claude Code, declaring your own MCP servers, one-command install with npx and opening the directory you're in, adopting your existing Claude Code CLI chats, a Home that leads with running and unread work, the keeper persona retired in favour of Claude, an unread badge on the sidebar's Home link, the instance's own root as a first-class workspace, subtree actions on the chat tree, a running-chats filter, instance Config split from workspace Settings, scratch retired, a much faster jobs index, a chat list that nests spawned chats under their parent, an external MCP endpoint, a generated API reference, per-message fork & revert, Claude Opus 5 by default, official Docker images & deploy recipes, attachments, streaming, unified triggers, and more."
 ---
 
 import DemoVideo from '../../components/DemoVideo.astro';
@@ -222,6 +222,19 @@ in 0.59.1. `npx @edspencer/paddock@latest` always gets you a working one.
 :::
 
 ## 0.55 — Bring your terminal history with you
+
+:::note[This feature is now called "adopt"]
+The button, badge and toast described below were renamed from *Import* to
+*Adopt* in a later release, matching what the API always called it
+([#744](https://github.com/edspencer/paddock/issues/744)). The entry below is
+left as it shipped. Two details it states are also now specific to the default
+`claude.transcripts: own`: under
+[`transcripts: host`](/configuration/config-file/#transcripts) (added in 0.62) the project's
+transcript store *is* your `~/.claude` folder, so adopting copies nothing at
+all — it only registers sessions that are already there. See [Adopt your
+terminal `claude` history](/using/working-in-chats/#adopt-your-terminal-claude-history)
+for current behaviour.
+:::
 
 - **Import the Claude Code chats you already have.** A project is backed by a
   working directory, and you very often already have months of terminal `claude`
