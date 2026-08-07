@@ -1,5 +1,217 @@
 # @paddock/server
 
+## 0.66.0
+
+### Minor Changes
+
+- [#741](https://github.com/edspencer/paddock/pull/741) [`18c11e0`](https://github.com/edspencer/paddock/commit/18c11e0ca36fa43f511ab07c9c68ace250167fef) Thanks [@edspencer](https://github.com/edspencer)! - The default listen port moves from **4000** to **7233**.
+
+  4000 was a bad default. It is one of the most contested ports in local
+  development — Jekyll has defaulted to it since 2008, Phoenix defaults to it, and
+  it is a common pick for a hand-rolled Node server. The CLI has carried a comment
+  calling `EADDRINUSE` on 4000 "the likeliest first-run failure" for as long as the
+  error message has existed, which is a fair description of a default that makes
+  the first run fail.
+
+  7233 is `PADD` on a phone keypad (P=7, A=2, D=3, D=3). It is **not** registered
+  with IANA — checked against the published registry — and carries no malware
+  association.
+
+  **It is not unoccupied.** 7233 is the default frontend gRPC port for
+  [Temporal](https://docs.temporal.io/temporal-service/temporal-server), whose
+  7233/7234/7235/7239 block covers its frontend, history, matching and worker
+  services. That collision is real and worth naming, because Temporal's audience —
+  self-hosting developers running orchestration — overlaps ours more than the base
+  rate would suggest. It is still the better trade: Temporal is one specific
+  server, almost always run under Compose or k8s where the published port is
+  trivially remapped, whereas 4000 collides with a whole class of everyday tooling.
+  The failure mode is also loud rather than silent — `EADDRINUSE` at boot, with the
+  existing message naming the port and the flag that fixes it.
+
+  **Upgrading:** if you set `PORT`, `port:` in `paddock.config.yaml`, or `--port`,
+  nothing changes. If you relied on the default, the instance moves to 7233 and
+  anything in front of it — a reverse proxy `reverse_proxy paddock:4000`, a Docker
+  `-p 127.0.0.1:4000:4000` publish, a k8s Service `targetPort`, an SSH tunnel —
+  needs the new number, or pin the old one with `PORT=4000`.
+
+- [#735](https://github.com/edspencer/paddock/pull/735) [`43f5603`](https://github.com/edspencer/paddock/commit/43f56038ec0e3fd0569a4f8ae9a22490df9b33d6) Thanks [@edspencer](https://github.com/edspencer)! - `project.yaml` and `paddock.config.yaml` now declare a `schemaVersion`, and
+  Paddock refuses to lenient-parse a file written by a newer version of itself
+  (#724).
+
+  The motivating problem is not migrations, it is **downgrades**. Running an older
+  Paddock — `npx @edspencer/paddock@0.62.0` is one command away — against a data
+  dir a newer one wrote used to read it leniently: the project normaliser drops
+  every key it does not recognise, and the next save writes the file back without
+  them. A `path:` or a `managed:` disappeared with no error and no way to notice.
+
+  The two on-disk formats Paddock owns now carry `schemaVersion: 1`, and a file
+  declaring a version this build does not understand is never lenient-parsed:
+
+  - **`paddock.config.yaml` from the future → refuse to start**, naming the file,
+    both versions, and the fix. Fail-closed, in the same shape as the existing
+    refusal when the Claude home resolves to your own `~/.claude` — an instance
+    config decides auth mode and bind host, and half-understanding those is worse
+    than not booting.
+  - **A `project.yaml` from the future → that project is skipped, loudly**, with a
+    startup warning naming the file and its version; the rest of the instance is
+    unaffected and the file is left byte-for-byte alone. Deliberately _not_ a
+    refusal: an unreadable `project.yaml` already made a project vanish silently,
+    so saying it out loud is a strict improvement, whereas bricking a whole
+    instance because one project directory was copied in from a newer box would be
+    a worse failure than the data loss being prevented.
+
+  **Adoption touches no existing data.** The current on-disk shape _is_ version 1
+  and an **absent** `schemaVersion` reads as 1, so every file on every live
+  instance already reads correctly and nothing is rewritten. Files Paddock writes
+  from now on carry the field explicitly; existing ones pick it up whenever they
+  are next saved for some other reason. There is no backfill pass, and merely
+  reading a file still writes nothing to it.
+
+  No migration runner ships with this — with `1` as the only version there is
+  nothing to migrate, and one with zero migrations cannot be meaningfully tested.
+  The rule for when to bump the number (monotonic integer, never semver; adding an
+  optional key does **not** bump) is documented next to the constants in
+  `schema-version.ts`.
+
+### Patch Changes
+
+- [#739](https://github.com/edspencer/paddock/pull/739) [`d75b610`](https://github.com/edspencer/paddock/commit/d75b610a91f281c91c4d3b24df02ae916cc3816d) Thanks [@edspencer](https://github.com/edspencer)! - test: add a `[[BGSUBAGENT]]` fake-Claude directive for a sub-agent that outlives its parent turn
+
+  The fake could not previously produce a sub-agent that is still running with no
+  live parent turn holding it open. Every existing directive keeps the parent turn
+  alive for as long as the sub-agent runs — `[[SUBAGENT]]` pairs the `Task` only
+  after its nested steps finish, and `[[SLOWTOOL]]` holds the turn open by design.
+
+  That gap made a whole bug class structurally untestable. Sub-agent progress is
+  polled over REST rather than streamed, and a live parent turn is exactly what
+  keeps the poll alive, so a nav-away/nav-back test written on either directive
+  **passes while the bug is live** (#725).
+
+  `[[BGSUBAGENT]]` pairs the `Task` tool_result immediately, lets the turn run on
+  to its terminal `result`, and then keeps appending sidechain steps for
+  `PADDOCK_FAKE_BGSUBAGENT_MS` (default 3000ms) — the detached state the bug needs.
+
+  Test-harness only: `test/bin/claude` is not part of the published package, and no
+  product code changes.
+
+- [#743](https://github.com/edspencer/paddock/pull/743) [`bfc5fa9`](https://github.com/edspencer/paddock/commit/bfc5fa9aacaa38233c23ec6e29e77409f72c78c6) Thanks [@edspencer](https://github.com/edspencer)! - Destructive chat operations now stop an in-flight turn instead of racing it
+  (#731). Deleting a chat mid-turn used to lose the whole conversation.
+
+  A chat's transcript is written by `claude` itself, straight through the symlink
+  Paddock plants — Paddock never holds the file handle. So unlinking the JSONL
+  while a turn was live did not delete the chat: the surviving process wrote itself
+  back, and the chat returned named after its raw session id with a 3-line
+  transcript that opened on an orphan `tool_result` and no prior history at all.
+  Promote lost the chat from **both** projects — the source resurrected a stub, the
+  target's list came up empty, and `adoptable-chats` reported nothing, so the UI
+  offered no way back. A hung turn was never reaped, leaving a `claude` child alive
+  and a `status: "running"` run row that never cleared.
+
+  `DELETE /chats/:id`, `POST /chats/batch/delete`, `POST /chats/:id/revert`,
+  `POST /chats/:id/promote` and `DELETE /api/projects/:slug` now cancel the turn
+  and **wait for it to be verifiably dead** before touching a byte, reporting
+  `cancelledTurn: true` when they did. Each is an unambiguous "this chat's current
+  state is going away", and refusing instead would strand the user behind a turn
+  that may never end. If the turn cannot be confirmed dead within 10s they return
+  `409 { code: "turn_running" }` rather than mutate under a live writer — the
+  resurrection is impossible by construction, not by winning a race.
+
+  Fork is deliberately **not** interlocked: the `fork_chat` fan-out (#214) is
+  invoked by a keeper from inside its own running turn, so the source is always
+  mid-flight there and refusing would break that contract. Instead the _copy_ is
+  trimmed back to the last point where every `tool_use` has its `tool_result`, so a
+  mid-turn fork is no longer born with a transcript the Messages API rejects on
+  resume. The source is untouched either way, and an idle fork is copied
+  byte-identically as before.
+
+- [#750](https://github.com/edspencer/paddock/pull/750) [`9f3ae4e`](https://github.com/edspencer/paddock/commit/9f3ae4e8b0e93d979bb0398a8b98e82e4c70fdc8) Thanks [@edspencer](https://github.com/edspencer)! - A still-running sub-agent keeps its place in the running-sub-agents bar, and a
+  sub-agent's nested steps no longer reappear as top-level transcript rows after a
+  reload. Two `/messages` payload bugs where the live path and the history path
+  disagreed and the history path was wrong.
+
+  **A live sub-agent was being handed a final duration (#725, cause A).**
+  `subagentDurationMs` is not decoration — it is the client's _finished_ signal, and
+  it is computed from the first→last timestamp of a transcript that may still be
+  growing. `attachSubagentFields`' `pending` branch already knew that and withheld
+  the field (#622). The `paired` branch below it stamped one unconditionally, and
+  because the SDK **backgrounds** sub-agents, the launching `Task` tool_result pairs
+  within milliseconds while the sub-agent keeps working — so a live sub-agent
+  reached the paired branch as a matter of course, was declared finished, and was
+  dropped from the bar for the rest of the run. A reload did not recover it: it
+  re-derives from the same code. The tell was a "final" duration that kept climbing:
+  9211 → 11296 → 13368.
+
+  The gate now lives at the source, so both branches are covered by construction: a
+  duration is published only for a sub-agent whose own transcript has actually
+  settled — its last line is a terminal assistant `end_turn`, or it has been quiet
+  for ten minutes (the fallback that keeps an _interrupted_ sub-agent, which never
+  writes an `end_turn`, from claiming "running" forever).
+
+  Worth recording, because the issue proposed it and it does not work: a sub-agent
+  transcript has **no** `type: "result"` line to look for. Zero of the 483 real ones
+  this was measured against carried one, so "has a terminal result line" would have
+  withheld every duration, always. `end_turn` is the marker that actually appears
+  (392 of 483, and mid-file exactly once).
+
+  **Sub-agent sidechain steps leaked into history (#727).** A sub-agent's steps
+  belong inside its `Task` card, served by the subagents endpoint. The live path
+  enforces that in five places via `isSidechainMessage`; the history path had no
+  equivalent, because `@herdctl/core` treats `isSidechain` as a whole-_session_
+  property and drops the per-line marker from the messages it returns. Any sidechain
+  line written into a main transcript therefore came back out of `/messages` as a
+  first-class top-level row, rendered as a sibling of the card rather than inside it.
+  The markers are now recovered from the raw transcript — on `isSidechain` _or_
+  `parent_tool_use_id`, since the writers disagree about which they stamp — and the
+  rows dropped before any of the file-order joins count positions.
+
+- [#742](https://github.com/edspencer/paddock/pull/742) [`0182c5c`](https://github.com/edspencer/paddock/commit/0182c5c91a86128383a886898fa9adb4597207ca) Thanks [@edspencer](https://github.com/edspencer)! - Fix silent data loss: the message you send right after deleting a chat no longer
+  lands in a brand-new session (#730).
+
+  The reproduction is an everyday one. Delete the chat you have just finished, go
+  back to an older one, send a message — and under `driveMode: batch` the message
+  was silently misfiled into a session that did not exist a moment ago. Nothing
+  looked wrong: the URL and the transcript on screen kept showing the chat you were
+  in, and the reply streamed into it. Only on reload did the message turn out to be
+  gone from that chat, with a stray new chat in the sidebar holding it — and the
+  keeper's answer had already been written with no memory of the conversation,
+  because it was a fresh session. It cost exactly one turn: the next send worked.
+
+  **What was actually happening.** herdctl keeps one "current session" pointer per
+  agent at `<stateDir>/sessions/<agent>.json`, rewritten after every batch turn, so
+  it always names that project's most-recently-active chat. Deleting that chat left
+  the pointer naming a transcript that was no longer on disk. On the next turn —
+  any chat, with its session id passed explicitly — herdctl's JobExecutor found the
+  pointer dangling, cleared it, and then **refused the explicitly-requested resume**
+  because a pointer had existed a moment earlier, which it reads as "this agent's
+  session just expired, so start fresh". The pointer named the deleted chat; the
+  caller asked for a different one; that chat's transcript was right there.
+
+  Every rule the bug reproduction turned up falls out of that: only deleting the
+  **most-recently-active** chat broke anything, `archive` never did (it removes
+  nothing, so nothing dangles), `promote` did (it deletes the source transcript by
+  the same call), the damage was scoped to one project (one pointer per keeper),
+  and it was one-shot (the fresh turn rewrote the pointer).
+
+  **The fix** is one `rm` of a file that is already dangling by the time we reach
+  it: when Paddock deletes or promotes a transcript, it now clears the agent-level
+  pointer if that pointer names it. herdctl would have cleared the same file at the
+  next turn regardless — doing it at the moment we make it dangle means the next
+  turn sees a clean "this agent owns no session" and adopts the caller's explicit
+  resume, which is the same path a process restart took, and why this always
+  "worked after a restart". Another chat's pointer is left alone.
+
+  The misreading itself is an upstream bug and the real repair belongs there —
+  filed as edspencer/herdctl#448, which also notes that any consumer whose
+  transcripts vanish by some other route (a manual `rm`, a retention sweep, a
+  crashed write) hits the same misclassification. `driveMode: session`, the
+  default, was never affected: the SDK session path does not consult the pointer
+  when the caller names a session.
+
+  Pinned by `resume-after-delete.test.ts` at the integration tier — a turn after a
+  delete, and after a promote, must land in the chat it was addressed to, with that
+  chat's history behind it. There was previously no test anywhere that sent a turn
+  _after_ a delete.
+
 ## 0.65.0
 
 ### Minor Changes
