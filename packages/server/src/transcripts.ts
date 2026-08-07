@@ -1,23 +1,59 @@
 /**
- * Transcript relocation (backing-store Phase 3).
+ * Transcript relocation (backing-store Phase 3), and the `transcripts` lever (#691).
  *
  * Claude Code writes a session transcript to `<claudeHome>/projects/<encoded-cwd>/`,
- * where `<claudeHome>` is `CLAUDE_CONFIG_DIR` (paddock's own `<dataDir>/claude-home`
- * since #620) and `<encoded-cwd>` is the agent's absolute working directory with every
- * non-[A-Za-z0-9] char replaced by '-'. That makes transcripts path-coupled and
- * not portable. We relocate them INTO the project by making the encoded path a
- * **symlink to `<projectDir>/.chats/`** — Claude then writes through the symlink
- * into the project dir (validated empirically), and herdctl's discovery, resume,
- * delete and rename all resolve through it transparently. The project dir becomes
- * self-contained and travels with the repo / NAS.
+ * where `<claudeHome>` is `CLAUDE_CONFIG_DIR` — always paddock's own
+ * `<dataDir>/claude-home` since #691 — and `<encoded-cwd>` is the agent's absolute
+ * working directory with every non-[A-Za-z0-9] char replaced by '-'. That makes
+ * transcripts path-coupled and not portable, so paddock makes that encoded path a
+ * **symlink** and Claude Code writes through it (validated empirically); herdctl's
+ * discovery, resume, delete and rename all resolve through it transparently.
+ *
+ * What the symlink POINTS AT is the one thing {@link TranscriptsMode} chooses:
+ *
+ *  - **`own`** (default) — `<projectDir>/.chats/`. Transcripts are paddock's own
+ *    copy, the project dir is self-contained and travels with the repo / NAS.
+ *  - **`host`** — `~/.claude/projects/<encoded-cwd>/`, the user's REAL Claude Code
+ *    folder for that same directory. One set of files, both directions: an append
+ *    made by `claude --resume` in a terminal shows up in paddock with no restart
+ *    and no re-import, and vice versa.
+ *
+ * ## Why `host` is an outward symlink and not a repointed config dir
+ *
+ * The obvious implementation of "share the user's transcripts" is to point
+ * `CLAUDE_CONFIG_DIR` at `~/.claude`, which is what 0.61.1 did. It drags memory,
+ * `.claude.json` and the credential-store service name along as collateral — and
+ * it breaks agent memory (#690), because the agent harness refuses to write to any
+ * path containing a `.claude` component and the memory dir is
+ * `<claudeHome>/projects/<enc>/memory`. Keeping paddock's own home and pointing one
+ * symlink outward fixes that by construction: the LITERAL path handed to the agent
+ * is always under `<dataDir>/claude-home/…`, which has no `.claude` component,
+ * while the files it resolves to are the user's. Pinned by
+ * `test/unit/transcripts.test.ts` in BOTH modes — do not "simplify" this back.
  *
  * `ensureProjectChats` is idempotent and self-healing: on first run for a project
  * whose encoded path is still a real directory (existing transcripts), it migrates
- * those files into `.chats/` and replaces the directory with the symlink.
+ * those files into the store and replaces the directory with the symlink.
  */
 import { promises as fs, createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
 import path from "node:path";
+
+/**
+ * Whose transcripts this instance uses — the `claude.transcripts` config key.
+ *
+ * `own` = paddock's, inside the data dir / project. `host` = this machine's
+ * Claude Code, shared live. See the module doc for the mechanism.
+ */
+export type TranscriptsMode = "own" | "host";
+
+/** Isolation is the default: nothing outside the data dir is written (#691). */
+export const DEFAULT_TRANSCRIPTS_MODE: TranscriptsMode = "own";
+
+/** Type guard, so an unknown config value falls back instead of failing a boot. */
+export function isKnownTranscriptsMode(value: string): value is TranscriptsMode {
+  return value === "own" || value === "host";
+}
 
 /**
  * Encode a working directory the way Claude Code names its transcript dir.
@@ -35,7 +71,87 @@ export function projectChatsDir(projectDir: string): string {
 }
 
 /**
- * Ensure `<chatsHostDir>/.chats/` exists and that Claude Code's encoded
+ * The transcript folder a Claude home holds for `workingDir` —
+ * `<home>/projects/<encoded-cwd>`.
+ *
+ * The LITERAL path, before any symlink is followed, which is what makes it worth
+ * naming: it is the string Claude Code builds its session file AND its agent
+ * memory dir (`<here>/memory`) out of, and the agent harness refuses to write to
+ * any path with a `.claude` component in it (#690). Under paddock's own home it
+ * never has one, in either {@link TranscriptsMode}.
+ */
+export function encodedTranscriptDir(claudeHome: string, workingDir: string): string {
+  return path.join(claudeHome, "projects", encodeProjectDir(workingDir));
+}
+
+/**
+ * Where a project's transcripts are planted, and where they point.
+ *
+ * `path` is the Claude home to plant the redirect symlink in, and it is REQUIRED
+ * — no default (#620). Callers must pass `cfg.claudeHome`: the engine is
+ * constructed with that same resolved value, and a symlink planted in a
+ * different home than the one the engine reads is exactly the "chats list but
+ * open empty" failure (#588). It used to default to the env-derived home for
+ * callers with no config, and `ensureSweeperHome` silently took that default —
+ * so the sweeper's symlink landed in a different home than every other agent's.
+ * Making the parameter required is what stops that class of bug at the type
+ * level.
+ *
+ * Since #691 paddock ALWAYS owns `path`, so the old `owned` flag is gone: the
+ * question it used to answer ("may we write here?") now has one answer, and the
+ * question that actually varies — whose transcripts these are — is
+ * {@link transcripts}.
+ */
+export interface ClaudeHomeTarget {
+  /** Absolute path to paddock's own Claude home (`cfg.claudeHome`). */
+  path: string;
+  /** Whose transcripts this instance uses (`cfg.claude.transcripts`). */
+  transcripts: TranscriptsMode;
+  /** The user's own `~/.claude` — the store under `transcripts: "host"`. */
+  userHome: string;
+}
+
+/**
+ * Point `<chatsHostDir>/.chats/` at the user's own transcript folder, so
+ * paddock's own by-path readers keep working under `transcripts: "host"`.
+ *
+ * NOT redundant with the redirect symlink, and not in #691's sketch — it is
+ * needed because roughly a dozen server modules (`subagents.ts`, `usage.ts`,
+ * `tooldetails.ts`, `localcommand.ts`, `recovery.ts`, `readFirstUserText`,
+ * the usage-limit notice scan) resolve a transcript as
+ * `<projectDir>/.chats/<sessionId>.jsonl` rather than through the Claude home.
+ * Without this the chat itself renders (herdctl reads through the home) while
+ * sub-agent panels, token usage, tool details, slash-command names and full
+ * previews all silently come back empty — which is what 0.61.1's `--here` does
+ * today. Both links point at the SAME real folder; nothing is chained.
+ *
+ * Non-destructive: a `.chats/` that is a real directory with anything in it is
+ * left exactly as it is (a mode switch does not get to delete a store), at the
+ * cost of those readers seeing the old copy until the operator moves it.
+ */
+async function pointChatsDirAt(chatsDir: string, store: string): Promise<void> {
+  // The parent may not exist yet — `ensureSweeperHome` calls in with a
+  // `<dataDir>/sweepers/<slug>` that nothing has created. Under `own` the
+  // recursive mkdir of `.chats/` itself covered that; here the leaf is a symlink,
+  // and `fs.symlink` into a missing parent is an ENOENT that the caller's
+  // catch-all would swallow — silently leaving the agent with no redirect at all.
+  await fs.mkdir(path.dirname(chatsDir), { recursive: true });
+  const st = await fs.lstat(chatsDir).catch(() => null);
+  if (st?.isSymbolicLink()) {
+    const target = await fs.readlink(chatsDir).catch(() => "");
+    if (path.resolve(path.dirname(chatsDir), target) === path.resolve(store)) return;
+    await fs.rm(chatsDir, { force: true });
+  } else if (st?.isDirectory()) {
+    if ((await fs.readdir(chatsDir).catch(() => ["?"])).length > 0) return;
+    await fs.rmdir(chatsDir);
+  } else if (st) {
+    return; // a regular file sitting on the name: not ours to remove
+  }
+  await fs.symlink(store, chatsDir);
+}
+
+/**
+ * Ensure the project's transcript store exists and that Claude Code's encoded
  * transcript path for `workingDir` is a symlink pointing at it (migrating an
  * existing real transcript dir in the process). Safe to call on every agent
  * registration. Never throws — a failure here must not block agent registration
@@ -48,70 +164,62 @@ export function projectChatsDir(projectDir: string): string {
  * store stays in the project's metadata dir (the data repo) — so transcripts
  * never pollute the external repo's working tree — hence the two are split.
  *
- * `home.path` is the Claude home to plant the symlink in, and it is REQUIRED —
- * no default (#620). Callers must pass `cfg.claudeHome`: the engine is
- * constructed with that same resolved value, and a symlink planted in a
- * different home than the one the engine reads is exactly the "chats list but
- * open empty" failure (#588). It used to default to the env-derived home for
- * callers with no config, and `ensureSweeperHome` silently took that default —
- * so the sweeper's symlink landed in a different home than every other agent's.
- * Making the parameter required is what stops that class of bug at the type
- * level.
+ * The store is `<chatsHostDir>/.chats/` under `transcripts: "own"` and the user's
+ * own `~/.claude/projects/<encoded-cwd>/` under `transcripts: "host"`; everything
+ * below is the same code either way.
  *
- * `home.owned` gates the one destructive branch (#620): migrating an existing
- * real transcript directory into `.chats/` copies the files and then REMOVES the
- * originals. That is correct self-healing inside a home paddock owns, where such
- * a directory can only be paddock's own doing. Inside the user's `~/.claude` it
- * is somebody else's data — a `claude` CLI session run in a directory paddock
- * happens to also manage — so we leave it strictly alone and let the SDK keep
- * writing there. Those transcripts stay importable through adoption (#588),
- * which is the deliberate, user-driven version of the same move.
+ * ## The one write into `~/.claude`, and why it is not the #682 mistake
+ *
+ * Under `host` this creates `~/.claude/projects/<encoded-cwd>/` if it is missing,
+ * because a symlink to a non-existent directory is not something Claude Code can
+ * `mkdir -p` through. That is a directory Claude Code itself would create the
+ * first time the user ran `claude` there, made under a config key whose entire
+ * meaning is "share the host's transcripts". #682 was the opposite: planting a
+ * link that silently REDIRECTED the user's future sessions into paddock's store
+ * on an instance that had asked for no such thing. Under `own` — the default —
+ * nothing under `~/.claude` is created, read or written at all.
  */
-export interface ClaudeHomeTarget {
-  /** Absolute path to the Claude home to plant the redirect symlink in. */
-  path: string;
-  /** Whether paddock owns this home — see `PaddockConfig.ownsClaudeHome`. */
-  owned: boolean;
-}
-
 export async function ensureProjectChats(
   workingDir: string,
   chatsHostDir: string,
   home: ClaudeHomeTarget,
 ): Promise<void> {
-  const claudeHomePath = home.path;
   try {
     const chatsDir = projectChatsDir(chatsHostDir);
-    await fs.mkdir(chatsDir, { recursive: true });
+    const store =
+      home.transcripts === "host"
+        ? encodedTranscriptDir(home.userHome, workingDir)
+        : chatsDir;
+    await fs.mkdir(store, { recursive: true });
+    if (home.transcripts === "host") await pointChatsDirAt(chatsDir, store);
 
-    const encoded = path.join(claudeHomePath, "projects", encodeProjectDir(workingDir));
+    const encoded = encodedTranscriptDir(home.path, workingDir);
     await fs.mkdir(path.dirname(encoded), { recursive: true });
 
     const st = await fs.lstat(encoded).catch(() => null);
 
-    // Already a symlink — point it at .chats if it drifted, else done.
+    // Already a symlink — point it at the store if it drifted, else done. The
+    // drift case is also how a `transcripts` flip takes effect on the next boot.
     if (st?.isSymbolicLink()) {
       const target = await fs.readlink(encoded).catch(() => "");
       const resolved = path.resolve(path.dirname(encoded), target);
-      if (resolved !== path.resolve(chatsDir)) {
+      if (resolved !== path.resolve(store)) {
         await fs.rm(encoded, { force: true });
-        await fs.symlink(chatsDir, encoded);
+        await fs.symlink(store, encoded);
       }
       return;
     }
 
-    // A real directory of existing transcripts. In a home paddock does NOT own
-    // these are the user's own CLI transcripts (#620) — leave them exactly where
-    // they are. The SDK keeps reading and appending to them, and adoption is how
-    // the user pulls them into the project if they want to. Bailing here also
-    // means we never plant a symlink over them.
-    if (st?.isDirectory() && !home.owned) return;
-
-    // A real directory of existing transcripts — migrate into .chats, then link.
+    // A real directory of existing transcripts — migrate into the store, then
+    // link. This is inside a home paddock owns, so such a directory can only be
+    // paddock's own doing: a boot where the symlink could not be planted, or an
+    // agent that ran before registration. (Pre-#691 this branch had to be gated
+    // on ownership, because the home could BE `~/.claude` and the files somebody
+    // else's. It cannot any more — see `resolveClaudeHome`.)
     if (st?.isDirectory()) {
       for (const entry of await fs.readdir(encoded)) {
         const from = path.join(encoded, entry);
-        const to = path.join(chatsDir, entry);
+        const to = path.join(store, entry);
         if (await fs.lstat(to).then(() => true).catch(() => false)) continue; // don't clobber
         // cp+rm is robust across filesystems (rename would EXDEV across mounts).
         // `preserveTimestamps` is load-bearing, not cosmetic (#588): fs.cp
@@ -123,12 +231,12 @@ export async function ensureProjectChats(
         await fs.rm(from, { recursive: true, force: true });
       }
       await fs.rmdir(encoded).catch(() => undefined);
-      await fs.symlink(chatsDir, encoded);
+      await fs.symlink(store, encoded);
       return;
     }
 
-    // Nothing there yet — just create the symlink so future turns land in .chats.
-    await fs.symlink(chatsDir, encoded);
+    // Nothing there yet — just create the symlink so future turns land in the store.
+    await fs.symlink(store, encoded);
   } catch {
     /* non-fatal: fall back to Claude Code's default location for this project */
   }

@@ -56,7 +56,12 @@ Kubernetes probes both do).
 ### Safe-by-default binding
 
 Because `none` is fully open, Paddock **won't let you expose it unauthenticated
-by accident**. The bind host defaults to **`127.0.0.1`** (loopback only), and if
+by accident**. This is what makes `npx @edspencer/paddock` on a laptop safe with no
+configuration: it binds loopback, so "no authentication" means "reachable only from
+this machine". You need to read the rest of this file when you put Paddock somewhere
+other people can reach.
+
+The bind host defaults to **`127.0.0.1`** (loopback only), and if
 you bind a non-loopback host (e.g. `0.0.0.0`) while `PADDOCK_AUTH_MODE=none`,
 startup **fails closed** with a clear message — the same fail-closed posture as
 `jwt` mode without a JWKS URL. To bind a routable interface, do one of:

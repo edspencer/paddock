@@ -147,6 +147,53 @@ describe("integration: server-authoritative queued-message drain (#245)", () => 
       delete process.env.PADDOCK_FAKE_SLOWTOOL_MS;
     }
   });
+
+  it("append at an ALREADY-FLUSHED ts is a distinct message, not a duplicate (#628)", async () => {
+    // The client keeps ONE stable enqueue ts across an APPEND to an existing queue
+    // (#245 identity), so a pane holding an already-drained queue — it never saw the
+    // `chat:queued_flushed` clear, which is broadcast un-buffered — re-asserts the
+    // same ts with LONGER text. Deduping on the ts alone made the server broadcast a
+    // text-less clear and drop the appended text on the floor.
+    process.env.PADDOCK_FAKE_SLOWTOOL_MS = "1200";
+    try {
+      const m1 = ws.mark();
+      ws.send({ type: "chat:send", payload: { projectSlug: SLUG, sessionId: null, message: "start turn" } });
+      const sessionId = (await ws.waitFor(isComplete, { from: m1 })).payload?.sessionId as string;
+
+      // Queue "alpha" at ts 7000 while idle → drained immediately, marking 7000 flushed.
+      const m2 = ws.mark();
+      ws.send({ type: "chat:set_queue", payload: { projectSlug: SLUG, sessionId, text: "alpha", ts: 7000 } });
+      expect((await ws.waitFor(isFlushed, { from: m2 })).payload?.text).toBe("alpha");
+      await ws.waitFor((e) => isComplete(e) && e.payload?.sessionId === sessionId, { from: m2 });
+
+      // Start another turn, then re-assert the SAME ts with the appended text.
+      const m3 = ws.mark();
+      ws.send({ type: "chat:send", payload: { projectSlug: SLUG, sessionId, message: "[[SLOWTOOL]] slow turn" } });
+      await ws.waitFor((e) => e.type === "chat:tool_start" && e.payload?.sessionId === sessionId, { from: m3 });
+      ws.send({ type: "chat:set_queue", payload: { projectSlug: SLUG, sessionId, text: "alpha\nbravo", ts: 7000 } });
+
+      // Same ts, DIFFERENT text ⇒ a new message: the flush frame carries it and the
+      // turn actually runs. Pre-fix the frame arrived with no text and nothing was sent.
+      const flushed = await ws.waitFor(isFlushed, { from: m3 });
+      expect(flushed.payload?.text).toBe("alpha\nbravo");
+      await ws.waitFor((e) => isComplete(e) && e.payload?.sessionId === sessionId, {
+        from: flushedIndex(ws, flushed),
+      });
+      expect((await userMessages(sessionId)).filter((m) => m === "alpha\nbravo")).toHaveLength(1);
+
+      // #245 stable identity still holds: re-asserting the SAME (ts, text) is a
+      // duplicate — cleared without a second send.
+      const m4 = ws.mark();
+      ws.send({ type: "chat:set_queue", payload: { projectSlug: SLUG, sessionId, text: "alpha\nbravo", ts: 7000 } });
+      expect((await ws.waitFor(isFlushed, { from: m4 })).payload?.text).toBeUndefined();
+      const m5 = ws.mark();
+      ws.send({ type: "chat:send", payload: { projectSlug: SLUG, sessionId, message: "sentinel" } });
+      await ws.waitFor((e) => isComplete(e) && e.payload?.sessionId === sessionId, { from: m5 });
+      expect((await userMessages(sessionId)).filter((m) => m === "alpha\nbravo")).toHaveLength(1);
+    } finally {
+      delete process.env.PADDOCK_FAKE_SLOWTOOL_MS;
+    }
+  });
 });
 
 /** Index of a received event, for use as a `waitFor` baseline. */

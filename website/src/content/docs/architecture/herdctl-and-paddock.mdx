@@ -116,7 +116,10 @@ config file must not be able to mount your filesystem.
 A run produces a **job record** (`.herdctl/jobs/job-*.yaml` plus a `.jsonl` output
 log) and updates a **session pointer** (`.herdctl/sessions/<agent>.json`) tracking
 which Claude session that agent is on. The transcript itself belongs to Claude
-Code, under `~/.claude/projects/`.
+Code, under `<claudeHome>/projects/` — `~/.claude/projects/` by default, though an
+embedder can point Claude Code somewhere else, and Paddock always does: it runs
+against a Claude home it owns, so there the path is
+`<dataDir>/claude-home/projects/`.
 
 This is why `herdctl sessions resume` works, and it is the same property Paddock
 leans on to make a chat survive a server restart: **the session is on disk, not in
@@ -290,16 +293,21 @@ dying: reconnect, and the hub replays the gap.
 
 The load-bearing trick is that bottom arrow.
 
-Claude Code stores transcripts at `~/.claude/projects/<encoded-working-dir>/`,
+Claude Code stores transcripts at `<claudeHome>/projects/<encoded-working-dir>/`,
 where the directory name is its own lossy encoding of the working directory (every
 non-alphanumeric character becomes a dash — so `/a/b/c`, `/a/b-c` and `/a-b/c` all
-collapse to the same name). Paddock makes that directory a **symlink to the
-project's `.chats/` folder**.
+collapse to the same name). Paddock always owns that home, so the path is
+`<dataDir>/claude-home/projects/<encoded-working-dir>/` — and Paddock makes that
+directory a **symlink**. Where it points is the
+[`claude.transcripts`](/configuration/config-file/#transcripts) key: `own` (the
+default) targets the **project's `.chats/` folder**; `host` targets the user's real
+`~/.claude/projects/<encoded-working-dir>/` so the machine's own terminal `claude`
+history is shared.
 
-The result is that Claude Code writes transcripts directly into the project
-directory, while herdctl's session discovery — which knows nothing about Paddock —
-resolves, resumes, renames and deletes those same sessions transparently. Nobody
-copies anything.
+The result, in the default arrangement, is that Claude Code writes transcripts
+directly into the project directory, while herdctl's session discovery — which
+knows nothing about Paddock — resolves, resumes, renames and deletes those same
+sessions transparently. Nobody copies anything.
 
 ---
 

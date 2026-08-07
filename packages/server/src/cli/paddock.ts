@@ -99,37 +99,6 @@ function addBundledBinsToPath(): void {
 }
 
 /**
- * Best-effort credential check — WARNS, never blocks.
- *
- * Claude Code stores credentials differently per platform (a file under
- * ~/.claude on Linux, the Keychain on macOS), so absence of a file does not
- * prove absence of a login. Refusing to start on a false negative would be
- * worse than a chat that fails with the runtime's own error, so this only
- * prints guidance.
- */
-function warnIfNoCredentials(claudeHome: string): void {
-  if (process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_API_KEY) return;
-  const looksLoggedIn =
-    fs.existsSync(path.join(claudeHome, ".credentials.json")) ||
-    fs.existsSync(path.join(os.homedir(), ".claude.json"));
-  if (looksLoggedIn) return;
-
-  console.warn(
-    [
-      "",
-      "  ⚠ No Claude credentials found.",
-      "",
-      "    Paddock will start, but chats will fail until it has credentials.",
-      "    Fix with either:",
-      "",
-      "      claude setup-token                  # Claude Max/Pro",
-      "      export ANTHROPIC_API_KEY=sk-ant-…   # API billing",
-      "",
-    ].join("\n"),
-  );
-}
-
-/**
  * Report where the data lives, the first time we create it.
  *
  * `npx` is stateless enough that people reasonably assume the whole thing is
@@ -162,7 +131,14 @@ function announceHereConsent(dir: string, dataDir: string): void {
       "",
       `  Opening ${dir} as a Paddock workspace.`,
       `    · ${path.relative(dir, dataDir) || HERE_MARKER}/ and .chats/ created here, and added to .gitignore`,
-      "    · ~/.claude sessions for this directory are linked at the workspace",
+      // Worth stating because it is not what you would predict: paddock reading
+      // the home a user's sessions live in does not turn them into paddock's
+      // chats. Verified against a running instance — a pre-existing transcript
+      // for the directory comes back from `adoptable-chats` (offered) and NOT
+      // from `chats` (listed), because session discovery is attribution-based,
+      // not "whatever is in the folder". So #663's confirmation still gates
+      // every import.
+      "    · ~/.claude sessions for this directory are offered for import (nothing is moved)",
       "  Later runs here resume it — no flag needed.",
       "",
     ].join("\n"),
@@ -176,7 +152,9 @@ function announceHereConsent(dir: string, dataDir: string): void {
  * transcripts and prints, and changes nothing on disk.
  */
 function offerHereIfSessionsExist(dir: string): void {
-  const claudeHome = process.env.CLAUDE_HOME ?? path.join(os.homedir(), ".claude");
+  // The USER's own home, always: this is looking for `claude` history they made
+  // in a terminal, which is by definition in `~/.claude` and never in paddock's.
+  const claudeHome = path.join(os.homedir(), ".claude");
   let sessions = 0;
   try {
     sessions = countClaudeSessions(claudeHome, dir);
@@ -188,7 +166,7 @@ function offerHereIfSessionsExist(dir: string): void {
     [
       "",
       `  This directory has ${sessions} Claude Code session${sessions === 1 ? "" : "s"}.`,
-      "  Run `paddock --here` to open it as a workspace and import them.",
+      "  Run `paddock --here` to open it as a workspace, where they can be imported.",
       "",
     ].join("\n"),
   );
@@ -253,6 +231,14 @@ async function main(): Promise<void> {
   const resuming = !opts.here && isHereWorkspace(cwd);
   const hereMode = opts.here || resuming;
 
+  // No Claude-home choice happens here any more (#691). The CLI used to point
+  // `CLAUDE_HOME` at `~/.claude` so a macOS Keychain login would be visible
+  // (#683); paddock now always owns its home, and what a user actually wanted
+  // from that — shared transcripts, shared login — are separate `claude:` config
+  // keys. `claude.credentials` restores the Keychain half and defaults to `host`,
+  // so a Mac whose only login is a `claude /login` still works out of the box
+  // with no flag: see `claude-credentials.ts`.
+
   // Apply CLI defaults as env vars. This is the whole integration surface: the
   // server resolves config inside `buildApp()`, so anything set before the
   // dynamic import below is picked up with no special-casing in config.ts.
@@ -290,12 +276,26 @@ async function main(): Promise<void> {
   //                      `[fleet-manager] …` lines via console.info — pino's
   //                      level cannot reach those.
   // An explicit value for either is left alone, and `--verbose` skips both.
+  // A LEVEL is not enough, which is what #684 was about. Background job failures
+  // are logged at `error` — level 50, above every threshold either variable can
+  // set — and one of them is a bare `console.error` inside the engine. So quiet
+  // mode is also stated as a fact the server can act on: `agent-errors.ts` reads
+  // this to collapse a recognised, non-fatal failure to its cause instead of
+  // printing a stack trace with 2 KB of system prompt in it. Internal to the
+  // CLI; `--verbose` leaves it unset and nothing is suppressed.
   if (!opts.verbose) {
     if (process.env.LOG_LEVEL === undefined) process.env.LOG_LEVEL = "warn";
     if (process.env.HERDCTL_LOG_LEVEL === undefined) process.env.HERDCTL_LOG_LEVEL = "warn";
+    process.env.PADDOCK_QUIET = "1";
   }
 
-  warnIfNoCredentials(process.env.CLAUDE_HOME ?? path.join(os.homedir(), ".claude"));
+  // No credential preflight here: `ensureClaudeHome` (claude-home.ts) already
+  // warns at boot, and it is the only check that can be right. It tests the home
+  // paddock will ACTUALLY use — after the bridge has symlinked in any
+  // `~/.claude/.credentials.json`, and, on darwin, after probing the Keychain for
+  // the login `CLAUDE_CONFIG_DIR` scoping hides (#683). It logs at `warn`, which
+  // survives the quiet default set just above. Continuity (chosen above) usually
+  // means it has nothing to say, because there is nothing left to bridge.
 
   const port = process.env.PORT ?? "4000";
   const host = process.env.HOST ?? "127.0.0.1";

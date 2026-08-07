@@ -19,7 +19,15 @@ import { createRequire } from "node:module";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { loadPaddockConfig, type PaddockConfig } from "./config.js";
-import { ensureClaudeHome, countLegacyTranscriptLinks } from "./claude-home.js";
+import {
+  ensureClaudeHome,
+  countLegacyTranscriptLinks,
+  findPlantedChatsLinks,
+} from "./claude-home.js";
+import { loadHostMcpSource } from "./claude-mcp.js";
+import { loadHostPlugins } from "./claude-plugins.js";
+import { declaredMcpNotices } from "./mcp-servers.js";
+import { installHerdctlLogBridge } from "./agent-errors.js";
 import { ProjectStore, ROOT_KEY } from "./projects.js";
 import { AttachmentStore } from "./attachments.js";
 import { HerdctlService } from "./herdctl.js";
@@ -111,6 +119,12 @@ function hasFileExtension(pathname: string): boolean {
 export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   const cfg = opts.config ?? loadPaddockConfig();
 
+  // Shape the engine's own logging before anything can start a job (#684). Two
+  // of the three sources of the credential-failure stack-trace wall are inside
+  // `@herdctl/core`, and `setLogHandler` is the supported way to reach them from
+  // out here. `PADDOCK_QUIET` is set by `cli/paddock.ts` unless `--verbose`.
+  installHerdctlLogBridge({ quiet: (process.env.PADDOCK_QUIET ?? "") !== "" });
+
   const app = Fastify({
     logger: { level: cfg.logLevel },
   });
@@ -138,10 +152,49 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   registerAuth(app, cfg.auth);
 
   // --- project layer + herdctl ------------------------------------------
-  const projects = new ProjectStore(cfg.projectsRoot);
+  const projects = new ProjectStore(cfg.projectsRoot, cfg.dataDir, {
+    warn: (message) => app.log.warn(message),
+  });
   await projects.init();
 
-  const herdctl = new HerdctlService(cfg);
+  // The user's own MCP servers, under `claude.mcpServers: host` (#691 step 5).
+  // Read BEFORE the service is constructed because every keeper's agent config
+  // carries them, and read exactly once — a `.claude.json` that grows a server
+  // mid-run is picked up at the next restart, which is what the notice says.
+  // Under `own` (the default) the file is not opened at all.
+  const hostMcp = await loadHostMcpSource(cfg);
+  for (const notice of hostMcp.notices) app.log[notice.level](notice.message);
+  // …and the servers this instance declares for ITSELF, from the top-level
+  // `mcpServers:` block (#691 step 6). Resolved during config load (it needs
+  // `process.env` for the `env:VAR` references), logged here because that is
+  // where the logger is. Nothing below carries a value out of the block: the
+  // diagnostics name keys and variable names only, and every server mentioned in
+  // a notice is rendered by `describeServer`.
+  for (const message of cfg.mcpServersDiagnostics.errors) app.log.error(message);
+  for (const message of cfg.mcpServersDiagnostics.warnings) app.log.warn(message);
+  for (const notice of declaredMcpNotices({
+    servers: cfg.mcpServers,
+    hostNames: Object.keys(hostMcp.source.user),
+    browserMcp: cfg.browserMcp,
+    // …and where a declared credential ends up once the runtime has it: on the
+    // `claude` command line under `batch`, in-process under `session`. Paddock
+    // cannot close that from here, so it names it at boot instead.
+    driveMode: cfg.driveMode,
+  })) {
+    app.log[notice.level](notice.message);
+  }
+  // …and the host's Claude Code PLUGINS (#700), which no amount of reading
+  // `.claude.json` can find: a plugin declares its own MCP servers internally.
+  // Gated by `claude.instructions` (which is what bridges `plugins/`), with
+  // `claude.mcpServers` deciding only whether the plugins' servers come too —
+  // see `claude-plugins.ts` for why that is not the single lever #700 assumes.
+  const hostPlugins = await loadHostPlugins(cfg);
+  for (const notice of hostPlugins.notices) app.log[notice.level](notice.message);
+  const herdctl = new HerdctlService(
+    cfg,
+    { ...hostMcp.source, declared: cfg.mcpServers },
+    hostPlugins.source,
+  );
   const git = new GitService(cfg.projectsRoot, cfg.gitAuthor);
   const githubAuth = new GithubAuth(path.join(cfg.dataDir, "github-auth.json"), cfg.githubClientId);
   const archive = new ArchiveStore(cfg.dataDir);
@@ -199,15 +252,32 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   for (const notice of (await ensureClaudeHome(cfg)).notices) {
     app.log[notice.level](notice.message);
   }
-  if (cfg.ownsClaudeHome) {
-    const stale = await countLegacyTranscriptLinks(cfg.legacyClaudeHome, cfg.dataDir);
-    if (stale > 0) {
-      app.log.info(
-        `${stale} transcript symlink(s) from a previous layout still point into ${cfg.dataDir} ` +
-          `from ${path.join(cfg.legacyClaudeHome, "projects")}. Nothing reads them any more; ` +
-          `paddock leaves them alone because it does not write to ~/.claude. Safe to delete.`,
-      );
-    }
+  // Unconditional since #691 — paddock always owns its home, so there is no
+  // longer a layout in which these links are the live ones.
+  const stale = await countLegacyTranscriptLinks(cfg.legacyClaudeHome, cfg.dataDir);
+  if (stale > 0) {
+    app.log.info(
+      `${stale} transcript symlink(s) from a previous layout still point into ${cfg.dataDir} ` +
+        `from ${path.join(cfg.legacyClaudeHome, "projects")}. Nothing reads them any more; ` +
+        `paddock leaves them alone because it does not write to ~/.claude. Safe to delete.`,
+    );
+  }
+  // #682: links an affected build planted at a path the user had not used yet.
+  // Unlike the residue above these are still LIVE — they redirect the user's own
+  // future `claude` sessions — so they warn, and name every path. Paddock does
+  // not remove them; it does not write to `~/.claude`.
+  const poisoned = await findPlantedChatsLinks(cfg.legacyClaudeHome, cfg.dataDir);
+  if (poisoned.length > 0) {
+    app.log.warn(
+      `${poisoned.length} symlink(s) in ${path.join(cfg.legacyClaudeHome, "projects")} redirect ` +
+        `Claude Code's transcripts into a paddock .chats/ store (#682). While they exist, ` +
+        `\`claude\` sessions you start in those directories are written to paddock's store, and ` +
+        `deleting that store destroys them. Paddock does not remove anything under ~/.claude — ` +
+        `delete them yourself if you did not intend this:\n` +
+        poisoned
+          .map((p) => `  ${p.link} -> ${p.target}${p.dangling ? "  (target is missing)" : ""}`)
+          .join("\n"),
+    );
   }
 
   const rootWorkspace = await projects.get(ROOT_KEY);

@@ -713,9 +713,9 @@ describe("ProjectStore", () => {
 
   // --- repo-backed projects (issue #187) --------------------------------
 
-  it("notebook project: repoBacked false, workingDir === dir", async () => {
+  it("managed project: managed true, workingDir === dir", async () => {
     const p = await store.create({ name: "Notebook" });
-    expect(p.repoBacked).toBe(false);
+    expect(p.managed).toBe(true);
     expect(p.repo).toBeUndefined();
     expect(p.workingDir).toBe(p.dir);
   });
@@ -724,8 +724,8 @@ describe("ProjectStore", () => {
     const src = await makeSourceRepo(path.join(root, "_src", "demo.git"));
     const p = await store.create({ name: "Repo Proj", repo: src });
 
-    // DTO: repo-backed, cwd is the nested checkout (named after the repo).
-    expect(p.repoBacked).toBe(true);
+    // DTO: unmanaged, cwd is the nested checkout (named after the repo).
+    expect(p.managed).toBe(false);
     expect(p.repo).toBe(src);
     expect(p.workingDir).toBe(path.join(p.dir, "demo"));
 
@@ -753,7 +753,7 @@ describe("ProjectStore", () => {
     const parsed = YAML.parse(await fs.readFile(path.join(p.dir, "project.yaml"), "utf8"));
     expect(parsed.repo).toBe(src);
     const reread = await store.get(p.slug);
-    expect(reread.repoBacked).toBe(true);
+    expect(reread.managed).toBe(false);
     expect(reread.workingDir).toBe(path.join(p.dir, "demo"));
   });
 
@@ -788,12 +788,12 @@ describe("ProjectStore", () => {
     const chatsDir = path.join(nb.dir, ".chats");
     await fs.mkdir(chatsDir, { recursive: true });
     await fs.writeFile(path.join(chatsDir, "sess-1.jsonl"), '{"type":"user"}\n');
-    expect((await store.get(nb.slug)).repoBacked).toBe(false);
+    expect((await store.get(nb.slug)).managed).toBe(true);
 
     const p = await store.promote(nb.slug, src);
 
-    // DTO flips to repo-backed; cwd is the nested checkout named after the repo.
-    expect(p.repoBacked).toBe(true);
+    // DTO flips to UNMANAGED; cwd is the nested checkout named after the repo.
+    expect(p.managed).toBe(false);
     expect(p.repo).toBe(src);
     expect(p.workingDir).toBe(path.join(p.dir, "demo"));
     expect(p.dir).toBe(nb.dir); // same metadata dir — in place, no move
@@ -819,7 +819,7 @@ describe("ProjectStore", () => {
 
     // Persisted + round-trips through get().
     const reread = await store.get(p.slug);
-    expect(reread.repoBacked).toBe(true);
+    expect(reread.managed).toBe(false);
     expect(reread.workingDir).toBe(path.join(p.dir, "demo"));
     expect(reread.repo).toBe(src);
   });
@@ -834,7 +834,7 @@ describe("ProjectStore", () => {
     const nb = await store.create({ name: "Keep Me" });
     await expect(store.promote(nb.slug, "not a url")).rejects.toMatchObject({ code: "invalid" });
     const reread = await store.get(nb.slug);
-    expect(reread.repoBacked).toBe(false);
+    expect(reread.managed).toBe(true);
     // The notebook's CLAUDE.md is still there (nothing was mutated).
     expect(await fs.access(path.join(nb.dir, "CLAUDE.md")).then(() => true)).toBe(true);
   });
@@ -849,9 +849,9 @@ describe("ProjectStore", () => {
     const bogus = path.join(root, "_src", "does-not-exist.git");
     await expect(store.promote(nb.slug, bogus)).rejects.toMatchObject({ code: "invalid" });
 
-    // Still a notebook, chats + CLAUDE.md + summary intact, no stray checkout dir.
+    // Still managed, chats + CLAUDE.md + summary intact, no stray checkout dir.
     const reread = await store.get(nb.slug);
-    expect(reread.repoBacked).toBe(false);
+    expect(reread.managed).toBe(true);
     expect(reread.repo).toBeUndefined();
     expect(reread.summary).toBe("keep my notes");
     expect(await fs.access(path.join(nb.dir, "CLAUDE.md")).then(() => true)).toBe(true);
@@ -866,8 +866,8 @@ describe("ProjectStore", () => {
     await fs.mkdir(path.join(nb.dir, "demo"), { recursive: true });
     await fs.writeFile(path.join(nb.dir, "demo", "keep.txt"), "mine\n");
     await expect(store.promote(nb.slug, src)).rejects.toMatchObject({ code: "exists" });
-    // Untouched: still a notebook, the pre-existing dir + its file survive.
-    expect((await store.get(nb.slug)).repoBacked).toBe(false);
+    // Untouched: still managed, the pre-existing dir + its file survive.
+    expect((await store.get(nb.slug)).managed).toBe(true);
     expect(await fs.readFile(path.join(nb.dir, "demo", "keep.txt"), "utf8")).toBe("mine\n");
   });
 });

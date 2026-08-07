@@ -106,12 +106,93 @@ export function repoCheckoutName(repo: string): string {
 }
 
 /**
- * Resolve a project's working directory (keeper cwd) from its metadata dir + repo
- * URL: the nested checkout for a repo-backed project, else the metadata dir
- * itself for a notebook project (issue #187).
+ * Whether `child` is `parent` itself or lives underneath it. Both are resolved
+ * first, so this compares real path strings rather than the caller's spelling
+ * (it does NOT follow symlinks — callers that care resolve them beforehand).
+ *
+ * The `+ path.sep` is load-bearing: a plain `startsWith(parent)` would call
+ * `/data/projects-old` a child of `/data/projects`.
  */
-export function workingDirFor(dir: string, repo?: string): string {
+export function isPathInside(child: string, parent: string): boolean {
+  const c = path.resolve(child);
+  const p = path.resolve(parent);
+  return c === p || c.startsWith(p + path.sep);
+}
+
+/**
+ * Resolve a project's working directory (keeper cwd) from its metadata dir plus
+ * whichever backing field is set:
+ *
+ *  - **`linkedPath`** (issue #206) — the cwd IS that directory, returned
+ *    verbatim, used in place with no copy. Applies on BOTH sides of the
+ *    managed/unmanaged axis: an unmanaged project links a code checkout you
+ *    already have, a managed one nominates where its notes should live.
+ *  - **`repo`** (issue #187) — the nested checkout Paddock cloned.
+ *  - **neither** — the metadata dir itself.
+ *
+ * `linkedPath` WINS over `repo`, which is why the two are not mutually exclusive:
+ * `repo` alongside a path is an ACQUISITION hint (clone here if the path is
+ * missing) plus a remote-match for adoption (`adoptable.ts`, #659) and a re-clone
+ * hint for disaster recovery. It never moves the cwd off the nominated path.
+ */
+export function workingDirFor(dir: string, repo?: string, linkedPath?: string): string {
+  if (linkedPath) return linkedPath;
   return repo ? path.join(dir, repoCheckoutName(repo)) : dir;
+}
+
+/** The subset of `project.yaml` that decides a project's shape. */
+export interface ProjectBacking {
+  managed?: boolean;
+  repo?: string;
+  path?: string;
+}
+
+/**
+ * Whether Paddock looks after this project's own files — the real axis, and the
+ * one that replaced the overloaded `repoBacked` boolean (issue #206).
+ *
+ * **managed** — Paddock curates `CLAUDE.md` / `OVERVIEW.md` / `CHANGELOG.md`
+ * here. This is what "notebook" used to mean.
+ * **unmanaged** — the content is code that you or your agents source-control
+ * OUTSIDE Paddock. Paddock never writes project files into it.
+ *
+ * Whether a git repo sits behind it is an INDEPENDENT question (just which of
+ * `path`/`repo` are set), not a type. See `docs/DESIGN-backing-store.md` §2 goal
+ * 4: the base store is a plain directory and git is an optional layer.
+ *
+ * ## The default is derived, never constant
+ *
+ * `managed ?? !(repo || path)` — an absent key means "whatever this project's
+ * backing implies". That is load-bearing for the upgrade path: every existing
+ * `project.yaml` predates the key, and if absent meant `true`, every existing
+ * repo-backed project would flip to managed on upgrade and the sweeper would
+ * start writing `CLAUDE.md` into somebody's checkout. New projects write the key
+ * explicitly, so the derivation only ever has to serve legacy files.
+ */
+export function isManaged(backing: ProjectBacking): boolean {
+  return backing.managed ?? !(backing.repo || backing.path);
+}
+
+/**
+ * Where a project's CURATED CONTENT lives — `OVERVIEW.md`, `CHANGELOG.md` and
+ * `CLAUDE.md`, the three files the sweeper writes.
+ *
+ * Content follows the working directory; application state does not. So:
+ *
+ *  - **managed** ⇒ the working dir. For a classic notebook that IS the metadata
+ *    dir (unchanged). For a managed project with an external `path`, the curated
+ *    files live out there with the content — an accepted consequence being that
+ *    they then do NOT live in the Paddock data dir.
+ *  - **unmanaged** ⇒ the metadata dir, always. The working dir is somebody
+ *    else's tree and Paddock does not write project files into it; `OVERVIEW.md`
+ *    and `CHANGELOG.md` are still curated, just sidecarred (issue #187), and
+ *    `CLAUDE.md` is not curated at all (the checkout owns its own).
+ *
+ * `project.yaml` and `.chats/` are NOT content and never move — see
+ * {@link import("./projects.js").ProjectStore.dirFor}.
+ */
+export function contentDirFor(dir: string, backing: ProjectBacking): string {
+  return isManaged(backing) ? workingDirFor(dir, backing.repo, backing.path) : dir;
 }
 
 export class ProjectError extends Error {

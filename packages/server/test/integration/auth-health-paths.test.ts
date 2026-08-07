@@ -55,10 +55,10 @@ async function boot(): Promise<Harness> {
     "PATH",
     "HOST",
     "LOG_LEVEL",
-    "CLAUDE_HOME",
     "PADDOCK_DATA_DIR",
     "PADDOCK_PROJECTS_DIR",
     "PADDOCK_WEB_DIST",
+    "CLAUDE_CONFIG_DIR",
     "PADDOCK_FAKE_SCRIPT",
     "PADDOCK_AUTH_MODE",
     "PADDOCK_AUTH_USER_HEADER",
@@ -73,8 +73,8 @@ async function boot(): Promise<Harness> {
   // Pin loopback so the safe-by-default bind guard (#435) doesn't refuse to boot
   // under a dev box's ambient HOST=0.0.0.0.
   process.env.HOST = "127.0.0.1";
-  delete process.env.CLAUDE_HOME;
   delete process.env.PADDOCK_FAKE_SCRIPT;
+  delete process.env.CLAUDE_CONFIG_DIR;
   for (const k of ["PADDOCK_BRAND_NAME", "PADDOCK_BRAND_LOGO", "PADDOCK_BRAND_ACCENT"]) {
     delete process.env[k];
   }

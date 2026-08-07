@@ -96,7 +96,15 @@ const env = {
   PADDOCK_WEB_DIST: webDist,
   LOG_LEVEL: process.env.LOG_LEVEL || "warn",
 };
-delete env.CLAUDE_HOME; // fall back to $HOME/.claude (matches the CLI runtime)
+delete env.CLAUDE_CONFIG_DIR; // use paddock's own <dataDir>/claude-home (#691)
+// An operator-set value is honoured over `claude.credentials` (#691), so an
+// ambient one on a dev box would silently change which login the E2E instance
+// runs on. Let paddock decide from the config, as a real first run does.
+delete env.CLAUDE_SECURESTORAGE_CONFIG_DIR;
+// Same for the two levers #691 step 4 added: the E2E instance should run on the
+// shipped defaults, not on whatever a dev box happens to export.
+delete env.PADDOCK_CLAUDE_INSTRUCTIONS;
+delete env.PADDOCK_CLAUDE_HOOKS;
 
 if (live) {
   // Live: keep the real claude on PATH, require the Max token.

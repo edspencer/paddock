@@ -7,7 +7,6 @@ import { getBrand, getOpenApi, logoIsImage } from "../lib/brand";
 import { areaLabel, orderAreaSlugs } from "../lib/areas";
 import { chatClient } from "../lib/ws";
 import { LAST_SEEN_EVENT, readLastSeen, setServerLastSeen } from "../lib/lastSeen";
-import { backfillLegacyLastSeen } from "../lib/lastSeenBackfill";
 import { TagPill } from "./TagPill";
 import { CogIcon, FolderIcon, HomeIcon, LinkIcon, MenuIcon, MoonIcon, PlusIcon, SunIcon, XIcon } from "./icons";
 import { NewProjectModal } from "./NewProjectModal";
@@ -79,10 +78,6 @@ function useProjectBadges(workspaces: Project[]): Map<string, ProjectBadge> {
       }
     }
     setVersion((v) => v + 1);
-    // One-time (#488) migration: push any pre-existing localStorage read-state up
-    // to the server, so removing the local mirror doesn't resurface chats the user
-    // already read. Self-deleting and best-effort; needs the payload for the slug.
-    void backfillLegacyLastSeen(workspaces).catch(() => undefined);
   }, [workspaces]);
 
   // Live in-flight set + a completion signal each time a turn stops running.

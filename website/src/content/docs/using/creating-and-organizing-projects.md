@@ -1,6 +1,6 @@
 ---
 title: Creating & organizing projects
-description: A hands-on walkthrough — make a new project (notebook or repo-backed), promote a notebook to repo-backed in place, fill in its project.yaml, group projects into areas, tune the agent in Settings (models, curation budgets), and promote a root chat into a project.
+description: A hands-on walkthrough — make a new project (notes Paddock curates, or a codebase it doesn't), point one at a directory you already have, promote a notebook to repo-backed in place, fill in its project.yaml, group projects into areas, tune the agent in Settings (models, curation budgets), and promote a root chat into a project.
 ---
 
 Everything you do in Paddock lives inside a **project**. This guide is the
@@ -8,7 +8,7 @@ practical, do-it-now companion to the [Projects concept](/concepts/projects/):
 that page explains *what* a project is; this one walks through *how* to create
 one, organize a growing collection, and tune it to your taste.
 
-By the end you'll know how to create both kinds of project, sort them into
+By the end you'll know how to create a project of any shape, sort them into
 **areas**, set per-project metadata and agent behaviour, and rescue a root chat
 by promoting it into a project of its own.
 
@@ -18,7 +18,7 @@ Click **New Project** — the button is in the left sidebar, and again on the
 projects home page (top-right, and in the empty state when you have none yet).
 That opens the **New project** dialog:
 
-![The New project dialog with a Git repository URL filled in, making it a repo-backed project](../../../assets/using/new-project-modal.png)
+![The New project dialog with a Git repository URL filled in, making it an unmanaged project Paddock clones](../../../assets/using/new-project-modal.png)
 
 You only have to fill in **one** field — everything else has a sensible default:
 
@@ -29,8 +29,10 @@ You only have to fill in **one** field — everything else has a sensible defaul
 - **Area** — the single group this project belongs to (see
   [Organize projects into areas](#organize-projects-into-areas)). Defaults to
   **Unsorted**; you can move it later.
-- **Git repository URL** *(optional)* — leave it blank for a **notebook**
-  project; paste a repo URL to make it **repo-backed** (next section).
+- **Directory on this machine** *(optional)* — an absolute path where the
+  project's content lives, or should live (next section).
+- **Git repository URL** *(optional)* — a repo for Paddock to clone, or to record
+  as the remote behind a directory you named (next section).
 - **Domain tags** — comma-separated, cross-cutting labels like
   `garden, planning`. Unlike the area, a project can carry many tags.
 - **Status** — defaults to **active**. Pick `idea` for something you're still
@@ -45,73 +47,173 @@ name, and **visibility** defaults to `public`. Both — plus everything above �
 are editable afterwards from the project's [Settings tab](#tune-the-agent-the-settings-tab).
 :::
 
-## Choose the project type: notebook vs repo-backed
+## Choose the shape: two questions, not three types
 
-The single choice that matters at creation time is whether you fill in the
-**Git repository URL** field. It's what splits the two project types. You don't
-have to get it right first time: a notebook can be
-[promoted to repo-backed later](#promote-a-notebook-to-repo-backed), in place.
-That promotion is **one-way**, though — a repo-backed project can never go back
-to being a notebook.
+There is no menu of project types to pick from. The dialog asks two independent
+questions, and everything else derives from your answers:
 
-### Notebook — for notes, plans, and ops
+1. **Is this notes Paddock should curate, or a codebase it shouldn't?** That's the
+   **managed** axis.
+2. **Where does the content live?** That's the **Directory on this machine** and
+   **Git repository URL** fields.
 
-Leave the git field blank. The project directory itself becomes the working
-directory, and Paddock seeds it with a starter `CLAUDE.md`. This is the right
-choice for research, planning, home-lab runbooks, or anything that isn't itself a
-code repository. Claude works with Markdown notes, docs, and the chat history —
-all curated inside Paddock.
+The two are orthogonal — notes can live at a path you nominate, and a codebase can
+be one Paddock clones *or* one you already have.
 
-### Repo-backed — for a codebase you want Claude to build
+### Question 1 — notes, or a codebase?
 
-Paste an external git URL and Paddock **clones that repo into a checkout inside
-the project**, then points the working directory at the clone. HTTPS, SSH
-(`git@host:owner/repo`), `git://`, and local paths all work.
+**Managed** means Paddock looks after the project's own files: the
+[sweeper](/concepts/sweeper/) curates its `CLAUDE.md`, `OVERVIEW.md`, and
+`CHANGELOG.md`. This is the classic notebook — research, planning, home-lab
+runbooks, anything that isn't itself a code repository. Claude works with Markdown
+notes, docs, and the chat history, all curated inside Paddock.
 
-Because Claude now works inside a real checkout, **the repo's own `CLAUDE.md`,
-branches, and PR workflow all apply** — it can branch, commit, and open pull
-requests against the upstream just like you would. Paddock keeps its own
-metadata (`project.yaml`, `OVERVIEW.md`, `CHANGELOG.md`, and the chat transcripts)
-in the enclosing project directory, safely outside the checkout via a sidecar
-`.gitignore`.
+**Unmanaged** means the content is code you or your agents source-control outside
+Paddock. Paddock never writes project files into it, so **the repo's own
+`CLAUDE.md`, branches, and PR workflow all apply** — Claude can branch, commit, and
+open pull requests against the upstream just like you would. `OVERVIEW.md` and
+`CHANGELOG.md` are still curated, but they're kept in the project's own folder
+inside Paddock's data directory, safely outside your working tree. Its `CLAUDE.md`
+is never touched.
+
+You usually don't answer this question directly. **Leave both location fields
+blank and you get a managed notebook; fill either one in and you get an unmanaged
+project** — which is almost always what you meant. There is exactly one genuinely
+ambiguous case, and that's the only time the dialog asks:
+
+:::note[The "These are notes" checkbox]
+Give a **directory** with **no repo URL** and a checkbox appears: *"These are
+notes — let Paddock curate them."* A bare directory could equally be a folder of
+Markdown you want curated or a checkout you want left alone, and Paddock won't
+guess. Tick it for notes; leave it clear for code.
+:::
+
+One combination is refused outright: **managed plus a git repository URL**.
+Paddock curating files into a repo it also clones has no sensible meaning, so the
+create fails rather than quietly picking an interpretation.
+
+### Question 2 — where does the content live?
+
+| You fill in | Where Claude works |
+|---|---|
+| Nothing | The project's own directory inside Paddock's data dir. |
+| **Git repository URL** only | A checkout Paddock clones for you, nested inside the project directory. |
+| **Directory on this machine** | *That directory*, used **in place, with no copy** — your real history, your branches, your remotes. |
+| **Both** | The directory wins as the working directory; the URL is recorded as the remote behind it. |
+
+HTTPS, SSH (`git@host:owner/repo`), `git://`, and local paths all work as repo
+URLs. A directory path must be **absolute**, and must sit **outside** Paddock's
+own projects root and data directory, and outside every other project's working
+directory.
+
+:::tip[Paddock writes nothing into a directory you nominate for code]
+For an unmanaged project: no `.chats/`, no `.gitignore`, no `CLAUDE.md`. Chat
+transcripts live in the project's own folder inside Paddock's data directory, and
+the repo's own `CLAUDE.md` is the only one in play. `git status` in your checkout
+stays as clean as you left it.
+:::
+
+For a **managed** project a directory means something slightly different: it
+nominates where your **notes** should live. `OVERVIEW.md`, `CHANGELOG.md`, and
+`CLAUDE.md` then get written *there* rather than inside Paddock's data dir — an
+accepted consequence of asking for your notes to live somewhere specific. Only
+`project.yaml` and the chat transcripts stay behind.
+
+### What Paddock does with the directory
+
+The path doesn't have to exist yet. What happens depends on what else you gave it:
+
+| Directory | Repo URL | What happens |
+|---|---|---|
+| Exists | — | Used as-is. |
+| Exists | Given | Used as-is, and Paddock checks its git remotes match. A mismatch is a **warning**, not a failure — a fork or an `ssh`-vs-`https` spelling is legitimate, but silently ignoring the URL isn't. |
+| Missing | Given | Paddock clones the repo to that path. |
+| Missing | — (managed) | Paddock creates the directory. An empty folder is a fine place to start taking notes. |
+| Missing | — (unmanaged) | **Rejected.** There's nothing to clone from, and an empty directory isn't a codebase. |
+
+If a create fails partway through, Paddock removes only directories *it* made
+during that attempt — a directory that was already there is never deleted.
+
+:::note[No repository required]
+Paddock probes for git and lights up the git features — the **Changes** tab,
+commit and push — when your working directory turns out to be a repo. It never
+insists on one. A plain folder of notes is a perfectly valid project.
+:::
 
 :::caution[Private repos need reachable credentials]
 Paddock runs `git clone` with credential prompts disabled, so a **private** repo
 URL fails fast rather than hanging. Make sure the host can reach the repo (a token
-in the environment, an SSH key, or a public URL) before creating a repo-backed
-project. See [Securing Paddock](/guides/securing/) for how credentials reach the
+in the environment, an SSH key, or a public URL) before creating a project that
+clones. See [Securing Paddock](/guides/securing/) for how credentials reach the
 box.
 :::
 
-For the full mechanics of `dir` vs `workingDir` and why metadata stays outside
-the checkout, see the [Projects concept page](/concepts/projects/).
+### Why point at a directory you already have
+
+This is the mode for running Paddock on your own machine over the clones you
+already work in — and two things follow from the working directory being one you
+also use by hand:
+
+- **Prior `claude` sessions in that directory are offered for adoption.**
+  Transcripts are keyed by working directory, so the conversations you already had
+  there show up in the project's **Adopt chats** list. (This only ever surfaces
+  sessions that really happened on this machine at that path.)
+- **The [`claude.transcripts`](/configuration/config-file/) and
+  `claude.mcpServers` levers finally mean something for a code project.** Both key
+  on the working directory. A project pointed at a clone Paddock made points at a
+  directory you have never opened a terminal in, so `transcripts: host` has nothing
+  to share and your `~/.claude.json` has no per-directory MCP servers registered
+  for it. A directory you already use matches natively.
+
+The **Changes** tab reports on the project's *working* directory too, so it shows
+the state of your actual checkout.
+
+:::caution[A path is specific to this machine]
+It records an absolute path that Paddock did not create, so it does not survive
+being rebuilt somewhere else — on a fresh box the project points at a directory
+that isn't there yet. Filling in the **Git repository URL** as well is what gives
+Paddock something to re-clone from.
+:::
+
+**`path` and the managed setting are both fixed at creation and immutable.** The
+working directory is baked into every transcript path, so re-pointing it would
+strand the project's history.
+
+For the full mechanics of `dir` vs `workingDir` and where each file lands, see the
+[Projects concept page](/concepts/projects/).
 
 ### Promote a notebook to repo-backed
 
 A notes-only project that turns out to want a codebase doesn't have to be torn
 down and recreated. From its **Settings** tab, the **Repository backing** section
-turns a notebook into a repo-backed project **in place** — keeping every chat,
-`OVERVIEW.md`, `CHANGELOG.md`, and every bit of metadata it has accumulated.
+turns a managed notebook into a repo-backed project **in place** — keeping every
+chat, `OVERVIEW.md`, `CHANGELOG.md`, and every bit of metadata it has accumulated.
+
+This is the one transition across the managed axis, and it only offers itself for
+a project that is **managed and has no `path` of its own**. An already-unmanaged
+project has nothing to promote; a managed project with its own directory is a
+notes folder you nominated, so Paddock refuses rather than turning it into a
+checkout behind your back.
 
 Paste the git URL, click **Promote to repo-backed…**, and confirm:
 
 ![The Repository backing section of a notebook project's Settings tab, with a git URL entered and the confirm step showing what promotion will do](../../../assets/using/promote-to-repo-backed.png)
 
 Paddock **clones first**, so a clone that fails leaves the notebook completely
-untouched. Once the clone lands, `repo:` is written to `project.yaml` and the
-working directory **flips to the checkout** — from then on the repo's own
-`CLAUDE.md`, branches, and PR workflow apply, exactly as for a project created
-repo-backed.
+untouched. Once the clone lands, `repo:` is written to `project.yaml`, the project
+flips to **`managed: false`**, and the working directory **flips to the checkout**
+— from then on the repo's own `CLAUDE.md`, branches, and PR workflow apply,
+exactly as for a project created that way.
 
 Two consequences worth knowing before you click:
 
 - **The notebook's `CLAUDE.md` is removed.** It was Paddock's to curate; the
   repo's own now takes over. (The sweeper keeps curating `OVERVIEW.md` and
   `CHANGELOG.md`, which live outside the checkout — it just never writes
-  `CLAUDE.md` for a repo-backed project.)
+  `CLAUDE.md` for an unmanaged project.)
 - **It's one-way.** There is no un-promote, and no way to point an existing
-  repo-backed project at a different repo. A repo-backed project's Settings tab
-  shows its repository and working directory read-only.
+  repo-backed project at a different repo. Its Settings tab shows the repository
+  and working directory read-only.
 
 If a directory named after the repo already exists inside the project, Paddock
 refuses rather than overwriting it.
@@ -119,8 +221,8 @@ refuses rather than overwriting it.
 :::note[Two different "promotes"]
 Don't confuse this with
 [promoting a *root chat* into a project](#promote-a-root-chat-into-a-project)
-further down. This one changes a project's **type**; that one turns a loose
-conversation into a project in the first place.
+further down. This one moves a project across the **managed** axis; that one turns
+a loose conversation into a project in the first place.
 :::
 
 ## What a project.yaml holds
@@ -157,7 +259,9 @@ The fields:
 | `group` | The project's **area** — its single, exclusive home. |
 | `started`, `updated` | Creation date (immutable) and last-touched date (auto-bumped). |
 | `links` | Optional `{label, url}` bookmarks. |
-| `repo` | Present only for repo-backed projects. Absent on a notebook, and set **once** — at creation, or by [promoting](#promote-a-notebook-to-repo-backed). Once set it never changes. |
+| `managed` | Whether Paddock curates this project's `CLAUDE.md`/`OVERVIEW.md`/`CHANGELOG.md`. Optional; **absent means `!(repo \|\| path)`**, so an old file written before the key existed keeps the meaning it always had. `managed: true` alongside `repo` is rejected. Set **once**, at creation, and immutable — except that [promoting](#promote-a-notebook-to-repo-backed) flips it to `false`. |
+| `repo` | A git URL. Set **once** — at creation, or by [promoting](#promote-a-notebook-to-repo-backed) — and never changes. Alone it makes Paddock clone a nested checkout; alongside `path` it records *which* repo that directory is (a remote-match for adoption, and something to re-clone from), without moving the working directory. |
+| `path` | An absolute path to the directory the project's content lives in. Set **once**, at creation, and immutable. Takes precedence over `repo` as the working directory. On an unmanaged project it's a checkout used in place; on a managed one it's where the curated notes should live. |
 | `model`, `permissionMode`, `driveMode`, `maxTurns`, `docker` | Per-project agent overrides — see below. Absent means *inherit the box default*. |
 | `models` | Optional allow-list narrowing which models this project offers — see [Restrict the offered models](#restrict-the-offered-models). |
 | `curation` | Optional per-file sweeper token budgets — see [Curation budgets](#curation-budgets). |
@@ -242,8 +346,8 @@ changes), are **Drive mode** (left on **Global default**), **Max spawn depth**,
 
 Below that block the tab carries three more sections:
 **[Offered models](#restrict-the-offered-models)**,
-**[Curation budgets](#curation-budgets)**, and — for a notebook —
-**[Repository backing](#promote-a-notebook-to-repo-backed)**. A final **Derived**
+**[Curation budgets](#curation-budgets)**, and — for a managed project with no
+`path` — **[Repository backing](#promote-a-notebook-to-repo-backed)**. A final **Derived**
 section shows read-only state the agent and sweeps maintain.
 
 See [Environment variables](/configuration/environment/) for the defaults a fresh
@@ -277,7 +381,7 @@ default, which the placeholder shows you:
 Inheritance is **field by field** — override `CHANGELOG.md` alone and the other
 two keep tracking the instance defaults. Lowering a budget is the lever for a
 chatty project whose notes have grown big enough to weigh on every chat that
-preloads them. (A repo-backed project never has its `CLAUDE.md` curated, so that
+preloads them. (An unmanaged project never has its `CLAUDE.md` curated, so that
 budget is moot for it.)
 
 ### Preload project context (in the composer, not Settings)
@@ -313,8 +417,8 @@ have to decide up front.
 
 ## Next steps
 
-- [Projects](/concepts/projects/) — the concept behind notebook vs repo-backed,
-  and what a project directory contains.
+- [Projects](/concepts/projects/) — the two axes behind a project's shape, and
+  what a project directory contains.
 - [Agents](/concepts/agents/) — the agents that do the work in each project.
 - [The sweeper](/concepts/sweeper/) — how `OVERVIEW.md` and `CHANGELOG.md` stay
   curated (and what "Preload project context" injects).

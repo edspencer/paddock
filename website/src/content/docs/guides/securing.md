@@ -306,6 +306,27 @@ Security isn't only the front door — it's also what the agents can reach:
   over baking them into images or `.env` files on disk. See
   [A home-lab setup](/guides/home-lab/).
 
+## What the instance takes from the host machine
+
+Since v0.62 this is a readable config surface rather than something to infer.
+Paddock always keeps its **own** Claude home under the data dir, and refuses to
+start if that resolves to the operator's `~/.claude`. What it borrows is five
+independent keys, four of which default to `own` (isolated):
+`transcripts`, `instructions`, `hooks` and `mcpServers`. Only `credentials`
+defaults to `host`, because reading a login writes nothing.
+
+The two worth checking on a shared or exposed instance:
+
+- **`claude.hooks`** — at `host`, the shell commands in the operator's
+  `~/.claude/settings.json` execute inside Paddock turns.
+- **`claude.mcpServers`** — at `host`, the MCP servers in the operator's
+  `~/.claude.json` are attached to every keeper, with the tool allow-list widened
+  to match. That is inherited capability, and belongs in the same mental bucket
+  as `browserMcp`.
+
+Full detail: [What Paddock touches on your
+machine](/guides/what-paddock-touches/).
+
 ## Checklist
 
 - [ ] Paddock's port is **not** on a public interface — only the proxy/tunnel is.

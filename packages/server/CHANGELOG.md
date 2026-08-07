@@ -1,5 +1,649 @@
 # @paddock/server
 
+## 0.64.0
+
+### Minor Changes
+
+- [#709](https://github.com/edspencer/paddock/pull/709) [`2655f7c`](https://github.com/edspencer/paddock/commit/2655f7c0c1c57cdd78b0f4be4cc9db530e5b91a6) Thanks [@edspencer](https://github.com/edspencer)! - Projects are described by two independent axes instead of one overloaded flag,
+  and a project can point at a directory you already have (#206, #597).
+
+  **`managed` replaces `repoBacked`.** A project is _managed_ when Paddock looks
+  after its own files — the sweeper curating `CLAUDE.md`, `OVERVIEW.md` and
+  `CHANGELOG.md`, which is what "notebook" used to mean — and _unmanaged_ when the
+  content is code you or your agents source-control outside Paddock. Whether a git
+  repo sits behind it is a separate question, and not a type: it is just which of
+  `path` and `repo` are set. `repoBacked` was one boolean answering four questions
+  and has been removed from the DTO; each consumer now takes the fact it needs.
+
+  **`path:` — where a project's content lives.** An absolute directory, applying to
+  both axes. Unmanaged, it links a checkout you already have — used in place, with
+  no copy, so Claude gets its real history, branches and remotes; Paddock writes
+  nothing into it (no `.chats/`, no sidecar `.gitignore`, no `CLAUDE.md`), and
+  deleting the project never touches it. Managed, it nominates where your notes
+  live, and the curated trio follows the content out there — an accepted
+  consequence being that those three files then do not live in the Paddock data
+  dir. Either way `project.yaml` (the registry entry) and `.chats/` stay put.
+
+  Acquisition follows from what you give it: an existing path is used as-is (with a
+  warning, not a failure, if a declared `repo`'s remote doesn't match it); a missing
+  path is cloned into when a `repo` is given, or created for a managed project. A
+  failed create only ever removes directories it made during that attempt, never
+  one that already existed.
+
+  **No git requirement.** Paddock probes for git and lights up the git features when
+  it finds a repository; it never rejects a directory for not being one.
+
+  **The Changes tab reports on the working directory (#597).** It read the metadata
+  directory before, so for a repo-backed project it showed the notes folder rather
+  than the code — and repo detection was asked of the projects root rather than the
+  directory in question. Both are now per-directory.
+
+  `managed` is optional on disk and its default is derived (`managed ?? !(repo ||
+path)`) so existing `project.yaml` files keep their current meaning on upgrade;
+  `managed: true` together with `repo` is rejected rather than silently reinterpreted.
+  `managed` and `path` are immutable after creation.
+
+### Patch Changes
+
+- [#707](https://github.com/edspencer/paddock/pull/707) [`7bcb8bd`](https://github.com/edspencer/paddock/commit/7bcb8bd9566293ae77369525232289bf67dc09d9) Thanks [@edspencer](https://github.com/edspencer)! - The `claude.instructions: own` startup notice is now a warning, so you actually
+  see it. It names which of your `~/.claude` files (`CLAUDE.md`, `agents/`,
+  `commands/`, `plugins/`) are not being loaded and which key turns them back on —
+  but it was written at `info`, and `npx @edspencer/paddock` sets `LOG_LEVEL=warn`
+  unless you pass `--verbose`, so on the documented install path the one population
+  the notice exists for never saw it (#706). It still says nothing when you have no
+  such files, or when you are on `claude.instructions: host`.
+
+## 0.63.0
+
+### Minor Changes
+
+- [#705](https://github.com/edspencer/paddock/pull/705) [`571def3`](https://github.com/edspencer/paddock/commit/571def3a8768f3b49c0d4fb6cfda19a4cc7c2905) Thanks [@edspencer](https://github.com/edspencer)! - Inherit the host's Claude Code **plugins**, and stop degrading `sse` /
+  header-authenticated MCP servers (#700).
+
+  Requires `@herdctl/core` 5.32.0, which adds the two things Paddock had no channel
+  for.
+
+  **Plugins.** A plugin that provides an MCP server — a Slack plugin installed on
+  your laptop, say — was invisible in Paddock on every setting, because the SDK
+  enables a discovered plugin from `enabledPlugins` in the **user** settings source
+  and Paddock's agents are invoked with `setting_sources: ["project"]`. Paddock now
+  enumerates the host's installed plugin directories from the CLI's own
+  `installed_plugins.json` registry and passes them explicitly, which needs no
+  settings-source grant. Two levers gate it, because a plugin is mostly
+  instructions and only sometimes MCP servers:
+
+  | `claude.instructions` | `claude.mcpServers` | what a keeper gets                                     |
+  | --------------------- | ------------------- | ------------------------------------------------------ |
+  | `host`                | `host`              | the plugin, including its MCP servers                  |
+  | `host`                | `own`               | the plugin's commands/agents/skills/hooks only         |
+  | `own`                 | _any_               | no plugins (`instructions` is what bridges `plugins/`) |
+
+  Each plugin server's `mcp__plugin_<plugin>_<server>__*` pattern is added to the
+  keeper's allowed tools automatically — without it the server connects and then has
+  every call auto-denied with no prompt. A plugin whose manifest points `mcpServers`
+  at a bundle rather than declaring them inline cannot be enumerated that way; it is
+  still attached, and a boot warning names it and the pattern to add by hand.
+
+  **MCP server fields.** `headers` and an explicit `type` (`sse`) are now carried
+  through verbatim instead of being stripped. So a bearer-authenticated or `sse`
+  server inherited under `claude.mcpServers: host` arrives intact and finds its
+  stored OAuth token (which is keyed on a hash of `{type, url, headers}`), and the
+  boot warnings v0.62.0 shipped for both are gone. The instance's own `mcpServers:`
+  block accepts both keys too — `headers` values take `env:VAR_NAME` references like
+  everything else there, and are never printed.
+
+### Patch Changes
+
+- [#703](https://github.com/edspencer/paddock/pull/703) [`a789260`](https://github.com/edspencer/paddock/commit/a789260df837a0629b29629fe6e5558e850e3288) Thanks [@edspencer](https://github.com/edspencer)! - `paddock --help` now documents the fifth sharing lever.
+
+  The "Sharing your Claude Code state" section listed four keys —
+  `transcripts`, `credentials`, `instructions`, `hooks` — and omitted
+  `claude.mcpServers`, which shipped alongside them in #691 step 5. Someone
+  reading `--help` to find out what an instance shares would have concluded that
+  MCP servers were not part of the block at all.
+
+  It now lists all five, and adds a line for the sibling top-level `mcpServers:`
+  block (#691 step 6) — the way to give an instance a server the host machine does
+  not have, which is the case `host` cannot serve. That line also carries #702's
+  caveat, so `--help` does not imply more than `env:VAR_NAME` delivers: it keeps a
+  credential out of the git-tracked file, and under `driveMode: batch` it does not
+  keep it out of `ps`. Help text only; no behaviour change.
+
+- [#702](https://github.com/edspencer/paddock/pull/702) [`f5cf1d2`](https://github.com/edspencer/paddock/commit/f5cf1d28a00b1de747b71e9362569532da0fd9d2) Thanks [@edspencer](https://github.com/edspencer)! - Say where a declared MCP server's credential actually ends up (follow-up to
+  #691 step 6).
+
+  `mcpServers:` keeps a resolved secret out of every surface Paddock owns — the
+  boot log, error messages, the Settings API. It does that completely, and it was
+  still not the whole story: on the **CLI runtime** (`driveMode: batch`) the engine
+  serialises the entire server definition, `env` values included, into a single
+  `--mcp-config` **command-line argument**. A process argument is world-readable on
+  Linux, so the token is legible to any local user through `/proc/<pid>/cmdline`
+  and `ps` for as long as the turn runs.
+
+  The default `driveMode: session` does not have this problem: the same record goes
+  to the SDK in-process, and the stdio server it spawns receives the value in its
+  environment, where `/proc/<pid>/environ` is owner-only — which is where Claude
+  Code itself puts it.
+
+  Paddock cannot close this from its side (the fix is upstream: the Claude CLI's
+  `--mcp-config` also accepts a _file path_), so it refuses to be silent instead.
+  An instance on `batch` with a credential-carrying declared server now gets a
+  **warning** at startup naming the server; one on `session` gets the same as an
+  informational note, because a single project pinning `driveMode: batch` brings
+  the exposure back. Documented alongside the block.
+
+  Verified rather than inferred: a new integration test drives a real turn and
+  reads the token back out of the spawned process's argv. It is a characterisation
+  test — if it ever starts failing, the engine has stopped doing this and both the
+  test and the warning should be deleted.
+
+## 0.62.0
+
+### Minor Changes
+
+- [#696](https://github.com/edspencer/paddock/pull/696) [`bcc9c40`](https://github.com/edspencer/paddock/commit/bcc9c409ec7a7977e29ca03eea45e3d7bb9ab8c4) Thanks [@edspencer](https://github.com/edspencer)! - `claude.credentials: own | host` — Paddock uses the Claude Code login you already
+  have (#691 step 3, fixes the #683 regression 0.61.1's successor introduced).
+
+  ```yaml
+  claude:
+    credentials: host # own | host — default host
+  ```
+
+  Making Paddock always own its Claude home fixed four things and broke one: Claude
+  Code files its secure-storage entry under a service name derived from
+  `CLAUDE_CONFIG_DIR`, so the moment Paddock set that variable, a macOS `claude
+/login` became invisible. On a Mac with no token in the environment that is an
+  instance which boots cleanly, reports itself ready, and fails every single turn
+  with "Not logged in". This is the lever that gets the login back without giving
+  the Claude home back.
+
+  - **`host` (the default)** — Paddock uses this machine's Claude Code login: the
+    macOS Keychain entry on darwin, your `~/.claude/.credentials.json` elsewhere
+    (symlinked in, never copied). Nothing else travels with it.
+  - **`own`** — only a login of this instance's: a `CLAUDE_CODE_OAUTH_TOKEN` /
+    `ANTHROPIC_API_KEY` in the environment, or a `.credentials.json` inside
+    Paddock's own Claude home. A `.credentials.json` symlink a previous boot
+    bridged in is withdrawn.
+
+  `PADDOCK_CLAUDE_CREDENTIALS` overrides the file, as usual.
+
+  **This is the one key in the `claude:` block that defaults to `host`, and the
+  exception is deliberate: isolation is about writes.** Reading a Keychain entry
+  creates, moves and deletes nothing of yours; defaulting it to `own` would
+  recreate #683 for every Mac user who has never exported a token. The guarantee
+  `own` everywhere buys — nothing outside the data dir is written — is untouched by
+  it.
+
+  Mechanically, `host` sets `CLAUDE_SECURESTORAGE_CONFIG_DIR=""` in the environment
+  the runtime gets. Claude Code resolves its secure-storage scope from that
+  variable _instead of_ `CLAUDE_CONFIG_DIR` whenever it is defined, and the empty
+  value selects the unsuffixed service name — the entry a plain `claude /login`
+  wrote — while Paddock's config dir stays exactly where it is. One variable, no
+  home moved, nothing else shared. Set the variable yourself to a non-empty value
+  and Paddock honours yours instead, saying so at startup.
+
+  Also: the darwin Keychain probe #686 shipped flagged as unverified is now
+  **confirmed correct** — the service name is exactly `Claude Code-credentials` —
+  and the boot notice knows about the lever, so a found Keychain login under
+  `credentials: host` is reported as the login being used rather than warned about
+  as a login that cannot be seen.
+
+- [#697](https://github.com/edspencer/paddock/pull/697) [`f9f6f12`](https://github.com/edspencer/paddock/commit/f9f6f126a69fed025fa2757fd73bcd09105b5d9b) Thanks [@edspencer](https://github.com/edspencer)! - `claude.instructions` and `claude.hooks` — your `~/.claude` prompts and hooks are
+  no longer inherited unconditionally (#691 step 4).
+
+  ```yaml
+  claude:
+    instructions: own # own | host — default own: CLAUDE.md, agents/, commands/, plugins/
+    hooks: own # own | host — default own: the hooks key of settings.json
+  ```
+
+  Until now, relocating the Claude home was followed by symlinking the whole of
+  your user-level config back into it — `settings.json`, `CLAUDE.md`, `agents/`,
+  `commands/`, `plugins/` — with no key to turn any of it off. The half that
+  matters is `hooks`: those are **shell commands** your `settings.json` binds to
+  tool use and session lifecycle, and they ran inside every Paddock turn whether or
+  not anyone chose that. "Isolate it by just trying Paddock" was not true, and this
+  is why.
+
+  **`hooks: own` is not a symlink decision.** `settings.json` carries `hooks` _and_
+  `permissions`, `model`, `statusLine`, `enabledPlugins`; a symlink is
+  all-or-nothing and the file is not. So Paddock writes its own `settings.json`
+  into its Claude home carrying your other keys with `hooks` dropped. It is
+  regenerated at every startup, so a restart is what applies an edit to yours —
+  and only files that actually define hooks are copied at all, so most instances
+  keep the symlink and nothing can go stale. A `settings.json` you put in Paddock's
+  own home is recognised by hash and never overwritten; an unparseable source
+  plants nothing rather than falling back to the symlink.
+
+  **`instructions: own` is a deliberate reversal, and smaller than it looks.** The
+  argument against it — shipped in #620's own docstring — is that your curated
+  `~/.claude/CLAUDE.md` silently stops reaching your agents. Its premise turns out
+  not to hold for the runtime Paddock runs chats on: user memory, `agents/` and
+  `commands/` move with Claude Code's `user` setting source, which Paddock's agents
+  do not load, so on a default chat turn these have been inert since chats moved to
+  the SDK runtime. They do apply to the sweeper, triggers and `batch` chats. It is
+  the default anyway because _"`own` everywhere means nothing outside the data dir
+  is read or written"_ has to be a guarantee you can read off a config file, not a
+  guarantee with a permanent footnote. Paddock names the key at startup when it
+  finds files it is not loading; each project's own `CLAUDE.md` is unaffected.
+
+  Both take `PADDOCK_CLAUDE_INSTRUCTIONS` / `PADDOCK_CLAUDE_HOOKS`, env > file >
+  default, and both withdraw a symlink a previous `host` boot planted.
+
+  **Scope, and a caveat found while building this.** `<claude-home>/settings.json`
+  is Claude Code's `userSettings` source, and herdctl invokes the Agent SDK with
+  `--setting-sources=project` for every agent that has a working directory — which
+  is every Paddock agent. So a default chat turn never reads that file; the CLI
+  paths (the sweeper, triggers, `driveMode: batch`) pass no such flag and do. The
+  host's hooks therefore execute in those paths and not, today, in an SDK chat
+  turn. Narrower than it looked, still real code execution, and the asymmetry is a
+  herdctl default rather than a guarantee.
+
+  Scope worth stating: `hooks: own` means _no host hooks_, not _no host commands_.
+  `settings.json` has several other keys that name a script to run — `apiKeyHelper`,
+  `awsAuthRefresh`, `awsCredentialExport`, `gcpAuthRefresh`, `proxyAuthHelper`,
+  `otelHeadersHelper`, `statusLine`, `subagentStatusLine` — and they are still
+  inherited. Where they belong is an open question on #691.
+
+- [#699](https://github.com/edspencer/paddock/pull/699) [`019a3ed`](https://github.com/edspencer/paddock/commit/019a3ed16ae4b4c45760c17643d9ff6a72e6e129) Thanks [@edspencer](https://github.com/edspencer)! - `claude.mcpServers` — your own MCP servers can now reach your Paddock agents
+  (#691 step 5, the last of the five levers).
+
+  ```yaml
+  claude:
+    mcpServers: own # own | host — default own
+  ```
+
+  `host` attaches the servers you added with `claude mcp add`: the top-level
+  `mcpServers` of your `~/.claude.json` (user scope, every project) plus any under
+  `projects.<absolute-dir>.mcpServers` (directory scope), which a project gets only
+  when that directory is its own working directory. `own` (the default) attaches
+  only what Paddock provides itself. Also `PADDOCK_CLAUDE_MCP_SERVERS`, env > file
+
+  > default. The boot log names every server attached, and every one it could not
+  > carry.
+
+  **Why this key is not a symlink like the others.** MCP servers are not declared
+  inside `~/.claude` at all — they live in **`~/.claude.json`**, a sibling _file_
+  next to that directory, because Claude Code resolves it as
+  `<config-dir-or-home>/.claude.json`. Once Paddock owns its own Claude home, no
+  bridge of entries _inside_ the home can reach it, which is why MCP inheritance
+  broke silently and separately from everything else. So `host` is a **read**:
+  Paddock reads that file once at startup and passes the servers to the runtime. It
+  deliberately does not symlink it, because Claude Code writes to it (per-project
+  trust, server approvals, migration flags) and bridging it would mean a Paddock
+  instance mutating your real config.
+
+  Read once, at boot — add a server and restart Paddock to pick it up.
+
+  **Two caveats found while building this, each warned about by name at startup.**
+  The engine's MCP schema has fields for `command`, `args`, `env` and `url` only, so
+  an http/sse server's **`headers` are dropped** (a bearer token is lost — and
+  because MCP OAuth tokens are keyed on a hash of `{type, url, headers}`, its stored
+  token is not found either), and **`type: sse` is connected to as HTTP**. A stdio
+  server, which is most of them, is carried exactly. A server declaring neither a
+  `command` nor a `url` is skipped.
+
+  **MCP logins do follow `claude.credentials`** — an open question on #691, now
+  answered from the bundled CLI: OAuth tokens live under an `mcpOAuth` key in the
+  _same_ credential store as your Anthropic login, resolved by the same variable
+  `claude.credentials` drives. There is no separate MCP token store, so
+  `credentials: host` (the default) carries them and `credentials: own` means
+  re-authorising inside Paddock.
+
+  **Plugins are not covered, and #691's reasoning for why turns out to be wrong.**
+  The design says the SDK does not auto-discover installed plugins; it does — the
+  plugin root is the Claude home and discovery is real. What actually blocks it is
+  that discovery is gated on `enabledPlugins` in the home's `settings.json`, which
+  Paddock's agents never load (they run with only the _project_ setting source), and
+  that herdctl exposes no way to pass a plugin per session. Both are outside this
+  change. Until then a plugin's MCP server has to be declared directly with
+  `claude mcp add`.
+
+  Declaring a server _only_ for Paddock is still #691 step 6. Today:
+  `CLAUDE_CONFIG_DIR=<data-dir>/claude-home claude mcp add …`, or a per-project
+  `.mcp.json`.
+
+- [#695](https://github.com/edspencer/paddock/pull/695) [`2fa6c80`](https://github.com/edspencer/paddock/commit/2fa6c809fd6cac9b280e5be516b2538afa0d14cb) Thanks [@edspencer](https://github.com/edspencer)! - A `claude:` block in `paddock.config.yaml`, and Paddock always owns its Claude
+  home (#691, closes #690).
+
+  Paddock had one lever — which Claude home it pointed at — and every distinct
+  concern was welded to it: whose transcripts a delete removed, which login was
+  visible, where agent memory was written. Three incidents in a week (#682, #683,
+  #689) all came out of moving it for one reason and getting the other four for
+  free. This splits the first concern out.
+
+  ```yaml
+  claude:
+    transcripts: own # own | host — default own
+  ```
+
+  `own` (the default) is today's behaviour: transcripts live in each project's
+  `.chats/`, inside the data dir, and nothing outside it is written. `host` shares
+  your real `~/.claude/projects/<encoded-cwd>/` folder live in both directions — a
+  chat continued in a terminal with `claude --resume` shows up in Paddock with no
+  restart and no re-import. Deleting a chat under `host` **releases** it rather
+  than removing it (#689): the transcript is your history, not Paddock's copy.
+  `PADDOCK_CLAUDE_TRANSCRIPTS` overrides the file, as usual.
+
+  `host` is one symlink per project pointing _out_ of Paddock's own Claude home,
+  not a repointed `CLAUDE_CONFIG_DIR`. That is what fixes **#690**: agent memory
+  lives at `<claudeHome>/projects/<enc>/memory`, and an agent cannot write to any
+  path containing a `.claude` component — so 0.61.1's "share by pointing the home
+  at `~/.claude`" silently took agent memory away. Here the literal path stays
+  inside Paddock's own home in both modes; only what it resolves to changes.
+
+  **Breaking, deliberately and without a compatibility shim:**
+
+  - **`CLAUDE_HOME` is deleted.** It is ignored, not an error (retired settings are
+    never fatal), so a stale export cannot move the home back on top of yours.
+  - **`--isolated-claude-home` is deleted.** It opted out of something Paddock no
+    longer does.
+  - **`CLAUDE_CONFIG_DIR` is still honoured** as "put Paddock's own home here" —
+    it is Claude Code's own variable and herdctl declines to clobber an
+    operator-set value — but Paddock now **refuses to start** if it (or a
+    `claudeHome:` key) resolves to your own `~/.claude`. That is the single value
+    that re-welds every concern together and re-breaks agent memory; the refusal
+    names `transcripts: host` as what you probably wanted.
+
+  Existing instances need no migration: transcripts already live in each project's
+  `.chats/`, so moving the home moves no data — the first boot replants each
+  project's symlink in the new home aimed at the same directory. Verified by
+  running an instance of each version against copies of one real fixture: chat
+  lists, adoptable counts, message bodies and `.chats/` content hashes were
+  identical, and the only difference on disk was the replanted links.
+
+- [#701](https://github.com/edspencer/paddock/pull/701) [`83d661f`](https://github.com/edspencer/paddock/commit/83d661f7d8b82e559ba8e2b678b030e76bdda0b8) Thanks [@edspencer](https://github.com/edspencer)! - `mcpServers:` — declare an MCP server to Paddock itself (#691 step 6, the last of
+  the sequence).
+
+  ```yaml
+  mcpServers:
+    notion:
+      command: npx
+      args: ["-y", "@notionhq/notion-mcp-server"]
+      env:
+        NOTION_TOKEN: env:NOTION_TOKEN # a reference, not the token
+  ```
+
+  Until now there was nowhere to say this. `claude.mcpServers: host` borrows the
+  servers your machine already has, which is no help if you are running Paddock in
+  a container and want Notion in it — there is nothing on the host to borrow. So
+  this is a **sibling of `claude:`, not a key inside it**: that block asks _whose_
+  servers this instance uses, this one says what it should have regardless.
+
+  Every project's keeper gets every server declared here, and each one's
+  `mcp__<name>__*` pattern is added to that keeper's tool allow-list — without
+  which the server attaches and then has every call silently refused. The boot log
+  names each attached server.
+
+  **Precedence** is `claude.mcpServers: host` < `mcpServers:` < Paddock's own. A
+  name you declare beats the same name inherited from `~/.claude.json`, because
+  this file is a statement about _this instance_ and that one is ambient machine
+  state. Paddock's own still win: `paddock` and `paddock_manage` are reserved
+  names, and a `playwright` of yours loses to the built-in browser server — with a
+  warning at boot rather than in silence.
+
+  **Keeping the token out of the file.** `paddock.config.yaml` is git-tracked and
+  the Config screen writes to it, so anywhere a string is expected — `command`, an
+  `args` entry, an `env` value, `url` — **`env:VAR_NAME` reads that value from the
+  environment**, the same indirection `managementApi` already uses for its client
+  tokens. An unset variable **drops that server** with a warning naming the
+  variable, rather than starting it without its credential. An inline value is
+  still allowed (an MCP `env` entry is often not a secret) but a credential-shaped
+  key, or a `url` with a query string, is warned about. Nothing Paddock logs or
+  serves ever contains a value from this block, and it is deliberately absent from
+  the Config screen and every API response.
+
+  **A declaration Paddock cannot carry faithfully is refused, not degraded** —
+  `headers:`, `type: sse`, an unrecognised key (`arg:` for `args:`), or both/neither
+  of `command` and `url`. That is the opposite of how `claude.mcpServers: host`
+  treats the same problems, deliberately: a host server was configured elsewhere
+  for something else, while this one you typed at Paddock and can fix. Only the
+  offending server is dropped; the rest attach and the instance boots.
+
+  Also fixes a gap in the previous release: the Config screen showed four of the
+  five `claude:` levers and not `claude.mcpServers`. It is now listed, read-only,
+  alongside its siblings.
+
+### Patch Changes
+
+- [#692](https://github.com/edspencer/paddock/pull/692) [`4c510ff`](https://github.com/edspencer/paddock/commit/4c510ff7dab14f1f144fa069d92345310c39cba7) Thanks [@edspencer](https://github.com/edspencer)! - Deleting a chat no longer destroys a transcript Paddock does not own (#689).
+
+  With the Claude home pointed at the user's own `~/.claude`, `DELETE /chats/:id`
+  returned `{"ok":true,"removed":true}` and unlinked the user's terminal `claude`
+  history for that directory. There is no copy to fall back on — Paddock plants no
+  symlink in a home it does not own (#682), so the file the agent reads and writes
+  _is_ the user's. It is #682 pointed the other way: that one claimed where future
+  sessions get written, this one deleted the past ones.
+
+  Delete now releases the session in that case instead of removing it, and the
+  response carries `retained: true`. In a home Paddock owns the behaviour is
+  unchanged — the transcript is Paddock's own copy in the project's `.chats/`, and
+  delete still means delete.
+
+  Known gap, tracked in #689: a released chat is still listed, because a chat
+  Paddock created is rediscovered by scanning the home. Closing that needs a
+  tombstone, which is deferred to the `transcripts` mode work in #691 rather than
+  built against a flag that design removes.
+
+## 0.61.1
+
+### Patch Changes
+
+- [#686](https://github.com/edspencer/paddock/pull/686) [`3f63720`](https://github.com/edspencer/paddock/commit/3f63720a70b9fd73cff52bd3e4cc8a33a809c7ef) Thanks [@edspencer](https://github.com/edspencer)! - The `paddock` CLI now uses the Claude Code login you already have, including on
+  macOS (#683). With no `CLAUDE_CODE_OAUTH_TOKEN`/`ANTHROPIC_API_KEY` and no explicit
+  `CLAUDE_HOME`/`CLAUDE_CONFIG_DIR`, it runs against your own `~/.claude` instead of an
+  isolated home under the data dir.
+
+  Since #620 Paddock always set `CLAUDE_CONFIG_DIR`, and Claude Code derives its
+  secure-storage service name from whether that variable is set at all — so a Keychain
+  login made under the plain name became invisible. The `.credentials.json` bridge
+  covers the file-based store and is structurally incapable of covering macOS. The
+  result was `npx @edspencer/paddock --here` booting fine and failing every turn with
+  `Not logged in`, on the platform the npx story is aimed at.
+
+  Continuity means transcripts stay in `~/.claude/projects/` rather than being relocated
+  into the workspace's `.chats/`. Paddock still writes nothing there (#682), and import
+  consent is unchanged — existing sessions are offered, not opened, exactly as before.
+  Pass `--isolated-claude-home` for the previous behaviour; a server, the container image
+  and `node dist/index.js` are unchanged.
+
+  Also: on macOS, when Paddock does hold its own home and finds no credential, it now
+  probes the Keychain and — if a login is there — says so and gives the exact command,
+  instead of a generic "no credentials found". The secret is never read or copied.
+
+- [#685](https://github.com/edspencer/paddock/pull/685) [`5fee9ee`](https://github.com/edspencer/paddock/commit/5fee9ee1ccfc15f18fc58dcb1d5eba67b1f7b749) Thanks [@edspencer](https://github.com/edspencer)! - Never plant a transcript symlink in a Claude home Paddock does not own (#682).
+  `ensureProjectChats` gated its two existing-directory branches on `home.owned` but
+  not the "nothing there yet" one, so with `CLAUDE_HOME=~/.claude` a directory with no
+  prior transcripts got `~/.claude/projects/<encoded-cwd>` replaced by a link to the
+  workspace's `.chats/`. From then on every `claude` session started in that directory
+  was written into Paddock's store, and deleting that store — an ordinary thing to do —
+  destroyed transcripts Paddock never owned. Reported on a real laptop: 30 sessions lost.
+
+  Paddock now creates nothing in an unowned home; transcripts stay where Claude Code
+  writes them and adoption remains the user-driven way to import them. Boot also warns
+  about links an affected build already planted, naming each path. Nothing is deleted
+  automatically — Paddock does not write to `~/.claude`, and that has to include
+  cleaning up after itself.
+
+- [#680](https://github.com/edspencer/paddock/pull/680) [`fee480a`](https://github.com/edspencer/paddock/commit/fee480a76027ffd4aa1caa302df947436f57a7a2) Thanks [@edspencer](https://github.com/edspencer)! - Correct `paddock --help`: `--here` does not link `~/.claude`. #665 fixed the two
+  runtime `console.log` strings but missed the `USAGE` block, which still claimed the
+  flag "links `~/.claude/projects/<encoded-dir>` at this workspace". Since #620/#634 the
+  Claude home defaults to `<dataDir>/claude-home` and `transcripts.ts` bails before
+  planting a symlink in a home Paddock does not own — sessions are _offered_ for import
+  and nothing is moved, copied or linked until you confirm (#663).
+
+- [#687](https://github.com/edspencer/paddock/pull/687) [`194dfc2`](https://github.com/edspencer/paddock/commit/194dfc295636dbb12893442c7d44407b558050bf) Thanks [@edspencer](https://github.com/edspencer)! - A credential-less first run no longer greets you with a stack-trace wall (#684).
+
+  `npx @edspencer/paddock --here` with no token printed a multi-screen dump containing
+  the entire sweeper system prompt four times — in the `ExecaError`, in the
+  `[fleet-manager]` line, in the serialised `err.message` and again in `err.stack`. The
+  one useful string, `Not logged in · Please run /login`, was on line 40. The server was
+  fine and still serving; nothing in the output said so.
+
+  - The sweeper recognises "not logged in", "out of credit" and "no `claude` on PATH"
+    and logs one actionable warn line with no error object to serialise. An
+    unrecognised failure keeps its full detail.
+  - The `claude` argv is cut out of `@herdctl/core`'s agent-failure lines, taking the
+    2 KB system prompt with it. `HERDCTL_LOG_LEVEL=debug` restores it.
+  - The CLI's quiet mode now actually covers failures. `LOG_LEVEL=warn` never could:
+    these are logged at `error`, above every threshold either variable can set.
+
+  Measured on the repo's own test-suite log: eight copies of the curator system prompt
+  before, zero after.
+
+## 0.61.0
+
+### Minor Changes
+
+- [#634](https://github.com/edspencer/paddock/pull/634) [`4df3a7a`](https://github.com/edspencer/paddock/commit/4df3a7a2ef6358c6e41a480eddf1add8d9ed31e4) Thanks [@edspencer](https://github.com/edspencer)! - Paddock now owns its Claude home; `~/.claude` is a read-only source (#620)
+
+  Claude Code's transcripts were the one piece of state Paddock did not keep under
+  its own data dir. They lived in the user's `~/.claude`, reached by planting
+  symlinks into it from outside — and `ensureProjectChats` would, on every agent
+  registration and inside a bare `catch {}`, copy a user's existing transcripts out
+  of there and **delete the originals**. That fired in exactly the case the chat
+  import (#588) exists to serve: pointing a project at a directory you already have
+  terminal `claude` history for.
+
+  That layout was forced, not chosen: until herdctl#423 nothing set
+  `CLAUDE_CONFIG_DIR`, so the SDK wrote to `~/.claude` whatever home Paddock
+  configured. With `@herdctl/core@5.29.0` that constraint is gone.
+
+  - The Claude home now defaults to **`<dataDir>/claude-home`**, making a data dir
+    movable, backable and wipeable as a unit. Precedence is `CLAUDE_HOME`, then
+    `CLAUDE_CONFIG_DIR`, then a `claudeHome:` config-file key, then the default.
+  - **Paddock never moves or deletes anything under `~/.claude`.** The destructive
+    migrate branch is gated on owning the home, so in the user's home it does
+    nothing at all.
+  - **Chat import still reads `~/.claude`** — the user's transcript folders are
+    mirrored into Paddock's home read-only, so a source is copied out of and never
+    written to.
+  - **Agent memory writes work.** Claude Code keeps per-project memory at
+    `<claudeHome>/projects/<enc-cwd>/memory/`; with no `.claude` path component the
+    harness restriction that blocked writes there no longer applies.
+  - User-level config in `~/.claude` (`.credentials.json`, `settings.json`,
+    `CLAUDE.md`, `agents/`, `commands/`, `plugins/`) is symlinked into the new home
+    when it has none of its own, so relocating does not drop your memory,
+    permissions or login.
+
+  **No data migration is required or performed.** Paddock-managed transcripts
+  already live in `<projectDir>/.chats/`; only the redirect symlink moves. The
+  symlinks a previous version planted in `~/.claude/projects/` are left in place
+  (nothing reads them any more) and reported once at boot so they can be cleaned up.
+
+  **Upgrading with a keychain-based login:** Claude Code scopes its credential store
+  to whether `CLAUDE_CONFIG_DIR` is set, so a login held in the OS keychain against
+  the default home is not found under the new one. Token-in-environment setups
+  (`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`) and file-based logins are
+  unaffected — the latter are bridged. Paddock warns at boot when it can find no
+  credential source, and `CLAUDE_HOME=$HOME/.claude` restores the previous layout
+  exactly.
+
+### Patch Changes
+
+- [#675](https://github.com/edspencer/paddock/pull/675) [`38fe841`](https://github.com/edspencer/paddock/commit/38fe841c4b8e49b52694b69026a05350ea2eec83) Thanks [@edspencer](https://github.com/edspencer)! - Stop destroying appended queued text when the enqueue timestamp is reused (#628)
+
+  The server's queue drain deduped a queued message on its client-supplied
+  `createdAtMs` alone. The client deliberately KEEPS that timestamp when appending
+  to an existing queue, so the message identity stays stable (#245) — which meant a
+  pane holding an already-drained queue (it never saw the un-buffered
+  `chat:queued_flushed` clear) re-asserted the same timestamp with longer text, and
+  the next drain treated it as a duplicate: it broadcast a text-less clear and threw
+  the appended text away. Not delayed — gone.
+
+  Drain now dedups on the `(ts, text)` tuple. A re-assert of the exact same message
+  is still a duplicate (so #245's no-double-send guarantee is unchanged), but "same
+  ts, different text" is correctly recognised as a new message and sent.
+
+- [#672](https://github.com/edspencer/paddock/pull/672) [`62f518f`](https://github.com/edspencer/paddock/commit/62f518ff993055e74a8b3323a16a0bbbead41faa) Thanks [@edspencer](https://github.com/edspencer)! - An explicit "mark unread" now survives a turn landing in the focused chat (#608)
+
+  Marking the open chat unread and having its in-flight turn complete a moment
+  later silently discarded the flag. The web client marks the focused chat seen
+  when a turn finishes there ("you were watching it"), and `POST .../seen` clears
+  the manual unread override — so an inferred seen quietly overrode an explicit
+  intent. The same happened via the API: `POST .../chats/:id/unread` returned
+  `{ ok: true }` and the write was then undone by a browser sitting in that chat,
+  with nothing telling the caller.
+
+  `POST .../chats/:id/seen` now accepts `keepUnread: true`, which advances the
+  last-seen watermark **without** clearing the manual override, and its response
+  carries the override's resulting state (`{ ok, lastSeen, unread }`). The web
+  client passes it only on the turn-completed-while-focused path; opening a chat
+  and the explicit read/unread toggle still spend the flag exactly as before.
+
+- [#675](https://github.com/edspencer/paddock/pull/675) [`38fe841`](https://github.com/edspencer/paddock/commit/38fe841c4b8e49b52694b69026a05350ea2eec83) Thanks [@edspencer](https://github.com/edspencer)! - Make Stop work on slash-command turns (#632)
+
+  Pressing Stop during a `/compact` did nothing — permanently. Two wiring gaps:
+  `onChatCommand` hardcoded `jobId: null` in its routing, so no turn id ever
+  reached the client (whose cancel is guarded by `if (meta.jobId)`, and whose
+  deferred pre-arm cancel therefore waited forever); and `runCommand` never
+  registered its session in `liveSessions`, so even a hand-supplied id resolved to
+  nothing to interrupt. Since compaction runs 60–180s, that is a long stretch with
+  no way out.
+
+  `runCommand` now mints a synthetic turn id, registers the live session under it
+  exactly as `chatSession` does (and deregisters it in the same `finally` that
+  closes the session), and hands it back via `onJobCreated`; `onChatCommand` puts
+  that id in its routing. `chat:cancel` on a command turn now reaches
+  `RuntimeSession.interrupt()`.
+
+- [#670](https://github.com/edspencer/paddock/pull/670) [`def27b8`](https://github.com/edspencer/paddock/commit/def27b874482c628d8801084217759f362e526e6) Thanks [@edspencer](https://github.com/edspencer)! - Stop describing a trigger with no tools as an enforced tool-less agent (#647)
+
+  Paddock expresses "no tools" as `allowed_tools: []`, and both herdctl runtimes emit
+  the allow-list **only when it is non-empty** — the CLI runtime guards
+  `if (allowed_tools?.length)` before pushing `--allowedTools`, and `toSDKOptions`
+  does the same before setting `allowedTools`. An empty list is therefore
+  indistinguishable from an unset one: the agent runs with Claude Code's default
+  tools, not a deny-all.
+
+  The source comments and the Triggers UI claimed the opposite. Nothing about the
+  runtime changes here — only what Paddock says about it:
+
+  - The trigger capability banner no longer promises a `tools: []` event trigger
+    "can only read its prompt and respond (no file, shell, or MCP access)". It now
+    says no tools were declared, that an empty list is not a restriction, and that
+    the prompt and max turns are the real bounds.
+  - The Triggers list shows "No tools" instead of "Tool-less", and the tool picker's
+    help text spells out that leaving everything unchecked is not a deny-all.
+  - The comments on `triggerToAgentToolConfig`, `hookToAgentToolConfig` and the
+    sweeper config describe what actually happens. The sweeper's tool-less-ness is
+    restated in terms of the properties that do hold: no injected MCP servers,
+    `max_turns: 4`, a system prompt that forbids tool use, and a non-interactive
+    `claude -p` run that cannot answer a permission prompt.
+
+  Making a tool grant enforceable at all is tracked separately in #319; this change
+  deliberately implements no enforcement.
+
+- [#665](https://github.com/edspencer/paddock/pull/665) [`1e03494`](https://github.com/edspencer/paddock/commit/1e03494ef7a610b7b97cc0659733ed3b41d526bd) Thanks [@edspencer](https://github.com/edspencer)! - CLI: tell the truth about `--here` and stop double-warning about credentials
+
+  `--here` no longer links the user's `~/.claude` transcripts into the workspace —
+  since #620/#634 `ensureProjectChats` bails out inside a home Paddock does not own,
+  so those sessions are left exactly where they are and surface as an _import offer_
+  (which since #663 also asks for confirmation). Two consent strings still described
+  the old behaviour and now describe the real one.
+
+  The `npx paddock` preflight also printed its own "No Claude credentials found"
+  warning immediately before the boot-time one from `ensureClaudeHome`. The
+  preflight checked the _legacy_ `~/.claude` rather than the home Paddock actually
+  uses, and treated a bare `~/.claude.json` as proof of a login — so it could stay
+  silent while Paddock's own home held no credentials at all. It is removed; the
+  boot notice checks the right directory, runs after the credential bridge, and
+  explains the `CLAUDE_CONFIG_DIR` keychain scoping that causes the failure.
+
+- [#676](https://github.com/edspencer/paddock/pull/676) [`1bbba15`](https://github.com/edspencer/paddock/commit/1bbba15bbbd64a3e5b795684b4c8d6fca62ef589) Thanks [@edspencer](https://github.com/edspencer)! - Paddock is MIT licensed, and the packaging script now proves it (#674)
+
+  The repo had no `LICENSE` file and no `license` field in any manifest — legally,
+  all rights reserved — while `scripts/make-npm-package.mjs` carried a
+  `license: serverPkg.license ?? "MIT"` fallback, so every published release told
+  npm it was MIT. The registry advertised a grant the source never made.
+
+  Now there is a real `LICENSE` (MIT, © 2026 Ed Spencer) at the repo root,
+  `"license": "MIT"` in the root, server, and web manifests, and the licence text
+  ships inside the published tarball and the release tarball. The fallback is
+  gone: the packaging script reads the real field and **exits non-zero** if it is
+  missing or blank, so a Paddock package can never again claim a licence the repo
+  did not grant.
+
 ## 0.60.0
 
 ### Minor Changes

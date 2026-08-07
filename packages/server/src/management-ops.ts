@@ -430,14 +430,15 @@ export function buildManagementOps(
         name: project.name,
         dir: project.dir,
         workingDir: project.workingDir,
-        repoBacked: project.repoBacked === true,
+        managed: project.managed === true,
         ...(project.repo ? { repo: project.repo } : {}),
+        ...(project.path ? { path: project.path } : {}),
         agentRegistered,
       };
     },
     // Promotion (#470), sharing create's gate. Same discipline: the SAME two calls,
     // in the same order, that `POST /api/projects/:slug/promote` makes — store
-    // promote, then agent re-registration. Every guard (already repo-backed, the
+    // promote, then agent re-registration. Every guard (already unmanaged, the
     // root workspace, an existing checkout dir, a bad URL) and the rollback to an
     // untouched notebook on clone failure live in `ProjectStore.promote` (#213).
     promoteProject: async (projectSlug, repo) => {
@@ -456,7 +457,11 @@ export function buildManagementOps(
         name: project.name,
         dir: project.dir,
         workingDir: project.workingDir,
-        repoBacked: project.repoBacked === true,
+        // #206 replaced `repoBacked` with the `managed` axis. Promotion always
+        // lands on `managed: false` — that IS what promoting means now — but read
+        // it off the project rather than hard-coding, so this reports what the
+        // store actually did.
+        managed: project.managed,
         ...(project.repo ? { repo: project.repo } : {}),
         agentRegistered,
       };

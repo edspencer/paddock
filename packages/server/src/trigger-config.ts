@@ -126,7 +126,7 @@ const runSchema = z.object({
   session: z.enum(["new", "resume"]).default("new"),
   /** Optional per-trigger model override (else the keeper default applies). */
   model: z.string().trim().min(1).optional(),
-  /** Deny-by-default allow-list = the trigger's capability. `[]` = tool-less. */
+  /** The trigger's declared capability. `[]` = no tools declared (see #647: unenforced). */
   tools: z.array(z.string().trim().min(1)).default([]),
   /** Recursion bound for internal spawning (reuses B1); 0 = may not spawn. */
   maxSpawnDepth: z.number().int().nonnegative().optional(),
@@ -352,11 +352,21 @@ export function curatorTriggerOf(
 /**
  * Project a trigger's {@link TriggerRun} onto the exact herdctl agent tool-config
  * fields (snake_case), so an event/webhook trigger's OWN `trigger-<slug>-<name>`
- * agent enforces the capability BY CONSTRUCTION. Always sets `allowed_tools` +
+ * agent carries the capability BY CONSTRUCTION. Always sets `allowed_tools` +
  * `max_turns` so a trigger agent never silently inherits the keeper's broad default
- * toolset; a tool-less trigger yields `allowed_tools: []` (the CLI runtime then
- * denies every tool). The ONE place run→agent-config translation lives. (The exact
- * analogue of `hookToAgentToolConfig`.)
+ * toolset.
+ *
+ * CAVEAT on the EMPTY case (#647): a trigger that declares no tools yields
+ * `allowed_tools: []`, and BOTH herdctl runtimes emit the allow-list only when it is
+ * non-empty (`if (allowed_tools?.length)`, in `cli-runtime` and `sdk-adapter` alike).
+ * So an empty list is indistinguishable from an unset one — no `--allowedTools` flag,
+ * no `allowedTools` option — and the agent runs with Claude Code's DEFAULT tools.
+ * `[]` is a declaration of intent, NOT an enforced deny-all: `max_turns`, the prompt
+ * and `permission_mode` are the real bounds. Making a grant enforceable at all is
+ * #319. Pinned by `test/unit/empty-allowed-tools-runtime.test.ts`.
+ *
+ * The ONE place run→agent-config translation lives. (The exact analogue of
+ * `hookToAgentToolConfig`.)
  */
 export function triggerToAgentToolConfig(run: TriggerRun): Record<string, unknown> {
   const out: Record<string, unknown> = {
@@ -443,7 +453,7 @@ export interface ChatTriggerInfo {
   agentName: string;
   /** Whether the trigger is armed (a disabled trigger's past chats are still shown). */
   enabled: boolean;
-  /** The exact tool grant (herdctl `allowed_tools`); `[]` = a tool-less trigger. */
+  /** The declared tool grant (herdctl `allowed_tools`); `[]` = none, unenforced (#647). */
   allowedTools: string[];
   /** The permission mode the trigger's turns run under, when it sets one. */
   permissionMode?: TriggerPermissionMode;
@@ -456,9 +466,9 @@ export interface ChatTriggerInfo {
 /**
  * Project a persisted trigger ({@link TriggerDto} fields) onto the web-facing
  * {@link ChatTriggerInfo}, resolving the SAME capability defaults
- * {@link triggerToAgentToolConfig} uses so the banner mirrors the enforced grant
- * exactly: an absent/empty allow-list surfaces as a tool-less `[]`, and an unset
- * `maxTurns` surfaces the {@link TRIGGER_DEFAULT_MAX_TURNS} bound herdctl applies.
+ * {@link triggerToAgentToolConfig} uses so the banner mirrors the registered grant
+ * exactly: an absent/empty allow-list surfaces as `[]`, and an unset `maxTurns`
+ * surfaces the {@link TRIGGER_DEFAULT_MAX_TURNS} bound herdctl applies.
  * The WHEN fields are read off the discriminated `trigger` so the banner can state
  * the trigger type and the exact firing condition.
  */

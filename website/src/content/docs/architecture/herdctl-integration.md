@@ -97,7 +97,7 @@ was written, so they fall outside its "verified against 5.10.1" claim:
 Claude home the engine's session discovery, its adoption primitives, and Claude
 Code itself resolve transcripts under. Paddock passes its one resolved
 `claudeHome` so the two sides cannot disagree about which home is real; see
-`HerdctlService` in `herdctl.ts` and the `CLAUDE_HOME` row in
+`HerdctlService` in `herdctl.ts` and the `CLAUDE_CONFIG_DIR` row in
 [Environment variables](/configuration/environment/).
 
 5.29.0 is also where the session-adoption primitives behind
@@ -187,6 +187,14 @@ add one at runtime was (1) write a per-agent yaml file (`working_directory` = th
 project dir), (2) regenerate `herdctl.yaml` to reference it, (3) call
 `await fleet.reload()`. Paddock did exactly that until 5.11.0.
 
+```ts
+// paddock's HerdctlService.ensureProjectAgent(), as it was until 5.11.0.
+// NEITHER of these exists in packages/ any more.
+await regenerateConfigFiles(allProjects); // wrote agents/<name>.yaml + herdctl.yaml
+const payload = await fleet.reload();     // hot-reload; no restart
+// payload.changes => [{type:"added", category:"agent", name:"keeper-foo"}, ...]
+```
+
 The `reload()` contract below still holds and still matters — Paddock owns the
 on-disk `herdctl.yaml` (fleet block + `defaults`) even though it no longer lists
 agents there.
@@ -199,13 +207,6 @@ agents there.
 - Updates the scheduler with new agents/schedules.
 - Emits `config:reloaded` with a `ConfigChange[]` diff (added/removed/modified ×
   agent/schedule/defaults).
-
-```ts
-// paddock's HerdctlService.ensureProjectAgent()
-await regenerateConfigFiles(allProjects); // writes agents/<name>.yaml + herdctl.yaml
-const payload = await fleet.reload();      // hot-reload; no restart
-// payload.changes => [{type:"added", category:"agent", name:"keeper-foo"}, ...]
-```
 
 Config-dir layout paddock owns (generated, never hand-edited):
 ```

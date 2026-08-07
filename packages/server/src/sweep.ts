@@ -39,6 +39,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { HerdctlService } from "./herdctl.js";
 import { keeperAgentName } from "./herdctl.js";
+import { classifyAgentError } from "./agent-errors.js";
 import type { ProjectStore, Project } from "./projects.js";
 import {
   DEFAULT_CURATION,
@@ -266,7 +267,17 @@ export class SweepService {
         lastSweptSessionMtime: wm.lastSweptSessionMtime,
         lastSweptAt: Date.now(),
       });
-      this.log.error({ err, slug }, "sweep: sweeper run errored (non-fatal)");
+      // #684: this is a best-effort background task whose failure is already
+      // labelled non-fatal, so a recognised cause gets ONE line at warn — no
+      // `err`, because pino serialising it is what put four copies of the
+      // curator system prompt on a first-time user's terminal. An unrecognised
+      // failure keeps the full object: that is the case somebody needs it.
+      const cause = classifyAgentError(err);
+      if (cause === undefined) {
+        this.log.error({ err, slug }, "sweep: sweeper run errored (non-fatal)");
+      } else {
+        this.log.warn({ slug }, `sweep: skipped, ${cause} (non-fatal — chat is unaffected)`);
+      }
     } finally {
       this.running.delete(slug);
     }
@@ -358,11 +369,16 @@ export class SweepService {
     // NOCHANGE leaves it untouched. A write failure is non-fatal (OVERVIEW/
     // CHANGELOG already landed; the watermark should still advance) → warn.
     //
-    // REPO-BACKED projects (issue #187): the CLAUDE.md is the external repo's
-    // OWN, upstream-owned file — the sweeper must NEVER write it (that would
-    // dirty the checkout and, if pushed, leak curation upstream). OVERVIEW.md +
-    // CHANGELOG.md are still curated (sidecarred), just not CLAUDE.md.
-    if (parsed.claude !== null && !project.repoBacked) {
+    // UNMANAGED projects (issue #206, formerly keyed on `repoBacked`): the
+    // CLAUDE.md belongs to the working directory's own source control — the
+    // sweeper must NEVER write it (that would dirty the checkout and, if pushed,
+    // leak curation upstream). OVERVIEW.md + CHANGELOG.md are still curated
+    // (sidecarred into the metadata dir), just not CLAUDE.md.
+    //
+    // `managed` is the precise fact here, where `repoBacked` was a proxy for it:
+    // what decides this is whether Paddock looks after the project's files, not
+    // whether a git repo happens to sit behind them.
+    if (parsed.claude !== null && project.managed) {
       const bounded = enforceHeadBudget(parsed.claude, budgetChars(budget, "claudeMaxTokens"));
       await this.projects.writeClaudeCurated(project.slug, bounded).catch((err) => {
         this.log.warn({ err, slug: project.slug }, "sweep: CLAUDE.md write failed (non-fatal)");

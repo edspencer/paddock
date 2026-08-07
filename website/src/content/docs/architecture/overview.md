@@ -137,7 +137,7 @@ internalize about the backend.
 ```mermaid
 flowchart TB
   subgraph C1["1 · Transcript JSONL — read-render"]
-    T["~/.claude/projects/{enc-cwd}/*.jsonl\n(symlinked → {project}/.chats/)"]
+    T["{dataDir}/claude-home/projects/{enc-cwd}/*.jsonl\n(symlinked → {project}/.chats/)"]
   end
   subgraph C2["2 · Browser localStorage — client prefs"]
     L["drafts · chat model · row heights · unread · queued · theme"]
@@ -163,19 +163,30 @@ flowchart TB
 
 The chat transcript is a JSONL file **written by the Claude Code CLI**, never by
 Paddock — Paddock only reads and renders it. Claude Code stores transcripts under
-`~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl`, where `<encoded-cwd>` is the
+`<claudeHome>/projects/<encoded-cwd>/<sessionId>.jsonl`, where `<encoded-cwd>` is the
 agent's absolute working directory with every non-`[A-Za-z0-9]` char replaced by
-`-` (`encodeProjectDir()` in `transcripts.ts`). **The working directory *is* the session key** — no
-manual tagging.
+`-` (`encodeProjectDir()` in `transcripts.ts`). Paddock always points Claude Code
+at a Claude home **it owns** — `<dataDir>/claude-home` (`resolveClaudeHome()` in
+`config.ts`), and it refuses to start if that resolves to the user's `~/.claude` —
+so in practice the path is `<dataDir>/claude-home/projects/<encoded-cwd>/`.
+**The working directory *is* the session key** — no manual tagging.
 
-To make transcripts portable (so a project directory is self-contained and can be
-backed up / moved), Paddock replaces that encoded directory with a **symlink to
-`<projectDir>/.chats/`** via `ensureProjectChats()` (`transcripts.ts`). It is
-idempotent and self-healing: it creates `.chats/`, then repoints a drifted
-symlink, migrates a pre-existing real transcript directory (EXDEV-safe `cp`+`rm`
-across mounts), or just creates the symlink — and never throws. For a repo-backed
-project the transcripts land in the **metadata dir**, not the external checkout
-(the `chatsHostDir` split, issue #187).
+Paddock then replaces that encoded directory with a **symlink**, via
+`ensureProjectChats()` (`transcripts.ts`). What it points at is chosen by the
+`claude.transcripts` config key ([reference](/configuration/config-file/#transcripts)):
+
+- `own` (the default) — the symlink targets `<projectDir>/.chats/`, so transcripts
+  are portable: a project directory is self-contained and can be backed up or moved.
+- `host` — the symlink targets the user's real `~/.claude/projects/<encoded-cwd>/`,
+  so chats are shared with the machine's own terminal `claude` history. In that mode
+  Paddock additionally points the project's `.chats/` at the user's folder, so the
+  by-path readers below keep working unchanged.
+
+The routine is idempotent and self-healing: it creates `.chats/`, then repoints a
+drifted symlink, migrates a pre-existing real transcript directory (EXDEV-safe
+`cp`+`rm` across mounts), or just creates the symlink — and never throws. For a
+repo-backed project the transcripts land in the **metadata dir**, not the external
+checkout (the `chatsHostDir` split, issue #187).
 
 Paddock reads transcripts two ways:
 
@@ -218,9 +229,10 @@ indefinitely. #488 separated *persistence* from *optimism* — the optimistic in
 clear now lives in the **same in-memory map** the server payload folds into
 (`lib/lastSeen.ts`), so every reload re-derives from server truth and divergence is
 structurally impossible rather than merely repaired. A failed `POST …/seen` rolls the
-bump back (`revertSeenLocally`) instead of silently sticking. The surviving
-localStorage touchpoints exist **only** for the one-time backfill of pre-#488 values
-(`lib/lastSeenBackfill.ts`) and go away once that migration drains.
+bump back (`revertSeenLocally`) instead of silently sticking. The one-time backfill
+that pushed surviving pre-#488 values up to the server has drained and been deleted
+(#552), so **nothing in the client reads or writes these keys any more** — any left
+in an old browser profile are inert.
 :::
 
 ### Class 3 — Server JSON sidecars (durable app state)
@@ -250,10 +262,6 @@ sidecar: lazy single-load into an in-memory `Map`/`Set` via `ensureLoaded()`
 through a `private writing: Promise<void>` chain** so overlapping writes never
 interleave, and non-throwing reads that degrade to a default. New durable app
 state should follow this same shape.
-
-> Implementation note: `QueuedMessageStore`'s key separator is a space, not the
-> NUL byte the others use (see its `keyOf`) — a benign inconsistency, but don't
-> assume a uniform separator across all of them.
 
 :::caution[A workspace key can be the empty string]
 Several of these are keyed by, or carry, a **workspace key** — and the root
@@ -348,8 +356,8 @@ Step by step:
    emitted through `turn.emit(...)`, never written straight to the socket.
 3. **Resolve model + drive mode.** The `model` override wins if
    `isKnownModel`, else `project.model`, else the instance default; the
-   agent is re-registered via `ensureKeeperModel` because there's no per-trigger
-   model API (`ws.ts`). Drive mode is `project.driveMode ?? cfg.keeperDriveMode`.
+   agent is re-registered via `ensureAgentModel` because there's no per-trigger
+   model API (`ws.ts`). Drive mode is `project.driveMode ?? cfg.driveMode`.
 4. **Preload (optional).** For a *new* chat with `preloadContext` and a non-empty
    `OVERVIEW.md`, the overview + changelog tail are wrapped and prepended to the
    prompt (`composePreloadedPrompt()` in `ws-triggers.ts`, CONTRACT-v2 §2).
@@ -450,6 +458,20 @@ into the **static herdctl agent config** by `browserMcpServers()` in
 `herdctl-agent-config.ts`, gated on `cfg.browserMcp` (`PADDOCK_BROWSER_MCP`, default
 off). It is scoped per *instance*, not per turn, so a box without the browser stack
 leaves it off and there are no failed spawns.
+
+The same `mcp_servers` key is how the user's OWN servers arrive under
+`claude.mcpServers: host` (#691, `claude-mcp.ts`): paddock reads `~/.claude.json`
+once at boot — top-level `mcpServers` plus `projects.<abs-dir>.mcpServers` — and
+`buildAgentConfig` merges the ones matching a project's working directory into the
+same key. That is deliberately *not* `injectedMcpServers`, whose
+`InjectedMcpServerDef` carries in-process JS handlers and cannot express a stdio
+command; `mcp_servers` is also the one seam that reaches BOTH runtimes, since the
+SDK adapter turns it into `sdkOptions.mcpServers` and the CLI runtime serialises it
+into `--mcp-config`. A host server also forces `allowed_tools` to be restated
+(`FLEET_ALLOWED_TOOLS` + one `mcp__<name>__*` per server): both runtimes auto-deny
+any tool absent from an explicit allowlist, and herdctl auto-adds those patterns for
+*injected* servers only — which is why `mcp__playwright__*` is hard-coded into the
+fleet defaults.
 
 **Anti-fork-bomb design:** recursion is bounded by a **depth gate**, not by
 withholding the toolset from every automated turn. Every server-initiated turn
@@ -585,7 +607,7 @@ The main knobs:
 | Area | Vars (default) |
 |---|---|
 | **Server** | `PORT` (4000), `HOST` (or `PADDOCK_HOST`; **127.0.0.1** since v0.44 — see [Binding & exposure](/configuration/binding-and-exposure/)), `LOG_LEVEL` (info), `PADDOCK_DANGEROUSLY_ALLOW_OPEN` (false — downgrades the bind-safety refusal to a warning) |
-| **Paths** | `PADDOCK_DATA_DIR` (./data), `PADDOCK_PROJECTS_DIR`, `PADDOCK_STATE_DIR` (`.herdctl`), `PADDOCK_HERDCTL_CONFIG`, `PADDOCK_WEB_DIST`, `CLAUDE_HOME` / `CLAUDE_CONFIG_DIR` (`<dataDir>/claude-home` — paddock owns its Claude home (#620); resolved once by `resolveClaudeHome()` in `config.ts` and threaded to BOTH paddock's transcript paths and the engine's `claudeHomePath`) |
+| **Paths** | `PADDOCK_DATA_DIR` (./data), `PADDOCK_PROJECTS_DIR`, `PADDOCK_STATE_DIR` (`.herdctl`), `PADDOCK_HERDCTL_CONFIG`, `PADDOCK_WEB_DIST`, `CLAUDE_CONFIG_DIR` (`<dataDir>/claude-home` — paddock ALWAYS owns its Claude home and refuses to start if this resolves to the user's `~/.claude` (#691); resolved once by `resolveClaudeHome()` in `config.ts` and threaded to BOTH paddock's transcript paths and the engine's `claudeHomePath`), `PADDOCK_CLAUDE_TRANSCRIPTS` (`own`|`host` — whose transcripts), `PADDOCK_CLAUDE_CREDENTIALS` (`own`|`host`, **default `host`** — whose login; sets `CLAUDE_SECURESTORAGE_CONFIG_DIR=""` so Claude Code reads the machine's unsuffixed keychain entry without moving the home, `claude-credentials.ts`), `PADDOCK_CLAUDE_INSTRUCTIONS` (`own`|`host` — whose `CLAUDE.md`/`agents/`/`commands/`/`plugins/`; symlink bridge, `claude-instructions.ts`), `PADDOCK_CLAUDE_HOOKS` (`own`|`host` — whether the host's `settings.json` hooks execute here; `own` cannot be a symlink decision, so paddock writes a filtered `settings.json` and re-derives it each boot, `claude-settings.ts`), `PADDOCK_CLAUDE_MCP_SERVERS` (`own`|`host` — whose MCP servers the keepers get; NOT a bridge, since they are declared in `~/.claude.json` BESIDE the home rather than inside it, so paddock reads that file once at boot and puts the servers on the keeper's `mcp_servers` agent config — the one seam both runtimes read — widening `allowed_tools` by `mcp__<name>__*` or every call would be auto-denied, `claude-mcp.ts`). All five are keys of `claude:` in the config file |
 | **Auth** | `PADDOCK_AUTH_MODE` (none), `PADDOCK_AUTH_USER_HEADER` (X-Forwarded-User), `..._EMAIL_HEADER`, `..._GROUPS_HEADER`, `..._JWT_HEADER` (Authorization), `..._JWKS_URL`, `..._JWT_ISSUER`, `..._JWT_AUDIENCE`, `..._USERNAME_CLAIM`, `..._GROUPS_CLAIM` (groups) |
 | **Agent** | `PADDOCK_DRIVE_MODE` (session), `PADDOCK_NATIVE_PROMPT` (true) |
 | **Self-MCP + spawning** | `PADDOCK_SELF_MCP` (false), `PADDOCK_SELF_MCP_WRITE` (false; implies read), `PADDOCK_SELF_MCP_PROJECTS` (false; `create_project` / `promote_project`, ride on write), `PADDOCK_HOOKS_MCP` (false; the trigger tools, per-project override), **`PADDOCK_MAX_SPAWN_DEPTH` (`1`, bounded `0`–`8`)** — see [§5](#5-mcp-injection) |

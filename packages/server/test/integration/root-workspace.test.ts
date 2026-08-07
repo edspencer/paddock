@@ -54,7 +54,7 @@ describe("integration: the root workspace (#531)", () => {
     expect(project.slug).toBe("");
     expect(project.dir).toBe(t.projectsRoot);
     expect(project.workingDir).toBe(t.projectsRoot);
-    expect(project.repoBacked).toBe(false);
+    expect(project.managed).toBe(true);
     // Name defaults to the projects-root directory basename.
     expect(project.name).toBe(path.basename(t.projectsRoot));
     // An ordinary workspace detail payload: project + changelog + chats.
@@ -166,8 +166,8 @@ describe("integration: the root workspace (#531)", () => {
       payload: { repo: "/tmp/some-repo" },
     });
     expect(res.statusCode).toBe(400);
-    expect((await t.app.inject({ method: "GET", url: "/api/root" })).json().project.repoBacked).toBe(
-      false,
+    expect((await t.app.inject({ method: "GET", url: "/api/root" })).json().project.managed).toBe(
+      true,
     );
   });
 

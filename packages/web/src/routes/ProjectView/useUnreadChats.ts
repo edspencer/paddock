@@ -20,7 +20,9 @@ import type { Chat } from "../../lib/types";
  * Marking a chat seen (open/focus, or its turn completing while focused) bumps
  * lastSeen=now, clears its live flag, and clears the manual override (via the
  * `onSeen` callback + the server's `/seen` route). `seenVersion` bumps on every
- * mark so the derivation recomputes.
+ * mark so the derivation recomputes. The one exception is an INFERRED seen
+ * (#608) — a turn landing in the chat you happen to be looking at — which bumps
+ * lastSeen but leaves an explicit "mark unread" alone: intent beats inference.
  *
  * Owns `liveUnread`/`seenVersion` internally; the WS-owned `runningSessions` set
  * stays owned by ProjectView and is passed in (the fleet-wide running set must
@@ -53,15 +55,22 @@ export function useUnreadChats({
    */
   onManySeen?: (sessionIds: string[]) => () => void;
 }): {
-  markSeen: (sessionId: string) => void;
+  markSeen: (sessionId: string, opts?: { keepUnread?: boolean }) => void;
   markManySeen: (sessionIds: string[]) => void;
   unread: ReadonlySet<string>;
 } {
   const [liveUnread, setLiveUnread] = useState<ReadonlySet<string>>(new Set());
   const [seenVersion, setSeenVersion] = useState(0);
+  /**
+   * Mark a chat seen. `keepUnread` makes it an INFERRED seen (#608): the
+   * lastSeen watermark still advances, but a manual "mark unread" override
+   * (#458) is left alone on BOTH sides — the parent's mirror isn't cleared and
+   * the server is asked to keep its flag. Intent outranks inference.
+   */
   const markSeen = useCallback(
-    (sessionId: string) => {
+    (sessionId: string, opts?: { keepUnread?: boolean }) => {
       const when = Date.now();
+      const keepUnread = opts?.keepUnread === true;
       // Optimistic in-memory clear (+ same-tab event), then persist to the server
       // (#189), which is the sole source of truth (#488). The bump is session-
       // scoped, so a reload always re-derives from the server and devices can't
@@ -70,12 +79,14 @@ export function useUnreadChats({
       const prev = markSeenLocally(sessionId, when);
       // The `/seen` route also clears any server-side manual unread override (#458);
       // `onSeen` mirrors that in the parent's chat state so the cue can't briefly
-      // flicker back after leaving the chat, before the next list refetch.
-      void api.markChatSeen(slug, sessionId, when).catch(() => {
+      // flicker back after leaving the chat, before the next list refetch. Both
+      // halves are skipped for an inferred seen (#608) so an explicit flag stands.
+      const opt = keepUnread ? { keepUnread: true } : undefined;
+      void api.markChatSeen(slug, sessionId, when, opt).catch(() => {
         revertSeenLocally(sessionId, prev, when);
         setSeenVersion((v) => v + 1);
       });
-      onSeen?.(sessionId);
+      if (!keepUnread) onSeen?.(sessionId);
       setLiveUnread((prev) => {
         if (!prev.has(sessionId)) return prev;
         const next = new Set(prev);
@@ -189,7 +200,10 @@ export function useUnreadChats({
     for (const id of prev) {
       if (runningSessions.has(id)) continue; // still running
       if (view === "chat" && id === activeSession) {
-        markSeen(id); // completed while focused → stays read
+        // Completed while focused → stays read, but this is an INFERRED seen, so
+        // it must not spend a manual unread flag the user set seconds earlier
+        // (#608) — including one set from another client via the API.
+        markSeen(id, { keepUnread: true });
       } else {
         setLiveUnread((s) => (s.has(id) ? s : new Set(s).add(id)));
       }

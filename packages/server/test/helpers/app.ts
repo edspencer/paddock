@@ -62,6 +62,24 @@ interface StartOptions {
    */
   configFile?: Record<string, unknown>;
   /**
+   * A synthetic `~/.claude.json` written into the throwaway HOME before build
+   * (#691 step 5). That file is the host's MCP-server declaration and it lives
+   * BESIDE the Claude home rather than inside it, so no other helper reaches it.
+   * Always synthetic: the real one on a dev box holds a user's own servers.
+   */
+  hostClaudeJson?: Record<string, unknown>;
+  /**
+   * Synthetic host Claude Code PLUGINS (#700), planted under
+   * `<home>/.claude/plugins/`: one `installed_plugins.json` registry entry per
+   * key, each pointing at a directory with a `.claude-plugin/plugin.json` and
+   * (when given) a `.mcp.json`.
+   *
+   * Always synthetic, and nothing ever runs them — a plugin directory is data
+   * until a turn loads it, and no turn runs in these tests. The real plugin root
+   * on a dev box holds a user's own plugins and their credentials.
+   */
+  hostPlugins?: Record<string, { mcpServers?: Record<string, unknown> }>;
+  /**
    * Extra environment variables to set before build (restored on teardown).
    * Needed for config that is REFERENCED from the YAML rather than inlined —
    * management-API tokens are `ref: env:VAR`, so the test must supply the var.
@@ -94,8 +112,12 @@ export async function startTestApp(opts: StartOptions = {}): Promise<TestApp> {
     PADDOCK_STATE_DIR: process.env.PADDOCK_STATE_DIR,
     PADDOCK_HERDCTL_CONFIG: process.env.PADDOCK_HERDCTL_CONFIG,
     PADDOCK_WEB_DIST: process.env.PADDOCK_WEB_DIST,
-    CLAUDE_HOME: process.env.CLAUDE_HOME,
     CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR,
+    CLAUDE_SECURESTORAGE_CONFIG_DIR: process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR,
+    PADDOCK_CLAUDE_CREDENTIALS: process.env.PADDOCK_CLAUDE_CREDENTIALS,
+    PADDOCK_CLAUDE_INSTRUCTIONS: process.env.PADDOCK_CLAUDE_INSTRUCTIONS,
+    PADDOCK_CLAUDE_HOOKS: process.env.PADDOCK_CLAUDE_HOOKS,
+    PADDOCK_CLAUDE_MCP_SERVERS: process.env.PADDOCK_CLAUDE_MCP_SERVERS,
     PADDOCK_FAKE_SCRIPT: process.env.PADDOCK_FAKE_SCRIPT,
     PADDOCK_FAKE_SWEEP: process.env.PADDOCK_FAKE_SWEEP,
     PADDOCK_SWEEP_MIN_INTERVAL_MS: process.env.PADDOCK_SWEEP_MIN_INTERVAL_MS,
@@ -120,12 +142,29 @@ export async function startTestApp(opts: StartOptions = {}): Promise<TestApp> {
   process.env.HOST = "127.0.0.1";
   delete process.env.PADDOCK_HOST;
   delete process.env.PADDOCK_DANGEROUSLY_ALLOW_OPEN;
-  // Both Claude-home overrides are cleared so the suite exercises the DEFAULT
-  // resolution — `<dataDir>/claude-home` since #620. `CLAUDE_CONFIG_DIR` matters
-  // as much as `CLAUDE_HOME` now that it is honoured (and a dev box may export
-  // it), or the whole suite would silently run against the ambient home.
-  delete process.env.CLAUDE_HOME;
+  // Cleared so the suite exercises the DEFAULT resolution —
+  // `<dataDir>/claude-home`. A dev box may export `CLAUDE_CONFIG_DIR`, and it is
+  // honoured (#691), so without this the whole suite would silently run against
+  // the ambient home — or, if that home is the user's own `~/.claude`, refuse to
+  // boot at all.
   delete process.env.CLAUDE_CONFIG_DIR;
+  // Same reasoning for the secure-storage scope (#691, `claude.credentials`).
+  // `buildApp` WRITES this variable — it is how the credentials mode reaches the
+  // runtime — so it must start from a known state, and the snapshot above
+  // restores whatever the box had. An operator-set value is honoured over the
+  // config key, so an ambient one would make the mode untestable; a stale ""
+  // from a previous app in this same worker would be indistinguishable from
+  // paddock's own.
+  delete process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR;
+  delete process.env.PADDOCK_CLAUDE_CREDENTIALS;
+  // And the two levers #691 step 4 added, for the same reason: an ambient
+  // PADDOCK_CLAUDE_HOOKS=host on a dev box would make the suite assert the
+  // opposite of the shipped default.
+  delete process.env.PADDOCK_CLAUDE_INSTRUCTIONS;
+  delete process.env.PADDOCK_CLAUDE_HOOKS;
+  // And step 5's, which would otherwise make `buildApp` read the DEV BOX's real
+  // ~/.claude.json — the one file this suite must never depend on the contents of.
+  delete process.env.PADDOCK_CLAUDE_MCP_SERVERS;
   // Hermetic drive mode: this integration harness drives turns through a fake
   // `claude` on PATH, which only the CLI (batch) runtime uses — the SDK/session
   // runtime needs a real login ("Not logged in"). The built-in default is now
@@ -184,6 +223,47 @@ export async function startTestApp(opts: StartOptions = {}): Promise<TestApp> {
     process.env.PADDOCK_CONFIG = configPath;
   } else {
     delete process.env.PADDOCK_CONFIG;
+  }
+
+  // The host's MCP declarations (#691 step 5). `<home>/.claude.json`, not
+  // `<home>/.claude/.claude.json` — that asymmetry is the whole reason the lever
+  // could not be a symlink bridge.
+  if (opts.hostClaudeJson) {
+    await fs.writeFile(
+      path.join(home, ".claude.json"),
+      JSON.stringify(opts.hostClaudeJson, null, 2),
+      "utf8",
+    );
+  }
+
+  // The host's plugins (#700). `<home>/.claude/plugins/`, enumerated from the
+  // CLI's own `installed_plugins.json` registry rather than by scanning — see
+  // `claude-plugins.ts` for why that file is the source of truth.
+  if (opts.hostPlugins) {
+    const root = path.join(home, ".claude", "plugins");
+    const registry: Record<string, unknown[]> = {};
+    for (const [name, decl] of Object.entries(opts.hostPlugins)) {
+      const dir = path.join(root, "cache", "test-marketplace", name, "1.0.0");
+      await fs.mkdir(path.join(dir, ".claude-plugin"), { recursive: true });
+      await fs.writeFile(
+        path.join(dir, ".claude-plugin", "plugin.json"),
+        JSON.stringify({ name }),
+        "utf8",
+      );
+      if (decl.mcpServers) {
+        await fs.writeFile(
+          path.join(dir, ".mcp.json"),
+          JSON.stringify({ mcpServers: decl.mcpServers }),
+          "utf8",
+        );
+      }
+      registry[`${name}@test-marketplace`] = [{ scope: "user", installPath: dir }];
+    }
+    await fs.writeFile(
+      path.join(root, "installed_plugins.json"),
+      JSON.stringify({ version: 2, plugins: registry }, null, 2),
+      "utf8",
+    );
   }
 
   for (const [k, v] of Object.entries(opts.env ?? {})) process.env[k] = v;

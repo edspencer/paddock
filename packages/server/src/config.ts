@@ -29,6 +29,29 @@ import {
   isKnownModel,
 } from "./models.js";
 import { DEFAULT_MAX_SPAWN_DEPTH, isValidMaxSpawnDepth } from "./spawn-capability.js";
+import {
+  type TranscriptsMode,
+  DEFAULT_TRANSCRIPTS_MODE,
+  isKnownTranscriptsMode,
+} from "./transcripts.js";
+import {
+  type CredentialsMode,
+  DEFAULT_CREDENTIALS_MODE,
+  isKnownCredentialsMode,
+} from "./claude-credentials.js";
+import {
+  type InstructionsMode,
+  DEFAULT_INSTRUCTIONS_MODE,
+  isKnownInstructionsMode,
+} from "./claude-instructions.js";
+import { type HooksMode, DEFAULT_HOOKS_MODE, isKnownHooksMode } from "./claude-settings.js";
+import {
+  type McpServersMode,
+  type McpServerDefs,
+  DEFAULT_MCP_SERVERS_MODE,
+  isKnownMcpServersMode,
+} from "./claude-mcp.js";
+import { resolveDeclaredMcpServers, type McpServersConfigFile } from "./mcp-servers.js";
 import { DEFAULT_ENVIRONMENT_PROMPT } from "./environment-prompt.js";
 import { type RecoveryConfig, DEFAULT_RECOVERY } from "./recovery-config.js";
 import { type CurationConfig, DEFAULT_CURATION } from "./curation-config.js";
@@ -105,6 +128,76 @@ export interface BrandConfig {
   accent: string;
 }
 
+/**
+ * What this instance shares with the host machine's Claude Code (#691).
+ *
+ * One key per concern, one vocabulary: `own` is paddock's, isolated inside the
+ * data dir; `host` is this machine's Claude Code. `own` everywhere is the
+ * guarantee an operator should be able to read straight off the config file —
+ * **nothing outside the data dir is read or written**.
+ *
+ * All five levers of #691's sequence now exist. Each is a key here rather than
+ * another meaning welded onto the Claude home, which is how the three incidents
+ * (#682, #683, #689) that motivated this all happened. What remains of #691 is
+ * step 6 — a place for a user to declare their OWN MCP servers, which is a
+ * different question from whose existing ones this instance borrows.
+ */
+export interface ClaudeConfig {
+  /**
+   * Whose session transcripts this instance uses. `own` (default) keeps them in
+   * each project's `.chats/`; `host` shares the user's real
+   * `~/.claude/projects/<encoded-cwd>/` folder live, in both directions.
+   *
+   * Driven by `PADDOCK_CLAUDE_TRANSCRIPTS`, then the `claude.transcripts:` key.
+   * See `transcripts.ts` for the mechanism and why it is not a repointed
+   * `CLAUDE_CONFIG_DIR`.
+   */
+  transcripts: TranscriptsMode;
+  /**
+   * Whose Claude Code login this instance uses. `host` (the default, and the ONE
+   * key that does not default to `own`) also reads this machine's own login — the
+   * macOS Keychain entry on darwin, the user's `~/.claude/.credentials.json`
+   * elsewhere; `own` uses only what is inside paddock's own Claude home.
+   *
+   * Driven by `PADDOCK_CLAUDE_CREDENTIALS`, then the `claude.credentials:` key.
+   * See `claude-credentials.ts` for the mechanism, and for why sharing a login is
+   * the safe default when everything else here isolates.
+   */
+  credentials: CredentialsMode;
+  /**
+   * Whose user-level instructions this instance loads — the user's `~/.claude`
+   * `CLAUDE.md`, `agents/`, `commands/` and `plugins/`. `own` (default) loads
+   * none of them; `host` symlinks them in, which is what every version before
+   * this one did unconditionally.
+   *
+   * Driven by `PADDOCK_CLAUDE_INSTRUCTIONS`, then the `claude.instructions:` key.
+   * See `claude-instructions.ts` — including the case AGAINST this default,
+   * which is real and is kept there rather than deleted.
+   */
+  instructions: InstructionsMode;
+  /**
+   * Whether this instance runs the host machine's Claude Code hooks — shell
+   * commands `~/.claude/settings.json` binds to tool use and session lifecycle.
+   * `own` (default) writes paddock's own `settings.json` carrying every other key
+   * of the user's with `hooks` dropped; `host` symlinks theirs in whole.
+   *
+   * Driven by `PADDOCK_CLAUDE_HOOKS`, then the `claude.hooks:` key. The one lever
+   * here that governs code execution rather than data — see `claude-settings.ts`.
+   */
+  hooks: HooksMode;
+  /**
+   * Whose MCP servers this instance's keepers get. `own` (default) attaches only
+   * the servers paddock itself provides; `host` also attaches the ones declared
+   * in the user's `~/.claude.json` — the top-level `mcpServers` plus any scoped
+   * to a project's own working directory.
+   *
+   * Driven by `PADDOCK_CLAUDE_MCP_SERVERS`, then the `claude.mcpServers:` key.
+   * The one lever whose source is NOT inside `~/.claude` — see `claude-mcp.ts`
+   * for why that made it break silently and separately from the other four.
+   */
+  mcpServers: McpServersMode;
+}
+
 /** OpenAPI / Swagger-UI reference surface config (see PaddockConfig.openapi). */
 export interface OpenApiConfig {
   /** Mount the `/open-api` UI + `/open-api.json` spec. Opt-in — defaults false. */
@@ -140,8 +233,9 @@ export interface PaddockConfig {
   /**
    * Absolute path to the Claude home THIS INSTANCE owns — the directory whose
    * `projects/<encoded-cwd>/` folders hold Claude Code's session transcripts.
-   * Defaults to `<dataDir>/claude-home` (#620); see {@link resolveClaudeHome}
-   * for the full precedence.
+   * `<dataDir>/claude-home` unless an operator relocates it; paddock ALWAYS owns
+   * it (#691) and refuses to start if it resolves to the user's own `~/.claude`.
+   * See {@link resolveClaudeHome}.
    *
    * Resolved ONCE here (#588) rather than re-read from `process.env` at each call
    * site, because it must be the SAME value everywhere: paddock's transcript
@@ -167,19 +261,15 @@ export interface PaddockConfig {
    */
   legacyClaudeHome: string;
   /**
-   * Does paddock OWN {@link claudeHome} — i.e. is it something other than the
-   * user's `~/.claude`?
+   * What this instance shares with the host's Claude Code (#691) — currently
+   * just `transcripts`. See {@link ClaudeConfig}.
    *
-   * The single gate on every mutating transcript operation (#620). Paddock's
-   * self-healing relocation is allowed to migrate a stray real transcript
-   * directory into `.chats/` inside a home it owns, because that directory is
-   * its own doing. Inside the user's home it is somebody else's data — a
-   * `claude` CLI session run in a directory paddock happens to also manage — and
-   * moving it is the destructive behaviour this flag exists to prevent.
-   *
-   * Derived, not configured: `resolve(claudeHome) !== resolve(legacyClaudeHome)`.
+   * Replaces the derived `ownsClaudeHome` flag, which was the single lever every
+   * distinct concern hung off. Paddock now always owns its home, so "may we
+   * write here?" has one answer and the question that actually varies — whose
+   * transcripts these are — is asked directly.
    */
-  ownsClaudeHome: boolean;
+  claude: ClaudeConfig;
   /** Provider-agnostic user-authentication config (see AUTH.md). */
   auth: AuthConfig;
   /** Voice-dictation (Whisper) capability (per-instance; default off). */
@@ -330,6 +420,28 @@ export interface PaddockConfig {
    */
   managementApiDiagnostics: { errors: string[]; warnings: string[] };
   /**
+   * MCP servers this instance declares for itself (#691 step 6), resolved from
+   * the top-level `mcpServers:` block with every `env:VAR_NAME` reference read
+   * from the environment. Every project's keeper is attached all of them, and
+   * they win a name collision against anything inherited via
+   * `claude.mcpServers: host`.
+   *
+   * **Holds resolved secret material** — an MCP server's `env` is where a stdio
+   * server's API token lives — exactly as {@link managementApi}'s client tokens
+   * do. It must never be serialised into an API response; `instance-config.ts`
+   * publishes only the fields in its own `FIELDS` table, and this is
+   * deliberately not one of them.
+   */
+  mcpServers: McpServerDefs;
+  /**
+   * Operator-facing problems found while resolving {@link mcpServers}: a
+   * declaration paddock cannot carry (`errors`, server dropped) or one whose
+   * `env:` reference did not resolve / whose secret is inlined (`warnings`).
+   * Carried, not logged, for the same reason as
+   * {@link managementApiDiagnostics}. Never contains a value from the block.
+   */
+  mcpServersDiagnostics: { errors: string[]; warnings: string[] };
+  /**
    * Instance default for the hook-management MCP (Epic G / G5, GG-4) — the
    * `mcp__paddock_manage__{list,set,remove}_hook` tools that let a project agent
    * declare/edit/delete its own event hooks. A sibling of {@link selfMcpWriteEnabled}:
@@ -424,8 +536,31 @@ export interface PaddockConfigFile {
   stateDir?: string;
   herdctlConfigPath?: string;
   webDist?: string;
-  /** Claude home override; beneath `CLAUDE_HOME`/`CLAUDE_CONFIG_DIR` (#620). */
+  /** Where paddock's OWN Claude home lives; beneath `CLAUDE_CONFIG_DIR` (#691). */
   claudeHome?: string;
+  /**
+   * What this instance shares with the host's Claude Code (#691). Each key takes
+   * `own` or `host`; a matching `PADDOCK_CLAUDE_*` env var still overrides it
+   * (file < env). Absent ⇒ fully isolated.
+   */
+  claude?: {
+    transcripts?: string;
+    credentials?: string;
+    instructions?: string;
+    hooks?: string;
+    mcpServers?: string;
+  };
+  /**
+   * MCP servers this instance declares for ITSELF (#691 step 6) — a sibling of
+   * `claude:`, not a member of it, because it answers a different question:
+   * `claude.mcpServers` borrows whatever this machine already has, while this
+   * says what paddock should have regardless.
+   *
+   * File-only, like `managementApi`: a map of servers does not express as a
+   * scalar env var. Token material belongs in the environment and is referenced
+   * as `env:VAR_NAME` from any string here — see `mcp-servers.ts`.
+   */
+  mcpServers?: McpServersConfigFile;
   auth?: {
     mode?: string;
     userHeader?: string;
@@ -833,10 +968,7 @@ export function loadPaddockConfig(): PaddockConfig {
     webDist: abs(envOr("PADDOCK_WEB_DIST", fileOr(file.webDist, defaultWebDist))),
     claudeHome: resolvedClaudeHome,
     legacyClaudeHome,
-    // Paddock owns any home that is not the user's own `~/.claude` (#620) —
-    // including one an operator pointed it at explicitly. The user's home is the
-    // only one whose contents belong to somebody else.
-    ownsClaudeHome: path.resolve(resolvedClaudeHome) !== path.resolve(legacyClaudeHome),
+    claude: loadClaudeConfig(file.claude),
     auth: loadAuthConfig(file.auth),
     transcription: loadTranscriptionConfig(file.transcription),
     brand: loadBrandConfig(file.brand),
@@ -863,6 +995,13 @@ export function loadPaddockConfig(): PaddockConfig {
         process.env,
       );
       return { managementApi: config, managementApiDiagnostics: { errors, warnings } };
+    })(),
+    ...(() => {
+      // #691 step 6: file-only, and resolved against the real environment because
+      // any string in the block may be an `env:VAR_NAME` reference. Diagnostics
+      // ride along for app.ts to log — they never carry a resolved value.
+      const { servers, errors, warnings } = resolveDeclaredMcpServers(file.mcpServers, process.env);
+      return { mcpServers: servers, mcpServersDiagnostics: { errors, warnings } };
     })(),
     hooksMcpEnabled: loadHooksMcpEnabled(file.hooksMcpEnabled),
     recovery: loadRecoveryConfig(file.recovery),
@@ -1245,35 +1384,91 @@ export function userClaudeHome(): string {
 }
 
 /**
- * Resolve the Claude home paddock runs its agents against.
+ * Resolve what this instance shares with the host's Claude Code (#691).
+ *
+ * Precedence is the file's usual env > file > default. An unrecognised value
+ * falls back to the default rather than failing the boot — the same rule every
+ * other enum here follows (`driveMode`, whisper `mode`). For `transcripts` that
+ * is also the safe direction: a typo isolates rather than silently sharing the
+ * user's files. For `credentials` the default is `host` and a typo therefore
+ * falls back to sharing — deliberately, because the failure it avoids (#683: an
+ * instance that boots clean and fails every turn) is the worse one, and reading a
+ * login risks no file of the user's. See `claude-credentials.ts`.
+ *
+ * `hooks` is the one where falling back on a typo is load-bearing in the other
+ * direction: `PADDOCK_CLAUDE_HOOKS=hots` isolates rather than executing the
+ * host's shell commands, which is the only acceptable way for a security lever
+ * to misread its input. `mcpServers` follows the same direction for a weaker
+ * reason — an MCP server is a process paddock spawns, so a typo that attaches
+ * nothing is better than one that attaches the user's whole set unasked.
+ */
+function loadClaudeConfig(file: PaddockConfigFile["claude"] = {}): ClaudeConfig {
+  const transcripts = (
+    envOpt("PADDOCK_CLAUDE_TRANSCRIPTS") ?? fileOpt(file.transcripts)
+  )?.toLowerCase();
+  const credentials = (
+    envOpt("PADDOCK_CLAUDE_CREDENTIALS") ?? fileOpt(file.credentials)
+  )?.toLowerCase();
+  const instructions = (
+    envOpt("PADDOCK_CLAUDE_INSTRUCTIONS") ?? fileOpt(file.instructions)
+  )?.toLowerCase();
+  const hooks = (envOpt("PADDOCK_CLAUDE_HOOKS") ?? fileOpt(file.hooks))?.toLowerCase();
+  const mcpServers = (
+    envOpt("PADDOCK_CLAUDE_MCP_SERVERS") ?? fileOpt(file.mcpServers)
+  )?.toLowerCase();
+  return {
+    transcripts:
+      transcripts && isKnownTranscriptsMode(transcripts) ? transcripts : DEFAULT_TRANSCRIPTS_MODE,
+    credentials:
+      credentials && isKnownCredentialsMode(credentials) ? credentials : DEFAULT_CREDENTIALS_MODE,
+    instructions:
+      instructions && isKnownInstructionsMode(instructions)
+        ? instructions
+        : DEFAULT_INSTRUCTIONS_MODE,
+    hooks: hooks && isKnownHooksMode(hooks) ? hooks : DEFAULT_HOOKS_MODE,
+    mcpServers:
+      mcpServers && isKnownMcpServersMode(mcpServers) ? mcpServers : DEFAULT_MCP_SERVERS_MODE,
+  };
+}
+
+/**
+ * Resolve where paddock's OWN Claude home lives.
  *
  * Precedence, highest first:
  *
- * 1. **`CLAUDE_HOME`** — paddock's own long-standing override. Setting it to
- *    `$HOME/.claude` restores the pre-#620 behaviour exactly, which is the
- *    documented escape hatch if the relocation causes trouble.
- * 2. **`CLAUDE_CONFIG_DIR`** — the variable *Claude Code itself* resolves its
+ * 1. **`CLAUDE_CONFIG_DIR`** — the variable *Claude Code itself* resolves its
  *    home from. Honouring it is load-bearing, not a courtesy: herdctl
  *    deliberately refuses to clobber an operator-set `CLAUDE_CONFIG_DIR`
  *    (herdctl#423), so if paddock picked a different home the SDK would write
  *    transcripts to one tree while herdctl read from another — the exact
  *    split-brain #588 fixed. Deferring to it makes that state unreachable.
- * 3. A `claudeHome:` key in the instance config file.
- * 4. **`<dataDir>/claude-home`** — the default since #620.
+ * 2. A `claudeHome:` key in the instance config file.
+ * 3. **`<dataDir>/claude-home`** — the default.
  *
- * On the default, and why it changed: paddock already nests herdctl's whole
- * state dir, the projects tree and the generated `herdctl.yaml` under its data
- * dir. Transcripts were the one exception, reached by planting symlinks in the
- * user's home — not a design choice but a constraint, because until
- * herdctl#423 nothing set `CLAUDE_CONFIG_DIR` and the SDK wrote to `~/.claude`
- * no matter what paddock configured. With that gone, owning the home makes the
- * data dir relocatable as a unit, leaves `~/.claude` alone, and (because there
- * is no longer a `.claude` path component) unblocks agent memory writes, which
- * the harness refuses for any path containing `.claude`.
+ * ## Paddock always OWNS this home, and the one value it refuses
+ *
+ * `CLAUDE_HOME` used to sit above all of this, and setting it to `~/.claude` was
+ * the documented escape hatch back to the pre-#620 layout. It is gone (#691),
+ * because pointing the home at the user's own directory is what welded five
+ * unrelated concerns to one lever: it decided whose transcripts were at risk,
+ * which keychain entry was visible, where agent memory landed, and whether
+ * delete meant delete. Those are now separate keys (`claude:`), so the home no
+ * longer needs to move for any of them.
+ *
+ * Which leaves exactly one value that must not be allowed through, from any
+ * source: the user's own `~/.claude`. It re-welds the lever, and it re-breaks
+ * agent memory (#690) — the memory dir is `<claudeHome>/projects/<enc>/memory`,
+ * and the agent harness refuses to write to any path with a `.claude` component.
+ * So it REFUSES TO START rather than silently degrading, which is the same
+ * fail-closed shape as the bind-safety guard. `CLAUDE_CONFIG_DIR` cannot simply
+ * be ignored instead: it is Claude Code's own variable, and disagreeing with an
+ * operator-set value is the herdctl#423 split-brain again.
  *
  * NOT canonical()-ed: this exact string is what herdctl hands Claude Code as
  * `CLAUDE_CONFIG_DIR`, and canonicalising would silently diverge from the
  * literal path the two of them encode into `<home>/projects/<encoded-cwd>`.
+ * The refusal check DOES resolve both sides, so a symlinked or trailing-slash
+ * spelling of `~/.claude` cannot slip past it.
  *
  * This is the RESOLVER, not the accessor. It is read once by
  * {@link loadPaddockConfig} into {@link PaddockConfig.claudeHome}; runtime code
@@ -1281,10 +1476,45 @@ export function userClaudeHome(): string {
  * engine can never end up resolving two different homes (#588).
  */
 export function resolveClaudeHome(dataDir: string, fromFile?: string): string {
-  const env = envOpt("CLAUDE_HOME") ?? envOpt("CLAUDE_CONFIG_DIR");
-  if (env !== undefined) return abs(env);
-  if (fromFile !== undefined && fromFile !== "") return abs(fromFile);
-  return path.join(dataDir, DEFAULT_CLAUDE_HOME_DIRNAME);
+  const env = envOpt("CLAUDE_CONFIG_DIR");
+  const home =
+    env !== undefined
+      ? abs(env)
+      : fromFile !== undefined && fromFile !== ""
+        ? abs(fromFile)
+        : path.join(dataDir, DEFAULT_CLAUDE_HOME_DIRNAME);
+  const refusal = claudeHomeRefusal(home, userClaudeHome(), env !== undefined);
+  if (refusal !== undefined) throw new Error(refusal);
+  return home;
+}
+
+/**
+ * Why `home` is unusable as paddock's own Claude home, or `undefined` if it is
+ * fine. Pure, so the whole decision is testable without touching `$HOME`.
+ *
+ * `fromEnv` only changes which fix is named first — the refusal itself is the
+ * same whichever layer supplied the value.
+ */
+export function claudeHomeRefusal(
+  home: string,
+  userHome: string,
+  fromEnv: boolean,
+): string | undefined {
+  if (path.resolve(home) !== path.resolve(userHome)) return undefined;
+  return (
+    `refusing to start: the Claude home resolves to your own ${userHome}, which paddock ` +
+    `must not run as its own home. It re-couples everything paddock keeps separate — ` +
+    `whose transcripts a delete removes, which login is visible, where agent memory is ` +
+    `written (agents cannot write under a \`.claude\` path at all, #690). ` +
+    (fromEnv
+      ? `CLAUDE_CONFIG_DIR is what points it there: unset it, or point it at a directory ` +
+        `of paddock's own. `
+      : `The \`claudeHome:\` key in paddock.config.yaml points it there: remove it, or name a ` +
+        `directory of paddock's own. `) +
+    `To SHARE your Claude Code transcripts, set \`claude: { transcripts: host }\` (or ` +
+    `PADDOCK_CLAUDE_TRANSCRIPTS=host) — that shares the files themselves and keeps ` +
+    `paddock's home where it belongs.`
+  );
 }
 
 /** Directory name of paddock's own Claude home inside the data dir (#620). */

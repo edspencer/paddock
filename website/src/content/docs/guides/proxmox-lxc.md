@@ -16,6 +16,10 @@ Paddock in an LXC, both backed by real recipes in the
   Paddock directly on the box with no Docker, provisioned as infrastructure-as-code
   (OpenTofu + Ansible).
 
+Both are for an instance you intend to keep. If you just want to see Paddock working
+inside a container you already have, `npx @edspencer/paddock` needs neither path —
+see [Getting started](/getting-started/#try-it-with-npx).
+
 Both end the same way: **behind a reverse proxy with authentication** — Paddock has
 no login of its own. Don't skip [that step](#put-it-behind-auth).
 

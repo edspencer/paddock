@@ -4,6 +4,17 @@ import userEvent from "@testing-library/user-event";
 import { SettingsPane } from "./SettingsPane";
 import { makeProject, makeModelsResponse } from "../test/factories";
 
+type ModelsResponse = ReturnType<typeof makeModelsResponse>;
+
+/** A promise resolved by hand, so the pre-fetch render is genuinely observable. */
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
 const updateProject = vi.fn();
 const getModels = vi.fn();
 const promoteProject = vi.fn();
@@ -196,6 +207,71 @@ describe("SettingsPane", () => {
     );
   });
 
+  it("claims nothing about the inherited defaults until /api/models resolves (issue #587)", async () => {
+    // Hold the meta fetch open so the pre-resolution render is observable rather
+    // than a couple of frames we'd have to race.
+    const meta = deferred<ModelsResponse>();
+    getModels.mockReturnValue(meta.promise);
+    // An instance whose real drive-mode default is `session` — the seeded literal
+    // "batch" was a false claim about this box's configuration.
+    const resolved = makeModelsResponse({ driveModeDefault: "session" });
+
+    render(<SettingsPane project={makeProject({ slug: "p1" })} onSaved={vi.fn()} />);
+
+    // --- Pre-fetch: neutral placeholders, no invented values. ---------------
+    const drive = screen.getByLabelText("Drive mode") as HTMLSelectElement;
+    expect(drive.options[0].value).toBe("");
+    expect(drive.options[0].textContent).toBe("Global default (loading…)");
+    expect(drive.options[0].textContent).not.toMatch(/batch/i);
+    // The helper prose asserts the same default, so it must not claim one either.
+    expect(screen.queryByText(/Inheriting the box-wide default/i)).not.toBeInTheDocument();
+    const driveHint = screen.getByText(/Loading the box-wide drive-mode default…/);
+    expect(driveHint.textContent).not.toMatch(/batch/i);
+
+    const depth = screen.getByLabelText("Max spawn depth") as HTMLSelectElement;
+    expect(depth.options[0].value).toBe("");
+    expect(depth.options[0].textContent).toBe("Instance default (loading…)");
+    expect(screen.queryByText(/Inheriting the instance default:/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/Loading the instance max-spawn-depth default…/)).toBeInTheDocument();
+
+    expect(screen.getByLabelText("OVERVIEW.md token budget")).toHaveAttribute(
+      "placeholder",
+      "Instance default (loading…)",
+    );
+    expect(screen.getByLabelText("CHANGELOG.md token budget")).toHaveAttribute(
+      "placeholder",
+      "Instance default (loading…)",
+    );
+    expect(screen.getByLabelText("CLAUDE.md token budget")).toHaveAttribute(
+      "placeholder",
+      "Instance default (loading…)",
+    );
+    expect(screen.queryByText(/Inheriting the instance defaults:/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/Loading the instance curation budgets…/)).toBeInTheDocument();
+
+    // --- Post-fetch: the real instance values, everywhere. ------------------
+    meta.resolve(resolved);
+    await screen.findByRole("option", { name: "Global default (Session)" });
+
+    expect(drive.options[0].textContent).toBe("Global default (Session)");
+    expect(screen.getByText(/Inheriting the box-wide default/i)).toBeInTheDocument();
+    expect(depth.options[0].textContent).toBe("Instance default (1)");
+    expect(screen.getByText(/Inheriting the instance default:/i)).toBeInTheDocument();
+    expect(screen.getByLabelText("OVERVIEW.md token budget")).toHaveAttribute(
+      "placeholder",
+      "Instance default (2000)",
+    );
+    expect(screen.getByLabelText("CHANGELOG.md token budget")).toHaveAttribute(
+      "placeholder",
+      "Instance default (8000)",
+    );
+    expect(screen.getByLabelText("CLAUDE.md token budget")).toHaveAttribute(
+      "placeholder",
+      "Instance default (6000)",
+    );
+    expect(screen.getByText(/Inheriting the instance defaults:/i)).toBeInTheDocument();
+  });
+
   it("maxSpawnDepth: sets a per-project override and sends it in the patch (issue #262)", async () => {
     const project = makeProject({ slug: "p1" });
     render(<SettingsPane project={project} onSaved={vi.fn()} />);
@@ -295,7 +371,7 @@ describe("SettingsPane", () => {
   // --- Repository backing / promotion (issue #213) -----------------------
 
   it("shows a promote affordance for a notebook project", () => {
-    const project = makeProject({ slug: "p1", repoBacked: false });
+    const project = makeProject({ slug: "p1", managed: true });
     render(<SettingsPane project={project} onSaved={vi.fn()} />);
     expect(screen.getByText("Repository backing")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /promote to repo-backed/i })).toBeDisabled();
@@ -307,7 +383,7 @@ describe("SettingsPane", () => {
   });
 
   it("flags an obviously-bad repo URL and keeps promote disabled", () => {
-    const project = makeProject({ slug: "p1", repoBacked: false });
+    const project = makeProject({ slug: "p1", managed: true });
     render(<SettingsPane project={project} onSaved={vi.fn()} />);
     fireEvent.change(screen.getByLabelText("Git repository URL"), {
       target: { value: "not a url" },
@@ -317,11 +393,11 @@ describe("SettingsPane", () => {
   });
 
   it("promotes through a two-step confirm and reports the updated project", async () => {
-    const project = makeProject({ slug: "p1", name: "Note Book", repoBacked: false });
+    const project = makeProject({ slug: "p1", name: "Note Book", managed: true });
     const promoted = makeProject({
       slug: "p1",
       name: "Note Book",
-      repoBacked: true,
+      managed: false,
       repo: "https://github.com/owner/repo.git",
       workingDir: "/data/projects/p1/repo",
     });
@@ -346,7 +422,7 @@ describe("SettingsPane", () => {
   it("surfaces a promote API error without calling onSaved", async () => {
     const { ApiError } = await vi.importActual<typeof import("../lib/api")>("../lib/api");
     promoteProject.mockRejectedValueOnce(new ApiError("git clone failed", 400));
-    const project = makeProject({ slug: "p1", repoBacked: false });
+    const project = makeProject({ slug: "p1", managed: true });
     const onSaved = vi.fn();
     render(<SettingsPane project={project} onSaved={onSaved} />);
     fireEvent.change(screen.getByLabelText("Git repository URL"), {
@@ -358,15 +434,15 @@ describe("SettingsPane", () => {
     expect(onSaved).not.toHaveBeenCalled();
   });
 
-  it("shows the backing read-only for an already repo-backed project (no promote form)", () => {
+  it("shows the backing read-only for an already-backed project (no promote form)", () => {
     const project = makeProject({
       slug: "p1",
-      repoBacked: true,
+      managed: false,
       repo: "https://github.com/owner/repo.git",
       workingDir: "/data/projects/p1/repo",
     });
     render(<SettingsPane project={project} onSaved={vi.fn()} />);
-    expect(screen.getByText("Repository backing")).toBeInTheDocument();
+    expect(screen.getByText("Backing")).toBeInTheDocument();
     expect(screen.getByText("https://github.com/owner/repo.git")).toBeInTheDocument();
     expect(screen.getByText("/data/projects/p1/repo")).toBeInTheDocument();
     expect(screen.queryByLabelText("Git repository URL")).not.toBeInTheDocument();

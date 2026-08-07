@@ -88,6 +88,8 @@ import {
   buildTriggerConfig,
   ensureConfigFile as writeBootConfigFile,
 } from "./herdctl-agent-config.js";
+import { EMPTY_MCP_SOURCES, type McpSources } from "./claude-mcp.js";
+import { EMPTY_HOST_PLUGINS, type HostPluginSource } from "./claude-plugins.js";
 import * as jobs from "./herdctl-jobs.js";
 import { JobsDirIndex } from "./herdctl-jobs-index.js";
 import { AdoptableIndex, type AdoptableSummary, type FilterReason } from "./adoptable.js";
@@ -102,6 +104,21 @@ import { AdoptableIndex, type AdoptableSummary, type FilterReason } from "./adop
 export type AdoptSkipped =
   | AdoptSkippedSession
   | { sessionId: string; reason: FilterReason; detail?: string };
+
+/**
+ * Outcome of deleting a chat (#689).
+ *
+ * Two fields rather than one boolean because "the transcript is gone" and "the
+ * chat is no longer listed here" stopped being the same thing: in a home paddock
+ * does not own, the file belongs to the user's terminal `claude` and is released
+ * rather than removed. See {@link HerdctlService.deleteSession}.
+ */
+export interface ChatDeletion {
+  /** A transcript file was unlinked. False when none existed, or when retained. */
+  removed: boolean;
+  /** The transcript was deliberately left on disk because it is not paddock's. */
+  retained: boolean;
+}
 
 /** Options passed through to a streamed trigger. */
 export interface ChatTurnOptions {
@@ -339,17 +356,43 @@ export class HerdctlService {
     return (this.jobsIndexOrNull ??= new JobsDirIndex(this.cfg.stateDir));
   }
 
-  constructor(private readonly cfg: PaddockConfig) {}
+  /**
+   * The external MCP servers every keeper gets: the user's own under
+   * `claude.mcpServers: host` (#691 step 5, read once at boot by
+   * `loadHostMcpSource`) plus the ones this instance declares in its own
+   * `mcpServers:` block (step 6, resolved during config load). Both are merged
+   * into one value by `buildApp` and handed in here.
+   *
+   * A constructor argument rather than something this service reads for itself,
+   * for the same reason `ensureClaudeHome` runs in `buildApp`: the read has
+   * notices an operator needs to see in the boot log, and it must not happen at
+   * all under `mcpServers: own`. Defaults to empty so every existing caller —
+   * including the several tests that construct this with `{} as PaddockConfig` —
+   * keeps meaning "isolated".
+   *
+   * `hostPlugins` is the host's Claude Code plugins (#700), read at boot by
+   * `loadHostPlugins` under `claude.instructions: host`, and handed in for
+   * exactly the same reasons.
+   */
+  constructor(
+    private readonly cfg: PaddockConfig,
+    private readonly mcpSources: McpSources = EMPTY_MCP_SOURCES,
+    private readonly hostPlugins: HostPluginSource = EMPTY_HOST_PLUGINS,
+  ) {}
 
   /**
-   * The Claude home every transcript symlink is planted in, plus whether paddock
-   * owns it (#620). One accessor, so no call site can quietly take a default and
-   * land in a different home than the FleetManager was built with — the bug
-   * `ensureSweeperHome` had, which put the sweeper's symlink in `~/.claude` while
-   * every other agent's went to the configured home.
+   * The Claude home every transcript symlink is planted in, plus where those
+   * symlinks point (#620, #691). One accessor, so no call site can quietly take
+   * a default and land in a different home than the FleetManager was built with
+   * — the bug `ensureSweeperHome` had, which put the sweeper's symlink in
+   * `~/.claude` while every other agent's went to the configured home.
    */
   private get claudeHomeTarget(): ClaudeHomeTarget {
-    return { path: this.cfg.claudeHome, owned: this.cfg.ownsClaudeHome };
+    return {
+      path: this.cfg.claudeHome,
+      transcripts: this.cfg.claude.transcripts,
+      userHome: this.cfg.legacyClaudeHome,
+    };
   }
 
   /**
@@ -428,10 +471,10 @@ export class HerdctlService {
       allowScheduleMutation: this.cfg.scheduleMutationEnabled,
       // Hand the engine the SAME Claude home paddock resolved (#588). Omitting
       // it makes the engine fall back to `os.homedir()/.claude` while paddock
-      // honours `CLAUDE_HOME`, so discovery, adoption and paddock's `.chats/`
-      // symlinks would resolve against different directories — sessions list
-      // from one home and open empty from the other. Masked whenever the two
-      // coincide, which is why it must be explicit.
+      // uses its own, so discovery, adoption and paddock's transcript symlinks
+      // would resolve against different directories — sessions list from one
+      // home and open empty from the other. Masked whenever the two coincide,
+      // which is why it must be explicit.
       claudeHomePath: this.cfg.claudeHome,
     });
     await this.fleet.initialize();
@@ -928,14 +971,45 @@ export class HerdctlService {
   }
 
   /**
-   * Delete a single chat (session) by agent name + session id. The FleetManager
-   * resolves the agent's working directory, removes the transcript JSONL, and
-   * invalidates the discovery cache so the list reflects it immediately.
-   * Validates the sessionId (rejects path traversal). Returns true if a
-   * transcript file was removed, false if none existed.
+   * Delete a single chat (session) by agent name + session id.
+   *
+   * Under `claude.transcripts: own`, this removes the transcript JSONL: the file
+   * lives in paddock's own tree (via the project's `.chats/` symlink), so it is
+   * ours to delete. The FleetManager resolves the agent's working directory,
+   * unlinks the file, validates the sessionId against traversal, and invalidates
+   * the discovery cache so the list reflects it immediately.
+   *
+   * Under `claude.transcripts: host`, it **releases the session instead** (#689).
+   * There is no copy to delete there: the symlink points OUT at
+   * `~/.claude/projects/<encoded-cwd>/`, so the transcript the agent reads and
+   * writes is the user's own — for an adopted chat, literally their terminal
+   * history. `rm`-ing it destroys history paddock never owned, which is the same
+   * class of mistake #682 was, pointed the other way: that one claimed where
+   * future sessions get written, this one deletes the past ones.
+   *
+   * `undoImport` already draws exactly this line ("A session adopted in place has
+   * no copy, and its transcript is the user's own — removing it would destroy
+   * history rather than restore it"); the invariant simply never reached here.
+   *
+   * The discriminator changed with #691 and the meaning did not. It used to be
+   * `ownsClaudeHome` — "is this home ours?" — which is now always true; the
+   * question that survives is "is this transcript ours?", and that is exactly
+   * what `transcripts` says. Deliberately NOT narrowed to "only adopted chats":
+   * under `host` a chat paddock started itself is in the user's tree too, and
+   * distinguishing them well enough to risk an `rm` is not worth the failure mode
+   * of getting it wrong. The cost is a transcript left behind, which the caller
+   * is told about; the alternative cost is somebody's history.
+   *
+   * The chat leaves paddock's list either way — which is what the user asked for
+   * — so `retained` is how a caller tells "gone" from "no longer shown here".
    */
-  async deleteSession(agentName: string, sessionId: string): Promise<boolean> {
-    return this.manager.deleteSession(agentName, sessionId);
+  async deleteSession(agentName: string, sessionId: string): Promise<ChatDeletion> {
+    if (this.cfg.claude.transcripts === "own") {
+      return { removed: await this.manager.deleteSession(agentName, sessionId), retained: false };
+    }
+    await this.manager.unadoptSession(agentName, sessionId).catch(() => undefined);
+    this.invalidateSessions(agentName);
+    return { removed: false, retained: true };
   }
 
   /**
@@ -1165,6 +1239,11 @@ export class HerdctlService {
    * compacts the real chat history. SDK messages stream via `onMessage` (same
    * shape as {@link chat}); resolves when the turn completes, then closes the
    * session. Returns the resolved session id.
+   *
+   * Like {@link chatSession}, the session is registered in {@link liveSessions}
+   * under a synthetic turn id handed back via `onJobCreated`, so Stop can
+   * interrupt a long-running command (#632). The session is still NOT managed by
+   * the reaper — teardown remains this method's own `finally`.
    */
   async runCommand(
     agentName: string,
@@ -1172,9 +1251,12 @@ export class HerdctlService {
       command: string;
       resume?: string | null;
       onMessage?: (msg: SDKMessage) => void | Promise<void>;
+      /** Receives the synthetic turn id Stop cancels this command turn by (#632). */
+      onJobCreated?: (jobId: string) => void;
     },
   ): Promise<{ sessionId: string | null }> {
     const isResume = typeof opts.resume === "string";
+    const turnId = randomUUID();
     const session = await this.manager.openChatSession(agentName, {
       resume: opts.resume,
       // Stream the command's assistant text token-by-token (paddock#315).
@@ -1183,6 +1265,14 @@ export class HerdctlService {
       // turn, so it gets the same environment context (#635).
       systemPromptAppend: this.environmentPromptAppend,
     });
+    // Register the live session under the synthetic turn id exactly as
+    // {@link chatSession} does, so `chat:cancel` routes to `session.interrupt()`
+    // (#632) — without this there is nothing for {@link cancel} to resolve and
+    // Stop is a no-op for the whole command. Removed in the same `finally` that
+    // closes the session, so the entry never outlives the turn.
+    this.liveSessions.set(turnId, session);
+    // Surface the synthetic id as the turn's jobId so the client renders Stop.
+    opts.onJobCreated?.(turnId);
     let sessionId: string | null = isResume ? (opts.resume as string) : null;
 
     try {
@@ -1211,6 +1301,9 @@ export class HerdctlService {
     } catch {
       // Stream error — fall through and let the caller surface completion.
     } finally {
+      // Deregister BEFORE closing, so a Stop racing teardown can't reach a
+      // session that is already shutting down.
+      this.liveSessions.delete(turnId);
       await session.close();
     }
     return { sessionId };
@@ -1655,7 +1748,13 @@ export class HerdctlService {
     project: Project,
     modelOverride?: string,
   ): Record<string, unknown> & { name: string } {
-    return buildAgentConfig(this.cfg, project, modelOverride);
+    return buildAgentConfig(
+      this.cfg,
+      project,
+      modelOverride,
+      this.mcpSources,
+      this.hostPlugins,
+    );
   }
 
   private sweeperAgentConfig(project: Project): Record<string, unknown> & { name: string } {

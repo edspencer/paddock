@@ -343,21 +343,27 @@ Present only when `PADDOCK_SELF_MCP_PROJECTS` is on, on top of write and read.
 ### `create_project`
 
 Provision a whole new project — its directory, `project.yaml`, seeded notes files
-and, when repo-backed, a cloned nested checkout — and register its agent.
+and, when a `repo` is given, a cloned nested checkout — and register its agent.
 
 | Argument | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `name` | string | **yes** | Display name. |
 | `slug` | string | no | Kebab-case (lowercase `a-z`, `0-9`, single hyphens). Omit to derive it from `name`. |
-| `repo` | string | no | A git URL (`https://`, `git://`, `ssh://`, or `git@host:owner/repo`). Supplying it makes the project **repo-backed**: the repo is cloned into a nested checkout that becomes the agent's working directory. Omit for a **notebook** project. |
+| `repo` | string | no | A git URL (`https://`, `git://`, `ssh://`, or `git@host:owner/repo`). Supplying it makes the project **unmanaged** and clones the repo into a nested checkout that becomes the agent's working directory. Omit for a **managed** notes project. |
 | `summary` | string | no | One-line description. |
 | `area` | string | no | The grouping shown in the sidebar. |
 | `status` | enum | no | One of `idea`, `active`, `paused`, `blocked`, `done`, `abandoned`. Default `active`. |
 
 **Returns**
-`{ created: true, slug, name, dir, workingDir, repoBacked, repo?, keeperRegistered }`.
+`{ created: true, slug, name, dir, workingDir, managed, repo?, path?, keeperRegistered }`.
 `dir` is the project's metadata directory; `workingDir` is the agent's cwd (the
-nested checkout when repo-backed, otherwise `dir`).
+nested checkout when a `repo` was cloned, otherwise `dir`). `managed` says whether
+Paddock curates the project's own files — it replaced the older `repoBacked` flag,
+which conflated that question with whether a git repo was involved (see
+[Projects](/concepts/projects/#two-axes-not-three-types)).
+
+This tool does not expose `path`; an agent cannot point a new project at an
+arbitrary directory on the box. Create those from the UI or the REST API.
 
 Two things this tool guarantees, and one it doesn't:
 
@@ -375,9 +381,10 @@ Two things this tool guarantees, and one it doesn't:
 
 ### `promote_project`
 
-Turn an **existing notebook project into a repo-backed one, in place** — for when
-a notes-only project has grown into (or was always meant to be) a codebase, and
-you would otherwise create a second project and abandon the first.
+Turn an **existing managed (notebook) project into an unmanaged, repo-backed one,
+in place** — for when a notes-only project has grown into (or was always meant to
+be) a codebase, and you would otherwise create a second project and abandon the
+first.
 
 | Argument | Type | Required | Notes |
 | --- | --- | --- | --- |
@@ -385,16 +392,18 @@ you would otherwise create a second project and abandon the first.
 | `repo` | string | **yes** | A git URL (`https://`, `git://`, `ssh://`, or `git@host:owner/repo`). |
 
 **Returns**
-`{ promoted: true, slug, name, dir, workingDir, repoBacked, repo, agentRegistered }`
+`{ promoted: true, slug, name, dir, workingDir, managed, repo, agentRegistered }`
 — the same report `create_project` returns, because a promoted project ends up in
-exactly the state a repo-backed `create_project` would have produced.
+exactly the state a `repo:`-carrying `create_project` would have produced.
+`managed` is always `false` on a successful promote: crossing that axis is what
+promoting now means (#206 replaced the older `repoBacked` flag).
 
 - **It is the same code path as `POST /api/projects/:slug/promote`** — the same
   store `promote` followed by the same agent re-registration, in the same order.
 - **Existing chats are kept.** The project's transcripts already live in its
   `.chats/` store; re-registering the agent re-symlinks the *new* working
   directory at that same store, so every chat stays listed and resumable.
-- **Only ever notebook → repo-backed.** A project that is already repo-backed is
+- **Only ever managed → unmanaged.** A project that is already unmanaged is
   refused, as is the root workspace. There is no MCP verb to undo a promotion.
 - **A bad or unreachable repo URL leaves the notebook untouched.** The clone runs
   before anything is mutated, and a failure rolls back just the checkout, so it is
@@ -506,6 +515,15 @@ and is not affected by any flag on this page.
 It is documented in
 **[Sending files & images](/using/sending-files-and-images/)**; nothing about it
 is restated here.
+
+:::caution[`paddock` and `paddock_manage` are reserved names]
+Both are materialised under the `mcp__<name>__*` tool namespace, and two servers
+claiming one namespace has no defined winner. So a server you
+[declare yourself](/configuration/config-file/#mcpservers--the-servers-this-instance-declares-itself)
+under either name is **refused outright** — an error naming the clash, with that
+server not attached, rather than a silent shadowing. The rest of the block still
+loads and the instance still starts. Pick any other key.
+:::
 
 ## The in-process surface vs. the external `/mcp` API
 

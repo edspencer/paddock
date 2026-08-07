@@ -1,14 +1,90 @@
 ---
 title: Getting started
-description: Run Paddock with Docker or from source, and connect a Claude token.
+description: Try Paddock in one command with npx, or run it with Docker or from source.
 ---
 
-Paddock is a single process per data root + port. The fastest way to try it is the
-published Docker image; you can also run it from source for development.
+Paddock is a single process per data root + port. The fastest way to try it is
+**`npx`** — nothing to install, nothing to clone. For an always-on instance on a server,
+use the published Docker image; to hack on Paddock itself, run it from source.
+
+## Try it with npx
+
+If you have Node 22+, you can run Paddock against your **existing Claude Code history**
+in one command. `cd` into a directory where you've been using Claude Code recently:
+
+```bash
+cd ~/code/some-project
+npx @edspencer/paddock --here
+```
+
+Paddock opens **that directory** as its workspace, finds the Claude Code sessions you
+already have for it, and offers them for import. Open **http://127.0.0.1:4000** (or add
+`-o` to have it opened for you) — and instead of an empty instance, you're looking at
+your own conversations, resumable.
+
+Later runs in the same directory resume it, with no flag needed.
+
+:::note[What `--here` writes into the directory]
+The flag is the consent, so here is exactly what it does — all of it reversible, none of
+it touching your code:
+
+- creates **`.paddock/`** for this workspace's state
+- creates **`.chats/`** for transcripts
+- appends those two entries to **`.gitignore`**
+
+**Nothing is written into your `~/.claude`** — no file, no symlink. Paddock keeps a
+Claude home of its own under `.paddock/`, transcripts are relocated into `.chats/` so
+the directory is self-contained, and your `~/.claude` is read for user-level config
+only. Sessions found there are *offered* for import: nothing is moved, copied or
+linked until you confirm, the originals stay put, and your terminal `claude` keeps
+working exactly as before.
+
+If you would rather Paddock and your terminal share **one** set of transcripts, that is
+a config key rather than a flag — `claude: { transcripts: host }`, see
+[the config file](/configuration/config-file/#claude--what-this-instance-shares-with-your-claude-code).
+
+To undo it completely: `rm -rf .paddock .chats` and drop the two `.gitignore` lines.
+:::
+
+Without `--here`, Paddock never touches the directory you ran it from — it starts a
+normal instance in `~/.paddock` and you create projects from the UI.
+
+**First run downloads ~250 MB.** Paddock drives Claude Code, and the Claude Agent SDK
+ships a per-platform binary of that size. Later runs reuse the npm cache and start
+immediately. If you expect to use it often, `npm i -g @edspencer/paddock` is friendlier
+than bare `npx`.
+
+Useful flags:
+
+```
+  -p, --port <port>       HTTP/WS port (default 4000)
+      --host <host>       Bind address (default 127.0.0.1)
+  -d, --data-dir <path>   Projects + state (default ~/.paddock)
+      --here              Open the CURRENT directory as the workspace
+  -o, --open              Open the app in your browser once it is listening
+      --verbose           Show the server's own logs (quiet by default)
+  -v, --version           Print the Paddock version and exit
+  -h, --help              Show this help
+```
+
+Under `--here` the data dir is `<dir>/.paddock` rather than `~/.paddock`.
+`--verbose` is worth one run on a new instance: several of Paddock's startup
+notices — which login it found, what it bridged from `~/.claude`, what it
+withheld — are written at `info`, which the quiet default filters out. The one
+notice you get either way is the warning that names your `~/.claude` instruction
+files when they are not being loaded.
+
+Credentials work the same as everywhere else — see
+[Claude authentication](#claude-authentication) below.
+
+An npx run binds **loopback with authentication disabled**, which is the right default
+for a laptop, and it *fails closed*: bind a routable address without configuring auth and
+it refuses to start. See [Binding & network exposure](/configuration/binding-and-exposure/).
 
 ## Run with Docker
 
-Run the published image, point it at a data volume, and give it a Claude token:
+For an always-on instance on a server, the published image is the simplest route. Point
+it at a data volume and give it a Claude token:
 
 ```bash
 docker run -d --name paddock -p 127.0.0.1:4000:4000 \
@@ -91,10 +167,13 @@ compose stack, `proxmox-iac/` (Tofu + Ansible), `kubernetes/` (Kustomize), and a
 :::
 
 :::caution[No built-in login]
-Paddock has **no authentication of its own**. Run it behind a reverse proxy / auth
-layer you trust — see [Authentication](/configuration/authentication/). It reads
-credentials from the environment and from files the host provides; it never stores
-secrets itself.
+Paddock has **no authentication of its own**. Anywhere it is reachable by more than your
+own machine — a server, a container published on a routable address — run it behind a
+reverse proxy / auth layer you trust; see
+[Authentication](/configuration/authentication/). It reads credentials from the
+environment and from files the host provides; it never stores secrets itself.
+
+This is not a concern for a local `npx` run, which binds loopback only.
 :::
 
 ## Claude authentication
@@ -110,9 +189,25 @@ turn is driven.
 The token is passed through the process environment; it is never written to disk by
 Paddock.
 
+**Or provide neither.** If this machine already has a Claude Code login, Paddock uses
+it: the macOS Keychain entry on a Mac, your `~/.claude/.credentials.json` elsewhere.
+That is `claude.credentials: host`, the default, and it is the one thing Paddock shares
+by default — because reading a login writes nothing. Set `claude: { credentials: own }`
+in the [config file](/configuration/config-file/#claude--what-this-instance-shares-with-your-claude-code)
+to turn it off.
+
+That login is the *only* thing shared by default. Your `~/.claude/CLAUDE.md`, `agents/`,
+`commands/` and `plugins/` are not loaded, and the hooks your `settings.json` binds to
+tool use do not run — `claude.instructions` and `claude.hooks` turn each on, and both
+default to `own`. If you have a curated `~/.claude/CLAUDE.md`, that is the one to know
+about: Paddock warns at startup, naming the key, when it finds files it is not
+loading — including on a plain `npx` run.
+
 ## Run from source
 
-You need **Node 22+** and the **`claude` CLI** on your `PATH`.
+You need **Node 22+**. Chats resolve the Claude Agent SDK's own bundled binary and never
+consult `PATH`, so they work without anything else installed; the **`claude` CLI** on
+your `PATH` is needed only for the post-turn sweeper and for triggers.
 
 ```bash
 git clone https://github.com/edspencer/paddock.git

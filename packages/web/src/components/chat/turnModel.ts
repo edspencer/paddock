@@ -202,6 +202,58 @@ export function historyToTurn(m: HistoryMessage, id: string): Turn {
   };
 }
 
+/** The slash command whose echo owns a compaction boundary (see below). */
+const COMPACT_COMMAND = "/compact";
+
+/**
+ * True for the turns that legitimately sit BETWEEN a compaction boundary and the
+ * `/compact` echo that produced it: the `<local-command-caveat>` CC writes just
+ * above the command, which renders as nothing (an empty `commandOutput`). Core's
+ * JSONL parser normally drops it (`isMeta:true`), so it usually never gets this
+ * far — but a caveat that does survive must not defeat the pairing.
+ */
+function isInvisibleCompactFiller(turn: Turn): boolean {
+  return turn.kind === "commandOutput" && turn.content === "";
+}
+
+/**
+ * Move a compaction boundary chip AFTER the `/compact` echo that produced it
+ * (issue #630).
+ *
+ * Claude Code appends the compaction records at file positions *preceding* the
+ * command line, but stamps them with the time compaction *finished* — so the
+ * boundary's own timestamp can be minutes LATER than the `/compact` sitting
+ * below it. Rendering in file order therefore reads as though the conversation
+ * was compacted before anyone asked for it.
+ *
+ * This is a targeted swap, not a re-sort: only a `compact` turn immediately
+ * followed by its `/compact` echo moves, and it moves exactly one slot past it.
+ * Everything else — including an auto-compaction with no echo to pair with, and
+ * a `/compact` whose compaction never produced a summary — is left in file
+ * order. No turn is ever added or dropped.
+ */
+function orderCompactBoundaries(turns: Turn[]): Turn[] {
+  if (!turns.some((t) => t.kind === "compact")) return turns;
+  const out: Turn[] = [];
+  for (let i = 0; i < turns.length; i++) {
+    const turn = turns[i];
+    if (turn.kind !== "compact") {
+      out.push(turn);
+      continue;
+    }
+    let j = i + 1;
+    while (j < turns.length && isInvisibleCompactFiller(turns[j])) j++;
+    const echo = turns[j];
+    if (echo?.kind === "command" && echo.command === COMPACT_COMMAND) {
+      out.push(...turns.slice(i + 1, j + 1), turn);
+      i = j;
+    } else {
+      out.push(turn);
+    }
+  }
+  return out;
+}
+
 /**
  * Build the rendered turns for a reloaded transcript, giving each a STABLE,
  * UNIQUE id derived from the source message's `uuid` (issue #135). The same
@@ -218,25 +270,28 @@ export function historyToTurn(m: HistoryMessage, id: string): Turn {
  */
 export function historyToTurns(msgs: HistoryMessage[]): Turn[] {
   const seen = new Map<string, number>();
-  return msgs
+  const turns = msgs
     // A `<task-notification>` folded into its launching background tool block
     // (issue #230) is no longer drawn as a standalone status pill.
     .filter((m) => !m.bgConsumed)
     .map((m) => {
-    let id: string;
-    if (m.uuid) {
-      const n = seen.get(m.uuid) ?? 0;
-      seen.set(m.uuid, n + 1);
-      id = n === 0 ? m.uuid : `${m.uuid}#${n}`;
-    } else {
-      id = nextId();
-    }
-    // Attach per-message hover metadata (#451): the source timestamp and the
-    // context-window fill as of this message. Set on the built turn (both are
-    // optional TurnMeta fields, so the discriminated body is unaffected).
-    const turn = historyToTurn(m, id);
-    turn.timestamp = m.timestamp;
-    if (m.contextTokens != null) turn.contextTokens = m.contextTokens;
-    return turn;
-  });
+      let id: string;
+      if (m.uuid) {
+        const n = seen.get(m.uuid) ?? 0;
+        seen.set(m.uuid, n + 1);
+        id = n === 0 ? m.uuid : `${m.uuid}#${n}`;
+      } else {
+        id = nextId();
+      }
+      // Attach per-message hover metadata (#451): the source timestamp and the
+      // context-window fill as of this message. Set on the built turn (both are
+      // optional TurnMeta fields, so the discriminated body is unaffected).
+      const turn = historyToTurn(m, id);
+      turn.timestamp = m.timestamp;
+      if (m.contextTokens != null) turn.contextTokens = m.contextTokens;
+      return turn;
+    });
+  // The compaction boundary CC writes ABOVE its own `/compact` echo is put back
+  // in the order it happened (issue #630).
+  return orderCompactBoundaries(turns);
 }

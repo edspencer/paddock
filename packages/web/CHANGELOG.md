@@ -1,5 +1,205 @@
 # @paddock/web
 
+## 0.64.0
+
+### Minor Changes
+
+- [#709](https://github.com/edspencer/paddock/pull/709) [`2655f7c`](https://github.com/edspencer/paddock/commit/2655f7c0c1c57cdd78b0f4be4cc9db530e5b91a6) Thanks [@edspencer](https://github.com/edspencer)! - Projects are described by two independent axes instead of one overloaded flag,
+  and a project can point at a directory you already have (#206, #597).
+
+  **`managed` replaces `repoBacked`.** A project is _managed_ when Paddock looks
+  after its own files — the sweeper curating `CLAUDE.md`, `OVERVIEW.md` and
+  `CHANGELOG.md`, which is what "notebook" used to mean — and _unmanaged_ when the
+  content is code you or your agents source-control outside Paddock. Whether a git
+  repo sits behind it is a separate question, and not a type: it is just which of
+  `path` and `repo` are set. `repoBacked` was one boolean answering four questions
+  and has been removed from the DTO; each consumer now takes the fact it needs.
+
+  **`path:` — where a project's content lives.** An absolute directory, applying to
+  both axes. Unmanaged, it links a checkout you already have — used in place, with
+  no copy, so Claude gets its real history, branches and remotes; Paddock writes
+  nothing into it (no `.chats/`, no sidecar `.gitignore`, no `CLAUDE.md`), and
+  deleting the project never touches it. Managed, it nominates where your notes
+  live, and the curated trio follows the content out there — an accepted
+  consequence being that those three files then do not live in the Paddock data
+  dir. Either way `project.yaml` (the registry entry) and `.chats/` stay put.
+
+  Acquisition follows from what you give it: an existing path is used as-is (with a
+  warning, not a failure, if a declared `repo`'s remote doesn't match it); a missing
+  path is cloned into when a `repo` is given, or created for a managed project. A
+  failed create only ever removes directories it made during that attempt, never
+  one that already existed.
+
+  **No git requirement.** Paddock probes for git and lights up the git features when
+  it finds a repository; it never rejects a directory for not being one.
+
+  **The Changes tab reports on the working directory (#597).** It read the metadata
+  directory before, so for a repo-backed project it showed the notes folder rather
+  than the code — and repo detection was asked of the projects root rather than the
+  directory in question. Both are now per-directory.
+
+  `managed` is optional on disk and its default is derived (`managed ?? !(repo ||
+path)`) so existing `project.yaml` files keep their current meaning on upgrade;
+  `managed: true` together with `repo` is rejected rather than silently reinterpreted.
+  `managed` and `path` are immutable after creation.
+
+## 0.63.0
+
+### Minor Changes
+
+- [#705](https://github.com/edspencer/paddock/pull/705) [`571def3`](https://github.com/edspencer/paddock/commit/571def3a8768f3b49c0d4fb6cfda19a4cc7c2905) Thanks [@edspencer](https://github.com/edspencer)! - Inherit the host's Claude Code **plugins**, and stop degrading `sse` /
+  header-authenticated MCP servers (#700).
+
+  Requires `@herdctl/core` 5.32.0, which adds the two things Paddock had no channel
+  for.
+
+  **Plugins.** A plugin that provides an MCP server — a Slack plugin installed on
+  your laptop, say — was invisible in Paddock on every setting, because the SDK
+  enables a discovered plugin from `enabledPlugins` in the **user** settings source
+  and Paddock's agents are invoked with `setting_sources: ["project"]`. Paddock now
+  enumerates the host's installed plugin directories from the CLI's own
+  `installed_plugins.json` registry and passes them explicitly, which needs no
+  settings-source grant. Two levers gate it, because a plugin is mostly
+  instructions and only sometimes MCP servers:
+
+  | `claude.instructions` | `claude.mcpServers` | what a keeper gets                                     |
+  | --------------------- | ------------------- | ------------------------------------------------------ |
+  | `host`                | `host`              | the plugin, including its MCP servers                  |
+  | `host`                | `own`               | the plugin's commands/agents/skills/hooks only         |
+  | `own`                 | _any_               | no plugins (`instructions` is what bridges `plugins/`) |
+
+  Each plugin server's `mcp__plugin_<plugin>_<server>__*` pattern is added to the
+  keeper's allowed tools automatically — without it the server connects and then has
+  every call auto-denied with no prompt. A plugin whose manifest points `mcpServers`
+  at a bundle rather than declaring them inline cannot be enumerated that way; it is
+  still attached, and a boot warning names it and the pattern to add by hand.
+
+  **MCP server fields.** `headers` and an explicit `type` (`sse`) are now carried
+  through verbatim instead of being stripped. So a bearer-authenticated or `sse`
+  server inherited under `claude.mcpServers: host` arrives intact and finds its
+  stored OAuth token (which is keyed on a hash of `{type, url, headers}`), and the
+  boot warnings v0.62.0 shipped for both are gone. The instance's own `mcpServers:`
+  block accepts both keys too — `headers` values take `env:VAR_NAME` references like
+  everything else there, and are never printed.
+
+## 0.62.0
+
+## 0.61.1
+
+## 0.61.0
+
+### Patch Changes
+
+- [#671](https://github.com/edspencer/paddock/pull/671) [`aa607e4`](https://github.com/edspencer/paddock/commit/aa607e47e061801f77298aa349d657b403577fe1) Thanks [@edspencer](https://github.com/edspencer)! - Remove the one-time #488 localStorage read-state backfill (#552)
+
+  #488 made read-state server-authoritative and dropped the localStorage
+  `lastSeen` mirror; to avoid resurfacing already-read chats it shipped a one-time
+  migration that pushed any surviving `paddock:lastSeen:*` keys up to the server
+  and deleted them. That migration has drained, but it was wired into the sidebar's
+  projects effect — so it re-scanned every localStorage key on **every projects
+  refresh, forever**, only to return early.
+
+  `lastSeenBackfill.ts` and the two localStorage helpers it used
+  (`legacyLastSeenEntries`, `clearLegacyLastSeen`) are gone. The client now has no
+  localStorage read-state code path at all.
+
+  The one caveat: a browser profile that has not opened Paddock since 2026-07-26
+  still holds legacy keys that will now never be pushed up, so the chats they cover
+  read as unread once. Those keys are inert — nothing reads them — and opening the
+  affected chats clears the cue for good.
+
+- [#672](https://github.com/edspencer/paddock/pull/672) [`62f518f`](https://github.com/edspencer/paddock/commit/62f518ff993055e74a8b3323a16a0bbbead41faa) Thanks [@edspencer](https://github.com/edspencer)! - An explicit "mark unread" now survives a turn landing in the focused chat (#608)
+
+  Marking the open chat unread and having its in-flight turn complete a moment
+  later silently discarded the flag. The web client marks the focused chat seen
+  when a turn finishes there ("you were watching it"), and `POST .../seen` clears
+  the manual unread override — so an inferred seen quietly overrode an explicit
+  intent. The same happened via the API: `POST .../chats/:id/unread` returned
+  `{ ok: true }` and the write was then undone by a browser sitting in that chat,
+  with nothing telling the caller.
+
+  `POST .../chats/:id/seen` now accepts `keepUnread: true`, which advances the
+  last-seen watermark **without** clearing the manual override, and its response
+  carries the override's resulting state (`{ ok, lastSeen, unread }`). The web
+  client passes it only on the turn-completed-while-focused path; opening a chat
+  and the explicit read/unread toggle still spend the flag exactly as before.
+
+- [#671](https://github.com/edspencer/paddock/pull/671) [`aa607e4`](https://github.com/edspencer/paddock/commit/aa607e47e061801f77298aa349d657b403577fe1) Thanks [@edspencer](https://github.com/edspencer)! - Stop the sidebar project list flashing to skeletons on every turn (#572)
+
+  `ProjectsProvider.refresh()` set `loading = true` unconditionally, and the
+  sidebar renders three pulsing placeholders _instead of_ the project list
+  whenever that flag is set. `ProjectView` refreshes the list from three
+  turn-lifecycle callbacks (`onSessionStarted`, `onSessionEstablished`,
+  `onTurnComplete`), so the whole nav blanked and re-populated **twice per keeper
+  turn** — measured on a live instance with a `MutationObserver`.
+
+  `loading` was doing double duty: "we have never loaded the list" and "we are
+  re-checking a list we are already showing". Only the first deserves a
+  placeholder. It now stays true only until the first _successful_ fetch lands;
+  after that, refreshes revalidate quietly and the previous list stays on screen.
+  A first load that fails still gets the placeholder back on retry, having nothing
+  to show in the meantime.
+
+- [#667](https://github.com/edspencer/paddock/pull/667) [`5fc3371`](https://github.com/edspencer/paddock/commit/5fc3371260b5124607d2b5bdd30dc71439bb28fd) Thanks [@edspencer](https://github.com/edspencer)! - Show the "conversation compacted" chip below the `/compact` that produced it
+
+  Claude Code appends a compaction's records to the session JSONL at positions
+  _preceding_ the command line that triggered it, while stamping them with the time
+  compaction _finished_. Paddock renders in file order, so a compacted chat read
+  backwards: the 🗜️ boundary sat above the `/compact` chip, as though the
+  conversation had been compacted before anyone asked for it, with the two records
+  up to three minutes apart in wall-clock terms (#630).
+
+  The transcript's grouping step now moves a compaction boundary one slot past the
+  `/compact` echo that produced it. It is a targeted swap, not a re-sort: a boundary
+  with no echo to pair with (an auto-compaction) and a `/compact` whose compaction
+  never completed are both left in file order, and no turn is added or dropped.
+  Purely cosmetic — the summary body stays tucked behind its disclosure exactly as
+  before.
+
+- [#670](https://github.com/edspencer/paddock/pull/670) [`def27b8`](https://github.com/edspencer/paddock/commit/def27b874482c628d8801084217759f362e526e6) Thanks [@edspencer](https://github.com/edspencer)! - Stop describing a trigger with no tools as an enforced tool-less agent (#647)
+
+  Paddock expresses "no tools" as `allowed_tools: []`, and both herdctl runtimes emit
+  the allow-list **only when it is non-empty** — the CLI runtime guards
+  `if (allowed_tools?.length)` before pushing `--allowedTools`, and `toSDKOptions`
+  does the same before setting `allowedTools`. An empty list is therefore
+  indistinguishable from an unset one: the agent runs with Claude Code's default
+  tools, not a deny-all.
+
+  The source comments and the Triggers UI claimed the opposite. Nothing about the
+  runtime changes here — only what Paddock says about it:
+
+  - The trigger capability banner no longer promises a `tools: []` event trigger
+    "can only read its prompt and respond (no file, shell, or MCP access)". It now
+    says no tools were declared, that an empty list is not a restriction, and that
+    the prompt and max turns are the real bounds.
+  - The Triggers list shows "No tools" instead of "Tool-less", and the tool picker's
+    help text spells out that leaving everything unchecked is not a deny-all.
+  - The comments on `triggerToAgentToolConfig`, `hookToAgentToolConfig` and the
+    sweeper config describe what actually happens. The sweeper's tool-less-ness is
+    restated in terms of the properties that do hold: no injected MCP servers,
+    `max_turns: 4`, a system prompt that forbids tool use, and a non-interactive
+    `claude -p` run that cannot answer a permission prompt.
+
+  Making a tool grant enforceable at all is tracked separately in #319; this change
+  deliberately implements no enforcement.
+
+- [#669](https://github.com/edspencer/paddock/pull/669) [`e873f98`](https://github.com/edspencer/paddock/commit/e873f98b7e12bb2204561d8493895939989e2f60) Thanks [@edspencer](https://github.com/edspencer)! - Stop Settings claiming an instance default it hasn't fetched yet
+
+  A project's Settings tab seeded the three inherited instance defaults with
+  literals, so before `GET /api/models` returned it told you your box defaults to
+  drive mode **Batch** — a claim about instance configuration, and a wrong one:
+  the box-wide default has been `session` since v0.36. The literal was written
+  when `batch` was the default and was never updated, which is exactly the drift a
+  hard-coded copy invites (#587).
+
+  The pre-fetch state is now genuinely unknown (`null`) rather than a guess, and
+  renders as such: `Global default (loading…)`, `Instance default (loading…)` and a
+  short "Loading the …" hint in place of the "Inheriting …" prose, matching the
+  existing _"Loading the instance model list…"_ idiom in the same pane. Applied to
+  drive mode, max spawn depth and the curation budgets alike, so none of them can
+  drift the next time a server default changes. Nothing about what is persisted
+  changes — the placeholder was never saved.
+
 ## 0.60.0
 
 ### Minor Changes

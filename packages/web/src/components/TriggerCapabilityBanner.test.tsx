@@ -62,11 +62,25 @@ describe("TriggerCapabilityBanner (Epic T / T4)", () => {
     expect(tools).toHaveTextContent("Read");
   });
 
-  it("describes a tool-less EVENT trigger as reasoning-only rather than listing tools", () => {
+  it("says an EVENT trigger declared no tools rather than listing tools", () => {
     renderBanner({ ...cleanup, allowedTools: [] });
     expect(screen.queryByTestId("trigger-allowed-tools")).toBeNull();
     const banner = screen.getByTestId("trigger-capability-banner");
-    expect(banner).toHaveTextContent(/no tools|reasoning only|can only read/i);
+    expect(banner).toHaveTextContent(/no tools/i);
+  });
+
+  it("does not claim an empty tool grant is an enforced sandbox (#647)", () => {
+    renderBanner({ ...cleanup, allowedTools: [] });
+    const banner = screen.getByTestId("trigger-capability-banner");
+    // An empty `allowed_tools` is never emitted to either herdctl runtime, so the
+    // agent gets Claude Code's default tools. The banner used to promise the
+    // opposite — "can only read its prompt and respond (no file, shell, or MCP
+    // access)" — a guarantee Paddock does not make. (#319 is the enforcement
+    // question itself; this only pins the copy.)
+    expect(banner).not.toHaveTextContent(/can only read its prompt/i);
+    expect(banner).not.toHaveTextContent(/no file, shell, or MCP access/i);
+    expect(banner).toHaveTextContent(/not a restriction/i);
+    expect(banner).toHaveTextContent(/default tools/i);
   });
 
   it("describes a tool-less SCHEDULE trigger as running as Claude", () => {

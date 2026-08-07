@@ -65,6 +65,18 @@ repository, and it does not require the model to be fooled by anything.
 
 > Whoever can merge to that repository can run commands on your box.
 
+:::note[The host machine's hooks are a different question, and are now off by default]
+The paragraph above is about a **repo's** `.claude/settings.json`, loaded because
+the checkout is a project settings source. Your **own**
+`~/.claude/settings.json` is a separate path, and since v0.62 its hooks do *not*
+run inside Paddock turns unless you set
+[`claude.hooks: host`](/configuration/config-file/#hooks). Before that they always
+did, with no key to turn them off. Turning it on re-inherits every hook you have
+configured — see [What Paddock touches on your
+machine](/guides/what-paddock-touches/). Nothing about that key affects the
+repo-supplied file described here, which no Paddock setting disables.
+:::
+
 For most people the upstream is their own repo and this is fine. It stops being fine for
 a fork you don't control, a vendored dependency, or a repo an agent chose itself —
 which is why `create_project` (gated by `selfMcpProjectsEnabled`, off by default) runs

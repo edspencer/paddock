@@ -36,6 +36,11 @@ import { DEFAULT_RECOVERY } from "./recovery-config.js";
 import { DEFAULT_ATTACHMENTS, sanitizeAllowedTypes } from "./attachments-config.js";
 import { DEFAULT_CURATION } from "./curation-config.js";
 import { DEFAULT_ENVIRONMENT_PROMPT } from "./environment-prompt.js";
+import { DEFAULT_TRANSCRIPTS_MODE } from "./transcripts.js";
+import { DEFAULT_CREDENTIALS_MODE } from "./claude-credentials.js";
+import { DEFAULT_INSTRUCTIONS_MODE } from "./claude-instructions.js";
+import { DEFAULT_HOOKS_MODE } from "./claude-settings.js";
+import { DEFAULT_MCP_SERVERS_MODE } from "./claude-mcp.js";
 import { type PaddockConfig } from "./config.js";
 
 /** Groups the Settings screen renders, in display order. */
@@ -297,6 +302,37 @@ export const FIELDS: readonly FieldSpec[] = [
   { key: "stateDir", group: "advanced", label: "State dir", type: "string", envVars: ["PADDOCK_STATE_DIR"], default: null, editable: false },
   { key: "herdctlConfigPath", group: "advanced", label: "herdctl config path", type: "string", envVars: ["PADDOCK_HERDCTL_CONFIG"], default: null, editable: false },
   { key: "webDist", group: "advanced", label: "Web dist", type: "string", envVars: ["PADDOCK_WEB_DIST"], default: null, editable: false },
+  // What this instance shares with the host's Claude Code (#691). READ-ONLY on
+  // purpose: `host` means paddock writes to the user's real transcript files,
+  // and the symlinks that implement it are planted at agent-registration time —
+  // a toggle that silently does nothing until the next boot would be worse than
+  // no toggle. It is surfaced because "what is this instance sharing?" should be
+  // answerable without reading a YAML file.
+  { key: "claude.transcripts", group: "advanced", label: "Transcripts", help: "own = Paddock's own, in each project's .chats/; host = your ~/.claude transcripts, shared live.", type: "string", envVars: ["PADDOCK_CLAUDE_TRANSCRIPTS"], default: DEFAULT_TRANSCRIPTS_MODE, editable: false },
+  // Read-only for the same reason, plus one of its own: the secure-storage
+  // variable it sets is read by Claude Code when a turn's process starts, so a
+  // live toggle would apply to some turns and not others.
+  { key: "claude.credentials", group: "advanced", label: "Credentials", help: "host = this machine's Claude Code login (macOS Keychain, or your ~/.claude/.credentials.json); own = only a login of this instance's.", type: "string", envVars: ["PADDOCK_CLAUDE_CREDENTIALS"], default: DEFAULT_CREDENTIALS_MODE, editable: false },
+  // Read-only for the same reasons. `hooks` is the one worth finding here even
+  // though it cannot be changed here: "does this instance run the shell commands
+  // my ~/.claude/settings.json binds to tool use?" is a question with a security
+  // answer, and it should be readable without opening a YAML file.
+  { key: "claude.instructions", group: "advanced", label: "Instructions", help: "own = this instance's own only; host = your ~/.claude CLAUDE.md, agents/, commands/ and plugins/ as well.", type: "string", envVars: ["PADDOCK_CLAUDE_INSTRUCTIONS"], default: DEFAULT_INSTRUCTIONS_MODE, editable: false },
+  { key: "claude.hooks", group: "advanced", label: "Hooks", help: "own = your ~/.claude/settings.json hooks do NOT run here (its other keys still apply); host = they do.", type: "string", envVars: ["PADDOCK_CLAUDE_HOOKS"], default: DEFAULT_HOOKS_MODE, editable: false },
+  // The fifth lever, which step 5 shipped without surfacing here. Read-only like
+  // its four siblings, and worth the row for the same reason `hooks` is: an MCP
+  // server is a process this instance spawns, so "is this instance running my
+  // machine's MCP servers?" should be answerable without opening a YAML file.
+  //
+  // NOTE what is deliberately absent: the top-level `mcpServers:` block (#691
+  // step 6), which declares servers rather than borrowing them. Its values hold
+  // resolved credentials — an MCP server's `env` is where a stdio server's API
+  // token lives — and every field in this table is serialised verbatim into the
+  // GET response, so a row for it would publish tokens to any authenticated UI
+  // user. There is no redacting variant of `FieldSpec`, and inventing one to
+  // display a server list is not worth the leak surface: the boot log already
+  // names every declared server, secret-free, via `describeServer`.
+  { key: "claude.mcpServers", group: "advanced", label: "MCP servers", help: "own = only the servers Paddock provides itself; host = the ones declared in your ~/.claude.json as well.", type: "string", envVars: ["PADDOCK_CLAUDE_MCP_SERVERS"], default: DEFAULT_MCP_SERVERS_MODE, editable: false },
   // Auth: read-only in v1 (misconfig can lock everyone out — issue #385). Only
   // the mode is surfaced; JWT/JWKS internals stay out of the API.
   { key: "auth.mode", group: "advanced", label: "Auth mode", type: "string", envVars: ["PADDOCK_AUTH_MODE"], default: "none", editable: false, sensitive: true },

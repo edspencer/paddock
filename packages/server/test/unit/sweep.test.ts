@@ -49,7 +49,14 @@ interface StubOverrides {
   budget?: { overviewMaxTokens: number; changelogMaxTokens: number; claudeMaxTokens: number };
   /** A per-project `project.yaml` curation override on the stub project (issue #384). */
   curation?: { overviewMaxTokens?: number; changelogMaxTokens?: number; claudeMaxTokens?: number };
+  /** Make `runSweeper` REJECT, to exercise the non-fatal failure path (#684). */
+  sweeperThrows?: unknown;
+  /** Capture log calls instead of dropping them (#684 asserts on the shape). */
+  logger?: { info: LogFn; warn: LogFn; error: LogFn };
 }
+
+/** pino-shaped: an optional bindings object, then the message. */
+type LogFn = (a?: unknown, b?: unknown) => void;
 
 describe("SweepService", () => {
   let dataDir: string;
@@ -73,7 +80,9 @@ describe("SweepService", () => {
   /** Build a SweepService over stub herdctl + projects, with 0 min-interval. */
   function makeService(o: StubOverrides = {}) {
     const sessions = o.sessions ?? [session("s1", "2026-06-20T00:00:00.000Z")];
-    const runSweeper = vi.fn(async () => ({
+    const runSweeper = vi.fn(async () => {
+      if (o.sweeperThrows !== undefined) throw o.sweeperThrows;
+      return {
       result: {
         success: o.sweeperSuccess ?? true,
         sessionId: "sw1",
@@ -81,7 +90,8 @@ describe("SweepService", () => {
         error: undefined,
       },
       text: o.sweeperText ?? OK_REPLY,
-    }));
+      };
+    });
     const herdctl = {
       recentSessions: vi.fn(async () => sessions),
       sessionMessages: vi.fn(async () => [
@@ -93,6 +103,10 @@ describe("SweepService", () => {
     // T5: the stub project carries an optional `triggers` map + a `workingDir` (used to
     // resolve a curator trigger's `run.promptFile` under `.paddock/triggers/`).
     const stubProject = {
+      // `managed` is what gates CLAUDE.md curation since #206 (it replaced
+      // `repoBacked`); default the stub to a managed project, the shape most of
+      // these cases are about.
+      managed: true,
       ...project,
       workingDir: project.dir,
       ...(o.triggers ? { triggers: o.triggers } : {}),
@@ -133,7 +147,7 @@ describe("SweepService", () => {
       dataDir,
       minIntervalMs: 0,
       budget: o.budget,
-      logger: silentLogger,
+      logger: o.logger ?? silentLogger,
     });
     return { svc, herdctl, projects, runSweeper };
   }
@@ -164,11 +178,11 @@ describe("SweepService", () => {
     svc.stop();
   });
 
-  it("does NOT touch CLAUDE.md for a repo-backed project — the repo owns it (#187)", async () => {
-    // A repo-backed project's CLAUDE.md is the external repo's own, upstream-
-    // owned file; the sweeper must never write it even when it reports a durable
-    // fact. OVERVIEW + CHANGELOG are still curated (sidecarred).
-    (project as { repoBacked?: boolean }).repoBacked = true;
+  it("does NOT touch CLAUDE.md for an UNMANAGED project — its own tree owns it (#187/#206)", async () => {
+    // An unmanaged project's CLAUDE.md belongs to the working directory's own
+    // source control; the sweeper must never write it even when it reports a
+    // durable fact. OVERVIEW + CHANGELOG are still curated (sidecarred).
+    (project as { managed?: boolean }).managed = false;
     const reply =
       "<<<OVERVIEW>>>\n# Overview\nState.\n<<<CHANGELOG>>>\nDid a thing.\n" +
       "<<<CLAUDE>>>\n- Durable: the API is versioned under /v2.\n<<<END>>>";
@@ -580,6 +594,66 @@ describe("SweepService", () => {
       expect(prompt).toContain(`chat-${id}`);
     }
     svc.stop();
+  });
+
+  // #684 — this is what a first-time `npx paddock --here` with no credentials
+  // actually hit. The sweeper is a best-effort background task whose failure is
+  // already labelled non-fatal; pino serialising `{ err }` at level 50 is what
+  // put four copies of the curator system prompt on their terminal, and made a
+  // healthy server look like it had crashed.
+  describe("a known, non-fatal failure (#684)", () => {
+    const notLoggedIn = Object.assign(
+      new Error(
+        "Command failed with exit code 1: claude -p --system-prompt " +
+          "'You are a concise project curator. SECRET_PROMPT_BODY'",
+      ),
+      { stderr: "Not logged in · Please run /login" },
+    );
+
+    function capturingLogger() {
+      const calls: Array<{ level: string; bindings: unknown; message: unknown }> = [];
+      const at =
+        (level: string): LogFn =>
+        (a, b) =>
+          calls.push({ level, bindings: a, message: b });
+      return { calls, logger: { info: at("info"), warn: at("warn"), error: at("error") } };
+    }
+
+    it("logs one warn line naming the cause, with no error object to serialise", async () => {
+      const { calls, logger } = capturingLogger();
+      const { svc } = makeService({ sweeperThrows: notLoggedIn, logger });
+      svc.enqueue("demo");
+      await vi.waitFor(
+        () => expect(calls.some((c) => String(c.message).startsWith("sweep: skipped,"))).toBe(true),
+        { timeout: 2000 },
+      );
+
+      const line = calls.find((c) => String(c.message).startsWith("sweep: skipped,"))!;
+      expect(line.level).toBe("warn"); // not error: nothing is broken
+      expect(String(line.message)).toMatch(/not logged in/i);
+      expect(String(line.message)).toContain("non-fatal");
+      // The decisive assertion. No `err` in the bindings means pino has nothing
+      // to expand into message + stack — and the system prompt cannot escape.
+      expect(line.bindings).toEqual({ slug: "demo" });
+      expect(JSON.stringify(calls)).not.toContain("SECRET_PROMPT_BODY");
+      // And no error-level line was emitted alongside it.
+      expect(calls.filter((c) => c.level === "error")).toEqual([]);
+      svc.stop();
+    });
+
+    it("still logs the FULL error for a failure it does not recognise", async () => {
+      const { calls, logger } = capturingLogger();
+      const { svc } = makeService({ sweeperThrows: new Error("disk quota exceeded"), logger });
+      svc.enqueue("demo");
+      await vi.waitFor(() => expect(calls.some((c) => c.level === "error")).toBe(true), {
+        timeout: 2000,
+      });
+
+      const line = calls.find((c) => c.level === "error")!;
+      expect(String(line.message)).toContain("sweeper run errored");
+      expect(line.bindings).toMatchObject({ slug: "demo", err: expect.any(Error) });
+      svc.stop();
+    });
   });
 });
 

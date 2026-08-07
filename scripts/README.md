@@ -8,9 +8,11 @@ not inherit the repo root's `"type": "module"`.
 
 ## `check-no-nul-bytes.mjs` — CI guard against raw NUL bytes
 
-`npm run check:nul` walks every `.ts`/`.tsx` under `packages/` (skipping
-`node_modules` and build output) and fails if any contains a literal `0x00`
-byte, reporting `file:line:col`.
+`npm run check:nul` walks every `.ts`/`.tsx`/`.mjs`/`.js` file in the repo
+(skipping `node_modules` and build output) and fails if any contains a literal
+`0x00` byte, reporting `file:line:col`. Data files — `.json`, `.md` — are
+deliberately not scanned: the guard is about *source* staying greppable, and a
+NUL in a JSON fixture is more likely to be intentional test data.
 
 A raw NUL inside a string literal is identical at runtime to the `\u0000`
 escape, so nothing about the program's behaviour betrays it — but ripgrep and
@@ -20,7 +22,9 @@ matches". Two such bytes once hid 1,249 lines of `packages/server/src` —
 including `ws.ts`, the busiest file in the server — from every recursive
 search. Because the byte renders as nothing in a terminal, it is also invisible
 in diffs, so neither review, typecheck, nor the test suite catches it. Hence a
-dedicated check, wired into CI ahead of `npm ci` (issue #570).
+dedicated check, wired into CI ahead of `npm ci` (issue #570). It originally
+scanned only `packages/**/*.ts`, which missed a second real occurrence in
+`scripts/demo-gif/seed.mjs`; #642 widened it to the whole repo.
 
 The fix is always to spell the character as an escape rather than paste the raw
 byte — see the `KEY_SEP` constants in `packages/server/src`.

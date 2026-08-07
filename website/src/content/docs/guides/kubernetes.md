@@ -30,7 +30,10 @@ it. So:
   auto-restart and declarative, version-controlled deploys for free.
 - **Skip it if** you just want Paddock running on a box. A single `docker run` or
   a Compose file on an always-on host ([Deploying Paddock](/guides/deploying/)) is
-  simpler, and you lose nothing — Paddock can't scale horizontally anyway.
+  simpler, and you lose nothing — Paddock can't scale horizontally anyway. And if
+  you only want to *try* it, `npx @edspencer/paddock --here`
+  ([Getting started](/getting-started/#try-it-with-npx)) needs no cluster and no
+  container.
 
 ## What's in the recipe
 
@@ -87,8 +90,10 @@ curl -fsS http://127.0.0.1:4000/api/health      # -> {"ok":true}
 ## Statefulness & single-writer
 
 **`/data` is the instance.** It holds the project store, the generated herdctl
-config and state, and — because the image sets `HOME=/data` — the Claude session
-transcripts under `~/.claude/projects`. **Resume depends on this volume
+config and state, and — because Paddock owns its own Claude home under the data
+dir — the Claude session transcripts under
+`/data/claude-home/projects/<encoded-cwd>`, each entry a symlink to that project's
+`.chats/`. **Resume depends on this volume
 persisting.** Lose it and you lose every project and conversation, so the PVC must
 be durable and must survive pod restarts.
 

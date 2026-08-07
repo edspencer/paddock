@@ -16,6 +16,13 @@ import YAML from "yaml";
 import type { PaddockConfig } from "./config.js";
 import type { Project } from "./projects.js";
 import {
+  EMPTY_MCP_SOURCES,
+  mcpServersFor,
+  mcpToolPattern,
+  type McpSources,
+} from "./claude-mcp.js";
+import { EMPTY_HOST_PLUGINS, type HostPluginSource } from "./claude-plugins.js";
+import {
   DEFAULT_MODEL,
   SWEEPER_DEFAULT_MODEL,
   DEFAULT_PERMISSION_MODE,
@@ -32,7 +39,7 @@ import {
   sweeperAgentName,
   triggerAgentName,
   browserMcpServers,
-  BROWSER_MCP_TOOL,
+  FLEET_ALLOWED_TOOLS,
   DENIED_TOOLS,
   KEEPER_MAX_CONCURRENT,
   KEEPER_SESSION_TIMEOUT,
@@ -62,11 +69,27 @@ import {
  * not `<dataDir>`: `projectsRoot` IS the instance's backing repo, so the file is
  * version-controlled. Since #516 the ROOT project reaches it the same way —
  * its cwd IS `projectsRoot`, so the walk-up needs no special-casing.
+ *
+ * `mcpSources` is the external MCP servers this instance attaches — the user's
+ * own under `claude.mcpServers: host` (#691 step 5) plus the ones the instance
+ * declares in its own `mcpServers:` block (step 6). Both are resolved once at
+ * boot and passed in rather than re-read here, so this stays pure and so a
+ * `.claude.json` is never opened under `mcpServers: own`. It defaults to empty,
+ * which is both the isolated mode and what every existing caller means. The
+ * KEEPER is the only agent that gets them: the sweeper is tool-less and each
+ * trigger declares its own narrow allowlist, so neither could call one anyway.
+ *
+ * `hostPlugins` is the same story for the host's Claude Code plugins (#700),
+ * resolved once at boot by `claude-plugins.ts` and gated by `claude.instructions`
+ * rather than `claude.mcpServers` — see that module for why. Keeper-only for the
+ * same reasons, and empty unless the lever is on.
  */
 export function buildAgentConfig(
   cfg: PaddockConfig,
   project: Project,
   modelOverride?: string,
+  mcpSources: McpSources = EMPTY_MCP_SOURCES,
+  hostPlugins: HostPluginSource = EMPTY_HOST_PLUGINS,
 ): Record<string, unknown> & { name: string } {
   const config: Record<string, unknown> & { name: string } = {
     name: keeperAgentName(project.slug),
@@ -126,10 +149,49 @@ export function buildAgentConfig(
   // non-empty so a trigger-less project stays byte-identical to before.
   const schedules = triggersToHerdctlSchedules(project.triggers);
   if (schedules) config.schedules = schedules;
-  // Browser MCP (headless Chromium) when enabled for this box; `mcp__playwright__*`
-  // is already on the inherited defaults.allowed_tools.
+  // MCP servers, from three sources, all landing on the SAME `mcp_servers` key:
+  //
+  //  - the browser MCP (headless Chromium) when enabled for this box —
+  //    `mcp__playwright__*` is already on the inherited defaults.allowed_tools;
+  //  - the user's own servers under `claude.mcpServers: host` (#691 step 5);
+  //  - the ones this instance declares in its own `mcpServers:` block (#691 step
+  //    6), which win over the inherited ones (`mcpServersFor` merges them last).
+  //
+  // Neither of the latter two is on the default allowlist, because their names are
+  // not knowable at config-file-write time — hence the widening below.
+  //
+  // Paddock's own server still wins a name collision, against BOTH: its flags are
+  // box-specific (the Ansible-installed chromium engine, --no-sandbox for an
+  // unprivileged LXC) and someone else's `playwright` would almost certainly not
+  // start here. A declared collision is warned about by name at boot
+  // (`declaredMcpNotices`) so it is not silent.
   const browser = browserMcpServers(cfg.browserMcp);
-  if (browser) config.mcp_servers = browser;
+  const external = mcpServersFor(mcpSources, project.workingDir);
+  const servers = { ...external, ...(browser ?? {}) };
+  if (Object.keys(servers).length > 0) config.mcp_servers = servers;
+  // Widen the allowlist by exactly those servers' tool patterns. WITHOUT this
+  // both levers are a no-op with no error: both runtimes auto-deny any tool
+  // missing from an explicit `allowed_tools`, so an attached-but-unlisted server
+  // connects and then has every call refused. herdctl does this automatically for
+  // INJECTED servers only (`cli-runtime.js`), never for config `mcp_servers` —
+  // which is why `mcp__playwright__*` is hard-coded into the defaults.
+  //
+  // Patterns already on the defaults are filtered out, so nothing is restated
+  // for an instance with no external servers (or one whose only server paddock's
+  // own overrode above) — that config stays byte-identical to before this lever.
+  //
+  // The host's Claude Code PLUGINS ride on the same two mechanisms (#700, and the
+  // `plugins` passthrough herdctl 5.32.0 added for it). They are a separate key
+  // rather than more `mcp_servers` because a plugin is a directory the engine
+  // loads, not a server paddock can describe — but their servers land in the same
+  // tool namespace and need the same allowlist widening, under names paddock has
+  // to derive rather than read (`claude-plugins.ts`).
+  if (hostPlugins.plugins.length > 0) config.plugins = hostPlugins.plugins;
+  const extra = [
+    ...Object.keys(external).map(mcpToolPattern),
+    ...hostPlugins.toolPatterns,
+  ].filter((pattern) => !FLEET_ALLOWED_TOOLS.includes(pattern));
+  if (extra.length > 0) config.allowed_tools = [...FLEET_ALLOWED_TOOLS, ...extra];
   return config;
 }
 
@@ -167,15 +229,22 @@ export function sweeperWorkingDir(cfg: PaddockConfig, slug: string): string {
 }
 
 /**
- * A project's sweeper (curator) agent config. TOOL-LESS: the sweeper has NO
- * tools (`allowed_tools: []`) — it never reads or writes files. Instead it
- * RETURNS the curated content as plain assistant text in marked sections
- * (OVERVIEW / CHANGELOG / optional CLAUDE, issue #177); SweepService parses
- * that text and writes OVERVIEW.md / CHANGELOG.md / CLAUDE.md itself.
+ * A project's sweeper (curator) agent config. TOOL-LESS BY DESIGN: it declares
+ * `allowed_tools: []` and never reads or writes files. Instead it RETURNS the
+ * curated content as plain assistant text in marked sections (OVERVIEW /
+ * CHANGELOG / optional CLAUDE, issue #177); SweepService parses that text and
+ * writes OVERVIEW.md / CHANGELOG.md / CLAUDE.md itself.
  *
  * This is cheaper and far more predictable than letting a Haiku agent drive
  * file edits: no tool-loop turns, no partial writes, no permission_mode /
- * denied_tools to reason about (all irrelevant with zero tools).
+ * denied_tools to reason about.
+ *
+ * What makes it tool-less is NOT the empty `allowed_tools` — herdctl emits an
+ * allow-list only when it is non-empty, so `[]` restricts nothing (#647). The
+ * actual guarantees are: no injected MCP servers (the sweeper is the one turn
+ * path that does not even get `send_file`), `max_turns: 4`, a system prompt
+ * whose first line is "You DO NOT use any tools", and a non-interactive
+ * `claude -p` run that cannot answer a permission prompt.
  */
 export function buildSweeperConfig(
   cfg: PaddockConfig,
@@ -200,9 +269,13 @@ export function buildSweeperConfig(
     // addAgent does deep-merge the loaded defaults, they just never carry it).
     runtime: "cli",
     model: curatorModel ?? SWEEPER_DEFAULT_MODEL,
-    // Tool-less: a handful of turns is plenty since there are no tool loops.
+    // A handful of turns is plenty since there are no tool loops — and this, not
+    // the empty allow-list below, is one of the things actually bounding the run.
     max_turns: 4,
-    // NO tools. The sweeper returns text only; SweepService does the writing.
+    // Declares NO tools: the sweeper returns text only; SweepService does the
+    // writing. Note herdctl does not emit an empty allow-list at all, so this
+    // restricts nothing on its own (#647) — see the doc comment above for the
+    // properties that do make the sweeper tool-less in practice.
     allowed_tools: [],
     system_prompt:
       "You are a concise project curator. You DO NOT use any tools — you only " +
@@ -257,7 +330,8 @@ export function buildSweeperConfig(
  * (`allowed_tools`/`permission_mode`/`model`/`max_turns`, projected by
  * {@link triggerToAgentToolConfig} from the trigger's `run`) IS its capability set.
  * Runs in the project's WORKING dir (so a trigger's Bash/Write act on the same tree
- * the keeper does). A tool-less trigger gets `allowed_tools: []` and can only return text.
+ * the keeper does). A trigger that declares no tools gets `allowed_tools: []` — which
+ * herdctl does not enforce as a deny-all; see {@link triggerToAgentToolConfig} (#647).
  */
 export function buildTriggerConfig(
   cfg: PaddockConfig,
@@ -354,7 +428,12 @@ export async function ensureConfigFile(cfg: PaddockConfig): Promise<void> {
       // several of these surface as deferred tools reached through it. These
       // only actually DO anything in session drive-mode (the reaper re-fires
       // them); in batch mode they're inert (documented in the box CLAUDE.md).
-      allowed_tools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "WebFetch", "WebSearch", "Task", "TodoWrite", "Skill", "NotebookEdit", "ToolSearch", "ScheduleWakeup", "Monitor", "CronCreate", "CronList", "CronDelete", BROWSER_MCP_TOOL],
+      // The list itself lives in `herdctl-agent-names.ts` as FLEET_ALLOWED_TOOLS,
+      // because a keeper with host MCP servers attached (#691 step 5) has to
+      // restate it plus their `mcp__<server>__*` patterns — herdctl's
+      // `mergeAgentConfig` REPLACES arrays rather than merging them, so an agent
+      // that widens the allowlist inherits nothing from here.
+      allowed_tools: [...FLEET_ALLOWED_TOOLS],
       // Best-effort denylist (#179): narrow, honest catastrophic-wipe patterns
       // that do NOT block legitimate absolute-path cleanup. See DENIED_TOOLS.
       denied_tools: [...DENIED_TOOLS],

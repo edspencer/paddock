@@ -89,6 +89,9 @@ COPY packages/server/package.json packages/server/
 COPY packages/web/package.json packages/web/
 RUN npm ci --omit=dev
 
+# The image redistributes Paddock, so it carries Paddock's licence text (#674).
+COPY LICENSE ./
+
 # Built artifacts. The server resolves the SPA at ../../web/dist relative to
 # packages/server/dist, so this layout needs no PADDOCK_WEB_DIST override.
 COPY --from=build /app/packages/server/dist packages/server/dist

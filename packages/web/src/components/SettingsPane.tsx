@@ -39,6 +39,12 @@ const PERMISSION_MODES: { value: string; label: string }[] = [
   { value: "bypassPermissions", label: "Bypass all (use with care)" },
 ];
 
+/**
+ * Stands in for an inherited instance default before the meta fetch resolves —
+ * a neutral "we don't know yet" rather than a claim about the box (#587).
+ */
+const LOADING_DEFAULT = "loading…";
+
 /** A section wrapper: a titled card with an optional one-line description. */
 function Section({
   title,
@@ -113,20 +119,28 @@ function RepoBackingSection({
     setRepo("");
     setConfirming(false);
     setError(null);
-  }, [project.slug, project.repoBacked]);
+  }, [project.slug, project.managed]);
 
-  // Repo-backed already: show the backing read-only (promotion is one-way).
-  if (project.repoBacked) {
+  // Already backed by a repo or a nominated directory: show it read-only. There
+  // is no un-promote and no re-pointing (#206 — the cwd is baked into every
+  // transcript path), so this is a statement of fact rather than a form.
+  if (!project.managed || project.path) {
     return (
       <Section
-        title="Repository backing"
-        description="This project is backed by an external git repo — Claude works in a checkout of it."
+        title="Backing"
+        description={
+          project.managed
+            ? "Claude works in the directory below, and Paddock curates this project's notes there."
+            : "Claude works in the directory below. Paddock does not write project files into it — its notes stay in the project's own folder."
+        }
       >
         <dl className="grid grid-cols-1 gap-y-3">
-          <ReadOnly
-            label="Repository"
-            value={<span className="break-all font-mono text-[13px]">{project.repo}</span>}
-          />
+          {project.repo && (
+            <ReadOnly
+              label={project.path ? "Repository (recorded)" : "Repository"}
+              value={<span className="break-all font-mono text-[13px]">{project.repo}</span>}
+            />
+          )}
           <ReadOnly
             label="Working directory"
             value={<span className="break-all font-mono text-[13px]">{project.workingDir}</span>}
@@ -294,16 +308,16 @@ export function SettingsPane({
   );
 
   const [models, setModels] = useState<ModelInfo[]>([]);
+  // The instance-wide defaults below are `null` until the meta fetch resolves.
+  // Seeding them with a literal made the panel state instance configuration it
+  // hadn't fetched yet, and drifted the moment a server default changed (#587) —
+  // so the pre-fetch state is genuinely unknown and renders as such.
   // The box-wide drive-mode default a project inherits when `driveMode` is unset.
-  const [driveModeDefault, setDriveModeDefault] = useState<"batch" | "session">("batch");
+  const [driveModeDefault, setDriveModeDefault] = useState<"batch" | "session" | null>(null);
   // The instance-wide max-spawn-depth default inherited when `maxSpawnDepth` is unset.
-  const [maxSpawnDepthDefault, setMaxSpawnDepthDefault] = useState<number>(1);
+  const [maxSpawnDepthDefault, setMaxSpawnDepthDefault] = useState<number | null>(null);
   // The instance-wide curation budgets inherited when a per-file override is unset (#384).
-  const [curationDefault, setCurationDefault] = useState<CurationConfig>({
-    overviewMaxTokens: 2000,
-    changelogMaxTokens: 8000,
-    claudeMaxTokens: 6000,
-  });
+  const [curationDefault, setCurationDefault] = useState<CurationConfig | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState(0);
@@ -487,8 +501,9 @@ export function SettingsPane({
   };
 
   // The box-wide default label — what "Global default" resolves to, regardless
-  // of the current (possibly overriding) selection.
-  const defaultDriveLabel = driveModeDefault === "session" ? "Session" : "Batch";
+  // of the current (possibly overriding) selection. Neutral until it's known.
+  const defaultDriveLabel =
+    driveModeDefault === null ? LOADING_DEFAULT : driveModeDefault === "session" ? "Session" : "Batch";
 
   // The models offered in the per-project default picker: the project's allow-list
   // when it narrows one (issue #457 Step 2), else the full instance list.
@@ -839,7 +854,13 @@ export function SettingsPane({
                     <option value="session">Session (cross-turn autonomy)</option>
                   </select>
                 </label>
-                {driveMode === "" ? (
+                {driveMode === "" && driveModeDefault === null ? (
+                  <Hint>
+                    <span className="italic text-paddock-400">
+                      Loading the box-wide drive-mode default…
+                    </span>
+                  </Hint>
+                ) : driveMode === "" ? (
                   <Hint>
                     Inheriting the box-wide default:{" "}
                     <span className="font-medium text-paddock-700 dark:text-paddock-200">
@@ -871,7 +892,9 @@ export function SettingsPane({
                     value={maxSpawnDepth}
                     onChange={(e) => setMaxSpawnDepth(e.target.value)}
                   >
-                    <option value="">Instance default ({maxSpawnDepthDefault})</option>
+                    <option value="">
+                      Instance default ({maxSpawnDepthDefault ?? LOADING_DEFAULT})
+                    </option>
                     <option value="0">0 — no spawned children get tools</option>
                     <option value="1">1 — children can report back (grandchildren can't)</option>
                     <option value="2">2</option>
@@ -879,7 +902,13 @@ export function SettingsPane({
                     <option value="4">4</option>
                   </select>
                 </label>
-                {maxSpawnDepth === "" ? (
+                {maxSpawnDepth === "" && maxSpawnDepthDefault === null ? (
+                  <Hint>
+                    <span className="italic text-paddock-400">
+                      Loading the instance max-spawn-depth default…
+                    </span>
+                  </Hint>
+                ) : maxSpawnDepth === "" ? (
                   <Hint>
                     Inheriting the instance default:{" "}
                     <span className="font-medium text-paddock-700 dark:text-paddock-200">
@@ -918,7 +947,7 @@ export function SettingsPane({
                   type="number"
                   min={1}
                   className="input"
-                  placeholder={`Instance default (${curationDefault.overviewMaxTokens})`}
+                  placeholder={`Instance default (${curationDefault?.overviewMaxTokens ?? LOADING_DEFAULT})`}
                   value={overviewBudget}
                   onChange={(e) => setOverviewBudget(e.target.value)}
                   aria-label="OVERVIEW.md token budget"
@@ -930,7 +959,7 @@ export function SettingsPane({
                   type="number"
                   min={1}
                   className="input"
-                  placeholder={`Instance default (${curationDefault.changelogMaxTokens})`}
+                  placeholder={`Instance default (${curationDefault?.changelogMaxTokens ?? LOADING_DEFAULT})`}
                   value={changelogBudget}
                   onChange={(e) => setChangelogBudget(e.target.value)}
                   aria-label="CHANGELOG.md token budget"
@@ -942,7 +971,7 @@ export function SettingsPane({
                   type="number"
                   min={1}
                   className="input"
-                  placeholder={`Instance default (${curationDefault.claudeMaxTokens})`}
+                  placeholder={`Instance default (${curationDefault?.claudeMaxTokens ?? LOADING_DEFAULT})`}
                   value={claudeBudget}
                   onChange={(e) => setClaudeBudget(e.target.value)}
                   aria-label="CLAUDE.md token budget"
@@ -953,9 +982,15 @@ export function SettingsPane({
               <Hint>Each budget must be a whole number of tokens (1 or more), or blank to inherit.</Hint>
             ) : buildCurationOverride(overviewBudget, changelogBudget, claudeBudget) ? (
               <Hint>
-                Overriding the instance defaults ({curationDefault.overviewMaxTokens}/
-                {curationDefault.changelogMaxTokens}/{curationDefault.claudeMaxTokens}) for the fields
-                set above.{" "}
+                Overriding the instance defaults
+                {curationDefault && (
+                  <>
+                    {" "}
+                    ({curationDefault.overviewMaxTokens}/{curationDefault.changelogMaxTokens}/
+                    {curationDefault.claudeMaxTokens})
+                  </>
+                )}{" "}
+                for the fields set above.{" "}
                 <button
                   type="button"
                   onClick={() => {
@@ -969,6 +1004,12 @@ export function SettingsPane({
                 </button>
                 . Repo-backed projects never have their CLAUDE.md curated, so that budget is moot for
                 them.
+              </Hint>
+            ) : curationDefault === null ? (
+              <Hint>
+                <span className="italic text-paddock-400">
+                  Loading the instance curation budgets…
+                </span>
               </Hint>
             ) : (
               <Hint>

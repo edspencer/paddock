@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   encodeProjectDir,
   projectChatsDir,
+  encodedTranscriptDir,
   ensureProjectChats,
   readFirstUserText,
   type ClaudeHomeTarget,
@@ -71,16 +72,20 @@ describe("ensureProjectChats", () => {
   let home: string;
   let projectDir: string;
 
+  let userHome: string;
+
   // The home is passed explicitly, never read from the environment (#620): the
   // parameter is required precisely so no caller can silently take a default.
-  const owned = (): ClaudeHomeTarget => ({ path: home, owned: true });
+  const owned = (): ClaudeHomeTarget => ({ path: home, transcripts: "own", userHome });
 
   beforeEach(async () => {
     home = await makeTmpDir("paddock-claude-home-");
+    userHome = await makeTmpDir("paddock-user-claude-");
     projectDir = await makeTmpDir("paddock-proj-");
   });
   afterEach(async () => {
     await rmTmpDir(home);
+    await rmTmpDir(userHome);
     await rmTmpDir(projectDir);
   });
 
@@ -155,42 +160,130 @@ describe("ensureProjectChats", () => {
     expect(await fs.readFile(path.join(chats, "sess-1.jsonl"), "utf8")).toBe("KEEP");
   });
 
-  // #620: the migrate branch copies transcripts into `.chats/` and then `fs.rm`s
-  // the originals. That is fine inside a home paddock owns — such a directory can
-  // only be its own doing. Inside the user's `~/.claude` it is somebody else's
-  // `claude` CLI history for a directory paddock happens to also manage, and
-  // deleting it was the destructive behaviour #620 exists to stop.
-  describe("in a home paddock does NOT own", () => {
-    const unowned = (h: string): ClaudeHomeTarget => ({ path: h, owned: false });
+  // #691: `transcripts: host` — the same owned home, with the symlink pointed
+  // the OTHER way, at the user's real folder for that working directory. One set
+  // of files, both directions: a `claude --resume` append in a terminal is the
+  // same bytes paddock renders.
+  describe("under transcripts: host", () => {
+    const host = (): ClaudeHomeTarget => ({ path: home, transcripts: "host", userHome });
+    const hostStore = (): string => encodedTranscriptDir(userHome, projectDir);
 
-    it("leaves an existing real transcript dir completely alone", async () => {
-      const enc = encodedPath();
-      await fs.mkdir(enc, { recursive: true });
-      await fs.writeFile(path.join(enc, "mine.jsonl"), '{"type":"user"}\n', "utf8");
-      const before = await fs.stat(path.join(enc, "mine.jsonl"));
+    it("points the encoded path at the USER's folder, and creates it", async () => {
+      await ensureProjectChats(projectDir, projectDir, host());
 
-      await ensureProjectChats(projectDir, projectDir, unowned(home));
-
-      // Still a real directory, still holding the user's transcript, untouched.
-      expect((await fs.lstat(enc)).isDirectory()).toBe(true);
-      expect((await fs.lstat(enc)).isSymbolicLink()).toBe(false);
-      const after = await fs.stat(path.join(enc, "mine.jsonl"));
-      expect(after.mtimeMs).toBe(before.mtimeMs);
-      // …and nothing was copied out of it either.
-      await expect(
-        fs.access(path.join(projectChatsDir(projectDir), "mine.jsonl")),
-      ).rejects.toBeTruthy();
-    });
-
-    it("still plants the symlink when there is nothing there (the escape hatch works)", async () => {
-      // CLAUDE_HOME=$HOME/.claude restores the pre-#620 layout in full, so the
-      // ordinary fresh-project path must keep working in an unowned home.
-      await ensureProjectChats(projectDir, projectDir, unowned(home));
       const enc = encodedPath();
       expect((await fs.lstat(enc)).isSymbolicLink()).toBe(true);
-      expect(path.resolve(path.dirname(enc), await fs.readlink(enc))).toBe(
-        path.resolve(projectChatsDir(projectDir)),
+      const target = await fs.readlink(enc);
+      expect(path.resolve(path.dirname(enc), target)).toBe(path.resolve(hostStore()));
+      // The link must not dangle: Claude Code cannot mkdir -p through one.
+      expect((await fs.stat(enc)).isDirectory()).toBe(true);
+    });
+
+    it("writes through the link into the user's real folder", async () => {
+      await ensureProjectChats(projectDir, projectDir, host());
+      // Stand in for Claude Code: write to the LITERAL path it would use.
+      await fs.writeFile(path.join(encodedPath(), "s.jsonl"), "SHARED", "utf8");
+      expect(await fs.readFile(path.join(hostStore(), "s.jsonl"), "utf8")).toBe("SHARED");
+    });
+
+    // Not in #691's sketch, and load-bearing: ~a dozen server modules resolve a
+    // transcript as `<projectDir>/.chats/<id>.jsonl` rather than through the
+    // Claude home (subagents, usage, tooldetails, localcommand, recovery,
+    // readFirstUserText). Without this they read an empty directory and the chat
+    // renders with no sub-agent panels, no token usage and no tool details.
+    it("points .chats/ at the same folder so by-path readers still work", async () => {
+      await ensureProjectChats(projectDir, projectDir, host());
+      await fs.writeFile(
+        path.join(hostStore(), "s3.jsonl"),
+        JSON.stringify({ type: "user", message: { content: "from the terminal" } }) + "\n",
+        "utf8",
       );
+      expect(await readFirstUserText(projectDir, "s3")).toBe("from the terminal");
+    });
+
+    it("never deletes a .chats/ that still holds transcripts", async () => {
+      const chats = projectChatsDir(projectDir);
+      await fs.mkdir(chats, { recursive: true });
+      await fs.writeFile(path.join(chats, "old.jsonl"), "KEEP", "utf8");
+
+      await ensureProjectChats(projectDir, projectDir, host());
+
+      expect((await fs.lstat(chats)).isSymbolicLink()).toBe(false);
+      expect(await fs.readFile(path.join(chats, "old.jsonl"), "utf8")).toBe("KEEP");
+      // …and the redirect is still planted, so chat itself works.
+      expect((await fs.lstat(encodedPath())).isSymbolicLink()).toBe(true);
+    });
+
+    // Regression, found by booting a real instance rather than by reading the
+    // code: `ensureSweeperHome` hands in a `<dataDir>/sweepers/<slug>` that
+    // nothing has created yet. Symlinking `.chats` into a missing parent is an
+    // ENOENT, and the function's catch-all swallowed it — so every sweeper lost
+    // its redirect and wrote transcripts to an unmanaged path, with no error.
+    it("works when the chats host dir does not exist yet (the sweeper case)", async () => {
+      const fresh = path.join(projectDir, "sweepers", "slug");
+      await ensureProjectChats(fresh, fresh, host());
+
+      const enc = encodedTranscriptDir(home, fresh);
+      expect((await fs.lstat(enc)).isSymbolicLink()).toBe(true);
+      expect(await fs.realpath(enc)).toBe(
+        await fs.realpath(encodedTranscriptDir(userHome, fresh)),
+      );
+      expect((await fs.lstat(projectChatsDir(fresh))).isSymbolicLink()).toBe(true);
+    });
+
+    it("re-aims an existing own-mode link when the setting flips", async () => {
+      await ensureProjectChats(projectDir, projectDir, owned());
+      await ensureProjectChats(projectDir, projectDir, host());
+
+      const enc = encodedPath();
+      const target = await fs.readlink(enc);
+      expect(path.resolve(path.dirname(enc), target)).toBe(path.resolve(hostStore()));
+    });
+  });
+
+  // The #690 regression, pinned in BOTH modes because it is the whole reason
+  // `host` is an outward symlink rather than a repointed `CLAUDE_CONFIG_DIR`.
+  //
+  // The agent harness refuses to write to any path containing a `.claude`
+  // component, and agent memory lives at `<claudeHome>/projects/<enc>/memory` —
+  // so 0.61.1's "share by pointing the home at ~/.claude" silently took agent
+  // memory away. Here the LITERAL path stays inside paddock's own home in both
+  // modes; only what it resolves to changes.
+  describe("the memory path handed to the agent (#690)", () => {
+    const hasClaudeComponent = (p: string): boolean =>
+      p.split(path.sep).includes(".claude");
+
+    it.each(["own", "host"] as const)(
+      "has no .claude component under transcripts: %s",
+      async (transcripts) => {
+        const target: ClaudeHomeTarget = { path: home, transcripts, userHome };
+        await ensureProjectChats(projectDir, projectDir, target);
+
+        const memory = path.join(encodedTranscriptDir(home, projectDir), "memory");
+        expect(hasClaudeComponent(memory)).toBe(false);
+        // The fixture must be able to fail: the user's home DOES have one, and
+        // under `host` that is exactly where these files resolve to.
+        expect(hasClaudeComponent(path.join(userHome, ".claude", "projects"))).toBe(true);
+      },
+    );
+
+    it("resolves INTO the user's home under host, while the literal path stays clean", async () => {
+      const realUserHome = path.join(userHome, ".claude");
+      await fs.mkdir(realUserHome, { recursive: true });
+      const target: ClaudeHomeTarget = { path: home, transcripts: "host", userHome: realUserHome };
+      await ensureProjectChats(projectDir, projectDir, target);
+
+      const memory = path.join(encodedTranscriptDir(home, projectDir), "memory");
+      expect(hasClaudeComponent(memory)).toBe(false);
+      await fs.mkdir(memory, { recursive: true });
+      await fs.writeFile(path.join(memory, "note.md"), "remembered", "utf8");
+      // Same file, reached through the user's real `.claude` path.
+      const shared = path.join(
+        encodedTranscriptDir(realUserHome, projectDir),
+        "memory",
+        "note.md",
+      );
+      expect(await fs.readFile(shared, "utf8")).toBe("remembered");
     });
   });
 
@@ -199,7 +292,7 @@ describe("ensureProjectChats", () => {
     const badHome = path.join(home, "afile");
     await fs.writeFile(badHome, "x", "utf8");
     await expect(
-      ensureProjectChats(projectDir, projectDir, { path: badHome, owned: true }),
+      ensureProjectChats(projectDir, projectDir, { path: badHome, transcripts: "own", userHome }),
     ).resolves.toBeUndefined();
   });
 });

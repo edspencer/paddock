@@ -154,16 +154,59 @@ Opening a directory (--here)
 
     · creates .paddock/ in the directory for this workspace's own state
     · creates .chats/ for transcripts, and adds both to .gitignore
-    · links ~/.claude/projects/<encoded-dir> at this workspace
+    · offers your ~/.claude sessions for this directory for import — nothing
+      there is moved, copied or linked until you confirm
 
   Once done, later runs in the same directory resume it — no flag needed.
   Without --here, Paddock never touches the directory you ran it from.
 
 Credentials
-  Paddock drives Claude Code, so it needs Claude credentials in the
-  environment: CLAUDE_CODE_OAUTH_TOKEN (Max/Pro) or ANTHROPIC_API_KEY (API
-  billing). If you already use Claude Code on this machine, an existing login
-  under ~/.claude is picked up automatically. Otherwise run \`claude setup-token\`.
+  Paddock drives Claude Code, so it needs Claude credentials — and if you
+  already use Claude Code on this machine, it uses the login you already have.
+  That is a macOS Keychain entry on a Mac, or your ~/.claude/.credentials.json
+  elsewhere (symlinked in, never copied). Reading a login writes nothing.
+
+  Otherwise: a CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY in the environment,
+  or a one-off \`CLAUDE_CONFIG_DIR=<data-dir>/claude-home claude login\`. With no
+  login at all anywhere, run \`claude setup-token\`. Paddock says at startup when
+  it can find none.
+
+Sharing your Claude Code state
+  Apart from that login, Paddock writes nothing outside its data dir by
+  default: transcripts go to each project's .chats/, and your ~/.claude is read
+  for config only. Each thing it can share is one key in
+  <data-dir>/paddock.config.yaml:
+
+    claude:
+      transcripts: host   # own | host, default own
+      credentials: host   # own | host, default host
+      instructions: host  # own | host, default own
+      hooks: host         # own | host, default own
+      mcpServers: host    # own | host, default own
+
+  transcripts: host makes a chat and a \`claude --resume\` in the same directory
+  the same file, live in both directions; deleting such a chat in Paddock
+  releases it rather than removing it, because it is your history rather than
+  Paddock's copy. credentials: own is the opt-out from sharing the login above.
+
+  instructions: host loads your ~/.claude CLAUDE.md, agents/, commands/ and
+  plugins/. Off by default, which is a change: your curated CLAUDE.md does not
+  reach Paddock's agents unless you say so. Each project's own CLAUDE.md always
+  does.
+
+  hooks: host runs the shell commands your ~/.claude/settings.json binds to
+  tool use. Off by default — inheriting someone's hooks is not something to
+  discover after the fact. Its other keys (permissions, model, statusline)
+  apply either way: under hooks: own Paddock writes its own settings.json
+  carrying them with hooks dropped, regenerated at startup.
+
+  mcpServers: host attaches the MCP servers declared in your ~/.claude.json —
+  the top-level ones, plus a project's own when its directory matches. To give
+  this instance a server your machine doesn't have, declare it instead in a
+  sibling mcpServers: block of the same file; use env:VAR_NAME anywhere a
+  string goes so tokens stay out of it. That keeps a token out of the file, not
+  out of \`ps\`: leave driveMode on its default (session) for a server holding
+  one, since batch passes the definition to claude as a command-line argument.
 
 Your data
   Everything lives in one directory — ~/.paddock unless you pass --data-dir.

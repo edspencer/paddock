@@ -87,7 +87,7 @@ describe("integration: import native Claude Code chats (#588)", () => {
     // A real discriminator: without this the two homes coincide and every
     // cross-home assertion below passes vacuously.
     expect(ownHome).not.toBe(userHome);
-    expect(t.cfg.ownsClaudeHome).toBe(true);
+    expect(t.cfg.claude.transcripts).toBe("own");
 
     // A local git repo to back the project (no network).
     const src = path.join(t.tmp, "_src", "acme-api");

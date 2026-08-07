@@ -80,15 +80,52 @@ you visit, more a service your other tools talk to.
 
 ## Quickstart
 
-Run the published image, point it at a data volume, and give it a Claude token:
+**Try it on your own Claude Code history, in one command.** `cd` into a directory
+where you've been using Claude Code recently:
+
+```bash
+cd ~/code/some-project
+npx @edspencer/paddock --here
+```
+
+Paddock opens **that directory** as its workspace, finds the Claude Code sessions
+you already have for it, and offers them for import — so you're looking at your own
+conversations, resumable, rather than an empty instance. Then open
+**http://127.0.0.1:4000**. Later runs in the same directory resume it, no flag needed.
+
+`--here` is the consent, and here is all of it: it creates `.paddock/` (workspace
+state) and `.chats/` (transcripts) in the directory and appends both to `.gitignore`.
+**Your `~/.claude` is not touched** — sessions there are *offered* for import, and
+nothing is moved, copied or linked until you confirm. Undo with `rm -rf .paddock
+.chats` and dropping the two `.gitignore` lines. Without the flag, Paddock never
+touches the directory you ran it from.
+
+Needs **Node 22+**. First run downloads ~250 MB — Paddock drives Claude Code, and
+the Agent SDK ships a per-platform binary of that size; later runs reuse the npm
+cache. For repeated use, `npm i -g @edspencer/paddock` beats bare `npx`.
+
+### Always-on: Docker
+
+For a server rather than a laptop, run the published image, point it at a data
+volume, and give it a Claude token:
 
 ```bash
 docker run -d --name paddock -p 127.0.0.1:4000:4000 \
   -e CLAUDE_CODE_OAUTH_TOKEN=…       `# Claude Max/Pro plan (OAuth)` \
   -e PADDOCK_DATA_DIR=/data \
+  -e PADDOCK_DANGEROUSLY_ALLOW_OPEN=1 `# see below — required inside a container` \
   -v paddock-data:/data \
   ghcr.io/edspencer/paddock:latest
 ```
+
+`PADDOCK_DANGEROUSLY_ALLOW_OPEN=1` is **required** here and the container will
+refuse to start without it. The image binds `0.0.0.0` (it has to, to be reachable
+from outside the container) and Paddock's default auth mode is `none`, and
+Paddock will not bind a routable interface unauthenticated without being told to.
+It is safe in *this* command because `-p 127.0.0.1:4000:4000` publishes the port
+on loopback only — the container namespace is the boundary. Drop the `127.0.0.1:`
+and you have handed an unauthenticated, code-executing Paddock to your whole
+network, so put an auth mode or a reverse proxy in front of it first.
 
 Then open **http://localhost:4000** and click **New Project**.
 
@@ -113,6 +150,7 @@ services:
     environment:
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN} # Claude Max/Pro (OAuth); or ANTHROPIC_API_KEY for API-key billing
       PADDOCK_DATA_DIR: /data
+      PADDOCK_DANGEROUSLY_ALLOW_OPEN: "1"                 # required in a container; safe because the port is published on loopback
     volumes:
       - paddock-data:/data
 volumes:
@@ -123,9 +161,10 @@ volumes:
 > **The web UI has no login of its own** — run it behind a reverse proxy / auth
 > layer you trust (see [AUTH.md](AUTH.md)). Paddock reads credentials from the
 > environment and from files the host provides; it never stores secrets itself.
-> It also fails closed: a source or tarball run binds loopback by default, and
-> refuses to start on a routable interface with `PADDOCK_AUTH_MODE=none` unless
-> you explicitly set `PADDOCK_DANGEROUSLY_ALLOW_OPEN`. (The
+> It also fails closed: an `npx`, source or tarball run binds loopback by default,
+> and refuses to start on a routable interface with `PADDOCK_AUTH_MODE=none` unless
+> you explicitly set `PADDOCK_DANGEROUSLY_ALLOW_OPEN`. None of that is a concern for
+> a local `npx` run, which is reachable only from your own machine. (The
 > [Management API](#drive-it-from-outside) is the one surface that authenticates
 > itself rather than delegating to your proxy.)
 
@@ -237,8 +276,33 @@ project's `project.yaml`.
 | `PADDOCK_MODELS` | — | Comma-separated allow-list of model ids to offer. Unset offers the whole catalog. |
 | `PADDOCK_OPENAPI_ENABLED` | off | Mounts a Swagger UI at `/open-api` (raw spec at `/open-api.json`) generated from the route schemas. |
 
+### What this instance shares with your Claude Code
+
+Paddock always keeps its **own** Claude home at `<data-dir>/claude-home`, and
+refuses to start if that resolves to your `~/.claude`. What it borrows from the
+machine is five independent keys in `paddock.config.yaml` — each `own`
+(Paddock's, isolated) or `host` (this machine's):
+
+```yaml
+claude:
+  transcripts: own    # own | host — default own
+  credentials: host   # own | host — default host — the one shared by default
+  instructions: own   # own | host — default own — CLAUDE.md, agents, commands, plugins
+  hooks: own          # own | host — default own — settings.json shell hooks
+  mcpServers: own     # own | host — default own — the servers in ~/.claude.json
+```
+
+Defaults mean **nothing outside the data dir is written, and only your login is
+read**. Worth knowing if you keep a curated `~/.claude/CLAUDE.md`: it is *not*
+loaded unless you set `instructions: host`. Each project's own `CLAUDE.md` always
+applies. A sibling top-level `mcpServers:` block declares servers to Paddock
+itself, for the case where the machine has none to borrow. Full detail:
+**[what Paddock touches on your machine](https://paddock.edspencer.net/guides/what-paddock-touches/)**
+and **[the config file reference](https://paddock.edspencer.net/configuration/config-file/)**.
+
 The **complete `PADDOCK_*` reference** — every variable, its default, and purpose
-— is in **[docs/CONFIGURATION.md](docs/CONFIGURATION.md)**;
+— is at
+**[paddock.edspencer.net/configuration/environment](https://paddock.edspencer.net/configuration/environment/)**;
 [`.env.example`](.env.example) is a runnable starting point. Most of these can
 also be edited from the **Settings** screen in the UI, which writes
 `paddock.config.yaml` and shows which fields an environment variable has pinned.
@@ -324,4 +388,4 @@ env gotchas, and the changesets flow.
 
 ## License
 
-See the repository for license details.
+[MIT](LICENSE) © 2026 Ed Spencer.

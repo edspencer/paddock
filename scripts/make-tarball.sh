@@ -6,6 +6,7 @@
 #   package.json + package-lock.json (for `npm ci --omit=dev`)
 #   packages/server/{package.json,dist}
 #   packages/web/{package.json,dist}
+#   LICENSE
 #   INSTALL.md (run instructions)
 #
 # Consumer:  tar xzf paddock-<v>.tgz && cd paddock && npm ci --omit=dev \
@@ -23,7 +24,7 @@ test -d packages/web/dist    || { echo "packages/web/dist missing — run 'npm r
 rm -rf dist-tarball
 mkdir -p "${STAGE}/packages/server" "${STAGE}/packages/web"
 
-cp package.json package-lock.json "${STAGE}/"
+cp package.json package-lock.json LICENSE "${STAGE}/"
 cp packages/server/package.json "${STAGE}/packages/server/"
 cp -R packages/server/dist "${STAGE}/packages/server/dist"
 cp packages/web/package.json "${STAGE}/packages/web/"
@@ -40,9 +41,30 @@ PORT=4000 HOST=0.0.0.0 \\
 node packages/server/dist/index.js
 \`\`\`
 
-Requires Node.js >= 22 and the \`claude\` CLI on PATH
-(\`npm i -g @anthropic-ai/claude-code\`). See the Docker image
-(ghcr.io/edspencer/paddock:${VERSION}) for a batteries-included alternative.
+Requires Node.js >= 22. Chats resolve the Claude Agent SDK's own bundled binary, so
+they work as-is; the \`claude\` CLI on PATH
+(\`npm i -g @anthropic-ai/claude-code\`) is needed only for the post-turn sweeper
+and for triggers.
+
+## Easier alternatives
+
+\`\`\`sh
+# No install, no clone:
+npx @edspencer/paddock
+
+# Or open the directory you're standing in as the workspace. Any Claude Code
+# sessions you already have for it are offered for import — nothing is moved,
+# copied or linked until you confirm:
+npx @edspencer/paddock --here
+\`\`\`
+
+Deliberately unpinned: releases 0.57.0-0.59.0 shipped a CLI that silently did nothing,
+so a pinned command generated from one of those tags would be a dud. \`@latest\` is
+always a working one.
+
+For an always-on server, the Docker image (ghcr.io/edspencer/paddock:${VERSION}) is
+batteries-included. This tarball is the right choice when you want the app on the box
+with no Docker and no registry access.
 EOF
 
 tar -czf "${OUT}.tgz" -C dist-tarball "${OUT}"

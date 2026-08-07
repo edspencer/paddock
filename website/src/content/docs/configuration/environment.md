@@ -20,6 +20,11 @@ For a runnable starting point, copy [`.env.example`](../.env.example) to `.env`
 and adjust. Authentication is summarised below but documented in full in
 [AUTH.md](/configuration/authentication).
 
+Running via `npx` and have no checkout to copy that file from? The CLI's own flags
+cover the common cases without any environment at all — `--port`, `--host`,
+`--data-dir`, `--here`. Run `npx @edspencer/paddock --help` for the full list; every
+`PADDOCK_*` variable below still works if you export it first.
+
 ## How values are parsed
 
 Two helpers do almost every read:
@@ -56,8 +61,12 @@ Consequences worth knowing:
 | `PORT` | `4000` | no | HTTP/WS listen port. |
 | `HOST` | `127.0.0.1` | no | Bind host. **Safe by default:** defaults to loopback, so a fresh run is network-closed. `PADDOCK_HOST` is an alias. Set to `0.0.0.0` (all interfaces) only behind auth or a proxy — see the guard below. |
 | `PADDOCK_DANGEROUSLY_ALLOW_OPEN` | `false` | no | Escape hatch for the open-server guard: allow a non-loopback bind **with no authentication** (`PADDOCK_AUTH_MODE=none`). Accepts `1`/`true`/`yes`. Without it, that combination **refuses to start**; with it, the server boots but logs a loud one-line warning. Leave unset unless you truly intend an unauthenticated server on a routable interface. |
-| `CLAUDE_HOME` | `<dataDir>/claude-home` | no | The Claude home Paddock runs its agents against — the directory whose `projects/<encoded-cwd>/` folders hold Claude Code's session transcripts, and the value handed to Claude Code as `CLAUDE_CONFIG_DIR`. **Paddock owns this directory** (#620): the data dir is a single relocatable root, and the user's `~/.claude` is a read-only source Paddock imports out of but never writes to. Precedence: `CLAUDE_HOME`, then `CLAUDE_CONFIG_DIR`, then a `claudeHome:` config-file key, then the default. `CLAUDE_CONFIG_DIR` is honoured because herdctl deliberately refuses to clobber an operator-set value (herdctl#423) — if Paddock disagreed with it, the SDK would write transcripts to one tree while herdctl read from another. Resolved **once** at startup into `PaddockConfig.claudeHome` (`resolveClaudeHome()` in `config.ts`) and threaded to *both* consumers: Paddock's transcript relocation and import detection (`ensureProjectChats` in `transcripts.ts`, `AdoptableIndex` in `adoptable.ts`), **and** the engine, as `FleetManagerOptions.claudeHomePath` (`herdctl.ts`). It is deliberately one value: were Paddock to honour this variable while the engine fell back to `$HOME/.claude`, chats would **list from one directory and open empty from another** (#588). Set it to `$HOME/.claude` to restore the pre-#620 layout exactly. |
-| `CLAUDE_CONFIG_DIR` | *(unset)* | no | Claude Code's own home variable. When set, Paddock adopts it as its Claude home rather than picking a different one (see above). Note that Claude Code scopes its credential store to whether this is set at all, so a keychain login made against the default home is not visible under a relocated one — Paddock warns at boot when it can find no credential source. |
+| `CLAUDE_CONFIG_DIR` | `<dataDir>/claude-home` | no | Where **Paddock's own** Claude home goes — the directory whose `projects/<encoded-cwd>/` folders hold Claude Code's session transcripts, and the value handed to Claude Code as its config dir. Paddock **always owns this directory** (#691): the data dir is a single relocatable root, and the user's `~/.claude` is a read-only source Paddock bridges config out of but never runs as. This variable is honoured (rather than ignored) because it is Claude Code's own, and herdctl deliberately refuses to clobber an operator-set value (herdctl#423) — if Paddock disagreed with it, the SDK would write transcripts to one tree while herdctl read from another, and chats would **list from one directory and open empty from another** (#588). A `claudeHome:` key in the [config file](/configuration/config-file/) sits beneath it. **Paddock refuses to start if this resolves to your own `~/.claude`** — that is the one value that re-welds every concern to a single lever and breaks agent memory (an agent cannot write to any path with a `.claude` component, #690). To share your real transcripts, use `claude.transcripts: host` instead; it shares the files without moving the home. Resolved **once** at startup into `PaddockConfig.claudeHome` (`resolveClaudeHome()` in `config.ts`) and threaded to *both* consumers: Paddock's transcript relocation and import detection (`ensureProjectChats` in `transcripts.ts`, `AdoptableIndex` in `adoptable.ts`), **and** the engine, as `FleetManagerOptions.claudeHomePath` (`herdctl.ts`). Note that Claude Code scopes its credential store to whether this is set at all, so a keychain login made against the default home is not visible under Paddock's — which is what `PADDOCK_CLAUDE_CREDENTIALS` (below, default `host`) exists to undo. Paddock warns at boot when it can find no credential source at all. |
+| `PADDOCK_CLAUDE_TRANSCRIPTS` | `own` | no | Whose session transcripts this instance uses (#691) — the env override for the `claude.transcripts` key. `own` keeps them in each project's `.chats/`, inside the data dir. `host` shares your real `~/.claude/projects/<encoded-cwd>/` folder live, in both directions: a Paddock chat and a `claude --resume` in the same directory are the same file. Under `host`, deleting a chat **releases** it rather than removing it — it is your history, not Paddock's copy (#689). See [the config file](/configuration/config-file/). |
+| `PADDOCK_CLAUDE_CREDENTIALS` | `host` | no | Whose Claude Code **login** this instance uses (#691) — the env override for the `claude.credentials` key, and the one key in that block whose default is `host` rather than `own`. `host` uses the login already on this machine: on macOS the Keychain entry a plain `claude /login` wrote, elsewhere your `~/.claude/.credentials.json` (symlinked into Paddock's home, never copied). `own` uses only what is inside Paddock's own Claude home — a token in the environment, or a `CLAUDE_CONFIG_DIR=<data-dir>/claude-home claude login`. The default is `host` because reading a login **writes nothing**, while isolating it by default produces an instance that boots cleanly and fails every turn with "Not logged in" (#683). Mechanically, `host` sets `CLAUDE_SECURESTORAGE_CONFIG_DIR=""` in the environment the runtime gets: Claude Code scopes its secure storage to that variable *instead of* `CLAUDE_CONFIG_DIR` when it is defined, and the empty value selects the unsuffixed service name — so the login is shared without Paddock's Claude home moving anywhere. Set the variable yourself to a non-empty value and Paddock honours it over this key. |
+| `PADDOCK_CLAUDE_INSTRUCTIONS` | `own` | no | Whose user-level **instructions** this instance loads (#691) — the env override for the `claude.instructions` key. Governs your `~/.claude` `CLAUDE.md`, `agents/`, `commands/` and `plugins/`: inert content the model reads or invokes by name, none of which runs a command on its own. `own` loads none of them; `host` symlinks all four in, which is what every version before 0.62 did unconditionally. **This default is a reversal with a real cost** — a curated `~/.claude/CLAUDE.md` stops reaching your agents, silently — and it is the default anyway so that "`own` everywhere means nothing outside the data dir is read or written" is a guarantee rather than a footnote. Paddock names this key at startup when it finds files it is not loading. Each project's own `CLAUDE.md` is unaffected either way. |
+| `PADDOCK_CLAUDE_HOOKS` | `own` | no | Whether this instance runs the host machine's Claude Code **hooks** (#691) — the env override for the `claude.hooks` key, and the only lever in the block that governs code execution rather than data. Hooks are shell commands `~/.claude/settings.json` binds to tool use and session lifecycle; before 0.62 they were inherited unconditionally, so every hook you had configured ran inside every Paddock turn with no way to stop it. `own` drops them; `host` symlinks your `settings.json` in whole. Because that file is a mixed bag (`hooks` *and* `permissions`, `model`, `statusLine`, `enabledPlugins`), `own` cannot be a symlink decision: Paddock **writes its own `settings.json`** carrying your other keys with `hooks` removed, regenerated at each startup — so a restart is what applies an edit to yours. A `settings.json` you put in Paddock's own home is recognised by hash and never overwritten. An unparseable source plants nothing rather than falling back to the symlink. Scope: this means *no host hooks*, not *no host commands* — `apiKeyHelper`, `awsAuthRefresh`, `statusLine` and friends are still inherited. |
+| `PADDOCK_CLAUDE_MCP_SERVERS` | `own` | no | Whose **MCP servers** this instance's project agents get (#691) — the env override for the `claude.mcpServers` key. `own` attaches only the servers Paddock provides itself (`send_file`, the optional self-management tools, the optional browser server); `host` also attaches the ones you have declared with `claude mcp add` — the top-level `mcpServers` of your `~/.claude.json` plus any scoped to a project's own working directory (`projects.<abs-dir>.mcpServers`). Note the path: MCP servers are declared in `~/.claude.json`, a **sibling of** `~/.claude` rather than a file inside it, which is why they were the one thing Paddock's config bridge structurally could not reach. Paddock **reads** that file and passes the servers to the runtime; it never symlinks or writes it, because Claude Code keeps mutable state there (per-project trust, approvals) that is yours. Read **once, at startup** — add a server and restart Paddock to pick it up — and the boot log names every server it attached. Two things cannot be carried through today and are warned about individually: an http/sse server's `headers` (so a bearer token is lost, and its stored OAuth token, which is keyed on a hash of those headers, is not found either), and the `sse` transport (connected to as HTTP). MCP OAuth tokens otherwise live in the same credential store as your Anthropic login, so `PADDOCK_CLAUDE_CREDENTIALS=host` carries them. Plugin-provided MCP servers are **not** covered — see the config file page. |
 
 
 > **Safe-by-default binding.** Paddock runs code and spends Claude tokens, so it
@@ -98,11 +107,17 @@ for modes, provider examples, and secret handling — this table is only the kno
 
 ## Management API tokens (`PADDOCK_MCP_TOKEN_*`)
 
-The external [Management API](/reference/mcp/) at `/mcp` has **no `PADDOCK_*`
-variables of its own** — the whole `managementApi` block is
-[config-file-only](/configuration/config-file/#managementapi--the-file-first-block).
-The environment's job is to hold the **client tokens**, which the file only ever
-*references*:
+The external [Management API](/reference/mcp/) at `/mcp` is
+[config-file-first](/configuration/config-file/#managementapi--the-file-first-block):
+the whole `managementApi` block is set in the file, with **exactly one
+environment override** —
+
+| Variable | Default | Restart? | What it does |
+|---|---|---|---|
+| `PADDOCK_MANAGEMENT_TRUSTED_PROXIES` | `loopback,linklocal,uniquelocal` | yes | Overrides `managementApi.trustedProxies`: which peers may be believed when they say a `/mcp` request arrived over HTTPS (`X-Forwarded-Proto`) and who it came from. Comma-separated IPs, CIDRs, or the preset names `loopback` / `linklocal` / `uniquelocal`. The environment wins over the file; saying nothing yields the compatibility default above rather than a strict list. |
+
+The environment's other job here is to hold the **client tokens**, which the file
+only ever *references*:
 
 ```yaml
 managementApi:
@@ -124,6 +139,33 @@ PADDOCK_MCP_TOKEN_MY_LAPTOP=pdk_my-paddock_1a2b3c…
 or `secret:` in the YAML is a hard config error — the config file is git-tracked.
 Deliver these like any other runtime credential: from a secrets manager or a
 secrets file, not a committed `.env`.
+
+## MCP server credentials
+
+The top-level [`mcpServers:`](/configuration/config-file/#mcpservers--the-servers-this-instance-declares-itself)
+block — where you declare an MCP server *to this instance* — is likewise
+**config-file-only**, and borrows the same indirection. Anywhere it expects a
+string (`command`, an `args` entry, an `env` value, `url`), `env:VAR_NAME` reads
+that value from the environment instead:
+
+```yaml
+mcpServers:
+  notion:
+    command: npx
+    args: ["-y", "@notionhq/notion-mcp-server"]
+    env:
+      NOTION_TOKEN: env:NOTION_TOKEN
+```
+
+```bash
+NOTION_TOKEN=ntn_…
+```
+
+The variable name is entirely yours — Paddock reads whatever the reference names,
+with no `PADDOCK_` convention, because these are third-party servers' own
+variables. An unset or blank one **drops that server** with a warning naming the
+variable, rather than starting it without its credential. Nothing Paddock logs or
+serves ever contains a value from this block.
 
 ## OpenAPI / Swagger reference
 
@@ -282,6 +324,8 @@ non-numeric, blank) falls back to the default rather than failing startup.
 | `CLAUDE_CODE_OAUTH_TOKEN` | — | conditional | Claude **Max plan** auth. Read from the server's environment and passed through to the `claude` process the runtime spawns; never written to config. Provide this **or** `ANTHROPIC_API_KEY`. |
 | `ANTHROPIC_API_KEY` | — | conditional | Claude **API-key** auth (API pricing). Alternative to `CLAUDE_CODE_OAUTH_TOKEN`. |
 | `LOG_LEVEL` | `info` | no | Fastify/pino log level (`fatal`…`trace`). |
+| `HERDCTL_LOG_LEVEL` | `info` | no | `@herdctl/core`'s own logger (the `[fleet-manager]` / `[CLIRuntime]` lines), which pino's level cannot reach. Paddock routes these through a handler that cuts the reconstructed `claude` argv out of agent-failure messages — a `claude -p` command line carries the whole system prompt and is noise in a log (#684). Set this to `debug` to get the full command back. |
+| `PADDOCK_QUIET` | — | no | Set by the `paddock` CLI unless `--verbose`. Collapses a *recognised*, non-fatal background failure (no login, no credit, no `claude` on PATH) to one actionable line instead of a stack trace; an unrecognised failure always keeps its full detail. A level alone could not do this — these are logged at `error`, above every threshold. |
 
 > Which auth you use is **independent of the runtime** — either credential works
 > on both the SDK runtime (chats) and the CLI runtime (the sweeper, triggers,

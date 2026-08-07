@@ -113,13 +113,34 @@ export interface Project {
   dir: string;
   /**
    * The keeper's working directory (cwd). Equals `dir` for a notebook project;
-   * for a repo-backed project it's the nested checkout under `dir` (issue #187).
+   * for a repo-backed project it's the nested checkout under `dir` (issue #187);
+   * for a LINKED project it's `path` — an existing checkout outside the data repo
+   * that Paddock uses in place and never writes to (issue #206).
    */
   workingDir: string;
-  /** Whether this project is backed by an external git repo (issue #187). */
-  repoBacked: boolean;
-  /** The external git repo URL, when repo-backed (issue #187). */
+  /**
+   * Where the sweeper's curated trio (`CLAUDE.md`/`OVERVIEW.md`/`CHANGELOG.md`)
+   * lives: `workingDir` for a managed project, `dir` for an unmanaged one. Equals
+   * `dir` except for a managed project with an external `path` (issue #206).
+   */
+  contentDir: string;
+  /**
+   * Whether Paddock curates this project's own files (issue #206) — always
+   * concrete, derived server-side as `managed ?? !(repo || path)`.
+   *
+   * Replaced `repoBacked`. Whether a git repo backs the project is a SEPARATE
+   * question, answered per directory by the git status endpoint (`status.repo`),
+   * not by this flag.
+   */
+  managed: boolean;
+  /** The external git repo URL, when one is recorded (issue #187 / #206). */
   repo?: string;
+  /**
+   * The directory this project's content lives in, when one was nominated
+   * (issue #206). `workingDir` equals it. For an unmanaged project this is a
+   * checkout used in place; for a managed one it is where the notes live.
+   */
+  path?: string;
   /** True once a sweep has written OVERVIEW.md (drives the preload checkbox + Overview hint). */
   hasOverview: boolean;
   /** Pinned file names rendered as sibling tabs (order-preserving). Default []. */
@@ -266,6 +287,24 @@ export interface CreateProjectInput {
    * checkout). Absent ⇒ a notebook project.
    */
   repo?: string;
+  /**
+   * Absolute path to the directory this project's content lives in (issue #206).
+   *
+   * An existing directory is used in place; a missing one is cloned into (with
+   * `repo`) or created (when managed). The server validates it — absolute, and
+   * outside the projects root / data dir / every other project's working
+   * directory — and rejects the create otherwise. No git repo is required.
+   * Immutable once set, and it takes precedence over `repo` for the cwd.
+   */
+  path?: string;
+  /**
+   * Whether Paddock curates this project's own CLAUDE.md/OVERVIEW.md/CHANGELOG.md
+   * (issue #206). Omit to let the server derive it as `!(repo || path)` — which
+   * settles the unambiguous cases — and send it explicitly only for a `path` with
+   * no `repo`, where "checkout" vs "notes folder" is a real choice.
+   * `managed: true` together with `repo` is rejected.
+   */
+  managed?: boolean;
 }
 
 /** Editable project metadata (slug + dates are immutable server-side). */
@@ -425,7 +464,11 @@ export interface ChatTriggerInfo {
   agentName: string;
   /** Whether the trigger is currently armed (a disabled trigger's past chats still show). */
   enabled: boolean;
-  /** The exact tool grant (herdctl `allowed_tools`); `[]` = a tool-less trigger. */
+  /**
+   * The declared tool grant (herdctl `allowed_tools`); `[]` = none declared. Note
+   * `[]` is NOT enforced as a deny-all — herdctl only emits the allow-list when it
+   * is non-empty, so an empty one leaves Claude's default tools in place (#647).
+   */
   allowedTools: string[];
   /** The permission mode the trigger's turns run under, when it sets one. */
   permissionMode?: string;
@@ -584,8 +627,8 @@ export type TriggerWhen =
 
 /**
  * WHAT a fired trigger does — the shared agent-run definition (identical across every
- * trigger type). Exactly one of `prompt` / `promptFile`; `tools` is a deny-by-default
- * allow-list (`[]` = a tool-less curator).
+ * trigger type). Exactly one of `prompt` / `promptFile`; `tools` is the allow-list
+ * (`[]` = none declared, which herdctl does not enforce as a deny-all — see #647).
  */
 export interface TriggerRun {
   prompt?: string;

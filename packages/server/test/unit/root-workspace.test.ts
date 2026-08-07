@@ -70,7 +70,7 @@ describe("root workspace (#531) — resolution", () => {
     expect(got.dir).toBe(root);
     // Never repo-backed: the root's dir already IS the instance's backing repo.
     expect(got.workingDir).toBe(root);
-    expect(got.repoBacked).toBe(false);
+    expect(got.managed).toBe(true);
   });
 
   it("defaults the root's name to the projects-root directory basename", async () => {
@@ -127,7 +127,7 @@ describe("root workspace (#531) — resolution", () => {
     await expect(store.promote(ROOT_KEY, "/tmp/whatever")).rejects.toMatchObject({
       code: "invalid",
     });
-    expect((await store.get(ROOT_KEY)).repoBacked).toBe(false);
+    expect((await store.get(ROOT_KEY)).managed).toBe(true);
   });
 
   it("writes project.yaml LAZILY — on the first edit, at <projectsRoot>/project.yaml", async () => {

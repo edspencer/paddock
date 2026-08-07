@@ -60,10 +60,9 @@ terminal icon) so you can tell them from chats started here — see
 you had those conversations, just somewhere else.
 
 :::note[When Paddock can't see your `~/.claude`]
-A containerised instance only sees what is mounted. Point
-[`CLAUDE_HOME`](/configuration/environment/) at a mounted copy of the history, or
-run the headless importer (`npm run import-chats -w @paddock/server`) on the host
-against the data dir.
+A containerised instance only sees what is mounted. Mount the history at the
+`~/.claude` the container's own `$HOME` resolves to, or run the headless importer
+(`npm run import-chats -w @paddock/server`) on the host against the data dir.
 :::
 
 ## Project chats vs root chats
@@ -341,6 +340,23 @@ back to the top of the list.
 Archived section are two separate trees, so a parent you archive moves out on its
 own and its still-active children are promoted to top-level rows rather than
 following it or being hidden behind it.
+
+### Delete, and what it means when transcripts are shared
+
+Deleting a chat normally unlinks its transcript — it is Paddock's copy, kept in
+the project's `.chats/`, and it is gone.
+
+Under [`claude.transcripts: host`](/configuration/config-file/#transcripts) it is
+not Paddock's copy: the file *is* your terminal `claude` history for that
+directory. So delete **releases** the chat instead of removing it, and the
+transcript stays on disk untouched. That is deliberate — Paddock does not delete
+history it did not create.
+
+One rough edge to know about: a released chat is still **listed**. Releasing
+drops Paddock's adoption record, but the engine finds the transcript again on the
+next listing and shows it, so the chat comes back. Closing that gap is tracked as
+[#693](https://github.com/edspencer/paddock/issues/693). Until then, if you want
+a shared chat out of your list, the transcript itself has to move.
 
 ### Resize the columns
 

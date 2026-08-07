@@ -9,17 +9,22 @@ import { encodeProjectDir } from "../../src/transcripts.js";
  * Regression for #588 gotcha 1: paddock and the ENGINE must resolve ONE Claude
  * home.
  *
- * `claudeHome()` honoured `CLAUDE_HOME`, but `HerdctlService.init` constructed
- * the FleetManager without passing it — so the engine fell back to
+ * The home resolver honoured an operator override, but `HerdctlService.init`
+ * constructed the FleetManager without passing it — so the engine fell back to
  * `os.homedir()/.claude`. Detection would then scan one home while discovery and
  * message reads used another: chats LIST but open EMPTY. The bug is invisible
- * whenever `CLAUDE_HOME === $HOME/.claude`, which is precisely the condition
- * `startTestApp` creates for every other suite (it DELETES `CLAUDE_HOME` so the
- * two coincide). This suite is therefore the only place that can see it: it sets
- * `CLAUDE_HOME` to a directory that is NOT under `$HOME`, so any component still
- * falling back to `$HOME/.claude` reads an empty/absent tree and fails loudly.
+ * whenever the configured home IS `$HOME/.claude`, which is what every other
+ * suite gets (`startTestApp` clears the override and the default lands in the
+ * data dir). This suite is therefore the only place that can see it: it sets
+ * `CLAUDE_CONFIG_DIR` to a directory that is NOT under `$HOME`, so any component
+ * still falling back to `$HOME/.claude` reads an empty tree and fails loudly.
+ *
+ * `CLAUDE_CONFIG_DIR` is the surviving override since #691 (`CLAUDE_HOME` is
+ * deleted), and it is honoured for the same reason it always was: herdctl
+ * declines to clobber an operator-set value, so paddock disagreeing with it
+ * recreates this exact split-brain.
  */
-describe("integration: the configured CLAUDE_HOME is threaded into the engine (#588)", () => {
+describe("integration: the configured Claude home is threaded into the engine (#588)", () => {
   let t: TestApp;
   let altRoot: string;
   let altHome: string;
@@ -27,7 +32,7 @@ describe("integration: the configured CLAUDE_HOME is threaded into the engine (#
   beforeAll(async () => {
     altRoot = await makeTmpDir("paddock-althome-");
     altHome = path.join(altRoot, "elsewhere", "dot-claude");
-    t = await startTestApp({ env: { CLAUDE_HOME: altHome } });
+    t = await startTestApp({ env: { CLAUDE_CONFIG_DIR: altHome } });
     await t.app.inject({ method: "POST", url: "/api/projects", payload: { name: "Alt Home" } });
   });
   afterAll(async () => {
@@ -41,7 +46,7 @@ describe("integration: the configured CLAUDE_HOME is threaded into the engine (#
     expect(altHome.startsWith(t.home)).toBe(false);
   });
 
-  it("resolves CLAUDE_HOME ONCE into PaddockConfig", () => {
+  it("resolves CLAUDE_CONFIG_DIR ONCE into PaddockConfig", () => {
     expect(t.cfg.claudeHome).toBe(altHome);
   });
 
@@ -51,7 +56,7 @@ describe("integration: the configured CLAUDE_HOME is threaded into the engine (#
     expect(t.herdctl.manager.getClaudeHomePath()).toBe(altHome);
   });
 
-  it("plants the project's transcript symlink under CLAUDE_HOME, not $HOME/.claude", async () => {
+  it("plants the project's transcript symlink under that home, not $HOME/.claude", async () => {
     const project = (await t.app.inject({ method: "GET", url: "/api/projects/alt-home" })).json()
       .project as { dir: string; workingDir: string };
     const encoded = path.join(altHome, "projects", encodeProjectDir(project.workingDir));

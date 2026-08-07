@@ -712,7 +712,7 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
         tags: ["Chats"],
         summary: "Delete a project chat",
         description:
-          "Deletes a project chat (session): removes its transcript JSONL and clears any archived/starred flag so a future session id can't inherit it. Responds 200 with `{ ok, removed }`.",
+          "Deletes a project chat (session) and clears any archived/starred flag so a future session id can't inherit it. Responds 200 with `{ ok, removed, retained }`. In a Claude home Paddock owns, the transcript JSONL is unlinked (`removed: true`). In a home it does NOT own the transcript is the user's own terminal `claude` history — Paddock plants no symlink there (#682), so there is no copy to delete — and the session is RELEASED instead: it leaves the chat list, the file stays on disk, and `retained` is true (#689).",
         params: {
           type: "object",
           properties: {
@@ -734,7 +734,7 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
       try {
         const agent = await agentForSlug(req.params.slug);
         await cleanupAttachments(agent, req.params.sessionId);
-        const removed = await herdctl.deleteSession(agent, req.params.sessionId);
+        const { removed, retained } = await herdctl.deleteSession(agent, req.params.sessionId);
         // Drop any archived/starred/unread/detached flag so a future session id
         // can't inherit it. (Read-state watermarks, other users' unread overrides,
         // provenance and any queued message are deliberately NOT swept here — that
@@ -748,7 +748,7 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
         // has to be cleared on the same path — otherwise a recycled session id
         // silently starts life detached from a parent it never had.
         await parentDetach.setDetached(agent, req.params.sessionId, false).catch(() => undefined);
-        return reply.code(200).send({ ok: true, removed });
+        return reply.code(200).send({ ok: true, removed, retained });
       } catch (err) {
         return sendProjectError(reply, err);
       }
@@ -1034,14 +1034,24 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
   // optional `when` (epoch-ms) lets the client pass its own timestamp; defaults
   // to now. Mirrors the archive toggle's shape/validation. Monotonic in the
   // store (an older `when` is a no-op), so it never resurrects a stale unread.
-  app.post<{ Params: { slug: string; sessionId: string }; Body: { when?: number } }>(
+  //
+  // `keepUnread: true` marks the seen as INFERRED rather than intentional (#608):
+  // the watermark still advances, but an explicit "mark unread" override is left
+  // alone. The web client uses it when a turn happens to land while the chat is
+  // focused — "you were watching" must not silently spend a flag the user (or an
+  // API caller) set seconds earlier. The response reports the resulting flag so a
+  // caller can see what its request did.
+  app.post<{
+    Params: { slug: string; sessionId: string };
+    Body: { when?: number; keepUnread?: boolean };
+  }>(
     "/chats/:sessionId/seen",
     {
       schema: {
         tags: ["Chats"],
         summary: "Mark a project chat as seen",
         description:
-          "Persists the user's last-viewed moment for a project chat server-side, driving the cross-device unread affordance. Optional body `{ when }` (epoch-ms) defaults to now; monotonic in the store (an older `when` is a no-op). Responds 200 with `{ ok, lastSeen }`.",
+          "Persists the user's last-viewed moment for a project chat server-side, driving the cross-device unread affordance. Optional body `{ when }` (epoch-ms) defaults to now; monotonic in the store (an older `when` is a no-op). Clears the chat's MANUAL unread override (see the `/unread` route) unless `keepUnread` is true, which marks the request as an INFERRED seen and leaves an explicit flag intact. Responds 200 with `{ ok, lastSeen, unread }`, `unread` being the override's state afterwards.",
         params: {
           type: "object",
           properties: {
@@ -1055,12 +1065,17 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
           additionalProperties: true,
           properties: {
             when: { description: "Epoch-ms timestamp to record as last seen; defaults to now." },
+            keepUnread: {
+              description:
+                "When true, advance the watermark WITHOUT clearing the manual unread override — for a seen that was inferred rather than intended. Defaults to false.",
+            },
           },
           required: [],
         },
         response: {
           200: {
-            description: "Object `{ ok, lastSeen }` with the recorded watermark.",
+            description:
+              "Object `{ ok, lastSeen, unread }` with the recorded watermark and the manual unread override's state afterwards.",
             type: "object",
             additionalProperties: true,
           },
@@ -1077,9 +1092,16 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
         const user = readStateUser(req);
         await readState.setLastSeen(user, agent, req.params.sessionId, when);
         // Marking a chat seen also clears any MANUAL unread override (#458): once
-        // the user has viewed it, the "look at it again later" flag is spent.
-        await unread.setUnread(user, agent, req.params.sessionId, false).catch(() => undefined);
-        return reply.code(200).send({ ok: true, lastSeen: when });
+        // the user has viewed it, the "look at it again later" flag is spent —
+        // UNLESS the caller flagged this as an inferred seen (#608), in which case
+        // the explicit intent outranks it and the flag stands.
+        let stillUnread = false;
+        if (req.body?.keepUnread === true) {
+          stillUnread = await unread.isUnread(user, agent, req.params.sessionId);
+        } else {
+          await unread.setUnread(user, agent, req.params.sessionId, false).catch(() => undefined);
+        }
+        return reply.code(200).send({ ok: true, lastSeen: when, unread: stillUnread });
       } catch (err) {
         return sendProjectError(reply, err);
       }
@@ -1385,7 +1407,13 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
           try {
             await cleanupAttachments(agent, sessionId);
             const gone = await herdctl.deleteSession(agent, sessionId);
-            if (gone) removed.push(sessionId);
+            // `retained` counts as success here, and the distinction matters for
+            // the flag-clearing below. These two buckets are "no longer in the
+            // chat list" vs "still in it": a RELEASED chat (#689) left the list
+            // even though its transcript survives on disk, so its flags must be
+            // cleared like any other departure. Only a genuine failure — nothing
+            // on disk to act on — belongs in `failed`.
+            if (gone.removed || gone.retained) removed.push(sessionId);
             else failed.push(sessionId);
           } catch {
             failed.push(sessionId);

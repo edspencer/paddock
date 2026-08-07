@@ -29,6 +29,12 @@ describe("paddock CLI: parseArgs", () => {
     });
   });
 
+  // #691 deleted it: what it opted out of — running as the user's own Claude
+  // home — is no longer something paddock ever does.
+  it("rejects the removed --isolated-claude-home flag like any other unknown option", () => {
+    expect(() => parseArgs(["--isolated-claude-home"])).toThrow(/unknown option/);
+  });
+
   it("parses long forms", () => {
     const opts = parseArgs([
       "--port",
