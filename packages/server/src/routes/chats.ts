@@ -193,14 +193,17 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
    *
    * `running` is authoritative (the live hub), not inferred from timestamps.
    * `unread` reuses the sidebar badge's derivation — the manual override (#458)
-   * or a completed turn newer than the read watermark (#189) — with ONE
-   * deliberate difference: archived chats are filed away on purpose, so they
-   * are excluded here. That means an archived chat with an unread turn still
-   * counts toward the sidebar's badge (`buildChatTurns` never consults
-   * `ArchiveStore`) while not appearing in this list. The two can therefore
-   * disagree by exactly that set; making them agree means teaching the badge
-   * about archiving, which is a behaviour change to the badge, not to this
-   * route.
+   * or a completed turn newer than the read watermark (#189) — INCLUDING the
+   * archived exclusion below.
+   *
+   * That last part used to be this route's alone: the badge never consulted
+   * `ArchiveStore`, so an archived unread chat counted toward the sidebar while
+   * being absent from this feed, and the two surfaces disagreed by exactly that
+   * set. #732 settled it the way this route already read it — archiving is the
+   * user filing a chat away, so it silences both — and `buildChatTurns` now
+   * applies the same rule. Keep the two in step: read state was made
+   * server-authoritative (#488) so surfaces could not diverge, and a rule that
+   * lives in only one of them is that divergence again.
    */
   app.get<{ Params: { slug: string } }>(
     "/chats/attention",
@@ -764,6 +767,12 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
         }
         await cleanupAttachments(agent, req.params.sessionId);
         const { removed, retained } = await herdctl.deleteSession(agent, req.params.sessionId);
+        // #732: and the chat's herdctl job records, which are what feeds the
+        // sidebar unread badge. Left behind, they kept the badge counting a chat
+        // there was nothing left to open to clear. Only when the transcript was
+        // actually REMOVED — see `purgeSessionJobs` for why a `retained`
+        // (released) chat keeps its records.
+        if (removed) await herdctl.purgeSessionJobs([req.params.sessionId]);
         // Drop any archived/starred/unread/detached flag so a future session id
         // can't inherit it. (Read-state watermarks, other users' unread overrides,
         // provenance and any queued message are deliberately NOT swept here — that
@@ -1452,6 +1461,10 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
         const user = readStateUser(req);
         const removed: string[] = [];
         const failed: string[] = [];
+        // The subset whose transcript was genuinely deleted — the ids whose job
+        // records may be purged (#732). Narrower than `removed`, which also
+        // holds RELEASED chats: those are still listed, so their records stay.
+        const deleted: string[] = [];
         for (const sessionId of sessionIds) {
           try {
             // #731: same interlock as the single delete, per id. A chat whose
@@ -1472,10 +1485,14 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
             // on disk to act on — belongs in `failed`.
             if (gone.removed || gone.retained) removed.push(sessionId);
             else failed.push(sessionId);
+            if (gone.removed) deleted.push(sessionId);
           } catch {
             failed.push(sessionId);
           }
         }
+        // ONE jobs-dir pass for the whole batch (#732) — purging per chat would
+        // re-scan the shared directory once per id, up to 500 times.
+        await herdctl.purgeSessionJobs(deleted);
         // Drop the archived/starred/unread/detached flags of the chats that were
         // ACTUALLY removed, so a recycled session id can't inherit stale state.
         //

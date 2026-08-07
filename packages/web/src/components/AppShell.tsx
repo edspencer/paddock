@@ -6,7 +6,12 @@ import type { Project } from "../lib/types";
 import { getBrand, getOpenApi, logoIsImage } from "../lib/brand";
 import { areaLabel, orderAreaSlugs } from "../lib/areas";
 import { chatClient } from "../lib/ws";
-import { LAST_SEEN_EVENT, readLastSeen, setServerLastSeen } from "../lib/lastSeen";
+import {
+  CHATS_GONE_EVENT,
+  LAST_SEEN_EVENT,
+  readLastSeen,
+  setServerLastSeen,
+} from "../lib/lastSeen";
 import { TagPill } from "./TagPill";
 import { CogIcon, FolderIcon, HomeIcon, LinkIcon, MenuIcon, MoonIcon, PlusIcon, SunIcon, XIcon } from "./icons";
 import { NewProjectModal } from "./NewProjectModal";
@@ -77,8 +82,33 @@ function useProjectBadges(workspaces: Project[]): Map<string, ProjectBadge> {
         else prev.unread = t.unread;
       }
     }
+    // #734 — a whole WORKSPACE can go away too. A completion whose slug is no
+    // longer in the list belongs to a deleted project: it counts toward a badge
+    // the user cannot reach, and it would attach to a NEW project that reuses
+    // the slug. Skipped while the list is empty, which is what a not-yet-loaded
+    // (or failed) fetch looks like — an unknown list must not zero the badges.
+    if (workspaces.length > 0) {
+      const known = new Set(workspaces.map((p) => p.slug));
+      for (const [sid, c] of m) if (!known.has(c.slug)) m.delete(sid);
+    }
     setVersion((v) => v + 1);
   }, [workspaces]);
+
+  // #732: forget a chat's completion the moment it is deleted. Without this the
+  // badge keeps counting a chat there is nothing left to open to clear — the
+  // server payload no longer carries it, but this cache is a ref that only ever
+  // grew, and under the default `session` drive mode its entries come from live
+  // WS completions that no server payload can retract.
+  useEffect(() => {
+    const forget = (e: Event) => {
+      const ids = (e as CustomEvent<{ sessionIds?: string[] }>).detail?.sessionIds ?? [];
+      let changed = false;
+      for (const id of ids) changed = completionsRef.current.delete(id) || changed;
+      if (changed) setVersion((v) => v + 1);
+    };
+    window.addEventListener(CHATS_GONE_EVENT, forget);
+    return () => window.removeEventListener(CHATS_GONE_EVENT, forget);
+  }, []);
 
   // Live in-flight set + a completion signal each time a turn stops running.
   useEffect(() => {

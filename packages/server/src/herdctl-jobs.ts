@@ -150,6 +150,102 @@ export async function listRunsForAgents(
 }
 
 /**
+ * Delete every job record matching `match`, plus each one's sibling `.jsonl`
+ * output file. Returns how many records were removed.
+ *
+ * The shared inverse of the writes above (#732 / #734). The jobs directory is
+ * append-only and fleet-wide, and until now NOTHING ever removed a record — so a
+ * record outlived whatever it described. Two user-visible consequences, one
+ * mechanism:
+ *
+ *  - A deleted CHAT kept feeding {@link lastTurnCompletedAtByProject}, i.e. the
+ *    sidebar unread badge, with no chat left to open to clear it (#732).
+ *  - A deleted PROJECT left its keeper's whole history behind, keyed by the
+ *    agent name — which is derived from the slug, which is derived from the
+ *    NAME. Re-creating a project called the same thing therefore inherited the
+ *    previous incarnation's `/runs`, prompt text and reply summaries included
+ *    (#734).
+ *
+ * Records are matched by reading them, not by parsing filenames: a job id
+ * encodes only a date and six characters of the session id, which is neither an
+ * agent nor a reliable session key.
+ *
+ * Best-effort per file, deliberately: a record we cannot read is a record we
+ * cannot prove is ours, so it is left alone rather than removed on a guess, and
+ * an unlink failure never fails the delete the user actually asked for. The
+ * caller invalidates {@link JobsDirIndex} afterwards — the index also drops
+ * vanished files on its own next scan, so this is belt-and-braces.
+ */
+async function purgeJobs(
+  stateDir: string,
+  match: (record: Record<string, unknown>) => boolean,
+): Promise<number> {
+  const jobsDir = jobsDirOf(stateDir);
+  let entries: string[] = [];
+  try {
+    entries = await fs.readdir(jobsDir);
+  } catch {
+    return 0; // no jobs dir yet — nothing to purge
+  }
+
+  let removed = 0;
+  for (const name of entries) {
+    if (!name.endsWith(".yaml")) continue;
+    const file = path.join(jobsDir, name);
+    let parsed: Record<string, unknown> | null = null;
+    try {
+      parsed = YAML.parse(await fs.readFile(file, "utf8")) as Record<string, unknown> | null;
+    } catch {
+      continue;
+    }
+    if (!parsed || !match(parsed)) continue;
+    await fs.rm(file, { force: true }).catch(() => undefined);
+    // The record names its own output file; fall back to the `<id>.jsonl`
+    // convention {@link writeAgentAdoptionJob} writes when it does not.
+    const output =
+      typeof parsed.output_file === "string" && parsed.output_file.length > 0
+        ? parsed.output_file
+        : path.join(jobsDir, `${name.slice(0, -".yaml".length)}.jsonl`);
+    // Only ever unlink an output file that lives in the jobs dir we just read.
+    if (path.dirname(path.resolve(output)) === path.resolve(jobsDir)) {
+      await fs.rm(output, { force: true }).catch(() => undefined);
+    }
+    removed++;
+  }
+  return removed;
+}
+
+/**
+ * Drop the job records of one or more CHATS (#732) — called when Paddock removes
+ * a chat from a project, so the record cannot outlive the transcript and keep
+ * the sidebar badge counting a chat that is no longer there to open.
+ */
+export async function purgeSessionJobs(stateDir: string, sessionIds: string[]): Promise<number> {
+  if (sessionIds.length === 0) return 0;
+  const wanted = new Set(sessionIds);
+  return purgeJobs(stateDir, (r) => typeof r.session_id === "string" && wanted.has(r.session_id));
+}
+
+/**
+ * Drop the job records of one or more AGENTS (#734) — called when a project is
+ * deleted, for every agent name that project owned (keeper, sweeper, hooks,
+ * triggers). Agent-keyed rather than project-keyed because the agent name is
+ * what the record actually carries.
+ *
+ * This is the containment half of the fix rather than the structural one: the
+ * durable answer to "a re-created project inherits the old one's records" is to
+ * key them by a stable project id instead of the user-controlled, reusable slug.
+ * That is a herdctl-side identity change (records are herdctl's format, written
+ * by its runtimes); purging on delete makes the leak impossible NOW without
+ * waiting for it, and stays correct afterwards.
+ */
+export async function purgeAgentJobs(stateDir: string, agents: string[]): Promise<number> {
+  if (agents.length === 0) return 0;
+  const wanted = new Set(agents);
+  return purgeJobs(stateDir, (r) => typeof r.agent === "string" && wanted.has(r.agent));
+}
+
+/**
  * Point every herdctl job record for `sessionId` at the project's keeper so
  * the core attribution index (last-write-wins per session) lists the session
  * under the project. A session can already have MANY job records (one per

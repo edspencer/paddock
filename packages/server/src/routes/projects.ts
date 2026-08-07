@@ -9,6 +9,7 @@ import {
   ProjectError,
   ROOT_KEY,
   isRootKey,
+  type Project,
   type CreateProjectInput,
   type UpdateProjectInput,
 } from "../projects.js";
@@ -43,7 +44,14 @@ export interface ChatTurnSummary {
  * (#553): the badge's semantics are "whatever this function returns", and there
  * is no second implementation for the root to drift from. The completed-turn
  * side comes from the cheap job-record scan (grouped by keeper agent), so this
- * costs no `listSessions` fan-out and no transcript parse.
+ * costs no transcript parse; `live` adds one cached session listing per
+ * workspace (see {@link liveSessionIds}).
+ *
+ * Two things are pruned OUT of the raw job-record fold, and the invariant they
+ * add up to is: **the badge counts exactly what the Home Unread feed counts.**
+ * A chat that no longer exists, and a chat the user archived. #488 made read
+ * state server-authoritative so surfaces could not diverge; a badge counting
+ * chats `/chats/attention` does not is that divergence one layer up.
  *
  * `key` is a WORKSPACE key, so `""` (the root) is a perfectly ordinary argument:
  * `turnsByProject` is already keyed that way (`lastTurnCompletedAtByProject`
@@ -54,15 +62,30 @@ export interface ChatTurnSummary {
 async function buildChatTurns(
   key: string,
   turnsByProject: Map<string, Map<string, string>>,
+  live: Set<string> | null,
   user: string | null,
   readState: RouteCtx["readState"],
   unread: RouteCtx["unread"],
+  archive: RouteCtx["archive"],
 ): Promise<ChatTurnSummary[]> {
   const bySession = turnsByProject.get(key);
   if (!bySession) return [];
   const keeper = keeperAgentName(key);
-  return Promise.all(
+  const rows = await Promise.all(
     [...bySession].map(async ([sessionId, lastTurnCompletedAt]) => {
+      // #732, prune 1 — a chat that no longer exists. The job records this fold
+      // reads are removed with the chat now, but that cannot heal a badge
+      // already stuck, and a transcript can leave by routes that are not a
+      // delete at all (an adoption undone, a JSONL removed by hand). `live` is
+      // `null` when the listing FAILED, which is not the same as empty: an
+      // unreadable chat store must leave the badge alone, not silently zero it.
+      if (live && !live.has(sessionId)) return null;
+      // #732, prune 2 — archiving is the user saying "stop bothering me about
+      // this one", and `/chats/attention` has always honoured that. The badge
+      // did not, so the sidebar could read 3 while the Home Unread feed showed
+      // nothing. One rule, both surfaces: archived is silent. It is silenced,
+      // not consumed — unarchiving brings the chat back to both.
+      if (await archive.isArchived(keeper, sessionId).catch(() => false)) return null;
       const lastSeen = await readState.getLastSeen(user, keeper, sessionId).catch(() => 0);
       // Manual unread override (#458): carry it so the sidebar's workspace
       // unread badge counts a manually-flagged chat, staying in step with
@@ -76,10 +99,40 @@ async function buildChatTurns(
       };
     }),
   );
+  return rows.filter((r): r is ChatTurnSummary => r !== null);
+}
+
+/**
+ * The session ids a workspace actually still has, for {@link buildChatTurns}'s
+ * prune — or `null` if we could not find out.
+ *
+ * That distinction is the whole point: a failed listing must NOT be read as "no
+ * chats", or a transient discovery error would empty the badge instead of
+ * leaving it alone. `listSessions` is a superset of the keeper chats the fold
+ * covers (it also returns hook-agent chats), which is the safe direction — it
+ * can only fail to prune, never over-prune.
+ *
+ * This costs one session listing per workspace on `GET /api/projects`, which
+ * #529 was careful to keep off this route. It is affordable because it is not
+ * the expensive half: the listing is a cached directory read (core's discovery
+ * cache is mtime-keyed with a TTL), whereas the 61%-of-CPU problem #529 fixed
+ * was YAML-parsing every job record. `/chats/attention` already does exactly
+ * this listing across the whole fleet on the Home tab.
+ */
+async function liveSessionIds(
+  herdctl: RouteCtx["herdctl"],
+  project: Project | null,
+): Promise<Set<string> | null> {
+  if (!project) return null;
+  try {
+    return new Set((await herdctl.listSessions(project)).map((s) => s.sessionId));
+  } catch {
+    return null;
+  }
 }
 
 export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void {
-  const { projects, herdctl, git, readState, unread, readStateUser } = ctx;
+  const { projects, herdctl, git, readState, unread, archive, readStateUser } = ctx;
 
   app.get(
     "/api/projects",
@@ -88,7 +141,7 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
         tags: ["Projects"],
         summary: "List projects",
         description:
-          "Returns `{ projects, root }`. `projects` is an array of the root workspace's CHILDREN; each entry carries the project metadata plus a compact `chatTurns` array (per-chat `{ sessionId, lastTurnCompletedAt, lastSeen? }` for the sidebar UNREAD count) and a `dirty` uncommitted-file count. `root` is the ROOT workspace itself, carrying the same `chatTurns` field so the sidebar's Home entry gets the identical badge; it is `null` only if the root record could not be read.",
+          "Returns `{ projects, root }`. `projects` is an array of the root workspace's CHILDREN; each entry carries the project metadata plus a compact `chatTurns` array (per-chat `{ sessionId, lastTurnCompletedAt, lastSeen? }` for the sidebar UNREAD count) and a `dirty` uncommitted-file count. `chatTurns` covers only chats that still EXIST and are not ARCHIVED, so the badge cannot outlive its chats (#732) and agrees with `/chats/attention` on archived ones. `root` is the ROOT workspace itself, carrying the same `chatTurns` field so the sidebar's Home entry gets the identical badge; it is `null` only if the root record could not be read.",
         response: {
           200: {
             description:
@@ -124,7 +177,15 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
     const projectsOut = await Promise.all(
       list.map(async (p) => ({
         ...p,
-        chatTurns: await buildChatTurns(p.slug, turnsByProject, user, readState, unread),
+        chatTurns: await buildChatTurns(
+          p.slug,
+          turnsByProject,
+          await liveSessionIds(herdctl, p),
+          user,
+          readState,
+          unread,
+          archive,
+        ),
         // The cheap store-wide sweep above buckets by path segment under
         // `projectsRoot`, so it can only speak for projects whose working dir is
         // the metadata dir. For one pointing somewhere else (a linked checkout,
@@ -141,7 +202,18 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
     // a file directly in the projects root has no bucket at all. Reporting 0
     // would be a fabricated clean; the field is optional, so it stays absent.
     const rootOut = root
-      ? { ...root, chatTurns: await buildChatTurns(ROOT_KEY, turnsByProject, user, readState, unread) }
+      ? {
+          ...root,
+          chatTurns: await buildChatTurns(
+            ROOT_KEY,
+            turnsByProject,
+            await liveSessionIds(herdctl, root),
+            user,
+            readState,
+            unread,
+            archive,
+          ),
+        }
       : null;
     return { projects: projectsOut, root: rootOut };
   });
@@ -548,6 +620,21 @@ export function registerProjectWorkspaceRoutes(app: FastifyInstance, ctx: RouteC
       } catch (err) {
         req.log.warn({ err }, "keeper-agent unregister failed (project dir already removed)");
       }
+      // #734: and its herdctl JOB RECORDS, which `remove()` cannot reach — they
+      // live in the shared fleet-wide jobs dir, not under the project. They are
+      // keyed by agent name, which is derived from the slug, which is derived
+      // from the NAME: leaving them behind means a project created later with
+      // the same name inherits this one's run history — prompt text and reply
+      // summaries — plus a phantom unread badge over zero chats.
+      await herdctl
+        .purgeProjectJobs(
+          project.slug,
+          Object.keys(project.hooks ?? {}),
+          Object.keys(project.triggers ?? {}),
+        )
+        .catch((err: unknown) => {
+          req.log.warn({ err }, "job-record purge failed (project is still deleted)");
+        });
       return reply.code(200).send({ ok: true, slug: project.slug });
     } catch (err) {
       return sendProjectError(reply, err);

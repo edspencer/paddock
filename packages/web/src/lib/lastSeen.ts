@@ -115,6 +115,40 @@ export function revertSeenLocally(sessionId: string, prev: number, applied: numb
 }
 
 /**
+ * Same-tab notification that chats have LEFT this instance (#732). `detail` is
+ * the departed session ids.
+ *
+ * The unread affordance is a set of per-session-id caches — this module's
+ * `lastSeen` map and the sidebar badge's completion cache — and none of them had
+ * any notion of a chat ending. They only ever grew, so deleting an unread chat
+ * left its cue counted by a badge with nothing left to open to clear it. The
+ * server side of that is fixed by pruning `chatTurns`, but the badge is also fed
+ * by LIVE turn completions over the WS, and under the default `session` drive
+ * mode (which writes no job records) those live signals are most of what the
+ * badge is made of. So the client needs the same "this is gone" edge, and it
+ * needs it without a reload.
+ */
+export const CHATS_GONE_EVENT = "paddock:chats-gone";
+
+/**
+ * Drop every trace of these chats from the client's read-state cache and tell
+ * the rest of the tab to do the same ({@link CHATS_GONE_EVENT}).
+ *
+ * Called after a delete the server confirmed — never optimistically. A chat the
+ * delete FAILED on still exists, and forgetting its watermark would resurrect
+ * its unread cue on a chat the user was just told survived.
+ */
+export function forgetChats(sessionIds: readonly string[]): void {
+  if (sessionIds.length === 0) return;
+  for (const id of sessionIds) lastSeen.delete(id);
+  try {
+    window.dispatchEvent(new CustomEvent(CHATS_GONE_EVENT, { detail: { sessionIds } }));
+  } catch {
+    /* ignore (non-browser / no window) */
+  }
+}
+
+/**
  * Clear the in-memory cache (tests only). The map is module-level and, unlike the
  * localStorage it replaced, isn't reset by `localStorage.clear()` — so a suite
  * reusing session ids across cases must reset it explicitly.
