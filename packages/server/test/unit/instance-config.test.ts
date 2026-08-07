@@ -253,9 +253,15 @@ describe("instance-config (#385)", () => {
       expect(() => validatePatch({ "recovery.debounceMs": false })).toThrow(/non-negative integer/);
       expect(() => validatePatch({ "recovery.maxRetries": [2] })).toThrow(/non-negative integer/);
       expect(() => validatePatch({ maxSpawnDepth: true })).toThrow(/non-negative integer/);
-      // A null on maxSpawnDepth used to write depth 0 — every child losing the
-      // self-MCP — for what the caller meant as "restore the default".
-      expect(() => validatePatch({ maxSpawnDepth: null })).toThrow(/non-negative integer/);
+    });
+
+    // Same hole as #723's, in the sibling validator: a null used to write depth
+    // 0, which takes the self-MCP away from every child, for what the caller
+    // meant as "restore the default".
+    it("clears maxSpawnDepth with null rather than writing depth 0", () => {
+      expect(validatePatch({ maxSpawnDepth: null })).toEqual([{ key: "maxSpawnDepth", value: null }]);
+      expect(validatePatch({ maxSpawnDepth: 0 })).toEqual([{ key: "maxSpawnDepth", value: 0 }]);
+      expect(validatePatch({ maxSpawnDepth: 3 })).toEqual([{ key: "maxSpawnDepth", value: 3 }]);
     });
 
     it("bounds numeric and string fields", () => {

@@ -232,13 +232,15 @@ const oneOf =
       : { ok: false, error: `must be one of: ${values.join(", ")}` };
 
 const spawnDepth = (raw: unknown): Coerced => {
-  // `numeric` rather than `Number` for the #723 reason: `Number(null)` is 0,
-  // which IS a valid depth — so a "clear this override" used to write the depth
-  // that switches every child's self-MCP off.
+  // Same shape as `nonNegInt`, for the same #723 reason: `Number(null)` is 0,
+  // which IS a valid depth — so "clear this override" wrote the one depth that
+  // switches every child's self-MCP off. Depth 0 stays settable; it just has to
+  // be asked for.
+  if (raw === null || raw === "" || raw === undefined) return { ok: true, value: null };
   const n = numeric(raw);
   return isValidMaxSpawnDepth(n)
     ? { ok: true, value: n }
-    : { ok: false, error: "must be a small non-negative integer" };
+    : { ok: false, error: "must be a small non-negative integer (or blank to use the default)" };
 };
 
 const hexColor = (raw: unknown): Coerced =>

@@ -324,6 +324,54 @@ test("/config is the instance config screen, separate from any workspace's setti
   expect(maxScroll).toBeGreaterThan(0);
 });
 
+/**
+ * Issue #722, in a real browser: nothing in the suite had ever SAVED a value on
+ * `/config`, which is how a screen that visibly threw away every save shipped.
+ *
+ * The screen edits `paddock.config.yaml` while the process keeps its boot-frozen
+ * config, so a save must leave the SAVED value on screen (it used to re-fetch
+ * and render the boot value, which looked exactly like the write had failed) and
+ * a reload — this tab or any other — must still see it.
+ *
+ * The instance's original value is restored at the end: these specs share one
+ * long-lived server, and a field left diverging would put a "restart pending"
+ * banner in front of every later test that visits this screen.
+ */
+test("/config: a saved value stays on screen and survives a reload (#722)", async ({ page }) => {
+  const OVERVIEW = '[id="cfg-curation.overviewMaxTokens"]';
+  await page.goto("/config");
+  const input = page.locator(OVERVIEW);
+  await expect(input).toBeVisible();
+  const original = await input.inputValue();
+
+  try {
+    await input.fill("1234");
+    await page.getByRole("button", { name: /save changes/i }).click();
+    await expect(page.getByText(/Saved to disk/i)).toBeVisible();
+
+    // THE regression: the box used to snap back to the pre-save value here.
+    await expect(input).toHaveValue("1234");
+    await expect(page.getByText("No changes")).toBeVisible();
+    // And the screen says what the running process is still using.
+    await expect(page.getByText(/In force now:/).first()).toBeVisible();
+
+    // A fresh load of the screen reads the FILE — which is also what makes
+    // another tab's write visible instead of silently lost.
+    await page.reload();
+    await expect(page.locator(OVERVIEW)).toHaveValue("1234");
+    await expect(page.getByText(/Restart pending/i)).toBeVisible();
+  } finally {
+    await page.request.put("/api/instance-config", {
+      data: { patch: { "curation.overviewMaxTokens": Number(original) } },
+    });
+  }
+
+  // Back in agreement with the process: no pending-restart claim left behind.
+  await page.reload();
+  await expect(page.locator(OVERVIEW)).toHaveValue(original);
+  await expect(page.getByText(/take effect only after the server restarts/i)).toBeVisible();
+});
+
 test("the sidebar's Config link goes to /config, and Settings is not in the sidebar", async ({
   page,
 }) => {
