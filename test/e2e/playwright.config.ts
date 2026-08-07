@@ -100,6 +100,15 @@ export default defineConfig({
         // outlast a navigation plus the attention fetch. Nothing else in the
         // e2e suite uses [[SLOWTOOL]], so widening it here costs nothing.
         PADDOCK_FAKE_SLOWTOOL_MS: "12000",
+        // How long the fake's [[BGSUBAGENT]] sub-agent keeps working AFTER its
+        // parent turn has finished (default 3s). journey-subagents.spec.ts has
+        // to observe that state across a tab switch AND a full reload, sampling
+        // the step list on each side, so the window must outlast the whole round
+        // trip — if it closes early the sub-agent legitimately settles and the
+        // spec fails looking exactly like the bug it is meant to detect. Set
+        // comfortably beyond that spec's own 120s timeout so a slow run can
+        // never be mistaken for a regression. Nothing else uses [[BGSUBAGENT]].
+        PADDOCK_FAKE_BGSUBAGENT_MS: "150000",
       },
     },
     {

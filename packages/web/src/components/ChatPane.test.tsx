@@ -460,6 +460,13 @@ describe("ChatPane: history hydration", () => {
           description: "map the features",
           toolUseId: "toolu_A",
           hasSubagent: true,
+          // A FINISHED sub-agent — which is what this test is about. The duration
+          // is the server's finished signal (it is withheld while the transcript
+          // is still growing, #725), and it is what keeps the shared poll off this
+          // card, so "not fetched until expanded" is a statement about laziness
+          // rather than about the chat happening to be idle. Without it the
+          // fixture models a still-RUNNING sub-agent, which is polled on sight.
+          subagentDurationMs: 4_200,
         },
       },
     ];
