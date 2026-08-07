@@ -69,6 +69,13 @@ favour of the `claude:` config block.
 
 ![The redesigned instance Config screen: a section rail with per-group counts down the left, a live filter and Modified-only toggle across the top, an env-override legend, and a dirty dot marking the one group holding an unsaved edit](../../assets/whats-new/config-redesign.png)
 
+<DemoVideo
+	src="/demo/config-filter.mp4"
+	poster="/demo/config-filter-poster.jpg"
+	alt="Paddock's instance Config screen. Typing 'token' into the filter narrows 47 settings to 3 and collapses the section rail to the single group that still matches. Clearing it and switching on 'Modified only' shows just the 9 settings that differ from their defaults, several carrying an ENV chip and the name of the variable overriding them. Clicking Branding in the rail scrolls that group into view rather than swapping to a separate tab, with the rest of the document still beneath it."
+	caption="One document, filtered and jumped. Searching by environment-variable name is the case tabs would have made impossible."
+/>
+
 - **Breaking: the default port moves from 4000 to 7233.** Port 4000 is one of the
   most contested in local development — Jekyll has used it since 2008, Phoenix
   uses it, and every hand-rolled Node server reaches for it — so Paddock's own
