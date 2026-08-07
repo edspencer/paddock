@@ -386,7 +386,7 @@ describe("loadPaddockConfig: YAML instance-config file (#270)", () => {
 
   it("no file present → env-only behaviour is unchanged (a no-op)", () => {
     const cfg = loadPaddockConfig();
-    expect(cfg.port).toBe(4000);
+    expect(cfg.port).toBe(7233);
     // Safe by default (#435): the bind host now defaults to loopback.
     expect(cfg.host).toBe("127.0.0.1");
     expect(cfg.dangerouslyAllowOpen).toBe(false);
@@ -550,7 +550,7 @@ describe("loadPaddockConfig: YAML instance-config file (#270)", () => {
   it("treats a null scalar (valueless key) as absent, falling back to the default", () => {
     writeConfig(["port:", "logLevel:", "maxSpawnDepth:"].join("\n") + "\n");
     const cfg = loadPaddockConfig();
-    expect(cfg.port).toBe(4000);
+    expect(cfg.port).toBe(7233);
     expect(cfg.logLevel).toBe("info");
     expect(cfg.maxSpawnDepth).toBe(1);
   });

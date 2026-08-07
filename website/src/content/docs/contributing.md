@@ -31,8 +31,8 @@ re-reading it here:
 ```bash
 npm install                 # install all workspaces
 npm run build               # build server (tsc) + web (vite)
-npm run dev                 # server on :4000 (API + WS)      — terminal 1
-npm run dev:web             # Vite dev server, proxies to :4000 — terminal 2
+npm run dev                 # server on :7233 (API + WS)      — terminal 1
+npm run dev:web             # Vite dev server, proxies to :7233 — terminal 2
 ```
 
 See [DEV.md](https://github.com/edspencer/paddock/blob/main/DEV.md) for the two run modes and their tradeoffs.

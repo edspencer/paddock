@@ -101,8 +101,8 @@ SDK's own bundled binary and never consult `PATH`.
 
 ```bash
 npm install                 # all workspaces
-npm run dev                 # server on :4000 (API + WS)      — terminal 1
-npm run dev:web             # Vite dev server, proxies to :4000 — terminal 2
+npm run dev                 # server on :7233 (API + WS)      — terminal 1
+npm run dev:web             # Vite dev server, proxies to :7233 — terminal 2
 npm run typecheck           # tsc on both packages
 npm test                    # server (unit+integration) + web (component)
 npm run test:e2e            # Playwright vs real server + a fake `claude` on PATH

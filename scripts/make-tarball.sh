@@ -37,7 +37,7 @@ cat > "${STAGE}/INSTALL.md" <<EOF
 npm ci --omit=dev
 PADDOCK_DATA_DIR=/var/lib/paddock \\
 CLAUDE_CODE_OAUTH_TOKEN=... \\
-PORT=4000 HOST=0.0.0.0 \\
+PORT=7233 HOST=0.0.0.0 \\
 node packages/server/dist/index.js
 \`\`\`
 

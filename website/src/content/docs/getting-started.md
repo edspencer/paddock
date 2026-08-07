@@ -18,7 +18,7 @@ npx @edspencer/paddock --here
 ```
 
 Paddock opens **that directory** as its workspace, finds the Claude Code sessions you
-already have for it, and offers them for import. Open **http://127.0.0.1:4000** (or add
+already have for it, and offers them for import. Open **http://127.0.0.1:7233** (or add
 `-o` to have it opened for you) — and instead of an empty instance, you're looking at
 your own conversations, resumable.
 
@@ -57,7 +57,7 @@ than bare `npx`.
 Useful flags:
 
 ```
-  -p, --port <port>       HTTP/WS port (default 4000)
+  -p, --port <port>       HTTP/WS port (default 7233)
       --host <host>       Bind address (default 127.0.0.1)
   -d, --data-dir <path>   Projects + state (default ~/.paddock)
       --here              Open the CURRENT directory as the workspace
@@ -87,7 +87,7 @@ For an always-on instance on a server, the published image is the simplest route
 it at a data volume and give it a Claude token:
 
 ```bash
-docker run -d --name paddock -p 127.0.0.1:4000:4000 \
+docker run -d --name paddock -p 127.0.0.1:7233:7233 \
   -e CLAUDE_CODE_OAUTH_TOKEN=…       `# Max plan auth (or ANTHROPIC_API_KEY)` \
   -e PADDOCK_DATA_DIR=/data \
   -e PADDOCK_DANGEROUSLY_ALLOW_OPEN=1 `# required in a container — see below` \
@@ -95,7 +95,7 @@ docker run -d --name paddock -p 127.0.0.1:4000:4000 \
   ghcr.io/edspencer/paddock:latest
 ```
 
-Then open **http://localhost:4000** and click **New Project**.
+Then open **http://localhost:7233** and click **New Project**.
 
 :::caution[Both of those flags are load-bearing — without the first, Paddock won't start]
 **`PADDOCK_DANGEROUSLY_ALLOW_OPEN=1` is required for *any* container run.** Inside a
@@ -106,10 +106,10 @@ default `PADDOCK_AUTH_MODE=none` and **refuses to boot** — the container exits
 away with `refusing to start: bind host "0.0.0.0" is not loopback…`. The flag downgrades
 that refusal to a boot warning.
 
-**`-p 127.0.0.1:4000:4000`** is what actually keeps you safe, and it's why the flag
+**`-p 127.0.0.1:7233:7233`** is what actually keeps you safe, and it's why the flag
 above is acceptable here. It publishes to the host's loopback only, so the real boundary
 is the container's network namespace plus this publish — not the in-container bind.
-Publishing on a routable address (`-p 4000:4000`) with no auth mode hands an
+Publishing on a routable address (`-p 7233:7233`) with no auth mode hands an
 unauthenticated, code-executing Paddock to your whole network.
 
 To reach it from another machine, keep the loopback publish and put a reverse proxy in
@@ -143,8 +143,8 @@ services:
   paddock:
     image: ghcr.io/edspencer/paddock:latest
     ports:
-      # Loopback only. Do NOT use "4000:4000" without an auth mode in front.
-      - "127.0.0.1:4000:4000"
+      # Loopback only. Do NOT use "7233:7233" without an auth mode in front.
+      - "127.0.0.1:7233:7233"
     environment:
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN} # or ANTHROPIC_API_KEY for API pricing
       PADDOCK_DATA_DIR: /data
@@ -229,20 +229,20 @@ export PADDOCK_DATA_DIR="$(mktemp -d /tmp/paddock-dev.XXXXXX)"   # optional thro
 npm run start                 # node packages/server/dist/index.js
 ```
 
-Open **http://localhost:4000/**. Quick checks:
+Open **http://localhost:7233/**. Quick checks:
 
 ```bash
-curl -s http://localhost:4000/api/health     # {"ok":true}
-curl -s http://localhost:4000/api/projects    # {"projects":[...]}
+curl -s http://localhost:7233/api/health     # {"ok":true}
+curl -s http://localhost:7233/api/projects    # {"projects":[...]}
 ```
 
 ### Hot-reload dev (two processes)
 
 For frontend iteration — Vite serves the SPA on `:5173` and proxies `/api` + `/ws`
-to the backend on `:4000`:
+to the backend on `:7233`:
 
 ```bash
-npm run dev        # terminal 1 — backend (watched) on :4000
+npm run dev        # terminal 1 — backend (watched) on :7233
 npm run dev:web    # terminal 2 — Vite SPA on :5173
 ```
 

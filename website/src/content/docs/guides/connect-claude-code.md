@@ -65,11 +65,11 @@ sees a loopback client because `sshd` connects to the port from the host itself.
 
 ```sh
 # on your laptop, in a terminal you leave open
-ssh -N -L 4000:127.0.0.1:4000 you@your-paddock-host
+ssh -N -L 7233:127.0.0.1:7233 you@your-paddock-host
 ```
 
-Your instance is now at `http://127.0.0.1:4000` **from the laptop**, and
-`http://127.0.0.1:4000/mcp` is a legitimate plaintext URL — nothing crosses the
+Your instance is now at `http://127.0.0.1:7233` **from the laptop**, and
+`http://127.0.0.1:7233/mcp` is a legitimate plaintext URL — nothing crosses the
 network in the clear.
 
 The trade-off is that the tunnel has to be up for the connection to work; a
@@ -224,7 +224,7 @@ Three things to get right:
   value that still validates won't break a bearer-token client — it's only used
   to build the OAuth discovery document, which isn't published here — but it is
   a typo that stays silently wrong, so get it right while you're looking at it.
-  - On **Route A** (SSH tunnel) that value is `http://127.0.0.1:4000` —
+  - On **Route A** (SSH tunnel) that value is `http://127.0.0.1:7233` —
     plain `http` is accepted for `localhost`, `127.0.0.1` and `::1`, and only for
     those. Any other host must be `https` or the management API refuses to start.
   - On **Routes B and C** it's your real external origin,
@@ -281,7 +281,7 @@ claude mcp add --transport http --scope user paddock \
   --header "Authorization: Bearer pdk_myinstance_1a2b3c…"
 ```
 
-On Route A, the URL is `http://127.0.0.1:4000/mcp` instead, and the tunnel from
+On Route A, the URL is `http://127.0.0.1:7233/mcp` instead, and the tunnel from
 step 0 has to be up.
 
 Three details that each cost somebody an afternoon:

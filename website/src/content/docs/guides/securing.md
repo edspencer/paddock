@@ -105,7 +105,7 @@ paddock.example.com {
         # generate the hash with:  caddy hash-password
         you $2a$14$…bcrypt-hash…
     }
-    reverse_proxy paddock:4000 {
+    reverse_proxy paddock:7233 {
         # Set the identity header from the authed user, overwriting any the
         # client sent — so it can't be forged.
         header_up X-Forwarded-User {http.auth.user.id}
@@ -164,7 +164,7 @@ paddock.example.com {
         # …and copy the identity it establishes onto the request.
         copy_headers X-Authentik-Username X-Authentik-Email X-Authentik-Groups X-Authentik-Jwt
     }
-    reverse_proxy paddock:4000
+    reverse_proxy paddock:7233
 }
 ```
 

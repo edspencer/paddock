@@ -91,7 +91,7 @@ npx @edspencer/paddock --here
 Paddock opens **that directory** as its workspace, finds the Claude Code sessions
 you already have for it, and offers them for import — so you're looking at your own
 conversations, resumable, rather than an empty instance. Then open
-**http://127.0.0.1:4000**. Later runs in the same directory resume it, no flag needed.
+**http://127.0.0.1:7233**. Later runs in the same directory resume it, no flag needed.
 
 `--here` is the consent, and here is all of it: it creates `.paddock/` (workspace
 state) and `.chats/` (transcripts) in the directory and appends both to `.gitignore`.
@@ -110,7 +110,7 @@ For a server rather than a laptop, run the published image, point it at a data
 volume, and give it a Claude token:
 
 ```bash
-docker run -d --name paddock -p 127.0.0.1:4000:4000 \
+docker run -d --name paddock -p 127.0.0.1:7233:7233 \
   -e CLAUDE_CODE_OAUTH_TOKEN=…       `# Claude Max/Pro plan (OAuth)` \
   -e PADDOCK_DATA_DIR=/data \
   -e PADDOCK_DANGEROUSLY_ALLOW_OPEN=1 `# see below — required inside a container` \
@@ -122,12 +122,12 @@ docker run -d --name paddock -p 127.0.0.1:4000:4000 \
 refuse to start without it. The image binds `0.0.0.0` (it has to, to be reachable
 from outside the container) and Paddock's default auth mode is `none`, and
 Paddock will not bind a routable interface unauthenticated without being told to.
-It is safe in *this* command because `-p 127.0.0.1:4000:4000` publishes the port
+It is safe in *this* command because `-p 127.0.0.1:7233:7233` publishes the port
 on loopback only — the container namespace is the boundary. Drop the `127.0.0.1:`
 and you have handed an unauthenticated, code-executing Paddock to your whole
 network, so put an auth mode or a reverse proxy in front of it first.
 
-Then open **http://localhost:4000** and click **New Project**.
+Then open **http://localhost:7233** and click **New Project**.
 
 Two images ship from the same source: **`:latest`** is the lean base (app plus
 `git`, `gh`, and the `claude` CLI), and **`:devbox`** layers on a coding-agent
@@ -146,7 +146,7 @@ services:
   paddock:
     image: ghcr.io/edspencer/paddock:latest   # or :devbox for the coding-agent toolbox
     ports:
-      - "127.0.0.1:4000:4000"
+      - "127.0.0.1:7233:7233"
     environment:
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN} # Claude Max/Pro (OAuth); or ANTHROPIC_API_KEY for API-key billing
       PADDOCK_DATA_DIR: /data
@@ -266,7 +266,7 @@ project's `project.yaml`.
 
 | Var | Default | Purpose |
 |-----|---------|---------|
-| `PORT` | `4000` | HTTP/WS port |
+| `PORT` | `7233` | HTTP/WS port |
 | `HOST` | `127.0.0.1` | Bind address. Loopback by default so a fresh source/tarball run is network-closed; the container images bind `0.0.0.0` because the network namespace is their boundary. |
 | `PADDOCK_DANGEROUSLY_ALLOW_OPEN` | — | Required to bind a routable interface with `PADDOCK_AUTH_MODE=none`. Without it, Paddock refuses to start — it runs code and spends your Claude tokens. |
 | `PADDOCK_DATA_DIR` | `./data` | Data root — holds `projects/`, `.herdctl/` state, the generated `herdctl.yaml`. Setting this cascades all derived paths. |
@@ -371,8 +371,8 @@ npm test                    # server (unit + integration) + web (component) test
 npm run test:e2e            # Playwright journeys (incl. mobile) against the real server + a fake `claude`
 
 # Run locally (two terminals):
-npm run dev                 # server on :4000 (API + WS)
-npm run dev:web             # Vite dev server, proxies /api + /ws to :4000
+npm run dev                 # server on :7233 (API + WS)
+npm run dev:web             # Vite dev server, proxies /api + /ws to :7233
 ```
 
 The E2E suite drives the **real** server, FleetManager, and CLI runtime; only the

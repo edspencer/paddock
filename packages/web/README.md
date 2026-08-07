@@ -10,8 +10,8 @@ Projects are the first-class citizen; the instance root is a workspace of its ow
 ## Quick start (frontend only)
 
 ```bash
-# From the repo root, with the backend already running on :4000:
-npm run dev:web      # http://localhost:5173 (proxies /api + /ws -> :4000)
+# From the repo root, with the backend already running on :7233:
+npm run dev:web      # http://localhost:5173 (proxies /api + /ws -> :7233)
 
 # Build the production bundle (the server serves packages/web/dist):
 npm run -w packages/web build

@@ -160,7 +160,7 @@ Overriding is deliberately a conscious act rather than the default path.
 
 ```sh
 docker run -d --name paddock \
-  -p 4000:4000 \
+  -p 7233:7233 \
   -v /srv/paddock-data:/data \
   -e CLAUDE_CODE_OAUTH_TOKEN=... \
   -e GITHUB_TOKEN=...            # optional, for git push of the backing repo

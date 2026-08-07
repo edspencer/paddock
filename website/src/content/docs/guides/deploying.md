@@ -36,7 +36,7 @@ Paddock ships as a Docker image, which is the simplest way to deploy on any of t
 hosts above:
 
 ```bash
-docker run -d --name paddock -p 127.0.0.1:4000:4000 \
+docker run -d --name paddock -p 127.0.0.1:7233:7233 \
   -e CLAUDE_CODE_OAUTH_TOKEN=…       `# or ANTHROPIC_API_KEY` \
   -e PADDOCK_DATA_DIR=/data \
   -e PADDOCK_DANGEROUSLY_ALLOW_OPEN=1 `# every container run needs this` \

@@ -107,10 +107,10 @@ docker compose --profile base   up -d     # app + git/ssh/gh/claude
 # ...or the coding-agent toolbox image:
 docker compose --profile devbox up -d     # + pm, ffmpeg, Chromium, docker, kubectl, python
 
-curl -fsS http://127.0.0.1:4000/api/health   # -> {"ok":true}
+curl -fsS http://127.0.0.1:7233/api/health   # -> {"ok":true}
 ```
 
-The recipe publishes to **loopback only** (`127.0.0.1:4000`) — reachable from inside
+The recipe publishes to **loopback only** (`127.0.0.1:7233`) — reachable from inside
 the LXC, not from the LAN — which is the [safe posture](#the-bind-is-safe-by-default)
 you want until auth is in front. Pick the **base** or **devbox** image with the
 Compose profile; the split is broken down in
@@ -198,7 +198,7 @@ can't route to an in-container `127.0.0.1`, so binding all interfaces is deliber
 That trips the fail-closed guard, so the container recipes set
 **`PADDOCK_DANGEROUSLY_ALLOW_OPEN=1`** to let the app boot. This does **not** expose
 your instance: for a container the real boundary is the **network namespace plus the
-loopback host-publish** (`127.0.0.1:4000`). If you ever publish on a routable address,
+loopback host-publish** (`127.0.0.1:7233`). If you ever publish on a routable address,
 unset that flag and put a real auth mode in front instead. The `docker/` recipe README
 explains this in full.
 
