@@ -1083,6 +1083,70 @@ export class HerdctlService {
   }
 
   /**
+   * Drop the herdctl job records for chats that have left this instance (#732),
+   * so a record cannot outlive its transcript and keep the sidebar unread badge
+   * counting a chat there is no longer anything to open.
+   *
+   * Takes a LIST rather than one id, and is called by the delete routes rather
+   * than from inside {@link deleteSession}, for one reason: purging is a scan of
+   * the whole shared jobs directory, and the batch route deletes up to 500 chats
+   * in a loop. Per-chat purging would re-scan a 2,000-record directory 500 times
+   * (see `herdctl-jobs-index.ts` for what that costs). One pass, all ids.
+   *
+   * Callers pass only the chats whose transcript was actually REMOVED. Under
+   * `claude.transcripts: host` a delete RELEASES instead — the chat is still
+   * listed there, a known deferred gap (#693, asserted by
+   * `delete-chat-host-transcripts.test.ts`), and purging would close it as a
+   * side effect, because the job record is part of what re-attributes a
+   * structurally-discovered session to the keeper. Resolving somebody else's
+   * deferred decision by accident is not this change's business, and keeping the
+   * record for a chat that is still in the list is coherent anyway:
+   * `buildChatTurns` prunes against the live chat list, so the badge follows the
+   * list either way — and will stop counting the chat the moment #693 makes it
+   * leave.
+   *
+   * Best-effort: tidying state must never fail the delete the user asked for.
+   */
+  async purgeSessionJobs(sessionIds: string[]): Promise<void> {
+    await jobs.purgeSessionJobs(this.cfg.stateDir, sessionIds).catch(() => 0);
+    this.jobsIndexOrNull?.invalidate();
+  }
+
+  /**
+   * Drop the herdctl job records of every agent a project owned (#734) — the
+   * records half of a project delete.
+   *
+   * Job records are keyed by AGENT NAME, and an agent name is derived from the
+   * slug, which is derived from the project NAME. So without this, deleting
+   * "Foo" and creating a new "Foo" hands the new project the old one's run
+   * history: prompts, reply summaries, and a phantom `chatTurns` entry that
+   * shows an unread badge on a project with zero chats. Files, `.chats/` and
+   * `read-state.json` were already cleaned; these were the one thing left.
+   *
+   * Takes the same hook/trigger name lists {@link removeProjectAgent} does, so
+   * the two together are the full inverse of the create flow — and so they stay
+   * in step: if a delete ever has to sweep DESCENDANT workspaces (nesting), both
+   * need the same widening, not just one. Matching is on the exact agent name,
+   * so deleting `foo` cannot touch a sibling `foo-bar`.
+   *
+   * Best-effort — the project directory is already gone by the time we get here.
+   */
+  async purgeProjectJobs(
+    slug: string,
+    hookNames: string[] = [],
+    triggerNames: string[] = [],
+  ): Promise<void> {
+    const agents = [
+      keeperAgentName(slug),
+      sweeperAgentName(slug),
+      ...hookNames.map((name) => hookAgentName(slug, name)),
+      ...triggerNames.map((name) => triggerAgentName(slug, name)),
+    ];
+    await jobs.purgeAgentJobs(this.cfg.stateDir, agents).catch(() => 0);
+    this.jobsIndexOrNull?.invalidate();
+  }
+
+  /**
    * Drop the agent-level session pointer when it names a transcript we just
    * removed. Issue #730 — silent data loss, and the fix is one `rm` of a file
    * that is already dangling by the time we get here.

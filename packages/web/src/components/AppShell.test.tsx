@@ -3,7 +3,12 @@ import { render, screen, fireEvent, waitFor, within, act } from "@testing-librar
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { AppShell } from "./AppShell";
 import { makeProject } from "../test/factories";
-import { markSeenLocally, readLastSeen, resetLastSeenForTests } from "../lib/lastSeen";
+import {
+  forgetChats,
+  markSeenLocally,
+  readLastSeen,
+  resetLastSeenForTests,
+} from "../lib/lastSeen";
 import { gridUrl } from "../routes/ProjectView/urls";
 import type { Project } from "../lib/types";
 
@@ -581,5 +586,101 @@ describe("AppShell: navigation", () => {
     renderShell();
     fireEvent.click(screen.getByRole("link", { name: /Alpha/ }));
     expect(screen.getByText("PROJECT")).toBeInTheDocument();
+  });
+});
+
+/**
+ * The badge must stop counting a chat that is GONE (#732, #734).
+ *
+ * The sidebar's completion cache is a ref that only ever grew: it folds in the
+ * server payload's `chatTurns` AND every live turn-completion seen over the WS,
+ * and nothing ever removed an entry. Deleting an unread chat therefore left the
+ * badge counting a chat with nothing left to open to clear it — permanently
+ * stuck. The server-side prune cannot reach the live half, and under the default
+ * `session` drive mode (no job records) the live half is most of the badge.
+ */
+describe("AppShell: the badge forgets chats that are gone (#732, #734)", () => {
+  const FUTURE = new Date(Date.now() + 60_000).toISOString();
+  const alpha = () => screen.getByRole("link", { name: /Alpha/ });
+
+  it("drops a deleted chat's live completion when the delete announces it", async () => {
+    mockProjects = [makeProject({ slug: "alpha", name: "Alpha", group: "homelab" })];
+    renderShell("/");
+    // A live turn on a chat the server payload knows nothing about — the only
+    // kind of completion signal a `session`-drive-mode instance produces.
+    setActiveInfos([["s1", "alpha"]]);
+    setActiveInfos([]); // turn ends → unread
+    expect(within(alpha()).getByLabelText(/1 unread reply/i)).toHaveTextContent("1");
+
+    act(() => forgetChats(["s1"]));
+    await waitFor(() =>
+      expect(within(alpha()).queryByLabelText(/unread/i)).not.toBeInTheDocument(),
+    );
+  });
+
+  it("leaves other chats' counts alone", async () => {
+    mockProjects = [makeProject({ slug: "alpha", name: "Alpha", group: "homelab" })];
+    renderShell("/");
+    setActiveInfos([
+      ["s1", "alpha"],
+      ["s2", "alpha"],
+    ]);
+    setActiveInfos([]);
+    expect(within(alpha()).getByLabelText(/2 unread replies/i)).toHaveTextContent("2");
+    act(() => forgetChats(["s1"]));
+    await waitFor(() =>
+      expect(within(alpha()).getByLabelText(/1 unread reply/i)).toHaveTextContent("1"),
+    );
+  });
+
+  it("drops completions belonging to a project that no longer exists (#734)", async () => {
+    mockProjects = [
+      makeProject({ slug: "alpha", name: "Alpha", group: "homelab" }),
+      makeProject({
+        slug: "doomed",
+        name: "Doomed",
+        group: "homelab",
+        chatTurns: [{ sessionId: "d1", lastTurnCompletedAt: FUTURE }],
+      }),
+    ];
+    const { rerender } = renderShell("/projects/alpha/chat");
+    expect(
+      within(screen.getByRole("link", { name: /Doomed/ })).getByLabelText(/1 unread reply/i),
+    ).toHaveTextContent("1");
+
+    // The project is deleted; the next projects fetch simply omits it. Its
+    // completion must not survive to attach to a project that reuses the slug.
+    mockProjects = [makeProject({ slug: "alpha", name: "Alpha", group: "homelab" })];
+    rerender(
+      <MemoryRouter initialEntries={["/projects/alpha/chat"]}>
+        <Routes>
+          <Route path="/" element={<AppShell />}>
+            <Route path="projects/:slug/*" element={<div>PROJECT</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("link", { name: /Doomed/ })).not.toBeInTheDocument(),
+    );
+    // And re-creating a project on the same slug starts clean.
+    mockProjects = [
+      makeProject({ slug: "alpha", name: "Alpha", group: "homelab" }),
+      makeProject({ slug: "doomed", name: "Doomed", group: "homelab", chatTurns: [] }),
+    ];
+    rerender(
+      <MemoryRouter initialEntries={["/projects/alpha/chat"]}>
+        <Routes>
+          <Route path="/" element={<AppShell />}>
+            <Route path="projects/:slug/*" element={<div>PROJECT</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("link", { name: /Doomed/ })).queryByLabelText(/unread/i),
+      ).not.toBeInTheDocument(),
+    );
   });
 });

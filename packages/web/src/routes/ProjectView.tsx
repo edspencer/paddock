@@ -28,6 +28,7 @@ import { PromoteChatModal } from "../components/PromoteChatModal";
 import { AdoptChatsModal } from "../components/AdoptChatsModal";
 import { usePaneWidth } from "../components/PaneResizer";
 import { CHATLIST_PANE } from "../lib/paneWidth";
+import { forgetChats } from "../lib/lastSeen";
 import {
   BoltIcon,
   BranchIcon,
@@ -903,6 +904,12 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
       }
     }
     const gone = new Set(removed);
+    // #732: retract these chats from every per-session-id cache in the tab —
+    // read-state here, the sidebar badge's completion cache via the event. Only
+    // the ids the server CONFIRMED removed, for the same reason the list filter
+    // below uses them: a chat the delete spared still exists, and forgetting its
+    // watermark would re-raise an unread cue on a chat we just said survived.
+    forgetChats(removed);
     setChats((prev) => prev.filter((c) => !gone.has(c.sessionId)));
     // If the open chat was among them, drop back to a fresh "new chat". `base`
     // is "" at the root and `/projects/:slug` otherwise (#516).
