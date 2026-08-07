@@ -220,18 +220,29 @@ export const api = {
 
   /**
    * Write a patch of editable instance-config fields to `paddock.config.yaml`
-   * (comment-preserving, atomic). Keyed by the field's dotted `key`. Writes do
-   * NOT hot-apply — the config is frozen at boot — so this resolves
-   * `{ restartRequired: true }` and the UI shows a restart banner. A 4xx body
-   * carries a human `error` (unknown/read-only key, or an invalid value).
+   * (comment-preserving, atomic). Keyed by the field's dotted `key`; a `null`
+   * clears that key back to its built-in default. Writes do NOT hot-apply — the
+   * config is frozen at boot — so this resolves `{ restartRequired: true }` and
+   * the UI shows a restart banner. A 4xx body carries a human `error`
+   * (unknown/read-only/env-shadowed key, or an invalid value).
+   *
+   * `expectedVersion` is the `configVersion` of the snapshot the edits were made
+   * against; the server 409s rather than overwrite a file some other tab has
+   * changed in the meantime (#722).
    */
   async updateInstanceConfig(
     patch: Record<string, unknown>,
-  ): Promise<{ restartRequired: boolean; configPath: string }> {
-    return req<{ restartRequired: boolean; configPath: string }>("/api/instance-config", {
-      method: "PUT",
-      body: JSON.stringify({ patch }),
-    });
+    expectedVersion?: string | null,
+  ): Promise<{ restartRequired: boolean; configPath: string; configVersion: string | null }> {
+    return req<{ restartRequired: boolean; configPath: string; configVersion: string | null }>(
+      "/api/instance-config",
+      {
+        method: "PUT",
+        body: JSON.stringify(
+          expectedVersion === undefined ? { patch } : { patch, expectedVersion },
+        ),
+      },
+    );
   },
 
   /**

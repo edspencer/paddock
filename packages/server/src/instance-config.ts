@@ -29,7 +29,8 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { parseDocument } from "yaml";
+import { createHash } from "node:crypto";
+import { parse, parseDocument } from "yaml";
 import { DRIVE_MODES, DEFAULT_DRIVE_MODE, MODELS, isKnownModel } from "./models.js";
 import { DEFAULT_MAX_SPAWN_DEPTH, isValidMaxSpawnDepth } from "./spawn-capability.js";
 import { DEFAULT_RECOVERY } from "./recovery-config.js";
@@ -114,37 +115,82 @@ interface FieldSpec {
 const asBool = (raw: unknown): Coerced =>
   typeof raw === "boolean" ? { ok: true, value: raw } : { ok: false, error: "must be a boolean" };
 
-const posInt = (raw: unknown): Coerced => {
-  const n = Number(raw);
-  return Number.isFinite(n) && Number.isInteger(n) && n > 0
-    ? { ok: true, value: n }
-    : { ok: false, error: "must be a positive integer" };
+/**
+ * Parse a JSON patch value that is meant to be a number, WITHOUT `Number()`'s
+ * coercions (issue #723). `Number()` happily turns `null` into `0`, `true` into
+ * `1` and `[7]` into `7` — so `{"recovery.maxRetries": null}`, documented to
+ * CLEAR the override, used to write a very meaningful `0` instead. Only a real
+ * number, or a non-blank numeric string (what an `<input type=number>` sends),
+ * counts; everything else is `NaN` and gets rejected by the callers below.
+ */
+const numeric = (raw: unknown): number => {
+  if (typeof raw === "number") return raw;
+  if (typeof raw === "string" && raw.trim() !== "") return Number(raw.trim());
+  return NaN;
 };
 
-const nonNegInt = (raw: unknown): Coerced => {
-  const n = Number(raw);
-  return Number.isFinite(n) && Number.isInteger(n) && n >= 0
+/**
+ * Ceiling for the numeric fields. Nothing downstream bounds these — a paste-o of
+ * `20000000` into a millisecond timeout is a 231-day debounce, and a token budget
+ * of 1e15 disables curation silently. A billion is far past any deliberate value
+ * (≈31 years in ms) and keeps every one of them a safe integer.
+ */
+const MAX_NUMBER = 1e9;
+
+/**
+ * Ceiling for a plain `string` field, in characters. These are names, paths and
+ * URLs; without a bound a 200 KB paste into `brand.name` becomes a 200 KB
+ * `paddock.config.yaml` that every boot must parse. The prompt-shaped `text`
+ * fields have their own, much larger {@link MAX_PROMPT_CHARS}.
+ */
+const MAX_STRING_CHARS = 1024;
+
+const posInt = (raw: unknown): Coerced => {
+  const n = numeric(raw);
+  return Number.isInteger(n) && n > 0 && n <= MAX_NUMBER
     ? { ok: true, value: n }
-    : { ok: false, error: "must be a non-negative integer" };
+    : { ok: false, error: `must be a positive integer (at most ${MAX_NUMBER})` };
+};
+
+/** A non-negative integer, OR null/empty-string to clear the override (#723). */
+const nonNegInt = (raw: unknown): Coerced => {
+  if (raw === null || raw === "" || raw === undefined) return { ok: true, value: null };
+  const n = numeric(raw);
+  return Number.isInteger(n) && n >= 0 && n <= MAX_NUMBER
+    ? { ok: true, value: n }
+    : {
+        ok: false,
+        error: `must be a non-negative integer up to ${MAX_NUMBER} (or blank to use the default)`,
+      };
 };
 
 /** A non-negative number, OR null/empty-string to clear the override. */
 const optNonNegNumber = (raw: unknown): Coerced => {
   if (raw === null || raw === "" || raw === undefined) return { ok: true, value: null };
-  const n = Number(raw);
-  return Number.isFinite(n) && n >= 0
+  const n = numeric(raw);
+  return Number.isFinite(n) && n >= 0 && n <= MAX_NUMBER
     ? { ok: true, value: n }
-    : { ok: false, error: "must be a non-negative number (or blank to use the default)" };
+    : { ok: false, error: `must be a non-negative number up to ${MAX_NUMBER} (or blank to use the default)` };
 };
 
-const nonEmptyString = (raw: unknown): Coerced =>
-  typeof raw === "string" && raw.trim().length > 0
-    ? { ok: true, value: raw.trim() }
-    : { ok: false, error: "must be a non-empty string" };
+const nonEmptyString = (raw: unknown): Coerced => {
+  if (typeof raw !== "string") return { ok: false, error: "must be a non-empty string" };
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return { ok: false, error: "must be a non-empty string" };
+  if (trimmed.length > MAX_STRING_CHARS) {
+    return { ok: false, error: `must be at most ${MAX_STRING_CHARS} characters (got ${trimmed.length})` };
+  }
+  return { ok: true, value: trimmed };
+};
 
 /** A string that may be blank (blank clears the override → falls back to default). */
-const optString = (raw: unknown): Coerced =>
-  typeof raw === "string" ? { ok: true, value: raw.trim() } : { ok: false, error: "must be a string" };
+const optString = (raw: unknown): Coerced => {
+  if (typeof raw !== "string") return { ok: false, error: "must be a string" };
+  const trimmed = raw.trim();
+  return trimmed.length <= MAX_STRING_CHARS
+    ? { ok: true, value: trimmed }
+    : { ok: false, error: `must be at most ${MAX_STRING_CHARS} characters (got ${trimmed.length})` };
+};
 
 /**
  * Upper bound on a prompt-shaped field, in characters. Nothing enforces a limit
@@ -186,7 +232,10 @@ const oneOf =
       : { ok: false, error: `must be one of: ${values.join(", ")}` };
 
 const spawnDepth = (raw: unknown): Coerced => {
-  const n = Number(raw);
+  // `numeric` rather than `Number` for the #723 reason: `Number(null)` is 0,
+  // which IS a valid depth — so a "clear this override" used to write the depth
+  // that switches every child's self-MCP off.
+  const n = numeric(raw);
   return isValidMaxSpawnDepth(n)
     ? { ok: true, value: n }
     : { ok: false, error: "must be a small non-negative integer" };
@@ -197,9 +246,18 @@ const hexColor = (raw: unknown): Coerced =>
     ? { ok: true, value: raw.trim() }
     : { ok: false, error: "must be a hex color like #c2603c" };
 
+/** Bounds on a free-form list field, for the same reason as {@link MAX_STRING_CHARS}. */
+const MAX_LIST_ITEMS = 64;
+const MAX_LIST_ITEM_CHARS = 256;
+
 const stringList = (raw: unknown): Coerced => {
   const list = sanitizeAllowedTypes(raw);
-  return list ? { ok: true, value: list } : { ok: false, error: "must be a non-empty list of type/extension strings" };
+  if (!list) return { ok: false, error: "must be a non-empty list of type/extension strings" };
+  if (list.length > MAX_LIST_ITEMS) return { ok: false, error: `must have at most ${MAX_LIST_ITEMS} entries` };
+  if (list.some((s) => s.length > MAX_LIST_ITEM_CHARS)) {
+    return { ok: false, error: `each entry must be at most ${MAX_LIST_ITEM_CHARS} characters` };
+  }
+  return { ok: true, value: list };
 };
 
 /**
@@ -377,7 +435,17 @@ export interface InstanceConfigFieldDto {
   help?: string;
   type: FieldType;
   enumValues?: readonly string[];
+  /** EFFECTIVE now: the value the running (frozen) process resolved at boot. */
   value: unknown;
+  /**
+   * PENDING: what this field would resolve to if the process restarted right
+   * now — i.e. what is in `paddock.config.yaml` this instant (or the built-in
+   * default where the file says nothing, or `value` where an env var wins). This
+   * is what the editor renders and what a save round-trips through (#722).
+   */
+  pendingValue: unknown;
+  /** `pendingValue` differs from `value` — the file has diverged from the process. */
+  pendingRestart: boolean;
   default: unknown;
   editable: boolean;
   sensitive: boolean;
@@ -397,8 +465,83 @@ export interface InstanceConfigDto {
   groups: InstanceConfigGroupDto[];
   /** Absolute path of the file a PUT writes to (informational). */
   configPath: string;
-  /** Always false — instance config is frozen at boot; edits need a restart. */
-  restartRequired: false;
+  /**
+   * At least one editable field's `pendingValue` differs from its `value`: the
+   * file on disk no longer describes the running process, and a restart would
+   * change behaviour. Was hardcoded `false` before #722 — which meant nothing
+   * ever told an operator their own save was unapplied.
+   */
+  restartRequired: boolean;
+  /**
+   * Fingerprint of the config file as read for THIS response (`null` when the
+   * file does not exist yet). A client echoes it back as `expectedVersion` on
+   * the PUT; the server refuses the write if the file changed meanwhile, so two
+   * tabs conflict loudly instead of silently last-writer-winning (#722).
+   */
+  configVersion: string | null;
+  /**
+   * Set when the file exists but could not be read or parsed. Pending values are
+   * unknowable in that state, so they fall back to the effective ones — better
+   * to say why than to silently report "nothing pending".
+   */
+  configFileError?: string;
+}
+
+/** The config file as read for a GET: its parsed body plus a fingerprint. */
+interface ConfigFileSnapshot {
+  /** Parsed mapping, or `null` when the file is absent/empty/unreadable. */
+  data: Record<string, unknown> | null;
+  /** Content fingerprint, or `null` when the file is absent. */
+  version: string | null;
+  /** Why `data` is null despite the file existing. */
+  error?: string;
+}
+
+/**
+ * Read + parse `paddock.config.yaml` for the GET path. Never throws: a missing
+ * file is the normal case, and a malformed one must not take down the screen
+ * that exists to fix it (the boot loader is the strict reader — see
+ * `loadConfigFile`).
+ */
+function readConfigFileSnapshot(configPath: string): ConfigFileSnapshot {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(configPath, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return { data: null, version: null };
+    return { data: null, version: null, error: `failed to read ${configPath}: ${(err as Error).message}` };
+  }
+  const version = createHash("sha256").update(raw).digest("hex").slice(0, 16);
+  let parsed: unknown;
+  try {
+    parsed = parse(raw);
+  } catch (err) {
+    return { data: null, version, error: `failed to parse ${configPath}: ${(err as Error).message}` };
+  }
+  // Empty / comments-only file → no overrides, same reading as loadConfigFile.
+  if (parsed === null || parsed === undefined) return { data: {}, version };
+  if (typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { data: null, version, error: `${configPath} is not a YAML mapping` };
+  }
+  return { data: parsed as Record<string, unknown>, version };
+}
+
+/**
+ * The current fingerprint of the config file (`null` when absent) — the PUT
+ * path's half of the optimistic-concurrency check. Deliberately re-reads rather
+ * than trusting a cached value: the point is to notice a write we did not make.
+ */
+export function instanceConfigVersion(configPath: string): string | null {
+  return readConfigFileSnapshot(configPath).version;
+}
+
+/** Structural equality for the value shapes a field can hold (scalars + string lists). */
+function valuesEqual(a: unknown, b: unknown): boolean {
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((v, i) => v === b[i]);
+  }
+  return a === b;
 }
 
 /**
@@ -423,9 +566,25 @@ export function instanceConfigPath(cfg: PaddockConfig): string {
 }
 
 /**
- * Build the grouped GET DTO from the resolved (frozen) config + live env. Each
- * field reports its current `value`, built-in `default`, and whether an env var
- * currently shadows it (so the UI renders env-shadowed fields read-only).
+ * Build the grouped GET DTO from the resolved (frozen) config, the live env AND
+ * the config file on disk. Each field reports:
+ *
+ *  - `value` — EFFECTIVE now, out of the frozen boot config;
+ *  - `pendingValue` — what a restart would resolve, out of the file this instant;
+ *  - `pendingRestart` — those two differ.
+ *
+ * Reading the file is the load-bearing part (#722). While this built the DTO
+ * from the frozen config alone, `GET` could not observe ANY write — including
+ * the one the caller had just made — so a successful save appeared to revert,
+ * two tabs clobbered each other with nothing able to notice, and
+ * `restartRequired` had no choice but to be a hardcoded `false`.
+ *
+ * Pending values are computed for EDITABLE, non-env-shadowed fields only:
+ *  - an env-shadowed field resolves to the same env value after a restart, so
+ *    the file cannot make it diverge;
+ *  - the read-only `advanced` bindings are normalised at boot (`dataDir` and
+ *    friends are canonicalised, `port` is `Number()`-ed), so comparing them
+ *    against raw file text would manufacture divergence that isn't there.
  */
 export function buildInstanceConfig(cfg: PaddockConfig): InstanceConfigDto {
   const groups: InstanceConfigGroupDto[] = GROUPS.map((g) => ({
@@ -436,9 +595,33 @@ export function buildInstanceConfig(cfg: PaddockConfig): InstanceConfigDto {
   }));
   const groupById = new Map(groups.map((g) => [g.id, g]));
 
+  const configPath = instanceConfigPath(cfg);
+  const file = readConfigFileSnapshot(configPath);
+  let restartRequired = false;
+
   for (const f of FIELDS) {
     const shadow = envOverride(f.envVars, f.envShadowWhenDefined);
     const raw = readPath(cfg, f.key);
+    // `undefined` (e.g. sweepMinIntervalMs unset, optional endpoint) → null so
+    // it JSON-serializes as an explicit absence rather than dropping the key.
+    const value = raw === undefined ? null : raw;
+
+    let pendingValue: unknown = value;
+    let pendingRestart = false;
+    if (f.editable && shadow === undefined && file.data) {
+      // Absent, or present-but-null (`debounceMs:` with nothing after it), both
+      // mean "no override" — `fileOr`/`fileOpt` degrade a null to the default.
+      const fileRaw = readPath(file.data, f.key);
+      pendingValue = fileRaw == null ? (f.default ?? null) : coerceForDisplay(f, fileRaw);
+      // A field the frozen config leaves unset IS its built-in default (that is
+      // what `default` documents), so normalise before comparing — otherwise
+      // e.g. `models`, unset and therefore null, would read as forever diverging
+      // from the catalog list the file's absence implies.
+      const effective = value === null ? (f.default ?? null) : value;
+      pendingRestart = !valuesEqual(pendingValue, effective);
+      if (pendingRestart) restartRequired = true;
+    }
+
     const dto: InstanceConfigFieldDto = {
       key: f.key,
       group: f.group,
@@ -446,9 +629,9 @@ export function buildInstanceConfig(cfg: PaddockConfig): InstanceConfigDto {
       help: f.help,
       type: f.type,
       enumValues: f.enumValues,
-      // `undefined` (e.g. sweepMinIntervalMs unset, optional endpoint) → null so
-      // it JSON-serializes as an explicit absence rather than dropping the key.
-      value: raw === undefined ? null : raw,
+      value,
+      pendingValue,
+      pendingRestart,
       default: f.default,
       editable: f.editable,
       sensitive: f.sensitive ?? false,
@@ -458,7 +641,26 @@ export function buildInstanceConfig(cfg: PaddockConfig): InstanceConfigDto {
     groupById.get(f.group)?.fields.push(dto);
   }
 
-  return { groups, configPath: instanceConfigPath(cfg), restartRequired: false };
+  return {
+    groups,
+    configPath,
+    restartRequired,
+    configVersion: file.version,
+    ...(file.error ? { configFileError: file.error } : {}),
+  };
+}
+
+/**
+ * Normalise a value read back out of the file into the shape the writer would
+ * have produced, so a hand-typed `"1234"` doesn't read as diverging from a
+ * written `1234`. A value the field's own validator rejects is reported
+ * verbatim: the file really does say that, and the screen showing it is how an
+ * operator finds out (the boot loader would degrade it to the default).
+ */
+function coerceForDisplay(f: FieldSpec, raw: unknown): unknown {
+  if (!f.coerce) return raw;
+  const res = f.coerce(raw);
+  return res.ok ? res.value : raw;
 }
 
 /** A rejected PUT: which field failed and why (surfaced as a 400). */
@@ -477,6 +679,7 @@ export class InstanceConfigError extends Error {
  * {@link InstanceConfigError} on the first offending field:
  *  - an unknown key,
  *  - a read-only / non-editable key,
+ *  - a key an env var currently shadows,
  *  - a value the field's `coerce` rejects.
  * Returns the coerced `{ key, value }` pairs ready to write. A field whose value
  * is `null` (an editable optional being cleared) is returned with `value: null`
@@ -489,6 +692,17 @@ export function validatePatch(patch: Record<string, unknown>): { key: string; va
     if (!spec) throw new InstanceConfigError(`Unknown setting: ${key}`, key);
     if (!spec.editable || !spec.coerce) {
       throw new InstanceConfigError(`Setting is read-only: ${key}`, key);
+    }
+    // `env > file > default`: writing a shadowed field to the file changes
+    // nothing an operator can observe, now or after a restart. The UI already
+    // renders these read-only; without this check the API happily returned 200 +
+    // `restartRequired: true` for a write that could never take effect.
+    const shadow = envOverride(spec.envVars, spec.envShadowWhenDefined);
+    if (shadow !== undefined) {
+      throw new InstanceConfigError(
+        `${spec.label} (${key}) is set by the environment variable ${shadow}, which wins over the config file — change it there instead`,
+        key,
+      );
     }
     const res = spec.coerce(raw);
     if (!res.ok) throw new InstanceConfigError(`${spec.label} (${key}) ${res.error}`, key);

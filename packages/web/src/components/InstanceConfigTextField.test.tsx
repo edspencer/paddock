@@ -37,6 +37,7 @@ function configWith(value: unknown, envOverridden = false): InstanceConfig {
   return {
     configPath: "/data/paddock.config.yaml",
     restartRequired: false,
+    configVersion: "v1",
     groups: [
       {
         id: "capabilities",
@@ -48,6 +49,10 @@ function configWith(value: unknown, envOverridden = false): InstanceConfig {
             label: "Environment prompt",
             type: "text",
             value,
+            // File and process agree here; the three authoring states this file
+            // is about are orthogonal to the pending/effective split (#722).
+            pendingValue: value,
+            pendingRestart: false,
             default: BUILT_IN,
             editable: true,
             sensitive: false,
@@ -93,7 +98,7 @@ describe("InstanceConfigForm — multi-line `text` field (#635)", () => {
     fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
 
     await waitFor(() => expect(updateInstanceConfig).toHaveBeenCalledTimes(1));
-    expect(updateInstanceConfig).toHaveBeenCalledWith({ environmentPrompt: multi });
+    expect(updateInstanceConfig).toHaveBeenCalledWith({ environmentPrompt: multi }, "v1");
   });
 
   it("clearing the box sends an empty string — the opt-out, not a reset", async () => {
@@ -106,7 +111,7 @@ describe("InstanceConfigForm — multi-line `text` field (#635)", () => {
     fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
 
     await waitFor(() => expect(updateInstanceConfig).toHaveBeenCalledTimes(1));
-    expect(updateInstanceConfig).toHaveBeenCalledWith({ environmentPrompt: "" });
+    expect(updateInstanceConfig).toHaveBeenCalledWith({ environmentPrompt: "" }, "v1");
   });
 
   it("\"Restore default\" sends null (delete the key), and shows the default text", async () => {
@@ -124,7 +129,7 @@ describe("InstanceConfigForm — multi-line `text` field (#635)", () => {
     await waitFor(() => expect(updateInstanceConfig).toHaveBeenCalledTimes(1));
     // null ⇒ the writer deletes the key, so the instance tracks future revisions
     // of the built-in text rather than pinning today's copy of it.
-    expect(updateInstanceConfig).toHaveBeenCalledWith({ environmentPrompt: null });
+    expect(updateInstanceConfig).toHaveBeenCalledWith({ environmentPrompt: null }, "v1");
   });
 
   it("offers no Restore default when the value already IS the default", async () => {

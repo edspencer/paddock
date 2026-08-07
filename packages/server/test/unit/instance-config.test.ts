@@ -18,6 +18,7 @@ import {
   InstanceConfigError,
   FIELDS,
 } from "../../src/instance-config.js";
+import { DEFAULT_RECOVERY } from "../../src/recovery-config.js";
 import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
 
 // Every env var any field references — cleared before each case so the box's
@@ -108,6 +109,87 @@ describe("instance-config (#385)", () => {
       const dto = buildInstanceConfig(cfg);
       expect(dto.configPath).toBe(path.join(cfg.dataDir, "paddock.config.yaml"));
       expect(dto.restartRequired).toBe(false);
+      expect(dto.configVersion).toBeNull(); // no file yet
+    });
+  });
+
+  /**
+   * Issue #722. The DTO used to be built from the frozen boot config alone, so a
+   * GET could not observe the file AT ALL — not even a write the same client had
+   * just made. Every case here writes the file AFTER resolving the config, which
+   * is exactly the runtime situation: a frozen process plus a file that has moved
+   * on.
+   */
+  describe("pending (on-disk) values vs effective (frozen) values (#722)", () => {
+    const writeFile = (body: string) =>
+      fs.writeFileSync(path.join(dataDir, "paddock.config.yaml"), body, "utf8");
+
+    it("reports the file's value as pendingValue and flags the divergence", () => {
+      const cfg = loadPaddockConfig(); // boots with no file → defaults
+      writeFile("curation:\n  overviewMaxTokens: 1234\nbrand:\n  name: AuditBrand\n");
+
+      const dto = buildInstanceConfig(cfg);
+      const overview = field(dto, "curation.overviewMaxTokens");
+      expect(overview.value).toBe(2000); // still in force
+      expect(overview.pendingValue).toBe(1234); // what a restart would load
+      expect(overview.pendingRestart).toBe(true);
+      expect(field(dto, "brand.name").pendingValue).toBe("AuditBrand");
+      expect(dto.restartRequired).toBe(true);
+      expect(dto.configVersion).toEqual(expect.any(String));
+    });
+
+    it("reports no divergence for a file that agrees with the process", () => {
+      writeFile("curation:\n  overviewMaxTokens: 1234\n");
+      const cfg = loadPaddockConfig(); // now boots WITH the file
+      const dto = buildInstanceConfig(cfg);
+      const overview = field(dto, "curation.overviewMaxTokens");
+      expect(overview.value).toBe(1234);
+      expect(overview.pendingValue).toBe(1234);
+      expect(overview.pendingRestart).toBe(false);
+      expect(dto.restartRequired).toBe(false);
+    });
+
+    it("treats a key the file omits as its built-in default (a cleared override)", () => {
+      writeFile("recovery:\n  maxRetries: 7\n");
+      const cfg = loadPaddockConfig();
+      expect(field(buildInstanceConfig(cfg), "recovery.maxRetries").pendingValue).toBe(7);
+
+      writeFile("recovery: {}\n"); // the operator cleared it (#723's null patch)
+      const after = field(buildInstanceConfig(cfg), "recovery.maxRetries");
+      expect(after.value).toBe(7); // still retrying 7× until restart
+      expect(after.pendingValue).toBe(DEFAULT_RECOVERY.maxRetries);
+      expect(after.pendingRestart).toBe(true);
+    });
+
+    it("does not manufacture divergence for unset or env-shadowed fields", () => {
+      const cfg = loadPaddockConfig();
+      writeFile("brand:\n  name: Only This Changed\n");
+      const dto = buildInstanceConfig(cfg);
+      // `models` is unset in both cfg and file: null there, catalog here. It must
+      // not read as a permanent pending change.
+      expect(field(dto, "models").pendingRestart).toBe(false);
+      // Read-only bindings are normalised at boot (canonicalised paths, Number()
+      // -ed port), so they are never compared against raw file text.
+      expect(field(dto, "dataDir").pendingRestart).toBe(false);
+      expect(field(dto, "brand.name").pendingRestart).toBe(true);
+    });
+
+    it("changes configVersion when the file changes", () => {
+      const cfg = loadPaddockConfig();
+      writeFile("brand:\n  name: One\n");
+      const a = buildInstanceConfig(cfg).configVersion;
+      writeFile("brand:\n  name: Two\n");
+      const b = buildInstanceConfig(cfg).configVersion;
+      expect(a).not.toBe(b);
+    });
+
+    it("surfaces a malformed file instead of silently reporting nothing pending", () => {
+      const cfg = loadPaddockConfig();
+      writeFile("brand:\n  name: [unterminated\n");
+      const dto = buildInstanceConfig(cfg);
+      expect(dto.configFileError).toMatch(/parse/);
+      expect(dto.restartRequired).toBe(false);
+      expect(field(dto, "brand.name").pendingValue).toBe(field(dto, "brand.name").value);
     });
   });
 
@@ -140,6 +222,62 @@ describe("instance-config (#385)", () => {
     it("clears an optional field with null", () => {
       expect(validatePatch({ sweepMinIntervalMs: null })).toEqual([
         { key: "sweepMinIntervalMs", value: null },
+      ]);
+    });
+
+    // Issue #723. `Number(null)` is 0, and 0 IS a valid non-negative integer, so
+    // the documented "null clears this key" used to write a very meaningful
+    // zero: `maxRetries: 0` disables recovery retries, `debounceMs: 0` removes
+    // the debounce. The clear must produce `value: null` (the writer's delete).
+    it("clears a nonNegInt field with null / empty string rather than writing 0 (#723)", () => {
+      for (const key of ["recovery.debounceMs", "recovery.maxRetries", "recovery.limboTimeoutMs"]) {
+        expect(validatePatch({ [key]: null })).toEqual([{ key, value: null }]);
+        expect(validatePatch({ [key]: "" })).toEqual([{ key, value: null }]);
+      }
+    });
+
+    it("still accepts a real zero on a nonNegInt field (#723)", () => {
+      // The clear must not cost the ability to deliberately SET zero.
+      expect(validatePatch({ "recovery.debounceMs": 0 })).toEqual([
+        { key: "recovery.debounceMs", value: 0 },
+      ]);
+      expect(validatePatch({ "recovery.maxRetries": 3 })).toEqual([
+        { key: "recovery.maxRetries", value: 3 },
+      ]);
+    });
+
+    // Same missing type check: `Number()` maps true→1, [7]→7, [] →0.
+    it("rejects non-numeric types on numeric fields (#723)", () => {
+      expect(() => validatePatch({ "curation.overviewMaxTokens": true })).toThrow(/positive integer/);
+      expect(() => validatePatch({ "curation.overviewMaxTokens": [7] })).toThrow(/positive integer/);
+      expect(() => validatePatch({ "recovery.debounceMs": false })).toThrow(/non-negative integer/);
+      expect(() => validatePatch({ "recovery.maxRetries": [2] })).toThrow(/non-negative integer/);
+      expect(() => validatePatch({ maxSpawnDepth: true })).toThrow(/non-negative integer/);
+      // A null on maxSpawnDepth used to write depth 0 — every child losing the
+      // self-MCP — for what the caller meant as "restore the default".
+      expect(() => validatePatch({ maxSpawnDepth: null })).toThrow(/non-negative integer/);
+    });
+
+    it("bounds numeric and string fields", () => {
+      expect(() => validatePatch({ "curation.overviewMaxTokens": 1e12 })).toThrow(/at most/);
+      expect(() => validatePatch({ "recovery.debounceMs": 1e12 })).toThrow(/up to/);
+      expect(() => validatePatch({ "brand.name": "x".repeat(200_000) })).toThrow(/at most/);
+      expect(() => validatePatch({ "transcription.endpoint": "y".repeat(5_000) })).toThrow(/at most/);
+      // Still generous enough for anything deliberate.
+      expect(validatePatch({ "brand.name": "A Perfectly Normal Box" })).toHaveLength(1);
+    });
+
+    // env > file > default: writing a shadowed field to the file can never take
+    // effect, so a 200 + "restartRequired" was a lie the UI already knew better
+    // than (it renders these read-only).
+    it("rejects a field an env var currently shadows", () => {
+      process.env.PADDOCK_BRAND_NAME = "From The Environment";
+      expect(() => validatePatch({ "brand.name": "From The File" })).toThrow(
+        /PADDOCK_BRAND_NAME/,
+      );
+      delete process.env.PADDOCK_BRAND_NAME;
+      expect(validatePatch({ "brand.name": "From The File" })).toEqual([
+        { key: "brand.name", value: "From The File" },
       ]);
     });
     it("accepts an allowedTypes list", () => {

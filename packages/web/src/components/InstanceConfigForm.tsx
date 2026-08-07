@@ -45,6 +45,19 @@ import { AlertIcon, CheckIcon, SearchIcon, XIcon } from "./icons";
  *    plain values.
  *
  * Only dirty, editable, non-shadowed fields are sent on save.
+ *
+ * ## The editor edits the FILE, not the process (#722)
+ *
+ * Every control binds to `pendingValue` — what `paddock.config.yaml` says right
+ * now — and not to `value`, the value the running process froze at boot. That
+ * one substitution is what makes the screen honest: a save re-fetches and sees
+ * its own write (it used to re-fetch the frozen boot values and look like it had
+ * reverted), and a write made in another tab shows up here on the next load
+ * instead of being invisible until it silently lost. Where the two disagree the
+ * field says so, and the banner reports that a restart is outstanding.
+ *
+ * A save also carries the `configVersion` it was composed against, so a second
+ * tab's stale write is refused (409) rather than quietly erasing the first.
  */
 export function InstanceConfigForm() {
   const [config, setConfig] = useState<InstanceConfig | null>(null);
@@ -88,22 +101,23 @@ export function InstanceConfigForm() {
     setEdits((prev) => ({ ...prev, [key]: value }));
   };
 
-  // The value shown for a field: a pending edit if present, else the server's.
-  const shownValue = (f: InstanceConfigField): unknown =>
-    Object.prototype.hasOwnProperty.call(edits, f.key) ? edits[f.key] : f.value;
+  // The value shown for a field: an unsaved local edit if present, else what the
+  // FILE says (`pendingValue`) — this is a file editor, so it must show the file.
+  // Falling back to `f.value` matters only for a server that predates #722.
+  const shownValue = (f: InstanceConfigField): unknown => baseValue(f, edits);
 
   const allFields = useMemo(
     () => (config ? config.groups.flatMap((g) => g.fields) : []),
     [config],
   );
 
-  // Only editable, non-env-shadowed fields whose shown value differs from the
-  // server's are dirty (and thus sent on save).
+  // Only editable, non-env-shadowed fields whose shown value differs from what
+  // is already in the file are dirty (and thus sent on save).
   const dirtyKeys = useMemo(() => {
     return allFields
       .filter((f) => f.editable && !f.envOverridden)
       .filter((f) => Object.prototype.hasOwnProperty.call(edits, f.key))
-      .filter((f) => !valuesEqual(edits[f.key], f.value))
+      .filter((f) => !valuesEqual(edits[f.key], fileValue(f)))
       .map((f) => f.key);
   }, [allFields, edits]);
   const dirtySet = useMemo(() => new Set(dirtyKeys), [dirtyKeys]);
@@ -118,7 +132,7 @@ export function InstanceConfigForm() {
     for (const g of config.groups) {
       const groupHit = q !== "" && g.label.toLowerCase().includes(q);
       const fields = g.fields.filter((f) => {
-        const shown = Object.prototype.hasOwnProperty.call(edits, f.key) ? edits[f.key] : f.value;
+        const shown = baseValue(f, edits);
         if (modifiedOnly && valuesEqual(shown, f.default)) return false;
         if (q === "" || groupHit) return true;
         return fieldHaystack(f).includes(q);
@@ -164,21 +178,34 @@ export function InstanceConfigForm() {
   };
 
   const save = async () => {
-    if (dirtyKeys.length === 0) return;
+    if (dirtyKeys.length === 0 || !config) return;
     const patch: Record<string, unknown> = {};
     for (const k of dirtyKeys) patch[k] = edits[k];
     setSaving(true);
     setSaveError(null);
     try {
-      await api.updateInstanceConfig(patch);
-      // The write does NOT hot-apply — re-fetch to confirm the (still-frozen)
-      // values and clear the local dirty set. The restart banner does the rest.
+      await api.updateInstanceConfig(patch, config.configVersion);
+      // The write does NOT hot-apply — re-fetch to pick up the new file contents
+      // (`pendingValue`s + `configVersion`) and clear the local dirty set. Before
+      // #722 this re-fetch returned the frozen BOOT values, which is why a
+      // successful save looked like it had reverted.
       const fresh = await api.getInstanceConfig();
       setConfig(fresh);
       setEdits({});
       setSaved(true);
     } catch (e) {
-      setSaveError(e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e));
+      // 409: someone else wrote the file since this page loaded. Keep the edits
+      // — they are still what the operator wants — but re-load so the form shows
+      // the other writer's values and carries the new version. Saving again is
+      // then a deliberate, informed overwrite of whatever still differs.
+      if (e instanceof ApiError && e.status === 409) {
+        try {
+          setConfig(await api.getInstanceConfig());
+        } catch {
+          /* keep the stale snapshot; the message below is the important part */
+        }
+      }
+      setSaveError(e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);
     }
@@ -218,7 +245,12 @@ export function InstanceConfigForm() {
 
           <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
             <div className="mx-auto max-w-4xl">
-              <RestartBanner saved={saved} configPath={config?.configPath} />
+              <RestartBanner
+                saved={saved}
+                configPath={config?.configPath}
+                restartRequired={config?.restartRequired ?? false}
+                fileError={config?.configFileError}
+              />
 
               {loading && <p className="text-sm text-paddock-500">Loading…</p>}
               {loadError && (
@@ -437,29 +469,58 @@ function FilterBar({
 
 /**
  * The persistent restart notice. Instance config is frozen at boot, so ANY edit
- * needs a restart to take effect — the banner is always shown, and switches to a
- * success tone right after a save lands.
+ * needs a restart to take effect — the banner is always shown, switches to a
+ * success tone right after a save lands, and (since #722) states plainly when
+ * the file already holds changes the running process has not picked up. That
+ * last state is the one that used to be unreachable: `restartRequired` was
+ * hardcoded `false`, so an unapplied edit — yours or another operator's — looked
+ * exactly like a clean instance.
  */
-function RestartBanner({ saved, configPath }: { saved: boolean; configPath?: string }) {
+function RestartBanner({
+  saved,
+  configPath,
+  restartRequired,
+  fileError,
+}: {
+  saved: boolean;
+  configPath?: string;
+  restartRequired: boolean;
+  fileError?: string;
+}) {
+  const tone = fileError ? "red" : saved ? "emerald" : "amber";
   return (
     <div
       role="status"
       className={`mb-5 flex items-start gap-2 rounded-lg border px-3 py-2.5 text-[13px] leading-snug ${
-        saved
-          ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-700/60 dark:bg-emerald-900/20 dark:text-emerald-300"
-          : "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700/60 dark:bg-amber-900/20 dark:text-amber-300"
+        tone === "red"
+          ? "border-red-300 bg-red-50 text-red-800 dark:border-red-700/60 dark:bg-red-900/20 dark:text-red-300"
+          : tone === "emerald"
+            ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-700/60 dark:bg-emerald-900/20 dark:text-emerald-300"
+            : "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700/60 dark:bg-amber-900/20 dark:text-amber-300"
       }`}
     >
-      {saved ? (
+      {tone === "emerald" ? (
         <CheckIcon width={15} height={15} className="mt-0.5 shrink-0" />
       ) : (
         <AlertIcon width={15} height={15} className="mt-0.5 shrink-0" />
       )}
       <span>
-        {saved ? (
+        {fileError ? (
+          <>
+            <strong>Could not read {filename(configPath)}.</strong> {fileError} — the values below
+            are the running instance's; what a restart would load is unknown until the file parses.
+          </>
+        ) : saved ? (
           <>
             <strong>Saved to disk.</strong> These changes take effect only after the server
             restarts.
+          </>
+        ) : restartRequired ? (
+          <>
+            <strong>Restart pending.</strong>{" "}
+            <code className="font-mono text-[12px]">{filename(configPath)}</code> holds changes the
+            running instance has not picked up — the fields below marked{" "}
+            <Chip tone="amber">restart</Chip> differ from what is in force right now.
           </>
         ) : (
           <>
@@ -565,6 +626,14 @@ function Field({
             </Chip>
           )}
           {!f.editable && !f.envOverridden && <Chip tone="plain">read-only</Chip>}
+          {f.pendingRestart && (
+            <Chip
+              tone="amber"
+              title="The config file and the running instance disagree on this field — restart to apply."
+            >
+              restart
+            </Chip>
+          )}
         </label>
         {isBoolean && !locked && (
           <Toggle id={inputId} checked={Boolean(value)} onChange={onChange} label={f.label} />
@@ -584,8 +653,25 @@ function Field({
           {f.envVar}
         </p>
       )}
+
+      {/* The control shows the FILE. When the process disagrees, say what is
+          actually in force — otherwise "restart pending" is a claim with no
+          evidence, and an operator cannot tell which way round it is. */}
+      {f.pendingRestart && (
+        <p className="mt-1 text-[11px] leading-snug text-amber-600 dark:text-amber-500/90">
+          In force now: <span className="font-mono">{summarize(f.value)}</span>
+        </p>
+      )}
     </div>
   );
+}
+
+/** A one-line rendering of a field value for the "in force now" note. */
+function summarize(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "(not set)";
+  const s = Array.isArray(value) ? value.join(", ") : String(value);
+  const oneLine = s.replace(/\s+/g, " ").trim();
+  return oneLine.length > 60 ? `${oneLine.slice(0, 60)}…` : oneLine;
 }
 
 /** A small inline tag beside a field label. */
@@ -818,6 +904,22 @@ function countDirty(groups: InstanceConfigGroup[], dirty: Set<string>): Record<s
 }
 
 const sectionDomId = (groupId: string) => `cfg-section-${groupId}`;
+
+/**
+ * The saved baseline a field's control edits from: what the config FILE holds
+ * (`pendingValue`), which is what a save overwrites and what a re-fetch reports.
+ * Falls back to the effective value for a field the server did not report a
+ * pending value for (a read-only or env-shadowed one, where the file cannot
+ * diverge — and a pre-#722 server, which reported no pending values at all).
+ */
+function fileValue(f: InstanceConfigField): unknown {
+  return f.pendingValue === undefined ? f.value : f.pendingValue;
+}
+
+/** The value on screen: an unsaved local edit if there is one, else the file's. */
+function baseValue(f: InstanceConfigField, edits: Record<string, unknown>): unknown {
+  return Object.prototype.hasOwnProperty.call(edits, f.key) ? edits[f.key] : fileValue(f);
+}
 
 /** Compare two field values (arrays by content) for dirty-detection. */
 function valuesEqual(a: unknown, b: unknown): boolean {

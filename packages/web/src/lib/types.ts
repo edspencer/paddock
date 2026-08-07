@@ -1343,9 +1343,15 @@ export type InstanceConfigFieldType =
 
 /**
  * One field on the instance-wide Settings screen (GET /api/instance-config).
- * `value`/`default` are the JSON-serialized resolved value + built-in default.
- * A field is rendered read-only when `!editable` OR `envOverridden` (an env var
- * shadows the file, so editing it would silently no-op).
+ * `default` is the built-in default. A field renders read-only when `!editable`
+ * OR `envOverridden` (an env var shadows the file, so editing it would silently
+ * no-op).
+ *
+ * TWO values, because the file and the running process can disagree (#722):
+ *  - `value` — what the running process resolved at boot (frozen there);
+ *  - `pendingValue` — what `paddock.config.yaml` says right now, i.e. what a
+ *    restart would resolve. The editor binds to THIS, so a save round-trips
+ *    instead of appearing to revert and another tab's write is visible.
  */
 export interface InstanceConfigField {
   key: string;
@@ -1355,6 +1361,9 @@ export interface InstanceConfigField {
   type: InstanceConfigFieldType;
   enumValues?: string[];
   value: unknown;
+  pendingValue: unknown;
+  /** `pendingValue` differs from `value`: this field is waiting on a restart. */
+  pendingRestart: boolean;
   default: unknown;
   editable: boolean;
   sensitive: boolean;
@@ -1374,5 +1383,10 @@ export interface InstanceConfig {
   groups: InstanceConfigGroup[];
   /** Absolute path a PUT writes to (informational). */
   configPath: string;
-  restartRequired: false;
+  /** Some field's file value differs from the running process's. */
+  restartRequired: boolean;
+  /** Fingerprint of the file this snapshot was read from; echoed back on save. */
+  configVersion: string | null;
+  /** The file exists but could not be read/parsed (pending values unknowable). */
+  configFileError?: string;
 }
