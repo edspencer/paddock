@@ -1,5 +1,5 @@
 ---
-"@edspencer/paddock": patch
+"@paddock/server": patch
 ---
 
 test: add a `[[BGSUBAGENT]]` fake-Claude directive for a sub-agent that outlives its parent turn
