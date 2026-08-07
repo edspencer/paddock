@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError } from "../lib/api";
+import { useMediaQuery } from "../lib/useMediaQuery";
 import type { InstanceConfig, InstanceConfigField, InstanceConfigGroup } from "../lib/types";
 import { AlertIcon, CheckIcon, SearchIcon, XIcon } from "./icons";
 
@@ -58,6 +59,11 @@ export function InstanceConfigForm() {
   const [modifiedOnly, setModifiedOnly] = useState(false);
   const [activeGroup, setActiveGroup] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  // Autofocus the filter on a pointer device only. `/config` is a dedicated
+  // screen whose first move is nearly always "find the setting I came for", so
+  // taking focus costs nothing — but doing it on a phone would throw the
+  // on-screen keyboard over the page before it has been read.
+  const autoFocusFilter = useMediaQuery("(min-width: 1024px)");
 
   useEffect(() => {
     let live = true;
@@ -206,6 +212,7 @@ export function InstanceConfigForm() {
               visibleCount={visibleCount}
               totalCount={allFields.length}
               filtering={filtering}
+              autoFocus={autoFocusFilter}
             />
           )}
 
@@ -236,8 +243,8 @@ export function InstanceConfigForm() {
                 </p>
               )}
 
-              {visibleGroups.map((g) => (
-                <Section key={g.id} group={g}>
+              {visibleGroups.map((g, i) => (
+                <Section key={g.id} group={g} first={i === 0}>
                   <div className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2">
                     {g.fields.map((f) => (
                       <Field
@@ -357,6 +364,7 @@ function FilterBar({
   visibleCount,
   totalCount,
   filtering,
+  autoFocus,
 }: {
   query: string;
   onQuery: (v: string) => void;
@@ -365,6 +373,7 @@ function FilterBar({
   visibleCount: number;
   totalCount: number;
   filtering: boolean;
+  autoFocus: boolean;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-paddock-200 px-4 py-2.5 dark:border-paddock-800 sm:px-6">
@@ -382,7 +391,17 @@ function FilterBar({
           // is suppressed so it does not sit beside ours as a second ✕.
           className="input h-8 w-full pl-8 pr-7 text-[13px] [&::-webkit-search-cancel-button]:appearance-none"
           value={query}
+          // eslint-disable-next-line jsx-a11y/no-autofocus -- gated to pointer devices; see autoFocusFilter
+          autoFocus={autoFocus}
           onChange={(e) => onQuery(e.target.value)}
+          // Escape empties the box rather than blurring it, so the way back to
+          // the full list is the key you already reached for.
+          onKeyDown={(e) => {
+            if (e.key === "Escape" && query !== "") {
+              e.preventDefault();
+              onQuery("");
+            }
+          }}
         />
         {query !== "" && (
           <button
@@ -468,17 +487,38 @@ function EnvLegend() {
   );
 }
 
-/** A titled section of related fields, and the scroll-spy anchor for the rail. */
-function Section({ group, children }: { group: InstanceConfigGroup; children: React.ReactNode }) {
+/**
+ * A titled section of related fields, and the scroll-spy anchor for the rail.
+ *
+ * The boundary is carried by THREE cues together, because any one of them alone
+ * was too weak to read as a break: a full-width rule, a big step in vertical
+ * rhythm (a section is further from the one above it than its own fields are
+ * from each other), and a heading a clear size/weight above a field label. The
+ * first section takes no rule — there is nothing above it to divide from.
+ */
+function Section({
+  group,
+  first,
+  children,
+}: {
+  group: InstanceConfigGroup;
+  first: boolean;
+  children: React.ReactNode;
+}) {
   return (
-    <section id={sectionDomId(group.id)} className="mb-7 scroll-mt-4">
-      <h2 className="text-sm font-semibold tracking-tight text-paddock-800 dark:text-paddock-200">
+    <section
+      id={sectionDomId(group.id)}
+      className={`scroll-mt-4 ${
+        first ? "" : "mt-9 border-t border-paddock-200 pt-7 dark:border-paddock-800"
+      }`}
+    >
+      <h2 className="text-base font-semibold tracking-tight text-paddock-900 dark:text-paddock-50">
         {group.label}
       </h2>
       {group.description && (
-        <p className="mt-0.5 text-[12px] leading-snug text-paddock-500">{group.description}</p>
+        <p className="mt-1 text-[12px] leading-snug text-paddock-500">{group.description}</p>
       )}
-      <div className="mt-2.5">{children}</div>
+      <div className="mt-4">{children}</div>
     </section>
   );
 }

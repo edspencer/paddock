@@ -135,6 +135,48 @@ describe("InstanceConfigPage (#385)", () => {
     expect(screen.getByText(/No settings match/i)).toBeInTheDocument();
   });
 
+  it("takes focus on load on a pointer device, and Escape clears the filter", async () => {
+    // The autofocus is gated on `(min-width: 1024px)` so a phone does not get
+    // the on-screen keyboard thrown over the page.
+    vi.stubGlobal(
+      "matchMedia",
+      (q: string) =>
+        ({
+          matches: q === "(min-width: 1024px)",
+          media: q,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+        }) as unknown as MediaQueryList,
+    );
+    renderScreen();
+    await screen.findByText("OVERVIEW.md max tokens");
+    const search = screen.getByRole("searchbox", { name: /search settings/i });
+    expect(search).toHaveFocus();
+
+    fireEvent.change(search, { target: { value: "overview" } });
+    expect(screen.queryByText("Port")).not.toBeInTheDocument();
+    fireEvent.keyDown(search, { key: "Escape" });
+    expect(screen.getByText("Port")).toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
+
+  it("does NOT take focus on a small screen", async () => {
+    vi.stubGlobal(
+      "matchMedia",
+      (q: string) =>
+        ({
+          matches: false,
+          media: q,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+        }) as unknown as MediaQueryList,
+    );
+    renderScreen();
+    await screen.findByText("OVERVIEW.md max tokens");
+    expect(screen.getByRole("searchbox", { name: /search settings/i })).not.toHaveFocus();
+    vi.unstubAllGlobals();
+  });
+
   it("'Modified only' shows just the fields that differ from their default", async () => {
     renderScreen();
     await screen.findByText("OVERVIEW.md max tokens");
