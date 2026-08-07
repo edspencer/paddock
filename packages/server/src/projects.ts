@@ -258,9 +258,18 @@ export class ProjectStore {
    * root, and that implicit safety is gone.
    *
    * So the check is made explicit and centralised here rather than re-derived at
-   * each call site: an `fs.rm` that escapes throws instead of deleting. Both
-   * current callers already only pass in-root paths — this exists so that stays
-   * true when someone later adds a third one.
+   * each call site: an `fs.rm` that escapes throws instead of deleting. Every
+   * caller already only passes in-root paths — this exists so that stays true
+   * when someone later adds another one.
+   *
+   * `promote()`'s two rollbacks route through here as well. Their target is
+   * `<projectsRoot>/<slug>/<checkoutName>`, which is in-root by construction, so
+   * the guard is inert there today — that is the point. This is the choke point
+   * the comment above promised, and a recursive delete that skips it is exactly
+   * the drift it exists to prevent. {@link rollback} is the deliberate exception:
+   * it deletes paths that may legitimately sit OUTSIDE the root (a user-nominated
+   * clone target), and is safe by a different mechanism — it only ever removes
+   * directories this operation created.
    */
   private async rmInsideRoot(target: string): Promise<void> {
     const resolved = path.resolve(target);
@@ -783,7 +792,7 @@ export class ProjectStore {
     try {
       await cloneRepo(repo, checkoutDir);
     } catch (err) {
-      await fs.rm(checkoutDir, { recursive: true, force: true }).catch(() => undefined);
+      await this.rmInsideRoot(checkoutDir).catch(() => undefined);
       throw new ProjectError(
         err instanceof Error ? err.message : `Failed to clone ${repo}`,
         "invalid",
@@ -811,7 +820,7 @@ export class ProjectStore {
     try {
       await this.writeYaml(slug, next);
     } catch (err) {
-      await fs.rm(checkoutDir, { recursive: true, force: true }).catch(() => undefined);
+      await this.rmInsideRoot(checkoutDir).catch(() => undefined);
       throw err;
     }
 
