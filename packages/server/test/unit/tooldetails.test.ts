@@ -363,4 +363,36 @@ describe("tooldetails (issue #237)", () => {
     const out = await enrichWithToolDetails(projectDir, "s2", [toolMsg("Edit")]);
     expect(out[0].toolCall!.editDiff!.additions).toBe(1);
   });
+
+  it("drops a sub-agent's sidechain steps without shifting the detail join (#727)", async () => {
+    // A sub-agent's nested step is written into the parent transcript on its own
+    // lane. It must not come back as a top-level row — and, because the detail
+    // join is positional per tool name, the recovery scan has to skip it too, or
+    // the top-level Read AFTER it inherits the sub-agent's file.
+    const sidechain = (line: Record<string, unknown>) => ({ ...line, isSidechain: true });
+    await writeMain("s3", [
+      { ...toolUse("Read", "tu_1", { file_path: "/x/before.ts" }), uuid: "u1" },
+      toolResult("tu_1", { file: { filePath: "/x/before.ts", numLines: 1, startLine: 1, totalLines: 1 } }),
+      sidechain({ ...toolUse("Read", "tu_s", { file_path: "/x/SIDECHAIN.ts" }), uuid: "us" }),
+      sidechain(toolResult("tu_s", { file: { filePath: "/x/SIDECHAIN.ts", numLines: 1, startLine: 1, totalLines: 1 } })),
+      { ...toolUse("Read", "tu_2", { file_path: "/x/after.ts" }), uuid: "u2" },
+      toolResult("tu_2", { file: { filePath: "/x/after.ts", numLines: 1, startLine: 1, totalLines: 1 } }),
+    ]);
+    // What core parses: all three Reads, each keyed to its source line's uuid.
+    const read = (uuid: string): EnrichedMessage => ({ ...toolMsg("Read"), uuid });
+    const out = await enrichWithToolDetails(projectDir, "s3", [read("u1"), read("us"), read("u2")]);
+
+    expect(out.map((m) => m.toolCall!.readInfo!.basename)).toEqual(["before.ts", "after.ts"]);
+  });
+
+  it("does not empty a transcript that is sidechain top to bottom (#727)", async () => {
+    // That shape is not a parent with leaked steps — it IS a sub-agent's own
+    // session file. Dropping every row would serve an empty chat.
+    await writeMain("s4", [
+      { ...toolUse("Read", "tu_1", { file_path: "/x/only.ts" }), uuid: "u1", isSidechain: true },
+      { ...toolResult("tu_1", { file: { filePath: "/x/only.ts" } }), isSidechain: true },
+    ]);
+    const out = await enrichWithToolDetails(projectDir, "s4", [{ ...toolMsg("Read"), uuid: "u1" }]);
+    expect(out).toHaveLength(1);
+  });
 });

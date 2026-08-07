@@ -109,7 +109,7 @@ by anything that can reach it — see [the caution above](#2-exposed-and-unauthe
 See [Securing Paddock](/guides/securing/) for the ladder from a VPN through to SSO.
 
 **Keep it on loopback and reach it through a proxy on the same box.** A reverse proxy
-(Caddy, nginx, Traefik) listening publicly and forwarding to `127.0.0.1:4000` is a very
+(Caddy, nginx, Traefik) listening publicly and forwarding to `127.0.0.1:7233` is a very
 good posture: only the proxy is exposed, and it's the thing doing TLS and auth. Nothing
 to change — this is the default.
 
@@ -159,7 +159,7 @@ namespace and the publish are my boundary."
 
 ```bash
 # reachable only from the host, not the LAN
-docker run -p 127.0.0.1:4000:4000 \
+docker run -p 127.0.0.1:7233:7233 \
   -e PADDOCK_DANGEROUSLY_ALLOW_OPEN=1 \
   ghcr.io/edspencer/paddock:latest
 ```

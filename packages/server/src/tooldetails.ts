@@ -33,7 +33,7 @@ import { createInterface } from "node:readline";
 import path from "node:path";
 import { projectChatsDir } from "./transcripts.js";
 import { fileKind } from "./projects.js";
-import { enrichWithSubagents } from "./subagents.js";
+import { dropSidechainMessages, enrichWithSubagents, isSidechainLine } from "./subagents.js";
 import { enrichWithBackground } from "./background.js";
 import { enrichWithLocalCommands } from "./localcommand.js";
 import {
@@ -367,12 +367,26 @@ async function readToolDetailsFromFileUncached(file: string): Promise<ToolDetail
     for await (const line of rl) {
       const trimmed = line.trim();
       if (!trimmed) continue;
-      let parsed: { message?: { content?: unknown }; toolUseResult?: unknown };
+      let parsed: {
+        isSidechain?: unknown;
+        parent_tool_use_id?: unknown;
+        message?: { content?: unknown; parent_tool_use_id?: unknown };
+        toolUseResult?: unknown;
+      };
       try {
         parsed = JSON.parse(trimmed);
       } catch {
         continue;
       }
+      // A sub-agent's steps are not rows of THIS transcript — `dropSidechainMessages`
+      // has already removed them from the message list this list joins against, so
+      // keeping them would shift every following tool's detail by one (#727). Their
+      // detail is derived separately, off the sub-agent's own transcript. (A file
+      // that is sidechain top to bottom — a sub-agent's OWN transcript — therefore
+      // recovers nothing and its messages pass through unenriched, which is a
+      // degrade rather than a misjoin; `dropSidechainMessages` likewise refuses to
+      // empty such a history.)
+      if (isSidechainLine(parsed)) continue;
       const content = parsed.message?.content;
       if (!Array.isArray(content)) continue;
 
@@ -473,17 +487,24 @@ export async function attachToolDetails(
 }
 
 /**
- * The single history-enrichment orchestrator (issue #237). Composes the three
- * server-side passes so the routes call one function: sub-agent recovery (#37) →
- * generalized per-tool detail (#237, subsuming #232's edit diff) → background /
- * task-notification folding (#230) → local-command stdout recovery (#158).
+ * The single history-enrichment orchestrator (issue #237). Composes the
+ * server-side passes so the routes call one function: sidechain drop (#727) →
+ * sub-agent recovery (#37) → generalized per-tool detail (#237, subsuming #232's
+ * edit diff) → background / task-notification folding (#230) → local-command
+ * stdout recovery (#158).
+ *
+ * The sidechain drop goes FIRST and is the history-path mirror of the live path's
+ * `isSidechainMessage` filter: a sub-agent's steps belong inside its Task card,
+ * and every later pass here joins by file order, so they have to be gone before
+ * anything counts positions.
  */
 export async function enrichWithToolDetails(
   projectDir: string,
   sessionId: string,
   messages: EnrichedMessage[],
 ): Promise<EnrichedMessage[]> {
-  const withSubagents = await enrichWithSubagents(projectDir, sessionId, messages);
+  const topLevel = await dropSidechainMessages(projectDir, sessionId, messages);
+  const withSubagents = await enrichWithSubagents(projectDir, sessionId, topLevel);
   const withDetails = await attachToolDetails(projectDir, sessionId, withSubagents);
   const withBackground = enrichWithBackground(withDetails);
   return enrichWithLocalCommands(projectDir, sessionId, withBackground);

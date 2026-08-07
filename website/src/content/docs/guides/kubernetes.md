@@ -45,7 +45,7 @@ and are wired together by `kustomization.yaml`:
 | --- | --- |
 | `kustomization.yaml` | Assembles the resources and pins the image tag. |
 | `deployment.yaml` | The Paddock pod — `replicas: 1`, `strategy: Recreate`, `/api/health` probes. |
-| `service.yaml` | Internal `ClusterIP` on port 80 → container port 4000. |
+| `service.yaml` | Internal `ClusterIP` on port 80 → container port 7233. |
 | `pvc.yaml` | `ReadWriteOnce` claim mounted at `/data` — the stateful bit. |
 | `secret.example.yaml` | Template for the Claude / GitHub token Secret. |
 | `ingress.yaml` | Optional external route — only safe behind an auth layer. |
@@ -83,8 +83,8 @@ kubectl -n paddock rollout status deploy/paddock
 Before you've wired up an Ingress, reach it by port-forwarding:
 
 ```sh
-kubectl -n paddock port-forward deploy/paddock 4000:4000
-curl -fsS http://127.0.0.1:4000/api/health      # -> {"ok":true}
+kubectl -n paddock port-forward deploy/paddock 7233:7233
+curl -fsS http://127.0.0.1:7233/api/health      # -> {"ok":true}
 ```
 
 ## Statefulness & single-writer

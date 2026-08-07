@@ -19,7 +19,7 @@ and a realistic example. It documents the same loader as the env-var page
 There is one resolution order, from lowest to highest priority:
 
 1. **Built-in defaults** — the floor. Every setting has a sane default baked into
-   the code (e.g. `PORT` → `4000`, `auth.mode` → `none`).
+   the code (e.g. `PORT` → `7233`, `auth.mode` → `none`).
 2. **The YAML file** — overrides the defaults. This is the **base layer**: each
    file value is threaded in as the fallback beneath the matching environment
    read.
@@ -37,7 +37,7 @@ A file value is coerced through the **same** parsing an env value gets, so all
 the rules on the [environment page](/configuration/environment/#how-values-are-parsed)
 — blank-is-unset, the `1`/`true`/`yes` boolean convention, unknown-enum-falls-
 back-to-default, path canonicalisation — apply identically to file values. A
-scalar may be written in its natural YAML type (`port: 4000`, `brand: { name:
+scalar may be written in its natural YAML type (`port: 7233`, `brand: { name:
 Homelab }`) or as a string; both resolve the same way.
 :::
 
@@ -113,7 +113,7 @@ the same YAML house style as `project.yaml` and the generated `herdctl.yaml`.
 schemaVersion: 1              # which version of THIS format the file is in
 
 # --- Core ---
-port: 4000
+port: 7233
 host: 0.0.0.0
 logLevel: info
 

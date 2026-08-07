@@ -968,7 +968,7 @@ export function loadPaddockConfig(): PaddockConfig {
   const defaultWebDist = resolveDefaultWebDist(import.meta.url);
 
   return Object.freeze({
-    port: Number(envOr("PORT", fileOr(file.port, "4000"))),
+    port: Number(envOr("PORT", fileOr(file.port, "7233"))),
     // Safe by default (#435): bind loopback unless explicitly told otherwise, so
     // a fresh source/tarball run is network-closed. Non-loopback + no auth is then
     // gated by the bind-safety guard (see bind-safety.ts). Existing deployments

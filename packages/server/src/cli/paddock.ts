@@ -297,7 +297,7 @@ async function main(): Promise<void> {
   // survives the quiet default set just above. Continuity (chosen above) usually
   // means it has nothing to say, because there is nothing left to bridge.
 
-  const port = process.env.PORT ?? "4000";
+  const port = process.env.PORT ?? "7233";
   const host = process.env.HOST ?? "127.0.0.1";
 
   // Imported dynamically, AFTER the env above is set: a static import would

@@ -40,7 +40,7 @@
  * A request from another host to a `0.0.0.0`-published port is SNAT'd to that
  * same address, so "peer is the gateway" does not prove the traffic stayed on
  * the box. Smoke-test from INSIDE the container instead (`docker compose exec
- * paddock curl http://127.0.0.1:4000/mcp …`), where the peer really is loopback.
+ * paddock curl http://127.0.0.1:7233/mcp …`), where the peer really is loopback.
  */
 import proxyAddr from "proxy-addr";
 

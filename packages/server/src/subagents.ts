@@ -119,7 +119,7 @@ export const MTIME_CACHE_MAX = 1024;
 export type MtimeCache<T> = Map<string, { mtimeMs: number; value: T }>;
 
 const taskUsesCache: MtimeCache<TaskToolUses> = new Map();
-const durationCache: MtimeCache<number | undefined> = new Map();
+const factsCache: MtimeCache<SubagentTranscriptFacts> = new Map();
 const usageCache: MtimeCache<SessionTokenUsage> = new Map();
 
 /** The file's mtime in epoch ms, or undefined if it can't be stat'd. */
@@ -384,6 +384,32 @@ export interface TaskToolUses {
   paired: TaskToolUse[];
   /** Launches still in flight (no tool_result yet), in file order. */
   pending: TaskToolUse[];
+  /** What of this transcript belongs to a sub-agent's own lane — see {@link SidechainLines}. */
+  sidechain: SidechainLines;
+}
+
+/**
+ * The sub-agent-lane content of one transcript (issue #727).
+ *
+ * A sub-agent's steps belong INSIDE its Task card, served by the subagents
+ * endpoint — never as top-level rows of the parent transcript. The live path
+ * enforces that in five places via `isSidechainMessage` (`ws-turn.ts`), but the
+ * history path had no equivalent: `@herdctl/core`'s parser treats `isSidechain`
+ * as a whole-SESSION property (a sidechain gets its own file) and drops the
+ * per-line flag from the `ChatMessage` it returns, so any sidechain line written
+ * INTO a main transcript is parsed as a first-class message and served by
+ * `/messages`. This recovers the markers from the raw transcript, which is the
+ * only place they survive.
+ *
+ * Recovered in the same pass as the Task launches above, so it costs no extra I/O.
+ */
+export interface SidechainLines {
+  /** `uuid` of every sidechain line — the key `ChatMessage.uuid` joins on. */
+  uuids: Set<string>;
+  /** `tool_use.id` of every Task/Agent launched FROM a sidechain line (a sub-agent
+   *  spawning its own sub-agent). Dropped from the parent's join so the file-order
+   *  alignment survives losing the sidechain messages. */
+  taskIds: Set<string>;
 }
 
 /**
@@ -410,7 +436,7 @@ async function readTaskUsesForSession(
   projectDir: string,
   sessionId: string,
 ): Promise<TaskToolUses> {
-  if (!SAFE_SEGMENT.test(sessionId)) return { paired: [], pending: [] };
+  if (!SAFE_SEGMENT.test(sessionId)) return emptyTaskToolUses();
   return readTaskUsesFromFile(path.join(projectChatsDir(projectDir), `${sessionId}.jsonl`));
 }
 
@@ -431,10 +457,37 @@ async function readTaskUsesFromFile(file: string): Promise<TaskToolUses> {
   return value;
 }
 
+function emptyTaskToolUses(): TaskToolUses {
+  return { paired: [], pending: [], sidechain: { uuids: new Set(), taskIds: new Set() } };
+}
+
+/**
+ * True when a raw transcript LINE was written on a sub-agent's own lane.
+ *
+ * Two markers, because the writers disagree: Claude Code stamps `isSidechain:
+ * true` (plus an `agentId`) on the line, while the SDK message stream — which
+ * `isSidechainMessage` in `ws-turn.ts` reads live, and which the test harness
+ * mirrors onto disk — carries `parent_tool_use_id`. Either is conclusive.
+ *
+ * Exported because EVERY file-order join over a main transcript has to agree with
+ * {@link dropSidechainMessages} about which lines exist: a scan that keeps a
+ * sidechain line while the parsed message list has dropped it shifts the whole
+ * join by one (#727).
+ */
+export function isSidechainLine(parsed: {
+  isSidechain?: unknown;
+  parent_tool_use_id?: unknown;
+  message?: { parent_tool_use_id?: unknown };
+}): boolean {
+  if (parsed.isSidechain === true) return true;
+  return Boolean(parsed.parent_tool_use_id ?? parsed.message?.parent_tool_use_id);
+}
+
 async function readTaskUsesFromFileUncached(file: string): Promise<TaskToolUses> {
   const byId = new Map<string, TaskToolUse>();
   const order: string[] = [];
   const resultIds = new Set<string>();
+  const sidechain: SidechainLines = { uuids: new Set(), taskIds: new Set() };
 
   const stream = createReadStream(file, { encoding: "utf8" });
   stream.on("error", () => undefined);
@@ -443,12 +496,22 @@ async function readTaskUsesFromFileUncached(file: string): Promise<TaskToolUses>
     for await (const line of rl) {
       const trimmed = line.trim();
       if (!trimmed) continue;
-      let parsed: { message?: { content?: unknown } };
+      let parsed: {
+        uuid?: unknown;
+        isSidechain?: unknown;
+        parent_tool_use_id?: unknown;
+        message?: { content?: unknown; parent_tool_use_id?: unknown };
+      };
       try {
         parsed = JSON.parse(trimmed);
       } catch {
         continue;
       }
+      // A sub-agent's OWN transcript is sidechain top to bottom, so this only ever
+      // marks anything on a MAIN session file — which is the only place the
+      // distinction means something (issue #727).
+      const onSidechain = isSidechainLine(parsed);
+      if (onSidechain && typeof parsed.uuid === "string") sidechain.uuids.add(parsed.uuid);
       const content = parsed.message?.content;
       if (!Array.isArray(content)) continue;
       for (const block of content) {
@@ -460,6 +523,7 @@ async function readTaskUsesFromFileUncached(file: string): Promise<TaskToolUses>
           input?: { subagent_type?: unknown; description?: unknown; prompt?: unknown };
         };
         if (b?.type === "tool_use" && b.name && SUBAGENT_TOOL_NAMES.has(b.name) && b.id) {
+          if (onSidechain) sidechain.taskIds.add(b.id);
           if (!byId.has(b.id)) {
             order.push(b.id);
             byId.set(b.id, {
@@ -475,7 +539,7 @@ async function readTaskUsesFromFileUncached(file: string): Promise<TaskToolUses>
       }
     }
   } catch {
-    return { paired: [], pending: [] };
+    return emptyTaskToolUses();
   } finally {
     rl.close();
     stream.destroy();
@@ -484,7 +548,46 @@ async function readTaskUsesFromFileUncached(file: string): Promise<TaskToolUses>
   return {
     paired: order.filter((id) => resultIds.has(id)).map((id) => byId.get(id)!),
     pending: order.filter((id) => !resultIds.has(id)).map((id) => byId.get(id)!),
+    sidechain,
   };
+}
+
+/**
+ * Drop a session's sub-agent sidechain steps from its parsed history (issue
+ * #727) — the history-path counterpart of the live path's `isSidechainMessage`
+ * filter, and the same invariant: a sub-agent's steps render INSIDE its Task
+ * card (via the subagents endpoint), never as top-level rows of the parent.
+ *
+ * Joins on `uuid`, the source line's own id, which `@herdctl/core` preserves on
+ * every parsed message (and, for a paired tool message, takes from the
+ * originating `tool_use` entry — so a sidechain tool call matches on the same
+ * line that made it sidechain). Rides the mtime-cached transcript scan, and
+ * short-circuits to the identity for the overwhelmingly common transcript with
+ * no sidechain lines at all, so this costs nothing on the normal path.
+ *
+ * A transcript that is sidechain top to bottom is not a parent with leaked steps
+ * — it IS a sub-agent's own session, the shape Claude Code writes as its own
+ * `agent-<hex>.jsonl`. herdctl keeps those out of session discovery, but if one
+ * is ever reached directly it should render its content, not an empty chat, so
+ * a drop that would empty the history is refused.
+ */
+export async function dropSidechainMessages<T extends ChatMessage>(
+  projectDir: string,
+  sessionId: string,
+  messages: T[],
+): Promise<T[]> {
+  const { sidechain } = await readTaskUsesForSession(projectDir, sessionId);
+  if (sidechain.uuids.size === 0) return messages;
+  const kept = messages.filter((m) => !(m.uuid && sidechain.uuids.has(m.uuid)));
+  return kept.length === 0 ? messages : kept;
+}
+
+/** The same launches minus any a sub-agent made on its own sidechain lane. */
+function withoutSidechainLaunches(uses: TaskToolUses): TaskToolUses {
+  const { taskIds } = uses.sidechain;
+  if (taskIds.size === 0) return uses;
+  const keep = (u: TaskToolUse): boolean => !taskIds.has(u.toolUseId);
+  return { ...uses, paired: uses.paired.filter(keep), pending: uses.pending.filter(keep) };
 }
 
 /**
@@ -598,10 +701,16 @@ export async function enrichWithSubagents(
   messages: ChatMessage[],
 ): Promise<EnrichedMessage[]> {
   if (!hasSubagentTool(messages)) return messages;
-  const [taskUses, subagents] = await Promise.all([
+  const [rawTaskUses, subagents] = await Promise.all([
     readTaskUsesForSession(projectDir, sessionId),
     listSubagents(projectDir, sessionId),
   ]);
+  // The join is by FILE ORDER, so it has to see the same launches the caller's
+  // message list does. {@link dropSidechainMessages} has already removed the
+  // sidechain rows from that list, so a nested launch a sub-agent made on its own
+  // lane must come out of the cursor too — leaving it in would shift every
+  // following top-level sub-agent's enrichment onto the wrong card (#727).
+  const taskUses = withoutSidechainLaunches(rawTaskUses);
   const [durations, costs] = await Promise.all([
     subagentDurations(subagents),
     subagentCosts(subagents),
@@ -610,17 +719,61 @@ export async function enrichWithSubagents(
 }
 
 /**
- * Compute each sub-agent's run time (ms) from the first→last timestamp in its
- * own transcript. Keyed by toolUseId. Runs once per session on chat open (only
- * over that session's sub-agent files), so the cost is bounded to the open chat.
+ * How long a sub-agent transcript with no terminal `end_turn` may stay quiet
+ * before we stop calling it live (issue #725).
+ *
+ * A sub-agent that was interrupted — its keeper killed, the box restarted — never
+ * writes an `end_turn`, so without this fallback its card would advertise "still
+ * running" forever and its duration would never appear. The window has to be
+ * comfortably longer than the longest gap a WORKING sub-agent can leave between
+ * transcript lines, which is one slow tool call (a full test suite, a long build),
+ * not one slow model response. Ten minutes clears that with room to spare, and the
+ * `end_turn` check below means the overwhelming majority of finished sub-agents
+ * (392 of the 483 real transcripts this was measured against) never wait for it at
+ * all — they are recognised as finished the instant their last line lands.
+ */
+const SUBAGENT_STALE_MS = 10 * 60_000;
+
+/** What one read of a sub-agent transcript tells us. Both facts are mtime-derived,
+ *  so both are safe to memoize against the file's mtime; the age comparison that
+ *  turns them into a liveness verdict is deliberately NOT cached (it depends on
+ *  `now`, not on the file). */
+interface SubagentTranscriptFacts {
+  /** First→last `timestamp` delta, or undefined with < 2 timestamps. */
+  durationMs?: number;
+  /** True when the last line is an assistant entry with `stop_reason: "end_turn"` —
+   *  a sub-agent's agent loop cannot continue past one, so this is its terminal
+   *  marker. (A sub-agent transcript has NO `type: "result"` line: zero of the 483
+   *  real ones checked did, so "has a result line" is not a usable signal here.) */
+  endsWithEndTurn: boolean;
+}
+
+/**
+ * Compute each FINISHED sub-agent's run time (ms) from the first→last timestamp
+ * in its own transcript. Keyed by toolUseId. Runs once per session on chat open
+ * (only over that session's sub-agent files), so the cost is bounded to the open
+ * chat.
+ *
+ * A sub-agent that still looks live is deliberately left OUT of the map (issue
+ * #725). `subagentDurationMs` is not merely cosmetic — it is the client's
+ * finished signal (`useRunningSubagents` drops any card that carries one) — and
+ * it is derived from a transcript that is still growing, so publishing it for a
+ * running sub-agent both freezes a bogus part-way number onto the card and
+ * evicts it from the running-sub-agents bar for the rest of the run. #622 fixed
+ * that for the `pending` branch of {@link attachSubagentFields} by omitting the
+ * field; the `paired` branch below it kept stamping one, and because the SDK
+ * backgrounds sub-agents, the launching `Task` pairs within milliseconds while
+ * the sub-agent keeps working — so a live sub-agent reaches the paired branch as
+ * a matter of course. Gating at the source fixes both branches by construction.
  */
 async function subagentDurations(
   subagents: Map<string, SubagentMeta>,
 ): Promise<Map<string, number>> {
   const out = new Map<string, number>();
+  const now = Date.now();
   await Promise.all(
     [...subagents.values()].map(async (m) => {
-      const ms = await readSubagentDurationMs(m.transcriptPath);
+      const ms = await readFinishedSubagentDurationMs(m.transcriptPath, now);
       if (ms !== undefined) out.set(m.toolUseId, ms);
     }),
   );
@@ -628,32 +781,73 @@ async function subagentDurations(
 }
 
 /**
- * The elapsed wall-clock of a sub-agent transcript: the delta between its first
- * and last `timestamp`. Scans for timestamps without a full JSON parse; returns
- * undefined if the file is missing or has < 2 timestamps.
+ * The elapsed wall-clock of a FINISHED sub-agent transcript, or undefined when it
+ * is missing, has < 2 timestamps, or still looks live (see {@link SUBAGENT_STALE_MS}).
  */
-async function readSubagentDurationMs(file: string): Promise<number | undefined> {
+async function readFinishedSubagentDurationMs(
+  file: string,
+  now: number,
+): Promise<number | undefined> {
   const mtimeMs = await statMtimeMs(file);
+  const facts = await readSubagentFacts(file, mtimeMs);
+  if (facts.durationMs === undefined) return undefined;
+  // No mtime (the file vanished between the stat and the read) ⇒ nothing is
+  // writing to it, so fall back to the structural check alone.
+  const quietMs = mtimeMs === undefined ? Infinity : now - mtimeMs;
+  if (!facts.endsWithEndTurn && quietMs < SUBAGENT_STALE_MS) return undefined;
+  return facts.durationMs;
+}
+
+async function readSubagentFacts(
+  file: string,
+  mtimeMs: number | undefined,
+): Promise<SubagentTranscriptFacts> {
   if (mtimeMs !== undefined) {
-    const cached = mtimeCacheGet(durationCache, file, mtimeMs);
+    const cached = mtimeCacheGet(factsCache, file, mtimeMs);
     if (cached.hit) return cached.value;
   }
-  const value = await readSubagentDurationMsUncached(file);
-  // Cache even undefined (missing/malformed) so a repeat open of an unchanged,
-  // duration-less transcript doesn't re-read the whole file every time.
-  if (mtimeMs !== undefined) mtimeCacheSet(durationCache, file, mtimeMs, value);
+  const value = await readSubagentFactsUncached(file);
+  // Cache even the empty result (missing/malformed) so a repeat open of an
+  // unchanged, duration-less transcript doesn't re-read the whole file every time.
+  if (mtimeMs !== undefined) mtimeCacheSet(factsCache, file, mtimeMs, value);
   return value;
 }
 
-async function readSubagentDurationMsUncached(file: string): Promise<number | undefined> {
+async function readSubagentFactsUncached(file: string): Promise<SubagentTranscriptFacts> {
   const raw = await fs.readFile(file, "utf8").catch(() => null);
-  if (raw === null) return undefined;
+  if (raw === null) return { endsWithEndTurn: false };
+  return { durationMs: transcriptSpanMs(raw), endsWithEndTurn: endsWithEndTurn(raw) };
+}
+
+/** First→last `timestamp` delta. Scans for timestamps without a full JSON parse. */
+function transcriptSpanMs(raw: string): number | undefined {
   const matches = [...raw.matchAll(/"timestamp":"([^"]+)"/g)];
   if (matches.length < 2) return undefined;
   const first = Date.parse(matches[0][1]);
   const last = Date.parse(matches[matches.length - 1][1]);
   if (Number.isNaN(first) || Number.isNaN(last) || last < first) return undefined;
   return last - first;
+}
+
+/** True when the transcript's last non-empty line is an assistant entry that
+ *  stopped with `end_turn`. Only that line is JSON-parsed. */
+function endsWithEndTurn(raw: string): boolean {
+  const lines = raw.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const trimmed = lines[i].trim();
+    if (!trimmed) continue;
+    try {
+      const parsed = JSON.parse(trimmed) as {
+        type?: string;
+        message?: { stop_reason?: unknown };
+      };
+      return parsed.type === "assistant" && parsed.message?.stop_reason === "end_turn";
+    } catch {
+      // A torn final line means the writer is mid-append — definitively not settled.
+      return false;
+    }
+  }
+  return false;
 }
 
 /**
@@ -918,6 +1112,13 @@ function attachSubagentFields(
         description: use.description,
         prompt: use.prompt,
         hasSubagent: subagents.has(use.toolUseId),
+        // Same hazard as the `pending` branch above, and for the same reason:
+        // a PAIRED `Task` does NOT mean the sub-agent is done — the SDK
+        // backgrounds it, so the tool_result lands in milliseconds while the
+        // sub-agent keeps working. `durations` is therefore gated on liveness at
+        // its source ({@link subagentDurations}) and holds an entry only for a
+        // sub-agent whose transcript has actually settled, so a still-running one
+        // gets `undefined` here and keeps its place in the bar (#725).
         subagentDurationMs: durations.get(use.toolUseId),
         subagentCostUsd: costs.get(use.toolUseId),
       },

@@ -7,7 +7,7 @@ sessions organized by project, in a web UI.
 npx @edspencer/paddock
 ```
 
-Then open <http://127.0.0.1:4000>.
+Then open <http://127.0.0.1:7233>.
 
 Or point it at work you've already done — see [Open your own project](#open-your-own-project).
 
@@ -107,7 +107,7 @@ Without `--here`, Paddock never touches the directory you ran it from.
 ## Options
 
 ```
-  -p, --port <port>       HTTP/WS port (default 4000)
+  -p, --port <port>       HTTP/WS port (default 7233)
       --host <host>       Bind address (default 127.0.0.1)
   -d, --data-dir <path>   Projects + state (default ~/.paddock)
       --here              Open the CURRENT directory as the workspace
@@ -138,7 +138,7 @@ A multi-arch Docker image is published alongside this package, and is the better
 fit for a server deployment:
 
 ```sh
-docker run -d -p 127.0.0.1:4000:4000 -v /srv/paddock-data:/data \
+docker run -d -p 127.0.0.1:7233:7233 -v /srv/paddock-data:/data \
   -e CLAUDE_CODE_OAUTH_TOKEN=… \
   -e PADDOCK_DANGEROUSLY_ALLOW_OPEN=1 \
   ghcr.io/edspencer/paddock:latest
