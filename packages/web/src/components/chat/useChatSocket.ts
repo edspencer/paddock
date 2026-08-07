@@ -44,6 +44,10 @@ export interface UseChatSocketParams {
   noticeThisTurnRef: MutableRefObject<boolean>;
   seenInjectionsRef: MutableRefObject<Set<string>>;
   onQueuedFlushedRef: MutableRefObject<(text?: string) => void>;
+  onQueuedStateRef: MutableRefObject<
+    (text: string | null, qid?: string, reason?: "returned") => void
+  >;
+  onQueuedReturnedRef: MutableRefObject<(text: string) => void>;
   // --- state setters ----------------------------------------------------------
   setTurns: Dispatch<SetStateAction<Turn[]>>;
   setStreaming: Dispatch<SetStateAction<boolean>>;
@@ -78,6 +82,8 @@ export function useChatSocket(params: UseChatSocketParams): void {
     noticeThisTurnRef,
     seenInjectionsRef,
     onQueuedFlushedRef,
+    onQueuedStateRef,
+    onQueuedReturnedRef,
     setTurns,
     setStreaming,
     setUsage,
@@ -308,6 +314,16 @@ export function useChatSocket(params: UseChatSocketParams): void {
         // The server auto-sent (or cleared a stale copy of) our queued message
         // (#245). Reflect it: render the sent bubble + clear the queue toolbar.
         onQueuedFlushedRef.current(text);
+      },
+      onQueuedState: ({ text, qid, reason }) => {
+        // The chat's queued slot changed server-side (#629) — another client
+        // queued alongside us, or edited/cleared the shared slot. Render it.
+        onQueuedStateRef.current(text, qid, reason);
+      },
+      onQueuedReturned: ({ text }) => {
+        // WE pressed Stop, so the server handed the queued message back rather
+        // than sending it (#751). It goes into the composer, not the transcript.
+        onQueuedReturnedRef.current(text);
       },
       onInjected: (inj, meta) => {
         // A machine injected a user turn into THIS open chat (#290 Part 2):

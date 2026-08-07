@@ -1270,6 +1270,33 @@ export type ServerWsMessage =
     }
   | {
       /**
+       * The chat's queued message changed server-side (#629). The slot is shared
+       * chat state — one queue per chat, not one per client — so every attached
+       * client renders what the server actually holds, and echoes `qid` back on
+       * its next write to prove it is editing the slot as it stands.
+       */
+      type: "chat:queued_state";
+      payload: {
+        projectSlug: string;
+        sessionId: string;
+        text: string | null;
+        qid?: string;
+        /** `returned` — a user pressed Stop and took the message back (#751). */
+        reason?: "returned";
+      };
+    }
+  | {
+      /**
+       * A user pressed Stop, so the queued message is handed BACK to their
+       * composer instead of being sent (#751). Sent only to the socket that
+       * asked to cancel — never rendered as a sent user bubble, because it
+       * wasn't sent.
+       */
+      type: "chat:queued_returned";
+      payload: { projectSlug: string; sessionId: string; text: string };
+    }
+  | {
+      /**
        * A machine-injected user turn landed in this session (issue #290 Part 2):
        * another chat `send_message`d / a schedule fired into it. Emitted so a
        * client already viewing the recipient renders the injected user bubble live

@@ -15,6 +15,26 @@
  * When a turn completes, the server checks for a queued message, auto-sends it as
  * the next message, and deletes the stored entry. The web client receives a
  * `chat:queued_flushed` frame to clear its localStorage.
+ *
+ * ## One slot, many contributors (#629)
+ *
+ * The slot is per CHAT, not per client — a chat has one "next message", the same
+ * model the composer renders. It used to be a bare overwrite, so a second client
+ * queueing on the same chat silently destroyed the first client's text (and the
+ * first client's transcript then rendered a user bubble nobody there had typed).
+ *
+ * The slot now holds an ordered list of {@link QueuedPart}s: one per contributing
+ * client queue, identified by that client's opaque queue id. A client updating ITS
+ * OWN part replaces it in place (an edit/append — #245's stable identity); a
+ * DIFFERENT client's queue appends a new part. `text` is the joined result and
+ * stays the thing that gets sent, so nothing downstream — nor an older reader of
+ * this file — needs to know about parts.
+ *
+ * The parts double as the drain's dedup ledger. A client that never saw the
+ * `chat:queued_flushed` clear (it is broadcast un-buffered) re-asserts its own
+ * (id, text) on reload; matching that against the parts actually flushed is what
+ * lets the drain tell a stale re-assert from a genuinely new message WITHOUT
+ * comparing wall clocks (#736). See `drainQueue` in ws.ts.
  */
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -28,10 +48,79 @@ function keyOf(agent: string, sessionId: string): string {
   return `${agent}${KEY_SEP}${sessionId}`;
 }
 
+/** Joiner when a second client's queue is merged in — what the composer uses. */
+const MERGE_SEP = "\n";
+/** How many (id, text) identities one slot remembers. Bounds the sidecar entry. */
+const MAX_KNOWN = 24;
+
+/**
+ * One identity a chat's queued message has been known by.
+ *
+ * `id` is OPAQUE and compared only for EQUALITY — never ordered — so a client with
+ * a skewed clock can't poison anything (#736). Two kinds of id land here: the one a
+ * CLIENT sent with its `chat:set_queue`, and the slot VERSION the server minted in
+ * response and broadcast back. A client re-asserting a queue on reload sends one of
+ * the two, which is exactly what makes the drain able to recognise it (see
+ * `drainQueue` in ws.ts).
+ */
+export interface QueuedPart {
+  id: string;
+  text: string;
+}
+
 /** A queued message awaiting auto-send. */
 export interface QueuedMessage {
+  /** The slot's full text — what gets sent. */
   text: string;
+  /** SERVER-stamped enqueue time. Informational — never load-bearing (#736). */
   createdAtMs: number;
+  /**
+   * The slot's current VERSION, minted on every write and broadcast to every
+   * attached client. A client echoes back the version it last saw, which is how
+   * the server can tell "this client is editing the slot it can see" from "this
+   * client composed a queue of its own, not knowing about the other one" (#629).
+   */
+  id?: string;
+  /**
+   * Every (id, text) this slot has been known by — the dedup ledger. Absent on an
+   * entry written by an older server; readers treat that as one legacy identity.
+   */
+  parts?: QueuedPart[];
+}
+
+/**
+ * Fold a write from a client that ISN'T on the slot's current version into the
+ * slot's text.
+ *
+ * Usually that client is simply appending to its own queue: it holds text the slot
+ * already contains and has added a line to the end of it. That is the ordinary
+ * single-client append — the composer keeps one queue id across an append (#245),
+ * and an older client sends only its enqueue `ts`, so neither ever carries the
+ * current version. It also covers the plain race of appending faster than the
+ * broadcast round trip. In every one of those, the client's text EXTENDS something
+ * the slot already holds, so we substitute in place rather than appending — or the
+ * client's own earlier text would appear twice.
+ *
+ * Otherwise the client queued without knowing what was already there (a second
+ * device), and its text is appended so neither message is lost (#629).
+ */
+function mergeInto(current: string, known: QueuedPart[], incoming: string): string {
+  // The most specific thing the incoming text extends — longest first, since a
+  // queue that has been appended to is known by every prefix it has passed through.
+  const extended = known
+    .filter((p) => p.text.length > 0 && incoming.startsWith(`${p.text}${MERGE_SEP}`))
+    .sort((a, b) => b.text.length - a.text.length)[0];
+  const at = extended ? current.indexOf(extended.text) : -1;
+  if (at < 0) return `${current}${MERGE_SEP}${incoming}`;
+  // Splice rather than String.replace: the texts are user prose and `$&`-style
+  // patterns in a replacement string would be interpreted.
+  return current.slice(0, at) + incoming + current.slice(at + extended!.text.length);
+}
+
+/** The identities of an entry, synthesising one for a legacy entry without any. */
+export function partsOf(m: QueuedMessage): QueuedPart[] {
+  if (m.parts && m.parts.length > 0) return m.parts;
+  return [{ id: m.id ?? `legacy:${m.createdAtMs}`, text: m.text }];
 }
 
 export class QueuedMessageStore {
@@ -61,7 +150,27 @@ export class QueuedMessageStore {
             typeof (v as Record<string, unknown>).text === "string" &&
             typeof (v as Record<string, unknown>).createdAtMs === "number"
           ) {
-            map.set(k, v as QueuedMessage);
+            const entry = v as QueuedMessage;
+            // `parts` is optional (an older server wrote entries without it) and
+            // corruption-tolerant like everything else here: a malformed parts
+            // array is dropped, leaving a legacy single-part entry, not a throw.
+            const raw = (v as Record<string, unknown>).parts;
+            const parts = Array.isArray(raw)
+              ? raw.filter(
+                  (p): p is QueuedPart =>
+                    Boolean(p) &&
+                    typeof p === "object" &&
+                    typeof (p as QueuedPart).id === "string" &&
+                    typeof (p as QueuedPart).text === "string",
+                )
+              : [];
+            const id = typeof (v as Record<string, unknown>).id === "string" ? entry.id : undefined;
+            map.set(k, {
+              text: entry.text,
+              createdAtMs: entry.createdAtMs,
+              ...(id ? { id } : {}),
+              ...(parts.length > 0 ? { parts } : {}),
+            });
           }
         }
       }
@@ -112,6 +221,71 @@ export class QueuedMessageStore {
       map.set(key, message);
     }
     await this.persist(map);
+  }
+
+  /**
+   * Write one client's queue into a chat's single slot, MERGING rather than
+   * overwriting (#629), and return the resulting entry. The read-modify-write
+   * happens with no `await` between the load and the mutation, so two clients
+   * queueing at once can't lose one another's text the way the old unconditional
+   * `set` overwrite did.
+   *
+   * `incoming.id` is the identity the client is writing under — either the slot
+   * VERSION it last saw (broadcast to it via `chat:queued_state`) or, if it has
+   * never seen one, its own queue id. That is what distinguishes the two cases:
+   *
+   *  - **it matches the current version** ⇒ the client can see the slot as it is
+   *    now, so its text IS the whole slot: replace. This covers the ordinary
+   *    single-client edit/append (#245 stable identity) and any client that has
+   *    caught up with a merge.
+   *  - **it doesn't** ⇒ the client composed this queue without knowing the
+   *    slot's current contents (a second device, or a tab that missed the
+   *    broadcast): APPEND, so neither message is lost.
+   *
+   * A write whose text the slot has already been known by is a re-assert — a
+   * reconnecting client pushing its stored copy — and is a no-op, so reconnecting
+   * can't duplicate text into the slot.
+   *
+   * `nowMs` stamps a fresh slot's `createdAtMs` SERVER-side; an existing slot keeps
+   * the one it has. The client's clock never enters the store (#736).
+   */
+  async upsert(
+    agent: string,
+    sessionId: string,
+    incoming: QueuedPart,
+    nowMs: number,
+    mintVersion: () => string,
+  ): Promise<QueuedMessage | null> {
+    const map = await this.ensureLoaded();
+    const key = keyOf(agent, sessionId);
+    const current = map.get(key) ?? null;
+    if (!incoming.text.trim()) return current;
+    const known = current ? partsOf(current) : [];
+    // Already folded in under some identity ⇒ a re-assert, not new text.
+    if (known.some((p) => p.text === incoming.text)) return current;
+    const text = !current
+      ? incoming.text
+      : incoming.id === current.id
+        ? // The client can see the slot as it stands, so its text IS the slot.
+          incoming.text
+        : mergeInto(current.text, known, incoming.text);
+    const version = mintVersion();
+    // Remember BOTH identities this write creates: what the client sent (which it
+    // will re-assert on reload) and the version we hand back (which it will
+    // re-assert once it adopts the broadcast). Either one reaching a later drain
+    // has to be recognisable as already-flushed.
+    const parts = [...known, { id: incoming.id, text: incoming.text }, { id: version, text }].slice(
+      -MAX_KNOWN,
+    );
+    const next: QueuedMessage = {
+      text,
+      createdAtMs: current?.createdAtMs ?? nowMs,
+      id: version,
+      parts,
+    };
+    map.set(key, next);
+    await this.persist(map);
+    return next;
   }
 
   /** Write-through, serialised so overlapping writes can't corrupt the file. */

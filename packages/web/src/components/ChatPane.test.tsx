@@ -20,7 +20,12 @@ let subs: FakeSub[] = [];
 const sends: Array<{ slug: string; message: string; sessionId: string | null; opts?: unknown }> = [];
 const commands: Array<{ slug: string; message: string; sessionId: string | null }> = [];
 const cancels: string[] = [];
-const queuedSets: Array<{ slug: string; sessionId: string; text: string | null }> = [];
+const queuedSets: Array<{
+  slug: string;
+  sessionId: string;
+  text: string | null;
+  qid?: string | null;
+}> = [];
 const continues: Array<{ slug: string; sessionId: string }> = [];
 let stateCb: ((s: string) => void) | null = null;
 
@@ -51,8 +56,8 @@ vi.mock("../lib/ws", () => ({
     sendCommand: (slug: string, message: string, sessionId: string | null) =>
       commands.push({ slug, message, sessionId }),
     cancel: (jobId: string) => cancels.push(jobId),
-    setQueued: (slug: string, sessionId: string, text: string | null) =>
-      queuedSets.push({ slug, sessionId, text }),
+    setQueued: (slug: string, sessionId: string, text: string | null, qid?: string | null) =>
+      queuedSets.push({ slug, sessionId, text, qid }),
     continueChat: (slug: string, sessionId: string) => continues.push({ slug, sessionId }),
   },
 }));
@@ -1184,11 +1189,11 @@ describe("ChatPane: message queue (issue #91)", () => {
     fireEvent.keyDown(box(), { key: "Enter" });
     expect(localStorage.getItem("paddock:queued:s1")).toBe("flush me");
     // The server auto-sent it and signals the flush → the persisted slot (text +
-    // its #245 timestamp) is forgotten.
-    expect(localStorage.getItem("paddock:queuedts:s1")).not.toBeNull();
+    // its #245/#736 queue id) is forgotten.
+    expect(localStorage.getItem("paddock:queuedqid:s1")).not.toBeNull();
     act(() => sub().handlers.onQueuedFlushed?.({ text: "flush me" }));
     await waitFor(() => expect(localStorage.getItem("paddock:queued:s1")).toBeNull());
-    expect(localStorage.getItem("paddock:queuedts:s1")).toBeNull();
+    expect(localStorage.getItem("paddock:queuedqid:s1")).toBeNull();
   });
 
   it("appends to the queued message on re-submit (single slot) and persists it (#245)", async () => {
@@ -1208,6 +1213,45 @@ describe("ChatPane: message queue (issue #91)", () => {
     expect(queuedSets.at(-1)).toMatchObject({ sessionId: "s", text: "line A\nline B" });
   });
 
+  it("renders the shared queue when ANOTHER client queues on this chat (#629)", async () => {
+    render(<ChatPane projectSlug="proj" initialSessionId="s" loadHistory={vi.fn().mockResolvedValue([])} />);
+    await startTurn();
+    await userEvent.type(box(), "from this tab");
+    fireEvent.keyDown(box(), { key: "Enter" });
+    expect(screen.getByText("from this tab")).toBeInTheDocument();
+
+    // The server merged a second client's queue into the chat's one slot and
+    // announced the result. Pre-#629 nothing was announced at all: the other
+    // client's queue silently REPLACED this one, and this pane went on showing a
+    // message that no longer existed anywhere.
+    act(() =>
+      sub().handlers.onQueuedState?.({ text: "from this tab\nfrom the phone", qid: "slot-1" }),
+    );
+    expect(screen.getByText("from this tab")).toBeInTheDocument();
+    expect(screen.getByText(/characters/)).toBeInTheDocument();
+
+    // And this pane now speaks for the shared slot: its next edit carries the
+    // slot's id, so it updates that slot instead of appending beside it.
+    await userEvent.type(box(), "and one more");
+    fireEvent.keyDown(box(), { key: "Enter" });
+    expect(queuedSets.at(-1)).toMatchObject({
+      sessionId: "s",
+      text: "from this tab\nfrom the phone\nand one more",
+      qid: "slot-1",
+    });
+  });
+
+  it("clears the queue toolbar when the server says the shared slot is empty (#629)", async () => {
+    render(<ChatPane projectSlug="proj" initialSessionId="s" loadHistory={vi.fn().mockResolvedValue([])} />);
+    await startTurn();
+    await userEvent.type(box(), "queued somewhere else"); 
+    fireEvent.keyDown(box(), { key: "Enter" });
+    expect(screen.getByText("queued somewhere else")).toBeInTheDocument();
+
+    act(() => sub().handlers.onQueuedState?.({ text: null }));
+    await waitFor(() => expect(screen.queryByText("queued somewhere else")).not.toBeInTheDocument());
+  });
+
   it("shows a '+N characters' hint only when the queued message spans more than one line", async () => {
     render(<ChatPane projectSlug="proj" />);
     await startTurn();
@@ -1224,7 +1268,14 @@ describe("ChatPane: message queue (issue #91)", () => {
     expect(screen.getByText("+7 characters")).toBeInTheDocument();
   });
 
-  it("holds the queue when the user hits Stop (does not auto-send)", async () => {
+  it("never sends the queued message ITSELF on a completion — the server owns that", async () => {
+    // The client stopped flushing its own queue in #245: a completion arriving
+    // while the socket was down never fired the client-side flush (a stranding
+    // path), and while it was up, client and server both sent it. This pane now
+    // only reflects what the server tells it — it renders the queue and acts on
+    // the server's frames (`chat:queued_flushed` when it was sent,
+    // `chat:queued_returned` when a Stop handed it back) — and puts nothing on
+    // the wire off a completion, cancelled or otherwise.
     render(<ChatPane projectSlug="proj" />);
     await startTurn();
     await userEvent.type(box(), "should not fire");
@@ -1232,12 +1283,76 @@ describe("ChatPane: message queue (issue #91)", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Stop/ }));
     expect(cancels).toEqual(["job-1"]);
-    // The server emits a completion for the cancelled turn — must NOT flush.
     act(() => sub().handlers.onComplete?.({ sessionId: "s", jobId: "job-1", success: true }));
 
     expect(sends).toHaveLength(1);
-    // The message stays queued for the user to send/edit.
+    // Still on screen: a completion alone changes nothing here. The chip clears
+    // when the SERVER says what happened to the queue — after a Stop that is
+    // `chat:queued_returned`, tested below.
     expect(screen.getByText("should not fire")).toBeInTheDocument();
+  });
+
+  it("a Stop hands the queued message back to THIS composer, not to the transcript (#751)", async () => {
+    render(<ChatPane projectSlug="proj" initialSessionId="s1" loadHistory={vi.fn().mockResolvedValue([])} />);
+    await screen.findByRole("button", { name: /^Send$/ });
+    await userEvent.type(box(), "first turn");
+    fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
+    act(() => sub().handlers.onResponse?.("…", { sessionId: "s1", jobId: "job-1" }));
+    await userEvent.type(box(), "the follow-up");
+    fireEvent.keyDown(box(), { key: "Enter" });
+    expect(screen.getByText("the follow-up")).toBeInTheDocument();
+
+    // The user pressed Stop; the server hands the message back rather than
+    // sending it. Stop means "give me control back", so it lands in the composer
+    // where the user decides what happens to it.
+    act(() => sub().handlers.onQueuedReturned?.({ text: "the follow-up" }));
+
+    expect(box()).toHaveValue("the follow-up");
+    // Not queued any more, and NOT rendered as a sent user bubble — it wasn't sent.
+    expect(screen.queryByText("queued")).not.toBeInTheDocument();
+    expect(sends).toHaveLength(1);
+    // It survives a reload as an ordinary composer draft (the same writeDraft
+    // effect that persists anything typed), and is gone from the queued slot.
+    await waitFor(() => expect(localStorage.getItem("paddock:draft:s1")).toBe("the follow-up"));
+    expect(localStorage.getItem("paddock:queued:s1")).toBeNull();
+  });
+
+  it("a returned message merges with whatever was already typed", async () => {
+    render(<ChatPane projectSlug="proj" initialSessionId="s1" loadHistory={vi.fn().mockResolvedValue([])} />);
+    await screen.findByRole("button", { name: /^Send$/ });
+    await userEvent.type(box(), "first turn");
+    fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
+    act(() => sub().handlers.onResponse?.("…", { sessionId: "s1", jobId: "job-1" }));
+    await userEvent.type(box(), "queued line");
+    fireEvent.keyDown(box(), { key: "Enter" });
+    // The user starts typing something else while the turn runs, then Stops.
+    await userEvent.type(box(), "half-typed thought");
+
+    act(() => sub().handlers.onQueuedReturned?.({ text: "queued line" }));
+
+    // Same rule the queue bar's Edit button has always used: the returned message
+    // goes above the draft in progress, so neither is lost and the order matches
+    // when they were written.
+    expect(box()).toHaveValue("queued line\nhalf-typed thought");
+  });
+
+  it("tells the OTHER client why the shared chip vanished (#751)", async () => {
+    render(<ChatPane projectSlug="proj" initialSessionId="s1" loadHistory={vi.fn().mockResolvedValue([])} />);
+    await startTurn();
+    await userEvent.type(box(), "queued somewhere"); 
+    fireEvent.keyDown(box(), { key: "Enter" });
+    expect(screen.getByText("queued somewhere")).toBeInTheDocument();
+
+    // Someone else pressed Stop and took the message back to THEIR composer. This
+    // pane must not paste it into its own — but a chip disappearing with no
+    // explanation is the same silence that made a second client's overwrite bite.
+    act(() => sub().handlers.onQueuedState?.({ text: null, reason: "returned" }));
+
+    await waitFor(() => expect(screen.queryByText("queued somewhere")).not.toBeInTheDocument());
+    expect(screen.getByText(/went back to the composer/i)).toBeInTheDocument();
+    // Not in this composer, and not in the transcript as a sent message.
+    expect(box()).toHaveValue("");
+    expect(sends).toHaveLength(1);
   });
 
   it("holds the queue when the turn errors (does not auto-send)", async () => {

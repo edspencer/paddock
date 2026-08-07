@@ -116,6 +116,17 @@ export interface ChatHandlers {
    */
   onQueuedFlushed?: (meta: { text?: string }) => void;
   /**
+   * The chat's queued message changed on the server (#629): another client queued
+   * alongside us, edited the slot, or cleared it. `text` is the slot's full
+   * contents (null when empty) and `qid` its identity, which the pane adopts.
+   */
+  onQueuedState?: (meta: { text: string | null; qid?: string; reason?: "returned" }) => void;
+  /**
+   * A Stop handed this chat's queued message back to THIS client's composer
+   * (#751). Only the socket that pressed Stop receives it.
+   */
+  onQueuedReturned?: (meta: { text: string }) => void;
+  /**
    * A machine-injected user turn arrived for this chat (#290): another chat
    * `send_message`d / a schedule fired into it. Render the injected user bubble
    * live (with its sender attribution) so it no longer takes a refresh to appear.
@@ -372,9 +383,9 @@ class ChatClient {
     projectSlug: string,
     sessionId: string,
     text: string | null,
-    ts?: number | null,
+    qid?: string | null,
   ): void {
-    const payload: Record<string, unknown> = { projectSlug, sessionId, text, ts };
+    const payload: Record<string, unknown> = { projectSlug, sessionId, text, qid };
     this.transmit(JSON.stringify({ type: "chat:set_queue", payload }));
   }
 
@@ -676,13 +687,59 @@ class ChatClient {
       const { sessionId, text } = msg.payload as { sessionId?: string; text?: string };
       if (sessionId) {
         // Import inline to avoid a circular dependency.
-        void import("./queued.js").then(({ writeQueued, writeQueuedTs }) => {
+        void import("./queued.js").then(({ writeQueued, writeQueuedId }) => {
           writeQueued(sessionId, slug, null);
-          writeQueuedTs(sessionId, slug, null);
+          writeQueuedId(sessionId, slug, null);
         });
         for (const sub of this.subs.values()) {
           if (sub.projectSlug === slug && sub.sessionId === sessionId) {
             sub.handlers.onQueuedFlushed?.({ text });
+          }
+        }
+      }
+      return;
+    }
+
+    if (msg.type === "chat:queued_state") {
+      // The chat's single queued slot changed server-side (#629). It is shared
+      // state now — every attached client renders the same thing — so mirror it
+      // into localStorage and hand it to any mounted pane. Before this, a queue was
+      // written and never announced: a second client's queue silently replaced the
+      // first's, whose chip went on showing a message that no longer existed.
+      const { sessionId, text, qid, reason } = msg.payload as {
+        sessionId?: string;
+        text?: string | null;
+        qid?: string;
+        reason?: "returned";
+      };
+      if (sessionId) {
+        const next = text && text.length > 0 ? text : null;
+        void import("./queued.js").then(({ writeQueued, writeQueuedId }) => {
+          writeQueued(sessionId, slug, next);
+          writeQueuedId(sessionId, slug, next ? (qid ?? null) : null);
+        });
+        for (const sub of this.subs.values()) {
+          if (sub.projectSlug === slug && sub.sessionId === sessionId) {
+            sub.handlers.onQueuedState?.({ text: next, qid, reason });
+          }
+        }
+      }
+      return;
+    }
+
+    if (msg.type === "chat:queued_returned") {
+      // A Stop gave this chat's queued message back to us rather than sending it
+      // (#751). Clear the persisted queue copy — it is a composer draft now, and
+      // the pane persists it as one — then hand the text to the mounted pane.
+      const { sessionId, text } = msg.payload as { sessionId?: string; text?: string };
+      if (sessionId && typeof text === "string") {
+        void import("./queued.js").then(({ writeQueued, writeQueuedId }) => {
+          writeQueued(sessionId, slug, null);
+          writeQueuedId(sessionId, slug, null);
+        });
+        for (const sub of this.subs.values()) {
+          if (sub.projectSlug === slug && sub.sessionId === sessionId) {
+            sub.handlers.onQueuedReturned?.({ text });
           }
         }
       }

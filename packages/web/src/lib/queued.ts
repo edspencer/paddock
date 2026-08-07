@@ -58,38 +58,69 @@ export function writeQueued(
 }
 
 const TS_PREFIX = "paddock:queuedts:";
+const ID_PREFIX = "paddock:queuedqid:";
 
-/** The localStorage key for a queued message's stable enqueue timestamp (#245). */
+/** The localStorage key for a queued message's legacy enqueue timestamp (#245). */
 function queuedTsKey(sessionId: string | null | undefined, slug: string): string {
   return TS_PREFIX + (sessionId ?? `new:${slug}`);
 }
 
+/** The localStorage key for a queued message's stable queue id (#245/#736). */
+function queuedIdKey(sessionId: string | null | undefined, slug: string): string {
+  return ID_PREFIX + (sessionId ?? `new:${slug}`);
+}
+
 /**
- * Read the stable enqueue timestamp of a chat's queued message (#245), or null.
- * The server uses it to dedup a drained message from a stale localStorage copy a
- * reloaded client re-asserts, so it must survive reloads alongside the text.
+ * Read the stable id of a chat's queued message (#245/#736), or null.
+ *
+ * The server matches it against what it has already drained, so it must survive a
+ * reload alongside the text — otherwise a reloaded pane re-asserts a message the
+ * server already sent and it goes out twice.
+ *
+ * This used to be the enqueue TIMESTAMP, and the server compared those timestamps
+ * as an ordering. They came from `Date.now()` in whichever browser queued the
+ * message, so a single fast clock left the server's marker in the future and every
+ * later queued message on that chat was silently destroyed (#736). The id is now
+ * opaque and compared only for equality. A queue written by the older client is
+ * migrated in place, keeping its identity across the upgrade.
  */
-export function readQueuedTs(sessionId: string | null | undefined, slug: string): number | null {
+export function readQueuedId(sessionId: string | null | undefined, slug: string): string | null {
   try {
-    const v = localStorage.getItem(queuedTsKey(sessionId, slug));
-    const n = v ? Number(v) : NaN;
-    return Number.isFinite(n) ? n : null;
+    const v = localStorage.getItem(queuedIdKey(sessionId, slug));
+    if (v && v.length > 0) return v;
+    const legacy = localStorage.getItem(queuedTsKey(sessionId, slug));
+    const n = legacy ? Number(legacy) : NaN;
+    return Number.isFinite(n) ? `ts:${n}` : null;
   } catch {
     return null;
   }
 }
 
-/** Persist (or forget, when `ts` is null) a queued message's enqueue timestamp. */
-export function writeQueuedTs(
+/** Persist (or forget, when `id` is null) a queued message's stable queue id. */
+export function writeQueuedId(
   sessionId: string | null | undefined,
   slug: string,
-  ts: number | null,
+  id: string | null,
 ): void {
   try {
-    const key = queuedTsKey(sessionId, slug);
-    if (ts != null) localStorage.setItem(key, String(ts));
+    const key = queuedIdKey(sessionId, slug);
+    if (id != null && id.length > 0) localStorage.setItem(key, id);
     else localStorage.removeItem(key);
+    // The pre-#736 key is superseded either way; drop it so a later read can't
+    // resurrect a stale identity from it.
+    localStorage.removeItem(queuedTsKey(sessionId, slug));
   } catch {
     /* ignore (private mode / quota) */
+  }
+}
+
+/** Mint a fresh queue id. Opaque — never parsed, only compared. */
+export function newQueuedId(): string {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    // Older/insecure-context browsers have no randomUUID; any unique-enough
+    // string works, since the value is never interpreted.
+    return `q-${Math.random().toString(36).slice(2)}-${Date.now()}`;
   }
 }

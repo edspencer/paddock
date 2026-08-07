@@ -6,9 +6,13 @@
  * turn it was meant to follow already ended — the reported stranding bug). Runs
  * through the REAL app + fake claude on a single socket.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import { promises as fs } from "node:fs";
+import path from "node:path";
 import { startTestApp, type TestApp } from "../helpers/app.js";
 import { listen, connectWs, type WsClient, type WsEvent } from "../helpers/ws.js";
+import type { RuntimeSession } from "@herdctl/core";
+import { quiesceSession } from "../../src/turn-interlock.js";
 
 const SLUG = "queue-proj";
 const isComplete = (e: WsEvent) =>
@@ -28,6 +32,10 @@ describe("integration: server-authoritative queued-message drain (#245)", () => 
         "sentinel": "Sentinel reply.",
         "slow turn": "Slow reply.",
         "after slow": "Handled the after-slow queue.",
+        "from the fast clock": "Handled the skewed queue.",
+        "must not vanish": "Handled the correctly-clocked queue.",
+        "from tab A\nfrom tab B": "Handled both tabs' queues.",
+        "line one\nline two": "Handled the appended queue.",
       },
     });
     await t.app.inject({ method: "POST", url: "/api/projects", payload: { name: "Queue Proj" } });
@@ -194,9 +202,567 @@ describe("integration: server-authoritative queued-message drain (#245)", () => 
       delete process.env.PADDOCK_FAKE_SLOWTOOL_MS;
     }
   });
+
+  it("a client with a FAST CLOCK does not destroy the next queued message (#736)", async () => {
+    const m1 = ws.mark();
+    ws.send({ type: "chat:send", payload: { projectSlug: SLUG, sessionId: null, message: "start turn" } });
+    const sessionId = (await ws.waitFor(isComplete, { from: m1 })).payload?.sessionId as string;
+
+    // A laptop whose clock is five minutes fast queues a message. It drains fine —
+    // and (pre-fix) left the server's dedup marker five minutes in the future.
+    const m2 = ws.mark();
+    ws.send({
+      type: "chat:set_queue",
+      payload: { projectSlug: SLUG, sessionId, text: "from the fast clock", ts: Date.now() + 5 * 60_000 },
+    });
+    expect((await ws.waitFor(isFlushed, { from: m2 })).payload?.text).toBe("from the fast clock");
+    await ws.waitFor((e) => isComplete(e) && e.payload?.sessionId === sessionId, { from: m2 });
+
+    // Now a correctly-clocked queue on the same chat. Pre-fix it was take()n,
+    // compared against that future marker, classified "already flushed", deleted
+    // from the sidecar and never sent — with the chip cleared and no error. And
+    // then so was every message after it, until wall-clock time caught up. The ts
+    // need not even come from this client: one fast laptop poisoned the chat for
+    // everyone attached to it.
+    const m3 = ws.mark();
+    ws.send({
+      type: "chat:set_queue",
+      payload: { projectSlug: SLUG, sessionId, text: "must not vanish", ts: Date.now() },
+    });
+    const flushed = await ws.waitFor(isFlushed, { from: m3 });
+    expect(flushed.payload?.text, "the queued message was silently destroyed").toBe("must not vanish");
+    await ws.waitFor((e) => isComplete(e) && e.payload?.sessionId === sessionId, {
+      from: flushedIndex(ws, flushed),
+    });
+    expect((await userMessages(sessionId)).filter((m) => m === "must not vanish")).toHaveLength(1);
+  });
+
+  it("a second client's queue MERGES into the one slot instead of destroying the first's (#629)", async () => {
+    process.env.PADDOCK_FAKE_SLOWTOOL_MS = "1500";
+    const wsB = await connectWs(port);
+    try {
+      const m1 = ws.mark();
+      ws.send({ type: "chat:send", payload: { projectSlug: SLUG, sessionId: null, message: "start turn" } });
+      const sessionId = (await ws.waitFor(isComplete, { from: m1 })).payload?.sessionId as string;
+
+      // Two panes open on the same chat — two tabs, or a laptop and a phone.
+      const subscribe = (c: WsClient) =>
+        c.send({
+          type: "chat:subscribe",
+          payload: { projectSlug: SLUG, sessionId, wantReplay: false, lastSeq: -1 },
+        });
+      subscribe(ws);
+      subscribe(wsB);
+
+      const m2 = ws.mark();
+      const mB = wsB.mark();
+      ws.send({
+        type: "chat:send",
+        payload: { projectSlug: SLUG, sessionId, message: "[[SLOWTOOL]] slow turn" },
+      });
+      await ws.waitFor((e) => e.type === "chat:tool_start" && e.payload?.sessionId === sessionId, {
+        from: m2,
+      });
+
+      // Tab A queues. The queue used to be written and never announced, so tab B
+      // had no idea anything was queued at all.
+      ws.send({
+        type: "chat:set_queue",
+        payload: { projectSlug: SLUG, sessionId, text: "from tab A", qid: "tab-a" },
+      });
+      const seenByB = await wsB.waitFor(
+        (e) => e.type === "chat:queued_state" && e.payload?.sessionId === sessionId,
+        { from: mB },
+      );
+      expect(seenByB.payload?.text, "tab A's queue was never announced to tab B").toBe("from tab A");
+
+      // Tab B queues too. A plain `set` overwrote the slot here: tab A's message was
+      // destroyed unrecoverably, its chip still showing, and when the drain fired,
+      // tab A's own transcript rendered tab B's text as a user bubble A never typed.
+      const mB2 = wsB.mark();
+      wsB.send({
+        type: "chat:set_queue",
+        payload: { projectSlug: SLUG, sessionId, text: "from tab B", qid: "tab-b" },
+      });
+      const merged = await wsB.waitFor(
+        (e) => e.type === "chat:queued_state" && e.payload?.sessionId === sessionId,
+        { from: mB2 },
+      );
+      expect(merged.payload?.text, "tab A's queued message was overwritten").toBe(
+        "from tab A\nfrom tab B",
+      );
+
+      // One slot, one flush, both messages — in the order they were queued.
+      const flushed = await ws.waitFor(isFlushed, { from: m2 });
+      expect(flushed.payload?.text).toBe("from tab A\nfrom tab B");
+      await ws.waitFor((e) => isComplete(e) && e.payload?.sessionId === sessionId, {
+        from: flushedIndex(ws, flushed),
+      });
+      expect(await userMessages(sessionId)).toContain("from tab A\nfrom tab B");
+    } finally {
+      wsB.close();
+      delete process.env.PADDOCK_FAKE_SLOWTOOL_MS;
+    }
+  });
+
+  it("appending to a LIVE queue extends it in place, not behind a copy of itself", async () => {
+    // The composer keeps ONE identity across an append (#245) and never carries
+    // the slot version the server minted a moment earlier — an older client sends
+    // only its `ts`, and even a current one can append faster than the broadcast
+    // round trip. Merging that as a second contribution would queue "line
+    // one\nline one\nline two".
+    process.env.PADDOCK_FAKE_SLOWTOOL_MS = "1500";
+    try {
+      const m1 = ws.mark();
+      ws.send({ type: "chat:send", payload: { projectSlug: SLUG, sessionId: null, message: "start turn" } });
+      const sessionId = (await ws.waitFor(isComplete, { from: m1 })).payload?.sessionId as string;
+
+      const m2 = ws.mark();
+      ws.send({
+        type: "chat:send",
+        payload: { projectSlug: SLUG, sessionId, message: "[[SLOWTOOL]] slow turn" },
+      });
+      await ws.waitFor((e) => e.type === "chat:tool_start" && e.payload?.sessionId === sessionId, {
+        from: m2,
+      });
+
+      ws.send({
+        type: "chat:set_queue",
+        payload: { projectSlug: SLUG, sessionId, text: "line one", qid: "one-pane" },
+      });
+      ws.send({
+        type: "chat:set_queue",
+        payload: { projectSlug: SLUG, sessionId, text: "line one\nline two", qid: "one-pane" },
+      });
+
+      const flushed = await ws.waitFor(isFlushed, { from: m2 });
+      expect(flushed.payload?.text).toBe("line one\nline two");
+      await ws.waitFor((e) => isComplete(e) && e.payload?.sessionId === sessionId, {
+        from: flushedIndex(ws, flushed),
+      });
+      expect((await userMessages(sessionId)).filter((m) => m === "line one\nline two")).toHaveLength(1);
+    } finally {
+      delete process.env.PADDOCK_FAKE_SLOWTOOL_MS;
+    }
+  });
+
+  it("refuses an unbounded queued message rather than persisting it verbatim", async () => {
+    const mark = ws.mark();
+    ws.send({
+      type: "chat:set_queue",
+      payload: { projectSlug: SLUG, sessionId: "size-probe", text: "x".repeat(200_000), qid: "big" },
+    });
+    const err = await ws.waitFor((e) => e.type === "chat:error", { from: mark });
+    expect(String(err.payload?.error)).toMatch(/too long/i);
+  });
 });
 
 /** Index of a received event, for use as a `waitFor` baseline. */
 function flushedIndex(ws: WsClient, e: WsEvent): number {
   return ws.events.indexOf(e);
 }
+
+/**
+ * #627: a queued message escapes on EVERY turn-ending path, not just a successful
+ * `chat:send`.
+ *
+ * `drainQueue` used to be called from two places — the idle `set_queue` and the
+ * completion of a `chat:send` turn. `onChatCommand`, `startAgentTurn` (triggers,
+ * spawns, wakes, recovery) and the background sub-agent sink all end turns without
+ * it, and a Stopped turn was deliberately skipped. So a message queued during any
+ * of those was persisted and then STRANDED: the chip sat there, and the message
+ * escaped only when some later `chat:send` completed — landing in the transcript
+ * BEHIND a message the user typed minutes afterwards.
+ *
+ * The drain now hangs off the hub's turn-end hook, which every one of those paths
+ * already goes through. Each test below asserts the flush arrives after ITS OWN
+ * turn's completion — an early (idle) drain would fail the ordering assertion just
+ * as a stranded one fails the wait.
+ */
+describe("integration: every turn-ending path drains the queue (#627)", () => {
+  let t: TestApp;
+  let port: number;
+  let ws: WsClient;
+  const TSLUG = "trig-queue";
+
+  beforeAll(async () => {
+    t = await startTestApp({
+      sweepIntervalMs: 600_000,
+      script: {
+        "queued during a trigger": "Handled the trigger-time queue.",
+        "typed later": "Handled the later message.",
+      },
+    });
+    await t.app.inject({ method: "POST", url: "/api/projects", payload: { name: "Trig Queue" } });
+    ({ port } = await listen(t.app));
+    ws = await connectWs(port);
+  });
+  afterAll(async () => {
+    ws?.close();
+    await t.teardown();
+  });
+
+  it("a TRIGGER turn drains the message queued while it ran", async () => {
+    process.env.PADDOCK_FAKE_SLOWTOOL_MS = "2500";
+    try {
+      await t.app.inject({
+        method: "PUT",
+        url: `/api/projects/${TSLUG}/triggers/slowfire`,
+        payload: {
+          trigger: { type: "event", on: "onArchive" },
+          run: { prompt: "TRIGGERTURN [[SLOWTOOL]] hold the turn open" },
+        },
+      });
+
+      const mark = ws.mark();
+      const fired = await t.app.inject({ method: "POST", url: `/api/projects/${TSLUG}/triggers/slowfire/run` });
+      expect(fired.statusCode).toBe(202);
+      const sessionId = fired.json().sessionId as string;
+      expect(sessionId).toBeTruthy();
+
+      // Watch the trigger's chat, exactly as a user with that pane open would.
+      ws.send({
+        type: "chat:subscribe",
+        payload: { projectSlug: TSLUG, sessionId, wantReplay: false, lastSeq: -1 },
+      });
+      // Queue a follow-up while the trigger turn is still running. The `isRunning`
+      // guard correctly holds it — nothing then picked it up.
+      ws.send({
+        type: "chat:set_queue",
+        payload: { projectSlug: TSLUG, sessionId, text: "queued during a trigger", qid: "trig-q" },
+      });
+
+      // The trigger turn ends…
+      const done = await ws.waitFor(
+        (e) => e.type === "chat:complete" && e.payload?.sessionId === sessionId,
+        { from: mark, timeoutMs: 20_000 },
+      );
+      // …and THAT is what flushes the queue. Baselined after the completion, so a
+      // drain that had (wrongly) fired earlier would not satisfy this either.
+      const flushed = await ws.waitFor(
+        (e) => e.type === "chat:queued_flushed" && e.payload?.sessionId === sessionId,
+        { from: ws.events.indexOf(done) + 1, timeoutMs: 20_000 },
+      );
+      expect(flushed.payload?.text).toBe("queued during a trigger");
+    } finally {
+      delete process.env.PADDOCK_FAKE_SLOWTOOL_MS;
+    }
+  });
+
+  /** Start a turn that blocks forever, and return its ids. */
+  async function startHangingTurn(client: WsClient) {
+    // [[HANGTOOL]] emits an in-flight tool and then blocks, so the turn ends only
+    // when the user clicks Stop — and it streams NO assistant text first. That
+    // matters for the fail-on-main property: the OLD drain gate was reply-aware,
+    // so a Stop after some prose had streamed already drained.
+    const mark = client.mark();
+    client.send({
+      type: "chat:send",
+      payload: { projectSlug: TSLUG, sessionId: null, message: "hold the line [[HANGTOOL]]" },
+    });
+    const streamed = await client.waitFor(
+      (e) =>
+        e.type === "chat:tool_start" &&
+        e.payload?.projectSlug === TSLUG &&
+        typeof e.payload?.jobId === "string" &&
+        typeof e.payload?.sessionId === "string",
+      { from: mark },
+    );
+    return {
+      mark,
+      jobId: streamed.payload!.jobId as string,
+      sessionId: streamed.payload!.sessionId as string,
+    };
+  }
+
+  /** Wait for the sidecar to settle on an expected value (it is rewritten in full). */
+  async function queueSettlesTo(sessionId: string, want: string | null): Promise<string | null> {
+    const deadline = Date.now() + 10_000;
+    let seen: string | null = null;
+    for (;;) {
+      seen = await storedQueue(sessionId);
+      if (seen === want || Date.now() > deadline) return seen;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  }
+
+  /** The chat's server-side queued message, straight off the sidecar. */
+  async function storedQueue(sessionId: string): Promise<string | null> {
+    const file = path.join(t.cfg.dataDir, "queued-message.json");
+    try {
+      const raw = JSON.parse(await fs.readFile(file, "utf8")) as Record<string, { text?: string }>;
+      const key = Object.keys(raw).find((k) => k.endsWith(sessionId));
+      return key ? (raw[key]?.text ?? null) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  it("a STOPPED turn RETURNS the queued message to the stopping client's composer", async () => {
+    // Stop means "give me control back". Sending the follow-up would have the
+    // agent start working again the instant it was stopped; holding it server-side
+    // is what stranded it (#627), to go out later behind whatever the user typed
+    // next. So it goes back to the composer of the client that pressed Stop.
+    const { jobId, sessionId } = await startHangingTurn(ws);
+    ws.send({
+      type: "chat:set_queue",
+      payload: { projectSlug: TSLUG, sessionId, text: "queued then stopped", qid: "stop-q" },
+    });
+    await ws.waitFor((e) => e.type === "chat:queued_state" && e.payload?.sessionId === sessionId);
+
+    const cancelMark = ws.mark();
+    ws.send({ type: "chat:cancel", payload: { jobId } });
+    const done = await ws.waitFor(
+      (e) => e.type === "chat:complete" && e.payload?.sessionId === sessionId,
+      { from: cancelMark, timeoutMs: 20_000 },
+    );
+
+    const returned = await ws.waitFor(
+      (e) => e.type === "chat:queued_returned" && e.payload?.sessionId === sessionId,
+      { from: ws.events.indexOf(done) + 1, timeoutMs: 20_000 },
+    );
+    expect(returned.payload?.text).toBe("queued then stopped");
+
+    // Not sent: no flush frame carrying it, and the server's copy is gone (it is
+    // the client's composer draft now, not a queued message).
+    expect(
+      ws.events.slice(cancelMark).some((e) => e.type === "chat:queued_flushed"),
+      "a returned message must not also be flushed",
+    ).toBe(false);
+    expect(await queueSettlesTo(sessionId, null)).toBeNull();
+
+    // And no turn was started off the back of the Stop.
+    const sentinel = ws.mark();
+    ws.send({ type: "ping" });
+    await ws.waitFor((e) => e.type === "pong", { from: sentinel });
+    expect(
+      ws.events.slice(cancelMark).filter((e) => e.type === "chat:complete"),
+      "Stop must not start another turn",
+    ).toHaveLength(1);
+  });
+
+  it("the OTHER client's chip clears WITH a reason, and no phantom user bubble", async () => {
+    // The queue is shared state (#629), so the client that didn't press Stop has
+    // to be told too — a chip vanishing from under you with no explanation is the
+    // same silence that made the overwrite bite. It gets the slot cleared plus a
+    // reason; it must NOT get the text (that would paste into a second composer)
+    // and must NOT get a flush frame (that renders a user bubble for a message
+    // nobody sent).
+    const wsB = await connectWs(port);
+    try {
+      const { jobId, sessionId } = await startHangingTurn(ws);
+      wsB.send({
+        type: "chat:subscribe",
+        payload: { projectSlug: TSLUG, sessionId, wantReplay: false, lastSeq: -1 },
+      });
+      const mB = wsB.mark();
+      ws.send({
+        type: "chat:set_queue",
+        payload: { projectSlug: TSLUG, sessionId, text: "shared then stopped", qid: "stop-q2" },
+      });
+      await wsB.waitFor(
+        (e) => e.type === "chat:queued_state" && e.payload?.text === "shared then stopped",
+        { from: mB },
+      );
+
+      const cancelMark = wsB.mark();
+      ws.send({ type: "chat:cancel", payload: { jobId } });
+
+      const cleared = await wsB.waitFor(
+        (e) => e.type === "chat:queued_state" && e.payload?.text === null,
+        { from: cancelMark, timeoutMs: 20_000 },
+      );
+      expect(cleared.payload?.reason).toBe("returned");
+      // B is told WHY, but never handed the text, and never told it was sent.
+      expect(wsB.events.slice(cancelMark).some((e) => e.type === "chat:queued_returned")).toBe(false);
+      expect(wsB.events.slice(cancelMark).some((e) => e.type === "chat:queued_flushed")).toBe(false);
+    } finally {
+      wsB.close();
+    }
+  });
+
+  it("a Stop with nobody left to hand it back PARKS the message — never dropped, never sent", async () => {
+    // The tab closed between pressing Stop and the turn actually ending. Dropping
+    // the message here would be exactly the silent loss this change exists to
+    // remove, and sending it would be the surprise Stop must not have — so it
+    // stays queued, and no later turn end auto-sends it.
+    //
+    // The dead socket is injected rather than raced: a client `close()` reaches
+    // the server whenever the event loop gets to it, which is not ordered against
+    // the cancelled turn finishing. So we note the Stop against a socket that is
+    // already gone and cancel the job directly, which is precisely the state the
+    // race produces.
+    const { jobId, sessionId } = await startHangingTurn(ws);
+    ws.send({
+      type: "chat:set_queue",
+      payload: { projectSlug: TSLUG, sessionId, text: "parked by a closed tab", qid: "park-q" },
+    });
+    await ws.waitFor((e) => e.type === "chat:queued_state" && e.payload?.sessionId === sessionId);
+
+    const deadSocket = { readyState: 3, OPEN: 1, send: () => {} };
+    t.hub.noteCancel(sessionId, { reason: "stop", origin: deadSocket });
+    const mark = ws.mark();
+    await t.herdctl.cancel(jobId).catch(() => undefined);
+    await ws.waitFor((e) => e.type === "chat:complete" && e.payload?.sessionId === sessionId, {
+      from: mark,
+      timeoutMs: 20_000,
+    });
+
+    // Still queued, and nobody was told it was sent.
+    expect(await queueSettlesTo(sessionId, "parked by a closed tab")).toBe("parked by a closed tab");
+    expect(ws.events.slice(mark).some((e) => e.type === "chat:queued_flushed")).toBe(false);
+
+    // A later turn on the same chat does NOT sweep it out behind the message the
+    // user typed afterwards — that stranding is the whole point of #627.
+    const m = ws.mark();
+    ws.send({ type: "chat:send", payload: { projectSlug: TSLUG, sessionId, message: "typed later" } });
+    await ws.waitFor((e) => e.type === "chat:complete" && e.payload?.sessionId === sessionId, {
+      from: m,
+      timeoutMs: 20_000,
+    });
+    expect(ws.events.slice(m).some((e) => e.type === "chat:queued_flushed")).toBe(false);
+    expect(await queueSettlesTo(sessionId, "parked by a closed tab")).toBe("parked by a closed tab");
+
+    // …and a pane OPENING the chat is told about it, so a parked message is never
+    // invisible: without this it would be known only to the tab that closed.
+    const wsD = await connectWs(port);
+    try {
+      const mD = wsD.mark();
+      wsD.send({
+        type: "chat:subscribe",
+        payload: { projectSlug: TSLUG, sessionId, wantReplay: false, lastSeq: -1 },
+      });
+      const state = await wsD.waitFor(
+        (e) => e.type === "chat:queued_state" && e.payload?.sessionId === sessionId,
+        { from: mD },
+      );
+      expect(state.payload?.text).toBe("parked by a closed tab");
+    } finally {
+      wsD.close();
+    }
+  });
+
+  it("a destructive op's quiesce leaves the queue strictly alone (#731)", async () => {
+    // The interlock stops a turn so it can delete/revert/promote the transcript.
+    // Draining there would start a fresh turn on a chat being removed — the #730
+    // resurrection — and would make the session busy again, so the interlock's own
+    // liveness poll could never settle and the operation would 409.
+    const { sessionId } = await startHangingTurn(ws);
+    ws.send({
+      type: "chat:set_queue",
+      payload: { projectSlug: TSLUG, sessionId, text: "queued before a delete", qid: "quiesce-q" },
+    });
+    await ws.waitFor((e) => e.type === "chat:queued_state" && e.payload?.sessionId === sessionId);
+
+    const mark = ws.mark();
+    const outcome = await quiesceSession({ hub: t.hub, herdctl: t.herdctl }, sessionId);
+    expect(outcome).toBe("stopped");
+
+    expect(ws.events.slice(mark).some((e) => e.type === "chat:queued_flushed")).toBe(false);
+    expect(ws.events.slice(mark).some((e) => e.type === "chat:queued_returned")).toBe(false);
+    expect(await queueSettlesTo(sessionId, "queued before a delete")).toBe("queued before a delete");
+  });
+});
+
+/**
+ * #627, slash-command path — and the drive-mode control for this whole file.
+ *
+ * `runCommand` goes through `openChatSession`, which in @herdctl/core ALWAYS runs
+ * on the SDK (session) runtime: the fake `claude` on PATH is never spawned, so this
+ * path cannot be driven by the CLI harness the rest of the suite pins. We stub the
+ * RuntimeSession and drive everything above it for real — ws.ts, `onChatCommand`,
+ * `consumeResumedTurn`, the hub, the store and the drain.
+ *
+ * That makes this test the one that exercises a SESSION-runtime turn ending, and
+ * it drains identically to the batch turns above: the drain hangs off the hub's
+ * turn-end hook, which sits above the runtime split, so both runtimes reach it
+ * through the same `turn.end()`.
+ */
+describe("integration: a slash-command turn drains the queue when it ends (#627)", () => {
+  let t: TestApp;
+  let port: number;
+  let ws: WsClient;
+  let spy: ReturnType<typeof vi.spyOn>;
+  const CSLUG = "cmd-queue";
+
+  /** A RuntimeSession that streams a line, then completes when `finish()` is called. */
+  function heldSession(sessionId: string) {
+    let finish: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      finish = r;
+    });
+    async function* messages(): AsyncGenerator<unknown> {
+      yield {
+        type: "assistant",
+        session_id: sessionId,
+        message: { model: "opus", content: [{ type: "text", text: "Compacting…" }] },
+      };
+      await held;
+      yield { type: "result", subtype: "success", session_id: sessionId, result: "done" };
+    }
+    const session = {
+      messages: messages(),
+      send: async () => {},
+      interrupt: async () => {},
+      listCommands: async () => [],
+      setModel: async () => {},
+      close: async () => {},
+    } as unknown as RuntimeSession;
+    return { session, finish: () => finish() };
+  }
+
+  beforeAll(async () => {
+    t = await startTestApp({
+      sweepIntervalMs: 600_000,
+      script: { "queued during a compact": "Handled the post-compact queue." },
+    });
+    await t.app.inject({ method: "POST", url: "/api/projects", payload: { name: "Cmd Queue" } });
+    spy = vi.spyOn(t.herdctl.manager, "openChatSession");
+    ({ port } = await listen(t.app));
+    ws = await connectWs(port);
+  });
+  afterAll(async () => {
+    ws?.close();
+    spy?.mockRestore();
+    await t.teardown();
+  });
+
+  it("drains on the COMMAND turn's completion, not on some later chat:send", async () => {
+    const sessionId = "cmd-queue-sess-1";
+    const fake = heldSession(sessionId);
+    spy.mockResolvedValue(fake.session as never);
+
+    const mark = ws.mark();
+    ws.send({
+      type: "chat:command",
+      payload: { projectSlug: CSLUG, command: "/compact", sessionId },
+    });
+    await ws.waitFor((e) => e.type === "chat:response" && e.payload?.sessionId === sessionId, {
+      from: mark,
+    });
+
+    // `onChatCommand` opens a real hub turn, so `hub.isRunning` is true and the
+    // queue is correctly held here. Pre-fix, nothing ever picked it back up: the
+    // command handler ended its turn with no drain, and the message sat in
+    // queued-message.json until a later `chat:send` flushed it out of order.
+    ws.send({
+      type: "chat:set_queue",
+      payload: { projectSlug: CSLUG, sessionId, text: "queued during a compact", qid: "cmd-q" },
+    });
+    // Let it be seen before the turn ends (the set is a round trip over the socket).
+    await ws.waitFor((e) => e.type === "chat:queued_state" && e.payload?.sessionId === sessionId, {
+      from: mark,
+    });
+
+    fake.finish();
+    const done = await ws.waitFor(
+      (e) => e.type === "chat:complete" && e.payload?.sessionId === sessionId,
+      { from: mark, timeoutMs: 20_000 },
+    );
+    const flushed = await ws.waitFor(
+      (e) => e.type === "chat:queued_flushed" && e.payload?.sessionId === sessionId,
+      { from: ws.events.indexOf(done) + 1, timeoutMs: 20_000 },
+    );
+    expect(flushed.payload?.text).toBe("queued during a compact");
+  });
+});

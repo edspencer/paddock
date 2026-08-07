@@ -344,10 +344,23 @@ export interface ChatSetQueueMessage {
     /** The queued message text, or null/empty to clear. */
     text?: string | null;
     /**
-     * Client-stamped identity of this queued message (#245): the ms timestamp of
-     * when it was first enqueued, stable across reloads. The server records the ts
-     * of the message it last drained per session so it can skip re-sending a stale
-     * copy a reloaded client re-asserts. Absent → the server stamps `Date.now()`.
+     * OPAQUE identity of this client's queue (#245 stable identity, #736). Minted
+     * once when the queue is first created and kept across edits, appends and
+     * reloads, so the server can tell (a) this client updating its own queue apart
+     * from another client queueing alongside it (#629) and (b) a stale re-assert of
+     * an already-drained message apart from a new one — by EQUALITY, never ordering.
+     *
+     * Absent from an older client, which sends only `ts`; the server folds that
+     * into an id.
+     */
+    qid?: string | null;
+    /**
+     * Legacy client-stamped enqueue time (#245). Superseded by `qid`: it was used
+     * as an ORDERED identity, so one client with a fast clock poisoned the dedup
+     * marker and every later queued message on that chat — from any client — was
+     * silently destroyed (#736). Still accepted (older clients send it, and it
+     * still identifies a message) but only ever compared for equality, and never
+     * stored as the enqueue time — the server stamps that itself.
      */
     ts?: number | null;
   };
@@ -539,6 +552,66 @@ export interface ChatQueuedFlushedMessage {
 }
 
 /**
+ * The chat's queued message changed (#629). Broadcast to EVERY socket attached to
+ * the session whenever the slot is written, so the queue is shared chat state that
+ * all clients render identically instead of invisible per-client state.
+ *
+ * Before this, a queue was only ever written and never announced: a second client
+ * queueing on the same chat overwrote the first client's text with no signal to
+ * anyone. The first user's chip sat there showing a message that no longer existed,
+ * and when the drain finally fired, their transcript rendered — as their own user
+ * bubble — a message they had never typed. The slot now MERGES contributions, and
+ * this frame is what makes the merge visible.
+ */
+export interface ChatQueuedStateMessage {
+  type: "chat:queued_state";
+  payload: {
+    projectSlug: string;
+    sessionId: string;
+    /** The chat's full queued text, or null when the slot is now empty. */
+    text: string | null;
+    /**
+     * The slot's identity. A client adopts it as its own queue id, so its next
+     * edit updates this shared slot in place rather than appending beside it.
+     */
+    qid?: string;
+    /**
+     * Why the slot changed, when it is worth explaining. `returned` means a user
+     * pressed Stop and the message went back to THEIR composer — sent to the
+     * other clients so a chip that just vanished from under them has a reason
+     * attached, rather than looking like the message evaporated. The client that
+     * pressed Stop is excluded from this broadcast; it gets
+     * {@link ChatQueuedReturnedMessage} instead.
+     */
+    reason?: "returned";
+  };
+}
+
+/**
+ * A user pressed Stop, so the message queued behind that turn is handed BACK to
+ * them (#751 follow-up). Sent only to the socket that asked to cancel.
+ *
+ * Stop means "give me control back". Auto-sending the follow-up would have the
+ * agent start working again the instant the user stopped it, and holding the
+ * message server-side is what stranded it (#627) — so it returns to the composer,
+ * where it is visible, editable, and sent only when the user says so.
+ *
+ * Deliberately NOT `chat:queued_flushed` with a flag: that frame means "this text
+ * was sent, render it as the user's bubble", and a returned message is precisely
+ * one that was NOT sent. Overloading it risks a phantom user turn in the
+ * transcript for a message the agent never received.
+ */
+export interface ChatQueuedReturnedMessage {
+  type: "chat:queued_returned";
+  payload: {
+    projectSlug: string;
+    sessionId: string;
+    /** The queued text, for the client to put back in its composer. */
+    text: string;
+  };
+}
+
+/**
  * A background task was killed at the turn boundary and the keeper is idle
  * (issue #347). Broadcast LIVE by the recovery engine the moment the kill is
  * detected — the notification is otherwise trapped in the SDK input queue until
@@ -585,6 +658,8 @@ export type ServerMessage =
   | ChatResyncMessage
   | ChatActiveMessage
   | ChatQueuedFlushedMessage
+  | ChatQueuedStateMessage
+  | ChatQueuedReturnedMessage
   | ChatKilledTaskMessage
   | ChatNoticeMessage
   | PongMessage;
@@ -648,6 +723,7 @@ export function isClientMessage(data: unknown): data is ClientMessage {
       return false;
     if (p.text !== undefined && p.text !== null && typeof p.text !== "string") return false;
     if (p.ts !== undefined && p.ts !== null && typeof p.ts !== "number") return false;
+    if (p.qid !== undefined && p.qid !== null && typeof p.qid !== "string") return false;
     return true;
   }
   return false;
