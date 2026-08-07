@@ -363,6 +363,22 @@ export interface ChatSetQueueMessage {
      * stored as the enqueue time — the server stamps that itself.
      */
     ts?: number | null;
+    /**
+     * Files staged in the composer that must ride the queued message (#728).
+     *
+     * Attachments used to be consumed ONLY by `chat:send`, so a message queued
+     * during a live turn left them staged: the tray never cleared and the file
+     * silently rode whatever the user sent next — a message they never meant to
+     * attach it to. They belong to the queued message, so they travel with it into
+     * the shared slot and are sent by the drain.
+     *
+     * Merged into the slot as a UNION BY ID, never a replace: a write can only
+     * ever ADD to what is staged, so one client's `set_queue` cannot silently drop
+     * another's file, and a client re-asserting its queue on reload (which by then
+     * has an empty tray) is a no-op rather than a wipe. Attachments leave the slot
+     * only when it is cleared outright or popped back to a composer.
+     */
+    attachments?: Array<{ id: string; filename: string; kind?: string }>;
   };
 }
 
@@ -548,6 +564,12 @@ export interface ChatQueuedFlushedMessage {
      * when the frame is just telling the client to clear a stale/already-sent copy.
      */
     text?: string;
+    /**
+     * The attachments that rode the drained message (#728), so the client renders
+     * the auto-sent user bubble with its files exactly as a live send does. Only
+     * present alongside `text` (a clear-only frame carries neither).
+     */
+    attachments?: Array<{ id: string; filename: string; kind?: string }>;
   };
 }
 
@@ -570,6 +592,13 @@ export interface ChatQueuedStateMessage {
     sessionId: string;
     /** The chat's full queued text, or null when the slot is now empty. */
     text: string | null;
+    /**
+     * The files staged on the slot (#728). Shared exactly like the text is: every
+     * attached client renders the same chips, so a file queued on one device is
+     * visible on the other rather than being invisible state that surfaces only
+     * when the drain sends it. Absent/empty when the slot holds no attachments.
+     */
+    attachments?: Array<{ id: string; filename: string; kind?: string }>;
     /**
      * The slot's identity. A client adopts it as its own queue id, so its next
      * edit updates this shared slot in place rather than appending beside it.
@@ -608,6 +637,13 @@ export interface ChatQueuedReturnedMessage {
     sessionId: string;
     /** The queued text, for the client to put back in its composer. */
     text: string;
+    /**
+     * The files that were staged on the slot (#728), for the client to put back in
+     * its attachment tray. Stop returns the whole message, not just its prose —
+     * dropping the files here would be the same silent loss under a different name,
+     * and leaving them on the (now cleared) slot would strand them server-side.
+     */
+    attachments?: Array<{ id: string; filename: string; kind?: string }>;
   };
 }
 
@@ -664,6 +700,24 @@ export type ServerMessage =
   | ChatNoticeMessage
   | PongMessage;
 
+/**
+ * Validate an optional wire list of composer attachment refs (#328/#728). Shared
+ * by `chat:send` and `chat:set_queue` — the queue carries the same refs the send
+ * does, so it validates them the same way rather than by a second, drifting copy.
+ * `undefined` is valid (the field is optional everywhere it appears).
+ */
+function isAttachmentRefList(v: unknown): boolean {
+  if (v === undefined) return true;
+  if (!Array.isArray(v)) return false;
+  for (const a of v) {
+    if (!a || typeof a !== "object") return false;
+    const ao = a as Record<string, unknown>;
+    if (typeof ao.id !== "string" || typeof ao.filename !== "string") return false;
+    if (ao.kind !== undefined && typeof ao.kind !== "string") return false;
+  }
+  return true;
+}
+
 export function isClientMessage(data: unknown): data is ClientMessage {
   if (typeof data !== "object" || data === null) return false;
   const m = data as Record<string, unknown>;
@@ -679,15 +733,7 @@ export function isClientMessage(data: unknown): data is ClientMessage {
     if (typeof slug !== "string") return false;
     if (p.preloadContext !== undefined && typeof p.preloadContext !== "boolean") return false;
     if (p.model !== undefined && typeof p.model !== "string") return false;
-    if (p.attachments !== undefined) {
-      if (!Array.isArray(p.attachments)) return false;
-      for (const a of p.attachments) {
-        if (!a || typeof a !== "object") return false;
-        const ao = a as Record<string, unknown>;
-        if (typeof ao.id !== "string" || typeof ao.filename !== "string") return false;
-        if (ao.kind !== undefined && typeof ao.kind !== "string") return false;
-      }
-    }
+    if (!isAttachmentRefList(p.attachments)) return false;
     return p.sessionId === undefined || p.sessionId === null || typeof p.sessionId === "string";
   }
   if (m.type === "chat:command") {
@@ -724,6 +770,9 @@ export function isClientMessage(data: unknown): data is ClientMessage {
     if (p.text !== undefined && p.text !== null && typeof p.text !== "string") return false;
     if (p.ts !== undefined && p.ts !== null && typeof p.ts !== "number") return false;
     if (p.qid !== undefined && p.qid !== null && typeof p.qid !== "string") return false;
+    // The queued message carries the composer's staged files (#728), validated
+    // exactly as `chat:send` validates its own.
+    if (!isAttachmentRefList(p.attachments)) return false;
     return true;
   }
   return false;

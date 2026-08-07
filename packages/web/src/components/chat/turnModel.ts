@@ -295,3 +295,131 @@ export function historyToTurns(msgs: HistoryMessage[]): Turn[] {
   // in the order it happened (issue #630).
   return orderCompactBoundaries(turns);
 }
+
+// --- hydration merge (issue #726) --------------------------------------------
+
+/**
+ * A content signature for turns that carry no stable id, used to recognise the
+ * same event in a REST snapshot and in a live frame. Deliberately narrow: it only
+ * has to be good enough to spot a duplicate inside the sub-second window a
+ * hydration fetch is in flight, not to identify a turn globally.
+ */
+function turnSignature(t: Turn): string {
+  switch (t.kind) {
+    case "user":
+      return `user:${t.content}`;
+    case "command":
+      return `command:${t.command}`;
+    case "commandOutput":
+      return `commandOutput:${t.content}`;
+    case "compact":
+      return `compact:${t.summary}`;
+    case "notification":
+      return `notification:${t.status ?? ""}:${t.summary}`;
+    case "notice":
+      return `notice:${t.notice.kind}`;
+    case "file":
+      return `file:${t.file.filename}:${t.file.source}`;
+    default:
+      return `${t.kind}:${t.id}`;
+  }
+}
+
+/**
+ * Fold the live turns accumulated while a transcript fetch was in flight into the
+ * snapshot that fetch returned (issue #726).
+ *
+ * A remounting pane clears the transcript, fetches it over REST and **replaced**
+ * the result wholesale. The socket is attached future-only by design (`lib/ws.ts`:
+ * a fresh mount hydrates over REST, so replaying buffered frames would duplicate
+ * it), so every frame that arrived between the server READING the transcript and
+ * the response reaching the browser was appended to the pane and then thrown away
+ * by that replace. The effect's `cancelled` flag guards a newer chat *switch*, not
+ * newer *frames*. In the reproduction that cost an entire assistant reply and the
+ * tool-result reconciliation behind it: no reply at all, and a Task card stuck on
+ * RUNNING until the page was reloaded.
+ *
+ * The window is the response leg plus the server's post-read work, so it needs
+ * ~1s+ of latency to bite — a WAN client or a loaded server, not a dev box. The
+ * fix costs nothing on the fast path: when nothing arrived during the fetch,
+ * `live` is empty and this returns the snapshot unchanged.
+ *
+ * Overlap is resolved per kind, always preferring whichever copy knows MORE:
+ *  - a tool call matches on `toolUseId` and the two are merged, so a snapshot row
+ *    still `pending` picks up the completion the live frame carried;
+ *  - an assistant bubble matches by prefix, since the live bubble accumulates the
+ *    same text chunk by chunk — the longer one wins;
+ *  - everything else matches on a content signature and the snapshot wins.
+ *
+ * Live turns with no counterpart are appended, in order, after the snapshot: the
+ * socket only delivers what is newer than the transcript the snapshot came from.
+ */
+export function mergeHydratedTurns(snapshot: Turn[], live: Turn[]): Turn[] {
+  if (live.length === 0) return snapshot;
+  if (snapshot.length === 0) return live;
+
+  const out = [...snapshot];
+  // Where each identity currently sits in `out`, so a match can be upgraded in
+  // place rather than appended.
+  const byToolUseId = new Map<string, number>();
+  const bySignature = new Map<string, number>();
+  const assistantIdx: number[] = [];
+  out.forEach((t, i) => {
+    if (t.kind === "tool" && t.tool.toolUseId) byToolUseId.set(t.tool.toolUseId, i);
+    else if (t.kind === "assistant") assistantIdx.push(i);
+    else bySignature.set(turnSignature(t), i);
+  });
+
+  for (const t of live) {
+    if (t.kind === "tool" && t.tool.toolUseId) {
+      const at = byToolUseId.get(t.tool.toolUseId);
+      if (at === undefined) {
+        byToolUseId.set(t.tool.toolUseId, out.length);
+        out.push(t);
+        continue;
+      }
+      // Same call, two views of it. The history-hydrated row carries the richer
+      // enrichment (diffs, sub-agent metadata, per-tool details) and the live row
+      // carries the completion the snapshot was taken too early to see, so the
+      // live fields are layered ON TOP of the snapshot's rather than replacing it.
+      const snap = out[at];
+      if (snap.kind !== "tool") continue;
+      // `pending` comes from the LIVE row, explicitly: a completion frame carries
+      // no `pending` key at all, so spreading it would leave a snapshot row that
+      // was read mid-flight stuck on "running" — the second half of #726, and the
+      // half a reply-only assertion misses.
+      out[at] = { ...snap, tool: { ...snap.tool, ...t.tool, pending: t.tool.pending === true } };
+      continue;
+    }
+    if (t.kind === "assistant") {
+      // The live bubble is the same text the transcript holds, accumulated chunk
+      // by chunk — so one is a prefix of the other, and the longer one is simply
+      // the later view of it.
+      const at = assistantIdx.find((i) => {
+        const s = out[i];
+        return (
+          s.kind === "assistant" &&
+          (s.content === t.content ||
+            s.content.startsWith(t.content) ||
+            t.content.startsWith(s.content))
+        );
+      });
+      if (at === undefined) {
+        assistantIdx.push(out.length);
+        out.push(t);
+        continue;
+      }
+      const snap = out[at];
+      if (snap.kind !== "assistant") continue;
+      if (t.content.length > snap.content.length) {
+        out[at] = { ...snap, content: t.content, streaming: t.streaming };
+      }
+      continue;
+    }
+    const sig = turnSignature(t);
+    if (bySignature.has(sig)) continue;
+    bySignature.set(sig, out.length);
+    out.push(t);
+  }
+  return out;
+}

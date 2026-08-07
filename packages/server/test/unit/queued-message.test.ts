@@ -2,7 +2,11 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { QueuedMessageStore } from "../../src/queued-message.js";
+import {
+  QueuedMessageStore,
+  hasQueuedContent,
+  unionAttachments,
+} from "../../src/queued-message.js";
 
 // Covers the per-chat queued-message sidecar (#197) and the atomic `take` that
 // makes server-authoritative draining safe against double-send (#245).
@@ -191,6 +195,110 @@ describe("QueuedMessageStore", () => {
       // The legacy entry has no version, so the incoming id can't match one: its
       // text is merged in rather than replacing what is already queued.
       expect(next?.text).toBe("legacy\nnew");
+    });
+  });
+  // ── attachments on the slot (#728) ────────────────────────────────────────
+  describe("staged attachments", () => {
+    /** A fresh, deterministic slot-version minter per test (mirrors above). */
+    function versions() {
+      let n = 0;
+      return () => `v${++n}`;
+    }
+    const fileA = { id: "a.txt", filename: "a.txt", kind: "text" };
+    const fileB = { id: "b.png", filename: "b.png", kind: "image" };
+
+    it("carries the files staged behind a queued message", async () => {
+      const store = new QueuedMessageStore(dir);
+      const next = await store.upsert(
+        "keeper-a",
+        "s1",
+        { id: "tab-a", text: "read this", attachments: [fileA] },
+        100,
+        versions(),
+      );
+      expect(next?.text).toBe("read this");
+      expect(next?.attachments).toEqual([fileA]);
+    });
+
+    it("stores a slot with attachments and NO text (#328: a file-only message)", async () => {
+      const store = new QueuedMessageStore(dir);
+      const next = await store.upsert(
+        "keeper-a",
+        "s1",
+        { id: "tab-a", text: "", attachments: [fileA] },
+        100,
+        versions(),
+      );
+      // The old guard returned early on empty text, which is why an
+      // attachment-only submit during a live turn queued nothing at all.
+      expect(next?.text).toBe("");
+      expect(next?.attachments).toEqual([fileA]);
+      expect(hasQueuedContent(next)).toBe(true);
+    });
+
+    it("UNIONS a second client's files rather than replacing them", async () => {
+      const store = new QueuedMessageStore(dir);
+      const mint = versions();
+      await store.upsert("keeper-a", "s1", { id: "tab-a", text: "A", attachments: [fileA] }, 1, mint);
+      const next = await store.upsert(
+        "keeper-a",
+        "s1",
+        { id: "tab-b", text: "B", attachments: [fileB] },
+        2,
+        mint,
+      );
+      expect(next?.text).toBe("A\nB");
+      expect(next?.attachments).toEqual([fileA, fileB]);
+    });
+
+    it("a re-assert with an EMPTY tray does not wipe the slot's files", async () => {
+      const store = new QueuedMessageStore(dir);
+      const mint = versions();
+      const first = await store.upsert(
+        "keeper-a",
+        "s1",
+        { id: "tab-a", text: "A", attachments: [fileA] },
+        1,
+        mint,
+      );
+      // A reloaded client re-asserts its text; by then its tray is empty, because
+      // enqueueing consumed it. Attachments merge additively, so this is a no-op —
+      // if it were a replace, reconnecting would silently drop the user's file.
+      const again = await store.upsert(
+        "keeper-a",
+        "s1",
+        { id: first!.id!, text: "A", attachments: [] },
+        2,
+        mint,
+      );
+      expect(again?.attachments).toEqual([fileA]);
+    });
+
+    it("dedupes by id, so re-sending the same ref adds nothing", async () => {
+      expect(unionAttachments([fileA], [fileA, fileB])).toEqual([fileA, fileB]);
+    });
+
+    it("bounds how many files one slot can hold", async () => {
+      const many = Array.from({ length: 40 }, (_, i) => ({ id: `f${i}`, filename: `f${i}.txt` }));
+      expect(unionAttachments([], many).length).toBe(20);
+    });
+
+    it("survives a corrupt attachments array on disk", async () => {
+      const store = new QueuedMessageStore(dir);
+      await fs.writeFile(
+        path.join(dir, "queued-message.json"),
+        JSON.stringify({
+          "keeper-a\u0000s1": {
+            text: "hi",
+            createdAtMs: 1,
+            attachments: [{ id: "ok.txt", filename: "ok.txt" }, "junk", { filename: "no-id" }],
+          },
+        }),
+        "utf8",
+      );
+      expect((await store.get("keeper-a", "s1"))?.attachments).toEqual([
+        { id: "ok.txt", filename: "ok.txt" },
+      ]);
     });
   });
 });

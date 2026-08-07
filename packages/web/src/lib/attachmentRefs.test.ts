@@ -4,10 +4,15 @@ import {
   readAttachmentRefs,
   writeAttachmentRefs,
   clearAttachmentRefs,
+  newChatInstanceId,
+  rotateNewChatInstance,
 } from "./attachmentRefs";
 import type { AttachmentRef } from "./types";
 
-beforeEach(() => localStorage.clear());
+beforeEach(() => {
+  localStorage.clear();
+  sessionStorage.clear();
+});
 
 const ref = (over: Partial<AttachmentRef> = {}): AttachmentRef => ({
   id: "att-1",
@@ -21,9 +26,37 @@ describe("attachment-ref persistence (#346)", () => {
     expect(attachmentRefsKey("sess-1", "proj")).toBe("paddock:attachments:sess-1");
   });
 
-  it("keys a brand-new chat (no session id) by new:<slug>", () => {
-    expect(attachmentRefsKey(null, "proj")).toBe("paddock:attachments:new:proj");
-    expect(attachmentRefsKey(undefined, "proj")).toBe("paddock:attachments:new:proj");
+  it("keys a brand-new chat by new:<slug>:<instance>, not by slug alone (#728)", () => {
+    const key = attachmentRefsKey(null, "proj");
+    expect(key).toMatch(/^paddock:attachments:new:proj:.+/);
+    // Stable within one new chat — a reload restores the tray it was staging
+    // (#346), which is the behaviour the instance id has to preserve.
+    expect(attachmentRefsKey(undefined, "proj")).toBe(key);
+  });
+
+  it("rotating the new-chat instance forgets the abandoned chat's tray (#728)", () => {
+    writeAttachmentRefs(null, "proj", [ref()]);
+    const before = attachmentRefsKey(null, "proj");
+    expect(readAttachmentRefs(null, "proj")).toHaveLength(1);
+
+    // Explicit "New Chat": this is a DIFFERENT chat, so the file staged on the
+    // abandoned one must not come back pre-staged and ride its first message.
+    // A single `new:<slug>` key shared by every future new chat did exactly that.
+    rotateNewChatInstance("proj");
+    expect(attachmentRefsKey(null, "proj")).not.toBe(before);
+    expect(readAttachmentRefs(null, "proj")).toEqual([]);
+    expect(localStorage.getItem(before)).toBeNull();
+  });
+
+  it("scopes the instance to one project", () => {
+    expect(newChatInstanceId("a")).not.toBe(newChatInstanceId("b"));
+    expect(newChatInstanceId("a")).toBe(newChatInstanceId("a"));
+  });
+
+  it("drops the pre-#728 per-project key on first use, leaving no dead bytes", () => {
+    localStorage.setItem("paddock:attachments:new:legacy", JSON.stringify([ref()]));
+    attachmentRefsKey(null, "legacy");
+    expect(localStorage.getItem("paddock:attachments:new:legacy")).toBeNull();
   });
 
   it("round-trips saved refs", () => {

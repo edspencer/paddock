@@ -11,9 +11,18 @@ import { DictationButton } from "./DictationButton";
 import { api } from "../lib/api";
 import { readChatModel, writeChatModel } from "../lib/chatModel";
 import { readDraft, writeDraft } from "../lib/draft";
-import { readQueued, writeQueued, readQueuedId, writeQueuedId, newQueuedId } from "../lib/queued";
+import {
+  readQueued,
+  writeQueued,
+  readQueuedId,
+  writeQueuedId,
+  readQueuedAttachments,
+  writeQueuedAttachments,
+  newQueuedId,
+} from "../lib/queued";
 import { AlertIcon, ClockIcon, PaperclipIcon, SendIcon, SparkIcon, StopIcon } from "./icons";
 import type {
+  AttachmentRef,
   AttachmentsConfig,
   AttachmentsOverride,
   ChatCompleteUsage,
@@ -31,7 +40,13 @@ import { TriggerCapabilityBanner } from "./TriggerCapabilityBanner";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { PaddockManageProjectContext } from "./PaddockManageBlock";
 // --- extracted chat modules (issue #403) -------------------------------------
-import { type Turn, historyToTurns, nextId, sealStreaming } from "./chat/turnModel";
+import {
+  type Turn,
+  historyToTurns,
+  mergeHydratedTurns,
+  nextId,
+  sealStreaming,
+} from "./chat/turnModel";
 import {
   RecoveryContext,
   type RecoveryContextValue,
@@ -215,6 +230,28 @@ export function ChatPane({
   );
   const queuedRef = useRef<string | null>(queued);
   const queuedIdRef = useRef<string | null>(readQueuedId(initialSessionId, projectSlug));
+  // Issue #728: the files staged behind the queued message. Enqueueing used to
+  // ignore the composer tray entirely — `send()` returned early into setQueued and
+  // never touched `attachRef`, and the flush happens SERVER-side, so `sendText`
+  // (the only consumer of the tray) never ran for a queued message. The tray never
+  // cleared and the file silently rode whatever was sent next. Attachments are now
+  // consumed by ENQUEUEING, exactly as they are by sending: they move out of the
+  // tray, into the queue slot, and out again with the drained turn.
+  //
+  // The slot is server-owned and shared across clients (#751/#629), so this is a
+  // mirror of what the server says is staged, not a private copy — the server
+  // unions attachments in, broadcasts them on `chat:queued_state`, sends them with
+  // the drain, and hands them back on `chat:queued_returned`.
+  const [queuedAttachments, setQueuedAttachments] = useState<AttachmentRef[]>(() =>
+    readQueuedAttachments(initialSessionId, projectSlug),
+  );
+  const queuedAttachRef = useRef<AttachmentRef[]>(queuedAttachments);
+  queuedAttachRef.current = queuedAttachments;
+  // Anything at all queued? A slot can hold files with no prose (#328: an
+  // attachment-only message is valid), so this is text OR attachments — testing
+  // the text alone is why an attachment-only submit during a live turn queued
+  // nothing and rendered no toolbar.
+  const hasQueued = queued != null || queuedAttachments.length > 0;
   // Set when the user hits Stop, so the completion it triggers does NOT flush the
   // queue (we hold rather than fire a follow-up into a cancelled turn). Cleared
   // on the next completion.
@@ -533,7 +570,20 @@ export function ChatPane({
       void loadHistory(initialSessionId)
         .then((msgs) => {
           if (cancelled) return;
-          setTurns(historyToTurns(msgs));
+          // MERGE, don't replace (#726). The socket is attached future-only — a
+          // fresh mount hydrates over REST, so replaying buffered frames would
+          // duplicate — which means any frame that arrives between the server
+          // reading the transcript and this response landing has already been
+          // appended to `prev`. A wholesale replace threw those away: remounting
+          // mid-turn (a tab switch and back) could silently lose the assistant's
+          // entire reply and leave a Task card spinning on RUNNING forever, with
+          // only a page reload to bring them back. `cancelled` guards a newer chat
+          // SWITCH; it never guarded newer frames.
+          //
+          // `prev` here is exactly the live turns since `setTurns([])` above, and
+          // is empty whenever the fetch beat them — so on the fast path (localhost
+          // answers in single-digit ms) this is the same full replace as before.
+          setTurns((prev) => mergeHydratedTurns(historyToTurns(msgs), prev));
         })
         .catch(() => {
           if (!cancelled) setError("Could not load this chat's history.");
@@ -712,8 +762,12 @@ export function ChatPane({
   // and the server can dedup an already-sent copy.
   useEffect(() => {
     writeQueued(initialSessionId, projectSlug, queued);
-    writeQueuedId(initialSessionId, projectSlug, queued ? queuedIdRef.current : null);
-  }, [queued, initialSessionId, projectSlug]);
+    writeQueuedId(initialSessionId, projectSlug, hasQueued ? queuedIdRef.current : null);
+    // The files riding the queued message persist alongside the text (#728) —
+    // otherwise a reload of a chat with an attachment-only queue would show an
+    // empty toolbar for a message the server is still holding.
+    writeQueuedAttachments(initialSessionId, projectSlug, queuedAttachments);
+  }, [queued, queuedAttachments, hasQueued, initialSessionId, projectSlug]);
 
 
   // Push the queued message to the server (#197/#245) — the server is authoritative
@@ -723,8 +777,18 @@ export function ChatPane({
   // initialSessionId updates.
   useEffect(() => {
     if (!initialSessionId) return; // new chat, no session yet
-    chatClient.setQueued(projectSlug, initialSessionId, queued, queued ? queuedIdRef.current : null);
-  }, [queued, initialSessionId, projectSlug, chatClient]);
+    chatClient.setQueued(
+      projectSlug,
+      initialSessionId,
+      queued,
+      hasQueued ? queuedIdRef.current : null,
+      // The staged files go up with the text (#728). The server UNIONS them into
+      // the shared slot, so this pane re-asserting a queue whose files it has
+      // already handed over (its tray is empty by then) adds nothing and removes
+      // nothing — only an explicit clear empties the slot.
+      queuedAttachments,
+    );
+  }, [queued, queuedAttachments, hasQueued, initialSessionId, projectSlug, chatClient]);
 
   // Auto-focus the composer on mount for a fresh chat so the user can type right
   // away: right after forking (autoFocus), and when starting a New Chat — which
@@ -741,14 +805,26 @@ export function ChatPane({
   // after), so we append the user turn to keep the transcript in order; either way
   // the queue toolbar + local/persisted copy are cleared (the socket layer already
   // cleared localStorage). The server owns the send — we only reflect it.
-  const onQueuedFlushed = useCallback((text?: string) => {
-    if (text) {
+  const onQueuedFlushed = useCallback((text?: string, attachments?: AttachmentRef[]) => {
+    const atts = attachments ?? [];
+    // An attachment-only queued message has no text but is still a real turn
+    // (#328/#728), so the bubble renders on EITHER.
+    if (text || atts.length > 0) {
       pinnedRef.current = true;
-      setTurns((prev) => [...sealStreaming(prev), { kind: "user", id: nextId(), content: text }]);
+      setTurns((prev) => [
+        ...sealStreaming(prev),
+        {
+          kind: "user",
+          id: nextId(),
+          content: text ?? "",
+          ...(atts.length > 0 ? { attachments: atts } : {}),
+        },
+      ]);
     }
     queuedRef.current = null;
     queuedIdRef.current = null;
     setQueued(null);
+    setQueuedAttachments([]);
   }, []);
 
   // The chat's queued message changed on the SERVER (#629) — another client (or
@@ -758,31 +834,51 @@ export function ChatPane({
   // it. Ignored when it matches what we already show, so the echo of our own
   // set_queue settles in one round trip instead of looping.
   const onQueuedState = useCallback(
-    (text: string | null, qid?: string, reason?: "returned") => {
+    (text: string | null, qid?: string, reason?: "returned", attachments?: AttachmentRef[]) => {
       if (qid) queuedIdRef.current = qid;
       const next = text && text.length > 0 ? text : null;
+      const atts = attachments ?? [];
       // Someone else pressed Stop and took the queued message back to their own
       // composer. Say so: a chip disappearing from under you with no explanation
       // is the same silence that made a second client's overwrite so confusing
       // (#629). The client that pressed Stop is not sent this — it watches the
       // text land in its own composer.
-      if (reason === "returned" && queuedRef.current != null) {
+      if (reason === "returned" && (queuedRef.current != null || queuedAttachRef.current.length)) {
         setNotice("Stopped — the queued message went back to the composer that stopped the turn.");
       }
-      if (queuedRef.current === next) return;
+      // The slot's files are shared state too (#728), so a broadcast that only
+      // repeats our text can still be carrying a file another device staged.
+      const sameAtts =
+        atts.length === queuedAttachRef.current.length &&
+        atts.every((a, i) => a.id === queuedAttachRef.current[i]?.id);
+      if (queuedRef.current === next && sameAtts) return;
       queuedRef.current = next;
-      if (next === null) queuedIdRef.current = null;
+      if (next === null && atts.length === 0) queuedIdRef.current = null;
       setQueued(next);
+      if (!sameAtts) setQueuedAttachments(atts);
     },
     [],
   );
   const onQueuedStateRef = useRef(onQueuedState);
   onQueuedStateRef.current = onQueuedState;
 
-  const popQueuedToComposer = useCallback((text: string) => {
+  const popQueuedToComposer = useCallback(
+    (text: string, attachments?: AttachmentRef[]) => {
     queuedRef.current = null;
     queuedIdRef.current = null;
     setQueued(null);
+    // The files come back to the composer TRAY, not the draft (#728): the message
+    // is being handed back whole, and putting the prose back while dropping its
+    // attachments would be the same silent loss in a nicer costume. Merged by id
+    // so a file already staged for the next message isn't duplicated.
+    const back = attachments ?? queuedAttachRef.current;
+    if (back.length > 0) {
+      setAttachments((prev) => {
+        const seen = new Set(prev.map((a) => a.id));
+        return [...prev, ...back.filter((a) => !seen.has(a.id))];
+      });
+    }
+    setQueuedAttachments([]);
     setDraft((prev) => (prev.trim() ? `${text}\n${prev}` : text));
     requestAnimationFrame(() => {
       const el = composerRef.current;
@@ -792,7 +888,9 @@ export function ChatPane({
         el.focus();
       }
     });
-  }, []);
+    },
+    [setAttachments],
+  );
 
   // The user pressed Stop, so the server handed this chat's queued message back
   // to US rather than sending it — Stop means "give me control back", and having
@@ -801,7 +899,7 @@ export function ChatPane({
   // so it merges with any draft already typed and persists through the same
   // writeDraft effect. The server has already cleared its copy of the slot.
   const onQueuedReturned = useCallback(
-    (text: string) => popQueuedToComposer(text),
+    (text: string, attachments?: AttachmentRef[]) => popQueuedToComposer(text, attachments),
     [popQueuedToComposer],
   );
   const onQueuedReturnedRef = useRef(onQueuedReturned);
@@ -923,8 +1021,30 @@ export function ChatPane({
     // the slot stays single (Claude Code's model). The composer clears either
     // way, and the queued toolbar surfaces it above the composer.
     if (streaming) {
+      // Enqueueing CONSUMES the composer attachments, exactly as sending does
+      // (#728). This path used to return without touching `attachRef` at all, and
+      // because the queue is flushed server-side, `sendText` — the only consumer
+      // of the tray — never ran for a queued message. The tray stayed populated
+      // and the file silently rode the next, unrelated send.
+      //
+      // A leading-slash queue is the one exception, mirroring `sendText`: the CLI
+      // dispatches a slash command and it carries no files, so they stay staged
+      // for the real message the user is about to type rather than being thrown
+      // away (#346 — silently dropping staged attachments is its own bug).
+      const isCommand = (queuedRef.current ?? text).startsWith("/");
+      const atts = isCommand ? [] : attachRef.current;
+      if (atts.length > 0) {
+        setQueuedAttachments((prev) => {
+          const seen = new Set(prev.map((a) => a.id));
+          return [...prev, ...atts.filter((a) => !seen.has(a.id))];
+        });
+        setAttachments([]);
+        attachRef.current = [];
+      }
       setQueued((prev) => {
-        const next = prev ? `${prev}\n${text}` : text;
+        // An attachment-only submit leaves the text alone: `""` is not a message,
+        // and joining it would put a stray blank line into the queued prose.
+        const next = text ? (prev ? `${prev}\n${text}` : text) : prev;
         queuedRef.current = next;
         // Mint a stable id for a fresh queue; keep it when appending to an existing
         // one (same pending message) so its identity is stable (#245).
@@ -937,7 +1057,7 @@ export function ChatPane({
     }
     setDraft("");
     sendText(text);
-  }, [draft, streaming, sendText]);
+  }, [draft, streaming, sendText, attachRef, setAttachments]);
 
 
 
@@ -946,8 +1066,10 @@ export function ChatPane({
   // setQueued(null) effect — it's a draft again until re-submitted (#91).
   const editQueued = useCallback(() => {
     const text = queuedRef.current;
-    if (text == null) return;
-    popQueuedToComposer(text);
+    // An attachment-only queue has no text but is still editable: Edit hands the
+    // files back to the tray (#728).
+    if (text == null && queuedAttachRef.current.length === 0) return;
+    popQueuedToComposer(text ?? "");
   }, [popQueuedToComposer]);
 
   // Discard the queued message entirely (the setQueued(null) effect clears the
@@ -956,6 +1078,9 @@ export function ChatPane({
     queuedRef.current = null;
     queuedIdRef.current = null;
     setQueued(null);
+    // Clear discards the whole message, files included — deliberate, on something
+    // the user can see (the bar lists the chips).
+    setQueuedAttachments([]);
   }, []);
 
   const cancel = useCallback(() => {
@@ -1148,8 +1273,13 @@ export function ChatPane({
 
       {/* Queued-message toolbar (#91): the single message stacked to auto-send
           when the current turn frees up. Sits directly above the composer. */}
-      {queued != null && (
-        <QueuedMessageBar text={queued} onEdit={editQueued} onClear={clearQueued} />
+      {hasQueued && (
+        <QueuedMessageBar
+          text={queued ?? ""}
+          attachments={queuedAttachments}
+          onEdit={editQueued}
+          onClear={clearQueued}
+        />
       )}
 
       {/* composer */}

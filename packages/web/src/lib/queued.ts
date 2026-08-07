@@ -16,6 +16,8 @@
 //
 // Cheap, try/catch-guarded for private mode / quota, never throws.
 
+import type { AttachmentKind, AttachmentRef } from "./types";
+
 const PREFIX = "paddock:queued:";
 
 /**
@@ -109,6 +111,66 @@ export function writeQueuedId(
     // The pre-#736 key is superseded either way; drop it so a later read can't
     // resurrect a stale identity from it.
     localStorage.removeItem(queuedTsKey(sessionId, slug));
+  } catch {
+    /* ignore (private mode / quota) */
+  }
+}
+
+const ATT_PREFIX = "paddock:queuedatt:";
+
+/** The localStorage key for the files staged on a chat's queued message (#728). */
+function queuedAttKey(sessionId: string | null | undefined, slug: string): string {
+  return ATT_PREFIX + (sessionId ?? `new:${slug}`);
+}
+
+/**
+ * Read the attachment refs riding a chat's queued message (#728), or `[]`.
+ *
+ * The server owns the slot and re-announces it on subscribe, so this is mostly the
+ * bridge across the window before that frame lands — and the only store at all for
+ * a brand-new chat, whose queue isn't persisted server-side until its session id
+ * exists. Sanitised defensively like lib/attachmentRefs.ts: a corrupt value reads
+ * as "nothing queued", never as a throw.
+ */
+export function readQueuedAttachments(
+  sessionId: string | null | undefined,
+  slug: string,
+): AttachmentRef[] {
+  try {
+    const raw = localStorage.getItem(queuedAttKey(sessionId, slug));
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const out: AttachmentRef[] = [];
+    for (const v of parsed) {
+      if (!v || typeof v !== "object") continue;
+      const o = v as Record<string, unknown>;
+      if (typeof o.id !== "string" || !o.id) continue;
+      if (typeof o.filename !== "string" || !o.filename) continue;
+      const ref: AttachmentRef = {
+        id: o.id,
+        filename: o.filename,
+        kind: (typeof o.kind === "string" ? o.kind : "file") as AttachmentKind,
+      };
+      if (typeof o.size === "number" && Number.isFinite(o.size)) ref.size = o.size;
+      out.push(ref);
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/** Persist (or, when empty, forget) the files staged on a chat's queued message. */
+export function writeQueuedAttachments(
+  sessionId: string | null | undefined,
+  slug: string,
+  refs: AttachmentRef[],
+): void {
+  try {
+    const key = queuedAttKey(sessionId, slug);
+    if (refs.length > 0) localStorage.setItem(key, JSON.stringify(refs));
+    else localStorage.removeItem(key);
   } catch {
     /* ignore (private mode / quota) */
   }

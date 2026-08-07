@@ -13,6 +13,7 @@ import type {
 import { StatusPill } from "../components/StatusPill";
 import { TagPill } from "../components/TagPill";
 import { ChatPane } from "../components/ChatPane";
+import { rotateNewChatInstance } from "../lib/attachmentRefs";
 import type { ShellOutletContext } from "../components/AppShell";
 import { ChangesPane } from "../components/ChangesPane";
 import { HistoryPane } from "../components/HistoryPane";
@@ -674,8 +675,13 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
   // would otherwise leave `routeSessionId` null and make `goChat` a no-op).
   const newChat = useCallback(() => {
     setNewChatNonce((n) => n + 1);
+    // This is a DIFFERENT chat, not a return to the one being composed, so the
+    // abandoned one's staged attachments must not follow it (#728). Rotating the
+    // new-chat instance id is the only place that distinction is made: navigating
+    // away and back deliberately keeps the tray (#346).
+    rotateNewChatInstance(slug);
     goChat();
-  }, [goChat]);
+  }, [goChat, slug]);
   const openChat = useCallback(
     (sessionId: string) =>
       navigate(`${base}/chat/${encodeURIComponent(sessionId)}`),

@@ -19,6 +19,7 @@
 //   chat:error            { projectSlug, error }
 //   pong
 import type {
+  AttachmentRef,
   ChatCompleteUsage,
   EditDiff,
   ReadInfo,
@@ -114,18 +115,24 @@ export interface ChatHandlers {
    * stale/already-sent copy. The server is authoritative — the client never sends
    * the queued message itself.
    */
-  onQueuedFlushed?: (meta: { text?: string }) => void;
+  onQueuedFlushed?: (meta: { text?: string; attachments?: AttachmentRef[] }) => void;
   /**
    * The chat's queued message changed on the server (#629): another client queued
    * alongside us, edited the slot, or cleared it. `text` is the slot's full
-   * contents (null when empty) and `qid` its identity, which the pane adopts.
+   * contents (null when empty), `attachments` the files staged on it (#728), and
+   * `qid` its identity, which the pane adopts.
    */
-  onQueuedState?: (meta: { text: string | null; qid?: string; reason?: "returned" }) => void;
+  onQueuedState?: (meta: {
+    text: string | null;
+    attachments?: AttachmentRef[];
+    qid?: string;
+    reason?: "returned";
+  }) => void;
   /**
    * A Stop handed this chat's queued message back to THIS client's composer
-   * (#751). Only the socket that pressed Stop receives it.
+   * (#751), files and all (#728). Only the socket that pressed Stop receives it.
    */
-  onQueuedReturned?: (meta: { text: string }) => void;
+  onQueuedReturned?: (meta: { text: string; attachments?: AttachmentRef[] }) => void;
   /**
    * A machine-injected user turn arrived for this chat (#290): another chat
    * `send_message`d / a schedule fired into it. Render the injected user bubble
@@ -384,8 +391,19 @@ class ChatClient {
     sessionId: string,
     text: string | null,
     qid?: string | null,
+    attachments?: AttachmentRef[],
   ): void {
     const payload: Record<string, unknown> = { projectSlug, sessionId, text, qid };
+    // The files staged behind this queued message (#728). The server merges them
+    // into the shared slot additively, so omitting them never clears any — which
+    // is what makes a re-assert from a client whose tray is empty harmless.
+    if (attachments && attachments.length > 0) {
+      payload.attachments = attachments.map((a) => ({
+        id: a.id,
+        filename: a.filename,
+        kind: a.kind,
+      }));
+    }
     this.transmit(JSON.stringify({ type: "chat:set_queue", payload }));
   }
 
@@ -684,16 +702,23 @@ class ChatClient {
       // The server auto-sent (or is clearing a stale copy of) the queued message.
       // Clear this chat's localStorage copy (#197/#245), and hand any mounted pane
       // the text so it renders the sent bubble + clears its in-memory queued state.
-      const { sessionId, text } = msg.payload as { sessionId?: string; text?: string };
+      const { sessionId, text, attachments } = msg.payload as {
+        sessionId?: string;
+        text?: string;
+        attachments?: AttachmentRef[];
+      };
       if (sessionId) {
         // Import inline to avoid a circular dependency.
-        void import("./queued.js").then(({ writeQueued, writeQueuedId }) => {
-          writeQueued(sessionId, slug, null);
-          writeQueuedId(sessionId, slug, null);
-        });
+        void import("./queued.js").then(
+          ({ writeQueued, writeQueuedId, writeQueuedAttachments }) => {
+            writeQueued(sessionId, slug, null);
+            writeQueuedId(sessionId, slug, null);
+            writeQueuedAttachments(sessionId, slug, []);
+          },
+        );
         for (const sub of this.subs.values()) {
           if (sub.projectSlug === slug && sub.sessionId === sessionId) {
-            sub.handlers.onQueuedFlushed?.({ text });
+            sub.handlers.onQueuedFlushed?.({ text, attachments });
           }
         }
       }
@@ -706,21 +731,30 @@ class ChatClient {
       // into localStorage and hand it to any mounted pane. Before this, a queue was
       // written and never announced: a second client's queue silently replaced the
       // first's, whose chip went on showing a message that no longer existed.
-      const { sessionId, text, qid, reason } = msg.payload as {
+      const { sessionId, text, qid, reason, attachments } = msg.payload as {
         sessionId?: string;
         text?: string | null;
         qid?: string;
         reason?: "returned";
+        attachments?: AttachmentRef[];
       };
       if (sessionId) {
         const next = text && text.length > 0 ? text : null;
-        void import("./queued.js").then(({ writeQueued, writeQueuedId }) => {
-          writeQueued(sessionId, slug, next);
-          writeQueuedId(sessionId, slug, next ? (qid ?? null) : null);
-        });
+        // The slot can hold files with no prose (#328/#728), so "is it empty" is
+        // text OR attachments — keying the persisted id off `next` alone would
+        // forget the identity of an attachment-only slot.
+        const atts = attachments ?? [];
+        const occupied = next !== null || atts.length > 0;
+        void import("./queued.js").then(
+          ({ writeQueued, writeQueuedId, writeQueuedAttachments }) => {
+            writeQueued(sessionId, slug, next);
+            writeQueuedId(sessionId, slug, occupied ? (qid ?? null) : null);
+            writeQueuedAttachments(sessionId, slug, atts);
+          },
+        );
         for (const sub of this.subs.values()) {
           if (sub.projectSlug === slug && sub.sessionId === sessionId) {
-            sub.handlers.onQueuedState?.({ text: next, qid, reason });
+            sub.handlers.onQueuedState?.({ text: next, attachments: atts, qid, reason });
           }
         }
       }
@@ -731,15 +765,24 @@ class ChatClient {
       // A Stop gave this chat's queued message back to us rather than sending it
       // (#751). Clear the persisted queue copy — it is a composer draft now, and
       // the pane persists it as one — then hand the text to the mounted pane.
-      const { sessionId, text } = msg.payload as { sessionId?: string; text?: string };
+      const { sessionId, text, attachments } = msg.payload as {
+        sessionId?: string;
+        text?: string;
+        attachments?: AttachmentRef[];
+      };
       if (sessionId && typeof text === "string") {
-        void import("./queued.js").then(({ writeQueued, writeQueuedId }) => {
-          writeQueued(sessionId, slug, null);
-          writeQueuedId(sessionId, slug, null);
-        });
+        void import("./queued.js").then(
+          ({ writeQueued, writeQueuedId, writeQueuedAttachments }) => {
+            writeQueued(sessionId, slug, null);
+            writeQueuedId(sessionId, slug, null);
+            // The files go back to the composer TRAY, which persists them under
+            // its own key (#346) — so the queue's copy is forgotten here.
+            writeQueuedAttachments(sessionId, slug, []);
+          },
+        );
         for (const sub of this.subs.values()) {
           if (sub.projectSlug === slug && sub.sessionId === sessionId) {
-            sub.handlers.onQueuedReturned?.({ text });
+            sub.handlers.onQueuedReturned?.({ text, attachments });
           }
         }
       }

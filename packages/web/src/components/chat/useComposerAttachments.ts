@@ -9,7 +9,7 @@ import {
   useState,
 } from "react";
 import { api } from "../../lib/api";
-import { readAttachmentRefs, writeAttachmentRefs } from "../../lib/attachmentRefs";
+import { attachmentRefsKey, readAttachmentRefs, writeAttachmentRefs } from "../../lib/attachmentRefs";
 import { isTypeAllowed as isAttachmentTypeAllowed } from "../../lib/attachments";
 import type { AttachmentRef, AttachmentsConfig, AttachmentsOverride } from "../../lib/types";
 
@@ -88,6 +88,29 @@ export function useComposerAttachments({
   useEffect(() => {
     writeAttachmentRefs(initialSessionId, projectSlug, attachments);
   }, [attachments, initialSessionId, projectSlug]);
+
+  // A brand-new chat stages its refs under a pre-session key; the moment its
+  // session id arrives, `initialSessionId` changes (WITHOUT a remount) and the
+  // effect above rewrites them under the real key. The pre-session copy is then a
+  // duplicate that nothing owns — and, before #728 keyed it per new-chat instance,
+  // it was the SAME key the next new chat in this project would read, so an
+  // abandoned staging silently re-attached itself later. Drop it here so it can't
+  // outlive the chat that made it, whichever way it was left behind.
+  const preSessionKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!initialSessionId) {
+      preSessionKeyRef.current = attachmentRefsKey(null, projectSlug);
+      return;
+    }
+    const stale = preSessionKeyRef.current;
+    preSessionKeyRef.current = null;
+    if (!stale || stale === attachmentRefsKey(initialSessionId, projectSlug)) return;
+    try {
+      localStorage.removeItem(stale);
+    } catch {
+      /* ignore (private mode) */
+    }
+  }, [initialSessionId, projectSlug]);
 
   // The composer's effective attachment config: the per-project override wins
   // field-wise over the instance default (from /api/models). Allow-all defaults

@@ -52,6 +52,13 @@ function keyOf(agent: string, sessionId: string): string {
 const MERGE_SEP = "\n";
 /** How many (id, text) identities one slot remembers. Bounds the sidecar entry. */
 const MAX_KNOWN = 24;
+/**
+ * How many attachments one slot can hold (#728). The composer caps a single
+ * message at 10 by default, but the slot is shared and merges additively, so two
+ * devices could otherwise stack refs into the sidecar without bound. Well above
+ * any real queued follow-up; the excess is dropped rather than persisted.
+ */
+const MAX_SLOT_ATTACHMENTS = 20;
 
 /**
  * One identity a chat's queued message has been known by.
@@ -68,9 +75,23 @@ export interface QueuedPart {
   text: string;
 }
 
+/**
+ * A composer attachment staged on the slot (#728) — the same lightweight ref the
+ * `chat:send` path carries. The bytes live in the AttachmentStore; only the id,
+ * filename and kind travel with the queued message.
+ */
+export interface QueuedAttachment {
+  id: string;
+  filename: string;
+  kind?: string;
+}
+
 /** A queued message awaiting auto-send. */
 export interface QueuedMessage {
-  /** The slot's full text — what gets sent. */
+  /**
+   * The slot's full text — what gets sent. May be `""` when the slot holds only
+   * attachments (#728: an attachment-only message is valid, #328).
+   */
   text: string;
   /** SERVER-stamped enqueue time. Informational — never load-bearing (#736). */
   createdAtMs: number;
@@ -86,6 +107,57 @@ export interface QueuedMessage {
    * entry written by an older server; readers treat that as one legacy identity.
    */
   parts?: QueuedPart[];
+  /**
+   * Files staged in the composer that ride this message when it drains (#728).
+   * Merged as a UNION BY ID so a write can only ever add: a client re-asserting
+   * its queue after a reload has an empty tray by then, and must not be able to
+   * wipe the files off the shared slot.
+   */
+  attachments?: QueuedAttachment[];
+}
+
+/**
+ * Union two attachment lists by id, preserving order and preferring the entry
+ * already on the slot (its filename/kind is the one every client has been shown).
+ * Bounded by {@link MAX_SLOT_ATTACHMENTS}.
+ */
+export function unionAttachments(
+  current: QueuedAttachment[] | undefined,
+  incoming: QueuedAttachment[] | undefined,
+): QueuedAttachment[] {
+  const out: QueuedAttachment[] = [];
+  const seen = new Set<string>();
+  for (const a of [...(current ?? []), ...(incoming ?? [])]) {
+    if (!a || typeof a.id !== "string" || !a.id || seen.has(a.id)) continue;
+    seen.add(a.id);
+    out.push(a.kind === undefined ? { id: a.id, filename: a.filename } : { ...a });
+    if (out.length >= MAX_SLOT_ATTACHMENTS) break;
+  }
+  return out;
+}
+
+/** Narrow a parsed value to a well-formed attachment list (dropping junk). */
+function sanitizeAttachments(v: unknown): QueuedAttachment[] {
+  if (!Array.isArray(v)) return [];
+  const out: QueuedAttachment[] = [];
+  for (const a of v) {
+    if (!a || typeof a !== "object") continue;
+    const o = a as Record<string, unknown>;
+    if (typeof o.id !== "string" || !o.id) continue;
+    if (typeof o.filename !== "string" || !o.filename) continue;
+    out.push({
+      id: o.id,
+      filename: o.filename,
+      ...(typeof o.kind === "string" ? { kind: o.kind } : {}),
+    });
+  }
+  return out;
+}
+
+/** Does this slot hold anything worth sending? Text, attachments, or both. */
+export function hasQueuedContent(m: QueuedMessage | null | undefined): boolean {
+  if (!m) return false;
+  return m.text.length > 0 || (m.attachments?.length ?? 0) > 0;
 }
 
 /**
@@ -165,11 +237,16 @@ export class QueuedMessageStore {
                 )
               : [];
             const id = typeof (v as Record<string, unknown>).id === "string" ? entry.id : undefined;
+            // Same tolerance for the staged attachments (#728): malformed entries
+            // are dropped, never thrown on — a corrupt sidecar must not be able to
+            // stop the queue loading.
+            const attachments = sanitizeAttachments((v as Record<string, unknown>).attachments);
             map.set(k, {
               text: entry.text,
               createdAtMs: entry.createdAtMs,
               ...(id ? { id } : {}),
               ...(parts.length > 0 ? { parts } : {}),
+              ...(attachments.length > 0 ? { attachments } : {}),
             });
           }
         }
@@ -252,36 +329,57 @@ export class QueuedMessageStore {
   async upsert(
     agent: string,
     sessionId: string,
-    incoming: QueuedPart,
+    incoming: QueuedPart & { attachments?: QueuedAttachment[] },
     nowMs: number,
     mintVersion: () => string,
   ): Promise<QueuedMessage | null> {
     const map = await this.ensureLoaded();
     const key = keyOf(agent, sessionId);
     const current = map.get(key) ?? null;
-    if (!incoming.text.trim()) return current;
+    // Attachments merge additively and independently of the text (#728): a write
+    // can add files, never remove them. Computed first so an attachments-only
+    // write — a valid message with no prose (#328) — has something to write even
+    // though every text rule below leaves the text alone.
+    const attachments = unionAttachments(current?.attachments, incoming.attachments);
+    const gainedAttachments = attachments.length > (current?.attachments?.length ?? 0);
+    const hasText = incoming.text.trim().length > 0;
+    if (!hasText && !gainedAttachments) return current;
     const known = current ? partsOf(current) : [];
-    // Already folded in under some identity ⇒ a re-assert, not new text.
-    if (known.some((p) => p.text === incoming.text)) return current;
+    // Already folded in under some identity ⇒ a re-assert, not new text. Still
+    // worth writing if it brought new files with it.
+    if (hasText && known.some((p) => p.text === incoming.text) && !gainedAttachments) {
+      return current;
+    }
+    const textIsNew = hasText && !known.some((p) => p.text === incoming.text);
     const text = !current
       ? incoming.text
-      : incoming.id === current.id
-        ? // The client can see the slot as it stands, so its text IS the slot.
-          incoming.text
-        : mergeInto(current.text, known, incoming.text);
+      : !textIsNew
+        ? // Nothing new to say — an attachments-only write, or a re-assert that
+          // brought files. The slot's prose is untouched.
+          current.text
+        : incoming.id === current.id
+          ? // The client can see the slot as it stands, so its text IS the slot.
+            incoming.text
+          : mergeInto(current.text, known, incoming.text);
     const version = mintVersion();
     // Remember BOTH identities this write creates: what the client sent (which it
     // will re-assert on reload) and the version we hand back (which it will
     // re-assert once it adopts the broadcast). Either one reaching a later drain
     // has to be recognisable as already-flushed.
-    const parts = [...known, { id: incoming.id, text: incoming.text }, { id: version, text }].slice(
-      -MAX_KNOWN,
-    );
+    // An attachments-only write contributes no text, so it contributes no identity
+    // to remember either — an empty-text part would match nothing and only crowd
+    // the ledger. The slot version is always recorded.
+    const parts = [
+      ...known,
+      ...(hasText ? [{ id: incoming.id, text: incoming.text }] : []),
+      { id: version, text },
+    ].slice(-MAX_KNOWN);
     const next: QueuedMessage = {
       text,
       createdAtMs: current?.createdAtMs ?? nowMs,
       id: version,
       parts,
+      ...(attachments.length > 0 ? { attachments } : {}),
     };
     map.set(key, next);
     await this.persist(map);
