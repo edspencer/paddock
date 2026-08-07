@@ -48,8 +48,10 @@
  */
 import {
   FleetManager,
+  clearSession,
   countPendingAsyncQueueEntries,
   getCliSessionFile,
+  getSessionInfo,
   type DiscoveredSession,
   type ChatMessage,
   type SDKMessage,
@@ -906,6 +908,10 @@ export class HerdctlService {
       if (copies.has(sessionId)) {
         const placed = getCliSessionFile(project.workingDir, sessionId, this.cfg.claudeHome);
         await fs.rm(placed, { force: true }).catch(() => undefined);
+        // Same removal, same hazard as a chat delete: a pointer left naming a
+        // transcript we just removed breaks the NEXT resume of a DIFFERENT chat
+        // in this project. See dropAgentSessionPointer (#730).
+        await this.dropAgentSessionPointer(agent, sessionId);
       }
       released.push(sessionId);
     }
@@ -942,6 +948,7 @@ export class HerdctlService {
     // In-place adoption placed nothing; `origin` IS the user's file.
     if (path.resolve(placed) === path.resolve(origin)) return;
     await fs.rm(placed, { force: true }).catch(() => undefined);
+    await this.dropAgentSessionPointer(agent, sessionId); // #730, as in undoImport
   }
 
   /**
@@ -1005,11 +1012,77 @@ export class HerdctlService {
    */
   async deleteSession(agentName: string, sessionId: string): Promise<ChatDeletion> {
     if (this.cfg.claude.transcripts === "own") {
-      return { removed: await this.manager.deleteSession(agentName, sessionId), retained: false };
+      const removed = await this.manager.deleteSession(agentName, sessionId);
+      await this.dropAgentSessionPointer(agentName, sessionId);
+      return { removed, retained: false };
     }
     await this.manager.unadoptSession(agentName, sessionId).catch(() => undefined);
     this.invalidateSessions(agentName);
     return { removed: false, retained: true };
+  }
+
+  /**
+   * Drop the agent-level session pointer when it names a transcript we just
+   * removed. Issue #730 — silent data loss, and the fix is one `rm` of a file
+   * that is already dangling by the time we get here.
+   *
+   * herdctl keeps ONE "this agent's current session" pointer per agent at
+   * `<stateDir>/sessions/<agent>.json`, rewritten after every batch turn — so it
+   * always names whichever chat ran most recently. It exists for exactly one
+   * purpose: resume that session when a caller asks for a turn WITHOUT naming a
+   * session. Paddock's chat sends always name one, so we never read it.
+   *
+   * It still reaches us, via how the JobExecutor reacts to it going stale.
+   * Deleting the most-recently-active chat leaves the pointer naming a transcript
+   * that is no longer on disk. On the NEXT turn — any chat, `resume: A`
+   * explicitly — the executor's timeout-aware read of the pointer judges it
+   * `file_not_found`, clears it, and reports "no session". The branch that
+   * handles that case then refuses to honor the caller's `resume`, because a
+   * pointer HAD existed a moment ago and the executor reads that as "this agent's
+   * session just expired, so start fresh" (herdctl's `hadAgentSession` gate,
+   * job-executor.js). It is the wrong reading: the pointer named B, the caller
+   * asked for A, and A's transcript is right there. The turn starts a brand-new
+   * session, the UI keeps showing A, and the user's message lands somewhere they
+   * will only find by reloading.
+   *
+   * That misreading is an upstream bug and the real fix belongs there — the gate
+   * should compare the cleared pointer's id against the caller's `resume` rather
+   * than treating any prior pointer as disqualifying (filed as
+   * edspencer/herdctl#448).
+   * What we do here is narrower and true regardless: a pointer to a transcript
+   * Paddock has just deleted is dangling, and herdctl would clear it at the next
+   * turn anyway — we clear it now, at the moment we make it dangle, so the next
+   * turn sees a clean "this agent owns no session" and adopts the caller's
+   * explicit `resume` (which is the same path a process restart takes, and why
+   * this always "worked after a restart").
+   *
+   * Only clears a pointer that names THIS session: another chat's pointer is
+   * live state and none of our business. Best-effort throughout — failing to
+   * tidy state must never fail the delete the user asked for.
+   *
+   * Called from every place Paddock removes a transcript from an agent's working
+   * directory: the `own` delete path, {@link promoteSession} (which moves the
+   * file out from under the source keeper by the same call), and the two
+   * import-undo paths that delete a copy an import placed. `archive` leaves the
+   * file alone, so it never dangles the pointer — which matches the reproduction
+   * exactly: archive is fine, delete and promote are not. Under
+   * `claude.transcripts: host` nothing is removed, so there is nothing to drop.
+   *
+   * The SDK session path (`driveMode: session`, the default) never reads the
+   * pointer for an explicit resume, so it is structurally immune; this is a
+   * `driveMode: batch` fix.
+   */
+  private async dropAgentSessionPointer(agentName: string, sessionId: string): Promise<void> {
+    try {
+      const sessionsDir = path.join(this.cfg.stateDir, "sessions");
+      // Read WITHOUT a timeout: the timeout-aware read is the one that clears,
+      // and we want to decide for ourselves, on the id alone.
+      const pointer = await getSessionInfo(sessionsDir, agentName);
+      if (pointer?.session_id !== sessionId) return;
+      await clearSession(sessionsDir, agentName);
+    } catch {
+      // Best-effort: the delete has already happened and stands.
+    }
   }
 
   /**
@@ -1533,6 +1606,10 @@ export class HerdctlService {
     const fromAgent = keeperAgentName(from.slug);
     await this.manager.deleteSession(fromAgent, sessionId).catch(() => undefined);
     await fs.rm(fromFile, { force: true });
+    // The source keeper's agent-level session pointer may name the chat we just
+    // moved out from under it. Left dangling it breaks the NEXT resume of any
+    // OTHER chat in the source project — see dropAgentSessionPointer (#730).
+    await this.dropAgentSessionPointer(fromAgent, sessionId);
 
     // Re-attribute the session to the new keeper, then drop the discovery +
     // attribution caches so the move shows immediately.
