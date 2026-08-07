@@ -40,6 +40,11 @@ import {
 import { sanitizeRecoveryOverride } from "./recovery-config.js";
 import { sanitizeCurationOverride } from "./curation-config.js";
 import { sanitizeAttachmentsOverride } from "./attachments-config.js";
+import {
+  PROJECT_SCHEMA_VERSION,
+  SCHEMA_VERSION_KEY,
+  projectSchemaSkip,
+} from "./schema-version.js";
 
 // --- re-export barrels (issue #403) ------------------------------------------
 // The moved symbols are re-exported from here so external importers keep finding
@@ -152,6 +157,9 @@ export class ProjectStore {
     private readonly dataDir?: string,
     private readonly log: { warn: (message: string) => void } = { warn: () => {} },
   ) {}
+
+  /** `${file} ${declaredVersion}` pairs already warned about — see {@link warnOnceAboutSchema}. */
+  private readonly schemaWarned = new Set<string>();
 
   /** Ensure the projects root exists. Call once at startup. */
   async init(): Promise<void> {
@@ -1205,14 +1213,27 @@ export class ProjectStore {
    */
   private async readSafe(key: string): Promise<Project | null> {
     const dir = this.dirFor(key);
+    const file = path.join(dir, PROJECT_FILE);
     let yaml: ProjectYaml;
     try {
-      const raw = await fs.readFile(path.join(dir, PROJECT_FILE), "utf8");
+      const raw = await fs.readFile(file, "utf8");
       const parsed = YAML.parse(raw) as Partial<ProjectYaml> | null;
       if (!parsed || typeof parsed !== "object") {
         if (!isRootKey(key)) return null;
         yaml = this.normalize({}, key);
       } else {
+        // The downgrade guard (#724), BEFORE `normalize` gets to be lenient with
+        // it. A file from the future is skipped whole — including the root's,
+        // which falls through to a `not_found` rather than to the empty-record
+        // defaults, because those defaults are precisely what a subsequent write
+        // would flatten it to. Nothing is written here, and every mutator reaches
+        // the file through `get()`, so a skipped record cannot be rewritten.
+        const declared = (parsed as Record<string, unknown>)[SCHEMA_VERSION_KEY];
+        const skip = projectSchemaSkip(declared, file);
+        if (skip !== undefined) {
+          this.warnOnceAboutSchema(file, declared, skip);
+          return null;
+        }
         yaml = this.normalize(parsed, key);
       }
     } catch {
@@ -1391,8 +1412,30 @@ export class ProjectStore {
     const header =
       "# Paddock project metadata. Directory name MUST equal `slug`.\n" +
       "# status: idea | active | paused | blocked | done | abandoned\n";
-    const body = YAML.stringify(yaml);
+    // Stamped here rather than threaded through ProjectYaml/the DTO, because
+    // this is the one write choke point and because what it describes is the
+    // FILE, not the project (#724). Unconditional and first: every write is a
+    // full rewrite from the normalized record, so what lands on disk is by
+    // construction this build's shape whatever the file said before. A legacy
+    // file therefore gains the key the next time it is saved for some other
+    // reason — there is no backfill pass, and merely reading one writes nothing.
+    const body = YAML.stringify({ [SCHEMA_VERSION_KEY]: PROJECT_SCHEMA_VERSION, ...yaml });
     await fs.writeFile(path.join(this.dirFor(slug), PROJECT_FILE), header + body, "utf8");
+  }
+
+  /**
+   * Say out loud that a project was skipped for being from the future (#724),
+   * once per (file, declared version).
+   *
+   * `list()` runs on every `GET /api/projects`, so an unconditional warn would
+   * bury the log. Keyed on the declared version as well as the path so a
+   * hand-edit — or the same instance being downgraded further — speaks up again.
+   */
+  private warnOnceAboutSchema(file: string, declared: unknown, message: string): void {
+    const seen = `${file} @ ${JSON.stringify(declared) ?? "?"}`;
+    if (this.schemaWarned.has(seen)) return;
+    this.schemaWarned.add(seen);
+    this.log.warn(message);
   }
 
   private toDto(dir: string, yaml: ProjectYaml, hasOverview: boolean): Project {
