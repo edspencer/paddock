@@ -13,6 +13,16 @@
  * the drain finish before `chat:complete`, the directive silently stops
  * reproducing the condition and every test built on it turns into a
  * false green. That is what this guards.
+ *
+ * The second test guards the OTHER half of that same trap, added alongside the
+ * #725 cause-B client fix. Producing the on-disk state is not enough: the state
+ * has to reach the client through REST in the shape the running-sub-agents bar
+ * consumes. A `Task` whose sidecar is missing comes back with `hasSubagent`
+ * false and is not a candidate at all, and one the server has already stamped a
+ * `subagentDurationMs` onto is dropped as finished — either way a browser test
+ * finds an empty bar for a reason that has nothing to do with the bug, and
+ * passes for the wrong reason once the bug is fixed. So this asserts the payload
+ * directly: still-running sub-agent present, expandable, NOT dated.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import fs from "node:fs/promises";
@@ -21,10 +31,13 @@ import { startTestApp, type TestApp } from "../helpers/app.js";
 import { listen, connectWs, type WsClient, type WsEvent } from "../helpers/ws.js";
 
 const SLUG = "bg-subagent-proj";
-const WINDOW_MS = 2000;
+const SLUG2 = "bg-subagent-rest";
+const WINDOW_MS = 4000;
 
-const isComplete = (e: WsEvent) =>
-  e.type === "chat:complete" && e.payload?.projectSlug === SLUG;
+const completeFor = (slug: string) => (e: WsEvent) =>
+  e.type === "chat:complete" && e.payload?.projectSlug === slug;
+const isComplete = completeFor(SLUG);
+const isComplete2 = completeFor(SLUG2);
 
 type Line = {
   type?: string;
@@ -56,6 +69,11 @@ describe("integration: [[BGSUBAGENT]] produces a sub-agent that outlives its par
       method: "POST",
       url: "/api/projects",
       payload: { name: "Bg Subagent Proj" },
+    });
+    await t.app.inject({
+      method: "POST",
+      url: "/api/projects",
+      payload: { name: "Bg Subagent Rest" },
     });
     ({ port } = await listen(t.app));
     ws = await connectWs(port);
@@ -102,5 +120,59 @@ describe("integration: [[BGSUBAGENT]] produces a sub-agent that outlives its par
       .slice(finalResultIdx + 1)
       .filter((l) => l.isSidechain).length;
     expect(sidechainAfterResult).toBeGreaterThan(0);
+  });
+
+  // Its OWN project: `chat:send` with `sessionId: null` continues the keeper's
+  // current session rather than starting a fresh one, so reusing SLUG here would
+  // append to the first test's chat — whose sub-agent has already finished and
+  // been dated, which is the exact state this test asserts the absence of.
+  it("serves the sub-agent as a LIVE candidate over REST once the parent turn is done", async () => {
+    const mark = ws.mark();
+    ws.send({
+      type: "chat:send",
+      payload: { projectSlug: SLUG2, sessionId: null, message: "[[BGSUBAGENT]] rest" },
+    });
+    const complete = await ws.waitFor(isComplete2, { from: mark });
+    const sessionId = complete.payload?.sessionId as string;
+
+    // The sidecar pair the real binary writes. `hasSubagent` on a paired Task is
+    // "is there a meta.json naming this toolUseId", so this is load-bearing.
+    const dir = path.join(t.projectsRoot, SLUG2, ".chats", sessionId, "subagents");
+    const entries = await fs.readdir(dir);
+    expect(entries.some((e) => e.endsWith(".meta.json"))).toBe(true);
+    expect(entries.some((e) => e.endsWith(".jsonl"))).toBe(true);
+
+    type Row = {
+      toolCall?: {
+        toolName?: string;
+        toolUseId?: string;
+        hasSubagent?: boolean;
+        subagentDurationMs?: number;
+      };
+    };
+    const res = await t.app.inject({
+      method: "GET",
+      url: `/api/projects/${SLUG2}/chats/${sessionId}/messages`,
+    });
+    expect(res.statusCode).toBe(200);
+    const task = (res.json().messages as Row[]).find((m) => m.toolCall?.toolName === "Task");
+    expect(task).toBeDefined();
+    // Exactly the three fields `useRunningSubagents` reads. A candidate needs an
+    // id and a sidecar; the ABSENCE of a duration is what keeps it in the bar.
+    expect(task?.toolCall?.toolUseId).toBeTruthy();
+    expect(task?.toolCall?.hasSubagent).toBe(true);
+    expect(task?.toolCall?.subagentDurationMs).toBeUndefined();
+
+    // And its own steps are readable, and still growing — the thing the client
+    // polls to keep the card's step list moving after the parent turn ended.
+    const toolUseId = task!.toolCall!.toolUseId!;
+    const stepsUrl = `/api/projects/${SLUG2}/chats/${sessionId}/subagents/${toolUseId}/messages`;
+    const stepCount = async () =>
+      (await t.app.inject({ method: "GET", url: stepsUrl })).json().messages.length as number;
+    // The sidecar exists from the launch but its first step lands a beat later,
+    // which is itself the point: the steps arrive AFTER the turn reported done.
+    await expect.poll(stepCount, { timeout: WINDOW_MS }).toBeGreaterThan(0);
+    const first = await stepCount();
+    await expect.poll(stepCount, { timeout: WINDOW_MS }).toBeGreaterThan(first);
   });
 });

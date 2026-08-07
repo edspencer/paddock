@@ -87,6 +87,36 @@ function signatureOf(messages: HistoryMessage[]): string {
  * while its transcript keeps growing, and only settles after
  * {@link STABLE_TICKS_TO_SETTLE} silent polls once the chat is no longer live.
  *
+ * ## Why every candidate is polled, with no liveness gate of our own (#725)
+ *
+ * This used to arm a candidate only while `chatLive` was true, and poll only
+ * armed ones. That gate was a proxy for "this sub-agent might still be working",
+ * and it lived in a `useRef` — so it held only for as long as the component
+ * stayed mounted. `ChatPane` is genuinely remounted on navigation (it is keyed,
+ * and a tab switch unmounts it outright), and a background sub-agent routinely
+ * outlives its parent's turn. So the exact case this hook exists to serve — a
+ * sub-agent still working after the parent replied — remounted into a state
+ * where nothing was armed, the loop early-returned, no poll ever ran, and every
+ * card fell back to "finished" for the rest of the run. A reload did not recover
+ * it, because a reload is just another mount. That was #725 cause B.
+ *
+ * The gate is gone rather than re-derived on mount, because there is now a
+ * better one a layer up. {@link useRunningSubagents} already drops any card
+ * carrying a `subagentDurationMs`, and since #725 cause A the server publishes
+ * that field ONLY for a sub-agent whose own transcript has settled (terminal
+ * `end_turn`, or ten minutes of silence). The candidate list is therefore
+ * already "the sub-agents the server does not consider finished" — an actual
+ * liveness verdict, derived from disk, that survives a remount by construction.
+ * Re-checking it here against the parent's streaming state could only subtract
+ * true positives.
+ *
+ * The lazy-"not until you expand it" contract that the arming gate was
+ * protecting is upheld by that same filter: opening an old chat yields no
+ * candidates at all, so nothing is fetched. The residue is bounded — a
+ * candidate we cannot settle (unreadable sidecar, a transcript with too few
+ * timestamps for the server to ever measure) costs at most
+ * {@link STABLE_TICKS_TO_SETTLE} + 1 polls per mount, then the loop stops.
+ *
  * Polling stops entirely once every candidate has settled, so a finished chat
  * costs nothing.
  *
@@ -105,12 +135,6 @@ export function useSubagentActivity(
   // Per-sub-agent settle bookkeeping. Refs, not state: mutating these must never
   // re-render, and the poll loop reads them at tick time.
   const settledRef = useRef<Set<string>>(new Set());
-  // Only sub-agents seen while the chat was LIVE are polled. Without this, merely
-  // opening a finished chat fetched every sub-agent transcript on load — breaking
-  // the lazy-"not until you expand it" contract and firing one request per card
-  // for work that ended long ago. Arming is sticky, which is the whole point: the
-  // sub-agent stays polled after the parent's turn ends, until it settles.
-  const armedRef = useRef<Set<string>>(new Set());
   const stableRef = useRef<Map<string, { sig: string; ticks: number }>>(new Map());
   // Read inside the loop without making them effect dependencies — `chatLive`
   // flipping must NOT restart the poll loop, only change how it settles.
@@ -126,12 +150,8 @@ export function useSubagentActivity(
     .sort()
     .join(",");
 
-  // Arm every candidate present while the chat is live. Done in render (not the
-  // effect) so a sub-agent launched mid-turn is armed on the very tick it appears.
-  if (chatLive) for (const c of candidates) armedRef.current.add(c.toolUseId);
-
   useEffect(() => {
-    const ids = (key ? key.split(",") : []).filter((id) => armedRef.current.has(id));
+    const ids = key ? key.split(",") : [];
     if (ids.length === 0 || !fetchRef.current) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -182,11 +202,11 @@ export function useSubagentActivity(
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-    // `chatLive` is a dependency because it ARMS candidates: a card hydrated from
-    // history is not polled until a turn goes live, and without this the loop
-    // would never restart to pick it up. (It also changes how a quiet sub-agent
-    // settles, which the loop reads from a ref.)
-  }, [key, chatLive]);
+    // `chatLive` is deliberately NOT a dependency: it must not restart the loop,
+    // and it no longer decides what gets polled (see the arming note above). It
+    // reaches the loop through `liveRef`, which only changes how a quiet
+    // sub-agent settles.
+  }, [key]);
 
   return activity;
 }
@@ -201,6 +221,12 @@ export function useSubagentActivity(
  * the instant the parent replied. A card that already carries a final
  * `subagentDurationMs` (filled by the history join on reload) is finished and
  * excluded, which is what keeps a reloaded chat from polling anything.
+ *
+ * Since #725 that exclusion is the ONLY liveness gate: {@link useSubagentActivity}
+ * polls whatever comes out of here. It can carry that on its own because the
+ * server withholds `subagentDurationMs` from a sub-agent whose transcript is
+ * still growing — so "no duration" means "not finished as far as disk knows",
+ * not merely "we have not looked yet".
  */
 export function useRunningSubagents(
   turns: Array<{ kind: string; tool?: import("../../lib/ws").ToolCall }>,

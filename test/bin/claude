@@ -104,7 +104,11 @@
  *                     still running with no live parent turn holding it open, which
  *                     is the exact state #725 needs: a nav-away/nav-back test built
  *                     on [[SUBAGENT]] or [[SLOWTOOL]] PASSES while the bug is live,
- *                     because a live parent turn is what dodges it.
+ *                     because a live parent turn is what dodges it. It also writes
+ *                     the real `subagents/agent-<hex>.{jsonl,meta.json}` sidecar
+ *                     pair — without which the card never becomes a running
+ *                     sub-agent candidate and a UI test passes vacuously — and
+ *                     closes it with a terminal `end_turn` when the window ends.
  *   • [[BIGCONTEXT]]→ a long tool-heavy turn whose assistant context snapshot grows
  *                     to ~292k, then a terminal `result` whose usage is the
  *                     CUMULATIVE per-turn total (~828k). The live context meter must
@@ -792,9 +796,39 @@ function main() {
   // alive. Any directive that leaves the parent turn running makes a nav-away /
   // nav-back test PASS while #725 is live. Detaching the sub-agent from its parent
   // turn is the whole point.
+  //
+  // It also writes the sub-agent's own `subagents/agent-<hex>.{jsonl,meta.json}`
+  // sidecar pair, exactly as the real binary does — WITHOUT it the directive
+  // cannot reproduce #725 through the UI at all. `hasSubagent` on a PAIRED Task
+  // is `subagents.has(toolUseId)`, i.e. "is there a meta.json naming this
+  // toolUseId", so with sidechain lines alone the card is not expandable and
+  // never becomes a running-sub-agent candidate: the bar is empty before and
+  // after a remount, and a nav test built on it passes vacuously.
   let bgSubagentTaskId = null;
+  let bgSubagentFile = null;
   if ((prompt || "").includes("[[BGSUBAGENT]]")) {
     bgSubagentTaskId = `toolu_${crypto.randomBytes(8).toString("hex")}`;
+    // <claude-home>/projects/<encoded-cwd> is a symlink to <project>/.chats, so
+    // this lands at .chats/<sessionId>/subagents/ — where the server looks.
+    const bgDir = path.join(dir, sessionId, "subagents");
+    const bgAgentId = crypto.randomBytes(8).toString("hex");
+    try {
+      fs.mkdirSync(bgDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(bgDir, `agent-${bgAgentId}.meta.json`),
+        JSON.stringify({
+          agentType: "general-purpose",
+          description: "background research",
+          toolUseId: bgSubagentTaskId,
+          spawnDepth: 1,
+        }),
+        "utf8",
+      );
+      bgSubagentFile = path.join(bgDir, `agent-${bgAgentId}.jsonl`);
+      fs.writeFileSync(bgSubagentFile, "", "utf8");
+    } catch {
+      /* best-effort: the parent transcript is still written either way */
+    }
     append({
       parentUuid: null,
       isSidechain: false,
@@ -1011,16 +1045,65 @@ function main() {
   // as far as the watcher is concerned; the sub-agent keeps producing. Each step is
   // a tool_use/tool_result pair on the sidechain lane, spaced so a poller observes
   // the count grow rather than seeing them all at once.
+  //
+  // Each pair is mirrored into the sub-agent's OWN sidecar transcript, which is
+  // the file the server reads for a card's steps and — since #725 cause A — for
+  // its liveness: a sidecar that is still growing and has no terminal
+  // `stop_reason: "end_turn"` is a sub-agent the server refuses to stamp a
+  // `subagentDurationMs` onto, so the card keeps its place in the running bar.
+  // The `end_turn` is written only when the window closes, so a test can choose
+  // how long the sub-agent stays live.
   if (bgSubagentTaskId) {
     const windowMs = Number(process.env.PADDOCK_FAKE_BGSUBAGENT_MS || "3000");
     const stepMs = 300;
     const deadline = Date.now() + windowMs;
+    /** Append one line to the sub-agent's own transcript (best-effort). */
+    const appendSubagent = (obj) => {
+      if (!bgSubagentFile) return;
+      try {
+        fs.appendFileSync(bgSubagentFile, JSON.stringify(obj) + "\n", "utf8");
+      } catch {
+        /* ignore */
+      }
+    };
     let n = 0;
     while (Date.now() < deadline) {
       sleep(stepMs);
       n += 1;
       const innerId = `toolu_${crypto.randomBytes(8).toString("hex")}`;
       const label = `BG_STEP_${n}`;
+      const stepUse = {
+        parentUuid: null,
+        isSidechain: true,
+        type: "assistant",
+        message: {
+          id: `msg_${crypto.randomBytes(8).toString("hex")}`,
+          role: "assistant",
+          model,
+          stop_reason: "tool_use",
+          content: [{ type: "tool_use", id: innerId, name: "Read", input: { file_path: label } }],
+          usage,
+        },
+        uuid: crypto.randomUUID(),
+        timestamp: nowIso(),
+        cwd,
+        sessionId,
+      };
+      const stepResult = {
+        parentUuid: null,
+        isSidechain: true,
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: innerId, content: label, is_error: false }],
+        },
+        uuid: crypto.randomUUID(),
+        timestamp: nowIso(),
+        cwd,
+        sessionId,
+      };
+      appendSubagent(stepUse);
+      appendSubagent(stepResult);
       append({
         parentUuid: null,
         isSidechain: true,
@@ -1056,6 +1139,26 @@ function main() {
         sessionId,
       });
     }
+    // The sub-agent finally stops. `end_turn` is its terminal marker (a sub-agent
+    // transcript has no `type: "result"` line — zero of the 483 real ones do), so
+    // this is what lets the server publish a duration and the card settle.
+    appendSubagent({
+      parentUuid: null,
+      isSidechain: true,
+      type: "assistant",
+      message: {
+        id: `msg_${crypto.randomBytes(8).toString("hex")}`,
+        role: "assistant",
+        model,
+        stop_reason: "end_turn",
+        content: [{ type: "text", text: `background research done after ${n} steps` }],
+        usage,
+      },
+      uuid: crypto.randomUUID(),
+      timestamp: nowIso(),
+      cwd,
+      sessionId,
+    });
   }
 
   // Mirror the reply to stdout (the runtime logs it; harmless) and exit cleanly.

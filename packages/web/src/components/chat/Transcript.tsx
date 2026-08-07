@@ -1040,7 +1040,15 @@ function NestedSteps({ toolUseId, live = false }: { toolUseId: string; live?: bo
   const turns = useMemo(() => historyToTurns(effective ?? []), [effective]);
 
   return (
-    <div className="border-t border-paddock-200/70 bg-paddock-50/60 px-3 py-3 dark:border-paddock-800 dark:bg-paddock-950/40">
+    // `data-testid` is for the E2E (#725): "the expanded step list keeps
+    // updating" has to be measured HERE and nowhere else. The running-sub-agents
+    // bar renders the same latest step, so a page-wide scan for step text would
+    // pass on the bar alone while this card stayed frozen — which is precisely
+    // the half of the bug a naive assertion misses.
+    <div
+      data-testid="subagent-steps"
+      className="border-t border-paddock-200/70 bg-paddock-50/60 px-3 py-3 dark:border-paddock-800 dark:bg-paddock-950/40"
+    >
       {error ? (
         <div className="text-[11.5px] text-rose-500">couldn't load sub-agent steps</div>
       ) : effective == null ? (
