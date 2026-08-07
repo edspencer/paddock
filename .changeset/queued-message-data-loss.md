@@ -47,8 +47,24 @@ minutes afterwards, with a stale chip sitting above the composer in between.
 The drain now hangs off a turn-end hook on the session hub, which every one of
 those paths already goes through, so this is structural rather than a list of call
 sites to remember to extend. It also sits above the batch/session runtime split,
-so both drive modes behave identically. A Stopped or failed turn now drains too:
-holding the queue there did not keep it for the user, it stranded it.
+so both drive modes behave identically.
+
+**Stop is the one exception, and it hands the message back rather than sending
+it.** "Give me control back" and "start working again immediately" are opposites,
+so the message queued behind a Stopped turn goes into the composer of the client
+that pressed Stop — by the same path the queued bar's Edit button has always
+used, so it merges with whatever was already typed and persists as an ordinary
+draft. Other clients watching the chat see the shared slot clear with a reason
+attached rather than a chip vanishing for no visible cause. If there is nobody
+left to hand it to (the tab closed between the Stop and the turn ending), the
+message stays queued and is parked so no later turn end sweeps it out behind
+something typed afterwards — and a pane opening the chat is now told what is
+queued on it, so a parked message is never invisible.
+
+The destructive-op interlock (#731) is excluded too: it cancels a turn precisely
+so it can delete, revert or promote the transcript, and starting a fresh turn
+there would both race that and keep the session busy so the interlock could never
+settle.
 
 Also in the same area: a queued message is capped at 100,000 characters (a 2 MB
 `chat:set_queue` used to be accepted and persisted verbatim, and the sidecar is
