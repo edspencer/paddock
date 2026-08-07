@@ -13,24 +13,97 @@
 // live durably in the server AttachmentStore until the chat is deleted — so
 // persisting the tray is just stashing a small JSON array of refs, no bytes.
 //
-// Keyed identically to lib/draft.ts / lib/queued.ts: a brand-new chat has no
-// session id yet, so it's keyed by its project slug ("new:<slug>"); once the chat
-// establishes a real session id, that id is used. Writing an empty list removes
-// the key, so clearing the tray (e.g. on send) forgets the stored refs for free.
+// Once a chat has a session id it keys on that, like lib/draft.ts / lib/queued.ts.
+// Writing an empty list removes the key, so clearing the tray (e.g. on send)
+// forgets the stored refs for free.
+//
+// A chat with no session id yet is keyed per NEW-CHAT INSTANCE, not per project
+// (#728). Those siblings key on the slug alone ("new:<slug>"), which is one key
+// shared by every future new chat in the project: a file staged on a new chat the
+// user then abandoned came back pre-staged on the NEXT new chat and rode its first
+// message. A draft gets away with that because its text is sitting visibly in the
+// composer; a silently restored attachment is easy to miss, and sending a file to
+// a conversation you didn't mean to is the data-exposure half of #728.
 //
 // Cheap, try/catch-guarded for private mode / quota / malformed JSON, never throws.
 import type { AttachmentKind, AttachmentRef } from "./types";
 
 const PREFIX = "paddock:attachments:";
+/** sessionStorage key holding the current new-chat instance id for a project. */
+const INSTANCE_PREFIX = "paddock:newchat-instance:";
+
+/** An opaque, unique-enough instance id. Never parsed, only compared. */
+function mintInstanceId(): string {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return `n-${Math.random().toString(36).slice(2)}-${Date.now()}`;
+  }
+}
+
+/**
+ * The id of the new chat currently being composed in this project, minting one on
+ * first use (#728).
+ *
+ * Held in **sessionStorage**, which is exactly the lifetime wanted: it survives a
+ * reload — so #346's "my staged files came back" still holds for the chat the user
+ * is actually looking at — but it is per tab and it is rotated by an explicit
+ * "New Chat" ({@link rotateNewChatInstance}), so a *different* new chat never
+ * inherits the last one's tray.
+ *
+ * Falls back to a single shared instance when storage is unavailable (private
+ * mode): the pre-#728 behaviour, which is the safe direction for a fallback —
+ * the tray still renders its chips, so nothing is attached invisibly.
+ */
+export function newChatInstanceId(slug: string): string {
+  try {
+    const k = INSTANCE_PREFIX + slug;
+    const existing = sessionStorage.getItem(k);
+    if (existing) return existing;
+    const id = mintInstanceId();
+    sessionStorage.setItem(k, id);
+    // Nothing reads the pre-#728 per-project key any more, so an upgrading client
+    // would carry it as dead bytes forever. Drop it on the way past.
+    try {
+      localStorage.removeItem(`${PREFIX}new:${slug}`);
+    } catch {
+      /* ignore */
+    }
+    return id;
+  } catch {
+    return "shared";
+  }
+}
+
+/**
+ * Abandon this project's current new chat: forget its staged refs and mint a fresh
+ * instance on the next read. Called from the explicit "New Chat" action — the one
+ * place that says "this is a different chat now", as opposed to navigating away
+ * from (and back to) the same one.
+ */
+export function rotateNewChatInstance(slug: string): void {
+  try {
+    localStorage.removeItem(attachmentRefsKey(null, slug));
+  } catch {
+    /* ignore */
+  }
+  try {
+    sessionStorage.removeItem(INSTANCE_PREFIX + slug);
+  } catch {
+    /* ignore */
+  }
+}
 
 /**
  * The localStorage key for a chat's staged attachment refs. `sessionId` is the
  * established Claude session id once known; before that a chat is keyed by its
- * slug as "new:<slug>" (the keeper is per-project, so this disambiguates the
- * pending new chat from saved ones).
+ * slug AND its new-chat instance id ("new:<slug>:<instance>"), so two different
+ * new chats in one project never share a tray (#728).
+ *
+ * Not pure for the pre-session case: it mints the instance id on first use.
  */
 export function attachmentRefsKey(sessionId: string | null | undefined, slug: string): string {
-  return PREFIX + (sessionId ?? `new:${slug}`);
+  return PREFIX + (sessionId ?? `new:${slug}:${newChatInstanceId(slug)}`);
 }
 
 /** Narrow an unknown parsed value to a well-formed AttachmentRef (else null). */

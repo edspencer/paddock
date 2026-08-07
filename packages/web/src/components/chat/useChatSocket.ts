@@ -2,7 +2,7 @@ import { type Dispatch, type MutableRefObject, type SetStateAction, useEffect } 
 import { chatClient } from "../../lib/ws";
 import { api } from "../../lib/api";
 import { writeChatModel } from "../../lib/chatModel";
-import type { ChatCompleteUsage, ChatUsage, HistoryMessage } from "../../lib/types";
+import type { AttachmentRef, ChatCompleteUsage, ChatUsage, HistoryMessage } from "../../lib/types";
 import { sentFileFromToolCall } from "./toolFormatting";
 import {
   type Turn,
@@ -43,11 +43,16 @@ export interface UseChatSocketParams {
   cancelledRef: MutableRefObject<boolean>;
   noticeThisTurnRef: MutableRefObject<boolean>;
   seenInjectionsRef: MutableRefObject<Set<string>>;
-  onQueuedFlushedRef: MutableRefObject<(text?: string) => void>;
+  onQueuedFlushedRef: MutableRefObject<(text?: string, attachments?: AttachmentRef[]) => void>;
   onQueuedStateRef: MutableRefObject<
-    (text: string | null, qid?: string, reason?: "returned") => void
+    (
+      text: string | null,
+      qid?: string,
+      reason?: "returned",
+      attachments?: AttachmentRef[],
+    ) => void
   >;
-  onQueuedReturnedRef: MutableRefObject<(text: string) => void>;
+  onQueuedReturnedRef: MutableRefObject<(text: string, attachments?: AttachmentRef[]) => void>;
   // --- state setters ----------------------------------------------------------
   setTurns: Dispatch<SetStateAction<Turn[]>>;
   setStreaming: Dispatch<SetStateAction<boolean>>;
@@ -310,20 +315,23 @@ export function useChatSocket(params: UseChatSocketParams): void {
           pendingCancelRef.current = false;
         }
       },
-      onQueuedFlushed: ({ text }) => {
+      onQueuedFlushed: ({ text, attachments }) => {
         // The server auto-sent (or cleared a stale copy of) our queued message
-        // (#245). Reflect it: render the sent bubble + clear the queue toolbar.
-        onQueuedFlushedRef.current(text);
+        // (#245). Reflect it: render the sent bubble — with the files that rode
+        // with it (#728) — and clear the queue toolbar.
+        onQueuedFlushedRef.current(text, attachments);
       },
-      onQueuedState: ({ text, qid, reason }) => {
+      onQueuedState: ({ text, qid, reason, attachments }) => {
         // The chat's queued slot changed server-side (#629) — another client
-        // queued alongside us, or edited/cleared the shared slot. Render it.
-        onQueuedStateRef.current(text, qid, reason);
+        // queued alongside us, or edited/cleared the shared slot. Render it,
+        // including whatever files are staged on it (#728).
+        onQueuedStateRef.current(text, qid, reason, attachments);
       },
-      onQueuedReturned: ({ text }) => {
+      onQueuedReturned: ({ text, attachments }) => {
         // WE pressed Stop, so the server handed the queued message back rather
-        // than sending it (#751). It goes into the composer, not the transcript.
-        onQueuedReturnedRef.current(text);
+        // than sending it (#751). It goes into the composer, not the transcript —
+        // text to the draft, files back to the attachment tray (#728).
+        onQueuedReturnedRef.current(text, attachments);
       },
       onInjected: (inj, meta) => {
         // A machine injected a user turn into THIS open chat (#290 Part 2):

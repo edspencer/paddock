@@ -77,7 +77,12 @@ import {
   type DriveMode,
 } from "./models.js";
 import { SessionHub, type TurnHandle, type ActiveInfo, type HubSocket } from "./session-hub.js";
-import { partsOf, type QueuedMessage } from "./queued-message.js";
+import {
+  hasQueuedContent,
+  partsOf,
+  type QueuedAttachment,
+  type QueuedMessage,
+} from "./queued-message.js";
 import { resolveAttachmentsConfig } from "./attachments-config.js";
 import { wrapAttachments, inferAttachmentKind, type PromptAttachment } from "./attachments-hint.js";
 import { sendFileServerDef, SEND_FILE_SERVER_KEY } from "./send-file-mcp.js";
@@ -525,14 +530,15 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
         void deps.queuedMessage
           .get(keeperAgentName(slug), sessionId)
           .then((queued) => {
-            if (!queued?.text) return;
+            if (!hasQueuedContent(queued)) return;
             send({
               type: "chat:queued_state",
               payload: {
                 projectSlug: slug,
                 sessionId,
-                text: queued.text,
-                ...(queued.id ? { qid: queued.id } : {}),
+                text: queued!.text || null,
+                ...(queued!.id ? { qid: queued!.id } : {}),
+                ...(queued!.attachments?.length ? { attachments: queued!.attachments } : {}),
               },
             });
           })
@@ -548,6 +554,33 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
     // `take` makes the read+clear atomic so two concurrent drains can never both
     // send it; the flushed-parts ledger skips what was already drained (a stale
     // client re-assert on reload) so it isn't sent twice.
+    /**
+     * Put attachments the drain could not carry back onto the (now empty) slot as
+     * an attachments-only queued message, and tell every client (#728). Only the
+     * slash-command path uses this: a command cannot carry files, and dropping
+     * them here would be the silent loss this whole change is about.
+     */
+    const restageAttachments = async (
+      slug: string,
+      sessionId: string,
+      attachments: QueuedAttachment[],
+    ): Promise<void> => {
+      if (!deps.queuedMessage) return;
+      const agent = keeperAgentName(slug);
+      await deps.queuedMessage
+        .set(agent, sessionId, {
+          text: "",
+          createdAtMs: Date.now(),
+          id: randomUUID(),
+          attachments,
+        })
+        .catch(() => undefined);
+      hub.broadcast(sessionId, {
+        type: "chat:queued_state",
+        payload: { projectSlug: slug, sessionId, text: null, attachments },
+      });
+    };
+
     const drainQueue = async (slug: string, sessionId: string): Promise<void> => {
       if (!deps.queuedMessage) return;
       // Another turn is already live on this session (a drain racing a fresh send,
@@ -556,7 +589,9 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       if (hub.isRunning(sessionId)) return;
       const agent = keeperAgentName(slug);
       const queued = await deps.queuedMessage.take(agent, sessionId).catch(() => null);
-      if (!queued?.text) return;
+      // A slot with no prose but staged files is a real message (#328/#728), so
+      // "is there anything here" is content, not text.
+      if (!hasQueuedContent(queued) || !queued) return;
       const markerKey = `${agent}${KEY_SEP}${sessionId}`;
       // Parked by a Stop we couldn't hand back (see returnQueueToComposer): the
       // user asked for control, so it waits for them, not for the next turn end.
@@ -585,26 +620,42 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       const parts = partsOf(queued);
       const stale = parts.some((p) => ledger.get(p.id)?.has(p.text));
       const text = stale ? "" : queued.text;
+      // A leading-slash queued message is a slash command (e.g. "/compact"): the
+      // CLI dispatches it, and a command carries no attachments — exactly as the
+      // live composer refuses to attach files to one. Keep them on the slot rather
+      // than destroying them: they stay visible as a queued message of their own
+      // and go out after the command's turn, which is the only outcome here that
+      // isn't silent loss (#728). Unreachable from the current client, which never
+      // stages files onto a slash-command queue; reachable if one ever appends
+      // prose + a file behind an already-queued command.
+      const isCommand = !stale && text.startsWith("/");
+      const attachments = stale || isCommand ? [] : (queued.attachments ?? []);
+      // An attachments-only slot has no text but is still a real message
+      // (#328/#728), so what makes this a send is CONTENT, not prose.
+      const sending = !stale && (Boolean(text) || attachments.length > 0);
       // Tell every attached client (origin + reconnected sockets) to clear its copy
-      // of this message. When we're really sending it, carry the text so the client
-      // renders the sent bubble in-transcript; on a stale re-assert we only clear.
+      // of this message. When we're really sending it, carry the text + attachments
+      // so the client renders the sent bubble in-transcript exactly as a live send
+      // does; on a stale re-assert we only clear.
       hub.broadcast(sessionId, {
         type: "chat:queued_flushed",
         payload: {
           projectSlug: slug,
           sessionId,
-          ...(text ? { text } : {}),
+          ...(sending && text ? { text } : {}),
+          ...(sending && attachments.length > 0 ? { attachments } : {}),
         },
       });
-      if (!text) return;
+      if (!sending) return;
       // Every identity this slot carried is now flushed, so a re-assert from any
       // client that held one of them is recognised rather than sent again.
       for (const p of parts) rememberFlushed(ledger, p.id, p.text);
       // Broadcast the flush frame BEFORE kicking the turn so the user bubble renders
-      // above the reply. Run it detached, like a human send. A leading-slash queued
-      // message is a slash command (e.g. "/compact"): route it through the command
-      // path so the CLI dispatches it — matching how the composer sends one live.
-      if (text.startsWith("/")) {
+      // above the reply. Run it detached, like a human send.
+      if (isCommand) {
+        if ((queued.attachments?.length ?? 0) > 0) {
+          void restageAttachments(slug, sessionId, queued.attachments!);
+        }
         void onChatCommand({
           type: "chat:command",
           payload: { projectSlug: slug, command: text, sessionId },
@@ -612,7 +663,14 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       } else {
         void onChatSend({
           type: "chat:send",
-          payload: { projectSlug: slug, sessionId, message: text },
+          payload: {
+            projectSlug: slug,
+            sessionId,
+            message: text,
+            // The files the user staged behind this message (#728). They used to
+            // stay in the composer tray and ride whatever was sent NEXT.
+            ...(attachments.length > 0 ? { attachments } : {}),
+          },
         });
       }
     };
@@ -624,6 +682,9 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       if (slug === undefined || slug === null) return;
       const sessionId = msg.payload.sessionId ?? null;
       const text = msg.payload.text ?? null;
+      // The composer's staged files ride the queued message (#728). They merge
+      // additively into the slot, so a write that carries none never removes any.
+      const attachments = msg.payload.attachments ?? [];
       // Every chat belongs to a workspace keeper.
       const agent = keeperAgentName(slug);
       if (!sessionId) {
@@ -631,17 +692,20 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
         // re-asserts it (same qid) once the id resolves, so it persists then.
         return;
       }
-      // Store or clear the queued message.
-      if (text && text.trim().length > 0) {
+      // Store or clear the queued message. A slot with staged files but no prose is
+      // a real message (#328: an attachment-only send is valid), so "is there
+      // anything to store" is text OR attachments — it used to be text alone, which
+      // is why an attachment-only submit during a live turn was a silent no-op.
+      if ((text && text.trim().length > 0) || attachments.length > 0) {
         // A queued message is persisted verbatim and the whole sidecar is rewritten
         // on every mutation, so an unbounded one is a cheap way to bloat the data
         // dir. Refuse it loudly rather than silently truncating the user's text.
-        if (text.length > MAX_QUEUED_CHARS) {
+        if (text != null && text.length > MAX_QUEUED_CHARS) {
           send({
             type: "chat:error",
             payload: {
               projectSlug: slug,
-              error: `Queued message is too long (${text.length} characters; the limit is ${MAX_QUEUED_CHARS}).`,
+              error: `Queued message is too long (${text!.length} characters; the limit is ${MAX_QUEUED_CHARS}).`,
             },
           });
           return;
@@ -653,7 +717,13 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
         // first client's message with no signal to anyone — and then rendered it,
         // in that client's own transcript, as a user bubble they never typed.
         const next = await deps.queuedMessage
-          .upsert(agent, sessionId, { id: queueIdOf(msg.payload), text }, Date.now(), randomUUID)
+          .upsert(
+            agent,
+            sessionId,
+            { id: queueIdOf(msg.payload), text: text ?? "", attachments },
+            Date.now(),
+            randomUUID,
+          )
           .catch(() => undefined);
         // The queue is shared chat state, so announce it: every attached client
         // renders the same slot, and echoing `qid` back on its next write is how a
@@ -665,8 +735,9 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
             payload: {
               projectSlug: slug,
               sessionId,
-              text: next?.text ?? null,
+              text: next?.text || null,
               ...(next?.id ? { qid: next.id } : {}),
+              ...(next?.attachments?.length ? { attachments: next.attachments } : {}),
             },
           });
         }
@@ -1302,7 +1373,8 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
     if (hub.isRunning(sessionId)) return;
     const agent = keeperAgentName(slug);
     const queued = await deps.queuedMessage.take(agent, sessionId).catch(() => null);
-    if (!queued?.text) return;
+    if (!hasQueuedContent(queued) || !queued) return;
+    const attachments = queued.attachments ?? [];
     const live = to && to.readyState === to.OPEN ? to : null;
     if (!live) {
       // Nobody to hand it to — the tab closed between the Stop and this turn
@@ -1322,18 +1394,26 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
         payload: {
           projectSlug: slug,
           sessionId,
-          text: queued.text,
+          text: queued.text || null,
           ...(queued.id ? { qid: queued.id } : {}),
+          ...(attachments.length > 0 ? { attachments } : {}),
         },
       });
       return;
     }
-    // The stopping client gets the text; everyone else just sees the shared slot
-    // clear, WITH a reason — a chip vanishing from under you with no explanation
-    // is the same silence that made #629 bite.
+    // The stopping client gets the text AND the files staged behind it (#728) —
+    // Stop returns the whole message, and a file left on the cleared slot would be
+    // stranded server-side. Everyone else just sees the shared slot clear, WITH a
+    // reason — a chip vanishing from under you with no explanation is the same
+    // silence that made #629 bite.
     writeFrame(live, {
       type: "chat:queued_returned",
-      payload: { projectSlug: slug, sessionId, text: queued.text },
+      payload: {
+        projectSlug: slug,
+        sessionId,
+        text: queued.text,
+        ...(attachments.length > 0 ? { attachments } : {}),
+      },
     });
     hub.broadcast(
       sessionId,

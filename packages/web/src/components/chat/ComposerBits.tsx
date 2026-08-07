@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ConnectionState } from "../../lib/ws";
 import { formatSessionUsage, formatTokens, formatUsd } from "../../lib/format";
-import type { ChatCompleteUsage, ChatUsage, ModelInfo } from "../../lib/types";
+import type { AttachmentRef, ChatCompleteUsage, ChatUsage, ModelInfo } from "../../lib/types";
 import { BranchIcon, ClockIcon, PencilIcon, XIcon } from "../icons";
 
 /**
@@ -217,10 +217,19 @@ export function WorkingIndicator() {
  */
 export function QueuedMessageBar({
   text,
+  attachments = [],
   onEdit,
   onClear,
 }: {
   text: string;
+  /**
+   * Files staged on the queued message (#728). Listed here because the queue is
+   * where they now live: enqueueing moves them out of the composer tray, so the
+   * bar is the only place the user can see that a file is going out with this
+   * message — and Edit is how they get it back. `text` may be `""` when the
+   * message is attachments-only (#328).
+   */
+  attachments?: AttachmentRef[];
   onEdit: () => void;
   onClear: () => void;
 }) {
@@ -238,10 +247,24 @@ export function QueuedMessageBar({
         </span>
         <span
           className="min-w-0 flex-1 truncate text-paddock-600 dark:text-paddock-300"
-          title={text}
+          title={text || attachments.map((a) => a.filename).join(", ")}
         >
-          {firstLine}
+          {firstLine ||
+            (attachments.length > 0 ? (
+              <span className="italic text-paddock-500 dark:text-paddock-400">
+                {attachments.length === 1 ? "1 attachment" : `${attachments.length} attachments`}
+              </span>
+            ) : null)}
         </span>
+        {firstLine && attachments.length > 0 && (
+          <span
+            className="shrink-0 tabular-nums text-paddock-400 dark:text-paddock-500"
+            data-testid="queued-attachment-count"
+            title={attachments.map((a) => a.filename).join(", ")}
+          >
+            📎 {attachments.length}
+          </span>
+        )}
         {moreChars > 0 && (
           <span
             className="shrink-0 tabular-nums text-paddock-400 dark:text-paddock-500"

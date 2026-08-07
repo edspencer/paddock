@@ -5,6 +5,7 @@ import { ChatPane } from "./ChatPane";
 import type { ChatHandlers } from "../lib/ws";
 import type { HistoryMessage } from "../lib/types";
 import { makeModelsResponse } from "../test/factories";
+import { attachmentRefsKey } from "../lib/attachmentRefs";
 
 // --- a thin fake chat socket --------------------------------------------------
 // We capture the handlers ChatPane subscribes with so a test can drive streamed
@@ -849,9 +850,15 @@ describe("ChatPane: attachment persistence (#346)", () => {
     { id: "att-1", filename: "diagram.png", kind: "image" },
     { id: "att-2", filename: "notes.txt", kind: "text", size: 42 },
   ]);
+  // A pre-session chat is keyed per NEW-CHAT INSTANCE since #728, not by slug
+  // alone — the one shared "new:<slug>" key is how an abandoned chat's file
+  // followed the next new chat. These tests seed through the key function rather
+  // than a literal, so they keep testing #346's behaviour (a remount restores the
+  // tray) instead of #728's key format.
+  const NEW_CHAT_KEY = () => attachmentRefsKey(null, "proj");
 
   it("restores persisted attachment refs into the tray on mount (new chat)", async () => {
-    localStorage.setItem("paddock:attachments:new:proj", STAGED);
+    localStorage.setItem(NEW_CHAT_KEY(), STAGED);
     render(<ChatPane projectSlug="proj" />);
     await screen.findByRole("button", { name: /^Send$/ });
     const tray = await screen.findByTestId("attachment-tray");
@@ -876,19 +883,19 @@ describe("ChatPane: attachment persistence (#346)", () => {
   });
 
   it("removing a staged attachment updates the persisted refs", async () => {
-    localStorage.setItem("paddock:attachments:new:proj", STAGED);
+    localStorage.setItem(NEW_CHAT_KEY(), STAGED);
     render(<ChatPane projectSlug="proj" />);
     await screen.findByTestId("attachment-tray");
     const removeBtns = screen.getAllByTestId("attachment-remove");
     fireEvent.click(removeBtns[0]);
     await waitFor(() => {
-      const stored = JSON.parse(localStorage.getItem("paddock:attachments:new:proj") ?? "[]");
+      const stored = JSON.parse(localStorage.getItem(NEW_CHAT_KEY()) ?? "[]");
       expect(stored.map((r: { id: string }) => r.id)).toEqual(["att-2"]);
     });
   });
 
   it("sends restored attachments and clears the persisted refs on send", async () => {
-    localStorage.setItem("paddock:attachments:new:proj", STAGED);
+    localStorage.setItem(NEW_CHAT_KEY(), STAGED);
     render(<ChatPane projectSlug="proj" />);
     const box = await screen.findByPlaceholderText(/Message Claude/i);
     await screen.findByTestId("attachment-tray");
@@ -900,7 +907,7 @@ describe("ChatPane: attachment persistence (#346)", () => {
     expect(opts.attachments?.map((a) => a.id)).toEqual(["att-1", "att-2"]);
     // The tray cleared and the stored refs were forgotten (mirrors draft clear).
     await waitFor(() =>
-      expect(localStorage.getItem("paddock:attachments:new:proj")).toBeNull(),
+      expect(localStorage.getItem(NEW_CHAT_KEY())).toBeNull(),
     );
     expect(screen.queryByTestId("attachment-tray")).not.toBeInTheDocument();
   });
