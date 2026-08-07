@@ -371,7 +371,7 @@ describe("SettingsPane", () => {
   // --- Repository backing / promotion (issue #213) -----------------------
 
   it("shows a promote affordance for a notebook project", () => {
-    const project = makeProject({ slug: "p1", repoBacked: false });
+    const project = makeProject({ slug: "p1", managed: true });
     render(<SettingsPane project={project} onSaved={vi.fn()} />);
     expect(screen.getByText("Repository backing")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /promote to repo-backed/i })).toBeDisabled();
@@ -383,7 +383,7 @@ describe("SettingsPane", () => {
   });
 
   it("flags an obviously-bad repo URL and keeps promote disabled", () => {
-    const project = makeProject({ slug: "p1", repoBacked: false });
+    const project = makeProject({ slug: "p1", managed: true });
     render(<SettingsPane project={project} onSaved={vi.fn()} />);
     fireEvent.change(screen.getByLabelText("Git repository URL"), {
       target: { value: "not a url" },
@@ -393,7 +393,7 @@ describe("SettingsPane", () => {
   });
 
   it("promotes through a two-step confirm and reports the updated project", async () => {
-    const project = makeProject({ slug: "p1", name: "Note Book", repoBacked: false });
+    const project = makeProject({ slug: "p1", name: "Note Book", managed: true });
     const promoted = makeProject({
       slug: "p1",
       name: "Note Book",
@@ -422,7 +422,7 @@ describe("SettingsPane", () => {
   it("surfaces a promote API error without calling onSaved", async () => {
     const { ApiError } = await vi.importActual<typeof import("../lib/api")>("../lib/api");
     promoteProject.mockRejectedValueOnce(new ApiError("git clone failed", 400));
-    const project = makeProject({ slug: "p1", repoBacked: false });
+    const project = makeProject({ slug: "p1", managed: true });
     const onSaved = vi.fn();
     render(<SettingsPane project={project} onSaved={onSaved} />);
     fireEvent.change(screen.getByLabelText("Git repository URL"), {
