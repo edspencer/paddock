@@ -64,6 +64,7 @@ import {
   ROOT_KEY,
   isRootKey,
   isPathInside,
+  isSystemPath,
   isManaged,
   contentDirFor,
   isValidRepoUrl,
@@ -78,6 +79,7 @@ export {
   ROOT_KEY,
   isRootKey,
   isPathInside,
+  isSystemPath,
   isManaged,
   contentDirFor,
   isValidRepoUrl,
@@ -90,6 +92,7 @@ import { gitRemotes, normalizeRemote } from "./adoptable.js";
 
 import {
   normalizeLinks,
+  PATCHABLE_KEYS,
   type Project,
   type ProjectYaml,
   type ProjectStatus,
@@ -282,7 +285,12 @@ export class ProjectStore {
   private async rmInsideRoot(target: string): Promise<void> {
     const resolved = path.resolve(target);
     const root = path.resolve(this.root);
-    if (resolved === root || !isPathInside(resolved, root)) {
+    // A projects root of `/` would make every path on the box "inside" it and
+    // turn this guard into a no-op. That was accidentally safe before #719 (when
+    // `isPathInside(x, "/")` was false for everything); now that containment
+    // reports the truth, refuse the degenerate root explicitly rather than
+    // relying on a bug to hold the line.
+    if (root === path.parse(root).root || resolved === root || !isPathInside(resolved, root)) {
       throw new ProjectError(
         `Refusing to delete outside the projects root: ${target}`,
         "invalid",
@@ -325,6 +333,9 @@ export class ProjectStore {
    *  - a relative path (a cwd must be unambiguous — it is baked into every
    *    transcript path, and resolving it against the server's cwd is a footgun);
    *  - a path that exists but isn't a directory;
+   *  - the filesystem root, or a path inside a system directory (issue #720) —
+   *    see {@link isSystemPath} for the floor and why it is a denylist rather
+   *    than a configurable allowed root;
    *  - a path inside `projectsRoot` or the data dir — that is Paddock's own
    *    state, and pointing at it re-creates the nesting this feature exists to
    *    avoid (plus `remove()` would then really delete it);
@@ -366,6 +377,22 @@ export class ProjectStore {
       if (!st?.isDirectory()) {
         throw new ProjectError(`Project path is not a directory: ${input}`, "not_directory");
       }
+    }
+
+    // The system-path floor (issue #720), applied to BOTH spellings.
+    //
+    // The canonicalised path is the one that matters — a symlink pointing at
+    // `/etc` must be refused for where it really goes. But the path AS WRITTEN
+    // has to be checked too, because `/proc/self/cwd` canonicalises to an
+    // ordinary directory (Paddock's own checkout) and so passes the resolved
+    // check: a `/proc` path is process-relative and non-durable, which a cwd
+    // baked into every transcript path can never be.
+    if (isSystemPath(resolved) || isSystemPath(input)) {
+      throw new ProjectError(
+        `Project path is a system directory and cannot back a project: ${input}` +
+          (resolved === path.resolve(input) ? "" : ` (resolves to ${resolved})`),
+        "invalid",
+      );
     }
 
     if (isPathInside(resolved, this.root)) {
@@ -860,28 +887,61 @@ export class ProjectStore {
       models: modelsPatch,
       ...rest
     } = patch;
+    // Take ONLY the allowlisted keys off the body (issue #721). `rest` is spread
+    // from an untrusted request body, so the previous `...rest` persisted any key
+    // a caller invented — verbatim, unbounded, into a file re-parsed on every
+    // project listing — and a key seeded with garbage today is a landmine for the
+    // release that starts honouring it.
+    const unknown: string[] = [];
+    const patched: Partial<ProjectYaml> = {};
+    for (const [key, value] of Object.entries(rest as Record<string, unknown>)) {
+      if (value === undefined) continue;
+      if (!(PATCHABLE_KEYS as readonly string[]).includes(key)) {
+        unknown.push(key);
+        continue;
+      }
+      (patched as Record<string, unknown>)[key] = value;
+    }
+    if (unknown.length > 0) {
+      this.log.warn(
+        `Ignoring unpatchable key(s) in PATCH of project "${slug}": ${unknown.join(", ")}`,
+      );
+    }
     const next: ProjectYaml = {
       ...this.stripDto(current),
-      ...rest,
+      ...patched,
       slug: current.slug, // immutable
       started: current.started, // immutable
       updated: today(),
     };
-    // `path` and `managed` are immutable (issue #206), enforced here rather than
-    // by their absence from UpdateProjectInput — that type is a compile-time shape
-    // while `rest` is spread from a request body.
+    // `path`, `managed` and `repo` are immutable — the THREE fields that feed
+    // `workingDirFor()` and therefore decide the keeper's cwd. The allowlist above
+    // already keeps them out of `patched`; re-asserting them from `current` here
+    // is deliberate belt-and-braces at the point the record is built, so a key
+    // later added to the allowlist cannot silently move a cwd.
     //
-    // For `path` both directions matter: a project must not be RE-POINTED (its cwd
-    // is baked into every transcript path, so moving it strands the history), and
-    // one must not be given a path by a stray key, which would silently hand its
-    // keeper a cwd somewhere else on the box that never went through
-    // `validatePath`. `managed` is re-asserted from `current` for the same reason
-    // — flipping it would move where the curated trio lives and either start the
-    // sweeper writing into a checkout or orphan the existing notes. (Changing it
-    // deliberately is a migration, not a PATCH; see #708 for what a silent
-    // location flip does to history.)
+    // For `path` both directions matter (issue #206): a project must not be
+    // RE-POINTED (its cwd is baked into every transcript path, so moving it
+    // strands the history), and one must not be GIVEN a path by a stray key,
+    // which would hand its keeper a cwd somewhere else on the box that never went
+    // through `validatePath`. `managed` is re-asserted for the same reason —
+    // flipping it moves where the curated trio lives and either starts the sweeper
+    // writing into a checkout or orphans the existing notes.
+    //
+    // `repo` was the one that got missed (issue #718). It is documented immutable
+    // (`ProjectYaml.repo`: "Set at creation; immutable thereafter"), `create()` and
+    // `promote()` both validate it with `isValidRepoUrl()`, and `update()` did
+    // neither: `PATCH {"repo":"not a url at all"}` returned 200 and relocated
+    // `workingDir` AND `contentDir` to `<dir>/not-a-url-at-all`, a directory that
+    // does not exist — every subsequent turn then hung 60s waiting for a session
+    // file and failed, with the existing chats stranded on the old cwd. Acquiring a
+    // repo for an existing project is what `promote()` is for; changing a backing
+    // store is a migration, not a PATCH (see #708 for what a silent location flip
+    // does to history).
     if (current.path) next.path = current.path;
     else delete next.path;
+    if (current.repo) next.repo = current.repo;
+    else delete next.repo;
     next.managed = current.managed;
     if (driveModePatch === null) {
       // Clear the per-project override -> inherit the global default (issue #122).

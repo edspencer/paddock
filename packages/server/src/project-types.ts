@@ -474,3 +474,39 @@ export type UpdateProjectInput = Partial<
    */
   curation?: CurationOverride | null;
 };
+
+/**
+ * The plain metadata keys a PATCH may set — the RUNTIME half of
+ * {@link UpdateProjectInput} (issue #721).
+ *
+ * The type is a compile-time shape; the request body is not type-checked at all,
+ * so `update()` used to spread it straight into the record it persisted and any
+ * invented key landed in `project.yaml` verbatim. This list is what it filters
+ * against.
+ *
+ * It deliberately covers ONLY the blanket-spread fields. The tri-state overrides
+ * (`models`/`driveMode`/`maxSpawnDepth`/`hooksMcpEnabled`/`recovery`/
+ * `attachments`/`curation`) are destructured out and applied explicitly, because
+ * a spread cannot express "delete this field" — which is how an override is
+ * cleared back to inherit — so they are patchable without being listed here.
+ *
+ * Not here, and not patchable by any route: `slug`/`started` (identity),
+ * `pinned`/`triggers` (their own endpoints), and `path`/`managed`/`repo` — the
+ * three fields that decide the keeper's cwd (issues #206, #718).
+ *
+ * The `satisfies` clause is the drift guard: a key removed from `ProjectYaml`
+ * fails the build here rather than silently becoming un-patchable.
+ */
+export const PATCHABLE_KEYS = [
+  "name",
+  "status",
+  "domain",
+  "group",
+  "visibility",
+  "summary",
+  "links",
+  "model",
+  "permissionMode",
+  "maxTurns",
+  "docker",
+] as const satisfies readonly (keyof ProjectYaml)[];

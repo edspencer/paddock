@@ -25,6 +25,7 @@ import {
   ProjectError,
   workingDirFor,
   isPathInside,
+  isSystemPath,
 } from "../../src/projects.js";
 import { ensureProjectChats } from "../../src/transcripts.js";
 import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
@@ -101,6 +102,50 @@ describe("workingDirFor / isPathInside with a linked path (issue #206)", () => {
     // The bug a bare startsWith would have: `projects-old` is NOT under `projects`.
     expect(isPathInside("/data/projects-old", "/data/projects")).toBe(false);
     expect(isPathInside("/home/ed/Code/foo", "/data/projects")).toBe(false);
+  });
+
+  it("isPathInside holds for the filesystem root, whose string already ends in a sep (#719)", () => {
+    // The `+ path.sep` that makes the sibling-prefix case above correct asked for
+    // `startsWith("//")` here, so EVERY child of `/` reported as outside it — and
+    // the bidirectional overlap guard in validatePath fell open in both directions
+    // once any project's working dir was `/`.
+    expect(isPathInside("/etc", "/")).toBe(true);
+    expect(isPathInside("/data/projects/a", "/")).toBe(true);
+    expect(isPathInside("/", "/")).toBe(true);
+    // The other direction, which is how the overlap guard also asks.
+    expect(isPathInside("/", "/data/projects")).toBe(false);
+  });
+});
+
+describe("isSystemPath — the floor beneath which no project may be linked (issue #720)", () => {
+  it("refuses the filesystem root and the system directories", () => {
+    for (const p of ["/", "/etc", "/dev", "/proc", "/sys", "/boot", "/usr", "/run"]) {
+      expect(isSystemPath(p), p).toBe(true);
+    }
+  });
+
+  it("refuses anything UNDER a system directory, not just the directory itself", () => {
+    expect(isSystemPath("/etc/nginx")).toBe(true);
+    expect(isSystemPath("/proc/self/cwd")).toBe(true);
+    expect(isSystemPath("/usr/local/src/thing")).toBe(true);
+  });
+
+  it("accepts the ordinary places a real checkout or notebook lives", () => {
+    for (const p of [
+      "/home/ed/Code/foo",
+      "/data/projects/paddock",
+      "/var/lib/paddock/projects/x",
+      "/opt/stuff",
+      "/srv/thing",
+      "/tmp/scratch",
+      "/root/Code/foo",
+      // A shared prefix with a denied root is NOT inside it — the same property
+      // the sibling-prefix case above protects.
+      "/etcetera",
+      "/development",
+    ]) {
+      expect(isSystemPath(p), p).toBe(false);
+    }
   });
 });
 
@@ -259,6 +304,32 @@ describe("ProjectStore — linked projects (issue #206)", () => {
     await rmTmpDir(path.dirname(elsewhere));
   });
 
+  it("update cannot give a notebook a repo, which would move its cwd (#718)", async () => {
+    const notebook = await store.create({ name: "Notes" });
+    // `repo` is the third field `workingDirFor()` reads. Unvalidated and mutable,
+    // it relocated BOTH the cwd and the contentDir to a nested directory nothing
+    // had created — the project's chats stayed keyed on the old cwd and every
+    // turn afterwards timed out waiting for a session file that never appeared.
+    for (const repo of ["not a url at all ;rm -rf /", "https://github.com/owner/other.git"]) {
+      const patched = await store.update(notebook.slug, { repo } as never);
+      expect(patched.repo, repo).toBeUndefined();
+      expect(patched.workingDir, repo).toBe(notebook.workingDir);
+      expect(patched.contentDir, repo).toBe(notebook.contentDir);
+      const yaml = YAML.parse(
+        await fs.readFile(path.join(notebook.dir, "project.yaml"), "utf8"),
+      );
+      expect(yaml.repo, repo).toBeUndefined();
+    }
+
+    // And it cannot re-point a project that legitimately HAS one.
+    const linked = await store.create({ name: "Foo", path: checkout });
+    const relinked = await store.update(linked.slug, {
+      repo: "https://github.com/owner/other.git",
+    } as never);
+    expect(relinked.repo).toBeUndefined();
+    expect(relinked.workingDir).toBe(checkout);
+  });
+
   it("promote refuses a linked project (it would clone into the user's repo)", async () => {
     const linked = await store.create({ name: "Foo", path: checkout });
     const before = await fingerprint(checkout);
@@ -367,6 +438,42 @@ describe("ProjectStore — linked projects (issue #206)", () => {
     await expect(store.create({ name: "Again", path: checkout })).rejects.toMatchObject({
       code: "invalid",
     });
+  });
+
+  it("rejects a system path, leaving nothing behind (issue #720)", async () => {
+    // Nothing is linked here: validation runs before any mkdir (proven by the
+    // next test), so these calls only ever throw. `/etc` and `/` are named
+    // because they are exactly what the issue reproduced as ACCEPTED — a
+    // keeper's cwd, running acceptEdits.
+    //
+    // These are deliberately all UNMANAGED. `managed: true` is what escalates
+    // the bug (contentDir becomes the linked dir, so the sweeper writes
+    // CLAUDE.md/CHANGELOG.md into it) — which is exactly why a test must not
+    // point it at a real system directory: on old code, or if this assertion
+    // were ever weakened, a run as root would write `/etc/CLAUDE.md` for real.
+    // The floor lives in `validatePath`, which runs identically on both sides of
+    // the managed axis, so the unmanaged case proves the gate; the managed
+    // consequence is covered on a scratch dir by the "managed + path" tests.
+    for (const p of ["/", "/etc", "/dev", "/etc/nginx"]) {
+      await expect(store.create({ name: "Sys", path: p }), p).rejects.toMatchObject({
+        code: "invalid",
+      });
+    }
+    // `/proc/self/cwd` canonicalises to an ordinary directory, so it passes the
+    // resolved check — the path as WRITTEN has to be refused as well.
+    await expect(
+      store.create({ name: "Sys", path: "/proc/self/cwd" }),
+    ).rejects.toMatchObject({ code: "invalid" });
+    await expect(fs.access(path.join(root, "sys"))).rejects.toThrow();
+  });
+
+  it("rejects a symlink whose real target is a system path (issue #720)", async () => {
+    const alias = path.join(await makeTmpDir("paddock-sysalias-"), "alias");
+    await fs.symlink("/etc", alias);
+    await expect(store.create({ name: "Alias", path: alias })).rejects.toMatchObject({
+      code: "invalid",
+    });
+    await rmTmpDir(path.dirname(alias));
   });
 
   it("a rejected path leaves no project directory behind", async () => {

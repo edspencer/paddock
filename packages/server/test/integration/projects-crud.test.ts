@@ -205,6 +205,118 @@ describe("integration: project CRUD over REST (real fleet, fake claude)", () => 
     expect(res.statusCode).toBe(400);
   });
 
+  /**
+   * The one property this route must never break: **a PATCH cannot move a
+   * project's working directory.**
+   *
+   * `workingDirFor()` reads exactly three fields — `path`, `managed` and `repo` —
+   * and the cwd it produces is baked into every transcript path, so moving it
+   * strands the project's whole history on a directory nothing points at any
+   * more. `path` and `managed` were already re-asserted from the current record;
+   * `repo` fed the same function and was missed (#718), which is why this asserts
+   * the PROPERTY rather than the three fields one at a time.
+   */
+  it("PATCH cannot move workingDir — path, managed and repo are all immutable (#718)", async () => {
+    const created = (
+      await t.app.inject({ method: "POST", url: "/api/projects", payload: { name: "Immutable" } })
+    ).json().project;
+    const { workingDir, contentDir, dir } = created;
+    expect(workingDir).toBe(dir);
+
+    const { promises: fs } = await import("node:fs");
+    const path = await import("node:path");
+    const YAML = (await import("yaml")).default;
+    const readYaml = async () =>
+      YAML.parse(await fs.readFile(path.join(dir, "project.yaml"), "utf8"));
+
+    // The first body is #718's reproduction verbatim: a value that is not a URL
+    // at all, which `create()` and `promote()` both refuse via isValidRepoUrl().
+    // It used to 200 and relocate BOTH dirs to `<dir>/not-a-url-at-all--rm--rf`,
+    // which does not exist — every turn afterwards hung 60s waiting for a session
+    // file and failed, with the existing chats stranded on the old cwd.
+    const bodies = [
+      { repo: "not a url at all ;rm -rf /" },
+      { repo: "https://github.com/owner/other.git" },
+      { path: "/tmp/somewhere-else" },
+      { managed: false },
+      { repo: "https://github.com/o/r.git", managed: false, path: "/tmp/x" },
+    ];
+    for (const payload of bodies) {
+      const label = JSON.stringify(payload);
+      const res = await t.app.inject({
+        method: "PATCH",
+        url: "/api/projects/immutable",
+        payload,
+      });
+      expect(res.statusCode, label).toBe(200);
+      const project = res.json().project;
+      expect(project.workingDir, label).toBe(workingDir);
+      expect(project.contentDir, label).toBe(contentDir);
+      expect(project.managed, label).toBe(true);
+      expect(project.repo, label).toBeUndefined();
+      expect(project.path, label).toBeUndefined();
+      // On disk too — the DTO hides fields the yaml carries, which is exactly why
+      // #721 was invisible from the UI.
+      const yaml = await readYaml();
+      expect(yaml.repo, label).toBeUndefined();
+      expect(yaml.path, label).toBeUndefined();
+      expect(yaml.managed, label).toBe(true);
+    }
+
+    // A re-GET agrees, and the working dir still exists — #718's symptom was a
+    // cwd pointing at a directory nothing ever created.
+    const got = (
+      await t.app.inject({ method: "GET", url: "/api/projects/immutable" })
+    ).json().project;
+    expect(got.workingDir).toBe(workingDir);
+    await expect(fs.stat(got.workingDir)).resolves.toBeTruthy();
+  });
+
+  it("PATCH drops unknown body keys instead of persisting them verbatim (#721)", async () => {
+    const created = (
+      await t.app.inject({ method: "POST", url: "/api/projects", payload: { name: "Allowlist" } })
+    ).json().project;
+
+    const res = await t.app.inject({
+      method: "PATCH",
+      url: "/api/projects/allowlist",
+      payload: {
+        // A legitimate field in the SAME body must still apply — the allowlist
+        // filters the body, it does not reject it.
+        summary: "kept",
+        bogusKey: "hello-audit",
+        nested: { a: [1, 2, { b: "c" }] },
+        // Derived DTO fields are not on-disk fields; a forged one used to land in
+        // project.yaml alongside the value the store computes.
+        contentDir: "/tmp/evil",
+        dir: "/tmp/evil",
+        hasOverview: true,
+        // Identity, and fields owned by their own endpoints.
+        slug: "hijacked",
+        started: "1999-01-01",
+        pinned: ["../../etc/passwd"],
+        triggers: { evil: { kind: "schedule" } },
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    const project = res.json().project;
+    expect(project.summary).toBe("kept");
+    expect(project.slug).toBe("allowlist");
+
+    const { promises: fs } = await import("node:fs");
+    const path = await import("node:path");
+    const YAML = (await import("yaml")).default;
+    const yaml = YAML.parse(await fs.readFile(path.join(created.dir, "project.yaml"), "utf8"));
+    expect(yaml.summary).toBe("kept");
+    expect(yaml.slug).toBe("allowlist");
+    expect(yaml.started).toBe(created.started);
+    // `pinned` IS an on-disk field — owned by /pins, not patchable here.
+    expect(yaml.pinned).toEqual([]);
+    for (const key of ["bogusKey", "nested", "contentDir", "dir", "hasOverview", "triggers"]) {
+      expect(Object.hasOwn(yaml, key), key).toBe(false);
+    }
+  });
+
   it("pins and unpins a file", async () => {
     const created = (
       await t.app.inject({ method: "POST", url: "/api/projects", payload: { name: "Pin Proj" } })
