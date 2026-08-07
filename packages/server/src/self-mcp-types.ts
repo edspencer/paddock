@@ -58,6 +58,14 @@ export interface SelfMcpCreatedProject {
   agentRegistered: boolean;
 }
 
+/**
+ * A promoted project as surfaced back to the agent (issue #470). Declared as an
+ * ALIAS rather than a second copy of the same fields: promotion's whole point is
+ * that the project ends up in exactly the state a repo-backed `create_project`
+ * would have produced, so the two reports must not be able to drift.
+ */
+export type SelfMcpPromotedProject = SelfMcpCreatedProject;
+
 /** A chat as surfaced to the agent. */
 export interface SelfMcpChat {
   /** Owning project slug. */
@@ -190,10 +198,11 @@ export interface SelfMcpWriteContext {
   /** Set (or clear) a chat's archived flag (presentational metadata only). */
   setArchived: (projectSlug: string, sessionId: string, archived: boolean) => Promise<void>;
   /**
-   * Whether the PROJECT tools (`create_project`, issue #467) are enabled for this
-   * instance — the `selfMcpProjectsEnabled` gate, resolved by the caller. When false
-   * the tool is NOT injected at all (absent, not present-but-refusing), the same
-   * binary discipline as {@link triggersMcpEnabled}.
+   * Whether the PROJECT tools (`create_project`, issue #467; `promote_project`,
+   * issue #470) are enabled for this instance — the `selfMcpProjectsEnabled` gate,
+   * resolved by the caller. When false the tools are NOT injected at all (absent,
+   * not present-but-refusing), the same binary discipline as
+   * {@link triggersMcpEnabled}.
    */
   projectsMcpEnabled: boolean;
   /**
@@ -206,6 +215,20 @@ export interface SelfMcpWriteContext {
    * non-fatal (mirroring the route) and reported via `agentRegistered`.
    */
   createProject: (input: SelfMcpCreateProjectInput) => Promise<SelfMcpCreatedProject>;
+  /**
+   * Promote an EXISTING notebook project to repo-backed in place, and re-register
+   * its agent — the SAME two steps `POST /api/projects/:slug/promote` performs, in
+   * the same order (`ProjectStore.promote` then `ensureProjectAgent`), so the REST
+   * and MCP paths cannot drift (issue #470/#213). All the real work (the already-
+   * repo-backed / root-workspace / bad-URL guards, the clone into the nested
+   * checkout, the `writeYaml` commit point and its rollback to an UNTOUCHED
+   * notebook on failure) stays in the store. Throws on a promote failure; a
+   * re-registration failure is non-fatal (mirroring the route) and reported via
+   * `agentRegistered` — though it matters more here than for create, since
+   * re-registration is what re-symlinks the new working dir at the project's
+   * existing `.chats/` store so its chats stay listed and resumable.
+   */
+  promoteProject: (projectSlug: string, repo: string) => Promise<SelfMcpPromotedProject>;
   /**
    * Whether the unified trigger-management MCP is enabled for THIS turn's project
    * (Epic T / T3 — the successor to the G5 hook-MCP gate, resolved from the SAME

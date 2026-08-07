@@ -79,6 +79,7 @@ export const READ_OPERATIONS = ["list_projects", "list_chats", "read_chat"] as c
 /** Chat write operations. The first four START TURNS (see the RCE note above). */
 export const WRITE_OPERATIONS = [
   "create_project",
+  "promote_project",
   "create_chat",
   "fork_chat",
   "send_message",
@@ -112,11 +113,13 @@ export const ALL_OPERATIONS: readonly string[] = [
 /**
  * Operations that grant code execution on the host, and so define the risk class
  * a write scope really is. A superset of {@link TURN_SPAWNING_OPERATIONS}:
- * `create_project` starts no turn, but it clones a CALLER-SUPPLIED git URL and
- * creates instance-level state, which belongs in the same warning.
+ * `create_project`/`promote_project` start no turn, but they clone a
+ * CALLER-SUPPLIED git URL and create (or restructure) instance-level state, which
+ * belongs in the same warning.
  */
 export const HIGH_RISK_OPERATIONS: readonly string[] = [
   "create_project",
+  "promote_project",
   "create_chat",
   "fork_chat",
   "fork_chat_batch",

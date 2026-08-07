@@ -15,6 +15,7 @@ import {
   isProjectAllowed,
   allowedOperations,
   grantsTurnSpawning,
+  grantsCodeExecution,
   assertOperation,
   assertProject,
   ManagementDeniedError,
@@ -93,6 +94,16 @@ describe("isOperationAllowed", () => {
     const s = scope({ allow: ["*"], deny: ["list_*"] });
     expect(isOperationAllowed(s, "list_chats")).toBe(false);
     expect(isOperationAllowed(s, "read_chat")).toBe(true);
+  });
+
+  // Promotion (#470) is a real catalogue entry, not an unknown name — otherwise it
+  // would be unreachable through the management API no matter what an operator
+  // granted, and `grantsCodeExecution` would under-report (it clones a
+  // caller-supplied URL, exactly like `create_project`).
+  it("knows promote_project, and counts it as code execution (#470)", () => {
+    expect(isOperationAllowed(scope({ allow: ["promote_project"] }), "promote_project")).toBe(true);
+    expect(grantsCodeExecution(scope({ allow: ["promote_project"] }))).toBe(true);
+    expect(isOperationAllowed(DEFAULT_READ_ONLY_SCOPE, "promote_project")).toBe(false);
   });
 
   // The catalogue gate: a name we don't know is refused even under `"*"`, so a

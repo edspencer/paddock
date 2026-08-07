@@ -12,7 +12,7 @@
  *   - `self-mcp-util.ts`         — result envelopes, clamps, arg coercion + caps
  *   - `self-mcp-descriptions.ts` — the agent-facing `*_DESC` prose
  *   - `self-mcp-read.ts`         — list_projects / list_chats / read_chat handlers
- *   - `self-mcp-write.ts`        — create/fork/send/archive/fork-batch + create_project handlers
+ *   - `self-mcp-write.ts`        — create/fork/send/archive/fork-batch + project handlers
  *   - `self-mcp-triggers.ts`     — list/set/remove/run trigger handlers
  *
  * ── How it reaches the keeper ───────────────────────────────────────────────
@@ -49,6 +49,7 @@ import {
   UNARCHIVE_CHAT_DESC,
   FORK_CHAT_BATCH_DESC,
   CREATE_PROJECT_DESC,
+  PROMOTE_PROJECT_DESC,
   SET_TRIGGER_DESC,
   REMOVE_TRIGGER_DESC,
   RUN_TRIGGER_DESC,
@@ -62,6 +63,7 @@ import {
   archiveChatHandler,
   forkChatBatchHandler,
   createProjectHandler,
+  promoteProjectHandler,
 } from "./self-mcp-write.js";
 import { PROJECT_STATUSES } from "./project-types.js";
 import {
@@ -83,6 +85,7 @@ export type {
   SelfMcpWriteContext,
   SelfMcpCreateProjectInput,
   SelfMcpCreatedProject,
+  SelfMcpPromotedProject,
 } from "./self-mcp-types.js";
 export {
   FORK_BATCH_MAX,
@@ -316,11 +319,15 @@ function writeTools(write: SelfMcpWriteContext): ServerTools {
 }
 
 /**
- * The PROJECT tools (issue #467 — `create_project`). Appended only when
+ * The PROJECT tools (issue #467 — `create_project`; issue #470 —
+ * `promote_project`). Appended only when
  * {@link SelfMcpWriteContext.projectsMcpEnabled} is on: the same coarse binary gate
- * as the trigger tools (when off the tool is ABSENT, not present-but-refusing). Its
- * own flag because — unlike every other write tool — this one provisions
- * instance-level state and clones a caller-supplied git URL.
+ * as the trigger tools (when off the tools are ABSENT, not present-but-refusing).
+ * Their own flag because — unlike every other write tool — these provision or
+ * restructure instance-level state and clone a caller-supplied git URL. Promotion
+ * shares the flag rather than getting a third one: it is the same blast-radius
+ * class, and an operator who has granted "this agent may provision projects" has
+ * already made the decision promotion asks for.
  */
 function projectTools(write: SelfMcpWriteContext): ServerTools {
   return [
@@ -357,6 +364,29 @@ function projectTools(write: SelfMcpWriteContext): ServerTools {
         required: ["name"],
       },
       handler: createProjectHandler(write),
+    },
+    {
+      name: "promote_project",
+      description: PROMOTE_PROJECT_DESC,
+      inputSchema: {
+        type: "object",
+        properties: {
+          project: {
+            type: "string",
+            description:
+              "Slug of the NOTEBOOK project to promote. Omit to promote the current project.",
+          },
+          repo: {
+            type: "string",
+            description:
+              "Git URL to back the project with (https://, git://, ssh:// or " +
+              "git@host:owner/repo). Cloned into a nested checkout that becomes the " +
+              "agent's working directory. Required.",
+          },
+        },
+        required: ["repo"],
+      },
+      handler: promoteProjectHandler(write),
     },
   ];
 }
@@ -507,8 +537,8 @@ function triggerTools(write: SelfMcpWriteContext): ServerTools {
  * write flag is on), the WRITE tools (create_chat/fork_chat/send_message/
  * archive_chat/unarchive_chat/fork_chat_batch) are appended too; omit it for
  * unchanged read-only behavior. Two further blocks hang off independent gates ON
- * that write context: {@link SelfMcpWriteContext.projectsMcpEnabled} (issue #467)
- * appends the project tool (create_project), and
+ * that write context: {@link SelfMcpWriteContext.projectsMcpEnabled} (issues #467,
+ * #470) appends the project tools (create_project/promote_project), and
  * {@link SelfMcpWriteContext.triggersMcpEnabled} (the per-project trigger-MCP
  * opt-in, Epic T / T3) appends the unified trigger-management tools (list_triggers/
  * set_trigger/remove_trigger/run_trigger). Inject under
@@ -559,11 +589,12 @@ export const SELF_MCP_WRITE_TOOL_NAMES = {
 } as const;
 
 /**
- * The fully-qualified name of the PROJECT tool (issue #467), present only when a
- * write context has {@link SelfMcpWriteContext.projectsMcpEnabled} on.
+ * The fully-qualified names of the PROJECT tools (issues #467, #470), present only
+ * when a write context has {@link SelfMcpWriteContext.projectsMcpEnabled} on.
  */
 export const SELF_MCP_PROJECT_TOOL_NAMES = {
   createProject: `mcp__${SERVER_NAME}__create_project`,
+  promoteProject: `mcp__${SERVER_NAME}__promote_project`,
 } as const;
 
 /**
