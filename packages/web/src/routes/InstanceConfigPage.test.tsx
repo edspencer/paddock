@@ -92,18 +92,104 @@ describe("InstanceConfigPage (#385)", () => {
   it("renders grouped fields and the restart banner", async () => {
     renderScreen();
     expect(await screen.findByText("OVERVIEW.md max tokens")).toBeInTheDocument();
-    expect(screen.getByText("Curation")).toBeInTheDocument();
-    expect(screen.getByText("Advanced (read-only)")).toBeInTheDocument();
+    // Each group is a section heading. (Its label also appears in the section
+    // rail, so match the heading specifically rather than the bare text.)
+    expect(screen.getByRole("heading", { name: "Curation" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Advanced (read-only)" })).toBeInTheDocument();
     // The persistent restart notice is always present.
     expect(screen.getByText(/take effect only after the server restarts/i)).toBeInTheDocument();
   });
 
-  it("renders env-overridden fields read-only with the env note", async () => {
+  it("renders env-overridden fields read-only, marked with the shadowing var", async () => {
     renderScreen();
     await screen.findByText("OVERVIEW.md max tokens");
-    // The env-shadowed field shows the override note and no editable input.
-    expect(screen.getByText(/Overridden by environment variable/i)).toBeInTheDocument();
+    // The explanation is stated once as a legend, not repeated per field —
+    // on a containerized instance most fields are env-shadowed.
+    expect(screen.getByText(/overridden by an environment variable/i)).toBeInTheDocument();
+    // The field itself carries an `env` chip and names the variable.
     expect(screen.getByText("PADDOCK_CURATION_CHANGELOG_MAX_TOKENS")).toBeInTheDocument();
+    expect(
+      screen.getByTitle(/Overridden by environment variable PADDOCK_CURATION_CHANGELOG_MAX_TOKENS/i),
+    ).toBeInTheDocument();
+  });
+
+  it("filters fields live, across every group, by label / key / env var", async () => {
+    renderScreen();
+    await screen.findByText("OVERVIEW.md max tokens");
+    const search = screen.getByRole("searchbox", { name: /search settings/i });
+
+    // A label substring narrows to the one field, dropping the other group
+    // entirely — search spans sections rather than being scoped to one.
+    fireEvent.change(search, { target: { value: "overview" } });
+    expect(screen.getByText("OVERVIEW.md max tokens")).toBeInTheDocument();
+    expect(screen.queryByText("Port")).not.toBeInTheDocument();
+    expect(screen.getByText("1 of 3")).toBeInTheDocument();
+
+    // An operator who thinks in PADDOCK_* names finds the field by typing one.
+    fireEvent.change(search, { target: { value: "PADDOCK_CURATION_CHANGELOG" } });
+    expect(screen.getByText("CHANGELOG.md max tokens")).toBeInTheDocument();
+    expect(screen.queryByText("OVERVIEW.md max tokens")).not.toBeInTheDocument();
+
+    // No match says so rather than rendering an empty page.
+    fireEvent.change(search, { target: { value: "zzzz" } });
+    expect(screen.getByText(/No settings match/i)).toBeInTheDocument();
+  });
+
+  it("takes focus on load on a pointer device, and Escape clears the filter", async () => {
+    // The autofocus is gated on `(min-width: 1024px)` so a phone does not get
+    // the on-screen keyboard thrown over the page.
+    vi.stubGlobal(
+      "matchMedia",
+      (q: string) =>
+        ({
+          matches: q === "(min-width: 1024px)",
+          media: q,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+        }) as unknown as MediaQueryList,
+    );
+    renderScreen();
+    await screen.findByText("OVERVIEW.md max tokens");
+    const search = screen.getByRole("searchbox", { name: /search settings/i });
+    expect(search).toHaveFocus();
+
+    fireEvent.change(search, { target: { value: "overview" } });
+    expect(screen.queryByText("Port")).not.toBeInTheDocument();
+    fireEvent.keyDown(search, { key: "Escape" });
+    expect(screen.getByText("Port")).toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
+
+  it("does NOT take focus on a small screen", async () => {
+    vi.stubGlobal(
+      "matchMedia",
+      (q: string) =>
+        ({
+          matches: false,
+          media: q,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+        }) as unknown as MediaQueryList,
+    );
+    renderScreen();
+    await screen.findByText("OVERVIEW.md max tokens");
+    expect(screen.getByRole("searchbox", { name: /search settings/i })).not.toHaveFocus();
+    vi.unstubAllGlobals();
+  });
+
+  it("'Modified only' shows just the fields that differ from their default", async () => {
+    renderScreen();
+    await screen.findByText("OVERVIEW.md max tokens");
+    // Every sample field currently equals its default.
+    fireEvent.click(screen.getByRole("button", { name: /modified only/i }));
+    expect(screen.getByText(/No settings match/i)).toBeInTheDocument();
+
+    // A pending edit makes that field — and only it — modified.
+    fireEvent.click(screen.getByRole("button", { name: /modified only/i }));
+    fireEvent.change((await screen.findAllByRole("spinbutton"))[0], { target: { value: "2500" } });
+    fireEvent.click(screen.getByRole("button", { name: /modified only/i }));
+    expect(screen.getByText("OVERVIEW.md max tokens")).toBeInTheDocument();
+    expect(screen.queryByText("Port")).not.toBeInTheDocument();
   });
 
   it("shows read-only bindings without an input", async () => {
