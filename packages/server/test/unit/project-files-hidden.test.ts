@@ -25,6 +25,14 @@ describe("project-files — hidden paths are refused, not just hidden", () => {
   let root: string;
   let store: ProjectStore;
 
+  /**
+   * A workspace key's directory. The helpers take a resolved directory rather
+   * than `(root, slug)` since issue #710 — a MANAGED project with a `path:` keeps
+   * its content elsewhere, so the store resolves the content dir and passes it
+   * in. For every workspace in this file that resolution is still `root + key`.
+   */
+  const dirOf = (key: string): string => path.join(root, key);
+
   beforeEach(async () => {
     root = await makeTmpDir("paddock-hidden-");
     store = new ProjectStore(root);
@@ -48,28 +56,28 @@ describe("project-files — hidden paths are refused, not just hidden", () => {
     // The empty key is the whole seam: `dirFor` is `path.join(root, "")`. This
     // file keeps its OWN copy of that resolution, and the previous design's
     // branch was missed here — 404ing every root file route.
-    expect(resolveInProject(root, ROOT_KEY, "")).toBe(root);
-    expect(resolveInProject(root, ROOT_KEY, "project.yaml")).toBe(
+    expect(resolveInProject(dirOf(ROOT_KEY), "")).toBe(root);
+    expect(resolveInProject(dirOf(ROOT_KEY), "project.yaml")).toBe(
       path.join(root, "project.yaml"),
     );
   });
 
   it("refuses descending THROUGH a hidden directory — transcripts and .git alike", () => {
     for (const p of [".chats/s1.jsonl", ".git/config", ".git/refs/heads/main"]) {
-      expect(() => resolveInProject(root, ROOT_KEY, p), p).toThrow(/Invalid file path/);
+      expect(() => resolveInProject(dirOf(ROOT_KEY), p), p).toThrow(/Invalid file path/);
     }
   });
 
   it("refuses a hidden directory inside an ordinary project too (pre-existing, same hole)", () => {
-    expect(() => resolveInProject(root, "alpha", ".chats/s2.jsonl")).toThrow(/Invalid file path/);
+    expect(() => resolveInProject(dirOf("alpha"), ".chats/s2.jsonl")).toThrow(/Invalid file path/);
   });
 
   it("refuses a hidden directory reached by normalisation, not just a literal one", () => {
     // The raw string contains no leading-dot segment; the RESOLVED path does.
-    expect(() => resolveInProject(root, ROOT_KEY, "alpha/../.chats/s1.jsonl")).toThrow(
+    expect(() => resolveInProject(dirOf(ROOT_KEY), "alpha/../.chats/s1.jsonl")).toThrow(
       /Invalid file path/,
     );
-    expect(() => resolveInProject(root, ROOT_KEY, "./.git/config")).toThrow(/Invalid file path/);
+    expect(() => resolveInProject(dirOf(ROOT_KEY), "./.git/config")).toThrow(/Invalid file path/);
   });
 
   it("STILL READS a dotfile leaf — the Changes pane depends on it", async () => {
@@ -80,7 +88,7 @@ describe("project-files — hidden paths are refused, not just hidden", () => {
     // `ensureSidecarGitignore` writes it. Caught in live QA as a 400 on
     // `/api/root/files/.gitignore`. Both directions must keep holding.
     await fs.writeFile(path.join(root, ".gitignore"), "/.chats/\n");
-    expect(resolveInProject(root, ROOT_KEY, ".gitignore")).toBe(path.join(root, ".gitignore"));
+    expect(resolveInProject(dirOf(ROOT_KEY), ".gitignore")).toBe(path.join(root, ".gitignore"));
     expect(await store.readFile(ROOT_KEY, ".gitignore")).toContain(".chats");
     // …and the same for an ordinary project's untracked dotfile.
     await fs.writeFile(path.join(root, "alpha", ".gitignore"), "/.chats/\n");
@@ -89,12 +97,12 @@ describe("project-files — hidden paths are refused, not just hidden", () => {
 
   it("still refuses ordinary traversal out of the project dir", () => {
     // A genuine escape to a sibling project, and an absolute path.
-    expect(() => resolveInProject(root, "alpha", "../beta/notes.md")).toThrow(
+    expect(() => resolveInProject(dirOf("alpha"), "../beta/notes.md")).toThrow(
       /Invalid file path/,
     );
-    expect(() => resolveInProject(root, "alpha", "/etc/passwd")).toThrow(/Invalid file path/);
+    expect(() => resolveInProject(dirOf("alpha"), "/etc/passwd")).toThrow(/Invalid file path/);
     // NOT an escape: `..` that normalises back inside is fine, and stays fine.
-    expect(resolveInProject(root, "alpha", "../alpha/notes.md")).toBe(
+    expect(resolveInProject(dirOf("alpha"), "../alpha/notes.md")).toBe(
       path.join(root, "alpha", "notes.md"),
     );
   });
@@ -102,18 +110,18 @@ describe("project-files — hidden paths are refused, not just hidden", () => {
   it("refuses an escape ABOVE the projects root from the root workspace itself", () => {
     // The root's dir IS the projects root, so `..` from there leaves the
     // instance entirely — the one traversal the root must never permit.
-    expect(() => resolveInProject(root, ROOT_KEY, "../elsewhere")).toThrow(/Invalid file path/);
-    expect(() => resolveInProject(root, ROOT_KEY, "/etc/passwd")).toThrow(/Invalid file path/);
+    expect(() => resolveInProject(dirOf(ROOT_KEY), "../elsewhere")).toThrow(/Invalid file path/);
+    expect(() => resolveInProject(dirOf(ROOT_KEY), "/etc/passwd")).toThrow(/Invalid file path/);
   });
 
   it("still allows the project root and ordinary nested files", () => {
-    expect(resolveInProject(root, "alpha", "")).toBe(path.join(root, "alpha"));
-    expect(resolveInProject(root, "alpha", "notes.md")).toBe(
+    expect(resolveInProject(dirOf("alpha"), "")).toBe(path.join(root, "alpha"));
+    expect(resolveInProject(dirOf("alpha"), "notes.md")).toBe(
       path.join(root, "alpha", "notes.md"),
     );
     // A project dir under a DOT-PREFIXED ancestor must still work: only the
     // path relative to the project dir is examined.
-    expect(resolveInProject(root, ROOT_KEY, "alpha/notes.md")).toBe(
+    expect(resolveInProject(dirOf(ROOT_KEY), "alpha/notes.md")).toBe(
       path.join(root, "alpha", "notes.md"),
     );
   });
@@ -121,10 +129,10 @@ describe("project-files — hidden paths are refused, not just hidden", () => {
   it("refuses to LIST a hidden directory that was previously enumerable", async () => {
     // `?path=.chats` used to enumerate every transcript filename. A listing
     // target IS a directory, so unlike a read its leaf gets no pass.
-    await expect(listFiles(root, ROOT_KEY, ".chats")).rejects.toThrow(/Invalid file path/);
-    await expect(listFiles(root, ROOT_KEY, ".git")).rejects.toThrow(/Invalid file path/);
+    await expect(listFiles(dirOf(ROOT_KEY), ".chats")).rejects.toThrow(/Invalid file path/);
+    await expect(listFiles(dirOf(ROOT_KEY), ".git")).rejects.toThrow(/Invalid file path/);
     // …while the ordinary listing still works and still omits dot entries.
-    const names = (await listFiles(root, ROOT_KEY)).map((e) => e.name);
+    const names = (await listFiles(dirOf(ROOT_KEY))).map((e) => e.name);
     expect(names).toContain("alpha");
     expect(names).toContain("project.yaml");
     expect(names.some((n) => n.startsWith("."))).toBe(false);

@@ -3,33 +3,24 @@
  *
  * Extracted from projects.ts (issue #403): the path-traversal guard plus the
  * directory listing + file readers (text / raw bytes / kind-hinted). Pure free
- * functions taking `(root, slug, …)` — no `ProjectStore` state beyond the
- * projects root — so `ProjectStore` keeps thin delegate methods over these and
- * the public API is unchanged. `ProjectError` codes are preserved exactly.
+ * functions taking `(dir, …)` — no `ProjectStore` state at all — so
+ * `ProjectStore` keeps thin delegate methods over these and the public API is
+ * unchanged. `ProjectError` codes are preserved exactly.
+ *
+ * **`dir` is the project's CONTENT dir, not `projectsRoot/<slug>`** (issue #710).
+ * These used to take `(root, slug)` and re-derive the directory by joining, which
+ * was right only while a project's content lived under the projects root. A
+ * MANAGED project with a `path:` (issue #206) keeps its curated trio out at that
+ * path, so the join addressed a directory holding nothing but `project.yaml` and
+ * the whole Files tab came back empty. Taking the directory the caller already
+ * resolved removes the second copy of that resolution rather than teaching it a
+ * new case — see {@link import("./project-paths.js").contentDirFor}.
  */
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { ProjectError } from "./project-paths.js";
 import { fileKind, contentTypeFor } from "./project-mime.js";
 import type { FileEntry, FileKind } from "./project-types.js";
-
-/**
- * The directory backing a workspace key — a second copy of
- * `ProjectStore.dirFor`'s resolution, kept in step by being the same one-liner.
- *
- * A key is a path relative to the projects root and the root workspace's key is
- * `""`, so `path.join` handles both with no branch. That matters historically:
- * the previous design DID need a branch here for a reserved slug, this copy was
- * missed, and every root file route 404'd until it was found in live QA. There
- * is no longer a branch to miss.
- *
- * The traversal guard below is unaffected: it compares against whatever this
- * returns, so at the root "inside the workspace dir" means "inside the projects
- * root" — exactly the scope of a keeper whose cwd is that directory.
- */
-function dirFor(root: string, key: string): string {
-  return path.join(root, key);
-}
 
 /**
  * Resolve a freeform file name to an absolute path inside the project dir,
@@ -65,13 +56,27 @@ function dirFor(root: string, key: string): string {
  * reachable there either. This is worth closing because "hidden in the listing"
  * should not be the only thing standing between an API and a transcript, not
  * because it grants anything new.
+ *
+ * **`hiddenSegments: "allow"`** turns the dot-directory half off, leaving only
+ * containment (issue #710). It exists for exactly one caller: `/git/file`, which
+ * serves a file from the project's WORKING directory and has already checked
+ * that `git status` reports that path as untracked. A git-verified allowlist is
+ * strictly stronger than this heuristic — git never names `.git` and never names
+ * an ignored path — and the heuristic is actively wrong out there, because a new
+ * `.github/workflows/ci.yml` is an ordinary Changes-tab row that a dot-directory
+ * rule refuses to render. Every other caller keeps the default. Pass it only
+ * with an independent allowlist in hand.
  */
-export function resolveInProject(root: string, slug: string, name: string): string {
-  const dir = dirFor(root, slug);
+export function resolveInProject(
+  dir: string,
+  name: string,
+  hiddenSegments: "refuse" | "allow" = "refuse",
+): string {
   const resolved = path.resolve(dir, name);
   if (resolved !== dir && !resolved.startsWith(dir + path.sep)) {
     throw new ProjectError("Invalid file path", "invalid");
   }
+  if (hiddenSegments === "allow") return resolved;
   // Check the RESOLVED path's segments relative to the project dir, not the
   // caller's raw string: `a/./.git/config` and `a/../.git/config` both normalise
   // to a hidden directory segment the raw string doesn't literally contain. The
@@ -106,15 +111,11 @@ function isHidden(segment: string): boolean {
  * doesn't exist and `ProjectError("not_directory")` when `subpath` is a file —
  * the latter lets the caller fall back to rendering that file.
  */
-export async function listFiles(
-  root: string,
-  slug: string,
-  subpath = "",
-): Promise<FileEntry[]> {
-  const target = resolveInProject(root, slug, subpath);
+export async function listFiles(dir: string, subpath = ""): Promise<FileEntry[]> {
+  const target = resolveInProject(dir, subpath);
   // A LISTING target is a directory, so unlike a read the leaf gets no pass:
   // `?path=.chats` is exactly how every transcript filename was enumerable.
-  const leaf = relSegments(dirFor(root, slug), target).at(-1);
+  const leaf = relSegments(dir, target).at(-1);
   if (leaf && isHidden(leaf)) {
     throw new ProjectError("Invalid file path", "invalid");
   }
@@ -137,25 +138,25 @@ export async function listFiles(
 
 /** Read a freeform file's contents as UTF-8 text (path-traversal guarded). */
 export async function readProjectFile(
-  root: string,
-  slug: string,
+  dir: string,
   name: string,
+  hiddenSegments: "refuse" | "allow" = "refuse",
 ): Promise<string> {
-  return fs.readFile(resolveInProject(root, slug, name), "utf8");
+  return fs.readFile(resolveInProject(dir, name, hiddenSegments), "utf8");
 }
 
 /**
  * Read a file's raw bytes + its MIME type (issue #61), for the binary/image
  * endpoint. Path-traversal guarded; throws ProjectError("not_found") if the
  * file is missing so the route can 404 cleanly. NOT decoded as text, so binary
- * (image) bytes survive intact.
+ * (image) bytes survive intact. See {@link resolveInProject} for `hiddenSegments`.
  */
 export async function readFileBytes(
-  root: string,
-  slug: string,
+  dir: string,
   name: string,
+  hiddenSegments: "refuse" | "allow" = "refuse",
 ): Promise<{ bytes: Buffer; mime: string }> {
-  const resolved = resolveInProject(root, slug, name);
+  const resolved = resolveInProject(dir, name, hiddenSegments);
   try {
     const bytes = await fs.readFile(resolved);
     return { bytes, mime: contentTypeFor(name) };
@@ -175,18 +176,19 @@ export async function readFileBytes(
  * For an IMAGE the raw bytes are NOT returned here (decoding binary as UTF-8
  * would mangle it): `content` is empty and the client fetches the bytes from
  * the raw endpoint. We still stat the file so a missing image 404s. Path-
- * traversal guarded; throws ProjectError("not_found") when missing.
+ * traversal guarded; throws ProjectError("not_found") when missing. See
+ * {@link resolveInProject} for `hiddenSegments`.
  */
 export async function readFileWithKind(
-  root: string,
-  slug: string,
+  dir: string,
   name: string,
+  hiddenSegments: "refuse" | "allow" = "refuse",
 ): Promise<{ name: string; kind: FileKind; content: string }> {
   const kind = fileKind(name);
   if (kind === "image") {
     // Existence check only — the bytes go over the raw endpoint.
     try {
-      await fs.stat(resolveInProject(root, slug, name));
+      await fs.stat(resolveInProject(dir, name, hiddenSegments));
     } catch (err) {
       if (err instanceof ProjectError) throw err;
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {
@@ -199,7 +201,7 @@ export async function readFileWithKind(
 
   let content: string;
   try {
-    content = await readProjectFile(root, slug, name);
+    content = await readProjectFile(dir, name, hiddenSegments);
   } catch (err) {
     if (err instanceof ProjectError) throw err; // traversal -> "invalid"
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {

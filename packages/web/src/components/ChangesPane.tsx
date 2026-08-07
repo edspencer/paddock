@@ -116,11 +116,15 @@ export function ChangesPane({
     [files],
   );
 
-  // Fleet-wide git info drives push (ahead/behind, remote) + the GitHub flow.
+  // THIS PROJECT's git info drives push (ahead/behind, remote) + the GitHub
+  // flow. It used to be the fleet-wide `/api/git`, which describes the backing
+  // store — so a linked or repo-backed project showed its own branch beside an
+  // ahead-count, a remote and a Push button that all belonged to Paddock's own
+  // notes repo (#710). For a notebook project the two are the same repository.
   const loadInfo = useCallback(async () => {
-    const next = await api.gitInfo().catch(() => null);
+    const next = await api.gitProjectInfo(slug).catch(() => null);
     if (next) setInfo(next);
-  }, []);
+  }, [slug]);
   useEffect(() => {
     void loadInfo();
   }, [loadInfo]);
@@ -178,7 +182,7 @@ export function ChangesPane({
     setBusyErr(null);
     setNote(null);
     try {
-      const res = await api.gitPush();
+      const res = await api.gitPush(slug);
       if (res.pushed) {
         setNote("Pushed to remote");
         await loadInfo();
@@ -190,7 +194,7 @@ export function ChangesPane({
     } finally {
       setPushing(false);
     }
-  }, [canPush, loadInfo]);
+  }, [canPush, loadInfo, slug]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -540,10 +544,17 @@ function diffLineClass(line: string): string {
 
 /**
  * Content view for an UNTRACKED (brand-new) file, shown in place of a diff since
- * `git diff` emits nothing for it (issue #107). Reuses the existing
- * `GET /files/:name` endpoint + render-kind hint: images render as an <img> from
- * the raw-bytes endpoint, everything else renders as plain text. The whole file
- * is new, so a green gutter echoes an all-added diff.
+ * `git diff` emits nothing for it (issue #107). Fetched from `GET /git/file` —
+ * the project's WORKING directory — with the same render-kind hint: images
+ * render as an <img> from the raw-bytes endpoint, everything else as plain text.
+ * The whole file is new, so a green gutter echoes an all-added diff.
+ *
+ * It read `GET /files/:name` until issue #710. That endpoint browses the
+ * project's NOTES directory, which is the same place only for a notebook
+ * project; for a repo-backed or linked one (a checkout, a git worktree) the file
+ * lives in the working directory and every row in this pane rendered "File not
+ * found". `/git/file` serves only what `git status` reports as untracked, so
+ * what this pane can fetch is by construction what it already lists.
  */
 function UntrackedFileView({ slug, file: change }: { slug: string; file: GitFileChange }) {
   const name = change.path;
@@ -557,7 +568,7 @@ function UntrackedFileView({ slug, file: change }: { slug: string; file: GitFile
     setError(null);
     setFile(null);
     api
-      .getProjectFile(slug, name)
+      .gitUntrackedFile(slug, name)
       .then((f) => {
         if (!cancelled) setFile(f);
       })
@@ -610,7 +621,7 @@ function UntrackedFileView({ slug, file: change }: { slug: string; file: GitFile
         {header}
         <div className="flex flex-1 items-center justify-center overflow-auto p-6">
           <img
-            src={api.projectFileRawUrl(slug, name)}
+            src={api.gitUntrackedFileRawUrl(slug, name)}
             alt={name}
             className="max-h-full max-w-full object-contain shadow-sm"
           />
