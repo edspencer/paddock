@@ -143,6 +143,17 @@ each is OPT-IN; a prompt with none of these is handled exactly as before):
   so the `ws.test.ts` boundary case sends this turn as a **resume** of an
   existing session (the transcript file already exists, watcher attaches
   reliably).
+- `[[BGSUBAGENT]]` → a **background** sub-agent that OUTLIVES its parent turn.
+  The `Task` tool_result is paired immediately, so the turn runs on to its
+  terminal `result` while sidechain steps keep arriving for
+  `PADDOCK_FAKE_BGSUBAGENT_MS` (default 3000ms). This is the only directive that
+  detaches a running sub-agent from a live parent turn, and it exists because
+  nothing else could: sub-agent progress is polled over REST, and a live parent
+  turn is what keeps that poll alive — so a nav-away/nav-back test written on
+  `[[SUBAGENT]]` or `[[SLOWTOOL]]` **passes while the bug is live** (#725).
+  Guarded by `test/integration/ws-subagent-background.test.ts`, which asserts the
+  parent turn finishes *first*; if that stops being true the directive silently
+  stops reproducing the condition and anything built on it becomes a false green.
 - **Sweeper curation prompts** (detected by the literal `<<<OVERVIEW>>>` the
   sweeper system/user prompt asks for) → the fake returns a marker-shaped reply
   (`<<<OVERVIEW>>> … <<<CHANGELOG>>> … <<<END>>>`) so `SweepService` can parse it
