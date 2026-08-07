@@ -61,7 +61,7 @@ FROM node:22-slim AS base
 WORKDIR /app
 
 ENV NODE_ENV=production \
-    PORT=4000 \
+    PORT=7233 \
     HOST=0.0.0.0 \
     PADDOCK_DATA_DIR=/data \
     HOME=/data
@@ -102,7 +102,7 @@ RUN printf '#!/bin/sh\nif [ -n "$GITHUB_TOKEN" ]; then\n  git config --global ur
     && chmod +x /usr/local/bin/docker-entrypoint.sh
 
 VOLUME ["/data"]
-EXPOSE 4000
+EXPOSE 7233
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD curl -fsS "http://127.0.0.1:${PORT}/api/health" || exit 1

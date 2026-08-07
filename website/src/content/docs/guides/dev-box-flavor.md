@@ -126,7 +126,7 @@ kubeconfig and no cluster credentials** — those are per-deployment and yours t
 supply. Mount or project one in at run time and point `KUBECONFIG` at it:
 
 ```bash
-docker run -d --name paddock -p 127.0.0.1:4000:4000 \
+docker run -d --name paddock -p 127.0.0.1:7233:7233 \
   -e CLAUDE_CODE_OAUTH_TOKEN=… \
   -e PADDOCK_DANGEROUSLY_ALLOW_OPEN=1 \
   -e KUBECONFIG=/data/.kube/config \
@@ -153,7 +153,7 @@ It runs exactly like base — same volume, same auth, same port — just a diffe
 tag:
 
 ```bash
-docker run -d --name paddock -p 127.0.0.1:4000:4000 \
+docker run -d --name paddock -p 127.0.0.1:7233:7233 \
   -e CLAUDE_CODE_OAUTH_TOKEN=…       `# or ANTHROPIC_API_KEY` \
   -e PADDOCK_DANGEROUSLY_ALLOW_OPEN=1 `# containers always bind 0.0.0.0` \
   -v paddock-data:/data \
@@ -174,7 +174,7 @@ docker run -d --name paddock -p 127.0.0.1:4000:4000 \
   Paddock, base or devbox: inside a container the app always binds `0.0.0.0`
   (Docker's port publishing can't route to an in-container `127.0.0.1`), and
   Paddock's fail-closed guard would otherwise refuse to boot. This is safe **only**
-  because the `-p 127.0.0.1:4000:4000` publish keeps the instance host-only. If you
+  because the `-p 127.0.0.1:7233:7233` publish keeps the instance host-only. If you
   ever publish on a routable address, drop this flag and put a real auth mode in
   front — see [Securing Paddock](/guides/securing/).
 
@@ -233,7 +233,7 @@ registry path and the dev-server data-isolation knobs — is in
 in the Paddock repo.
 
 :::note[Preview ports are separate from Paddock's port]
-Only Paddock's own port (`4000`) is published by the run command above. To reach a
+Only Paddock's own port (`7233`) is published by the run command above. To reach a
 `pm` preview server from another machine, you also have to expose its port — front
 it with the same reverse proxy that fronts Paddock, or route the `PM_PORT_MIN..MAX`
 range. Like Paddock itself, a preview server is unauthenticated: don't expose one

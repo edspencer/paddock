@@ -34,25 +34,25 @@ npm run build
 
 # 3. (optional) Use a throwaway data dir so you don't touch real projects.
 export PADDOCK_DATA_DIR="$(mktemp -d /tmp/paddock-dev.XXXXXX)"
-export PORT=4000            # default; change if 4000 is taken
+export PORT=7233            # default; change if 7233 is taken
 
 # 4. Start the single server process.
 npm run start              # == node packages/server/dist/index.js
 ```
 
-Open **http://localhost:4000/** — the SPA, API, and WebSocket chat all live here.
+Open **http://localhost:7233/** — the SPA, API, and WebSocket chat all live here.
 
 Quick checks (another terminal):
 
 ```bash
-curl -s http://localhost:4000/api/health     # {"ok":true}
-curl -s http://localhost:4000/api/projects    # {"projects":[...]}
+curl -s http://localhost:7233/api/health     # {"ok":true}
+curl -s http://localhost:7233/api/projects    # {"projects":[...]}
 ```
 
 ## Mode B — hot-reload dev (two processes)
 
 Use this while iterating on the frontend. Vite serves the SPA on `:5173` and
-**proxies** `/api` + `/ws` to the backend on `:4000` (see `vite.config.ts`), so
+**proxies** `/api` + `/ws` to the backend on `:7233` (see `vite.config.ts`), so
 the WebSocket chat works end-to-end with live reload.
 
 ```bash
@@ -60,15 +60,15 @@ cd ~/Code/paddock
 set -a; source ~/herds/.env; set +a   # token in env for BOTH terminals
 
 # Terminal 1 — backend (watched, tsx)
-npm run dev          # paddock-server on :4000
+npm run dev          # paddock-server on :7233
 
 # Terminal 2 — frontend (Vite, HMR)
-npm run dev:web      # http://localhost:5173  (proxies /api + /ws -> :4000)
+npm run dev:web      # http://localhost:5173  (proxies /api + /ws -> :7233)
 ```
 
 Open **http://localhost:5173/**.
 
-To run on different ports (e.g. when `:4000` is already taken by another
+To run on different ports (e.g. when `:7233` is already taken by another
 instance) point the dev server at a backend on another port:
 
 ```bash
@@ -94,14 +94,14 @@ rm -rf /tmp/paddock-dev.*
 | Var | Default | Purpose |
 |-----|---------|---------|
 | `CLAUDE_CODE_OAUTH_TOKEN` | — | **Required.** Max auth, passed to the agents. |
-| `PORT` | `4000` | HTTP/WS listen port. |
+| `PORT` | `7233` | HTTP/WS listen port. |
 | `HOST` | `127.0.0.1` | Bind host — loopback by default. Binding a routable interface while `PADDOCK_AUTH_MODE=none` refuses to start unless `PADDOCK_DANGEROUSLY_ALLOW_OPEN` is set. |
 | `PADDOCK_DATA_DIR` | `./data` | Root for projects, herdctl config + state. |
 | `PADDOCK_WEB_DIST` | `packages/web/dist` | Built SPA served in production. |
 | `VITE_API_BASE` *(web build)* | same-origin | Point the SPA at a non-default API origin. |
 | `VITE_WS_BASE` *(web build)* | same-origin | Point the SPA at a non-default WS origin. |
 | `PADDOCK_DEV_PORT` *(Mode B)* | `5173` | Vite dev-server port. |
-| `PADDOCK_PROXY_TARGET` *(Mode B)* | `http://localhost:4000` | Backend origin the Vite dev server proxies `/api` + `/ws` to (WS target derived by swapping `http`→`ws`). |
+| `PADDOCK_PROXY_TARGET` *(Mode B)* | `http://localhost:7233` | Backend origin the Vite dev server proxies `/api` + `/ws` to (WS target derived by swapping `http`→`ws`). |
 | `PADDOCK_WHISPER_MODE` | `off` (or `remote` if an endpoint is set) | Voice dictation backend: `off` \| `remote` \| `local`. |
 | `PADDOCK_WHISPER_ENDPOINT` | — | **remote:** OpenAI-compatible base URL, e.g. `http://whisper.local:8385/v1`. `/audio/transcriptions` is appended. |
 | `PADDOCK_WHISPER_MODEL` | `base` | Whisper model (`tiny`/`base`/`small`/…; `.en` variants for English-only). |

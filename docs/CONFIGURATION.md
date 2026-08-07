@@ -38,7 +38,7 @@ declarations will live in, and it matches the repo's YAML house style
 
 ```yaml
 # <data>/paddock.config.yaml — every value here is overridable by its env var
-port: 4000
+port: 7233
 logLevel: info
 keeperDriveMode: session
 auth:
@@ -85,7 +85,7 @@ Consequences worth knowing:
 | `PADDOCK_STATE_DIR` | `<data>/.herdctl` | no | herdctl state directory. |
 | `PADDOCK_HERDCTL_CONFIG` | `<data>/herdctl.yaml` | no | Path to the generated `herdctl.yaml` the FleetManager loads (Paddock owns/regenerates it). |
 | `PADDOCK_WEB_DIST` | `packages/web/dist` | no | Built SPA served in production (resolved relative to the server module). |
-| `PORT` | `4000` | no | HTTP/WS listen port. |
+| `PORT` | `7233` | no | HTTP/WS listen port. |
 | `HOST` | `127.0.0.1` | no | Bind host. Loopback by default (#435) so a fresh source/tarball run is network-closed. The container images set `HOST=0.0.0.0` — the network namespace is their boundary. `PADDOCK_HOST` is an accepted alias. |
 | `PADDOCK_DANGEROUSLY_ALLOW_OPEN` | — | no | Permits binding a non-loopback host while `PADDOCK_AUTH_MODE=none`. Without it that combination **refuses to start**; see [AUTH.md](../AUTH.md). Boots with a loud warning when set. |
 | `PADDOCK_MANAGEMENT_TRUSTED_PROXIES` | `loopback, linklocal, uniquelocal` | no | Peers whose `X-Forwarded-Proto` the `/mcp` plaintext guard believes. IPs, CIDRs, `loopback`/`linklocal`/`uniquelocal`, or `none`/`all`. Overrides `managementApi.trustedProxies`; see [Management API](#management-api-mcp-external-callers). |
@@ -254,7 +254,7 @@ Two consequences worth knowing:
   scheme from outside:
 
   ```sh
-  docker compose exec paddock curl -sS -X POST http://127.0.0.1:4000/mcp \
+  docker compose exec paddock curl -sS -X POST http://127.0.0.1:7233/mcp \
     -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
     -H 'Accept: application/json, text/event-stream' \
     -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
@@ -341,6 +341,6 @@ Read by the Vite build/dev server (`packages/web`), not the backend:
 | Variable | Default | Required | Purpose |
 |----------|---------|----------|---------|
 | `PADDOCK_DEV_PORT` | `5173` | no | Vite dev-server port (hot-reload mode). |
-| `PADDOCK_PROXY_TARGET` | `http://localhost:4000` | no | Backend origin the Vite dev server proxies `/api` + `/ws` to (WS target derived by swapping `http`→`ws`). |
+| `PADDOCK_PROXY_TARGET` | `http://localhost:7233` | no | Backend origin the Vite dev server proxies `/api` + `/ws` to (WS target derived by swapping `http`→`ws`). |
 | `VITE_API_BASE` | *(same-origin)* | no | Build-time: point the SPA at a non-default API origin. |
 | `VITE_WS_BASE` | *(same-origin)* | no | Build-time: point the SPA at a non-default WebSocket origin. |

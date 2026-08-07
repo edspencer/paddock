@@ -110,9 +110,9 @@ export function nodeVersionProblem(nodeVersion: string): string | undefined {
 /**
  * Translate a listen failure into something a human can act on.
  *
- * `EADDRINUSE` on 4000 is the likeliest first-run failure — a popular port and
- * Paddock's own default — and Node's raw error names neither the port nor the
- * flag that fixes it.
+ * `EADDRINUSE` is the likeliest first-run failure — usually a second Paddock, or
+ * a Temporal frontend, which defaults to the same 7233 — and Node's raw error
+ * names neither the port nor the flag that fixes it.
  */
 export function explainListenError(err: unknown, host: string, port: string): string {
   const code = (err as { code?: string } | undefined)?.code;
@@ -126,7 +126,7 @@ export function explainListenError(err: unknown, host: string, port: string): st
   if (code === "EACCES") {
     return (
       `not allowed to bind ${host}:${port}.\n` +
-      `Ports below 1024 need elevated privileges — use a higher one:  paddock --port 4000`
+      `Ports below 1024 need elevated privileges — use a higher one:  paddock --port 7233`
     );
   }
   return String((err as { message?: string } | undefined)?.message ?? err);
@@ -138,7 +138,7 @@ Usage
   npx @edspencer/paddock [options]
 
 Options
-  -p, --port <port>       HTTP/WS port (default 4000, or $PORT)
+  -p, --port <port>       HTTP/WS port (default 7233, or $PORT)
       --host <host>       Bind address (default 127.0.0.1)
   -d, --data-dir <path>   Projects + state (default ~/.paddock, or $PADDOCK_DATA_DIR)
       --here              Open the CURRENT directory as the workspace (see below)

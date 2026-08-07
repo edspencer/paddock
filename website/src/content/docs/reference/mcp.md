@@ -231,7 +231,7 @@ loopback:
 
 ```bash
 docker compose exec paddock \
-  curl -sS -X POST http://127.0.0.1:4000/mcp \
+  curl -sS -X POST http://127.0.0.1:7233/mcp \
     -H "Authorization: Bearer <the token your client config references>" \
     -H "Accept: application/json, text/event-stream" \
     -H "Content-Type: application/json" \
