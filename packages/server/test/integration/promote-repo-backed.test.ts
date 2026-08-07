@@ -46,7 +46,7 @@ describe("integration: promote notebook → repo-backed over REST (issue #213)",
         payload: { name: "Promote Me", summary: "planning notes" },
       })
     ).json().project;
-    expect(created.repoBacked).toBe(false);
+    expect(created.managed).toBe(true);
     expect(created.workingDir).toBe(created.dir);
 
     // Promote.
@@ -57,7 +57,7 @@ describe("integration: promote notebook → repo-backed over REST (issue #213)",
     });
     expect(res.statusCode).toBe(200);
     const p = res.json().project;
-    expect(p.repoBacked).toBe(true);
+    expect(p.managed).toBe(false);
     expect(p.repo).toBe(src);
     expect(p.workingDir).toBe(path.join(p.dir, "demo"));
 
@@ -73,7 +73,7 @@ describe("integration: promote notebook → repo-backed over REST (issue #213)",
 
     // GET reflects the promotion + preserves the sidecar metadata (changelog).
     const got = (await t.app.inject({ method: "GET", url: "/api/projects/promote-me" })).json();
-    expect(got.project.repoBacked).toBe(true);
+    expect(got.project.managed).toBe(false);
     expect(got.project.summary).toBe("planning notes");
     expect(got.changelog).toContain("Project opened.");
   });
@@ -115,7 +115,7 @@ describe("integration: promote notebook → repo-backed over REST (issue #213)",
     expect(res.statusCode).toBe(400);
     // Still a notebook, no stray checkout, CLAUDE.md intact.
     const got = (await t.app.inject({ method: "GET", url: "/api/projects/survivor-nb" })).json();
-    expect(got.project.repoBacked).toBe(false);
+    expect(got.project.managed).toBe(true);
     await expect(fs.access(path.join(got.project.dir, "CLAUDE.md"))).resolves.toBeUndefined();
   });
 });

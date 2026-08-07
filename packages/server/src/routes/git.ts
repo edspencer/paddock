@@ -189,7 +189,10 @@ export function registerGitWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx):
     async (req, reply) => {
       try {
         const project = await projects.get(req.params.slug);
-        return await git.projectStatus(project.dir);
+        // The project's WORKING directory, not its metadata dir (#597): for a
+        // repo-backed or linked project those differ, and `dir` showed the notes
+        // folder rather than the code the project is about.
+        return await git.projectStatus(project.workingDir);
       } catch (err) {
         return sendProjectError(reply, err);
       }
@@ -229,7 +232,7 @@ export function registerGitWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx):
     async (req, reply) => {
       try {
         const project = await projects.get(req.params.slug);
-        const diff = await git.projectDiff(project.dir, req.query.file);
+        const diff = await git.projectDiff(project.workingDir, req.query.file);
         reply.header("content-type", "text/plain; charset=utf-8");
         return diff;
       } catch (err) {
@@ -281,7 +284,7 @@ export function registerGitWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx):
         // Optional `files` (project-relative) commits only those changes (#258);
         // omitted ⇒ commit the whole subtree (legacy behavior).
         const files = Array.isArray(req.body?.files) ? req.body?.files : undefined;
-        return await git.commitProject(project.dir, message, files);
+        return await git.commitProject(project.workingDir, message, files);
       } catch (err) {
         return sendProjectError(reply, err);
       }

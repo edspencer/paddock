@@ -152,7 +152,9 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   registerAuth(app, cfg.auth);
 
   // --- project layer + herdctl ------------------------------------------
-  const projects = new ProjectStore(cfg.projectsRoot);
+  const projects = new ProjectStore(cfg.projectsRoot, cfg.dataDir, {
+    warn: (message) => app.log.warn(message),
+  });
   await projects.init();
 
   // The user's own MCP servers, under `claude.mcpServers: host` (#691 step 5).

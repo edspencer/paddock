@@ -185,4 +185,75 @@ describe("GitService", () => {
       expect(r.behind).toBe(0);
     });
   });
+
+  // --- per-directory repo detection (issues #597 / #206) ----------------------
+
+  describe("repo detection is per DIRECTORY, not store-wide", () => {
+    it("reports on a repo outside the store even when the store isn't one", async () => {
+      // The #597 bug, in its sharpest form: the projects root is a plain
+      // directory (paddock does not require it to be a repo) while a project's
+      // working directory is a real checkout somewhere else. Gating on the STORE
+      // hid the Changes tab for the one directory that actually had changes.
+      const store = path.join(root, "plain-store");
+      await fs.mkdir(store, { recursive: true });
+      const elsewhere = path.join(root, "elsewhere");
+      await fs.mkdir(elsewhere, { recursive: true });
+      await initRepo(elsewhere);
+      await fs.writeFile(path.join(elsewhere, "a.txt"), "hello\n");
+      await git(elsewhere, "add", "-A");
+      await git(elsewhere, "commit", "-m", "init");
+      await fs.writeFile(path.join(elsewhere, "a.txt"), "changed\n");
+
+      const svc = new GitService(store);
+      expect(await svc.isRepo()).toBe(false); // the store still isn't a repo …
+
+      const status = await svc.projectStatus(elsewhere); // … but this directory is
+      expect(status.repo).toBe(true);
+      expect(status.branch).toBe("main");
+      expect(status.files.map((f) => f.path)).toEqual(["a.txt"]);
+      expect(await svc.projectDiff(elsewhere)).toContain("changed");
+      expect(await svc.dirtyCountAt(elsewhere)).toBe(1);
+
+      const committed = await svc.commitProject(elsewhere, "from paddock");
+      expect(committed.committed).toBe(true);
+      expect(await svc.dirtyCountAt(elsewhere)).toBe(0);
+    });
+
+    it("reports a NON-repo subdirectory of a repo store as not-a-repo", async () => {
+      // The converse: `isRepo()` on the store said yes for directories that were
+      // not themselves in the work tree. A nested checkout is the real case —
+      // paddock gitignores it, so the outer repo does not track it at all.
+      const store = path.join(root, "repo-store");
+      await fs.mkdir(store, { recursive: true });
+      await initRepo(store);
+      const svc = new GitService(store);
+      expect(await svc.isRepo()).toBe(true);
+
+      // A directory that does not exist is not a work tree, and must not throw.
+      expect(await svc.isRepoAt(path.join(store, "nope"))).toBe(false);
+      expect(await svc.projectStatus(path.join(store, "nope"))).toEqual({
+        repo: false,
+        files: [],
+        clean: true,
+      });
+      expect(await svc.dirtyCountAt(path.join(store, "nope"))).toBe(0);
+
+      // A real subdirectory of the store IS inside its work tree, as before.
+      const sub = path.join(store, "sub");
+      await fs.mkdir(sub, { recursive: true });
+      expect(await svc.isRepoAt(sub)).toBe(true);
+    });
+
+    it("resetRepoCache clears the per-directory cache too", async () => {
+      const dir = path.join(root, "later");
+      await fs.mkdir(dir, { recursive: true });
+      const svc = new GitService(dir);
+      expect(await svc.isRepoAt(dir)).toBe(false);
+
+      await initRepo(dir); // `git init` at runtime, the case the reset exists for
+      expect(await svc.isRepoAt(dir)).toBe(false); // still cached …
+      svc.resetRepoCache();
+      expect(await svc.isRepoAt(dir)).toBe(true); // … until the cache is dropped
+    });
+  });
 });

@@ -1,6 +1,6 @@
 ---
 title: "Projects"
-description: "Notebook vs. repo-backed projects, and what a project directory contains."
+description: "The two axes that decide a project's shape — managed vs. unmanaged, and where its content lives — and what a project directory contains."
 ---
 
 A **project** is a [workspace](/concepts/workspaces) nested inside the root. The
@@ -16,20 +16,25 @@ What distinguishes a project is only that its
 to the projects root — is non-empty; the root's key is the empty string. Chats, files,
 changes, history, settings, and triggers all behave identically at either, because they
 are served by [literally the same handlers](/concepts/workspaces#one-plugin-two-mounts).
-This page covers what is specific to a nested workspace, chiefly the two project *types*.
+This page covers what is specific to a nested workspace, chiefly how a project's
+**backing** is decided.
 
 ## What's in a project directory
 
 ```
 <projectsRoot>/<slug>/
-├── project.yaml     # metadata (the on-disk ProjectYaml)
+├── project.yaml     # metadata (the on-disk ProjectYaml) — never moves
 ├── OVERVIEW.md      # current synthesized state — sweeper-curated, replaced wholesale
 ├── CHANGELOG.md     # append-only dated history — sweeper + hand-edited
-├── CLAUDE.md        # durable project identity / working conventions (notebook only)
+├── CLAUDE.md        # durable project identity / working conventions (managed only)
 ├── .chats/          # the chat transcripts (JSONL), symlinked from
-│                    #   <dataDir>/claude-home/projects/<encoded-cwd>
+│                    #   <dataDir>/claude-home/projects/<encoded-cwd> — never moves
 └── <authored files> # notes.md, spec.html, diagrams… (you write these)
 ```
+
+That is the classic shape. The three curated files can live somewhere else
+entirely — see [Where the files land](#where-the-files-land) — but `project.yaml`
+and `.chats/` always stay here.
 
 `project.yaml` is the source of truth for metadata. On disk it carries only what's set.
 The eight **required** fields are `name`, `slug`, `status`, `domain` (a `string[]` of
@@ -41,7 +46,7 @@ The **optional** ones fall into groups:
 | Presentation          | `group` (the project's single "area"), `links`, `pinned`           |
 | Agent overrides       | `model`, `models`, `permissionMode`, `maxTurns`, `docker`, `driveMode`, `maxSpawnDepth`, `hooksMcpEnabled` |
 | Inherited sub-configs | `recovery`, `attachments`, `curation`                              |
-| Backing repo          | `repo`                                                             |
+| Backing               | `managed`, `path`, `repo`                                          |
 | Automation            | `schedules`, `hooks`, `triggers`                                    |
 
 Every agent override and sub-config follows the same inherit/override discipline: absent
@@ -53,8 +58,10 @@ concrete into the file. The three automation blocks are keyed records —
 The server reads the file
 into a `ProjectYaml`, then resolves a fully-concrete `Project` DTO for the API —
 filling defaults (e.g. `model ?? DEFAULT_MODEL`) and deriving fields like
-`dir`, `workingDir`, `repoBacked`, and `hasOverview`. `stripDto()` is the inverse,
-so round-tripping never rewrites fields that weren't set.
+`dir`, `workingDir`, `contentDir`, `managed`, and `hasOverview`. `stripDto()` is
+the inverse, so round-tripping never rewrites fields that weren't set. `managed`
+is the one derived field whose default is *computed from other fields* rather than
+being a constant — see [Axis 1](#axis-1--managed-whose-files-are-these).
 
 `OVERVIEW.md` and `CHANGELOG.md` are maintained by the [sweeper](/concepts/sweeper).
 `CLAUDE.md` holds what the project *durably is* and how you work on it — seeded
@@ -81,73 +88,208 @@ these routes can already start a chat and run Bash, which is strictly more
 capability than reading a file. It is worth closing because "hidden in the listing" should
 not be the only thing standing between an API and a transcript.
 
-## The two project types
+## Two axes, not three types
 
-A project is one of two types, distinguished by a single field: the optional
-`repo` (an external git repo URL) in `project.yaml` (`repoBacked =
-Boolean(yaml.repo)`). The type is set at creation, or later by
-[**promoting**](/using/creating-and-organizing-projects/#promote-a-notebook-to-repo-backed)
-a notebook to repo-backed in place — a one-way transition. Once `repo` is set it
-never changes.
+Paddock used to describe projects as a list of *types* — notebook, repo-backed,
+linked — collapsed behind one derived `repoBacked` boolean. That flag was a single
+word doing four jobs, and it broke the moment a fourth backing shape appeared.
+What actually determines a project's shape is **two independent questions**:
 
-### Notebook (the classic type)
+1. **`managed`** — does Paddock look after this project's own files?
+2. **Where the content lives** — which of `path` and `repo` are set.
 
-No `repo` field. The project directory itself is the agent's working directory
-— the agent's cwd **is** `dir`. A notebook project is pure Paddock-managed
-content: notes, docs, plans, and its chats, all living in the data repo. This is
-the right type for research, planning, ops notes, or any work that isn't itself a
-code repository.
+They are orthogonal: you can hold either one fixed and vary the other. Only the
+first is a genuine property of the project; the second is a location.
 
-```
-workingDir === dir           # Claude runs directly in the project dir
-```
+### Axis 1 — `managed`: whose files are these?
 
-### Repo-backed (an external git repo as the agent's cwd)
+- **`managed: true`** — Paddock looks after this project's own files. The
+  [sweeper](/concepts/sweeper) curates its `CLAUDE.md`, `OVERVIEW.md`, and
+  `CHANGELOG.md`. This is precisely what "notebook" used to mean, and it is the
+  right shape for research, planning, ops notes, or any work that isn't itself a
+  code repository.
+- **`managed: false`** (**unmanaged**) — the content is code that you or your
+  agents source-control *outside* Paddock. Paddock never writes project files into
+  it. The working tree owns its own `CLAUDE.md`, history, branches, and PR
+  workflow.
 
-`repo` is set to an external git URL (https, ssh, `git@host:owner/repo`, git://,
-or a local path). At creation Paddock **clones that repo into a nested checkout**
-inside the project directory, and the agent's working directory becomes that
-checkout — so the repo's own `CLAUDE.md`, git history, branches, and PR workflow
-all work natively. This is the right type when the project *is* a codebase you
-want Claude to build, branch, and open PRs against.
+The key is optional in `project.yaml`, and its default is **derived, never
+constant**:
 
-```
-dir         = <projectsRoot>/<slug>            # metadata dir (Paddock-owned)
-workingDir  = <dir>/<repo-name>                # nested checkout (agent's cwd)
+```ts
+managed = managed ?? !(repo || path)
 ```
 
-The checkout name is derived deterministically from the repo URL's basename
-(`repoCheckoutName()`), which is why `repo` can never be *re-pointed* once set —
-the checkout on disk is named after it. The project's Paddock
-metadata — `project.yaml`, `OVERVIEW.md`, `CHANGELOG.md`, and `.chats/` — always
-lives in the **metadata dir** (`dir`), never inside the checkout. A sidecar
-`.gitignore` written into `dir` keeps the nested checkout and the transcripts out
-of the enclosing data repo (a deliberate "git-in-git" arrangement). Because the
-checkout's `CLAUDE.md` is upstream-owned, the sweeper never amends it for a
-repo-backed project.
+:::caution[Why the default is derived and not just `true`]
+Every `project.yaml` on disk today predates this key. If absent meant `true`,
+every existing repo-backed project would flip to *managed* the moment Paddock
+upgraded, and the sweeper would start writing `CLAUDE.md` into somebody's
+checkout. Deriving from the backing gives each legacy file back the meaning it
+already had. Newly created projects write the key explicitly, so the derivation
+only ever has to serve old files.
+:::
+
+**`managed: true` together with `repo` is rejected at creation** — not silently
+ignored. Paddock curating files into a repo it also clones is not a combination
+with a sensible meaning, so the create fails rather than quietly picking one
+interpretation.
+
+`managed` is set once, at creation, and immutable thereafter. The one transition
+across the axis is
+[**promotion**](/using/creating-and-organizing-projects/#promote-a-notebook-to-repo-backed),
+which sets `repo` on an existing managed project in place and flips it to
+`managed: false`. It is one-way, and refused for a project that is already
+unmanaged or that has its own `path`.
+
+### Axis 2 — where the content lives
+
+This is not a type. It is just which of the two optional location fields are set,
+and `workingDirFor()` resolves the agent's cwd from them — `path` wins:
+
+```ts
+workingDir = path ?? (repo ? `${dir}/${repoCheckoutName(repo)}` : dir)
+```
+
+| Field  | What it is | Applies to |
+| ------ | ---------- | ---------- |
+| `path` | An absolute path to a directory on the box. **Both** sides of axis 1: *unmanaged + `path`* works in a checkout you already have, in place, with no copy — real history, branches, and remotes; *managed + `path`* nominates where your **notes** should live. | managed **and** unmanaged |
+| `repo` | A git URL (https, ssh, `git@host:owner/repo`, git://, or a local path). An acquisition hint, a remote-match for session adoption, and a re-clone hint for disaster recovery. | unmanaged only |
+
+Both are set at creation and immutable thereafter. `repo` can never be
+*re-pointed* because the checkout on disk is named after it, deterministically
+(`repoCheckoutName()`); `path` can never be re-pointed because the cwd is baked
+into every transcript path, so moving it would strand the project's history.
+
+This split is [`DESIGN-backing-store.md`](https://github.com/edspencer/paddock/blob/main/docs/DESIGN-backing-store.md)
+§2 goal 4 made concrete: **the base store is a plain directory and git is an
+optional layer**, not the thing a project is defined by.
+
+:::note[There is no git requirement anywhere]
+Paddock **probes** for git and lights up git features — the Changes tab, commit
+and push — when it finds a working tree. It never *rejects* a directory for not
+being a repository. A folder of Markdown notes is a perfectly good working
+directory, and there is no mandatory git check anywhere in Paddock.
+:::
+
+### Acquisition: what happens at creation
+
+`path` and `repo` together describe not just where the content is but how Paddock
+should get hold of it:
+
+| Given | What Paddock does |
+| --- | --- |
+| `path` exists | Use it. If `repo` is set too, verify the directory's remotes include it and **warn on a mismatch** — `repo` is never silently ignored, and never fails the create either. |
+| `path` missing, `repo` set | Clone the repo to that path. |
+| `path` missing, managed | Create the directory — an empty dir is a valid notebook. |
+| `path` missing, unmanaged, no `repo` | **Error.** There is nothing to acquire from, and an empty directory is not a codebase. |
+| `repo` set, no `path` | Clone into a nested checkout under the project dir (the pre-existing behaviour). |
+| unmanaged, neither | **Error.** An unmanaged project needs something to work in. |
+
+The mismatch warning is deliberately a warning: plenty of legitimate setups (a
+fork, a mirror, an `ssh`-vs-`https` spelling) won't match exactly, and the
+directory the user named is the one they meant. But silently ignoring `repo` is
+its own bug class, so the mismatch is said out loud.
+
+:::caution[Cleanup only ever removes directories Paddock created]
+When a create fails partway, the rollback list contains only directories *that
+call* brought into being. A pre-existing directory is never in it, so no rollback
+can delete one — the target is user-nominated and might be a home directory.
+:::
+
+### Where the files land
+
+Content follows the working directory; Paddock's own state does not.
+
+For a **managed project with an external `path`**, the three curated files **move
+to the path**:
+
+- `OVERVIEW.md`, `CHANGELOG.md`, `CLAUDE.md` → the working directory.
+
+**This means those files then do not live in the Paddock data dir at all.** That
+is an accepted, deliberate outcome, not an oversight: you asked for your notes to
+live somewhere, and the curated notes *are* the content.
+
+Two things stay in `<projectsRoot>/<slug>/` regardless:
+
+- **`project.yaml`** — the registry entry. Paddock discovers projects by scanning
+  for it, so it structurally cannot move.
+- **`.chats/`** — Paddock's own state, and what backup tooling points at.
+
+For an **unmanaged project**, the curated files stay in the metadata dir as
+sidecars: `OVERVIEW.md` and `CHANGELOG.md` are still written, just outside the
+working tree, and `CLAUDE.md` is **not curated at all** — the working directory
+owns its own. Where Paddock clones a nested checkout, a sidecar `.gitignore` in
+the metadata dir keeps that checkout and the transcripts out of the enclosing
+data repo (a deliberate "git-in-git" arrangement). Where the working directory is
+one you already had, Paddock writes nothing into it whatsoever: the transcript
+store stays in the metadata dir via `ensureProjectChats`'s two-argument split
+(`ensureProjectChats(workingDir, chatsHostDir, home)` — the cwd names the
+transcript folder, `chatsHostDir` says where the store lives).
+
+:::caution[Deleting a project never deletes an outside working directory]
+Every recursive delete in the project store goes through one guard that refuses
+any path not strictly inside `projectsRoot`. Before external paths that
+containment was implicit — everything a project owned was nested under its slug
+dir — and a working directory outside the root is precisely what breaks that
+assumption, so it is now explicit and centralised rather than re-derived at each
+call site.
+:::
+
+### What a directory you also use by hand buys you
+
+Pointing `workingDir` at a directory you open a terminal in is what several
+cwd-keyed features have always needed:
+
+- **Session adoption works with no extra machinery.** Transcripts are keyed by
+  working directory, and `candidateSources` already appends the project's own
+  `workingDir` last, so the exact-cwd branch matches your prior `claude` sessions
+  in that directory natively.
+- **`claude.transcripts: host` and per-directory `~/.claude.json` MCP servers
+  become meaningful.** Both key on `workingDir`; against a clone Paddock made
+  there is nothing on the host side to match.
+- **The Changes tab reports on the *working* directory**, not the metadata dir
+  (this was bug #597), and appears whenever that directory turns out to be a git
+  repo. Detection is per-directory, because the working directory may sit outside
+  `projectsRoot` entirely.
+
+The trade is portability: a `path` records an absolute path Paddock did not
+create, so it does not survive being rebuilt elsewhere. On a fresh box the project
+points at a directory that isn't there until you re-create it — which is exactly
+what a `repo` alongside a `path` is there to help with.
 
 ```mermaid
 flowchart TB
-  subgraph Notebook["Notebook project"]
-    N["{slug}/  ← agent cwd\n project.yaml · OVERVIEW · CHANGELOG · CLAUDE · .chats/"]
+  subgraph Managed["managed: true — Paddock curates CLAUDE · OVERVIEW · CHANGELOG"]
+    M1["no path, no repo  (the classic notebook)\n{slug}/  ← agent cwd · curated trio · project.yaml · .chats/"]
+    M2["path: /home/ed/notes\n{slug}/  keeps project.yaml · .chats/\n/home/ed/notes  ← agent cwd · curated trio lives HERE"]
   end
-  subgraph Repo["Repo-backed project"]
-    D["{slug}/  (metadata dir)\n project.yaml · OVERVIEW · CHANGELOG · .chats/ · .gitignore"]
-    Ck["{slug}/{repo-name}/  ← agent cwd\n the external repo checkout (own .git, own CLAUDE.md)"]
-    D --> Ck
+  subgraph Unmanaged["managed: false — the working tree owns its own CLAUDE.md"]
+    U1["repo, no path\n{slug}/  keeps project.yaml · .chats/ · OVERVIEW · CHANGELOG\n{slug}/{repo-name}/  ← agent cwd — the checkout Paddock cloned"]
+    U2["path: /home/ed/Code/foo  (repo optional)\n{slug}/  keeps project.yaml · .chats/ · OVERVIEW · CHANGELOG\n/home/ed/Code/foo  ← agent cwd — Paddock writes nothing here"]
   end
-  %% The two project shapes are unconnected, so mermaid ranks them side by side
-  %% (1071px, scaled 1.6x down). `~~~` is an invisible link that stacks them
-  %% vertically without drawing an edge — 686px, i.e. 1:1 in the column.
-  Notebook ~~~ Repo
+  %% Rows = axis 1 (managed), cells within a row = axis 2 (location). The cells
+  %% are unconnected, so mermaid ranks them side by side within each subgraph;
+  %% `~~~` is an invisible link that stacks the two rows without drawing an edge.
+  Managed ~~~ Unmanaged
 ```
+
+The empty cell is the rejected combination: **managed + `repo`**. Everything else
+in the grid is a real, supported shape.
 
 ## Why the split
 
-Keeping metadata in `dir` and the working tree in `workingDir` is what lets a
-project be **self-contained and portable**: the whole project directory (notes +
-chats + attribution) can be backed up or moved as a unit, while a repo-backed
-project still gives Claude a first-class checkout to do real engineering in.
+Keeping the registry entry and the transcripts in `dir` while the content lives in
+`workingDir` is what lets a project be **self-contained and portable**: chats and
+attribution ride along as a unit and are always in the one place backup tooling
+points at, while an unmanaged project still gives Claude a first-class working
+tree to do real engineering in.
+
+Splitting `managed` out from the location is what stops those two concerns from
+being decided by the same flag. The sweeper's `CLAUDE.md` suppression and the
+promotion guard key on `managed`; the git surface keys on whether `workingDir`
+happens to be a git working tree, asked per directory. Neither has to consult a
+"type" that guessed at both.
+
 See [`../DESIGN-backing-store.md`](https://github.com/edspencer/paddock/blob/main/docs/DESIGN-backing-store.md) for the durability
 model and [`../ARCHITECTURE.md`](/architecture/overview) for how `dir`/`workingDir`
 flow through the system.

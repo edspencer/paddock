@@ -103,6 +103,10 @@ describe("SweepService", () => {
     // T5: the stub project carries an optional `triggers` map + a `workingDir` (used to
     // resolve a curator trigger's `run.promptFile` under `.paddock/triggers/`).
     const stubProject = {
+      // `managed` is what gates CLAUDE.md curation since #206 (it replaced
+      // `repoBacked`); default the stub to a managed project, the shape most of
+      // these cases are about.
+      managed: true,
       ...project,
       workingDir: project.dir,
       ...(o.triggers ? { triggers: o.triggers } : {}),
@@ -174,11 +178,11 @@ describe("SweepService", () => {
     svc.stop();
   });
 
-  it("does NOT touch CLAUDE.md for a repo-backed project — the repo owns it (#187)", async () => {
-    // A repo-backed project's CLAUDE.md is the external repo's own, upstream-
-    // owned file; the sweeper must never write it even when it reports a durable
-    // fact. OVERVIEW + CHANGELOG are still curated (sidecarred).
-    (project as { repoBacked?: boolean }).repoBacked = true;
+  it("does NOT touch CLAUDE.md for an UNMANAGED project — its own tree owns it (#187/#206)", async () => {
+    // An unmanaged project's CLAUDE.md belongs to the working directory's own
+    // source control; the sweeper must never write it even when it reports a
+    // durable fact. OVERVIEW + CHANGELOG are still curated (sidecarred).
+    (project as { managed?: boolean }).managed = false;
     const reply =
       "<<<OVERVIEW>>>\n# Overview\nState.\n<<<CHANGELOG>>>\nDid a thing.\n" +
       "<<<CLAUDE>>>\n- Durable: the API is versioned under /v2.\n<<<END>>>";

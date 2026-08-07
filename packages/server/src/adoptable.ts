@@ -301,7 +301,7 @@ export function normalizeRemote(url: string): string {
  * enough here — `url = …` inside a `[remote "…"]` section — because the question
  * is only "does any remote name this repo", not "what is the exact config".
  */
-async function gitRemotes(cwd: string): Promise<string[]> {
+export async function gitRemotes(cwd: string): Promise<string[]> {
   const dot = path.join(cwd, ".git");
   const st = await fs.stat(dot).catch(() => null);
   if (st === null) return [];

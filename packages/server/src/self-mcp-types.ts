@@ -42,12 +42,14 @@ export interface SelfMcpCreatedProject {
   name: string;
   /** The project's metadata dir (OVERVIEW/CHANGELOG/`.chats` live here). */
   dir: string;
-  /** The keeper's cwd — the nested checkout when repo-backed, else `dir`. */
+  /** The keeper's cwd — `path`, else the nested checkout, else `dir` (#206). */
   workingDir: string;
-  /** Whether the project is backed by a cloned external repo (#187). */
-  repoBacked: boolean;
-  /** The repo URL when repo-backed, else undefined. */
+  /** Whether Paddock curates this project's own files (#206, replaced `repoBacked`). */
+  managed: boolean;
+  /** The repo URL when one is recorded, else undefined. */
   repo?: string;
+  /** The nominated content directory when one is set, else undefined (#206). */
+  path?: string;
   /**
    * Whether the keeper agent registered. The REST create path treats a registration
    * failure as non-fatal (the project IS created), so this mirrors it — but reports

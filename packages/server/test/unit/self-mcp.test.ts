@@ -455,9 +455,9 @@ function fakeWrite(over: Partial<SelfMcpWriteContext> = {}): RecordingWrite {
         slug,
         name: input.name,
         dir,
-        // A repo-backed project's cwd is the nested checkout; a notebook's is its dir.
+        // An unmanaged project's cwd is the nested checkout; a managed one's is its dir.
         workingDir: input.repo ? `${dir}/checkout` : dir,
-        repoBacked: Boolean(input.repo),
+        managed: !input.repo,
         ...(input.repo ? { repo: input.repo } : {}),
         agentRegistered: true,
       };
@@ -1147,13 +1147,13 @@ describe("self-management MCP (create_project)", () => {
     expect(SELF_MCP_PROJECT_TOOL_NAMES.createProject).toBe("mcp__paddock_manage__create_project");
   });
 
-  it("creates a NOTEBOOK project from just a name, deriving the slug", async () => {
+  it("creates a MANAGED project from just a name, deriving the slug", async () => {
     const write = fakeWrite({ projectsMcpEnabled: true });
     const { json } = await callWrite(write, "create_project", { name: "Paddock Deploy" });
     expect(write.calls.createProject).toEqual([{ name: "Paddock Deploy" }]);
     expect(json.created).toBe(true);
     expect(json.slug).toBe("paddock-deploy");
-    expect(json.repoBacked).toBe(false);
+    expect(json.managed).toBe(true);
     expect(json.repo).toBeUndefined();
     expect(json.workingDir).toBe(json.dir);
     expect(json.agentRegistered).toBe(true);
@@ -1179,8 +1179,8 @@ describe("self-management MCP (create_project)", () => {
         status: "idea",
       },
     ]);
-    // Repo-backed: the keeper's cwd is the nested checkout, not the metadata dir.
-    expect(json.repoBacked).toBe(true);
+    // Unmanaged: the keeper's cwd is the nested checkout, not the metadata dir.
+    expect(json.managed).toBe(false);
     expect(json.repo).toBe("https://github.com/octocat/Hello-World");
     expect(json.workingDir).not.toBe(json.dir);
   });
@@ -1273,7 +1273,7 @@ describe("self-management MCP (create_project)", () => {
         name: input.name,
         dir: "/srv/x",
         workingDir: "/srv/x",
-        repoBacked: false,
+        managed: true,
         agentRegistered: false,
       }),
     });
