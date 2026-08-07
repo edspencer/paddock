@@ -295,4 +295,51 @@ describe("SessionHub", () => {
     expect(origin.sent).toHaveLength(0); // dead
     expect(reconnected.types()).toEqual(["chat:queued_flushed"]); // still reached
   });
+
+  // --- the turn-end hook every drain path hangs off (#627) ------------------
+
+  it("onTurnEnd fires once per turn, with the turn's session and origin", () => {
+    const hub = new SessionHub();
+    const ends: Array<{ sessionId: string; projectSlug: string; hasOrigin: boolean }> = [];
+    hub.onTurnEnd = ({ sessionId, projectSlug, origin }) =>
+      ends.push({ sessionId, projectSlug, hasOrigin: origin !== null });
+    const origin = new FakeSocket();
+    const turn = hub.startTurn("p", origin, "s1");
+
+    turn.end();
+    expect(ends).toEqual([{ sessionId: "s1", projectSlug: "p", hasOrigin: true }]);
+
+    // A second end() must not fire it again — the queue would drain twice.
+    turn.end();
+    expect(ends).toHaveLength(1);
+  });
+
+  it("onTurnEnd fires for a turn with NO origin socket (a trigger / wake / spawn)", () => {
+    // The whole point of the hook: these are the turns that had no drain at all,
+    // because the only drain call site lived on the socket-driven `chat:send` path.
+    const hub = new SessionHub();
+    const ends: string[] = [];
+    hub.onTurnEnd = ({ sessionId }) => ends.push(sessionId);
+    hub.startTurn("p", null, "s-trigger").end();
+    expect(ends).toEqual(["s-trigger"]);
+  });
+
+  it("onTurnEnd does not fire for a turn that never resolved a session id", () => {
+    // Nothing could have been queued against it — the queue is keyed by session.
+    const hub = new SessionHub();
+    let fired = 0;
+    hub.onTurnEnd = () => fired++;
+    hub.startTurn("p", new FakeSocket()).end();
+    expect(fired).toBe(0);
+  });
+
+  it("a throwing onTurnEnd cannot break turn teardown", () => {
+    const hub = new SessionHub();
+    hub.onTurnEnd = () => {
+      throw new Error("drain blew up");
+    };
+    const turn = hub.startTurn("p", new FakeSocket(), "s1");
+    expect(() => turn.end()).not.toThrow();
+    expect(hub.isRunning("s1")).toBe(false);
+  });
 });

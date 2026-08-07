@@ -20,7 +20,12 @@ let subs: FakeSub[] = [];
 const sends: Array<{ slug: string; message: string; sessionId: string | null; opts?: unknown }> = [];
 const commands: Array<{ slug: string; message: string; sessionId: string | null }> = [];
 const cancels: string[] = [];
-const queuedSets: Array<{ slug: string; sessionId: string; text: string | null }> = [];
+const queuedSets: Array<{
+  slug: string;
+  sessionId: string;
+  text: string | null;
+  qid?: string | null;
+}> = [];
 const continues: Array<{ slug: string; sessionId: string }> = [];
 let stateCb: ((s: string) => void) | null = null;
 
@@ -51,8 +56,8 @@ vi.mock("../lib/ws", () => ({
     sendCommand: (slug: string, message: string, sessionId: string | null) =>
       commands.push({ slug, message, sessionId }),
     cancel: (jobId: string) => cancels.push(jobId),
-    setQueued: (slug: string, sessionId: string, text: string | null) =>
-      queuedSets.push({ slug, sessionId, text }),
+    setQueued: (slug: string, sessionId: string, text: string | null, qid?: string | null) =>
+      queuedSets.push({ slug, sessionId, text, qid }),
     continueChat: (slug: string, sessionId: string) => continues.push({ slug, sessionId }),
   },
 }));
@@ -1184,11 +1189,11 @@ describe("ChatPane: message queue (issue #91)", () => {
     fireEvent.keyDown(box(), { key: "Enter" });
     expect(localStorage.getItem("paddock:queued:s1")).toBe("flush me");
     // The server auto-sent it and signals the flush → the persisted slot (text +
-    // its #245 timestamp) is forgotten.
-    expect(localStorage.getItem("paddock:queuedts:s1")).not.toBeNull();
+    // its #245/#736 queue id) is forgotten.
+    expect(localStorage.getItem("paddock:queuedqid:s1")).not.toBeNull();
     act(() => sub().handlers.onQueuedFlushed?.({ text: "flush me" }));
     await waitFor(() => expect(localStorage.getItem("paddock:queued:s1")).toBeNull());
-    expect(localStorage.getItem("paddock:queuedts:s1")).toBeNull();
+    expect(localStorage.getItem("paddock:queuedqid:s1")).toBeNull();
   });
 
   it("appends to the queued message on re-submit (single slot) and persists it (#245)", async () => {
@@ -1206,6 +1211,45 @@ describe("ChatPane: message queue (issue #91)", () => {
     // The single slot was appended and pushed to the server as one message for it
     // to auto-send (with a single stable identity — the two enqueues share a ts).
     expect(queuedSets.at(-1)).toMatchObject({ sessionId: "s", text: "line A\nline B" });
+  });
+
+  it("renders the shared queue when ANOTHER client queues on this chat (#629)", async () => {
+    render(<ChatPane projectSlug="proj" initialSessionId="s" loadHistory={vi.fn().mockResolvedValue([])} />);
+    await startTurn();
+    await userEvent.type(box(), "from this tab");
+    fireEvent.keyDown(box(), { key: "Enter" });
+    expect(screen.getByText("from this tab")).toBeInTheDocument();
+
+    // The server merged a second client's queue into the chat's one slot and
+    // announced the result. Pre-#629 nothing was announced at all: the other
+    // client's queue silently REPLACED this one, and this pane went on showing a
+    // message that no longer existed anywhere.
+    act(() =>
+      sub().handlers.onQueuedState?.({ text: "from this tab\nfrom the phone", qid: "slot-1" }),
+    );
+    expect(screen.getByText("from this tab")).toBeInTheDocument();
+    expect(screen.getByText(/characters/)).toBeInTheDocument();
+
+    // And this pane now speaks for the shared slot: its next edit carries the
+    // slot's id, so it updates that slot instead of appending beside it.
+    await userEvent.type(box(), "and one more");
+    fireEvent.keyDown(box(), { key: "Enter" });
+    expect(queuedSets.at(-1)).toMatchObject({
+      sessionId: "s",
+      text: "from this tab\nfrom the phone\nand one more",
+      qid: "slot-1",
+    });
+  });
+
+  it("clears the queue toolbar when the server says the shared slot is empty (#629)", async () => {
+    render(<ChatPane projectSlug="proj" initialSessionId="s" loadHistory={vi.fn().mockResolvedValue([])} />);
+    await startTurn();
+    await userEvent.type(box(), "queued somewhere else"); 
+    fireEvent.keyDown(box(), { key: "Enter" });
+    expect(screen.getByText("queued somewhere else")).toBeInTheDocument();
+
+    act(() => sub().handlers.onQueuedState?.({ text: null }));
+    await waitFor(() => expect(screen.queryByText("queued somewhere else")).not.toBeInTheDocument());
   });
 
   it("shows a '+N characters' hint only when the queued message spans more than one line", async () => {

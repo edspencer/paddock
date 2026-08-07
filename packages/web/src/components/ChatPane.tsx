@@ -11,7 +11,7 @@ import { DictationButton } from "./DictationButton";
 import { api } from "../lib/api";
 import { readChatModel, writeChatModel } from "../lib/chatModel";
 import { readDraft, writeDraft } from "../lib/draft";
-import { readQueued, writeQueued, readQueuedTs, writeQueuedTs } from "../lib/queued";
+import { readQueued, writeQueued, readQueuedId, writeQueuedId, newQueuedId } from "../lib/queued";
 import { AlertIcon, PaperclipIcon, SendIcon, SparkIcon, StopIcon } from "./icons";
 import type {
   AttachmentsConfig,
@@ -201,14 +201,15 @@ export function ChatPane({
   // above; see lib/queued.ts).
   // Issue #245: the SERVER now owns auto-send — this pane persists the queue to the
   // server and renders/clears it when the server says it flushed (onQueuedFlushed);
-  // it no longer sends the queued message itself. `queuedTsRef` is the message's
-  // stable enqueue timestamp, persisted alongside the text so the server can dedup
-  // a stale copy this pane re-asserts on reload from one it already sent.
+  // it no longer sends the queued message itself. `queuedIdRef` is the queue's
+  // opaque, stable id, persisted alongside the text so the server can tell a stale
+  // copy this pane re-asserts on reload from one it has not sent yet (#245/#736) —
+  // and can tell THIS pane's queue from another client's (#629).
   const [queued, setQueued] = useState<string | null>(() =>
     readQueued(initialSessionId, projectSlug),
   );
   const queuedRef = useRef<string | null>(queued);
-  const queuedTsRef = useRef<number | null>(readQueuedTs(initialSessionId, projectSlug));
+  const queuedIdRef = useRef<string | null>(readQueuedId(initialSessionId, projectSlug));
   // Set when the user hits Stop, so the completion it triggers does NOT flush the
   // queue (we hold rather than fire a follow-up into a cancelled turn). Cleared
   // on the next completion.
@@ -693,22 +694,23 @@ export function ChatPane({
   // Issue #197: persist the queued message so it survives a chat switch / reload
   // too — otherwise navigating away and back silently drops it. Every queue
   // mutation (enqueue / edit / clear) flows through setQueued, so keying off
-  // `queued` covers them all; writing null/"" forgets the key. Its stable enqueue
-  // timestamp (#245) is persisted in lockstep so a reloaded pane re-asserts the
-  // same identity and the server can dedup an already-sent copy.
+  // `queued` covers them all; writing null/"" forgets the key. Its stable queue id
+  // (#245) is persisted in lockstep so a reloaded pane re-asserts the same identity
+  // and the server can dedup an already-sent copy.
   useEffect(() => {
     writeQueued(initialSessionId, projectSlug, queued);
-    writeQueuedTs(initialSessionId, projectSlug, queued ? queuedTsRef.current : null);
+    writeQueuedId(initialSessionId, projectSlug, queued ? queuedIdRef.current : null);
   }, [queued, initialSessionId, projectSlug]);
 
 
   // Push the queued message to the server (#197/#245) — the server is authoritative
   // for auto-send, so this pane just keeps the server's copy in sync. Carries the
-  // stable ts so a re-assert on reload is deduped. Only once the session id exists;
-  // a new chat re-asserts (same ts) when its id resolves and initialSessionId updates.
+  // stable queue id so a re-assert on reload is deduped. Only once the session id
+  // exists; a new chat re-asserts (same id) when its id resolves and
+  // initialSessionId updates.
   useEffect(() => {
     if (!initialSessionId) return; // new chat, no session yet
-    chatClient.setQueued(projectSlug, initialSessionId, queued, queued ? queuedTsRef.current : null);
+    chatClient.setQueued(projectSlug, initialSessionId, queued, queued ? queuedIdRef.current : null);
   }, [queued, initialSessionId, projectSlug, chatClient]);
 
   // Auto-focus the composer on mount for a fresh chat so the user can type right
@@ -732,9 +734,26 @@ export function ChatPane({
       setTurns((prev) => [...sealStreaming(prev), { kind: "user", id: nextId(), content: text }]);
     }
     queuedRef.current = null;
-    queuedTsRef.current = null;
+    queuedIdRef.current = null;
     setQueued(null);
   }, []);
+
+  // The chat's queued message changed on the SERVER (#629) — another client (or
+  // another tab) queued, edited or cleared it. The slot is shared chat state, so
+  // render exactly what the server says is in it and adopt its id, which makes our
+  // next edit update that slot in place instead of appending a second part beside
+  // it. Ignored when it matches what we already show, so the echo of our own
+  // set_queue settles in one round trip instead of looping.
+  const onQueuedState = useCallback((text: string | null, qid?: string) => {
+    if (qid) queuedIdRef.current = qid;
+    const next = text && text.length > 0 ? text : null;
+    if (queuedRef.current === next) return;
+    queuedRef.current = next;
+    if (next === null) queuedIdRef.current = null;
+    setQueued(next);
+  }, []);
+  const onQueuedStateRef = useRef(onQueuedState);
+  onQueuedStateRef.current = onQueuedState;
   // Stable ref so the (stably-subscribed) socket handlers call the latest version.
   const onQueuedFlushedRef = useRef(onQueuedFlushed);
   onQueuedFlushedRef.current = onQueuedFlushed;
@@ -763,6 +782,7 @@ export function ChatPane({
     noticeThisTurnRef,
     seenInjectionsRef,
     onQueuedFlushedRef,
+    onQueuedStateRef,
     setTurns,
     setStreaming,
     setUsage,
@@ -853,9 +873,9 @@ export function ChatPane({
       setQueued((prev) => {
         const next = prev ? `${prev}\n${text}` : text;
         queuedRef.current = next;
-        // Stamp a stable enqueue time on a fresh queue; keep it when appending to
-        // an existing one (same pending message) so its identity is stable (#245).
-        if (prev == null) queuedTsRef.current = Date.now();
+        // Mint a stable id for a fresh queue; keep it when appending to an existing
+        // one (same pending message) so its identity is stable (#245).
+        if (prev == null || queuedIdRef.current == null) queuedIdRef.current = newQueuedId();
         return next;
       });
       setDraft("");
@@ -875,7 +895,7 @@ export function ChatPane({
     const text = queuedRef.current;
     if (text == null) return;
     queuedRef.current = null;
-    queuedTsRef.current = null;
+    queuedIdRef.current = null;
     setQueued(null);
     setDraft((prev) => (prev.trim() ? `${text}\n${prev}` : text));
     requestAnimationFrame(() => {
@@ -892,7 +912,7 @@ export function ChatPane({
   // server + persisted copies too).
   const clearQueued = useCallback(() => {
     queuedRef.current = null;
-    queuedTsRef.current = null;
+    queuedIdRef.current = null;
     setQueued(null);
   }, []);
 

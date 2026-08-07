@@ -509,20 +509,25 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       const queued = await deps.queuedMessage.take(agent, sessionId).catch(() => null);
       if (!queued?.text) return;
       const ledger = flushedLedger(`${agent}${KEY_SEP}${sessionId}`);
-      // Drop the parts we have already flushed and send what's left (#628/#736).
+      // Have we already sent this? (#628/#736.)
       //
-      // Identity is the (queue id, text) TUPLE, matched by EQUALITY. It used to be
-      // (ts, text) with an ORDERING rule — "older than the last flush ⇒ a stale
-      // re-assert" — which held only while every ts came from one client's clock.
-      // They don't: the ts was whatever browser queued the message, so a single
-      // client with a fast clock left a marker in the future and every later queued
-      // message on that chat, from any client, was silently taken, classified
-      // already-flushed and destroyed until wall-clock time caught up (#736).
-      // Equality needs no such assumption. The client keeps ONE id across an APPEND
-      // (#245 stable identity), so "same id, longer text" is still a genuinely new
-      // message and is sent — the #628 behaviour, unchanged.
-      const fresh = partsOf(queued).filter((p) => !ledger.get(p.id)?.has(p.text));
-      const text = fresh.map((p) => p.text).join("\n");
+      // Identity is the (id, text) TUPLE, matched by EQUALITY, against every
+      // identity the slot has been known by — so a client re-asserting its stored
+      // copy on reload is recognised whether it holds the id it sent or the slot
+      // version the server broadcast back.
+      //
+      // It used to be a (ts, text) tuple with an ORDERING rule on top: "older than
+      // the last flush ⇒ stale by construction, timestamps being monotonic". They
+      // are monotonic within one client, but the ts came from whichever BROWSER
+      // queued the message — so a single client with a fast clock left the marker
+      // five minutes in the future, and every later queued message on that chat,
+      // from any client, was taken, classified already-flushed, deleted and never
+      // sent, until wall-clock time caught up (#736). Equality assumes nothing
+      // about clocks. An APPEND keeps its identity with LONGER text (#245), so it
+      // still reads as a genuinely new message and is sent — #628, unchanged.
+      const parts = partsOf(queued);
+      const stale = parts.some((p) => ledger.get(p.id)?.has(p.text));
+      const text = stale ? "" : queued.text;
       // Tell every attached client (origin + reconnected sockets) to clear its copy
       // of this message. When we're really sending it, carry the text so the client
       // renders the sent bubble in-transcript; on a stale re-assert we only clear.
@@ -535,7 +540,9 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
         },
       });
       if (!text) return;
-      for (const p of fresh) rememberFlushed(ledger, p.id, p.text);
+      // Every identity this slot carried is now flushed, so a re-assert from any
+      // client that held one of them is recognised rather than sent again.
+      for (const p of parts) rememberFlushed(ledger, p.id, p.text);
       // Broadcast the flush frame BEFORE kicking the turn so the user bubble renders
       // above the reply. Run it detached, like a human send. A leading-slash queued
       // message is a slash command (e.g. "/compact"): route it through the command
@@ -583,17 +590,18 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
           return;
         }
         // Merge into the chat's single slot rather than overwriting it (#629). The
-        // queue id says whose queue this is: this client updating its own (replace
-        // in place) or a second client queueing alongside it (append). The old
-        // unconditional overwrite destroyed the first client's message with no
-        // signal to anyone — and then rendered it, in that client's own transcript,
-        // as a user bubble they never typed.
+        // id the client wrote under says which this is: a client editing the slot
+        // it can currently see (replace) or one that queued without knowing what
+        // was already there (append). The old unconditional overwrite destroyed the
+        // first client's message with no signal to anyone — and then rendered it,
+        // in that client's own transcript, as a user bubble they never typed.
         const next = await deps.queuedMessage
-          .upsert(agent, sessionId, { id: queueIdOf(msg.payload), text }, Date.now())
+          .upsert(agent, sessionId, { id: queueIdOf(msg.payload), text }, Date.now(), randomUUID)
           .catch(() => undefined);
-        // The queue is shared chat state now, so announce it: every attached client
-        // renders the same slot, and adopting `qid` makes the next edit from any of
-        // them update this slot instead of appending beside it.
+        // The queue is shared chat state, so announce it: every attached client
+        // renders the same slot, and echoing `qid` back on its next write is how a
+        // client proves it is editing the slot as it stands rather than replacing
+        // someone else's text with its own.
         if (next !== undefined) {
           hub.broadcast(sessionId, {
             type: "chat:queued_state",
@@ -601,7 +609,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
               projectSlug: slug,
               sessionId,
               text: next?.text ?? null,
-              ...(next ? { qid: partsOf(next)[0].id } : {}),
+              ...(next?.id ? { qid: next.id } : {}),
             },
           });
         }

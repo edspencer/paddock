@@ -405,19 +405,23 @@ describe("integration: every turn-ending path drains the queue (#627)", () => {
   });
 
   it("a STOPPED turn drains the message queued while it ran", async () => {
-    // [[HANG]] streams a reply and then blocks forever, so the turn only ends when
-    // the user clicks Stop. Holding the queue "for the user" on that path did not
-    // keep it safe: nothing drained it afterwards either, so it waited for the next
-    // `chat:send` and arrived behind whatever the user typed next, with a stale chip
-    // in the meantime.
+    // [[HANGTOOL]] emits an in-flight tool and then blocks forever, so the turn ends
+    // only when the user clicks Stop — and, deliberately, it streams NO assistant
+    // text first. That matters: the old drain gate (`effectiveSuccess`) is
+    // reply-aware, so a Stop AFTER some prose had streamed drained anyway. The "a
+    // Stop/failed turn holds the queue for the user" comment therefore only ever
+    // described THIS case — a turn Stopped before it said anything — and holding it
+    // did not keep the message safe: nothing drained it afterwards either, so it
+    // waited for the next `chat:send` and landed behind whatever the user typed
+    // next, with a stale chip above the composer in the meantime.
     const mark = ws.mark();
     ws.send({
       type: "chat:send",
-      payload: { projectSlug: TSLUG, sessionId: null, message: "hold the line [[HANG]]" },
+      payload: { projectSlug: TSLUG, sessionId: null, message: "hold the line [[HANGTOOL]]" },
     });
     const streamed = await ws.waitFor(
       (e) =>
-        (e.type === "chat:response" || e.type === "chat:active") &&
+        e.type === "chat:tool_start" &&
         e.payload?.projectSlug === TSLUG &&
         typeof e.payload?.jobId === "string" &&
         typeof e.payload?.sessionId === "string",
