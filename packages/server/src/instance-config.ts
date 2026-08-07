@@ -36,6 +36,7 @@ import { DEFAULT_RECOVERY } from "./recovery-config.js";
 import { DEFAULT_ATTACHMENTS, sanitizeAllowedTypes } from "./attachments-config.js";
 import { DEFAULT_CURATION } from "./curation-config.js";
 import { DEFAULT_ENVIRONMENT_PROMPT } from "./environment-prompt.js";
+import { CONFIG_SCHEMA_VERSION, SCHEMA_VERSION_KEY } from "./schema-version.js";
 import { DEFAULT_TRANSCRIPTS_MODE } from "./transcripts.js";
 import { DEFAULT_CREDENTIALS_MODE } from "./claude-credentials.js";
 import { DEFAULT_INSTRUCTIONS_MODE } from "./claude-instructions.js";
@@ -527,6 +528,17 @@ export function writeInstanceConfig(
     const p = key.split(".");
     if (value === null) doc.deleteIn(p);
     else doc.setIn(p, value);
+  }
+
+  // Stamp the schema version on a file that does not declare one yet (#724) —
+  // which includes every file written before adoption and every fresh one this
+  // branch creates. Written only when ABSENT, unlike `project.yaml`: this is a
+  // partial patch over a document whose other keys are round-tripped untouched,
+  // so it is not in a position to assert what version the WHOLE file is. A file
+  // that already declares one has been through `loadConfigFile`'s guard, so it
+  // is at or below this build's version and re-stamping would say nothing new.
+  if (doc.getIn([SCHEMA_VERSION_KEY]) === undefined) {
+    doc.setIn([SCHEMA_VERSION_KEY], CONFIG_SCHEMA_VERSION);
   }
 
   const serialized = doc.toString();

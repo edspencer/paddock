@@ -48,6 +48,7 @@ The **optional** ones fall into groups:
 | Inherited sub-configs | `recovery`, `attachments`, `curation`                              |
 | Backing               | `managed`, `path`, `repo`                                          |
 | Automation            | `schedules`, `hooks`, `triggers`                                    |
+| Format                | `schemaVersion`                                                     |
 
 Every agent override and sub-config follows the same inherit/override discipline: absent
 on disk means "inherit the instance default", resolved at dispatch rather than baked
@@ -66,6 +67,34 @@ being a constant — see [Axis 1](#axis-1--managed-whose-files-are-these).
 `OVERVIEW.md` and `CHANGELOG.md` are maintained by the [sweeper](/concepts/sweeper).
 `CLAUDE.md` holds what the project *durably is* and how you work on it — seeded
 terse and amended conservatively. (See `projects.ts` for `ProjectStore`.)
+
+### `schemaVersion` — a project from the future is hidden, not mangled
+
+`schemaVersion` is the one field that describes the **file** rather than the
+project. It exists because "the server fills in defaults and rewrites the file on
+the next save" is the right behaviour for a `project.yaml` an *older* Paddock
+wrote and a data-loss bug for one a *newer* Paddock wrote: the normaliser drops
+keys it doesn't recognise, and the next save persists the loss. A project
+directory is a portable thing — people copy them between instances — so the
+version rides in each file rather than in a data-dir manifest.
+
+When a `project.yaml` declares a version newer than the running build
+understands, that project is **hidden**: it does not appear in the projects list,
+its keeper is not registered, and every route for it answers "not found". A
+warning naming the file and its version is logged the first time. Nothing is
+written to it — the file survives exactly as you found it, and upgrading Paddock
+brings the project straight back.
+
+This is deliberately gentler than the same situation in
+[`paddock.config.yaml`](/configuration/config-file/#schemaversion--the-downgrade-guard),
+which refuses to start. One project directory copied in from a newer box should
+not take the instance down, and an unreadable `project.yaml` already made a
+project vanish — the warning is what's new.
+
+As with the config file, adoption costs nothing: today's shape *is* version 1 and
+an **absent** `schemaVersion` reads as 1, so every existing file is already
+correct. Paddock writes the key on projects it creates and adds it to older files
+the next time it saves them for some other reason; reading one never rewrites it.
 
 ### Dot-prefixed paths are refused, not just hidden
 

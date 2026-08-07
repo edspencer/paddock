@@ -28,6 +28,7 @@ import {
   isKnownDriveMode,
   isKnownModel,
 } from "./models.js";
+import { SCHEMA_VERSION_KEY, configSchemaRefusal } from "./schema-version.js";
 import { DEFAULT_MAX_SPAWN_DEPTH, isValidMaxSpawnDepth } from "./spawn-capability.js";
 import {
   type TranscriptsMode,
@@ -529,6 +530,13 @@ export interface PaddockConfig {
  * top-level record sections here.
  */
 export interface PaddockConfigFile {
+  /**
+   * Which version of THIS format the file is written in (#724). Absent reads as
+   * `1` — the shape every pre-adoption file already has — and a version newer
+   * than `CONFIG_SCHEMA_VERSION` refuses the boot rather than being
+   * lenient-parsed. See `schema-version.ts` for when to bump it.
+   */
+  schemaVersion?: number | string;
   port?: number | string;
   host?: string;
   dataDir?: string;
@@ -810,6 +818,14 @@ export function loadConfigFile(dataDir: string): PaddockConfigFile {
   // an object (which would crash with an unclear TypeError). Deeper `null`s and
   // wrong-typed sections already degrade to defaults via fileOr/fileOpt.
   const obj = parsed as Record<string, unknown>;
+
+  // The downgrade guard (#724), BEFORE any lenient interpretation below. A file
+  // from the future must never be half-read: every unknown key here is dropped,
+  // and `writeInstanceConfig` would then persist the loss. Fail closed, exactly
+  // as `resolveClaudeHome` does.
+  const refusal = configSchemaRefusal(obj[SCHEMA_VERSION_KEY], configPath);
+  if (refusal !== undefined) throw new Error(refusal);
+
   for (const key of Object.keys(obj)) {
     if (obj[key] === null) delete obj[key];
   }

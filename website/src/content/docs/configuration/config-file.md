@@ -65,6 +65,40 @@ The file is entirely optional:
   it) is dropped, so that section falls back to env/defaults instead of crashing.
 - **Unknown keys are ignored.** This leaves room for the schedule and hook
   declarations that share this file to be added without breaking older builds.
+- **A file from a NEWER Paddock is an error.** See below.
+
+## `schemaVersion` — the downgrade guard
+
+Since **v0.66** the file may carry a `schemaVersion:` at the top, and Paddock
+**refuses to start** when it declares a version newer than the running build
+understands:
+
+```
+refusing to start: /data/paddock.config.yaml declares version 2 of the paddock
+config format, but this build understands up to version 1. It was written by a
+NEWER paddock. …
+```
+
+The reason is the bullet just above. "Unknown keys are ignored" is exactly the
+right behaviour for a file written by an *older* Paddock and exactly the wrong
+one for a file written by a *newer* one: running `npx @edspencer/paddock@0.62.0`
+against a data dir 0.66 wrote would read the keys it recognises, ignore the rest,
+and — the moment anything saved a setting — write the file back without them.
+The version field turns that into a clean stop.
+
+Three things worth knowing:
+
+- **Nothing you have needs changing.** The shape the file has today *is* version
+  1, and an **absent** `schemaVersion` reads as 1. Existing files are correct as
+  they stand; Paddock adds the key the next time it writes the file itself (a
+  save from the Settings screen), and never rewrites one just to add it.
+- **It is a plain counter, not semver.** It goes up by one, and only when an old
+  reader would get the wrong *answer* — a renamed key, a key whose meaning
+  changed, a default whose absence now means something new. Adding an optional
+  key does **not** bump it, which is why it will move rarely.
+- **`project.yaml` carries the same field, and guards more gently** — see
+  [Projects](/concepts/projects/). One project directory from the future gets
+  hidden with a startup warning rather than stopping the whole instance.
 
 ## An example config file
 
@@ -75,6 +109,8 @@ the same YAML house style as `project.yaml` and the generated `herdctl.yaml`.
 ```yaml
 # <PADDOCK_DATA_DIR>/paddock.config.yaml
 # A home-lab instance. Every value here is overridable by its env var.
+
+schemaVersion: 1              # which version of THIS format the file is in
 
 # --- Core ---
 port: 4000
