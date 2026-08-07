@@ -12,6 +12,188 @@ forward — most notably 0.61.1's `--isolated-claude-home`, which 0.62 removed i
 favour of the `claude:` config block.
 :::
 
+## 0.66.1 — Nothing you typed while it was busy goes missing
+
+- **Three separate ways a queued message could vanish are closed.** The queue is
+  the chip above the composer that holds what you type while a turn is running.
+  It could lose your message to a **clock**: its dedup marker was keyed on a
+  timestamp supplied by *your browser* and compared as an ordering, so one laptop
+  running five minutes fast parked the marker in the future and every later
+  queued message on that chat — from **any** client — was quietly taken, marked
+  already-sent, and deleted. Identity is now an opaque server-side id compared
+  for equality, and the clock belongs to the server.
+- **The queue is shared state, so a second tab merges instead of overwriting.**
+  One slot per chat, broadcast to every client attached to it. Previously a
+  second window silently destroyed the first one's message — with no error, and
+  with the first window still showing a chip for a message that no longer existed
+  anywhere. Worse, when the turn ended that client watched *someone else's* text
+  appear in the transcript as though they had typed it. A client that queues
+  without having seen the current slot now has its text **appended**, not
+  substituted.
+- **A queued message escapes on every path a turn can end by.** The drain used to
+  be called from exactly one of the eight places a turn finishes, so anything
+  queued behind a `/compact`, a trigger, a scheduled wake or a background
+  sub-agent was persisted and then stranded — surfacing only when some *later*
+  message completed, which landed it in the transcript **behind** something you
+  typed minutes afterwards. It now hangs off a turn-end hook every path goes
+  through, which covers paths that do not exist yet.
+- **Stopping a turn hands your queued message back rather than sending it.**
+  Deliberately the one exception to the above: pressing **Stop** means *give me
+  control back*, not *start immediately*, so the text lands in your composer,
+  merged above whatever draft was already there. Other clients see the shared
+  slot clear with a reason attached instead of a chip disappearing for no visible
+  cause, and if the stopping tab has gone the message is parked rather than swept
+  out behind something typed later.
+
+## 0.66.0 — A Config screen you can navigate
+
+- **The instance Config screen is navigable instead of one long slab.** Forty-seven
+  settings in ten groups used to render as a single narrow column — **5,508
+  pixels, about seven screenfuls** — with no way to reach a setting you already
+  knew the name of except scrolling past everything else. It now has a **section
+  rail** with per-group counts and scroll-spy, a **live filter**, and a **Modified
+  only** lens that shows just what differs from the built-in defaults. The design
+  follows VS Code's settings screen rather than tabs, and that distinction is the
+  whole argument: *tabs partition, which is exactly what defeats a search.* A rail
+  scroll-spying over one document means "jump to Branding" and "find every field
+  mentioning `token`" are both available and neither disables the other.
+
+  The filter matches labels, dotted keys, help text, enum values **and environment
+  variable names** — so an operator who thinks in `PADDOCK_*` finds a field by
+  typing one. Settings overridden by the environment now carry a small chip and
+  the variable's name, with the explanation stated **once, in a legend**; repeating
+  that two-line notice beside twenty fields was the single largest source of the
+  old page's length on a containerised instance. Read-only bindings are no longer
+  input-shaped, booleans are a switch on the label line, and short fields pair into
+  two columns. Saving, dirty-tracking and restart-required semantics are unchanged.
+
+![The redesigned instance Config screen: a section rail with per-group counts down the left, a live filter and Modified-only toggle across the top, an env-override legend, and a dirty dot marking the one group holding an unsaved edit](../../assets/whats-new/config-redesign.png)
+
+- **Breaking: the default port moves from 4000 to 7233.** Port 4000 is one of the
+  most contested in local development — Jekyll has used it since 2008, Phoenix
+  uses it, and every hand-rolled Node server reaches for it — so Paddock's own
+  code had long described `EADDRINUSE` on 4000 as the likeliest first-run failure.
+  A default that makes the first run fail is the wrong default. 7233 is `PADD` on
+  a phone keypad and is not IANA-registered. **If you set `PORT`, `port:` or
+  `--port`, nothing changes.** If you rely on the default, everything in front of
+  Paddock needs the new number: your reverse proxy, your `docker run -p`, your
+  Kubernetes Service `targetPort`, your SSH tunnels. Pin the old behaviour with
+  `PORT=4000`. In fairness, 7233 is Temporal's frontend port — judged the better
+  trade because Temporal is one specific server usually run under Compose or
+  Kubernetes where a published port is trivially remapped, and because the failure
+  is loud at boot rather than silent.
+- **Both on-disk formats now declare a `schemaVersion`, so a downgrade can't
+  quietly eat your settings.** The problem this solves is downgrades, not
+  migrations: `npx @edspencer/paddock@0.62.0` is one command away, and an older
+  build reading a newer data directory dropped every key it didn't recognise and
+  wrote the file back without them — a `path:` or a `managed:` disappearing with
+  no error. A `paddock.config.yaml` from the future now **refuses to start**,
+  naming both versions and the fix, because instance config decides auth mode and
+  bind host and half-understanding those is worse than not booting. A
+  `project.yaml` from the future is **skipped loudly** instead, leaving the file
+  untouched — bricking a whole instance because one project directory was copied
+  from a newer box would be worse than the loss being prevented. Nothing on disk
+  changes: the current shape *is* version 1, and an absent field reads as 1.
+- **The UI says "adopt" where it used to say "import".** Reported from real use:
+  when a project's transcripts are your own `~/.claude` directory, the sessions
+  being offered are **already there** — the action registers them so they appear
+  in the chat list, and moves nothing. The backend has always called it adoption;
+  the UI was the only layer speaking a second language. The confirmation dialog,
+  the provenance badge and the History chip all follow, so a button saying *Adopt*
+  no longer yields a chat badged *Imported*. The dialog also stopped claiming your
+  history "is copied, never moved" — true in one mode, wrong in the other — in
+  favour of the promise that holds in both: **your originals are never moved or
+  deleted.** Note the seam: the headless script is still `npm run import-chats`,
+  and the REST routes are unchanged.
+- **Deleting, reverting or promoting a chat now stops the turn first, and waits
+  until it is verifiably dead.** The transcript is written by `claude` itself,
+  straight through the symlink Paddock plants — Paddock never holds the file
+  handle. So unlinking a transcript mid-turn did not delete the chat: the
+  surviving process wrote itself back and the chat **returned**, named after its
+  raw session id, opening on an orphaned tool result with no prior history.
+  Promote was worse — it lost the chat from *both* projects, with nothing in the
+  UI offering a way back. These operations now cancel the turn, confirm it is
+  gone, and report that they did; if death can't be confirmed within ten seconds
+  they refuse with a clear error rather than mutating under a live writer. The
+  resurrection is now impossible by construction rather than by winning a race.
+- **A sub-agent that is still working keeps its place in the running bar.**
+  Because the SDK backgrounds sub-agents, the launching `Task` call pairs within
+  milliseconds while the sub-agent keeps going — and the code stamped a *final*
+  duration at that moment, so a live sub-agent was declared finished and dropped
+  out of the bar for the rest of its run. The tell was a "final" duration that
+  kept climbing. A duration is now published only once the sub-agent's own
+  transcript has settled. Separately, reloading a chat no longer lifts a
+  sub-agent's nested steps out of its card and into the transcript as top-level
+  rows.
+- **On `driveMode: batch` only:** deleting the chat you just finished and then
+  messaging an older one no longer misfiles that message into a brand-new
+  session. Nothing looked wrong at the time — the reply streamed into the chat
+  you were reading — but on reload the message had moved to a stray new chat, and
+  the answer had been written with no memory of the conversation. The default
+  `session` mode was never affected.
+
+## 0.65 — An agent can promote its own project
+
+- **A keeper can turn its own notebook project into a repo-backed one.** The REST
+  route has done this for a long time, but there was no MCP verb — so an agent
+  that realised its notes-only project should really be a codebase had to stop and
+  ask a human, or create a *second* project and abandon the first, **losing every
+  chat in it**. `promote_project` takes a git URL and defaults to the project the
+  agent is running in: it clones, re-points the working directory, and
+  re-registers the agent against the existing chat store, so the conversation
+  history stays listed and resumable. A failed clone rolls back to a byte-identical
+  notebook. It rides the existing "may provision projects" permission rather than
+  adding a third switch — though note that operators who granted that at 0.64 did
+  not knowingly grant promotion.
+
+## 0.64 — Point Paddock at a checkout you already have
+
+- **`path:` links a directory that already exists, and Paddock uses it in place.**
+  No copy, no clone, no import: your checkout keeps its real history, branches and
+  remotes, and Claude works in the actual repository. **Paddock writes nothing into
+  it** — no transcript folder, no sidecar `.gitignore`, no `CLAUDE.md` — and
+  deleting the project never touches the directory.
+- **Two independent axes replace one overloaded flag.** *Managed* now means
+  Paddock looks after the project's own files — the sweeper curating `CLAUDE.md`,
+  `OVERVIEW.md` and `CHANGELOG.md`, which is what "notebook" used to mean.
+  *Unmanaged* means the content is code you version-control yourself. **Whether a
+  git repo sits behind it is a separate question and not a type.** The old
+  `repoBacked` boolean was one flag answering four questions and is **removed from
+  the API response**, so anything reading the projects API needs updating. Existing
+  projects keep their meaning on upgrade, and both new fields are fixed at creation
+  time.
+- **The Changes tab reports on the code, not the notes.** It had been reading the
+  *metadata* directory, so for a repo-backed project it showed you the notes folder
+  rather than the checkout — and it asked whether the projects root was a
+  repository rather than the directory actually in question. Both are now answered
+  per-directory.
+
+## 0.63 — Your laptop's Claude Code plugins, inside Paddock
+
+- **A plugin you installed in Claude Code now works in Paddock, MCP servers and
+  all.** Previously it was invisible on every setting — a Slack plugin on your
+  laptop simply did not exist here — because the SDK enables a discovered plugin
+  from a settings source Paddock's agents are not invoked with. Paddock now reads
+  the CLI's own plugin registry and passes the directories explicitly, which needs
+  no such grant. Two levers gate it, because a plugin is mostly instructions and
+  only sometimes servers: sharing **instructions** brings the plugin's commands,
+  agents, skills and hooks; sharing **MCP servers** as well brings its servers too.
+  Each plugin server is added to the agent's allowed tools automatically — without
+  that the server connects and then has every call denied with no prompt.
+- **A bearer-authenticated or `sse` MCP server survives being inherited.** Its
+  `headers` and explicit `type` are now carried through verbatim rather than
+  stripped — which matters more than it sounds, because a stored OAuth token is
+  keyed on a hash that includes both, so stripping them broke token lookup
+  entirely. The two boot warnings 0.62 shipped about this are gone.
+- **A security note, deliberately surfaced rather than buried.** If you declare an
+  MCP server with a credential in `mcpServers:`, Paddock keeps that secret out of
+  every surface it owns. But on **`driveMode: batch`** the engine serialises the
+  whole server definition — credential included — into a single command-line
+  argument, and process arguments are readable by any local user for as long as
+  the turn runs. Paddock cannot close this from its side, so it now says so at
+  startup instead of staying quiet. The default `session` mode passes the value
+  in-process and is unaffected.
+
 ## 0.62 — Five levers instead of one
 
 Paddock sits next to Claude Code state you already have: transcripts, a login,
@@ -203,12 +385,20 @@ destroyed real terminal history](https://github.com/edspencer/paddock/issues/689
 
   The flag is the consent, and it says what it's about to do: it creates
   `.paddock/` for the workspace's state and `.chats/` for transcripts, and adds both
-  to your `.gitignore`. **Your `~/.claude` is not touched** — sessions there are
-  *offered* for import, and nothing is moved, copied or linked until you confirm, so
-  your terminal `claude` keeps working exactly as before. Later runs in the same
+  to your `.gitignore`. Later runs in the same
   directory resume it with no flag needed — the git model, where `--here` is
   `git init` and `.paddock/` is `.git`. Without the flag, Paddock never touches the
   directory you ran it from.
+
+  :::caution[As shipped, `--here` did touch your `~/.claude`]
+  This entry originally said your `~/.claude` was left alone. That was **wrong for
+  the versions it describes**: on 0.59.0–0.60, `--here` also linked
+  `~/.claude/projects/<encoded-dir>` at the new workspace, so terminal `claude`
+  sessions in that directory afterwards wrote into Paddock's store — and one
+  report lost 30 transcripts to it. 0.61.1 stopped Paddock planting a link in a
+  Claude home it does not own, and warns about any already planted. If you ran
+  `--here` on those versions, check the 0.61.1 entry below.
+  :::
 
 - **Published with provenance.** Releases go to npm from CI through OIDC trusted
   publishing, carrying a signed SLSA attestation that ties each version back to the
