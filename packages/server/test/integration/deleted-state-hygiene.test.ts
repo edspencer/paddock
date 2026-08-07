@@ -136,6 +136,9 @@ describe("integration: deleted chats stop feeding the unread badge (#732)", () =
       .json()
       .runs as { sessionId?: string; session_id?: string }[];
     const runSessions = new Set(runs.map((r) => r.sessionId ?? r.session_id));
+    // The survivor's run is still there — without this the two absences below
+    // would pass just as well on an empty or misshapen `/runs`.
+    expect(runSessions.has(ids[2])).toBe(true);
     expect(runSessions.has(ids[0])).toBe(false);
     expect(runSessions.has(ids[1])).toBe(false);
   });
