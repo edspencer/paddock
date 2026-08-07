@@ -16,6 +16,7 @@ import {
   writeInstanceConfig,
   validatePatch,
   instanceConfigPath,
+  instanceConfigVersion,
   InstanceConfigError,
 } from "../instance-config.js";
 import { TranscriptionError } from "../transcribe.js";
@@ -177,7 +178,7 @@ export function registerMetaRoutes(app: FastifyInstance, ctx: RouteCtx): void {
         tags: ["System"],
         summary: "Read instance-wide config",
         description:
-          "Reports every surfaced instance-config field (value / default / editable / sensitive / env-shadow) for the top-level admin screen. Returns a JSON object keyed by field.",
+          "Reports every surfaced instance-config field for the top-level admin screen: `value` (effective in the running, boot-frozen process), `pendingValue` (what a restart would resolve, read from paddock.config.yaml on every request), `pendingRestart`, plus default / editable / sensitive / env-shadow flags. Top level carries `restartRequired` (any field diverges), `configPath`, and `configVersion` — a fingerprint of the file to echo back as `expectedVersion` on the PUT.",
         response: {
           200: {
             description: "Instance config snapshot.",
@@ -190,25 +191,35 @@ export function registerMetaRoutes(app: FastifyInstance, ctx: RouteCtx): void {
     async () => buildInstanceConfig(cfg),
   );
 
-  app.put<{ Body: { patch?: Record<string, unknown> } }>(
+  app.put<{ Body: { patch?: Record<string, unknown>; expectedVersion?: string | null } }>(
     "/api/instance-config",
     {
       schema: {
         tags: ["System"],
         summary: "Write instance-wide config",
         description:
-          "Writes the editable subset of the instance config to paddock.config.yaml (comment-preserving, atomic). Writes DO NOT hot-apply — the config is frozen at boot — so a successful write returns `{ restartRequired: true, configPath }` and the process keeps its current config until it restarts. Returns 400 on a malformed patch or invalid field, 500 on write failure.",
+          "Writes the editable subset of the instance config to paddock.config.yaml (comment-preserving, atomic). Writes DO NOT hot-apply — the config is frozen at boot — so a successful write returns `{ restartRequired: true, configPath, configVersion }` and the process keeps its current config until it restarts. A `null` value clears that key (the built-in default applies again). Pass `expectedVersion` (the `configVersion` from the GET you were editing) to make the write conditional: 409 if the file changed underneath you, instead of silently overwriting another editor. Returns 400 on a malformed patch, an invalid/read-only/env-shadowed field, 500 on write failure.",
         body: {
           // Documentation-only (no validation/coercion): accept any/empty body.
           type: ["object", "null"],
           additionalProperties: true,
           properties: {
             patch: { description: "Map of config field name to new value to write." },
+            expectedVersion: {
+              description:
+                "Optional. The `configVersion` this patch was composed against; the write is refused with 409 if the file no longer matches.",
+            },
           },
         },
         response: {
           200: {
             description: "Write accepted; restart required to apply.",
+            type: "object",
+            additionalProperties: true,
+          },
+          409: {
+            description:
+              "`expectedVersion` no longer matches the file — another writer got there first. Nothing was written.",
             type: "object",
             additionalProperties: true,
           },
@@ -229,13 +240,33 @@ export function registerMetaRoutes(app: FastifyInstance, ctx: RouteCtx): void {
         }
         throw err;
       }
+      const configPath = instanceConfigPath(cfg);
+      // Optimistic concurrency (#722). Opt-in — a client that sends no
+      // `expectedVersion` (curl, a script) writes unconditionally, as before —
+      // but the UI always sends one, so two tabs editing the same file now
+      // collide loudly instead of the second silently erasing the first.
+      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, "expectedVersion")) {
+        const current = instanceConfigVersion(configPath);
+        if (current !== (req.body?.expectedVersion ?? null)) {
+          return reply.code(409).send({
+            error:
+              "The config file changed on disk since this page loaded (another tab, or an editor). Nothing was written — reload the settings and apply your changes again.",
+            code: "config_conflict",
+            configVersion: current,
+          });
+        }
+      }
       try {
-        writeInstanceConfig(instanceConfigPath(cfg), pairs);
+        writeInstanceConfig(configPath, pairs);
       } catch (err) {
         return reply.code(500).send({ error: `failed to write config file: ${(err as Error).message}` });
       }
       // The write lands in the file but NOT in the running (frozen) config.
-      return { restartRequired: true, configPath: instanceConfigPath(cfg) };
+      return {
+        restartRequired: true,
+        configPath,
+        configVersion: instanceConfigVersion(configPath),
+      };
     },
   );
 

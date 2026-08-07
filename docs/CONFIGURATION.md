@@ -52,6 +52,29 @@ gitAuthor:
   email: paddock@localhost
 ```
 
+### Editing it from the Settings screen (`/config`)
+
+The admin Settings screen writes this same file (comment-preserving and atomic —
+your comments and any keys Paddock doesn't manage survive a save). Because the
+resolved config is **frozen at boot**, the screen is an editor for the *file*,
+not for the running process, and it shows both:
+
+- **In force now** — what this process resolved at startup. No write moves it.
+- **Pending** — what the file says right now, i.e. what a restart would load.
+  Fields where the two differ are marked `restart`, and the page says a restart
+  is outstanding. The file is re-read on every request, so an edit made in
+  another tab (or by hand in `$EDITOR`) shows up here too.
+
+Three rules the write path enforces:
+
+- **`null` clears a key** rather than writing a zero or empty value — the
+  built-in default applies again after the restart.
+- **A field an env var currently shadows is refused** (400). `env > file`, so
+  writing it to the file could never take effect; change the variable instead.
+- **A save is conditional.** The UI sends back the `configVersion` it read; if
+  the file changed since then the write is refused with a 409 rather than
+  silently overwriting whoever got there first.
+
 ## How values are parsed
 
 Two helpers do almost every read:
