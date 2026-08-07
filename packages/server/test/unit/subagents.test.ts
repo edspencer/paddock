@@ -390,13 +390,53 @@ describe("subagents (issue #37)", () => {
           { type: "user", message: { content: "go" }, timestamp: "2026-01-01T00:00:00.000Z" },
           {
             type: "assistant",
-            message: { id: "m1", content: [{ type: "text", text: "done" }] },
+            // `end_turn` is what makes this a FINISHED sub-agent rather than one
+            // caught mid-run — see the liveness test below (#725).
+            message: { id: "m1", stop_reason: "end_turn", content: [{ type: "text", text: "done" }] },
             timestamp: "2026-01-01T00:00:12.500Z",
           },
         ],
       );
       const enriched = await enrichWithSubagents(projectDir, "s8", [toolMsg("Agent", "done A")]);
       expect(enriched[0].toolCall?.subagentDurationMs).toBe(12_500);
+    });
+
+    it("withholds the run time while the sub-agent is still working (#725)", async () => {
+      // The `Task` has ALREADY paired — the SDK backgrounds sub-agents, so its
+      // tool_result lands within milliseconds while the sub-agent keeps going. The
+      // duration must stay unpublished anyway: it is the client's finished signal
+      // (`useRunningSubagents` drops any card that carries one) and it is read off
+      // a transcript that is still growing, so publishing it here freezes a bogus
+      // part-way number AND evicts a live sub-agent from the running bar.
+      await writeMain("s8-live", [
+        toolUse("Agent", "toolu_L", { subagent_type: "Explore", description: "still going" }),
+        toolResult("toolu_L", "dispatched"),
+      ]);
+      await writeSubagent(
+        "s8-live",
+        "lll",
+        { agentType: "Explore", description: "still going", toolUseId: "toolu_L" },
+        [
+          { type: "user", message: { content: "go" }, timestamp: "2026-01-01T00:00:00.000Z" },
+          {
+            // Mid-run: an assistant step that called a tool, so the agent loop
+            // continues. No `end_turn`, and the file was written just now.
+            type: "assistant",
+            message: {
+              id: "m1",
+              stop_reason: "tool_use",
+              content: [{ type: "tool_use", id: "t1", name: "Read", input: { file_path: "a.ts" } }],
+            },
+            timestamp: "2026-01-01T00:00:12.500Z",
+          },
+        ],
+      );
+      const enriched = await enrichWithSubagents(projectDir, "s8-live", [
+        toolMsg("Agent", "dispatched"),
+      ]);
+      // Still recognised as a sub-agent — it must stay expandable and in the bar.
+      expect(enriched[0].toolCall).toMatchObject({ toolUseId: "toolu_L", hasSubagent: true });
+      expect(enriched[0].toolCall?.subagentDurationMs).toBeUndefined();
     });
 
     it("prices the sub-agent's cost per-model from its own transcript usage (issue #166)", async () => {
