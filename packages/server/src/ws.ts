@@ -50,6 +50,7 @@
  * that also captures, from each raw SDK message, the session id and the per-turn
  * usage + model (the translator only exposes text/boundary/tool events).
  */
+import { randomUUID } from "node:crypto";
 import type { WebSocket } from "@fastify/websocket";
 import type {
   SDKMessage,
@@ -75,7 +76,8 @@ import {
   isKnownDriveMode,
   type DriveMode,
 } from "./models.js";
-import { SessionHub, type TurnHandle, type ActiveInfo } from "./session-hub.js";
+import { SessionHub, type TurnHandle, type ActiveInfo, type HubSocket } from "./session-hub.js";
+import { partsOf } from "./queued-message.js";
 import { resolveAttachmentsConfig } from "./attachments-config.js";
 import { wrapAttachments, inferAttachmentKind, type PromptAttachment } from "./attachments-hint.js";
 import { sendFileServerDef, SEND_FILE_SERVER_KEY } from "./send-file-mcp.js";
@@ -143,6 +145,30 @@ const SERVER_PING_INTERVAL_MS = 30_000;
 const KEY_SEP = "\u0000";
 
 
+/**
+ * Cap on a single queued message. The sidecar is rewritten in full on every queue
+ * mutation and the text is persisted verbatim, so an unbounded queue is a cheap
+ * way to bloat the data dir (a 2 MB `chat:set_queue` was accepted as-is). Well
+ * above any hand-typed follow-up, including a pasted stack trace.
+ */
+const MAX_QUEUED_CHARS = 100_000;
+
+/**
+ * The opaque identity of the client queue a `chat:set_queue` belongs to (#736).
+ *
+ * Whatever the client supplies is used for EQUALITY ONLY — never compared as a
+ * clock — so a skewed clock can't poison anything. A legacy client sends only the
+ * enqueue `ts`, which is folded into an id (still a perfectly good per-client
+ * identity, just no longer an ordering). A client that sends neither gets a fresh
+ * id, so its queue is always treated as new: with nothing stable to match on, the
+ * safe failure is to send the message rather than to discard it.
+ */
+function queueIdOf(payload: { qid?: string | null; ts?: number | null }): string {
+  if (typeof payload.qid === "string" && payload.qid.length > 0) return payload.qid;
+  if (typeof payload.ts === "number") return `ts:${payload.ts}`;
+  return `anon:${randomUUID()}`;
+}
+
 export function makeChatHandler(deps: ChatHandlerDeps) {
   // ONE hub shared across every socket this handler serves: it tracks each
   // session's in-flight turn and fans its frames out to whichever socket(s) are
@@ -157,14 +183,53 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
   // double-send only survives a server restart, when the persisted store is
   // already empty anyway.
   //
-  // A message's identity is the (ts, text) TUPLE, not the timestamp alone (#628).
-  // The client deliberately KEEPS one enqueue ts when APPENDING to an existing
-  // queue (#245 stable identity), so "same ts, different text" is a genuinely new
-  // message — deduping on the ts alone silently destroyed the appended text.
-  // Timestamps are monotonic per session (a fresh queue stamps `Date.now()`), so
-  // anything strictly OLDER than `ts` is stale by construction and only the texts
-  // flushed AT `ts` need remembering — one bounded set per session.
-  const lastFlushed = new Map<string, { ts: number; texts: Set<string> }>();
+  // A queued message's identity is the (queue id, text) TUPLE, matched by
+  // EQUALITY (#628/#736). The client KEEPS one queue id when APPENDING to an
+  // existing queue (#245 stable identity), so "same id, different text" is a
+  // genuinely new message — deduping on the id alone would silently destroy the
+  // appended text.
+  //
+  // This used to be a (ts, text) tuple with an ORDERING rule on top: anything
+  // older than the last flushed ts was "stale by construction, timestamps being
+  // monotonic". They are monotonic within ONE client — but the ts came from
+  // whichever browser queued the message, so a single client with a fast clock
+  // parked the marker in the future and every subsequent queued message on that
+  // chat, from ANY client, was silently destroyed until wall-clock time caught up
+  // (#736). Equality assumes nothing about clocks, so the ordering rule is gone;
+  // in exchange every flushed id has to be remembered rather than just the newest.
+  //
+  // Bounded on both axes: MAX_FLUSHED_SESSIONS chats, MAX_FLUSHED_IDS ids each,
+  // oldest evicted first (insertion-ordered Maps). Overflow can only cost a rare
+  // double-send of a re-asserted message, the same exposure a server restart has.
+  const lastFlushed = new Map<string, Map<string, Set<string>>>();
+  const MAX_FLUSHED_SESSIONS = 512;
+  const MAX_FLUSHED_IDS = 32;
+  const MAX_FLUSHED_TEXTS = 8;
+
+  /** This session's flushed-parts ledger (id -> the texts flushed under it). */
+  const flushedLedger = (markerKey: string): Map<string, Set<string>> => {
+    let m = lastFlushed.get(markerKey);
+    if (!m) {
+      m = new Map();
+      lastFlushed.set(markerKey, m);
+      if (lastFlushed.size > MAX_FLUSHED_SESSIONS) {
+        lastFlushed.delete(lastFlushed.keys().next().value as string);
+      }
+    }
+    return m;
+  };
+
+  /** Record one flushed part, trimming the oldest entries past the bounds. */
+  const rememberFlushed = (ledger: Map<string, Set<string>>, id: string, text: string): void => {
+    let texts = ledger.get(id);
+    if (!texts) {
+      texts = new Set();
+      ledger.set(id, texts);
+      if (ledger.size > MAX_FLUSHED_IDS) ledger.delete(ledger.keys().next().value as string);
+    }
+    texts.add(text);
+    if (texts.size > MAX_FLUSHED_TEXTS) texts.delete(texts.values().next().value as string);
+  };
 
   // Every currently-connected socket, so a turn's start/stop transition can be
   // broadcast to all clients — powering the per-chat sidebar streaming dots that
@@ -358,84 +423,19 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
     makeBackgroundTurnSink,
   } = engine;
 
-  const handle = async function handle(socket: WebSocket): Promise<void> {
-    const send = (m: ServerMessage) => {
-      if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(m));
-    };
-
-    // Register this socket for active-turn broadcasts, and immediately catch it
-    // up on which sessions are currently running (so the sidebar dots and a
-    // returning pane's Stop button reflect reality from the first paint).
-    clients.add(socket);
-    for (const info of hub.runningSessions()) send(activeFrame(info));
-
-    // Heartbeat: browsers auto-answer protocol ping frames with a pong, so a
-    // client whose TCP has silently died (idle drop, sleep) fails to pong and is
-    // terminated on the next tick — freeing server resources and letting the
-    // client's own reconnect take over. Cleared when the socket closes.
-    let isAlive = true;
-    socket.on("pong", () => {
-      isAlive = true;
-    });
-    const heartbeat = setInterval(() => {
-      if (!isAlive) {
-        socket.terminate();
-        return;
-      }
-      isAlive = false;
-      try {
-        socket.ping();
-      } catch {
-        socket.terminate();
-      }
-    }, SERVER_PING_INTERVAL_MS);
-    socket.on("close", () => {
-      clearInterval(heartbeat);
-      // Drop this socket from every session fan-out set so the hub stops trying
-      // to write to it (a running turn keeps going for other attached sockets).
-      hub.unsubscribeSocket(socket);
-      clients.delete(socket);
-    });
-
-    socket.on("message", (raw: Buffer | string) => {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(raw.toString());
-      } catch {
-        send({ type: "chat:error", payload: { projectSlug: "?", error: "Invalid JSON" } });
-        return;
-      }
-      if (!isClientMessage(parsed)) {
-        send({ type: "chat:error", payload: { projectSlug: "?", error: "Unknown message" } });
-        return;
-      }
-      if (parsed.type === "ping") {
-        send({ type: "pong" });
-        return;
-      }
-      if (parsed.type === "chat:cancel") {
-        void deps.herdctl.cancel(parsed.payload.jobId).catch(() => undefined);
-        return;
-      }
-      if (parsed.type === "chat:subscribe") {
-        onSubscribe(parsed);
-        return;
-      }
-      if (parsed.type === "chat:set_queue") {
-        void onSetQueue(parsed);
-        return;
-      }
-      if (parsed.type === "chat:command") {
-        void onChatCommand(parsed);
-        return;
-      }
-      if (parsed.type === "chat:continue") {
-        void onChatContinue(parsed);
-        return;
-      }
-      void onChatSend(parsed);
-    });
-
+  /**
+   * Build the chat operations for ONE connection: the handlers behind every
+   * client frame, plus the queue drain they share.
+   *
+   * A factory rather than plain closures inside {@link handle} because the drain
+   * has to run with NO socket at all (#627). A turn started by a trigger, a
+   * scheduler wake or a spawn has no originating connection, and a queued
+   * follow-up must still go out when it ends — so `socket` is nullable and the
+   * ops are built once, socket-less, for those paths (see `headlessOps` below).
+   * A socket-less send is a no-op: everything a client needs to see travels over
+   * the hub, which fans out to every socket attached to the session.
+   */
+  const makeChatOps = (socket: HubSocket | null, send: (m: ServerMessage) => void) => {
     /**
      * Manual keeper recovery (issue #301, Layer 2). Re-drive a hung keeper whose
      * background task was killed at the turn boundary by injecting the recovery
@@ -471,6 +471,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
     };
 
     const onSubscribe = (msg: ChatSubscribeMessage): void => {
+      if (!socket) return; // the socket-less ops never receive client frames
       const { sessionId, wantReplay, lastSeq } = msg.payload;
       const result = hub.attach(sessionId, socket, {
         wantReplay: wantReplay === true,
@@ -491,27 +492,37 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
     };
 
     // Server-authoritative queue drain (#245): auto-send a persisted queued
-    // message as the next turn, exactly once. Called (a) when a turn completes
-    // successfully and (b) when a queue is set while the session is idle — a queue
-    // that arrived (e.g. via the reconnect outbox) after the turn it was meant to
-    // follow already ended. `take` makes the read+clear atomic so the two callers
-    // can never both send it; the `lastFlushed` marker skips a message already
-    // drained (a stale client re-assert on reload) so it isn't sent twice.
+    // message as the next turn, exactly once. Called (a) whenever a turn ends —
+    // through the hub, so EVERY turn path drains (#627) — and (b) when a queue is
+    // set while the session is idle, i.e. a queue that arrived (e.g. via the
+    // reconnect outbox) after the turn it was meant to follow already ended.
+    // `take` makes the read+clear atomic so two concurrent drains can never both
+    // send it; the flushed-parts ledger skips what was already drained (a stale
+    // client re-assert on reload) so it isn't sent twice.
     const drainQueue = async (slug: string, sessionId: string): Promise<void> => {
       if (!deps.queuedMessage) return;
+      // Another turn is already live on this session (a drain racing a fresh send,
+      // or a turn ending while its successor has started). Leave the queue for
+      // that turn's own end — sending now would interleave two turns.
+      if (hub.isRunning(sessionId)) return;
       const agent = keeperAgentName(slug);
       const queued = await deps.queuedMessage.take(agent, sessionId).catch(() => null);
       if (!queued?.text) return;
-      const markerKey = `${agent}${KEY_SEP}${sessionId}`;
-      const marker = lastFlushed.get(markerKey);
-      // Already drained, on the (ts, text) tuple (#628): either this exact text
-      // went out at this exact ts, or the whole message predates the last one we
-      // flushed — which, timestamps being monotonic, can only be a stale re-assert.
-      // An APPEND reuses the ts with longer text, so it is NOT a duplicate.
-      const already =
-        marker !== undefined &&
-        (queued.createdAtMs < marker.ts ||
-          (queued.createdAtMs === marker.ts && marker.texts.has(queued.text)));
+      const ledger = flushedLedger(`${agent}${KEY_SEP}${sessionId}`);
+      // Drop the parts we have already flushed and send what's left (#628/#736).
+      //
+      // Identity is the (queue id, text) TUPLE, matched by EQUALITY. It used to be
+      // (ts, text) with an ORDERING rule — "older than the last flush ⇒ a stale
+      // re-assert" — which held only while every ts came from one client's clock.
+      // They don't: the ts was whatever browser queued the message, so a single
+      // client with a fast clock left a marker in the future and every later queued
+      // message on that chat, from any client, was silently taken, classified
+      // already-flushed and destroyed until wall-clock time caught up (#736).
+      // Equality needs no such assumption. The client keeps ONE id across an APPEND
+      // (#245 stable identity), so "same id, longer text" is still a genuinely new
+      // message and is sent — the #628 behaviour, unchanged.
+      const fresh = partsOf(queued).filter((p) => !ledger.get(p.id)?.has(p.text));
+      const text = fresh.map((p) => p.text).join("\n");
       // Tell every attached client (origin + reconnected sockets) to clear its copy
       // of this message. When we're really sending it, carry the text so the client
       // renders the sent bubble in-transcript; on a stale re-assert we only clear.
@@ -520,27 +531,24 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
         payload: {
           projectSlug: slug,
           sessionId,
-          ...(already ? {} : { text: queued.text }),
+          ...(text ? { text } : {}),
         },
       });
-      if (already) return;
-      // Record the tuple. A newer ts supersedes the marker outright (everything at
-      // the old ts is now stale); the same ts adds one more flushed text.
-      if (marker !== undefined && marker.ts === queued.createdAtMs) marker.texts.add(queued.text);
-      else lastFlushed.set(markerKey, { ts: queued.createdAtMs, texts: new Set([queued.text]) });
+      if (!text) return;
+      for (const p of fresh) rememberFlushed(ledger, p.id, p.text);
       // Broadcast the flush frame BEFORE kicking the turn so the user bubble renders
       // above the reply. Run it detached, like a human send. A leading-slash queued
       // message is a slash command (e.g. "/compact"): route it through the command
       // path so the CLI dispatches it — matching how the composer sends one live.
-      if (queued.text.startsWith("/")) {
+      if (text.startsWith("/")) {
         void onChatCommand({
           type: "chat:command",
-          payload: { projectSlug: slug, command: queued.text, sessionId },
+          payload: { projectSlug: slug, command: text, sessionId },
         });
       } else {
         void onChatSend({
           type: "chat:send",
-          payload: { projectSlug: slug, sessionId, message: queued.text },
+          payload: { projectSlug: slug, sessionId, message: text },
         });
       }
     };
@@ -556,20 +564,60 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       const agent = keeperAgentName(slug);
       if (!sessionId) {
         // New chat: queue isn't stored until the session id exists. The client
-        // re-asserts it (with the same ts) once the id resolves, so it persists then.
+        // re-asserts it (same qid) once the id resolves, so it persists then.
         return;
       }
       // Store or clear the queued message.
       if (text && text.trim().length > 0) {
-        await deps.queuedMessage
-          .set(agent, sessionId, { text, createdAtMs: msg.payload.ts ?? Date.now() })
+        // A queued message is persisted verbatim and the whole sidecar is rewritten
+        // on every mutation, so an unbounded one is a cheap way to bloat the data
+        // dir. Refuse it loudly rather than silently truncating the user's text.
+        if (text.length > MAX_QUEUED_CHARS) {
+          send({
+            type: "chat:error",
+            payload: {
+              projectSlug: slug,
+              error: `Queued message is too long (${text.length} characters; the limit is ${MAX_QUEUED_CHARS}).`,
+            },
+          });
+          return;
+        }
+        // Merge into the chat's single slot rather than overwriting it (#629). The
+        // queue id says whose queue this is: this client updating its own (replace
+        // in place) or a second client queueing alongside it (append). The old
+        // unconditional overwrite destroyed the first client's message with no
+        // signal to anyone — and then rendered it, in that client's own transcript,
+        // as a user bubble they never typed.
+        const next = await deps.queuedMessage
+          .upsert(agent, sessionId, { id: queueIdOf(msg.payload), text }, Date.now())
           .catch(() => undefined);
+        // The queue is shared chat state now, so announce it: every attached client
+        // renders the same slot, and adopting `qid` makes the next edit from any of
+        // them update this slot instead of appending beside it.
+        if (next !== undefined) {
+          hub.broadcast(sessionId, {
+            type: "chat:queued_state",
+            payload: {
+              projectSlug: slug,
+              sessionId,
+              text: next?.text ?? null,
+              ...(next ? { qid: partsOf(next)[0].id } : {}),
+            },
+          });
+        }
         // If no turn is running, this queue arrived after the turn it was meant to
         // follow already ended — drain it now rather than wait for a completion
         // that won't come (the reported stranding bug, #245).
         if (!hub.isRunning(sessionId)) await drainQueue(slug, sessionId);
       } else {
+        // A clear wipes the WHOLE slot, including another client's contribution:
+        // with the state broadcast the chip is shared, so clearing it is a
+        // deliberate act on something the user can actually see.
         await deps.queuedMessage.set(agent, sessionId, null).catch(() => undefined);
+        hub.broadcast(sessionId, {
+          type: "chat:queued_state",
+          payload: { projectSlug: slug, sessionId, text: null },
+        });
       }
     };
 
@@ -940,14 +988,13 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
             ...(completeUsage ? { model: completeModel, usage: completeUsage } : {}),
           },
         });
+        // Ending the turn drains any queued follow-up (#197/#245) via the hub's
+        // turn-end hook — the ONE place every turn path converges (#627), rather
+        // than this call site alone. It no longer waits for a SUCCESSFUL turn:
+        // holding the queue on a failed/Stopped turn didn't keep it for the user,
+        // it stranded it, to be flushed by the NEXT `chat:send` — landing behind a
+        // message typed later, with a stale chip in between. See drainQueue.
         turn.end();
-
-        // After a SUCCESSFUL turn, auto-send any queued follow-up (#197/#245). A
-        // Stop/failed turn holds the queue for the user (no drain). drainQueue owns
-        // the take + client notify + next-turn kickoff, shared with the idle path.
-        if (effectiveSuccess && finalSession) {
-          await drainQueue(slug, finalSession);
-        }
 
         // Layer 3 (issue #301): arm a post-turn recovery watch for a session-mode
         // keeper turn. If this turn launched a background task that the runtime kills
@@ -1145,6 +1192,116 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
         turn.end();
       }
     };
+    return { onChatContinue, onSubscribe, drainQueue, onSetQueue, onChatSend, onChatCommand };
+  };
+
+  // The ops used when a turn ends with no socket behind it — a trigger, a wake, a
+  // spawned turn, a background sub-agent stretch — so the drain still has a way to
+  // dispatch the follow-up. Built once: it holds no per-connection state.
+  const headlessOps = makeChatOps(null, () => {});
+
+  // Prefer the ending turn's ORIGIN socket when there is one, so a drained turn
+  // keeps the same fan-out (and error routing) the turn it followed had; a turn
+  // with no origin falls back to the headless ops.
+  const opsFor = (origin: HubSocket | null): ReturnType<typeof makeChatOps> =>
+    origin
+      ? makeChatOps(origin, (m: ServerMessage) => {
+          if (origin.readyState === origin.OPEN) origin.send(JSON.stringify(m));
+        })
+      : headlessOps;
+
+  // #627: EVERY turn-ending path drains the queue, because every one of them ends
+  // its turn through the hub. Previously this was a single call after a successful
+  // `chat:send`, so a message queued during a slash command, a trigger, a wake, a
+  // background stretch or a Stopped turn was stranded until some later `chat:send`
+  // flushed it — out of order, behind a message the user typed afterwards.
+  hub.onTurnEnd = ({ sessionId, projectSlug, origin }) => {
+    void opsFor(origin).drainQueue(projectSlug, sessionId);
+  };
+
+  const handle = async function handle(socket: WebSocket): Promise<void> {
+    const send = (m: ServerMessage) => {
+      if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(m));
+    };
+
+    // This connection's operations. The frame dispatcher below closes over them.
+    const { onChatContinue, onSubscribe, onSetQueue, onChatSend, onChatCommand } = makeChatOps(
+      socket,
+      send,
+    );
+
+    // Register this socket for active-turn broadcasts, and immediately catch it
+    // up on which sessions are currently running (so the sidebar dots and a
+    // returning pane's Stop button reflect reality from the first paint).
+    clients.add(socket);
+    for (const info of hub.runningSessions()) send(activeFrame(info));
+
+    // Heartbeat: browsers auto-answer protocol ping frames with a pong, so a
+    // client whose TCP has silently died (idle drop, sleep) fails to pong and is
+    // terminated on the next tick — freeing server resources and letting the
+    // client's own reconnect take over. Cleared when the socket closes.
+    let isAlive = true;
+    socket.on("pong", () => {
+      isAlive = true;
+    });
+    const heartbeat = setInterval(() => {
+      if (!isAlive) {
+        socket.terminate();
+        return;
+      }
+      isAlive = false;
+      try {
+        socket.ping();
+      } catch {
+        socket.terminate();
+      }
+    }, SERVER_PING_INTERVAL_MS);
+    socket.on("close", () => {
+      clearInterval(heartbeat);
+      // Drop this socket from every session fan-out set so the hub stops trying
+      // to write to it (a running turn keeps going for other attached sockets).
+      hub.unsubscribeSocket(socket);
+      clients.delete(socket);
+    });
+
+    socket.on("message", (raw: Buffer | string) => {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw.toString());
+      } catch {
+        send({ type: "chat:error", payload: { projectSlug: "?", error: "Invalid JSON" } });
+        return;
+      }
+      if (!isClientMessage(parsed)) {
+        send({ type: "chat:error", payload: { projectSlug: "?", error: "Unknown message" } });
+        return;
+      }
+      if (parsed.type === "ping") {
+        send({ type: "pong" });
+        return;
+      }
+      if (parsed.type === "chat:cancel") {
+        void deps.herdctl.cancel(parsed.payload.jobId).catch(() => undefined);
+        return;
+      }
+      if (parsed.type === "chat:subscribe") {
+        onSubscribe(parsed);
+        return;
+      }
+      if (parsed.type === "chat:set_queue") {
+        void onSetQueue(parsed);
+        return;
+      }
+      if (parsed.type === "chat:command") {
+        void onChatCommand(parsed);
+        return;
+      }
+      if (parsed.type === "chat:continue") {
+        void onChatContinue(parsed);
+        return;
+      }
+      void onChatSend(parsed);
+    });
   };
 
   // The socket handler PLUS the manual trigger-fire entrypoint: a "trigger now"

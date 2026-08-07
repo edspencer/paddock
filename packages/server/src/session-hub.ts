@@ -125,6 +125,28 @@ export class SessionHub {
   onActive: ((info: ActiveInfo) => void) | null = null;
 
   /**
+   * Notified once per turn, when that turn stops running (#627). Set by the WS
+   * layer, which uses it to drain a queued follow-up.
+   *
+   * This exists because "after a turn" was, for a long time, spelled as a call at
+   * ONE of the eight `turn.end()` sites — the `chat:send` completion. A message
+   * queued during a slash command, a trigger/spawn turn, a scheduler wake, a
+   * background sub-agent stretch or a Stopped turn was therefore persisted and
+   * then stranded, escaping only when some LATER `chat:send` happened to flush it —
+   * arriving after a message the user typed afterwards. Every one of those paths
+   * already funnels through {@link end}, so hanging the drain here makes "drain on
+   * every turn-ending path" structural rather than a list somebody has to remember
+   * to extend — including for turn paths that don't exist yet.
+   *
+   * Fires only once a turn's session id is known (a turn that died before its id
+   * resolved has no chat to drain), and always AFTER the terminal frame its caller
+   * emitted, so a drained follow-up's bubble lands below the turn it followed.
+   */
+  onTurnEnd:
+    | ((info: { sessionId: string; projectSlug: string; origin: HubSocket | null }) => void)
+    | null = null;
+
+  /**
    * Begin tracking a turn. Pass `sessionId` when it's already known (a resumed
    * chat / a slash command) so the turn is re-attachable from its very first
    * frame; omit it for a brand-new chat and call {@link TurnHandle.setSession}
@@ -268,11 +290,22 @@ export class SessionHub {
 
   /** Mark a turn finished; retain its buffer briefly for an end-of-turn reconnect. */
   end(turn: Turn): void {
+    if (!turn.running) return; // already ended — never fire onTurnEnd twice
     turn.running = false;
     if (turn.sessionId) {
       this.fireActive(turn);
       turn.evictTimer = setTimeout(() => this.evict(turn), COMPLETED_TTL_MS);
       turn.evictTimer.unref?.();
+      // #627: the session is idle again — let the WS layer drain a queued
+      // follow-up. Never allowed to throw into a caller finalizing its turn.
+      if (this.onTurnEnd) {
+        const { sessionId, projectSlug, origin } = turn;
+        try {
+          this.onTurnEnd({ sessionId, projectSlug, origin });
+        } catch {
+          /* a drain that throws must not break turn teardown */
+        }
+      }
     }
   }
 
