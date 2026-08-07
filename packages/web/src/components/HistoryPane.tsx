@@ -44,13 +44,13 @@ function originMeta(origin: RunSummary["origin"]): {
       icon: <BranchIcon width={12} height={12} />,
       cls: "bg-violet-100 text-violet-700 dark:bg-violet-950/50 dark:text-violet-400",
     };
-  // Imported from the user's Claude Code CLI history (#588). Still a run the
+  // Adopted from the user's Claude Code CLI history (#588). Still a run the
   // human drove — just not here — so it gets its own chip rather than the "You"
   // fallback, which would claim the turn happened in paddock. Matches the
   // emerald/terminal language of the sidebar's `adopted` ProvenanceBadge.
   if (origin === "adopted")
     return {
-      label: "Imported",
+      label: "Adopted",
       icon: <TerminalIcon width={12} height={12} />,
       cls: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400",
     };
@@ -94,9 +94,9 @@ function runDuration(run: RunSummary): string {
  *
  * Written as an exclusion list rather than `origin !== "human"` because #588 added
  * a second attended origin: an `adopted` run is a turn the human drove personally,
- * just in a terminal before the import. Counting it as unattended would put the
+ * just in a terminal before it was adopted. Counting it as unattended would put the
  * user's own back-catalogue in the "ran while you were away" banner the first time
- * they import, which is the opposite of what that banner is for.
+ * they adopt, which is the opposite of what that banner is for.
  */
 function unattended(run: RunSummary): boolean {
   return run.origin !== "human" && run.origin !== "adopted";
@@ -107,7 +107,7 @@ function triggerNote(run: RunSummary): string {
   if (run.origin === "scheduled") return run.schedule ? `schedule · ${run.schedule}` : "schedule";
   if (run.origin === "spawned")
     return run.depth > 1 ? `spawned · ${run.depth} levels deep` : "spawned by another chat";
-  if (run.origin === "adopted") return "imported from the Claude Code CLI";
+  if (run.origin === "adopted") return "adopted from the Claude Code CLI";
   return "you";
 }
 

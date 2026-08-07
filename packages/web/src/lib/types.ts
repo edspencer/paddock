@@ -432,9 +432,9 @@ export interface Chat {
  * badge surface.
  *
  * `adopted` (#588) is the one origin that predates paddock entirely: the chat was
- * imported from the user's own Claude Code CLI history, so its turns happened in a
+ * adopted from the user's own Claude Code CLI history, so its turns happened in a
  * terminal before this project ever saw them. It is badged for exactly that reason
- * — imported history reads identically to a chat started here otherwise, and "did I
+ * — adopted history reads identically to a chat started here otherwise, and "did I
  * write this in paddock or in my terminal?" is not answerable from the transcript.
  */
 export type ChatOrigin = "human" | "scheduled" | "spawned" | "hook" | "adopted";
@@ -487,7 +487,7 @@ export interface ChatProvenance {
 
 /**
  * One working directory the user already has native Claude Code CLI history for,
- * and which of its sessions this workspace could import (#588).
+ * and which of its sessions this workspace could adopt (#588).
  *
  * There can be more than one: a repo-backed project matches both its own working
  * directory and the ORIGIN checkout the user actually ran `claude` in. The server
@@ -496,7 +496,7 @@ export interface ChatProvenance {
 export interface AdoptableSource {
   /** The native transcript folder's recorded cwd. */
   sourceCwd: string;
-  /** The importable (native, non-sidechain, un-adopted) session ids under it. */
+  /** The adoptable (native, non-sidechain, un-adopted) session ids under it. */
   sessionIds: string[];
   /** The same sessions, with what the confirmation dialog needs to show them. */
   sessions: AdoptableCandidate[];
@@ -505,8 +505,8 @@ export interface AdoptableSource {
 /**
  * One session on offer, described well enough to decide about (#660).
  *
- * The import used to be an unconfirmed click, so an id was all the count needed.
- * A dialog that asks "import these?" has to say what "these" ARE — the instance
+ * The adoption used to be an unconfirmed click, so an id was all the count needed.
+ * A dialog that asks "adopt these?" has to say what "these" ARE — the instance
  * that prompted this offered 26 chats of which the user recognised none.
  */
 export interface AdoptableCandidate {
@@ -522,11 +522,11 @@ export interface AdoptableCandidate {
 
 /**
  * `GET <base>/adoptable-chats` (#588) — how many native CLI chats this workspace
- * could import right now, and where they'd come from.
+ * could adopt right now, and where they'd come from.
  *
- * `count` is a LIVE figure, not a one-shot offer: it is re-read after every import
+ * `count` is a LIVE figure, not a one-shot offer: it is re-read after every adoption
  * and drops to 0 only because there is genuinely nothing left to take, so the
- * import affordance reappears by itself if the user later runs more terminal
+ * adoption affordance reappears by itself if the user later runs more terminal
  * sessions in the same directory (gotcha #5 on the issue).
  */
 export interface AdoptableChats {
@@ -534,15 +534,15 @@ export interface AdoptableChats {
   sources: AdoptableSource[];
 }
 
-/** One session the import declined to take, and why. */
+/** One session the adoption declined to take, and why. */
 export interface AdoptSkip {
   sessionId: string;
   reason: string;
 }
 
 /**
- * `POST <base>/adopt-chats` (#588) — the session ids actually imported, plus the
- * ones that were passed over. A partly-skipped import is a success with a caveat,
+ * `POST <base>/adopt-chats` (#588) — the session ids actually adopted, plus the
+ * ones that were passed over. A partly-skipped adoption is a success with a caveat,
  * not a failure: the adopted chats are really there, so the result is reported
  * rather than thrown.
  */
@@ -553,10 +553,10 @@ export interface AdoptChatsResult {
 
 /**
  * `POST <base>/unadopt-chats` (#660) — the session ids released by undoing the
- * most recent import.
+ * most recent adoption.
  *
  * An empty array is a legitimate, non-error outcome: there was nothing to undo
- * because nothing was imported, it has already been undone, or the server has
+ * because nothing was adopted, it has already been undone, or the server has
  * restarted since (the undo offer is deliberately in-memory and short-lived).
  */
 export interface UnadoptChatsResult {

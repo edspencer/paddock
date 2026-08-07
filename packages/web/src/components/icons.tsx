@@ -246,9 +246,9 @@ export const UploadIcon = (p: IconProps) => (
 
 /**
  * A terminal prompt (`> _`), #588. Marks the things that came from the user's own
- * command line rather than from paddock: the "Import N native chats" action and
+ * command line rather than from paddock: the "Adopt N native chats" action and
  * the `adopted` provenance badge that action produces. Deliberately the SAME icon
- * in both places, so the badge on an imported row reads as the visible outcome of
+ * in both places, so the badge on an adopted row reads as the visible outcome of
  * the button rather than as an unrelated new marker.
  */
 export const TerminalIcon = (p: IconProps) => (

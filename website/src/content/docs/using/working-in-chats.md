@@ -1,6 +1,6 @@
 ---
 title: Working in chats
-description: A hands-on walkthrough — start a chat, import your existing terminal claude history, understand project chats vs root chats, resume from anywhere, use the composer and message queue, Stop a turn, rewind or fork from any message, and keep a growing chat list legible with unread dots, stars, search, and archive.
+description: A hands-on walkthrough — start a chat, adopt your existing terminal claude history, understand project chats vs root chats, resume from anywhere, use the composer and message queue, Stop a turn, rewind or fork from any message, and keep a growing chat list legible with unread dots, stars, search, and archive.
 ---
 
 A **chat** is where you actually work in Paddock — one conversation with an
@@ -29,17 +29,18 @@ streams back — so the new chat shows up in the sidebar **while the first turn 
 still running**, not only after it finishes. You never wait for a round-trip to
 see your chat appear.
 
-## Import your terminal `claude` history
+## Adopt your terminal `claude` history
 
 If you already ran `claude` in a terminal against this workspace's working
 directory, those conversations can be brought in. When there are any, an
-**Import N native chats** button appears at the top of the chat list, just above
-the **Chats** label. One click, no confirmation: the transcripts are imported,
-the list refreshes, and a toast reports how many arrived.
+**Adopt N native chats** button appears at the top of the chat list, just above
+the **Chats** label. Clicking it opens a dialog listing exactly what is on offer
+and where each session came from; confirm it and the list refreshes, with a toast
+reporting how many arrived.
 
 The count is **live**, not a dismissable prompt. It is recomputed from disk, so
 it comes back if you accrue new terminal sessions later, and it reaches zero only
-because there is genuinely nothing left to import. Empty and slash-command-only
+because there is genuinely nothing left to adopt. Empty and slash-command-only
 transcripts are withheld as noise, so the number is what you'd actually want.
 
 What gets offered is the workspace's own working directory plus any Claude
@@ -49,12 +50,18 @@ from your own checkout of the same repo, somewhere else on disk, is found too.
 
 Two things are deliberate about how it runs:
 
-- **Transcripts are copied, never moved.** Your `~/.claude` history is left
-  exactly as it was. Import is not a migration you can't undo.
+- **Your originals are never moved or deleted.** Your `~/.claude` history is
+  left exactly as it was, and adopting is undoable. Under
+  [`claude.transcripts: host`](/configuration/config-file/#transcripts) nothing is copied at
+  all — the project's transcript store *is* your `~/.claude` folder, so those
+  sessions are already in it. Adopting only registers them so they appear in the
+  chat list; it is a consent gate, not a data movement. Under the default `own`
+  the transcript is copied into Paddock's own store, leaving your original in
+  place.
 - **Original timestamps are kept**, so a months-old archive sorts by when those
   conversations actually happened rather than collapsing to today.
 
-Imported chats resume like any other, and carry an **Imported** badge (an emerald
+Adopted chats resume like any other, and carry an **Adopted** badge (an emerald
 terminal icon) so you can tell them from chats started here — see
 [Provenance](/concepts/provenance/). They are *not* counted as unattended runs:
 you had those conversations, just somewhere else.

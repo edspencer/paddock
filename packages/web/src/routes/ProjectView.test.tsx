@@ -166,8 +166,8 @@ beforeEach(() => {
   // Home's attention feed (#599). Default to a quiet workspace; a test that
   // cares about the rows themselves overrides this.
   apiFns.attentionChats.mockResolvedValue({ running: [], unread: [] });
-  // #588: nothing to import unless a test says otherwise, so the sidebar's
-  // "Import N native chats" row stays absent from every unrelated assertion.
+  // #588: nothing to adopt unless a test says otherwise, so the sidebar's
+  // "Adopt N native chats" row stays absent from every unrelated assertion.
   apiFns.getAdoptableChats.mockResolvedValue({ count: 0, sources: [] });
   apiFns.adoptChats.mockResolvedValue({ adopted: [], skipped: [] });
   apiFns.unadoptChats.mockResolvedValue({ released: [] });
@@ -1835,7 +1835,7 @@ describe("ProjectView: chat row declares its action count (#508)", () => {
 });
 
 /**
- * Importing the user's existing Claude Code CLI chats (#588).
+ * Adopting the user's existing Claude Code CLI chats (#588).
  *
  * The load-bearing property here is that the button is gated on a LIVE COUNT and
  * not on a dismissed flag (gotcha #5 on the issue). A dismiss flag passes the
@@ -1843,9 +1843,9 @@ describe("ProjectView: chat row declares its action count (#508)", () => {
  * when the user runs more terminal sessions. So the suite asserts both halves:
  * the button vanishes when the re-read count is 0, AND returns when it isn't.
  */
-describe("ProjectView: import native CLI chats (#588)", () => {
-  /** The sidebar's import row, or null when it isn't offered. */
-  const importRow = () => screen.queryByRole("button", { name: /Import \d+ native/i });
+describe("ProjectView: adopt native CLI chats (#588)", () => {
+  /** The sidebar's adopt row, or null when it isn't offered. */
+  const adoptRow = () => screen.queryByRole("button", { name: /Adopt \d+ native/i });
 
   /** One source's worth of offer, in the shape the server really returns. */
   function source(sourceCwd: string, sessionIds: string[]) {
@@ -1861,7 +1861,7 @@ describe("ProjectView: import native CLI chats (#588)", () => {
     };
   }
 
-  /** Offer `count` importable sessions on this workspace's first fetch. */
+  /** Offer `count` adoptable sessions on this workspace's first fetch. */
   function offer(count: number, sessionIds = ["n1", "n2"]) {
     apiFns.getAdoptableChats.mockResolvedValue({
       count,
@@ -1870,31 +1870,31 @@ describe("ProjectView: import native CLI chats (#588)", () => {
   }
 
   /**
-   * Do what a user does to import: open the dialog, then confirm it (#660).
+   * Do what a user does to adopt: open the dialog, then confirm it (#660).
    *
-   * The click on the sidebar row no longer imports anything by itself, so every
-   * test below that cares about the RESULT of an import goes through here.
+   * The click on the sidebar row no longer adopts anything by itself, so every
+   * test below that cares about the RESULT of an adopt goes through here.
    */
-  async function confirmImport(offered: RegExp) {
+  async function confirmAdopt(offered: RegExp) {
     fireEvent.click(await screen.findByRole("button", { name: offered }));
-    fireEvent.click(await screen.findByRole("button", { name: /^Import \d+ chat/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Adopt \d+ chat/i }));
   }
 
-  it("does not offer an import when there is nothing to import", async () => {
+  it("does not offer an adopt when there is nothing to adopt", async () => {
     apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
     offer(0, []);
     renderAt("/projects/p/chat");
     await screen.findByText(/No saved chats yet/);
     await waitFor(() => expect(apiFns.getAdoptableChats).toHaveBeenCalledWith("p"));
-    expect(importRow()).toBeNull();
+    expect(adoptRow()).toBeNull();
   });
 
   it("labels the button with the live count, singular for one", async () => {
     apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
     offer(1, ["n1"]);
     renderAt("/projects/p/chat");
-    const btn = await screen.findByRole("button", { name: /Import 1 native/i });
-    expect(btn).toHaveTextContent("Import 1 native chat");
+    const btn = await screen.findByRole("button", { name: /Adopt 1 native/i });
+    expect(btn).toHaveTextContent("Adopt 1 native chat");
     // Not "1 native chats" — the plural is derived, so this is the case that
     // catches a hard-coded "s".
     expect(btn).not.toHaveTextContent("chats");
@@ -1904,17 +1904,17 @@ describe("ProjectView: import native CLI chats (#588)", () => {
     apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
     offer(7);
     renderAt("/projects/p/chat");
-    const btn = await screen.findByRole("button", { name: /Import 7 native/i });
-    expect(btn).toHaveTextContent("Import 7 native chats");
+    const btn = await screen.findByRole("button", { name: /Adopt 7 native/i });
+    expect(btn).toHaveTextContent("Adopt 7 native chats");
     // Reachable by its accessible name, not just its visible text.
-    expect(btn.getAttribute("aria-label")).toMatch(/Import 7 native Claude Code chats/i);
+    expect(btn.getAttribute("aria-label")).toMatch(/Adopt 7 native Claude Code chats/i);
   });
 
   it("fetches the count once per workspace open, not on every render", async () => {
     apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
     offer(3);
     renderAt("/projects/p/chat");
-    await screen.findByRole("button", { name: /Import 3 native/i });
+    await screen.findByRole("button", { name: /Adopt 3 native/i });
     // Drive an unrelated re-render (the running-set socket frame) and prove it
     // did not trigger a second fetch.
     act(() => activeCb?.(new Set(["whatever"])));
@@ -1924,25 +1924,25 @@ describe("ProjectView: import native CLI chats (#588)", () => {
   // The property #660 adds, and the one the old one-click behaviour failed: the
   // click ASKS. On the instance that prompted this the offer was 26 chats the
   // user recognised none of, with no preview and no undo.
-  it("asks before importing anything — the click opens a dialog, not a POST", async () => {
+  it("asks before adopting anything — the click opens a dialog, not a POST", async () => {
     apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
     offer(2);
     renderAt("/projects/p/chat");
-    fireEvent.click(await screen.findByRole("button", { name: /Import 2 native/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /Adopt 2 native/i }));
 
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
-    // Nothing has been imported by opening it.
+    // Nothing has been adopted by opening it.
     expect(apiFns.adoptChats).not.toHaveBeenCalled();
   });
 
-  it("shows what would be imported, and where it came from", async () => {
+  it("shows what would be adopted, and where it came from", async () => {
     apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
     apiFns.getAdoptableChats.mockResolvedValue({
       count: 2,
       sources: [source("/data/scratch/qa-copy/p", ["n1", "n2"])],
     });
     renderAt("/projects/p/chat");
-    fireEvent.click(await screen.findByRole("button", { name: /Import 2 native/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /Adopt 2 native/i }));
     await screen.findByRole("dialog");
 
     // The source path is the load-bearing detail: it is what makes "these are
@@ -1951,24 +1951,24 @@ describe("ProjectView: import native CLI chats (#588)", () => {
     expect(screen.getAllByText(/did some work in/)).toHaveLength(2);
   });
 
-  it("cancelling imports nothing and leaves the offer standing", async () => {
+  it("cancelling adopts nothing and leaves the offer standing", async () => {
     apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
     offer(2);
     renderAt("/projects/p/chat");
-    fireEvent.click(await screen.findByRole("button", { name: /Import 2 native/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /Adopt 2 native/i }));
     fireEvent.click(await screen.findByRole("button", { name: /^Cancel$/ }));
 
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(apiFns.adoptChats).not.toHaveBeenCalled();
-    expect(importRow()).not.toBeNull();
+    expect(adoptRow()).not.toBeNull();
   });
 
-  it("imports only the sessions still ticked", async () => {
+  it("adopts only the sessions still ticked", async () => {
     apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
     offer(2);
     apiFns.adoptChats.mockResolvedValue({ adopted: ["n2"], skipped: [] });
     renderAt("/projects/p/chat");
-    fireEvent.click(await screen.findByRole("button", { name: /Import 2 native/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /Adopt 2 native/i }));
     await screen.findByRole("dialog");
 
     // Everything starts ticked — the common case is "yes, all of it".
@@ -1976,13 +1976,13 @@ describe("ProjectView: import native CLI chats (#588)", () => {
     expect(boxes.every((b) => (b as HTMLInputElement).checked)).toBe(true);
 
     fireEvent.click(boxes[0]);
-    fireEvent.click(screen.getByRole("button", { name: /^Import 1 chat$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Adopt 1 chat$/i }));
     await waitFor(() =>
       expect(apiFns.adoptChats).toHaveBeenCalledWith("p", { sessionIds: ["n2"] }),
     );
   });
 
-  it("shows 'Importing…' while the import is in flight", async () => {
+  it("shows 'Adopting…' while the adopt is in flight", async () => {
     apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
     apiFns.getAdoptableChats
       .mockResolvedValueOnce({ count: 2, sources: [source("/w", ["n1", "n2"])] })
@@ -1994,20 +1994,20 @@ describe("ProjectView: import native CLI chats (#588)", () => {
       }),
     );
     renderAt("/projects/p/chat");
-    await confirmImport(/Import 2 native/i);
+    await confirmAdopt(/Adopt 2 native/i);
 
     await waitFor(() =>
       expect(apiFns.adoptChats).toHaveBeenCalledWith("p", { sessionIds: ["n1", "n2"] }),
     );
-    const busy = screen.getByRole("button", { name: /Import 2 native/i });
-    expect(busy).toHaveTextContent("Importing…");
+    const busy = screen.getByRole("button", { name: /Adopt 2 native/i });
+    expect(busy).toHaveTextContent("Adopting…");
     expect(busy).toBeDisabled();
 
     act(() => release({ adopted: ["n1", "n2"], skipped: [] }));
-    await waitFor(() => expect(importRow()).toBeNull());
+    await waitFor(() => expect(adoptRow()).toBeNull());
   });
 
-  it("re-fetches BOTH the chat list and the count after importing", async () => {
+  it("re-fetches BOTH the chat list and the count after adopting", async () => {
     apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
     offer(2);
     apiFns.adoptChats.mockResolvedValue({ adopted: ["n1", "n2"], skipped: [] });
@@ -2015,7 +2015,7 @@ describe("ProjectView: import native CLI chats (#588)", () => {
       makeChat({ sessionId: "n1", name: "From my terminal" }),
     ]);
     renderAt("/projects/p/chat");
-    await confirmImport(/Import 2 native/i);
+    await confirmAdopt(/Adopt 2 native/i);
 
     // The list is what the user came for; the count is what hides the button.
     // Neither is inferred from the POST's response.
@@ -2031,25 +2031,25 @@ describe("ProjectView: import native CLI chats (#588)", () => {
       .mockResolvedValue({ count: 0, sources: [] });
     apiFns.adoptChats.mockResolvedValue({ adopted: ["n1", "n2"], skipped: [] });
     renderAt("/projects/p/chat");
-    await confirmImport(/Import 2 native/i);
-    await waitFor(() => expect(importRow()).toBeNull());
+    await confirmAdopt(/Adopt 2 native/i);
+    await waitFor(() => expect(adoptRow()).toBeNull());
   });
 
   // The live-count property itself. A "dismissed" boolean passes every test
   // above and fails this one.
-  it("offers the import AGAIN when the count comes back non-zero", async () => {
+  it("offers the adopt AGAIN when the count comes back non-zero", async () => {
     apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
     apiFns.getAdoptableChats
       .mockResolvedValueOnce({ count: 2, sources: [source("/w", ["n1", "n2"])] })
-      // The user has been busy in a terminal since: two imported, three new.
+      // The user has been busy in a terminal since: two adopted, three new.
       .mockResolvedValue({ count: 3, sources: [source("/w", ["n3", "n4", "n5"])] });
     apiFns.adoptChats.mockResolvedValue({ adopted: ["n1", "n2"], skipped: [] });
     renderAt("/projects/p/chat");
-    await confirmImport(/Import 2 native/i);
-    expect(await screen.findByRole("button", { name: /Import 3 native/i })).toBeInTheDocument();
+    await confirmAdopt(/Adopt 2 native/i);
+    expect(await screen.findByRole("button", { name: /Adopt 3 native/i })).toBeInTheDocument();
   });
 
-  it("toasts what was imported", async () => {
+  it("toasts what was adopted", async () => {
     apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
     offer(7);
     apiFns.adoptChats.mockResolvedValue({
@@ -2057,8 +2057,8 @@ describe("ProjectView: import native CLI chats (#588)", () => {
       skipped: [],
     });
     renderAt("/projects/p/chat");
-    await confirmImport(/Import 7 native/i);
-    expect(await screen.findByRole("status")).toHaveTextContent("Imported 7 chats");
+    await confirmAdopt(/Adopt 7 native/i);
+    expect(await screen.findByRole("status")).toHaveTextContent("Adopted 7 chats");
   });
 
   it("is honest about skipped sessions rather than reporting a clean success", async () => {
@@ -2072,20 +2072,20 @@ describe("ProjectView: import native CLI chats (#588)", () => {
       ],
     });
     renderAt("/projects/p/chat");
-    await confirmImport(/Import 5 native/i);
+    await confirmAdopt(/Adopt 5 native/i);
     const toast = await screen.findByRole("status");
-    expect(toast).toHaveTextContent("Imported 3 chats");
+    expect(toast).toHaveTextContent("Adopted 3 chats");
     expect(toast).toHaveTextContent("skipped 2");
     // One shared reason is named — it is usually the whole explanation.
     expect(toast).toHaveTextContent("no transcript on disk");
   });
 
-  it("surfaces a failed import WITHOUT blanking the project view or sticking the button", async () => {
+  it("surfaces a failed adopt WITHOUT blanking the project view or sticking the button", async () => {
     apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p", name: "Reactor" })));
     offer(4);
     apiFns.adoptChats.mockRejectedValue(new Error("source transcripts not readable"));
     renderAt("/projects/p/chat");
-    await confirmImport(/Import 4 native/i);
+    await confirmAdopt(/Adopt 4 native/i);
 
     expect(await screen.findByRole("status")).toHaveTextContent("source transcripts not readable");
     // NOT `loadErr`: that is an early return that replaces the whole page, so
@@ -2093,8 +2093,8 @@ describe("ProjectView: import native CLI chats (#588)", () => {
     expect(screen.getByRole("heading", { name: "Reactor" })).toBeInTheDocument();
     // The offer stands and the button is clickable again — a `finally`, not a
     // success-path reset.
-    const btn = screen.getByRole("button", { name: /Import 4 native/i });
-    expect(btn).toHaveTextContent("Import 4 native chats");
+    const btn = screen.getByRole("button", { name: /Adopt 4 native/i });
+    expect(btn).toHaveTextContent("Adopt 4 native chats");
     expect(btn).not.toBeDisabled();
     // A failed POST must not re-read the count: zeroing it here would retract
     // the offer over a transient error.
@@ -2103,24 +2103,24 @@ describe("ProjectView: import native CLI chats (#588)", () => {
 
   // --- undo (#660) --------------------------------------------------------
 
-  it("offers an Undo on the import toast, and undoing releases what came in", async () => {
+  it("offers an Undo on the adopt toast, and undoing releases what came in", async () => {
     apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
     offer(2);
     apiFns.adoptChats.mockResolvedValue({ adopted: ["n1", "n2"], skipped: [] });
     apiFns.unadoptChats.mockResolvedValue({ released: ["n1", "n2"] });
     renderAt("/projects/p/chat");
-    await confirmImport(/Import 2 native/i);
+    await confirmAdopt(/Adopt 2 native/i);
 
     const toast = await screen.findByRole("status");
     fireEvent.click(within(toast).getByRole("button", { name: /^Undo$/ }));
 
     // Only ids travel: WHICH files may be deleted is the server's call, from
-    // what the import actually did, so an undo can never be talked into
+    // what the adopt actually did, so an undo can never be talked into
     // removing something it did not create.
     await waitFor(() =>
       expect(apiFns.unadoptChats).toHaveBeenCalledWith("p", { sessionIds: ["n1", "n2"] }),
     );
-    expect(await screen.findByRole("status")).toHaveTextContent("Removed 2 imported chats");
+    expect(await screen.findByRole("status")).toHaveTextContent("Removed 2 adopted chats");
   });
 
   it("re-reads the list and the count after an undo, so the offer comes back", async () => {
@@ -2133,15 +2133,15 @@ describe("ProjectView: import native CLI chats (#588)", () => {
     apiFns.adoptChats.mockResolvedValue({ adopted: ["n1"], skipped: [] });
     apiFns.unadoptChats.mockResolvedValue({ released: ["n1"] });
     renderAt("/projects/p/chat");
-    await confirmImport(/Import 1 native/i);
-    await waitFor(() => expect(importRow()).toBeNull());
+    await confirmAdopt(/Adopt 1 native/i);
+    await waitFor(() => expect(adoptRow()).toBeNull());
 
     fireEvent.click(within(await screen.findByRole("status")).getByRole("button", { name: /^Undo$/ }));
-    expect(await screen.findByRole("button", { name: /Import 1 native/i })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Adopt 1 native/i })).toBeInTheDocument();
     expect(apiFns.listProjectChats).toHaveBeenCalled();
   });
 
-  it("offers no Undo when the import brought nothing in", async () => {
+  it("offers no Undo when the adopt brought nothing in", async () => {
     apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
     offer(2);
     apiFns.adoptChats.mockResolvedValue({
@@ -2149,7 +2149,7 @@ describe("ProjectView: import native CLI chats (#588)", () => {
       skipped: [{ sessionId: "n1", reason: "no transcript on disk" }],
     });
     renderAt("/projects/p/chat");
-    await confirmImport(/Import 2 native/i);
+    await confirmAdopt(/Adopt 2 native/i);
 
     const toast = await screen.findByRole("status");
     expect(within(toast).queryByRole("button", { name: /^Undo$/ })).toBeNull();
@@ -2163,7 +2163,7 @@ describe("ProjectView: import native CLI chats (#588)", () => {
     apiFns.adoptChats.mockResolvedValue({ adopted: ["n1"], skipped: [] });
     apiFns.unadoptChats.mockResolvedValue({ released: [] });
     renderAt("/projects/p/chat");
-    await confirmImport(/Import 1 native/i);
+    await confirmAdopt(/Adopt 1 native/i);
     fireEvent.click(within(await screen.findByRole("status")).getByRole("button", { name: /^Undo$/ }));
 
     expect(await screen.findByRole("status")).toHaveTextContent("Nothing left to undo");
@@ -2174,13 +2174,13 @@ describe("ProjectView: import native CLI chats (#588)", () => {
     offer(1, ["n1"]);
     apiFns.adoptChats.mockResolvedValue({ adopted: ["n1"], skipped: [] });
     renderAt("/projects/p/chat");
-    await confirmImport(/Import 1 native/i);
+    await confirmAdopt(/Adopt 1 native/i);
     await screen.findByRole("status");
     fireEvent.click(screen.getByRole("button", { name: /Dismiss notification/i }));
     await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
   });
 
-  it("badges an imported chat in the list so it reads as history, not a paddock chat", async () => {
+  it("badges an adopted chat in the list so it reads as history, not a paddock chat", async () => {
     apiFns.getProjectDetail.mockResolvedValue(
       detail(makeProject({ slug: "p" }), {
         chats: [
@@ -2191,10 +2191,10 @@ describe("ProjectView: import native CLI chats (#588)", () => {
     );
     renderAt("/projects/p/chat");
     await screen.findByText("Terminal work");
-    const imported = screen.getByText("Terminal work").closest(".chat-row") as HTMLElement;
+    const adopted = screen.getByText("Terminal work").closest(".chat-row") as HTMLElement;
     const native = screen.getByText("Started here").closest(".chat-row") as HTMLElement;
-    expect(within(imported).getByLabelText("Imported chat")).toBeInTheDocument();
+    expect(within(adopted).getByLabelText("Adopted chat")).toBeInTheDocument();
     // The human-origin chat stays unbadged, so the marker actually distinguishes.
-    expect(within(native).queryByLabelText("Imported chat")).toBeNull();
+    expect(within(native).queryByLabelText("Adopted chat")).toBeNull();
   });
 });
