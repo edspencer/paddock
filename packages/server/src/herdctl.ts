@@ -288,6 +288,67 @@ export function sliceTranscriptAtUuid(
   return lines.slice(0, end + 1).join("\n") + "\n";
 }
 
+/**
+ * Trim a transcript back to the last point at which every `tool_use` has its
+ * `tool_result` (issue #731).
+ *
+ * FORK is the caller. Unlike delete/promote/revert, forking mid-turn is not an
+ * accident to be interlocked away — it is a designed, load-bearing feature: the
+ * `fork_chat` fan-out (#214) is invoked BY a keeper from inside its own running
+ * turn, and `forkKickoffPrompt` even apologises to the child for the truncated
+ * final exchange. Refusing a fork while the source is running would break that
+ * contract outright.
+ *
+ * What we can fix is the artifact. A snapshot taken mid-tool-call ends on an
+ * assistant `tool_use` whose `tool_result` had not been written yet, and the
+ * real Anthropic Messages API REJECTS that shape on resume ("tool_use ids were
+ * found without tool_result blocks"), so the fork is born unresumable. Cutting
+ * the copy back to the last balanced boundary costs the child an exchange it was
+ * told to ignore anyway, and buys a transcript that loads.
+ *
+ * The source transcript is never touched — this only ever shapes the COPY.
+ *
+ * Returns `raw` byte-identical when nothing is unpaired (the overwhelmingly
+ * common idle-fork case), and also when trimming would leave nothing at all — an
+ * empty chat is a worse outcome than a suspect one.
+ */
+export function trimToPairedToolBoundary(raw: string): string {
+  const lines = raw.split("\n");
+  const open = new Set<string>();
+  /** Last index after which no tool_use is awaiting its result. */
+  let lastBalanced = -1;
+
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i]!.trim();
+    if (!t) continue;
+    let o: { message?: { content?: unknown } };
+    try {
+      o = JSON.parse(t) as { message?: { content?: unknown } };
+    } catch {
+      // An unparseable line can't be reasoned about; treat it as opaque filler
+      // and let the surrounding balance decide.
+      if (open.size === 0) lastBalanced = i;
+      continue;
+    }
+    const content = o.message?.content;
+    if (Array.isArray(content)) {
+      for (const block of content) {
+        const b = block as { type?: string; id?: string; tool_use_id?: string };
+        if (b?.type === "tool_use" && typeof b.id === "string") open.add(b.id);
+        else if (b?.type === "tool_result" && typeof b.tool_use_id === "string") {
+          open.delete(b.tool_use_id);
+        }
+      }
+    }
+    if (open.size === 0) lastBalanced = i;
+  }
+
+  // Ends balanced (the idle-fork case) — hand back the exact bytes.
+  if (open.size === 0) return raw;
+  if (lastBalanced < 0) return raw;
+  return lines.slice(0, lastBalanced + 1).join("\n") + "\n";
+}
+
 export class HerdctlService {
   private fleet: FleetManager | null = null;
   private started = false;
@@ -1377,6 +1438,25 @@ export class HerdctlService {
   }
 
   /**
+   * End a managed chat SESSION outright, by session id (issue #731). Where
+   * {@link cancel} ends the model turn — and on the session runtime deliberately
+   * leaves the session (and its `claude` subprocess) open for the next message —
+   * this closes the session itself, so nothing is left holding the transcript
+   * path open ahead of a destructive operation.
+   *
+   * Best-effort and null-safe: `false` when there was no live managed session to
+   * reap (the batch runtime never has one), or when the fleet isn't up. Callers
+   * decide liveness from {@link isSdkSessionLive}, not from this return value.
+   */
+  reapSession(sessionId: string): boolean {
+    try {
+      return this.fleet?.reapChatSession(sessionId) ?? false;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Run a project's sweeper (curator) agent with a fresh session and the given
    * prompt. Used OUT OF BAND by SweepService — never from the user-chat path —
    * so a sweep can never enqueue another sweep. resume:null forces a clean
@@ -1597,6 +1677,14 @@ export class HerdctlService {
       }
       raw = sliced;
     }
+
+    // #731: the source may be MID-TURN — always is, for the agent-initiated
+    // `fork_chat` fan-out — so the snapshot can end on a `tool_use` whose
+    // `tool_result` hasn't been written yet. Copying that shape gives the child
+    // a transcript the Messages API rejects on resume, i.e. a fork that exists
+    // but cannot be talked to. Cut the COPY back to the last balanced boundary;
+    // the source is untouched either way.
+    raw = trimToPairedToolBoundary(raw);
 
     const newId = randomUUID();
     // Rewrite the embedded session id on every line. Same compact-JSON

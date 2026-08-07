@@ -39,6 +39,7 @@ import {
   BATCH_SESSIONS_MAX,
 } from "../chat-dto.js";
 import type { RouteCtx } from "../route-context.js";
+import { quiesceSession, turnRunningError } from "../turn-interlock.js";
 
 /**
  * Workspace-scoped chat routes: paths are declared RELATIVE to the workspace
@@ -92,6 +93,18 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
    */
   const isRunning = (sessionId: string): boolean =>
     ctx.managementOpsContext?.hub.isRunning(sessionId) ?? false;
+
+  /**
+   * The interlock every DESTRUCTIVE chat route runs first (issue #731).
+   *
+   * `claude` writes the transcript itself, so unlinking or rewriting it while a
+   * turn is live does not remove the chat — the surviving process re-creates the
+   * file from its own tail and the chat comes back with its history gone. These
+   * routes therefore stop the turn and WAIT for it to be dead before touching a
+   * byte; `stuck` means we could not confirm that, and the only safe answer then
+   * is to refuse.
+   */
+  const interlock = { hub: ctx.managementOpsContext?.hub, herdctl };
 
   // --- chats (sessions) --------------------------------------------------
 
@@ -723,7 +736,14 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
         },
         response: {
           200: {
-            description: "Object `{ ok, removed }` indicating whether the transcript was removed.",
+            description:
+              "Object `{ ok, removed, retained, cancelledTurn }` — whether the transcript was removed, and whether a live turn had to be stopped first (#731).",
+            type: "object",
+            additionalProperties: true,
+          },
+          409: {
+            description:
+              "`{ code: 'turn_running' }` — a turn is still running on this chat and could not be stopped, so nothing was deleted (#731).",
             type: "object",
             additionalProperties: true,
           },
@@ -733,6 +753,15 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
     async (req, reply) => {
       try {
         const agent = await agentForSlug(req.params.slug);
+        // #731: stop any in-flight turn FIRST. A delete is an unambiguous "this
+        // chat is going away", so we cancel rather than refuse — refusing would
+        // strand the user behind a turn that may never end (a hung turn was
+        // exactly how this was found). If the turn will not die we refuse, since
+        // deleting under a live writer is what resurrected the chat.
+        const quiesced = await quiesceSession(interlock, req.params.sessionId);
+        if (quiesced === "stuck") {
+          return reply.code(409).send(turnRunningError([req.params.sessionId]));
+        }
         await cleanupAttachments(agent, req.params.sessionId);
         const { removed, retained } = await herdctl.deleteSession(agent, req.params.sessionId);
         // Drop any archived/starred/unread/detached flag so a future session id
@@ -748,7 +777,9 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
         // has to be cleared on the same path — otherwise a recycled session id
         // silently starts life detached from a parent it never had.
         await parentDetach.setDetached(agent, req.params.sessionId, false).catch(() => undefined);
-        return reply.code(200).send({ ok: true, removed, retained });
+        return reply
+          .code(200)
+          .send({ ok: true, removed, retained, cancelledTurn: quiesced === "stopped" });
       } catch (err) {
         return sendProjectError(reply, err);
       }
@@ -906,7 +937,14 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
         },
         response: {
           200: {
-            description: "Object reporting how many messages were removed.",
+            description:
+              "Object reporting how many messages were removed, and whether a live turn had to be stopped first (`cancelledTurn`, #731).",
+            type: "object",
+            additionalProperties: true,
+          },
+          409: {
+            description:
+              "`{ code: 'turn_running' }` — a turn is still running on this chat and could not be stopped, so nothing was truncated (#731).",
             type: "object",
             additionalProperties: true,
           },
@@ -918,8 +956,19 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
         const uuid = req.body?.uuid;
         if (!uuid) return reply.code(400).send({ error: "uuid is required" });
         const project = await projects.get(req.params.slug);
+        // #731: revert truncates the LIVE transcript in place — the same file a
+        // running turn is appending to — so mid-turn it left an orphan
+        // `tool_result` whose `tool_use` had just been truncated away. Cancel
+        // rather than refuse: an in-flight turn is by definition part of the tail
+        // the user just asked to throw away.
+        const quiesced = await quiesceSession(interlock, req.params.sessionId);
+        if (quiesced === "stuck") {
+          return reply.code(409).send(turnRunningError([req.params.sessionId]));
+        }
         const { removed } = await herdctl.revertSession(project, req.params.sessionId, uuid);
-        return reply.code(200).send({ ok: true, removed });
+        return reply
+          .code(200)
+          .send({ ok: true, removed, cancelledTurn: quiesced === "stopped" });
       } catch (err) {
         return sendProjectError(reply, err);
       }
@@ -1405,6 +1454,14 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
         const failed: string[] = [];
         for (const sessionId of sessionIds) {
           try {
+            // #731: same interlock as the single delete, per id. A chat whose
+            // turn refuses to die lands in `failed` rather than aborting the
+            // batch — the route is already best-effort-and-honest per chat, and
+            // "still running" is exactly the kind of partial failure it reports.
+            if ((await quiesceSession(interlock, sessionId)) === "stuck") {
+              failed.push(sessionId);
+              continue;
+            }
             await cleanupAttachments(agent, sessionId);
             const gone = await herdctl.deleteSession(agent, sessionId);
             // `retained` counts as success here, and the distinction matters for
@@ -1483,7 +1540,13 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
         response: {
           201: {
             description:
-              "Object `{ project, promoted, sessionId }` describing the created project and whether the transcript was re-homed.",
+              "Object `{ project, promoted, sessionId, cancelledTurn }` describing the created project, whether the transcript was re-homed, and whether a live turn had to be stopped first (#731).",
+            type: "object",
+            additionalProperties: true,
+          },
+          409: {
+            description:
+              "`{ code: 'turn_running' }` — a turn is still running on this chat and could not be stopped. Nothing was moved and NO project was created (#731).",
             type: "object",
             additionalProperties: true,
           },
@@ -1497,6 +1560,15 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
       }
       try {
         const from = await projects.get(req.params.slug);
+        // #731: promote MOVES the transcript, so mid-turn it lost the chat from
+        // BOTH projects — the surviving process rewrote the source path it still
+        // held, while the moved copy went unlisted in the target with no recovery
+        // path in the UI. Quiesce BEFORE `projects.create` so a refusal doesn't
+        // leave an empty project behind as a side-effect of a failed promote.
+        const quiesced = await quiesceSession(interlock, req.params.sessionId);
+        if (quiesced === "stuck") {
+          return reply.code(409).send(turnRunningError([req.params.sessionId]));
+        }
         const project = await projects.create({
           name: body.name,
           slug: body.slug,
@@ -1518,7 +1590,12 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
         } catch (err) {
           req.log.warn({ err }, "promote: could not re-home the transcript");
         }
-        return reply.code(201).send({ project, promoted, sessionId: req.params.sessionId });
+        return reply.code(201).send({
+          project,
+          promoted,
+          sessionId: req.params.sessionId,
+          cancelledTurn: quiesced === "stopped",
+        });
       } catch (err) {
         return sendProjectError(reply, err);
       }

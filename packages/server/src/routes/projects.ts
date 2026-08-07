@@ -8,6 +8,7 @@ import type { FastifyInstance } from "fastify";
 import {
   ProjectError,
   ROOT_KEY,
+  isRootKey,
   type CreateProjectInput,
   type UpdateProjectInput,
 } from "../projects.js";
@@ -24,6 +25,7 @@ import { isValidMaxSpawnDepth, MAX_SPAWN_DEPTH_LIMIT } from "../spawn-capability
 import { sendProjectError } from "../route-errors.js";
 import { buildProjectChats, makeTriggerResolver, makeParentResolver } from "../chat-dto.js";
 import type { RouteCtx } from "../route-context.js";
+import { quiesceProject, turnRunningError } from "../turn-interlock.js";
 
 /** One entry of a workspace's compact `chatTurns` list (see {@link buildChatTurns}). */
 export interface ChatTurnSummary {
@@ -509,12 +511,34 @@ export function registerProjectWorkspaceRoutes(app: FastifyInstance, ctx: RouteC
             type: "object",
             additionalProperties: true,
           },
+          409: {
+            description:
+              "`{ code: 'turn_running', sessionIds }` — one or more of the project's chats has a turn that could not be stopped, so nothing was deleted (#731).",
+            type: "object",
+            additionalProperties: true,
+          },
         },
       },
     },
     async (req, reply) => {
     try {
-      const project = await projects.remove(req.params.slug); // throws not_found
+      // #731: a project delete takes every chat in it, so it races the same live
+      // writers a chat delete does — and the orphaned `claude` was observed
+      // running on with a cwd of `…/<slug> (deleted)`. Stop them all first, and
+      // refuse rather than remove the directory out from under one.
+      //
+      // `remove()` refuses the ROOT workspace, and a refusal must not have killed
+      // the root's live turns on the way to saying no — so that one check comes
+      // first, mirroring the guard in `remove()` rather than duplicating its
+      // error.
+      if (!isRootKey(req.params.slug)) {
+        const stuck = await quiesceProject(
+          { hub: ctx.managementOpsContext?.hub, herdctl },
+          req.params.slug,
+        );
+        if (stuck.length > 0) return reply.code(409).send(turnRunningError(stuck));
+      }
+      const project = await projects.remove(req.params.slug); // throws not_found / refuses root
       try {
         await herdctl.removeProjectAgent(
           project.slug,
