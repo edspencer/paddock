@@ -1,44 +1,301 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/*
+ * Paddock stylesheet — Tailwind v4.
+ *
+ * Structure, in load order:
+ *   1. Tailwind + the token file (`styles/tokens.css`, the colour source of truth)
+ *   2. Custom variants (`dark:`, `can-hover:`)
+ *   3. `@theme inline` — the token -> utility mapping, plus the type / radius /
+ *      shadow / motion scales
+ *   4. `@layer base` — element defaults and v3->v4 compatibility
+ *   5. `@utility` / `@layer components` — the class-level primitives
+ *
+ * See docs/DESIGN.md for the rules. The two that matter most here:
+ *   - a colour NEVER appears as a literal in this file or in a component; it
+ *     comes from `styles/tokens.css` via a semantic utility;
+ *   - a visual direction is defined by swapping tokens, not by editing this file.
+ */
+@import "tailwindcss";
+@import "./styles/tokens.css";
 
 /*
- * Self-hosted fonts (no runtime Google Fonts dependency — works offline on the
- * LAN). Inter + JetBrains Mono are variable fonts; each woff2 (latin subset)
- * covers the full weight range we use. system-ui remains the fallback (see the
- * Tailwind fontFamily stacks) so text is readable even before fonts load.
+ * Dark mode is class-toggled on <html> (index.html applies it before first
+ * paint from localStorage). v4 defaults to `prefers-color-scheme`, so this
+ * restores the v3 `darkMode: "class"` behaviour.
  *
- * Files: packages/web/public/fonts/*.woff2 -> served at /fonts/*.woff2.
+ * Very little should need `dark:` now — the tokens swap themselves at `.dark`.
+ * Reach for it only when a rule genuinely differs per mode beyond colour.
  */
-@font-face {
-  font-family: "Inter";
-  font-style: normal;
-  font-weight: 100 900;
-  font-display: swap;
-  src: url("/fonts/inter-latin.woff2") format("woff2");
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * `can-hover:` — applies only when the device has a real hover-capable pointer.
+ * Touch browsers (iOS Safari especially) apply a *sticky* :hover on tap that
+ * persists until the next tap elsewhere, so any hover-only affordance (icon
+ * swaps, reveals) must be gated behind this variant or it gets stuck on.
+ */
+@custom-variant can-hover (@media (hover: hover));
+
+@theme inline {
+  /* ------------------------------------------------------------- colour --
+   * Every entry here is `var(--x)` pointing at `styles/tokens.css`. `inline`
+   * means the generated utility carries that `var()` through to the element, so
+   * one swap at `:root` / `.dark` re-themes the whole app.
+   */
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-surface-hover: var(--surface-hover);
+  --color-surface-active: var(--surface-active);
+  --color-surface-selected: var(--surface-selected);
+  --color-overlay: var(--overlay);
+
+  --color-fg: var(--text);
+  --color-fg-muted: var(--text-muted);
+  --color-fg-subtle: var(--text-subtle);
+  --color-fg-on-solid: var(--text-on-solid);
+
+  --color-edge: var(--border);
+  --color-edge-subtle: var(--border-subtle);
+  --color-edge-strong: var(--border-strong);
+
+  --color-accent: var(--accent-text);
+  --color-accent-solid: var(--accent-solid);
+  --color-accent-solid-hover: var(--accent-solid-hover);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-edge: var(--accent-border);
+
+  --color-success: var(--success-text);
+  --color-success-solid: var(--success-solid);
+  --color-success-fg: var(--success-fg);
+  --color-success-soft: var(--success-soft);
+  --color-success-edge: var(--success-border);
+
+  --color-warn: var(--warn-text);
+  --color-warn-solid: var(--warn-solid);
+  --color-warn-fg: var(--warn-fg);
+  --color-warn-soft: var(--warn-soft);
+  --color-warn-edge: var(--warn-border);
+
+  --color-danger: var(--danger-text);
+  --color-danger-solid: var(--danger-solid);
+  --color-danger-fg: var(--danger-fg);
+  --color-danger-soft: var(--danger-soft);
+  --color-danger-edge: var(--danger-border);
+
+  --color-info: var(--info-text);
+  --color-info-solid: var(--info-solid);
+  --color-info-fg: var(--info-fg);
+  --color-info-soft: var(--info-soft);
+  --color-info-edge: var(--info-border);
+
+  --color-lineage: var(--lineage-text);
+  --color-lineage-solid: var(--lineage-solid);
+  --color-lineage-fg: var(--lineage-fg);
+  --color-lineage-soft: var(--lineage-soft);
+  --color-lineage-edge: var(--lineage-border);
 }
-@font-face {
-  font-family: "JetBrains Mono";
-  font-style: normal;
-  font-weight: 100 800;
-  font-display: swap;
-  src: url("/fonts/jetbrains-mono-latin.woff2") format("woff2");
+
+/*
+ * The non-colour scales. A PLAIN `@theme` (not `inline`) on purpose: these are
+ * emitted as real custom properties on `:root`, so a direction can override any
+ * of them from `styles/tokens.css` — a squarer direction sets `--radius-*` to 0,
+ * a serif direction repoints `--font-display` — without editing this file.
+ */
+@theme {
+  /* ------------------------------------------------------------- typography --
+   * Two families; a direction swaps these and nothing else.
+   * `--font-display` exists so a direction can give headings their own face
+   * without touching a component; it defaults to the body face.
+   */
+  --font-sans:
+    "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-display: var(--font-sans);
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /*
+   * The type scale. Tailwind's own xs/sm/base/lg/xl/2xl/3xl rungs are kept
+   * unchanged (the app's body size is `text-sm` = 14px); the three added rungs
+   * are the ones the app was faking with 189 arbitrary `text-[Npx]` values.
+   *   3xs 10px  dense metadata, counts, letter badges
+   *   2xs 11px  chips, pills, section labels    <- by far the most used
+   *   md  15px  document prose (the file viewer), one notch above UI text
+   */
+  --text-3xs: 0.625rem;
+  --text-3xs--line-height: 0.875rem;
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+  --text-md: 0.9375rem;
+  --text-md--line-height: 1.5rem;
+
+  /* ---------------------------------------------------------------- radius --
+   * Concentric: a child's radius is one rung below its parent's, so nested
+   * corners stay parallel. dialog/card 2xl(16) > panel xl(12) > control lg(8) >
+   * chip md(6) > badge sm(4). These match Tailwind's defaults; they are restated
+   * so a direction can shift the whole system (e.g. to 0) in one place.
+   */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+  --radius-2xl: 1rem;
+  --radius-3xl: 1.5rem;
+
+  /* --------------------------------------------------------------- elevation --
+   * Layered: a tight direct shadow for the contact edge plus a wide ambient one
+   * for the occlusion. Both are tinted toward the surface hue in light mode and
+   * go neutral-black in dark, via `--shadow-color` in tokens.css.
+   */
+  --shadow-2xs: 0 1px 1px rgb(var(--shadow-color) / var(--shadow-ambient));
+  --shadow-xs:
+    0 1px 1px rgb(var(--shadow-color) / var(--shadow-direct)),
+    0 1px 3px -1px rgb(var(--shadow-color) / var(--shadow-ambient));
+  --shadow-sm:
+    0 1px 2px rgb(var(--shadow-color) / var(--shadow-direct)),
+    0 2px 6px -2px rgb(var(--shadow-color) / var(--shadow-ambient));
+  --shadow-md:
+    0 2px 4px -1px rgb(var(--shadow-color) / var(--shadow-direct)),
+    0 6px 16px -4px rgb(var(--shadow-color) / var(--shadow-ambient));
+  --shadow-lg:
+    0 4px 8px -2px rgb(var(--shadow-color) / var(--shadow-direct)),
+    0 12px 28px -8px rgb(var(--shadow-color) / var(--shadow-ambient));
+  --shadow-xl:
+    0 8px 16px -4px rgb(var(--shadow-color) / var(--shadow-direct)),
+    0 24px 48px -12px rgb(var(--shadow-color) / var(--shadow-ambient));
+  --shadow-2xl:
+    0 12px 24px -6px rgb(var(--shadow-color) / var(--shadow-direct)),
+    0 40px 72px -16px rgb(var(--shadow-color) / var(--shadow-ambient));
+
+  /* ------------------------------------------------------------------ motion --
+   * Frequency decides whether to animate at all (see docs/DESIGN.md):
+   * 100+/day actions get NO animation; occasional chrome gets these.
+   * Exit faster than entrance — long feedback reads as latency.
+   */
+  --ease-out-quick: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+
+  --animate-scale-in: scale-in 0.16s var(--ease-out-quick);
+  --animate-fade-in: fade-in 0.12s linear;
+
+  @keyframes scale-in {
+    from {
+      opacity: 0;
+      transform: scale(0.97);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+  /*
+   * Deliberately opacity-only and short. The previous 250ms fade-in carried a
+   * 4px translate and fired on every arriving chat message — a 100+/day event,
+   * which the craft floor says should not animate at all. Kept (shortened, no
+   * translate) only for genuinely occasional chrome.
+   */
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+}
+
+/*
+ * ---------------------------------------------------------------------------
+ * MIGRATION COMPAT — delete once the last raw `*-paddock-N` use is gone.
+ * ---------------------------------------------------------------------------
+ * The pre-token app addressed colour by palette step (`text-paddock-500`,
+ * `dark:bg-paddock-900`, …), 1017 times. This block keeps those utilities
+ * generating during the sweep so the tree is never half-broken. Values are the
+ * NEW neutral ramp at the OLD lightness ladder — same hue family, ~a third of
+ * the chroma, which is what removes the muddy tan cast from light mode.
+ *
+ * `tokens.test.ts` asserts this block is gone once `src/` is clean. Do NOT
+ * reach for these in new code: docs/DESIGN.md forbids a raw palette step in a
+ * component, and that rule is the only thing that stops the drift returning.
+ */
+@theme {
+  --color-paddock-50: oklch(0.9725 0.0025 88);
+  --color-paddock-100: oklch(0.9356 0.005 88);
+  --color-paddock-200: oklch(0.8478 0.011 88);
+  --color-paddock-300: oklch(0.753 0.016 88);
+  --color-paddock-400: oklch(0.6659 0.02 88);
+  --color-paddock-500: oklch(0.594 0.02 88);
+  --color-paddock-600: oklch(0.5048 0.017 88);
+  --color-paddock-700: oklch(0.4287 0.013 88);
+  --color-paddock-800: oklch(0.3346 0.009 88);
+  --color-paddock-900: oklch(0.2561 0.007 88);
+  --color-paddock-950: oklch(0.1933 0.005 88);
+  --color-canvas: oklch(0.9645 0.0035 88);
+  --color-canvas-dark: oklch(0.187 0.006 88);
+  --color-ink: oklch(0.225 0.014 88);
+  --color-ink-dark: oklch(0.93 0.012 88);
+}
+
+/*
+ * Durations, as plain custom properties. Tailwind has no theme namespace for
+ * them, so they are consumed by the `motion-*` utilities below and by hand-rolled
+ * transitions. Anything longer than these reads as lag.
+ */
+:root {
+  --duration-fast: 120ms; /* feedback: hover, press, tint */
+  --duration-base: 180ms; /* state change: open/close, expand */
+  --duration-slow: 300ms; /* layout: drawers, reflow */
 }
 
 @layer base {
-  :root {
-    color-scheme: light dark;
-    /*
-     * Accent color as space-separated RGB channels so Tailwind's
-     * `rgb(var(--accent) / <alpha-value>)` tokens keep supporting opacity
-     * modifiers (bg-accent/15, ring-accent/20, …). These defaults are the
-     * terracotta palette; a branded instance overrides --accent* via a
-     * server-injected <style> in index.html (issue #34, PADDOCK_BRAND_ACCENT).
-     */
-    --accent: 194 96 60; /* #c2603c */
-    --accent-600: 168 78 47; /* #a84e2f */
-    --accent-700: 138 63 38; /* #8a3f26 */
+  /*
+   * Self-hosted fonts (no runtime Google Fonts dependency — works offline on the
+   * LAN). Inter + JetBrains Mono are variable fonts; each woff2 (latin subset)
+   * covers the full weight range we use. system-ui remains the fallback (see the
+   * `--font-*` stacks above) so text is readable even before fonts load.
+   *
+   * A direction adding a face: commit a subset woff2 to public/fonts/, add an
+   * @font-face here, and point `--font-sans` / `--font-display` at it. No
+   * component changes, and no network request.
+   */
+  @font-face {
+    font-family: "Inter";
+    font-style: normal;
+    font-weight: 100 900;
+    font-display: swap;
+    src: url("/fonts/inter-latin.woff2") format("woff2");
   }
+  @font-face {
+    font-family: "JetBrains Mono";
+    font-style: normal;
+    font-weight: 100 800;
+    font-display: swap;
+    src: url("/fonts/jetbrains-mono-latin.woff2") format("woff2");
+  }
+
+  /*
+   * Tailwind v4 compatibility. v4's preflight defaults `border-color` and
+   * `outline-color` to `currentColor` and `::placeholder` to a 50%-opacity
+   * currentColor; v3 defaulted them to palette greys. Restoring token-driven
+   * defaults keeps every `border`-without-a-colour in the app correct and means
+   * a direction controls placeholders from tokens.css like everything else.
+   */
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-edge);
+  }
+  ::placeholder {
+    color: var(--color-fg-subtle);
+    opacity: 1;
+  }
+  /* v4's preflight sets buttons to `cursor: default`; the app assumes pointer. */
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
   html,
   body,
   #root {
@@ -67,16 +324,13 @@
    * `<select>` is deliberately EXCLUDED (#372): it opens a native picker rather
    * than accepting a text caret, so it does not trigger the focus-zoom that
    * breaks the shell — and force-bumping it to 16px made the composer's small
-   * model dropdown (text-[11px]) balloon out of scale with its row. Leaving
-   * selects alone keeps them at their intended size on mobile.
+   * model dropdown balloon out of scale with its row.
    */
   @media (max-width: 640px) {
     input,
     textarea {
-      /* !important so the rule wins over Tailwind's `text-sm` utility class
-         (higher specificity) that the composer/modal inputs carry — otherwise
-         they stay 14px and Safari still focus-zooms. Nothing is intentionally
-         sub-16px on mobile, so a blanket override is safe. */
+      /* !important so the rule wins over the `text-sm` utility the composer and
+         modal inputs carry. Nothing is intentionally sub-16px on mobile. */
       font-size: 16px !important;
     }
   }
@@ -90,28 +344,30 @@
     -webkit-tap-highlight-color: transparent;
   }
   body {
-    @apply bg-canvas text-ink antialiased;
+    background-color: var(--color-surface);
+    color: var(--color-fg);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
     font-feature-settings: "cv05", "ss01";
   }
-  .dark body {
-    @apply bg-canvas-dark text-ink-dark;
+  /* Headings set their own measure; balance keeps two-line titles even. */
+  h1,
+  h2,
+  h3,
+  h4 {
+    text-wrap: balance;
+    font-family: var(--font-display);
   }
   * {
     scrollbar-width: thin;
-    scrollbar-color: rgb(var(--scroll-thumb)) transparent;
-  }
-  :root {
-    --scroll-thumb: 212 205 182; /* paddock-200 */
-  }
-  .dark {
-    --scroll-thumb: 62 53 40; /* paddock-800 */
+    scrollbar-color: var(--scroll-thumb) transparent;
   }
   ::-webkit-scrollbar {
     width: 9px;
     height: 9px;
   }
   ::-webkit-scrollbar-thumb {
-    background-color: rgb(var(--scroll-thumb));
+    background-color: var(--scroll-thumb);
     border-radius: 9999px;
   }
   ::-webkit-scrollbar-track {
@@ -119,27 +375,80 @@
   }
 }
 
+/*
+ * `@utility` (not `@layer components`) for the two bases that other rules
+ * `@apply`: in v4 only registered utilities may be applied, so a plain
+ * `@layer components` class cannot be composed this way.
+ */
+@utility btn {
+  @apply inline-flex select-none items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium;
+  transition-property: color, background-color, border-color, box-shadow, transform;
+  transition-duration: var(--duration-fast);
+  transition-timing-function: var(--ease-standard);
+  @apply disabled:cursor-not-allowed disabled:opacity-50;
+}
+
+@utility menu-item {
+  @apply flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-fg-muted;
+  transition: background-color var(--duration-fast) var(--ease-standard);
+  @apply hover:bg-surface-hover hover:text-fg;
+}
+
+/*
+ * Motion utilities. Named durations rather than `duration-[Nms]` so the three
+ * tiers stay countable, and never `transition: all` — an explicit property list
+ * is required (see docs/DESIGN.md).
+ */
+@utility motion-fast {
+  transition-duration: var(--duration-fast);
+  transition-timing-function: var(--ease-standard);
+}
+@utility motion-base {
+  transition-duration: var(--duration-base);
+  transition-timing-function: var(--ease-standard);
+}
+@utility motion-slow {
+  transition-duration: var(--duration-slow);
+  transition-timing-function: var(--ease-standard);
+}
+
+/*
+ * Focus ring. `box-shadow`, never `outline` — outline ignores border-radius, so
+ * a ring on a rounded control renders as a rectangle. Two layers: an inner ring
+ * in the surface colour so the accent ring reads on any background.
+ */
+@utility focus-ring {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow:
+    0 0 0 2px var(--color-surface),
+    0 0 0 4px var(--color-accent);
+}
+
+/* Numbers that get compared column-to-column (token counts, durations,
+   timestamps, the Config screen) must not jitter as they tick. */
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+}
+
 @layer components {
   .status-pill {
-    @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium leading-none;
+    @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-2xs font-medium leading-none;
   }
   .tag {
-    @apply inline-flex items-center rounded-md bg-paddock-200/70 px-1.5 py-0.5 text-[11px] font-medium text-paddock-700 dark:bg-paddock-800 dark:text-paddock-200;
-  }
-  .btn {
-    @apply inline-flex select-none items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition-all disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex items-center rounded-md bg-surface-active px-1.5 py-0.5 text-2xs font-medium text-fg-muted;
   }
   .btn-primary {
-    @apply btn bg-accent text-white shadow-sm hover:bg-accent-600 active:scale-[0.98];
+    @apply btn bg-accent-solid text-accent-fg shadow-xs hover:bg-accent-solid-hover active:scale-[0.98];
   }
   .btn-ghost {
-    @apply btn bg-paddock-200/60 text-paddock-800 hover:bg-paddock-200 dark:bg-paddock-800/50 dark:text-paddock-100 dark:hover:bg-paddock-800;
+    @apply btn bg-surface-active text-fg hover:bg-surface-selected;
   }
   .btn-subtle {
-    @apply btn text-paddock-600 hover:bg-paddock-200/60 dark:text-paddock-400 dark:hover:bg-paddock-800/60;
+    @apply btn text-fg-muted hover:bg-surface-hover hover:text-fg;
   }
   .btn-danger {
-    @apply btn bg-rose-600 text-white shadow-sm hover:bg-rose-700 active:scale-[0.98];
+    @apply btn bg-danger-solid text-danger-fg shadow-xs hover:brightness-110 active:scale-[0.98];
   }
   /*
    * Chat-list row (#508). The hover action strip is absolutely positioned over
@@ -155,40 +464,38 @@
    * Thresholds are arithmetic, not taste: the strip is `n × 26 − 2` px wide
    * (24px buttons, 2px gaps), the longest string `relativeTime` produces
    * ("yesterday") needs ~64px, and an 8px gap keeps them apart. So 6 icons →
-   * 226px, 7 → 252px, 8 → 278px. Above its own threshold a row keeps its
-   * timestamp visible on hover, because there it genuinely fits.
+   * 226px, 7 → 252px, 8 → 278px.
    */
   .chat-row {
     container-type: inline-size;
   }
   .chat-row-time {
-    transition: opacity 150ms ease-out;
+    transition: opacity var(--duration-fast) var(--ease-standard);
   }
 
   /* Small dropdown menu (project "…" actions). */
   .menu {
-    @apply absolute z-50 min-w-[10rem] animate-scale-in overflow-hidden rounded-xl border border-paddock-200 bg-white py-1 shadow-xl dark:border-paddock-800 dark:bg-paddock-900;
-  }
-  .menu-item {
-    @apply flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-paddock-700 transition-colors hover:bg-paddock-100 dark:text-paddock-200 dark:hover:bg-paddock-800;
+    @apply absolute z-50 min-w-40 animate-scale-in overflow-hidden rounded-xl border border-edge bg-surface-raised py-1 shadow-xl;
   }
   .menu-item-danger {
-    @apply menu-item text-rose-600 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/50;
+    @apply menu-item text-danger hover:bg-danger-soft hover:text-danger;
   }
   .card {
-    @apply rounded-2xl border border-paddock-200 bg-white p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:border-paddock-300 hover:shadow-md dark:border-paddock-800 dark:bg-paddock-900/70 dark:hover:border-paddock-700;
+    @apply rounded-2xl border border-edge bg-surface-raised p-4 shadow-xs;
   }
   .input {
-    @apply w-full rounded-lg border border-paddock-300 bg-paddock-50 px-3 py-2 text-sm outline-none transition-colors placeholder:text-paddock-400 focus:border-accent focus:ring-2 focus:ring-accent/20 dark:border-paddock-700 dark:bg-paddock-950 dark:placeholder:text-paddock-600;
+    @apply w-full rounded-lg border border-edge-strong bg-surface-sunken px-3 py-2 text-sm text-fg outline-none;
+    transition:
+      border-color var(--duration-fast) var(--ease-standard),
+      box-shadow var(--duration-fast) var(--ease-standard);
+    @apply focus:border-accent focus:ring-2 focus:ring-accent/25;
   }
   .field-label {
-    @apply mb-1 block text-xs font-semibold uppercase tracking-wide text-paddock-500;
+    @apply mb-1 block text-xs font-semibold uppercase tracking-wide text-fg-muted;
   }
   /*
    * Safe-area padding for edge chrome under viewport-fit=cover. `max(…, 0px)`
    * keeps the existing padding on non-notched devices where the inset is 0.
-   * pt-safe: mobile top bar (under the status bar / notch).
-   * pb-safe: composer (above the home indicator).
    */
   .pt-safe {
     padding-top: max(env(safe-area-inset-top), 0.5rem);
@@ -197,7 +504,7 @@
     padding-bottom: max(env(safe-area-inset-bottom), 0.75rem);
   }
   .section-label {
-    @apply px-3 text-[11px] font-semibold uppercase tracking-wider text-paddock-500;
+    @apply px-3 text-2xs font-semibold uppercase tracking-wider text-fg-muted;
   }
 }
 
@@ -207,9 +514,6 @@
  * hover-gated for the same reason the `can-hover:` variant exists: a touch
  * browser applies a STICKY :hover after a tap, which would otherwise leave the
  * timestamp hidden until the next tap somewhere else.
- *
- * A browser without container-query support (pre-2023) simply ignores these and
- * gets today's behaviour — icons overlapping the timestamp on a narrow sidebar.
  */
 @media (hover: hover) {
   @container (width < 226px) {
@@ -229,10 +533,10 @@
   }
 }
 
-/* Markdown rendering inside assistant bubbles. Compact, readable, dark-aware. */
+/* Markdown rendering inside assistant bubbles. Compact, readable. */
 @layer components {
   .md {
-    @apply text-[14px] leading-relaxed;
+    @apply text-sm leading-relaxed;
   }
   .md > :first-child {
     @apply mt-0;
@@ -263,32 +567,32 @@
     @apply my-1;
   }
   .md a {
-    @apply text-accent underline underline-offset-2 hover:text-accent-600;
+    @apply text-accent underline underline-offset-2 hover:no-underline;
   }
   .md blockquote {
-    @apply my-2 border-l-2 border-paddock-300 pl-3 text-paddock-600 dark:border-paddock-700 dark:text-paddock-400;
+    @apply my-2 border-l-2 border-edge pl-3 text-fg-muted;
   }
   .md code {
-    @apply rounded bg-paddock-200/70 px-1 py-0.5 font-mono text-[12.5px] dark:bg-paddock-800/80;
+    @apply rounded bg-surface-active px-1 py-0.5 font-mono text-xs;
   }
   .md pre {
-    @apply my-3 overflow-x-auto rounded-lg bg-paddock-100 p-3 text-[12.5px] leading-relaxed dark:bg-paddock-950;
+    @apply my-3 overflow-x-auto rounded-lg bg-surface-sunken p-3 text-xs leading-relaxed;
   }
   .md pre code {
     @apply bg-transparent p-0;
   }
   .md table {
-    @apply my-3 w-full border-collapse text-[13px];
+    @apply my-3 w-full border-collapse text-xs;
   }
   .md th,
   .md td {
-    @apply border border-paddock-200 px-2 py-1 text-left dark:border-paddock-800;
+    @apply border border-edge px-2 py-1 text-left;
   }
   .md th {
-    @apply bg-paddock-100/70 font-semibold dark:bg-paddock-900;
+    @apply bg-surface-sunken font-semibold;
   }
   .md hr {
-    @apply my-3 border-paddock-200 dark:border-paddock-800;
+    @apply my-3 border-edge;
   }
 }
 
@@ -299,16 +603,16 @@
  */
 @layer components {
   .prose-doc .md {
-    @apply text-[15px] leading-7 text-paddock-800 dark:text-paddock-200;
+    @apply text-md leading-7 text-fg-muted;
   }
   .prose-doc .md h1 {
-    @apply mb-3 mt-6 border-b border-paddock-200 pb-2 text-2xl font-bold tracking-tight text-ink dark:border-paddock-800 dark:text-ink-dark;
+    @apply mb-3 mt-6 border-b border-edge pb-2 text-2xl font-bold tracking-tight text-fg;
   }
   .prose-doc .md h2 {
-    @apply mb-2 mt-6 text-xl font-semibold tracking-tight text-ink dark:text-ink-dark;
+    @apply mb-2 mt-6 text-xl font-semibold tracking-tight text-fg;
   }
   .prose-doc .md h3 {
-    @apply mb-2 mt-5 text-base font-semibold text-ink dark:text-ink-dark;
+    @apply mb-2 mt-5 text-base font-semibold text-fg;
   }
   .prose-doc .md p {
     @apply my-3;
@@ -320,10 +624,10 @@
     @apply my-3 space-y-1.5;
   }
   .prose-doc .md blockquote {
-    @apply my-4 rounded-r-lg border-l-4 border-accent/70 bg-accent/5 py-2 pl-4 pr-3 text-paddock-700 dark:text-paddock-300;
+    @apply my-4 rounded-r-lg border-l-4 border-accent-edge bg-accent-soft py-2 pl-4 pr-3 text-fg-muted;
   }
   .prose-doc .md pre {
-    @apply my-4 rounded-xl border border-paddock-200 p-4 dark:border-paddock-800;
+    @apply my-4 rounded-xl border border-edge p-4;
   }
   .prose-doc .md table {
     @apply my-4 overflow-hidden rounded-lg text-sm;
@@ -337,69 +641,68 @@
 /*
  * Syntax-highlighting token colors for agent-sent code (issue #127).
  *
- * Hand-written to match the Paddock palette in both themes — we deliberately do
+ * Hand-written against the semantic tokens in both themes — we deliberately do
  * NOT import a prebuilt highlight.js theme (keeps theme control + avoids an extra
  * chunk). `.hljs` inherits the card foreground; the `.hljs-*` token classes are
- * highlight.js's scope names. Light values first, `.dark` overrides after.
+ * highlight.js's scope names.
  *
  * NOTE: these are intentionally NOT inside `@layer components`. highlight.js
  * emits the `.hljs-*` class names at RUNTIME, so Tailwind's content scan never
  * sees them — and Tailwind tree-shakes unused rules *within* `@layer`, which
- * would silently strip every token color (only `.hljs`/`.hljs-keyword` happen to
- * appear in source/tests and would survive). Kept un-layered so they're always
- * emitted; the cascade still lands after the utilities layer below.
+ * would silently strip every token color. Kept un-layered so they're always
+ * emitted; the cascade still lands after the utilities layer.
  */
 .hljs {
-  @apply text-paddock-800 dark:text-paddock-200;
+  @apply text-fg-muted;
 }
 .hljs-comment,
 .hljs-quote {
-  @apply italic text-paddock-400 dark:text-paddock-500;
+  @apply italic text-fg-subtle;
 }
 .hljs-keyword,
 .hljs-selector-tag,
 .hljs-operator {
-  @apply font-medium text-accent-700 dark:text-accent;
+  @apply font-medium text-accent;
 }
 .hljs-literal,
 .hljs-number,
 .hljs-symbol,
 .hljs-bullet {
-  @apply text-amber-600 dark:text-amber-400;
+  @apply text-warn;
 }
 .hljs-string,
 .hljs-regexp,
 .hljs-meta .hljs-string {
-  @apply text-emerald-700 dark:text-emerald-400;
+  @apply text-success;
 }
 .hljs-built_in,
 .hljs-type,
 .hljs-class .hljs-title {
-  @apply text-sky-700 dark:text-sky-300;
+  @apply text-info;
 }
 .hljs-title,
 .hljs-title.function_,
 .hljs-function .hljs-title,
 .hljs-section {
-  @apply text-violet-700 dark:text-violet-300;
+  @apply text-lineage;
 }
 .hljs-variable,
 .hljs-template-variable,
 .hljs-params {
-  @apply text-paddock-700 dark:text-paddock-300;
+  @apply text-fg-muted;
 }
 .hljs-attr,
 .hljs-attribute,
 .hljs-property {
-  @apply text-sky-700 dark:text-sky-300;
+  @apply text-info;
 }
 .hljs-name,
 .hljs-tag {
-  @apply text-rose-600 dark:text-rose-400;
+  @apply text-danger;
 }
 .hljs-meta,
 .hljs-punctuation {
-  @apply text-paddock-400 dark:text-paddock-500;
+  @apply text-fg-subtle;
 }
 .hljs-emphasis {
   @apply italic;
@@ -408,10 +711,10 @@
   @apply font-semibold;
 }
 .hljs-deletion {
-  @apply text-rose-700 dark:text-rose-400;
+  @apply text-danger;
 }
 .hljs-addition {
-  @apply text-emerald-700 dark:text-emerald-400;
+  @apply text-success;
 }
 
 /* Continuous "working" affordances (the streaming caret, the context-ring and
@@ -457,15 +760,15 @@
     background-color: rgb(var(--accent) / 0.16);
   }
 }
-@layer utilities {
-  .subagent-reveal {
-    animation: subagent-reveal 1.6s ease-in-out 2;
-  }
-  .spin-eco {
-    animation: spin-eco 1.2s steps(12, end) infinite;
-    will-change: transform;
-  }
-  .streaming-caret::after {
+@utility subagent-reveal {
+  animation: subagent-reveal 1.6s ease-in-out 2;
+}
+@utility spin-eco {
+  animation: spin-eco 1.2s steps(12, end) infinite;
+  will-change: transform;
+}
+@utility streaming-caret {
+  &::after {
     content: "▍";
     @apply ml-0.5 inline-block text-accent;
     animation: caret-blink 1s step-end infinite;
@@ -478,11 +781,18 @@
   .animate-spin,
   .animate-ping,
   .animate-pulse,
-  .animate-bounce {
+  .animate-bounce,
+  .animate-scale-in,
+  .animate-fade-in {
     animation: none !important;
   }
   .streaming-caret::after {
     opacity: 1;
+  }
+  *,
+  ::before,
+  ::after {
+    transition-duration: 0.01ms !important;
   }
 }
 
