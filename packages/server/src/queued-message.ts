@@ -88,6 +88,35 @@ export interface QueuedMessage {
   parts?: QueuedPart[];
 }
 
+/**
+ * Fold a write from a client that ISN'T on the slot's current version into the
+ * slot's text.
+ *
+ * Usually that client is simply appending to its own queue: it holds text the slot
+ * already contains and has added a line to the end of it. That is the ordinary
+ * single-client append — the composer keeps one queue id across an append (#245),
+ * and an older client sends only its enqueue `ts`, so neither ever carries the
+ * current version. It also covers the plain race of appending faster than the
+ * broadcast round trip. In every one of those, the client's text EXTENDS something
+ * the slot already holds, so we substitute in place rather than appending — or the
+ * client's own earlier text would appear twice.
+ *
+ * Otherwise the client queued without knowing what was already there (a second
+ * device), and its text is appended so neither message is lost (#629).
+ */
+function mergeInto(current: string, known: QueuedPart[], incoming: string): string {
+  // The most specific thing the incoming text extends — longest first, since a
+  // queue that has been appended to is known by every prefix it has passed through.
+  const extended = known
+    .filter((p) => p.text.length > 0 && incoming.startsWith(`${p.text}${MERGE_SEP}`))
+    .sort((a, b) => b.text.length - a.text.length)[0];
+  const at = extended ? current.indexOf(extended.text) : -1;
+  if (at < 0) return `${current}${MERGE_SEP}${incoming}`;
+  // Splice rather than String.replace: the texts are user prose and `$&`-style
+  // patterns in a replacement string would be interpreted.
+  return current.slice(0, at) + incoming + current.slice(at + extended!.text.length);
+}
+
 /** The identities of an entry, synthesising one for a legacy entry without any. */
 export function partsOf(m: QueuedMessage): QueuedPart[] {
   if (m.parts && m.parts.length > 0) return m.parts;
@@ -234,10 +263,12 @@ export class QueuedMessageStore {
     const known = current ? partsOf(current) : [];
     // Already folded in under some identity ⇒ a re-assert, not new text.
     if (known.some((p) => p.text === incoming.text)) return current;
-    const text =
-      current && incoming.id !== current.id
-        ? `${current.text}${MERGE_SEP}${incoming.text}`
-        : incoming.text;
+    const text = !current
+      ? incoming.text
+      : incoming.id === current.id
+        ? // The client can see the slot as it stands, so its text IS the slot.
+          incoming.text
+        : mergeInto(current.text, known, incoming.text);
     const version = mintVersion();
     // Remember BOTH identities this write creates: what the client sent (which it
     // will re-assert on reload) and the version we hand back (which it will

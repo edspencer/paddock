@@ -151,6 +151,29 @@ describe("QueuedMessageStore", () => {
       expect(after?.text).toBe("A\nB");
     });
 
+    it("a client APPENDING without the current version extends its own text in place", async () => {
+      const store = new QueuedMessageStore(dir);
+      const mint = versions();
+      await store.upsert("keeper-a", "s1", { id: "tab-a", text: "A" }, 100, mint);
+      // The composer keeps ONE queue id across an append (#245) and an older client
+      // sends only its enqueue ts, so neither ever carries the slot version — and
+      // even a current client can append faster than the broadcast round trip.
+      // Appending this as a second contribution would give "A\nA\nB".
+      const next = await store.upsert("keeper-a", "s1", { id: "tab-a", text: "A\nB" }, 101, mint);
+      expect(next?.text).toBe("A\nB");
+    });
+
+    it("...and still doesn't clobber the OTHER client's text while doing it", async () => {
+      const store = new QueuedMessageStore(dir);
+      const mint = versions();
+      await store.upsert("keeper-a", "s1", { id: "tab-a", text: "A" }, 100, mint);
+      await store.upsert("keeper-a", "s1", { id: "tab-b", text: "B" }, 101, mint);
+      // Tab A never saw the merge and appends to what it still thinks is the queue.
+      // Its line goes where its text already is; tab B's is left alone.
+      const next = await store.upsert("keeper-a", "s1", { id: "tab-a", text: "A\nC" }, 102, mint);
+      expect(next?.text).toBe("A\nC\nB");
+    });
+
     it("bounds the identities one slot remembers", async () => {
       const store = new QueuedMessageStore(dir);
       const mint = versions();

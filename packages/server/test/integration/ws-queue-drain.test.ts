@@ -32,6 +32,7 @@ describe("integration: server-authoritative queued-message drain (#245)", () => 
         "from the fast clock": "Handled the skewed queue.",
         "must not vanish": "Handled the correctly-clocked queue.",
         "from tab A\nfrom tab B": "Handled both tabs' queues.",
+        "line one\nline two": "Handled the appended queue.",
       },
     });
     await t.app.inject({ method: "POST", url: "/api/projects", payload: { name: "Queue Proj" } });
@@ -297,6 +298,47 @@ describe("integration: server-authoritative queued-message drain (#245)", () => 
       expect(await userMessages(sessionId)).toContain("from tab A\nfrom tab B");
     } finally {
       wsB.close();
+      delete process.env.PADDOCK_FAKE_SLOWTOOL_MS;
+    }
+  });
+
+  it("appending to a LIVE queue extends it in place, not behind a copy of itself", async () => {
+    // The composer keeps ONE identity across an append (#245) and never carries
+    // the slot version the server minted a moment earlier — an older client sends
+    // only its `ts`, and even a current one can append faster than the broadcast
+    // round trip. Merging that as a second contribution would queue "line
+    // one\nline one\nline two".
+    process.env.PADDOCK_FAKE_SLOWTOOL_MS = "1500";
+    try {
+      const m1 = ws.mark();
+      ws.send({ type: "chat:send", payload: { projectSlug: SLUG, sessionId: null, message: "start turn" } });
+      const sessionId = (await ws.waitFor(isComplete, { from: m1 })).payload?.sessionId as string;
+
+      const m2 = ws.mark();
+      ws.send({
+        type: "chat:send",
+        payload: { projectSlug: SLUG, sessionId, message: "[[SLOWTOOL]] slow turn" },
+      });
+      await ws.waitFor((e) => e.type === "chat:tool_start" && e.payload?.sessionId === sessionId, {
+        from: m2,
+      });
+
+      ws.send({
+        type: "chat:set_queue",
+        payload: { projectSlug: SLUG, sessionId, text: "line one", qid: "one-pane" },
+      });
+      ws.send({
+        type: "chat:set_queue",
+        payload: { projectSlug: SLUG, sessionId, text: "line one\nline two", qid: "one-pane" },
+      });
+
+      const flushed = await ws.waitFor(isFlushed, { from: m2 });
+      expect(flushed.payload?.text).toBe("line one\nline two");
+      await ws.waitFor((e) => isComplete(e) && e.payload?.sessionId === sessionId, {
+        from: flushedIndex(ws, flushed),
+      });
+      expect((await userMessages(sessionId)).filter((m) => m === "line one\nline two")).toHaveLength(1);
+    } finally {
       delete process.env.PADDOCK_FAKE_SLOWTOOL_MS;
     }
   });

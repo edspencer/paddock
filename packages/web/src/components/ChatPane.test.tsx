@@ -1268,7 +1268,13 @@ describe("ChatPane: message queue (issue #91)", () => {
     expect(screen.getByText("+7 characters")).toBeInTheDocument();
   });
 
-  it("holds the queue when the user hits Stop (does not auto-send)", async () => {
+  it("never sends the queued message ITSELF on a completion — the server owns that", async () => {
+    // The client stopped flushing its own queue in #245: a completion arriving
+    // while the socket was down never fired the client-side flush (a stranding
+    // path), and while it was up, client and server both sent it. This pane now
+    // only reflects what the server tells it — it renders the queue and clears it
+    // on `chat:queued_flushed`, and puts nothing on the wire off a completion,
+    // cancelled or otherwise.
     render(<ChatPane projectSlug="proj" />);
     await startTurn();
     await userEvent.type(box(), "should not fire");
@@ -1276,11 +1282,11 @@ describe("ChatPane: message queue (issue #91)", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Stop/ }));
     expect(cancels).toEqual(["job-1"]);
-    // The server emits a completion for the cancelled turn — must NOT flush.
     act(() => sub().handlers.onComplete?.({ sessionId: "s", jobId: "job-1", success: true }));
 
     expect(sends).toHaveLength(1);
-    // The message stays queued for the user to send/edit.
+    // Still on screen: only the server's flush frame clears the chip (#627 — the
+    // server drains a Stopped turn's queue too, and says so with that frame).
     expect(screen.getByText("should not fire")).toBeInTheDocument();
   });
 
