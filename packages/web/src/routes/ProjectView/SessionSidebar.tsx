@@ -248,8 +248,8 @@ export function SessionSidebar({
       key={c.sessionId}
       className={`group/chat chat-row chat-row--actions-${actionCount} relative mb-0.5 flex rounded-lg transition-colors ${
         activeSession === c.sessionId && view === "chat"
-          ? "bg-paddock-200/80 dark:bg-paddock-800"
-          : "hover:bg-paddock-200/50 dark:hover:bg-paddock-800/50"
+          ? "bg-surface-selected"
+          : "hover:bg-surface-hover"
       }`}
     >
       {/* One guide line per ancestor level: indentation you can actually trace
@@ -261,7 +261,7 @@ export function SessionSidebar({
         <div
           key={i}
           aria-hidden="true"
-          className="w-3 shrink-0 border-l border-paddock-300/60 dark:border-paddock-700/60"
+          className="w-3 shrink-0 border-l border-edge"
         />
       ))}
       {/* Twisty gutter. A separate control from the row button (a button can't
@@ -278,7 +278,7 @@ export function SessionSidebar({
                   e.stopPropagation();
                   toggleChatCollapsed(c.sessionId);
                 }}
-                className="flex h-4 w-4 items-center justify-center rounded text-paddock-400 transition hover:bg-paddock-300/60 hover:text-paddock-700 dark:hover:bg-paddock-700 dark:hover:text-paddock-100"
+                className="flex h-4 w-4 items-center justify-center rounded text-fg-subtle transition hover:bg-surface-active hover:text-fg"
               >
                 <ChevronDownIcon
                   width={11}
@@ -313,7 +313,7 @@ export function SessionSidebar({
               <span
                 data-unread="true"
                 aria-label="Unread reply"
-                className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
+                className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent-solid"
               />
             </Tooltip>
           )}
@@ -326,7 +326,7 @@ export function SessionSidebar({
               expanded, the indented rows say it better than a number can. */}
           {isCollapsed && descendantCount > 0 && (
             <Tooltip content={`${nested(descendantCount)} hidden`} className="shrink-0">
-              <span className="shrink-0 rounded-full bg-paddock-300/70 px-1.5 text-[10px] font-medium leading-4 text-paddock-600 dark:bg-paddock-700 dark:text-paddock-300">
+              <span className="shrink-0 rounded-full bg-surface-active px-1.5 text-3xs font-medium leading-4 text-fg-muted">
                 {descendantCount}
               </span>
             </Tooltip>
@@ -355,7 +355,7 @@ export function SessionSidebar({
         </span>
         {/* Row 2 (left): relative time. The actions live on this row too, as
             an absolute sibling anchored bottom-right (below). */}
-        <span className="chat-row-time text-[11px] text-paddock-400">
+        <span className="chat-row-time text-2xs text-fg-subtle">
           {relativeTime(c.updatedAt)}
         </span>
       </button>
@@ -379,7 +379,7 @@ export function SessionSidebar({
                 e.stopPropagation();
                 void detachChat(c);
               }}
-              className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-paddock-200 hover:text-accent focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-paddock-700 dark:hover:text-accent"
+              className="flex h-6 w-6 items-center justify-center rounded-md text-fg-subtle opacity-0 transition hover:bg-surface-active hover:text-accent focus:opacity-100 group-hover/chat:opacity-100"
             >
               <UnlinkIcon width={13} height={13} />
             </button>
@@ -393,7 +393,7 @@ export function SessionSidebar({
               e.stopPropagation();
               setForkingChat(c);
             }}
-            className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-paddock-200 hover:text-accent focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-paddock-700 dark:hover:text-accent"
+            className="flex h-6 w-6 items-center justify-center rounded-md text-fg-subtle opacity-0 transition hover:bg-surface-active hover:text-accent focus:opacity-100 group-hover/chat:opacity-100"
           >
             <BranchIcon width={13} height={13} />
           </button>
@@ -408,7 +408,7 @@ export function SessionSidebar({
                 e.stopPropagation();
                 setPromotingChat(c);
               }}
-              className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-paddock-200 hover:text-accent focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-paddock-700 dark:hover:text-accent"
+              className="flex h-6 w-6 items-center justify-center rounded-md text-fg-subtle opacity-0 transition hover:bg-surface-active hover:text-accent focus:opacity-100 group-hover/chat:opacity-100"
             >
               <PlusIcon width={13} height={13} />
             </button>
@@ -422,7 +422,7 @@ export function SessionSidebar({
               e.stopPropagation();
               renameChat(c);
             }}
-            className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-paddock-200 hover:text-paddock-700 focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-paddock-700 dark:hover:text-paddock-100"
+            className="flex h-6 w-6 items-center justify-center rounded-md text-fg-subtle opacity-0 transition hover:bg-surface-active hover:text-fg focus:opacity-100 group-hover/chat:opacity-100"
           >
             <PencilIcon width={13} height={13} />
           </button>
@@ -450,8 +450,8 @@ export function SessionSidebar({
               e.stopPropagation();
               void archiveChat(c, targetIds(e));
             }}
-            className={`flex h-6 w-6 items-center justify-center rounded-md transition focus:opacity-100 group-hover/chat:opacity-100 hover:bg-paddock-200 hover:text-accent dark:hover:bg-paddock-700 dark:hover:text-accent ${
-              c.archived ? "text-accent opacity-100" : "text-paddock-400 opacity-0"
+            className={`flex h-6 w-6 items-center justify-center rounded-md transition focus:opacity-100 group-hover/chat:opacity-100 hover:bg-surface-active hover:text-accent ${
+              c.archived ? "text-accent opacity-100" : "text-fg-subtle opacity-0"
             }`}
           >
             <ArchiveIcon width={13} height={13} />
@@ -467,7 +467,7 @@ export function SessionSidebar({
               e.stopPropagation();
               requestDeleteChat(c, targetIds(e));
             }}
-            className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-rose-100 hover:text-rose-600 focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-rose-950/60 dark:hover:text-rose-400"
+            className="flex h-6 w-6 items-center justify-center rounded-md text-fg-subtle opacity-0 transition hover:bg-danger-soft hover:text-danger focus:opacity-100 group-hover/chat:opacity-100"
           >
             <TrashIcon width={13} height={13} />
           </button>
@@ -495,7 +495,7 @@ export function SessionSidebar({
               e.stopPropagation();
               void toggleUnread(c, targetIds(e));
             }}
-            className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 opacity-0 transition hover:bg-paddock-200 hover:text-accent focus:opacity-100 group-hover/chat:opacity-100 dark:hover:bg-paddock-700 dark:hover:text-accent"
+            className="flex h-6 w-6 items-center justify-center rounded-md text-fg-subtle opacity-0 transition hover:bg-surface-active hover:text-accent focus:opacity-100 group-hover/chat:opacity-100"
           >
             <EnvelopeIcon width={13} height={13} open={!isUnread} />
           </button>
@@ -514,8 +514,8 @@ export function SessionSidebar({
               e.stopPropagation();
               void starChat(c);
             }}
-            className={`flex h-6 w-6 items-center justify-center rounded-md transition focus:opacity-100 group-hover/chat:opacity-100 hover:bg-paddock-200 hover:text-amber-500 dark:hover:bg-paddock-700 dark:hover:text-amber-400 ${
-              c.starred ? "text-amber-400 opacity-100" : "text-paddock-400 opacity-0"
+            className={`flex h-6 w-6 items-center justify-center rounded-md transition focus:opacity-100 group-hover/chat:opacity-100 hover:bg-surface-active hover:text-warn ${
+              c.starred ? "text-warn opacity-100" : "text-fg-subtle opacity-0"
             }`}
           >
             <StarIcon width={13} height={13} fill={c.starred ? "currentColor" : "none"} />
@@ -531,7 +531,7 @@ export function SessionSidebar({
       {/* Session-list backdrop (mobile only, when the drawer is open). */}
       {sessionsOpen && (
         <div
-          className="fixed inset-0 z-20 bg-black/40 lg:hidden"
+          className="fixed inset-0 z-20 bg-overlay lg:hidden"
           aria-hidden="true"
           onClick={() => setSessionsOpen(false)}
         />
@@ -539,7 +539,7 @@ export function SessionSidebar({
       {/* Session list — static column on lg+, off-canvas drawer on mobile. */}
       <div
         style={chatList.style}
-        className={`fixed inset-y-0 left-0 z-30 flex w-64 max-w-[80%] shrink-0 flex-col border-r border-paddock-200 bg-canvas shadow-2xl transition-transform duration-200 ease-out dark:border-paddock-800 dark:bg-paddock-900 lg:relative lg:z-auto lg:max-w-none lg:translate-x-0 lg:bg-white/40 lg:shadow-none dark:lg:bg-paddock-900/20 ${
+        className={`fixed inset-y-0 left-0 z-30 flex w-64 max-w-[80%] shrink-0 flex-col border-r border-edge bg-surface-raised shadow-2xl transition-transform duration-200 ease-out lg:relative lg:z-auto lg:max-w-none lg:translate-x-0 lg:bg-surface-raised/40 lg:shadow-none ${
           sessionsOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
@@ -558,7 +558,7 @@ export function SessionSidebar({
             <SearchIcon
               width={15}
               height={15}
-              className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-paddock-400"
+              className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-subtle"
             />
             <input
               type="text"
@@ -577,7 +577,7 @@ export function SessionSidebar({
                   type="button"
                   onClick={() => setChatSearch("")}
                   aria-label="Clear search"
-                  className="flex h-6 w-6 items-center justify-center rounded-md text-paddock-400 transition hover:bg-paddock-200 hover:text-paddock-700 dark:hover:bg-paddock-700 dark:hover:text-paddock-100"
+                  className="flex h-6 w-6 items-center justify-center rounded-md text-fg-subtle transition hover:bg-surface-active hover:text-fg"
                 >
                   <XIcon width={13} height={13} />
                 </button>
@@ -673,9 +673,9 @@ export function SessionSidebar({
           <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
             {/* A fresh new chat with nothing sent yet (no session id at all). */}
             {activeSession === null && view === "chat" && !pendingChat && (
-              <div className="mb-0.5 flex items-center gap-1.5 rounded-lg bg-paddock-200/80 px-2.5 py-2 text-sm dark:bg-paddock-800">
-                <ChatIcon width={13} height={13} className="text-paddock-500" />
-                <span className="font-medium italic text-paddock-600 dark:text-paddock-300">
+              <div className="mb-0.5 flex items-center gap-1.5 rounded-lg bg-surface-selected px-2.5 py-2 text-sm">
+                <ChatIcon width={13} height={13} className="text-fg-muted" />
+                <span className="font-medium italic text-fg-muted">
                   New chat…
                 </span>
               </div>
@@ -687,15 +687,15 @@ export function SessionSidebar({
               <div
                 className={`group/chat relative mb-0.5 rounded-lg transition-colors ${
                   activeSession === pendingChat && view === "chat"
-                    ? "bg-paddock-200/80 dark:bg-paddock-800"
-                    : "hover:bg-paddock-200/50 dark:hover:bg-paddock-800/50"
+                    ? "bg-surface-selected"
+                    : "hover:bg-surface-hover"
                 }`}
               >
                 <button
                   onClick={() => openChat(pendingChat)}
                   className="flex w-full items-center gap-1.5 rounded-lg px-2.5 py-2 text-left text-sm"
                 >
-                  <span className="min-w-0 flex-1 truncate font-medium italic text-paddock-600 dark:text-paddock-300">
+                  <span className="min-w-0 flex-1 truncate font-medium italic text-fg-muted">
                     New chat…
                   </span>
                   {/* #115: the merged spinning ring stands in for the old
@@ -708,7 +708,7 @@ export function SessionSidebar({
                 from the list (mis-attributed by the post-turn sweep, #154). */}
             {fallbackChat && chatRow(fallbackChat)}
             {chats.length === 0 && !fallbackChat && (
-              <p className="px-2 py-2 text-sm text-paddock-500">
+              <p className="px-2 py-2 text-sm text-fg-muted">
                 No saved chats yet. Send a message to start one.
               </p>
             )}
@@ -719,7 +719,7 @@ export function SessionSidebar({
                 Shown whenever the filter is on and nothing is running, even if
                 the pinned open chat keeps a row on screen. */}
             {chats.length > 0 && viewPrefs.runningOnly && runningCount === 0 && (
-              <p className="px-2 py-2 text-sm text-paddock-500">
+              <p className="px-2 py-2 text-sm text-fg-muted">
                 No chats are running.{" "}
                 <button
                   type="button"
@@ -735,7 +735,7 @@ export function SessionSidebar({
               searching &&
               visibleChats.length === 0 &&
               !fallbackChat && (
-                <p className="px-2 py-2 text-sm text-paddock-500">
+                <p className="px-2 py-2 text-sm text-fg-muted">
                   No chats match “{chatSearch.trim()}”.
                 </p>
               )}
@@ -744,7 +744,7 @@ export function SessionSidebar({
               !searching &&
               activeChats.length === 0 &&
               !fallbackChat && (
-                <p className="px-2 py-2 text-sm text-paddock-500">
+                <p className="px-2 py-2 text-sm text-fg-muted">
                   No active chats — see Archived below.
                 </p>
               )}
@@ -755,7 +755,7 @@ export function SessionSidebar({
               animates up to a ~50% splitter, its list scrolling independently. */}
           {archivedChats.length > 0 && (
             <div
-              className={`flex flex-col border-t border-paddock-200 dark:border-paddock-800 ${
+              className={`flex flex-col border-t border-edge ${
                 archivedOpen ? "min-h-0 flex-1" : "shrink-0"
               }`}
             >
@@ -763,7 +763,7 @@ export function SessionSidebar({
                 type="button"
                 onClick={() => setArchivedOpen((o) => !o)}
                 aria-expanded={archivedOpen}
-                className="flex w-full items-center gap-1.5 px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-paddock-500 transition-colors hover:bg-paddock-200/40 dark:text-paddock-400 dark:hover:bg-paddock-800/40"
+                className="flex w-full items-center gap-1.5 px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-fg-muted transition-colors hover:bg-surface-hover"
               >
                 <ChevronDownIcon
                   width={14}
@@ -771,7 +771,7 @@ export function SessionSidebar({
                   className={`shrink-0 transition-transform ${archivedOpen ? "" : "-rotate-90"}`}
                 />
                 <span>Archived</span>
-                <span className="ml-auto rounded-full bg-paddock-200 px-1.5 py-0.5 text-[10px] font-semibold normal-case text-paddock-600 dark:bg-paddock-800 dark:text-paddock-300">
+                <span className="ml-auto rounded-full bg-surface-active px-1.5 py-0.5 text-3xs font-semibold normal-case text-fg-muted">
                   {archivedCount}
                 </span>
               </button>

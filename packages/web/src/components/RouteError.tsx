@@ -30,11 +30,11 @@ export function RouteError() {
     // same unobtrusive spinner the route fallback uses, not an error.
     return (
       <div
-        className="flex h-[100dvh] items-center justify-center bg-canvas dark:bg-canvas-dark"
+        className="flex h-[100dvh] items-center justify-center bg-surface"
         aria-busy="true"
         aria-live="polite"
       >
-        <span className="h-6 w-6 animate-spin rounded-full border-2 border-paddock-300 border-t-accent dark:border-paddock-700 dark:border-t-accent" />
+        <span className="h-6 w-6 animate-spin rounded-full border-2 border-edge-strong border-t-accent" />
         <span className="sr-only">Updating…</span>
       </div>
     );
@@ -44,14 +44,14 @@ export function RouteError() {
     error instanceof Error ? error.message : typeof error === "string" ? error : "";
 
   return (
-    <div className="flex h-[100dvh] flex-col items-center justify-center gap-4 bg-canvas px-6 text-center dark:bg-canvas-dark">
+    <div className="flex h-[100dvh] flex-col items-center justify-center gap-4 bg-surface px-6 text-center">
       <div>
         <h1 className="text-lg font-semibold tracking-tight">Something went wrong</h1>
-        <p className="mt-1 max-w-md text-sm text-paddock-500 dark:text-paddock-400">
+        <p className="mt-1 max-w-md text-sm text-fg-muted">
           The app hit an unexpected error. Reloading usually fixes it.
         </p>
         {message ? (
-          <p className="mt-2 max-w-md break-words font-mono text-[11px] text-paddock-400">
+          <p className="mt-2 max-w-md break-words font-mono text-2xs text-fg-subtle">
             {message}
           </p>
         ) : null}

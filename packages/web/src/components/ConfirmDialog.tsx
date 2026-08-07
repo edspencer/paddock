@@ -64,29 +64,29 @@ export function ConfirmDialog({
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-overlay p-4 backdrop-blur-sm"
       onClick={() => dismissOnBackdrop && !busy && onClose()}
     >
       <div
-        className={`w-full ${wide ? "max-w-md" : "max-w-sm"} animate-scale-in rounded-2xl border border-paddock-200 bg-white p-6 shadow-2xl dark:border-paddock-800 dark:bg-paddock-900`}
+        className={`w-full ${wide ? "max-w-md" : "max-w-sm"} animate-scale-in rounded-2xl border border-edge bg-surface-raised p-6 shadow-2xl`}
         onClick={(e) => e.stopPropagation()}
         role="alertdialog"
         aria-modal="true"
       >
         <div className="flex items-start gap-3">
           {danger && (
-            <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-rose-100 text-rose-600 dark:bg-rose-950/60 dark:text-rose-400">
+            <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-danger-soft text-danger">
               <AlertIcon width={18} height={18} />
             </span>
           )}
           <div className="min-w-0">
             <h2 className="text-base font-semibold">{title}</h2>
-            <div className="mt-1.5 text-sm text-paddock-600 dark:text-paddock-400">{message}</div>
+            <div className="mt-1.5 text-sm text-fg-muted">{message}</div>
           </div>
         </div>
 
         {error && (
-          <p className="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600 dark:bg-rose-950/40 dark:text-rose-300">
+          <p className="mt-4 rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">
             {error}
           </p>
         )}

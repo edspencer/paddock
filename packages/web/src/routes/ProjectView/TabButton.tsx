@@ -24,8 +24,8 @@ export function TabButton({
       onClick={onClick}
       className={`whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-medium transition-colors ${
         active
-          ? "border-accent text-ink dark:text-ink-dark"
-          : "border-transparent text-paddock-500 hover:text-paddock-700 dark:hover:text-paddock-300"
+          ? "border-accent text-fg"
+          : "border-transparent text-fg-muted hover:text-fg"
       }`}
     >
       {children}

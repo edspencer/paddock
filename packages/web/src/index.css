@@ -48,6 +48,7 @@
   --color-surface-active: var(--surface-active);
   --color-surface-selected: var(--surface-selected);
   --color-overlay: var(--overlay);
+  --color-overlay-strong: var(--overlay-strong);
 
   --color-fg: var(--text);
   --color-fg-muted: var(--text-muted);
@@ -201,38 +202,6 @@
       opacity: 1;
     }
   }
-}
-
-/*
- * ---------------------------------------------------------------------------
- * MIGRATION COMPAT — delete once the last raw `*-paddock-N` use is gone.
- * ---------------------------------------------------------------------------
- * The pre-token app addressed colour by palette step (`text-paddock-500`,
- * `dark:bg-paddock-900`, …), 1017 times. This block keeps those utilities
- * generating during the sweep so the tree is never half-broken. Values are the
- * NEW neutral ramp at the OLD lightness ladder — same hue family, ~a third of
- * the chroma, which is what removes the muddy tan cast from light mode.
- *
- * `tokens.test.ts` asserts this block is gone once `src/` is clean. Do NOT
- * reach for these in new code: docs/DESIGN.md forbids a raw palette step in a
- * component, and that rule is the only thing that stops the drift returning.
- */
-@theme {
-  --color-paddock-50: oklch(0.9725 0.0025 88);
-  --color-paddock-100: oklch(0.9356 0.005 88);
-  --color-paddock-200: oklch(0.8478 0.011 88);
-  --color-paddock-300: oklch(0.753 0.016 88);
-  --color-paddock-400: oklch(0.6659 0.02 88);
-  --color-paddock-500: oklch(0.594 0.02 88);
-  --color-paddock-600: oklch(0.5048 0.017 88);
-  --color-paddock-700: oklch(0.4287 0.013 88);
-  --color-paddock-800: oklch(0.3346 0.009 88);
-  --color-paddock-900: oklch(0.2561 0.007 88);
-  --color-paddock-950: oklch(0.1933 0.005 88);
-  --color-canvas: oklch(0.9645 0.0035 88);
-  --color-canvas-dark: oklch(0.187 0.006 88);
-  --color-ink: oklch(0.225 0.014 88);
-  --color-ink-dark: oklch(0.93 0.012 88);
 }
 
 /*
@@ -423,6 +392,19 @@
   box-shadow:
     0 0 0 2px var(--color-surface),
     0 0 0 4px var(--color-accent);
+}
+
+/*
+ * The HTML-preview iframe (FileView) renders an arbitrary, untrusted document in
+ * a null origin. Such a document almost always has a transparent body and
+ * assumes a light page, so theming its backdrop would leave dark text on a dark
+ * surface. It is a viewport onto someone else's document, not a Paddock
+ * surface — pinned light, deliberately, and the only place in the app that
+ * states a colour outright.
+ */
+@utility html-preview {
+  background-color: #fff;
+  color-scheme: light;
 }
 
 /* Numbers that get compared column-to-column (token counts, durations,

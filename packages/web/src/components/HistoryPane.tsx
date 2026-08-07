@@ -36,28 +36,28 @@ function originMeta(origin: RunSummary["origin"]): {
     return {
       label: "Scheduled",
       icon: <ClockIcon width={12} height={12} />,
-      cls: "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-400",
+      cls: "bg-warn-soft text-warn",
     };
   if (origin === "spawned")
     return {
       label: "Spawned",
       icon: <BranchIcon width={12} height={12} />,
-      cls: "bg-violet-100 text-violet-700 dark:bg-violet-950/50 dark:text-violet-400",
+      cls: "bg-lineage-soft text-lineage",
     };
   // Adopted from the user's Claude Code CLI history (#588). Still a run the
   // human drove — just not here — so it gets its own chip rather than the "You"
   // fallback, which would claim the turn happened in paddock. Matches the
-  // emerald/terminal language of the sidebar's `adopted` ProvenanceBadge.
+  // success/terminal language of the sidebar's `adopted` ProvenanceBadge.
   if (origin === "adopted")
     return {
       label: "Adopted",
       icon: <TerminalIcon width={12} height={12} />,
-      cls: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400",
+      cls: "bg-success-soft text-success",
     };
   return {
     label: "You",
     icon: <ChatIcon width={12} height={12} />,
-    cls: "bg-paddock-200/70 text-paddock-600 dark:bg-paddock-800 dark:text-paddock-300",
+    cls: "bg-surface-active text-fg-muted",
   };
 }
 
@@ -65,17 +65,17 @@ function originMeta(origin: RunSummary["origin"]): {
 function statusMeta(status: RunSummary["status"]): { label: string; cls: string } {
   switch (status) {
     case "completed":
-      return { label: "completed", cls: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400" };
+      return { label: "completed", cls: "bg-success-soft text-success" };
     case "failed":
-      return { label: "failed", cls: "bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-400" };
+      return { label: "failed", cls: "bg-danger-soft text-danger" };
     case "running":
-      return { label: "running", cls: "bg-sky-100 text-sky-700 dark:bg-sky-950/50 dark:text-sky-400" };
+      return { label: "running", cls: "bg-info-soft text-info" };
     case "cancelled":
-      return { label: "cancelled", cls: "bg-paddock-200/70 text-paddock-500 dark:bg-paddock-800 dark:text-paddock-400" };
+      return { label: "cancelled", cls: "bg-surface-active text-fg-muted" };
     case "pending":
-      return { label: "pending", cls: "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-400" };
+      return { label: "pending", cls: "bg-warn-soft text-warn" };
     default:
-      return { label: status, cls: "bg-paddock-200/70 text-paddock-500 dark:bg-paddock-800 dark:text-paddock-400" };
+      return { label: status, cls: "bg-surface-active text-fg-muted" };
   }
 }
 
@@ -131,9 +131,9 @@ function RunRow({
       disabled={!clickable}
       data-run-origin={run.origin}
       data-run-new={run.isNew ? "true" : undefined}
-      className={`flex w-full items-start gap-3 border-t border-paddock-200 px-4 py-3 text-left first:border-t-0 dark:border-paddock-800 ${
-        clickable ? "hover:bg-paddock-100/70 dark:hover:bg-paddock-900/40" : "cursor-default"
-      } ${run.isNew ? "bg-accent/[0.06]" : ""}`}
+      className={`flex w-full items-start gap-3 border-t border-edge px-4 py-3 text-left first:border-t-0 ${
+        clickable ? "hover:bg-surface-hover" : "cursor-default"
+      } ${run.isNew ? "bg-accent-soft" : ""}`}
     >
       {/* since-last-visit dot */}
       <span className="mt-1.5 w-1.5 shrink-0">
@@ -142,7 +142,7 @@ function RunRow({
             data-run-unread="true"
             aria-label="New since your last visit"
             title="Ran while you were away"
-            className="block h-1.5 w-1.5 rounded-full bg-accent"
+            className="block h-1.5 w-1.5 rounded-full bg-accent-solid"
           />
         )}
       </span>
@@ -150,26 +150,24 @@ function RunRow({
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span
-            className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium ${origin.cls}`}
+            className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-2xs font-medium ${origin.cls}`}
           >
             {origin.icon}
             {origin.label}
           </span>
-          <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium ${status.cls}`}>
+          <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-2xs font-medium ${status.cls}`}>
             {status.label}
           </span>
         </div>
-        <p className="mt-1 truncate text-sm text-ink dark:text-ink-dark">{label}</p>
-        <p className="mt-0.5 truncate text-xs text-paddock-500 dark:text-paddock-400">
-          {triggerNote(run)}
-        </p>
+        <p className="mt-1 truncate text-sm text-fg">{label}</p>
+        <p className="mt-0.5 truncate text-xs text-fg-muted">{triggerNote(run)}</p>
       </div>
 
-      <div className="flex shrink-0 flex-col items-end gap-0.5 text-xs text-paddock-500 dark:text-paddock-400">
+      <div className="flex shrink-0 flex-col items-end gap-0.5 text-xs text-fg-muted">
         <span title={new Date(run.startedAt).toLocaleString()}>{relativeTime(run.startedAt)}</span>
-        <span className="font-mono">{runDuration(run)}</span>
+        <span className="font-mono tabular">{runDuration(run)}</span>
         {/* Cost — P3 seam (DD-4 / X1#378 + X2#271): always em-dash for now. */}
-        <span className="font-mono text-paddock-400 dark:text-paddock-600" title="Per-run cost is coming soon">
+        <span className="font-mono text-fg-subtle" title="Per-run cost is coming soon">
           —
         </span>
       </div>
@@ -205,18 +203,18 @@ export function HistoryPane({ slug, state, chats, onOpenChat }: HistoryPaneProps
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-paddock-200 px-4 py-3 dark:border-paddock-800">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-edge px-4 py-3">
         <div className="flex items-center gap-3">
-          <h2 className="text-sm font-semibold text-ink dark:text-ink-dark">Run history</h2>
+          <h2 className="text-sm font-semibold text-fg">Run history</h2>
           <button
             type="button"
             onClick={() => void refresh()}
-            className="text-xs text-paddock-500 hover:text-paddock-700 dark:text-paddock-400 dark:hover:text-paddock-200"
+            className="text-xs text-fg-muted hover:text-fg"
           >
             Refresh
           </button>
         </div>
-        <div className="inline-flex overflow-hidden rounded-lg border border-paddock-200 text-xs dark:border-paddock-800">
+        <div className="inline-flex overflow-hidden rounded-lg border border-edge text-xs">
           <FilterButton active={filter === "unattended"} onClick={() => setFilter("unattended")}>
             Unattended{unattendedCount > 0 ? ` (${unattendedCount})` : ""}
           </FilterButton>
@@ -229,7 +227,7 @@ export function HistoryPane({ slug, state, chats, onOpenChat }: HistoryPaneProps
       {newAway > 0 && (
         <div
           data-since-last-visit={newAway}
-          className="border-b border-accent/30 bg-accent/[0.08] px-4 py-2 text-sm text-ink dark:text-ink-dark"
+          className="border-b border-accent-edge bg-accent-soft px-4 py-2 text-sm text-fg"
         >
           <span className="font-medium">
             {newAway} new {newAway === 1 ? "run" : "runs"}
@@ -240,11 +238,9 @@ export function HistoryPane({ slug, state, chats, onOpenChat }: HistoryPaneProps
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {error ? (
-          <div className="px-4 py-10 text-center text-sm text-rose-600 dark:text-rose-400">
-            {error}
-          </div>
+          <div className="px-4 py-10 text-center text-sm text-danger">{error}</div>
         ) : loading && runs.length === 0 ? (
-          <div className="px-4 py-10 text-center text-sm text-paddock-500 dark:text-paddock-400">
+          <div className="px-4 py-10 text-center text-sm text-fg-muted">
             Loading run history…
           </div>
         ) : shown.length === 0 ? (
@@ -279,10 +275,8 @@ function FilterButton({
     <button
       type="button"
       onClick={onClick}
-      className={`px-2.5 py-1 font-medium transition-colors ${
-        active
-          ? "bg-accent/15 text-accent-700 dark:text-accent"
-          : "text-paddock-500 hover:text-paddock-700 dark:text-paddock-400 dark:hover:text-paddock-200"
+      className={`motion-fast px-2.5 py-1 font-medium transition-colors ${
+        active ? "bg-accent-soft text-accent" : "text-fg-muted hover:text-fg"
       }`}
     >
       {children}
@@ -293,10 +287,10 @@ function FilterButton({
 function EmptyState({ filter, hasAny }: { filter: OriginFilter; hasAny: boolean }) {
   return (
     <div className="px-4 py-12 text-center">
-      <p className="text-sm font-medium text-ink dark:text-ink-dark">
+      <p className="text-sm font-medium text-fg">
         {filter === "unattended" ? "No unattended runs yet" : "No runs yet"}
       </p>
-      <p className="mx-auto mt-1 max-w-sm text-xs text-paddock-500 dark:text-paddock-400">
+      <p className="mx-auto mt-1 max-w-sm text-xs text-fg-muted">
         {filter === "unattended"
           ? hasAny
             ? "Scheduled and spawned runs will show up here. Switch to All to see your own runs."

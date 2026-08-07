@@ -60,12 +60,12 @@ export function Mermaid({ code }: { code: string }) {
 
   if (error) {
     return (
-      <div className="my-3 rounded-lg border border-amber-300/60 bg-amber-50 p-3 text-xs dark:border-amber-900/60 dark:bg-amber-950/40">
-        <p className="font-semibold text-amber-700 dark:text-amber-300">
+      <div className="my-3 rounded-lg border border-warn-edge bg-warn-soft p-3 text-xs">
+        <p className="font-semibold text-warn">
           Couldn't render this Mermaid diagram
         </p>
-        <p className="mt-1 text-amber-600 dark:text-amber-400/90">{error}</p>
-        <pre className="mt-2 overflow-x-auto rounded bg-paddock-100 p-2 font-mono text-[11.5px] text-paddock-700 dark:bg-paddock-950 dark:text-paddock-300">
+        <p className="mt-1 text-warn">{error}</p>
+        <pre className="mt-2 overflow-x-auto rounded bg-surface-sunken p-2 font-mono text-2xs text-fg-muted">
           {code}
         </pre>
       </div>
@@ -76,7 +76,7 @@ export function Mermaid({ code }: { code: string }) {
     <div
       ref={hostRef}
       data-testid="mermaid"
-      className="mermaid-host my-3 flex justify-center overflow-x-auto rounded-lg border border-paddock-200 bg-white/60 p-3 dark:border-paddock-800 dark:bg-paddock-950/40"
+      className="mermaid-host my-3 flex justify-center overflow-x-auto rounded-lg border border-edge bg-surface-raised p-3"
     />
   );
 }

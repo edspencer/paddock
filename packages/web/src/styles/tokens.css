@@ -51,6 +51,9 @@
   /* Modal / drawer scrim. Deliberately hue-neutral black so it darkens rather
      than tints whatever is behind it. */
   --overlay: oklch(0 0 0 / 0.42);
+  /* The media lightbox needs a heavier scrim than a dialog: it sits over an
+     arbitrary photo rather than over app chrome. */
+  --overlay-strong: oklch(0 0 0 / 0.82);
 
   /* ----------------------------------------------------------------- text --
    * Three rungs, all of which clear 4.5:1 against the DARKEST surface they can
@@ -153,6 +156,7 @@
   --surface-active: oklch(0.268 0.009 88);
   --surface-selected: oklch(0.258 0.01 88);
   --overlay: oklch(0 0 0 / 0.55);
+  --overlay-strong: oklch(0 0 0 / 0.86);
 
   --text: oklch(0.93 0.012 88);
   --text-muted: oklch(0.718 0.015 88);
