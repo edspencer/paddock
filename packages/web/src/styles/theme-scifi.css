@@ -17,7 +17,7 @@
  *   matte, physical, an object          luminous, theatrical, a display
  *   dark ground at L 0.268              dark ground at L 0.150 — near-black
  *   ground chroma 0.006 (a grey)        ground chroma 0.019 (a blue)
- *   accent L 0.66 C 0.098               accent L 0.72 C 0.123 — one stop brighter
+ *   accent L 0.66 C 0.098 @ H202        accent L 0.72 C 0.126 @ H212 — brighter, colder
  *   dark teal button, white type        LIT CYAN PLATE, dark type
  *   4px radius                          0 — square, machined
  *   structure in surfaces               structure in HAIRLINES
@@ -44,7 +44,7 @@
  *
  * ── Both modes are drawn, not inverted ─────────────────────────────────────
  * Dark is a deep-space ground. Light is a clean room: cool white, hairlines in
- * a darker ink (L 0.735 where the other themes sit at 0.82, so they actually
+ * a darker ink (L 0.71 where the other themes sit at 0.82, so they actually
  * read), glow traded for crisp precision. Same equipment, different lighting —
  * which is why the accent channels mean the same thing in both:
  *
@@ -54,7 +54,7 @@
  *   --accent-fg   the dark type ON the plate — deep ground ink, both modes
  *
  * That plate-carries-dark-type polarity is also what makes the hue picker
- * behave: the theme's own plate/ink ratio is 8.10, low enough that every one of
+ * behave: the theme's own plate/ink ratio is 8.03, low enough that every one of
  * the ten named hues re-solves at FULL chroma (measured — no hue washes out to
  * pastel), so an amber or a rose picked here reads as a deliberate alert
  * variant rather than as a broken cyan one.
@@ -84,16 +84,16 @@
 
 [data-theme="scifi"]:not(.dark) {
   /* light — a clean room. Bright, cool, hairlines in a darker ink. */
-  --accent: 0 173 176; /* #00adb0 — mid cyan: a mark that clears 3:1 on white */
-  --accent-600: 0 188 191; /* #00bcbf — the lit plate */
-  --accent-700: 0 101 103; /* #006567 — accent text, and the ink-cyan hairline */
+  --accent: 0 151 172; /* #0097ac — mid cyan: a mark that clears 3:1 on white */
+  --accent-600: 0 185 210; /* #00b9d2 — the lit plate */
+  --accent-700: 0 99 114; /* #006372 — accent text, and the ink-cyan hairline */
 
-  --surface: oklch(0.968 0.007 235);
+  --surface: oklch(0.955 0.012 232);
   --surface-raised: oklch(0.996 0.002 235);
-  --surface-sunken: oklch(0.928 0.012 235);
-  --surface-hover: oklch(0.944 0.011 232);
-  --surface-active: oklch(0.912 0.014 230);
-  --surface-selected: oklch(0.906 0.024 218);
+  --surface-sunken: oklch(0.918 0.016 232);
+  --surface-hover: oklch(0.934 0.015 230);
+  --surface-active: oklch(0.902 0.018 228);
+  --surface-selected: oklch(0.896 0.03 216);
   /* Scrims are a cool ink rather than neutral black — on a blue-white ground a
      neutral scrim reads as dirt. */
   --overlay: oklch(0.28 0.03 240 / 0.34);
@@ -106,8 +106,8 @@
      white: this theme's fills are LIT, so the mark on them has to be ink. */
   --text-on-solid: oklch(0.17 0.025 240);
 
-  --border-subtle: oklch(0.855 0.012 235);
-  --border: oklch(0.735 0.022 232);
+  --border-subtle: oklch(0.845 0.016 232);
+  --border: oklch(0.71 0.026 230);
   --border-strong: oklch(0.52 0.03 230);
 
   --accent-color: rgb(var(--accent));
@@ -161,14 +161,14 @@
   --shadow-ambient: 0.06;
   --shadow-direct: 0.07;
 
-  --scroll-thumb: oklch(0.76 0.02 232);
+  --scroll-thumb: oklch(0.74 0.024 230);
 }
 
 [data-theme="scifi"].dark {
   /* dark — deep space. This is the theme's home. */
-  --accent: 0 216 220; /* #00d8dc — the bright lit state */
-  --accent-600: 0 188 191; /* #00bcbf — the plate, and accent text on the ground */
-  --accent-700: 0 101 103; /* #006567 — the ink-cyan step */
+  --accent: 0 213 242; /* #00d5f2 — the bright lit state */
+  --accent-600: 0 185 210; /* #00b9d2 — the plate, and accent text on the ground */
+  --accent-700: 0 99 114; /* #006372 — the ink-cyan step */
 
   /* Near-black, and blue rather than grey: chroma 0.019 at these lightnesses is
      unmistakably a colour across a room and still reads as a ground up close.
@@ -312,8 +312,13 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Headings are calm and wide, not heavy — the emphasis lives in the labels. */
-[data-theme="scifi"] :is(h1, h2, h3, h4) {
+/*
+ * Display headings are calm and wide, not heavy — the emphasis lives in the
+ * labels. Deliberately `h1, h2` only: `h3`/`h4` in this app are small UI
+ * headings whose semibold IS the hierarchy, and these rules are unlayered, so
+ * a weight set here would beat the `font-semibold` at their call sites.
+ */
+[data-theme="scifi"] :is(h1, h2) {
   font-weight: 500;
   letter-spacing: 0.005em;
 }
