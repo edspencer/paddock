@@ -341,6 +341,15 @@ Server → client (`ServerMessage` union, `ws-protocol.ts`):
 Every hub-routed frame carries a `Routing` payload (`ws-protocol.ts`): `projectSlug`,
 `target` (legacy alias), `sessionId`, `jobId`, and a hub-stamped monotonic `seq`.
 
+:::caution[This table lists what the server *emits*, not what `ServerMessage` declares]
+`chat:injected` is emitted by `ws-turn.ts`, typed by the client and handled by
+it — but it is **missing from the `ServerMessage` union** in `ws-protocol.ts`
+([#772](https://github.com/edspencer/paddock/issues/772)). It compiles only
+because `HubMessageInput.type` is a bare `string`. Nothing is broken at runtime,
+but the union is the file most contributors read as *the* protocol, so treat
+this table — not the union — as the emitted set until #772 lands.
+:::
+
 ### Turn lifecycle (`onChatSend`, `ws.ts`)
 
 ```mermaid
@@ -779,6 +788,17 @@ with the raw spec at `/docs/json`. It does not — it mounts at `cfg.openapi.pat
 (default `/open-api`), as the adjacent `app.log.info({ path: cfg.openapi.path })` and
 the "set `PADDOCK_OPENAPI_ENABLED=1` to mount `/open-api`" branch both show. Trust the
 code, not that comment.
+:::
+
+:::caution[The adopt routes' spec text still says "import"]
+The engine primitives, the REST routes and the UI all say **adopt**
+(`/adopt-chats`, `/unadopt-chats`, `adoptSessionsFrom`), but the OpenAPI
+`summary`/`description` strings on those routes still say "import"/"importable",
+and one still describes candidate matching in the retired
+**repo-backed**/**notebook** typology. That inconsistency is user-visible through
+the published spec — tracked as
+[#770](https://github.com/edspencer/paddock/issues/770). (The `import-chats`
+*script* name is intentional and stays.)
 :::
 
 ---
