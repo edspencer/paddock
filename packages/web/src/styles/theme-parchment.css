@@ -156,7 +156,17 @@
    * Eight layers: two arms per corner, each solid for its first 40% and then
    * fading, which is how the reference's elbow trails into dashes.
    */
-  --parch-tick: 22px;
+  /*
+   * Arms are ASYMMETRIC, and that is the fix for a real problem rather than a
+   * flourish. The reference's panels are large and square-ish, so its elbows
+   * are even; Paddock's plates run from a 34px one-line tool call to a full
+   * transcript. With even 22px arms a short plate's top and bottom elbows
+   * almost meet and it reads as double-boxed — ornament eating a row, which is
+   * exactly the failure to avoid. A long horizontal arm and a short vertical
+   * one gives a big panel a proper frame and a one-liner a corner tick.
+   */
+  --parch-tick: 20px;
+  --parch-tick-v: 10px;
   --parch-inset: 5px;
   --parch-frame-image:
     linear-gradient(90deg, var(--parch-ink) 0 40%, transparent 100%),
@@ -168,9 +178,9 @@
     linear-gradient(270deg, var(--parch-ink) 0 40%, transparent 100%),
     linear-gradient(0deg, var(--parch-ink) 0 40%, transparent 100%);
   --parch-frame-size:
-    var(--parch-tick) 1px, 1px var(--parch-tick), var(--parch-tick) 1px,
-    1px var(--parch-tick), var(--parch-tick) 1px, 1px var(--parch-tick),
-    var(--parch-tick) 1px, 1px var(--parch-tick);
+    var(--parch-tick) 1px, 1px var(--parch-tick-v), var(--parch-tick) 1px,
+    1px var(--parch-tick-v), var(--parch-tick) 1px, 1px var(--parch-tick-v),
+    var(--parch-tick) 1px, 1px var(--parch-tick-v);
   --parch-frame-pos:
     left var(--parch-inset) top var(--parch-inset),
     left var(--parch-inset) top var(--parch-inset),
@@ -225,7 +235,7 @@
      result, which is a real cost and also, as it happens, what a hand-drawn
      menu looks like — the reference has one ink, not three greys. */
   --surface: oklch(0.805 0.032 18); /* the dusty-rose field */
-  --surface-raised: oklch(0.966 0.017 84); /* a parchment plate */
+  --surface-raised: oklch(0.977 0.015 84); /* a parchment plate */
   --surface-sunken: oklch(0.905 0.024 56); /* a well cut into the plate */
   --surface-hover: oklch(0.928 0.024 40);
   --surface-active: oklch(0.895 0.028 30);
@@ -318,6 +328,9 @@
   --parch-gilt: oklch(0.795 0.115 82);
   --parch-gilt-lit: oklch(0.888 0.09 88);
   --parch-gilt-deep: oklch(0.6 0.095 72);
+  /* The brass a MARK is drawn in — icons, pins, dots. Deep on parchment, lit
+     on wine, so one rule serves both without a specificity fight. */
+  --parch-gilt-mark: var(--parch-gilt-deep);
 }
 
 /* ------------------------------------------------------------------- dark --
@@ -332,7 +345,7 @@
   --accent-700: 132 36 48; /* #842430 */
 
   --surface: oklch(0.188 0.024 44); /* oiled walnut */
-  --surface-raised: oklch(0.295 0.03 52); /* tanned leather, lamp-lit */
+  --surface-raised: oklch(0.308 0.03 52); /* tanned leather, lamp-lit */
   --surface-sunken: oklch(0.148 0.018 42);
   --surface-hover: oklch(0.322 0.03 50);
   --surface-active: oklch(0.352 0.032 48);
@@ -418,6 +431,7 @@
   --parch-gilt: oklch(0.792 0.115 82);
   --parch-gilt-lit: oklch(0.895 0.088 88);
   --parch-gilt-deep: oklch(0.62 0.1 72);
+  --parch-gilt-mark: oklch(0.74 0.11 78);
 }
 
 /*
@@ -462,6 +476,7 @@
   --accent-soft: color-mix(in oklab, rgb(var(--accent)) 30%, var(--parch-chrome));
   --accent-border: color-mix(in oklab, rgb(var(--accent)) 55%, var(--parch-chrome-edge));
   --scroll-thumb: var(--parch-chrome-edge-strong);
+  --parch-gilt-mark: var(--parch-gilt);
   background-color: var(--parch-chrome);
   /*
    * The inherited colour, which is NOT redundant with `--text` above and is the
@@ -523,9 +538,17 @@
   background-position: var(--parch-frame-pos), 0 0;
   background-repeat: var(--parch-frame-repeat), repeat;
   background-blend-mode: var(--parch-frame-blend), soft-light;
+  /*
+   * A real cast shadow, not a hairline of elevation. In the reference every
+   * plate is visibly lying ON the field — the shadow is doing as much of that
+   * work as the value step is, which is why round two still read flat with a
+   * 0.16 lightness gap already in place. Three layers: a contact line in the
+   * ink, a tight penumbra, and a wide soft one.
+   */
   box-shadow:
-    0 1px 0 0 rgb(var(--shadow-color) / var(--shadow-direct)),
-    0 6px 14px -6px rgb(var(--shadow-color) / var(--shadow-ambient));
+    0 1px 0 color-mix(in oklab, var(--parch-ink) 14%, transparent),
+    0 3px 6px -2px rgb(var(--shadow-color) / 0.3),
+    0 14px 26px -12px rgb(var(--shadow-color) / 0.34);
 }
 /*
  * Several of the app's "panels" are a rounded border with NO fill — the Home
@@ -633,7 +656,8 @@
  * Paddock's equivalents are the unread/archived counts and the chip-shaped
  * badges, so those get struck instead of tinted.
  */
-[data-theme="parchment"] aside .rounded-full:is(.bg-accent-solid, .bg-danger-solid) {
+[data-theme="parchment"] .rounded-full:is(.bg-accent-solid, .bg-danger-solid),
+[data-theme="parchment"] .rounded-full:is(.bg-accent-soft, .bg-warn-soft) {
   background-image: linear-gradient(
     180deg,
     var(--parch-gilt-lit) 0%,
@@ -645,6 +669,42 @@
     inset 0 0 0 1px var(--parch-gilt-deep),
     0 1px 2px rgb(0 0 0 / 0.35);
   text-shadow: 0 1px 0 color-mix(in oklab, var(--parch-gilt-lit) 60%, transparent);
+}
+
+/* Brass is what stops the whole screen being one warm hue, and the reference
+   spends it on FITTINGS: the line icon beside every nav row, the pin, the
+   marker. So every icon the app draws in the accent becomes a fitting, and the
+   rail's row icons with them. These are marks rather than text, so the 3:1
+   floor applies, and `--parch-gilt-mark` resolves per scope — deep enough to
+   read on parchment, lit enough to read on wine. */
+[data-theme="parchment"] aside nav svg,
+[data-theme="parchment"] aside .section-label + button svg,
+[data-theme="parchment"] svg.text-accent {
+  color: var(--parch-gilt-mark);
+}
+
+/* ═══════════════════════════════════════════════════ 9 · THE NESTING ══════ *
+ * The reference's middle panel is a frame around a RECESSED grid, and that
+ * nesting — rail, then well, then plate — is most of what separates a menu
+ * from a list of cards. Paddock's chat-list column is the same shape: a long
+ * scrolling index sitting between the wine rail and the content. Sunk, with
+ * the light falling off at both edges, it becomes the well.
+ */
+[data-theme="parchment"] main div.w-64.border-r {
+  /*
+   * Carved from the SAME sheet as the field, not tinted darker. A well ought to
+   * be darker than what contains it, and this one is contained by `--surface`
+   * — but `--surface` is already the darkest surface in the theme, the one the
+   * whole ink ramp is solved against, so anything below it puts the chat-row
+   * timestamps under AA. The recess is therefore made entirely of light: same
+   * colour, shadow falling in from all three edges. Same reading, no contrast
+   * cost, and it stays correct if the palette moves.
+   */
+  background-color: var(--surface);
+  box-shadow:
+    inset 9px 0 12px -9px rgb(var(--shadow-color) / 0.75),
+    inset -9px 0 12px -9px rgb(var(--shadow-color) / 0.75),
+    inset 0 8px 10px -9px rgb(var(--shadow-color) / 0.7);
 }
 
 /* ═══════════════════════════════════════════════════ 8 · THE VOICE ════════ *
