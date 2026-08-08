@@ -157,19 +157,38 @@ const sources = walk(".").map((file) => ({ file, text: readFileSync(join(SRC, fi
 /** `lib/brand.ts` mirrors the server's default accent hex; that one is the seam. */
 const HEX_ALLOWED = new Set(["lib/brand.ts"]);
 
+/**
+ * Scan code, not prose. These rules exist to stop banned patterns being USED;
+ * a comment explaining why a pattern is banned — or documenting the class a
+ * line replaced — is exactly the thing we want people writing, and it should
+ * not trip the rule that motivated it. (It did, immediately: the comment on
+ * `SessionSidebar`'s chat-row timestamp quotes the `text-[11px]` it replaced.)
+ */
+function codeLines(text: string): Array<[number, string]> {
+  // Blank out every block comment (`/* … */` and JSX's `{/* … */}`) in place,
+  // keeping the newlines so reported line numbers stay true, then drop `//`
+  // lines. Cheaper and more reliable than tracking comment state line by line —
+  // the first attempt at that missed JSX comments, because they open with `{/*`.
+  const blanked = text.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "));
+  return blanked
+    .split("\n")
+    .map((line, i) => [i + 1, line] as [number, string])
+    .filter(([, line]) => !line.trim().startsWith("//"));
+}
+
 describe("colour discipline", () => {
   it("no component states a colour literally", () => {
     const offenders: string[] = [];
     for (const { file, text } of sources) {
       if (HEX_ALLOWED.has(file)) continue;
-      for (const [i, line] of text.split("\n").entries()) {
+      for (const [n, line] of codeLines(text)) {
         // Skip issue references (`#708`) and hash routes; a colour hex is 3 or
         // 6 hex digits inside a string or an arbitrary Tailwind value.
         if (/["'[]#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})\b/.test(line)) {
-          offenders.push(`${file}:${i + 1}: ${line.trim().slice(0, 100)}`);
+          offenders.push(`${file}:${n}: ${line.trim().slice(0, 100)}`);
         }
         if (/\brgba?\(\s*\d/.test(line)) {
-          offenders.push(`${file}:${i + 1}: ${line.trim().slice(0, 100)}`);
+          offenders.push(`${file}:${n}: ${line.trim().slice(0, 100)}`);
         }
       }
     }
@@ -179,8 +198,8 @@ describe("colour discipline", () => {
   it("no component addresses a raw palette step", () => {
     const offenders: string[] = [];
     for (const { file, text } of sources) {
-      for (const [i, line] of text.split("\n").entries()) {
-        if (/-paddock-\d{2,3}\b/.test(line)) offenders.push(`${file}:${i + 1}`);
+      for (const [n, line] of codeLines(text)) {
+        if (/-paddock-\d{2,3}\b/.test(line)) offenders.push(`${file}:${n}`);
       }
     }
     expect(offenders, "use a semantic token (bg-surface, text-fg-muted, …)").toEqual([]);
@@ -196,8 +215,8 @@ describe("colour discipline", () => {
   it("no component invents a font size", () => {
     const offenders: string[] = [];
     for (const { file, text } of sources) {
-      for (const [i, line] of text.split("\n").entries()) {
-        if (/\btext-\[[\d.]+(px|rem)\]/.test(line)) offenders.push(`${file}:${i + 1}`);
+      for (const [n, line] of codeLines(text)) {
+        if (/\btext-\[[\d.]+(px|rem)\]/.test(line)) offenders.push(`${file}:${n}`);
       }
     }
     expect(offenders, "use a rung of the type scale (text-3xs … text-3xl)").toEqual([]);
@@ -206,9 +225,9 @@ describe("colour discipline", () => {
   it("no component uses `transition-all` or a bare outline focus ring", () => {
     const offenders: string[] = [];
     for (const { file, text } of sources) {
-      for (const [i, line] of text.split("\n").entries()) {
-        if (/\btransition-all\b/.test(line)) offenders.push(`${file}:${i + 1} transition-all`);
-        if (/\bfocus:outline\b(?!-none)/.test(line)) offenders.push(`${file}:${i + 1} outline ring`);
+      for (const [n, line] of codeLines(text)) {
+        if (/\btransition-all\b/.test(line)) offenders.push(`${file}:${n} transition-all`);
+        if (/\bfocus:outline\b(?!-none)/.test(line)) offenders.push(`${file}:${n} outline ring`);
       }
     }
     expect(offenders).toEqual([]);
