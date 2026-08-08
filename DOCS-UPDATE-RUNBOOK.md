@@ -685,8 +685,11 @@ hit hides inside an expected one.
 - Let CI run. `.github/workflows/ci.yml` has exactly **three** jobs: `test`
   (NUL-byte check + typecheck + unit/integration), `website` (docs-site build)
   and `e2e`. Two things follow:
-  - **There is NO secret scan.** The §7 leak check is yours alone; nothing
-    downstream catches what you miss.
+  - **No job here scans for secrets.** A **GitGuardian** check does run on the
+    PR, but it is a GitHub App rather than a CI job, and it looks for
+    *credentials* — it will not flag a private hostname, a dev-subdomain suffix,
+    a LAN IP or your instance's branding, which is most of what a docs pass
+    actually leaks. Treat the §7 leak check as yours alone.
   - The docs build is **path-filtered** to `website/**` and `openapi-site/**`, so
     a **README-only or `docs/`-only PR gets no docs build at all**. If your diff
     touches `astro.config.mjs` but nothing else triggers the filter, your local
