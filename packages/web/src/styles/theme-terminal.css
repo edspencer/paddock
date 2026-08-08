@@ -1,0 +1,365 @@
+/*
+ * terminal — the eighth runtime theme.
+ *
+ * ONE FILE plus one line in `lib/appearance.ts` and one in `index.html`. It is
+ * deliberately NOT emitted by `scripts/build-themes.mjs`: that generator lifts
+ * tokens out of the four original direction worktrees, and this theme was
+ * authored directly against the token contract instead. Nothing else in the
+ * system needs to know it exists.
+ *
+ * ---------------------------------------------------------------- the brief --
+ * "A 1337 hacker kinda vibe." The house craft floor tells every direction to
+ * avoid a near-black canvas with one bright acid-green accent, because it is a
+ * catalogued default-AI cliché. Ed waived that rule for this theme and only
+ * this theme. A waiver is not a licence to ship the slop version, so the
+ * reference is specific rather than vibes-based:
+ *
+ *   - DEC VT220 / VT100 P1 phosphor for the dark canvas: a green-cast black,
+ *     never #000, because a powered CRT face is never truly off.
+ *   - The 16-colour ANSI palette as the semantic set. It is a real, forty-
+ *     year-old system for exactly the job Paddock's status hues do, so the
+ *     mapping is honest rather than decorative: green=ok, yellow=attention,
+ *     red=failure, CYAN (not blue — ANSI blue is unreadable on black, which is
+ *     why every ncurses program reaches for cyan) = informational, magenta =
+ *     structure. htop, `ls --color`, git's diff colours all agree.
+ *   - IBM 3270 / Norton Commander / ncurses panel chrome: square corners,
+ *     frames drawn in the foreground colour rather than in a grey hairline,
+ *     corner ticks, reverse-video for the primary action.
+ *   - Iosevka everywhere, chrome included. This is the one theme where a
+ *     monospace UI is correct rather than affected.
+ *
+ * -------------------------------------------------------- the two artefacts --
+ * DARK is the tube. Green-cast black, phosphor-green text, a bright acid-green
+ * accent that fills a button and puts BLACK type on it — reverse video, the way
+ * a terminal has always drawn its selected item. Shadows are re-tinted to the
+ * accent so elevation reads as phosphor bloom instead of black occlusion.
+ *
+ * LIGHT is not that palette inverted. It is a LINE PRINTER: dark ribbon ink on
+ * warm paper, and `--surface-sunken` is the pale green bar of continuous-feed
+ * greenbar stock, so every well, input and code block in the app lands on the
+ * bar. Same face, same square frames, same structure, none of the glow. That is
+ * a real artefact from the same room as the terminal rather than a chore.
+ *
+ * ----------------------------------------------------------- what is waived --
+ * Contrast is NOT. Mid-grey comments at 2:1 is the classic terminal-theme
+ * failure and the reason most of them are unusable for prose. Every pairing
+ * here is asserted by `theme-terminal.test.ts`, which parses this file the way
+ * `tokens.test.ts` parses the foundation one. Body text is a green-tinted
+ * near-white rather than saturated #0F0: the green belongs to the chrome, the
+ * accents and the labels, because long agent prose is what Paddock is FOR.
+ */
+
+/*
+ * Iosevka 400/700 — SIL OFL 1.1, self-hosted, subset to latin + box drawing +
+ * block elements + geometric shapes (14 KB each). Chosen over the four mono
+ * faces already in the build because it is the terminal face of the era and
+ * because it is narrower than all of them, which a mono-everywhere UI needs.
+ *
+ * Two weights, not four, and the ranges are stretched to cover the whole scale:
+ * a terminal has exactly two weights, so `font-medium` renders regular and
+ * `font-semibold` renders bold. That is the authentic answer and it halves the
+ * download.
+ */
+@font-face {
+  font-family: "Iosevka Terminal";
+  font-style: normal;
+  font-weight: 100 500;
+  font-display: swap;
+  src: url("/fonts/iosevka-terminal-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Iosevka Terminal";
+  font-style: normal;
+  font-weight: 600 900;
+  font-display: swap;
+  src: url("/fonts/iosevka-terminal-700.woff2") format("woff2");
+}
+
+/* ================================================================ tokens == */
+
+[data-theme="terminal"] {
+  /* One family, four roles. Nothing in this app is set in a proportional face. */
+  --font-sans: "Iosevka Terminal", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-display: var(--font-sans);
+  --font-mono: var(--font-sans);
+  --font-prose: var(--font-sans);
+
+  /*
+   * Square, all the way down. The radius scale exists precisely so a direction
+   * can shift the whole system in one place; a TUI's is zero. Concentric nesting
+   * is satisfied trivially.
+   */
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+  --radius-2xl: 0px;
+  --radius-3xl: 0px;
+}
+
+/* ------------------------------------------------------------------ light --
+ * The line printer. Paper is a warm off-white with the faintest green in it;
+ * the sunken step IS the greenbar. Ink is a near-black with a green cast, the
+ * colour a well-inked ribbon actually leaves.
+ */
+[data-theme="terminal"]:not(.dark) {
+  --accent: 48 247 109; /* #30f76d — the tube green */
+  --accent-600: 36 160 71; /* #24a047 */
+  --accent-700: 9 103 46; /* #09672e — ink green, the printable one */
+
+  /*
+   * Greenbar stock is not green paper — it is WHITE paper with green bars
+   * printed on it, which is why it was legible enough to survive thirty years
+   * of machine-room use. So `surface`/`raised` are all but neutral and the
+   * green is concentrated in the sunken step, where the app puts its wells:
+   * inputs, code blocks, tracks, hovered and selected rows. Every dense list in
+   * Paddock lands on the bar.
+   */
+  --surface: oklch(0.976 0.005 105);
+  --surface-raised: oklch(0.997 0.002 105);
+  --surface-sunken: oklch(0.918 0.042 148);
+  --surface-hover: oklch(0.938 0.032 148);
+  --surface-active: oklch(0.9 0.048 148);
+  --surface-selected: oklch(0.893 0.058 148);
+  --overlay: oklch(0 0 0 / 0.38);
+  --overlay-strong: oklch(0 0 0 / 0.82);
+
+  --text: oklch(0.235 0.028 150);
+  --text-muted: oklch(0.408 0.032 150);
+  --text-subtle: oklch(0.472 0.034 150);
+  --text-on-solid: oklch(0.99 0.004 128);
+
+  /* Frames are drawn in ink, not in grey. A printed rule is the same ribbon as
+     the type, just thinner. */
+  --border-subtle: oklch(0.882 0.022 148);
+  --border: oklch(0.782 0.036 148);
+  --border-strong: oklch(0.548 0.058 150);
+
+  /* On paper, "reverse video" is a solid block of ink with the paper showing
+     through the type — so the fill is the dark ink green and the label is
+     paper. Hover goes darker, never lighter. */
+  --accent-color: rgb(var(--accent-600));
+  --accent-solid: rgb(var(--accent-700));
+  --accent-solid-hover: color-mix(in oklab, rgb(var(--accent-700)) 78%, black);
+  --accent-fg: oklch(0.99 0.004 128);
+  --accent-text: rgb(var(--accent-700));
+  --accent-soft: color-mix(in oklab, rgb(var(--accent)) 24%, var(--surface-raised));
+  --accent-border: color-mix(in oklab, rgb(var(--accent-600)) 52%, var(--surface));
+
+  /* ANSI, printed. Same five hues as the tube, run down to ink lightness. */
+  --success-solid: oklch(0.49 0.128 148);
+  --success-fg: oklch(0.99 0.004 128);
+  --success-text: oklch(0.435 0.115 148);
+  --success-soft: oklch(0.932 0.048 148);
+  --success-border: oklch(0.79 0.085 148);
+
+  --warn-solid: oklch(0.5 0.102 78);
+  --warn-fg: oklch(0.99 0.004 128);
+  --warn-text: oklch(0.455 0.093 78);
+  --warn-soft: oklch(0.938 0.05 82);
+  --warn-border: oklch(0.8 0.09 80);
+
+  --danger-solid: oklch(0.485 0.175 27);
+  --danger-fg: oklch(0.99 0.004 128);
+  --danger-text: oklch(0.455 0.175 27);
+  --danger-soft: oklch(0.936 0.032 27);
+  --danger-border: oklch(0.79 0.09 27);
+
+  --info-solid: oklch(0.48 0.081 210);
+  --info-fg: oklch(0.99 0.004 128);
+  --info-text: oklch(0.445 0.075 210);
+  --info-soft: oklch(0.934 0.035 205);
+  --info-border: oklch(0.79 0.06 208);
+
+  --lineage-solid: oklch(0.475 0.175 330);
+  --lineage-fg: oklch(0.99 0.004 128);
+  --lineage-text: oklch(0.45 0.175 330);
+  --lineage-soft: oklch(0.936 0.032 330);
+  --lineage-border: oklch(0.79 0.075 330);
+
+  /* Paper does not glow. Just enough to lift a menu off the page. */
+  --shadow-color: 30 52 34;
+  --shadow-ambient: 0.06;
+  --shadow-direct: 0.07;
+
+  --scroll-thumb: oklch(0.782 0.036 148);
+}
+
+/* ------------------------------------------------------------------- dark --
+ * The tube. Every surface carries the same green cast at rising lightness, so
+ * the ladder reads as one piece of glass rather than as stacked greys.
+ */
+[data-theme="terminal"].dark {
+  --accent: 48 247 109;
+  --accent-600: 36 160 71;
+  --accent-700: 9 103 46;
+
+  --surface: oklch(0.158 0.016 152);
+  --surface-raised: oklch(0.196 0.019 152);
+  --surface-sunken: oklch(0.114 0.013 152);
+  --surface-hover: oklch(0.233 0.024 152);
+  --surface-active: oklch(0.272 0.03 152);
+  --surface-selected: oklch(0.262 0.042 148);
+  --overlay: oklch(0 0 0 / 0.66);
+  --overlay-strong: oklch(0 0 0 / 0.9);
+
+  /*
+   * Body text is a green-tinted near-white, NOT saturated phosphor. Full #0F0
+   * at paragraph length is the single reason most terminal themes are unusable
+   * for reading, and Paddock is mostly long agent prose. The saturation lives
+   * in `--accent-text` and the status hues, which are short strings.
+   */
+  --text: oklch(0.925 0.042 150);
+  --text-muted: oklch(0.775 0.055 150);
+  --text-subtle: oklch(0.692 0.058 150);
+  /* Type on a saturated fill is the tube's black — reverse video. */
+  --text-on-solid: oklch(0.15 0.02 150);
+
+  --border-subtle: oklch(0.298 0.032 152);
+  --border: oklch(0.408 0.055 152);
+  --border-strong: oklch(0.6 0.088 150);
+
+  --accent-color: rgb(var(--accent));
+  --accent-solid: rgb(var(--accent));
+  --accent-solid-hover: color-mix(in oklab, rgb(var(--accent)) 74%, white);
+  --accent-fg: oklch(0.15 0.02 150);
+  --accent-text: rgb(var(--accent));
+  --accent-soft: color-mix(in oklab, rgb(var(--accent)) 15%, var(--surface));
+  --accent-border: color-mix(in oklab, rgb(var(--accent)) 45%, var(--surface));
+
+  /*
+   * ANSI bright, on black, with black type on the fills. A colour block in a
+   * terminal is the bright colour with the background punched through it — so
+   * every `-solid` here is light and every `-fg` is the tube black, which is
+   * both authentic and the easy side of the contrast problem.
+   */
+  --success-solid: oklch(0.8 0.2 148);
+  --success-fg: oklch(0.15 0.02 150);
+  --success-text: oklch(0.855 0.19 148);
+  --success-soft: oklch(0.248 0.058 148);
+  --success-border: oklch(0.405 0.09 148);
+
+  --warn-solid: oklch(0.845 0.165 85);
+  --warn-fg: oklch(0.15 0.02 150);
+  --warn-text: oklch(0.865 0.145 85);
+  --warn-soft: oklch(0.255 0.05 85);
+  --warn-border: oklch(0.42 0.08 85);
+
+  --danger-solid: oklch(0.705 0.183 27);
+  --danger-fg: oklch(0.15 0.02 150);
+  --danger-text: oklch(0.775 0.13 27);
+  --danger-soft: oklch(0.262 0.072 27);
+  --danger-border: oklch(0.425 0.11 27);
+
+  --info-solid: oklch(0.83 0.125 200);
+  --info-fg: oklch(0.15 0.02 150);
+  --info-text: oklch(0.865 0.12 200);
+  --info-soft: oklch(0.258 0.043 200);
+  --info-border: oklch(0.418 0.07 200);
+
+  --lineage-solid: oklch(0.755 0.185 330);
+  --lineage-fg: oklch(0.15 0.02 150);
+  --lineage-text: oklch(0.805 0.17 330);
+  --lineage-soft: oklch(0.268 0.072 330);
+  --lineage-border: oklch(0.432 0.11 330);
+
+  /*
+   * Elevation as PHOSPHOR BLOOM. The shadow channels are the accent green
+   * instead of black, so a raised panel is haloed by the light coming off the
+   * screen rather than casting a shadow onto it — which is what a self-lit
+   * display actually does. Alphas are small; the two layers of the shadow scale
+   * do the rest.
+   */
+  --shadow-color: 48 247 109;
+  --shadow-ambient: 0.14;
+  --shadow-direct: 0.07;
+
+  --scroll-thumb: oklch(0.408 0.055 152);
+}
+
+/* ================================================================ chrome ==
+ * Everything below is gated on `[data-theme="terminal"]` and is therefore inert
+ * for the other seven themes. It is deliberately small: four rules, no
+ * component changes, no new markup.
+ */
+
+/* Reverse video. A terminal has always shown a selection as the two colours
+   swapped, and it costs one rule. */
+[data-theme="terminal"] ::selection {
+  background: var(--accent-color);
+  color: var(--accent-fg);
+}
+
+/* A block caret in the accent, where the browser will give us one. */
+[data-theme="terminal"] :is(input, textarea) {
+  caret-color: var(--accent-color);
+  caret-shape: block;
+}
+
+/*
+ * Corner ticks — the ncurses panel mark. Every raised, bordered surface (cards,
+ * menus, the composer, dialogs) gets four short L-shaped rules at its corners,
+ * painted as background gradients rather than pseudo-elements so nothing gains
+ * a stacking context and no component's layout changes.
+ *
+ * `--tick` is the arm length; the gradients are 1px hairlines in the border
+ * colour, drawn just inside the frame.
+ */
+[data-theme="terminal"] .border.bg-surface-raised,
+[data-theme="terminal"] .border.bg-surface-sunken {
+  --tick: 7px;
+  background-image:
+    /* top-left */
+    linear-gradient(to right, var(--border-strong) 0 var(--tick), transparent var(--tick)),
+    linear-gradient(to bottom, var(--border-strong) 0 var(--tick), transparent var(--tick)),
+    /* top-right */ linear-gradient(to left, var(--border-strong) 0 var(--tick), transparent var(--tick)),
+    linear-gradient(to bottom, var(--border-strong) 0 var(--tick), transparent var(--tick)),
+    /* bottom-left */ linear-gradient(to right, var(--border-strong) 0 var(--tick), transparent var(--tick)),
+    linear-gradient(to top, var(--border-strong) 0 var(--tick), transparent var(--tick)),
+    /* bottom-right */ linear-gradient(to left, var(--border-strong) 0 var(--tick), transparent var(--tick)),
+    linear-gradient(to top, var(--border-strong) 0 var(--tick), transparent var(--tick));
+  background-repeat: no-repeat;
+  background-size:
+    var(--tick) 1px,
+    1px var(--tick),
+    var(--tick) 1px,
+    1px var(--tick),
+    var(--tick) 1px,
+    1px var(--tick),
+    var(--tick) 1px,
+    1px var(--tick);
+  background-position:
+    top left,
+    top left,
+    top right,
+    top right,
+    bottom left,
+    bottom left,
+    bottom right,
+    bottom right;
+}
+
+/*
+ * Phosphor bloom on accent TEXT, dark mode only. A lit pixel on a CRT spills
+ * into its neighbours; that halo is most of why a green screen looks like a
+ * green screen. Confined to `text-accent` — links, counts, the "in use" marker,
+ * short strings — and never applied to body prose, where a glow stops being
+ * atmosphere and starts being a blur. Light mode has no glow at all: ink does
+ * not emit.
+ */
+[data-theme="terminal"].dark .text-accent {
+  text-shadow: 0 0 7px color-mix(in oklab, var(--accent-color) 38%, transparent);
+}
+
+/*
+ * TAKEN OFF, deliberately. A fifth rule put CRT raster lines on the reverse-
+ * video fills — a 1px-in-3px `repeating-linear-gradient` over the primary and
+ * destructive buttons. It was built, shipped to the preview and photographed:
+ * at 6x magnification it is exactly right, and at 1:1 on a 36px-tall button it
+ * reads as banding, the kind of thing you file a rendering bug about. The
+ * texture needs more vertical room than any control in this app has.
+ *
+ * Left as a note rather than as code because the idea is sound and the next
+ * person will have it: it wants a large surface (a full-bleed hero, a login
+ * screen), not a button.
+ */

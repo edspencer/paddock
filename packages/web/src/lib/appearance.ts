@@ -55,6 +55,11 @@ export const THEMES = [
     label: "Parchment",
     blurb: "Wine chrome, corner brackets, an old-style serif. A 90s RPG menu.",
   },
+  {
+    id: "terminal",
+    label: "Terminal",
+    blurb: "Phosphor and ANSI in the dark; greenbar and ribbon ink in the light.",
+  },
 ] as const;
 
 export type ThemeId = (typeof THEMES)[number]["id"];
