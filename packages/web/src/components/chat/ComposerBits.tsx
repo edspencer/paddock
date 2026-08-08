@@ -76,7 +76,11 @@ export function StatusRow({
   onOpenForkParent?: (sessionId: string) => void;
 }) {
   return (
-    <div className="mb-2 flex items-center gap-3 px-1 text-2xs text-fg-subtle">
+    // Every value in this row is a machine reading — a model id, a token count,
+    // a percentage, a dollar estimate — so the whole strip is mono and tabular.
+    // It sits directly under the transcript, which is set in the serif; the face
+    // change is what tells you this bar is instrumentation and not conversation.
+    <div className="mb-2 flex items-center gap-3 px-1 font-mono text-2xs text-fg-subtle tabular">
       <label className="inline-flex items-center gap-1.5">
         <span className="font-medium text-fg-muted">Model</span>
         <select
@@ -130,23 +134,30 @@ export function ContextMeter({ usage }: { usage: ChatCompleteUsage | null }) {
     return <span className="text-fg-subtle">context: —</span>;
   }
   const pct = Math.min(100, Math.max(0, (usage.contextTokens / usage.contextLimit) * 100));
-  const warn = pct >= 80;
   const used = Math.round(usage.contextTokens / 1000);
   const limit = Math.round(usage.contextLimit / 1000);
+  // `phosphor`: a fuel gauge is a MACHINE reading, so it wears machine hues, not
+  // the accent — the accent means "the operator" in this direction and a context
+  // window is not something you said. Three rungs rather than two, because the
+  // difference between "getting full" and "about to compact" is the one you
+  // actually want a colour for.
+  const level = pct >= 95 ? "danger" : pct >= 80 ? "warn" : "info";
+  const fill =
+    level === "danger" ? "bg-danger-solid" : level === "warn" ? "bg-warn-solid" : "bg-info-solid";
+  const tone =
+    level === "danger" ? "text-danger" : level === "warn" ? "text-warn" : undefined;
   return (
     <span
       className="inline-flex min-w-0 items-center gap-1.5"
       title={`Context window used as of the last completed turn (${usage.contextTokens.toLocaleString()} / ${usage.contextLimit.toLocaleString()} tokens)`}
     >
-      <span className="h-1 w-20 overflow-hidden rounded-full bg-surface-active">
+      <span className="h-1 w-20 overflow-hidden rounded-sm bg-surface-active">
         <span
-          className={`motion-base block h-full rounded-full transition-[width,background-color] ${
-            warn ? "bg-warn-solid" : "bg-accent-solid"
-          }`}
+          className={`motion-base block h-full transition-[width,background-color] ${fill}`}
           style={{ width: `${pct}%` }}
         />
       </span>
-      <span className={warn ? "text-warn" : undefined}>
+      <span className={tone}>
         {used}k / {limit}k ({Math.round(pct)}%)
       </span>
     </span>

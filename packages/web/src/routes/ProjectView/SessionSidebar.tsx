@@ -355,7 +355,11 @@ export function SessionSidebar({
         </span>
         {/* Row 2 (left): relative time. The actions live on this row too, as
             an absolute sibling anchored bottom-right (below). */}
-        <span className="chat-row-time text-2xs text-fg-subtle">
+        {/* The one number on the row, and the one you compare down the column:
+            mono + tabular, so "1w ago" and "22h ago" line up instead of dancing
+            as the list re-sorts. The title above it stays in the serif — it is
+            language someone (or Claude) wrote. */}
+        <span className="chat-row-time font-mono text-2xs text-fg-subtle tabular">
           {relativeTime(c.updatedAt)}
         </span>
       </button>
