@@ -79,13 +79,29 @@ the conventional white-on-mid arrangement — 7.3:1 in dark, 5.3:1 in light — 
 it means `hover` can go *brighter*, raising contrast on interaction instead of
 lowering it.
 
-**Caveat, and it is a real one.** Because `--accent-fg` is dark, a
-`PADDOCK_BRAND_ACCENT` set to a *dark* colour would put dark type on a dark fill.
-The branding seam still works — every accent token derives from the three sRGB
-channels, and the guard proves it — but this direction assumes a brand accent
-light enough to carry dark type. That is the mirror image of the assumption the
-white-foreground directions make, not a bug, but it should be a deliberate choice
-if this direction ships.
+**Caveat, measured.** Because `--accent-fg` is dark, the readability of the
+primary button depends on how light the brand accent is. The branding seam itself
+still works — every accent token derives from the three sRGB channels, and
+`tokens.test.ts` proves all five follow an injected override — but the *contrast*
+does not come for free. Measured `--accent-fg` on `--accent-solid`, identical in
+both modes because the three channels are mode-independent:
+
+| `PADDOCK_BRAND_ACCENT` | solid | fg on solid | on hover |
+|---|---|---|---|
+| **default (phosphor rose)** | `#c86a96` | **5.11:1** ✅ | **7.29:1** ✅ |
+| a light brand, e.g. sky `56 189 248` | `#0ea5e9` | 6.50:1 ✅ | 8.40:1 ✅ |
+| Paddock's old terracotta `194 96 60` | `#a84e2f` | 3.25:1 ⚠️ large-text only | 4.31:1 ⚠️ |
+| a dark brand, e.g. navy `20 80 160` | `#11458a` | 1.92:1 ❌ | 2.30:1 ❌ |
+
+So: the default path is unambiguously correct and *improves* on hover, a light
+brand is fine, and a dark brand breaks. This is the mirror image of the
+assumption a white-foreground direction makes (where a *light* brand breaks
+instead) — it is not a bug, but if this direction ships it should be a deliberate
+choice, and the honest fix is a luminance-aware `--accent-fg`, which CSS cannot
+express portably today (`color-contrast()` is Safari-only). The cheap fallback,
+if a dark brand accent is ever needed, is to set `--accent-fg` to white and
+`--accent-solid` to the 600 step, giving up the lit-chip metaphor on the accent
+alone while the five status hues keep it.
 
 ## Type
 
