@@ -217,9 +217,34 @@
    *
    * `multiply` can only darken, so the failure is bounded and points the safe
    * way — it improves light-on-dark contrast (all the chrome text) and can only
-   * hurt dark-on-light. The light-surface tile is therefore cut to a whisper, a
-   * [0.974, 1] band worth under 0.005 of lightness, while the chrome tile —
-   * where darkening is free — keeps a real [0.85, 1] fibre.
+   * hurt dark-on-light.
+   *
+   * The first pass at that cut the light-surface tile to a whisper — a
+   * [0.974, 1] band — purely to keep the guard's numbers honest, and the
+   * texture promptly vanished. Ed: "we lost the texture." Hiding from the
+   * problem was the wrong move; the right one is to TELL THE GUARD. The band is
+   * now [0.93, 1] with the low-frequency mottle dominant — large soft blotches
+   * read as an aged sheet where fine grain reads as static.
+   *
+   * THE SLOPES ARE MEASURED, NOT CHOSEN, and two attempts failed before that.
+   * `feTurbulence` does not fill [0, 1]: rendered to a canvas and sampled, this
+   * one spans 0.51–0.89 with its median at 0.737. A transfer function written
+   * over the theoretical range therefore spends almost all of itself on values
+   * the noise never emits — the first "visible" band mapped the ENTIRE noise
+   * above 1.0, where `multiply` clamps it, and produced three levels of
+   * variation out of 255. Each layer's slope and intercept here is solved from
+   * that measured histogram so p90 lands exactly on 1.0 (most of the sheet is
+   * clean paper) and the minimum lands on the floor (the darkest stain). If you
+   * change a `baseFrequency` or `numOctaves`, RE-MEASURE — the distribution
+   * moves with them. And
+   * `theme-parchment.test.ts` asserts every light-mode foreground against the
+   * surface MULTIPLIED BY `TEXTURE_MIN` — the darkest pixel the tile can
+   * produce — instead of against the flat token. So the texture is visible and
+   * the contrast floor holds at the worst pixel on screen, not the average one.
+   *
+   * Dark mode needs no such factor: multiply darkens, and a darker background
+   * under LIGHT text only improves the ratio, so its token is already the worst
+   * case. Same for the chrome in both modes.
    *
    * The general lesson, which cost three rounds: THE CONTRAST GUARD READS
    * TOKENS AND THE SCREEN SHOWS PIXELS, and a blend mode sits between them. It
@@ -228,8 +253,8 @@
    * rather than incomplete. Anything compositing over a surface has to be
    * verified by sampling the rendered page.
    */
-  --parch-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='m' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.013' numOctaves='3' stitchTiles='stitch' seed='5'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.026' intercept='0.974'/%3E%3CfeFuncG type='linear' slope='0.026' intercept='0.974'/%3E%3CfeFuncB type='linear' slope='0.026' intercept='0.974'/%3E%3CfeFuncA type='linear' slope='0' intercept='1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Cfilter id='g' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.35 0.9' numOctaves='4' stitchTiles='stitch' seed='11'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.03' intercept='0.97'/%3E%3CfeFuncG type='linear' slope='0.03' intercept='0.97'/%3E%3CfeFuncB type='linear' slope='0.03' intercept='0.97'/%3E%3CfeFuncA type='linear' slope='0' intercept='1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23m)'/%3E%3Crect width='300' height='300' filter='url(%23g)' opacity='0.5'/%3E%3C/svg%3E");
-  --parch-fibre: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='320'%3E%3Cfilter id='b' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.018' numOctaves='3' stitchTiles='stitch' seed='9'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.15' intercept='0.85'/%3E%3CfeFuncG type='linear' slope='0.15' intercept='0.85'/%3E%3CfeFuncB type='linear' slope='0.15' intercept='0.85'/%3E%3CfeFuncA type='linear' slope='0' intercept='1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Cfilter id='f' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.012 0.6' numOctaves='4' stitchTiles='stitch' seed='3'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.13' intercept='0.87'/%3E%3CfeFuncG type='linear' slope='0.13' intercept='0.87'/%3E%3CfeFuncB type='linear' slope='0.13' intercept='0.87'/%3E%3CfeFuncA type='linear' slope='0' intercept='1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='320' height='320' filter='url(%23b)'/%3E%3Crect width='320' height='320' filter='url(%23f)' opacity='0.55'/%3E%3C/svg%3E");
+  --parch-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='320'%3E%3Cfilter id='m' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.012' numOctaves='2' stitchTiles='stitch' seed='5'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.2349' intercept='0.8102'/%3E%3CfeFuncG type='linear' slope='0.2349' intercept='0.8102'/%3E%3CfeFuncB type='linear' slope='0.2349' intercept='0.8102'/%3E%3CfeFuncA type='linear' slope='0' intercept='1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Cfilter id='g' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.22 0.75' numOctaves='3' stitchTiles='stitch' seed='11'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.0959' intercept='0.9225'/%3E%3CfeFuncG type='linear' slope='0.0959' intercept='0.9225'/%3E%3CfeFuncB type='linear' slope='0.0959' intercept='0.9225'/%3E%3CfeFuncA type='linear' slope='0' intercept='1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='320' height='320' filter='url(%23m)'/%3E%3Crect width='320' height='320' filter='url(%23g)' opacity='0.35'/%3E%3C/svg%3E");
+  --parch-fibre: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='320'%3E%3Cfilter id='b' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.018' numOctaves='3' stitchTiles='stitch' seed='9'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.549' intercept='0.5586'/%3E%3CfeFuncG type='linear' slope='0.549' intercept='0.5586'/%3E%3CfeFuncB type='linear' slope='0.549' intercept='0.5586'/%3E%3CfeFuncA type='linear' slope='0' intercept='1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Cfilter id='f' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.012 0.6' numOctaves='4' stitchTiles='stitch' seed='3'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.5051' intercept='0.5899'/%3E%3CfeFuncG type='linear' slope='0.5051' intercept='0.5899'/%3E%3CfeFuncB type='linear' slope='0.5051' intercept='0.5899'/%3E%3CfeFuncA type='linear' slope='0' intercept='1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='320' height='320' filter='url(%23b)'/%3E%3Crect width='320' height='320' filter='url(%23f)' opacity='0.55'/%3E%3C/svg%3E");
 }
 
 /* ------------------------------------------------------------------ light --
@@ -279,8 +304,8 @@
   /* Ink. Everything is pulled onto the wine so the page reads as one drawn
      object; nothing here is a neutral grey. */
   --text: oklch(0.3 0.055 32);
-  --text-muted: oklch(0.442 0.05 30);
-  --text-subtle: oklch(0.446 0.042 34);
+  --text-muted: oklch(0.415 0.05 30);
+  --text-subtle: oklch(0.414 0.042 34);
   --text-on-solid: oklch(0.975 0.014 84);
 
   /* Rules, in the reference's two tones: `--border` is the lighter outer line
@@ -301,31 +326,31 @@
      brass. `danger` is pushed to 32 so it cannot be read as the wine at 15. */
   --success-solid: oklch(0.475 0.1 146);
   --success-fg: oklch(0.975 0.014 84);
-  --success-text: oklch(0.43 0.095 146);
+  --success-text: oklch(0.4 0.095 146);
   --success-soft: oklch(0.932 0.034 146);
   --success-border: oklch(0.83 0.062 146);
 
   --warn-solid: oklch(0.545 0.108 78);
   --warn-fg: oklch(0.975 0.014 84);
-  --warn-text: oklch(0.443 0.09 78);
+  --warn-text: oklch(0.413 0.084 78);
   --warn-soft: oklch(0.936 0.045 82);
   --warn-border: oklch(0.828 0.078 82);
 
   --danger-solid: oklch(0.5 0.155 32);
   --danger-fg: oklch(0.975 0.014 84);
-  --danger-text: oklch(0.457 0.15 32);
+  --danger-text: oklch(0.427 0.15 32);
   --danger-soft: oklch(0.93 0.032 32);
   --danger-border: oklch(0.828 0.07 32);
 
   --info-solid: oklch(0.48 0.095 245);
   --info-fg: oklch(0.975 0.014 84);
-  --info-text: oklch(0.438 0.09 245);
+  --info-text: oklch(0.408 0.09 245);
   --info-soft: oklch(0.932 0.03 245);
   --info-border: oklch(0.83 0.055 245);
 
   --lineage-solid: oklch(0.48 0.125 312);
   --lineage-fg: oklch(0.975 0.014 84);
-  --lineage-text: oklch(0.453 0.12 312);
+  --lineage-text: oklch(0.424 0.12 312);
   --lineage-soft: oklch(0.932 0.032 312);
   --lineage-border: oklch(0.83 0.06 312);
 
