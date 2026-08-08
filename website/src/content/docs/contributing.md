@@ -24,7 +24,9 @@ re-reading it here:
   resolve the SDK's own bundled binary and never consult `PATH`, so they run without
   it — and so do **triggers**, which resolve their drive mode exactly like a chat
   (project override, else the instance default, which is `session`). Only the sweeper
-  goes through the CLI unconditionally.
+  goes through the CLI unconditionally. If you are reading the source, note that
+  several comments still claim *all* triggers are CLI turns — they are wrong, and
+  tracked as [#771](https://github.com/edspencer/paddock/issues/771).
 - A **Claude Max OAuth token** (`CLAUDE_CODE_OAUTH_TOKEN`) or an
   `ANTHROPIC_API_KEY` in your environment. Never print or commit it — load it into
   the environment, don't hardcode it (see [DEV.md](https://github.com/edspencer/paddock/blob/main/DEV.md)).

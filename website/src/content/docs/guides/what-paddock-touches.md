@@ -90,7 +90,7 @@ wrong. Where they belong is
 `.paddock/` and `.chats/` there and adds both to `.gitignore`, and it offers any
 Claude Code sessions you already have **for that directory** for **adoption**. (The
 CLI's own output and `--help` still call this *import* — same feature, one rename
-behind the UI.)
+behind the UI; [#770](https://github.com/edspencer/paddock/issues/770).)
 
 It decides nothing else. In particular it does **not** change where transcripts
 live or which login is used — those are `transcripts` and `credentials`,

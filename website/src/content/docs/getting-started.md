@@ -25,7 +25,8 @@ looking at your own conversations, resumable.
 :::note[The CLI still calls this "import"]
 **Adopt** is the product word: it is what the sidebar row, the dialog, the button and
 the badge all say. The CLI's own startup text and `--help` are one rename behind and
-still print *"offered for import"* — same feature, older label.
+still print *"offered for import"* — same feature, older label, tracked as
+[#770](https://github.com/edspencer/paddock/issues/770).
 :::
 
 Later runs in the same directory resume it, with no flag needed.

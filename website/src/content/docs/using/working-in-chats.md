@@ -84,7 +84,9 @@ history location, `--data-dir <dir>` to name the instance, `--move` to move rath
 copy, `--dry-run` to see what would happen, and `--json` for machine-readable output.
 
 The script keeps the older *import* name deliberately — it predates the UI's rename to
-**Adopt** and renaming it would break anyone's scripts.
+**Adopt**, and renaming it would break anyone's scripts. (The CLI's `--help` text also
+still says "import" where it means "adopt"; that part *is* a bug —
+[#770](https://github.com/edspencer/paddock/issues/770).)
 :::
 
 ## Project chats vs root chats

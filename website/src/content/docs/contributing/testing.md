@@ -208,7 +208,16 @@ workspace, tags, theme, turn notices, home attention, project view, landing, and
 two mobile journeys.
 
 Artifacts (screenshots on failure, traces/videos on retry) go to the run's temp
-dir, never the repo.
+dir, never the repo. The HTML report lands there too, under `<temp>/report`.
+
+:::note[Don't go looking for the report in a failed CI run]
+CI has an upload step for the Playwright report, but it points at
+`test/e2e/playwright-report/` — a path the reporter never writes to — with
+`if-no-files-found: ignore`, so it is a silent no-op on every failed E2E run. Reproduce
+locally to get a report. Tracked as
+[#774](https://github.com/edspencer/paddock/issues/774); the workflow is what's wrong
+here, not the config.
+:::
 
 ### Live mode (`npm run test:e2e:live`)
 
@@ -233,8 +242,10 @@ path actually run.
 > **trigger is not automatically a `trigger()` call**: a scheduled or event trigger
 > resolves its drive mode exactly like a chat (project override, else the instance
 > default), so on the default `session` it goes through `openChatSession` too. Only
-> the sweeper is unconditional. The original note here also framed this as a
-> Max-vs-API-key choice, which was wrong: either credential works on either runtime.
+> the sweeper is unconditional — several source comments still say otherwise, tracked
+> as [#771](https://github.com/edspencer/paddock/issues/771). The original note here
+> also framed this as a Max-vs-API-key choice, which was wrong: either credential works
+> on either runtime.
 
 `index.ts` was also split into a `buildApp()` factory (`app.ts`) so tests can boot the
 app without binding a port or installing signal handlers — a pure seam, no behavior
