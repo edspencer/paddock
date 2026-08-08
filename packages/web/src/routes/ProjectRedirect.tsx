@@ -47,7 +47,7 @@ export function ProjectRedirect() {
   }, [slug]);
 
   if (target === null) {
-    return <div className="p-8 text-sm text-paddock-500">Opening project…</div>;
+    return <div className="p-8 text-sm text-fg-muted">Opening project…</div>;
   }
   return <Navigate to={`/projects/${slug}/${target}`} replace />;
 }

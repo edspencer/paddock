@@ -23,7 +23,7 @@ export function TagPill({ tag, className = "" }: { tag: string; className?: stri
         navigate(`/tags/${encodeURIComponent(tag)}`);
       }}
       title={`Show projects tagged ${tag}`}
-      className={`tag relative z-10 transition-colors hover:bg-paddock-300/70 dark:hover:bg-paddock-700 ${className}`}
+      className={`tag relative z-10 transition-colors hover:bg-surface-selected ${className}`}
     >
       {tag}
     </button>

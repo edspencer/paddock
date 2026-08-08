@@ -252,9 +252,9 @@ export function InstanceConfigForm() {
                 fileError={config?.configFileError}
               />
 
-              {loading && <p className="text-sm text-paddock-500">Loading…</p>}
+              {loading && <p className="text-sm text-fg-muted">Loading…</p>}
               {loadError && (
-                <p className="text-sm text-red-600 dark:text-red-400" role="alert">
+                <p className="text-sm text-danger" role="alert">
                   Failed to load settings: {loadError}
                 </p>
               )}
@@ -262,7 +262,7 @@ export function InstanceConfigForm() {
               {config && anyEnvOverridden && <EnvLegend />}
 
               {config && visibleCount === 0 && (
-                <p className="py-8 text-center text-sm text-paddock-500">
+                <p className="py-8 text-center text-sm text-fg-muted">
                   No settings match{" "}
                   {query.trim() ? (
                     <>
@@ -296,14 +296,14 @@ export function InstanceConfigForm() {
       </div>
 
       {config && (
-        <footer className="flex items-center gap-3 border-t border-paddock-200 px-4 py-3 dark:border-paddock-800 sm:px-6">
+        <footer className="flex items-center gap-3 border-t border-edge px-4 py-3 sm:px-6">
           {saveError && (
-            <span className="flex items-center gap-1.5 text-[13px] text-red-600 dark:text-red-400" role="alert">
+            <span className="flex items-center gap-1.5 text-sm text-danger" role="alert">
               <AlertIcon width={14} height={14} className="shrink-0" />
               {saveError}
             </span>
           )}
-          <span className="ml-auto text-[12px] text-paddock-400">
+          <span className="ml-auto text-xs text-fg-subtle">
             {dirtyKeys.length > 0
               ? `${dirtyKeys.length} unsaved change${dirtyKeys.length === 1 ? "" : "s"}`
               : "No changes"}
@@ -350,7 +350,7 @@ function SectionRail({
   return (
     <nav
       aria-label="Config sections"
-      className="hidden w-52 shrink-0 overflow-y-auto border-r border-paddock-200 px-2 py-4 dark:border-paddock-800 lg:block"
+      className="hidden w-52 shrink-0 overflow-y-auto border-r border-edge px-2 py-4 lg:block"
     >
       <ul className="space-y-0.5">
         {groups.map((g) => {
@@ -362,20 +362,20 @@ function SectionRail({
                 type="button"
                 onClick={() => onJump(g.id)}
                 aria-current={isActive ? "true" : undefined}
-                className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] transition-colors ${
+                className={`motion-fast flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm transition-colors ${
                   isActive
-                    ? "bg-paddock-100 font-medium text-paddock-900 dark:bg-paddock-800 dark:text-paddock-100"
-                    : "text-paddock-500 hover:bg-paddock-100/60 hover:text-paddock-800 dark:hover:bg-paddock-800/50 dark:hover:text-paddock-200"
+                    ? "bg-surface-selected font-medium text-fg"
+                    : "text-fg-muted hover:bg-surface-hover hover:text-fg"
                 }`}
               >
                 <span className="min-w-0 flex-1 truncate">{g.label}</span>
                 {dirty > 0 && (
                   <span
-                    className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
+                    className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent-solid"
                     aria-label={`${dirty} unsaved`}
                   />
                 )}
-                <span className="shrink-0 text-[11px] tabular-nums text-paddock-400">
+                <span className="shrink-0 text-2xs tabular text-fg-subtle">
                   {g.fields.length}
                 </span>
               </button>
@@ -408,12 +408,12 @@ function FilterBar({
   autoFocus: boolean;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-2 border-b border-paddock-200 px-4 py-2.5 dark:border-paddock-800 sm:px-6">
+    <div className="flex flex-wrap items-center gap-2 border-b border-edge px-4 py-2.5 sm:px-6">
       <div className="relative min-w-0 flex-1 sm:max-w-sm">
         <SearchIcon
           width={14}
           height={14}
-          className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-paddock-400"
+          className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-subtle"
         />
         <input
           type="search"
@@ -421,7 +421,7 @@ function FilterBar({
           placeholder="Search settings, keys, env vars…"
           // `type=search` for the searchbox role; the UA's own clear affordance
           // is suppressed so it does not sit beside ours as a second ✕.
-          className="input h-8 w-full pl-8 pr-7 text-[13px] [&::-webkit-search-cancel-button]:appearance-none"
+          className="input h-8 w-full pl-8 pr-7 text-sm [&::-webkit-search-cancel-button]:appearance-none"
           value={query}
           // eslint-disable-next-line jsx-a11y/no-autofocus -- gated to pointer devices; see autoFocusFilter
           autoFocus={autoFocus}
@@ -440,7 +440,7 @@ function FilterBar({
             type="button"
             aria-label="Clear search"
             onClick={() => onQuery("")}
-            className="absolute right-2 top-1/2 -translate-y-1/2 text-paddock-400 hover:text-paddock-700 dark:hover:text-paddock-200"
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-fg-subtle hover:text-fg"
           >
             <XIcon width={13} height={13} />
           </button>
@@ -451,16 +451,16 @@ function FilterBar({
         type="button"
         aria-pressed={modifiedOnly}
         onClick={() => onModifiedOnly(!modifiedOnly)}
-        className={`shrink-0 rounded-md border px-2.5 py-1 text-[12px] transition-colors ${
+        className={`motion-fast shrink-0 rounded-md border px-2.5 py-1 text-xs transition-colors ${
           modifiedOnly
-            ? "border-accent/60 bg-accent/10 text-accent"
-            : "border-paddock-200 text-paddock-500 hover:text-paddock-800 dark:border-paddock-700 dark:hover:text-paddock-200"
+            ? "border-accent-edge bg-accent-soft text-accent"
+            : "border-edge text-fg-muted hover:text-fg"
         }`}
       >
         Modified only
       </button>
 
-      <span className="shrink-0 text-[12px] tabular-nums text-paddock-400">
+      <span className="shrink-0 text-xs tabular text-fg-subtle">
         {filtering ? `${visibleCount} of ${totalCount}` : `${totalCount} settings`}
       </span>
     </div>
@@ -487,19 +487,19 @@ function RestartBanner({
   restartRequired: boolean;
   fileError?: string;
 }) {
-  const tone = fileError ? "red" : saved ? "emerald" : "amber";
+  const tone = fileError ? "danger" : saved ? "success" : "warn";
   return (
     <div
       role="status"
-      className={`mb-5 flex items-start gap-2 rounded-lg border px-3 py-2.5 text-[13px] leading-snug ${
-        tone === "red"
-          ? "border-red-300 bg-red-50 text-red-800 dark:border-red-700/60 dark:bg-red-900/20 dark:text-red-300"
-          : tone === "emerald"
-            ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-700/60 dark:bg-emerald-900/20 dark:text-emerald-300"
-            : "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700/60 dark:bg-amber-900/20 dark:text-amber-300"
+      className={`mb-5 flex items-start gap-2 rounded-lg border px-3 py-2.5 text-sm leading-snug ${
+        tone === "danger"
+          ? "border-danger-edge bg-danger-soft text-danger"
+          : tone === "success"
+            ? "border-success-edge bg-success-soft text-success"
+            : "border-warn-edge bg-warn-soft text-warn"
       }`}
     >
-      {tone === "emerald" ? (
+      {tone === "success" ? (
         <CheckIcon width={15} height={15} className="mt-0.5 shrink-0" />
       ) : (
         <AlertIcon width={15} height={15} className="mt-0.5 shrink-0" />
@@ -518,13 +518,13 @@ function RestartBanner({
         ) : restartRequired ? (
           <>
             <strong>Restart pending.</strong>{" "}
-            <code className="font-mono text-[12px]">{filename(configPath)}</code> holds changes the
+            <code className="font-mono text-xs">{filename(configPath)}</code> holds changes the
             running instance has not picked up — the fields below marked{" "}
-            <Chip tone="amber">restart</Chip> differ from what is in force right now.
+            <Chip tone="warn">restart</Chip> differ from what is in force right now.
           </>
         ) : (
           <>
-            Changes here are written to <code className="font-mono text-[12px]">{filename(configPath)}</code>{" "}
+            Changes here are written to <code className="font-mono text-xs">{filename(configPath)}</code>{" "}
             and take effect only after the server restarts — the running instance keeps its current
             config until then.
           </>
@@ -541,8 +541,8 @@ function RestartBanner({
  */
 function EnvLegend() {
   return (
-    <p className="mb-5 text-[12px] leading-snug text-paddock-500">
-      Settings marked <Chip tone="amber">env</Chip> are overridden by an environment variable,
+    <p className="mb-5 text-xs leading-snug text-fg-muted">
+      Settings marked <Chip tone="warn">env</Chip> are overridden by an environment variable,
       which wins over this file — edit that variable (and restart) to change them.
     </p>
   );
@@ -569,15 +569,11 @@ function Section({
   return (
     <section
       id={sectionDomId(group.id)}
-      className={`scroll-mt-4 ${
-        first ? "" : "mt-9 border-t border-paddock-200 pt-7 dark:border-paddock-800"
-      }`}
+      className={`scroll-mt-4 ${first ? "" : "mt-9 border-t border-edge pt-7"}`}
     >
-      <h2 className="text-base font-semibold tracking-tight text-paddock-900 dark:text-paddock-50">
-        {group.label}
-      </h2>
+      <h2 className="text-base font-semibold tracking-tight text-fg">{group.label}</h2>
       {group.description && (
-        <p className="mt-1 text-[12px] leading-snug text-paddock-500">{group.description}</p>
+        <p className="mt-1 text-xs leading-snug text-fg-muted">{group.description}</p>
       )}
       <div className="mt-4">{children}</div>
     </section>
@@ -603,32 +599,38 @@ function Field({
   const locked = !f.editable || f.envOverridden;
   const inputId = `cfg-${f.key}`;
   const isBoolean = f.type === "boolean";
+  // Decided ONCE per field, from the SAVED value — never from `value`, which is
+  // the live per-keystroke edit. The layout must not depend on the in-flight
+  // edit: keying the width off it made a string field flip to `sm:col-span-2`
+  // the instant it crossed the length threshold, re-flowing itself and every
+  // field after it into different grid columns and moving the caret mid-type.
+  const wide = useMemo(() => isWide(f, fileValue(f)), [f]);
 
   return (
     <div
-      className={`min-w-0 ${isWide(f, value) ? "sm:col-span-2" : ""} ${
+      className={`min-w-0 ${wide ? "sm:col-span-2" : ""} ${
         dirty ? "-ml-2.5 border-l-2 border-accent pl-2" : ""
       }`}
     >
       <div className="flex items-center justify-between gap-2">
         <label
           htmlFor={locked || isBoolean ? undefined : inputId}
-          className="min-w-0 text-[13px] font-medium"
+          className="min-w-0 text-sm font-medium"
         >
           <span className="align-middle">{f.label}</span>
-          {f.sensitive && <Chip tone="amber">sensitive</Chip>}
+          {f.sensitive && <Chip tone="warn">sensitive</Chip>}
           {f.envOverridden && (
             <Chip
-              tone="amber"
+              tone="warn"
               title={`Overridden by environment variable ${f.envVar} — edit that env var (and restart) to change it.`}
             >
               env
             </Chip>
           )}
-          {!f.editable && !f.envOverridden && <Chip tone="plain">read-only</Chip>}
+          {!f.editable && !f.envOverridden && <Chip tone="neutral">read-only</Chip>}
           {f.pendingRestart && (
             <Chip
-              tone="amber"
+              tone="warn"
               title="The config file and the running instance disagree on this field — restart to apply."
             >
               restart
@@ -640,7 +642,7 @@ function Field({
         )}
       </div>
 
-      {f.help && <p className="mt-0.5 text-[12px] leading-snug text-paddock-500">{f.help}</p>}
+      {f.help && <p className="mt-0.5 text-xs leading-snug text-fg-muted">{f.help}</p>}
 
       {locked ? (
         <LockedValue field={f} value={value} />
@@ -649,16 +651,14 @@ function Field({
       )}
 
       {f.envOverridden && (
-        <p className="mt-1 truncate font-mono text-[11px] text-amber-600 dark:text-amber-500/90">
-          {f.envVar}
-        </p>
+        <p className="mt-1 truncate font-mono text-2xs text-warn">{f.envVar}</p>
       )}
 
       {/* The control shows the FILE. When the process disagrees, say what is
           actually in force — otherwise "restart pending" is a claim with no
           evidence, and an operator cannot tell which way round it is. */}
       {f.pendingRestart && (
-        <p className="mt-1 text-[11px] leading-snug text-amber-600 dark:text-amber-500/90">
+        <p className="mt-1 text-2xs leading-snug text-warn">
           In force now: <span className="font-mono">{summarize(f.value)}</span>
         </p>
       )}
@@ -681,16 +681,14 @@ function Chip({
   title,
 }: {
   children: React.ReactNode;
-  tone: "amber" | "plain";
+  tone: "warn" | "neutral";
   title?: string;
 }) {
   return (
     <span
       title={title}
-      className={`ml-1.5 rounded px-1 py-px align-middle text-[10px] font-semibold uppercase tracking-wide ${
-        tone === "amber"
-          ? "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400"
-          : "bg-paddock-100 text-paddock-500 dark:bg-paddock-800 dark:text-paddock-400"
+      className={`ml-1.5 rounded px-1 py-px align-middle text-3xs font-semibold uppercase tracking-wide ${
+        tone === "warn" ? "bg-warn-soft text-warn" : "bg-surface-active text-fg-muted"
       }`}
     >
       {children}
@@ -720,7 +718,7 @@ function Toggle({
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}
       />
-      <span className="block h-[18px] w-8 rounded-full bg-paddock-300 transition-colors after:absolute after:left-[2px] after:top-[2px] after:h-[14px] after:w-[14px] after:rounded-full after:bg-white after:transition-transform after:content-[''] peer-checked:bg-accent peer-checked:after:translate-x-[14px] peer-focus-visible:ring-2 peer-focus-visible:ring-accent/50 dark:bg-paddock-700" />
+      <span className="motion-fast block h-[18px] w-8 rounded-full bg-edge-strong transition-colors after:absolute after:left-[2px] after:top-[2px] after:h-[14px] after:w-[14px] after:rounded-full after:bg-fg-on-solid after:transition-transform after:content-[''] peer-checked:bg-accent-solid peer-checked:after:translate-x-[14px] peer-focus-visible:ring-2 peer-focus-visible:ring-accent/50" />
     </label>
   );
 }
@@ -786,13 +784,13 @@ function Control({
       <div className="mt-1.5">
         <textarea
           id={inputId}
-          className="input min-h-[7rem] resize-y font-mono text-[12px] leading-relaxed"
+          className="input min-h-[7rem] resize-y font-mono text-xs leading-relaxed"
           rows={6}
           spellCheck={false}
           value={shown}
           onChange={(e) => onChange(e.target.value)}
         />
-        <div className="mt-1 flex items-center justify-between gap-3 text-[12px] text-paddock-500">
+        <div className="mt-1 flex items-center justify-between gap-3 text-xs text-fg-muted">
           <span>
             {isDefaulted
               ? "Using the built-in default."
@@ -803,7 +801,7 @@ function Control({
           {canRestore && (
             <button
               type="button"
-              className="shrink-0 underline underline-offset-2 hover:text-paddock-700 dark:hover:text-paddock-300"
+              className="shrink-0 underline underline-offset-2 hover:text-fg"
               onClick={() => onChange(null)}
             >
               Restore default
@@ -853,19 +851,19 @@ function Control({
  */
 function LockedValue({ field: f, value }: { field: InstanceConfigField; value: unknown }) {
   return (
-    <div className="mt-1 text-[12px] text-paddock-600 dark:text-paddock-300">
+    <div className="mt-1 text-xs text-fg-muted">
       {f.type === "boolean" ? (
         <span className="font-mono">{value ? "true" : "false"}</span>
       ) : value === null || value === undefined || value === "" ? (
         // For a `text` field an empty value is a deliberate opt-out, not an
         // absence — say so rather than the generic "(not set)" (#635).
-        <span className="italic text-paddock-400">
+        <span className="italic text-fg-subtle">
           {f.type === "text" && value === "" ? "(empty — nothing appended)" : "(not set)"}
         </span>
       ) : f.type === "text" ? (
         // Multi-line: preserve the operator's line breaks instead of collapsing
         // a whole prompt onto one `break-all` line.
-        <span className="block max-h-40 overflow-y-auto whitespace-pre-wrap rounded bg-paddock-50 px-2 py-1.5 font-mono text-[12px] leading-relaxed dark:bg-paddock-900/40">
+        <span className="block max-h-40 overflow-y-auto whitespace-pre-wrap rounded bg-surface-sunken px-2 py-1.5 font-mono text-xs leading-relaxed">
           {String(value)}
         </span>
       ) : (
@@ -881,10 +879,15 @@ function LockedValue({ field: f, value }: { field: InstanceConfigField; value: u
  * Which fields earn the full width. Prompts and lists always; a plain string
  * whose value is long (a filesystem path, a URL) would otherwise be truncated
  * into uselessness in a half-width cell.
+ *
+ * `saved` is deliberately the field's SAVED baseline ({@link fileValue}), not
+ * the value being edited: a width that tracks the in-flight edit re-flows the
+ * grid under the operator's caret the moment a string crosses the threshold.
+ * Width is a property of the field's identity, decided at load and then stable.
  */
-function isWide(f: InstanceConfigField, value: unknown): boolean {
+function isWide(f: InstanceConfigField, saved: unknown): boolean {
   if (f.type === "text" || f.type === "string-list") return true;
-  const s = Array.isArray(value) ? value.join(", ") : value == null ? "" : String(value);
+  const s = Array.isArray(saved) ? saved.join(", ") : saved == null ? "" : String(saved);
   return s.length > 38;
 }
 

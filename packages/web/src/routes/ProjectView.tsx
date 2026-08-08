@@ -1165,14 +1165,14 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
   if (loadErr) {
     return (
       <div className="p-8">
-        <div className="rounded-lg border border-rose-300/60 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300">
+        <div className="rounded-lg border border-danger-edge bg-danger-soft px-4 py-3 text-sm text-danger">
           {loadErr}
         </div>
       </div>
     );
   }
   if (!project) {
-    return <div className="p-8 text-sm text-paddock-500">Loading project…</div>;
+    return <div className="p-8 text-sm text-fg-muted">Loading project…</div>;
   }
 
   const pinned = project.pinned;
@@ -1201,7 +1201,7 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
           and the summary live on the Home tab (desktop-only here). `pt-safe`
           clears the status bar/notch now that the shell's bar is gone. On lg+ it
           wraps into the full rich header. */}
-      <header className="pt-safe border-b border-paddock-200 px-3 pb-2.5 dark:border-paddock-800 sm:px-6 lg:py-4">
+      <header className="pt-safe border-b border-edge px-3 pb-2.5 sm:px-6 lg:py-4">
         <div className="flex items-center gap-2 lg:flex-wrap lg:gap-3">
           {/* Global project-nav drawer — inline on mobile only (the shell's own
               hamburger row is suppressed on project routes). */}
@@ -1222,7 +1222,7 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
             <ChatIcon width={16} height={16} />
             <span className="hidden sm:inline">Chats</span>
             {chats.length > 0 && (
-              <span className="text-[11px] text-paddock-400">{chats.length}</span>
+              <span className="text-2xs text-fg-subtle">{chats.length}</span>
             )}
           </button>
           {/* The project name doubles as a breadcrumb up to the Home tab. */}
@@ -1243,7 +1243,7 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
           {project.hasOverview && (
             <span
               title="A sweep has curated an OVERVIEW.md for this project. New chats can preload it as context."
-              className="hidden items-center gap-1 rounded-md bg-emerald-100 px-1.5 py-0.5 text-[11px] font-medium text-emerald-700 lg:inline-flex dark:bg-emerald-950/50 dark:text-emerald-400"
+              className="hidden items-center gap-1 rounded-md bg-success-soft px-1.5 py-0.5 text-2xs font-medium text-success lg:inline-flex"
             >
               <CheckIcon width={11} height={11} />
               Overview
@@ -1259,7 +1259,7 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
                   ? `Claude works in ${project.path}, a checkout of ${project.repo}`
                   : `Claude works in a clone of ${project.repo}`
               }
-              className="hidden items-center gap-1 rounded-md bg-sky-100 px-1.5 py-0.5 text-[11px] font-medium text-sky-700 lg:inline-flex dark:bg-sky-950/50 dark:text-sky-400"
+              className="hidden items-center gap-1 rounded-md bg-info-soft px-1.5 py-0.5 text-2xs font-medium text-info lg:inline-flex"
             >
               <BranchIcon width={11} height={11} />
               Repo
@@ -1268,13 +1268,13 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
           {!project.managed && !project.repo && project.path && (
             <span
               title={`Claude works in ${project.path}. Paddock writes no project files there.`}
-              className="hidden items-center gap-1 rounded-md bg-sky-100 px-1.5 py-0.5 text-[11px] font-medium text-sky-700 lg:inline-flex dark:bg-sky-950/50 dark:text-sky-400"
+              className="hidden items-center gap-1 rounded-md bg-info-soft px-1.5 py-0.5 text-2xs font-medium text-info lg:inline-flex"
             >
               <BranchIcon width={11} height={11} />
               Linked
             </span>
           )}
-          <span className="ml-auto hidden items-center gap-1 text-xs text-paddock-400 lg:inline-flex">
+          <span className="ml-auto hidden items-center gap-1 text-xs text-fg-subtle lg:inline-flex">
             <ClockIcon width={12} height={12} />
             updated {relativeTime(project.updated)}
           </span>
@@ -1298,7 +1298,7 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
           />
         </div>
         {project.summary && (
-          <p className="mt-1.5 hidden text-sm text-paddock-600 lg:block dark:text-paddock-400">
+          <p className="mt-1.5 hidden text-sm text-fg-muted lg:block">
             {project.summary}
           </p>
         )}
@@ -1365,7 +1365,7 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
               instead of off each tab gives the identical geometry with none of
               the overflow. */}
           <div
-            className={`border-b border-paddock-200 dark:border-paddock-800 ${
+            className={`border-b border-edge ${
               view === "chat" ? "hidden lg:block" : "block"
             }`}
           >
@@ -1393,7 +1393,7 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
                       title={`${gitStatus.files.length} uncommitted change${
                         gitStatus.files.length === 1 ? "" : "s"
                       }`}
-                      className="inline-flex min-w-[1.1rem] items-center justify-center rounded-full bg-amber-100 px-1 text-[10px] font-semibold text-amber-700 dark:bg-amber-950/50 dark:text-amber-400"
+                      className="inline-flex min-w-[1.1rem] items-center justify-center rounded-full bg-warn-soft px-1 text-3xs font-semibold text-warn"
                     >
                       {gitStatus.files.length}
                     </span>
@@ -1411,7 +1411,7 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
                 {newRunCount > 0 && (
                   <span
                     title={`${newRunCount} new unattended run${newRunCount === 1 ? "" : "s"} since your last visit`}
-                    className="inline-flex min-w-[1.1rem] items-center justify-center rounded-full bg-accent/15 px-1 text-[10px] font-semibold text-accent-700 dark:text-accent"
+                    className="inline-flex min-w-[1.1rem] items-center justify-center rounded-full bg-accent-soft px-1 text-3xs font-semibold text-accent"
                   >
                     {newRunCount}
                   </span>
@@ -1587,7 +1587,7 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
         title="Delete project?"
         message={
           <>
-            <span className="font-medium text-ink dark:text-ink-dark">{project.name}</span> and all
+            <span className="font-medium text-fg">{project.name}</span> and all
             its chats and files will be permanently removed. This cannot be undone.
           </>
         }
@@ -1617,7 +1617,7 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
             <>
               {deletingChat.ids.length > 1 ? (
                 <>
-                  <span className="font-medium text-ink dark:text-ink-dark">
+                  <span className="font-medium text-fg">
                     {deletingChat.chat.name}
                   </span>{" "}
                   and its {deletingChat.ids.length - 1} nested chat

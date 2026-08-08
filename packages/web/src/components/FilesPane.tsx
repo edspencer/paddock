@@ -80,7 +80,7 @@ export function FilesPane({
             {[0, 1, 2].map((i) => (
               <div
                 key={i}
-                className="h-10 animate-pulse rounded-lg bg-paddock-200/60 dark:bg-paddock-800/60"
+                className="h-10 animate-pulse rounded-lg bg-surface-active"
               />
             ))}
           </div>
@@ -94,7 +94,7 @@ export function FilesPane({
       <div className="flex-1 overflow-y-auto overscroll-contain">
         <div className="mx-auto max-w-3xl px-6 py-6">
           {breadcrumb}
-          <div className="flex items-start gap-2 rounded-lg border border-rose-300/60 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/50 dark:text-rose-300">
+          <div className="flex items-start gap-2 rounded-lg border border-danger-edge bg-danger-soft px-3 py-2 text-sm text-danger">
             <AlertIcon width={16} height={16} className="mt-0.5 shrink-0" />
             <span>{error}</span>
           </div>
@@ -110,14 +110,14 @@ export function FilesPane({
     const isPinned = project.pinned.includes(path);
     return (
       <div className="flex min-h-0 flex-1 flex-col">
-        <div className="flex items-center gap-2 border-b border-paddock-200 px-4 py-2 dark:border-paddock-800">
+        <div className="flex items-center gap-2 border-b border-edge px-4 py-2">
           <div className="min-w-0 flex-1">{breadcrumb}</div>
           <button
             onClick={() => onTogglePin(path)}
             className={`ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
               isPinned
                 ? "bg-accent/10 text-accent"
-                : "text-paddock-500 hover:bg-paddock-200/60 dark:hover:bg-paddock-800/60"
+                : "text-fg-muted hover:bg-surface-hover"
             }`}
             title={isPinned ? "Unpin (remove tab)" : "Pin as a tab"}
           >
@@ -140,25 +140,25 @@ export function FilesPane({
         {breadcrumb}
         {entries.length === 0 && path === "" ? (
           <div className="card">
-            <p className="text-sm italic text-paddock-400">
+            <p className="text-sm italic text-fg-subtle">
               No files yet. Files Claude writes (and sweep-curated OVERVIEW.md)
               will appear here.
             </p>
           </div>
         ) : (
-          <div className="overflow-hidden rounded-2xl border border-paddock-200 dark:border-paddock-800">
+          <div className="overflow-hidden rounded-2xl border border-edge">
             {/* A ".." row to go up a level when we're nested. */}
             {path !== "" && (
               <button
                 onClick={() => onNavigate(parent)}
-                className="flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-paddock-100/70 dark:hover:bg-paddock-900/40"
+                className="flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-surface-hover"
               >
-                <FolderIcon width={15} height={15} className="shrink-0 text-paddock-400" />
-                <span className="font-mono text-sm text-paddock-500">..</span>
+                <FolderIcon width={15} height={15} className="shrink-0 text-fg-subtle" />
+                <span className="font-mono text-sm text-fg-muted">..</span>
               </button>
             )}
             {entries.length === 0 && path !== "" && (
-              <div className="px-3 py-2.5 text-sm italic text-paddock-400">
+              <div className="px-3 py-2.5 text-sm italic text-fg-subtle">
                 This folder is empty.
               </div>
             )}
@@ -169,11 +169,11 @@ export function FilesPane({
               // Any file is pinnable, at any depth — the pin stores childPath
               // (the full project-relative path), not just the basename.
               const showPin = !isDir;
-              const border = i > 0 || path !== "" ? "border-t border-paddock-200 dark:border-paddock-800" : "";
+              const border = i > 0 || path !== "" ? "border-t border-edge" : "";
               return (
                 <div
                   key={e.name}
-                  className={`group/file flex items-center gap-2 px-3 py-2.5 transition-colors hover:bg-paddock-100/70 dark:hover:bg-paddock-900/40 ${border}`}
+                  className={`group/file flex items-center gap-2 px-3 py-2.5 transition-colors hover:bg-surface-hover ${border}`}
                 >
                   <button
                     onClick={() => onNavigate(childPath)}
@@ -182,13 +182,11 @@ export function FilesPane({
                     {isDir ? (
                       <FolderIcon width={15} height={15} className="shrink-0 text-accent/80" />
                     ) : (
-                      <FileIcon width={15} height={15} className="shrink-0 text-paddock-400" />
+                      <FileIcon width={15} height={15} className="shrink-0 text-fg-subtle" />
                     )}
                     <span
                       className={`truncate font-mono text-sm ${
-                        isDir
-                          ? "font-medium text-paddock-700 dark:text-paddock-200"
-                          : "text-paddock-700 dark:text-paddock-200"
+                        isDir ? "font-medium text-fg" : "text-fg"
                       }`}
                     >
                       {e.name}
@@ -197,7 +195,7 @@ export function FilesPane({
                       <ChevronRightIcon
                         width={14}
                         height={14}
-                        className="ml-auto shrink-0 text-paddock-300 dark:text-paddock-600"
+                        className="ml-auto shrink-0 text-fg-subtle"
                       />
                     )}
                   </button>
@@ -207,10 +205,10 @@ export function FilesPane({
                       aria-label={isPinned ? `Unpin ${e.name}` : `Pin ${e.name}`}
                       title={isPinned ? "Unpin (remove tab)" : "Pin as a sibling tab"}
                       onClick={() => onTogglePin(childPath)}
-                      className={`flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition ${
+                      className={`flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-2xs font-medium transition ${
                         isPinned
                           ? "bg-accent/10 text-accent"
-                          : "text-paddock-400 opacity-0 hover:bg-paddock-200/70 hover:text-paddock-700 focus:opacity-100 group-hover/file:opacity-100 dark:hover:bg-paddock-800"
+                          : "text-fg-subtle opacity-0 hover:bg-surface-active hover:text-fg-muted focus:opacity-100 group-hover/file:opacity-100"
                       }`}
                     >
                       <PinIcon width={12} height={12} />
@@ -260,7 +258,7 @@ function Breadcrumb({
             <ChevronRightIcon
               width={13}
               height={13}
-              className="shrink-0 text-paddock-300 dark:text-paddock-600"
+              className="shrink-0 text-fg-subtle"
             />
             <CrumbButton
               label={seg}
@@ -296,7 +294,7 @@ function CrumbButton({
       <span
         aria-current="page"
         className={`${cls} font-medium ${
-          muted ? "text-paddock-500 dark:text-paddock-400" : "text-ink dark:text-ink-dark"
+          muted ? "text-fg-muted" : "text-fg"
         }`}
       >
         {label}
@@ -307,7 +305,7 @@ function CrumbButton({
     <button
       type="button"
       onClick={onClick}
-      className={`${cls} rounded text-paddock-500 transition-colors hover:text-accent`}
+      className={`${cls} rounded text-fg-muted transition-colors hover:text-accent`}
     >
       {label}
     </button>

@@ -61,7 +61,7 @@ export function ProjectMenu({
           stop(e);
           setOpen((o) => !o);
         }}
-        className="flex h-7 w-7 items-center justify-center rounded-lg text-paddock-400 transition-colors hover:bg-paddock-200/70 hover:text-paddock-700 dark:hover:bg-paddock-800 dark:hover:text-paddock-200"
+        className="flex h-7 w-7 items-center justify-center rounded-lg text-fg-subtle transition-colors hover:bg-surface-active hover:text-fg"
       >
         <MoreIcon width={size} height={size} />
       </button>

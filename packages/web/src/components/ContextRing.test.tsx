@@ -19,14 +19,14 @@ describe("ContextRing", () => {
     const arc = container.querySelectorAll("circle")[1];
     // 25% of the circumference filled.
     expect(arc.getAttribute("stroke-dasharray")).toBe(`${(25 / 100) * C} ${C}`);
-    // Below the 80% threshold → accent, not amber.
-    expect(arc.getAttribute("class")).toContain("stroke-accent");
+    // Below the 80% threshold → the accent fill, not the warn tone.
+    expect(arc.getAttribute("class")).toContain("stroke-[var(--accent-solid)]");
   });
 
   it("turns amber at or above 80% full", () => {
     const { container } = render(<ContextRing tokens={850_000} limit={1_000_000} />);
     const arc = container.querySelectorAll("circle")[1];
-    expect(arc.getAttribute("class")).toContain("stroke-amber-500");
+    expect(arc.getAttribute("class")).toContain("stroke-[var(--warn-solid)]");
   });
 
   it("clamps an over-limit usage to a full ring", () => {

@@ -47,15 +47,15 @@ export function isBackgroundTool(tool: ToolCall): boolean {
 export function statusChipClass(status: string): string {
   switch (status) {
     case "completed":
-      return "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300";
+      return "bg-success-soft text-success";
     case "killed":
     case "timed out":
-      return "bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300";
+      return "bg-warn-soft text-warn";
     case "running":
     case "persistent":
-      return "bg-sky-100 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300";
+      return "bg-info-soft text-info";
     default:
-      return "bg-paddock-200/70 text-paddock-600 dark:bg-paddock-800 dark:text-paddock-300";
+      return "bg-surface-active text-fg-muted";
   }
 }
 
@@ -112,9 +112,9 @@ export function sentFileFromToolCall(tc: ToolCall): SentFile | null {
 
 /** Line coloring for a diff line by its kind (`+` add, `-` del, ` ` context). */
 export function diffLineClass(t: "+" | "-" | " "): string {
-  if (t === "+") return "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300";
-  if (t === "-") return "bg-rose-50 text-rose-800 dark:bg-rose-950/30 dark:text-rose-300";
-  return "text-paddock-600 dark:text-paddock-400";
+  if (t === "+") return "bg-success-soft text-success";
+  if (t === "-") return "bg-danger-soft text-danger";
+  return "text-fg-muted";
 }
 
 /** Right-align a line number into the fixed-width gutter cell (blank when absent). */
@@ -127,15 +127,15 @@ export function taskStatusPillClass(status: string): string {
   switch (status) {
     case "completed":
     case "done":
-      return "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300";
+      return "bg-success-soft text-success";
     case "in_progress":
-      return "bg-sky-100 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300";
+      return "bg-info-soft text-info";
     case "blocked":
     case "failed":
     case "cancelled":
-      return "bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300";
+      return "bg-danger-soft text-danger";
     default: // pending & anything else
-      return "bg-paddock-200/70 text-paddock-600 dark:bg-paddock-800 dark:text-paddock-300";
+      return "bg-surface-active text-fg-muted";
   }
 }
 
