@@ -212,6 +212,13 @@ class ChatClient {
   // so the projects sidebar can also group in-flight turns BY project (#161)
   // with no new polling; `onActiveSessions` still exposes just the id set.
   private activeSessions = new Map<string, string>();
+  // sessionId -> epoch-ms the running turn began, from the same `chat:active`
+  // frames. Kept in a SEPARATE map rather than widening `activeSessions` so the
+  // two existing `onActive*` subscriber shapes are untouched: several consumers
+  // key effects on the map's identity, and a value that changed on every frame
+  // would re-fire them. Read through `turnStartedAt()`, which never invents a
+  // time — an absent entry means "we do not know", not "just now".
+  private activeStartedAt = new Map<string, number>();
   private activeListeners = new Set<(s: ReadonlySet<string>) => void>();
   private activeInfoListeners = new Set<(m: ReadonlyMap<string, string>) => void>();
   // Every session id this client has ever attached a subscription to. Used by
@@ -293,10 +300,38 @@ class ChatClient {
     return () => this.activeInfoListeners.delete(cb);
   }
 
-  private setActive(sessionId: string, running: boolean, projectSlug: string): void {
+  /**
+   * When the currently-running turn on `sessionId` began (epoch ms), or null if
+   * this client has never been told. The server sends it on every `chat:active`
+   * and replays the whole running snapshot on connect, so this survives a
+   * reload mid-turn — which is the case that matters, because "how long has
+   * that agent been going?" is exactly what you ask after coming back to the
+   * tab. Falls back to null (not `Date.now()`) so a caller can render an
+   * honest placeholder rather than a clock that restarts on every refresh.
+   */
+  turnStartedAt(sessionId: string): number | null {
+    return this.activeStartedAt.get(sessionId) ?? null;
+  }
+
+  private setActive(
+    sessionId: string,
+    running: boolean,
+    projectSlug: string,
+    startedAt?: number,
+  ): void {
     const had = this.activeSessions.has(sessionId);
-    if (running) this.activeSessions.set(sessionId, projectSlug);
-    else this.activeSessions.delete(sessionId);
+    if (running) {
+      this.activeSessions.set(sessionId, projectSlug);
+      // Only ever set, never refresh: `chat:active` fires again mid-turn when
+      // the jobId resolves, and taking the later timestamp would reset the
+      // elapsed clock a few seconds into every turn.
+      if (startedAt != null && !this.activeStartedAt.has(sessionId)) {
+        this.activeStartedAt.set(sessionId, startedAt);
+      }
+    } else {
+      this.activeSessions.delete(sessionId);
+      this.activeStartedAt.delete(sessionId);
+    }
     if (this.activeSessions.has(sessionId) !== had) {
       const keys = new Set(this.activeSessions.keys());
       for (const cb of this.activeListeners) cb(keys);
@@ -685,7 +720,7 @@ class ChatClient {
     if (msg.type === "chat:active") {
       // App-level: update the running-sessions set that drives the sidebar dots,
       // even for chats with no mounted pane.
-      this.setActive(msg.payload.sessionId, msg.payload.running, slug);
+      this.setActive(msg.payload.sessionId, msg.payload.running, slug, msg.payload.startedAt);
       // Pane-level: tell the matching mounted chat so it restores/clears its Stop
       // button + streaming indicator (a returning pane learns its turn is live).
       // EXACT session match only — never fall through to a nascent (new-chat) pane,

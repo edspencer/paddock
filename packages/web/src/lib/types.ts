@@ -1261,6 +1261,15 @@ export type ServerWsMessage =
         sessionId: string;
         jobId: string | null;
         running: boolean;
+        /**
+         * Epoch-ms the turn started, from the hub (the only thing that knows —
+         * a job record is written at the END of a turn). Optional so a client
+         * built against an older server still parses the frame; the fleet
+         * readout falls back to "started when we first saw it" when it is
+         * absent, which is right for a fresh turn and merely conservative for
+         * one that was already running.
+         */
+        startedAt?: number;
       };
     }
   | {

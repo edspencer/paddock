@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import type { AttentionChat, Project } from "../../lib/types";
 import { Markdown } from "../../components/Markdown";
-import { relativeTime } from "../../lib/format";
+import { formatElapsed, relativeTime } from "../../lib/format";
 import { ChevronRightIcon, FileIcon, PinIcon, PlusIcon } from "../../components/icons";
 import { EmptyState } from "../../components/ui";
+import { useSecondsTick } from "../../components/FleetReadout";
+import { chatClient } from "../../lib/ws";
 
 /**
  * The Home tab: the workspace's landing page. Gives `/projects/:slug` a real
@@ -78,7 +80,16 @@ export function HomePane({
               chats={running}
               workspaceSlug={project.slug}
               loading={attentionLoading}
-              empty="Nothing running right now."
+              empty={{
+                title: "The fleet is idle",
+                body: "Nothing is running right now. Start a chat and it appears here — and in the readout at the top of the window, with a clock on it.",
+                action: (
+                  <button onClick={onNewChat} className="btn-ghost gap-1.5 px-2 py-1 text-xs">
+                    <PlusIcon width={13} height={13} />
+                    New chat
+                  </button>
+                ),
+              }}
               onOpenChat={onOpenChat}
               kind="running"
             />
@@ -95,7 +106,13 @@ export function HomePane({
               chats={unread}
               workspaceSlug={project.slug}
               loading={attentionLoading}
-              empty="No unread replies. All caught up."
+              /* No action on purpose: an empty inbox is the state you WANT, and
+                 offering a next step here would invent work. A dead end only
+                 matters when the user is stuck, and nobody is stuck at zero. */
+              empty={{
+                title: "All caught up",
+                body: "Replies that land while you are somewhere else collect here.",
+              }}
               onOpenChat={onOpenChat}
               kind="unread"
             />
@@ -115,7 +132,10 @@ export function HomePane({
               )}
             </div>
             {recentFiles.length === 0 ? (
-              <EmptyState title="No files yet. Files Claude writes appear here." />
+              <EmptyState
+                title="No files yet"
+                body="Files an agent writes into this project show up here — and you can pin the ones worth keeping in reach."
+              />
             ) : (
               <div className="overflow-hidden rounded-2xl border border-edge">
                 {recentFiles.map((f, i) => (
@@ -154,14 +174,20 @@ export function HomePane({
           id={`${project.slug}:overview`}
           title="OVERVIEW.md"
           body={overview}
-          emptyLabel="No OVERVIEW.md yet."
+          emptyLabel={{
+            title: "No OVERVIEW.md yet",
+            body: "The sweeper writes one out of band once this project has a few turns of history behind it.",
+          }}
         />
         <NotesSection
           key={`${project.slug}:changelog`}
           id={`${project.slug}:changelog`}
           title="CHANGELOG.md"
           body={changelog}
-          emptyLabel="No CHANGELOG.md yet."
+          emptyLabel={{
+            title: "No CHANGELOG.md yet",
+            body: "Entries are curated automatically after a turn that changes something.",
+          }}
         />
 
         <p className="mt-6 text-2xs text-fg-subtle">
@@ -206,10 +232,16 @@ function ChatRows({
   chats: AttentionChat[];
   workspaceSlug: string;
   loading: boolean;
-  empty: string;
+  empty: { title: string; body?: string; action?: ReactNode };
   onOpenChat: (sessionId: string, projectSlug: string) => void;
   kind: "running" | "unread";
 }) {
+  // Only ticks while this list actually holds running rows.
+  useSecondsTick(kind === "running" && chats.length > 0);
+  const runningSince = (sessionId: string) => {
+    const at = chatClient.turnStartedAt(sessionId);
+    return at == null ? "running" : formatElapsed(Date.now() - at);
+  };
   if (loading && chats.length === 0) {
     return (
       <div
@@ -219,7 +251,7 @@ function ChatRows({
     );
   }
   if (chats.length === 0) {
-    return <EmptyState title={empty} />;
+    return <EmptyState title={empty.title} body={empty.body} action={empty.action} />;
   }
   return (
     <div
@@ -253,8 +285,18 @@ function ChatRows({
               {c.projectName}
             </span>
           )}
-          <span className="shrink-0 text-2xs text-fg-subtle">
-            {relativeTime(kind === "unread" ? (c.lastTurnCompletedAt ?? c.updatedAt) : c.updatedAt)}
+          <span className="shrink-0 font-mono tabular text-2xs text-fg-subtle">
+            {/*
+              A RUNNING row shows how long the turn has been going, not how long
+              ago the chat file changed. Those are different questions, and the
+              old answer made this row disagree with the fleet readout directly
+              above it: the readout said 1:03 while the row said "1m ago", for
+              the same turn. Same source (`turnStartedAt`), same formatter
+              (`formatElapsed`), same second (`useSecondsTick`).
+            */}
+            {kind === "running"
+              ? runningSince(c.sessionId)
+              : relativeTime(c.lastTurnCompletedAt ?? c.updatedAt)}
           </span>
         </button>
       ))}
@@ -280,7 +322,7 @@ function NotesSection({
   id: string;
   title: string;
   body: string;
-  emptyLabel: string;
+  emptyLabel: { title: string; body: string };
 }) {
   const [collapsed, toggle] = useCollapsed(id);
   const open = !collapsed;
@@ -306,7 +348,7 @@ function NotesSection({
             <Markdown>{body}</Markdown>
           </div>
         ) : (
-          <EmptyState title={emptyLabel} />
+          <EmptyState title={emptyLabel.title} body={emptyLabel.body} />
         ))}
     </section>
   );

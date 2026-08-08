@@ -18,6 +18,7 @@ import {
   XIcon,
 } from "../components/icons";
 import { relativeTime } from "../lib/format";
+import { chatClient } from "../lib/ws";
 import { areaBlurb, areaLabel, orderAreaSlugs } from "../lib/areas";
 import { gridUrl } from "./ProjectView/urls";
 
@@ -39,6 +40,7 @@ import { gridUrl } from "./ProjectView/urls";
  */
 export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
   const { projects: allProjects, loading, error, upsert, remove } = useProjects();
+  const runningByProject = useRunningByProject();
   const [modalOpen, setModalOpen] = useState(false);
   const [deleting, setDeleting] = useState<Project | null>(null);
   const navigate = useNavigate();
@@ -174,6 +176,7 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
                 key={p.slug}
                 project={p}
                 sessionCount={counts[p.slug]?.length}
+                running={runningByProject.get(p.slug) ?? 0}
                 onEdit={() => editProject(p)}
                 onDelete={() => setDeleting(p)}
               />
@@ -303,6 +306,7 @@ function AreaSection({
 }) {
   const [collapsed, toggle] = useCollapsed(slug || "unsorted");
   const open = !collapsed;
+  const runningByProject = useRunningByProject();
   return (
     <section className="mb-4">
       <SectionHeader
@@ -319,6 +323,7 @@ function AreaSection({
               key={p.slug}
               project={p}
               sessionCount={counts[p.slug]?.length}
+              running={runningByProject.get(p.slug) ?? 0}
               onEdit={() => onEdit(p)}
               onDelete={() => onDelete(p)}
             />
@@ -329,14 +334,45 @@ function AreaSection({
   );
 }
 
+/**
+ * Live in-flight turns per project, fleet-wide.
+ *
+ * The grid was the one surface with NO live state on it at all: with four turns
+ * running across four projects, every card still read "8 chats · 1w ago" beside
+ * a `project.yaml` status pill that had not changed in a week. This direction's
+ * whole thesis is that Paddock is a control surface for running agents, and a
+ * page called Projects that cannot tell you which projects are working is the
+ * clearest place that was untrue.
+ *
+ * Costs nothing: `chat:active` is already broadcast to every socket and the
+ * server replays the running snapshot on connect, so subscribing here is one
+ * more listener on a map the client already keeps. No new fetch, no polling.
+ */
+function useRunningByProject(): ReadonlyMap<string, number> {
+  const [counts, setCounts] = useState<ReadonlyMap<string, number>>(new Map());
+  useEffect(
+    () =>
+      chatClient.onActiveInfos((infos) => {
+        const next = new Map<string, number>();
+        for (const slug of infos.values()) next.set(slug, (next.get(slug) ?? 0) + 1);
+        setCounts(next);
+      }),
+    [],
+  );
+  return counts;
+}
+
 function ProjectCard({
   project,
   sessionCount,
+  running,
   onEdit,
   onDelete,
 }: {
   project: Project;
   sessionCount?: number;
+  /** Turns in flight in this project right now. */
+  running: number;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -378,11 +414,29 @@ function ProjectCard({
         </div>
       )}
       <div className="mt-auto flex items-center justify-between gap-2 border-t border-edge pt-3 text-2xs text-fg-subtle">
-        <span className="inline-flex items-center gap-1">
-          <ChatIcon width={12} height={12} />
-          {sessionCount == null
-            ? "…"
-            : `${sessionCount} ${sessionCount === 1 ? "chat" : "chats"}`}
+        <span className="inline-flex items-center gap-2">
+          {running > 0 && (
+            /* The card's only accent, and it means exactly one thing: this
+               project has an agent working right now. Same lamp + tabular
+               figure as the fleet readout's channels and the chat list's
+               context column — one grammar for "live" everywhere. */
+            <span
+              className="inline-flex items-center gap-1 font-medium text-accent"
+              title={`${running} turn${running === 1 ? "" : "s"} running in this project`}
+            >
+              <span
+                className="h-1.5 w-1.5 shrink-0 rounded-[1px] bg-accent-solid"
+                aria-hidden="true"
+              />
+              <span className="tabular">{running}</span> running
+            </span>
+          )}
+          <span className="inline-flex items-center gap-1">
+            <ChatIcon width={12} height={12} />
+            {sessionCount == null
+              ? "…"
+              : `${sessionCount} ${sessionCount === 1 ? "chat" : "chats"}`}
+          </span>
         </span>
         <span className="inline-flex items-center gap-1">
           <ClockIcon width={12} height={12} />

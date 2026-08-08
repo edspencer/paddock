@@ -543,6 +543,16 @@ export interface ChatActiveMessage {
     /** The running turn's cancellable job id, when known. */
     jobId: string | null;
     running: boolean;
+    /**
+     * Epoch-ms the running turn began, from the session hub. The hub is the only
+     * thing that knows: a job record is written when a turn ENDS, and the
+     * transcript's timestamps are the model's rather than the run's. Because the
+     * server replays its whole running snapshot to every socket on connect, a
+     * client that reloads mid-turn still learns the true start — which is what
+     * lets a fleet readout say "running 12:04" instead of restarting at zero on
+     * every page load. Meaningless (and omitted) when `running` is false.
+     */
+    startedAt?: number;
   };
 }
 

@@ -13,6 +13,7 @@ import {
   setServerLastSeen,
 } from "../lib/lastSeen";
 import { TagPill } from "./TagPill";
+import { FleetReadout } from "./FleetReadout";
 import { CogIcon, FolderIcon, HomeIcon, LinkIcon, MenuIcon, MoonIcon, PlusIcon, SunIcon, XIcon } from "./icons";
 import { NewProjectModal } from "./NewProjectModal";
 import { PaneResizer, usePaneWidth } from "./PaneResizer";
@@ -413,11 +414,20 @@ export function AppShell() {
       </aside>
 
       {/* Main pane. The Suspense boundary covers the lazily-loaded route chunks
-          (issue #11) — a brief, unobtrusive fallback while a route's JS loads. */}
-      <main className="min-w-0 flex-1 overflow-hidden">
-        <Suspense fallback={<RouteFallback />}>
-          <Outlet context={{ openNav: () => setNavOpen(true) } satisfies ShellOutletContext} />
-        </Suspense>
+          (issue #11) — a brief, unobtrusive fallback while a route's JS loads.
+
+          The fleet readout sits ABOVE the outlet rather than in the sidebar: it
+          has to be visible on every route including a maximised chat, and the
+          sidebar is an off-canvas drawer below `lg`. It is a fixed-height,
+          non-shrinking row, so the route below keeps its own `100dvh`-minus-chrome
+          scroll behaviour unchanged. */}
+      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <FleetReadout />
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <Suspense fallback={<RouteFallback />}>
+            <Outlet context={{ openNav: () => setNavOpen(true) } satisfies ShellOutletContext} />
+          </Suspense>
+        </div>
       </main>
 
       {/* Mounted at the SHELL, not in a route, because the sidebar that opens it

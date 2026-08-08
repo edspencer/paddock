@@ -71,7 +71,20 @@ export const TurnView = memo(function TurnView({ turn }: { turn: Turn }) {
           <MessageAttachments attachments={turn.attachments} />
         ) : null}
         {turn.content ? (
-          <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-accent-solid px-4 py-2.5 text-sm text-accent-fg shadow-sm">
+          /*
+           * `instrument`: a user turn is a SUNKEN well, not an accent slab.
+           *
+           * It was a solid `bg-accent-solid` block — the largest, loudest thing
+           * on the busiest screen in the app, and a straight violation of this
+           * direction's one colour rule: the accent signals state (running,
+           * needs attention) and never decorates. "Who said this" is not a
+           * state, so it must not spend the accent.
+           *
+           * The distinction it spends instead is structural and means something:
+           * input is recessed, output is raised. What you type goes down into
+           * the machine; what comes back sits on top of it.
+           */
+          <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-md border border-edge bg-surface-sunken px-3 py-2 text-sm text-fg">
             {turn.content}
           </div>
         ) : null}

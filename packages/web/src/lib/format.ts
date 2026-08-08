@@ -290,3 +290,22 @@ export function taskNotificationStatus(content: string): string | null {
 export function isTerminatedTaskStatus(status: string | null | undefined): boolean {
   return status === "killed" || status === "stopped";
 }
+
+/**
+ * A running turn's elapsed time: `m:ss` under an hour, `h:mm:ss` over it.
+ *
+ * Shared by the fleet readout and Home's running rows on purpose. Those two
+ * surfaces describe the SAME turn, and they used to disagree — the readout said
+ * `1:03` while the row beside it said "1m ago", because one was measuring the
+ * turn and the other was measuring the chat's mtime. One clock, one format,
+ * everywhere. Always tabular-width within a magnitude so a column of them does
+ * not jitter as they tick.
+ */
+export function formatElapsed(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const s = total % 60;
+  const m = Math.floor(total / 60) % 60;
+  const h = Math.floor(total / 3600);
+  const ss = String(s).padStart(2, "0");
+  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
+}

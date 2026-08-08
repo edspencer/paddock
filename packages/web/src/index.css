@@ -105,14 +105,15 @@
  */
 @theme {
   /* ------------------------------------------------------------- typography --
-   * Two families; a direction swaps these and nothing else.
+   * Two families; a direction swaps these and nothing else. `instrument` runs
+   * IBM Plex Sans / IBM Plex Mono — see the @font-face block below for why.
    * `--font-display` exists so a direction can give headings their own face
    * without touching a component; it defaults to the body face.
    */
   --font-sans:
-    "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --font-display: var(--font-sans);
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
 
   /*
    * The type scale. Tailwind's own xs/sm/base/lg/xl/2xl/3xl rungs are kept
@@ -218,8 +219,14 @@
 @layer base {
   /*
    * Self-hosted fonts (no runtime Google Fonts dependency — works offline on the
-   * LAN). Inter + JetBrains Mono are variable fonts; each woff2 (latin subset)
-   * covers the full weight range we use. system-ui remains the fallback (see the
+   * LAN). `instrument` uses IBM Plex Sans (variable, one woff2 covering 100–700)
+   * and IBM Plex Mono (static 400/500/600) — both OFL-1.1, latin subset.
+   *
+   * Plex is here for its numerals. It is a technical grotesk drawn for
+   * engineering documentation: flat-sided bowls, a genuinely even figure width,
+   * and — the reason it beat the alternatives — a mono sibling built on the SAME
+   * skeleton, so a readout can set its labels in sans and its values in mono and
+   * they still look like one instrument. system-ui remains the fallback (see the
    * `--font-*` stacks above) so text is readable even before fonts load.
    *
    * A direction adding a face: commit a subset woff2 to public/fonts/, add an
@@ -227,18 +234,32 @@
    * component changes, and no network request.
    */
   @font-face {
-    font-family: "Inter";
+    font-family: "IBM Plex Sans";
     font-style: normal;
-    font-weight: 100 900;
+    font-weight: 100 700;
     font-display: swap;
-    src: url("/fonts/inter-latin.woff2") format("woff2");
+    src: url("/fonts/ibm-plex-sans-latin.woff2") format("woff2");
   }
   @font-face {
-    font-family: "JetBrains Mono";
+    font-family: "IBM Plex Mono";
     font-style: normal;
-    font-weight: 100 800;
+    font-weight: 400;
     font-display: swap;
-    src: url("/fonts/jetbrains-mono-latin.woff2") format("woff2");
+    src: url("/fonts/ibm-plex-mono-latin-400.woff2") format("woff2");
+  }
+  @font-face {
+    font-family: "IBM Plex Mono";
+    font-style: normal;
+    font-weight: 500;
+    font-display: swap;
+    src: url("/fonts/ibm-plex-mono-latin-500.woff2") format("woff2");
+  }
+  @font-face {
+    font-family: "IBM Plex Mono";
+    font-style: normal;
+    font-weight: 600;
+    font-display: swap;
+    src: url("/fonts/ibm-plex-mono-latin-600.woff2") format("woff2");
   }
 
   /*
@@ -317,7 +338,20 @@
     color: var(--color-fg);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    font-feature-settings: "cv05", "ss01";
+    /*
+     * `instrument`: tabular figures are the DEFAULT for the whole app, not an
+     * opt-in. Every number in Paddock is a number you compare — token counts
+     * against a limit, durations against each other, a column of timestamps —
+     * and proportional figures make those columns wobble as they tick. Prose
+     * opts back out below; nothing else needs to.
+     */
+    font-variant-numeric: tabular-nums;
+  }
+  /* …except running prose, where a `1` as wide as a `0` reads as a typo. */
+  .prose-doc .md,
+  .md p,
+  .md li {
+    font-variant-numeric: normal;
   }
   /* Headings set their own measure; balance keeps two-line titles even. */
   h1,
