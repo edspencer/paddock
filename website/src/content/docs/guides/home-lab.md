@@ -23,9 +23,12 @@ The reason this setup is productive is **what lives alongside Paddock in that
 container.** Paddock's chats are Claude Code sessions, and they are only as
 capable as the tools on the box. The author's container provisions:
 
-- **Node.js and the `claude` CLI** on the `PATH` — the sweeper, triggers and
-  batch-mode turns spawn `claude` per job, so the binary must be present (without
-  it, those jobs fail instantly with `spawn claude ENOENT`).
+- **Node.js and the `claude` CLI** on the `PATH` — the post-turn sweeper and any
+  `driveMode: batch` turn spawn `claude` per job, so the binary must be present
+  (without it, those jobs fail instantly with `spawn claude ENOENT`). Triggers only
+  join that list when their project or the instance is pinned to `batch` — on the
+  default `session` they run through the SDK runtime like any chat, and never consult
+  `PATH`.
 - **The `gh` GitHub CLI, authenticated with a scoped token** — so agents can open PRs
   and manage issues, but the token is a **fine-grained PAT limited to just the repos
   this instance should touch.** That scoping *is* the security boundary.

@@ -151,7 +151,7 @@ cp inventory/hosts.ini.example inventory/hosts.ini
 ansible-playbook site.yml
 
 # On the box, it answers on loopback:
-curl -fsS http://127.0.0.1:3000/api/health
+curl -fsS http://127.0.0.1:7233/api/health
 ```
 
 The default `paddock_deploy_method` is **`tarball`**: Ansible extracts a release

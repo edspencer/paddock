@@ -18,9 +18,16 @@ npx @edspencer/paddock --here
 ```
 
 Paddock opens **that directory** as its workspace, finds the Claude Code sessions you
-already have for it, and offers them for import. Open **http://127.0.0.1:7233** (or add
-`-o` to have it opened for you) — and instead of an empty instance, you're looking at
-your own conversations, resumable.
+already have for it, and offers them for **adoption**. Open **http://127.0.0.1:7233**
+(or add `-o` to have it opened for you) — and instead of an empty instance, you're
+looking at your own conversations, resumable.
+
+:::note[The CLI still calls this "import"]
+**Adopt** is the product word: it is what the sidebar row, the dialog, the button and
+the badge all say. The CLI's own startup text and `--help` are one rename behind and
+still print *"offered for import"* — same feature, older label, tracked as
+[#770](https://github.com/edspencer/paddock/issues/770).
+:::
 
 Later runs in the same directory resume it, with no flag needed.
 
@@ -35,9 +42,9 @@ it touching your code:
 **Nothing is written into your `~/.claude`** — no file, no symlink. Paddock keeps a
 Claude home of its own under `.paddock/`, transcripts are relocated into `.chats/` so
 the directory is self-contained, and your `~/.claude` is read for user-level config
-only. Sessions found there are *offered* for import: nothing is moved, copied or
-linked until you confirm, the originals stay put, and your terminal `claude` keeps
-working exactly as before.
+only. Sessions found there are *offered* for adoption: nothing is moved, copied or
+linked until you confirm, your originals are never moved or deleted, and your terminal
+`claude` keeps working exactly as before.
 
 If you would rather Paddock and your terminal share **one** set of transcripts, that is
 a config key rather than a flag — `claude: { transcripts: host }`, see
@@ -57,9 +64,9 @@ than bare `npx`.
 Useful flags:
 
 ```
-  -p, --port <port>       HTTP/WS port (default 7233)
+  -p, --port <port>       HTTP/WS port (default 7233, or $PORT)
       --host <host>       Bind address (default 127.0.0.1)
-  -d, --data-dir <path>   Projects + state (default ~/.paddock)
+  -d, --data-dir <path>   Projects + state (default ~/.paddock, or $PADDOCK_DATA_DIR)
       --here              Open the CURRENT directory as the workspace
   -o, --open              Open the app in your browser once it is listening
       --verbose           Show the server's own logs (quiet by default)
@@ -206,8 +213,15 @@ loading — including on a plain `npx` run.
 ## Run from source
 
 You need **Node 22+**. Chats resolve the Claude Agent SDK's own bundled binary and never
-consult `PATH`, so they work without anything else installed; the **`claude` CLI** on
-your `PATH` is needed only for the post-turn sweeper and for triggers.
+consult `PATH`, so they work without anything else installed. The **`claude` CLI** on
+your `PATH` is needed by the **post-turn sweeper** — the one turn Paddock always runs
+through the CLI — and by any turn resolved to **`driveMode: batch`**.
+
+A trigger is *not* automatically a CLI turn: it resolves its drive mode exactly the way
+a chat does (project override, else the instance default), so on the built-in default
+`session` a scheduled or event trigger goes through the SDK runtime and never consults
+`PATH`. It needs `claude` installed only when its project — or the whole instance — is
+pinned to `batch`.
 
 ```bash
 git clone https://github.com/edspencer/paddock.git

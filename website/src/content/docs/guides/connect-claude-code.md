@@ -23,8 +23,12 @@ and it's the one you should set up first.
 :::danger[Any write scope is remote code execution on the host]
 `create_chat`, `send_message`, `fork_chat`, `fork_chat_batch`, `run_trigger` and
 `set_trigger` **start turns** — and Claude runs with `Bash` and `Write`.
-`create_project` clones a git URL the caller supplies. Granting any of them to a
-client is granting code execution on the machine Paddock runs on.
+**`create_project` *and* `promote_project`** each clone a git URL the caller supplies;
+`promote_project` is the easy one to overlook, because `repo` is its only required
+argument, so it is the same clone under a different name. `archive_chat`,
+`unarchive_chat` and `remove_trigger` don't execute code, but they do mutate state a
+read-only client has no business touching. Granting any of these to a client is
+granting code execution on the machine Paddock runs on.
 
 This guide never grants one. The whole safety story is that a client configured
 with **no `scope` block** is read-only, so the way to stay safe is to not write a

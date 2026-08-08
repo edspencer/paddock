@@ -44,9 +44,11 @@ because there is genuinely nothing left to adopt. Empty and slash-command-only
 transcripts are withheld as noise, so the number is what you'd actually want.
 
 What gets offered is the workspace's own working directory plus any Claude
-transcript folder whose *recorded* working directory matches it — by checkout
-name for a repo-backed project, by exact path for a notebook one — so history
-from your own checkout of the same repo, somewhere else on disk, is found too.
+transcript folder whose *recorded* working directory matches it. For a project with
+a **`repo:`** the match is by checkout name, so history from your own clone of the
+same repo, somewhere else on disk, is found too — but a same-named directory has to
+*prove* it is a clone of that repo (one of its git remotes must point there) before
+anything from it is offered. Without a `repo:`, the match is by exact path.
 
 Two things are deliberate about how it runs:
 
@@ -68,8 +70,23 @@ you had those conversations, just somewhere else.
 
 :::note[When Paddock can't see your `~/.claude`]
 A containerised instance only sees what is mounted. Mount the history at the
-`~/.claude` the container's own `$HOME` resolves to, or run the headless importer
-(`npm run import-chats -w @paddock/server`) on the host against the data dir.
+`~/.claude` the container's own `$HOME` resolves to, or run the headless importer on
+the host against the data dir:
+
+```bash
+npm run import-chats -w @paddock/server -- --project <slug> --dry-run
+```
+
+**`--project` is required** — the script exits `2` without it. Pass `--root` instead
+to target the root workspace (its slug is the empty string, which is why it needs its
+own flag). Other options: `--from <dir>` to read somewhere other than the default
+history location, `--data-dir <dir>` to name the instance, `--move` to move rather than
+copy, `--dry-run` to see what would happen, and `--json` for machine-readable output.
+
+The script keeps the older *import* name deliberately — it predates the UI's rename to
+**Adopt**, and renaming it would break anyone's scripts. (The CLI's `--help` text also
+still says "import" where it means "adopt"; that part *is* a bug —
+[#770](https://github.com/edspencer/paddock/issues/770).)
 :::
 
 ## Project chats vs root chats

@@ -17,44 +17,32 @@ npm run test:e2e:live  # same, but the REAL claude + Max token (gated; manual on
 
 Pure-logic + component tests. No server, no fleet, no claude.
 
-- **Server** (`packages/server/test/unit/`, node env):
-  - `projects.test.ts` — slugify, fileKind, create/get/list/update, the
-    group/area + model round-trips, pin/unpin, appendChangelog, file reads +
-    traversal guard, overview, remove.
-  - `models.test.ts` — the model list, defaults, lookups.
-  - `transcripts.test.ts` — `encodeProjectDir`, `ensureProjectChats` incl. the
-    symlink-healing + real-dir-migration branches, and a `transcripts: host`
-    block covering the other symlink target (the encoded path points at the
-    user's own folder, and writes go through it). The old #620 ownership guard is
-    gone: since #691 paddock always owns its Claude home, so there is nothing to
-    gate on.
-  - `github-auth.test.ts` — the GitHub OAuth **device flow** with a mocked
-    global `fetch`: `clientId`/`status`, `startDeviceFlow` (happy + non-ok +
-    malformed), `pollDeviceFlow` (pending / slow_down / authorized / error /
-    non-JSON-body, the 0600 token file + login lookup), `token`/`disconnect`,
-    and the cache.
-  - `git.test.ts` — `GitService` against real temp repos: not-a-repo guards, a
-    configured **bare-origin remote** + push/ahead-behind, single-file diff, the
-    unborn-branch diff fallback, rename-prefix stripping, commit no-op/error.
-  - `sweep.test.ts` — `SweepService` with stubbed herdctl/projects: parse +
-    write, coalescing a burst into one sweep, skip-no-activity + the persisted
-    watermark, the unparseable-output retry (watermark not advanced),
-    sweeper-failure + project-deleted drops, `stop()`.
-- **Web** (`packages/web/src/**/*.test.{ts,tsx}`, jsdom + @testing-library/react):
-  - `lib/areas.test.ts`, `lib/format.test.ts`.
-  - `components/StatusPill`, `components/TagPill`.
-  - `routes/ProjectsGrid.test.tsx` — area-section grouping/order/counts,
-    collapse + localStorage, embedding as the first section of root Home,
-    tag-filter mode.
-  - The New / Edit / Promote modals — validation + the exact request payload they
-    build (api client mocked).
+The suite is too large to enumerate file-by-file and stay accurate, so this is the
+shape rather than a list. As of v0.66.2:
+
+- **Server** (`packages/server/test/unit/`, node env) — **100 files**. Broadly:
+  project CRUD and slugging, path containment and the system-path denylist, the
+  config resolver and every `PADDOCK_*` precedence rule, instance-config validation,
+  transcripts (`encodeProjectDir`, `ensureProjectChats`, and the `transcripts: host`
+  symlink target), the `claude:` sharing levers, MCP-server declaration and
+  allowlisting, the self-MCP tool surface and its gates, `SweepService`, `GitService`
+  against real temp repos, the GitHub OAuth device flow with a mocked `fetch`,
+  schema-version guards and the turn interlock.
+- **Web** (`packages/web/src/**/*.test.{ts,tsx}`, jsdom + @testing-library/react) —
+  **72 files**: `lib/` helpers, individual components, the route-level grids and
+  panes, and the modals (validation plus the exact request payload each builds,
+  with the api client mocked).
+
+To see the current list, `ls packages/server/test/unit/` — the filenames map to the
+`src/` module they cover.
 
 Run just one layer:
 
 ```
-npm run test:server          # all server tests (unit + integration)
-npm run test:web             # all web tests
-npm run test -w packages/server -- test/unit   # server unit only
+npm run test:server                         # all server tests (unit + integration)
+npm run test:web                            # all web tests
+npm run test:unit -w packages/server        # server unit only
+npm run test:integration -w packages/server # server integration only
 ```
 
 ## Layer 2 — server integration (Vitest + fake claude)
@@ -62,7 +50,8 @@ npm run test -w packages/server -- test/unit   # server unit only
 Boots the **real** Fastify app (`buildApp()`), the **real** `@herdctl/core`
 FleetManager + CLI runtime, the **real** transcript/session machinery — against a
 temp data dir, with the fake `claude` first on `PATH`. Files:
-`packages/server/test/integration/`.
+`packages/server/test/integration/` — **58** of them at v0.66.2. A representative
+slice, to show what this layer is for:
 
 - `projects-crud.test.ts` — REST CRUD, agent registration in fleet status,
   pins, 404/409/400 paths.
@@ -96,13 +85,19 @@ temp data dir, with the fake `claude` first on `PATH`. Files:
 - `git.test.ts` — status/diff/commit against a real temp git repo, and the
   `repo:false` path when the store isn't a repo.
 
+The other ~50 follow the same pattern against the real app: the queue and its
+slot-versioning frames, sub-agent sidechain and background rehydration, the turn
+interlock on delete/revert/promote, adopt + unadopt, declared MCP servers (including
+the `--mcp-config` argv exposure under `driveMode: batch`), and the instance-config
+routes. `ls packages/server/test/integration/` for the current set.
+
 ### The fake-claude harness (`test/bin/claude`)
 
 > **The harness pins `batch` on purpose.** A fake `claude` on `PATH` is only
 > reachable from the **CLI** runtime, and Paddock's default drive mode is
 > `session` — which routes turns through `openChatSession` → the **SDK** runtime,
 > which spawns the SDK's own bundled `claude` and would never see the stub. So
-> `test/e2e/server.mjs:119` sets `PADDOCK_DRIVE_MODE=batch` in fake mode
+> `test/e2e/server.mjs:127` sets `PADDOCK_DRIVE_MODE=batch` in fake mode
 > (live mode leaves the default alone). The E2E suite therefore exercises the CLI
 > runtime, **not** the runtime a real chat uses.
 
@@ -185,12 +180,44 @@ fake claude. `test/e2e/server.mjs` boots `packages/server/dist/index.js` serving
 
 **You must build first**: `npm run build` (server + web), then `npm run test:e2e`.
 
-Flows covered (`happy-path.spec.ts`): create a project (pick an area) → land in
-it; send a chat and watch it stream, reload and see history; collapse an area
-section; filter by a domain tag; promote a one-off chat into a project.
+**The layer is 20 specs across four Playwright projects, against two servers.** The
+config (`test/e2e/playwright.config.ts`) declares:
+
+| Project | Specs | Viewport | Server |
+|---|---|---|---|
+| `chromium` | everything except the git and mobile specs | Desktop Chrome | `4317` |
+| `chromium-git` | `journey-git-*.spec.ts` | Desktop Chrome | `4318` |
+| `mobile` | `journey-mobile.spec.ts` | Pixel 5 (`isMobile` + `hasTouch`) | `4317` |
+| `mobile-git` | `journey-mobile-git.spec.ts` | Pixel 5 | `4318` |
+
+The two servers exist because git-repo detection is cached process-wide, so a
+repo-backed and a non-repo run cannot share one. Both ports derive from
+**`PADDOCK_E2E_PORT`** (default `4317`; the git server is always that `+ 1`) — override
+it if `4317`/`4318` are taken, which is also how you avoid colliding with an orphaned
+server from an earlier run. Each server gets its own temp data dir.
+
+The `mobile` projects reuse the same Chromium install, so a phone-sized run costs no
+extra browser download in CI.
+
+`happy-path.spec.ts` is the original smoke run — create a project (pick an area) → land
+in it; send a chat and watch it stream, reload and see history; collapse an area
+section; filter by a domain tag; promote a root chat into a project. The 19
+`journey-*` specs are the real coverage: chat, errors, files, git changes, GitHub,
+attachments + queue, sub-agents, lifecycle, preload, remount hydration, the root
+workspace, tags, theme, turn notices, home attention, project view, landing, and the
+two mobile journeys.
 
 Artifacts (screenshots on failure, traces/videos on retry) go to the run's temp
-dir, never the repo.
+dir, never the repo. The HTML report lands there too, under `<temp>/report`.
+
+:::note[Don't go looking for the report in a failed CI run]
+CI has an upload step for the Playwright report, but it points at
+`test/e2e/playwright-report/` — a path the reporter never writes to — with
+`if-no-files-found: ignore`, so it is a silent no-op on every failed E2E run. Reproduce
+locally to get a report. Tracked as
+[#774](https://github.com/edspencer/paddock/issues/774); the workflow is what's wrong
+here, not the config.
+:::
 
 ### Live mode (`npm run test:e2e:live`)
 
@@ -208,14 +235,21 @@ fake.
 (keeper/sweeper) in `herdctl.ts`, which is what makes the fake-claude/CLI
 path actually run.
 
-> **Scope note (2026-07).** `runtime` is read only on the one-shot `trigger()`
-> path — `openChatSession` hard-codes the SDK runtime — so these lines govern the
-> sweeper, triggers, and `driveMode: batch` turns. They do **not** make a real
-> chat a `claude -p` subprocess; the default `session` mode does that on the SDK.
-> The original note here also framed this as a Max-vs-API-key choice, which was
-> wrong: either credential works on either runtime. `index.ts` was also split
-into a `buildApp()` factory (`app.ts`) so tests can boot the app without binding
-a port or installing signal handlers — a pure seam, no behavior change.
+> **Scope note.** `runtime` is read only on the one-shot `trigger()` path —
+> `openChatSession` hard-codes the SDK runtime — so these lines govern the **sweeper**
+> and any turn resolved to **`driveMode: batch`**. They do **not** make a real chat a
+> `claude -p` subprocess; the default `session` mode drives it on the SDK. And note a
+> **trigger is not automatically a `trigger()` call**: a scheduled or event trigger
+> resolves its drive mode exactly like a chat (project override, else the instance
+> default), so on the default `session` it goes through `openChatSession` too. Only
+> the sweeper is unconditional — several source comments still say otherwise, tracked
+> as [#771](https://github.com/edspencer/paddock/issues/771). The original note here
+> also framed this as a Max-vs-API-key choice, which was wrong: either credential works
+> on either runtime.
+
+`index.ts` was also split into a `buildApp()` factory (`app.ts`) so tests can boot the
+app without binding a port or installing signal handlers — a pure seam, no behavior
+change.
 
 ## Known gaps / TODO for follow-up agents
 
@@ -246,13 +280,21 @@ a port or installing signal handlers — a pure seam, no behavior change.
 - `reattributeSession` / `writeAdoptionJob` are covered end-to-end via
   `promote.test.ts` (they're private). A direct unit test would need a small
   export seam; left as a follow-up.
-- E2E covers the happy paths; error states (offline socket, failed turn,
-  validation errors in-browser), model-picker, context-meter, file pins/tabs,
-  and the git UI are not yet driven from the browser.
+- **E2E is no longer happy-path-only.** Error states
+  (`journey-errors.spec.ts`), file pins/tabs (`journey-files.spec.ts`) and the git UI
+  (`journey-git-changes.spec.ts`, `journey-git-github.spec.ts`,
+  `journey-mobile-git.spec.ts`) all have specs now. What is still thin from the
+  browser: the model picker and the context meter, which are asserted at the
+  component and integration tiers instead.
+- **The fake `claude` cannot reach every state.** It is a CLI stub, so the suite that
+  uses it exercises the **CLI** runtime, not the SDK runtime a real chat uses — and it
+  accepts transcript shapes the real Messages API would reject. Structural soundness
+  is what these tests prove; real-API resumability is not verifiable at this tier.
 - `index.ts` (the process bootstrap: bind a port + signal handlers) is
-  intentionally left at 0% — it isn't server logic worth a test. Excluding it,
-  the meaningful `src/**` coverage is ~93% stmts.
-- Server coverage is now ~90% stmts / 84% branch over all `src/**` (~93% / ~84%
-  excluding index), up from ~72% / ~67%. Wiring a
-  `@vitest/coverage-v8` threshold gate (herdctl uses 85%) is the natural next
-  step now that the suite is broad.
+  intentionally left at 0% — it isn't server logic worth a test.
+- **No coverage figures are quoted here on purpose.** The numbers this page used to
+  carry predate roughly 150 added test files and could not be reproduced. Measure it
+  yourself when you need it (`npm run test -w packages/server -- --coverage`;
+  `@vitest/coverage-v8` is already a devDependency) rather than trusting
+  a figure in prose. Wiring a `@vitest/coverage-v8` threshold gate (herdctl uses 85%)
+  is still the natural next step.
