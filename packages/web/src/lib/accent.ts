@@ -466,6 +466,17 @@ export function applyAccent(
   const okAccent = { C: ctx.chroma.accent };
   const ok700 = { C: ctx.chroma.a700 };
 
+  // Start from a clean slate. `readContext` restores whatever was inline before
+  // it looked (it is a read, and a read must not mutate) — but that includes any
+  // DERIVED token a previous run repaired, e.g. `--accent-solid-hover`. Those
+  // are flat hexes, they outrank the theme's own derivation, and nothing below
+  // overwrites one unless the repair fires again. Left in place they pin part of
+  // the accent family to the last hue that needed fixing: picking Teal and then
+  // Violet gave a violet button with a teal hover, and the contrast audit could
+  // not see it because a stale accent is still a readable one. Clearing here is
+  // what makes each apply a fresh derivation rather than a patch on the last.
+  clearAccent(root);
+
   root.style.setProperty("--accent", channels(sAccent.rgb));
   root.style.setProperty("--accent-600", channels(s600.rgb));
   root.style.setProperty("--accent-700", channels(s700.rgb));

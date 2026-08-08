@@ -40,7 +40,7 @@ import {
   type Appearance,
   type ThemeId,
 } from "../lib/appearance";
-import { cx } from "./ui/cx";
+import { Button, Chip, StatusDot, cx } from "./ui";
 
 /** Hues to paint the strip at. 5-degree steps: finer than the eye separates at
  *  this width, coarse enough that the whole strip is one cheap solve. */
@@ -347,8 +347,67 @@ export function AppearancePanel({ variant = "wide", className }: AppearancePanel
         </fieldset>
       </div>
 
+      {/* ---------------------------------------------------------- preview -- */}
+      <AccentPreview />
+
       {/* ---------------------------------------------------------- readout -- */}
       {report && <ContrastReadout report={report} open={showChecks} onToggle={setShowChecks} />}
+    </div>
+  );
+}
+
+/**
+ * The accent, on the actual controls that wear it.
+ *
+ * This exists because of a mistake worth recording. The picker moved onto
+ * `/config` to stop it covering the app — and `/config` turns out to paint only
+ * **seven** elements with `--accent-solid`, the largest of which is the Save
+ * button, which is disabled and therefore muted whenever the form is clean. So
+ * changing the accent was genuinely, correctly applying and genuinely looking
+ * like nothing had happened. A control you cannot see the effect of is broken
+ * however correct its output.
+ *
+ * These are the real primitives (`Button`, `Chip`, `StatusDot`) with the real
+ * tokens, not a painted mock — which is the point: if the accent breaks a
+ * button, it breaks here too. The hover fill is shown as a plain swatch rather
+ * than a button, because you cannot force `:hover` and the hover step is
+ * exactly where the contrast inversion lived.
+ */
+function AccentPreview() {
+  return (
+    <div>
+      <p className="text-2xs font-semibold uppercase tracking-wide text-fg-muted">Preview</p>
+      <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-edge bg-surface p-3">
+        <Button variant="primary" size="sm">
+          Send
+        </Button>
+        <Button variant="ghost" size="sm">
+          Cancel
+        </Button>
+        <Button variant="link" size="sm">
+          A link
+        </Button>
+        <span className="inline-flex items-center gap-1 rounded-md border border-accent-edge bg-accent-soft px-1.5 py-0.5 text-2xs font-medium text-accent">
+          accent chip
+        </span>
+        <Chip tone="accent" shape="pill" dot>
+          running
+        </Chip>
+        <span className="inline-flex items-center gap-1.5 text-2xs text-fg-subtle">
+          <span
+            className="h-4 w-4 rounded-md border border-edge bg-accent-solid-hover"
+            aria-hidden
+          />
+          hovered
+        </span>
+        <span className="ml-auto inline-flex items-center gap-1.5">
+          <StatusDot tone="success" />
+          <StatusDot tone="warn" />
+          <StatusDot tone="danger" />
+          <StatusDot tone="info" />
+          <span className="text-2xs text-fg-subtle">status hues (theme’s, not yours)</span>
+        </span>
+      </div>
     </div>
   );
 }
