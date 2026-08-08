@@ -184,22 +184,53 @@ largest saturated area on screen. Every chrome assertion passed. A human said "i
 looks pink" twice and was told the token value twice; the first measurement of an
 actual pixel settled it in about ninety seconds.
 
-**So, for any theme that composites over a surface:**
+**So, for any theme that composites over a surface, satisfy _one_ of these two.**
+They are alternatives, not a sequence — the second is strictly better because it
+lets a theme have real texture instead of a whisper of one:
 
-- **Verify by sampling the rendered page, not the stylesheet.** The assertion is
-  *painted pixel matches token within ΔL 0.01*. Screenshot, decode, take the
-  **median** of a patch (the median steps over texture noise and stray glyphs),
-  convert to OKLab L, and compare against the token.
-- **Prefer `multiply` to `soft-light` or `overlay` for texture.** `multiply` can
-  only darken, so the error is bounded and points in a known direction: it
-  *improves* light-on-dark (all chrome text) and can only hurt dark-on-light, so
-  the tile over light surfaces should be a whisper. After that change parchment
-  measured ΔL 0.008 on chrome and 0.006 on the ground — both inside the rule.
-- **When a human's report and your instrument disagree, check the instrument.**
+**(a) Keep the composite negligible.** Painted pixel within **ΔL 0.01** of the
+token, verified by sampling the rendered page. Then the existing token-based
+guards remain true and nothing else is needed.
+
+**(b) Model the composite in the guard, and assert against the worst painted
+pixel.** `theme-parchment.test.ts` is the worked example: every surface there is
+`background-color` + a `multiply`-blended noise tile, so the real background is
+the token times some factor in `[TEXTURE_MIN, 1]`. The guard multiplies the
+background down by `TEXTURE_MIN` before measuring contrast — light mode only,
+because `multiply` can only darken and a darker background under *light* text
+only raises the ratio, so the flat token is already the worst case in dark mode
+and on the chrome.
+
+Route (b) carries one obligation that is easy to forget: **`TEXTURE_MIN` is a
+hand-maintained mirror of the tile's own range, and nothing enforces the
+coupling.** Change the tile's `feFuncR` slope/intercept or its opacity and the
+constant silently stops describing the CSS — the same failure as before, one
+level up. So re-measure it when the tile changes. Measured on the shipping
+theme: the darkest real ground pixel is **0.959** of the token against a
+`TEXTURE_MIN` of **0.93**, i.e. conservative with room to spare — and the painted
+ground is ΔL **0.019** from its token, which is why route (a) alone would not
+pass and route (b) is what makes the theme legal.
+
+Whichever route: **prefer `multiply` to `soft-light` or `overlay`.** `multiply`
+can only darken, so the error is bounded and points in a known direction.
+
+**How to sample.** Screenshot, decode, take the **median** of a patch, convert to
+OKLab L. Use the median rather than the mean, and check the patch is bare surface
+first: a patch that clips a glyph shows a min/max spread of ~116/255 where clean
+ground is ~6, and its minimum is antialiasing rather than texture. `ffmpeg` is on
+the box and decodes PNG directly:
+
+```sh
+ffmpeg -v error -i shot.png -vf "crop=8:8:X:Y" -f rawvideo -pix_fmt rgb24 - | od -An -tu1 -N3
+```
+
+**And when a human's report and your instrument disagree, check the instrument.**
 
 Today only `parchment` uses a blend mode. `scifi` and `terminal` use alpha and
-gradients, which the rendered-node audit already handles. Theme nine is where
-this bites next.
+gradients, which the rendered-node audit already handles. Note that route (b)
+currently lives in parchment's own test file — the shared `themes.test.ts` still
+reads flat tokens, so a ninth theme that composites inherits **no** protection
+until it writes its own. That is the next piece of work on the guard.
 
 ## 5. The scales
 
