@@ -4,9 +4,19 @@ description: "One agent per project (the root included), and promotion into a pr
 ---
 
 Every chat in Paddock is run by a Claude Code **agent** registered with herdctl's
-`FleetManager`. There is one kind you interact with — the per-project agent that
-runs Claude in the project's directory — plus the [sweeper](/concepts/sweeper),
-which is an internal per-project agent you never chat with directly.
+`FleetManager`. There are three kinds:
+
+- **`keeper-<slug>`** — the per-project agent that runs Claude in the project's
+  working directory, with the project's full toolset. This is the one you chat
+  with.
+- **`trigger-<slug>-<name>`** — a scoped agent per [event hook](/concepts/hooks)
+  or capability-scoped [schedule](/concepts/schedules), holding just that
+  trigger's granted tools. You *do* interact with these: replying inside a
+  trigger's chat runs your turn at **that agent's** capability, not the
+  project's — which is what the chat's capability banner is there to say. (A
+  schedule with no `run.tools` allow-list runs on the keeper instead.)
+- **`sweeper-<slug>`** — the internal per-project [curator](/concepts/sweeper),
+  which you never chat with directly.
 
 Every workspace has an agent, including the instance root — a chat that belongs
 to no *particular* project is simply a chat of [the root
@@ -71,14 +81,24 @@ re-homing it under that project's agent.
 `HerdctlService.promoteSession(sessionId, from, to)` (`herdctl.ts`, wired at
 `POST /api/projects/:slug/chats/:sessionId/promote`):
 
+0. **Quiesces the chat's in-flight turn** (#731). Promote *moves* the transcript,
+   so mid-turn it used to lose the chat from both projects. The turn is now
+   cancelled and its death verified first; if that can't be confirmed within
+   10s the route returns **`409 { code: "turn_running" }`**. This happens
+   *before* the project is created, so a refusal leaves no orphan project
+   behind. A success reports `cancelledTurn` so the UI can say what it stopped.
 1. **Moves the transcript** from the source project's `.chats/` into the new
    project's `.chats/`, preserving mtime.
 2. **Rewrites the embedded `cwd` token** in the JSONL to the new project's
-   `workingDir` — the checkout, for a repo-backed project. (Resume does not
+   `workingDir` — which is the nested checkout for a project with a `repo`, or
+   the external directory for one linked with `path`. (Resume does not
    depend on this: Claude Code keys resume on where the transcript *is*, not on
    its recorded `cwd`. The rewrite keeps the file honest about itself.)
 3. **Evicts the source agent's in-process session state**
-   (`deleteSession(keeper-<from>, sessionId)`) so a same-process resume works.
+   (`deleteSession(keeper-<from>, sessionId)`) so a same-process resume works,
+   and drops the source keeper's **agent-level session pointer** (#730) — left
+   dangling it would break the next resume of any *other* chat in the source
+   project.
 4. **Re-attributes** the session to `keeper-<to>` and invalidates both agents'
    discovery caches so the chat immediately shows under the new project.
 
