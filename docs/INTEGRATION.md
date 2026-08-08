@@ -91,7 +91,9 @@ was written, so they fall outside its "verified against 5.10.1" claim:
 Claude home the engine's session discovery, its adoption primitives, and Claude
 Code itself resolve transcripts under. Paddock passes `cfg.claudeHome` so the two
 sides cannot disagree about which home is real; see `HerdctlService` in
-`herdctl.ts` and the `CLAUDE_HOME` row in [CONFIGURATION.md](CONFIGURATION.md).
+`herdctl.ts` and the `CLAUDE_CONFIG_DIR` row in
+[CONFIGURATION.md](CONFIGURATION.md). (This page used to name `CLAUDE_HOME` here;
+that variable was removed in #691 and is now ignored.)
 
 5.29.0 is also where the session-adoption primitives the chat import is built on
 arrived — `listAdoptableSessions`, `adoptSessionsFrom` and `unadoptSession` on

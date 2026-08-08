@@ -28,7 +28,7 @@ declarations will live in, and it matches the repo's YAML house style
   does a present-but-malformed file — a parse error, or a top-level list/scalar
   instead of a mapping.)
 - **Shape.** Keys mirror the resolved config: top-level scalars (`port`, `host`,
-  `logLevel`, `keeperDriveMode`, `maxSpawnDepth`, `browserMcp`,
+  `logLevel`, `driveMode`, `maxSpawnDepth`, `browserMcp`,
   `sweepMinIntervalMs`, `selfMcpEnabled`, …), the `models` allow-list array, plus
   nested sections `auth`,
   `brand`, `transcription`, `gitAuthor`, and `managementApi` (the last is
@@ -40,7 +40,7 @@ declarations will live in, and it matches the repo's YAML house style
 # <data>/paddock.config.yaml — every value here is overridable by its env var
 port: 7233
 logLevel: info
-keeperDriveMode: session
+driveMode: session
 auth:
   mode: jwt
   jwksUrl: https://idp.example/jwks
@@ -112,8 +112,21 @@ Consequences worth knowing:
 | `HOST` | `127.0.0.1` | no | Bind host. Loopback by default (#435) so a fresh source/tarball run is network-closed. The container images set `HOST=0.0.0.0` — the network namespace is their boundary. `PADDOCK_HOST` is an accepted alias. |
 | `PADDOCK_DANGEROUSLY_ALLOW_OPEN` | — | no | Permits binding a non-loopback host while `PADDOCK_AUTH_MODE=none`. Without it that combination **refuses to start**; see [AUTH.md](../AUTH.md). Boots with a loud warning when set. |
 | `PADDOCK_MANAGEMENT_TRUSTED_PROXIES` | `loopback, linklocal, uniquelocal` | no | Peers whose `X-Forwarded-Proto` the `/mcp` plaintext guard believes. IPs, CIDRs, `loopback`/`linklocal`/`uniquelocal`, or `none`/`all`. Overrides `managementApi.trustedProxies`; see [Management API](#management-api-mcp-external-callers). |
-| `CLAUDE_HOME` | `<dataDir>/claude-home` | no | The Claude home Paddock runs its agents against — the directory whose `projects/<encoded-cwd>/` folders hold Claude Code's session transcripts, and the value handed to Claude Code as `CLAUDE_CONFIG_DIR`. **Paddock owns this directory** (#620): the data dir is a single relocatable root, and the user's `~/.claude` is a read-only source Paddock imports out of but never writes to. Precedence: `CLAUDE_HOME`, then `CLAUDE_CONFIG_DIR`, then a `claudeHome:` config-file key, then the default. `CLAUDE_CONFIG_DIR` is honoured because herdctl deliberately refuses to clobber an operator-set value (herdctl#423) — if Paddock disagreed with it, the SDK would write transcripts to one tree while herdctl read from another. Resolved **once** at startup into `PaddockConfig.claudeHome` (`resolveClaudeHome()` in `config.ts`) and threaded to *both* consumers: Paddock's transcript relocation and import detection (`ensureProjectChats` in `transcripts.ts`, `AdoptableIndex` in `adoptable.ts`), **and** the engine, as `FleetManagerOptions.claudeHomePath` (`herdctl.ts`). It is deliberately one value: were Paddock to honour this variable while the engine fell back to `$HOME/.claude`, chats would **list from one directory and open empty from another** (#588). Set it to `$HOME/.claude` to restore the pre-#620 layout exactly. |
-| `CLAUDE_CONFIG_DIR` | *(unset)* | no | Claude Code's own home variable. When set, Paddock adopts it as its Claude home rather than picking a different one (see above). Note that Claude Code scopes its credential store to whether this is set at all, so a keychain login made against the default home is not visible under a relocated one — Paddock warns at boot when it can find no credential source. |
+| `CLAUDE_CONFIG_DIR` | *(unset)* | no | Claude Code's own home variable, and the **only** environment override for the Claude home Paddock runs its agents against — the directory whose `projects/<encoded-cwd>/` folders hold Claude Code's session transcripts. Precedence is `CLAUDE_CONFIG_DIR` → the `claudeHome:` config-file key → `<dataDir>/claude-home` (the default). Paddock **always owns** this directory (#691) and **refuses to start** if it resolves to the user's own `~/.claude`. Resolved **once** at startup into `PaddockConfig.claudeHome` (`resolveClaudeHome()` in `config.ts`) and threaded to *both* consumers: Paddock's transcript relocation and adoption detection (`ensureProjectChats` in `transcripts.ts`, `AdoptableIndex` in `adoptable.ts`), **and** the engine, as `FleetManagerOptions.claudeHomePath` (`herdctl.ts`) — were the two to disagree, chats would **list from one directory and open empty from another** (#588). Note that Claude Code scopes its credential store to whether this is set at all, so a keychain login made against the default home is not visible under a relocated one — Paddock warns at boot when it can find no credential source. |
+
+> **⛔ `CLAUDE_HOME` was removed in #691 and is now *ignored, not an error*.** It
+> used to sit above `CLAUDE_CONFIG_DIR` in the precedence chain, and setting it to
+> `$HOME/.claude` was the documented way back to the pre-#620 layout. **Do not do
+> either.** A launcher that still exports `CLAUDE_HOME` silently gets the default
+> `<dataDir>/claude-home` while its operator believes they relocated the home —
+> use `CLAUDE_CONFIG_DIR`, and verify the running process
+> (`tr '\0' '\n' < /proc/<pid>/environ`) rather than the intent. And pointing the
+> home at your own `~/.claude` now **refuses to boot** outright: it re-welded five
+> unrelated concerns to one lever (whose transcripts a delete removes, which login
+> is visible, where agent memory lands), which are now the separate `claude:` keys.
+> To *share* your Claude Code transcripts, set `claude: { transcripts: host }`
+> (or `PADDOCK_CLAUDE_TRANSCRIPTS=host`) — that shares the files themselves and
+> leaves Paddock's home where it belongs.
 
 > **`PADDOCK_CONFIG__*` is not implemented.** There is no generic
 > `PADDOCK_CONFIG__foo__bar` → nested-herdctl-key override mechanism in this tree.
