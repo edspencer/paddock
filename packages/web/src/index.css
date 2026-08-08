@@ -25,6 +25,12 @@
  * inside every theme.
  */
 @import "./styles/themes.css";
+/*
+ * `terminal` — hand-authored rather than generated, so it lives in its own file
+ * and imports last. It carries its own @font-face rules and its own chrome, all
+ * gated on `[data-theme="terminal"]`, so it is inert everywhere else.
+ */
+@import "./styles/theme-terminal.css";
 
 /*
  * Dark mode is class-toggled on <html> (index.html applies it before first
