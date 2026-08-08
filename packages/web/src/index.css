@@ -25,6 +25,14 @@
  * inside every theme.
  */
 @import "./styles/themes.css";
+/*
+ * `parchment` is hand-written rather than generated: it was authored against
+ * this branch's theme system directly, so there is no direction worktree for
+ * `build-themes.mjs` to lift it out of. Same three-block shape, same cascade
+ * rules, plus the only decorative CSS any theme ships — all of it gated on
+ * `[data-theme="parchment"]` and inert everywhere else.
+ */
+@import "./styles/theme-parchment.css";
 
 /*
  * Dark mode is class-toggled on <html> (index.html applies it before first

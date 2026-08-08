@@ -1,0 +1,477 @@
+/*
+ * ============================================================== parchment ==
+ * A 2D-vector fantasy-game UI, taken seriously as a developer tool.
+ *
+ * Reference: denizen-games' "Parchment" UI kit — Ed's words, "redolent of 90s
+ * video games with a 'parchment' kinda vibe". Four load-bearing characteristics
+ * were lifted from it, and they are the whole theme:
+ *
+ *   1. WINE CHROME. A deep burgundy is the strongest colour on screen and it is
+ *      STRUCTURAL, not an accent sprinkle — it is the sidebar, the whole column,
+ *      in both modes. Everything else defers to it.
+ *   2. TWO WARM SURFACES, ACTUALLY SEPARATED. A parchment card floating on a
+ *      dusty-rose field. `main` puts 0.027 of perceptual lightness between a card
+ *      and the page behind it, which is why the app reads flat; this puts 0.080
+ *      light / 0.060 dark, so a card is an object rather than a border.
+ *   3. CORNER BRACKETS. A fine second rule that appears only at the four corners
+ *      of a major panel. This is the single most recognisable thing about the
+ *      reference and it costs eight gradients — no images, no pseudo-elements,
+ *      no positioning change (see the ornament section for why that matters).
+ *   4. AN OLD-STYLE SERIF, ITALIC FOR FLAVOUR TEXT. Alegreya throughout, with a
+ *      real italic on every descriptive line, and Alegreya SC (small caps) on the
+ *      micro-labels the app currently sets in tracked uppercase.
+ *
+ * ── The failure mode this theme is standing next to ──────────────────────────
+ * "Warm cream background + high-contrast serif" is Anthropic's own catalogued
+ * default-AI aesthetic (cluster #1 in CONTRACT.md), and `vellum` already holds
+ * warm-and-literate. The three differentiators are deliberate and they are all
+ * doing work: the WINE (a dark chrome column, not a tasteful accent), the
+ * ORNAMENT (corner brackets and gilt rules), and the ITALIC (flavour text reads
+ * as an item description, not as a caption). Take any one of them away and this
+ * becomes a startup landing page.
+ *
+ * ── Density ──────────────────────────────────────────────────────────────────
+ * This is a game menu's flavour on a dense tool's bones. Nothing here inflates
+ * padding: the ONLY size change is +1px on `--text-xs`/`--text-sm`, which is
+ * compensation, not decoration — Alegreya's x-height is ~10% shorter than
+ * Inter's, so 14px Alegreya reads as ~13px Inter. Ornament is on major panels
+ * only. Put brackets on every chip and the screen turns to lace.
+ *
+ * ── How this file plugs in ───────────────────────────────────────────────────
+ * `styles/themes.css` is GENERATED (`scripts/build-themes.mjs`) so it must not
+ * be hand-edited. This is a separate, hand-written theme imported after it, in
+ * the same three-block shape the generator emits — base / `:not(.dark)` /
+ * `.dark` — so the cascade rules in its header apply here unchanged.
+ */
+
+/* ------------------------------------------------------------------ faces --
+ * OFL, self-hosted, latin subsets. `@font-face` is lazy: these download only if
+ * the parchment theme is actually selected.
+ *
+ * Alegreya (Huerta Tipográfica, OFL) is the pick and it is a considered one. It
+ * is an old-style face — angled stress, calligraphic ductus, a genuinely
+ * cursive italic rather than a slanted roman — but it was drawn for long-form
+ * *text*, so it holds together at 13px in a table, which the Garamonds this
+ * theme wanted do not. The italic is the reason it is here: the reference's item
+ * description is italic and Paddock has help text under every field.
+ */
+@font-face {
+  font-family: "Alegreya";
+  font-style: normal;
+  font-weight: 400 900;
+  font-display: swap;
+  src: url("/fonts/alegreya-latin.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Alegreya";
+  font-style: italic;
+  font-weight: 400 900;
+  font-display: swap;
+  src: url("/fonts/alegreya-latin-italic.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Alegreya SC";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/alegreya-sc-latin-500.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Alegreya SC";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/alegreya-sc-latin-700.woff2") format("woff2");
+}
+/* Courier Prime (Quote-Unquote Apps, OFL) — a typewriter texture that was
+   redrawn for screens, so it carries the period flavour into code blocks
+   without the hairline strokes that make actual Courier unreadable. */
+@font-face {
+  font-family: "Courier Prime";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/courier-prime-latin-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Courier Prime";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/courier-prime-latin-700.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Courier Prime";
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/courier-prime-latin-italic.woff2") format("woff2");
+}
+
+/* ----------------------------------------------- mode-independent scales -- */
+[data-theme="parchment"] {
+  --font-sans: "Alegreya", ui-serif, Georgia, "Times New Roman", serif;
+  --font-display: var(--font-sans);
+  --font-prose: var(--font-sans);
+  --font-mono: "Courier Prime", ui-monospace, SFMono-Regular, monospace;
+  /* The small-caps face is not a `--font-*` token because nothing generic
+     should reach for it; it is applied by name to the micro-labels below. */
+
+  /* Type: +1px on the two most-used rungs, and nothing else. See "Density". */
+  --text-3xs: 0.6875rem;
+  --text-3xs--line-height: 0.9375rem;
+  --text-2xs: 0.75rem;
+  --text-2xs--line-height: 1.0625rem;
+  --text-xs: 0.8125rem;
+  --text-xs--line-height: 1.125rem;
+  --text-sm: 0.9375rem;
+  --text-sm--line-height: 1.4375rem;
+  --text-base--line-height: 1.5625rem;
+  --text-md: 1.0625rem;
+  --text-md--line-height: 1.75rem;
+
+  /* Rounding: the reference's ~8px, held concentric. A panel is 10px, a control
+     6px, a chip 4px — chunkier than a modern UI at the small end, calmer than
+     one at the large end, which is what a vector game kit looks like. */
+  --radius-sm: 0.1875rem;
+  --radius-md: 0.25rem;
+  --radius-lg: 0.375rem;
+  --radius-xl: 0.5rem;
+  --radius-2xl: 0.625rem;
+  --radius-3xl: 0.875rem;
+}
+
+/* ------------------------------------------------------------------ light --
+ * Parchment card on a dusty-rose field, wine chrome, brass ornament.
+ */
+[data-theme="parchment"]:not(.dark) {
+  /* The brandable seam, in the exact channel format the server overwrites. */
+  --accent: 130 38 50; /* #822632 wine */
+  --accent-600: 117 25 40; /* #751928 */
+  --accent-700: 101 18 32; /* #651220 */
+
+  --surface: oklch(0.884 0.0235 18); /* dusty rose field */
+  --surface-raised: oklch(0.9645 0.0175 84); /* parchment */
+  --surface-sunken: oklch(0.9215 0.0215 62); /* a well cut into the parchment */
+  --surface-hover: oklch(0.912 0.026 30);
+  --surface-active: oklch(0.876 0.03 22);
+  --surface-selected: oklch(0.888 0.042 15);
+  --overlay: oklch(0.16 0.04 20 / 0.5);
+  --overlay-strong: oklch(0.12 0.03 20 / 0.85);
+
+  /* Ink, not black: everything is pulled toward the wine so the page reads as
+     one warm object rather than as grey text on a tinted card. */
+  --text: oklch(0.285 0.049 22);
+  --text-muted: oklch(0.445 0.038 26);
+  --text-subtle: oklch(0.468 0.033 28);
+  --text-on-solid: oklch(0.985 0.012 84);
+
+  --border-subtle: oklch(0.858 0.02 30);
+  --border: oklch(0.775 0.026 30);
+  --border-strong: oklch(0.565 0.032 28);
+
+  --accent-color: rgb(var(--accent));
+  --accent-solid: rgb(var(--accent-600));
+  --accent-solid-hover: rgb(var(--accent-700));
+  --accent-fg: oklch(0.985 0.012 84);
+  --accent-text: rgb(var(--accent));
+  --accent-soft: color-mix(in oklab, rgb(var(--accent)) 11%, var(--surface-raised));
+  --accent-border: color-mix(in oklab, rgb(var(--accent)) 42%, var(--surface));
+
+  /* Status hues, muted and warmed so nothing outshouts the wine. `warn` is the
+     theme's brass — it is the hue that carries gold into counts and pending
+     work, which is where the reference puts it. `danger` is pushed to 32 so it
+     cannot be mistaken for the wine at 17. */
+  --success-solid: oklch(0.475 0.1 146);
+  --success-fg: oklch(0.985 0.012 84);
+  --success-text: oklch(0.44 0.095 146);
+  --success-soft: oklch(0.932 0.034 146);
+  --success-border: oklch(0.83 0.062 146);
+
+  --warn-solid: oklch(0.545 0.108 78);
+  --warn-fg: oklch(0.985 0.012 84);
+  --warn-text: oklch(0.45 0.09 78);
+  --warn-soft: oklch(0.936 0.045 82);
+  --warn-border: oklch(0.828 0.078 82);
+
+  --danger-solid: oklch(0.5 0.155 32);
+  --danger-fg: oklch(0.985 0.012 84);
+  --danger-text: oklch(0.455 0.15 32);
+  --danger-soft: oklch(0.93 0.032 32);
+  --danger-border: oklch(0.828 0.07 32);
+
+  --info-solid: oklch(0.48 0.095 245);
+  --info-fg: oklch(0.985 0.012 84);
+  --info-text: oklch(0.445 0.09 245);
+  --info-soft: oklch(0.932 0.03 245);
+  --info-border: oklch(0.83 0.055 245);
+
+  --lineage-solid: oklch(0.48 0.125 312);
+  --lineage-fg: oklch(0.985 0.012 84);
+  --lineage-text: oklch(0.445 0.12 312);
+  --lineage-soft: oklch(0.932 0.032 312);
+  --lineage-border: oklch(0.83 0.06 312);
+
+  /* Soft, warm, and layered — a vector kit's drop shadow, not a hard edge. */
+  --shadow-color: 78 40 34;
+  --shadow-ambient: 0.11;
+  --shadow-direct: 0.07;
+
+  --scroll-thumb: oklch(0.775 0.026 30);
+
+  /* ---------------------------------------------------- parchment-private --
+   * The wine chrome column and the ornament. These are NOT semantic app tokens
+   * — no component may reach for them — they exist so the two rules at the
+   * bottom of this file have somewhere mode-aware to read from.
+   */
+  --parch-chrome: oklch(0.305 0.082 18);
+  --parch-chrome-raised: oklch(0.34 0.082 18);
+  --parch-chrome-sunken: oklch(0.268 0.08 18);
+  --parch-chrome-hover: oklch(0.352 0.082 16);
+  --parch-chrome-active: oklch(0.385 0.082 16);
+  --parch-chrome-text: oklch(0.955 0.02 84);
+  --parch-chrome-muted: oklch(0.785 0.032 60);
+  --parch-chrome-subtle: oklch(0.768 0.038 55);
+  --parch-chrome-edge: oklch(0.44 0.075 16);
+  --parch-chrome-edge-strong: oklch(0.615 0.075 20);
+  /* Brass. On the wine it is a lit metal edge; it is the sidebar's accent. */
+  --parch-gilt: oklch(0.79 0.105 82);
+  /* The corner brackets. On parchment, gold-on-cream is invisible, so the rule
+     is a burnt sienna that still reads as tooled leather. */
+  --parch-ornament: oklch(0.615 0.062 34);
+}
+
+/* ------------------------------------------------------------------- dark --
+ * The same room at night: oiled wood, oxblood leather, and the parchment now a
+ * lamp-lit surface rather than a bleached one. Same theme, different hour.
+ */
+[data-theme="parchment"].dark {
+  --accent: 164 57 68; /* #a43944 — the wine, lit */
+  --accent-600: 147 46 57; /* #932e39 */
+  --accent-700: 130 34 46; /* #82222e */
+
+  --surface: oklch(0.212 0.0175 52); /* oiled wood */
+  --surface-raised: oklch(0.272 0.0195 58); /* lamp-lit leather */
+  --surface-sunken: oklch(0.172 0.014 50);
+  --surface-hover: oklch(0.305 0.021 55);
+  --surface-active: oklch(0.335 0.023 52);
+  --surface-selected: oklch(0.318 0.045 18);
+  --overlay: oklch(0.09 0.02 30 / 0.62);
+  --overlay-strong: oklch(0.06 0.015 30 / 0.88);
+
+  --text: oklch(0.935 0.022 82);
+  --text-muted: oklch(0.748 0.03 74);
+  --text-subtle: oklch(0.706 0.032 70);
+  --text-on-solid: oklch(0.985 0.012 84);
+
+  --border-subtle: oklch(0.295 0.016 45);
+  --border: oklch(0.368 0.02 45);
+  --border-strong: oklch(0.568 0.026 40);
+
+  --accent-color: rgb(var(--accent));
+  --accent-solid: rgb(var(--accent-600));
+  --accent-solid-hover: rgb(var(--accent));
+  --accent-fg: oklch(0.985 0.012 84);
+  /* Candlelight on wine: as TEXT the fill is too dark on the wood, so it is
+     lifted toward a lit rose. Still derived from `--accent`, so branding and
+     the hue picker both propagate. */
+  --accent-text: color-mix(in oklab, rgb(var(--accent)) 46%, oklch(0.97 0.03 60));
+  --accent-soft: color-mix(in oklab, rgb(var(--accent)) 26%, var(--surface));
+  --accent-border: color-mix(in oklab, rgb(var(--accent)) 52%, var(--surface));
+
+  --success-solid: oklch(0.5 0.11 146);
+  --success-fg: oklch(0.985 0.012 84);
+  --success-text: oklch(0.798 0.115 146);
+  --success-soft: oklch(0.298 0.048 146);
+  --success-border: oklch(0.402 0.07 146);
+
+  --warn-solid: oklch(0.63 0.115 80);
+  --warn-fg: oklch(0.145 0.02 60);
+  --warn-text: oklch(0.822 0.13 82);
+  --warn-soft: oklch(0.298 0.048 82);
+  --warn-border: oklch(0.402 0.07 82);
+
+  --danger-solid: oklch(0.535 0.16 32);
+  --danger-fg: oklch(0.985 0.012 84);
+  --danger-text: oklch(0.795 0.115 32);
+  --danger-soft: oklch(0.298 0.048 32);
+  --danger-border: oklch(0.402 0.07 32);
+
+  --info-solid: oklch(0.51 0.1 245);
+  --info-fg: oklch(0.985 0.012 84);
+  --info-text: oklch(0.795 0.09 245);
+  --info-soft: oklch(0.298 0.045 245);
+  --info-border: oklch(0.402 0.065 245);
+
+  --lineage-solid: oklch(0.51 0.14 312);
+  --lineage-fg: oklch(0.985 0.012 84);
+  --lineage-text: oklch(0.795 0.115 312);
+  --lineage-soft: oklch(0.298 0.048 312);
+  --lineage-border: oklch(0.402 0.07 312);
+
+  --shadow-color: 0 0 0;
+  --shadow-ambient: 0.46;
+  --shadow-direct: 0.5;
+
+  --scroll-thumb: oklch(0.368 0.02 45);
+
+  --parch-chrome: oklch(0.185 0.042 16);
+  --parch-chrome-raised: oklch(0.225 0.042 16);
+  --parch-chrome-sunken: oklch(0.155 0.036 16);
+  --parch-chrome-hover: oklch(0.255 0.042 16);
+  --parch-chrome-active: oklch(0.29 0.042 16);
+  --parch-chrome-text: oklch(0.925 0.022 82);
+  --parch-chrome-muted: oklch(0.755 0.032 60);
+  --parch-chrome-subtle: oklch(0.742 0.038 55);
+  --parch-chrome-edge: oklch(0.318 0.04 16);
+  --parch-chrome-edge-strong: oklch(0.535 0.075 20);
+  --parch-gilt: oklch(0.775 0.105 82);
+  --parch-ornament: oklch(0.545 0.075 74);
+}
+
+/*
+ * ================================================================ ornament ==
+ * Everything below is gated on `[data-theme="parchment"]` and is therefore
+ * INERT in the other five themes. It is the only non-token part of this
+ * direction, and it is three ideas, not a component rewrite.
+ */
+
+/* ------------------------------------------------------- 1. the wine column --
+ * The sidebar is the chrome. Rather than paint it and then hand-fix every
+ * foreground inside it, this REDECLARES the token set on the `<aside>` — custom
+ * properties resolve per element, so every `bg-surface-*`, `text-fg-*` and
+ * `border-edge*` utility in the whole subtree re-points at the wine ramp with
+ * no component knowing anything happened. That is the entire trick, and it is
+ * why a structural colour costs one rule here instead of a fork of AppShell.
+ *
+ * `--accent-soft`/`--accent-border` deliberately stay DERIVED from `--accent`,
+ * so the selected chat row still answers the accent-hue picker; `--accent-text`
+ * is pinned to brass because a hue solved for legibility on parchment has no
+ * reason to be legible on wine, and the counts in this column are gold in the
+ * reference anyway.
+ */
+[data-theme="parchment"] aside {
+  --surface: var(--parch-chrome);
+  --surface-raised: var(--parch-chrome-raised);
+  --surface-sunken: var(--parch-chrome-sunken);
+  --surface-hover: var(--parch-chrome-hover);
+  --surface-active: var(--parch-chrome-active);
+  --surface-selected: color-mix(in oklab, rgb(var(--accent)) 30%, var(--parch-chrome-active));
+  --text: var(--parch-chrome-text);
+  --text-muted: var(--parch-chrome-muted);
+  --text-subtle: var(--parch-chrome-subtle);
+  --border-subtle: var(--parch-chrome-edge);
+  --border: var(--parch-chrome-edge);
+  --border-strong: var(--parch-chrome-edge-strong);
+  --accent-text: var(--parch-gilt);
+  --accent-soft: color-mix(in oklab, rgb(var(--accent)) 30%, var(--parch-chrome));
+  --accent-border: color-mix(in oklab, rgb(var(--accent)) 55%, var(--parch-chrome-edge));
+  --scroll-thumb: var(--parch-chrome-edge-strong);
+  /* The utility on the aside is `lg:bg-surface-raised/50` — a 50% wine over the
+     page would wash out, so the column is stated opaque here. */
+  background-color: var(--parch-chrome);
+  /*
+   * And the inherited colour, which is NOT redundant with `--text` above and
+   * cost an hour to work out. `@layer base` sets `body { color: var(--color-fg) }`
+   * — resolved at BODY, outside this scope — and a sidebar row that carries no
+   * colour utility of its own (every project name; the wordmark) simply
+   * inherits it. Redeclaring the token fixes `text-fg-*` but not inheritance,
+   * so the names rendered in the page's dark ink on the wine and vanished.
+   */
+  color: var(--parch-chrome-text);
+  /* A gilt hairline down the inside edge: the brass fillet of a tooled panel. */
+  border-right-color: var(--parch-ornament);
+}
+
+/* ------------------------------------------------ 2. the corner brackets --
+ * The reference's signature: a fine second rule that shows only at the corners.
+ *
+ * Drawn as EIGHT background gradients on the panel itself — not a pseudo-element.
+ * `::before` would need `position: relative` on the panel, which silently
+ * re-parents every absolutely-positioned descendant (hover action strips,
+ * badges, resizers) to the card. A background-image composites over the
+ * background-color, changes no layout, and cannot be clipped by `overflow`.
+ *
+ * Applied to MAJOR panels only: the `Card` primitive, the legacy `.card`, and a
+ * dialog. Not chips, not inputs, not menu items — put these on everything and
+ * the screen turns to lace.
+ */
+[data-theme="parchment"] .card,
+[data-theme="parchment"] .rounded-2xl.bg-surface-raised,
+[data-theme="parchment"] [role="dialog"] {
+  --parch-tick: 13px;
+  --parch-inset: 5px;
+  background-image:
+    linear-gradient(var(--parch-ornament), var(--parch-ornament)),
+    linear-gradient(var(--parch-ornament), var(--parch-ornament)),
+    linear-gradient(var(--parch-ornament), var(--parch-ornament)),
+    linear-gradient(var(--parch-ornament), var(--parch-ornament)),
+    linear-gradient(var(--parch-ornament), var(--parch-ornament)),
+    linear-gradient(var(--parch-ornament), var(--parch-ornament)),
+    linear-gradient(var(--parch-ornament), var(--parch-ornament)),
+    linear-gradient(var(--parch-ornament), var(--parch-ornament));
+  background-repeat: no-repeat;
+  background-size:
+    var(--parch-tick) 1px,
+    1px var(--parch-tick),
+    var(--parch-tick) 1px,
+    1px var(--parch-tick),
+    var(--parch-tick) 1px,
+    1px var(--parch-tick),
+    var(--parch-tick) 1px,
+    1px var(--parch-tick);
+  background-position:
+    left var(--parch-inset) top var(--parch-inset),
+    left var(--parch-inset) top var(--parch-inset),
+    right var(--parch-inset) top var(--parch-inset),
+    right var(--parch-inset) top var(--parch-inset),
+    left var(--parch-inset) bottom var(--parch-inset),
+    left var(--parch-inset) bottom var(--parch-inset),
+    right var(--parch-inset) bottom var(--parch-inset),
+    right var(--parch-inset) bottom var(--parch-inset);
+}
+
+/* ----------------------------------------------- 3. serif voice: the type --
+ * Two conventions, both straight out of the reference sheet.
+ *
+ * (a) SMALL CAPS for the micro-labels. The app sets these in tracked uppercase;
+ *     Alegreya SC says the same thing in the register of an engraved plate.
+ *     `text-transform: none` is required — the face already speaks in caps, and
+ *     leaving `uppercase` on would render full caps and throw the effect away.
+ * (b) ITALIC for descriptive text. In the reference the item description is
+ *     italic, and that convention lands exactly on Paddock's help text: every
+ *     `Hint`, every `Section` description, every empty-state line.
+ */
+[data-theme="parchment"] :is(label, legend, h3, h4, div, span).uppercase,
+[data-theme="parchment"] .field-label,
+[data-theme="parchment"] .section-label {
+  font-family: "Alegreya SC", var(--font-display);
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0.015em;
+}
+/* Small caps sit optically smaller than the caps they replace, so the two
+   smallest label rungs come up one notch. Only those two. */
+[data-theme="parchment"] :is(.text-2xs, .text-3xs).uppercase,
+[data-theme="parchment"] .section-label {
+  font-size: var(--text-xs);
+}
+
+[data-theme="parchment"] p.leading-snug,
+[data-theme="parchment"] p.text-fg-subtle,
+[data-theme="parchment"] .prose-doc .md blockquote {
+  font-style: italic;
+}
+
+/* Old-style figures are the historically correct companion to this face — but
+   NOT where numbers are compared column-to-column, which is what `.tabular`
+   marks. Lining, tabular figures win there; the app already says where. */
+[data-theme="parchment"] {
+  font-variant-numeric: oldstyle-nums;
+}
+[data-theme="parchment"] .tabular {
+  font-variant-numeric: tabular-nums lining-nums;
+}
+[data-theme="parchment"] :is(.font-mono, code, pre, input, textarea, select, .status-pill) {
+  font-variant-numeric: lining-nums;
+}
