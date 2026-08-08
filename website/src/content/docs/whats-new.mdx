@@ -1,6 +1,6 @@
 ---
 title: What's New
-description: "The user-facing highlights of each Paddock release — five independent levers for what an instance shares with your Claude Code, declaring your own MCP servers, one-command install with npx and opening the directory you're in, adopting your existing Claude Code CLI chats, a Home that leads with running and unread work, the keeper persona retired in favour of Claude, an unread badge on the sidebar's Home link, the instance's own root as a first-class workspace, subtree actions on the chat tree, a running-chats filter, instance Config split from workspace Settings, scratch retired, a much faster jobs index, a chat list that nests spawned chats under their parent, an external MCP endpoint, a generated API reference, per-message fork & revert, Claude Opus 5 by default, official Docker images & deploy recipes, attachments, streaming, unified triggers, and more."
+description: "User-facing highlights of each Paddock release, newest first — queued messages, the Config screen redesign and the new default port, linked project directories, host Claude Code plugins, granular inheritance from your Claude Code state, adopting terminal chats, and the npm package. Earlier releases are archived on a companion page."
 ---
 
 import DemoVideo from '../../components/DemoVideo.astro';
@@ -98,21 +98,17 @@ favour of the `claude:` config block.
   process arguments** by any local user while a turn runs. Paddock can't fix this
   from its side, so it warns at startup. The default `session` mode is unaffected.
 
-## 0.62 — Five levers instead of one
+## 0.62 — Granular host Claude inheritance options
 
-Paddock sits next to Claude Code state you already have: transcripts, a login,
-an MCP server or two, a curated `CLAUDE.md`. Until this release it reached all
-of that through **one** lever — which Claude home it pointed at — with every
-distinct concern welded to it. Moving it for one reason changed four others,
-which is how a single week produced [data
+Paddock sits next to Claude Code state you already have: transcripts, a login, an
+MCP server or two, a curated `CLAUDE.md`. Until this release it reached all of
+that through **one** lever — which Claude home it pointed at — so moving it for
+one reason changed four others. That is how a single week produced [data
 loss](https://github.com/edspencer/paddock/issues/682), an [invisible macOS
 login](https://github.com/edspencer/paddock/issues/683), and a [delete that
 destroyed real terminal history](https://github.com/edspencer/paddock/issues/689).
-0.62 splits it into five independent keys.
 
-- **You can now read what Paddock touches off a config file, instead of
-  inferring it.** Each key answers one question — *whose X does this instance
-  use?* — in one vocabulary:
+- **Five independent keys, each answering *whose X does this instance use?***
 
   ```yaml
   claude:
@@ -124,109 +120,44 @@ destroyed real terminal history](https://github.com/edspencer/paddock/issues/689
   ```
 
   `own` is Paddock's, isolated inside the data dir; `host` is this machine's
-  Claude Code. Omit the block for the default, which is full isolation apart
-  from your login. There is a new page — [What Paddock touches on your
-  machine](/guides/what-paddock-touches/) — that states the guarantee in one
-  place, and [the config file reference](/configuration/config-file/#claude--what-this-instance-shares-with-your-claude-code)
-  covers each key in depth.
+  Claude Code. Omit the block for full isolation apart from your login. [What
+  Paddock touches on your machine](/guides/what-paddock-touches/) states the
+  guarantee in one place.
 
 - **⚠️ If you keep a curated `~/.claude/CLAUDE.md`, read this one.**
   `instructions` defaults to `own`, so your user-level `CLAUDE.md`, `agents/`,
-  `commands/` and `plugins/` are **not** loaded. Every release before 0.62
-  bridged them in unconditionally. To keep the old behaviour:
-
-  ```yaml
-  claude:
-    instructions: host
-  ```
-
-  Two things make this smaller than it sounds, and one makes it larger. Smaller:
-  each **project's** own `CLAUDE.md` is loaded in every mode and is untouched by
-  this key, and on a default chat turn these four files were already inert —
-  Paddock's chat runtime loads only the `project` setting source, so the host's
-  user-level files had stopped applying there when chats moved to the Agent SDK.
-  Larger: they *do* still apply on the CLI paths — the post-turn sweeper,
-  triggers, and `driveMode: batch` chats — so this is a real change there, and
-  Paddock's startup notice about it is written at `info`, which the `npx`
-  launcher's quiet default filters out. If you had it, you will not be told you
-  lost it. Hence this entry.
-
-  *Superseded:* that notice is now a **warning**
-  ([#706](https://github.com/edspencer/paddock/issues/706)), so it survives the
-  `npx` quiet default and you are told — still only when you actually have
-  `~/.claude` instruction files that are not being loaded.
-
-- **Your `~/.claude/settings.json` hooks no longer run inside Paddock turns.**
-  Hooks are shell commands bound to tool use, and until now every one you had
-  ever configured ran in Paddock with no key to turn it off. `hooks: own` is the
-  default; `hooks: host` restores them. The rest of that file — `permissions`,
-  `model`, `statusLine` — still applies either way: under `own` Paddock writes
-  its own `settings.json` carrying your other keys with `hooks` dropped, and
-  regenerates it at each startup. Note the name is exact: this stops host
-  **hooks**, not every host **command**, because several other `settings.json`
-  keys also name a script to run ([#698](https://github.com/edspencer/paddock/issues/698)).
-
-- **Your own MCP servers can reach Paddock's agents — two different ways.**
-  `claude.mcpServers: host` attaches the servers already declared in your
-  `~/.claude.json`. Separately, a **sibling** `mcpServers:` block declares
-  servers to Paddock itself, which is the answer for a container or a server
-  where there is nothing on the machine to borrow:
-
-  ```yaml
-  mcpServers:
-    notion:
-      command: npx
-      args: ["-y", "@notionhq/notion-mcp-server"]
-      env:
-        NOTION_TOKEN: env:NOTION_TOKEN     # a reference, not the token
-  ```
-
-  `env:VAR_NAME` works anywhere a string goes, so tokens stay out of the file —
-  which matters, because that file is git-tracked and editable from the Config
-  screen. Paddock never prints a value from this block back to you.
-
-  One limit worth knowing, and it is downstream of Paddock rather than a bug in
-  it: `env:VAR_NAME` keeps a credential out of the *file*, and under
-  **`driveMode: batch`** it does not keep it out of `ps`. On that runtime the
-  engine passes the whole server definition to `claude` as a `--mcp-config`
-  command-line argument, and process arguments are world-readable on Linux
-  (`/proc/<pid>/cmdline`). The default **`driveMode: session`** hands the same
-  record over in-process, so the server receives its `env` the way any process
-  does — owner-readable only, exactly as your own Claude Code does it. Prefer the
-  default for any server holding a credential; Paddock warns at startup if you
-  are on `batch` with one.
-
+  `commands/` and `plugins/` are **not** loaded; every release before 0.62
+  bridged them in unconditionally. Set `instructions: host` to keep the old
+  behaviour. Each **project's** own `CLAUDE.md` is loaded in every mode and is
+  unaffected. The change bites on the CLI paths — the sweeper, triggers and
+  `driveMode: batch` — where those files did still apply. *(0.64 raised the
+  startup notice to a warning, so you are now told.)*
+- **Host `settings.json` hooks no longer run inside Paddock turns.** Every hook
+  you had ever configured used to run here with no way to turn it off. `hooks:
+  host` restores them; the rest of that file still applies either way.
+- **Your own MCP servers can reach Paddock two ways.** `claude.mcpServers: host`
+  attaches what is already in your `~/.claude.json`. A sibling `mcpServers:`
+  block declares servers to Paddock itself — the answer for a container with
+  nothing to borrow — where `env:VAR_NAME` references keep tokens out of a
+  git-tracked file.
 - **Deleting a shared chat releases it instead of destroying it.** Under
   `transcripts: host` a Paddock chat and a `claude --resume` in the same
-  directory are the same file, in both directions and with no re-import. So
-  delete no longer means `rm`: the transcript stays on disk because it is your
-  history rather than Paddock's copy. (The chat does not yet disappear from your
-  list — that half needs a tombstone and is tracked as
-  [#693](https://github.com/edspencer/paddock/issues/693).)
+  directory are the same file, so delete no longer means `rm` — the transcript is
+  your history, not Paddock's copy.
+- **`CLAUDE_HOME` and `--isolated-claude-home` are removed**, replaced by the
+  block above. `CLAUDE_CONFIG_DIR` still works as "put Paddock's home here", but
+  a value resolving to your `~/.claude` is now a startup refusal rather than a
+  silent re-coupling. No migration needed.
 
-- **Paddock always owns its own Claude home, and refuses to start if you aim it
-  at yours.** `CLAUDE_HOME` and `--isolated-claude-home` are **removed** — the
-  `claude:` block replaces both. `CLAUDE_CONFIG_DIR` is still honoured, as "put
-  Paddock's own home here", but a value resolving to your `~/.claude` is now a
-  startup refusal rather than a silent re-coupling: it is the one setting that
-  recreates every bug above and breaks agent memory. Existing instances need no
-  migration — transcripts already live in each project's `.chats/`, so the home
-  moving moves no data.
+## 0.61.1 — CLI login, and symlinks into your Claude home
 
-## 0.61.1 — Your `~/.claude`, left alone and finally usable
-
-- **Paddock no longer plants anything in a Claude home it doesn't own** — and if an
-  earlier build planted one, it now tells you where. Paddock used to redirect a
-  directory's transcripts by replacing `~/.claude/projects/<encoded-dir>` with a
-  symlink to the workspace's `.chats/`. It skipped that for directories you already
-  had history in, but not for ones you didn't — and a directory with no history is
-  exactly what `--here` is usually pointed at. From that moment *every* `claude`
-  session you started in that directory was written into Paddock's store, so deleting
-  `.chats/` — an ordinary thing to do — took real history with it. One person lost
-  30 transcripts this way.
-
-  Nothing is created under `~/.claude` now, in any configuration. Import stays the
-  way you bring history in: offered, confirmed by you, originals untouched.
+- **Paddock no longer plants anything in a Claude home it doesn't own.** It used
+  to redirect a directory's transcripts by replacing
+  `~/.claude/projects/<encoded-dir>` with a symlink to the workspace's `.chats/`.
+  It skipped directories you already had history in, but not empty ones — which is
+  exactly what `--here` is usually pointed at. From then on every `claude` session
+  in that directory was written into Paddock's store, so deleting `.chats/` took
+  real history with it. One person lost 30 transcripts this way.
 
   :::caution[Check for a leftover link if you used `--here` before 0.61.1]
   `--here` on **0.59.1–0.60** planted one with no special configuration, as did
@@ -237,38 +168,22 @@ destroyed real terminal history](https://github.com/edspencer/paddock/issues/689
   ls -l ~/.claude/projects | grep -- '-> .*\.chats'
   ```
 
-  Any link listed there still redirects that directory's sessions. Deleting the link
-  restores normal behaviour; **move the transcripts out of the `.chats/` it points at
-  first** if you want to keep them. Paddock won't remove it for you — not writing to
-  `~/.claude` has to include not deleting from it.
+  Deleting the link restores normal behaviour; **move the transcripts out of the
+  `.chats/` it points at first** if you want to keep them. Paddock won't remove it
+  for you — not writing to `~/.claude` has to include not deleting from it.
   :::
 
-- **On a Mac, your existing Claude Code login just works.** Claude Code files its
+- **On a Mac, your existing Claude Code login works again.** Claude Code files its
   Keychain entry under a name derived from whether `CLAUDE_CONFIG_DIR` is set, so
-  once Paddock started pointing at its own Claude home (0.61.0), a perfectly good
-  login became invisible: `npx @edspencer/paddock --here` would start, load the UI,
-  and fail every turn with `Not logged in`. A Keychain entry can't be shared the way
-  a `.credentials.json` can, so there was no bridging it.
-
-  With no token in your environment, the CLI now runs against your own `~/.claude`
-  and uses the login already there. Your transcripts stay where Claude Code has
-  always written them rather than moving into `.chats/`, and it says so on startup.
-  Pass `--isolated-claude-home` for a Claude home of Paddock's own. Servers, the
-  container image and `node dist/index.js` are unchanged — isolation is a server
-  concern, and `--here` means *my* directory, *my* login.
-
-  *Superseded by 0.62:* `--isolated-claude-home` was removed, Paddock now always
-  keeps its own Claude home, and `--here` no longer decides anything about
-  credentials or transcripts — [`claude.credentials`](/configuration/config-file/#credentials)
-  and [`claude.transcripts`](/configuration/config-file/#transcripts) do,
-  independently of each other and of the flag.
-
-- **A first run with no credentials looks like a message, not a crash.** It used to
-  print several screens of stack trace with the entire sweeper system prompt in it,
-  four times over, with the one useful line — `Not logged in` — about forty lines
-  down. The server was fine and still serving; nothing about that output said so.
-  A known, non-fatal background failure is now one line naming the cause and the fix.
-  `--verbose` (or `HERDCTL_LOG_LEVEL=debug`) still gets you everything.
+  once Paddock pointed at its own Claude home a perfectly good login went
+  invisible and every turn failed with `Not logged in`. A Keychain entry can't be
+  bridged the way a `.credentials.json` can, so with no token in your environment
+  the CLI now runs against your own `~/.claude`. *(0.62 removed
+  `--isolated-claude-home`; `claude.credentials` and `claude.transcripts` decide
+  this now.)*
+- **A first run with no credentials prints a message, not a crash.** It used to
+  emit several screens of stack trace containing the whole sweeper system prompt,
+  four times, with the useful line forty lines down.
 
 ## 0.61.0 — Paddock's own Claude home
 
@@ -292,50 +207,34 @@ destroyed real terminal history](https://github.com/edspencer/paddock/issues/689
   file and no `license` field, while the publish script defaulted it to MIT — so
   every release told npm one thing while the source granted another.
 
-## 0.59.1–0.60 — One command, on your own history
+## 0.59.1–0.60 — npx install, `--here`, and confirmed adoption
 
-- **`npx @edspencer/paddock` — nothing to install, nothing to clone.** Paddock is
-  published to npm as a single self-contained package: the server, the web UI, and
-  the Claude Code runtime, in one command. If you have Node 22+, you have
-  everything you need. It starts quiet (the boot logging used to
-  scroll the one URL you wanted off the top of the terminal), tells you where your
-  data lives the first time it creates it, and warns you up front rather than
-  silently failing if it can't find Claude credentials.
-
-- **`--here` opens the directory you're standing in.** Run
-  `npx @edspencer/paddock --here` inside a project and Paddock adopts *that*
-  directory as its workspace: Claude works in your files, and any Claude Code
-  sessions you already have for the directory are offered for import. So the
-  fastest way to find out whether Paddock is for you is to point it at work you
-  already did — not at an empty instance.
-
-  The flag is the consent, and it says what it's about to do: it creates
-  `.paddock/` for the workspace's state and `.chats/` for transcripts, and adds both
-  to your `.gitignore`. Later runs in the same
-  directory resume it with no flag needed — the git model, where `--here` is
-  `git init` and `.paddock/` is `.git`. Without the flag, Paddock never touches the
-  directory you ran it from.
+- **`npx @edspencer/paddock` starts an instance in one command** — server, web UI
+  and Claude Code runtime, no Docker and no clone. It starts quiet, says where it
+  put your data, and warns up front rather than failing on the first turn.
+- **`--here` opens the directory you are standing in** as the workspace, rather
+  than creating a project somewhere else. It creates `.paddock/` for state and
+  `.chats/` for transcripts and adds both to your `.gitignore`; later runs resume
+  with no flag. The model is `git init`, with `.paddock/` as `.git`.
 
   :::caution[As shipped, `--here` did touch your `~/.claude`]
-  This entry originally said your `~/.claude` was left alone. That was **wrong for
-  the versions it describes**: on 0.59.0–0.60, `--here` also linked
-  `~/.claude/projects/<encoded-dir>` at the new workspace, so terminal `claude`
-  sessions in that directory afterwards wrote into Paddock's store — and one
-  report lost 30 transcripts to it. 0.61.1 stopped Paddock planting a link in a
-  Claude home it does not own, and warns about any already planted. If you ran
-  `--here` on those versions, check the 0.61.1 entry below.
+  On 0.59.0–0.60 it also linked `~/.claude/projects/<encoded-dir>` at the new
+  workspace, so terminal `claude` sessions in that directory afterwards wrote into
+  Paddock's store — one report lost 30 transcripts. 0.61.1 stopped it and warns
+  about any link already planted.
   :::
 
-- **Published with provenance.** Releases go to npm from CI through OIDC trusted
-  publishing, carrying a signed SLSA attestation that ties each version back to the
-  exact commit and workflow that built it. The release fails if the attestation
-  doesn't appear.
-
-:::caution[Use 0.59.1 or later]
-The npm package first shipped in 0.56.0, but **0.57.0 through 0.59.0 are broken** — the
-CLI silently did nothing and exited 0 when run through `npx` or a global install. Fixed
-in 0.59.1. `npx @edspencer/paddock@latest` always gets you a working one.
-:::
+- **Adoption asks before it takes anything.** The old button imported everything
+  on one click and could not be undone. It now opens a dialog listing candidate
+  sessions **grouped by source directory** — the source path being the detail that
+  makes "these are from a scratch copy, not my checkout" visible *before* you
+  commit — and a successful adoption offers **Undo**.
+- **It stops offering chats that were never yours.** Paddock's own curation runs
+  were being offered as terminal history, and a same-named directory anywhere on
+  disk counted as your checkout; a repo-backed project now requires the git
+  remotes to match.
+- **Published with provenance** — releases go to npm from CI through OIDC trusted
+  publishing, with a signed attestation tying each version to the commit.
 
 ## 0.58 — CLI output and flags
 
@@ -378,36 +277,16 @@ in 0.59.1. `npx @edspencer/paddock@latest` always gets you a working one.
   ignores it. Paddock reads config by name rather than validating a schema, so a
   removed key is never looked at — and **a typo'd key is equally silent**.
 
-## 0.55 — Bring your terminal history with you
+## 0.55 — Adopting Claude Code CLI chats
 
-:::note[This feature is now called "adopt"]
-The button, badge and toast described below were renamed from *Import* to
-*Adopt* in a later release, matching what the API always called it
-([#744](https://github.com/edspencer/paddock/issues/744)). The entry below is
-left as it shipped. Two details it states are also now specific to the default
-`claude.transcripts: own`: under
-[`transcripts: host`](/configuration/config-file/#transcripts) (added in 0.62) the project's
-transcript store *is* your `~/.claude` folder, so adopting copies nothing at
-all — it only registers sessions that are already there. See [Adopt your
-terminal `claude` history](/using/working-in-chats/#adopt-your-terminal-claude-history)
-for current behaviour.
-:::
-
-- **Import the Claude Code chats you already have.** A project is backed by a
-  working directory, and you very often already have months of terminal `claude`
-  history for it — or for your own checkout of the same repo, somewhere else
-  entirely. Until now none of that was visible here. When a workspace has
-  importable sessions, an **Import _N_ native chats** button appears at the top of
-  its chat list; one click, no confirmation dialog, and they arrive. Imported
-  chats carry an **Imported** badge so you can tell them from chats started here,
-  and they keep their original timestamps, so a conversation from three weeks ago
-  sorts where it actually belongs rather than collapsing to "today". **Your
-  `~/.claude` history is copied, never moved** — nothing you have in the terminal
-  is disturbed. The count is live rather than a dismissable prompt, so it comes
-  back if you accrue new terminal sessions later, and it reaches zero only when
-  there is genuinely nothing left to bring over. There is a headless equivalent,
-  `npm run import-chats`, for when the transcripts and the server don't share a
-  filesystem — a containerised instance only sees what you have mounted.
+- **Bring the terminal `claude` history you already have into a project.** When a
+  workspace has adoptable sessions, a button appears above its chat list; one
+  click and they arrive, carrying an **Adopted** badge and their **original
+  timestamps**, so a conversation from three weeks ago sorts where it belongs
+  rather than collapsing to "today". Your `~/.claude` history is copied, never
+  moved. The count is live rather than a dismissable prompt, and there is a
+  headless equivalent for when the transcripts and the server don't share a
+  filesystem.
 
 <DemoVideo
 	src="/demo/import-chats.mp4"
@@ -416,180 +295,72 @@ for current behaviour.
 	caption="Seven terminal sessions adopted into a project in one click. The dates are the original ones — imported chats sort by when the conversation really happened, not when you imported it."
 />
 
-- **Detection is deliberately forgiving about where your checkout lives.** A
-  repo-backed project matches any transcript folder whose recorded working
-  directory has the same checkout name, so history from a clone at a completely
-  different path still comes over; a notebook project matches its exact path. The
-  working directory is read out of the transcript itself rather than decoded from
-  the folder name, because that encoding is lossy — `/a/b-c`, `/a-b/c` and
-  `/a/b/c` all collapse to the same folder. Empty and slash-command-only
-  transcripts are held back as noise and reported separately, so a lower count
-  always has an explanation rather than looking like something went missing.
-
 ![An imported chat open in Paddock. Every row in the chat list carries a small terminal icon marking it as imported, and the message box below reads "Message Claude…"](../../assets/whats-new/imported-chat.png)
-- **Operator action: point your health probes at `/api/health`.** Five paths
-  (`/healthz`, `/-/health`, `/health`, `/readyz`, `/livez`) were exempt from
-  authentication but served by no route at all, so they fell through to the
-  front-end catch-all and answered `200` with the app shell — to *anyone*, signed
-  in or not. A monitoring check aimed at `/healthz` therefore reported healthy
-  whatever the instance was actually doing. They are now gated like any other
-  unknown path. `/api/health` is the real one, returns `{"ok":true}`, and is what
-  the shipped Dockerfile and Kubernetes manifests already use.
-- **Two measured memory fixes on the paths you hit constantly.** The jobs index
-  was retaining every record body it exists specifically to avoid retaining — the
-  YAML parser hands back string slices that pin the whole source document alive,
-  so caching three small fields per record kept all of it. Measured against this
-  instance's own jobs directory: **95.7 MB retained before, 1.9 MB after.**
-  Separately, the per-chat usage endpoint fanned out one file read per chat
-  simultaneously — 1,515 chats meant 1,515 concurrent reads — and bounding it
-  **halves peak memory** with no measurable latency cost. Neither changes a single
-  byte of what the endpoints return.
-- **The running sub-agents bar survives leaving a chat and coming back.**
-  Re-opening a chat rehydrates it from history, and a sub-agent that was still
-  working had no completed tool result to join against, so the bar emptied for the
-  rest of its run and its cards stopped expanding — healing only once the
-  sub-agent finished, which is exactly when you no longer needed it.
-- **The self-management tools stop lying by omission.** `read_chat` now says
-  outright that tool entries come back empty and still count against your limit,
-  that thinking blocks and sub-agent transcripts are dropped, and where the
-  lossless transcript actually lives — so it is no longer mistaken for an audit
-  tool. It also flags that an unknown session id returns an empty result rather
-  than an error, which had already produced one confident report about a chat that
-  was never opened. And the whole surface can finally see the **root workspace**:
-  root chats were previously unlistable and unreadable, with two of the three
-  failure modes silent.
 
-## 0.54 — Claude, not "the keeper"
+- **Detection is forgiving about where your checkout lives.** A repo-backed
+  project matches any transcript folder whose recorded working directory has the
+  same checkout name, so history from a clone at a different path still comes
+  over. The working directory is read out of the transcript rather than decoded
+  from the folder name, because that encoding is lossy — `/a/b-c`, `/a-b/c` and
+  `/a/b/c` all collapse to one folder. Empty and slash-command-only transcripts
+  are held back as noise and reported separately, so a lower count always has an
+  explanation.
 
-- **The UI says Claude now.** Paddock is a thin layer over Claude Code, and the
-  "keeper" persona was inventing a second actor that does not exist — you were
-  messaging Claude the whole time. So the composer says **Message Claude…**,
-  Settings has a **Claude** section rather than *Keeper agent*, and the turn
-  notices say *Claude reached its turn limit*. Where a sentence didn't need an
-  actor at all, the word is simply gone rather than swapped: "a dedicated keeper
-  agent" drops out of the empty-projects copy entirely.
-- **Breaking: the `keeper` names are gone from config, env and the API, with no
-  aliases.** Pre-1.0, a minor release may break the one before it. If you set
-  either of these, rename them:
+## 0.54 — The "keeper" rename, and Home's attention feeds
+
+- **The UI says Claude.** Paddock is a thin layer over Claude Code, and the
+  "keeper" persona invented a second actor that does not exist — you were
+  messaging Claude the whole time. The composer says **Message Claude…**, Settings
+  has a **Claude** section, and where a sentence didn't need an actor the word is
+  simply gone.
+- **Breaking: the `keeper` names are gone from config, env and the API**, with no
+  aliases. If you set either of these, rename them:
 
   | before | after |
   | --- | --- |
   | `PADDOCK_KEEPER_DRIVE_MODE` | `PADDOCK_DRIVE_MODE` |
   | `PADDOCK_KEEPER_NATIVE_PROMPT` | `PADDOCK_NATIVE_PROMPT` |
 
-  In `paddock.yaml` and instance settings, `keeperDriveMode` → `driveMode`. An
-  instance still setting the old key falls back to the built-in default rather
-  than failing to boot — quietly, so check yours. On `GET /api/models`,
-  `keeperDefault` → `defaultModel` and `keeperDriveModeDefault` →
-  `driveModeDefault`. The `keeper-` prefix on agent *names* is deliberately
-  untouched: it is persisted in job records and session directories, and renaming
-  it would orphan all of them.
-- **Home leads with what needs you: running chats first, then unread.** Home used
-  to open on a list of recent chats — the same list the sidebar already shows in
-  full — so the front door duplicated the furniture and buried the signal. It now
-  opens on the two states that actually want a decision from you. The root's Home
-  is fleet-wide, covering every project's live work as well as its own, while a
-  project's Home is scoped to itself; both run through one component that never
-  learns which it is rendering. Running state is read from the live session hub
-  rather than guessed from timestamps, so it can't disagree with the streaming
-  dots, and a chat is never in both lists at once. **This is also what fixed the
+  In `paddock.yaml`, `keeperDriveMode` → `driveMode`. An instance still setting
+  the old key falls back to the built-in default **quietly**, so check yours. On
+  `GET /api/models`, `keeperDefault` → `defaultModel`.
+- **Home leads with what needs you: running chats, then unread.** It used to open
+  on a list of recent chats — the same list the sidebar already shows — so the
+  front door duplicated the furniture and buried the signal. The root's Home is
+  fleet-wide; a project's is scoped to itself. Running state is read from the live
+  session hub rather than guessed from timestamps, which is also **what fixed the
   in-flight badge**: watching the running set is now itself a reason to hold a
-  socket open, so landing on Home is correct on first paint instead of looking
-  like a quiet instance.
+  socket open.
 
 ![The root workspace's Home, leading with a Running section and then an Unread section listing 88 chats from across every project, each tagged with the project it belongs to and how long ago it replied](../../assets/whats-new/home-attention.png)
-- **`OVERVIEW.md` now renders on Home beside `CHANGELOG.md`**, both collapsible
-  with the choice remembered per workspace. The old Overview card at the bottom —
-  a summary plus a metadata table — is gone; it described the workspace rather
-  than offering a way into it, and Settings already owns editing that. The
-  **Projects** section left Home too, taking the New Project button to the
-  sidebar's Projects header, where it sits directly above the list it adds to.
-- **Foreground sub-agents stopped duplicating themselves into the transcript.**
-  Launching a sub-agent in the foreground printed every one of its steps twice —
-  once inside its card, correctly, and once as top-level rows of the parent chat
-  next to the card that already contained them. The filter that prevents this
-  existed but ran on only one of the five paths that stream a turn. It runs on all
-  five now, which also keeps a sub-agent's context out of the parent's context
-  meter. The bug was live-only — a reload always "healed" it — which is why it
-  read as a streaming glitch and survived so long.
-- **A live bar above the composer shows what running sub-agents are doing.** A
-  sub-agent could work for minutes behind a collapsed card showing only a cost,
-  usually scrolled well out of view. Each running sub-agent now lists its latest
-  step and step count as it works; tapping one scrolls its card into view, expands
-  it and flashes it so your eye lands on the right place. Liveness and duration
-  come from the sub-agent's own transcript rather than the parent's — the parent
-  finishing its turn no longer makes a sub-agent that is still working look idle.
+
+- **`OVERVIEW.md` renders on Home beside `CHANGELOG.md`**, both collapsible. The
+  old Overview card is gone, and the **New Project** button moved to the sidebar's
+  Projects header.
+- **Foreground sub-agents stopped duplicating themselves into the transcript**,
+  and a live bar above the composer now shows each running sub-agent's latest step
+  — tapping one scrolls its card into view. Liveness comes from the sub-agent's
+  own transcript, so a parent finishing its turn no longer makes a working
+  sub-agent look idle.
 - **A chat can no longer be bound to the curator's transcript.** For a notebook
-  project the curation sweeper shared a working directory with Claude, and since a
-  sweep is scheduled after every turn, the two raced for the same session
-  directory. When the sweeper's transcript landed first, your turn was handed the
-  sweeper's session id — so the curation text streamed back as the reply, resuming
-  the chat resumed the *curation* transcript with no memory of your conversation,
-  and the chat could disappear from the project's list entirely. The sweeper now
-  has its own directory, which removes the shared-directory collision structurally
-  rather than by timing.
+  project the sweeper shared a working directory with Claude, and since a sweep is
+  scheduled after every turn the two raced for the same session directory — so
+  curation text could stream back as the reply, and the chat could disappear from
+  the project's list entirely.
 
-## 0.53 — Home says what it's holding
+## 0.53 — Unread badge on the Home link
 
-- **The sidebar's Home link now carries the same unread badge as every project
-  row.** 0.52 reduced the sidebar to a single **Home** link, and that link stayed
-  mute: the root is a workspace with chats of its own, yet it was the one row in
-  the sidebar that could never tell you something had come back. Now it says
-  exactly what every other workspace row says — an accent pill counting unread
-  replies, a spinner and count for turns in flight, and *nothing at all* when it
-  is quiet. It is the same badge component with the same accessible labels ("2
-  unread replies", "1 chat in flight"), rather than a root-shaped lookalike, so
-  Home and a project row read the same way at a glance instead of each needing
-  its own interpretation. **The in-flight half rides the live chat socket, and in
-  0.53 nothing opened that socket until you opened a chat — so on a Home you had
-  only just loaded you saw the unread pill but not yet the spinner.** That was a
-  known gap rather than the intended design, and it is fixed in the next release:
-  watching the running set is now itself a reason to hold a socket, so the
-  spinner is correct on first paint too.
+- **The sidebar's Home link carries the same unread badge as every project row.**
+  0.52 reduced the sidebar to a single **Home** link, and that link stayed mute —
+  the root is a workspace with chats of its own, yet it was the one row that could
+  never tell you something had come back. It now shows an accent pill counting
+  unread replies, a spinner and count for turns in flight, and nothing at all when
+  quiet, using the same component and accessible labels as a project row.
+  **In 0.53 the in-flight half only appeared once you had opened a chat**, because
+  nothing held the socket open until then; 0.54 fixed that.
 - **Home also costs one request less.** The project list used to be followed by a
-  second, full fetch of the root workspace — its changelog and its whole chat
-  list included — from which everything but a few metadata fields was thrown
-  away. The root's counts now arrive alongside the projects on the request that
-  was already being made.
-- **Promoting a chat into a project puts it in the sidebar straight away.** The
-  action always did the right thing on the server — the project was created and
-  the chat's transcript re-homed — but the new project simply wasn't in the left
-  nav until you reloaded, which made a working action look like a failed one. Two
-  further faults in that dialog are fixed with it: a project name you had typed
-  was silently reverted to the chat's name whenever the view behind it
-  re-rendered, which in a live chat is often; and a promote that failed could
-  never show you why, because the error was wiped one render after it appeared.
-- **The project Settings tab no longer prints the same date twice.** It showed
-  **Started** and **Created** as two adjacent rows carrying an identical value —
-  the second was an alias of the first, kept to reconcile two old specs. Only
-  **Started** remains, and it still means the date the project was created.
-- **Some long-dead compatibility surface is gone, which external clients should
-  know about.** Three things left the wire: `created` on the project object (the
-  duplicate above), `sweeperDefault` on `GET /api/models` (the sweeper's model is
-  resolved on the server and was never selectable, so the field only ever
-  described a decision a client couldn't make), and the `target` field on
-  WebSocket frames, which was a byte-for-byte duplicate of `projectSlug` kept for
-  early frontends that never existed. If you built against `projectSlug` — as
-  Paddock's own client always has — nothing changes.
-
-:::danger[Breaking: two environment variables were renamed, with no aliases]
-Retiring "keeper" as a user-facing word also renamed the env vars carrying it:
-
-| before | after |
-|---|---|
-| `PADDOCK_KEEPER_DRIVE_MODE` | `PADDOCK_DRIVE_MODE` |
-| `PADDOCK_KEEPER_NATIVE_PROMPT` | `PADDOCK_NATIVE_PROMPT` |
-
-**An old name is not an error — it is ignored**, so an instance still setting one
-falls back to the built-in default instead of failing to start. For drive mode
-that default is `session`, so anyone who had pinned
-`PADDOCK_KEEPER_DRIVE_MODE=batch` is now on the SDK runtime without being told.
-Check your environment for the old names.
-
-The `paddock.yaml` key `keeperDriveMode` → `driveMode` changed the same way.
-:::
-
----
+  second full fetch of the root workspace, from which everything but a few
+  metadata fields was thrown away.
 
 ## Earlier releases
 
