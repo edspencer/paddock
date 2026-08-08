@@ -707,8 +707,18 @@
     @apply mb-4 mt-0 text-3xl font-bold tracking-tight;
     line-height: 1.15;
   }
+  /*
+   * CHANEL'S RULE, APPLIED. This heading had a rule above it as well as 60px
+   * of air. Two devices doing one job — and the air alone separates the
+   * sections perfectly well at a 68ch measure, while reading like a book
+   * rather than a spec sheet. The rule came off.
+   *
+   * What survives is the point: the only hairlines left in this direction are
+   * the Home index eyebrows and the list separators, and both of those encode
+   * structure rather than decorate it.
+   */
   .prose-doc .md h2 {
-    @apply mb-3 mt-10 border-t border-edge pt-5 text-xl font-semibold tracking-tight;
+    @apply mb-3 mt-13 text-xl font-semibold tracking-tight;
   }
   .prose-doc .md h3 {
     @apply mb-2 mt-7 text-base font-semibold;
@@ -718,7 +728,7 @@
   }
   /* A heading immediately after another heading has nothing to separate from. */
   .prose-doc .md :is(h1, h2, h3, h4) + :is(h2, h3, h4) {
-    @apply mt-4 border-t-0 pt-0;
+    @apply mt-4;
   }
 
   .prose-doc .md p {
@@ -818,7 +828,7 @@
     @apply mb-2 mt-4 text-lg font-semibold;
   }
   .prose-tight .md h2 {
-    @apply mb-2 mt-4 border-t-0 pt-0 text-base font-semibold;
+    @apply mb-2 mt-4 text-base font-semibold;
   }
   .prose-tight .md h3 {
     @apply mb-1 mt-3 text-sm font-semibold;

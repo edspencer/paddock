@@ -78,11 +78,20 @@ export function HomePane({
         <IndexSection
           label="Running"
           count={running.length}
+          /*
+           * Only ONE "New chat" on this section at a time. When Running is
+           * empty its empty state carries the invitation, so an eyebrow button
+           * would put two identical primary affordances within 40px of each
+           * other. The action appears here only once there are rows to sit
+           * above.
+           */
           action={
-            <Button size="sm" variant="subtle" onClick={onNewChat}>
-              <PlusIcon width={13} height={13} />
-              New chat
-            </Button>
+            running.length > 0 && (
+              <Button size="sm" variant="subtle" onClick={onNewChat}>
+                <PlusIcon width={13} height={13} />
+                New chat
+              </Button>
+            )
           }
         >
           {attentionError ? (
@@ -115,7 +124,7 @@ export function HomePane({
               chats={unread}
               workspaceSlug={project.slug}
               loading={attentionLoading}
-              empty="All caught up."
+              empty="No unread replies. All caught up."
               emptyBody="Replies that land while you are elsewhere collect here."
               onOpenChat={onOpenChat}
               kind="unread"
@@ -219,8 +228,13 @@ function IndexSection({
   return (
     <section className="mb-8">
       <div className="mb-1 flex items-center gap-3">
-        <h3 className="text-2xs font-semibold uppercase tracking-wider text-fg-muted">{label}</h3>
-        {count > 0 && <span className="tabular text-2xs text-fg-subtle">{count}</span>}
+        {/* The count lives INSIDE the heading: it is part of what this section
+            is called ("Running 3"), and a screen reader announcing the heading
+            without it would drop the only quantity on the row. */}
+        <h3 className="flex items-baseline gap-1.5 text-2xs font-semibold uppercase tracking-wider text-fg-muted">
+          {label}
+          {count > 0 && <span className="tabular font-normal text-fg-subtle">{count}</span>}
+        </h3>
         <span aria-hidden className="h-px min-w-4 flex-1 bg-edge" />
         {action}
       </div>

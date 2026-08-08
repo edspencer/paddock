@@ -197,10 +197,42 @@ export function TurnRow({ turn }: { turn: Turn }) {
   const btn = `${chip} h-6 w-6 justify-center text-fg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-accent`;
 
   return (
-    <div className="group relative">
+    /*
+     * METADATA IN THE MARGIN.
+     *
+     * The turn reserves a right-hand margin (`lg:pr-24`) that costs nothing:
+     * prose is capped at the 68ch measure and never reached that far anyway.
+     * The message's time and context fill live there permanently, quiet and
+     * tabular — a ledger annotates in the margin, it does not interrupt the
+     * line. They used to be a floating chip that appeared over the text only
+     * on hover, which meant the one piece of context a long transcript most
+     * needs ("when was this, and how full was the window?") was invisible
+     * until you went looking for it.
+     *
+     * The fork/revert BUTTONS stay hover-revealed — they are actions, not
+     * information, and two icon buttons per turn permanently on screen would
+     * be noise. They occupy the same slot, so the margin note fades as they
+     * arrive: one place, two states.
+     */
+    <div className="group relative lg:pr-24">
+      <div
+        className="pointer-events-none absolute right-0 top-0 hidden w-24 pl-3 text-right leading-tight opacity-100 transition-opacity duration-150 group-hover:opacity-0 group-focus-within:opacity-0 lg:block"
+        title={new Date(turn.timestamp!).toLocaleString()}
+      >
+        <span className="tabular text-2xs text-fg-subtle">{relativeTime(turn.timestamp)}</span>
+        {ctx != null ? (
+          <span
+            className="tabular block text-3xs text-fg-subtle"
+            title="Context-window fill as of this message"
+          >
+            {formatTokens(ctx)}
+            {pct != null ? ` · ${pct}%` : ""}
+          </span>
+        ) : null}
+      </div>
       <div className="pointer-events-none absolute -top-3 right-1 z-10 flex items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
         <span
-          className={`${chip} gap-1 px-2 py-0.5 text-2xs text-fg-muted`}
+          className={`${chip} gap-1 px-2 py-0.5 text-2xs text-fg-muted lg:hidden`}
           title={new Date(turn.timestamp!).toLocaleString()}
         >
           <span>{relativeTime(turn.timestamp)}</span>
