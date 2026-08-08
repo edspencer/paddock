@@ -561,7 +561,6 @@ export function applyAccent(
   const ctx = opts.context ?? readAccentContext(root);
   const solved = solveChannels(ctx, hue);
   const { a600: s600, a700: s700, accent: sAccent } = solved;
-  const okAccent = { C: ctx.chroma.accent };
   const ok700 = { C: ctx.chroma.a700 };
 
   // Start from a clean slate. `readContext` restores whatever was inline before
@@ -610,13 +609,25 @@ export function applyAccent(
     let ratio = contrastRatio(fill, derivedFg);
     let repaired = false;
     if (ratio < floor + MARGIN) {
+      // Solve from the THEME's chroma, not the chroma of the fill we are
+      // replacing, and hand `solve` a floor so it can relax an elevated target.
+      //
+      // Both matter, and missing them made the chroma fix in `solveChannels`
+      // invisible on exactly the themes it was written for. A derived fill that
+      // needs repairing is usually one the gamut already pulled in, so taking
+      // ITS chroma locks the degradation in — the repair faithfully reproduces
+      // the washed-out colour it was called to correct. Measured on terminal
+      // dark, the five repaired hues came back at 0.36–0.50 of the theme's own
+      // chroma while every un-repaired hue sat at 0.75+: a clean split, with the
+      // repair on the wrong side of it.
       const { C } = rgbToOklch(fill);
       const fixed = solve(
         floor + MARGIN,
-        C || okAccent.C,
+        Math.max(C, ctx.chroma.a600),
         hue,
         derivedFg,
         relativeLuminance(fill) < relativeLuminance(derivedFg),
+        AA_TEXT + MARGIN,
       );
       root.style.setProperty(token, toHex(fixed.rgb));
       ratio = contrastRatio(fixed.rgb, derivedFg);
