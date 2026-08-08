@@ -563,8 +563,17 @@
       box-shadow var(--duration-fast) var(--ease-standard);
     @apply focus:border-accent focus:ring-2 focus:ring-accent/25;
   }
+  /*
+   * The last two holdouts of the hand-rolled eyebrow idiom, and the only ones
+   * that lived in CSS rather than in a class string — which is why the earlier
+   * sweep over `.tsx` missed them. Left alone they would have split the app's
+   * field labels in two: the Config screen routes its controls through
+   * `ui/Form.tsx`, whose `Label` is already the mono eyebrow, while the 44
+   * remaining `.field-label` call sites in Triggers, Settings and the modals
+   * would have stayed sans-uppercase. One voice, or it is two products again.
+   */
   .field-label {
-    @apply mb-1 block text-xs font-semibold uppercase tracking-wide text-fg-muted;
+    @apply eyebrow mb-1 block text-2xs text-fg-subtle;
   }
   /*
    * Safe-area padding for edge chrome under viewport-fit=cover. `max(…, 0px)`
@@ -577,7 +586,7 @@
     padding-bottom: max(env(safe-area-inset-bottom), 0.75rem);
   }
   .section-label {
-    @apply px-3 text-2xs font-semibold uppercase tracking-wider text-fg-muted;
+    @apply eyebrow px-3 text-2xs text-fg-subtle;
   }
 }
 
