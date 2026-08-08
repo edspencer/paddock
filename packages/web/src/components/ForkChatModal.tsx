@@ -52,11 +52,11 @@ export function ForkChatModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-4 backdrop-blur-sm"
       onClick={onClose}
     >
       <form
-        className="w-full max-w-md animate-scale-in rounded-2xl border border-paddock-200 bg-white p-6 shadow-2xl dark:border-paddock-800 dark:bg-paddock-900"
+        className="w-full max-w-md animate-scale-in rounded-2xl border border-edge bg-surface-raised p-6 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
         onSubmit={submit}
       >
@@ -65,13 +65,13 @@ export function ForkChatModal({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg p-1 text-paddock-400 hover:bg-paddock-100 hover:text-paddock-600 dark:hover:bg-paddock-800"
+            className="rounded-lg p-1 text-fg-subtle hover:bg-surface-hover hover:text-fg-muted"
             aria-label="Close"
           >
             <XIcon width={18} height={18} />
           </button>
         </div>
-        <p className="mb-5 text-sm text-paddock-500">
+        <p className="mb-5 text-sm text-fg-muted">
           Branches a new chat from this one — the parent&apos;s full history comes along and stays
           resumable. Name the fork, then continue it independently.
         </p>

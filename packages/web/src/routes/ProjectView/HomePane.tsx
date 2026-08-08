@@ -2,7 +2,8 @@ import { useState } from "react";
 import type { AttentionChat, Project } from "../../lib/types";
 import { Markdown } from "../../components/Markdown";
 import { relativeTime } from "../../lib/format";
-import { ChevronRightIcon, FileIcon, PinIcon, PlusIcon } from "../../components/icons";
+import { ChatIcon, ChevronRightIcon, FileIcon, PinIcon, PlusIcon } from "../../components/icons";
+import { Button, EmptyState } from "../../components/ui";
 
 /**
  * The Home tab: the workspace's landing page. Gives `/projects/:slug` a real
@@ -22,6 +23,22 @@ import { ChevronRightIcon, FileIcon, PinIcon, PlusIcon } from "../../components/
  * SUBTREE, so the ROOT's Home is fleet-wide (every project plus the root's own
  * chats) and a project's Home is scoped to itself — through one component that
  * never learns which it is rendering. See `useAttentionChats`.
+ *
+ * ## The empty states are invitations, not voids
+ *
+ * A quiet workspace used to render five near-identical rounded boxes down one
+ * viewport, four of them dead ends: "Nothing running right now.", "No unread
+ * replies. All caught up.", "No files yet.", "No OVERVIEW.md yet." — a wall of
+ * grey with nothing to do about any of it, and the first two saying the same
+ * thing twice in a row.
+ *
+ * So: the two attention feeds collapse into ONE panel when both are empty,
+ * because both empty IS one state, and that panel is the only place on the
+ * screen carrying a primary action. Everything else stays quiet and merely says
+ * who fills it in and when — which is the answer the reader actually lacked, the
+ * notes files being written by the post-turn sweeper rather than by hand. One
+ * moment of weight, three quiet lines: repeated pattern, then a deliberate
+ * break, rather than four identical boxes.
  */
 export function HomePane({
   project,
@@ -56,49 +73,80 @@ export function HomePane({
   onOpenFiles?: () => void;
 }) {
   const recentFiles = files.slice(0, 6);
+  // Both attention feeds empty is ONE state, not two. Rendered as two sections it
+  // was two dead ends in a row — "Nothing running right now." above "No unread
+  // replies. All caught up." — saying the same thing twice and offering nothing
+  // to do about it. It collapses into a single invitation instead: the screen's
+  // one moment of weight, and the only place the primary action appears.
+  //
+  // Deliberately NOT shown while `attentionLoading`: claiming all is caught up
+  // before the answer has arrived is a lie the user acts on.
+  const allCaughtUp =
+    !attentionError && !attentionLoading && running.length === 0 && unread.length === 0;
   return (
     <div className="flex-1 overflow-y-auto overscroll-contain">
       <div className="mx-auto max-w-3xl px-6 py-6">
-        {/* Running: the live work, and the shortcut to start more. */}
-        <section className="mb-8">
-          <div className="mb-2 flex items-center justify-between">
-            <SectionLabel label="Running" count={running.length} />
-            <button onClick={onNewChat} className="btn-subtle -mr-1 gap-1.5 px-2 py-1 text-xs">
-              <PlusIcon width={13} height={13} />
-              New chat
-            </button>
-          </div>
-          {attentionError ? (
-            <div className="card">
-              <p className="text-sm text-rose-600 dark:text-rose-400">{attentionError}</p>
-            </div>
-          ) : (
-            <ChatRows
-              chats={running}
-              workspaceSlug={project.slug}
-              loading={attentionLoading}
-              empty="Nothing running right now."
-              onOpenChat={onOpenChat}
-              kind="running"
-            />
-          )}
-        </section>
-
-        {/* Unread: replies that landed while the user was elsewhere. */}
-        {!attentionError && (
+        {attentionError ? (
           <section className="mb-8">
             <div className="mb-2 flex items-center justify-between">
-              <SectionLabel label="Unread" count={unread.length} />
+              <SectionLabel label="Running" count={running.length} />
+              <NewChatButton onNewChat={onNewChat} />
             </div>
-            <ChatRows
-              chats={unread}
-              workspaceSlug={project.slug}
-              loading={attentionLoading}
-              empty="No unread replies. All caught up."
-              onOpenChat={onOpenChat}
-              kind="unread"
+            <div className="card">
+              <p className="text-sm text-danger">{attentionError}</p>
+            </div>
+          </section>
+        ) : allCaughtUp ? (
+          <section className="mb-8">
+            <EmptyState
+              variant="panel"
+              icon={<ChatIcon width={22} height={22} />}
+              title="All caught up"
+              body="Nothing is running and there are no unread replies. Start a chat and it will appear here the moment it wants you."
+              action={
+                <Button
+                  variant="primary"
+                  icon={<PlusIcon width={14} height={14} />}
+                  onClick={onNewChat}
+                >
+                  New chat
+                </Button>
+              }
             />
           </section>
+        ) : (
+          <>
+            {/* Running: the live work, and the shortcut to start more. */}
+            <section className="mb-8">
+              <div className="mb-2 flex items-center justify-between">
+                <SectionLabel label="Running" count={running.length} />
+                <NewChatButton onNewChat={onNewChat} />
+              </div>
+              <ChatRows
+                chats={running}
+                workspaceSlug={project.slug}
+                loading={attentionLoading}
+                empty="Nothing running right now."
+                onOpenChat={onOpenChat}
+                kind="running"
+              />
+            </section>
+
+            {/* Unread: replies that landed while the user was elsewhere. */}
+            <section className="mb-8">
+              <div className="mb-2 flex items-center justify-between">
+                <SectionLabel label="Unread" count={unread.length} />
+              </div>
+              <ChatRows
+                chats={unread}
+                workspaceSlug={project.slug}
+                loading={attentionLoading}
+                empty="No unread replies. All caught up."
+                onOpenChat={onOpenChat}
+                kind="unread"
+              />
+            </section>
+          </>
         )}
 
         {/* Files: a preview of the file index; "View all" jumps to the Files tab.
@@ -114,23 +162,22 @@ export function HomePane({
               )}
             </div>
             {recentFiles.length === 0 ? (
-              <div className="card">
-                <p className="text-sm italic text-paddock-400">
-                  No files yet. Files Claude writes appear here.
-                </p>
-              </div>
+              <EmptyState
+                title="No files yet"
+                body="Anything Claude writes in this project shows up here, newest first."
+              />
             ) : (
-              <div className="overflow-hidden rounded-2xl border border-paddock-200 dark:border-paddock-800">
+              <div className="overflow-hidden rounded-2xl border border-edge">
                 {recentFiles.map((f, i) => (
                   <button
                     key={f}
                     onClick={() => onOpenFile(f)}
-                    className={`flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-paddock-100/70 dark:hover:bg-paddock-900/40 ${
-                      i > 0 ? "border-t border-paddock-200 dark:border-paddock-800" : ""
+                    className={`flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-surface-hover ${
+                      i > 0 ? "border-t border-edge" : ""
                     }`}
                   >
-                    <FileIcon width={15} height={15} className="shrink-0 text-paddock-400" />
-                    <span className="min-w-0 flex-1 truncate font-mono text-sm text-paddock-700 dark:text-paddock-200">
+                    <FileIcon width={15} height={15} className="shrink-0 text-fg-subtle" />
+                    <span className="min-w-0 flex-1 truncate font-mono text-sm text-fg">
                       {f}
                     </span>
                     {project.pinned.includes(f) && (
@@ -157,17 +204,19 @@ export function HomePane({
           id={`${project.slug}:overview`}
           title="OVERVIEW.md"
           body={overview}
-          emptyLabel="No OVERVIEW.md yet."
+          emptyTitle="No OVERVIEW.md yet"
+          emptyBody="The sweeper writes this after a chat — what this workspace is, and where the work has got to."
         />
         <NotesSection
           key={`${project.slug}:changelog`}
           id={`${project.slug}:changelog`}
           title="CHANGELOG.md"
           body={changelog}
-          emptyLabel="No CHANGELOG.md yet."
+          emptyTitle="No CHANGELOG.md yet"
+          emptyBody="The sweeper writes this after a chat — a running log of what actually changed."
         />
 
-        <p className="mt-6 text-[11px] text-paddock-400">
+        <p className="mt-6 text-2xs text-fg-subtle">
           Project directory: <span className="font-mono">{project.dir}</span>
         </p>
       </div>
@@ -175,12 +224,25 @@ export function HomePane({
   );
 }
 
+/**
+ * The quiet "New chat" affordance in the Running header. Quiet on purpose: when
+ * there IS live work the header is not the thing to look at, and when there is
+ * not, the all-caught-up panel carries the same action at full weight instead.
+ */
+function NewChatButton({ onNewChat }: { onNewChat: () => void }) {
+  return (
+    <Button variant="subtle" size="sm" className="-mr-1" icon={<PlusIcon width={13} height={13} />} onClick={onNewChat}>
+      New chat
+    </Button>
+  );
+}
+
 /** A Home section heading + its count, in Home's shared visual language. */
 function SectionLabel({ label, count }: { label: string; count: number }) {
   return (
-    <h3 className="text-sm font-semibold uppercase tracking-wide text-paddock-500">
+    <h3 className="text-sm font-semibold uppercase tracking-wide text-fg-muted">
       {label}
-      {count > 0 && <span className="ml-1.5 text-paddock-400">{count}</span>}
+      {count > 0 && <span className="ml-1.5 text-fg-subtle">{count}</span>}
     </h3>
   );
 }
@@ -216,51 +278,47 @@ function ChatRows({
   if (loading && chats.length === 0) {
     return (
       <div
-        className="h-[52px] animate-pulse rounded-2xl border border-paddock-200 bg-white/60 dark:border-paddock-800 dark:bg-paddock-900/50"
+        className="h-[52px] animate-pulse rounded-2xl border border-edge bg-surface-raised"
         aria-busy="true"
       />
     );
   }
   if (chats.length === 0) {
-    return (
-      <div className="card">
-        <p className="text-sm italic text-paddock-400">{empty}</p>
-      </div>
-    );
+    return <EmptyState title={empty} />;
   }
   return (
     <div
-      className="overflow-hidden rounded-2xl border border-paddock-200 dark:border-paddock-800"
+      className="overflow-hidden rounded-2xl border border-edge"
       data-testid={`home-${kind}-chats`}
     >
       {chats.map((c, i) => (
         <button
           key={`${c.projectSlug}:${c.sessionId}`}
           onClick={() => onOpenChat(c.sessionId, c.projectSlug)}
-          className={`flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-paddock-100/70 dark:hover:bg-paddock-900/40 ${
-            i > 0 ? "border-t border-paddock-200 dark:border-paddock-800" : ""
+          className={`flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-surface-hover ${
+            i > 0 ? "border-t border-edge" : ""
           }`}
         >
           {kind === "running" ? (
             <span
               title="Streaming a response…"
               aria-label="streaming"
-              className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent"
+              className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent-solid"
             />
           ) : (
             <span
               title="Unread reply"
               aria-label="unread"
-              className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
+              className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent-solid"
             />
           )}
           <span className="min-w-0 flex-1 truncate text-sm font-medium">{c.name}</span>
           {c.projectSlug !== workspaceSlug && (
-            <span className="shrink-0 truncate rounded-md bg-paddock-100 px-1.5 py-0.5 text-[11px] text-paddock-600 dark:bg-paddock-800 dark:text-paddock-300">
+            <span className="shrink-0 truncate rounded-md bg-surface-active px-1.5 py-0.5 text-2xs text-fg-muted">
               {c.projectName}
             </span>
           )}
-          <span className="shrink-0 text-[11px] text-paddock-400">
+          <span className="shrink-0 text-2xs text-fg-subtle">
             {relativeTime(kind === "unread" ? (c.lastTurnCompletedAt ?? c.updatedAt) : c.updatedAt)}
           </span>
         </button>
@@ -282,12 +340,19 @@ function NotesSection({
   id,
   title,
   body,
-  emptyLabel,
+  emptyTitle,
+  emptyBody,
 }: {
   id: string;
   title: string;
   body: string;
-  emptyLabel: string;
+  emptyTitle: string;
+  /**
+   * One line saying who fills this in and when. These two files are written by
+   * the post-turn sweeper, not by hand, so "No OVERVIEW.md yet." on its own left
+   * the reader with no idea whether that was theirs to fix.
+   */
+  emptyBody: string;
 }) {
   const [collapsed, toggle] = useCollapsed(id);
   const open = !collapsed;
@@ -298,24 +363,23 @@ function NotesSection({
         type="button"
         onClick={toggle}
         aria-expanded={open}
-        className="mb-2 -ml-1 flex w-full items-center gap-1.5 rounded-lg px-1 py-1 text-left transition-colors hover:bg-paddock-100/60 dark:hover:bg-paddock-800/40"
+        className="mb-2 -ml-1 flex w-full items-center gap-1.5 rounded-lg px-1 py-1 text-left transition-colors hover:bg-surface-hover"
       >
         <ChevronRightIcon
           width={14}
           height={14}
-          className={`shrink-0 text-paddock-400 transition-transform ${open ? "rotate-90" : ""}`}
+          className={`shrink-0 text-fg-subtle transition-transform ${open ? "rotate-90" : ""}`}
         />
-        <h3 className="text-sm font-semibold uppercase tracking-wide text-paddock-500">{title}</h3>
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-fg-muted">{title}</h3>
       </button>
-      {open && (
-        <div className="card">
-          {hasBody ? (
+      {open &&
+        (hasBody ? (
+          <div className="card">
             <Markdown>{body}</Markdown>
-          ) : (
-            <p className="text-sm italic text-paddock-400">{emptyLabel}</p>
-          )}
-        </div>
-      )}
+          </div>
+        ) : (
+          <EmptyState title={emptyTitle} body={emptyBody} />
+        ))}
     </section>
   );
 }

@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 
 // Paddock version, injected as a compile-time constant so the SPA can display it
 // (workspace is fixed-versioned, so web's version is the release version).
@@ -60,7 +61,7 @@ const proxyTarget = process.env.PADDOCK_PROXY_TARGET || "http://localhost:7233";
 const wsTarget = proxyTarget.replace(/^http/, "ws");
 
 export default defineConfig({
-  plugins: [react(), swCacheVersion()],
+  plugins: [react(), tailwindcss(), swCacheVersion()],
   define: {
     __APP_VERSION__: JSON.stringify(pkgVersion),
   },
