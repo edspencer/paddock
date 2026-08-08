@@ -88,8 +88,15 @@ describe("HomePane: section order (#599)", () => {
   it("drops the Files section entirely when there is no Files tab to jump to", () => {
     // Omitting the handler hides the affordance it drives rather than pointing
     // it at a dead URL.
-    renderHome({ onOpenFile: undefined, onOpenFiles: undefined });
-    expect(sectionHeadings()).toEqual(["Running", "Unread", "OVERVIEW.md", "CHANGELOG.md"]);
+    // Feeds are non-empty only so Running/Unread stay as separate sections —
+    // both empty collapses them into one panel with no headings at all.
+    renderHome({
+      onOpenFile: undefined,
+      onOpenFiles: undefined,
+      running: [row({ sessionId: "r1" })],
+      unread: [row({ sessionId: "u1" })],
+    });
+    expect(sectionHeadings()).toEqual(["Running1", "Unread1", "OVERVIEW.md", "CHANGELOG.md"]);
   });
 
   it("shows the project directory as the footer line", () => {
@@ -128,8 +135,8 @@ describe("HomePane: the Running and Unread feeds", () => {
     ).toBeInTheDocument();
   });
 
-  it("offers New chat from the Running header", () => {
-    renderHome();
+  it("offers New chat from the Running header while there is live work", () => {
+    renderHome({ running: [row({ name: "Streaming now" })] });
     fireEvent.click(screen.getByRole("button", { name: /New chat/i }));
     expect(onNewChat).toHaveBeenCalledTimes(1);
   });
@@ -144,12 +151,27 @@ describe("HomePane: the Running and Unread feeds", () => {
     expect(onOpenChat).toHaveBeenCalledWith("s9", "hushpod");
   });
 
-  it("shows its empty states when nothing wants attention", () => {
+  it("collapses BOTH empty feeds into one invitation, not two dead ends", () => {
+    // Two sections each saying nothing-to-see is one state told twice. It
+    // becomes a single panel — and the panel carries the next step, which is the
+    // whole reason it exists.
     renderHome();
-    expect(screen.getByText("Nothing running right now.")).toBeInTheDocument();
-    expect(screen.getByText("No unread replies. All caught up.")).toBeInTheDocument();
+    expect(screen.getByText("All caught up")).toBeInTheDocument();
+    expect(screen.queryByText("Nothing running right now.")).not.toBeInTheDocument();
+    expect(screen.queryByText("No unread replies. All caught up.")).not.toBeInTheDocument();
     expect(screen.queryByTestId("home-running-chats")).not.toBeInTheDocument();
     expect(screen.queryByTestId("home-unread-chats")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /New chat/i }));
+    expect(onNewChat).toHaveBeenCalledTimes(1);
+  });
+
+  it("still shows the per-feed empty state when only ONE feed is empty", () => {
+    // Half-empty is genuinely two states, and the section labels are what say
+    // which half — collapsing here would lose that.
+    renderHome({ running: [row({ name: "Streaming now" })] });
+    expect(screen.getByText("No unread replies. All caught up.")).toBeInTheDocument();
+    expect(screen.queryByText("All caught up")).not.toBeInTheDocument();
   });
 
   it("shows a skeleton, not an empty state, on the first load", () => {
@@ -172,6 +194,9 @@ describe("HomePane: the Running and Unread feeds", () => {
     expect(screen.getByText("attention feed exploded")).toBeInTheDocument();
     expect(screen.queryByText("Nothing running right now.")).not.toBeInTheDocument();
     expect(screen.queryByText("No unread replies. All caught up.")).not.toBeInTheDocument();
+    // Nor the collapsed invitation — "all caught up" is a claim, and a failed
+    // feed is exactly the case where we cannot make it.
+    expect(screen.queryByText("All caught up")).not.toBeInTheDocument();
   });
 });
 
@@ -272,7 +297,7 @@ describe("HomePane: the collapsible notes cards", () => {
 
   it("shows a per-file empty state when the workspace has no notes yet", () => {
     renderHome();
-    expect(screen.getByText("No OVERVIEW.md yet.")).toBeInTheDocument();
-    expect(screen.getByText("No CHANGELOG.md yet.")).toBeInTheDocument();
+    expect(screen.getByText("No OVERVIEW.md yet")).toBeInTheDocument();
+    expect(screen.getByText("No CHANGELOG.md yet")).toBeInTheDocument();
   });
 });
