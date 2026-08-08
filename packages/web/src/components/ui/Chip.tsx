@@ -72,8 +72,14 @@ export function Chip({
     <span
       title={title}
       className={cx(
-        "inline-flex items-center gap-1 font-medium leading-none",
-        shape === "pill" ? "rounded-full px-2 py-0.5" : "rounded-md px-1.5 py-0.5",
+        // `tabular` because a chip is very often a count, and a count that
+        // jitters as it ticks is the thing tabular figures exist to stop.
+        "inline-flex items-center gap-1 font-medium leading-none tabular",
+        // The `tag` shape is cut square-ish — a stamped label rather than a
+        // rounded blob — while `pill` stays fully round for live status. The
+        // difference in radius is doing the same job as the difference in
+        // meaning, which is the only reason to have two shapes.
+        shape === "pill" ? "rounded-full px-2 py-0.5" : "rounded-sm px-1.5 py-0.5",
         size === "sm" ? "text-3xs" : "text-2xs",
         TONES[tone],
         className,

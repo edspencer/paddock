@@ -257,11 +257,22 @@ export function SessionSidebar({
           runs past a screenful. Depth is capped so a long chain can't squeeze the
           title out of a narrow sidebar — past the cap, rows stop indenting but
           stay in their parent's subtree. */}
-      {Array.from({ length: Math.min(depth, MAX_INDENT_LEVELS) }, (_, i) => (
+      {/* The guides are drawn in the `lineage` hue rather than the neutral edge,
+          because that is precisely what they are: derivation made visible. It is
+          the same ink the register uses for a spawn hop and the transcript uses
+          for a fork, so one colour means one thing everywhere in the app. The
+          innermost guide — the one that leads to THIS row's own parent — is the
+          strong step; the ancestors behind it fade back, so a deep chain reads
+          as depth rather than as a barcode. */}
+      {Array.from({ length: Math.min(depth, MAX_INDENT_LEVELS) }, (_, i: number) => (
         <div
           key={i}
           aria-hidden="true"
-          className="w-3 shrink-0 border-l border-edge"
+          className={`w-3 shrink-0 border-l ${
+            i === Math.min(depth, MAX_INDENT_LEVELS) - 1
+              ? "border-lineage-edge"
+              : "border-lineage-edge/40"
+          }`}
         />
       ))}
       {/* Twisty gutter. A separate control from the row button (a button can't

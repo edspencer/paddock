@@ -1,5 +1,5 @@
 /*
- * Paddock design tokens — the single source of truth for colour.
+ * Paddock design tokens — direction `register`.
  *
  * READ docs/DESIGN.md BEFORE EDITING. The short version:
  *
@@ -13,15 +13,39 @@
  *    tokens (`paddock-500` help text measured 3.75:1).
  *  - Every text-on-surface pair declared here is asserted at >= 4.5:1 (>= 3:1
  *    for large text) in BOTH modes by `tokens.test.ts`, which parses this very
- *    file. If you change a value and the ratio drops, the test fails. That is
- *    the point — it is what makes a new direction trustworthy rather than an
- *    opinion.
+ *    file. If you change a value and the ratio drops, the test fails.
  *  - `--accent` / `--accent-600` / `--accent-700` are space-separated sRGB
  *    channels, NOT oklch, because a running server overrides them with an
  *    injected `<style>` for `PADDOCK_BRAND_ACCENT` (issue #34, see
  *    packages/server/src/brand.ts). Keep that format and those three names or
- *    per-instance branding breaks. Everything accent-flavoured below is derived
- *    from them so a brand colour propagates.
+ *    per-instance branding breaks.
+ *
+ * ---------------------------------------------------------------------------
+ * THE DIRECTION: `register`
+ *
+ * Paddock is a system of record. Chats fork, get promoted, get reverted;
+ * lineage and provenance are first-class in the data and near-invisible in the
+ * UI. This direction treats the app as a publication — an archive with a strong
+ * editorial hand.
+ *
+ * Light-first, because light is the mode that was measurably worse.
+ *
+ *   PAPER   A pale sage-grey with real substance (`#e3e9e5`), not the warm
+ *           cream (#F4F1EA) that Anthropic's own guidance names as default-AI
+ *           cluster #1 — and which Paddock's old canvas sat 7/255 from. The
+ *           sheet (`--surface-raised`) is nearly white and now separates from
+ *           the desk at 1.21:1 rather than the old, invisible 1.08:1.
+ *   INK     A green-black (`#0d1b16`), not neutral black — ink on paper always
+ *           carries the hue of the fibre it soaked into.
+ *   COLOUR  Deliberately scarce. The accent is a deep registrar's indigo dark
+ *           enough to read as ink; the only genuinely saturated thing in the
+ *           app is `lineage`, because derivation is the one fact this direction
+ *           exists to make visible. Decoration earns no hue.
+ *
+ * The trap this direction fails into is broadsheet pastiche — hairline rules,
+ * zero radius, newspaper columns. So: the radius scale below stays real
+ * (3–22px), elevation stays matte rather than absent, and rules are spent on
+ * chronology only. Editorial means hierarchy and voice, not newsprint.
  */
 
 :root {
@@ -30,39 +54,48 @@
   /* ---------------------------------------------------------------- accent --
    * Brandable seam. Server-injected override lands on these three, in this
    * exact format. Do not rename, do not convert to oklch.
+   *
+   * Registrar's indigo: oklch(0.445 0.112 266) and two darker steps. Deep
+   * enough that a filled button reads as ink rather than as a brand colour,
+   * hued enough that a link is unmistakably a link. It replaces terracotta,
+   * which managed only 4.17:1 under white text and is the third marker of the
+   * default-AI palette.
    */
-  --accent: 194 96 60; /* #c2603c */
-  --accent-600: 168 78 47; /* #a84e2f */
-  --accent-700: 138 63 38; /* #8a3f26 */
+  --accent: 54 80 145; /* #365091 */
+  --accent-600: 43 66 127; /* #2b427f */
+  --accent-700: 31 51 103; /* #1f3367 */
 
   /* -------------------------------------------------------------- surfaces --
    * sunken < surface < raised. `surface` is the app canvas; `raised` is
    * anything that floats above it (cards, menus, dialogs, the composer);
    * `sunken` is anything that reads as a well (inputs, code blocks, tracks).
-   * `hover`/`active`/`selected` are the interactive fills that sit on top of
-   * any of the three.
+   *
+   * The canvas is the DESK and the raised surface is the SHEET, so the step
+   * between them is deliberately large for a light theme: card-on-canvas was
+   * 1.08:1 before the tokens existed, which is to say it was not a step at all.
    */
-  --surface: oklch(0.9645 0.0035 88);
-  --surface-raised: oklch(0.996 0.0015 88);
-  --surface-sunken: oklch(0.933 0.006 88);
-  --surface-hover: oklch(0.94 0.006 88);
-  --surface-active: oklch(0.908 0.008 88);
-  --surface-selected: oklch(0.918 0.009 88);
+  --surface: oklch(0.928 0.0085 155);
+  --surface-raised: oklch(0.992 0.003 155);
+  --surface-sunken: oklch(0.8965 0.0115 155);
+  --surface-hover: oklch(0.907 0.011 155);
+  --surface-active: oklch(0.884 0.0135 155);
+  --surface-selected: oklch(0.895 0.017 160);
   /* Modal / drawer scrim. Deliberately hue-neutral black so it darkens rather
      than tints whatever is behind it. */
-  --overlay: oklch(0 0 0 / 0.42);
+  --overlay: oklch(0 0 0 / 0.4);
   /* The media lightbox needs a heavier scrim than a dialog: it sits over an
      arbitrary photo rather than over app chrome. */
-  --overlay-strong: oklch(0 0 0 / 0.82);
+  --overlay-strong: oklch(0 0 0 / 0.84);
 
   /* ----------------------------------------------------------------- text --
    * Three rungs, all of which clear 4.5:1 against the DARKEST surface they can
-   * legally sit on (`--surface-sunken`) — including `--text-subtle`, which is
-   * the placeholder colour and therefore real text.
+   * legally sit on (`--surface-active`) — including `--text-subtle`, which is
+   * the placeholder colour and therefore real text. The hue drifts a little
+   * cooler than the paper: ink and fibre are never quite the same colour.
    */
-  --text: oklch(0.225 0.014 88);
-  --text-muted: oklch(0.415 0.017 88);
-  --text-subtle: oklch(0.492 0.018 88);
+  --text: oklch(0.208 0.022 170);
+  --text-muted: oklch(0.408 0.021 168);
+  --text-subtle: oklch(0.462 0.019 165);
   /* Foreground for anything sitting on a saturated solid fill. */
   --text-on-solid: oklch(1 0 0);
 
@@ -71,23 +104,22 @@
    * `--border-strong` clears 3:1 against every surface, so it is the one to
    * reach for on a control boundary, a hover state, or a focus-adjacent edge.
    */
-  --border-subtle: oklch(0.905 0.008 88);
-  --border: oklch(0.82 0.012 88);
-  --border-strong: oklch(0.608 0.015 88);
+  --border-subtle: oklch(0.888 0.012 155);
+  --border: oklch(0.796 0.017 155);
+  --border-strong: oklch(0.568 0.021 158);
 
   /* ------------------------------------------------------- accent, derived --
-   * `--accent-solid` is the fill for anything that carries text on it: the raw
-   * brand accent only manages 4.17:1 against white, so the button uses the 600
-   * step (5.53:1). `--accent-text` is the accent AS TEXT on a neutral surface,
-   * which needs the darker 700 step in light mode.
+   * `--accent-solid` is the fill for anything that carries text on it;
+   * `--accent-text` is the accent AS TEXT on a neutral surface. Both are the
+   * darker steps, which is what makes the accent read as ink.
    */
   --accent-color: rgb(var(--accent));
   --accent-solid: rgb(var(--accent-600));
   --accent-solid-hover: rgb(var(--accent-700));
   --accent-fg: oklch(1 0 0);
   --accent-text: rgb(var(--accent-700));
-  --accent-soft: color-mix(in oklab, rgb(var(--accent)) 10%, var(--surface-raised));
-  --accent-border: color-mix(in oklab, rgb(var(--accent)) 40%, var(--surface));
+  --accent-soft: color-mix(in oklab, rgb(var(--accent)) 9%, var(--surface-raised));
+  --accent-border: color-mix(in oklab, rgb(var(--accent)) 34%, var(--surface));
 
   /* ------------------------------------------------------------- status hues --
    * Five domain hues. Each has the same five slots so they are interchangeable
@@ -98,119 +130,188 @@
    *   -soft    tinted background (chips, banners, diff lines)
    *   -border  border for a `-soft` banner
    *
-   * success  emerald  added · completed · enabled · connected · adopted
-   * warn     amber    caution · pending · modified · paused · dirty · starred
-   * danger   rose     error · failed · deleted · destructive · stderr
-   * info     sky      informational · in progress · background task · repo
-   * lineage  violet   derivation & structure: renamed, spawned, hunk header,
-   *                   trigger type = schedule
+   * success  added · completed · enabled · connected · adopted
+   * warn     caution · pending · modified · paused · dirty · starred
+   * danger   error · failed · deleted · destructive · stderr
+   * info     informational · in progress · background task · repo
+   * lineage  derivation & structure: renamed, spawned, forked, hunk header,
+   *          trigger type = schedule
+   *
+   * They are set as PRINTED inks: every `-solid` sits at L 0.492 and every
+   * `-text` at L 0.428, so five markers in a row read as one weight rather than
+   * as five competing signals. Chroma is the only thing that varies — and
+   * `lineage` is given the most of it on purpose. It is the hue that means
+   * "this came from somewhere", which is the fact this direction is about.
    */
-  --success-solid: oklch(0.535 0.1252 158);
+  --success-solid: oklch(0.492 0.115 152);
   --success-fg: oklch(1 0 0);
-  --success-text: oklch(0.47 0.11 158);
-  --success-soft: oklch(0.948 0.045 158);
-  --success-border: oklch(0.84 0.075 158);
+  --success-text: oklch(0.428 0.106 152);
+  --success-soft: oklch(0.938 0.038 152);
+  --success-border: oklch(0.83 0.063 152);
 
-  --warn-solid: oklch(0.535 0.1074 72);
+  --warn-solid: oklch(0.492 0.105 68);
   --warn-fg: oklch(1 0 0);
-  --warn-text: oklch(0.47 0.0955 72);
-  --warn-soft: oklch(0.948 0.0401 72);
-  --warn-border: oklch(0.84 0.075 72);
+  --warn-text: oklch(0.428 0.088 68);
+  --warn-soft: oklch(0.938 0.038 68);
+  --warn-border: oklch(0.83 0.058 68);
 
-  --danger-solid: oklch(0.535 0.17 24);
+  --danger-solid: oklch(0.492 0.155 22);
   --danger-fg: oklch(1 0 0);
-  --danger-text: oklch(0.47 0.15 24);
-  --danger-soft: oklch(0.948 0.0262 24);
-  --danger-border: oklch(0.84 0.075 24);
+  --danger-text: oklch(0.428 0.143 22);
+  --danger-soft: oklch(0.938 0.03 22);
+  --danger-border: oklch(0.83 0.085 22);
 
-  --info-solid: oklch(0.535 0.127 242);
+  --info-solid: oklch(0.492 0.103 234);
   --info-fg: oklch(1 0 0);
-  --info-text: oklch(0.47 0.1116 242);
-  --info-soft: oklch(0.948 0.0276 242);
-  --info-border: oklch(0.84 0.075 242);
+  --info-text: oklch(0.428 0.084 234);
+  --info-soft: oklch(0.938 0.034 234);
+  --info-border: oklch(0.83 0.063 234);
 
-  --lineage-solid: oklch(0.535 0.17 295);
+  --lineage-solid: oklch(0.492 0.185 300);
   --lineage-fg: oklch(1 0 0);
-  --lineage-text: oklch(0.47 0.17 295);
-  --lineage-soft: oklch(0.948 0.028 295);
-  --lineage-border: oklch(0.84 0.075 295);
+  --lineage-text: oklch(0.428 0.17 300);
+  --lineage-soft: oklch(0.938 0.034 300);
+  --lineage-border: oklch(0.83 0.1 300);
 
   /* --------------------------------------------------------------- effects --
-   * Shadows are tinted toward the surface hue and layered (ambient + direct);
-   * see theme.css. `--shadow-color` is the channel set both layers mix from.
+   * Matte. Paper does not gloss: the ambient and direct layers are both pulled
+   * back so an edge does the separating and the shadow only says "this sheet is
+   * lying on top of that one". Tinted toward the ink, not neutral black.
    */
-  --shadow-color: 40 34 22;
-  --shadow-ambient: 0.06;
-  --shadow-direct: 0.08;
+  --shadow-color: 26 42 35;
+  --shadow-ambient: 0.05;
+  --shadow-direct: 0.055;
 
-  --scroll-thumb: oklch(0.82 0.012 88);
+  --scroll-thumb: oklch(0.8 0.017 155);
 }
 
 .dark {
   color-scheme: dark;
 
-  --surface: oklch(0.187 0.006 88);
-  --surface-raised: oklch(0.232 0.0075 88);
-  --surface-sunken: oklch(0.148 0.005 88);
-  --surface-hover: oklch(0.245 0.008 88);
-  --surface-active: oklch(0.268 0.009 88);
-  --surface-selected: oklch(0.258 0.01 88);
+  /*
+   * The same ledger printed as a negative — a deep ink-green ground, NOT
+   * near-black. (OKLCH `L` is not relative luminance: L 0.20 already reads as
+   * black, and a near-black ground plus one bright accent is documented
+   * default-AI cluster #2.) Ramp derived independently of the light one.
+   */
+  --surface: oklch(0.222 0.0135 168);
+  --surface-raised: oklch(0.268 0.0145 168);
+  --surface-sunken: oklch(0.178 0.011 168);
+  --surface-hover: oklch(0.286 0.016 168);
+  --surface-active: oklch(0.312 0.0175 168);
+  --surface-selected: oklch(0.302 0.021 172);
   --overlay: oklch(0 0 0 / 0.55);
   --overlay-strong: oklch(0 0 0 / 0.86);
 
-  --text: oklch(0.93 0.012 88);
-  --text-muted: oklch(0.718 0.015 88);
-  --text-subtle: oklch(0.652 0.016 88);
+  --text: oklch(0.938 0.011 150);
+  --text-muted: oklch(0.742 0.015 152);
+  --text-subtle: oklch(0.684 0.016 152);
   --text-on-solid: oklch(1 0 0);
 
-  --border-subtle: oklch(0.28 0.009 88);
-  --border: oklch(0.335 0.011 88);
-  --border-strong: oklch(0.525 0.014 88);
+  --border-subtle: oklch(0.305 0.016 168);
+  --border: oklch(0.368 0.018 168);
+  --border-strong: oklch(0.582 0.02 168);
 
-  /* On a dark canvas the raw accent already clears 4.5:1 as a fill, but not as
-     TEXT at small sizes against `surface-raised` — so accent text is lightened
-     toward white. Still derived from `--accent`, so branding propagates. */
+  /*
+   * The light mode's accent steps are ink-dark by design, which on a dark
+   * ground would be mud. So dark mode fills with the BASE step and lightens the
+   * text step toward white — still derived from the three sRGB channels, so a
+   * `PADDOCK_BRAND_ACCENT` override still propagates through everything.
+   */
   --accent-color: rgb(var(--accent));
-  --accent-solid: rgb(var(--accent-600));
-  --accent-solid-hover: rgb(var(--accent));
+  --accent-solid: color-mix(in oklab, rgb(var(--accent)) 85%, white);
+  --accent-solid-hover: color-mix(in oklab, rgb(var(--accent)) 70%, white);
   --accent-fg: oklch(1 0 0);
-  --accent-text: color-mix(in oklab, rgb(var(--accent)) 74%, white);
-  --accent-soft: color-mix(in oklab, rgb(var(--accent)) 16%, var(--surface));
-  --accent-border: color-mix(in oklab, rgb(var(--accent)) 45%, var(--surface));
+  --accent-text: color-mix(in oklab, rgb(var(--accent)) 52%, white);
+  --accent-soft: color-mix(in oklab, rgb(var(--accent)) 26%, var(--surface));
+  --accent-border: color-mix(in oklab, rgb(var(--accent)) 52%, var(--surface));
 
-  --success-solid: oklch(0.535 0.1252 158);
+  --success-solid: oklch(0.52 0.115 152);
   --success-fg: oklch(1 0 0);
-  --success-text: oklch(0.79 0.1268 158);
-  --success-soft: oklch(0.26 0.05 158);
-  --success-border: oklch(0.37 0.07 158);
+  --success-text: oklch(0.808 0.088 152);
+  --success-soft: oklch(0.292 0.041 152);
+  --success-border: oklch(0.402 0.051 152);
 
-  --warn-solid: oklch(0.535 0.1074 72);
+  --warn-solid: oklch(0.52 0.105 68);
   --warn-fg: oklch(1 0 0);
-  --warn-text: oklch(0.79 0.13 72);
-  --warn-soft: oklch(0.26 0.05 72);
-  --warn-border: oklch(0.37 0.07 72);
+  --warn-text: oklch(0.808 0.086 68);
+  --warn-soft: oklch(0.292 0.038 68);
+  --warn-border: oklch(0.402 0.046 68);
 
-  --danger-solid: oklch(0.535 0.17 24);
+  --danger-solid: oklch(0.52 0.155 22);
   --danger-fg: oklch(1 0 0);
-  --danger-text: oklch(0.79 0.1217 24);
-  --danger-soft: oklch(0.26 0.05 24);
-  --danger-border: oklch(0.37 0.07 24);
+  --danger-text: oklch(0.808 0.09 22);
+  --danger-soft: oklch(0.292 0.056 22);
+  --danger-border: oklch(0.402 0.068 22);
 
-  --info-solid: oklch(0.535 0.127 242);
+  --info-solid: oklch(0.52 0.101 234);
   --info-fg: oklch(1 0 0);
-  --info-text: oklch(0.79 0.1172 242);
-  --info-soft: oklch(0.26 0.05 242);
-  --info-border: oklch(0.37 0.07 242);
+  --info-text: oklch(0.808 0.086 234);
+  --info-soft: oklch(0.292 0.041 234);
+  --info-border: oklch(0.402 0.051 234);
 
-  --lineage-solid: oklch(0.535 0.17 295);
+  --lineage-solid: oklch(0.52 0.185 300);
   --lineage-fg: oklch(1 0 0);
-  --lineage-text: oklch(0.79 0.1195 295);
-  --lineage-soft: oklch(0.26 0.05 295);
-  --lineage-border: oklch(0.37 0.07 295);
+  --lineage-text: oklch(0.808 0.113 300);
+  --lineage-soft: oklch(0.292 0.067 300);
+  --lineage-border: oklch(0.402 0.081 300);
 
   --shadow-color: 0 0 0;
   --shadow-ambient: 0.4;
-  --shadow-direct: 0.5;
+  --shadow-direct: 0.48;
 
-  --scroll-thumb: oklch(0.335 0.011 88);
+  --scroll-thumb: oklch(0.368 0.018 168);
+}
+
+/* ===========================================================================
+ * NON-COLOUR SCALES — direction overrides
+ *
+ * `index.css` declares these in a plain (non-`inline`) `@theme`, so they are
+ * emitted as real custom properties and a direction can re-cut any of them from
+ * here. They are outside `:root`/`.dark` above because none of them differ
+ * between modes.
+ * ======================================================================== */
+
+:root {
+  /* ------------------------------------------------------------ type scale --
+   * The brief for this direction: real jumps between levels. 32/28/24 is three
+   * sizes doing one job — the eye reads it as flat. So the UI rungs (10–16) are
+   * left alone, because a dense tool needs them, and everything ABOVE body is
+   * re-cut with the gaps opened up:
+   *
+   *     16  →  20  →  27  →  36  →  48        ratio ~1.27–1.35
+   *
+   * `--text-3xl` is now genuinely display-sized, which is what makes a masthead
+   * possible without inventing a new rung. Tracking tightens as size grows, the
+   * way a real display cut would.
+   */
+  --text-md: 0.96875rem; /* 15.5 — document prose */
+  --text-md--line-height: 1.6rem;
+  --text-base--line-height: 1.5rem;
+  --text-lg: 1.25rem; /* 20 */
+  --text-lg--line-height: 1.75rem;
+  --text-lg--letter-spacing: -0.005em;
+  --text-xl: 1.6875rem; /* 27 */
+  --text-xl--line-height: 2.125rem;
+  --text-xl--letter-spacing: -0.012em;
+  --text-2xl: 2.25rem; /* 36 */
+  --text-2xl--line-height: 2.625rem;
+  --text-2xl--letter-spacing: -0.018em;
+  --text-3xl: 3rem; /* 48 */
+  --text-3xl--line-height: 3.25rem;
+  --text-3xl--letter-spacing: -0.024em;
+
+  /* ---------------------------------------------------------------- radius --
+   * Concentric, and deliberately NOT zero. Squared corners plus hairlines plus
+   * a serif is the broadsheet pastiche this direction is most at risk of, and
+   * the fastest way to fall in is to set these to 0 "for editorial rigour".
+   * They are instead cut slightly crisper than the default so the app reads as
+   * trimmed stock rather than as rounded chrome.
+   */
+  --radius-sm: 0.1875rem; /* 3  — badge */
+  --radius-md: 0.3125rem; /* 5  — chip */
+  --radius-lg: 0.5rem; /* 8  — control */
+  --radius-xl: 0.6875rem; /* 11 — panel */
+  --radius-2xl: 0.9375rem; /* 15 — card, dialog */
+  --radius-3xl: 1.375rem; /* 22 */
 }

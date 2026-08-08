@@ -1,9 +1,10 @@
 import { useState } from "react";
 import type { AttentionChat, Project } from "../../lib/types";
 import { Markdown } from "../../components/Markdown";
+import { ChangelogRecord } from "../../components/ChangelogRecord";
 import { relativeTime } from "../../lib/format";
 import { ChevronRightIcon, FileIcon, PinIcon, PlusIcon } from "../../components/icons";
-import { EmptyState } from "../../components/ui";
+import { Button, EmptyState } from "../../components/ui";
 
 /**
  * The Home tab: the workspace's landing page. Gives `/projects/:slug` a real
@@ -115,7 +116,10 @@ export function HomePane({
               )}
             </div>
             {recentFiles.length === 0 ? (
-              <EmptyState title="No files yet. Files Claude writes appear here." />
+              <EmptyState
+                title="Files Claude writes will appear here"
+                body="Anything the agent creates in this project's directory is indexed automatically — you never have to upload it."
+              />
             ) : (
               <div className="overflow-hidden rounded-2xl border border-edge">
                 {recentFiles.map((f, i) => (
@@ -149,19 +153,38 @@ export function HomePane({
             `useState` initializer, so navigating between workspaces has to
             REMOUNT the section or it would keep showing the previous
             workspace's fold. */}
+        {/*
+         * Both notes files are written by the sweeper AFTER a turn finishes, so
+         * an empty one is not a missing file — it is a project that has not been
+         * worked on yet. Saying so, and offering the one action that changes it,
+         * turns what used to be two dead "No X yet." lines into a next step.
+         * Only the first carries the button: two identical primary actions
+         * stacked in one viewport is the monotony the craft floor warns about.
+         */}
         <NotesSection
           key={`${project.slug}:overview`}
           id={`${project.slug}:overview`}
           title="OVERVIEW.md"
           body={overview}
-          emptyLabel="No OVERVIEW.md yet."
+          emptyTitle="Nothing to summarise yet"
+          emptyBody="After a chat finishes, the sweeper curates OVERVIEW.md out of band — the standing answer to what this project is and where it has got to."
+          emptyAction={
+            <Button variant="primary" size="sm" icon={<PlusIcon width={13} height={13} />} onClick={onNewChat}>
+              Start the first chat
+            </Button>
+          }
         />
+        {/* The changelog is a RECORD — the sweeper writes it newest-first in
+            dated sections — so it renders in the register's chronological
+            grammar rather than as one undifferentiated Markdown scroll. */}
         <NotesSection
           key={`${project.slug}:changelog`}
           id={`${project.slug}:changelog`}
           title="CHANGELOG.md"
           body={changelog}
-          emptyLabel="No CHANGELOG.md yet."
+          emptyTitle="The record starts with your first turn"
+          emptyBody="Every finished turn adds a dated entry here, newest first — the account of how this project got where it is."
+          variant="record"
         />
 
         <p className="mt-6 text-2xs text-fg-subtle">
@@ -175,9 +198,9 @@ export function HomePane({
 /** A Home section heading + its count, in Home's shared visual language. */
 function SectionLabel({ label, count }: { label: string; count: number }) {
   return (
-    <h3 className="text-sm font-semibold uppercase tracking-wide text-fg-muted">
+    <h3 className="eyebrow text-2xs text-fg-subtle">
       {label}
-      {count > 0 && <span className="ml-1.5 text-fg-subtle">{count}</span>}
+      {count > 0 && <span className="folio ml-2 normal-case text-fg-muted">{count}</span>}
     </h3>
   );
 }
@@ -275,12 +298,19 @@ function NotesSection({
   id,
   title,
   body,
-  emptyLabel,
+  emptyTitle,
+  emptyBody,
+  emptyAction,
+  variant = "prose",
 }: {
   id: string;
   title: string;
   body: string;
-  emptyLabel: string;
+  emptyTitle: string;
+  emptyBody?: string;
+  emptyAction?: React.ReactNode;
+  /** `record` sets dated sections in the register's marginal-date grammar. */
+  variant?: "prose" | "record";
 }) {
   const [collapsed, toggle] = useCollapsed(id);
   const open = !collapsed;
@@ -298,15 +328,19 @@ function NotesSection({
           height={14}
           className={`shrink-0 text-fg-subtle transition-transform ${open ? "rotate-90" : ""}`}
         />
-        <h3 className="text-sm font-semibold uppercase tracking-wide text-fg-muted">{title}</h3>
+        <h3 className="eyebrow text-2xs text-fg-subtle">{title}</h3>
       </button>
       {open &&
         (hasBody ? (
-          <div className="card">
-            <Markdown>{body}</Markdown>
-          </div>
+          variant === "record" ? (
+            <ChangelogRecord source={body} />
+          ) : (
+            <div className="card">
+              <Markdown>{body}</Markdown>
+            </div>
+          )
         ) : (
-          <EmptyState title={emptyLabel} />
+          <EmptyState title={emptyTitle} body={emptyBody} action={emptyAction} />
         ))}
     </section>
   );

@@ -83,18 +83,33 @@ export function Section({
       )}
     >
       <div className="flex items-baseline justify-between gap-3">
+        {/*
+         * Two voices, on purpose, and the split is the direction's "repeat the
+         * pattern, then break it" in its smallest form.
+         *
+         * A `rule` section is a real editorial heading: display face, sentence
+         * case, one rung up. A `card`/`bare` section is a CLASSIFICATION of the
+         * content below it, so it gets the eyebrow — mono, tracked, small. The
+         * previous shared style set every one of them in the heading face at
+         * `uppercase tracking-wide`, which with a serif display reads as an
+         * invitation rather than as a label.
+         */}
         <h3
           className={cx(
             variant === "rule"
-              ? "text-base font-semibold tracking-tight text-fg"
-              : "text-sm font-semibold uppercase tracking-wide text-fg-muted",
+              ? "text-lg font-semibold text-fg"
+              : "eyebrow text-2xs text-fg-subtle",
           )}
         >
           {title}
         </h3>
         {action}
       </div>
-      {description && <p className="mt-0.5 text-xs leading-snug text-fg-muted">{description}</p>}
+      {description && (
+        <p className={cx("text-xs leading-snug text-fg-muted", variant === "rule" ? "mt-1.5" : "mt-1")}>
+          {description}
+        </p>
+      )}
       {variant === "card" ? (
         <Card className="mt-2">{children}</Card>
       ) : (
@@ -146,20 +161,21 @@ export function EmptyState({
       </div>
     );
   }
+  /*
+   * The panel form is an unwritten page rather than a placeholder box: no
+   * dashed outline, no tinted icon tile. The icon is drawn in the muted ink,
+   * because this direction spends hue on provenance and status only — an empty
+   * state is not a status.
+   */
   return (
-    <div
-      className={cx(
-        "mx-auto max-w-lg rounded-2xl border border-dashed border-edge px-8 py-12 text-center",
-        className,
-      )}
-    >
+    <div className={cx("mx-auto max-w-lg px-8 py-14 text-center", className)}>
       {icon && (
-        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-accent-soft text-accent">
+        <div className="mx-auto mb-5 flex h-12 w-12 items-center justify-center rounded-xl border border-edge-subtle bg-surface-sunken text-fg-subtle">
           {icon}
         </div>
       )}
-      <h3 className="text-base font-semibold text-fg">{title}</h3>
-      {body && <p className="mx-auto mt-1.5 max-w-sm text-sm text-fg-muted">{body}</p>}
+      <h3 className="text-lg font-semibold text-fg">{title}</h3>
+      {body && <p className="mx-auto mt-2 max-w-sm text-sm text-fg-muted">{body}</p>}
       {action && <div className="mt-5 flex items-center justify-center gap-2">{action}</div>}
     </div>
   );

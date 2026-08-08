@@ -110,8 +110,9 @@
    * without touching a component; it defaults to the body face.
    */
   --font-sans:
-    "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  --font-display: var(--font-sans);
+    "Instrument Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+    sans-serif;
+  --font-display: "Fraunces", "Instrument Sans", Georgia, serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 
   /*
@@ -227,11 +228,36 @@
    * component changes, and no network request.
    */
   @font-face {
-    font-family: "Inter";
+    font-family: "Instrument Sans";
     font-style: normal;
-    font-weight: 100 900;
+    font-weight: 400 700;
+    font-stretch: 75% 100%;
     font-display: swap;
-    src: url("/fonts/inter-latin.woff2") format("woff2");
+    src: url("/fonts/instrument-sans-latin.woff2") format("woff2");
+  }
+  @font-face {
+    font-family: "Instrument Sans";
+    font-style: italic;
+    font-weight: 400 700;
+    font-stretch: 75% 100%;
+    font-display: swap;
+    src: url("/fonts/instrument-sans-latin-italic.woff2") format("woff2");
+  }
+  /*
+   * Fraunces is the display face and it is the direction's one loud decision.
+   * It is a variable OLD-STYLE serif, not a high-contrast modern one — which
+   * matters, because "warm cream + high-contrast serif display + terracotta" is
+   * the documented default-AI aesthetic and half the point of this direction is
+   * not to be that. `opsz` is pinned low-ish and `WONK` is on (see the h1–h4
+   * rule below), which keeps the angular, slightly wilful terminals that give
+   * it a point of view instead of the glassy Didone look at high optical sizes.
+   */
+  @font-face {
+    font-family: "Fraunces";
+    font-style: normal;
+    font-weight: 300 900;
+    font-display: swap;
+    src: url("/fonts/fraunces-latin.woff2") format("woff2");
   }
   @font-face {
     font-family: "JetBrains Mono";
@@ -317,15 +343,31 @@
     color: var(--color-fg);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    font-feature-settings: "cv05", "ss01";
+    /* `ss01` gives Instrument Sans its single-storey `a`-less alternates and a
+       straighter `l`; the old `cv05` was an Inter-only feature and is dropped
+       with Inter. */
+    font-feature-settings: "ss01";
   }
-  /* Headings set their own measure; balance keeps two-line titles even. */
+  /*
+   * Headings set their own measure; balance keeps two-line titles even.
+   *
+   * `WONK 1` is the whole reason Fraunces is here: it swaps in the angular,
+   * slightly off-key terminals that stop the face reading as a generic
+   * "elegant serif". `SOFT` is nudged up a touch to take the brittleness off
+   * the joins at UI sizes, and `opsz` is held well below the 144 maximum so the
+   * stroke contrast stays old-style rather than Didone.
+   */
   h1,
   h2,
   h3,
   h4 {
     text-wrap: balance;
     font-family: var(--font-display);
+    font-variation-settings:
+      "opsz" 40,
+      "SOFT" 22,
+      "WONK" 1;
+    letter-spacing: -0.012em;
   }
   * {
     scrollbar-width: thin;
@@ -411,6 +453,55 @@
    timestamps, the Config screen) must not jitter as they tick. */
 @utility tabular {
   font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------------------------
+ * Direction `register` — three structural utilities.
+ *
+ * Each one exists to carry a FACT, not a decoration. The rule this direction
+ * holds itself to is that a label, a number or a rule may only appear where it
+ * encodes something true about the thing beside it — provenance, position in
+ * the record, or when it happened. If it is there to make the page look
+ * editorial, it comes out.
+ * ------------------------------------------------------------------------ */
+
+/*
+ * The eyebrow: a tracked, uppercase mono label. Reserved for classification —
+ * what KIND of thing this is (its origin, its status, its section). Never a
+ * title, never restating what the heading below already says.
+ */
+@utility eyebrow {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * A folio number: the position of an entry within the record. Mono, tabular,
+ * and quiet enough to scan past — it is an index, not a headline.
+ */
+@utility folio {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  font-feature-settings: "zero";
+}
+
+/*
+ * Date numerals in the margin, set in the display face with lining tabular
+ * figures so a column of days stacks true. This is how time becomes structure
+ * rather than a caption.
+ */
+@utility marginal-date {
+  font-family: var(--font-display);
+  font-variation-settings:
+    "opsz" 60,
+    "SOFT" 18,
+    "WONK" 1;
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: -0.03em;
 }
 
 @layer components {
