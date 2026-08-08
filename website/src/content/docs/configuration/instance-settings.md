@@ -32,16 +32,42 @@ split fixed.
 
 ### 1. Every change needs a restart
 
-This is the big one, and the screen says so in a banner that never goes away.
+This is the big one, and the screen says so in a banner that never goes away — but
+since v0.66.2 the banner has **three** states rather than one, because "what a
+restart would load" is now something Paddock actually checks rather than assumes.
 
 Paddock resolves its instance config **once, at boot**, and freezes it. Saving writes
 your changes to `paddock.config.yaml` on disk — it does **not** hot-apply them. The
-running process keeps the config it started with until you restart it. After a
-successful save the banner switches to a green "Saved to disk — these changes take
-effect only after the server restarts" confirmation, which is the honest version of a
-success message.
+running process keeps the config it started with until you restart it.
+
+| Banner | When | What it means |
+|---|---|---|
+| Red — *"Could not read paddock.config.yaml"* | the file exists but won't parse | The values shown are the **running** instance's. What a restart would load is unknown until the file parses. |
+| Green — *"Saved to disk"* | just after a successful save | Your write landed. It takes effect at the next restart. |
+| Amber — *"Restart pending"* | the file holds changes the process hasn't picked up | At least one field's on-disk value differs from what is in force. Those fields are individually chipped **restart**. |
+| Amber — the plain notice | otherwise | Nothing is diverging; edits here will need a restart like any other. |
+
+That amber "Restart pending" state used to be unreachable: `restartRequired` was
+hardcoded `false`, so an unapplied edit — yours, another tab's, or one made with an
+editor — looked exactly like a clean instance. It is now **computed**, by comparing
+each editable field's on-disk value against the one the process is running.
 
 So the workflow is: change what you want, save, restart Paddock, verify.
+
+#### Two values per field
+
+That comparison is visible in the API too. Every field the screen renders carries
+**both**:
+
+- **`value`** — what the running, boot-frozen process resolved.
+- **`pendingValue`** — what `paddock.config.yaml` says *this instant*, i.e. what a
+  restart would load. Computed for **editable, non-env-shadowed** fields only;
+  everywhere else it just repeats `value`.
+- **`pendingRestart`** — the two differ.
+
+The editor renders `pendingValue`, and a save round-trips through it. So the screen
+is an editor for the *file*, showing you where the file and the process disagree —
+not a window onto the running process.
 
 ### 2. An environment variable wins, and the screen tells you
 
@@ -174,6 +200,30 @@ and the reason, and **nothing** is written. The rules mirror the config loader's
 so the screen can't produce a file the loader would then quietly degrade.
 
 Only fields you actually changed are sent, so a save is a patch, not a rewrite.
+
+A save also **stamps `schemaVersion: 1`** into a file that doesn't declare one yet
+— which is every file written before v0.66.0 and every fresh one the first save
+creates. Only when absent: a patch round-trips the document's other keys untouched,
+so it is in no position to assert what version the *whole* file is, and a file that
+already declares one has been through the boot guard already. That is the "written
+on the next save" half of the promise in
+[Config file → `schemaVersion`](/configuration/config-file/#schemaversion--the-downgrade-guard).
+
+### Two tabs, one file
+
+The GET returns a **`configVersion`** — a fingerprint of the file as read for that
+response. The screen echoes it back as **`expectedVersion`** on the PUT, and the
+server refuses the write with a **`409`** (`code: "config_conflict"`) if the file no
+longer matches. **Nothing is written** in that case; reload the settings and reapply.
+Before this, a second tab silently erased the first tab's save.
+
+`expectedVersion` is **opt-in**. A client that omits it — curl, a script — writes
+unconditionally, exactly as before. The UI always sends one.
+
+One related response worth knowing: writing an **env-shadowed** field is a **`400`**
+naming the variable that wins. It used to return `200` + `restartRequired: true` for
+a write that could never take effect. (Sending `null` for a field clears its key, as
+[above](#what-you-can-edit) — that is a `200`, not an error.)
 
 ## See also
 
