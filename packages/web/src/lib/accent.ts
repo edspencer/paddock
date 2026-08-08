@@ -365,7 +365,7 @@ export function themeDefaultHue(root: HTMLElement = document.documentElement): n
  * read — the strip a user drags along is painted with the colours they would
  * actually get, not with a decorative rainbow that happens to sit near them.
  */
-interface Context {
+export interface AccentContext {
   fg: Rgba;
   surface: Rgba;
   surfaces: Rgba[];
@@ -378,11 +378,22 @@ interface Context {
 
 const WHITE: Rgba = { r: 1, g: 1, b: 1, a: 1 };
 
-function readContext(root: HTMLElement): Context {
+/**
+ * Read the theme's own accent defaults and the targets they imply.
+ *
+ * Exported so a DRAG can read it once and reuse it. Nothing in here depends on
+ * the picked hue — it is the theme's chroma, its polarity and the ratios it
+ * already achieves — so re-reading it per frame is pure waste, and expensive
+ * waste: it clears six inline properties and then reads eight more, each read
+ * after a write forcing a full style recalc. Capturing it at `pointerdown` and
+ * passing it back to `applyAccent` is safe because the only things that could
+ * invalidate it (the theme, the mode, the ground tint) cannot change mid-drag.
+ */
+export function readAccentContext(root: HTMLElement = document.documentElement): AccentContext {
   return withThemeDefaults(root, () => readContextNow(root));
 }
 
-function readContextNow(root: HTMLElement): Context {
+function readContextNow(root: HTMLElement): AccentContext {
   const def = {
     accent: readColor(root, "--accent") ?? WHITE,
     a600: readColor(root, "--accent-600") ?? WHITE,
@@ -430,7 +441,7 @@ function readContextNow(root: HTMLElement): Context {
   };
 }
 
-function solveChannels(ctx: Context, hue: number) {
+function solveChannels(ctx: AccentContext, hue: number) {
   return {
     accent: solve(ctx.targets.accent, ctx.chroma.accent, hue, ctx.surface, ctx.darker.accent),
     a600: solve(ctx.targets.a600, ctx.chroma.a600, hue, ctx.fg, ctx.darker.a600),
@@ -448,19 +459,32 @@ function solveChannels(ctx: Context, hue: number) {
  * shows that rather than promising a vividness the app will not deliver.
  */
 export function accentSwatches(hues: number[], root: HTMLElement = document.documentElement): string[] {
-  const ctx = readContext(root);
+  const ctx = readAccentContext(root);
   return hues.map((h) => toHex(solve(ctx.targets.a600, ctx.chroma.a600, h, ctx.fg, ctx.darker.a600).rgb));
+}
+
+export interface ApplyAccentOptions {
+  /** A context from `readAccentContext`, to skip the re-read during a drag. */
+  context?: AccentContext;
+  /**
+   * A drag frame. Skips the final read-back of the applied tokens, which exists
+   * only to feed the pre-paint cache and costs a whole extra style recalc — a
+   * scrub throws that report away sixty times a second. Halves the per-frame
+   * cost; the values it omits are filled in by the ordinary apply on release.
+   */
+  live?: boolean;
 }
 
 export function applyAccent(
   hue: number,
   root: HTMLElement = document.documentElement,
+  opts: ApplyAccentOptions = {},
 ): AccentReport {
   const mode: "light" | "dark" = root.classList.contains("dark") ? "dark" : "light";
 
   // 1. Read the theme's own defaults, with our overrides out of the way, and
   //    2. derive the targets. 3. Solve each channel at the new hue.
-  const ctx = readContext(root);
+  const ctx = opts.context ?? readAccentContext(root);
   const solved = solveChannels(ctx, hue);
   const { a600: s600, a700: s700, accent: sAccent } = solved;
   const okAccent = { C: ctx.chroma.accent };
@@ -482,11 +506,32 @@ export function applyAccent(
   root.style.setProperty("--accent-700", channels(s700.rgb));
 
   // 4. Verify what the theme DERIVED, and repair what its derivation lost.
+  //
+  // Read EVERYTHING first, then write. Each `getComputedStyle` after a style
+  // write forces a full style recalc of the document, so interleaving the two
+  // — read a token, repair it, read the next — costs one recalc per token
+  // instead of one for the batch. Measured on this page that was ~11ms per
+  // read-after-write, which a live drag cannot afford: it is the difference
+  // between the scrub tracking your finger and lurching after it.
+  const derived: Record<string, Rgba | null> = {};
+  for (const name of [
+    "--accent-fg",
+    "--accent-solid",
+    "--accent-solid-hover",
+    "--accent-text",
+    "--surface",
+    "--surface-raised",
+    "--surface-sunken",
+    "--accent-soft",
+  ]) {
+    derived[name] = readColor(root, name);
+  }
+
   const checks: AccentCheck[] = [];
-  const derivedFg = readColor(root, "--accent-fg") ?? ctx.fg;
+  const derivedFg = derived["--accent-fg"] ?? ctx.fg;
 
   const repairFill = (token: string, label: string, floor: number): number => {
-    const fill = readColor(root, token);
+    const fill = derived[token];
     if (!fill) return Infinity;
     let ratio = contrastRatio(fill, derivedFg);
     let repaired = false;
@@ -522,12 +567,12 @@ export function applyAccent(
   // check misses.
   const derivedSurfaces: { name: string; c: Rgba }[] = [];
   for (const n of ["--surface", "--surface-raised", "--surface-sunken", "--accent-soft"]) {
-    const c = readColor(root, n);
+    const c = derived[n];
     if (c) derivedSurfaces.push({ name: n, c });
   }
 
   let textRatio = Infinity;
-  const text = readColor(root, "--accent-text");
+  const text = derived["--accent-text"];
   if (text && derivedSurfaces.length) {
     const lowest = derivedSurfaces.reduce(
       (a, b) => (contrastRatio(text, a.c) < contrastRatio(text, b.c) ? a : b),
@@ -562,9 +607,11 @@ export function applyAccent(
   }
 
   const applied: Record<string, string> = {};
-  for (const name of ["--accent-solid", "--accent-solid-hover", "--accent-text"]) {
-    const c = readColor(root, name);
-    if (c) applied[name] = toHex(c);
+  if (!opts.live) {
+    for (const name of ["--accent-solid", "--accent-solid-hover", "--accent-text"]) {
+      const c = readColor(root, name);
+      if (c) applied[name] = toHex(c);
+    }
   }
 
   return {

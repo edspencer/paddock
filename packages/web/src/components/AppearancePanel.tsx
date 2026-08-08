@@ -29,7 +29,14 @@
  * `[data-theme]` blocks the app uses, not hand-picked preview hexes.
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { accentSwatches, applyAccent, clearAccent, type AccentReport } from "../lib/accent";
+import {
+  accentSwatches,
+  applyAccent,
+  clearAccent,
+  readAccentContext,
+  type AccentContext,
+  type AccentReport,
+} from "../lib/accent";
 import {
   APPEARANCE_EVENT,
   NAMED_HUES,
@@ -46,16 +53,25 @@ import { Button, Chip, StatusDot, cx } from "./ui";
  *  this width, coarse enough that the whole strip is one cheap solve. */
 const STRIP = Array.from({ length: 72 }, (_, i) => i * 5);
 
-/** The nearest named colour to a hue, for the "you picked…" label. Purely a
- *  label — an unnamed hue is still perfectly valid, it just reads as "Custom". */
-function nearestName(hue: number): string {
-  let best: { name: string; hue: number } = NAMED_HUES[0];
-  let bestD = 360;
-  for (const n of NAMED_HUES) {
-    const d = Math.min(Math.abs(n.hue - hue), 360 - Math.abs(n.hue - hue));
-    if (d < bestD) [best, bestD] = [n, d];
-  }
-  return bestD <= 6 ? best.name : "Custom";
+const BY_HUE = [...NAMED_HUES].sort((a, b) => a.hue - b.hue);
+const arc = (a: number, b: number) => Math.min(Math.abs(a - b), 360 - Math.abs(a - b));
+
+/**
+ * Say where on the strip you are, in words.
+ *
+ * Reads out continuously while you scrub, which is why it names the *bracketing
+ * pair* rather than falling back to "Custom" between the named colours — a
+ * label that blinks between "Teal" and "Custom" as you drag tells you nothing
+ * and makes the control feel unreliable. "Between Teal and Sky" is both true
+ * and the only vocabulary this thing is allowed: no degrees, no hex.
+ */
+function describeHue(hue: number): string {
+  const near = BY_HUE.reduce((best, n) => (arc(n.hue, hue) < arc(best.hue, hue) ? n : best));
+  if (arc(near.hue, hue) <= 8) return near.name;
+  // The pair this hue sits between, wrapping past the end of the list.
+  const after = BY_HUE.find((n) => n.hue > hue) ?? BY_HUE[0];
+  const before = BY_HUE[(BY_HUE.indexOf(after) - 1 + BY_HUE.length) % BY_HUE.length];
+  return `between ${before.name} and ${after.name}`;
 }
 
 /**
@@ -115,6 +131,173 @@ function ThemeSwatch({
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * The spectrum: a draggable slider, not a row of swatch buttons.
+ *
+ * Two things make this more than a styling change.
+ *
+ * **It is painted with the real solved colours.** The gradient stops are
+ * `accentSwatches()` output — the same solve the app runs — so every position
+ * on the track is the colour that position produces. Where the solve has to
+ * give ground (chroma pulled in near the sRGB boundary, lightness moved around
+ * a hue whose luminance runs high) the track shows it rather than promising a
+ * vividness the app will not deliver. The last stop repeats the first, because
+ * hue wraps and a gradient does not.
+ *
+ * **Dragging applies on every frame, but only commits on release.** A live
+ * apply is a full solve plus a repair pass, and the repair pass reads computed
+ * styles — a forced style recalc. Doing that per `pointermove` (which can fire
+ * several times a frame) would be visibly rough, so moves are coalesced into
+ * one `requestAnimationFrame`. Persisting is separate and deliberately deferred
+ * to `pointerup`: writing localStorage and re-rendering the five theme previews
+ * on every frame of a drag is a lot of work to throw away, and the previews
+ * flickering as you scrub is worse than them settling once you stop.
+ *
+ * During the drag the thumb and the label are moved by writing to the DOM
+ * directly rather than through state, so a scrub costs zero React renders.
+ */
+function AccentStrip({
+  hexes,
+  hue,
+  active,
+  onCommit,
+}: {
+  hexes: string[];
+  hue: number;
+  /** Whether a colour has been picked (vs "theme's own"). */
+  active: boolean;
+  onCommit: (hue: number) => void;
+}) {
+  const trackRef = useRef<HTMLDivElement | null>(null);
+  const thumbRef = useRef<HTMLDivElement | null>(null);
+  const labelRef = useRef<HTMLSpanElement | null>(null);
+  const frame = useRef(0);
+  const pending = useRef<number | null>(null);
+  const dragging = useRef(false);
+  // Captured once per drag; see `readAccentContext`.
+  const context = useRef<AccentContext | null>(null);
+
+  const gradient = useMemo(() => {
+    if (hexes.length === 0) return undefined;
+    const stops = hexes.map((hex, i) => `${hex} ${((i / hexes.length) * 100).toFixed(2)}%`);
+    stops.push(`${hexes[0]} 100%`);
+    return `linear-gradient(to right, ${stops.join(", ")})`;
+  }, [hexes]);
+
+  const paint = useCallback((h: number) => {
+    if (thumbRef.current) thumbRef.current.style.left = `${(h / 360) * 100}%`;
+    if (labelRef.current) labelRef.current.textContent = describeHue(h);
+  }, []);
+
+  // Keep the thumb honest when the hue changes from anywhere else — a named
+  // swatch, "theme's own", a theme switch that re-solves the same hue.
+  useEffect(() => {
+    if (!dragging.current) paint(hue);
+  }, [hue, paint]);
+
+  const hueAt = (clientX: number): number => {
+    const rect = trackRef.current?.getBoundingClientRect();
+    if (!rect || rect.width === 0) return 0;
+    const f = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+    return Math.round(f * 360) % 360;
+  };
+
+  const preview = useCallback(
+    (h: number) => {
+      pending.current = h;
+      if (frame.current) return;
+      frame.current = requestAnimationFrame(() => {
+        frame.current = 0;
+        const next = pending.current;
+        pending.current = null;
+        if (next === null) return;
+        paint(next);
+        applyAccent(next, document.documentElement, {
+          context: context.current ?? undefined,
+          live: true,
+        });
+      });
+    },
+    [paint],
+  );
+
+  useEffect(() => () => cancelAnimationFrame(frame.current), []);
+
+  const finish = (h: number) => {
+    dragging.current = false;
+    context.current = null;
+    cancelAnimationFrame(frame.current);
+    frame.current = 0;
+    pending.current = null;
+    onCommit(h);
+  };
+
+  return (
+    <>
+      <div className="mt-2 flex items-baseline justify-between gap-2">
+        <span className="text-3xs text-fg-subtle">Drag along the strip</span>
+        <span ref={labelRef} className="text-3xs font-medium text-fg-muted" aria-hidden />
+      </div>
+      <div
+        ref={trackRef}
+        role="slider"
+        tabIndex={0}
+        aria-label="Accent colour"
+        aria-valuemin={0}
+        aria-valuemax={359}
+        aria-valuenow={hue}
+        // The number is the implementation's, not the user's — `aria-valuetext`
+        // overrides it so a screen reader announces a colour name.
+        aria-valuetext={active ? describeHue(hue) : "the theme’s own colour"}
+        onPointerDown={(e) => {
+          e.currentTarget.setPointerCapture(e.pointerId);
+          dragging.current = true;
+          context.current = readAccentContext();
+          preview(hueAt(e.clientX));
+        }}
+        onPointerMove={(e) => {
+          if (dragging.current) preview(hueAt(e.clientX));
+        }}
+        onPointerUp={(e) => {
+          if (dragging.current) finish(hueAt(e.clientX));
+        }}
+        onPointerCancel={() => {
+          if (dragging.current) finish(hue);
+        }}
+        onKeyDown={(e) => {
+          const step = e.key === "PageUp" || e.key === "PageDown" ? 15 : e.shiftKey ? 10 : 2;
+          let next: number | null = null;
+          if (e.key === "ArrowLeft" || e.key === "ArrowDown" || e.key === "PageDown") {
+            next = (hue - step + 360) % 360;
+          } else if (e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "PageUp") {
+            next = (hue + step) % 360;
+          } else if (e.key === "Home") next = 0;
+          else if (e.key === "End") next = 359;
+          if (next === null) return;
+          e.preventDefault();
+          onCommit(next);
+        }}
+        style={{ backgroundImage: gradient, touchAction: "none" }}
+        className={cx(
+          "relative mt-1 h-8 cursor-pointer rounded-lg border border-edge shadow-xs select-none",
+          "focus-visible:focus-ring",
+        )}
+      >
+        <div
+          ref={thumbRef}
+          aria-hidden
+          style={{ left: `${(hue / 360) * 100}%` }}
+          className={cx(
+            "pointer-events-none absolute top-1/2 h-[calc(100%+6px)] w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full",
+            "border border-fg bg-surface-raised shadow-sm",
+            !active && "opacity-0",
+          )}
+        />
+      </div>
+    </>
   );
 }
 
@@ -244,32 +427,12 @@ export function AppearancePanel({ variant = "wide", className }: AppearancePanel
             and dark.
           </p>
 
-          {/* The strip. Each cell is the real solved colour at that position, so
-              what you see is what the primary button becomes. */}
-          <div
-            role="group"
-            aria-label="Accent colour spectrum"
-            className="mt-2 flex h-8 overflow-hidden rounded-lg border border-edge shadow-xs"
-          >
-            {strip.map((hex, i) => {
-              const hue = STRIP[i];
-              const active = isCustom && Math.abs(activeHue - hue) < 2.5;
-              return (
-                <button
-                  key={hue}
-                  type="button"
-                  title={nearestName(hue) === "Custom" ? "This colour" : nearestName(hue)}
-                  aria-label={`Accent colour ${i + 1} of ${strip.length}`}
-                  onClick={() => commit({ hue })}
-                  style={{ backgroundColor: hex }}
-                  className={cx(
-                    "h-full flex-1 focus-visible:relative focus-visible:z-10 focus-visible:focus-ring",
-                    active && "relative z-10 ring-2 ring-fg ring-inset",
-                  )}
-                />
-              );
-            })}
-          </div>
+          <AccentStrip
+            hexes={strip}
+            hue={activeHue}
+            active={isCustom}
+            onCommit={(hue) => commit({ hue })}
+          />
 
           {/* …and the same thing by name, because most of the time you know
               which colour you want and do not want to hunt for it. */}
