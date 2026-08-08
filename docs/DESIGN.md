@@ -159,6 +159,48 @@ The primary-button fix is why the button fill is `--accent-600` rather than the
 raw brand accent: the accent stays the brand colour everywhere it does not carry
 text.
 
+### The limit of this guarantee: it reads tokens, and the screen shows pixels
+
+`tokens.test.ts` (and `themes.test.ts`, which applies the same contract to every
+runtime theme) resolves **declared token values**. If anything composites on top
+of a surface — a blend mode, a texture tile, a translucent overlay — the colour
+that reaches the eye is not the colour the guard measured, and the guard has no
+way to know. It does not report a smaller margin. **It reports a number that is
+not on screen.**
+
+This is not hypothetical. The `parchment` theme laid a texture tile over its
+chrome with `background-blend-mode: soft-light`. `soft-light` is asymmetric on a
+dark backdrop — below a base of about 0.25 it lifts far more than an equally
+distant darker sample lowers, and it lifts the low channels of a saturated colour
+proportionally most. The result:
+
+| | value |
+|---|---|
+| intended chrome (token) | L **0.332** |
+| actually painted | `#7c3d49`, L **0.444** |
+
+A 0.11 lift, plus desaturation, across the nav rail and the header slab — the
+largest saturated area on screen. Every chrome assertion passed. A human said "it
+looks pink" twice and was told the token value twice; the first measurement of an
+actual pixel settled it in about ninety seconds.
+
+**So, for any theme that composites over a surface:**
+
+- **Verify by sampling the rendered page, not the stylesheet.** The assertion is
+  *painted pixel matches token within ΔL 0.01*. Screenshot, decode, take the
+  **median** of a patch (the median steps over texture noise and stray glyphs),
+  convert to OKLab L, and compare against the token.
+- **Prefer `multiply` to `soft-light` or `overlay` for texture.** `multiply` can
+  only darken, so the error is bounded and points in a known direction: it
+  *improves* light-on-dark (all chrome text) and can only hurt dark-on-light, so
+  the tile over light surfaces should be a whisper. After that change parchment
+  measured ΔL 0.008 on chrome and 0.006 on the ground — both inside the rule.
+- **When a human's report and your instrument disagree, check the instrument.**
+
+Today only `parchment` uses a blend mode. `scifi` and `terminal` use alpha and
+gradients, which the rendered-node audit already handles. Theme nine is where
+this bites next.
+
 ## 5. The scales
 
 ### Type
