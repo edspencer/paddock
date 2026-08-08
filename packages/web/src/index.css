@@ -40,6 +40,7 @@
  */
 @import "./styles/theme-parchment.css";
 @import "./styles/theme-terminal.css";
+@import "./styles/theme-scifi.css";
 
 /*
  * Dark mode is class-toggled on <html> (index.html applies it before first
@@ -386,6 +387,26 @@
     font-weight: 500;
     font-display: swap;
     src: url("/fonts/fira-mono-500-latin.woff2") format("woff2");
+  }
+
+  /* scifi — Saira / Martian Mono. Both are variable on WIDTH as well as weight,
+     which is the point: the theme's letterspaced micro-labels and its code are
+     real condensed instances (82% and 87.5%), not squashed normal ones. */
+  @font-face {
+    font-family: "Saira";
+    font-style: normal;
+    font-weight: 100 900;
+    font-stretch: 50% 125%;
+    font-display: swap;
+    src: url("/fonts/saira-latin.woff2") format("woff2");
+  }
+  @font-face {
+    font-family: "Martian Mono";
+    font-style: normal;
+    font-weight: 100 800;
+    font-stretch: 75% 112.5%;
+    font-display: swap;
+    src: url("/fonts/martian-mono-latin.woff2") format("woff2");
   }
 
   /* register — Instrument Sans / Fraunces (display) / JetBrains Mono */

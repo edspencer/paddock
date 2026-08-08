@@ -60,6 +60,11 @@ export const THEMES = [
     label: "Terminal",
     blurb: "Phosphor and ANSI in the dark; greenbar and ribbon ink in the light.",
   },
+  {
+    id: "scifi",
+    label: "Sci-Fi",
+    blurb: "Deep-space ground and luminous cyan. Hairlines, telemetry, glow.",
+  },
 ] as const;
 
 export type ThemeId = (typeof THEMES)[number]["id"];
