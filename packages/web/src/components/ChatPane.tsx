@@ -1188,7 +1188,20 @@ export function ChatPane({
         onScroll={onScroll}
         className="flex-1 overflow-y-auto overscroll-contain"
       >
-        <div className="mx-auto w-full max-w-3xl px-4 py-6">
+        {/*
+         * The transcript is a page laid on the board.
+         *
+         * `min-h-full` keeps the sheet running the full height of the viewport
+         * even for a two-message chat, so the page never stops halfway down and
+         * leaves the board showing under it. The side rules and the raised fill
+         * are what make a long transcript read as one continuous document
+         * rather than as a stack of bubbles — which is why the assistant turn
+         * inside it no longer has a bubble of its own.
+         *
+         * There is no bottom radius or bottom rule: the page runs under the
+         * composer, which sits on the board (`bg-surface`) below it.
+         */}
+        <div className="mx-auto min-h-full w-full max-w-3xl border-x border-edge bg-surface-raised px-4 py-6 shadow-sm sm:px-8">
           {/* Read-only capability banner atop a TRIGGER chat (Epic T / T4): a
               truthful-from-config statement of what this agent is + may do. */}
           {trigger && (

@@ -79,11 +79,15 @@ export function FileView({ slug, name }: { slug: string; name: string }) {
     );
   }
 
-  // markdown
+  // markdown — a document, so it is set as one: a page on the board, at the
+  // reading measure. `prose-doc` caps each block at `--measure` (68ch) and lets
+  // code, tables and images break out of it.
   return (
-    <article className="prose-doc mx-auto max-w-3xl px-6 py-6">
-      <Markdown mermaid>{file.content}</Markdown>
-    </article>
+    <div className="px-3 py-6 sm:px-6">
+      <article className="prose-doc page mx-auto max-w-3xl px-5 py-8 sm:px-10 sm:py-10">
+        <Markdown mermaid>{file.content}</Markdown>
+      </article>
+    </div>
   );
 }
 

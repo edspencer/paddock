@@ -259,7 +259,13 @@ export function AppShell() {
       {/* Sidebar — a static column on lg+, an off-canvas drawer on mobile. */}
       <aside
         style={sidenav.style}
-        className={`fixed inset-y-0 left-0 z-40 flex w-72 max-w-[85%] shrink-0 flex-col border-r border-edge bg-surface shadow-2xl transition-transform duration-200 ease-out lg:relative lg:z-auto lg:max-w-none lg:translate-x-0 lg:bg-surface-raised/50 lg:shadow-none ${
+        /* On desktop the nav is transparent so it sits ON the board. The app's
+           tonal architecture is desk vs paper: all chrome is the canvas, and
+           only documents are raised. A lighter wash here (it used to be
+           `surface-raised/50`) made the navigation brighter than the work,
+           which is backwards. As a mobile drawer it still needs an opaque fill
+           — it floats over content there. */
+        className={`fixed inset-y-0 left-0 z-40 flex w-72 max-w-[85%] shrink-0 flex-col border-r border-edge bg-surface shadow-2xl transition-transform duration-200 ease-out lg:relative lg:z-auto lg:max-w-none lg:translate-x-0 lg:bg-transparent lg:shadow-none ${
           navOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >

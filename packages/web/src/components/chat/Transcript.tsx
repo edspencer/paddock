@@ -134,10 +134,21 @@ export const TurnView = memo(function TurnView({ turn }: { turn: Turn }) {
       </div>
     );
   }
-  // assistant
+  /*
+   * assistant — the third document surface, and the one that is read the most.
+   *
+   * It had a bubble: `bg-surface-raised` + a ring + a shadow, 92% of the
+   * column. But the transcript column is now itself a page (see ChatPane), so
+   * a raised bubble on a raised page is a sheet on a sheet — and boxing an
+   * agent's prose is what stops a long turn from being readable at length.
+   * The bubble is gone. Assistant prose sits directly on the page, in the
+   * document face, at the reading measure. That leaves the USER's turn as the
+   * only bubble in the transcript, which is the correct emphasis: what you
+   * asked for is the marginal note, what came back is the record.
+   */
   return (
-    <div className="flex animate-fade-in justify-start">
-      <div className="max-w-[92%] rounded-2xl rounded-bl-md bg-surface-raised px-4 py-2.5 text-fg shadow-sm ring-1 ring-edge">
+    <div className="animate-fade-in">
+      <div className="prose-doc prose-tight text-fg">
         {turn.content ? (
           <div className={turn.streaming ? "streaming-caret" : undefined}>
             <Markdown>{turn.content}</Markdown>

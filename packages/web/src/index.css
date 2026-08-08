@@ -677,8 +677,11 @@
     line-height: 1.72;
     font-optical-sizing: auto;
     /* Hyphenation is what makes a 68ch ragged-right column hold together when
-       an agent drops a 40-character identifier into the middle of a sentence. */
+       an agent drops a 40-character identifier into the middle of a sentence.
+       The limits stop it breaking short words or leaving an orphan syllable —
+       without them `auto` will happily hyphenate "on-ly". */
     hyphens: auto;
+    hyphenate-limit-chars: 7 4 3;
     overflow-wrap: break-word;
   }
 
@@ -792,6 +795,55 @@
   }
   .prose-doc .md img {
     @apply my-6 rounded-lg;
+  }
+}
+
+/*
+ * `.prose-tight` — the same document typography, one notch down, for the chat
+ * transcript.
+ *
+ * An assistant turn is prose and deserves the reading face, but it is not a
+ * document: it has no title, it is one of hundreds on the page, and its
+ * headings are section markers inside a reply rather than the top of a record.
+ * So the face, the measure and the rhythm stay; the heading scale collapses
+ * toward body size and the h2 rule (which would draw a line across the
+ * transcript every few turns) is dropped.
+ */
+@layer components {
+  .prose-tight .md {
+    font-size: 0.9375rem;
+    line-height: 1.68;
+  }
+  .prose-tight .md h1 {
+    @apply mb-2 mt-4 text-lg font-semibold;
+  }
+  .prose-tight .md h2 {
+    @apply mb-2 mt-4 border-t-0 pt-0 text-base font-semibold;
+  }
+  .prose-tight .md h3 {
+    @apply mb-1 mt-3 text-sm font-semibold;
+  }
+  .prose-tight .md h4 {
+    @apply mb-1 mt-3 text-2xs;
+  }
+  .prose-tight .md p {
+    @apply my-3;
+  }
+  .prose-tight .md ul,
+  .prose-tight .md ol {
+    @apply my-3 space-y-1.5 pl-5;
+  }
+  .prose-tight .md pre {
+    @apply my-3;
+  }
+  .prose-tight .md blockquote {
+    @apply my-3;
+  }
+  .prose-tight .md table {
+    @apply my-3;
+  }
+  .prose-tight .md hr {
+    @apply my-5;
   }
 }
 

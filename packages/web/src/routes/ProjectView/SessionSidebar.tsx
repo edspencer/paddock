@@ -539,7 +539,7 @@ export function SessionSidebar({
       {/* Session list — static column on lg+, off-canvas drawer on mobile. */}
       <div
         style={chatList.style}
-        className={`fixed inset-y-0 left-0 z-30 flex w-64 max-w-[80%] shrink-0 flex-col border-r border-edge bg-surface-raised shadow-2xl transition-transform duration-200 ease-out lg:relative lg:z-auto lg:max-w-none lg:translate-x-0 lg:bg-surface-raised/40 lg:shadow-none ${
+        className={`fixed inset-y-0 left-0 z-30 flex w-64 max-w-[80%] shrink-0 flex-col border-r border-edge bg-surface-raised shadow-2xl transition-transform duration-200 ease-out lg:relative lg:z-auto lg:max-w-none lg:translate-x-0 lg:bg-transparent lg:shadow-none ${
           sessionsOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
