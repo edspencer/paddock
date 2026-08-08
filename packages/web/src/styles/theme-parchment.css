@@ -217,7 +217,20 @@
 }
 
 /* ------------------------------------------------------------------ light --
- * Parchment plates on a dusty-rose field, wine chrome, brass fittings.
+ * Parchment, wine chrome, brass fittings.
+ *
+ * The ground was a dusty rose for three rounds, lifted from the reference's own
+ * mauve backdrop — and it was wrong HERE for a reason the reference cannot show
+ * you. A game menu is mostly panel with a sliver of backdrop at the edges;
+ * Paddock is mostly open field. Promote a supporting colour into the largest
+ * area on screen and it stops supporting and starts being the theme. Ed's read
+ * was exactly that: "the parchment isn't rose". So the ground is aged paper
+ * (#dbc7a7) with a fresh sheet on it (#fdf4de), and the only red left is where
+ * the reference actually spends it — the chrome, the primary, and selection.
+ *
+ * A happy side-effect: parchment is lighter than the rose it replaces, and the
+ * darkest surface is what the whole ink ramp is solved against, so the three
+ * text rungs got their separation back. They had been squeezed to within 0.02.
  */
 [data-theme="parchment"]:not(.dark) {
   /* The brandable seam, in the exact channel format the server overwrites.
@@ -234,27 +247,29 @@
      solved against. The three ink rungs end up within 0.02 of each other as a
      result, which is a real cost and also, as it happens, what a hand-drawn
      menu looks like — the reference has one ink, not three greys. */
-  --surface: oklch(0.805 0.032 18); /* the dusty-rose field */
-  --surface-raised: oklch(0.977 0.015 84); /* a parchment plate */
-  --surface-sunken: oklch(0.905 0.024 56); /* a well cut into the plate */
-  --surface-hover: oklch(0.928 0.024 40);
-  --surface-active: oklch(0.895 0.028 30);
-  --surface-selected: oklch(0.912 0.04 14);
-  --overlay: oklch(0.2 0.05 18 / 0.55);
-  --overlay-strong: oklch(0.13 0.035 18 / 0.87);
+  --surface: oklch(0.838 0.048 80); /* #dbc7a7 — aged parchment, the ground */
+  --surface-raised: oklch(0.968 0.03 88); /* #fdf4de — a fresh sheet on it */
+  --surface-sunken: oklch(0.912 0.042 78); /* #f2dfc3 — a well cut into it */
+  --surface-hover: oklch(0.932 0.036 80);
+  --surface-active: oklch(0.898 0.042 76);
+  /* The one surface that stays on the wine: selection IS the accent, and it is
+     what answers the hue picker. */
+  --surface-selected: oklch(0.906 0.05 34);
+  --overlay: oklch(0.2 0.05 40 / 0.55);
+  --overlay-strong: oklch(0.13 0.035 40 / 0.87);
 
   /* Ink. Everything is pulled onto the wine so the page reads as one drawn
      object; nothing here is a neutral grey. */
-  --text: oklch(0.3 0.06 20);
-  --text-muted: oklch(0.4 0.048 22);
-  --text-subtle: oklch(0.418 0.042 24);
+  --text: oklch(0.3 0.055 32);
+  --text-muted: oklch(0.442 0.05 30);
+  --text-subtle: oklch(0.446 0.042 34);
   --text-on-solid: oklch(0.975 0.014 84);
 
   /* Rules, in the reference's two tones: `--border` is the lighter outer line
      a plate is drawn with, `--border-strong` is the ink weight of a control. */
-  --border-subtle: oklch(0.79 0.03 26);
-  --border: oklch(0.672 0.045 22);
-  --border-strong: oklch(0.478 0.06 20);
+  --border-subtle: oklch(0.808 0.038 60);
+  --border: oklch(0.688 0.05 52);
+  --border-strong: oklch(0.49 0.055 45);
 
   --accent-color: rgb(var(--accent));
   --accent-solid: rgb(var(--accent-600));
@@ -268,47 +283,47 @@
      brass. `danger` is pushed to 32 so it cannot be read as the wine at 15. */
   --success-solid: oklch(0.475 0.1 146);
   --success-fg: oklch(0.975 0.014 84);
-  --success-text: oklch(0.402 0.095 146);
+  --success-text: oklch(0.43 0.095 146);
   --success-soft: oklch(0.932 0.034 146);
   --success-border: oklch(0.83 0.062 146);
 
   --warn-solid: oklch(0.545 0.108 78);
   --warn-fg: oklch(0.975 0.014 84);
-  --warn-text: oklch(0.415 0.086 78);
+  --warn-text: oklch(0.443 0.09 78);
   --warn-soft: oklch(0.936 0.045 82);
   --warn-border: oklch(0.828 0.078 82);
 
   --danger-solid: oklch(0.5 0.155 32);
   --danger-fg: oklch(0.975 0.014 84);
-  --danger-text: oklch(0.43 0.15 32);
+  --danger-text: oklch(0.457 0.15 32);
   --danger-soft: oklch(0.93 0.032 32);
   --danger-border: oklch(0.828 0.07 32);
 
   --info-solid: oklch(0.48 0.095 245);
   --info-fg: oklch(0.975 0.014 84);
-  --info-text: oklch(0.411 0.09 245);
+  --info-text: oklch(0.438 0.09 245);
   --info-soft: oklch(0.932 0.03 245);
   --info-border: oklch(0.83 0.055 245);
 
   --lineage-solid: oklch(0.48 0.125 312);
   --lineage-fg: oklch(0.975 0.014 84);
-  --lineage-text: oklch(0.426 0.12 312);
+  --lineage-text: oklch(0.453 0.12 312);
   --lineage-soft: oklch(0.932 0.032 312);
   --lineage-border: oklch(0.83 0.06 312);
 
   /* A vector kit's soft drop shadow — plates sit ON the field, not in it. */
-  --shadow-color: 74 34 32;
+  --shadow-color: 76 50 28;
   --shadow-ambient: 0.16;
   --shadow-direct: 0.1;
 
-  --scroll-thumb: oklch(0.7 0.045 24);
+  --scroll-thumb: oklch(0.702 0.05 55);
 
   /* ---------------------------------------------------- parchment-private --
    * Not semantic app tokens — no component may reach for these. They exist so
    * the gated rules below have somewhere mode-aware to read from.
    */
-  --parch-ink: oklch(0.44 0.075 18); /* the drawn line */
-  --parch-ink-soft: oklch(0.672 0.045 22);
+  --parch-ink: oklch(0.44 0.07 40); /* the drawn line */
+  --parch-ink-soft: oklch(0.688 0.05 52);
   --parch-texture-strength: 0.5;
 
   /* the wine chrome: the slab and the rail */
@@ -327,7 +342,7 @@
   /* brass. `-lit` is the coin's top rim, `-deep` its shadowed underside. */
   --parch-gilt: oklch(0.795 0.115 82);
   --parch-gilt-lit: oklch(0.888 0.09 88);
-  --parch-gilt-deep: oklch(0.6 0.095 72);
+  --parch-gilt-deep: oklch(0.58 0.1 74);
   /* The brass a MARK is drawn in — icons, pins, dots. Deep on parchment, lit
      on wine, so one rule serves both without a specificity fight. */
   --parch-gilt-mark: var(--parch-gilt-deep);
@@ -345,7 +360,7 @@
   --accent-700: 132 36 48; /* #842430 */
 
   --surface: oklch(0.188 0.024 44); /* oiled walnut */
-  --surface-raised: oklch(0.308 0.03 52); /* tanned leather, lamp-lit */
+  --surface-raised: oklch(0.308 0.034 62); /* lamp-lit vellum over leather */
   --surface-sunken: oklch(0.148 0.018 42);
   --surface-hover: oklch(0.322 0.03 50);
   --surface-active: oklch(0.352 0.032 48);
