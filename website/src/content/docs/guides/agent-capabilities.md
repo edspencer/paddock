@@ -98,6 +98,39 @@ chroot, no seccomp profile, and no per-agent uid.
   [scoped trigger agents](#scoped-agents-triggers-and-hooks) that have no other tools.
   See [Sending files & images](/using/sending-files-and-images/).
 
+### Every turn carries an operator-editable prompt block
+
+Paddock appends an **environment prompt** to each keeper turn's system prompt. It is
+short, and one of the two things it says is *use `mcp__paddock__send_file` to show the
+user an image or a rendering rather than describing it* — so the `send_file` behaviour
+above is partly instructed, not purely emergent. The default text also tells the agent
+its replies render as Markdown in a browser and to make links clickable.
+
+You can change or remove it. Resolution is by **definedness**, not emptiness, because
+blank *is* the opt-out:
+
+- **`PADDOCK_ENVIRONMENT_PROMPT` defined at all — including empty — wins outright**, and
+  the Settings screen renders the field read-only while it is set.
+- Otherwise a **string** `environmentPrompt:` in `paddock.config.yaml` wins, empty
+  included. A non-string value (a YAML number, a mapping, or the `null` you get from a
+  bare `environmentPrompt:` with nothing after it) is *ignored* and falls back to the
+  default — so a typo'd key quietly gives you the built-in text rather than an error.
+- Otherwise the built-in default.
+
+The Settings → Capabilities → **Environment prompt** editor is the same value.
+
+:::caution[On `driveMode: batch` the environment prompt is silently dropped]
+With the default `nativeSystemPrompt: true`, the environment prompt is appended only on
+the **SDK** path. On the CLI path — the sweeper, and any turn resolved to
+`driveMode: batch` — it is **not appended at all**, because appending there would mean
+*replacing* Claude Code's native system prompt rather than adding to it.
+
+This matters because [pinning a project to `batch`](#docker-isolation) is exactly what
+this page tells you to do to get Docker isolation. That project's agents silently stop
+being told to use `send_file`, and you get no warning. Lifting the restriction needs
+`--append-system-prompt` support in herdctl's CLI runtime, tracked upstream.
+:::
+
 ### Paddock's own credentials are reachable
 
 Paddock does not construct a filtered environment for agent subprocesses — they inherit
