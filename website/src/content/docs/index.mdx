@@ -34,7 +34,7 @@ npx @edspencer/paddock --here
 
 <p align="center">
   Paddock opens that directory as a workspace and offers your existing sessions for
-  import — nothing to install, nothing to clone.
+  adoption — nothing to install, nothing to clone.
   <a href="/getting-started/#try-it-with-npx">What it writes to the directory →</a>
 </p>
 
@@ -69,10 +69,11 @@ GitHub token, `ffmpeg`, whatever your work calls for). See
 
 <CardGrid>
 	<Card title="Project-first" icon="open-book">
-		Every project has its own agent, files, and changelog. Notebook
-		projects live in your data repo; repo-backed projects clone an external git
-		repo as the agent's working directory — and a notebook can be promoted to
-		one later.
+		Every project has its own agent, files, and changelog. A **managed** project
+		is one whose notes Paddock curates; an **unmanaged** one is code you
+		source-control yourself. Where the content lives is a separate question:
+		`repo:` clones a git repo as the working directory, `path:` uses a directory
+		you already have, in place. Either can be promoted to a repo later.
 	</Card>
 	<Card title="Persistent, resumable chats" icon="random">
 		Server-hosted sessions survive reloads, reconnects, and devices. Fork,
