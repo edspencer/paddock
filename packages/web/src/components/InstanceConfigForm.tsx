@@ -597,7 +597,10 @@ function FilterBar({
         Modified only
       </button>
 
-      <span className="shrink-0 text-xs tabular text-fg-subtle">
+      {/* A count that changes as you filter — mono so it belongs to the same
+          register as the values it is counting, and so "9 of 47" doesn't
+          re-flow the row as the digits change width. */}
+      <span className="shrink-0 font-mono text-2xs text-fg-subtle tabular">
         {filtering ? `${visibleCount} of ${totalCount}` : `${totalCount} settings`}
       </span>
     </div>
