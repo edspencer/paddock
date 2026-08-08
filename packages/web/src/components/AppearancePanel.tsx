@@ -315,7 +315,6 @@ export function AppearancePanel({ variant = "wide", className }: AppearancePanel
   const compact = variant === "narrow";
   const [appearance, setAppearance] = useState<Appearance>(readAppearance);
   const [report, setReport] = useState<AccentReport | null>(null);
-  const [showChecks, setShowChecks] = useState(false);
   const dark =
     typeof document !== "undefined" && document.documentElement.classList.contains("dark");
 
@@ -512,9 +511,6 @@ export function AppearancePanel({ variant = "wide", className }: AppearancePanel
 
       {/* ---------------------------------------------------------- preview -- */}
       <AccentPreview />
-
-      {/* ---------------------------------------------------------- readout -- */}
-      {report && <ContrastReadout report={report} open={showChecks} onToggle={setShowChecks} />}
     </div>
   );
 }
@@ -571,74 +567,6 @@ function AccentPreview() {
           <span className="text-2xs text-fg-subtle">status hues (theme’s, not yours)</span>
         </span>
       </div>
-    </div>
-  );
-}
-
-/**
- * The diagnostic. This is for whoever is reviewing the solver, not for whoever
- * is picking a colour — hence the deliberately technical framing and the fact
- * that it is collapsed by default. The headline is the only part a normal user
- * should ever need, and even that is really just reassurance.
- */
-function ContrastReadout({
-  report,
-  open,
-  onToggle,
-}: {
-  report: AccentReport;
-  open: boolean;
-  onToggle: (v: boolean) => void;
-}) {
-  return (
-    <div className="rounded-lg border border-edge-subtle bg-surface-sunken px-2.5 py-2">
-      <button
-        type="button"
-        onClick={() => onToggle(!open)}
-        aria-expanded={open}
-        className="flex w-full items-center justify-between gap-2 text-left focus-visible:focus-ring"
-      >
-        <span className="text-3xs text-fg-muted">
-          {report.ok ? "Readable in this theme and mode" : "Something here is below the floor"}
-        </span>
-        <span className="text-3xs text-fg-subtle">{open ? "Hide check" : "Show check"}</span>
-      </button>
-      {open && (
-        <dl className="mt-2 space-y-1 border-t border-edge-subtle pt-2">
-          {report.checks.map((c) => (
-            <div key={c.label} className="flex items-baseline justify-between gap-2">
-              <dt className="min-w-0 truncate text-3xs text-fg-subtle">
-                {c.label}
-                {c.repaired && <span className="ml-1 text-warn">clamped</span>}
-              </dt>
-              <dd
-                className={cx(
-                  "shrink-0 text-3xs tabular-nums",
-                  c.ratio >= c.floor ? "text-success" : "text-danger",
-                )}
-              >
-                {c.ratio === Infinity ? "—" : c.ratio.toFixed(2)}:1
-                <span className="ml-1 text-fg-subtle">/ {c.floor}</span>
-              </dd>
-            </div>
-          ))}
-          <div className="flex items-baseline justify-between gap-2 pt-1 text-3xs text-fg-subtle">
-            <dt>Solved channels ({report.mode})</dt>
-            <dd className="flex items-center gap-1">
-              {[report.channels.accent, report.channels.accent600, report.channels.accent700].map(
-                (hex) => (
-                  <span
-                    key={hex}
-                    title={hex}
-                    className="h-3 w-3 rounded-sm border border-edge"
-                    style={{ backgroundColor: hex }}
-                  />
-                ),
-              )}
-            </dd>
-          </div>
-        </dl>
-      )}
     </div>
   );
 }
