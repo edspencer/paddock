@@ -59,7 +59,7 @@ function Chip({ children }: { children: React.ReactNode }) {
 function PromptBlock({ label, text }: { label: string; text: string }) {
   return (
     <div className="mt-2">
-      <div className="mb-1 text-3xs font-semibold uppercase tracking-wide text-fg-subtle">
+      <div className="mb-1 text-3xs eyebrow text-fg-subtle">
         {label}
       </div>
       <div className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-surface-sunken px-2.5 py-1.5 text-2xs leading-relaxed text-fg-muted">

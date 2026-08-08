@@ -44,7 +44,6 @@ import { useEffect, useMemo, useState } from "react";
 import type { Chat, RunSummary } from "../lib/types";
 import type { ProjectRunsState } from "../lib/useProjectRuns";
 import { relativeTime, formatDuration } from "../lib/format";
-import { BranchIcon, ClockIcon, ChatIcon, TerminalIcon, BoltIcon } from "./icons";
 import { Button } from "./ui";
 import { MarginalDate } from "./MarginalDate";
 
@@ -68,23 +67,21 @@ type OriginFilter = "unattended" | "all";
  * below. It gets its own entry now; the two disagreeing is a server/client
  * split worth filing separately (`ORIGIN_IS_UNATTENDED` in runs.ts calls `hook`
  * attended, this file does not).
+ *
+ * Chanel's rule, applied: each of these used to carry an 11px icon as well — a
+ * clock beside the word "Scheduled", a branch beside "Spawned". The eyebrow's
+ * word says it, the eyebrow's ink says it a second time, and the icon said it a
+ * third. Taking the icons off is what lets a row read as a line of type rather
+ * than as a toolbar.
  */
-function originMeta(origin: RunSummary["origin"]): {
-  label: string;
-  icon: React.ReactNode;
-  cls: string;
-} {
-  if (origin === "scheduled")
-    return { label: "Scheduled", icon: <ClockIcon width={11} height={11} />, cls: "text-warn" };
-  if (origin === "spawned")
-    return { label: "Spawned", icon: <BranchIcon width={11} height={11} />, cls: "text-lineage" };
-  if (origin === "hook")
-    return { label: "Hook", icon: <BoltIcon width={11} height={11} />, cls: "text-info" };
+function originMeta(origin: RunSummary["origin"]): { label: string; cls: string } {
+  if (origin === "scheduled") return { label: "Scheduled", cls: "text-warn" };
+  if (origin === "spawned") return { label: "Spawned", cls: "text-lineage" };
+  if (origin === "hook") return { label: "Hook", cls: "text-info" };
   // Adopted from the user's Claude Code CLI history (#588). Still a run the
   // human drove — just not here.
-  if (origin === "adopted")
-    return { label: "Adopted", icon: <TerminalIcon width={11} height={11} />, cls: "text-success" };
-  return { label: "You", icon: <ChatIcon width={11} height={11} />, cls: "text-fg-subtle" };
+  if (origin === "adopted") return { label: "Adopted", cls: "text-success" };
+  return { label: "You", cls: "text-fg-subtle" };
 }
 
 /**
@@ -230,10 +227,7 @@ function RunRow({
 
       <span className="min-w-0 flex-1">
         <span className="flex items-baseline gap-2">
-          <span className={`eyebrow flex shrink-0 items-center gap-1 text-3xs ${origin.cls}`}>
-            {origin.icon}
-            {origin.label}
-          </span>
+          <span className={`eyebrow shrink-0 text-3xs ${origin.cls}`}>{origin.label}</span>
           {outcome && (
             <span className={`eyebrow shrink-0 text-3xs ${outcome.cls}`}>{outcome.label}</span>
           )}
@@ -494,6 +488,9 @@ function LastVisitRule({ at }: { at: number }) {
         month: "short",
         hour: "2-digit",
         minute: "2-digit",
+        // 24-hour, to match the time on every row beneath it. A register that
+        // prints "12:46 PM" here and "12:46" three lines down is two records.
+        hour12: false,
       });
   return (
     <div

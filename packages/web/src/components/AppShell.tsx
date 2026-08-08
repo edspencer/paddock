@@ -358,7 +358,7 @@ export function AppShell() {
             sections.map(([slug, ps]) => (
               <div key={slug || "unsorted"} className="mb-2">
                 {sections.length > 1 && (
-                  <div className="px-2.5 pb-1 pt-2 text-3xs font-semibold uppercase tracking-wider text-fg-subtle">
+                  <div className="px-2.5 pb-1 pt-2 text-3xs eyebrowr text-fg-subtle">
                     {areaLabel(slug)}
                   </div>
                 )}

@@ -774,7 +774,7 @@ export function SessionSidebar({
                 type="button"
                 onClick={() => setArchivedOpen((o) => !o)}
                 aria-expanded={archivedOpen}
-                className="flex w-full items-center gap-1.5 px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-fg-muted transition-colors hover:bg-surface-hover"
+                className="flex w-full items-center gap-1.5 px-3 py-2 text-left text-xs font-medium eyebrow text-fg-muted transition-colors hover:bg-surface-hover"
               >
                 <ChevronDownIcon
                   width={14}

@@ -43,7 +43,7 @@ export function Label({
 }: React.LabelHTMLAttributes<HTMLLabelElement> & { children: ReactNode }) {
   return (
     <label
-      className={cx("mb-1 block text-xs font-semibold uppercase tracking-wide text-fg-muted", className)}
+      className={cx("mb-1 block text-xs eyebrow text-fg-muted", className)}
       {...rest}
     />
   );
@@ -85,7 +85,7 @@ export function Field({ label, hint, error, aside, className, children }: FieldP
   return (
     <div className={cx("mb-4", className)}>
       <div className="flex items-center justify-between gap-2">
-        <label htmlFor={id} className="mb-1 block text-xs font-semibold uppercase tracking-wide text-fg-muted">
+        <label htmlFor={id} className="mb-1 block text-xs eyebrow text-fg-muted">
           {label}
         </label>
         {aside}

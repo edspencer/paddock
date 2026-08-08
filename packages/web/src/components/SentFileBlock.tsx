@@ -37,7 +37,7 @@ export function SentFileBlock({ file }: { file: SentFile }) {
           <Chevron open={open} />
           <FileIcon />
           <span className="font-mono text-fg-muted">{file.filename}</span>
-          <span className="ml-auto uppercase tracking-wide text-3xs text-fg-subtle">
+          <span className="ml-auto eyebrow text-3xs text-fg-subtle">
             {file.language ?? file.kind}
           </span>
         </button>

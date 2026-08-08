@@ -693,12 +693,12 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
             {label}
           </span>
           {isSubagent && (
-            <span className="shrink-0 whitespace-nowrap rounded bg-accent-soft px-1.5 py-0.5 text-3xs font-semibold uppercase tracking-wide text-accent">
+            <span className="shrink-0 whitespace-nowrap rounded bg-accent-soft px-1.5 py-0.5 text-3xs eyebrow text-accent">
               sub-agent
             </span>
           )}
           {isBg && (
-            <span className="shrink-0 whitespace-nowrap rounded bg-info-soft px-1.5 py-0.5 text-3xs font-semibold uppercase tracking-wide text-info">
+            <span className="shrink-0 whitespace-nowrap rounded bg-info-soft px-1.5 py-0.5 text-3xs eyebrow text-info">
               background
             </span>
           )}
@@ -709,14 +709,14 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
             // read/send in another project), label it with that target project so
             // the badge matches the card body's "in {project}" line instead of
             // reading as the host project's brand name.
-            <span className="shrink-0 whitespace-nowrap rounded bg-accent-soft px-1.5 py-0.5 text-3xs font-semibold uppercase tracking-wide text-accent">
+            <span className="shrink-0 whitespace-nowrap rounded bg-accent-soft px-1.5 py-0.5 text-3xs eyebrow text-accent">
               {paddockManage && "project" in paddockManage && paddockManage.project
                 ? paddockManage.project
                 : "Paddock"}
             </span>
           )}
           {mcp.isMcp && !mcp.isPaddock && (
-            <span className="shrink-0 whitespace-nowrap rounded bg-surface-active px-1.5 py-0.5 text-3xs font-semibold uppercase tracking-wide text-fg-muted">
+            <span className="shrink-0 whitespace-nowrap rounded bg-surface-active px-1.5 py-0.5 text-3xs eyebrow text-fg-muted">
               MCP
             </span>
           )}
@@ -766,7 +766,7 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
                   className="h-3 w-3 animate-spin rounded-full border-2 border-accent-edge border-t-accent"
                   aria-hidden="true"
                 />
-                <span className="text-3xs font-semibold uppercase tracking-wide">running</span>
+                <span className="text-3xs eyebrow">running</span>
               </span>
             ) : (
               <>

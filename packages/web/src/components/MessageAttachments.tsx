@@ -44,7 +44,7 @@ function AttachmentItem({ attachment }: { attachment: AttachmentRef }) {
         <span className="truncate font-medium text-fg">
           {attachment.filename}
         </span>
-        <span className="uppercase tracking-wide text-3xs text-fg-subtle">
+        <span className="eyebrow text-3xs text-fg-subtle">
           {attachment.kind}
           {size ? ` · ${size}` : ""}
         </span>
@@ -92,7 +92,7 @@ export function AttachmentTrayItem({
         <span className="max-w-[10rem] truncate font-medium text-fg">
           {attachment.filename}
         </span>
-        <span className="uppercase tracking-wide text-3xs text-fg-subtle">
+        <span className="eyebrow text-3xs text-fg-subtle">
           {attachment.kind}
           {size ? ` · ${size}` : ""}
         </span>

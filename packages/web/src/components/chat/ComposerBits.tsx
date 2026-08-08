@@ -242,7 +242,7 @@ export function QueuedMessageBar({
     <div className="mx-auto mb-2 w-full max-w-3xl px-4">
       <div className="group flex items-center gap-2 rounded-lg border border-accent-edge bg-accent-soft px-3 py-1.5 text-xs">
         <ClockIcon width={13} height={13} className="shrink-0 text-accent" />
-        <span className="shrink-0 font-semibold uppercase tracking-wide text-accent">
+        <span className="shrink-0 eyebrow text-accent">
           queued
         </span>
         <span

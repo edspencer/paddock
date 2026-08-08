@@ -34,7 +34,7 @@ export function RunningSubagents({
             className="h-2.5 w-2.5 shrink-0 animate-spin rounded-full border-2 border-accent/30 border-t-accent"
             aria-hidden="true"
           />
-          <span className="text-3xs font-semibold uppercase tracking-wide text-accent">
+          <span className="text-3xs eyebrow text-accent">
             {running.length} sub-agent{running.length === 1 ? "" : "s"} running
           </span>
         </div>

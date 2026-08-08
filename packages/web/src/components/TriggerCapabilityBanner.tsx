@@ -67,7 +67,7 @@ export function TriggerCapabilityBanner({
             <span className="font-semibold">Trigger agent</span>
             <span
               data-trigger-type={trigger.type}
-              className="rounded bg-info-solid/15 px-1.5 py-px text-2xs font-medium uppercase tracking-wide text-info"
+              className="rounded bg-info-solid/15 px-1.5 py-px text-2xs font-medium eyebrow text-info"
             >
               {trigger.type}
             </span>
@@ -77,7 +77,7 @@ export function TriggerCapabilityBanner({
             {!trigger.enabled && (
               <span
                 title="This trigger is currently disabled — it won't fire again until re-enabled. This chat is one of its past runs."
-                className="rounded bg-info-solid/15 px-1.5 py-px text-2xs font-medium uppercase tracking-wide text-info"
+                className="rounded bg-info-solid/15 px-1.5 py-px text-2xs font-medium eyebrow text-info"
               >
                 disabled
               </span>

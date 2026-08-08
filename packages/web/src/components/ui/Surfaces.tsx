@@ -90,8 +90,8 @@ export function Section({
          * A `rule` section is a real editorial heading: display face, sentence
          * case, one rung up. A `card`/`bare` section is a CLASSIFICATION of the
          * content below it, so it gets the eyebrow — mono, tracked, small. The
-         * previous shared style set every one of them in the heading face at
-         * `uppercase tracking-wide`, which with a serif display reads as an
+         * previous shared style set every one of them in the heading face,
+         * uppercased and letter-spaced — which under a serif display reads as an
          * invitation rather than as a label.
          */}
         <h3

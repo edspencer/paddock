@@ -57,7 +57,7 @@ function Section({
 }) {
   return (
     <section className="mb-6">
-      <h3 className="text-sm font-semibold uppercase tracking-wide text-fg-muted">{title}</h3>
+      <h3 className="eyebrow text-2xs text-fg-subtle">{title}</h3>
       {description && <p className="mb-3 mt-0.5 text-sm text-fg-muted">{description}</p>}
       <div className={`card ${description ? "" : "mt-2"}`}>{children}</div>
     </section>
@@ -83,7 +83,7 @@ function Caution({ children }: { children: React.ReactNode }) {
 function ReadOnly({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div>
-      <dt className="text-2xs font-semibold uppercase tracking-wide text-fg-subtle">{label}</dt>
+      <dt className="text-2xs eyebrow text-fg-subtle">{label}</dt>
       <dd className="mt-0.5 text-sm text-fg-muted">{value}</dd>
     </div>
   );

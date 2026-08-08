@@ -687,7 +687,7 @@ function Chip({
   return (
     <span
       title={title}
-      className={`ml-1.5 rounded px-1 py-px align-middle text-3xs font-semibold uppercase tracking-wide ${
+      className={`ml-1.5 rounded px-1 py-px align-middle text-3xs eyebrow ${
         tone === "warn" ? "bg-warn-soft text-warn" : "bg-surface-active text-fg-muted"
       }`}
     >

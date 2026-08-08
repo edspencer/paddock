@@ -387,7 +387,7 @@ export function TriggersPane({ project }: { project: Project }) {
     <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain" data-testid="triggers-pane">
       <div className="mx-auto max-w-3xl px-6 py-6">
         <section className="mb-6">
-          <h3 className="flex items-center gap-1.5 text-sm font-semibold uppercase tracking-wide text-fg-muted">
+          <h3 className="eyebrow flex items-center gap-1.5 text-2xs text-fg-subtle">
             <BoltIcon width={14} height={14} />
             Triggers
           </h3>
@@ -419,7 +419,7 @@ export function TriggersPane({ project }: { project: Project }) {
               <div className="-mx-1 overflow-x-auto">
                 <table className="w-full min-w-[54rem] border-collapse text-sm">
                   <thead>
-                    <tr className="border-b border-edge text-left text-2xs font-semibold uppercase tracking-wide text-fg-subtle">
+                    <tr className="border-b border-edge text-left text-2xs eyebrow text-fg-subtle">
                       <th className="px-2 py-2 font-semibold">Trigger</th>
                       <th className="px-2 py-2 font-semibold">Type</th>
                       <th className="px-2 py-2 font-semibold">When</th>
@@ -771,7 +771,7 @@ export function TriggersPane({ project }: { project: Project }) {
                       {GROUP_ORDER.filter((g) => grantableTools.some((t) => t.group === g)).map(
                         (group) => (
                           <fieldset key={group}>
-                            <legend className="mb-1 text-2xs font-semibold uppercase tracking-wide text-fg-subtle">
+                            <legend className="mb-1 text-2xs eyebrow text-fg-subtle">
                               {GROUP_LABELS[group]}
                             </legend>
                             <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
