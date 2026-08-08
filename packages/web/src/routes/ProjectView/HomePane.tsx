@@ -3,6 +3,7 @@ import type { AttentionChat, Project } from "../../lib/types";
 import { Markdown } from "../../components/Markdown";
 import { relativeTime } from "../../lib/format";
 import { ChevronRightIcon, FileIcon, PinIcon, PlusIcon } from "../../components/icons";
+import { Button, EmptyState } from "../../components/ui";
 
 /**
  * The Home tab: the workspace's landing page. Gives `/projects/:slug` a real
@@ -58,89 +59,119 @@ export function HomePane({
   const recentFiles = files.slice(0, 6);
   return (
     <div className="flex-1 overflow-y-auto overscroll-contain">
-      <div className="mx-auto max-w-3xl px-6 py-6">
+      <div className="mx-auto max-w-3xl px-6 py-8">
+        {/*
+         * Home is two things, and vellum makes them look like two things.
+         *
+         * Above: THE INDEX — running, unread, files. Live state, set as a ruled
+         * list directly on the board. No boxes: an index is a list of pointers,
+         * and giving each entry its own card is what made this screen read as
+         * five identical rounded boxes stacked down the page.
+         *
+         * Below: THE RECORD — OVERVIEW.md and CHANGELOG.md, as actual pages.
+         * That is the deliberate break in the repeated pattern, and it encodes
+         * something true: everything above is what is happening now, everything
+         * below is what has been written down.
+         */}
+
         {/* Running: the live work, and the shortcut to start more. */}
-        <section className="mb-8">
-          <div className="mb-2 flex items-center justify-between">
-            <SectionLabel label="Running" count={running.length} />
-            <button onClick={onNewChat} className="btn-subtle -mr-1 gap-1.5 px-2 py-1 text-xs">
-              <PlusIcon width={13} height={13} />
-              New chat
-            </button>
-          </div>
+        <IndexSection
+          label="Running"
+          count={running.length}
+          /*
+           * Only ONE "New chat" on this section at a time. When Running is
+           * empty its empty state carries the invitation, so an eyebrow button
+           * would put two identical primary affordances within 40px of each
+           * other. The action appears here only once there are rows to sit
+           * above.
+           */
+          action={
+            running.length > 0 && (
+              <Button size="sm" variant="subtle" onClick={onNewChat}>
+                <PlusIcon width={13} height={13} />
+                New chat
+              </Button>
+            )
+          }
+        >
           {attentionError ? (
-            <div className="card">
-              <p className="text-sm text-rose-600 dark:text-rose-400">{attentionError}</p>
-            </div>
+            <p className="rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">
+              {attentionError}
+            </p>
           ) : (
             <ChatRows
               chats={running}
               workspaceSlug={project.slug}
               loading={attentionLoading}
               empty="Nothing running right now."
+              emptyBody="Start a chat and its live turns show up here."
+              emptyAction={
+                <Button size="sm" variant="ghost" onClick={onNewChat}>
+                  <PlusIcon width={13} height={13} />
+                  New chat
+                </Button>
+              }
               onOpenChat={onOpenChat}
               kind="running"
             />
           )}
-        </section>
+        </IndexSection>
 
         {/* Unread: replies that landed while the user was elsewhere. */}
         {!attentionError && (
-          <section className="mb-8">
-            <div className="mb-2 flex items-center justify-between">
-              <SectionLabel label="Unread" count={unread.length} />
-            </div>
+          <IndexSection label="Unread" count={unread.length}>
             <ChatRows
               chats={unread}
               workspaceSlug={project.slug}
               loading={attentionLoading}
               empty="No unread replies. All caught up."
+              emptyBody="Replies that land while you are elsewhere collect here."
               onOpenChat={onOpenChat}
               kind="unread"
             />
-          </section>
+          </IndexSection>
         )}
 
         {/* Files: a preview of the file index; "View all" jumps to the Files tab.
             Omitted entirely where there is no Files tab to jump TO. */}
         {onOpenFile && (
-          <section className="mb-8">
-            <div className="mb-2 flex items-center justify-between">
-              <SectionLabel label="Files" count={files.length} />
-              {files.length > recentFiles.length && (
-                <button onClick={onOpenFiles} className="btn-subtle -mr-1 px-2 py-1 text-xs">
+          <IndexSection
+            label="Files"
+            count={files.length}
+            action={
+              files.length > recentFiles.length && (
+                <Button size="sm" variant="subtle" onClick={onOpenFiles}>
                   View all
-                </button>
-              )}
-            </div>
+                </Button>
+              )
+            }
+          >
             {recentFiles.length === 0 ? (
-              <div className="card">
-                <p className="text-sm italic text-paddock-400">
-                  No files yet. Files Claude writes appear here.
-                </p>
-              </div>
+              <EmptyState
+                title="No files yet."
+                body="Anything Claude writes into this project shows up here."
+              />
             ) : (
-              <div className="overflow-hidden rounded-2xl border border-paddock-200 dark:border-paddock-800">
-                {recentFiles.map((f, i) => (
-                  <button
-                    key={f}
-                    onClick={() => onOpenFile(f)}
-                    className={`flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-paddock-100/70 dark:hover:bg-paddock-900/40 ${
-                      i > 0 ? "border-t border-paddock-200 dark:border-paddock-800" : ""
-                    }`}
-                  >
-                    <FileIcon width={15} height={15} className="shrink-0 text-paddock-400" />
-                    <span className="min-w-0 flex-1 truncate font-mono text-sm text-paddock-700 dark:text-paddock-200">
-                      {f}
-                    </span>
-                    {project.pinned.includes(f) && (
-                      <PinIcon width={12} height={12} className="shrink-0 text-accent" />
-                    )}
-                  </button>
+              <ul>
+                {recentFiles.map((f) => (
+                  <li key={f}>
+                    <button
+                      onClick={() => onOpenFile(f)}
+                      className="motion-fast flex w-full items-center gap-2.5 border-b border-edge-subtle px-2 py-2.5 text-left transition-[background-color] hover:bg-surface-hover"
+                    >
+                      <FileIcon width={15} height={15} className="shrink-0 text-fg-subtle" />
+                      <span className="min-w-0 flex-1 truncate font-mono text-sm text-fg">
+                        {f}
+                      </span>
+                      {project.pinned.includes(f) && (
+                        <PinIcon width={12} height={12} className="shrink-0 text-accent" />
+                      )}
+                    </button>
+                  </li>
                 ))}
-              </div>
+              </ul>
             )}
-          </section>
+          </IndexSection>
         )}
 
         {/* The two curated notes files, as sibling collapsible cards (#599).
@@ -167,7 +198,7 @@ export function HomePane({
           emptyLabel="No CHANGELOG.md yet."
         />
 
-        <p className="mt-6 text-[11px] text-paddock-400">
+        <p className="mt-6 text-2xs text-fg-subtle">
           Project directory: <span className="font-mono">{project.dir}</span>
         </p>
       </div>
@@ -175,13 +206,40 @@ export function HomePane({
   );
 }
 
-/** A Home section heading + its count, in Home's shared visual language. */
-function SectionLabel({ label, count }: { label: string; count: number }) {
+/**
+ * One section of Home's INDEX — the repeated pattern.
+ *
+ * An eyebrow (label, count, a rule that runs out to the section's action) over
+ * a ruled list. The rule is the only decoration and it does a job: it ties the
+ * label to its optional action across the width, so three sections stack
+ * without three boxes. The record sections below deliberately do NOT use this.
+ */
+function IndexSection({
+  label,
+  count,
+  action,
+  children,
+}: {
+  label: string;
+  count: number;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
   return (
-    <h3 className="text-sm font-semibold uppercase tracking-wide text-paddock-500">
-      {label}
-      {count > 0 && <span className="ml-1.5 text-paddock-400">{count}</span>}
-    </h3>
+    <section className="mb-8">
+      <div className="mb-1 flex items-center gap-3">
+        {/* The count lives INSIDE the heading: it is part of what this section
+            is called ("Running 3"), and a screen reader announcing the heading
+            without it would drop the only quantity on the row. */}
+        <h3 className="flex items-baseline gap-1.5 text-2xs font-semibold uppercase tracking-wider text-fg-muted">
+          {label}
+          {count > 0 && <span className="tabular font-normal text-fg-subtle">{count}</span>}
+        </h3>
+        <span aria-hidden className="h-px min-w-4 flex-1 bg-edge" />
+        {action}
+      </div>
+      {children}
+    </section>
   );
 }
 
@@ -203,6 +261,8 @@ function ChatRows({
   workspaceSlug,
   loading,
   empty,
+  emptyBody,
+  emptyAction,
   onOpenChat,
   kind,
 }: {
@@ -210,62 +270,54 @@ function ChatRows({
   workspaceSlug: string;
   loading: boolean;
   empty: string;
+  emptyBody?: string;
+  emptyAction?: React.ReactNode;
   onOpenChat: (sessionId: string, projectSlug: string) => void;
   kind: "running" | "unread";
 }) {
   if (loading && chats.length === 0) {
-    return (
-      <div
-        className="h-[52px] animate-pulse rounded-2xl border border-paddock-200 bg-white/60 dark:border-paddock-800 dark:bg-paddock-900/50"
-        aria-busy="true"
-      />
-    );
+    return <div className="h-[46px] animate-pulse border-b border-edge-subtle" aria-busy="true" />;
   }
   if (chats.length === 0) {
-    return (
-      <div className="card">
-        <p className="text-sm italic text-paddock-400">{empty}</p>
-      </div>
-    );
+    return <EmptyState title={empty} body={emptyBody} action={emptyAction} />;
   }
   return (
-    <div
-      className="overflow-hidden rounded-2xl border border-paddock-200 dark:border-paddock-800"
-      data-testid={`home-${kind}-chats`}
-    >
-      {chats.map((c, i) => (
-        <button
-          key={`${c.projectSlug}:${c.sessionId}`}
-          onClick={() => onOpenChat(c.sessionId, c.projectSlug)}
-          className={`flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-paddock-100/70 dark:hover:bg-paddock-900/40 ${
-            i > 0 ? "border-t border-paddock-200 dark:border-paddock-800" : ""
-          }`}
-        >
-          {kind === "running" ? (
-            <span
-              title="Streaming a response…"
-              aria-label="streaming"
-              className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent"
-            />
-          ) : (
-            <span
-              title="Unread reply"
-              aria-label="unread"
-              className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
-            />
-          )}
-          <span className="min-w-0 flex-1 truncate text-sm font-medium">{c.name}</span>
-          {c.projectSlug !== workspaceSlug && (
-            <span className="shrink-0 truncate rounded-md bg-paddock-100 px-1.5 py-0.5 text-[11px] text-paddock-600 dark:bg-paddock-800 dark:text-paddock-300">
-              {c.projectName}
+    <ul data-testid={`home-${kind}-chats`}>
+      {chats.map((c) => (
+        <li key={`${c.projectSlug}:${c.sessionId}`}>
+          <button
+            onClick={() => onOpenChat(c.sessionId, c.projectSlug)}
+            className="motion-fast flex w-full items-center gap-2.5 border-b border-edge-subtle px-2 py-2.5 text-left transition-[background-color] hover:bg-surface-hover"
+          >
+            {kind === "running" ? (
+              <span
+                title="Streaming a response…"
+                aria-label="streaming"
+                className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent-solid"
+              />
+            ) : (
+              <span
+                title="Unread reply"
+                aria-label="unread"
+                className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent-solid"
+              />
+            )}
+            <span className="min-w-0 flex-1 truncate text-sm font-medium">{c.name}</span>
+            {c.projectSlug !== workspaceSlug && (
+              <span className="shrink-0 truncate rounded-md bg-surface-active px-1.5 py-0.5 text-2xs text-fg-muted">
+                {c.projectName}
+              </span>
+            )}
+            {/* Timestamps are compared row-to-row, so they get tabular figures. */}
+            <span className="tabular shrink-0 text-2xs text-fg-subtle">
+              {relativeTime(
+                kind === "unread" ? (c.lastTurnCompletedAt ?? c.updatedAt) : c.updatedAt,
+              )}
             </span>
-          )}
-          <span className="shrink-0 text-[11px] text-paddock-400">
-            {relativeTime(kind === "unread" ? (c.lastTurnCompletedAt ?? c.updatedAt) : c.updatedAt)}
-          </span>
-        </button>
+          </button>
+        </li>
       ))}
-    </div>
+    </ul>
   );
 }
 
@@ -293,29 +345,42 @@ function NotesSection({
   const open = !collapsed;
   const hasBody = body.trim().length > 0;
   return (
-    <section className="mb-8">
+    <section className="mb-10">
       <button
         type="button"
         onClick={toggle}
         aria-expanded={open}
-        className="mb-2 -ml-1 flex w-full items-center gap-1.5 rounded-lg px-1 py-1 text-left transition-colors hover:bg-paddock-100/60 dark:hover:bg-paddock-800/40"
+        className="motion-fast -ml-1 mb-2 flex w-full items-center gap-1.5 rounded-md px-1 py-1 text-left transition-[background-color] hover:bg-surface-hover"
       >
         <ChevronRightIcon
           width={14}
           height={14}
-          className={`shrink-0 text-paddock-400 transition-transform ${open ? "rotate-90" : ""}`}
+          className={`shrink-0 text-fg-subtle transition-transform ${open ? "rotate-90" : ""}`}
         />
-        <h3 className="text-sm font-semibold uppercase tracking-wide text-paddock-500">{title}</h3>
+        {/* These are filenames, so they are set as filenames. */}
+        <h3 className="font-mono text-xs font-medium text-fg-muted">{title}</h3>
       </button>
-      {open && (
-        <div className="card">
-          {hasBody ? (
+      {open &&
+        (hasBody ? (
+          /*
+           * The break in the pattern. Everything above this point is a ruled
+           * list on the board; the two curated notes files are PAGES — the
+           * raised surface, real padding, and `prose-doc`, which is the
+           * document typography (Literata at a 68ch measure).
+           *
+           * They rendered through the compact CHAT markdown scope inside a
+           * `.card` before this: OVERVIEW.md, the document that says what a
+           * project is, was typeset as a chat bubble.
+           */
+          <article className="prose-doc page px-6 py-6 sm:px-9 sm:py-8">
             <Markdown>{body}</Markdown>
-          ) : (
-            <p className="text-sm italic text-paddock-400">{emptyLabel}</p>
-          )}
-        </div>
-      )}
+          </article>
+        ) : (
+          <EmptyState
+            title={emptyLabel}
+            body="Paddock's sweeper curates this after each turn — it appears once there is something to say."
+          />
+        ))}
     </section>
   );
 }
