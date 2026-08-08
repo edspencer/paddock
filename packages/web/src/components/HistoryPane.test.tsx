@@ -87,15 +87,18 @@ describe("HistoryPane (#268)", () => {
     expect(screen.getByText("my own turn")).toBeInTheDocument();
   });
 
-  it("shows the since-last-visit banner for new unattended runs and marks seen on open", () => {
+  // The standalone banner became a line in the masthead: a record says what it
+  // covers before it says anything else, and "2 while you were away" belongs in
+  // that summary rather than in a strip that pushes the first row off-screen.
+  it("counts the since-last-visit runs in the masthead and marks seen on open", () => {
     const { state, markSeen } = makeState([
       run({ jobId: "j-sched", sessionId: "s-sched", origin: "scheduled", isNew: true }),
       run({ jobId: "j-spawn", sessionId: "s-spawn", origin: "spawned", isNew: true }),
     ]);
     render(<HistoryPane slug="p" state={state} chats={chats} onOpenChat={vi.fn()} />);
 
-    const banner = screen.getByText(/ran while you were away/i);
-    expect(within(banner).getByText(/2 new runs/i)).toBeInTheDocument();
+    const note = screen.getByText(/while you were away/i);
+    expect(within(note).getByText("2")).toBeInTheDocument();
     // Opening the tab advances the watermark exactly once.
     expect(markSeen).toHaveBeenCalledTimes(1);
   });
@@ -105,7 +108,7 @@ describe("HistoryPane (#268)", () => {
       run({ jobId: "j-sched", sessionId: "s-sched", origin: "scheduled", isNew: false }),
     ]);
     render(<HistoryPane slug="p" state={state} chats={chats} onOpenChat={vi.fn()} />);
-    expect(screen.queryByText(/ran while you were away/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/while you were away/i)).not.toBeInTheDocument();
   });
 
   it("clicking a run opens its chat", () => {
@@ -118,12 +121,15 @@ describe("HistoryPane (#268)", () => {
     expect(onOpenChat).toHaveBeenCalledWith("s-sched");
   });
 
-  it("renders the scheduled trigger note with the schedule name", () => {
+  // The schedule's NAME is the fact worth keeping; "schedule · " was restating
+  // the origin eyebrow sitting two inches to its left.
+  it("names the schedule a scheduled run fired from", () => {
     const { state } = makeState([
       run({ jobId: "j-sched", sessionId: "s-sched", origin: "scheduled", schedule: "nightly-triage" }),
     ]);
     render(<HistoryPane slug="p" state={state} chats={chats} onOpenChat={vi.fn()} />);
-    expect(screen.getByText(/schedule · nightly-triage/)).toBeInTheDocument();
+    expect(screen.getByText("Scheduled")).toBeInTheDocument();
+    expect(screen.getByText(/nightly-triage/)).toBeInTheDocument();
   });
 
   // #588. `originMeta` is an if-chain, not an exhaustive switch, so a new origin
@@ -142,6 +148,9 @@ describe("HistoryPane (#268)", () => {
     fireEvent.click(screen.getByRole("button", { name: /^All$/ }));
     expect(screen.getByText("Adopted")).toBeInTheDocument();
     expect(screen.queryByText("You")).not.toBeInTheDocument();
-    expect(screen.getByText(/adopted from the Claude Code CLI/i)).toBeInTheDocument();
+    // The prose note ("adopted from the Claude Code CLI") is gone — the origin
+    // eyebrow asserted above already carries it, and the register does not print
+    // the same fact twice. The row still has to be reachable.
+    expect(screen.getByText("ran in a terminal")).toBeInTheDocument();
   });
 });

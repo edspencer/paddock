@@ -300,7 +300,15 @@ function RunRow({
 
 export function HistoryPane({ slug, state, chats, onOpenChat }: HistoryPaneProps) {
   const { data, loading, error, refresh, markSeen } = state;
-  const [filter, setFilter] = useState<OriginFilter>("all");
+  /*
+   * Deliberately still `unattended` by default. The register makes the full
+   * record legible and it is tempting to open on it, but this pane exists to
+   * answer "what ran while I wasn't watching" (#268) — that is a product
+   * decision, not a visual one, and a redesign is not the place to quietly
+   * reverse it. The masthead counts the WHOLE record either way, so the scale
+   * of the archive is visible even from the filtered view.
+   */
+  const [filter, setFilter] = useState<OriginFilter>("unattended");
 
   // Opening the tab clears the badge: advance the watermark once per mount.
   // eslint-disable-next-line react-hooks/exhaustive-deps
