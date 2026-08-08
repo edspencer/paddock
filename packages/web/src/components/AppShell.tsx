@@ -13,8 +13,10 @@ import {
   setServerLastSeen,
 } from "../lib/lastSeen";
 import { TagPill } from "./TagPill";
-import { CogIcon, FolderIcon, HomeIcon, LinkIcon, MenuIcon, MoonIcon, PlusIcon, SunIcon, XIcon } from "./icons";
+import { CogIcon, FolderIcon, HomeIcon, LinkIcon, MenuIcon, MoonIcon, PaletteIcon, PlusIcon, SunIcon, XIcon } from "./icons";
 import { NewProjectModal } from "./NewProjectModal";
+import { AppearancePanel } from "./AppearancePanel";
+import { Dialog } from "./ui";
 import { PaneResizer, usePaneWidth } from "./PaneResizer";
 import { SIDENAV_PANE } from "../lib/paneWidth";
 import { gridUrl, ROOT_KEY } from "../routes/ProjectView/urls";
@@ -165,6 +167,7 @@ export function AppShell() {
   // project; deleting that section without moving this would have removed the
   // ability entirely.
   const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [appearanceOpen, setAppearanceOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
   const brand = getBrand();
@@ -408,6 +411,19 @@ export function AppShell() {
             {dark ? <SunIcon width={15} height={15} /> : <MoonIcon width={15} height={15} />}
             {dark ? "Light mode" : "Dark mode"}
           </button>
+          {/* Appearance sits next to light/dark because it is the same kind of
+              choice: a per-device preference that applies instantly and is
+              remembered. Anything that changes how the app looks belongs in one
+              place, not split between the sidebar and a settings screen. */}
+          <button
+            type="button"
+            onClick={() => setAppearanceOpen(true)}
+            className="btn-subtle mt-1 w-full justify-start"
+            title="Theme and accent colour"
+          >
+            <PaletteIcon width={15} height={15} />
+            Appearance
+          </button>
           <p className="mt-2 px-2 text-2xs text-fg-subtle">v{__APP_VERSION__}</p>
         </div>
       </aside>
@@ -435,6 +451,16 @@ export function AppShell() {
           navigate(`/projects/${p.slug}/chat`);
         }}
       />
+
+      <Dialog
+        open={appearanceOpen}
+        onClose={() => setAppearanceOpen(false)}
+        title="Appearance"
+        description="Applies to this browser only, straight away."
+        size="lg"
+      >
+        <AppearancePanel />
+      </Dialog>
     </div>
   );
 }
