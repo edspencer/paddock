@@ -306,6 +306,38 @@ Security isn't only the front door — it's also what the agents can reach:
   over baking them into images or `.env` files on disk. See
   [A home-lab setup](/guides/home-lab/).
 
+:::danger[On `driveMode: batch`, a declared MCP credential is readable from `ps`]
+If you declare MCP servers in the top-level **`mcpServers:`** block, the `env:VAR`
+indirection keeps the resolved secret out of the config file, out of the boot log, out
+of error messages and out of the Settings API. It does **not** keep it out of a command
+line.
+
+Under **`driveMode: batch`** herdctl's CLI runtime serialises the entire server
+definition — resolved `env` values and `headers` included — into a single
+`--mcp-config` **argv element**. A process argument is not private on Linux:
+`/proc/<pid>/cmdline` is world-readable by default and `ps` prints it. So on `batch`,
+any local user can read that token for the lifetime of every turn. This is observed
+behaviour, not a theoretical concern — an integration test drives a real turn and
+reads the token back out of the spawned process's argv.
+
+The default **`driveMode: session`** is unaffected: it hands the same record to the SDK
+in-process, and a spawned stdio server receives the value in its environment, where
+`/proc/<pid>/environ` is owner-only.
+
+Two things to check:
+
+- **A single project pinning `driveMode: batch` reintroduces the exposure**, even on an
+  instance whose default is `session`. Paddock warns at startup on a `batch` instance
+  and notes it informationally otherwise, but it cannot see a per-project override
+  coming.
+- **On a multi-user box, `batch` plus a declared credential means every local account
+  can read it.** If you cannot move off `batch`, do not declare a credential-bearing
+  MCP server — attach it some other way, or accept that the secret is local-user-visible.
+
+Paddock cannot fix this from its side; the fix is upstream. Full write-up:
+[What Paddock touches on your machine](/guides/what-paddock-touches/).
+:::
+
 ## What the instance takes from the host machine
 
 Since v0.62 this is a readable config surface rather than something to infer.
@@ -342,6 +374,8 @@ machine](/guides/what-paddock-touches/).
       later**.
 - [ ] Management-API client tokens live in the **environment** (`auth.ref:
       env:…`), never inline in `paddock.config.yaml`.
+- [ ] If you declare `mcpServers:` with an `env:VAR` credential, the instance —
+      **and every project on it** — is on `driveMode: session`, not `batch`.
 - [ ] `/mcp` is reached over **real TLS** you verified — not merely a request
       Paddock's `X-Forwarded-Proto` check accepted.
 - [ ] `managementApi.trustedProxies` **names your actual TLS terminator**, rather
