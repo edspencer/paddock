@@ -1,5 +1,13 @@
 # Paddock Test Strategy
 
+<!-- docs-original -->
+> [!NOTE]
+> **This file lives here on purpose.** Unlike the superseded forks alongside it,
+> this is the original test-strategy rationale and has no website twin — the documentation website links *out* to this
+> path, so `docs/` is its permanent address. It is a **point-in-time** record:
+> accurate for when it was written, deliberately not updated against later
+> releases. Check any claim against the live docs before acting on it.
+
 Goal: high confidence that paddock keeps working after every change — at the
 **server**, **herdctl-integration**, and **UI** levels — without paying for (or
 waiting on) real Anthropic calls on every run.

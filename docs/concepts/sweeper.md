@@ -1,5 +1,15 @@
 # The sweeper
 
+<!-- superseded-banner -->
+> [!WARNING]
+> **Superseded — this is a stale fork, not the maintained page.**
+> Read **[The sweeper](https://paddock.edspencer.net/concepts/sweeper/)** instead
+> (source: [`website/src/content/docs/concepts/sweeper.md`](https://github.com/edspencer/paddock/blob/main/website/src/content/docs/concepts/sweeper.md)).
+>
+> This copy is not updated against releases and has already been wrong about
+> live behaviour in ways that break a server. It survives only because other
+> files still link to it. Do not patch it — patch the website copy.
+
 The **sweeper** keeps a project's notes current without you having to. After each
 of your chat turns in a project, a per-project, **tool-less** curation agent reads
 what just happened and updates two files: `OVERVIEW.md` (the current state) and

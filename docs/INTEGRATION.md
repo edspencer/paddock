@@ -1,5 +1,15 @@
 # Paddock ↔ `@herdctl/core` Integration Contract
 
+<!-- superseded-banner -->
+> [!WARNING]
+> **Superseded — this is a stale fork, not the maintained page.**
+> Read **[herdctl integration](https://paddock.edspencer.net/architecture/herdctl-integration/)** instead
+> (source: [`website/src/content/docs/architecture/herdctl-integration.md`](https://github.com/edspencer/paddock/blob/main/website/src/content/docs/architecture/herdctl-integration.md)).
+>
+> This copy is not updated against releases and has already been wrong about
+> live behaviour in ways that break a server. It survives only because other
+> files still link to it. Do not patch it — patch the website copy.
+
 > The public-npm API surface paddock depends on. Every claim was checked against
 > the shipped `.d.ts` declarations of the **installed** package.
 >

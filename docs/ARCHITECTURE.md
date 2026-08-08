@@ -1,6 +1,16 @@
 # Paddock architecture
 
-> Canonical architecture overview for Paddock — the project layer over
+<!-- superseded-banner -->
+> [!WARNING]
+> **Superseded — this is a stale fork, not the maintained page.**
+> Read **[Architecture overview](https://paddock.edspencer.net/architecture/overview/)** instead
+> (source: [`website/src/content/docs/architecture/overview.md`](https://github.com/edspencer/paddock/blob/main/website/src/content/docs/architecture/overview.md)).
+>
+> This copy is not updated against releases and has already been wrong about
+> live behaviour in ways that break a server. It survives only because other
+> files still link to it. Do not patch it — patch the website copy.
+
+> Architecture overview for Paddock — the project layer over
 > [`@herdctl/core`](https://github.com/edspencer/herdctl) that turns Claude Code
 > into hosted, per-project, resumable chat. This document is the "how it fits
 > together" map; the exact public `@herdctl/core` API contract Paddock depends on

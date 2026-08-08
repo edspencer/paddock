@@ -1,11 +1,22 @@
 # Configuration reference
 
+<!-- superseded-banner -->
+> [!WARNING]
+> **Superseded — this is a stale fork, not the maintained page.**
+> Read **[Environment variables](https://paddock.edspencer.net/configuration/environment/)** instead
+> (source: [`website/src/content/docs/configuration/environment.md`](https://github.com/edspencer/paddock/blob/main/website/src/content/docs/configuration/environment.md)).
+>
+> This copy is not updated against releases and has already been wrong about
+> live behaviour in ways that break a server. It survives only because other
+> files still link to it. Do not patch it — patch the website copy.
+
 Paddock is configured from the **environment**, optionally layered over a
 **YAML instance-config file** — precedence **file < env** (the file provides the
 base, environment variables override it). Every setting is resolved once at
 startup (`packages/server/src/config.ts`), normalised, and frozen. This page is
-the canonical list of every variable the server reads, its default (taken from
-the code, not guessed), and what it does.
+a list of variables the server reads, its default (taken from the code at the
+time of writing, not guessed), and what it does. For the *current* list, read
+the website page linked above.
 
 Environment-only remains fully supported and is the default: with no file
 present, behaviour is exactly as it was before the loader existed. For a runnable
