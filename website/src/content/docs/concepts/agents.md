@@ -16,8 +16,9 @@ the self-management MCP, curation, triggers, attachments and run history.
 ## One agent per project
 
 Each [project](/concepts/projects) has one long-lived agent, and its working
-directory is the project's `workingDir` — the project dir for a notebook project,
-or the nested checkout for a repo-backed one. Because Claude Code keys transcripts
+directory is the project's `workingDir` — an external directory you nominated
+with `path`, else the nested checkout if the project has a `repo`, else the
+project directory itself. Because Claude Code keys transcripts
 by working directory, **that cwd is what ties a project's chats to that project.**
 
 - Registered programmatically at startup and on project create/update via
