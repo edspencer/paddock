@@ -217,9 +217,34 @@
    *
    * `multiply` can only darken, so the failure is bounded and points the safe
    * way — it improves light-on-dark contrast (all the chrome text) and can only
-   * hurt dark-on-light. The light-surface tile is therefore cut to a whisper, a
-   * [0.974, 1] band worth under 0.005 of lightness, while the chrome tile —
-   * where darkening is free — keeps a real [0.85, 1] fibre.
+   * hurt dark-on-light.
+   *
+   * The first pass at that cut the light-surface tile to a whisper — a
+   * [0.974, 1] band — purely to keep the guard's numbers honest, and the
+   * texture promptly vanished. Ed: "we lost the texture." Hiding from the
+   * problem was the wrong move; the right one is to TELL THE GUARD. The band is
+   * now [0.93, 1] with the low-frequency mottle dominant — large soft blotches
+   * read as an aged sheet where fine grain reads as static.
+   *
+   * THE SLOPES ARE MEASURED, NOT CHOSEN, and two attempts failed before that.
+   * `feTurbulence` does not fill [0, 1]: rendered to a canvas and sampled, this
+   * one spans 0.51–0.89 with its median at 0.737. A transfer function written
+   * over the theoretical range therefore spends almost all of itself on values
+   * the noise never emits — the first "visible" band mapped the ENTIRE noise
+   * above 1.0, where `multiply` clamps it, and produced three levels of
+   * variation out of 255. Each layer's slope and intercept here is solved from
+   * that measured histogram so p90 lands exactly on 1.0 (most of the sheet is
+   * clean paper) and the minimum lands on the floor (the darkest stain). If you
+   * change a `baseFrequency` or `numOctaves`, RE-MEASURE — the distribution
+   * moves with them. And
+   * `theme-parchment.test.ts` asserts every light-mode foreground against the
+   * surface MULTIPLIED BY `TEXTURE_MIN` — the darkest pixel the tile can
+   * produce — instead of against the flat token. So the texture is visible and
+   * the contrast floor holds at the worst pixel on screen, not the average one.
+   *
+   * Dark mode needs no such factor: multiply darkens, and a darker background
+   * under LIGHT text only improves the ratio, so its token is already the worst
+   * case. Same for the chrome in both modes.
    *
    * The general lesson, which cost three rounds: THE CONTRAST GUARD READS
    * TOKENS AND THE SCREEN SHOWS PIXELS, and a blend mode sits between them. It
@@ -228,8 +253,8 @@
    * rather than incomplete. Anything compositing over a surface has to be
    * verified by sampling the rendered page.
    */
-  --parch-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='m' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.013' numOctaves='3' stitchTiles='stitch' seed='5'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.026' intercept='0.974'/%3E%3CfeFuncG type='linear' slope='0.026' intercept='0.974'/%3E%3CfeFuncB type='linear' slope='0.026' intercept='0.974'/%3E%3CfeFuncA type='linear' slope='0' intercept='1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Cfilter id='g' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.35 0.9' numOctaves='4' stitchTiles='stitch' seed='11'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.03' intercept='0.97'/%3E%3CfeFuncG type='linear' slope='0.03' intercept='0.97'/%3E%3CfeFuncB type='linear' slope='0.03' intercept='0.97'/%3E%3CfeFuncA type='linear' slope='0' intercept='1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23m)'/%3E%3Crect width='300' height='300' filter='url(%23g)' opacity='0.5'/%3E%3C/svg%3E");
-  --parch-fibre: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='320'%3E%3Cfilter id='b' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.018' numOctaves='3' stitchTiles='stitch' seed='9'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.15' intercept='0.85'/%3E%3CfeFuncG type='linear' slope='0.15' intercept='0.85'/%3E%3CfeFuncB type='linear' slope='0.15' intercept='0.85'/%3E%3CfeFuncA type='linear' slope='0' intercept='1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Cfilter id='f' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.012 0.6' numOctaves='4' stitchTiles='stitch' seed='3'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.13' intercept='0.87'/%3E%3CfeFuncG type='linear' slope='0.13' intercept='0.87'/%3E%3CfeFuncB type='linear' slope='0.13' intercept='0.87'/%3E%3CfeFuncA type='linear' slope='0' intercept='1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='320' height='320' filter='url(%23b)'/%3E%3Crect width='320' height='320' filter='url(%23f)' opacity='0.55'/%3E%3C/svg%3E");
+  --parch-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='320'%3E%3Cfilter id='m' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.012' numOctaves='2' stitchTiles='stitch' seed='5'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.2349' intercept='0.8102'/%3E%3CfeFuncG type='linear' slope='0.2349' intercept='0.8102'/%3E%3CfeFuncB type='linear' slope='0.2349' intercept='0.8102'/%3E%3CfeFuncA type='linear' slope='0' intercept='1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Cfilter id='g' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.22 0.75' numOctaves='3' stitchTiles='stitch' seed='11'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.0959' intercept='0.9225'/%3E%3CfeFuncG type='linear' slope='0.0959' intercept='0.9225'/%3E%3CfeFuncB type='linear' slope='0.0959' intercept='0.9225'/%3E%3CfeFuncA type='linear' slope='0' intercept='1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='320' height='320' filter='url(%23m)'/%3E%3Crect width='320' height='320' filter='url(%23g)' opacity='0.35'/%3E%3C/svg%3E");
+  --parch-fibre: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='320'%3E%3Cfilter id='b' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.018' numOctaves='3' stitchTiles='stitch' seed='9'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.549' intercept='0.5586'/%3E%3CfeFuncG type='linear' slope='0.549' intercept='0.5586'/%3E%3CfeFuncB type='linear' slope='0.549' intercept='0.5586'/%3E%3CfeFuncA type='linear' slope='0' intercept='1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Cfilter id='f' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.012 0.6' numOctaves='4' stitchTiles='stitch' seed='3'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.5051' intercept='0.5899'/%3E%3CfeFuncG type='linear' slope='0.5051' intercept='0.5899'/%3E%3CfeFuncB type='linear' slope='0.5051' intercept='0.5899'/%3E%3CfeFuncA type='linear' slope='0' intercept='1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='320' height='320' filter='url(%23b)'/%3E%3Crect width='320' height='320' filter='url(%23f)' opacity='0.55'/%3E%3C/svg%3E");
 }
 
 /* ------------------------------------------------------------------ light --
@@ -250,10 +275,13 @@
  */
 [data-theme="parchment"]:not(.dark) {
   /* The brandable seam, in the exact channel format the server overwrites.
-     Deepened from round one toward the reference's own maroon (#5c2833). */
-  --accent: 116 33 44; /* #74212c */
-  --accent-600: 101 24 35; /* #651823 */
-  --accent-700: 86 16 27; /* #56101b */
+     AMBER, not the reference's maroon: this theme already spends its metal on
+     every count and fitting, so making the accent the same brass unifies the
+     two instead of running a second hue alongside them. The maroon stays where
+     the reference actually puts it — the header slab. */
+  --accent: 220 164 69; /* #dca445 */
+  --accent-600: 207 152 55; /* #cf9837 */
+  --accent-700: 188 137 45; /* #bc892d */
 
   /* The ladder is deliberately WIDE. Round one put 0.080 of perceptual
      lightness between a panel and the field and it still read as one warm
@@ -268,17 +296,18 @@
   --surface-sunken: oklch(0.912 0.042 78); /* #f2dfc3 — a well cut into it */
   --surface-hover: oklch(0.932 0.036 80);
   --surface-active: oklch(0.898 0.042 76);
-  /* The one surface that stays on the wine: selection IS the accent, and it is
-     what answers the hue picker. */
-  --surface-selected: oklch(0.906 0.05 34);
+  /* Selection is a whisper of the accent's own hue, not a pink bar. The
+     reference marks the active row with RULES rather than a fill (see §5), so
+     the fill only has to hint and the ink rules do the work. */
+  --surface-selected: oklch(0.928 0.036 78);
   --overlay: oklch(0.2 0.05 40 / 0.55);
   --overlay-strong: oklch(0.13 0.035 40 / 0.87);
 
   /* Ink. Everything is pulled onto the wine so the page reads as one drawn
      object; nothing here is a neutral grey. */
   --text: oklch(0.3 0.055 32);
-  --text-muted: oklch(0.442 0.05 30);
-  --text-subtle: oklch(0.446 0.042 34);
+  --text-muted: oklch(0.415 0.05 30);
+  --text-subtle: oklch(0.414 0.042 34);
   --text-on-solid: oklch(0.975 0.014 84);
 
   /* Rules, in the reference's two tones: `--border` is the lighter outer line
@@ -290,40 +319,47 @@
   --accent-color: rgb(var(--accent));
   --accent-solid: rgb(var(--accent-600));
   --accent-solid-hover: rgb(var(--accent-700));
-  --accent-fg: oklch(0.975 0.014 84);
-  --accent-text: rgb(var(--accent));
-  --accent-soft: color-mix(in oklab, rgb(var(--accent)) 12%, var(--surface-raised));
-  --accent-border: color-mix(in oklab, rgb(var(--accent)) 45%, var(--surface));
+  /* DARK type on the fill — a struck gold plate with the lettering engraved
+     into it, which is the reference's coin rather than its button. The accent
+     solver already handles themes that invert this way (phosphor and vellum-dark
+     do), so the hue picker still works from it. */
+  --accent-fg: oklch(0.25 0.045 55);
+  /* As TEXT on paper, amber has to come most of the way down to bronze to clear
+     AA — gold on cream is the hardest pairing in the palette. Still mixed FROM
+     `--accent`, so the brand seam and the hue picker both propagate. */
+  --accent-text: color-mix(in oklab, rgb(var(--accent)) 32%, oklch(0.2 0.02 60));
+  --accent-soft: color-mix(in oklab, rgb(var(--accent)) 16%, var(--surface-raised));
+  --accent-border: color-mix(in oklab, rgb(var(--accent)) 55%, var(--surface));
 
   /* Status hues, muted and warmed so nothing outshouts the wine. `warn` is the
      brass. `danger` is pushed to 32 so it cannot be read as the wine at 15. */
   --success-solid: oklch(0.475 0.1 146);
   --success-fg: oklch(0.975 0.014 84);
-  --success-text: oklch(0.43 0.095 146);
+  --success-text: oklch(0.4 0.095 146);
   --success-soft: oklch(0.932 0.034 146);
   --success-border: oklch(0.83 0.062 146);
 
   --warn-solid: oklch(0.545 0.108 78);
   --warn-fg: oklch(0.975 0.014 84);
-  --warn-text: oklch(0.443 0.09 78);
+  --warn-text: oklch(0.413 0.084 78);
   --warn-soft: oklch(0.936 0.045 82);
   --warn-border: oklch(0.828 0.078 82);
 
   --danger-solid: oklch(0.5 0.155 32);
   --danger-fg: oklch(0.975 0.014 84);
-  --danger-text: oklch(0.457 0.15 32);
+  --danger-text: oklch(0.427 0.15 32);
   --danger-soft: oklch(0.93 0.032 32);
   --danger-border: oklch(0.828 0.07 32);
 
   --info-solid: oklch(0.48 0.095 245);
   --info-fg: oklch(0.975 0.014 84);
-  --info-text: oklch(0.438 0.09 245);
+  --info-text: oklch(0.408 0.09 245);
   --info-soft: oklch(0.932 0.03 245);
   --info-border: oklch(0.83 0.055 245);
 
   --lineage-solid: oklch(0.48 0.125 312);
   --lineage-fg: oklch(0.975 0.014 84);
-  --lineage-text: oklch(0.453 0.12 312);
+  --lineage-text: oklch(0.424 0.12 312);
   --lineage-soft: oklch(0.932 0.032 312);
   --lineage-border: oklch(0.83 0.06 312);
 
@@ -374,36 +410,36 @@
  * because leather and wood have more of it than paper does.
  */
 [data-theme="parchment"].dark {
-  --accent: 168 60 72; /* #a83c48 — the wine, lit */
-  --accent-600: 150 48 59; /* #96303b */
-  --accent-700: 132 36 48; /* #842430 */
+  --accent: 229 172 76; /* #e5ac4c — the metal, lit */
+  --accent-600: 215 159 66; /* #d79f42 */
+  --accent-700: 197 144 56; /* #c59038 */
 
-  --surface: oklch(0.188 0.024 44); /* oiled walnut */
-  --surface-raised: oklch(0.308 0.034 62); /* lamp-lit vellum over leather */
-  --surface-sunken: oklch(0.148 0.018 42);
-  --surface-hover: oklch(0.322 0.03 50);
-  --surface-active: oklch(0.352 0.032 48);
-  --surface-selected: oklch(0.335 0.052 16);
+  --surface: oklch(0.235 0.028 80); /* the desk, in shadow */
+  --surface-raised: oklch(0.325 0.042 84); /* the sheet, under the lamp */
+  --surface-sunken: oklch(0.2 0.024 78);
+  --surface-hover: oklch(0.355 0.042 84);
+  --surface-active: oklch(0.385 0.042 84);
+  --surface-selected: oklch(0.378 0.038 78);
   --overlay: oklch(0.08 0.02 30 / 0.66);
   --overlay-strong: oklch(0.05 0.015 30 / 0.9);
 
-  --text: oklch(0.932 0.026 80);
-  --text-muted: oklch(0.768 0.036 70);
-  --text-subtle: oklch(0.728 0.038 66);
+  --text: oklch(0.94 0.03 84);
+  --text-muted: oklch(0.782 0.034 72);
+  --text-subtle: oklch(0.77 0.036 68);
   --text-on-solid: oklch(0.975 0.014 84);
 
-  --border-subtle: oklch(0.3 0.02 46);
-  --border: oklch(0.412 0.03 48);
-  --border-strong: oklch(0.6 0.042 52);
+  --border-subtle: oklch(0.33 0.026 78);
+  --border: oklch(0.44 0.034 78);
+  --border-strong: oklch(0.63 0.045 78);
 
   --accent-color: rgb(var(--accent));
   --accent-solid: rgb(var(--accent-600));
   --accent-solid-hover: rgb(var(--accent));
-  --accent-fg: oklch(0.975 0.014 84);
-  /* Candlelight on wine: as TEXT the fill is too dark on the walnut, so it is
-     lifted toward a lit rose. Still derived from `--accent`, so the brand seam
-     and the hue picker both propagate. */
-  --accent-text: color-mix(in oklab, rgb(var(--accent)) 44%, oklch(0.97 0.03 60));
+  --accent-fg: oklch(0.22 0.04 55);
+  /* Lamplight on brass: the metal is already light enough to be text here, so
+     it is used almost neat, lifted a touch off the fill so a link and a button
+     are not the same value. Still derived from `--accent`. */
+  --accent-text: color-mix(in oklab, rgb(var(--accent)) 85%, oklch(0.97 0.03 80));
   --accent-soft: color-mix(in oklab, rgb(var(--accent)) 28%, var(--surface));
   --accent-border: color-mix(in oklab, rgb(var(--accent)) 54%, var(--surface));
 
@@ -441,28 +477,28 @@
   --shadow-ambient: 0.5;
   --shadow-direct: 0.55;
 
-  --scroll-thumb: oklch(0.412 0.03 48);
+  --scroll-thumb: oklch(0.44 0.034 78);
 
   /* In the dark the ink inverts: you cannot draw a dark line on dark leather,
      so the frame is scribed in a light tan — a scored line rather than an
      inked one, which is what tooled leather actually looks like. */
-  --parch-ink: oklch(0.6 0.05 62);
-  --parch-ink-soft: oklch(0.412 0.03 48);
+  --parch-ink: oklch(0.64 0.055 78);
+  --parch-ink-soft: oklch(0.44 0.034 78);
   --parch-texture-strength: 0.8;
 
-  --parch-chrome: oklch(0.2 0.05 10);
-  --parch-chrome-raised: oklch(0.238 0.05 10);
-  --parch-chrome-sunken: oklch(0.168 0.042 10);
-  --parch-chrome-hover: oklch(0.266 0.05 10);
-  --parch-chrome-active: oklch(0.3 0.05 10);
-  --parch-chrome-text: oklch(0.928 0.024 80);
-  --parch-chrome-muted: oklch(0.768 0.034 60);
-  --parch-chrome-subtle: oklch(0.748 0.036 55);
-  --parch-chrome-edge: oklch(0.312 0.042 14);
-  --parch-chrome-edge-strong: oklch(0.545 0.075 18);
+  --parch-chrome: oklch(0.305 0.078 10);
+  --parch-chrome-raised: oklch(0.335 0.078 10);
+  --parch-chrome-sunken: oklch(0.272 0.072 10);
+  --parch-chrome-hover: oklch(0.345 0.078 10);
+  --parch-chrome-active: oklch(0.372 0.078 10);
+  --parch-chrome-text: oklch(0.94 0.024 80);
+  --parch-chrome-muted: oklch(0.798 0.034 60);
+  --parch-chrome-subtle: oklch(0.796 0.036 55);
+  --parch-chrome-edge: oklch(0.4 0.06 12);
+  --parch-chrome-edge-strong: oklch(0.632 0.07 14);
   --parch-chrome-ink: oklch(0.55 0.06 30);
 
-  --parch-gilt: oklch(0.792 0.115 82);
+  --parch-gilt: oklch(0.81 0.11 82);
   --parch-gilt-lit: oklch(0.895 0.088 88);
   --parch-gilt-deep: oklch(0.62 0.1 72);
   --parch-gilt-mark: oklch(0.74 0.11 78);
@@ -476,25 +512,32 @@
  */
 
 /* ═══════════════════════════════════════════════════ 1 · THE CHROME ═══════ *
- * Two regions carry the wine — the route header slab and the nav rail — and
- * they meet at the top-left corner, so the wine reads as an L that frames the
- * content the way the reference's top bar frames the panels.
+ * ONE region carries the wine: the route header slab. That is the correction
+ * that took four rounds, and it is the same mistake twice — the reference
+ * spends maroon on a single ~55px bar, roughly 5% of its pixels, and ITS LEFT
+ * MENU IS A PARCHMENT PANEL with maroon text and maroon line icons. I had made
+ * the whole 288px full-height rail wine as well, taking the red from 5% of the
+ * screen to about a quarter of it. Ed said "that red stuff isn't Parchment"
+ * three times: he was describing a proportion, and I kept hearing a hue.
  *
- * Both work the same way: they REDECLARE the semantic token set rather than
- * being painted and then hand-corrected. Custom properties resolve per element,
- * so every `bg-surface-*`, `text-fg-*` and `border-edge*` utility in the whole
- * subtree re-points at the wine ramp and no component knows anything happened.
- * A framed plate dropped inside either region picks up the chrome's own ink for
- * its frame, for free, because the frame gradients read `var(--parch-ink)`.
+ * The slab REDECLARES the semantic token set rather than being painted and then
+ * hand-corrected. Custom properties resolve per element, so every
+ * `bg-surface-*`, `text-fg-*` and `border-edge*` utility inside it re-points at
+ * the wine ramp and no component knows anything happened.
  */
-[data-theme="parchment"] aside,
 [data-theme="parchment"] header.pt-safe {
   --surface: var(--parch-chrome);
   --surface-raised: var(--parch-chrome-raised);
   --surface-sunken: var(--parch-chrome-sunken);
   --surface-hover: var(--parch-chrome-hover);
   --surface-active: var(--parch-chrome-active);
-  --surface-selected: color-mix(in oklab, rgb(var(--accent)) 30%, var(--parch-chrome-active));
+  /* No accent mix here. That worked while the accent was a dark wine, but an
+     amber one LIGHTENS whatever it is mixed into, and this scope's foregrounds
+     are solved against the chrome's own ceiling. Nothing in the slab renders a
+     selected row anyway — since the rail became a parchment panel this scope is
+     the header alone — and selection in this theme is marked by rules rather
+     than by a fill. */
+  --surface-selected: var(--parch-chrome-active);
   --text: var(--parch-chrome-text);
   --text-muted: var(--parch-chrome-muted);
   --text-subtle: var(--parch-chrome-subtle);
@@ -534,9 +577,20 @@
     inset 0 1px 0 var(--parch-chrome-edge-strong),
     0 3px 10px -3px rgb(var(--shadow-color) / 0.5);
 }
-/* Same fillet down the rail's inside edge, so the L is continuous. */
+/*
+ * The nav rail: a parchment panel, framed like every other plate — which is
+ * what the reference's left menu actually is. It keeps the app's own tokens
+ * (no scope override), so the contrast guard's assertions cover it, and its
+ * icons and rules are drawn in ink rather than brass, again per the reference.
+ */
 [data-theme="parchment"] aside {
-  border-right-color: var(--parch-gilt-deep);
+  background-color: var(--surface-raised);
+  background-image: var(--parch-frame-image), var(--parch-grain);
+  background-size: var(--parch-frame-size), 300px 300px;
+  background-position: var(--parch-frame-pos), 0 0;
+  background-repeat: var(--parch-frame-repeat), repeat;
+  background-blend-mode: var(--parch-frame-blend), multiply;
+  border-right: 1.5px solid color-mix(in oklab, var(--parch-ink) 55%, var(--border));
 }
 
 /* The open ground. The field gets the coarse fibre too — an unused expanse of
@@ -666,8 +720,8 @@
  */
 [data-theme="parchment"] aside .bg-surface-selected {
   box-shadow:
-    inset 0 1px 0 var(--parch-gilt-deep),
-    inset 0 -1px 0 var(--parch-gilt-deep);
+    inset 0 1px 0 var(--parch-ink),
+    inset 0 -1px 0 var(--parch-ink);
 }
 
 /* ═══════════════════════════════════════════════════ 6 · THE TABS ═════════ *
@@ -714,8 +768,6 @@
    rail's row icons with them. These are marks rather than text, so the 3:1
    floor applies, and `--parch-gilt-mark` resolves per scope — deep enough to
    read on parchment, lit enough to read on wine. */
-[data-theme="parchment"] aside nav svg,
-[data-theme="parchment"] aside .section-label + button svg,
 [data-theme="parchment"] svg.text-accent {
   color: var(--parch-gilt-mark);
 }

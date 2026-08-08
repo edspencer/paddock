@@ -17,6 +17,7 @@ import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { contrastRatio, inSrgbGamut, resolveColor, rgbToOklch, toHex } from "../lib/color";
+import type { Rgba } from "../lib/color";
 
 const SRC = resolve(process.cwd(), "src");
 const css = readFileSync(join(SRC, "styles/theme-parchment.css"), "utf-8").replace(
@@ -74,13 +75,52 @@ const HUES = ["success", "warn", "danger", "info", "lineage"] as const;
 const AA_BODY = 4.5;
 const AA_LARGE = 3;
 
-function ratio(vars: Record<string, string>, fg: string, bg: string): number {
-  return contrastRatio(resolveColor(`var(${fg})`, vars), resolveColor(`var(${bg})`, vars));
+/**
+ * The darkest sample the parchment texture tile can produce.
+ *
+ * Every surface in this theme is painted `background-color` + a `multiply`-
+ * blended noise tile, so the colour a foreground actually sits on is the token
+ * TIMES some value in [TEXTURE_MIN, 1] — never the flat token. Asserting
+ * against the token is what let an earlier `soft-light` build ship a chrome
+ * 0.11 of lightness away from the value this file was certifying, so this
+ * multiplies the background down to the worst pixel before measuring.
+ *
+ * LIGHT MODE ONLY, and that asymmetry is the point rather than an oversight:
+ * `multiply` can only darken, and a darker background under the LIGHT text of
+ * dark mode (or of the wine chrome) only raises the ratio. So the token is
+ * already the worst case there, and applying the factor would make the test
+ * assert about a pixel that cannot exist.
+ *
+ * Keep this in step with the `--parch-grain` band in theme-parchment.css.
+ */
+const TEXTURE_MIN = 0.93;
+
+/** The worst pixel the texture can make of a surface, in the mode given. */
+function textured(c: Rgba, mode: "light" | "dark", bg: string): Rgba {
+  if (mode !== "light" || !bg.startsWith("--surface")) return c;
+  return { ...c, r: c.r * TEXTURE_MIN, g: c.g * TEXTURE_MIN, b: c.b * TEXTURE_MIN };
 }
-function label(vars: Record<string, string>, fg: string, bg: string): string {
+
+function ratio(
+  vars: Record<string, string>,
+  fg: string,
+  bg: string,
+  mode: "light" | "dark" = "dark",
+): number {
+  return contrastRatio(
+    resolveColor(`var(${fg})`, vars),
+    textured(resolveColor(`var(${bg})`, vars), mode, bg),
+  );
+}
+function label(
+  vars: Record<string, string>,
+  fg: string,
+  bg: string,
+  mode: "light" | "dark" = "dark",
+): string {
   const f = toHex(resolveColor(`var(${fg})`, vars));
-  const b = toHex(resolveColor(`var(${bg})`, vars));
-  return `${fg} (${f}) on ${bg} (${b}) = ${ratio(vars, fg, bg).toFixed(2)}:1`;
+  const b = toHex(textured(resolveColor(`var(${bg})`, vars), mode, bg));
+  return `${fg} (${f}) on ${bg} (${b}${mode === "light" && bg.startsWith("--surface") ? ", textured" : ""}) = ${ratio(vars, fg, bg, mode).toFixed(2)}:1`;
 }
 
 describe.each(["light", "dark"] as const)("parchment — %s", (mode) => {
@@ -89,15 +129,17 @@ describe.each(["light", "dark"] as const)("parchment — %s", (mode) => {
   it.each(FOREGROUNDS.flatMap((fg) => SURFACES.map((bg) => [fg, bg] as const)))(
     "%s on %s clears 4.5:1",
     (fg, bg) => {
-      expect(ratio(vars, fg, bg), label(vars, fg, bg)).toBeGreaterThanOrEqual(AA_BODY);
+      expect(ratio(vars, fg, bg, mode), label(vars, fg, bg, mode)).toBeGreaterThanOrEqual(
+        AA_BODY,
+      );
     },
   );
 
   it.each(HUES)("%s reads on every surface it is used on", (hue) => {
     for (const bg of ["--surface", "--surface-raised", "--surface-sunken", `--${hue}-soft`]) {
       expect(
-        ratio(vars, `--${hue}-text`, bg),
-        label(vars, `--${hue}-text`, bg),
+        ratio(vars, `--${hue}-text`, bg, mode),
+        label(vars, `--${hue}-text`, bg, mode),
       ).toBeGreaterThanOrEqual(AA_BODY);
     }
   });
@@ -121,8 +163,8 @@ describe.each(["light", "dark"] as const)("parchment — %s", (mode) => {
   it("border-strong is a visible control boundary (3:1) on every surface", () => {
     for (const bg of ["--surface", "--surface-raised", "--surface-sunken"]) {
       expect(
-        ratio(vars, "--border-strong", bg),
-        label(vars, "--border-strong", bg),
+        ratio(vars, "--border-strong", bg, mode),
+        label(vars, "--border-strong", bg, mode),
       ).toBeGreaterThanOrEqual(AA_LARGE);
     }
   });
