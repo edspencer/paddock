@@ -43,9 +43,9 @@ export function FileView({ slug, name }: { slug: string; name: string }) {
   if (loading) {
     return (
       <div className="space-y-3 p-6">
-        <div className="h-4 w-1/3 animate-pulse rounded bg-paddock-200/70 dark:bg-paddock-800/70" />
-        <div className="h-4 w-2/3 animate-pulse rounded bg-paddock-200/70 dark:bg-paddock-800/70" />
-        <div className="h-4 w-1/2 animate-pulse rounded bg-paddock-200/70 dark:bg-paddock-800/70" />
+        <div className="h-4 w-1/3 animate-pulse rounded bg-surface-active" />
+        <div className="h-4 w-2/3 animate-pulse rounded bg-surface-active" />
+        <div className="h-4 w-1/2 animate-pulse rounded bg-surface-active" />
       </div>
     );
   }
@@ -53,7 +53,7 @@ export function FileView({ slug, name }: { slug: string; name: string }) {
   if (error || !file) {
     return (
       <div className="p-6">
-        <div className="flex items-start gap-2 rounded-lg border border-rose-300/60 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/50 dark:text-rose-300">
+        <div className="flex items-start gap-2 rounded-lg border border-danger-edge bg-danger-soft px-3 py-2 text-sm text-danger">
           <AlertIcon width={16} height={16} className="mt-0.5 shrink-0" />
           <span>{error ?? "File not found."}</span>
         </div>
@@ -72,7 +72,7 @@ export function FileView({ slug, name }: { slug: string; name: string }) {
   if (file.kind === "text") {
     return (
       <div className="overflow-auto p-6">
-        <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-lg border border-paddock-200 bg-paddock-50 p-4 font-mono text-[12.5px] leading-relaxed text-paddock-800 dark:border-paddock-800 dark:bg-paddock-950 dark:text-paddock-200">
+        <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-lg border border-edge bg-surface-sunken p-4 font-mono text-xs leading-relaxed text-fg">
           {file.content}
         </pre>
       </div>
@@ -96,10 +96,10 @@ export function FileView({ slug, name }: { slug: string; name: string }) {
 function HtmlFileView({ name, content }: { name: string; content: string }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center gap-2 border-b border-paddock-200 bg-paddock-50/60 px-4 py-2 text-[11px] text-paddock-500 dark:border-paddock-800 dark:bg-paddock-900/40">
+      <div className="flex items-center gap-2 border-b border-edge bg-surface-sunken px-4 py-2 text-2xs text-fg-muted">
         <ShieldIcon />
         <span>
-          <span className="font-mono text-paddock-600 dark:text-paddock-300">{name}</span> renders in
+          <span className="font-mono text-fg-muted">{name}</span> renders in
           a sandboxed frame (scripts allowed, isolated from the app).
         </span>
       </div>
@@ -107,7 +107,7 @@ function HtmlFileView({ name, content }: { name: string; content: string }) {
         title={name}
         sandbox="allow-scripts"
         srcDoc={content}
-        className="min-h-[480px] w-full flex-1 bg-white"
+        className="html-preview min-h-[480px] w-full flex-1"
       />
     </div>
   );
@@ -121,19 +121,21 @@ function HtmlFileView({ name, content }: { name: string; content: string }) {
  */
 function ImageFileView({ slug, name }: { slug: string; name: string }) {
   const [failed, setFailed] = useState(false);
+  // Tokenised checkerboard: a 6% wash of the foreground colour, so the mat
+  // inverts with the theme instead of always being a black tint.
   const checker =
-    "repeating-conic-gradient(rgb(0 0 0 / 0.06) 0% 25%, transparent 0% 50%) 50% / 20px 20px";
+    "repeating-conic-gradient(color-mix(in oklab, var(--text) 6%, transparent) 0% 25%, transparent 0% 50%) 50% / 20px 20px";
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center gap-2 border-b border-paddock-200 bg-paddock-50/60 px-4 py-2 text-[11px] text-paddock-500 dark:border-paddock-800 dark:bg-paddock-900/40">
-        <span className="font-mono text-paddock-600 dark:text-paddock-300">{name}</span>
+      <div className="flex items-center gap-2 border-b border-edge bg-surface-sunken px-4 py-2 text-2xs text-fg-muted">
+        <span className="font-mono text-fg-muted">{name}</span>
       </div>
       <div
         className="flex flex-1 items-center justify-center overflow-auto p-6"
         style={{ background: checker }}
       >
         {failed ? (
-          <div className="flex items-center gap-2 rounded-lg border border-rose-300/60 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/50 dark:text-rose-300">
+          <div className="flex items-center gap-2 rounded-lg border border-danger-edge bg-danger-soft px-3 py-2 text-sm text-danger">
             <AlertIcon width={16} height={16} className="shrink-0" />
             <span>Could not display this image.</span>
           </div>
@@ -161,7 +163,7 @@ function ShieldIcon() {
       strokeWidth={2}
       strokeLinecap="round"
       strokeLinejoin="round"
-      className="shrink-0 text-paddock-400"
+      className="shrink-0 text-fg-subtle"
     >
       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" />
     </svg>

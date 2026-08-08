@@ -387,11 +387,11 @@ export function TriggersPane({ project }: { project: Project }) {
     <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain" data-testid="triggers-pane">
       <div className="mx-auto max-w-3xl px-6 py-6">
         <section className="mb-6">
-          <h3 className="flex items-center gap-1.5 text-sm font-semibold uppercase tracking-wide text-paddock-500">
+          <h3 className="flex items-center gap-1.5 text-sm font-semibold uppercase tracking-wide text-fg-muted">
             <BoltIcon width={14} height={14} />
             Triggers
           </h3>
-          <p className="mb-3 mt-0.5 text-[13px] text-paddock-500">
+          <p className="mb-3 mt-0.5 text-sm text-fg-muted">
             A trigger runs an agent turn when something happens — a{" "}
             <span className="font-medium">schedule</span> (a cron/interval fires), an{" "}
             <span className="font-medium">event</span> (a lifecycle event like a chat being
@@ -401,25 +401,25 @@ export function TriggersPane({ project }: { project: Project }) {
           </p>
           <div className="card">
             {error && (
-              <p className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600 dark:bg-rose-950/40 dark:text-rose-300">
+              <p className="mb-3 rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">
                 {error}
               </p>
             )}
             {notice && (
-              <p className="mb-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+              <p className="mb-3 rounded-lg bg-success-soft px-3 py-2 text-sm text-success">
                 {notice}
               </p>
             )}
 
             {loading ? (
-              <p className="py-4 text-center text-sm text-paddock-400">Loading triggers…</p>
+              <p className="py-4 text-center text-sm text-fg-subtle">Loading triggers…</p>
             ) : triggers.length === 0 ? (
-              <p className="py-4 text-center text-sm italic text-paddock-400">No triggers yet.</p>
+              <p className="py-4 text-center text-sm italic text-fg-subtle">No triggers yet.</p>
             ) : (
               <div className="-mx-1 overflow-x-auto">
                 <table className="w-full min-w-[54rem] border-collapse text-sm">
                   <thead>
-                    <tr className="border-b border-paddock-200 text-left text-[11px] font-semibold uppercase tracking-wide text-paddock-400 dark:border-paddock-800">
+                    <tr className="border-b border-edge text-left text-2xs font-semibold uppercase tracking-wide text-fg-subtle">
                       <th className="px-2 py-2 font-semibold">Trigger</th>
                       <th className="px-2 py-2 font-semibold">Type</th>
                       <th className="px-2 py-2 font-semibold">When</th>
@@ -437,22 +437,22 @@ export function TriggersPane({ project }: { project: Project }) {
                       <tr
                         key={t.name}
                         data-trigger={t.name}
-                        className="border-b border-paddock-100 last:border-0 dark:border-paddock-800/60"
+                        className="border-b border-edge-subtle last:border-0"
                       >
                         <td className="px-2 py-2.5 align-top">
-                          <span className="font-medium text-paddock-800 dark:text-paddock-100">
+                          <span className="font-medium text-fg">
                             {t.name}
                           </span>
                           {t.run.promptFile ? (
                             <span
-                              className="mt-0.5 block font-mono text-[11px] text-paddock-400"
+                              className="mt-0.5 block font-mono text-2xs text-fg-subtle"
                               title="Prompt read from this file at fire time"
                             >
                               {t.run.promptFile}
                             </span>
                           ) : (
                             t.run.prompt && (
-                              <span className="mt-0.5 block max-w-[16rem] truncate text-[11px] text-paddock-400">
+                              <span className="mt-0.5 block max-w-[16rem] truncate text-2xs text-fg-subtle">
                                 {t.run.prompt}
                               </span>
                             )
@@ -461,10 +461,10 @@ export function TriggersPane({ project }: { project: Project }) {
                         <td className="px-2 py-2.5 align-top">
                           <TypeBadge type={t.trigger.type} />
                         </td>
-                        <td className="px-2 py-2.5 align-top font-mono text-[12px] text-paddock-600 dark:text-paddock-300">
+                        <td className="px-2 py-2.5 align-top font-mono text-xs text-fg-muted">
                           {whenSummary(t.trigger)}
                         </td>
-                        <td className="px-2 py-2.5 align-top text-[12px] text-paddock-600 dark:text-paddock-300">
+                        <td className="px-2 py-2.5 align-top text-xs text-fg-muted">
                           <span
                             title={
                               t.run.tools?.join(", ") ||
@@ -474,7 +474,7 @@ export function TriggersPane({ project }: { project: Project }) {
                             {capabilitySummary(t)}
                           </span>
                           {t.run.permissionMode && (
-                            <span className="mt-0.5 block text-[11px] text-paddock-400">
+                            <span className="mt-0.5 block text-2xs text-fg-subtle">
                               {t.run.permissionMode}
                             </span>
                           )}
@@ -501,7 +501,7 @@ export function TriggersPane({ project }: { project: Project }) {
                               }
                               aria-label={`Run ${t.name} now`}
                               data-testid={`run-trigger-${t.name}`}
-                              className="flex h-7 w-7 items-center justify-center rounded-md text-accent transition hover:bg-accent/10 disabled:opacity-40"
+                              className="flex h-7 w-7 items-center justify-center rounded-md text-accent transition hover:bg-accent-soft disabled:opacity-40"
                             >
                               <PlayIcon width={13} height={13} />
                             </button>
@@ -509,7 +509,7 @@ export function TriggersPane({ project }: { project: Project }) {
                               type="button"
                               onClick={() => toggle(t)}
                               disabled={busy === t.name}
-                              className="rounded-md px-1.5 py-1 text-[12px] font-medium text-paddock-500 transition hover:bg-paddock-200/60 disabled:opacity-40 dark:hover:bg-paddock-800/60"
+                              className="rounded-md px-1.5 py-1 text-xs font-medium text-fg-muted transition hover:bg-surface-hover disabled:opacity-40"
                               title={t.enabled ? "Disable" : "Enable"}
                             >
                               {t.enabled ? "Disable" : "Enable"}
@@ -520,7 +520,7 @@ export function TriggersPane({ project }: { project: Project }) {
                               disabled={busy === t.name}
                               title="Edit"
                               aria-label={`Edit ${t.name}`}
-                              className="flex h-7 w-7 items-center justify-center rounded-md text-paddock-500 transition hover:bg-paddock-200/60 disabled:opacity-40 dark:hover:bg-paddock-800/60"
+                              className="flex h-7 w-7 items-center justify-center rounded-md text-fg-muted transition hover:bg-surface-hover disabled:opacity-40"
                             >
                               <PencilIcon width={14} height={14} />
                             </button>
@@ -530,7 +530,7 @@ export function TriggersPane({ project }: { project: Project }) {
                               disabled={busy === t.name}
                               title="Delete"
                               aria-label={`Delete ${t.name}`}
-                              className="flex h-7 w-7 items-center justify-center rounded-md text-paddock-400 transition hover:bg-rose-100 hover:text-rose-600 disabled:opacity-40 dark:hover:bg-rose-950/60 dark:hover:text-rose-400"
+                              className="flex h-7 w-7 items-center justify-center rounded-md text-fg-subtle transition hover:bg-danger-soft hover:text-danger disabled:opacity-40"
                             >
                               <TrashIcon width={14} height={14} />
                             </button>
@@ -565,18 +565,18 @@ export function TriggersPane({ project }: { project: Project }) {
             {/* Inline editor for create / edit. */}
             {editing && draft && (
               <div
-                className="mt-4 rounded-xl border border-paddock-200 bg-paddock-50/60 p-4 dark:border-paddock-800 dark:bg-paddock-950/40"
+                className="mt-4 rounded-xl border border-edge bg-surface-sunken p-4"
                 data-testid="trigger-editor"
               >
                 <div className="mb-3 flex items-center justify-between">
-                  <span className="text-sm font-semibold text-paddock-700 dark:text-paddock-200">
+                  <span className="text-sm font-semibold text-fg">
                     {editing.isNew ? "New trigger" : `Edit “${draft.name}”`}
                   </span>
                   <button
                     type="button"
                     onClick={() => setEditing(null)}
                     aria-label="Cancel"
-                    className="flex h-7 w-7 items-center justify-center rounded-md text-paddock-400 hover:bg-paddock-200/60 dark:hover:bg-paddock-800/60"
+                    className="flex h-7 w-7 items-center justify-center rounded-md text-fg-subtle hover:bg-surface-hover"
                   >
                     <XIcon width={14} height={14} />
                   </button>
@@ -595,14 +595,14 @@ export function TriggersPane({ project }: { project: Project }) {
                       data-testid="trigger-name"
                     />
                     {editing.isNew && nameTaken ? (
-                      <p className="mt-1 text-[12px] text-rose-500">A trigger with that name exists.</p>
+                      <p className="mt-1 text-xs text-danger">A trigger with that name exists.</p>
                     ) : editing.isNew && draft.name.trim() && nameInvalid ? (
-                      <p className="mt-1 text-[12px] text-rose-500">
+                      <p className="mt-1 text-xs text-danger">
                         Letters, numbers, <code>. _ -</code> only (max 64).
                       </p>
                     ) : (
                       !editing.isNew && (
-                        <p className="mt-1 text-[12px] text-paddock-400">
+                        <p className="mt-1 text-xs text-fg-subtle">
                           Rename by deleting and recreating.
                         </p>
                       )
@@ -654,7 +654,7 @@ export function TriggersPane({ project }: { project: Project }) {
                           aria-invalid={whenInvalid}
                           data-testid="trigger-expr"
                         />
-                        <p className="mt-1 text-[12px] text-paddock-400">
+                        <p className="mt-1 text-xs text-fg-subtle">
                           {draft.scheduleKind === "cron"
                             ? "5-field cron (or @daily / @hourly), host-local time."
                             : "A duration like 30m, 1h, or 6h."}
@@ -696,7 +696,7 @@ export function TriggersPane({ project }: { project: Project }) {
 
                   {/* Reserved-webhook notice: the shape is shown but the ingress isn't built (T6). */}
                   {webhookReserved && (
-                    <p className="col-span-2 flex items-start gap-1.5 text-[12px] leading-snug text-amber-600 dark:text-amber-400">
+                    <p className="col-span-2 flex items-start gap-1.5 text-xs leading-snug text-warn">
                       <AlertIcon width={13} height={13} className="mt-0.5 shrink-0" />
                       <span data-testid="trigger-webhook-reserved">
                         Webhook triggers are <strong>reserved</strong> — the inbound HTTP ingress
@@ -709,11 +709,11 @@ export function TriggersPane({ project }: { project: Project }) {
                   {/* Prompt. */}
                   <div className="col-span-2 block">
                     <span className="field-label">Prompt</span>
-                    <div className="mb-2 flex gap-3 text-[13px]">
+                    <div className="mb-2 flex gap-3 text-sm">
                       <label className="inline-flex cursor-pointer items-center gap-1.5">
                         <input
                           type="radio"
-                          className="accent-accent"
+                          className="accent-[var(--accent-solid)]"
                           checked={draft.promptMode === "inline"}
                           onChange={() => patchDraft({ promptMode: "inline" })}
                         />
@@ -722,7 +722,7 @@ export function TriggersPane({ project }: { project: Project }) {
                       <label className="inline-flex cursor-pointer items-center gap-1.5">
                         <input
                           type="radio"
-                          className="accent-accent"
+                          className="accent-[var(--accent-solid)]"
                           checked={draft.promptMode === "file"}
                           onChange={() => patchDraft({ promptMode: "file" })}
                         />
@@ -748,7 +748,7 @@ export function TriggersPane({ project }: { project: Project }) {
                           aria-invalid={promptInvalid}
                           data-testid="trigger-prompt-file"
                         />
-                        <p className="mt-1 text-[12px] text-paddock-400">
+                        <p className="mt-1 text-xs text-fg-subtle">
                           A <code>.md</code> file under <code>.paddock/triggers/</code>, read fresh
                           each fire (git-tracked, Claude-editable).
                         </p>
@@ -759,7 +759,7 @@ export function TriggersPane({ project }: { project: Project }) {
                   {/* Capability picker: tool scope. */}
                   <div className="col-span-2 block">
                     <span className="field-label">Tools</span>
-                    <p className="mb-2 text-[12px] text-paddock-400">
+                    <p className="mb-2 text-xs text-fg-subtle">
                       The trigger agent can use exactly the tools you check here — nothing else.
                       {draft.type === "schedule"
                         ? " Leave all unchecked and the schedule runs as Claude with its full toolset."
@@ -771,7 +771,7 @@ export function TriggersPane({ project }: { project: Project }) {
                       {GROUP_ORDER.filter((g) => grantableTools.some((t) => t.group === g)).map(
                         (group) => (
                           <fieldset key={group}>
-                            <legend className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-paddock-400">
+                            <legend className="mb-1 text-2xs font-semibold uppercase tracking-wide text-fg-subtle">
                               {GROUP_LABELS[group]}
                             </legend>
                             <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
@@ -780,21 +780,21 @@ export function TriggersPane({ project }: { project: Project }) {
                                 .map((t) => (
                                   <label
                                     key={t.name}
-                                    className="flex cursor-pointer items-start gap-2 rounded-md px-1.5 py-1 text-[13px] hover:bg-paddock-100/60 dark:hover:bg-paddock-800/40"
+                                    className="flex cursor-pointer items-start gap-2 rounded-md px-1.5 py-1 text-sm hover:bg-surface-hover"
                                     title={t.description}
                                   >
                                     <input
                                       type="checkbox"
-                                      className="mt-0.5 h-4 w-4 shrink-0 accent-accent"
+                                      className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--accent-solid)]"
                                       checked={draft.allowedTools.has(t.name)}
                                       onChange={() => toggleTool(t.name)}
                                       data-tool={t.name}
                                     />
                                     <span className="min-w-0">
-                                      <span className="font-mono text-[12px] font-medium text-paddock-700 dark:text-paddock-200">
+                                      <span className="font-mono text-xs font-medium text-fg">
                                         {t.name}
                                       </span>
-                                      <span className="block text-[11px] leading-snug text-paddock-400">
+                                      <span className="block text-2xs leading-snug text-fg-subtle">
                                         {t.description}
                                       </span>
                                     </span>
@@ -806,7 +806,7 @@ export function TriggersPane({ project }: { project: Project }) {
                       )}
                     </div>
                     {draft.allowedTools.has("Bash") && (
-                      <p className="mt-2 flex items-start gap-1.5 text-[12px] leading-snug text-amber-600 dark:text-amber-400">
+                      <p className="mt-2 flex items-start gap-1.5 text-xs leading-snug text-warn">
                         <AlertIcon width={13} height={13} className="mt-0.5 shrink-0" />
                         <span>
                           <code>Bash</code> lets this trigger run arbitrary shell commands in the
@@ -821,16 +821,16 @@ export function TriggersPane({ project }: { project: Project }) {
                     <label className="inline-flex cursor-pointer items-center gap-2 text-sm">
                       <input
                         type="checkbox"
-                        className="h-4 w-4 accent-accent"
+                        className="h-4 w-4 accent-[var(--accent-solid)]"
                         checked={draft.resumeSession}
                         onChange={(e) => patchDraft({ resumeSession: e.target.checked })}
                         data-testid="trigger-session"
                       />
-                      <span className="text-paddock-700 dark:text-paddock-200">
+                      <span className="text-fg">
                         Accrete into one session
                       </span>
                     </label>
-                    <span className="text-[12px] text-paddock-400">
+                    <span className="text-xs text-fg-subtle">
                       {draft.resumeSession
                         ? "One long-lived chat that accretes across fires."
                         : "A fresh chat each fire."}
@@ -893,7 +893,7 @@ export function TriggersPane({ project }: { project: Project }) {
                       placeholder="Inherit"
                       data-testid="trigger-max-spawn-depth"
                     />
-                    <p className="mt-1 text-[12px] text-paddock-400">
+                    <p className="mt-1 text-xs text-fg-subtle">
                       0 = may not spawn children.
                     </p>
                   </label>
@@ -901,12 +901,12 @@ export function TriggersPane({ project }: { project: Project }) {
                   <label className="col-span-2 inline-flex cursor-pointer items-center gap-2 text-sm">
                     <input
                       type="checkbox"
-                      className="h-4 w-4 accent-accent"
+                      className="h-4 w-4 accent-[var(--accent-solid)]"
                       checked={draft.enabled}
                       onChange={(e) => patchDraft({ enabled: e.target.checked })}
                       data-testid="trigger-enabled"
                     />
-                    <span className="text-paddock-700 dark:text-paddock-200">
+                    <span className="text-fg">
                       Enabled (fires on its trigger)
                     </span>
                   </label>
@@ -943,7 +943,7 @@ export function TriggersPane({ project }: { project: Project }) {
         message={
           deletingTrigger && (
             <>
-              <span className="font-medium text-ink dark:text-ink-dark">
+              <span className="font-medium text-fg">
                 {deletingTrigger.name}
               </span>{" "}
               will be removed from this project. This can&apos;t be undone.
@@ -957,18 +957,22 @@ export function TriggersPane({ project }: { project: Project }) {
   );
 }
 
-/** A small badge coloring the trigger's type (schedule / event / webhook). */
+/**
+ * A small badge toning the trigger's type (schedule / event / webhook).
+ * A schedule is `lineage` (it is the structural origin of the runs it spawns),
+ * an event is `info`, a webhook — reserved — is neutral.
+ */
 function TypeBadge({ type }: { type: TriggerType }) {
   const map: Record<TriggerType, string> = {
-    schedule: "bg-violet-100 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300",
-    event: "bg-sky-100 text-sky-700 dark:bg-sky-950/50 dark:text-sky-300",
-    webhook: "bg-paddock-200 text-paddock-500 dark:bg-paddock-800 dark:text-paddock-400",
+    schedule: "bg-lineage-soft text-lineage",
+    event: "bg-info-soft text-info",
+    webhook: "bg-surface-active text-fg-muted",
   };
   const Icon = type === "schedule" ? ClockIcon : BoltIcon;
   return (
     <span
       data-trigger-type={type}
-      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium capitalize ${map[type]}`}
+      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-2xs font-medium capitalize ${map[type]}`}
     >
       <Icon width={11} height={11} />
       {type}
@@ -977,17 +981,17 @@ function TypeBadge({ type }: { type: TriggerType }) {
 }
 
 /**
- * A small status chip. A live run wins the display (an amber pulsing "Running" chip),
- * otherwise it reflects the armed state: enabled (green) vs disabled (grey).
+ * A small status chip. A live run wins the display (a pulsing `warn` "Running" chip),
+ * otherwise it reflects the armed state: enabled (`success`) vs disabled (neutral).
  */
 function StatusChip({ enabled, running }: { enabled: boolean; running?: boolean }) {
   if (running) {
     return (
       <span
         data-trigger-status="running"
-        className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
+        className="inline-flex items-center gap-1 rounded-full bg-warn-soft px-2 py-0.5 text-2xs font-medium text-warn"
       >
-        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
+        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-warn-solid" />
         Running
       </span>
     );
@@ -995,10 +999,8 @@ function StatusChip({ enabled, running }: { enabled: boolean; running?: boolean 
   return (
     <span
       data-trigger-status={enabled ? "enabled" : "disabled"}
-      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${
-        enabled
-          ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
-          : "bg-paddock-200 text-paddock-500 dark:bg-paddock-800 dark:text-paddock-400"
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-2xs font-medium ${
+        enabled ? "bg-success-soft text-success" : "bg-surface-active text-fg-muted"
       }`}
     >
       {enabled ? "Enabled" : "Disabled"}
@@ -1006,12 +1008,12 @@ function StatusChip({ enabled, running }: { enabled: boolean; running?: boolean 
   );
 }
 
-/** Colour for a run status: green success, rose failure/cancel, amber running, grey else. */
+/** Tone for a run status: success, danger on failure/cancel, warn while running, neutral else. */
 function runStatusClass(status: string): string {
-  if (status === "completed") return "bg-emerald-500";
-  if (status === "failed" || status === "cancelled") return "bg-rose-500";
-  if (status === "running" || status === "pending") return "bg-amber-500";
-  return "bg-paddock-400";
+  if (status === "completed") return "bg-success-solid";
+  if (status === "failed" || status === "cancelled") return "bg-danger-solid";
+  if (status === "running" || status === "pending") return "bg-warn-solid";
+  return "bg-fg-subtle";
 }
 
 /**
@@ -1021,7 +1023,7 @@ function runStatusClass(status: string): string {
  */
 function LastRunCell({ rt }: { rt?: TriggerRuntime }) {
   const last = rt?.lastRun;
-  if (!last) return <span className="text-[12px] text-paddock-400">—</span>;
+  if (!last) return <span className="text-xs text-fg-subtle">—</span>;
   const when = last.startedAt;
   const title = [
     when ? new Date(when).toLocaleString() : null,
@@ -1031,7 +1033,7 @@ function LastRunCell({ rt }: { rt?: TriggerRuntime }) {
     .filter(Boolean)
     .join("\n");
   return (
-    <span className="inline-flex items-center gap-1.5 text-[12px] text-paddock-600 dark:text-paddock-300" title={title}>
+    <span className="inline-flex items-center gap-1.5 text-xs text-fg-muted" title={title}>
       <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${runStatusClass(last.status)}`} />
       {last.status === "running" ? "Running…" : relativeTime(when)}
     </span>
@@ -1046,16 +1048,16 @@ function LastRunCell({ rt }: { rt?: TriggerRuntime }) {
 function NextRunCell({ rt, trigger }: { rt?: TriggerRuntime; trigger: Trigger }) {
   const type = trigger.trigger.type;
   if (type === "event") {
-    return <span className="text-[12px] text-paddock-400">on event</span>;
+    return <span className="text-xs text-fg-subtle">on event</span>;
   }
   if (type === "webhook") {
-    return <span className="text-[12px] text-paddock-400">on webhook</span>;
+    return <span className="text-xs text-fg-subtle">on webhook</span>;
   }
   const next = rt?.nextRunAt;
-  if (!next) return <span className="text-[12px] text-paddock-400">—</span>;
+  if (!next) return <span className="text-xs text-fg-subtle">—</span>;
   return (
     <span
-      className="text-[12px] text-paddock-600 dark:text-paddock-300"
+      className="text-xs text-fg-muted"
       title={new Date(next).toLocaleString()}
     >
       {untilTime(next)}

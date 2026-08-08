@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 import { useProjects } from "../lib/projects-context";
 import type { Chat, Project } from "../lib/types";
-import { StatusPill } from "../components/StatusPill";
+import { StatusPill, statusRail } from "../components/StatusPill";
 import { TagPill } from "../components/TagPill";
 import { NewProjectModal } from "../components/NewProjectModal";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -102,7 +102,7 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
       <div className="mx-auto max-w-6xl px-3 py-5 sm:px-8 sm:py-10">
         <header className="mb-8 flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h1 className="text-[28px] font-semibold tracking-tight">
+            <h1 className="text-3xl font-semibold tracking-tight">
               {filterTag ? (
                 <>
                   Projects tagged <span className="text-accent">{filterTag}</span>
@@ -112,7 +112,7 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
               )}
             </h1>
             {filterTag ? (
-              <p className="mt-1.5 max-w-xl text-sm text-paddock-500">
+              <p className="mt-1.5 max-w-xl text-sm text-fg-muted">
                 {!loading &&
                   `${projects.length} ${projects.length === 1 ? "project" : "projects"} tagged “${filterTag}”.`}{" "}
                 <Link to={grid} className="text-accent underline-offset-2 hover:underline">
@@ -120,7 +120,7 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
                 </Link>
               </p>
             ) : (
-              <p className="mt-1.5 max-w-xl text-sm text-paddock-500">
+              <p className="mt-1.5 max-w-xl text-sm text-fg-muted">
                 Each project is a directory with persistent, resumable Claude Code
                 sessions — your work, organized and always running.
               </p>
@@ -142,7 +142,7 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
         {filterTag && <FilterChip tag={filterTag} onClear={() => navigate(grid)} />}
 
         {error && (
-          <div className="mb-6 rounded-lg border border-rose-300/60 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300">
+          <div className="mb-6 rounded-lg border border-danger-edge bg-danger-soft px-4 py-3 text-sm text-danger">
             {error}
           </div>
         )}
@@ -152,7 +152,7 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
             {[0, 1, 2, 3, 4, 5].map((i) => (
               <div
                 key={i}
-                className="h-40 animate-pulse rounded-2xl border border-paddock-200 bg-white/60 dark:border-paddock-800 dark:bg-paddock-900/50"
+                className="h-40 animate-pulse rounded-2xl border border-edge bg-surface-raised"
               />
             ))}
           </div>
@@ -204,7 +204,7 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
         title="Delete project?"
         message={
           <>
-            <span className="font-medium text-ink dark:text-ink-dark">{deleting?.name}</span> and
+            <span className="font-medium text-fg">{deleting?.name}</span> and
             all its chats and files will be permanently removed. This cannot be undone.
           </>
         }
@@ -266,20 +266,20 @@ function SectionHeader({
     <button
       type="button"
       onClick={onToggle}
-      className="group/area flex w-full items-center gap-2 rounded-lg px-1 py-2 text-left hover:bg-paddock-100/60 dark:hover:bg-paddock-800/40"
+      className="group/area flex w-full items-center gap-2 rounded-lg px-1 py-2 text-left hover:bg-surface-hover"
       aria-expanded={open}
     >
       <ChevronRightIcon
         width={16}
         height={16}
-        className={`shrink-0 text-paddock-400 transition-transform ${open ? "rotate-90" : ""}`}
+        className={`shrink-0 text-fg-subtle transition-transform ${open ? "rotate-90" : ""}`}
       />
-      <h2 className="text-[15px] font-semibold tracking-tight">{label}</h2>
-      <span className="rounded-full bg-paddock-200/70 px-2 py-0.5 text-[11px] font-medium text-paddock-500 dark:bg-paddock-800 dark:text-paddock-400">
+      <h2 className="text-md font-semibold tracking-tight">{label}</h2>
+      <span className="rounded-full bg-surface-active px-2 py-0.5 text-2xs font-medium text-fg-muted">
         {count}
       </span>
       {blurb && (
-        <span className="hidden min-w-0 truncate text-xs text-paddock-400 md:inline">
+        <span className="hidden min-w-0 truncate text-xs text-fg-subtle md:inline">
           · {blurb}
         </span>
       )}
@@ -341,14 +341,25 @@ function ProjectCard({
   onDelete: () => void;
 }) {
   return (
-    <Link to={`/projects/${project.slug}`} className="card group/card relative flex flex-col gap-3">
+    // `phosphor`: the card wears the same status RAIL as every other record in
+    // the app, so a wall of six reads as a fleet you can scan by colour rather
+    // than six identical boxes you have to read. The slug — the identifier the
+    // URL and the filesystem actually use — is machine truth, so it sits under
+    // the name in the mono; the name and the summary are language.
+    <Link
+      to={`/projects/${project.slug}`}
+      className={`card group/card relative flex flex-col gap-3 border-l-2 ${statusRail(project.status)}`}
+    >
       <div className="flex items-start justify-between gap-2">
-        <h2 className="min-w-0 line-clamp-2 font-semibold leading-snug">{project.name}</h2>
+        <div className="min-w-0">
+          <h2 className="min-w-0 line-clamp-2 font-semibold leading-snug">{project.name}</h2>
+          <p className="truncate font-mono text-3xs text-fg-subtle">{project.slug}</p>
+        </div>
         <div className="flex shrink-0 items-center gap-1">
           {project.dirty ? (
             <span
               title={`${project.dirty} uncommitted change${project.dirty === 1 ? "" : "s"} — open the Changes tab`}
-              className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-950/50 dark:text-amber-400"
+              className="inline-flex items-center gap-1 rounded-full bg-warn-soft px-1.5 py-0.5 text-3xs font-semibold text-warn"
             >
               <BranchIcon width={10} height={10} />
               {project.dirty}
@@ -363,7 +374,7 @@ function ProjectCard({
         </div>
       </div>
       {project.summary && (
-        <p className="line-clamp-3 text-sm text-paddock-600 dark:text-paddock-400">
+        <p className="line-clamp-3 text-sm text-fg-muted">
           {project.summary}
         </p>
       )}
@@ -377,7 +388,8 @@ function ProjectCard({
           )}
         </div>
       )}
-      <div className="mt-auto flex items-center justify-between gap-2 border-t border-paddock-200/70 pt-3 text-[11px] text-paddock-400 dark:border-paddock-800">
+      {/* Counts and times are compared card-to-card, so they are mono + tabular. */}
+      <div className="mt-auto flex items-center justify-between gap-2 border-t border-edge pt-3 font-mono text-2xs text-fg-subtle tabular">
         <span className="inline-flex items-center gap-1">
           <ChatIcon width={12} height={12} />
           {sessionCount == null
@@ -397,9 +409,9 @@ function ProjectCard({
  *  the filter (back to the full grid). */
 function FilterChip({ tag, onClear }: { tag: string; onClear: () => void }) {
   return (
-    <div className="mb-6 flex items-center gap-2 text-sm text-paddock-500">
+    <div className="mb-6 flex items-center gap-2 text-sm text-fg-muted">
       <span>Filtered by</span>
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-paddock-200/70 px-2.5 py-1 text-xs font-medium text-paddock-700 dark:bg-paddock-800 dark:text-paddock-200">
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-active px-2.5 py-1 text-xs font-medium text-fg">
         <span aria-hidden>🏷</span>
         <span className="max-w-[14rem] truncate">{tag}</span>
         <button
@@ -407,7 +419,7 @@ function FilterChip({ tag, onClear }: { tag: string; onClear: () => void }) {
           aria-label={`Clear ${tag} filter`}
           title="Clear filter"
           onClick={onClear}
-          className="-mr-0.5 ml-0.5 flex h-4 w-4 items-center justify-center rounded-full transition-colors hover:bg-black/10 dark:hover:bg-white/10"
+          className="-mr-0.5 ml-0.5 flex h-4 w-4 items-center justify-center rounded-full transition-colors hover:bg-surface-selected"
         >
           <XIcon width={11} height={11} />
         </button>
@@ -419,9 +431,9 @@ function FilterChip({ tag, onClear }: { tag: string; onClear: () => void }) {
 /** Empty state for /tags/:tag when no project carries the tag. */
 function NoTagMatchState({ tag, onClear }: { tag: string; onClear: () => void }) {
   return (
-    <div className="mx-auto mt-10 max-w-lg rounded-2xl border border-dashed border-paddock-300 bg-white/50 px-8 py-12 text-center dark:border-paddock-700 dark:bg-paddock-900/40">
+    <div className="mx-auto mt-10 max-w-lg rounded-2xl border border-dashed border-edge bg-surface-raised px-8 py-12 text-center">
       <h2 className="text-lg font-semibold">No projects tagged</h2>
-      <p className="mx-auto mt-3 flex items-center justify-center gap-1.5 text-sm text-paddock-500">
+      <p className="mx-auto mt-3 flex items-center justify-center gap-1.5 text-sm text-fg-muted">
         Nothing matches <span className="tag">{tag}</span> right now.
       </p>
       <div className="mt-6 flex items-center justify-center">
@@ -436,12 +448,12 @@ function NoTagMatchState({ tag, onClear }: { tag: string; onClear: () => void })
 
 function EmptyState({ onCreate, onChat }: { onCreate: () => void; onChat: () => void }) {
   return (
-    <div className="mx-auto mt-10 max-w-lg rounded-2xl border border-dashed border-paddock-300 bg-white/50 px-8 py-12 text-center dark:border-paddock-700 dark:bg-paddock-900/40">
-      <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-accent/10 text-accent">
+    <div className="mx-auto mt-10 max-w-lg rounded-2xl border border-dashed border-edge bg-surface-raised px-8 py-12 text-center">
+      <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-accent-soft text-accent">
         <SparkIcon width={26} height={26} />
       </div>
       <h2 className="text-lg font-semibold">Create your first project</h2>
-      <p className="mx-auto mt-2 max-w-sm text-sm text-paddock-500">
+      <p className="mx-auto mt-2 max-w-sm text-sm text-fg-muted">
         A project gives your work a home — a directory and chat sessions that persist
         and resume. Start one, then chat your way through it.
       </p>

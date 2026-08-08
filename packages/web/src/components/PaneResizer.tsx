@@ -112,7 +112,7 @@ export function PaneResizer({
       // hit strip straddling the pane's right edge, subtle until hover/focus.
       className="group/resizer absolute inset-y-0 right-0 z-10 hidden w-1.5 -mr-0.5 cursor-ew-resize touch-none lg:block"
     >
-      <span className="absolute inset-y-0 right-0 w-px bg-paddock-200 transition group-hover/resizer:w-0.5 group-hover/resizer:bg-accent group-focus/resizer:w-0.5 group-focus/resizer:bg-accent dark:bg-paddock-800" />
+      <span className="absolute inset-y-0 right-0 w-px bg-edge transition group-hover/resizer:w-0.5 group-hover/resizer:bg-accent-solid group-focus/resizer:w-0.5 group-focus/resizer:bg-accent-solid" />
     </div>
   );
 }

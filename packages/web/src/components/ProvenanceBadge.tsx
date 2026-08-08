@@ -53,7 +53,7 @@ export function ProvenanceBadge({
         data-provenance="adopted"
         aria-label="Adopted chat"
         title="Adopted — this chat came from your Claude Code CLI history"
-        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded text-emerald-600 dark:text-emerald-400 ${className}`}
+        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded text-success ${className}`}
       >
         <TerminalIcon width={12} height={12} />
       </span>
@@ -67,7 +67,7 @@ export function ProvenanceBadge({
         data-provenance="hook"
         aria-label="Hook chat"
         title={label}
-        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded text-sky-600 dark:text-sky-400 ${className}`}
+        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded text-info ${className}`}
       >
         <BoltIcon width={12} height={12} />
       </span>
@@ -80,7 +80,7 @@ export function ProvenanceBadge({
         data-provenance="scheduled"
         aria-label="Scheduled chat"
         title="Scheduled — a schedule started this chat"
-        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded text-amber-600 dark:text-amber-400 ${className}`}
+        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded text-warn ${className}`}
       >
         <ClockIcon width={12} height={12} />
       </span>
@@ -95,7 +95,7 @@ export function ProvenanceBadge({
       data-provenance="spawned"
       aria-label="Spawned chat"
       title={`Spawned — another chat created this one${depthNote}`}
-      className={`flex h-4 w-4 shrink-0 items-center justify-center rounded text-violet-600 dark:text-violet-400 ${className}`}
+      className={`flex h-4 w-4 shrink-0 items-center justify-center rounded text-lineage ${className}`}
     >
       <BranchIcon width={12} height={12} />
     </span>

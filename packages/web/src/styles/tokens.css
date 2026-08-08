@@ -1,0 +1,258 @@
+/*
+ * Paddock design tokens — direction `phosphor`.
+ *
+ * READ docs/DESIGN.md BEFORE EDITING, then docs/DESIGN-phosphor.md for what this
+ * particular direction is arguing. The short version:
+ *
+ *  - This file declares SEMANTIC tokens only, twice: once for light (`:root`) and
+ *    once for dark (`.dark`). Nothing else in the app may hard-code a colour.
+ *  - Colours are authored in **OKLCH**, light and dark derived SEPARATELY.
+ *  - Every text-on-surface pair is asserted at >= 4.5:1 in BOTH modes by
+ *    `tokens.test.ts`, which parses this very file.
+ *  - `--accent` / `--accent-600` / `--accent-700` stay space-separated sRGB
+ *    channels: a running server overwrites them for `PADDOCK_BRAND_ACCENT` (#34).
+ *
+ * ---------------------------------------------------------------------------
+ * THE PHOSPHOR ARGUMENT
+ *
+ * Paddock is a window onto a running process. The ground is therefore the dark
+ * GLASS of a display — not "near-black", which is the documented default-AI dark
+ * aesthetic (cluster 2) and which OKLCH makes very easy to reach by accident:
+ * `L 0.20` is not 20% luminance, it reads as black. This ground sits at L 0.283
+ * with real chroma at hue 194 — a deep blue-green you can name.
+ *
+ * On top of that glass there is no single loud accent. There is a FAMILY of
+ * signals, one per kind of machine event, and one — and only one — warm hue for
+ * the human:
+ *
+ *     accent  H 352  rose     the operator: your turns, focus, primary action
+ *     danger  H  25  red      errors, stderr, deletions, destructive
+ *     warn    H  70  amber    caution, interrupted, pending, dirty
+ *     success H 150  green    completed, added, connected
+ *     info    H 248  blue     detached work: background tasks, monitors
+ *     lineage H 296  violet   derivation: sub-agents, forks, provenance, hunks
+ *
+ * They are deliberately spaced ~45-80 degrees apart and share ONE lightness per
+ * rung per mode, so five of them in a column read as one instrument rather than
+ * five competing brands. Chroma is the only thing that varies between them, and
+ * only enough to equalise their perceived weight.
+ *
+ * The one inversion worth knowing: `*-solid` is BRIGHT and its `*-fg` is the
+ * deep glass, not white. A phosphor pixel glows and the screen behind it does
+ * not; a lit chip with dark type is the whole metaphor in one token pair, and it
+ * measures better than white-on-mid (7.3:1 dark, 5.3:1 light) besides.
+ *
+ * Caveat for a future maintainer: because `--accent-fg` is dark rather than
+ * white, a `PADDOCK_BRAND_ACCENT` set to a DARK colour would put dark text on a
+ * dark fill. The seam still propagates (every accent token derives from the three
+ * channels), but this direction assumes a brand accent light enough to carry dark
+ * type — the mirror of the assumption the white-fg directions make.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* ---------------------------------------------------------------- accent --
+   * Brandable seam. Server-injected override lands on these three, in this exact
+   * format. Do not rename, do not convert to oklch.
+   *
+   * `phosphor`'s accent is the OPERATOR, not the product: a dusty rose at H 352,
+   * the only warm hue in a cool room and the only genuinely saturated thing on
+   * screen. Everything the machine says is muted; what you said is lit.
+   *   --accent      oklch(0.735 0.098 352)  the lit rose — rails, dots, dark-mode text
+   *   --accent-600  oklch(0.645 0.128 352)  the fill that carries dark type (5.1:1)
+   *   --accent-700  oklch(0.450 0.108 352)  accent AS TEXT on a light surface
+   */
+  --accent: 217 143 176; /* #d98fb0 — the lit rose */
+  --accent-600: 200 106 150; /* #c86a96 — the fill */
+  --accent-700: 129 56 91; /* #81385b — accent as text, light mode */
+
+  /* -------------------------------------------------------------- surfaces --
+   * Light mode is NOT an afterthought here — it is the same room with the lights
+   * on. Same hue family (194), chroma dropped by ~half so the paper reads cool
+   * and calm rather than tinted. sunken < surface < raised.
+   */
+  --surface: oklch(0.96 0.01 194);
+  --surface-raised: oklch(0.992 0.004 194);
+  --surface-sunken: oklch(0.925 0.014 194);
+  --surface-hover: oklch(0.938 0.014 194);
+  --surface-active: oklch(0.9 0.018 194);
+  --surface-selected: oklch(0.906 0.026 194);
+  /* Scrims tint toward the glass rather than going neutral black, so a dialog
+     over a hued canvas darkens the room instead of greying it. */
+  --overlay: oklch(0.22 0.02 194 / 0.44);
+  --overlay-strong: oklch(0.14 0.018 194 / 0.84);
+
+  /* ----------------------------------------------------------------- text --
+   * Three rungs, all clearing 4.5:1 against the darkest surface they can legally
+   * sit on. Ink is a deep teal, never black: black on a hued paper reads as a
+   * hole punched in it.
+   */
+  --text: oklch(0.255 0.03 200);
+  --text-muted: oklch(0.442 0.03 198);
+  --text-subtle: oklch(0.488 0.028 196);
+  /* Foreground for anything sitting on a saturated solid fill. See the header:
+     in this direction the solids are LIT and this is the glass behind them. */
+  --text-on-solid: oklch(0.2 0.022 194);
+
+  /* --------------------------------------------------------------- borders --
+   * Tinted toward the surface hue. `--border-strong` clears 3:1 against every
+   * surface, so it is the one to reach for on a control boundary.
+   */
+  --border-subtle: oklch(0.895 0.014 194);
+  --border: oklch(0.822 0.02 194);
+  --border-strong: oklch(0.6 0.026 196);
+
+  /* ------------------------------------------------------- accent, derived --
+   * `--accent-solid` is the lit fill; `--accent-fg` is the glass on top of it.
+   * Hover goes BRIGHTER, not darker, so contrast against that dark type rises
+   * on interaction rather than falling.
+   */
+  --accent-color: rgb(var(--accent));
+  --accent-solid: rgb(var(--accent-600));
+  --accent-solid-hover: rgb(var(--accent));
+  --accent-fg: oklch(0.2 0.022 194);
+  --accent-text: rgb(var(--accent-700));
+  --accent-soft: color-mix(in oklab, rgb(var(--accent)) 15%, var(--surface-raised));
+  --accent-border: color-mix(in oklab, rgb(var(--accent)) 55%, var(--surface));
+
+  /* ----------------------------------------------------------- status hues --
+   * Five domain hues, each with the same five slots so they are interchangeable
+   * at a call site:
+   *   -solid   the lit fill (dots, chips, destructive button)
+   *   -fg      the glass, on that fill
+   *   -text    the hue as text, on any surface OR on its own `-soft`
+   *   -soft    a tint you can lay a whole record on without it shouting
+   *   -border  the rail / boundary for a `-soft` region
+   *
+   * ONE lightness per rung across all five (light: solid .635, text .452,
+   * soft .945, border .815) so a column of five reads as one family. Only chroma
+   * varies, and only to equalise weight — blue and violet need less than red.
+   */
+  --success-solid: oklch(0.635 0.145 150);
+  --success-fg: oklch(0.2 0.022 194);
+  --success-text: oklch(0.452 0.115 150);
+  --success-soft: oklch(0.945 0.038 150);
+  --success-border: oklch(0.815 0.075 150);
+
+  --warn-solid: oklch(0.635 0.135 70);
+  --warn-fg: oklch(0.2 0.022 194);
+  --warn-text: oklch(0.452 0.09 70);
+  --warn-soft: oklch(0.945 0.038 70);
+  --warn-border: oklch(0.815 0.075 70);
+
+  --danger-solid: oklch(0.635 0.165 25);
+  --danger-fg: oklch(0.2 0.022 194);
+  --danger-text: oklch(0.452 0.15 25);
+  --danger-soft: oklch(0.945 0.024 25);
+  --danger-border: oklch(0.815 0.075 25);
+
+  --info-solid: oklch(0.635 0.15 248);
+  --info-fg: oklch(0.2 0.022 194);
+  --info-text: oklch(0.452 0.11 248);
+  --info-soft: oklch(0.945 0.028 248);
+  --info-border: oklch(0.815 0.07 248);
+
+  --lineage-solid: oklch(0.635 0.165 296);
+  --lineage-fg: oklch(0.2 0.022 194);
+  --lineage-text: oklch(0.452 0.155 296);
+  --lineage-soft: oklch(0.945 0.03 296);
+  --lineage-border: oklch(0.815 0.075 296);
+
+  /* --------------------------------------------------------------- effects --
+   * Layered (ambient + direct) and tinted toward the glass hue.
+   */
+  --shadow-color: 22 46 46;
+  --shadow-ambient: 0.06;
+  --shadow-direct: 0.07;
+
+  --scroll-thumb: oklch(0.822 0.02 194);
+
+  /* ---------------------------------------------------------------- form --
+   * Non-colour scales this direction overrides. `phosphor` is a dense readout,
+   * so corners tighten by roughly a third — but they do NOT go to zero, which
+   * is the broadsheet default (cluster 3) and belongs to a different direction.
+   * Concentricity is preserved: each rung is one step below its parent.
+   */
+  --radius-sm: 0.125rem; /* 2px  badge */
+  --radius-md: 0.1875rem; /* 3px  chip */
+  --radius-lg: 0.3125rem; /* 5px  control */
+  --radius-xl: 0.4375rem; /* 7px  panel */
+  --radius-2xl: 0.5625rem; /* 9px  card / dialog */
+  --radius-3xl: 0.75rem; /* 12px */
+}
+
+.dark {
+  color-scheme: dark;
+
+  /* The glass. L 0.283 at hue 194 with real chroma: a deep blue-green you can
+     name, not a near-black you can't. (`L 0.20` would render #10201f — the
+     cluster-2 ground this direction exists to avoid.) */
+  --surface: oklch(0.283 0.028 194);
+  --surface-raised: oklch(0.322 0.03 194);
+  --surface-sunken: oklch(0.238 0.024 194);
+  --surface-hover: oklch(0.345 0.032 194);
+  --surface-active: oklch(0.36 0.034 194);
+  --surface-selected: oklch(0.352 0.044 194);
+  --overlay: oklch(0.12 0.018 194 / 0.62);
+  --overlay-strong: oklch(0.09 0.014 194 / 0.88);
+
+  --text: oklch(0.95 0.012 194);
+  --text-muted: oklch(0.828 0.02 194);
+  --text-subtle: oklch(0.742 0.024 194);
+  --text-on-solid: oklch(0.2 0.022 194);
+
+  --border-subtle: oklch(0.372 0.03 194);
+  --border: oklch(0.428 0.034 194);
+  --border-strong: oklch(0.6 0.038 194);
+
+  /* The three channels are mode-independent (they are the branding seam), so the
+     lit fill and its dark foreground are IDENTICAL in both modes — the one place
+     the two themes deliberately agree. Only `--accent-text` differs: on glass it
+     has to lift toward white to clear 4.5:1 at 11px. */
+  --accent-color: rgb(var(--accent));
+  --accent-solid: rgb(var(--accent-600));
+  --accent-solid-hover: rgb(var(--accent));
+  --accent-fg: oklch(0.2 0.022 194);
+  --accent-text: color-mix(in oklab, rgb(var(--accent)) 78%, white);
+  --accent-soft: color-mix(in oklab, rgb(var(--accent)) 27%, var(--surface));
+  --accent-border: color-mix(in oklab, rgb(var(--accent)) 46%, var(--surface));
+
+  /* Same family, re-derived: solid .72 (lit), text .815, soft .305, border .44. */
+  --success-solid: oklch(0.72 0.145 150);
+  --success-fg: oklch(0.2 0.022 194);
+  --success-text: oklch(0.815 0.115 150);
+  --success-soft: oklch(0.305 0.05 150);
+  --success-border: oklch(0.44 0.075 150);
+
+  --warn-solid: oklch(0.72 0.15 70);
+  --warn-fg: oklch(0.2 0.022 194);
+  --warn-text: oklch(0.815 0.125 70);
+  --warn-soft: oklch(0.305 0.05 70);
+  --warn-border: oklch(0.44 0.075 70);
+
+  --danger-solid: oklch(0.72 0.15 25);
+  --danger-fg: oklch(0.2 0.022 194);
+  --danger-text: oklch(0.815 0.088 25);
+  --danger-soft: oklch(0.305 0.055 25);
+  --danger-border: oklch(0.44 0.09 25);
+
+  --info-solid: oklch(0.72 0.125 248);
+  --info-fg: oklch(0.2 0.022 194);
+  --info-text: oklch(0.815 0.085 248);
+  --info-soft: oklch(0.305 0.055 248);
+  --info-border: oklch(0.44 0.085 248);
+
+  --lineage-solid: oklch(0.72 0.135 296);
+  --lineage-fg: oklch(0.2 0.022 194);
+  --lineage-text: oklch(0.815 0.095 296);
+  --lineage-soft: oklch(0.305 0.06 296);
+  --lineage-border: oklch(0.44 0.09 296);
+
+  /* Glass has no ambient bounce: the shadow is the absence of the backlight. */
+  --shadow-color: 2 10 10;
+  --shadow-ambient: 0.45;
+  --shadow-direct: 0.55;
+
+  --scroll-thumb: oklch(0.428 0.034 194);
+}

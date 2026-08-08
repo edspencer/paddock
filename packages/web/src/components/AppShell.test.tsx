@@ -575,10 +575,10 @@ describe("AppShell: navigation", () => {
     // `end` on the NavLink: without it every route matches `/` as a prefix and
     // the Home item reads as active on every page in the app.
     const { unmount } = renderShell("/");
-    expect(screen.getByRole("link", { name: "Home" }).className).toMatch(/bg-paddock-200/);
+    expect(screen.getByRole("link", { name: "Home" }).className).toMatch(/bg-surface-selected/);
     unmount();
     renderShell("/projects/alpha/chat");
-    expect(screen.getByRole("link", { name: "Home" }).className).not.toMatch(/bg-paddock-200/);
+    expect(screen.getByRole("link", { name: "Home" }).className).not.toMatch(/bg-surface-selected/);
   });
 
   it("a project nav link routes to that project", () => {

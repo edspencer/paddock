@@ -43,7 +43,7 @@ export function DictationButton({ onText }: DictationButtonProps) {
         disabled
         aria-label="Voice dictation unavailable"
         title="Voice dictation needs a secure context (HTTPS or localhost). It's blocked over plain HTTP."
-        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-paddock-300 dark:text-paddock-700"
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-fg-subtle"
       >
         <MicIcon width={18} height={18} />
       </button>
@@ -73,14 +73,14 @@ export function DictationButton({ onText }: DictationButtonProps) {
       {errored && error && (
         <div
           role="alert"
-          className="absolute bottom-full right-0 z-10 mb-2 flex max-w-[240px] items-start gap-2 rounded-lg border border-rose-300/70 bg-rose-50 px-2.5 py-1.5 text-xs text-rose-700 shadow-md dark:border-rose-900/70 dark:bg-rose-950 dark:text-rose-300"
+          className="absolute bottom-full right-0 z-10 mb-2 flex max-w-[240px] items-start gap-2 rounded-lg border border-danger-edge bg-danger-soft px-2.5 py-1.5 text-xs text-danger shadow-md"
         >
           <AlertIcon width={14} height={14} className="mt-0.5 shrink-0" />
           <span className="min-w-0 break-words">{error}</span>
           <button
             type="button"
             onClick={retry}
-            className="shrink-0 font-medium text-rose-700 underline underline-offset-2 hover:text-rose-900 dark:text-rose-200 dark:hover:text-rose-100"
+            className="shrink-0 font-medium text-danger underline underline-offset-2 hover:opacity-80"
           >
             Retry
           </button>
@@ -88,7 +88,7 @@ export function DictationButton({ onText }: DictationButtonProps) {
             type="button"
             onClick={dismiss}
             aria-label="Dismiss error"
-            className="shrink-0 text-rose-400 hover:text-rose-600 dark:hover:text-rose-200"
+            className="shrink-0 text-danger/70 hover:text-danger"
           >
             ✕
           </button>
@@ -113,16 +113,16 @@ export function DictationButton({ onText }: DictationButtonProps) {
         className={[
           "group flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors",
           recording
-            ? "bg-rose-100 text-rose-600 dark:bg-rose-950/60 dark:text-rose-400"
+            ? "bg-danger-soft text-danger"
             : transcribing
               ? // Transcribing: bright accent (spinner reads clearly); clickable to
                 // cancel. Hover tint is can-hover-gated: on touch, the tap that
                 // stopped the recording leaves a sticky :hover which would tint
-                // this rose and make it look like it's still recording.
-                "cursor-pointer text-accent can-hover:hover:bg-rose-100 can-hover:hover:text-rose-600 dark:can-hover:hover:bg-rose-950/60 dark:can-hover:hover:text-rose-400"
+                // this red and make it look like it's still recording.
+                "cursor-pointer text-accent can-hover:hover:bg-danger-soft can-hover:hover:text-danger"
               : errored
-                ? "bg-rose-100 text-rose-600 dark:bg-rose-950/60 dark:text-rose-400"
-                : "text-paddock-500 can-hover:hover:bg-paddock-100 can-hover:hover:text-paddock-700 dark:text-paddock-400 dark:can-hover:hover:bg-paddock-800 dark:can-hover:hover:text-paddock-200",
+                ? "bg-danger-soft text-danger"
+                : "text-fg-muted can-hover:hover:bg-surface-hover can-hover:hover:text-fg",
         ]
           .filter(Boolean)
           .join(" ")}
