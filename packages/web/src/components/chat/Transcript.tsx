@@ -727,20 +727,31 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
   return (
     <div
       ref={cardRef}
-      className={`motion-fast border-l-2 text-xs transition-[background-color,border-color] ${rail} ${rowTint} ${
+      className={`group/row motion-fast border-l-2 text-xs transition-[background-color,border-color] ${rail} ${rowTint} ${
         revealing ? "subagent-reveal" : ""
       }`}
     >
       <button
         type="button"
+        aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
         className="grid w-full grid-cols-[1rem_6rem_minmax(0,1fr)_auto] items-center gap-x-2 py-1.5 pl-1.5 pr-2.5 text-left can-hover:hover:bg-surface-hover"
       >
+        {/*
+          Chanel's rule, applied to the densest surface in the app: a chevron on
+          every row is three hundred identical glyphs telling you something the
+          block's own shape already tells you. It keeps its column (no layout
+          shift) but only paints when the row is hovered, focused or open.
+          `aria-expanded` carries the state for anyone not looking at pixels.
+        */}
         <span className="flex items-center">
           <ChevronRightIcon
             width={11}
             height={11}
-            className={`motion-fast shrink-0 text-fg-subtle transition-transform ${open ? "rotate-90" : ""}`}
+            aria-hidden
+            className={`motion-fast shrink-0 text-fg-subtle transition-[transform,opacity] group-focus-within/row:opacity-100 can-hover:group-hover/row:opacity-100 ${
+              open ? "rotate-90 opacity-100" : "opacity-0"
+            }`}
           />
         </span>
         <span className="flex min-w-0 items-center gap-1.5">

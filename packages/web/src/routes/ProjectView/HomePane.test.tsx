@@ -270,9 +270,12 @@ describe("HomePane: the collapsible notes cards", () => {
     expect(screen.getByText("the overview body")).toBeInTheDocument();
   });
 
+  // An empty state is an invitation, not a report of absence (docs/DESIGN.md):
+  // each of these says what WILL fill the slot and who fills it, so the copy is
+  // asserted on the explanation rather than on a "No X yet." string.
   it("shows a per-file empty state when the workspace has no notes yet", () => {
     renderHome();
-    expect(screen.getByText("No OVERVIEW.md yet.")).toBeInTheDocument();
-    expect(screen.getByText("No CHANGELOG.md yet.")).toBeInTheDocument();
+    expect(screen.getByText(/The sweeper writes OVERVIEW\.md for you/)).toBeInTheDocument();
+    expect(screen.getByText(/A running record of what changed/)).toBeInTheDocument();
   });
 });
