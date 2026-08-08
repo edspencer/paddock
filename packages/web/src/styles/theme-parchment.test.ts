@@ -52,10 +52,12 @@ const MODES = {
 } as const;
 
 /**
- * The sidebar scope, resolved per mode: the same rule, but with the wine ramp
- * mapped onto the semantic names exactly as the CSS does it.
+ * The wine-chrome scope (the nav rail AND the route header slab), resolved per
+ * mode: the same rule, with the wine ramp mapped onto the semantic names
+ * exactly as the CSS does it. Matched on the second selector of the list, which
+ * is what `{` actually follows.
  */
-const CHROME = block('[data-theme="parchment"] aside');
+const CHROME = block('[data-theme="parchment"] header.pt-safe');
 const chromeVars = (mode: "light" | "dark") => ({ ...MODES[mode], ...CHROME });
 
 const SURFACES = [
